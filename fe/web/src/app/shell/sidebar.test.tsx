@@ -1,0 +1,811 @@
+// @vitest-environment jsdom
+// Behaviour of the workspace rail: disclosure, badges, create/delete, account menu.
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import type { Area } from '../../../../core/domain/area.ts';
+import { NEUTRAL_ACTIVITY, type Track } from '../../../../core/domain/track.ts';
+import { createUiPreferences, UiPreferencesProvider } from '../providers/ui-preferences.tsx';
+import { createReadReceiptsKernel, readReceiptsFixture, type ReadReceiptsKernel } from '../providers/read-receipts-fixture.tsx';
+import { ThemeProvider } from '../theme/public.tsx';
+import { SidebarFixture as Sidebar } from './sidebar-fixture.tsx';
+
+afterEach(() => { cleanup(); delete document.documentElement.dataset.theme; });
+
+function memoryStorage() {
+  const values = new Map<string, string>();
+  return { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => { values.set(key, value); } };
+}
+
+function area(overrides: Partial<Area> = {}): Area {
+  return {
+    id: 'c1', name: 'Work', color: '#5B8DEF', sort: 1, kind: 'user',
+    defaultTemplateId: null, defaultCwd: null, createdAt: 0, updatedAt: 0, ...overrides,
+  };
+}
+
+function track(overrides: Partial<Track> = {}): Track {
+  return {
+    id: 'w1', areaId: 'c1', title: 'Task', sort: 1, cwd: '/tmp', isolation: 'none', agentCwd: '/tmp',
+    pinnedAt: null, closedAt: null, createdAt: 0, updatedAt: 0,
+    ...NEUTRAL_ACTIVITY,
+    ...overrides,
+  };
+}
+
+type Props = Parameters<typeof Sidebar>[0];
+
+/** The kernel's receipts default to a baseline of 1: a Track whose `activityAt` is later reads as unread. */
+function renderSidebar(props: Partial<Props> = {}, preferences = createUiPreferences(), kernel: ReadReceiptsKernel = createReadReceiptsKernel({ baselineMs: 1 })) {
+  const { wrap } = readReceiptsFixture(kernel);
+  const build = (overrides: Partial<Props>) => {
+    const merged = { ...props, ...overrides };
+    const tracks = merged.tracks ?? [];
+    return wrap(
+      <UiPreferencesProvider preferences={preferences}><ThemeProvider storage={memoryStorage()}>
+        <Sidebar
+          areas={merged.areas ?? [area()]}
+          tracksByArea={merged.tracksByArea ?? new Map([['c1', tracks]])}
+          tracks={tracks}
+          currentPath={merged.currentPath ?? '/'}
+          onGo={merged.onGo ?? vi.fn()}
+          onRequestCreateArea={merged.onRequestCreateArea ?? vi.fn()}
+          onRequestEditArea={merged.onRequestEditArea ?? vi.fn()}
+          onDeleteArea={merged.onDeleteArea ?? vi.fn()}
+          onNewTrack={merged.onNewTrack ?? vi.fn()}
+          onSetPinned={merged.onSetPinned ?? vi.fn()}
+          onDeleteTrack={merged.onDeleteTrack ?? vi.fn()}
+          collapsed={merged.collapsed ?? false}
+          onToggleCollapsed={merged.onToggleCollapsed ?? vi.fn()}
+          onOpenSettings={merged.onOpenSettings ?? vi.fn()}
+          onOpenPlugins={merged.onOpenPlugins ?? vi.fn()}
+          onSignOut={merged.onSignOut ?? vi.fn()}
+          userLabel={merged.userLabel}
+          readError={merged.readError}
+          activityError={merged.activityError}
+          readLoading={merged.readLoading}
+          onRetryRead={merged.onRetryRead}
+        />
+      </ThemeProvider></UiPreferencesProvider>,
+    );
+  };
+  const result = render(build({}));
+  return { ...result, update: (overrides: Partial<Props>) => result.rerender(build(overrides)) };
+}
+
+async function requestAreaDelete(): Promise<void> {
+  await userEvent.click(screen.getByRole('button', { name: 'Area actions for Work' }));
+  await userEvent.click(screen.getByRole('menuitem', { name: 'Delete area' }));
+}
+
+describe('workspace read feedback', () => {
+  it('keeps loading and read failures in the connection disclosure and retries the read', async () => {
+    const onRetryRead = vi.fn();
+    const { update } = renderSidebar({ readLoading: true, onRetryRead });
+    expect(screen.queryByRole('dialog', { name: '连接详情' })).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: /^连接状态/ }));
+    expect(within(screen.getByRole('dialog', { name: '连接详情' })).getByText('正在读取工作区…')).toBeTruthy();
+    await userEvent.keyboard('{Escape}');
+    update({ readLoading: false, readError: 'areas down', onRetryRead });
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.queryByRole('dialog', { name: '连接详情' })).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: '连接状态：连接异常' }));
+    expect(within(screen.getByRole('dialog', { name: '连接详情' })).getByText('areas down')).toBeTruthy();
+    await userEvent.click(screen.getByRole('button', { name: '重试读取' }));
+    expect(onRetryRead).toHaveBeenCalledTimes(1);
+  });
+
+  it('collects read and activity errors behind one indicator even with a collapsed sidebar', async () => {
+    const onRetryRead = vi.fn();
+    renderSidebar({ collapsed: true, readError: 'Areas are unavailable.', activityError: 'Track activity is unavailable.', onRetryRead });
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.queryByRole('dialog', { name: '连接详情' })).toBeNull();
+    expect(screen.getAllByRole('button', { name: /^连接状态/ })).toHaveLength(1);
+    await userEvent.click(screen.getByRole('button', { name: /^连接状态/ }));
+    expect(within(screen.getByRole('dialog', { name: '连接详情' })).getByText('Areas are unavailable.')).toBeTruthy();
+    expect(within(screen.getByRole('dialog', { name: '连接详情' })).getByText('Track activity is unavailable.')).toBeTruthy();
+    await userEvent.click(screen.getByRole('button', { name: '重试读取' }));
+    expect(onRetryRead).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('area disclosure', () => {
+  it('collapses and re-expands an area track list from its group row', async () => {
+    renderSidebar({ tracks: [track({ title: 'Inside' })] });
+    expect(screen.getByRole('button', { name: /^Track Inside/ })).toBeTruthy();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Collapse area Work' }));
+    expect(screen.queryByRole('button', { name: /^Track Inside/ })).toBeNull();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Expand area Work' }));
+    expect(screen.getByRole('button', { name: /^Track Inside/ })).toBeTruthy();
+  });
+
+  it('keeps an area collapsed when opening a track in it', async () => {
+    const tracks = [track({ id: 'w9', title: 'Inside' })];
+    const { update } = renderSidebar({ tracks });
+    await userEvent.click(screen.getByRole('button', { name: 'Collapse area Work' }));
+    expect(screen.queryByRole('button', { name: /^Track Inside/ })).toBeNull();
+
+    update({ tracks, currentPath: '/track/w9' });
+    expect(screen.queryByRole('button', { name: /^Track Inside/ })).toBeNull();
+  });
+
+  it('keeps an area collapsed when moving between Tracks in it', async () => {
+    const tracks = [track({ id: 'w1', title: 'First' }), track({ id: 'w2', title: 'Second' })];
+    const { update } = renderSidebar({ tracks, currentPath: '/track/w1' });
+    await userEvent.click(screen.getByRole('button', { name: 'Collapse area Work' }));
+    expect(screen.queryByRole('button', { name: /^Track Second/ })).toBeNull();
+
+    update({ tracks, currentPath: '/track/w2' });
+    expect(screen.queryByRole('button', { name: /^Track Second/ })).toBeNull();
+  });
+});
+
+describe('area row', () => {
+  it('carries the name and nothing else — no count, no identity dot', () => {
+    const tracks = [
+      track({ id: 'a' }),
+      track({ id: 'b', closedAt: 5 }),
+      track({ id: 'c' }),
+    ];
+    renderSidebar({ tracks, tracksByArea: new Map([['c1', tracks]]) });
+    const name = screen.getByTitle('Work');
+    const row = screen.getByRole('button', { name: 'Collapse area Work' });
+    expect(name.textContent).toBe('Work');
+    expect(name.closest('button')).toBe(row);
+    expect(name.querySelectorAll('[style]').length).toBe(0);
+  });
+
+  it('makes the whole Area row a disclosure and never a navigation target', async () => {
+    const onGo = vi.fn();
+    renderSidebar({ tracks: [track()], onGo });
+    const disclosure = screen.getByRole('button', { name: 'Collapse area Work' });
+    expect(disclosure.getAttribute('aria-expanded')).toBe('true');
+    expect(disclosure.querySelector('svg')).toBeTruthy();
+    await userEvent.click(disclosure);
+    expect(onGo).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: /^Track Task/ })).toBeNull();
+  });
+
+  it('toggles immediately for Enter and Space keyboard activation', async () => {
+    renderSidebar({ tracks: [track()] });
+    const disclosure = screen.getByRole('button', { name: 'Collapse area Work' });
+    disclosure.focus();
+    await userEvent.keyboard('{Enter}');
+    expect(screen.getByRole('button', { name: 'Expand area Work' })).toBeTruthy();
+    await userEvent.keyboard(' ');
+    expect(screen.getByRole('button', { name: 'Collapse area Work' })).toBeTruthy();
+  });
+
+  /* The rail does not own the new-track surface; the group reports which Area the route belongs to. */
+  it('starts a track in its own area from the row, without navigating into it', async () => {
+    const onNewTrack = vi.fn();
+    const onGo = vi.fn();
+    renderSidebar({
+      areas: [area(), area({ id: 'c2', name: 'Reading', sort: 2 })],
+      tracksByArea: new Map([['c1', []], ['c2', []]]),
+      onNewTrack,
+      onGo,
+    });
+    await userEvent.click(screen.getByRole('button', { name: 'New track in Reading' }));
+    expect(onNewTrack.mock.calls).toEqual([['c2']]);
+    expect(onGo).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Collapse area Reading' })).toBeTruthy();
+  });
+});
+
+describe('new area', () => {
+  it('requests the shared editor from both the header and zero-state action', async () => {
+    const onRequestCreateArea = vi.fn();
+    const view = renderSidebar({ onRequestCreateArea });
+    await userEvent.click(screen.getByRole('button', { name: 'New area' }));
+    expect(onRequestCreateArea).toHaveBeenCalledTimes(1);
+
+    view.update({ areas: [], tracksByArea: new Map() });
+    await userEvent.click(screen.getByRole('button', { name: 'New area' }));
+    expect(onRequestCreateArea).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('edit area', () => {
+  it('does not overload the disclosure double-click with editing', async () => {
+    const onRequestEditArea = vi.fn();
+    const onGo = vi.fn();
+    renderSidebar({ tracks: [track({ title: 'Inside' })], onRequestEditArea, onGo });
+    await userEvent.dblClick(screen.getByRole('button', { name: 'Collapse area Work' }));
+    expect(onRequestEditArea).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Collapse area Work' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /^Track Inside/ })).toBeTruthy();
+    expect(onGo).not.toHaveBeenCalled();
+  });
+
+  it('is discoverable from the Area actions menu', async () => {
+    const onRequestEditArea = vi.fn();
+    renderSidebar({ onRequestEditArea });
+    await userEvent.click(screen.getByRole('button', { name: 'Area actions for Work' }));
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Edit area' }));
+    expect(onRequestEditArea).toHaveBeenCalledWith(area(), expect.objectContaining({ kind: 'anchor' }));
+  });
+});
+
+describe('destructive confirms', () => {
+  it('focuses the name input when opening an area delete confirmation', async () => {
+    renderSidebar();
+    await requestAreaDelete();
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('textbox', { name: 'Type Work to confirm.' })));
+  });
+
+  it('deletes a track only after Confirm, and nothing on Cancel', async () => {
+    const onDeleteTrack = vi.fn();
+    renderSidebar({ tracks: [track({ id: 'w1', title: 'Task' })], onDeleteTrack });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Delete Task' }));
+    expect(screen.getByRole('dialog', { name: 'Delete this track?' })).toBeTruthy();
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Cancel' })));
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(onDeleteTrack).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Delete Task' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Delete track' }));
+    expect(onDeleteTrack).toHaveBeenCalledWith('w1', expect.any(AbortSignal));
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('deletes an area only after Confirm', async () => {
+    const onDeleteArea = vi.fn();
+    renderSidebar({ onDeleteArea });
+
+    await requestAreaDelete();
+    // Deleting an area cascades to every track inside it, so it is the one operation
+    // behind a typed confirm.
+    expect(screen.getByRole('dialog', { name: 'Delete Work?' })).toBeTruthy();
+    await userEvent.click(screen.getByRole('button', { name: 'Delete area' }));
+    expect(onDeleteArea).not.toHaveBeenCalled();
+
+    await userEvent.type(screen.getByLabelText('Type Work to confirm.'), 'Work');
+    await userEvent.click(screen.getByRole('button', { name: 'Delete area' }));
+    expect(onDeleteArea).toHaveBeenCalledWith('c1', expect.any(AbortSignal));
+  });
+
+  it('states that the cascade count is unknown when the area track query has no data', async () => {
+    renderSidebar({ tracksByArea: new Map() });
+    await requestAreaDelete();
+    expect(screen.getByRole('dialog').textContent).toContain('The number of tracks is not available.');
+    expect(screen.getByRole('dialog').textContent).not.toContain('deletes 0 tracks');
+  });
+
+  it('describes deletion of a genuinely empty area without claiming it deletes zero tracks', async () => {
+    renderSidebar({ tracksByArea: new Map([['c1', []]]) });
+    await requestAreaDelete();
+    expect(screen.getByRole('dialog').textContent).toContain('This deletes the area.');
+    expect(screen.getByRole('dialog').textContent).not.toContain('deletes 0 tracks');
+  });
+
+  it('keeps the confirm mounted while the delete is in flight and clears it on rejection', async () => {
+    let reject: (reason: Error) => void = () => {};
+    let signal: AbortSignal | undefined;
+    const onDeleteTrack = vi.fn((_id: string, requestSignal: AbortSignal) => {
+      signal = requestSignal;
+      return new Promise<void>((_resolve, rejectFn) => { reject = rejectFn; });
+    });
+    renderSidebar({ tracks: [track({ id: 'w1', title: 'Task' })], onDeleteTrack });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Delete Task' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Delete track' }));
+    // Busy, not `disabled`: focus is on Confirm at this instant and `disabled`
+    // would drop it out of the trap.
+    const confirm = screen.getByRole('button', { name: 'Deleting…' });
+    expect(confirm.hasAttribute('disabled')).toBe(false);
+    expect(confirm.getAttribute('aria-disabled')).toBe('true');
+    const cancel = screen.getByRole('button', { name: 'Cancel' });
+    expect(cancel.hasAttribute('disabled')).toBe(false);
+    expect(screen.getByRole('dialog').textContent).toContain('Closing this dialog cancels the delete request.');
+    await userEvent.click(cancel);
+    expect(screen.queryByRole('dialog', { name: 'Delete this track?' })).toBeNull();
+    expect(signal?.aborted).toBe(true);
+
+    reject(new DOMException('aborted', 'AbortError'));
+    await screen.findByRole('button', { name: 'Delete Task' });
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('can delete a second target immediately after canceling the first request', async () => {
+    const deleted: string[] = [];
+    const onDeleteTrack = vi.fn((id: string, signal: AbortSignal) => {
+      deleted.push(id);
+      if (id !== 'w1') return Promise.resolve();
+      return new Promise<void>((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+      });
+    });
+    renderSidebar({ tracks: [track({ id: 'w1', title: 'Alpha' }), track({ id: 'w2', title: 'Beta' })], onDeleteTrack });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Delete Alpha' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Delete track' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Delete Beta' }));
+    expect(screen.getByRole('button', { name: 'Delete track' }).getAttribute('aria-busy')).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: 'Delete track' }));
+    expect(deleted).toEqual(['w1', 'w2']);
+  });
+});
+
+describe('pin', () => {
+  it('pins through the row menu without a confirm', async () => {
+    const onSetPinned = vi.fn();
+    renderSidebar({ tracks: [track({ id: 'w1', title: 'Task' })], onSetPinned });
+    await userEvent.click(screen.getByRole('button', { name: 'Actions for track Task' }));
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Pin globally' }));
+    expect(onSetPinned.mock.calls).toEqual([['w1', true]]);
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+});
+
+describe('user menu', () => {
+  it('opens Settings, Plugins and Sign out from the avatar, and calls the injected callbacks', async () => {
+    const onOpenSettings = vi.fn();
+    const onOpenPlugins = vi.fn();
+    const onSignOut = vi.fn();
+    renderSidebar({ onOpenSettings, onOpenPlugins, onSignOut, userLabel: 'Kenji Xie' });
+
+    const avatar = screen.getByRole('button', { name: 'Account menu for Kenji Xie' });
+    expect(avatar.textContent).toBe('KX');
+    await userEvent.click(avatar);
+    expect(screen.getAllByRole('menuitem').map((node) => node.textContent))
+      .toEqual(['Settings', 'Plugins', 'Sign out']);
+
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Settings' }));
+    expect(onOpenSettings).toHaveBeenCalledTimes(1);
+
+    await userEvent.click(screen.getByRole('button', { name: 'Account menu for Kenji Xie' }));
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Plugins' }));
+    expect(onOpenPlugins).toHaveBeenCalledTimes(1);
+
+    await userEvent.click(screen.getByRole('button', { name: 'Account menu for Kenji Xie' }));
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Sign out' }));
+    expect(onSignOut).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('collapse toggle', () => {
+  it('pairs the mark with a clear Today destination in the expanded rail', async () => {
+    const onGo = vi.fn();
+    renderSidebar({ onGo });
+    const today = screen.getByRole('button', { name: 'Go to Today' });
+    expect(today.textContent).toBe('Neige');
+    expect(today.querySelector('[aria-hidden="true"]')).toBeTruthy();
+    await userEvent.click(today);
+    expect(onGo).toHaveBeenCalledWith({ name: 'today' });
+  });
+
+  /* `AppShell` owns `collapsed`, because collapsing changes the shell grid column;
+   * the click reports upward and the collapsed rendering is driven by the prop. */
+  it('reports the toggle upward instead of collapsing itself', async () => {
+    const onToggleCollapsed = vi.fn();
+    renderSidebar({ tracks: [track({ title: 'Inside' })], onToggleCollapsed });
+    const toggle = screen.getByRole('button', { name: 'Collapse sidebar' });
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    await userEvent.click(toggle);
+    expect(onToggleCollapsed).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('button', { name: 'Collapse area Work' })).toBeTruthy();
+  });
+
+  it('drops to an icon strip when told it is collapsed, and stays navigable', () => {
+    const { update } = renderSidebar({ tracks: [track({ title: 'Inside' })] });
+    update({ collapsed: true });
+
+    // No section labels: 11px uppercase does not fit in 44px.
+    expect(screen.queryAllByRole('heading')).toHaveLength(0);
+    expect(screen.queryByRole('button', { name: /^Track Inside/ })).toBeNull();
+    // The area is still reachable, named for assistive tech and initialled for
+    // sighted users; this surface stays greyscale.
+    const item = screen.getByRole('button', { name: 'Show area Work' });
+    expect(item.textContent).toBe('W');
+    expect(screen.getByRole('button', { name: 'Account menu for You' })).toBeTruthy();
+    const expand = screen.getByRole('button', { name: 'Expand sidebar' });
+    expect(expand.getAttribute('aria-expanded')).toBe('false');
+    expect(expand.querySelector('[aria-hidden="true"]')).toBeTruthy();
+
+    update({ collapsed: false });
+    expect(screen.getByRole('button', { name: 'Collapse area Work' })).toBeTruthy();
+  });
+
+  it('uses a collapsed Area initial to reveal its group, never to navigate', async () => {
+    const onToggleCollapsed = vi.fn();
+    const onGo = vi.fn();
+    renderSidebar({ collapsed: true, onToggleCollapsed, onGo });
+    await userEvent.click(screen.getByRole('button', { name: 'Show area Work' }));
+    expect(onToggleCollapsed).toHaveBeenCalledTimes(1);
+    expect(onGo).not.toHaveBeenCalled();
+  });
+
+  it('leaves focus and the final scroll on the chosen Area, not the active Track elsewhere', async () => {
+    const scrolled: HTMLElement[] = [];
+    const scrollIntoView = vi.fn(function recordScroll(this: HTMLElement) {
+      scrolled.push(this);
+    });
+    const originalScrollIntoView = Object.getOwnPropertyDescriptor(
+      HTMLElement.prototype, 'scrollIntoView',
+    );
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+      configurable: true,
+      value: scrollIntoView,
+    });
+    const active = track({ id: 'w1', areaId: 'c1', title: 'Active' });
+    const reading = area({ id: 'c2', name: 'Reading', sort: 2 });
+    const { update } = renderSidebar({
+      collapsed: true,
+      currentPath: '/track/w1',
+      areas: [area(), reading],
+      tracks: [active],
+      tracksByArea: new Map([['c1', [active]], ['c2', []]]),
+    });
+    await userEvent.click(screen.getByRole('button', { name: 'Show area Reading' }));
+    update({ collapsed: false });
+
+    const disclosure = screen.getByRole('button', { name: 'Collapse area Reading' });
+    await waitFor(() => expect(document.activeElement).toBe(disclosure));
+    await waitFor(() => expect(scrolled.at(-1)).toBe(disclosure));
+    expect(scrolled.some((element) => element.getAttribute('aria-current') === 'page')).toBe(true);
+    expect(scrollIntoView).toHaveBeenLastCalledWith({ block: 'nearest', container: 'nearest' });
+    if (originalScrollIntoView === undefined) {
+      Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView');
+    } else {
+      Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', originalScrollIntoView);
+    }
+  });
+
+  it('shows the waiting count as the strip\'s only figure, with no dot beside it', () => {
+    const { update } = renderSidebar({
+      // The count is the kernel's verdict (input or failed), not the open/closed state:
+      // a closed track the kernel has said nothing about is not waiting on anyone.
+      tracks: [
+        track({ id: 'a', closedAt: 5 }),
+        track({ id: 'b', attention: 'input' }),
+        track({ id: 'c', closedAt: 5, attention: 'failed' }),
+      ],
+    });
+    update({ collapsed: true });
+    const count = screen.getByLabelText('2 waiting on you');
+    expect(count.textContent).toBe('2');
+  });
+});
+
+
+it('reads the track receipt against the activity high-water mark, not updatedAt', async () => {
+  /* `updatedAt` moves on a rename or a pin; the receipt compares the kernel's
+   * completion high-water mark, and `activityAt: null` is never unread. The kernel's baseline is 100. */
+  renderSidebar({
+    tracks: [
+      track({ id: 'fresh', title: 'Fresh', updatedAt: 1, activityAt: 150 }),
+      track({ id: 'seen', title: 'Seen', updatedAt: 1_000, activityAt: 50 }),
+      track({ id: 'never', title: 'Never', updatedAt: 1_000, activityAt: null }),
+    ],
+  }, createUiPreferences(memoryStorage()), createReadReceiptsKernel({ baselineMs: 100 }));
+  const marker = (title: string) => screen.getByRole('button', { name: new RegExp(`^Track ${title}`) })
+    .parentElement?.querySelector('[data-nc-activity]')?.getAttribute('data-nc-activity') ?? null;
+  await waitFor(() => expect(marker('Fresh')).toBe('unread'));
+  expect(marker('Seen')).toBeNull();
+  expect(marker('Never')).toBeNull();
+});
+
+it('restores Area disclosure after the shell is remounted', async () => {
+  const storage = memoryStorage();
+  const tracks = [track({ title: 'Inside' })];
+  const first = renderSidebar({ tracks }, createUiPreferences(storage));
+  await userEvent.click(screen.getByRole('button', { name: 'Collapse area Work' }));
+  first.unmount();
+  renderSidebar({ tracks, currentPath: '/track/w1' }, createUiPreferences(storage));
+  expect(screen.getByRole('button', { name: 'Expand area Work' })).toBeTruthy();
+  expect(screen.queryByRole('button', { name: /^Track Inside/ })).toBeNull();
+});
+
+
+describe('shared sidebar groups', () => {
+  const headings = () => screen.queryAllByRole('heading', { level: 2 }).map((node) => node.textContent);
+  async function openOptions() {
+    await userEvent.click(screen.getByRole('button', { name: 'Sidebar view options' }));
+  }
+
+  it('hides and restores Focus and Pinned independently and remembers both choices', async () => {
+    const storage = memoryStorage();
+    const preferences = createUiPreferences(storage);
+    const props = {
+      tracks: [
+        track({ id: 'f1', title: 'Needs input', attention: 'input', pinnedAt: null }),
+        track({ id: 'p1', title: 'Pinned work', pinnedAt: 5 }),
+      ],
+    };
+    renderSidebar(props, preferences);
+    expect(headings()).toEqual(['Focus', 'Pinned']);
+    await userEvent.click(screen.getByRole('button', { name: 'Group actions for Focus' }));
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Hide group' }));
+    expect(headings()).toEqual(['Pinned']);
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Sidebar view options' }));
+    cleanup();
+    const restored = createUiPreferences(storage);
+    renderSidebar(props, restored);
+    expect(headings()).toEqual(['Pinned']);
+    await openOptions();
+    expect(screen.queryByRole('menuitemcheckbox')).toBeNull();
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Hidden groups' }));
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Show Focus' }));
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(headings()).toEqual(['Focus', 'Pinned']);
+  });
+
+  it('orders Focus by failed, waiting, then running while excluding pinned tracks', () => {
+    const tracks = [
+      track({ id: 'run', title: 'Running job', working: true, updatedAt: 30 }),
+      track({ id: 'wait', title: 'Waiting ask', attention: 'input', updatedAt: 10 }),
+      track({ id: 'fail', title: 'Failed gate', attention: 'failed', updatedAt: 20 }),
+      track({ id: 'pin-fail', title: 'Pinned failure', attention: 'failed', pinnedAt: 5, updatedAt: 40 }),
+      track({ id: 'quiet', title: 'Quiet note' }),
+    ];
+    const { update } = renderSidebar({ tracks });
+    const focusGroup = screen.getByRole('group', { name: 'Focus' });
+    const pinnedGroup = screen.getByRole('group', { name: 'Pinned' });
+    expect(within(focusGroup).getAllByRole('button', { name: /^Track / })
+      .map((row) => row.getAttribute('aria-label'))).toEqual([
+      'Track Failed gate, needs attention, in area Work',
+      'Track Waiting ask, waiting on you, in area Work',
+      'Track Running job, working, in area Work',
+    ]);
+    expect(within(pinnedGroup).getAllByRole('button', { name: /^Track / })
+      .map((row) => row.getAttribute('aria-label'))).toEqual([
+      'Track Pinned failure, needs attention, in area Work',
+    ]);
+    update({ tracks: [track({ id: 'quiet', title: 'Quiet note' })] });
+    expect(headings()).toEqual([]);
+  });
+
+  it('shares disclosure and the five-row reveal across shortcut and Area groups', async () => {
+    const preferences = createUiPreferences(memoryStorage());
+    const tracks = Array.from({ length: 7 }, (_, index) => track({ id: `p${index}`, title: `P${index}`, pinnedAt: 20 - index }));
+    const { update } = renderSidebar({ tracks, currentPath: '/track/p6' }, preferences);
+    const group = screen.getByRole('group', { name: 'Pinned' });
+    expect(within(group).getAllByRole('button', { name: /^Track / })).toHaveLength(6);
+    await userEvent.click(within(group).getByRole('button', { name: 'Show 1 more in Pinned' }));
+    expect(within(group).getAllByRole('button', { name: /^Track / })).toHaveLength(7);
+    await userEvent.click(screen.getByRole('button', { name: 'Collapse Pinned' }));
+    expect(within(group).queryAllByRole('button', { name: /^Track / })).toHaveLength(0);
+    update({ tracks, currentPath: '/track/p0' });
+    expect(screen.getByRole('button', { name: 'Expand Pinned' }).getAttribute('aria-expanded')).toBe('false');
+    await userEvent.click(screen.getByRole('button', { name: 'Expand Pinned' }));
+    expect(within(group).getAllByRole('button', { name: /^Track / })).toHaveLength(7);
+    const areaGroup = screen.getByRole('group', { name: 'area Work' });
+    await userEvent.click(screen.getByRole('button', { name: 'Collapse area Work' }));
+    expect(within(areaGroup).queryAllByRole('button', { name: /^Track / })).toHaveLength(0);
+    await userEvent.click(screen.getByRole('button', { name: 'Expand area Work' }));
+    expect(within(areaGroup).getAllByRole('button', { name: /^Track / })).toHaveLength(5);
+  });
+
+  it('never surfaces system Tracks in shortcut groups', async () => {
+    const kernel = createReadReceiptsKernel({ baselineMs: 1 });
+    renderSidebar({ areas: [area({ kind: 'system' })], tracks: [track({ activityAt: 10, working: true, pinnedAt: 5 })] }, createUiPreferences(), kernel);
+    await waitFor(() => expect(kernel.requests).toHaveLength(1));
+    expect(headings()).toEqual([]);
+    expect(screen.getByRole('heading', { name: '还没有 Area' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /^Track / })).toBeNull();
+  });
+});
+
+
+describe('sidebar group management', () => {
+  const headings = () => screen.queryAllByRole('heading', { level: 2 }).map((node) => node.textContent);
+  async function action(menu: string, item: string) {
+    await userEvent.click(screen.getByRole('button', { name: menu }));
+    await userEvent.click(screen.getByRole('menuitem', { name: item }));
+  }
+  async function restore(title: string, isArea = false) {
+    await userEvent.click(screen.getByRole('button', { name: 'Sidebar view options' }));
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Hidden groups' }));
+    await userEvent.click(screen.getByRole('menuitem', { name: `Show ${isArea ? 'area ' : ''}${title}` }));
+  }
+
+  it('moves visible top-level siblings, disables boundaries and restores hidden groups in their saved slots', async () => {
+    const preferences = createUiPreferences();
+    renderSidebar({
+      tracks: [
+        track({ id: 'f1', title: 'Focus task', attention: 'input', pinnedAt: null }),
+        track({ id: 'p1', title: 'Pinned task', pinnedAt: 5 }),
+      ],
+    }, preferences);
+    await userEvent.click(screen.getByRole('button', { name: 'Group actions for Focus' }));
+    expect(screen.getByRole('menuitem', { name: 'Move up' }).getAttribute('aria-disabled')).toBe('true');
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Move down' }));
+    expect(headings()).toEqual(['Pinned', 'Focus']);
+    await action('Group actions for Focus', 'Hide group');
+    expect(headings()).toEqual(['Pinned']);
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Sidebar view options' }));
+    await restore('Focus');
+    expect(headings()).toEqual(['Pinned', 'Focus']);
+    const areaGroup = screen.getByRole('group', { name: 'area Work' });
+    const focusGroup = screen.getByRole('group', { name: 'Focus' });
+    expect(Boolean(focusGroup.compareDocumentPosition(areaGroup) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
+    await userEvent.click(screen.getByRole('button', { name: 'Group actions for Focus' }));
+    expect(screen.getByRole('menuitem', { name: 'Move down' }).getAttribute('aria-disabled')).toBe('true');
+    await userEvent.keyboard('{Escape}');
+  });
+
+  it('projects saved sections into regions without rewriting the saved order or moving across regions', async () => {
+    const preferences = createUiPreferences();
+    preferences.setSidebarOrder('sections', ['pinned', 'areas', 'focus']);
+    renderSidebar({ tracks: [
+      track({ id: 'f1', attention: 'input', pinnedAt: null }),
+      track({ id: 'p1', pinnedAt: 5 }),
+    ] }, preferences);
+    expect(headings()).toEqual(['Pinned', 'Focus']);
+    const folders = screen.getByRole('group', { name: 'area Work' });
+    expect(Boolean(screen.getByRole('group', { name: 'Focus' }).compareDocumentPosition(folders) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
+    expect(preferences.sidebarOrder('sections', ['focus', 'pinned', 'areas'])).toEqual(['pinned', 'areas', 'focus']);
+    await userEvent.click(screen.getByRole('button', { name: 'Group actions for Focus' }));
+    expect(screen.getByRole('menuitem', { name: 'Move down' }).getAttribute('aria-disabled')).toBe('true');
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Move up' }));
+    expect(headings()).toEqual(['Focus', 'Pinned']);
+    expect(preferences.sidebarOrder('sections', ['focus', 'pinned', 'areas'])).toEqual(['focus', 'areas', 'pinned']);
+    await action('Group actions for Pinned', 'Hide group');
+    await userEvent.click(screen.getByRole('button', { name: 'Group actions for Focus' }));
+    for (const name of ['Move up', 'Move down']) {
+      expect(screen.getByRole('menuitem', { name }).getAttribute('aria-disabled')).toBe('true');
+    }
+    await userEvent.keyboard('{Escape}');
+  });
+
+  it('keeps Area movement personal, restores a hidden Area even when its parent slot is hidden, and remembers layout', async () => {
+    const storage = memoryStorage();
+    const preferences = createUiPreferences(storage);
+    const areas = [area(), area({ id: 'c2', name: 'Reading', sort: 2 })];
+    const props = { areas, tracksByArea: new Map([['c1', []], ['c2', []]]) };
+    const view = renderSidebar(props, preferences);
+    await action('Area actions for Work', 'Move down');
+    expect(screen.getAllByRole('button', { name: /^Collapse area / }).map((node) => node.textContent)).toEqual(['Reading', 'Work']);
+    expect(areas.map((row) => [row.id, row.sort])).toEqual([['c1', 1], ['c2', 2]]);
+    await action('Area actions for Work', 'Hide group');
+    expect(screen.queryByRole('button', { name: 'Collapse area Work' })).toBeNull();
+    preferences.setSidebarGroupVisible('areas', false);
+    await restore('Work', true);
+    expect(screen.getAllByRole('button', { name: /^Collapse area / }).map((node) => node.textContent)).toEqual(['Reading', 'Work']);
+    await action('Area actions for Reading', 'Hide group');
+    view.unmount();
+    renderSidebar(props, createUiPreferences(storage));
+    expect(screen.queryByRole('button', { name: 'Collapse area Reading' })).toBeNull();
+    await restore('Reading', true);
+    expect(screen.getAllByRole('button', { name: /^Collapse area / }).map((node) => node.textContent)).toEqual(['Reading', 'Work']);
+  });
+
+  it('appends new Areas, forgets deleted ones and never restores a system Area from saved preferences', () => {
+    const preferences = createUiPreferences();
+    preferences.setSidebarOrder('areas', ['deleted', 'sys', 'c2', 'c2', 'c1']);
+    preferences.setSidebarGroupVisible('area:sys', false);
+    const areas = [area(), area({ id: 'c2', name: 'Reading' }), area({ id: 'new', name: 'New' }), area({ id: 'sys', name: 'System', kind: 'system' })];
+    renderSidebar({ areas }, preferences);
+    expect(screen.getAllByRole('button', { name: /^Collapse area / }).map((node) => node.textContent)).toEqual(['Reading', 'Work', 'New']);
+    expect(screen.queryByRole('button', { name: 'Area actions for System' })).toBeNull();
+  });
+
+  it('hiding the current Area changes only sidebar display and applies to the collapsed strip', async () => {
+    const preferences = createUiPreferences();
+    const onGo = vi.fn();
+    const props = { tracks: [track({ title: 'Current', working: true })], currentPath: '/track/w1', onGo };
+    const { update } = renderSidebar(props, preferences);
+    await action('Area actions for Work', 'Hide group');
+    expect(onGo).not.toHaveBeenCalled();
+    update({ ...props, collapsed: true });
+    expect(screen.queryByRole('button', { name: 'Show area Work' })).toBeNull();
+  });
+});
+
+
+it('distinguishes hidden Areas from workspace groups with the same title', async () => {
+  const kernel = createReadReceiptsKernel({ baselineMs: 1 });
+  renderSidebar({ areas: [area({ name: 'Pinned' })], tracks: [track({ pinnedAt: 5 })] }, undefined, kernel);
+  await waitFor(() => expect(kernel.requests).toHaveLength(1));
+  await userEvent.click(screen.getByRole('button', { name: 'Group actions for Pinned' }));
+  await userEvent.click(screen.getByRole('menuitem', { name: 'Hide group' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Area actions for Pinned' }));
+  await userEvent.click(screen.getByRole('menuitem', { name: 'Hide group' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Sidebar view options' }));
+  await userEvent.keyboard('{ArrowDown}{ArrowRight}');
+  expect(await screen.findByRole('menuitem', { name: 'Show Pinned' })).toBeTruthy();
+  expect(screen.getByRole('menuitem', { name: 'Show area Pinned' })).toBeTruthy();
+});
+
+
+it('keeps Show recovery for every built-in group after all groups are hidden', async () => {
+  const preferences = createUiPreferences();
+  const kernel = createReadReceiptsKernel({ baselineMs: 1 });
+  const onGo = vi.fn();
+  const rows = [
+    track({ id: 'f1', title: 'Recoverable focus', attention: 'input', pinnedAt: null }),
+    track({ id: 'p1', title: 'Recoverable pin', pinnedAt: 5 }),
+  ];
+  renderSidebar({ tracks: rows, onGo }, preferences, kernel);
+  // Let the initial receipt query settle before opening transient menus.
+  await waitFor(() => expect(kernel.requests).toHaveLength(1));
+  expect(screen.getAllByRole('button', { name: /^Track Recoverable/ })).toHaveLength(4);
+  for (const menu of ['Group actions for Focus', 'Group actions for Pinned', 'Area actions for Work']) {
+    await userEvent.click(screen.getByRole('button', { name: menu }));
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Hide group' }));
+  }
+  expect(screen.queryAllByRole('heading')).toHaveLength(0);
+  expect(screen.queryByRole('group', { name: 'area Work' })).toBeNull();
+  const labels = ['Focus', 'Pinned', 'area Work'];
+  await userEvent.click(screen.getByRole('button', { name: 'Sidebar view options' }));
+  await userEvent.keyboard('{ArrowDown}{ArrowRight}');
+  await screen.findByRole('menuitem', { name: 'Show Focus' });
+  for (const label of labels) expect(screen.getByRole('menuitem', { name: `Show ${label}` })).toBeTruthy();
+  await userEvent.keyboard('{Escape}{Escape}');
+  for (const label of labels) {
+    await userEvent.click(screen.getByRole('button', { name: 'Sidebar view options' }));
+    await userEvent.keyboard('{ArrowDown}{ArrowRight}');
+    await userEvent.click(await screen.findByRole('menuitem', { name: `Show ${label}` }));
+  }
+  expect(screen.getAllByRole('heading').map(node => node.textContent)).toEqual(['Focus', 'Pinned']);
+  expect(screen.getAllByRole('button', { name: /^Track Recoverable/ })).toHaveLength(4);
+  expect(rows[1]?.pinnedAt).toBe(5);
+  expect(onGo).not.toHaveBeenCalled();
+});
+
+
+it('offers personal Track actions without navigation and pins before the Area limit', async () => {
+  const preferences = createUiPreferences();
+  preferences.setDatabaseScope('db');
+  const kernel = createReadReceiptsKernel({ baselineMs: 1_000 });
+  const onGo = vi.fn();
+  const onSetPinned = vi.fn();
+  const rows = [track({ id: 'old', title: 'Old', activityAt: 0 }), ...Array.from({ length: 6 }, (_, i) => track({ id: `t${i}`, title: `Task ${i}` }))];
+  preferences.setAreaTrackPinned('c1', 'old', true);
+  renderSidebar({ tracks: rows.toReversed(), onGo, onSetPinned }, preferences, kernel);
+  const group = within(screen.getByRole('group', { name: 'area Work' }));
+  expect(group.getAllByRole('button', { name: /^Track / })[0]?.getAttribute('aria-label')).toBe('Track Old');
+  await userEvent.click(group.getByRole('button', { name: 'Actions for track Old' }));
+  await userEvent.click(screen.getByRole('menuitem', { name: 'Pin globally' }));
+  expect(onSetPinned).toHaveBeenCalledWith('old', true);
+  await userEvent.click(group.getByRole('button', { name: 'Actions for track Old' }));
+  await userEvent.click(screen.getByRole('menuitem', { name: 'Mark as unread' }));
+  await waitFor(() => expect(kernel.stored('track', 'old')?.manualUnread).toBe(true));
+  expect(onGo).not.toHaveBeenCalled();
+  expect(screen.queryByRole('group', { name: 'Pinned' })).toBeNull();
+  await userEvent.click(group.getByRole('button', { name: 'Actions for track Old' }));
+  await userEvent.click(screen.getByRole('menuitem', { name: 'Unpin within area' }));
+  expect(preferences.areaTrackPinned('c1', 'old')).toBe(false);
+  expect(group.queryByRole('button', { name: 'Track Old' })).toBeNull();
+});
+
+
+it('keeps manually unread until the selected Track view acknowledges it', async () => {
+  const kernel = createReadReceiptsKernel({ baselineMs: 1_000 });
+  renderSidebar({ tracks: [track()], currentPath: '/track/w1' }, createUiPreferences(), kernel);
+  await waitFor(() => expect(kernel.requests).toHaveLength(1));
+  await userEvent.click(screen.getByRole('button', { name: 'Actions for track Task' }));
+  await userEvent.click(screen.getByRole('menuitem', { name: 'Mark as unread' }));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Track Task' }).getAttribute('aria-describedby')).toBeTruthy());
+  await userEvent.click(screen.getByRole('button', { name: 'Track Task' }));
+  expect(kernel.stored('track', 'w1')?.manualUnread).toBe(true);
+  expect(kernel.posts().map((request) => request.path)).toEqual(['/api/read-receipts/track/w1/unread']);
+});
+
+it('does not claim an empty activity shortcut after its read fails', () => {
+  const preferences = createUiPreferences();
+  preferences.setSidebarGroupVisible('focus', true);
+  preferences.setSidebarGroupVisible('pinned', true);
+  renderSidebar({ tracks: [], activityError: 'Activity is unavailable.' }, preferences);
+  expect(screen.queryByRole('group', { name: 'Focus' })).toBeNull();
+  expect(screen.queryByRole('group', { name: 'Pinned' })).toBeNull();
+});
+
+
+it('keeps a failed track delete alert inside its confirmation', async () => {
+  const onDeleteTrack = vi.fn().mockRejectedValue(new Error('offline'));
+  renderSidebar({ tracks: [track({ id: 'w1', title: 'Task' })], onDeleteTrack });
+  await userEvent.click(screen.getByRole('button', { name: 'Delete Task' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Delete track' }));
+  const dialog = screen.getByRole('dialog', { name: 'Delete this track?' });
+  expect(await within(dialog).findByRole('alert')).toBeTruthy();
+  await userEvent.click(within(dialog).getByRole('button', { name: 'Delete track' }));
+  await waitFor(() => expect(onDeleteTrack).toHaveBeenCalledTimes(2));
+});

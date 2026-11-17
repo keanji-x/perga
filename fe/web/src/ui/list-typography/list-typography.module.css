@@ -1,0 +1,47 @@
+@layer ui {
+  /* Both navigation surfaces use these roles. Layout belongs to their hosts. */
+  .primary {
+    font: var(--type-content);
+    letter-spacing: var(--type-content-tracking);
+    color: var(--text);
+  }
+  .compact {
+    font: var(--type-content);
+    font-size: 0.8125rem;
+    letter-spacing: var(--type-content-tracking);
+    color: var(--text);
+  }
+  .group {
+    font: var(--type-ui);
+    letter-spacing: var(--type-ui-tracking);
+    color: var(--text);
+  }
+  .section,
+  .secondary,
+  .count {
+    font: var(--type-metadata);
+    letter-spacing: var(--type-metadata-tracking);
+    color: var(--text-3);
+  }
+  .section {
+    font: var(--type-navigation-label);
+    letter-spacing: var(--type-navigation-label-tracking);
+    text-transform: var(--list-section-transform, none);
+  }
+  .count {
+    font-variant-numeric: tabular-nums;
+    text-align: end;
+  }
+  /* Black is the opaque alpha-mask stop; it does not supply a text colour. */
+  .fade {
+    mask-image: linear-gradient(to right, black calc(100% - var(--space-4)), transparent);
+  }
+
+  .medium {
+    font-weight: var(--weight-medium);
+  }
+  .selected {
+    font-weight: var(--weight-medium);
+    color: var(--text);
+  }
+}

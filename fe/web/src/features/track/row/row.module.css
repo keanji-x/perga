@@ -1,0 +1,399 @@
+/*
+ * The one track row, in four variants (§6.3). Everything that differs between
+ * them is in this file's four `.variant*` blocks; the geometry, the grid, and
+ * the state recipes are shared, because a row that is 48px on one surface and
+ * 28px on another is still the same object.
+ *
+ * The row has no border and no background of its own (principle 1): a list is
+ * rows on a shared ground separated by rhythm, not twelve cards.
+ */
+@layer features {
+  /* The cap lives on the wrapper, not only on the row: the hover actions are
+     positioned against the wrapper, so a full-width wrapper would strand them
+     hundreds of pixels away from the row they belong to — the same horizontal
+     hole §8.2 is fixing, just moved onto the buttons. */
+  .wrapper {
+    position: relative;
+    display: grid;
+    max-inline-size: var(--measure-list);
+  }
+
+  .row {
+    --track-row-background: transparent;
+    background: var(--track-row-background);
+    display: grid;
+    grid-template-columns: var(--dot-sm) minmax(0, 1fr) auto;
+    column-gap: var(--space-1);
+    row-gap: var(--space-half);
+    align-items: center;
+    inline-size: 100%;
+    max-inline-size: var(--measure-list);
+    padding-block: 0;
+    border-radius: var(--radius-highlight);
+    text-align: start;
+    cursor: pointer;
+    transition: background-color var(--motion-quick) var(--ease-feedback),
+      color var(--motion-quick) var(--ease-feedback);
+  }
+
+  .row:not(.variantRail) { padding-inline: var(--space-1); }
+
+  .row:hover {
+    --track-row-background: var(--overlay-hover);
+  }
+
+  .row:active {
+    --track-row-background: var(--overlay-active);
+    transition: none;
+  }
+
+  /* Inset, because the row runs the full width of a container that clips. */
+  .row:focus-visible {
+    outline-offset: -2px;
+  }
+
+  /* Fill + weight, and no border. §5.1 argues for *two* channels (the soft fill
+     is only ~4% lighter than the ground, so it cannot stand alone) — the 1px
+     accent outline was a third one nothing defended, and it also broke §3.2
+     rule 4, which says a border may never carry importance. The row keeps its
+     transparent 1px so dropping the colour changes no geometry. */
+  .rowActive {
+    --track-row-background: var(--selection-bg);
+  }
+
+  /* Selection retains its own paint while sharing hover geometry with idle rows. */
+  .rowActive:hover {
+    --track-row-background: var(--selection-hover-bg);
+  }
+
+  /* Every rail state paints the same inset surface; navigation-row owns depth geometry. */
+  .variantRail {
+    min-block-size: var(--navigation-entry-height, 1.875rem);
+    grid-template-columns: minmax(0, 1fr);
+    position: relative;
+    isolation: isolate;
+    background: transparent;
+  }
+
+  .variantRail::before {
+    content: '';
+    position: absolute;
+    z-index: -1;
+    inset-block: 0;
+    inset-inline: var(--navigation-selection-inset, 0px) 0;
+    border-radius: inherit;
+    background: var(--track-row-background);
+    transition: background-color var(--motion-quick) var(--ease-feedback),
+      box-shadow var(--motion-quick) var(--ease-feedback);
+    pointer-events: none;
+  }
+
+  .variantRail.rowActive {
+    --track-row-background: var(--navigation-active-bg);
+  }
+
+  .variantRail.rowActive::before {
+    box-shadow: var(--navigation-active-shadow);
+  }
+
+  .variantRail.rowActive:hover {
+    --track-row-background: var(--navigation-active-hover-bg);
+  }
+
+  /* The leading 6px column. It spans both lines and centres against the row,
+     not the title baseline: it marks the row, not the sentence. */
+  .leadingStatus { display: grid; place-items: center; }
+
+  .titleRow {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    min-inline-size: 0;
+  }
+
+  .hour {
+    font: var(--type-compact-metadata);
+    letter-spacing: var(--type-compact-metadata-tracking);
+    flex: none;
+    color: var(--text-3);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .title {
+    min-inline-size: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  .variantRail .title {
+    color: var(--text-2);
+  }
+
+  .variantRail:hover .title,
+  .variantRail:focus-visible .title,
+  .variantRail.rowActive .title {
+    color: var(--text);
+  }
+
+  /* Right edge means status. A fixed column, never `margin-inline-start: auto`,
+     which would open hundreds of pixels of gap on a 720px row. */
+  .age {
+    font: var(--type-compact-metadata);
+    letter-spacing: var(--type-compact-metadata-tracking);
+    grid-row: 1;
+    grid-column: 3;
+    color: var(--text-3);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .variantDefault {
+    min-block-size: var(--row-h-lg);
+  }
+
+  .variantCompact {
+    min-block-size: var(--row-h);
+  }
+
+  /* One column, like the rail and for the same reason: the status dot left the
+     grid for the trailing edge, and with the age gone too the title is the
+     whole row. It keeps the panel's own row height and fill padding. */
+  .variantPanel {
+    min-block-size: var(--row-h);
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* Name typography and selected emphasis are owned by ui/list-typography. */
+
+  /* Non-rail variants retain their own gutters; navigation-row owns the rail. */
+  .row.hasRemove:not(.variantRail) {
+    padding-inline-end: calc(var(--space-1) * 2 + var(--control-h-sm));
+  }
+
+  /* Compact rows share the timestamp slot with their hover delete action. */
+  .variantCompact.hasRemove:not(.hasPin):not(.hasMenu) { padding-inline-end: var(--space-1); }
+  .variantCompact.hasRemove:not(.hasPin):not(.hasMenu) .age { min-inline-size: var(--control-h-sm); text-align: end; }
+  .wrapper:hover .variantCompact.hasRemove:not(.hasPin):not(.hasMenu) .age,
+  .wrapper:focus-within .variantCompact.hasRemove:not(.hasPin):not(.hasMenu) .age { opacity: 0; }
+
+  .row.hasPin.hasRemove:not(.variantRail) {
+    padding-inline-end: calc(var(--space-1) * 3 + var(--control-h-sm) * 2);
+  }
+
+  /*
+   * The panel's trailing slot is likewise occupied at rest by the status dot,
+   * so its gutter is unconditional too. It is one `--space-2` narrower than the
+   * rail's because the panel row's fill padding is 4, not 6, and the slot is
+   * flush with the module head's `+` rather than inset from a rail edge.
+   */
+  .row.variantPanel,
+  .row.variantPanel.hasPin,
+  .row.variantPanel.hasRemove,
+  .row.variantPanel.hasPin.hasRemove {
+    padding-inline-end: calc(var(--space-1) + var(--control-h-sm));
+  }
+
+  /* Row controls appear on hover/focus. The row keeps its geometry while the
+     rail title yields trailing space when controls are revealed. */
+  .menuButton {
+    inline-size: var(--control-h-sm);
+    block-size: var(--control-h-sm);
+    opacity: 0;
+    pointer-events: none;
+    transition: none;
+  }
+
+  .action {
+    line-height: 1;
+    position: absolute;
+    inset-block-start: 50%;
+    display: grid;
+    place-items: center;
+    /* The retained source slot must give its child the complete hit area. */
+    grid-template-columns: minmax(0, 1fr);
+    inline-size: var(--control-h-sm);
+    block-size: var(--control-h-sm);
+    padding: 0;
+    border-radius: var(--radius-highlight);
+    color: var(--text-3);
+    opacity: 0;
+    cursor: pointer;
+    translate: 0 -50%;
+    transition: opacity var(--motion-quick) var(--ease-feedback),
+      background-color var(--motion-quick) var(--ease-feedback);
+
+    /* `opacity: 0` must block clicks, but it may not use `visibility: hidden`:
+       that removes the element from the focus order, so `:focus-within` would
+       never fire and the keyboard path would lose these entirely (§2.6). */
+    pointer-events: none;
+  }
+
+  .action:hover,
+  .action:focus-visible {
+    opacity: 1;
+    pointer-events: auto;
+    background: var(--overlay-hover-strong);
+    color: var(--text);
+  }
+
+  .wrapper:hover .action,
+  .wrapper:focus-within .action,
+  .wrapper:has(.menuButton[aria-expanded='true']) .action {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .wrapper:hover .menuButton,
+  .wrapper:focus-within .menuButton,
+  .wrapper:has(.menuButton[aria-expanded='true']) .menuButton {
+    opacity: 1;
+    pointer-events: auto;
+    transition: opacity var(--motion-quick) var(--ease-feedback);
+  }
+
+  /*
+   * Non-rail surfaces have no leading icon gutter, so pin stays trailing and
+   * outboard of delete: pin persists at rest on non-rail surfaces, so putting
+   * it outermost shows one control flush to the edge rather than beside an
+   * empty slot. Rail rows consume ui/navigation-row trailing slots instead.
+   */
+  .wrapper:where(:not(.wrapperRail)) .pin {
+    inset-inline-end: var(--space-1);
+  }
+
+  .wrapper:where(:not(.wrapperRail)) .remove {
+    inset-inline-end: calc(var(--space-1) * 2 + var(--control-h-sm));
+  }
+
+  /*
+   * Flush, not inset. The module head's `+` pulls itself out by `--space-2` to
+   * sit on the card's own trailing edge, and the row list bleeds by the same 4,
+   * so a row control at inset 0 lands its 20px box exactly under the head's.
+   * One trailing column for the whole module: `+`, then every `×`, then every
+   * status dot, all on one centre line.
+   */
+  .wrapperPanel:where(:not(.wrapperRail)) .remove {
+    inset-inline-end: 0;
+  }
+
+  /*
+   * Status and delete share one 20px slot. The full-width grid centres both
+   * 6px dots and 10px working rings without overflow. Nothing shifts on hover:
+   * one mark simply becomes the other.
+   */
+  .statusSlot {
+    pointer-events: none;
+    display: grid;
+    place-items: center;
+    inline-size: var(--control-h-sm);
+    position: absolute;
+    inset-block-start: 50%;
+    align-self: auto;
+    translate: 0 -50%;
+    z-index: 1;
+    color: var(--text-3);
+    transition: opacity var(--motion-quick) var(--ease-feedback);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .statusSlot {
+      transition: none;
+    }
+  }
+
+  .wrapper:where(:not(.wrapperRail)) .statusSlot { inset-inline-end: var(--space-1); }
+
+  .wrapperPanel .statusSlot {
+    inset-inline-end: 0;
+  }
+
+  .wrapperPanel:hover .statusSlot,
+  .wrapperPanel:focus-within .statusSlot,
+  .wrapperRail:hover .statusSlot,
+  .wrapperRail:focus-within .statusSlot,
+  .wrapperPanel:has(.menuButton[aria-expanded='true']) .statusSlot,
+  .wrapperRail:has(.menuButton[aria-expanded='true']) .statusSlot {
+    opacity: 0;
+  }
+
+  /* One tone step distinguishes the active pin action. */
+  .pinOn {
+    color: var(--text-2);
+  }
+
+  /* The sidebar's Pinned group conveys membership, so its repeated row controls
+     appear only on hover/focus. Other surfaces retain their persistent pin mark. */
+  .wrapper:where(:not(.wrapperRail)) .pinOn {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  /* Same stroke geometry, opposite action: a sidebar pin points up to pin and
+     down to unpin. Rotate only the decorative glyph, leaving the hit target fixed. */
+  .wrapperRail .pinOn svg {
+    rotate: 180deg;
+  }
+
+  /* Touch has no hover; keep both actions directly reachable on that surface. */
+  @media (hover: none) {
+    .wrapperRail .pin {
+      opacity: 1;
+      pointer-events: auto;
+    }
+  }
+
+  .remove:hover {
+    color: var(--error-text);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .row,
+    .action {
+      transition: none;
+    }
+  }
+  .variantRail.hasMenu .title { text-overflow: clip; }
+
+  .menuSlot {
+    pointer-events: none;
+    position: absolute;
+    inset-block-start: 50%;
+    translate: 0 -50%;
+  }
+
+  .wrapper:where(:not(.wrapperRail)) .menuSlot { inset-inline-end: calc(var(--space-1) * 2 + var(--control-h-sm)); }
+
+  .row.hasMenu:not(.variantRail),
+  .row.hasMenu.hasRemove:not(.variantRail),
+  .row.hasMenu.hasPin.hasRemove:not(.variantRail) { padding-inline-end: calc(var(--space-1) * 4 + var(--control-h-sm) * 3); }
+  .wrapper:where(:not(.wrapperRail)):has(.hasMenu) .remove { inset-inline-end: var(--space-1); }
+  .wrapperPanel:has(.hasMenu) .remove { inset-inline-end: 0; }
+  .wrapperPanel:has(.hasMenu) .menuSlot { inset-inline-end: calc(var(--space-1) + var(--control-h-sm)); }
+  .wrapper:where(:not(.wrapperRail)):has(.hasMenu) .pin { inset-inline-end: calc(var(--space-1) * 3 + var(--control-h-sm) * 2); }
+
+  .wrapper:hover .menuSlot,
+  .wrapper:focus-within .menuSlot,
+  .wrapper:has(.menuButton[aria-expanded='true']) .menuSlot { pointer-events: auto; }
+
+  @media (hover: none) {
+    .menuSlot { pointer-events: auto; }
+    .menuButton { opacity: 1; pointer-events: auto; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .menuButton,
+    .wrapper:hover .menuButton,
+    .wrapper:focus-within .menuButton,
+    .wrapper:has(.menuButton[aria-expanded='true']) .menuButton { transition: none; }
+  }
+}
+
+@layer features {
+  .removeButton {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    inline-size: 100%;
+    block-size: 100%;
+  }
+}

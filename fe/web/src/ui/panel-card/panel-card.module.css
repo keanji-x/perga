@@ -1,0 +1,125 @@
+@layer ui {
+  /* CardFrame owns the shared shape, material and clipping. Context panels
+     request its flat mode; this owner adds only module layout. */
+  .card {
+    display: flex;
+    flex-direction: column;
+    min-inline-size: 0;
+  }
+
+  .fill { block-size: 100%; max-block-size: 100%; min-block-size: 0; }
+
+  .module {
+    display: flex;
+    flex-direction: column;
+    min-inline-size: 0;
+  }
+
+  /* One surface; module separation comes from spacing. */
+  .module + .module {
+    margin-block-start: var(--space-1);
+  }
+
+  /*
+   * No panel-head tint. §6.5 used to give a panel head its own surface, and
+   * that worked while the card had an outline: the head was lighter than the
+   * card and the outline still said where the card began. With the outline
+   * gone the head — at 98, against a 98.8 page — dissolved the card's top edge,
+   * and the card read as two loose grey blocks instead of one object. This
+   * file was the token's only mention, and it was a mention saying not to use
+   * it, so `--surface-panel-head` has been deleted from `tokens.css`.
+   *
+   * One surface for the whole card, then. The label tier (uppercase plus
+   * tracking) already marks a head as a head, and spacing already separates
+   * one module from the next; a third channel was paying to undo the first two.
+   */
+  /* The same 28px heading band as the workspace sidebar, with a 4px gap
+     before content. Shared text roles live in ui/list-typography. */
+  .head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-1);
+    block-size: var(--row-h);
+    flex-shrink: 0;
+    padding-inline: var(--space-3);
+    padding-block-end: 0;
+  }
+
+  /* The label tier: uppercase plus tracking, standing in for a font size the
+     panel has no room to spend. The two always travel together — 11px uppercase
+     without added tracking is not readable. */
+  .title {
+    color: var(--text-2);
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-inline-size: 0;
+  }
+
+  /* Contextual counts and actions appear with pointer or keyboard intent. */
+  .revealActions > .head > :not(.title) { opacity: 0; }
+  .revealActions:hover > .head > :not(.title),
+  .revealActions:focus-within > .head > :not(.title) { opacity: 1; }
+  @media (hover: none) { .revealActions > .head > :not(.title) { opacity: 1; } }
+
+  /* The head's trailing control. 20px, not 28: unlike a rail section action it
+     sits inside a 28px head that is itself a bigger target, which is the
+     exemption §2.5 grants (WCAG 2.5.8's 24px-offset rule). The negative end
+     margin pulls the glyph box flush with the `--space-4` body padding below
+     it. */
+  .iconSlot {
+    display: flex;
+    inline-size: var(--glyph-sm);
+    block-size: var(--glyph-sm);
+    flex-shrink: 0;
+  }
+
+  .action {
+    line-height: 1;
+    display: grid;
+    place-items: center;
+    inline-size: var(--control-h-sm);
+    block-size: var(--control-h-sm);
+    margin-inline-end: calc(var(--space-1) * -1);
+    border-radius: var(--radius-highlight);
+    color: var(--text-3);
+    cursor: pointer;
+  }
+
+  .action:hover,
+  .action:focus-visible {
+    background: var(--overlay-hover-strong);
+    color: var(--text);
+  }
+
+  /* One 12px text inset per surface. Lists bleed only their hover padding
+     into the gutter; group backgrounds never add a second text indent.
+     Rows use a continuous 28px rhythm; groups, not individual rows, own gaps. */
+  .body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    min-inline-size: 0;
+    padding-block-start: var(--space-2);
+    padding-block-end: var(--space-3);
+    padding-inline: var(--space-3);
+  }
+
+  .bare > .head {
+    position: absolute;
+    inline-size: 1px;
+    block-size: 1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .bare > .body { padding: 0; gap: 0; }
+  .bare + .bare { margin-block-start: 0; }
+
+  .fill > .module { flex-shrink: 0; }
+  .fill > .grow { flex: 1 1 auto; min-block-size: 0; }
+  .grow > .body { flex: 1 1 auto; min-block-size: 0; }
+
+}

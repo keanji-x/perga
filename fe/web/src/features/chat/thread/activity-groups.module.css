@@ -1,0 +1,98 @@
+@layer features {
+  /*
+   * Host presentation for Astryx 0.6.3's `ChatToolCalls`, each keyed on an
+   * attribute the vendor or this component sets rather than on a generated
+   * StyleX class name, so a vendor rebuild cannot silently detach them.
+   *
+   * The column is the drawer's, and the text inside a call — a 64-character
+   * command, or a failure line quoted from the machine — must break inside it
+   * rather than widen it. `anywhere` is inherited by the detail Astryx reveals
+   * under a row; the rows themselves are `nowrap` and ellipsize on their own.
+   */
+  .group {
+    min-inline-size: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .detail {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  /* Astryx collapses the list to zero height and hides its overflow, but the
+     rows that carry a detail are still `tabIndex=0` buttons, so Tab walked
+     through every failed call of a closed group. Visibility takes them out of
+     the tab order and the accessibility tree together; the open state is
+     `ChatThread`'s, handed to the vendor as `isExpanded`, and the header still
+     carries it as `aria-expanded`. */
+  .group > [aria-expanded='false'] + div {
+    visibility: hidden;
+  }
+
+  /* A `running` call whose conversation is no longer live — interrupted, exited,
+     failed — or has moved on past it never reported an end, and Astryx has no
+     status for that: both of its unfinished states draw a spinner. The line
+     rendering drops its pulse in that state; the group drops the vendor's
+     spinner, which is the element it marks `role="status"`. `data-nc-live` is
+     set only on the group at the tail of a live transcript (`live && last`,
+     as for a lone line), so neither a dead conversation nor a run the next
+     turn has left behind claims to be working — whether the group is open or
+     closed, since the rule does not care which. */
+  .group:not([data-nc-live]) [role='status'] {
+    display: none;
+  }
+
+  /* The vendor has no unknown terminal status. Keep its unfinished status value,
+     replace the spinner slot with neutral ink, and suppress its stale Running
+     announcement; the feature's visible call name carries the truthful label. */
+  .group span:has(> [data-nc-unconfirmed]) > :not([data-nc-unconfirmed]) {
+    display: none;
+  }
+
+  .unconfirmed {
+    display: inline-flex;
+    color: var(--text-3);
+  }
+
+  /* Preserve the vendor's status role and dimensions; its direct SVG is replaced by our execution mark, which is portalled in as a direct SVG child too and must stay painted. */
+  .group [role='status'] > svg:not([data-nc-motion]) { display: none; }
+
+  /* Summary and detail disclosures share the column's trailing edge. The
+     vendor's expanded summary label otherwise wraps beside its fixed icons. */
+  .group[role='group'] > [aria-expanded] > span:last-child {
+    margin-inline-start: auto;
+  }
+
+  .group[role='group'] > [aria-expanded='true'] > span:nth-child(2) {
+    min-inline-size: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  /* Astryx rows start with the semantic status/icon slot; exclude result
+     content so its own Code layout is untouched. Match text scale in the
+     fixed glyph slots, then let names and trailing text yield before arrows. */
+  .group div:not([data-nc-detail] *):has(> span:first-child svg) > span:first-child {
+    inline-size: 1rem;
+    block-size: 1rem;
+  }
+
+  .group div:not([data-nc-detail] *):has(> span:first-child svg) > span:nth-child(2) {
+    min-inline-size: 0;
+  }
+
+  .group div:not([data-nc-detail] *):has(> span:first-child svg) > span:last-child:has(svg) {
+    inline-size: 0.875rem;
+    block-size: 0.875rem;
+  }
+
+  /* With details the penultimate slot is trailing text; without details it
+     is the last. The icon/count slots retain their intrinsic width. */
+  .group div:not([data-nc-detail] *):has(> span:first-child svg) > span:is(:last-child, :nth-last-child(2)):not(:first-child, :nth-child(2)):not(:has(svg)) {
+    min-inline-size: 0;
+    flex-shrink: 10;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}

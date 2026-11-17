@@ -1,0 +1,89 @@
+import { createContext, useContext, useEffect, useSyncExternalStore, type ReactNode } from 'react';
+import { FOLLOW_INSTALLATION_DEFAULT, type ModelSelection } from '../../../../core/domain/conversation.ts';
+import type { AgentProvider } from '../../../../core/api/generated/wire.ts';
+import type { Area } from '../../../../core/domain/area.ts';
+import type { NewTrackBody } from '../../../../core/domain/track.ts';
+import type { NewTrackFormState } from '../../features/area/new-track/public.tsx';
+import type { PlannerRole } from '../../features/chat/thread/model-pill.tsx';
+import { useState } from '../../ui/state/public.ts';
+import { mintIdempotencyKey } from '../providers/idempotency-key.ts';
+
+/** One create's wire body and the key it is sent under on every attempt. */
+export type TrackCreationRequest = Readonly<{ body: NewTrackBody; key: string }>;
+
+export type NewTrackDraftArea = Pick<Area, 'id' | 'name' | 'defaultCwd'>;
+
+export type NewTrackSession = Readonly<{
+  area: NewTrackDraftArea;
+  form: NewTrackFormState | null;
+  /** The Planner's backend; `codex` until the reader picks a model from another provider's group. */
+  provider: AgentProvider;
+  /** A selection from `provider`'s catalog; set together with `provider` by one pick. */
+  model: ModelSelection;
+  /** `admin` creates an Area admin Track (`admin: true`); `member` sends no `admin` key. */
+  role: PlannerRole;
+  key: string;
+  creating: boolean;
+  request: TrackCreationRequest | null;
+  createdTrackId: string | null;
+  error: string | null;
+  canRetryAsNewTrack: boolean;
+  folderConflict: Readonly<{
+    ownerAreaId: string; areaName: string; folderId: number; cwd: string;
+  }> | null;
+}>;
+
+function createDraftStore() {
+  const drafts = new Map<string, NewTrackSession>();
+  const listeners = new Set<() => void>();
+  const notify = () => { for (const listener of listeners) listener(); };
+  return {
+    subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
+    get: (areaId: string) => drafts.get(areaId) ?? null,
+    ensure: (area: Area) => {
+      if (drafts.has(area.id)) return;
+      drafts.set(area.id, { area: { id: area.id, name: area.name, defaultCwd: area.defaultCwd }, form: null, provider: 'codex', model: FOLLOW_INSTALLATION_DEFAULT, role: 'member', key: mintIdempotencyKey(), creating: false,
+        request: null, createdTrackId: null, error: null, canRetryAsNewTrack: false, folderConflict: null });
+      notify();
+    },
+    update: (areaId: string, patch: Partial<NewTrackSession>) => {
+      const current = drafts.get(areaId);
+      if (current === undefined) return;
+      drafts.set(areaId, { ...current, ...patch });
+      notify();
+    },
+    forget: (areaId: string) => { drafts.delete(areaId); notify(); },
+  };
+}
+
+const DraftContext = createContext<ReturnType<typeof createDraftStore> | null>(null);
+
+/** One tab's unfinished intentions; route navigation never clears them. */
+export function NewTrackDraftProvider({ children }: { children: ReactNode }) {
+  const [store] = useState(createDraftStore);
+  return <DraftContext.Provider value={store}>{children}</DraftContext.Provider>;
+}
+
+function useDraftStore() {
+  const store = useContext(DraftContext);
+  if (store === null) throw new Error('NewTrackDraftProvider is required');
+  return store;
+}
+
+/** Read a retained intention for presentation; it never proves live Area membership. */
+export function useNewTrackDraftArea(areaId: string | undefined): NewTrackDraftArea | undefined {
+  const store = useDraftStore();
+  return useSyncExternalStore(store.subscribe, () => areaId === undefined ? undefined : store.get(areaId)?.area);
+}
+
+/** Seed the existing draft from a confirmed create response before entering its route. */
+export function usePrepareNewTrack(): (area: Area) => void {
+  return useDraftStore().ensure;
+}
+
+export function useNewTrackSession(areaId: string, area: Area | undefined) {
+  const store = useDraftStore();
+  const session = useSyncExternalStore(store.subscribe, () => store.get(areaId));
+  useEffect(() => { if (area !== undefined) store.ensure(area); }, [area, store]);
+  return { store, session };
+}

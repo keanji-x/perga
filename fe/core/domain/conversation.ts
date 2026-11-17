@@ -1,0 +1,1587 @@
+import { z } from 'zod';
+import { activityContent } from './conversation-activity-content.js';
+import { runRecoverySchema, type RunRecovery } from './conversation-restart.js';
+import { agentProviderSchema } from '../api/schemas.js';
+
+import type {
+  AgentProvider, ConversationInitialInputReceiptResult, HarnessInputPresentation, HarnessInputSegment, HarnessItem, HarnessPhaseTag,
+  HarnessInterruptionReason, HarnessTimeoutEvidence,
+  PlannerAttachment, PlannerPermissionMode, SystemInputPresentation, TrackConversationSummary, UploadAttachmentResponse,
+} from '../api/generated/wire.js';
+import type { ApiFailure, ApiOperation } from '../api/types.js';
+import {
+  TASK_LS_TOOL, REPORT_DELETE_TOOL, REPORT_READ_TOOLS, REPORT_WRITE_TOOLS,
+  TASK_ACCEPT_TOOL, TASK_REJECT_TOOL, DEV_PUBLISH_TOOL, TRACK_RENAME_TOOL, TRACK_TOOL_PREFIX, USER_ASK_TOOL,
+  MAIL_SEND_TOOL,
+} from '../keys/mcp-tools.js';
+import { classifyFailure, failureReason, refusedText, type FailureTable, type WriteFailure, type WriteText } from './failure-class.js';
+import { plannerPermissionModeSchema } from './planner-permission-mode.js';
+import { sha256Hex } from './sha256.js';
+import { initialInputReceiptResultSchema } from './conversation-initial-input.js';
+
+/** A frozen discussion source; does not name a provider session. */
+export type SideConversation = Readonly<{ source_card_id: string; context: string }>;
+
+export const PLANNER_CONVERSATION_KIND = 'shared-spec' as const;
+
+/** What kind of thing the conversation is; `'track-assistant'` is derived server-side from the card's own marker. */
+export type ConversationKind =
+  | 'terminal' | 'codex' | 'claude' | 'shared-spec' | 'track-assistant';
+
+/** Mirrors `WorkerSessionState`. */
+export type ConversationState =
+  | 'starting' | 'running' | 'idle' | 'turn_pending' | 'exited' | 'failed' | 'superseded';
+
+export type Conversation = Readonly<{
+  id: string;
+  trackId: string;
+  /** Assistant archive metadata; other conversation kinds have no archive lifecycle. */
+  archivedAt?: number | null;
+  /** Saved parent of a discussion branch; absent for ordinary conversations. */
+  sourceCardId?: string;
+  /**
+   * The track's title; absent when a per-Track list does not repeat it, so surfaces that name
+   * tracks must resolve it.
+   */
+  trackTitle?: string;
+  /** The conversation's own name, or null; never the track's title. */
+  title: string | null;
+  kind: ConversationKind;
+  provider: AgentProvider;
+  /** The live session's state, or `null` when there is no live session to read — a fact, not a gap. */
+  state: ConversationState | null;
+  /** Last turn, or the session's own update time when it has no turns yet. */
+  updatedAt: number;
+  /**
+   * When the last non-interrupted turn ended, `null` before any has; `updatedAt` also moves when
+   * the reader queues a message.
+   */
+  lastTurnCompletedAt?: number | null;
+  /** Turn count, or absent when the surface that produced the row cannot count. */
+  turns?: number;
+}>;
+
+export type CreatedConversation = Readonly<{ conversation: Conversation; initialInput: ConversationInitialInputReceiptResult }>;
+
+/** What a session is called when it has no name of its own. */
+export const CONVERSATION_KIND_LABEL: Readonly<Record<ConversationKind, string>> = Object.freeze({
+  terminal: 'Terminal',
+  codex: 'Codex',
+  claude: 'Claude',
+  'shared-spec': 'Planner',
+  'track-assistant': 'Assistant',
+});
+
+/**
+ * Who is entitled to say what state a conversation of this kind is in: `'server'` when a list
+ * endpoint read `worker_sessions.state`, `'route'` when only the surface reading its harness
+ * knows. A total `Record` so a new kind is a compile error.
+ */
+export const CONVERSATION_STATE_SOURCE: Readonly<Record<ConversationKind, 'server' | 'route'>> = Object.freeze({
+  terminal: 'route',
+  codex: 'route',
+  claude: 'route',
+  'shared-spec': 'route',
+  'track-assistant': 'server',
+});
+
+/** The one name a conversation shows, wherever it is shown. */
+export function conversationName(conversation: Conversation): string {
+  return conversation.title ?? CONVERSATION_KIND_LABEL[conversation.kind];
+}
+
+/** A name taken from the first line said; roughly what `--panel-w` fits at `--text-base`. */
+export const CONVERSATION_NAME_MAX = 48;
+
+export function conversationNameFrom(text: string): string | null {
+  const line = text.trim().split('\n', 1)[0]?.trim() ?? '';
+  if (line === '') return null;
+  return line.length <= CONVERSATION_NAME_MAX
+    ? line
+    : `${line.slice(0, CONVERSATION_NAME_MAX - 1).trimEnd()}…`;
+}
+
+/** Newest first. Sorting is a display rule, but "which is newest" is not. */
+export function byRecency(left: Conversation, right: Conversation): number {
+  return right.updatedAt - left.updatedAt;
+}
+
+/** Who wrote a turn. Tool calls, shell runs and the like are not speech; they arrive as `ConversationActivity`. */
+export type TurnAuthor = 'you' | 'agent' | 'human' | 'unknown';
+
+/** Known native execution identity; absent for application inputs and unknown historical sources. */
+export type NativeTurnContext = Readonly<{
+  nativeTurn?: Readonly<{ threadId: string; turnId: string }>;
+}>;
+
+export type ConversationTurn = NativeTurnContext & Readonly<{
+  id: string;
+  author: TurnAuthor;
+  /** Present only for actual canonical Human identity; native user echoes have none. */
+  human?: Readonly<{ userId: string; displayName: string; messageId: string; revision: number }>;
+  displayPosition?: number;
+  imported?: boolean;
+  /** Verbatim. Line breaks are the author's and are preserved on render. */
+  text: string;
+  atMs: number;
+  /** Images this turn carried; absent and empty mean the same thing. */
+  attachments?: readonly PlannerAttachment[];
+  /** Set when the agent asked this through `neige_user_ask`; the quiet-sync fold keeps it outside the fold. */
+  origin?: 'ask';
+  /** Exact input provenance, including a known acceptance receipt; only inputSource names raw stored source. */
+  queueEntryId?: string | null;
+  /** Canonical structured-input source; rendered ids remain the renderer's separate identity. */
+  inputSource?: Readonly<{ cardId: string; threadId: string; itemId: number; segmentIndex: number; turnId: string | null; entryRev: number | null }>;
+}>;
+
+/**
+ * A user turn accepted optimistically, carrying the newest persisted item the sender had observed
+ * before that request.
+ */
+export type OptimisticConversationTurn = ConversationTurn & Readonly<{
+  serverHighWaterBefore: number;
+  authorUserId?: string;
+  /**
+   * True when the kernel put this message on the harness `pending_queue` instead of issuing it
+   * as a turn. Required rather than optional: an absent flag would read as *not* queued, and an
+   * echo the client believes it issued but the kernel queued is a composer that goes dead.
+   */
+  queued: boolean;
+  /**
+   * The pending-queue entry this send landed in once the server has said so, and `null` until
+   * then or when there is none to name; `null` means this side keeps drawing the message.
+   */
+  entryId: string | null;
+}>;
+
+/** A kernel observation delivered through Codex's user-message transport; nobody in the conversation authored it. */
+export type ConversationSystemEntry = Readonly<{
+  id: string;
+  author: 'system';
+  /** Present for a canonical source's actual conversation cursor. */
+  displayPosition?: number;
+  imported?: boolean;
+  /** Stable short label selected from structured kernel metadata. */
+  label: string;
+  /** Full rendered observation, retained as disclosure/title context. */
+  text: string;
+  atMs: number;
+  /**
+   * Set on every segment of a report-only batch, including its regenerable budget context.
+   * A budget alone is not a background sync. Never `false`.
+   */
+  quiet?: true;
+}>;
+
+export type ConversationMessage = ConversationTurn | ConversationSystemEntry;
+
+const harnessInputPresentationSchema: z.ZodType<HarnessInputPresentation> = z.enum([
+  'user',
+  'system',
+  'system_worker_turn_finished',
+  'system_report_edited',
+  'system_task_completed',
+  'system_task_failed',
+  'system_mail',
+  'system_planner_turn_budget',
+  'system_planner_context_usage',
+]);
+
+/** The presentation owner supplies the closed set; System cannot acquire User presentation. */
+export const systemInputPresentationSchema = z.custom<SystemInputPresentation>(value =>
+  harnessInputPresentationSchema.safeParse(value).success && value !== 'user');
+
+const plannerAttachmentSchema: z.ZodType<PlannerAttachment> = z.object({
+  id: z.string(), contentType: z.string(), size: z.number(), url: z.string(),
+});
+
+// Released origins contained only observation/event_id. Normalize their absent pair to unknown;
+// a present queue_entry still has to satisfy the current required nullable contract.
+const harnessInputOriginSchema = z.preprocess(value => {
+  if (value !== null && typeof value === 'object' && !Array.isArray(value) && !Object.hasOwn(value, 'queue_entry')
+    && Object.keys(value).every(key => key === 'observation' || key === 'event_id')) return { ...value, queue_entry: null };
+  return value;
+}, z.object({ observation: z.string(), event_id: z.number().nullable(),
+  queue_entry: z.object({ id: z.string().min(1), rev: z.number().int().nonnegative() }).nullable() }));
+
+export const harnessInputSegmentSchema: z.ZodType<HarnessInputSegment> = z.object({
+  presentation: harnessInputPresentationSchema,
+  text: z.string(),
+  /* Defaulted rather than required: older segments have no such key, and a row that fails to decode disappears. */
+  attachments: z.array(plannerAttachmentSchema).optional().default([]),
+  /* Absent on segments recorded before the kernel named each segment's observation and event. */
+  origin: harnessInputOriginSchema.optional(),
+});
+
+export const harnessItemSchema: z.ZodType<HarnessItem> = z.object({
+  id: z.number(), worker_session_id: z.string(), card_id: z.string(), track_id: z.string(),
+  thread_id: z.string(), turn_id: z.string().nullable(), item_uuid: z.string().nullable(),
+  item_type: z.string().nullable(), method: z.string(), params: z.string(), created_at_ms: z.number(),
+  input_segments: z.array(harnessInputSegmentSchema).optional(),
+  /* Required and nullable: the kernel always sends it, `null` on a row with no turn error. */
+  turn_error_text: z.string().nullable(),
+});
+
+const harnessPhaseSchema = z.enum([
+  'pending_thread_start', 'idle', 'issuing_turn', 'compacting', 'issuing_interrupt',
+  'turn_running', 'turn_completed', 'resumed', 'wedged',
+]);
+
+/**
+ * Whether a message posted *now* goes on the harness pending queue rather than straight into
+ * a turn: `HarnessState::can_issue_turn()` accepts only `Idle` and `TurnCompleted`.
+ * `null` (unknown) is deliberately read as queueing: guessing *issued* on a conversation that
+ * really queued is a dead composer with no round trip that ends it.
+ */
+export function kernelQueuesInput(phase: HarnessPhaseTag | null): boolean {
+  return !(phase === 'idle' || phase === 'turn_completed');
+}
+
+/**
+ * One addressable message waiting in the harness pending queue. `rev` is the compare-and-swap
+ * token; entries written before ids existed cannot appear here and are counted by `pending_overflow`.
+ */
+export type PendingQueueEntry = Readonly<{
+  entry_id: string;
+  text: string;
+  rev: number;
+  queued_at_ms: number;
+}>;
+
+const pendingQueueEntrySchema: z.ZodType<PendingQueueEntry> = z.object({
+  entry_id: z.string(),
+  text: z.string(),
+  rev: z.number(),
+  queued_at_ms: z.number(),
+});
+
+export type CompactOutcome = Readonly<{
+  operation_id: string;
+  thread_id: string;
+  turn_id: string | null;
+  status: 'started' | 'completed' | 'interrupted' | 'failed' | 'unconfirmed' | 'refused';
+}>;
+
+export type PlannerRun = Readonly<{
+  card_id: string;
+  worker_session_id?: string | null;
+  phase?: z.infer<typeof harnessPhaseSchema> | null;
+  /** The addressable page of the pending queue, in queue order. */
+  pending: readonly PendingQueueEntry[];
+  /**
+   * How many queued user messages this page does not show; a count, not a list, because the kernel
+   * has no id to name them by.
+   */
+  pending_overflow: number;
+  /** The conversation's model selection; `null` follows the default. */
+  model: string | null;
+  reasoning_effort: string | null;
+  /** Whether the Planner may pause a turn to ask before acting outside its sandbox; `null` exactly when the card is not a Planner. */
+  permission_mode: PlannerPermissionMode | null;
+  /**
+   * Why the queue is not draining, or `null`; render as one standing notice. `null` is not evidence
+   * that anything succeeded.
+   */
+  blocked_reason: string | null;
+  /** Explicit server-owned recovery; phase never implies an action. */
+  recovery: RunRecovery | null;
+  /**
+   * Whether this card can take image attachments; defaulted to false, which is absent exactly when
+   * the server is older than the feature.
+   */
+  attachments_supported: boolean;
+  /** Whether the bound Planner backend implements manual context compaction. */
+  manual_compact_supported: boolean;
+  compact_outcome: CompactOutcome | null;
+  context_usage_invalidated: boolean;
+  /** How full the model's context is, or `null` when the harness has never reported it. */
+  token_usage: PlannerRunTokenUsage | null;
+  /** The turn the harness is running; non-null exactly when `phase` is `turn_running`. */
+  running_turn: PlannerRunningTurn | null;
+}>;
+
+/**
+ * How long the harness has run its current turn, by its own monotonic clock since it accepted the
+ * turn's start. Not a wall-clock time: anchor it to when the response arrived (`anchorRunningTurn`).
+ */
+export type PlannerRunningTurn = Readonly<{ turn_id: string; elapsed_ms: number }>;
+
+const plannerRunningTurnSchema: z.ZodType<PlannerRunningTurn> = z.object({
+  turn_id: z.string(),
+  elapsed_ms: z.number(),
+});
+
+/**
+ * The context-occupancy reading, exactly as the server ships it. `percent` is the server's
+ * number and the only thing a meter may be drawn from — it is NOT `used_tokens / context_window`.
+ */
+export type PlannerRunTokenUsage = Readonly<{
+  /** Tokens in the model's context as of its most recent response. */
+  used_tokens: number;
+  /** The model's context window, or `null` when codex has never named one. */
+  context_window: number | null;
+  /** Context occupancy in `0..=100`, or `null` — see above. */
+  percent: number | null;
+  /** Wall clock of the codex frame this came from; a rehydrated reading can be months old. */
+  at_ms: number;
+}>;
+
+const plannerRunTokenUsageSchema: z.ZodType<PlannerRunTokenUsage> = z.object({
+  used_tokens: z.number(),
+  context_window: z.number().nullable(),
+  percent: z.number().nullable(),
+  at_ms: z.number(),
+});
+
+/** Reversible retained-DOM commit budget, shared by requests and cursor termination. */
+export const HARNESS_ITEMS_PAGE_LIMIT = 60;
+
+export function harnessItemsOperation(cardId: string, afterId = 0, direction: 'asc' | 'desc' = 'desc'):
+ApiOperation<HarnessItem[]> {
+  return {
+    method: 'GET',
+    path: `/api/cards/${encodeURIComponent(cardId)}/harness/items?after_id=${afterId}&limit=${HARNESS_ITEMS_PAGE_LIMIT}&direction=${direction}`,
+    responseSchema: z.array(harnessItemSchema),
+  };
+}
+
+export function plannerRunOperation(cardId: string): ApiOperation<PlannerRun> {
+  return {
+    method: 'GET', path: `/api/cards/${encodeURIComponent(cardId)}/planner/run`,
+    responseSchema: z.object({
+      card_id: z.string(), worker_session_id: z.string().nullable().optional(), phase: harnessPhaseSchema.nullable().optional(),
+      /* Defaulted rather than required: a dormant card and older servers answer without them. */
+      pending: z.array(pendingQueueEntrySchema).optional().default([]),
+      pending_overflow: z.number().optional().default(0),
+      /* `.nullable()` and NOT `.optional()`: the server always sends these, so accepting absence
+         would hide the day one stopped being sent. */
+      model: z.string().nullable(), reasoning_effort: z.string().nullable(),
+      permission_mode: plannerPermissionModeSchema.nullable(),
+      blocked_reason: z.string().nullable(),
+      recovery: runRecoverySchema.nullable(),
+      /* Absent on older servers, and false is the safe read. */
+      attachments_supported: z.boolean().optional().default(false),
+      manual_compact_supported: z.boolean(),
+      compact_outcome: z.object({ operation_id: z.string(), thread_id: z.string(), turn_id: z.string().nullable(),
+        status: z.enum(['started', 'completed', 'interrupted', 'failed', 'unconfirmed', 'refused']),
+      }).nullable(),
+      context_usage_invalidated: z.boolean(),
+      /* Absent on older servers and whenever the harness has never reported a usage frame; `null` draws no meter. */
+      token_usage: plannerRunTokenUsageSchema.nullable().optional().default(null),
+      running_turn: plannerRunningTurnSchema.nullable(),
+    }),
+  };
+}
+
+/** What one conversation has chosen; `null` means "follow the installation default". The server requires both keys. */
+export type ModelSelection = Readonly<{ model: string | null; reasoning_effort: string | null }>;
+
+export const FOLLOW_INSTALLATION_DEFAULT: ModelSelection = Object.freeze({
+  model: null, reasoning_effort: null,
+});
+
+const reasoningEffortOptionSchema = z.object({
+  reasoning_effort: z.string(),
+  /* codex's own words for its own setting, shown verbatim; `null` for a Claude effort level, which the CLI declares without one. */
+  description: z.string().nullable(),
+});
+
+const catalogModelSchema = z.object({
+  /* A React key and nothing else — the value that travels to the server is `model`. */
+  id: z.string(),
+  model: z.string(),
+  /* The model this entry runs where the provider says (the Claude CLI's `resolvedModel`); `null` for codex. */
+  resolved_model: z.string().nullable(),
+  display_name: z.string(),
+  description: z.string(),
+  /* Which entry codex's own picker highlights, NOT what this installation follows (that is `default` below). */
+  is_default: z.boolean(),
+  /* A Claude entry's are the CLI's own `supportedEffortLevels`: empty when it declares none. */
+  supported_reasoning_efforts: z.array(reasoningEffortOptionSchema),
+  /* `null` exactly when the provider declares no default effort (every Claude entry, #1822). */
+  default_reasoning_effort: z.string().nullable(),
+});
+
+/**
+ * `GET /api/models`. `source` and `default_source` are separate answers: otherwise an empty live
+ * catalog would read like one the server could not produce. A Claude Planner's catalog is the Claude
+ * CLI's own list (#1822), `unavailable` while Claude is not ready; its CLI `default` entry is not a row
+ * but the `default` here (`claude_cli`): what it resolves to, and the efforts the `null` selection takes.
+ */
+export const modelCatalogSchema = z.object({
+  models: z.array(catalogModelSchema),
+  default: z.object({
+    model: z.string().nullable(),
+    reasoning_effort: z.string().nullable(),
+    /* `null` for codex, whose default's efforts are those of the entry `model` names. */
+    supported_reasoning_efforts: z.array(reasoningEffortOptionSchema).nullable(),
+  }),
+  default_source: z.enum(['config_read', 'config_toml', 'claude_cli', 'acp_session', 'unknown']),
+  source: z.enum(['live', 'unavailable']),
+  fetched_at_ms: z.number().nullable(),
+});
+
+export type ModelCatalog = z.infer<typeof modelCatalogSchema>;
+
+/**
+ * Whose catalog: an existing card's, or one for a conversation about to be created on `provider`.
+ * A Claude Planner's (either way) is the Claude CLI's list the server cached (#1822).
+ */
+export type ModelCatalogScope =
+  | Readonly<{ kind: 'card'; cardId: string }>
+  | Readonly<{ kind: 'provider'; provider: AgentProvider }>;
+
+/** Config layers are per-directory, so without `card_id` the server answers `default_source: 'unknown'`. */
+export function modelCatalogOperation(scope: ModelCatalogScope): ApiOperation<ModelCatalog> {
+  return {
+    method: 'GET',
+    path: scope.kind === 'card'
+      ? `/api/models?card_id=${encodeURIComponent(scope.cardId)}`
+      : `/api/models?provider=${scope.provider}`,
+    responseSchema: modelCatalogSchema,
+  };
+}
+
+export type ModelSelectionResult = Readonly<{
+  model: string | null;
+  reasoning_effort: string | null;
+  effort_adjusted: boolean;
+  unknown_model: boolean;
+}>;
+
+/**
+ * Run writes one at a time, keeping only the LATEST waiting intent while one is in flight;
+ * a rejected write hands the queue on rather than stranding it. Orders one client's own
+ * writes only.
+ */
+export function createSerialWriter<TArgs, TResult>(
+  write: (args: TArgs) => Promise<TResult>,
+): (args: TArgs) => Promise<TResult> {
+  let inFlight: Promise<TResult> | null = null;
+  let queued: TArgs | null = null;
+  let queuedIsSet = false;
+
+  const drain = async (args: TArgs): Promise<TResult> => {
+    let current = args;
+    for (;;) {
+      let result: TResult;
+      try {
+        result = await write(current);
+      } catch (error) {
+        /* Nothing superseded this one, so its failure is the chain's answer. */
+        if (!queuedIsSet) throw error;
+        current = takeQueued();
+        continue;
+      }
+      if (!queuedIsSet) return result;
+      current = takeQueued();
+    }
+  };
+
+  const takeQueued = (): TArgs => {
+    const next = queued as TArgs;
+    queuedIsSet = false;
+    queued = null;
+    return next;
+  };
+
+  return (args: TArgs): Promise<TResult> => {
+    if (inFlight === null) {
+      const run = drain(args).finally(() => { inFlight = null; });
+      inFlight = run;
+      return run;
+    }
+    /* Supersede rather than append: an intent nobody can still see the effect of is not worth a round trip. */
+    queued = args;
+    queuedIsSet = true;
+    return inFlight;
+  };
+}
+
+export function setPlannerModelOperation(
+  cardId: string, selection: ModelSelection,
+): ApiOperation<ModelSelectionResult> {
+  return {
+    method: 'PUT',
+    path: `/api/cards/${encodeURIComponent(cardId)}/planner/model`,
+    body: { model: selection.model, reasoning_effort: selection.reasoning_effort },
+    responseSchema: z.object({
+      card_id: z.string(),
+      model: z.string().nullable(),
+      reasoning_effort: z.string().nullable(),
+      effort_adjusted: z.boolean(),
+      unknown_model: z.boolean(),
+    }),
+  };
+}
+
+/**
+ * What a failed `PUT /planner/model` says. Each listed status is answered before anything is stored: 400 (a Claude
+ * card while Claude is not ready), 403, 404 and 422. A 5xx, a lost or an unreadable answer may follow a stored one.
+ */
+export const PLANNER_MODEL_FAILURES: FailureTable<WriteFailure> = Object.freeze({
+  rules: Object.freeze([Object.freeze({ status: Object.freeze([400, 403, 404, 422]), is: 'refused' as const })]),
+  unauthorized: 'refused',
+  otherwise: 'unknown',
+});
+
+/** What a failed model change says (`refusalText`): not changed, or, when it may have been stored, unconfirmed. */
+export const MODEL_CHANGE_TEXT = Object.freeze({ refused: 'The model was not changed.', unknown: 'The model change is unconfirmed.' });
+
+/** What a `POST /planner/input` answers, including where the text landed. */
+export type SentPlannerInput = Readonly<{
+  card_id: string;
+  worker_session_id: string;
+  /** The queue entry the text is now sitting in, or `null` when it folded into an entry that has no id. */
+  entry_id: string | null;
+}>;
+
+/**
+ * One send, keyed: the same `idempotencyKey` on a retry is answered with the first request's answer
+ * and queues nothing, so a send whose answer was lost can be sent again safely. `replacesTurn` is the
+ * latest turn an Edit replaces (#2043): the server removes it and queues this message in one commit,
+ * or answers 409 `planner_turn_not_replaceable` and changes nothing; `null` for an ordinary send.
+ */
+export function sendPlannerInputOperation(
+  cardId: string, text: string, attachments: readonly string[], idempotencyKey: string, replacesTurn: string | null,
+): ApiOperation<SentPlannerInput> {
+  return {
+    method: 'POST', path: `/api/cards/${encodeURIComponent(cardId)}/planner/input`,
+    /* Each field is omitted when empty: both are `#[serde(default)]` on the server, and an empty
+       array or a null would change the bytes of every ordinary text-only send. */
+    body: {
+      text,
+      ...(attachments.length === 0 ? {} : { attachments }),
+      ...(replacesTurn === null ? {} : { replaces_turn: replacesTurn }),
+    },
+    headers: { 'Idempotency-Key': idempotencyKey },
+    responseSchema: z.object({
+      card_id: z.string(),
+      worker_session_id: z.string(),
+      entry_id: z.string().nullable().optional().transform((value) => value ?? null),
+    }),
+  };
+}
+
+/** The image formats the upload endpoint accepts; the server's magic-number sniff is the judgement. */
+export const ATTACHABLE_IMAGE_TYPES = Object.freeze(
+  ['image/png', 'image/jpeg', 'image/gif', 'image/webp'] as const,
+);
+
+/** Mirrors `MAX_ATTACHMENTS_PER_MESSAGE` in `planner_attachments::bind`. */
+export const MAX_ATTACHMENTS_PER_MESSAGE = 8;
+
+/** Why the composer took no more images: its one cap, for a pick and a refill alike. */
+export const TOO_MANY_IMAGES = `A message can carry at most ${MAX_ATTACHMENTS_PER_MESSAGE} images.`;
+
+/**
+ * What a failed `POST /planner/attachments` says: 400 (not an accepted image, an attached workspace, the card's
+ * budget spent, a body that stopped arriving), 403, 404 and 413 store nothing; anything else may have stored it.
+ */
+export const PLANNER_ATTACHMENT_FAILURES: FailureTable<WriteFailure> = Object.freeze({
+  rules: Object.freeze([Object.freeze({ status: Object.freeze([400, 403, 404, 413]), is: 'refused' as const })]),
+  unauthorized: 'refused',
+  otherwise: 'unknown',
+});
+
+/** What a failed upload says (`refusalText`): not uploaded, or, when it may have been stored, could not be. */
+export const UPLOAD_TEXT = Object.freeze({ refused: 'The image was not uploaded.', unknown: 'The image could not be uploaded.' });
+
+/**
+ * Upload one image as raw bytes; `content-type` here is merged *over* the `application/json` the
+ * client adds for any body.
+ */
+export function uploadPlannerAttachmentOperation(
+  cardId: string, bytes: Uint8Array, contentType: string,
+): ApiOperation<UploadAttachmentResponse> {
+  return {
+    method: 'POST',
+    path: `/api/cards/${encodeURIComponent(cardId)}/planner/attachments`,
+    body: bytes,
+    headers: { 'content-type': contentType },
+    responseSchema: z.object({
+      attachmentId: z.string(), contentType: z.string(), size: z.number(), url: z.string(),
+    }),
+  };
+}
+
+/** What `PATCH`/`DELETE /planner/input/{entry_id}` answer on success. */
+export type PlannerInputMutation = Readonly<{
+  card_id: string;
+  entry_id: string;
+  /** The entry's revision after the write. */
+  rev: number;
+  /** The stored text after the write, or `null` when the entry was deleted. */
+  text: string | null;
+}>;
+
+const plannerInputMutationSchema = z.object({
+  card_id: z.string(),
+  entry_id: z.string(),
+  rev: z.number(),
+  text: z.string().nullable(),
+});
+
+function plannerInputPath(cardId: string, entryId: string): string {
+  return `/api/cards/${encodeURIComponent(cardId)}/planner/input/${encodeURIComponent(entryId)}`;
+}
+
+/** Edit in place under the queue's compare-and-swap revision. */
+export function editPlannerInputOperation(cardId: string, entryId: string, text: string, ifEntryRev: number):
+ApiOperation<Omit<PlannerInputMutation, 'text'> & Readonly<{ text: string }>> {
+  return { method: 'PATCH', path: plannerInputPath(cardId, entryId), body: { text, if_entry_rev: ifEntryRev },
+    responseSchema: plannerInputMutationSchema.extend({ text: z.string() }) };
+}
+
+/** Remove one queued message, refusing if somebody moved it first. */
+export function deletePlannerInputOperation(
+  cardId: string, entryId: string, ifEntryRev: number,
+): ApiOperation<PlannerInputMutation> {
+  return {
+    method: 'DELETE', path: plannerInputPath(cardId, entryId),
+    body: { if_entry_rev: ifEntryRev },
+    responseSchema: plannerInputMutationSchema,
+  };
+}
+
+/** What `POST …/planner/input/{entry_id}/steer` answers on success. */
+export type PlannerSteer = Readonly<{
+  card_id: string;
+  entry_id: string;
+  /** Always `true` on a 200; every refusal is a typed 409, never `false` here. */
+  steered: boolean;
+  /** The turn that took the message — the one that was running. */
+  turn_id: string;
+}>;
+
+const plannerSteerSchema: z.ZodType<PlannerSteer> = z.object({
+  card_id: z.string(),
+  entry_id: z.string(),
+  steered: z.boolean(),
+  turn_id: z.string(),
+});
+
+/**
+ * Send one queued message into the running turn, with the same compare-and-swap token as the
+ * delete. 409 `planner_steer_no_running_turn`: no turn took it. 409 `planner_steer_unknown_outcome`:
+ * codex never answered, and whether it reached the turn is not known.
+ */
+export function steerPlannerInputOperation(
+  cardId: string, entryId: string, ifEntryRev: number,
+): ApiOperation<PlannerSteer> {
+  return {
+    method: 'POST', path: `${plannerInputPath(cardId, entryId)}/steer`,
+    body: { if_entry_rev: ifEntryRev },
+    responseSchema: plannerSteerSchema,
+  };
+}
+
+export type PlannerQueueEditOutcome =
+  | Readonly<{ kind: 'done'; entry: PendingQueueEntry }>
+  | Exclude<PlannerQueueWriteOutcome, { kind: 'done' }>;
+
+const plannerInputStaleSchema = z.object({ text: z.string(), rev: z.number(), entry_id: z.string() });
+
+/**
+ * What one write to the pending queue turned into. `stale` and `gone` call for opposite next
+ * moves: retry against the quoted revision, versus stop, the message is on its way.
+ */
+export type PlannerQueueWriteOutcome =
+  | Readonly<{ kind: 'done' }>
+  | Readonly<{ kind: 'stale'; entryId: string; text: string; rev: number }>
+  | Readonly<{ kind: 'gone' }>
+  | Readonly<{ kind: 'not_running' }>
+  | Readonly<{ kind: 'unanswered' }>
+  | Readonly<{ kind: 'failed'; message: string }>;
+
+/**
+ * What a failed delete or steer of a queued message means. `stale`: a lost compare-and-swap, whose
+ * body quotes the text and revision the entry actually holds. `gone`: the queue drained or somebody
+ * else deleted the entry, beyond editing. The steer's own 409s: `not_running`, no turn took the
+ * message and it is still queued unchanged; `unanswered`, codex never answered, so "nothing
+ * happened" cannot be claimed.
+ */
+export const PLANNER_QUEUE_WRITE_FAILURES: FailureTable<Exclude<PlannerQueueWriteOutcome['kind'], 'done'>> = Object.freeze({
+  rules: Object.freeze([
+    Object.freeze({ status: Object.freeze([409]), code: 'planner_input_stale', is: 'stale' as const }),
+    Object.freeze({ status: Object.freeze([404]), is: 'gone' as const }),
+    Object.freeze({ status: Object.freeze([409]), code: 'planner_steer_no_running_turn', is: 'not_running' as const }),
+    Object.freeze({ status: Object.freeze([409]), code: 'planner_steer_unknown_outcome', is: 'unanswered' as const }),
+  ]),
+  unauthorized: 'failed',
+  otherwise: 'failed',
+});
+
+/**
+ * Classifies a rejected queue write. Never called for a success. `failed` shows the server's own
+ * sentence when it gave one, else `fallback`; a `stale` whose body is unreadable is `failed` too.
+ */
+export function plannerQueueWriteFailure(
+  failure: ApiFailure | null, fallback: string,
+): Exclude<PlannerQueueWriteOutcome, { kind: 'done' }> {
+  const kind = classifyFailure(failure, PLANNER_QUEUE_WRITE_FAILURES);
+  const stale = kind === 'stale' && failure?.kind === 'http' ? plannerInputStaleSchema.safeParse(failure.body) : null;
+  if (stale?.success === true) return { kind: 'stale', entryId: stale.data.entry_id, text: stale.data.text, rev: stale.data.rev };
+  if (kind === 'failed' || kind === 'stale') {
+    return { kind: 'failed', message: failure?.kind === 'http' && failure.message !== '' ? failureReason(failure) : fallback };
+  }
+  return { kind };
+}
+
+export const COMPACT_FAILURES: FailureTable<WriteFailure> = Object.freeze({
+  rules: Object.freeze([Object.freeze({ status: Object.freeze([400, 403, 404, 409, 422]), is: 'refused' as const })]),
+  unauthorized: 'refused', otherwise: 'unknown',
+});
+export const COMPACT_TEXT = Object.freeze({ refused: 'Context was not compacted.', unknown: 'Context compaction is unconfirmed. Refresh before trying again.' });
+
+export function compactPlannerOperation(cardId: string): ApiOperation<{ started: boolean }> {
+  return {
+    method: 'POST', path: `/api/cards/${encodeURIComponent(cardId)}/planner/compact`,
+    responseSchema: z.object({ card_id: z.string(), worker_session_id: z.string(), started: z.literal(true) }),
+  };
+}
+
+export function interruptPlannerOperation(cardId: string): ApiOperation<{ stopped: boolean }> {
+  return {
+    method: 'POST', path: `/api/cards/${encodeURIComponent(cardId)}/planner/interrupt`,
+    responseSchema: z.object({ card_id: z.string(), worker_session_id: z.string(), stopped: z.boolean() }),
+  };
+}
+
+const conversationStateSchema = z.enum([
+  'starting', 'running', 'idle', 'turn_pending', 'exited', 'failed', 'superseded',
+]);
+
+/** The longest first message the server accepts, checked before it is sent. */
+export const CONVERSATION_TEXT_MAX = 32768;
+
+/* Track conversations: written out rather than aliased to the area schema, and living here
+   rather than in `core/api/schemas.ts` because `kind: 'track-assistant'` is not in the event vocabulary. */
+
+export const trackConversationSummarySchema: z.ZodType<TrackConversationSummary> = z.object({
+  archivedAt: z.number().nullable(),
+  provider: agentProviderSchema,
+  id: z.string(),
+  trackId: z.string(),
+  title: z.string().nullable(),
+  kind: z.string(),
+  state: conversationStateSchema.nullable(),
+  updatedAt: z.number(),
+  // Required and nullable, as the kernel sends it; an older kernel's rows lack it and are rejected.
+  lastTurnCompletedAt: z.number().nullable(),
+  sourceCardId: z.string().optional(),
+});
+
+/**
+ * `trackTitle` is absent because this endpoint does not send it; `kind` is pinned because it is the
+ * only value this endpoint produces.
+ */
+export function toTrackConversation(row: TrackConversationSummary): Conversation {
+  return {
+    provider: row.provider,
+    archivedAt: row.archivedAt,
+    id: row.id,
+    trackId: row.trackId,
+    ...(row.sourceCardId === undefined ? {} : { sourceCardId: row.sourceCardId }),
+    title: row.title,
+    kind: 'track-assistant',
+    state: row.state,
+    updatedAt: row.updatedAt,
+    lastTurnCompletedAt: row.lastTurnCompletedAt,
+  };
+}
+
+/** Idempotent assignment: a retry cannot toggle a conversation back. */
+export function setConversationArchiveOperation(trackId: string, cardId: string, archived: boolean): ApiOperation<undefined> {
+  return {
+    method: 'PATCH',
+    path: `/api/tracks/${encodeURIComponent(trackId)}/conversations/${encodeURIComponent(cardId)}/archive`,
+    body: { archived }, responseSchema: z.undefined(),
+  };
+}
+
+export function trackConversationsOperation(trackId: string): ApiOperation<Conversation[]> {
+  return {
+    method: 'GET',
+    path: `/api/tracks/${encodeURIComponent(trackId)}/conversations`,
+    responseSchema: z.array(trackConversationSummarySchema).transform((rows) => rows.map(toTrackConversation)),
+  };
+}
+
+/**
+ * `idempotencyKey` identifies the draft, so a key minted per call could create a second
+ * conversation after a timeout.
+ */
+export function createTrackConversationOperation(
+  trackId: string, text: string, idempotencyKey: string, provider: AgentProvider, selection: ModelSelection, side?: SideConversation,
+): ApiOperation<CreatedConversation> {
+  return {
+    method: 'POST',
+    path: `/api/tracks/${encodeURIComponent(trackId)}/conversations`,
+    headers: { 'Idempotency-Key': idempotencyKey },
+    body: { text, provider,
+      ...(side === undefined ? {} : { side }),
+      ...(selection.model === null ? {} : { model: selection.model }),
+      ...(selection.reasoning_effort === null ? {} : { reasoning_effort: selection.reasoning_effort }),
+    },
+    responseSchema: trackConversationSummarySchema.and(z.object({ initialInput: initialInputReceiptResultSchema }))
+      .transform((row) => ({ conversation: toTrackConversation(row), initialInput: row.initialInput })),
+  };
+}
+
+/** Mirror of the server's `derive_track_conversation_keys`; its golden is asserted in `conversation.test.ts`. */
+export function trackConversationCardId(trackId: string, idempotencyKey: string): string {
+  return `conv-${sha256Hex(`wave-conversation:${trackId}:${idempotencyKey}`).slice(0, 32)}`;
+}
+
+/** What a failed create means for the draft; a 409 here is four distinguishable situations. */
+export type ConversationCreateFailure = Readonly<
+  | {
+    /**
+     * Ambiguous: the attempt may have committed. Keep the key and the text, re-read the list. A 503 is one too: on this
+     * endpoint every 503 comes after the card was minted.
+     */
+    kind: 'retry';
+    message: string;
+  }
+  | {
+    /** The derived card already exists — the list is behind, not the draft. */
+    kind: 'exists';
+    message: string;
+  }
+  | {
+    /** Refused before anything could commit, so the key is unspent; a 400 is a refusal of the body itself. */
+    kind: 'blocked';
+    message: string;
+  }
+  | {
+    /** This key was already spent on a different first message. */
+    kind: 'stale-payload';
+    message: string;
+  }
+  | {
+    /** The key used up its retry slots or was refused as invalid; only a new key can go anywhere. */
+    kind: 'exhausted';
+    message: string;
+  }
+  | {
+    /** The Track is gone; there is nowhere to put the draft. */
+    kind: 'gone';
+    message: string;
+  }
+>;
+
+/**
+ * What a failed create means for the draft; a 409 is told apart by its `code`. A lost or unreadable
+ * answer may have been served, so it is `retry`, as is a concurrent create under the same key and a 503.
+ */
+export const CONVERSATION_CREATE_FAILURES: FailureTable<ConversationCreateFailure['kind']> = Object.freeze({
+  rules: Object.freeze([
+    Object.freeze({ code: 'idempotency_key_exhausted', is: 'exhausted' as const }),
+    Object.freeze({ code: 'idempotency_key_invalid', is: 'exhausted' as const }),
+    Object.freeze({ code: 'idempotency_key_reused', is: 'stale-payload' as const }),
+    Object.freeze({ code: 'idempotency_key_concurrent', is: 'retry' as const }),
+    Object.freeze({ status: Object.freeze([404]), is: 'gone' as const }),
+    Object.freeze({ status: Object.freeze([400]), is: 'blocked' as const }),
+    Object.freeze({ status: Object.freeze([409]), is: 'exists' as const }),
+  ]),
+  unauthorized: 'retry',
+  otherwise: 'retry',
+});
+
+/** A create refused (when the server gave no reason) and one whose outcome is unknown; the draft keeps its words either way. */
+export const CONVERSATION_CREATE_TEXT: WriteText = Object.freeze({
+  refused: 'The conversation was not started.',
+  unknown: 'Starting the conversation is unconfirmed. Try again to check the same conversation.',
+});
+
+/**
+ * The unknown sentence for each remedy a draft offers while its create is unconfirmed: the sentence names the button the
+ * footer shows. Both buttons look for this key's conversation before anything new is created.
+ */
+export function conversationCreateUnknownText(remedy: 'retry' | 'new-conversation'): string {
+  return remedy === 'retry' ? CONVERSATION_CREATE_TEXT.unknown
+    : 'Starting the conversation is unconfirmed. Sending it as a new conversation checks for that one first.';
+}
+
+/**
+ * What a failed create (`null`: no answer was read) means for the draft, with its sentence: `retry` says only that it is
+ * unconfirmed, every other kind the server's reason. No transport text shows; the connection is the global indicator's.
+ */
+export function conversationCreateFailure(failure: ApiFailure | null): ConversationCreateFailure {
+  const kind = classifyFailure(failure, CONVERSATION_CREATE_FAILURES);
+  return { kind, message: kind === 'retry' ? CONVERSATION_CREATE_TEXT.unknown : refusedText(failure, CONVERSATION_CREATE_TEXT.refused) };
+}
+
+const DIFF_PREFIX = '## Track state changes since your last turn';
+const DIFF_END = '\n\n---\n\n';
+const USER_SAYS = 'User says:\n';
+
+export const SYSTEM_PRESENTATION_LABELS: Readonly<
+Record<SystemInputPresentation, string>
+> = Object.freeze({
+  system: 'System update',
+  system_worker_turn_finished: 'Worker turn finished',
+  system_report_edited: 'Report edited',
+  system_task_completed: 'Task completed',
+  system_task_failed: 'Task failed',
+  system_mail: 'Mail',
+  system_planner_turn_budget: 'Planner turn budget',
+  system_planner_context_usage: 'Planner context usage',
+});
+
+/* Live data uses the camelCase spellings; snake_case is accepted as a precaution since the kernel
+   stores `item.type` verbatim. */
+const AGENT_MESSAGE = 'agentMessage';
+const AGENT_MESSAGE_SNAKE_CASE = 'agent_message';
+const USER_MESSAGE = 'userMessage';
+const USER_MESSAGE_SNAKE_CASE = 'user_message';
+
+function isAgentMessage(itemType: string | null): boolean {
+  return itemType === AGENT_MESSAGE || itemType === AGENT_MESSAGE_SNAKE_CASE;
+}
+
+export function isUserMessage(itemType: string | null): boolean {
+  return itemType === USER_MESSAGE || itemType === USER_MESSAGE_SNAKE_CASE;
+}
+
+/** One line per question: its title, then its options when it offers a choice. */
+function askText(questions: unknown): string {
+  if (!Array.isArray(questions)) return '';
+  return questions.flatMap((question: unknown) => {
+    if (typeof question !== 'object' || question === null) return [];
+    const { title, options } = question as { title?: unknown; options?: unknown };
+    if (typeof title !== 'string' || title.trim() === '') return [];
+    const choices = Array.isArray(options)
+      ? options.filter((option): option is string => typeof option === 'string' && option.trim() !== '')
+        .map((option) => option.trim())
+      : [];
+    return [choices.length > 0 ? `${title.trim()} (${choices.join(' / ')})` : title.trim()];
+  }).join('\n');
+}
+
+/*
+ * `neige_user_ask` is speech: the row is an agent turn whose text is its questions. Only a
+ * SUCCESSFUL `item/completed` mints it; a refused call falls through to the failed activity line.
+ */
+function userAskToTurn(
+  item: Readonly<{
+    id: number; item_uuid: string | null; item_type: string | null; method: string; params: string;
+    created_at_ms: number;
+  }>,
+): ConversationTurn | null {
+  if (item.item_type !== 'mcpToolCall') return null;
+  if (item.method !== 'item/completed') return null;
+  let parsed: unknown;
+  try { parsed = JSON.parse(item.params); } catch { return null; }
+  if (typeof parsed !== 'object' || parsed === null) return null;
+  const envelope = parsed as { completedAtMs?: unknown; item?: unknown };
+  if (typeof envelope.item !== 'object' || envelope.item === null) return null;
+  const payload = envelope.item as {
+    tool?: unknown; arguments?: unknown; error?: unknown; status?: unknown;
+  };
+  if (payload.tool !== USER_ASK_TOOL) return null;
+  /* The same failure reading as the activity line: an MCP error member, or a failed status. */
+  if ((payload.error !== undefined && payload.error !== null) || payload.status === 'failed') {
+    return null;
+  }
+  const args = payload.arguments;
+  if (typeof args !== 'object' || args === null) return null;
+  const text = askText((args as { questions?: unknown }).questions);
+  if (text === '') return null;
+  return {
+    id: `ask-${item.item_uuid ?? item.id}`,
+    author: 'agent',
+    text,
+    atMs: typeof envelope.completedAtMs === 'number' && Number.isFinite(envelope.completedAtMs)
+      ? envelope.completedAtMs : item.created_at_ms,
+    origin: 'ask',
+  };
+}
+
+/** The words one input segment shows: a user segment loses the kernel's `User says:` lead. */
+export function inputSegmentText(segment: HarnessInputSegment): string {
+  const text = segment.presentation === 'user' && segment.text.startsWith(USER_SAYS)
+    ? segment.text.slice(USER_SAYS.length) : segment.text;
+  return text.trim();
+}
+
+export function harnessItemToTurns(item: HarnessItem): readonly ConversationMessage[] {
+  const ask = userAskToTurn(item);
+  if (ask !== null) return [ask];
+  if (item.method !== 'item/completed' ||
+      (!isAgentMessage(item.item_type) && !isUserMessage(item.item_type))) return [];
+
+  if (isUserMessage(item.item_type) && item.input_segments !== undefined) {
+    const segments = item.input_segments;
+    let completedAtMs: unknown;
+    try {
+      const parsed = JSON.parse(item.params) as unknown;
+      if (typeof parsed === 'object' && parsed !== null) {
+        completedAtMs = (parsed as { completedAtMs?: unknown }).completedAtMs;
+      }
+    } catch {
+      // The structured segments remain usable even when the upstream notification cannot be decoded.
+    }
+    const atMs = typeof completedAtMs === 'number' && Number.isFinite(completedAtMs)
+      ? completedAtMs : item.created_at_ms;
+    /* Regenerable context is not a wakeup. At least one real report edit must remain. */
+    const observations = segments.filter((segment) => segment.presentation !== 'system_planner_turn_budget' && segment.presentation !== 'system_planner_context_usage');
+    const quiet = observations.length > 0
+      && observations.every((segment) => segment.presentation === 'system_report_edited');
+    return segments.flatMap<ConversationMessage>((segment, index) => {
+      const text = inputSegmentText(segment);
+      const attachments = segment.attachments;
+      /* An image with no words is a message. */
+      if (text === '' && attachments.length === 0) return [];
+      const id = segments.length === 1
+        ? String(item.id) : `${item.id}:${index}`;
+      if (segment.presentation === 'user') {
+        return [{ id, author: 'you' as const, text, atMs, attachments,
+          inputSource: { cardId: item.card_id, threadId: item.thread_id, itemId: item.id, segmentIndex: index, turnId: item.turn_id, entryRev: segment.origin?.queue_entry?.rev ?? null },
+          ...(segment.origin === undefined ? {} : { queueEntryId: segment.origin.queue_entry?.id ?? null }) }];
+      }
+      return [{
+        id, author: 'system' as const,
+        label: SYSTEM_PRESENTATION_LABELS[segment.presentation], text, atMs,
+        ...(quiet ? { quiet: true as const } : {}),
+      }];
+    });
+  }
+
+  let parsed: unknown;
+  try { parsed = JSON.parse(item.params); } catch { return []; }
+  if (typeof parsed !== 'object' || parsed === null) return [];
+  const envelope = parsed as { completedAtMs?: unknown; item?: unknown };
+  if (typeof envelope.item !== 'object' || envelope.item === null) return [];
+  const payload = envelope.item as { text?: unknown; content?: unknown };
+  let text = isAgentMessage(item.item_type)
+    ? (typeof payload.text === 'string' ? payload.text : '')
+    : (Array.isArray(payload.content) ? payload.content.map((part: unknown) => (
+      typeof part === 'object' && part !== null && typeof (part as { text?: unknown }).text === 'string'
+        ? (part as { text: string }).text : ''
+    )).join('') : '');
+  if (isUserMessage(item.item_type) && text.startsWith(DIFF_PREFIX)) {
+    const end = text.indexOf(DIFF_END);
+    if (end >= 0) text = text.slice(end + DIFF_END.length);
+  }
+  if (isUserMessage(item.item_type) && text.startsWith(USER_SAYS)) {
+    text = text.slice(USER_SAYS.length);
+  }
+  text = text.trim();
+  if (text === '') return [];
+  return [{
+    id: String(item.id), author: isUserMessage(item.item_type) ? 'you' : 'agent', text,
+    atMs: typeof envelope.completedAtMs === 'number' && Number.isFinite(envelope.completedAtMs)
+      ? envelope.completedAtMs : item.created_at_ms,
+  }];
+}
+
+/** The decoder's exact structured presentation label, never inferred from input text. */
+export function isPlannerTurnContext(entry: TranscriptEntry): entry is ConversationSystemEntry {
+  return entry.author === 'system' && (entry.label === SYSTEM_PRESENTATION_LABELS.system_planner_turn_budget
+    || entry.label === SYSTEM_PRESENTATION_LABELS.system_planner_context_usage);
+}
+
+/* What the agent did between two things it said: one line each, a verb and its target.
+   The kernel persists both `item/started` and `item/completed`, so the running state is real data. */
+export type ActivityState = 'running' | 'done' | 'failed';
+
+export type ConversationActivity = Readonly<{
+  id: string;
+  /** Discriminates against `ConversationTurn` inside one sorted transcript. */
+  author: 'activity';
+  /** Present tense while running, past tense once done: `Running` / `Ran`. */
+  verb: string;
+  /** What it acted on, already trimmed to something readable. Never a payload. */
+  target: string | null;
+  state: ActivityState;
+  /**
+   * Straight off `item/completed`'s own `durationMs`; pairing `started` with `completed` would
+   * measure our poll, not the action.
+   */
+  durationMs: number | null;
+  /** Why it failed, in one clipped line; `null` on anything that did not fail. */
+  detail: string | null;
+  /** Optional provider-supplied thinking or tool body, read through the activity disclosure. */
+  content?: string;
+  /** The wire name of the tool on an `mcpToolCall` row, verbatim; `null` on every other item type. */
+  tool: string | null;
+  atMs: number;
+}>;
+
+/** How a turn ended. `completed` entries are kept but render as nothing; only `interrupted` and `failed` are drawn. */
+export type TurnOutcomeStatus = 'completed' | 'interrupted' | 'failed';
+
+export type ConversationTurnOutcome = Readonly<{
+  id: string;
+  /** Discriminates against the speakers and the activity line. */
+  author: 'turn';
+  /** Historical fact; cannot describe or authorize the current execution. */
+  imported?: boolean;
+  turnId: string;
+  status: TurnOutcomeStatus;
+  /** The recorded `error.message`, verbatim; interrupted turns may also carry a reason. */
+  message?: string;
+  /** The kernel's readable reason (`turn_error_text`) for an interrupted or failed turn. */
+  text?: string;
+  /** `error.codexErrorInfo` as one token: the bare enum string or, for the object form, its single key. */
+  code?: string;
+  /** Protected kernel metadata, separate from provider error/code. Unknown shapes are ignored without losing the outcome. */
+  harnessInterruption?: HarnessInterruptionReason | HarnessTimeoutEvidence;
+  /**
+   * The wire `status` when it was not one of the three above; such a row is surfaced as `failed`
+   * rather than dropped.
+   */
+  rawStatus?: string;
+  /** The row's own `durationMs`; `null` when it carries none, meaning unknown — never derived from message or tool times. */
+  elapsedMs: number | null;
+  atMs: number;
+}>;
+
+export type TranscriptEntry = NativeTurnContext & (ConversationMessage | ConversationActivity | ConversationTurnOutcome);
+
+/** The speakers; neither an activity line nor a turn outcome is one. */
+export function isConversationMessage(entry: TranscriptEntry): entry is ConversationMessage {
+  return entry.author === 'you' || entry.author === 'human' || entry.author === 'unknown' || entry.author === 'agent' || entry.author === 'system';
+}
+
+/** `bash -lc '…'` is how codex spells every command; the line shows what was actually run. */
+const SHELL_WRAPPER = /^(?:\S*\/)?(?:ba|z|)sh\s+-l?c\s+(['"])([\s\S]*)\1$/;
+
+export function readableCommand(command: string): string {
+  const match = SHELL_WRAPPER.exec(command.trim());
+  return (match?.[2] ?? command).trim();
+}
+
+const ACTIVITY_TARGET_MAX = 64;
+
+function clip(text: string): string | null {
+  const line = text.trim().split('\n', 1)[0]?.trim() ?? '';
+  if (line === '') return null;
+  return line.length <= ACTIVITY_TARGET_MAX
+    ? line
+    : `${line.slice(0, ACTIVITY_TARGET_MAX - 1).trimEnd()}…`;
+}
+
+type ActivityShape = Readonly<{ running: string; done: string; target: string | null }>;
+
+/**
+ * The tools whose names are worth saying in English; an unknown tool keeps its wire name rather
+ * than an invented phrase. `args` is the call's `arguments`, read only by a tool whose line names one.
+ */
+function toolShape(tool: string, args: unknown): ActivityShape {
+  if (REPORT_WRITE_TOOLS.includes(tool)) {
+    return { running: 'Writing report', done: 'Wrote report', target: null };
+  }
+  if (tool === REPORT_DELETE_TOOL) {
+    return { running: 'Deleting blocks', done: 'Deleted blocks', target: null };
+  }
+  if (REPORT_READ_TOOLS.includes(tool)) {
+    return { running: 'Reading report', done: 'Read report', target: null };
+  }
+  if (tool === TASK_ACCEPT_TOOL) {
+    return { running: 'Accepting task', done: 'Accepted task', target: null };
+  }
+  if (tool === TASK_REJECT_TOOL) {
+    return { running: 'Rejecting task', done: 'Rejected task', target: null };
+  }
+  if (tool === TASK_LS_TOOL) {
+    return { running: 'Reading plan', done: 'Read plan', target: null };
+  }
+  // The `neige_track_*` tools that change the track; they must be tested before the prefix fallback below.
+  if (tool === TRACK_RENAME_TOOL) {
+    return { running: 'Naming the track', done: 'Named the track', target: null };
+  }
+  if (tool === DEV_PUBLISH_TOOL) {
+    return { running: 'Publishing the PR', done: 'Published the PR', target: null };
+  }
+  if (tool === MAIL_SEND_TOOL) {
+    const summary = typeof args === 'object' && args !== null ? (args as { summary?: unknown }).summary : undefined;
+    return { running: 'Sending mail', done: 'Sent mail', target: typeof summary === 'string' ? clip(summary) : null };
+  }
+  // `cat`, `ls`, `state`, `log`, `diff` are looks; any new `neige_track_*` WRITE needs its own branch ahead of this one.
+  if (tool.startsWith(TRACK_TOOL_PREFIX)) {
+    return { running: 'Reading the track', done: 'Read the track', target: null };
+  }
+  return { running: 'Calling', done: 'Called', target: clip(tool) };
+}
+
+function activityShape(itemType: string, item: Record<string, unknown>): ActivityShape | null {
+  switch (itemType) {
+    case 'reasoning':
+      // No summary text on the line: the point is that time is passing.
+      return { running: 'Thinking', done: 'Thought', target: null };
+    case 'commandExecution':
+      return {
+        running: 'Running', done: 'Ran',
+        target: typeof item.command === 'string' ? clip(readableCommand(item.command)) : null,
+      };
+    case 'fileChange': {
+      const changes = Array.isArray(item.changes) ? item.changes.length : 0;
+      return {
+        running: 'Editing', done: 'Edited',
+        target: changes === 0 ? null : (changes === 1 ? '1 file' : `${changes} files`),
+      };
+    }
+    case 'mcpToolCall':
+      return toolShape(typeof item.tool === 'string' ? item.tool : '', item.arguments);
+    // Curated subset of codex's `ThreadItem` union; unknown variants fall through to the generic line.
+    case 'webSearch':
+      return { running: 'Searching the web', done: 'Searched the web', target: null };
+    case 'imageGeneration':
+      return { running: 'Generating image', done: 'Generated image', target: null };
+    case 'sleep':
+      return { running: 'Waiting', done: 'Waited', target: null };
+    case 'collabAgentToolCall':
+      return { running: 'Calling agent', done: 'Called agent', target: null };
+    case 'subAgentActivity':
+      return { running: 'Delegating', done: 'Delegated', target: null };
+    case 'dynamicToolCall':
+      return { running: 'Calling tool', done: 'Called tool', target: typeof item.tool === 'string' ? clip(item.tool) : null };
+    case 'hookPrompt':
+      return { running: 'Prompting', done: 'Prompted', target: null };
+    case 'imageView':
+      return { running: 'Viewing image', done: 'Viewed image', target: null };
+    case 'enteredReviewMode':
+      return { running: 'Entering review mode', done: 'Entered review mode', target: null };
+    case 'exitedReviewMode':
+      return { running: 'Exiting review mode', done: 'Exited review mode', target: null };
+    case 'contextCompaction':
+      return { running: 'Compacting', done: 'Compacted', target: null };
+    default:
+      return { running: 'Working', done: 'Worked', target: clip(itemType) };
+  }
+}
+
+/* `aggregatedOutput` is kilobytes on a normal build; clipped here so "one short line, never a payload" is a property of the type. `error` outranks its tail. */
+/** The last non-empty line of a machine string, clipped; `null` when there is no such line. */
+function informativeLine(text: string): string | null {
+  const lines = text.split('\n');
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const line = clip(lines[index] ?? '');
+    if (line !== null) return line;
+  }
+  return null;
+}
+
+function failureDetail(payload: Record<string, unknown>): string | null {
+  // What the machine said, in both wire spellings; a blank one falls through to the tail.
+  const error = payload.error;
+  const stated = typeof error === 'string' ? error
+    : (typeof error === 'object' && error !== null
+      && typeof (error as { message?: unknown }).message === 'string'
+      ? (error as { message: string }).message : null);
+  if (stated !== null) {
+    const line = informativeLine(stated);
+    if (line !== null) return line;
+  }
+  // Otherwise the tail: a shell puts its error there and a test runner its count.
+  const output = payload.aggregatedOutput;
+  if (typeof output === 'string') return informativeLine(output);
+  return null;
+}
+
+export function harnessItemToActivity(item: HarnessItem): ConversationActivity | null {
+  if (isAgentMessage(item.item_type) || isUserMessage(item.item_type)) return null;
+  if (item.method !== 'item/started' && item.method !== 'item/completed') return null;
+  if (item.item_type === null) return null;
+  let parsed: unknown;
+  try { parsed = JSON.parse(item.params); } catch { return null; }
+  if (typeof parsed !== 'object' || parsed === null) return null;
+  const envelope = parsed as { completedAtMs?: unknown; item?: unknown };
+  if (typeof envelope.item !== 'object' || envelope.item === null) return null;
+  const payload = envelope.item as Record<string, unknown>;
+  const shape = activityShape(item.item_type, payload);
+  if (shape === null) return null;
+
+  const done = item.method === 'item/completed';
+  /* Failure is read from the action's own report, never guessed: a non-zero
+     exit, an MCP error member, or a status the wire itself calls failed. */
+  const failed = done && (
+    (typeof payload.exitCode === 'number' && payload.exitCode !== 0)
+    || (payload.error !== undefined && payload.error !== null)
+    || payload.status === 'failed'
+  );
+  return {
+    id: `activity-${item.id}`,
+    author: 'activity',
+    verb: done ? shape.done : shape.running,
+    target: shape.target,
+    state: failed ? 'failed' : (done ? 'done' : 'running'),
+    /* `done &&` is deliberate: a line still saying `Running` must not print an interval that has not ended. */
+    durationMs: done && typeof payload.durationMs === 'number'
+      && Number.isFinite(payload.durationMs)
+      ? payload.durationMs : null,
+    detail: failed ? failureDetail(payload) : null,
+    ...activityContent(item.item_type, payload),
+    tool: item.item_type === 'mcpToolCall' && typeof payload.tool === 'string' ? payload.tool : null,
+    atMs: typeof envelope.completedAtMs === 'number' && Number.isFinite(envelope.completedAtMs)
+      ? envelope.completedAtMs : item.created_at_ms,
+  };
+}
+
+/* The stored `turn/completed` params: codex's `Turn` minus its items. Lenient below `status`:
+   a malformed `error` costs only the detail, never the line, and `status` is `z.unknown()` so a
+   non-string status still renders as a turn that ended in an unknown way. */
+const turnOutcomeParamsSchema = z.object({
+  id: z.string().optional().catch(undefined),
+  status: z.unknown(),
+  error: z.object({
+    message: z.string().optional().catch(undefined),
+    codexErrorInfo: z.union([z.string(), z.record(z.string(), z.unknown())]).nullish().catch(undefined),
+  }).nullish().catch(undefined),
+  durationMs: z.unknown().optional(),
+  harness_interruption_reason: z.unknown().optional(),
+});
+
+/** The released cause-only string and complete v1 proof; never read unprotected `harness_timeout`. */
+export const harnessTimeoutEvidenceSchema: z.ZodType<HarnessTimeoutEvidence> = z.object({
+  version: z.literal('v1'),
+  request: z.strictObject({
+    session_id: z.string(), card_id: z.string(), track_id: z.string(), thread_id: z.string(), turn_id: z.string(),
+    reason: z.literal('max_turn_duration'), requested_at_ms: z.number().int(),
+    effective_elapsed_ms: z.number().int().nonnegative(), budget_ms: z.number().int().nonnegative(),
+  }),
+  ended_at_ms: z.number().int(),
+});
+const harnessInterruptionSchema = z.union([z.literal('max_turn_duration'), harnessTimeoutEvidenceSchema]);
+
+/** A recorded duration only when it is a finite, non-negative integer; anything else is unknown, not 0. */
+function recordedDurationMs(value: unknown): number | null {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : null;
+}
+
+function codexErrorCode(info: string | Readonly<Record<string, unknown>> | null | undefined): string | undefined {
+  if (info === null || info === undefined) return undefined;
+  if (typeof info === 'string') return info;
+  const [key] = Object.keys(info);
+  return key;
+}
+
+/**
+ * The outcome line for one `turn/completed` row; `null` only when it is not an outcome row at all
+ * or has no turn id. `atMs` is the kernel's `created_at_ms`, the same clock every other row uses,
+ * not codex's whole-second `completedAt`.
+ */
+export function transcriptRowToTurnOutcome(item: HarnessItem): ConversationTurnOutcome | null {
+  if (item.method !== 'turn/completed') return null;
+  let parsed: unknown;
+  try { parsed = JSON.parse(item.params); } catch { return null; }
+  const result = turnOutcomeParamsSchema.safeParse(parsed);
+  if (!result.success) return null;
+  const { status: wireStatus, error, durationMs } = result.data;
+  if (wireStatus === undefined) return null;
+  const turnId = item.turn_id ?? result.data.id;
+  if (turnId === undefined) return null;
+  const message = error?.message;
+  const code = codexErrorCode(error?.codexErrorInfo);
+  const interruption = wireStatus === 'interrupted'
+    ? harnessInterruptionSchema.safeParse(result.data.harness_interruption_reason) : null;
+  const base = {
+    id: `outcome-${item.id}`, author: 'turn' as const, turnId, atMs: item.created_at_ms,
+    elapsedMs: recordedDurationMs(durationMs),
+    ...(message === undefined ? {} : { message }),
+    ...(item.turn_error_text === null ? {} : { text: item.turn_error_text }),
+    ...(code === undefined ? {} : { code }),
+    ...(interruption?.success ? { harnessInterruption: interruption.data } : {}),
+  };
+  if (wireStatus === 'completed' || wireStatus === 'interrupted' || wireStatus === 'failed') {
+    return { ...base, status: wireStatus };
+  }
+  // Not a string: show what the wire actually said, as text.
+  const rawStatus = typeof wireStatus === 'string' ? wireStatus : JSON.stringify(wireStatus);
+  return { ...base, status: 'failed', rawStatus };
+}
+
+/**
+ * The only notification methods the transcript renders. A fail-closed backstop: the server
+ * narrows `GET …/harness/items` to the same methods so the page limit is a budget of renderable
+ * rows, and the converters check the method themselves too.
+ */
+function isTranscriptMethod(method: string): boolean {
+  return method === 'item/started' || method === 'item/completed' || method === 'turn/completed';
+}
+
+/**
+ * The transcript: messages and actions in one list. `started` and `completed` pair on `item_uuid`
+ * into one line in the started row's position, and a finished `Thought` survives only as the tail.
+ */
+export function buildTranscript(items: readonly HarnessItem[]): readonly TranscriptEntry[] {
+  const order: string[] = [];
+  const byKey = new Map<string, TranscriptEntry>();
+  /** The turn of the row that placed each entry; `null` for a row that belongs to no turn. */
+  const turnOf = new Map<string, string | null>();
+
+  for (const item of [...items].sort((left, right) => left.id - right.id)) {
+    if (!isTranscriptMethod(item.method)) continue;
+    // A turn outcome is its own line, keyed by its own row: nothing pairs with or overwrites it.
+    const outcome = transcriptRowToTurnOutcome(item);
+    if (outcome !== null) {
+      order.push(outcome.id);
+      byKey.set(outcome.id, outcome);
+      turnOf.set(outcome.id, outcome.turnId);
+      continue;
+    }
+    const turns = harnessItemToTurns(item);
+    if (turns.length > 0) {
+      for (const turn of turns) {
+        /* An ask bubble takes the key of the activity line its own `item/started` row minted, so
+           the bubble replaces the line in place. */
+        const key = turn.author === 'agent' && turn.origin === 'ask'
+          ? `activity-${item.item_uuid ?? item.id}` : `turn-${turn.id}`;
+        if (!byKey.has(key)) { order.push(key); turnOf.set(key, item.turn_id); }
+        byKey.set(key, turn);
+      }
+      continue;
+    }
+    const activity = harnessItemToActivity(item);
+    if (activity === null) continue;
+    // Pair on the wire's own item id when it has one; a row without one is its own line.
+    const key = `activity-${item.item_uuid ?? item.id}`;
+    if (!byKey.has(key)) { order.push(key); turnOf.set(key, item.turn_id); }
+    byKey.set(key, { ...activity, id: key });
+  }
+
+  const entries = placeTurnOutcomes(order, turnOf, (key) => byKey.get(key)?.author === 'turn').flatMap((key) => {
+    const entry = byKey.get(key);
+    return entry === undefined ? [] : [entry];
+  });
+
+  return retireFollowedThoughts(entries);
+}
+
+/**
+ * Each outcome moves to just after the last entry of its own turn, never past the first entry of a
+ * later turn; a row with no turn id belongs to no turn. A provider can store a turn's outcome before
+ * its last reply (the Claude driver does), and the reply still reads above the line that ends it.
+ */
+function placeTurnOutcomes(
+  order: readonly string[], turnOf: ReadonlyMap<string, string | null>, isOutcome: (key: string) => boolean,
+): readonly string[] {
+  const placed = [...order];
+  for (const key of order) {
+    const turn = turnOf.get(key) ?? null;
+    if (!isOutcome(key) || turn === null) continue;
+    const from = placed.indexOf(key);
+    let to = from;
+    for (let index = from + 1; index < placed.length; index += 1) {
+      const other = placed[index];
+      const otherTurn = turnOf.get(other) ?? null;
+      if (otherTurn === null) continue;
+      if (otherTurn !== turn || isOutcome(other)) break;
+      to = index;
+    }
+    if (to === from) continue;
+    placed.splice(from, 1);
+    placed.splice(to, 0, key);
+  }
+  return placed;
+}
+
+/**
+ * Readable thoughts remain available; an empty `Thought` status survives only until later activity. Shared by
+ * `buildTranscript` and `mergeTranscript` so the two agree on which thought is "followed".
+ */
+export function retireFollowedThoughts(entries: readonly TranscriptEntry[]): readonly TranscriptEntry[] {
+  return entries.filter((entry, index) => {
+    if (entry.author !== 'activity' || entry.verb !== 'Thought' || entry.content !== undefined) return true;
+    return !entries.slice(index + 1).some((later) => later.author !== 'turn');
+  });
+}
+
+/** Append entries the server has not stored yet (optimistic user echoes, live replies), retiring the thought they now follow. */
+export function mergeTranscript(
+  serverEntries: readonly TranscriptEntry[],
+  echoes: readonly ConversationTurn[],
+): readonly TranscriptEntry[] {
+  return echoes.length === 0 ? serverEntries : retireFollowedThoughts([...serverEntries, ...echoes]);
+}
+
+const ECHO_RECONCILIATION_LOOKBACK = 50;
+
+function userTextMatchesEcho(userText: string, echoText: string): boolean {
+  const user = userText.trim();
+  const echo = echoText.trim();
+  return user !== '' && echo !== '' && (user === echo || user.startsWith(`${echo}\n`));
+}
+
+/**
+ * Whether a persisted row is the same send as an echo that had no words: attachment ids are server-
+ * minted, one per upload.
+ */
+function userAttachmentsMatchEcho(
+  turn: ConversationTurn, echo: ConversationTurn,
+): boolean {
+  const echoIds = echo.attachments ?? [];
+  if (echo.text.trim() !== '' || echoIds.length === 0) return false;
+  const rowIds = new Set((turn.attachments ?? []).map((attachment) => attachment.id));
+  return echoIds.every((attachment) => rowIds.has(attachment.id));
+}
+
+/** Body qualification is separate from identity, attribution and source-version evidence. */
+export function inputBodyMatchesEcho(turn: ConversationTurn, echo: ConversationTurn): boolean {
+  return userTextMatchesEcho(turn.text, echo.text) || userAttachmentsMatchEcho(turn, echo);
+}
+
+/** Reconcile recent persisted user rows with optimistic echoes one-to-one. */
+export function reconcileUserEchoes(
+  serverTurns: readonly ConversationMessage[],
+  echoes: readonly ConversationTurn[],
+): readonly ConversationTurn[] {
+  const userTurns = serverTurns.filter((turn): turn is ConversationTurn => turn.author === 'you')
+    .slice(-ECHO_RECONCILIATION_LOOKBACK);
+  const matchedUserIndexes = new Set<number>();
+  return echoes.filter((echo) => {
+    const match = userTurns.findIndex((turn, index) =>
+      !matchedUserIndexes.has(index)
+      && inputBodyMatchesEcho(turn, echo));
+    if (match < 0) return true;
+    matchedUserIndexes.add(match);
+    return false;
+  });
+}
+
+export function isOptimisticConversationTurn(
+  entry: TranscriptEntry,
+): entry is OptimisticConversationTurn {
+  if (entry.author !== 'you' || !('serverHighWaterBefore' in entry)) return false;
+  const before = entry.serverHighWaterBefore;
+  return typeof before === 'number' && Number.isFinite(before);
+}
+
+/**
+ * Whether this entry is a message the kernel queued; asked of a `TranscriptEntry` because the
+ * renderer holds the merged transcript.
+ */
+export function isQueuedConversationTurn(entry: TranscriptEntry): boolean {
+  return isOptimisticConversationTurn(entry) && entry.queued;
+}
+
+/** Highest persisted item id observed before an optimistic send. */
+export function serverItemHighWater(items: readonly Readonly<{ id: number }>[]): number {
+  return items.reduce((highest, item) => Math.max(highest, item.id), 0);
+}
+
+/** User-role display data includes unknown historical authors; this is never an ownership test. */
+export function isUserConversationTurn(entry:TranscriptEntry|undefined):entry is ConversationTurn & Readonly<{ author: 'you' | 'human' | 'unknown' }> {
+  return entry?.author === 'you' || entry?.author === 'human' || entry?.author === 'unknown';
+}
+
+/** An exchange opens at a user-role message after an agent/activity boundary. */
+export function opensExchange(turns: readonly TranscriptEntry[], index: number): boolean {
+  const turn = turns[index];
+  if (turn === undefined) return false;
+  return isUserConversationTurn(turn) && !isUserConversationTurn(turns[index-1]);
+}
+
+/** The gap after which a transcript is worth stamping with a time; the time is a separator, not a label. */
+export const CONVERSATION_GAP_MS = 10 * 60 * 1000;
+
+export function opensAfterGap(turns: readonly TranscriptEntry[], index: number): boolean {
+  const turn = turns[index];
+  const previous = turns[index - 1];
+  if (turn === undefined) return false;
+  if (previous === undefined) return true;
+  return turn.atMs - previous.atMs >= CONVERSATION_GAP_MS;
+}

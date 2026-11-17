@@ -1,0 +1,107 @@
+@layer features {
+  .rootHeader {
+    grid-template-columns: calc(var(--rail-w-collapsed) + var(--space-1)) minmax(0, 1fr);
+    gap: var(--space-2);
+    padding: calc(env(safe-area-inset-top) + var(--space-4)) var(--space-4) var(--space-4);
+  }
+
+  .rootHeader .titleContent button:is([aria-haspopup='menu'], [data-nc-page-title]) {
+    font-size: var(--font-step-3-size);
+    font-weight: var(--weight-medium);
+    line-height: var(--font-step-3-line);
+    display: flex;
+    margin-inline-start: auto;
+    inline-size: fit-content;
+    justify-content: flex-start;
+    border: 0 !important;
+    border-radius: var(--radius-md) !important;
+    background-color: transparent !important;
+    box-shadow: none;
+    color: var(--text);
+    min-block-size: var(--control-h-touch);
+    padding-inline: var(--space-2);
+  }
+
+  .titleContent {
+    min-inline-size: 0;
+    inline-size: 100%;
+  }
+
+  .areaTitle {
+    display: flex;
+    justify-content: center;
+    min-inline-size: 0;
+  }
+
+  .trackTitleHost {
+    --header-primary-h: calc(var(--rail-w-collapsed) + var(--space-1));
+    min-inline-size: 0;
+    inline-size: 100%;
+  }
+
+  /* The declared title slot wins whenever a page fills it, independent of its URL. */
+  .trackTitleHost:empty,
+  .titleContent:has(.trackTitleHost:not(:empty)) .areaTitle {
+    display: none;
+  }
+
+  .iconButton {
+    display: grid;
+    place-items: center;
+    inline-size: var(--control-h-touch);
+    block-size: var(--control-h-touch);
+    min-block-size: var(--control-h-touch);
+    border-radius: var(--radius-md);
+    color: var(--text-2);
+    cursor: pointer;
+  }
+
+  .toolsMenu {
+    inset-inline-end: var(--space-3);
+    position: absolute;
+    z-index: var(--z-overlay);
+    inset-block-start: calc(env(safe-area-inset-top) + var(--rail-w-collapsed) + var(--space-3));
+    inline-size: min(19rem, calc(100vw - var(--space-4)));
+    max-block-size: 60dvh;
+    overflow: auto;
+    padding: var(--space-1);
+    background: var(--paper);
+    border: 1px solid transparent;
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-float);
+  }
+
+  .menuItem {
+    font-size: var(--font-step-3-size);
+    display: flex;
+    gap: var(--space-2);
+    align-items: center;
+    min-block-size: var(--rail-w-collapsed);
+    inline-size: 100%;
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-highlight);
+    text-align: start;
+    overflow-wrap: anywhere;
+    cursor: pointer;
+  }
+
+  .menuItem:hover,
+  .menuItem:focus-visible {
+    background: var(--overlay-hover-strong);
+  }
+
+  .iconButton:active,
+  .menuItem:not([aria-disabled='true']):active {
+    background-image: linear-gradient(var(--overlay-active), var(--overlay-active));
+  }
+
+  .menuItem[aria-disabled='true'] {
+    color: var(--text-3);
+    cursor: default;
+  }
+
+  .tools,
+  .toolsMenuWrap {
+    min-inline-size: 0;
+  }
+}

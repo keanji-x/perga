@@ -1,0 +1,28 @@
+/** Architecture-rule exceptions. Entries must be repository-relative files, never globs; keep each reason beside its path. */
+export const moduleRuntimeStateExceptions = Object.freeze([
+  Object.freeze({ path: 'web/src/main.tsx', reason: 'App bootstrap must retain the browser mount node while composing React.' }),
+  Object.freeze({ path: 'web/src/app/providers/idempotency-key.ts', reason: 'The fallback mint counter must outlive every panel mount: the conversation panel is a per-page hook, so a remount-scoped counter could reuse a Track conversation key.' }),
+  Object.freeze({ path: 'web/src/systems/terminal/osc52.ts', reason: 'Port of web/src/input/osc52.ts; encoded-length constant is derived at module scope in the original file.' }),
+]);
+export const moduleRuntimeStateAllowlist = Object.freeze(moduleRuntimeStateExceptions.map(({ path }) => path));
+
+export const createContextExceptions = Object.freeze([
+  Object.freeze({ path: 'web/src/app/auth/current-user.tsx', reason: 'The auth composition projects only UID and display name from the existing verified SessionGate or RecoveryGate identity; it neither probes nor grants authority.' }),
+  Object.freeze({ path: 'web/src/systems/github-links/public.tsx', reason: 'The GitHub citation system receives the app-owned authenticated read port without coupling chat and report feature domains.' }),
+  Object.freeze({ path: 'web/src/app/providers/connection-status.tsx', reason: 'The app-scoped provider exposes live event-stream observations or the recovery owner’s status to the shell without owning socket lifecycle or authorization.' }),
+  Object.freeze({ path: 'web/src/app/providers/read-receipts.tsx', reason: 'The app-scoped provider hands the shell and route outlet the app transport for the kernel-owned read receipts (#2596); it keeps no browser storage.' }),
+  Object.freeze({ path: 'web/src/app/providers/ui-preferences.tsx', reason: 'The app-scoped provider injects browser-local display preferences into the shell and route outlet without persisting conversation contents.' }),
+  Object.freeze({ path: 'web/src/app/router/track-view-state.tsx', reason: 'The router-lifetime provider remembers per-Track view state without keeping inactive resource hosts alive or persisting user data.' }),
+  Object.freeze({ path: 'web/src/app/router/new-track-drafts.tsx', reason: 'The shell-lifetime Track draft provider retains per-Area text, exact request identity and pending leases across route navigation without persisted user data.' }),
+  Object.freeze({ path: 'web/src/app/conversations/public.tsx', reason: 'The visit-scoped conversation registry provider must sit above the route outlet so navigation cannot discard remembered conversations.' }),
+  Object.freeze({ path: 'web/src/app/shell/public.tsx', reason: 'The shell owns mobile workspace-sheet state and the conversation drawer width on its main region, while routes inside <Outlet /> need to reopen the Areas or Pages sheet on Back and resize their conversation drawer.' }),
+  Object.freeze({ path: 'web/src/app/theme/public.tsx', reason: 'App theme provider owns the document dataset mirror.' }),
+  Object.freeze({ path: 'web/src/ui/dialog/public.tsx', reason: 'Issue #997 permits context in the primitive directory while consumers remain in ui.' }),
+]);
+/** @param {string} name @param {ReadonlyArray<{reason: string}>} entries */
+function requireReasons(name, entries) {
+  if (entries.some(({ reason }) => reason.trim() === '')) throw new Error(`${name} exceptions require a nonempty reason`);
+}
+requireReasons('module runtime state', moduleRuntimeStateExceptions);
+requireReasons('createContext', createContextExceptions);
+export const createContextAllowlist = Object.freeze(createContextExceptions.map(({ path }) => path));

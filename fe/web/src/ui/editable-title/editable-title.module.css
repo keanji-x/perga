@@ -1,0 +1,44 @@
+@layer ui {
+  .title {
+    font: inherit;
+    min-inline-size: 0;
+    max-inline-size: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    background: none;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    padding: var(--space-half) var(--space-1);
+    margin-inline-start: calc(-1 * var(--space-1));
+    color: inherit;
+    cursor: text;
+    text-align: start;
+  }
+
+  /* The editor's focus boundary (input and its failure) adds no box: the input lays out as before. */
+  .editing {
+    display: contents;
+  }
+
+  .title:hover {
+    border-color: var(--hairline);
+    background: var(--overlay-hover-faint);
+  }
+
+  /* Rule, box and colour come from base.css's one text-field recipe. What is
+     local is the alignment: the input replaces the title in place, so it keeps
+     the title's own type and sheds the button's inline padding rather than
+     re-adding its own — the characters must not move when editing opens. */
+  .input {
+    font: inherit;
+    padding-block: var(--space-half);
+    min-width: 0;
+  }
+}
+
+@layer ui {
+  @media (width < 60rem) {
+    .input { font: var(--type-input); letter-spacing: var(--type-input-tracking); }
+  }
+}

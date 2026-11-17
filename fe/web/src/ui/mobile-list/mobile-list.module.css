@@ -1,0 +1,126 @@
+@layer ui {
+  .group {
+    display: flex;
+    flex-direction: column;
+    min-inline-size: 0;
+    padding: var(--space-1);
+    border: 0;
+    border-radius: var(--radius-lg);
+    background: var(--surface-card);
+    box-shadow: none;
+  }
+
+  .plain { padding: 0; border-radius: 0; background: transparent; }
+
+  .page {
+    display: flex;
+    flex: 1 1 auto;
+    inline-size: 100%;
+    min-block-size: 100%;
+    flex-direction: column;
+    gap: var(--space-2);
+    padding-block-end: var(--space-4);
+    overflow: auto;
+    overscroll-behavior: contain;
+    background: var(--bg);
+  }
+
+  .content {
+    padding-inline: var(--space-4);
+  }
+
+  .content,
+  .section {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+
+  .section > h3 {
+    font-size: var(--font-step-2-size);
+    font-weight: var(--weight-medium);
+    line-height: var(--font-step-2-line);
+    padding-inline: var(--space-2);
+    color: var(--text-3);
+  }
+
+  .list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-half);
+    padding: 0;
+    background: transparent;
+  }
+
+  .item {
+    inline-size: 100%;
+    min-block-size: var(--rail-w-collapsed);
+    padding-inline-start: var(--space-half) !important;
+    padding-inline-end: var(--space-2) !important;
+    gap: var(--space-3) !important;
+    border-radius: var(--radius-highlight);
+    background: transparent;
+  }
+
+  /* #1234 — hover is an affordance, so it belongs to rows that do something.
+     A row with no `onSelect` renders no invisible button at all, and lighting
+     it up under the pointer promised a landing that does not exist. */
+  .item:not(.itemStatic):hover,
+  .item:not(.itemStatic):focus-visible {
+    background: var(--overlay-hover);
+  }
+
+  .itemStatic {
+    cursor: default;
+  }
+
+  .itemNested {
+    padding-inline-start: var(--space-5);
+  }
+
+  .itemTitle {
+    font-size: var(--font-step-2-size);
+    font-weight: var(--weight-medium);
+    line-height: var(--font-step-2-line);
+    display: block;
+    min-inline-size: 0;
+    overflow: hidden;
+    color: var(--text);
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  .itemTitleDocument {
+    font-family: var(--font-serif);
+    font-size: var(--font-step-3-size);
+    font-weight: var(--weight-normal);
+    letter-spacing: var(--font-step-3-tracking);
+  }
+
+  .meta {
+    font-size: var(--font-step-1-size);
+    line-height: var(--font-step-1-line);
+    max-inline-size: 35vi;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    color: var(--text-3);
+  }
+
+  /* #1234 S1b-4b — the accessible-description carrier. The canonical clip block
+     (the same one `ui/schema-form/fields/DirectoryField` uses): `clip-path`
+     alone would leave the node selectable, and `display: none` would take it
+     out of the accessibility tree, which is the one tree it exists to be in. */
+  .srOnly {
+    position: absolute;
+    inline-size: 1px;
+    block-size: 1px;
+    margin: calc(-1 * var(--space-px));
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .empty { padding-inline: var(--space-4); }
+}

@@ -1,0 +1,695 @@
+import inventoryStyles from './inventory.module.css';
+import notificationStyles from './notification.module.css';
+import { LayerDismissal } from '../../../ui/dialog/public.tsx';
+import { LayerDepthProvider } from '@astryxdesign/core/Layer';
+import type { TrackClosedControl } from './closed-control.ts';
+import { NO_ISOLATION_LABEL, NO_ISOLATION_EXPLANATION } from '../../../../../core/domain/workspace-isolation.ts';
+import { ExplanationBadge } from '../../../ui/explanation-badge/public.tsx';
+import type { DialogOrigin } from '../../../ui/dialog/public.tsx';
+import { ContextAction, ContextFrame, ContextGroup } from '../../../ui/panel-card/context.tsx';
+import { EmptyState } from '../../../ui/empty-state/public.tsx';
+import { TrackTitle } from '../title/public.tsx';
+// The `/track/$trackId` surface. Presentational: every mutation and navigation leaves through a callback,
+// and there is no `<a href>` anywhere on this page.
+
+import { Button as AstryxButton } from '@astryxdesign/core/Button';
+import { DropdownMenu as AstryxDropdownMenu } from '@astryxdesign/core/DropdownMenu';
+import { Markdown } from '@astryxdesign/core/Markdown';
+import { MoreMenu as AstryxMoreMenu } from '@astryxdesign/core/MoreMenu';
+import { VisuallyHidden } from '@astryxdesign/core/VisuallyHidden';
+import { useCallback, useEffect, useLayoutEffect, useRef, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
+import { useCompactViewport } from '../../../ui/viewport/public.ts';
+
+import { DISMISS_FAILURES, DISMISS_TEXT, notificationPlainText } from '../../../../../core/domain/activity.ts';
+import { DELETE_FAILURES, DELETE_TEXT, writeFailureText } from '../../../../../core/domain/failure-class.ts';
+import type { ReportOutlineItem, ReportTaskRow } from '../../../../../core/domain/report.ts';
+import {
+  TRACK_PATCH_FAILURES, TRACK_PATCH_TEXT, UNTITLED_TRACK_LABEL, trackActivityState, trackDisplayTitle, type CardWire, type Track,
+} from '../../../../../core/domain/track.ts';
+import { ActivityIndicator } from '../../../ui/activity-indicator/public.tsx';
+import { DELETE_TRACK_COPY } from '../../../ui/confirm-dialog/copy.ts';
+import { EditableTitle, type EditableTitleProps } from '../../../ui/editable-title/public.tsx';
+import { Icon } from '../../../ui/icon/public.tsx';
+import { MobileList, MobileListItem, MobileListPage } from '../../../ui/mobile-list/public.tsx';
+import { MobileHeader } from '../../../ui/mobile-header/public.tsx';
+import { PageHeader } from '../../../ui/page-header/public.tsx';
+import {
+  OperationFeedback, DeleteConfirmDialog, useDeleteConfirm, useOperationFeedback,
+} from '../../../ui/operation-feedback/public.tsx';
+import { PanelCard } from '../../../ui/panel-card/public.tsx';
+import { relativeTime } from '../row/public.tsx';
+import { useState } from '../../../ui/state/public.ts';
+import { deriveTrackPageView } from '../../../../../core/view/track-page.ts';
+import type { RowModuleView, TrackPageView } from '../../../../../core/view/panel.ts';
+import { TrackAdminBadge } from '../admin-badge/public.tsx';
+import { TrackClosedBadge } from '../closed-badge/public.tsx';
+import { makeDesktopPainter, paintDesktopPanel, type DesktopPainterDeps } from './desktop-painter.tsx';
+import { makeMobilePainter, paintMobileModule } from './mobile-painter.tsx';
+import { MobileTitleReadView } from './mobile-title-read-view.tsx';
+import styles from './page.module.css';
+
+/** The mobile drill-down pages: two that are not row modules, plus one per row module the view model names. The renderer special-cases exactly those two and sends every other member through `paintMobileModule`. */
+type MobilePanelKind = 'outline' | Exclude<RowModuleView['key'], 'work' | 'temporary'> | 'conversations';
+
+/** One row of the Notifications aside — the route's projection of one item of `TrackActivity.attentionItems`. */
+export type TrackInputNotification = Readonly<{
+  /** The kernel's item key; the row's key. */
+  key: string;
+  /**
+   * `ask`: the Planner asks the user something; `approval`: a Planner turn is paused on a request only an answer ends
+   * (#2348), so it cannot be dismissed; `planner-down`: the Planner stopped; `planner-turn-timeout`: a confirmed budget stop.
+   */
+  kind: 'ask' | 'approval' | 'planner-down' | 'planner-turn-timeout';
+  /** The kernel's words, shown verbatim: the Planner's questions, or the reason it stopped. */
+  text: string;
+  atMs: number;
+  action?: import('../../../../../core/api/generated/wire.ts').AskAction;
+}>;
+
+/** A row's meta line: what kind of thing is waiting, in plain words; only its dot carries colour. */
+const NOTIFICATION_LABEL = Object.freeze({
+  ask: 'Needs your answer', approval: 'Waiting for your approval', 'planner-down': "Planner can't continue",
+  'planner-turn-timeout': 'Planner turn timed out',
+} as const);
+
+/** Whether a row offers Dismiss. A paused turn's request stays until it is answered or goes away, so dismissing it would do nothing. */
+const NOTIFICATION_DISMISSABLE = Object.freeze({ ask: true, approval: false, 'planner-down': true, 'planner-turn-timeout': true } as const);
+
+/**
+ * What clicking a row does: shown in the label's place while the row is hovered or focused, and the start of its
+ * accessible name. A Planner question and a paused turn's request are both answered in the Planner.
+ */
+const NOTIFICATION_ACTION = Object.freeze({
+  answer: Object.freeze({ hint: 'Answer in Planner', name: 'Answer the Planner' }),
+  open: Object.freeze({ hint: 'Open Planner', name: 'Open the Planner' }),
+} as const);
+
+function notificationAction(kind: TrackInputNotification['kind']) {
+  return NOTIFICATION_ACTION[kind === 'ask' || kind === 'approval' ? 'answer' : 'open'];
+}
+
+/** The start of a row's words, as plain text, for its accessible names; the whole text is in the Planner conversation. */
+function notificationGist(text: string): string {
+  const chars = [...notificationPlainText(text)];
+  return chars.length > 80 ? `${chars.slice(0, 80).join('')}…` : chars.join('');
+}
+
+export type TrackPageProps = Readonly<{
+  track: Pick<Track, 'id' | 'title' | 'closedAt' | 'working' | 'attention' | 'cards'> & Partial<Pick<Track, 'isolation'>>;
+  /** Fill the reading column with an app-owned interactive surface. */
+  fillReading?: boolean;
+  /** Visit-scoped choice supplied by the route owner, independently for each Track. */
+  progressDisclosure?: DesktopPainterDeps['progressDisclosure'];
+  /** App-composed panel module: shares the desktop card, precedes the report on compact screens. */
+  panelContent?: ReactNode;
+  cards: readonly CardWire[];
+  /** Full Track card identities, independently of panel visibility or openability. */
+  existingCardIds: ReadonlySet<string>;
+  /** The track's tasks, joined by `app/router` from the report's `task` blocks and the kernel's verdicts. */
+  tasks: readonly ReportTaskRow[];
+  /** The cards the board can draw, as `app/router` asks the registry. Required: a default here would be a second, silent verdict. It gates only whether a Task row's kind is an `open-card` control. */
+  openableCards: ReadonlySet<string>;
+  /** Report anchors rendered as a separate mobile list instead of a margin rail. */
+  outlineItems?: readonly ReportOutlineItem[];
+  /** The panel card's second module, composed by `app/router` (features/chat). */
+  /** The report document, composed by `app/router` (features/report). */
+  report?: ReactNode;
+  /** A compact reading introduction supplied by the page owner. */
+  mobileReportIntro?: ReactNode;
+  /** `REFERENCED BY` — omitted entirely when nothing cites this track. */
+  backlinks?: ReactNode;
+  conversationList?: ReactNode;
+  /** App-composed desktop conversation items; mobile retains its own history list. */
+  conversationContextList?: ReactNode;
+  /** The conversation module head's `+`, composed by `app/router`. */
+  mobileChatComposer?: ReactNode;
+  /** Everything the kernel says is addressed to the user on this track, projected by
+   *  the route from the activity overlay's items (`attentionItems`). */
+  inputNotifications?: readonly TrackInputNotification[];
+  /** Opens the Planner's composer: what a click anywhere on a row does, an ask and planner down alike. */
+  onReply?: () => void;
+  /** Dismiss the row's item by its kernel key. The row stays until the overlay no longer lists it. */
+  onDismiss?: (key: string) => Promise<void>;
+  /** The clock the rows' relative times read; the current time when omitted. */
+  nowMs?: number;
+  /** The route's conversation drawer is open. Input notifications compact
+   *  beside it instead of covering its composer. */
+  conversationOpen?: boolean;
+  /** Any active foreground drawer makes the painted mobile panel inaccessible. */
+  mobilePanelObscured: boolean;
+  /** Starts Chat from the desktop header or the mobile Report action. */
+  onStartConversation?: () => void;
+  /** Hide the redundant header action when the conversation is already in the reading column. */
+  showConversationAction?: boolean;
+  shareLinks?: ReactNode;
+  onShareTrack?: (origin: DialogOrigin) => void;
+  /** The Cards module head's `+`, composed by `app/router`. */
+  cardsAction?: ReactNode;
+  /** Browser-local file history, composed by the report feature through app. */
+  recentFiles?: ReactNode;
+  onOpenCard?: (cardId: string) => void;
+  /** Supplying this reveals a delete on every row the kernel says is deletable. The caller owns the confirm: the board offers the identical gesture on the card's own head. */
+  onDeleteCard?: (cardId: string, origin: DialogOrigin) => void;
+  onSetWorkbench?: (cardId: string, inWorkbench: boolean) => void;
+  /** Reveal a task's block in the document — the same landing the outline, a
+   *  `neige://` link and a backlink all use. */
+  onOpenTask?: (blockId: string) => void;
+  onOpenOutline?: (blockId: string) => void;
+  /** The card grid or transient file viewer, composed by `app/router` and positioned over the document column. */
+  board?: ReactNode;
+  onCloseBoard?: () => void;
+  /** Which secondary panel the mobile report is showing, or `null`. The panel is a navigation destination, so its identity lives in the URL and `app/router` reads it. */
+  panel?: MobilePanelKind | null;
+  onOpenPanel?: (panel: MobilePanelKind) => void;
+  onClosePanel?: () => void;
+  mobileBackLabel?: string;
+  onMobileBack?: () => void;
+  /** Optional app-owned phone header slot; this feature keeps ownership of actions and focus. */
+  mobileHeaderActionsHost?: HTMLElement | null;
+  mobileHeaderTitleHost?: HTMLElement | null;
+  mobileTitleReadView?: EditableTitleProps['readView'];
+  /** The server's capabilities; at most one is true, so the menu offers Close or Reopen, never both. */
+  canReopenTrack: boolean;
+  canCloseTrack: boolean;
+  /** The server's `admin_granted_at`: the Admin badge. The role is changed in the Planner conversation's composer. */
+  adminGrantedAt: number | null;
+  onRenameTrack?: (title: string) => void | Promise<void>;
+  closedControl?: TrackClosedControl;
+  onDeleteTrack?: (signal: AbortSignal) => void | Promise<void>;
+  /** After a delete that holds, the server's answer or a 404 to a retry alike. */
+  onTrackDeleted?: () => void;
+}>;
+
+/** The view model's module under `key`, by key rather than by index. Missing is an error rather than an empty page. */
+function rowModule(view: TrackPageView, key: RowModuleView['key']): RowModuleView {
+  const found = view.rowModules.find((module) => module.key === key);
+  if (found === undefined) throw new Error(`the track page view has no ${key} module`);
+  return found;
+}
+
+export function TrackPage({ fillReading = false, mobileReportIntro, mobileChatComposer,
+  panelContent, progressDisclosure, track, cards, existingCardIds, tasks, openableCards, outlineItems = [], report, backlinks, conversationList, conversationContextList,
+  shareLinks, onShareTrack, onStartConversation, showConversationAction = true, conversationOpen = false, mobilePanelObscured, inputNotifications = [], onReply, onDismiss, nowMs,
+  cardsAction, recentFiles, onOpenCard, onDeleteCard, onSetWorkbench, onOpenTask, onOpenOutline, board, onCloseBoard,
+  panel = null, onOpenPanel, onClosePanel,
+  mobileBackLabel = 'Pages', onMobileBack, mobileHeaderActionsHost = null, mobileHeaderTitleHost = null, mobileTitleReadView,
+  canReopenTrack, canCloseTrack, adminGrantedAt, onRenameTrack, closedControl, onDeleteTrack, onTrackDeleted,
+}: TrackPageProps) {
+  const compactViewport = useCompactViewport();
+  const headerActionsHost = compactViewport ? mobileHeaderActionsHost : null;
+  const [titleContainer] = useState(() => {
+    const container = document.createElement('div');
+    container.style.display = 'contents';
+    return container;
+  });
+  useLayoutEffect(() => () => titleContainer.remove(), [titleContainer]);
+  const desktopTitleSlotRef = useRef<HTMLDivElement | null>(null);
+  const [mobileTitleReadHost] = useState(() => document.createElement('div'));
+  const lastFocusedTitleRef = useRef<HTMLElement | null>(null);
+  const titleReadControlRef = useRef<HTMLButtonElement | null>(null);
+  const mobileTitleEditRef = useRef<(() => void) | null>(null);
+  const [canEditMobileTitle, setCanEditMobileTitle] = useState(false);
+  const registerMobileTitleEdit = useCallback((begin: (() => void) | null) => {
+    mobileTitleEditRef.current = begin;
+    setCanEditMobileTitle(begin !== null);
+  }, []);
+  const relocatingTitleRef = useRef(false);
+  const titleInHeader = compactViewport && mobileHeaderTitleHost !== null;
+  useLayoutEffect(() => {
+    const slot = titleInHeader ? mobileHeaderTitleHost : desktopTitleSlotRef.current;
+    if (slot !== null) {
+      const focused = lastFocusedTitleRef.current;
+      const restore = focused !== null
+        && (document.activeElement === focused || document.activeElement === document.body);
+      // Read controls change shape across breakpoints; the editor itself is
+      // stable. Hand off only focus previously owned by this title subtree.
+      const target = focused !== null && titleContainer.contains(focused) ? focused : titleReadControlRef.current;
+      relocatingTitleRef.current = true;
+      slot.appendChild(titleContainer);
+      // A host removed at the breakpoint can drop focus to body without a
+      // blur event. Restore the same input after moving its stable container.
+      if (restore) target?.focus({ preventScroll: true });
+      relocatingTitleRef.current = false;
+    }
+  }, [mobileHeaderTitleHost, titleContainer, titleInHeader]);
+
+  const deletion = useDeleteConfirm((_id, signal) => onDeleteTrack?.(signal), writeFailureText(DELETE_FAILURES, DELETE_TEXT), onTrackDeleted);
+  const dismissFeedback = useOperationFeedback();
+  const notificationSignature = inputNotifications.map(({ key }) => key).join('|');
+  const hasTurnTimeout = inputNotifications.some(({ kind }) => kind === 'planner-turn-timeout');
+  const [noticeExpanded, setNoticeExpanded] = useState(inputNotifications.length > 0 && !conversationOpen);
+  const [notificationAnnouncement, setNotificationAnnouncement] = useState('');
+  const offeredClosedAction = closedControl === undefined ? null : canReopenTrack ? 'reopen' : (canCloseTrack ? 'close' : null);
+  const previousNotificationSignatureRef = useRef('');
+  const previousNotificationCountRef = useRef(0);
+  const previousConversationOpenRef = useRef(conversationOpen);
+  useEffect(() => {
+    if (notificationSignature === previousNotificationSignatureRef.current) return;
+    const count = inputNotifications.length;
+    setNotificationAnnouncement(count > 0
+      ? `${count} ${count === 1 ? 'notification needs' : 'notifications need'} your attention.`
+      : (previousNotificationCountRef.current > 0 ? 'All notifications cleared.' : ''));
+    if (count > 0 && !conversationOpen) setNoticeExpanded(true);
+    previousNotificationSignatureRef.current = notificationSignature;
+    previousNotificationCountRef.current = count;
+  }, [conversationOpen, inputNotifications.length, notificationSignature]);
+  useEffect(() => {
+    if (conversationOpen && !previousConversationOpenRef.current) setNoticeExpanded(false);
+    previousConversationOpenRef.current = conversationOpen;
+  }, [conversationOpen]);
+  const boardOpen = onCloseBoard !== undefined;
+  const mobilePanelOpen = panel !== null;
+  const noticePanelOpen = noticeExpanded;
+  const mobilePanelKind: MobilePanelKind = panel ?? 'cards';
+  const trackWorkActions = [
+    ...(offeredClosedAction === 'reopen' ? [
+      { label: 'Reopen', isDisabled: closedControl?.pending, onClick: () => closedControl?.setClosed('reopen').catch(() => false) },
+    ] : []),
+    ...(offeredClosedAction === 'close' ? [
+      { label: 'Close', isDisabled: closedControl?.pending, onClick: () => closedControl?.setClosed('close').catch(() => false) },
+    ] : []),
+  ];
+  const desktopSourceRef = useRef<HTMLSpanElement | null>(null);
+  const deleteTrackAction = (origin: DialogOrigin) => ({ label: 'Delete track', onClick: () => deletion.request(track.id, origin) });
+  const trackMutationActions = [
+    ...trackWorkActions,
+    ...(!compactViewport && onShareTrack !== undefined ? [{ label: 'Share track', onClick: () => onShareTrack({ kind: 'anchor', anchor: { ref: desktopSourceRef }, unavailable: 'surface-center' }) }] : []),
+    ...(trackWorkActions.length > 0 && onDeleteTrack !== undefined ? [{ type: 'divider' as const }] : []),
+    ...(onDeleteTrack === undefined ? [] : [deleteTrackAction({ kind: 'anchor', anchor: { ref: desktopSourceRef }, unavailable: 'surface-center' })]),
+  ];
+  /* The desktop panel goes through `core/view`: one derivation, one traversal, one painter. This file may not spell a projection marker; `desktop-projection.test.tsx` scans for that. */
+  /* `activity` is the track itself: `Track` carries the overlay-derived
+     `cards` verdicts, and that field is all the derivation is typed to read. */
+  const panelView = deriveTrackPageView({ cards, existingCardIds, tasks, activity: track, openableCards });
+  const desktopConversations = conversationContextList ?? conversationList;
+  const hasDesktopConversations = desktopConversations !== undefined || onStartConversation !== undefined;
+  const desktopPainter = makeDesktopPainter({ cardsAction, onOpenCard, onOpenTask, onDeleteCard, onSetWorkbench, progressDisclosure,
+    suppressEmpty: desktopConversations !== undefined || onStartConversation !== undefined || recentFiles !== undefined || backlinks !== undefined,
+  });
+  const [desktopActionsOpen, setDesktopActionsOpen] = useState(false);
+  const desktopActionsRef = useRef<HTMLButtonElement | null>(null);
+  const mobilePanelRef = useRef<HTMLElement | null>(null);
+  const shareTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const mobileActionsRef = useRef<HTMLSpanElement | null>(null);
+  const previousPanel = useRef<MobilePanelKind | null>(null);
+
+  const dismissalLayer = <LayerDismissal {...{
+    isActive: mobilePanelOpen && !mobilePanelObscured,
+    onDismiss: () => onClosePanel?.(),
+    getContainer: () => mobilePanelRef.current,
+  }} />;
+
+  /* Focus: opening moves it into the panel container; closing returns it to the menu that opened it. Driven off `panel`, not the click, so the hardware Back button and a cold-start `?panel=` deep link behave too. */
+  useEffect(() => {
+    const previous = previousPanel.current;
+    previousPanel.current = panel;
+    if (panel !== null) {
+      if (previous === null) mobilePanelRef.current?.focus({ preventScroll: true });
+      return;
+    }
+    if (previous === null) return;
+    const trigger = mobileHeaderTitleHost?.querySelector<HTMLElement>('[data-nc-page-title]')
+      ?? mobileActionsRef.current?.querySelector('button');
+    trigger?.focus({ preventScroll: true });
+  }, [panel, mobileHeaderTitleHost]);
+
+  /** Panel changes are immediate; the route remains their navigation owner. */
+  const openMobilePanel = (kind: MobilePanelKind) => {
+    onOpenPanel?.(kind);
+  };
+  const closeMobilePanel = () => {
+    onClosePanel?.();
+  };
+
+  /* Rebuilt per render, like the desktop's: the page chrome it closes over —
+     where Back goes — is a fact about this render. */
+  const mobilePainter = makeMobilePainter({
+    // Task reveal owns clearing its panel route; do not close it a second time.
+    onOpenTask,
+    backLabel: 'Report',
+    onBack: closeMobilePanel,
+  });
+
+  const mobileActions = !boardOpen ? (
+    <span className={styles.mobilePanelButton} ref={mobileActionsRef}>
+      <AstryxMoreMenu
+        label="Track actions"
+        alignment="end"
+        variant="ghost"
+        size="lg"
+        items={[
+          ...(outlineItems.length > 0
+            ? [{ label: 'Outline', onClick: () => openMobilePanel('outline') }]
+            : []),
+          /* The module sequence is this menu: derived from `rowModules`, so a module the view model gains, loses or reorders moves the menu with it. `Outline` and `Conversations` are not row modules. */
+          ...panelView.rowModules.filter(module => onDeleteTrack !== undefined || module.rows.length > 0).map((module) => ({
+            label: module.title,
+            onClick: () => openMobilePanel(module.key),
+          })),
+          { label: 'Conversations', onClick: () => openMobilePanel('conversations') },
+          ...(trackWorkActions.length > 0 || canEditMobileTitle || onDeleteTrack !== undefined ? [{ type: 'divider' as const }] : []),
+          ...trackWorkActions,
+          ...(trackWorkActions.length > 0 && (canEditMobileTitle || onDeleteTrack !== undefined) ? [{ type: 'divider' as const }] : []),
+          ...(canEditMobileTitle ? [{ label: 'Edit track', onClick: () => { requestAnimationFrame(() => mobileTitleEditRef.current?.()); } }] : []),
+          ...(onDeleteTrack === undefined ? [] : [deleteTrackAction({ kind: 'anchor', anchor: { ref: mobileActionsRef }, unavailable: 'surface-center' })]),
+        ]}
+      />
+    </span>
+  ) : undefined;
+
+  return (
+    <section
+      className={`${styles.page} ${fillReading ? styles.fillReading : ''} ${boardOpen ? styles.pageBoard : ''}`}
+      data-nc-track-page=""
+    >
+      {dismissalLayer}
+      <PageHeader
+        className={`${styles.workHeader} ${conversationOpen ? styles.workHeaderBesideDrawer : ''}`}
+        title={
+          <>
+            {onCloseBoard !== undefined && (
+              <button
+                type="button"
+                data-nc-role="icon"
+                className={styles.headerBack}
+                aria-label="Back to track"
+                title="Back to track"
+                onClick={onCloseBoard}
+              >
+                <Icon name="arrow-left" />
+              </button>
+            )}
+            {/* The raw title, with the fallback as the placeholder. `emptyCommit="clear"`: the planner's `neige_track_rename` succeeds only while the title is empty, so clearing the name is a real request here, not a cancel. */}
+            <div className={styles.titleSlot} ref={desktopTitleSlotRef} />
+          </>
+        }
+        meta={!compactViewport && !boardOpen && onShareTrack !== undefined && <AstryxButton ref={shareTriggerRef}
+          isIconOnly label="分享" tooltip="分享" variant="ghost" size="sm" icon={<Icon name="share" size="sm" />} className={styles.shareTrigger}
+          onClick={() => onShareTrack({ kind: 'anchor', anchor: { ref: shareTriggerRef }, unavailable: 'surface-center' })} />}
+        actions={(
+          <span className={styles.headerActions}>
+            {showConversationAction && !boardOpen && !conversationOpen && (onReply !== undefined || onStartConversation !== undefined) && (
+              <AstryxButton
+                className={styles.desktopChatAction}
+                label="讨论这项工作"
+                tooltip={onReply === undefined ? 'Open conversation' : 'Open Planner conversation'}
+                variant="ghost"
+                size="sm"
+                icon={<Icon name="chat" />}
+                onClick={onReply ?? onStartConversation}
+              />
+            )}
+            {trackMutationActions.length > 0 && <span ref={desktopSourceRef} className={styles.trackActions}>
+              <AstryxDropdownMenu
+                alignment="end"
+                button={{
+                  ref: desktopActionsRef,
+                  label: `Track actions for ${trackDisplayTitle(track.title)}`,
+                  icon: <Icon name="more" />,
+                  variant: 'ghost',
+                  size: 'sm',
+                  isIconOnly: true,
+                }}
+                items={trackMutationActions}
+                hasChevron={false}
+                isMenuOpen={desktopActionsOpen}
+                onOpenChange={(isOpen) => {
+                  setDesktopActionsOpen(isOpen);
+                  if (!isOpen) {
+                    requestAnimationFrame(() => {
+                      if (document.querySelector('[role="dialog"][aria-modal="true"]') === null) desktopActionsRef.current?.focus();
+                    });
+                  }
+                }}
+              />
+            </span>}
+          </span>
+        )}
+      />
+
+      {createPortal(<div className={titleInHeader ? styles.mobileHeaderIdentity : styles.titleCluster}
+        onFocusCapture={(event) => { lastFocusedTitleRef.current = event.target; }}
+        onBlurCapture={(event) => {
+          if (relocatingTitleRef.current) event.stopPropagation();
+          else if (!titleContainer.contains(event.relatedTarget)) lastFocusedTitleRef.current = null;
+        }}>
+        <h1 className={styles.titleHeading}>{onRenameTrack === undefined ? <span className={styles.title} data-nc-page-title=""><TrackTitle track={track} /></span> : <EditableTitle value={track.title} placeholder={UNTITLED_TRACK_LABEL}
+          displayContent={<TrackTitle track={track} />} emptyCommit="clear" onCommit={onRenameTrack}
+          readCommitFailure={writeFailureText(TRACK_PATCH_FAILURES, TRACK_PATCH_TEXT.rename)} editLabel="Rename track" inputLabel="Track title"
+          className={styles.title} isPageTitle titleRef={titleReadControlRef}
+          readView={titleInHeader && mobileTitleReadView !== undefined ? (controls) => <MobileTitleReadView
+            controls={controls} host={mobileTitleReadHost} view={mobileTitleReadView} register={registerMobileTitleEdit} /> : undefined} />}</h1>
+        <div className={styles.mobileTitleReadHost} hidden={!titleInHeader}
+          ref={(node) => { if (node !== null && mobileTitleReadHost.parentNode !== node) node.appendChild(mobileTitleReadHost); }} />
+        {track.isolation === 'none' && <ExplanationBadge label={NO_ISOLATION_LABEL}>{NO_ISOLATION_EXPLANATION}</ExplanationBadge>}
+        {!titleInHeader && <TrackClosedBadge closedAt={track.closedAt} />}
+        {!titleInHeader && <TrackAdminBadge adminGrantedAt={adminGrantedAt} />}
+        {/* The same indicator the rail paints. `unread` is `false` by construction: the page is the reader, and its receipt clears the moment it is visible. The mobile page head carries no indicator. */}
+        {!titleInHeader && <ActivityIndicator state={trackActivityState(track, false)} />}
+      </div>, titleContainer)}
+      {headerActionsHost !== null && mobileActions !== undefined && createPortal(mobileActions, headerActionsHost)}
+      {titleInHeader && !boardOpen ? null : <div className={styles.mobileTrackHeader}>
+        <MobileHeader
+          title={trackDisplayTitle(track.title)}
+          titleText={<TrackTitle track={track} />}
+          meta={<>{track.isolation === 'none' && <ExplanationBadge label={NO_ISOLATION_LABEL}>{NO_ISOLATION_EXPLANATION}</ExplanationBadge>}<TrackClosedBadge closedAt={track.closedAt} /><TrackAdminBadge adminGrantedAt={adminGrantedAt} /></>}
+          level={1}
+          backLabel={boardOpen ? 'Report' : mobileBackLabel}
+          onBack={boardOpen ? onCloseBoard : onMobileBack}
+          actions={headerActionsHost === null ? mobileActions : undefined}
+        />
+      </div>}
+
+      <div className={styles.workspace}>
+      <div
+        className={styles.content}
+        aria-hidden={boardOpen ? true : undefined}
+        inert={boardOpen}
+      >
+        <div className={styles.doc}>
+          {compactViewport && mobileReportIntro}
+          {compactViewport && panelContent !== undefined && <div className={styles.compactPanelContent}><PanelCard>{panelContent}</PanelCard></div>}
+          {report}
+        </div>
+
+        {/* `data-nc-panel` is how `app/shell` hides this while the conversation
+            drawer is open. */}
+        <aside
+          id="mobile-track-panel"
+          ref={mobilePanelRef}
+          className={`${styles.panel} ${mobilePanelOpen ? styles.mobilePanelOpen : styles.mobilePanelClosed}`}
+          data-nc-panel=""
+          data-nc-mobile-page={mobilePanelOpen ? 'open' : 'closed'}
+          /* Programmatically focusable only — the container is where focus
+             lands when the panel opens, never a Tab stop of its own. */
+          tabIndex={mobilePanelOpen ? -1 : undefined}
+        >
+          <LayerDepthProvider><div
+            className={styles.mobileListSurface}
+            /* The projection's root on this surface: the two surfaces are siblings in the DOM at the same time, so a whole-page scan would read them as one tree. */
+            data-nc-mobile-panel=""
+            aria-hidden={mobilePanelOpen && !(compactViewport && mobilePanelObscured) ? undefined : true}
+            inert={!mobilePanelOpen || (compactViewport && mobilePanelObscured)}
+          >
+            {mobilePanelOpen && (mobilePanelKind === 'outline' ? (
+              <MobileListPage
+                title="Outline"
+                backLabel="Report"
+                onBack={closeMobilePanel}
+              >
+                <MobileList>
+                  {outlineItems.flatMap((item) => [
+                    <MobileListItem
+                      key={item.blockId}
+                      title={item.label}
+                      meta={item.number === null ? undefined : String(item.number)}
+                      onSelect={() => {
+                        // The anchor navigation clears `?panel=` itself, so closing it here too would be two moves for one.
+                        onOpenOutline?.(item.blockId);
+                      }}
+                    />,
+                    ...item.children.map((child) => (
+                      <MobileListItem
+                        key={child.blockId}
+                        title={child.label}
+                        nested
+                        onSelect={() => {
+                          onOpenOutline?.(child.blockId);
+                        }}
+                      />
+                    )),
+                  ])}
+                </MobileList>
+              </MobileListPage>
+            ) : mobilePanelKind === 'conversations' ? (
+              <MobileListPage
+                title="Conversations"
+                backLabel="Report"
+                onBack={closeMobilePanel}
+              >
+                <div className={styles.mobileConversationList}>
+                  {conversationList ?? <EmptyState variant="compact" icon={<Icon name="chat" />} title="还没有对话" description="在这里发起的对话会显示在列表中。" />}
+                </div>
+              </MobileListPage>
+            ) : (
+              /* Every row module goes through `core/view`, in one branch: what is left of `MobilePanelKind` is exactly `RowModuleView['key']`. The four declaration words are deliberately not quoted anywhere in this file. */
+              paintMobileModule(mobilePainter, rowModule(panelView, mobilePanelKind))
+            ))}
+          </div></LayerDepthProvider>
+          <div
+            className={styles.desktopPanelSurface}
+            /* The projection's root on this surface; `.mobileListSurface` is a sibling in the DOM at the same time. */
+            data-nc-desktop-panel=""
+            aria-hidden={mobilePanelOpen ? true : undefined}
+            inert={mobilePanelOpen}
+          >
+          <PanelCard className={inventoryStyles.workCard}>
+            <ContextFrame>
+              {hasDesktopConversations && <ContextGroup title="Conversations"
+                actionVisibility="always" action={onStartConversation === undefined ? undefined : <ContextAction
+                  label="New conversation" icon="plus" onClick={onStartConversation} />}>
+                {desktopConversations}
+              </ContextGroup>}
+              {!compactViewport && panelContent !== undefined && <div className={inventoryStyles.panelContext}>{panelContent}</div>}
+              {paintDesktopPanel(desktopPainter, panelView.desktop)}
+              {!compactViewport && shareLinks}
+              {(recentFiles !== undefined || backlinks !== undefined) && <ContextGroup title="Related" collapsible>
+                <div className={inventoryStyles.relatedContent}>{recentFiles}{backlinks}</div>
+              </ContextGroup>}
+            </ContextFrame>
+          </PanelCard>
+          </div>
+        </aside>
+      </div>
+      {board}
+      </div>
+
+      {compactViewport && !conversationOpen && !mobilePanelObscured
+        && !boardOpen && !mobilePanelOpen && (mobileChatComposer !== undefined || onStartConversation !== undefined) && (
+        mobileChatComposer !== undefined ? <div className={styles.mobileReportChatDock} data-nc-mobile-report-chat="">
+          <div className={styles.mobileChatInput}>{mobileChatComposer}</div>
+        </div> : (
+        <AstryxButton
+          className={styles.mobileReportChatFab}
+          data-nc-mobile-report-chat=""
+          label="Chat"
+          variant="primary"
+          size="lg"
+          icon={<Icon name="chat" />}
+          onClick={onStartConversation}
+        />
+      ))}
+
+      <VisuallyHidden
+        role="status"
+        aria-label="Input notifications"
+        aria-live="polite"
+        aria-atomic="true"
+      >{notificationAnnouncement}</VisuallyHidden>
+
+      {inputNotifications.length > 0 && (
+        <aside
+          className={`${notificationStyles.needsInputNotice} ${noticePanelOpen
+            ? notificationStyles.needsInputNoticeExpanded
+            : notificationStyles.needsInputNoticeCompact} ${conversationOpen ? notificationStyles.needsInputNoticeBesideDrawer : ''}
+            ${hasTurnTimeout && !conversationOpen && !mobilePanelObscured ? notificationStyles.timeoutNotice : ''}`}
+          data-nc-needs-input-notice=""
+          data-nc-notification-mode={noticePanelOpen ? 'expanded' : 'compact'}
+          role="region"
+          aria-label="Notifications"
+        >
+          {noticePanelOpen ? (
+            <>
+              <span className={notificationStyles.needsInputNoticeHeader}>
+                <span className={notificationStyles.needsInputNoticeIcon}><Icon name="notification" size="sm" /></span>
+                <strong className={notificationStyles.needsInputNoticeTitle}>{hasTurnTimeout ? 'Notifications' : 'Waiting on you'}</strong>
+                <span className={notificationStyles.needsInputCount}>{inputNotifications.length}</span>
+                <button
+                  type="button"
+                  className={notificationStyles.needsInputCollapse}
+                  aria-label="Collapse notifications"
+                  title="Collapse notifications"
+                  onClick={() => setNoticeExpanded(false)}
+                ><Icon name="chevron-right" size="sm" /></button>
+              </span>
+              <ul className={notificationStyles.needsInputNoticeList}>
+                {inputNotifications.map((notification) => (
+                  <li
+                    key={notification.key}
+                    className={`${notificationStyles.notice} ${onReply === undefined ? '' : notificationStyles.noticeActionable}`}
+                    data-nc-notification-state={notification.kind}
+                  >
+                    {/* The whole row is the reply: a button stretched over it, so nothing interactive nests
+                        inside another; the × and the body's links sit above it. */}
+                    {onReply !== undefined && (
+                      <button
+                        type="button"
+                        className={notificationStyles.noticeOpen}
+                        aria-label={`${notificationAction(notification.kind).name}: ${notificationGist(notification.text)}`}
+                        onClick={onReply}
+                      />
+                    )}
+                    <span className={notificationStyles.noticeMeta}>
+                      <span
+                        className={`${notificationStyles.noticeDot} ${notification.kind === 'planner-down' ? notificationStyles.noticeDotDown
+                          : notification.kind === 'planner-turn-timeout' ? notificationStyles.noticeDotTimeout : notificationStyles.noticeDotAsk}`}
+                        aria-hidden="true"
+                      />
+                      {/* One slot, two spans: the label, and the row's action in its place while the row is hovered
+                          or focused. Stacked in one grid cell, so the swap does not move the time. */}
+                      <span className={notificationStyles.noticeLabel}>
+                        <span className={notificationStyles.noticeLabelText}>{NOTIFICATION_LABEL[notification.kind]}</span>
+                        {onReply !== undefined && (
+                          <span className={notificationStyles.noticeAction} aria-hidden="true">{notificationAction(notification.kind).hint}</span>
+                        )}
+                      </span>
+                      <time className={notificationStyles.noticeTime} dateTime={new Date(notification.atMs).toISOString()}>
+                        {relativeTime(notification.atMs, nowMs ?? Date.now())}
+                      </time>
+                    </span>
+                    {/* The kernel's words are markdown, rendered as the chat renders a reply. An ask is read whole;
+                        a failure is clamped, its full text is in the Planner conversation. */}
+                    <div className={`${notificationStyles.noticeBody} ${notification.kind === 'planner-down' ? notificationStyles.noticeBodyClamped : ''}`}>
+                      <Markdown density="compact" headingLevelStart={3}>{notification.text}</Markdown>
+                      {notification.kind === 'planner-turn-timeout' && <p className={notificationStyles.noticeTimestamp}>
+                        Recorded at <time dateTime={new Date(notification.atMs).toISOString()}>{new Date(notification.atMs).toISOString()}</time>
+                      </p>}
+                    </div>
+                    {onDismiss !== undefined && notification.action === undefined && NOTIFICATION_DISMISSABLE[notification.kind] && (
+                      <button
+                        type="button"
+                        className={notificationStyles.noticeDismiss}
+                        aria-label={`Dismiss: ${NOTIFICATION_LABEL[notification.kind]}: ${notificationGist(notification.text)}`}
+                        title="Dismiss"
+                        onClick={() => {
+                          void dismissFeedback.run(onDismiss(notification.key), writeFailureText(DISMISS_FAILURES, DISMISS_TEXT));
+                        }}
+                      ><Icon name="close" size="sm" /></button>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </>
+          ) : (
+            <button
+              type="button"
+              className={notificationStyles.needsInputLauncher}
+              data-nc-notification-launcher=""
+              aria-label={`Open ${inputNotifications.length} ${inputNotifications.length === 1 ? 'notification' : 'notifications'}`}
+              title="Open notifications"
+              onClick={() => setNoticeExpanded(true)}
+            >
+              <Icon name="notification" />
+              <span className={notificationStyles.needsInputIndicator} aria-hidden="true">{inputNotifications.length}</span>
+            </button>
+          )}
+        </aside>
+      )}
+
+      <DeleteConfirmDialog confirm={deletion} copy={DELETE_TRACK_COPY} />
+      {closedControl !== undefined && <OperationFeedback feedback={closedControl.feedback} />}
+      <OperationFeedback feedback={dismissFeedback} />
+    </section>
+  );
+}

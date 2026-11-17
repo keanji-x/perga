@@ -1,0 +1,282 @@
+import inventoryStyles from './inventory.module.css';
+import { EmptyState } from '../../../ui/empty-state/public.tsx';
+import { inventoryEmptyContent } from './empty-content.tsx';
+import { useRef } from 'react';
+import type { DialogOrigin } from '../../../ui/dialog/public.tsx';
+// The desktop track panel, painted from `core/view`'s panel view model.
+// A row or empty leaf is pending until its module says which module it lands in; a module leaf is finished.
+
+import { DropdownMenuItem } from '@astryxdesign/core/DropdownMenu';
+import { ContextGroup, ContextItem, ContextList } from '../../../ui/panel-card/context.tsx';
+import { ListText } from '../../../ui/list-typography/public.tsx';
+import { type ReactNode } from 'react';
+import { VisuallyHidden } from '@astryxdesign/core/VisuallyHidden';
+
+import { inventorySections, inventoryNeedsAttention, panelRowGroup, type InventoryGroupKey } from '../../../../../core/view/panel-groups.ts';
+import { InventoryGroups } from './inventory-groups.tsx';
+import { FIELD, MARKER, paintPanel } from '../../../../../core/view/panel.ts';
+import type {
+  ActionSupport, PanelRow, RowAction, RowModuleView, RowPainter, TrackPageView,
+} from '../../../../../core/view/panel.ts';
+import { executionActivityLabelOf, progressStatusLabel } from '../../../../../core/view/track-page.ts';
+import { activityLabelOf } from '../../../../../core/domain/activity.ts';
+import { PanelModule } from '../../../ui/panel-card/public.tsx';
+import { InventoryIcon, InventoryKind } from './inventory-kind.tsx';
+
+/** A row or an empty line, painted as far as it can be here; `paint` is called from `module()` and nowhere else. */
+type PendingLeaf = Readonly<{
+  slot: 'row' | 'empty';
+  needsAttention: (moduleKey: RowModuleView['key']) => boolean;
+  group: (moduleKey: RowModuleView['key']) => InventoryGroupKey;
+  paint: (moduleKey: RowModuleView['key']) => ReactNode;
+}>;
+
+/** A module, which needs nothing further. */
+type ModuleLeaf = Readonly<{ slot: 'module'; node: ReactNode }>;
+
+/** A tagged union: only a pending leaf ever needs a key, and it never reaches the top level. */
+export type DesktopLeaf = PendingLeaf | ModuleLeaf;
+
+export type DesktopPainterDeps = Readonly<{
+  progressDisclosure?: Readonly<{ open: boolean; onOpenChange: (open: boolean) => void }>;
+  /** Other contextual content already gives the card its visible empty state. */
+  suppressEmpty?: boolean;
+  onOpenCard?: (cardId: string) => void;
+  onOpenTask?: (blockId: string) => void;
+  onDeleteCard?: (cardId: string, origin: DialogOrigin) => void;
+  onSetWorkbench?: (cardId: string, inWorkbench: boolean) => void;
+  /** The Cards module head's `+`, composed by `app/router`; travels as an opaque node. */
+  cardsAction?: ReactNode;
+  /** Compact, already-derived progress for the Tasks module head. */
+  taskSummary?: string | null;
+  /** Related entry content composed by the host; belongs inside the tools section. */
+  cardEntries?: ReactNode;
+}>;
+
+/** One marker attribute, spelled from `MARKER` / `FIELD` so no name is retyped here. */
+const mark = (name: string, value: string): Readonly<Record<string, string>> => ({ [name]: value });
+
+/** What a painter needs from one of a row's actions. `null` when absent — never derived, or filtered by the capability table — and both mean draw no control. */
+type Control = Readonly<{
+  id: string;
+  label: string | null;
+  hint: string | null;
+  description: string | null;
+}>;
+
+function control(row: PanelRow, kind: RowAction['kind']): Control | null {
+  for (const action of row.actions) {
+    if (action.kind !== kind) continue;
+    return {
+      id: action.kind === 'reveal-block' ? action.blockId : action.cardId,
+      label: action.label,
+      hint: action.hint,
+      description: action.description,
+    };
+  }
+  return null;
+}
+
+/** `null` must emit no attribute at all: a second accessible name overrides a control's visible text (WCAG 2.5.3). */
+function wording(action: Control): Readonly<Record<string, string>> {
+  return {
+    ...(action.label === null ? {} : { 'aria-label': action.label }),
+    ...(action.hint === null ? {} : { title: action.hint }),
+    ...(action.description === null ? {} : { 'aria-description': action.description }),
+  };
+}
+
+/** Nonvisual metadata preserves the projection and accessible descriptions. */
+function rowMetadata(row: PanelRow, moduleKey: RowModuleView['key'], activityText: string | null): ReactNode {
+  return <VisuallyHidden data-nc-inventory-metadata="">
+    {row.activity !== null && <>
+      <span data-nc-activity={row.activity} aria-hidden="true" />
+      {activityText !== null && <span>{activityText}</span>}
+    </>}
+    {moduleKey === 'tasks' && row.status !== null && <span {...mark(MARKER.status, row.status.token)} title={row.status.phrase}
+      {...(moduleKey === 'tasks' ? { 'aria-hidden': true, 'data-nc-task-status-text': '' } : {})}>
+      {row.status.token}
+    </span>}
+    {row.badges.filter(badge => moduleKey !== 'cards' || badge.id !== 'task').map(badge => <ListText tone="secondary" key={badge.id}
+      className={badge.struck ? inventoryStyles.taskWithdrawn : undefined} aria-hidden={moduleKey === 'cards' ? true : undefined}
+      {...mark(MARKER.badge, badge.id)}>{badge.text}</ListText>)}
+  </VisuallyHidden>;
+}
+
+/** A Task row: the reveal button always reveals the block; the kind is the worker-card affordance. A `<button>` may not nest inside a `<button>`, so the row is a plain `<li>`; "the row reveals the block" is a CSS sheet (`.taskReveal::before`), not DOM containment. */
+function taskRow(row: PanelRow, deps: DesktopPainterDeps): ReactNode {
+  const reveal = control(row, 'reveal-block');
+  const open = control(row, 'open-card');
+  const revealControl = (
+    <button
+      type="button"
+      className={inventoryStyles.taskReveal}
+      {...(reveal === null ? {} : { ...mark(MARKER.action, 'reveal-block'), ...wording(reveal) })}
+      onClick={reveal === null ? undefined : () => deps.onOpenTask?.(reveal.id)}
+    >
+      <ListText tone="primary" className={inventoryStyles.taskKey} {...mark(MARKER.field, FIELD.title)}>{row.title}</ListText>
+      {rowMetadata(row, 'tasks', row.activity === null ? null : activityLabelOf(row.activity))}
+    </button>
+  );
+  return (
+    <li key={row.id} className={inventoryStyles.taskRow} {...mark(MARKER.row, row.id)}>
+      {revealControl}
+      {/* `title` describes the destination without touching the accessible name, which stays the visible word (WCAG 2.5.3). */}
+      {row.kind !== null && (open === null
+        ? <ListText tone="secondary" className={inventoryStyles.taskKind} title={row.kind} {...mark(MARKER.field, FIELD.kind)}><InventoryKind kind={row.kind} /></ListText>
+        : (
+          <ListText as="button" tone="secondary"
+            className={inventoryStyles.taskKindButton}
+            {...mark(MARKER.field, FIELD.kind)}
+            {...mark(MARKER.action, 'open-card')}
+            {...wording(open)}
+            onClick={() => deps.onOpenCard?.(open.id)}
+          >
+            <InventoryKind kind={row.kind} />
+          </ListText>
+        ))}
+    </li>
+  );
+}
+
+/** Shared contextual task/tool row; source and execution destinations stay distinct. */
+function ContextRow({ row, deps }: { row: PanelRow; deps: DesktopPainterDeps }) {
+  const sourceRef = useRef<HTMLLIElement | null>(null);
+  const reveal = control(row, 'reveal-block');
+  const open = control(row, 'open-card');
+  const primary = reveal ?? open;
+  const isTask = reveal !== null;
+  const secondary = row.actions.filter(action => action.kind !== (isTask ? 'reveal-block' : 'open-card'));
+  const icon = row.kind === null ? (isTask ? 'tasks' : 'file') : <InventoryIcon kind={row.kind} />;
+  const statusLabel = progressStatusLabel(row);
+  const attention = !isTask && (row.activity === 'attention' || row.activity === 'failed') ? activityLabelOf(row.activity) : null;
+  const detail = [row.title, row.kind, row.status?.phrase, executionActivityLabelOf(row.activity)].filter(Boolean).join(' · ');
+  return <li ref={sourceRef} key={row.id} title={detail} {...mark(MARKER.row, row.id)}>
+    <ContextItem icon={icon} label={<span className={row.badges.some(badge => badge.struck) ? inventoryStyles.taskWithdrawn : undefined}
+        {...mark(MARKER.field, FIELD.title)}>{row.title}</span>}
+      trailing={statusLabel === null && attention === null ? undefined : <ListText tone="secondary">
+        {statusLabel}{statusLabel !== null && attention !== null ? ' · ' : null}{attention !== null && <span>{attention}</span>}
+      </ListText>}
+      metadata={<>
+        {row.kind !== null && <VisuallyHidden aria-hidden="true" {...mark(MARKER.field, FIELD.kind)}>{row.kind}</VisuallyHidden>}
+        {rowMetadata(row, isTask ? 'tasks' : 'cards', executionActivityLabelOf(row.activity))}
+        {!isTask && row.status !== null && <VisuallyHidden><span aria-hidden="true" {...mark(MARKER.status, row.status.token)} title={row.status.phrase}>{row.status.token}</span></VisuallyHidden>}
+        {!isTask && row.badges.filter(badge => badge.id === 'task').map(badge => <VisuallyHidden key={badge.id} {...mark(MARKER.badge, badge.id)}>{badge.text}</VisuallyHidden>)}
+      </>}
+      buttonProps={{ ...(primary === null ? {} : { ...mark(MARKER.action, isTask ? 'reveal-block' : 'open-card'), ...wording(primary) }),
+        onClick: primary === null ? undefined : () => isTask ? deps.onOpenTask?.(primary.id) : deps.onOpenCard?.(primary.id) }}
+      menuLabel={`Actions for ${row.title}`}
+      menu={secondary.length === 0 ? undefined : secondary.map(action => {
+        const target = control(row, action.kind)!;
+        const text = action.label ?? (action.kind === 'open-card' ? 'View execution' : 'Remove tool');
+        return <DropdownMenuItem key={action.kind} label={<span {...mark(MARKER.action, action.kind)} {...wording(target)}>{text}</span>}
+          variant={action.kind === 'delete-card' ? 'destructive' : 'default'}
+          onClick={() => action.kind === 'delete-card' ? deps.onDeleteCard?.(target.id, { kind: 'anchor', anchor: { ref: sourceRef }, unavailable: 'surface-center' })
+            : action.kind === 'set-workbench' ? deps.onSetWorkbench?.(target.id, action.inWorkbench)
+            : deps.onOpenCard?.(target.id)} />;
+      })} />
+  </li>;
+}
+
+/** The desktop panel's painter, rebuilt per render: `delete-card` support is `onDeleteCard !== undefined`, a fact about this render. `open-card` and `reveal-block` are drawn with or without a callback. */
+export function makeDesktopPainter(deps: DesktopPainterDeps): RowPainter<DesktopLeaf> {
+  const deleteSupport: ActionSupport = deps.onDeleteCard === undefined
+    ? { supported: false, why: 'the host passed no onDeleteCard, so this render offers no delete' }
+    : { supported: true };
+
+  return {
+    action: {
+      'reveal-block': { supported: true },
+      'open-card': { supported: true },
+      'delete-card': deleteSupport,
+      'set-workbench': deps.onSetWorkbench === undefined
+        ? { supported: false, why: 'the host did not provide terminal placement mutation' } : { supported: true },
+    },
+
+    row: (row) => ({
+      slot: 'row',
+      needsAttention: key => inventoryNeedsAttention(row, key),
+      group: (key) => panelRowGroup(row, key),
+      paint: (moduleKey) => moduleKey === 'tasks' ? taskRow(row, deps) : <ContextRow key={row.id} row={row} deps={deps} />,
+    }),
+
+    empty: (text) => ({
+      slot: 'empty',
+      needsAttention: () => false,
+      group: () => 'other',
+      paint: (key) => <EmptyState key="empty" variant="compact" titleFieldMarker={FIELD.empty} {...inventoryEmptyContent(key, text)} />,
+    }),
+
+    module: (parts) => {
+      const children = () => parts.children.map((leaf) => finish(leaf, parts.key));
+      const rows = parts.children.every((leaf) => leaf.slot === 'row');
+      const module = parts.key === 'work' ? <PanelModule key={parts.key} title={parts.title} bare
+        moduleMarker={parts.key} titleFieldMarker={FIELD.moduleTitle}>
+        <div data-nc-work-inventory="">
+          {!rows
+            ? (deps.suppressEmpty ? <VisuallyHidden>{children()}</VisuallyHidden> : children())
+            : <ContextGroup title={parts.title} collapsible {...deps.progressDisclosure}>
+              {open => open ? <ContextList aria-label="Execution progress">{children()}</ContextList> : null}
+            </ContextGroup>}
+        </div>
+      </PanelModule> : (parts.key === 'cards' || parts.key === 'temporary') ? <PanelModule key={parts.key} title={parts.title} bare
+        moduleMarker={parts.key} titleFieldMarker={FIELD.moduleTitle}>
+        <ContextGroup title={parts.title} collapsible="controls" open={parts.key === 'cards'} secondaryAction={parts.key === 'cards' ? deps.cardsAction : undefined} actionVisibility="always">
+          {open => open ? <>
+            <div {...(parts.key === 'cards' ? { 'data-nc-card-inventory': '' } : {})}>{rows ? <ContextList aria-label={parts.key === 'cards' ? 'Workbench tools' : 'Temporary terminals'}>{children()}</ContextList> : children()}</div>
+            {parts.key === 'cards' ? deps.cardEntries : undefined}
+          </> : null}
+        </ContextGroup>
+      </PanelModule> : (
+        <PanelModule
+          key={parts.key}
+          title={parts.title}
+          revealActions
+          action={deps.taskSummary
+              ? <ListText tone="count" className={inventoryStyles.taskSummary} title={deps.taskSummary}>{deps.taskSummary}</ListText>
+              : undefined}
+          moduleMarker={parts.key}
+          titleFieldMarker={FIELD.moduleTitle}
+        >
+          <div data-nc-task-inventory="">
+          {!rows ? children() : <InventoryGroups
+            groups={inventorySections(parts.children, leaf => {
+              if (leaf.slot === 'module') throw new Error('Nested inventory module');
+              return leaf.group(parts.key);
+            }, leaf => leaf.slot !== 'module' && leaf.needsAttention(parts.key))}
+            noun="task"
+            renderRows={leaves => <ul className={inventoryStyles.tasks}>{leaves.map(leaf => finish(leaf, parts.key))}</ul>}
+          />}
+          </div>
+        </PanelModule>
+      );
+      return {
+        slot: 'module',
+        node: parts.key === 'work' && !rows && deps.suppressEmpty
+          ? <VisuallyHidden key={parts.key} as="div" aria-hidden="true">{module}</VisuallyHidden>
+          : module,
+      };
+    },
+  };
+}
+
+/** Resolve one of a module's children against the module it landed in. A module leaf here means the traversal changed shape, so it throws. */
+function finish(leaf: DesktopLeaf, moduleKey: RowModuleView['key']): ReactNode {
+  if (leaf.slot === 'module') {
+    throw new Error(`paintModule handed the ${moduleKey} module a module leaf as a child`);
+  }
+  return leaf.paint(moduleKey);
+}
+
+/** `paintPanel`, unwrapped into nodes the page can render. It reads no key, so it cannot re-bind one to the view's order. */
+export function paintDesktopPanel(
+  painter: RowPainter<DesktopLeaf>,
+  view: TrackPageView,
+): readonly ReactNode[] {
+  return paintPanel(painter, view).map((leaf) => {
+    if (leaf.slot !== 'module') {
+      throw new Error(`paintPanel returned a ${leaf.slot} leaf where a module was due`);
+    }
+    return leaf.node;
+  });
+}

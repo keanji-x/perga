@@ -1,0 +1,173 @@
+{
+  "manifest_version": 5,
+  "id": "archive",
+  "version": "0.4.0",
+  "min_kernel_version": "0.0.1",
+  "display_name": "Research archive",
+  "description": "Read-only access to the point-in-time Longbridge archive (#2575): the capture's health, and archived values as of a past moment. The capture runs outside Neige as a systemd timer; this plugin only reads the archive and the capture's last exit, never the token, and never calls Longbridge.",
+  "entrypoint": {
+    "command": "bin/research-archive-plugin"
+  },
+  "planner_instructions": "This read-only plugin exposes the Longbridge archive; a separate systemd timer captures it. plugin_archive_capture_status reports Core health: ok, attention or failing. Core is the original eight endpoints; snapshots, financial reports, calendar and bars are Supplemental. Show both tiers in Reports. Supplemental quota/auth failures, timeouts and gaps never require an owner question. Overall run outcome can remain open/partial after Core completes. For failing Core/host health, ask the owner with neige_user_ask, quoting the reasons, and repeat only when reasons change. For attention, disclose weaker/lost data in the Report without asking. plugin_archive_capture_watch on:true keeps this Track's live archive.status table, rendered with source neige://plugin/archive/archive.status; on:false removes it. plugin_archive_read_at returns the latest successful fetch at/before at, narrowed by a JSON pointer; call twice to compare moments. Original six endpoints began capture 2026-10-13 UTC for trading day 2026-10-12; annual and new endpoint history starts only with their own captures. Never infer archive history from a fiscal period or trade date. No successful fetch yields no_value; never planned yields not_archived. Calendar uses market:US; other endpoints use symbol. Financial reports are summaries: do not invent missing TBVPS, finance-lease additions or segment revenue. Align stock/benchmark bars by explicit trade_date; never substitute an older benchmark session. Calendar reported_counts are provider statistics, not returned-event cardinality; variants may normalize. Group dates are upstream labels and can differ from ext.local_date/datetime; do not infer NY earnings timing from group keys.",
+  "exposes_tools": [
+    {
+      "name": "capture_status",
+      "description": "Read archive health and recent capture outcomes. Core coverage drives health. Supplemental coverage is reported separately.",
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "annotations": {
+        "title": "Archive status",
+        "readOnlyHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "read_at",
+      "description": "Read the latest successful archived value for each symbol and endpoint at or before at, using a JSON pointer. value includes the trading day and fetch time. Distinguish not_archived, no_value and pointer_missing. Select narrow pointers to stay within 40 KiB. For finance_calendar, use market=US and /days/YYYY-MM-DD/SYMBOL. Calendar coverage follows provider labels. Align daily candlesticks by trade_date.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "The moment to read at: an RFC 3339 time with an offset, such as 2026-10-13T16:00:00-04:00."
+          },
+          "reads": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 12,
+            "items": {
+              "type": "object",
+              "properties": {
+                "symbol": {
+                  "type": "string",
+                  "description": "The security symbol as archived, such as NVDA.US."
+                },
+                "endpoint": {
+                  "type": "string",
+                  "enum": [
+                    "consensus",
+                    "forecast_eps",
+                    "rating_latest",
+                    "ratings",
+                    "rating_detail",
+                    "valuation",
+                    "consensus_annual",
+                    "earnings_snapshot",
+                    "financial_reports",
+                    "finance_calendar",
+                    "daily_candlesticks"
+                  ],
+                  "description": "The archived Longbridge endpoint."
+                },
+                "pointer": {
+                  "type": "string",
+                  "description": "An RFC 6901 JSON pointer into the body, such as /target/highest_price; \"\" for the whole body."
+                },
+                "market": {
+                  "type": "string",
+                  "enum": [
+                    "US"
+                  ],
+                  "description": "Market target for finance_calendar; omit symbol."
+                }
+              },
+              "required": [
+                "endpoint",
+                "pointer"
+              ],
+              "additionalProperties": false,
+              "oneOf": [
+                {
+                  "required": [
+                    "symbol"
+                  ],
+                  "not": {
+                    "required": [
+                      "market"
+                    ]
+                  }
+                },
+                {
+                  "required": [
+                    "market"
+                  ],
+                  "not": {
+                    "required": [
+                      "symbol"
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        },
+        "required": [
+          "at",
+          "reads"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "title": "Archive values at a time",
+        "readOnlyHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "capture_watch",
+      "description": "Start or stop the live archive status table in this Track. Stopping removes the table.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "on": {
+            "type": "boolean",
+            "description": "true to show the table on this Track, false to remove it"
+          }
+        },
+        "required": [
+          "on"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "title": "Watch archive status",
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "openWorldHint": false
+      }
+    }
+  ],
+  "permissions": {
+    "overlays_write": [
+      "track"
+    ],
+    "kv_quota_bytes": 16384
+  },
+  "config_schema": {
+    "type": "object",
+    "properties": {
+      "data_dir": {
+        "type": "string",
+        "description": "Absolute path of the capture job's data dir (its config's data_dir). The plugin reads archive.sqlite3 read-only and last_exit.json there, and nothing else."
+      },
+      "poll_seconds": {
+        "type": "integer",
+        "default": 60,
+        "description": "Seconds between status reads for watching Tracks (10 to 3600)."
+      },
+      "stale_after_minutes": {
+        "type": "integer",
+        "default": 90,
+        "description": "Minutes after the last recorded capture exit at which the status says the timer is not starting the capture (60 to 2880). It must exceed 30 (the timer's interval) plus the capture's attempt_timeout_minutes, with a margin: a start can hold the lock that long, and a start that finds the lock held records nothing. The default 90 fits attempt_timeout_minutes up to about 45."
+      }
+    },
+    "required": [
+      "data_dir"
+    ],
+    "additionalProperties": false
+  }
+}

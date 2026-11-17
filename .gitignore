@@ -1,0 +1,45 @@
+# .NET / C#
+bin/
+obj/
+TestResults/
+*.user
+*.suo
+.vs/
+
+# Rust
+/target/
+**/target/
+plugins/*/bin/
+
+# Frontend / Node
+node_modules/
+**/node_modules/
+fe/web/dist/
+.vite/
+playwright-report/
+test-results/
+.vitest-attachments/
+__screenshots__/
+**/*.tsbuildinfo
+fe/core/api/generated/openapi.json.tmp
+
+# Python caches (plugins)
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Runtime SQLite & Cold Blobs
+*.db
+*.db-wal
+*.db-shm
+*.db.bak-*
+/blobs/
+
+# Env / OS / Local agent state
+.env
+.env.local
+.DS_Store
+.idea/
+.vscode/
+*.swp
+.claude/

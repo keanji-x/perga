@@ -1,0 +1,219 @@
+import { prepareReportDocument } from '../../features/report/document/preparation.ts';
+// @vitest-environment jsdom
+// Settings › Plugins › add and remove over the real router and transport: a blank
+// credential is an absent key, not an empty string, and the kernel refuses an empty one.
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { RouterProvider, createMemoryHistory } from '@tanstack/react-router';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import type { ApiRequest, ApiTransportPort, ApiTransportResponse } from '../../../../core/api/types.ts';
+import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
+import { createAppRouter } from '../router/public.tsx';
+import { bootTestCardRuntime } from '../router/test-card-runtime.ts';
+import { ThemeProvider } from '../theme/public.tsx';
+
+const unauthorized = createUnauthorizedChannel({ enqueue: (task) => task() });
+
+beforeEach(() => {
+  vi.stubGlobal('matchMedia', vi.fn(() => ({
+    matches: false,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+  })));
+});
+
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
+
+const ROW = {
+  id: 'todo',
+  version: '0.1.0',
+  enabled: false,
+  state: 'disabled',
+  manifest_name: 'Todo',
+  has_config: false,
+  can_uninstall: true, can_disable: true,
+};
+
+type Reply = (request: ApiRequest) => ApiTransportResponse;
+
+function renderPlugins(reply: Reply) {
+  const calls: ApiRequest[] = [];
+  const transport: ApiTransportPort = {
+    send(request): Promise<ApiTransportResponse> {
+      calls.push(request);
+      return Promise.resolve(reply(request));
+    },
+  };
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const router = createAppRouter({ prepareReport: prepareReportDocument,
+    transport, unauthorized, client, cards: bootTestCardRuntime(), onSignOut: () => undefined,
+  });
+  router.update({ history: createMemoryHistory({ initialEntries: ['/settings/plugins'] }) });
+  render(
+    <QueryClientProvider client={client}>
+      <ThemeProvider storage={{ getItem: () => null, setItem: () => undefined }}>
+        <RouterProvider router={router} />
+      </ThemeProvider>
+    </QueryClientProvider>,
+  );
+  return calls;
+}
+
+const ok = (body: unknown): ApiTransportResponse => ({ status: 200, statusText: 'OK', body });
+
+async function type(label: string, value: string) {
+  await userEvent.type(await screen.findByLabelText(label), value);
+}
+
+describe('Settings › Plugins › add, end to end', () => {
+  it('posts the connector the operator described, credential and placement together', async () => {
+    const calls = renderPlugins((request) => {
+      if (request.path === '/api/plugins') return ok([]);
+      if (request.path === '/api/settings') return ok({ settings: {} });
+      if (request.path === '/api/plugins/install') {
+        return { status: 201, statusText: 'Created', body: { id: 'com.example.zhibao', enabled: false } };
+      }
+      return ok([]);
+    });
+
+    await userEvent.click(await screen.findByText('Add a plugin'));
+    fireEvent.change(screen.getByLabelText('MCP configuration'), { target: { value: JSON.stringify({
+      name: 'Zhibao', url: 'https://mcp.wisburg.com/mcp', headers: { Authorization: 'Bearer sk-live-credential' },
+    }) } });
+    await userEvent.click(screen.getByRole('button', { name: 'Advanced settings' }));
+    await userEvent.clear(screen.getByLabelText('Id'));
+    await type('Id', 'com.example.zhibao');
+    await userEvent.click(screen.getByRole('combobox', { name: 'Tool access' }));
+    await userEvent.click(await screen.findByRole('option', { name: 'Selected tools' }));
+    await type('Tools', 'list-articles, get-article-detail');
+    await userEvent.click(screen.getByRole('button', { name: 'Add plugin' }));
+
+    await waitFor(() => {
+      expect(calls.some((call) => call.path === '/api/plugins/install')).toBe(true);
+    });
+    const install = calls.find((call) => call.path === '/api/plugins/install');
+    expect(install?.method).toBe('POST');
+    expect(install?.body).toEqual({
+      source: {
+        kind: 'mcp_http_v2',
+        id: 'com.example.zhibao',
+        display_name: 'Zhibao',
+        url: 'https://mcp.wisburg.com/mcp',
+        tools_allow: ['list-articles', 'get-article-detail'],
+        headers: { Authorization: 'Bearer sk-live-credential' },
+      },
+    });
+    await screen.findByText('Add a plugin');
+  });
+
+  it('omits the credential entirely for a server that needs none', async () => {
+    const calls = renderPlugins((request) => {
+      if (request.path === '/api/plugins') return ok([]);
+      if (request.path === '/api/settings') return ok({ settings: {} });
+      if (request.path === '/api/plugins/mcp/check') return ok({ tools: ['search'] });
+      if (request.path === '/api/plugins/install') {
+        return { status: 201, statusText: 'Created', body: { id: 'open', enabled: false } };
+      }
+      return ok([]);
+    });
+
+    await userEvent.click(await screen.findByText('Add a plugin'));
+    fireEvent.change(screen.getByLabelText('MCP configuration'), { target: { value: '{"url":"https://open.example.com/mcp"}' } });
+    await userEvent.click(screen.getByRole('button', { name: 'Check connection' }));
+    expect((await screen.findByRole('status', { name: 'Connection check' })).textContent).toContain('1 tools discovered');
+    expect(calls.some((call) => call.path === '/api/plugins/install')).toBe(false);
+    await userEvent.click(screen.getByRole('button', { name: 'Add plugin' }));
+
+    await waitFor(() => {
+      expect(calls.some((call) => call.path === '/api/plugins/install')).toBe(true);
+    });
+    const source = (calls.find((call) => call.path === '/api/plugins/install')
+      ?.body as { source: Record<string, unknown> }).source;
+    expect('api_key' in source).toBe(false);
+    expect('api_key_in' in source).toBe(false);
+    expect('tools_allow' in source).toBe(false);
+    expect(source.tools_all).toBe(true);
+    const configuration = { ...source };
+    delete configuration.kind;
+    expect(calls.find((call) => call.path === '/api/plugins/mcp/check')?.body).toEqual(configuration);
+  });
+
+  it('installs a server directory by path', async () => {
+    const calls = renderPlugins((request) => {
+      if (request.path === '/api/plugins') return ok([]);
+      if (request.path === '/api/settings') return ok({ settings: {} });
+      if (request.path === '/api/plugins/install') {
+        return { status: 201, statusText: 'Created', body: { id: 'todo', enabled: false } };
+      }
+      return ok([]);
+    });
+
+    await userEvent.click(await screen.findByText('Add a plugin'));
+    await userEvent.click(screen.getByRole('combobox', { name: 'Source' }));
+    await userEvent.click(await screen.findByRole('option', { name: 'Server directory' }));
+    await type('Directory path', '/srv/neige/plugins/todo');
+    await userEvent.click(screen.getByRole('button', { name: 'Add plugin' }));
+
+    await waitFor(() => {
+      expect(calls.some((call) => call.path === '/api/plugins/install')).toBe(true);
+    });
+    expect(calls.find((call) => call.path === '/api/plugins/install')?.body).toEqual({
+      source: { kind: 'local_path', path: '/srv/neige/plugins/todo' },
+    });
+  });
+
+  it('shows the kernel’s refusal without leaving the form', async () => {
+    renderPlugins((request) => {
+      if (request.path === '/api/plugins') return ok([]);
+      if (request.path === '/api/settings') return ok({ settings: {} });
+      if (request.path === '/api/plugins/install') {
+        return {
+          status: 409,
+          statusText: 'Conflict',
+          /* The kernel's own `ErrorBody`: the sentence is `error`, the code is `code`. */
+          body: { error: 'plugin `todo` already installed at version `0.1.0`', code: 'plugin_conflict' },
+        };
+      }
+      return ok([]);
+    });
+
+    await userEvent.click(await screen.findByText('Add a plugin'));
+    fireEvent.change(screen.getByLabelText('MCP configuration'), { target: { value: '{"url":"https://mcp.example.com/mcp","name":"Todo"}' } });
+    await userEvent.click(screen.getByRole('button', { name: 'Advanced settings' }));
+    await userEvent.clear(screen.getByLabelText('Id'));
+    await type('Id', 'todo');
+    await userEvent.click(screen.getByRole('button', { name: 'Add plugin' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('already installed');
+    expect(screen.getByLabelText<HTMLInputElement>('Id').value).toBe('todo');
+  });
+});
+
+describe('Settings › Plugins › remove, end to end', () => {
+  it('deletes once the question is answered, and re-reads the list', async () => {
+    let installed = [ROW];
+    const calls = renderPlugins((request) => {
+      if (request.path === '/api/plugins') return ok(installed);
+      if (request.path === '/api/settings') return ok({ settings: {} });
+      if (request.path === '/api/plugins/todo' && request.method === 'DELETE') {
+        installed = [];
+        return { status: 204, statusText: 'No Content', body: null };
+      }
+      return ok([]);
+    });
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Remove Todo' }));
+    expect(calls.some((call) => call.method === 'DELETE')).toBe(false);
+    await userEvent.click(within(screen.getByRole('dialog', { name: 'Remove Todo?' })).getByRole('button', { name: 'Remove plugin' }));
+
+    await screen.findByText('还没有添加插件');
+    const deletes = calls.filter((call) => call.method === 'DELETE');
+    expect(deletes.map((call) => call.path)).toEqual(['/api/plugins/todo']);
+  });
+});

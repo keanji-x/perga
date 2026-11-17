@@ -1,0 +1,377 @@
+import { describe, expect, it } from 'vitest';
+import { z } from 'zod';
+
+import { performApiRequest } from '../api/client.js';
+import type { ApiFailure } from '../api/types.js';
+import {
+  CONVERSATION_CREATE_FAILURES, PLANNER_ATTACHMENT_FAILURES, PLANNER_MODEL_FAILURES, PLANNER_QUEUE_WRITE_FAILURES,
+} from './conversation.js';
+import { SEND_FAILURES } from './conversation-delivery.js';
+import { PLANNER_INTERRUPT_FAILURES } from './conversation-stop.js';
+import { PLANNER_RESTART_FAILURES } from './conversation-restart.js';
+import { AREA_CREATE_FAILURES, AREA_PATCH_FAILURES } from './area.js';
+import { DISMISS_FAILURES } from './activity.js';
+import { READ_RECEIPT_FAILURES } from './read-receipts.js';
+import { ANSWER_ASK_FAILURES } from './ask.js';
+import {
+  ApiError, classifyFailure, DELETE_FAILURES, DELETE_TEXT, failureReason, NotSentError, refusalText, refusedText, writeClassOf,
+  writeFailureText,
+  type FailureTable,
+} from './failure-class.js';
+import {
+  PLUGIN_CONFIG_FAILURES, PLUGIN_CONFIG_RESET_OFFERS, PLUGIN_INSTALL_FAILURES, PLUGIN_INSTALL_RETRY_FAILURES,
+  PLUGIN_RELOAD_BEFORE_STOP, PLUGIN_RELOAD_FAILURES, PLUGIN_TOGGLE_FAILURES, PLUGIN_UNINSTALL_FAILURES,
+} from './plugins.js';
+import { SETTINGS_FAILURES } from './settings.js';
+import { PROBE_FAILURES } from './read-failure.js';
+import { CARD_CREATE_FAILURES, TRACK_CREATE_FAILURES, TRACK_PATCH_FAILURES } from './track.js';
+
+const http = (status: number, code = 'http_error', message = 'answered'): ApiFailure =>
+  ({ kind: 'http', status, code, message, body: { error: message, code } });
+const unauthorized: ApiFailure = { kind: 'unauthorized', status: 401, code: 'unauthorized', message: 'signed out' };
+const transport: ApiFailure = { kind: 'transport', message: 'dropped' };
+const decode: ApiFailure = { kind: 'decode', message: 'malformed' };
+
+/** Each route table against every failure kind: 401, each listed status and code, a lost answer, an unreadable one, none. */
+const cases: ReadonlyArray<readonly [string, FailureTable<string>, ReadonlyArray<readonly [ApiFailure | null, string]>]> = [
+  ['POST /planner/input', SEND_FAILURES, [
+    /* A refusal of the body or the card: the same send would be refused again (#2068). */
+    [http(400), 'refused'], [http(403), 'refused'], [http(404), 'refused'], [http(413), 'refused'], [http(422), 'refused'],
+    /* Answered before handling, for a reason that can pass: the same send may be tried again. */
+    [http(429), 'rejected'], [unauthorized, 'rejected'],
+    /* #2192: a refusal whose way out is a fresh session, told apart by its code. */
+    [http(409, 'planner_harness_dormant'), 'dormant'], [http(409, 'planner_harness_runtime_superseded'), 'refused'],
+    /* An Edit's replace refused before any write (#2043): final, the server's reason is shown. */
+    [http(409, 'planner_turn_not_replaceable'), 'refused'],
+    /* A key bound to another message can never be stored or replayed (#2068): final. */
+    [http(409, 'idempotency_key_reused'), 'refused'], [http(400, 'idempotency_key_invalid'), 'refused'],
+    /* Another request under the key was stored at that moment: a retry replays its answer. */
+    [http(409, 'idempotency_key_concurrent'), 'unknown'],
+    /* The code decides before the status: an answer naming one of these never wrote. */
+    [http(400, 'planner_harness_dormant'), 'dormant'],
+    [http(409, 'conflict'), 'unknown'], [http(408), 'unknown'], [http(500), 'unknown'], [http(502), 'unknown'],
+    [http(503, 'service_unavailable'), 'unknown'], [http(504), 'unknown'],
+    [transport, 'unknown'], [decode, 'unknown'], [null, 'unknown'],
+  ]],
+  ['DELETE / POST …/steer on a queued entry', PLANNER_QUEUE_WRITE_FAILURES, [
+    [http(409, 'planner_input_stale'), 'stale'], [http(404, 'not_found'), 'gone'],
+    [http(409, 'planner_steer_no_running_turn'), 'not_running'], [http(409, 'planner_steer_unknown_outcome'), 'unanswered'],
+    /* A code is read only with the status it comes with. */
+    [http(500, 'planner_steer_unknown_outcome'), 'failed'], [http(404, 'planner_input_stale'), 'gone'],
+    [http(409, 'conflict'), 'failed'], [http(400), 'failed'], [unauthorized, 'failed'],
+    [transport, 'failed'], [decode, 'failed'], [null, 'failed'],
+  ]],
+  ['POST /tracks/{id}/conversations', CONVERSATION_CREATE_FAILURES, [
+    [http(409, 'idempotency_key_exhausted'), 'exhausted'], [http(404, 'not_found'), 'gone'],
+    /* Raised after the card is minted: as ambiguous as a lost answer (#2131 S7). */
+    [http(503, 'service_unavailable'), 'retry'], [http(400, 'bad_request'), 'blocked'],
+    [http(409, 'idempotency_key_reused'), 'stale-payload'], [http(409, 'idempotency_key_concurrent'), 'retry'],
+    /* Told apart by the code alone: the wording of a `conflict` decides nothing. */
+    [http(409, 'conflict', 'Idempotency-Key already used with different payload'), 'exists'],
+    [http(409, 'conflict', 'card already exists'), 'exists'],
+    /* An invalid key can never be answered; a new one can. */
+    [http(400, 'idempotency_key_invalid'), 'exhausted'],
+    [http(500), 'retry'], [http(403), 'retry'], [unauthorized, 'retry'],
+    [transport, 'retry'], [decode, 'retry'], [null, 'retry'],
+  ]],
+  ['PUT /planner/model', PLANNER_MODEL_FAILURES, [
+    [http(400, 'bad_request'), 'refused'], [http(403, 'forbidden'), 'refused'], [http(404, 'not_found'), 'refused'],
+    [http(422), 'refused'], [unauthorized, 'refused'],
+    [http(409, 'conflict'), 'unknown'], [http(500, 'internal'), 'unknown'], [http(503, 'service_unavailable'), 'unknown'],
+    [transport, 'unknown'], [decode, 'unknown'], [null, 'unknown'],
+  ]],
+  ['POST /planner/interrupt', PLANNER_INTERRUPT_FAILURES, [
+    [http(403, 'forbidden'), 'refused'], [http(404, 'not_found'), 'refused'],
+    [http(409, 'planner_harness_dormant'), 'refused'], [unauthorized, 'refused'],
+    /* Only the dormant 409 is answered before a dispatch; any other may follow one. */
+    [http(409, 'conflict'), 'unknown'], [http(400), 'unknown'], [http(500, 'internal'), 'unknown'],
+    [http(503, 'service_unavailable'), 'unknown'],
+    [transport, 'unknown'], [decode, 'unknown'], [null, 'unknown'],
+  ]],
+  ['POST /planner/restart', PLANNER_RESTART_FAILURES, [
+    /* Answered before any session starts: the server's reason is shown. */
+    [http(400, 'bad_request'), 'refused'], [http(403, 'forbidden'), 'refused'], [http(404, 'not_found'), 'refused'],
+    [http(409, 'conflict'), 'refused'], [unauthorized, 'refused'],
+    /* May follow a started session: the run read after it says which. */
+    [http(500, 'internal'), 'unknown'], [http(503, 'service_unavailable'), 'unknown'],
+    [transport, 'unknown'], [decode, 'unknown'], [null, 'unknown'],
+  ]],
+  ['POST /planner/attachments', PLANNER_ATTACHMENT_FAILURES, [
+    [http(400, 'bad_request'), 'refused'], [http(403, 'forbidden'), 'refused'], [http(404, 'not_found'), 'refused'],
+    [http(413, 'payload_too_large'), 'refused'], [unauthorized, 'refused'],
+    [http(500, 'internal'), 'unknown'], [http(503, 'service_unavailable'), 'unknown'],
+    [transport, 'unknown'], [decode, 'unknown'], [null, 'unknown'],
+  ]],
+  ['POST /tracks', TRACK_CREATE_FAILURES, [
+    [http(409, 'idempotency_key_exhausted'), 'exhausted'],
+    /* A key bound to another create, or to one the server can no longer compare: final. */
+    [http(409, 'idempotency_key_reused'), 'key-reused'],
+    /* An invalid key can never mint; only a fresh key goes anywhere. */
+    [http(400, 'idempotency_key_invalid'), 'exhausted'], [http(400, 'bad_request'), 'rejected'],
+    [http(403, 'forbidden'), 'rejected'], [http(404, 'not_found'), 'rejected'], [http(422), 'rejected'],
+    [http(429), 'rejected'], [http(499), 'rejected'],
+    /* May follow a commit: the request and its key are kept. */
+    [http(409, 'idempotency_key_concurrent'), 'unconfirmed'], [http(409, 'conflict'), 'unconfirmed'],
+    [http(408), 'unconfirmed'], [http(500, 'internal'), 'unconfirmed'], [http(503, 'service_unavailable'), 'unconfirmed'],
+    [unauthorized, 'unconfirmed'], [transport, 'unconfirmed'], [decode, 'unconfirmed'], [null, 'unconfirmed'],
+  ]],
+  ['POST /areas', AREA_CREATE_FAILURES, [
+    /* No retry under the key can succeed: the next Create mints a new one (#2068). */
+    [http(409, 'idempotency_key_reused'), 'key-spent'], [http(400, 'idempotency_key_invalid'), 'key-spent'],
+    [http(409, 'idempotency_key_exhausted'), 'key-spent'],
+    [http(400, 'bad_request'), 'rejected'], [http(403), 'rejected'], [http(404), 'rejected'], [http(422), 'rejected'],
+    [http(429), 'rejected'], [unauthorized, 'rejected'],
+    /* A concurrent create or a lost answer: the request is kept for a retry. */
+    [http(409, 'conflict'), 'unconfirmed'], [http(409, 'idempotency_key_concurrent'), 'unconfirmed'],
+    [http(408), 'unconfirmed'], [http(500, 'internal'), 'unconfirmed'], [http(503, 'service_unavailable'), 'unconfirmed'],
+    [transport, 'unconfirmed'], [decode, 'unconfirmed'], [null, 'unconfirmed'],
+  ]],
+  /* #2131: the non-chat writes. */
+  ['DELETE by id (track, area, card, recipe)', DELETE_FAILURES, [
+    /* The row is gone: what a retry after an unknown answer meets. */
+    [http(404, 'not_found'), 'done'],
+    [http(403, 'forbidden'), 'refused'], [http(409, 'conflict'), 'refused'], [http(409, 'terminal_disposal'), 'refused'],
+    [unauthorized, 'refused'],
+    [http(400), 'unknown'], [http(500, 'db_error'), 'unknown'], [http(503), 'unknown'],
+    [transport, 'unknown'], [decode, 'unknown'], [null, 'unknown'],
+  ]],
+  ['PATCH /tracks/{id}', TRACK_PATCH_FAILURES, [
+    [http(400, 'bad_request'), 'refused'], [http(403, 'forbidden'), 'refused'], [http(404, 'not_found'), 'refused'],
+    [http(409, 'conflict'), 'refused'], [http(413), 'refused'], [http(422), 'refused'], [unauthorized, 'refused'],
+    [http(500, 'db_error'), 'unknown'], [http(503), 'unknown'],
+    [transport, 'unknown'], [decode, 'unknown'], [null, 'unknown'],
+  ]],
+  ['POST a card', CARD_CREATE_FAILURES, [
+    [http(400, 'bad_request'), 'refused'], [http(403, 'plugin_permission'), 'refused'], [http(404, 'not_found'), 'refused'],
+    [http(422, 'not_a_card_tool'), 'refused'], [unauthorized, 'refused'],
+    /* A key bound to another body, or one the server cannot store: final, the next intent mints a new key (#2131 S2). */
+    [http(409, 'idempotency_key_reused'), 'refused'], [http(400, 'idempotency_key_invalid'), 'refused'],
+    /* A create the kernel refused before its transaction committed (a Pending-phase failure, replayed under its key). */
+    [http(409, 'conflict'), 'refused'],
+    /* A create that failed for good under its key, or stopped before anything was made (#2131 S4, #2175). */
+    [http(500, 'operation_failed'), 'refused'],
+    /* A create that stopped part way and is never driven again: the card may exist, and the key replays the same. */
+    [http(500, 'operation_stuck'), 'stuck'],
+    /* A 5xx or a lost answer: the card may exist, so the key is kept. */
+    [http(409, 'idempotency_key_concurrent'), 'unknown'],
+    [http(500), 'unknown'], [http(502, 'tool_call_failed'), 'unknown'], [http(503, 'service_unavailable'), 'unknown'],
+    [transport, 'unknown'], [decode, 'unknown'], [null, 'unknown'],
+  ]],
+  ['PATCH /areas/{id}', AREA_PATCH_FAILURES, [
+    [http(400, 'bad_request'), 'refused'], [http(404, 'not_found'), 'refused'], [http(413), 'refused'],
+    [http(422), 'refused'], [unauthorized, 'refused'],
+    /* The server sends no 429; one would not be an answer this route documents. */
+    [http(403), 'unknown'], [http(429), 'unknown'], [http(500, 'db_error'), 'unknown'],
+    [transport, 'unknown'], [decode, 'unknown'], [null, 'unknown'],
+  ]],
+  ['POST /tracks/{id}/activity/dismissals', DISMISS_FAILURES, [
+    /* The track is gone, and its notification with it. */
+    [http(404, 'not_found'), 'done'],
+    [http(400, 'bad_request'), 'refused'], [http(403, 'forbidden'), 'refused'], [http(422), 'refused'],
+    [unauthorized, 'refused'],
+    [http(409), 'unknown'], [http(500), 'unknown'],
+    [transport, 'unknown'], [decode, 'unknown'], [null, 'unknown'],
+  ]],
+  /* #2596: idempotent receipt writes; a refusal is final, anything else may have stored it. */
+  ['POST /read-receipts/{kind}/{target_id}/read|unread', READ_RECEIPT_FAILURES, [
+    [http(400, 'bad_request'), 'refused'], [http(403, 'forbidden'), 'refused'], [http(422), 'refused'], [unauthorized, 'refused'],
+    [http(404), 'unknown'], [http(500), 'unknown'],
+    [transport, 'unknown'], [decode, 'unknown'], [null, 'unknown'],
+  ]],
+  ['POST /tracks/{id}/asks/{ask_id}/answer', ANSWER_ASK_FAILURES, [
+    /* Already answered, in another tab or by an earlier attempt whose answer was lost: no longer the reader's to answer. */
+    [http(409, 'conflict'), 'done'],
+    [http(400, 'bad_request'), 'refused'], [http(403, 'forbidden'), 'refused'], [http(404, 'not_found'), 'refused'],
+    [http(413), 'refused'], [http(415), 'refused'], [http(422), 'refused'], [unauthorized, 'refused'],
+    [http(500), 'unknown'], [http(503), 'unknown'],
+    [transport, 'unknown'], [decode, 'unknown'], [null, 'unknown'],
+  ]],
+  /* #2131 S6: Settings. `plugin_busy` touched nothing: a refusal with the kernel's reason. */
+  ['POST /plugins/{id}/enable|disable', PLUGIN_TOGGLE_FAILURES, [
+    [http(400, 'bad_request'), 'refused'], [http(404, 'not_found'), 'refused'], [http(409, 'plugin_busy'), 'refused'],
+    [http(409, 'plugin_conflict'), 'refused'], [http(422, 'plugin_kernel_too_old'), 'refused'], [unauthorized, 'refused'],
+    /* The enable landed and the plugin waits on its connector or a required key; its row shows why. */
+    [http(503, 'service_unavailable'), 'done'],
+    /* Any 500 may follow a partial change. */
+    [http(500, 'internal'), 'unknown'], [http(403), 'unknown'], [http(503), 'unknown'],
+    [transport, 'unknown'], [decode, 'unknown'], [null, 'unknown'],
+  ]],
+  ['DELETE /plugins/{id}', PLUGIN_UNINSTALL_FAILURES, [
+    [http(404, 'not_found'), 'done'],
+    [http(400, 'bad_request'), 'refused'], [http(409, 'plugin_busy'), 'refused'], [http(403), 'refused'], [unauthorized, 'refused'],
+    [http(500, 'internal'), 'unknown'], [transport, 'unknown'], [decode, 'unknown'], [null, 'unknown'],
+  ]],
+  ['POST /plugins/install, first attempt', PLUGIN_INSTALL_FAILURES, [
+    [http(400, 'plugin_install'), 'refused'], [http(409, 'plugin_conflict'), 'refused'], [http(409, 'plugin_busy'), 'refused'],
+    [http(409, 'plugin_dir_occupied'), 'refused'], [http(413), 'refused'], [http(415), 'refused'], [http(422, 'plugin_kernel_too_old'), 'refused'], [unauthorized, 'refused'],
+    [http(404), 'unknown'], [http(500, 'internal'), 'unknown'], [transport, 'unknown'], [decode, 'unknown'], [null, 'unknown'],
+  ]],
+  ['POST /plugins/install, after an unknown answer', PLUGIN_INSTALL_RETRY_FAILURES, [
+    /* "Already installed": the earlier attempt landed. Only that code; a busy 409 is still a refusal. */
+    [http(409, 'plugin_conflict'), 'done'], [http(409, 'plugin_busy'), 'refused'],
+    /* A directory the kernel did not write: nothing was installed, by this attempt or the earlier one. */
+    [http(409, 'plugin_dir_occupied'), 'refused'],
+    [http(400, 'plugin_install'), 'refused'], [http(422), 'refused'], [unauthorized, 'refused'],
+    [http(500, 'internal'), 'unknown'], [transport, 'unknown'], [decode, 'unknown'], [null, 'unknown'],
+  ]],
+  ['PATCH /plugins/{id}/config', PLUGIN_CONFIG_FAILURES, [
+    [http(400, 'bad_request'), 'refused'], [http(400, 'plugin_config_too_large'), 'refused'], [http(404, 'not_found'), 'refused'],
+    [http(409, 'plugin_busy'), 'refused'], [http(409, 'plugin_manifest_unloaded'), 'refused'],
+    [http(409, 'plugin_config_corrupt'), 'refused'], [http(413), 'refused'], [http(415), 'refused'], [http(422), 'refused'],
+    [unauthorized, 'refused'],
+    [http(500, 'db_error'), 'unknown'], [transport, 'unknown'], [decode, 'unknown'], [null, 'unknown'],
+  ]],
+  ['PATCH /plugins/{id}/config, the reset offer', PLUGIN_CONFIG_RESET_OFFERS, [
+    [http(409, 'plugin_config_corrupt'), 'reset'], [http(400, 'plugin_config_too_large'), 'reset'],
+    [http(409, 'plugin_manifest_unloaded'), 'none'], [http(400, 'bad_request'), 'none'], [http(409, 'plugin_busy'), 'none'],
+    [unauthorized, 'none'], [transport, 'none'], [decode, 'none'], [null, 'none'],
+  ]],
+  ['POST /plugins/{id}/reload', PLUGIN_RELOAD_FAILURES, [
+    [http(400, 'plugin_install'), 'refused'], [http(404, 'not_found'), 'refused'], [http(409, 'plugin_busy'), 'refused'],
+    [http(409, 'plugin_conflict'), 'refused'], [http(422, 'plugin_kernel_too_old'), 'refused'],
+    [http(503, 'service_unavailable'), 'refused'], [unauthorized, 'refused'],
+    [http(500, 'internal'), 'unknown'], [transport, 'unknown'], [decode, 'unknown'], [null, 'unknown'],
+  ]],
+  ['POST /plugins/{id}/reload, answered before the stop', PLUGIN_RELOAD_BEFORE_STOP, [
+    [http(404, 'not_found'), 'untouched'], [http(409, 'plugin_busy'), 'untouched'], [unauthorized, 'untouched'],
+    [http(409, 'plugin_conflict'), 'after-stop'], [http(400, 'plugin_install'), 'after-stop'], [http(422), 'after-stop'],
+    [http(503, 'service_unavailable'), 'after-stop'], [http(500, 'internal'), 'after-stop'],
+    [transport, 'after-stop'], [decode, 'after-stop'], [null, 'after-stop'],
+  ]],
+  ['PUT /settings', SETTINGS_FAILURES, [
+    /* The handler answers only 500; a 4xx is the extractor's, before anything was stored. */
+    [http(400), 'refused'], [http(413), 'refused'], [http(415), 'refused'], [http(422), 'refused'], [unauthorized, 'refused'],
+    [http(500, 'db_error'), 'unknown'], [http(503), 'unknown'], [transport, 'unknown'], [decode, 'unknown'], [null, 'unknown'],
+  ]],
+  /* #2131 S7: a read-only probe (Recheck, connector check); an answered failure carries the server's reason. A 401 is the
+     session's, not the probed server's: the probe never ran. */
+  ['GET /agent-providers?refresh=true, POST /plugins/mcp/check', PROBE_FAILURES, [
+    [http(400), 'answered'], [http(404), 'answered'], [http(500, 'internal'), 'answered'], [http(502, 'mcp_setup_failed'), 'answered'],
+    [http(503), 'answered'], [http(599), 'answered'], [unauthorized, 'unfinished'],
+    [http(399), 'unfinished'], [http(600), 'unfinished'], [transport, 'unfinished'], [decode, 'unfinished'], [null, 'unfinished'],
+  ]],
+];
+
+describe.each(cases)('classifying a failed %s', (_route, table, expected) => {
+  it.each(expected)('reads %o as %s', (failure, kind) => {
+    expect(classifyFailure(failure, table)).toBe(kind);
+  });
+});
+
+describe('classifyFailure', () => {
+  const table: FailureTable<'first' | 'second' | 'auth' | 'other'> = {
+    rules: [
+      { status: [409], code: 'a', is: 'first' },
+      { status: { from: 400, to: 409 }, is: 'second' },
+    ],
+    unauthorized: 'auth',
+    otherwise: 'other',
+  };
+
+  it('takes the first rule whose every given field matches', () => {
+    expect(classifyFailure(http(409, 'a'), table)).toBe('first');
+    expect(classifyFailure(http(400, 'a'), table)).toBe('second');
+    expect(classifyFailure(http(409, 'b'), table)).toBe('second');
+  });
+
+  it('reads a status range inclusively at both ends', () => {
+    expect(classifyFailure(http(400), table)).toBe('second');
+    expect(classifyFailure(http(410), table)).toBe('other');
+    expect(classifyFailure(http(399), table)).toBe('other');
+  });
+
+  it('never reads rules for a 401, however its code reads', () => {
+    expect(classifyFailure({ ...unauthorized, code: 'a' }, table)).toBe('auth');
+  });
+});
+
+describe('refusalText', () => {
+  const text = (failure: Parameters<typeof refusalText>[0]) => refusalText(failure, PLANNER_MODEL_FAILURES, 'Not changed.');
+
+  it('shows a refusal in the server’s own words, or the fixed refusal when it gave none', () => {
+    expect(text(http(400, 'bad_request', 'Claude is not ready'))).toBe('Claude is not ready');
+    expect(text({ kind: 'http', status: 404, code: 'not_found', message: '' })).toBe('Not changed.');
+  });
+
+  /* #2068 item 27: stopped at admission, nothing left the browser. */
+  it('reads a write that was not sent as refused, in the fixed words', () => {
+    expect(text(new NotSentError(new Error('工作区恢复权限尚未准备好。')))).toBe('Not changed.');
+  });
+
+  it('gives no words for a failure that may have been stored', () => {
+    expect(text(transport)).toBeNull();
+    expect(text({ kind: 'transport', message: 'Request timed out.' })).toBeNull();
+    expect(text(http(500, 'internal', 'model store unavailable'))).toBeNull();
+    expect(text(null)).toBeNull();
+  });
+});
+
+describe('writeFailureText', () => {
+  const read = writeFailureText(DELETE_FAILURES, DELETE_TEXT);
+
+  it('reads an answer that proves the intent holds as done: no sentence', () => {
+    expect(read(new ApiError(http(404, 'not_found', 'track not found')))).toBeNull();
+  });
+
+  it('shows a refusal in the server’s words, or the fixed refusal when it gave none', () => {
+    expect(read(new ApiError(http(409, 'conflict', 'a managed track cannot be deleted')))).toBe('a managed track cannot be deleted');
+    expect(read(new ApiError({ kind: 'http', status: 403, code: 'forbidden', message: '' }))).toBe(DELETE_TEXT.refused);
+  });
+
+  it('reads a write that was not sent as refused, never as done or unknown', () => {
+    expect(read(new NotSentError())).toBe(DELETE_TEXT.refused);
+  });
+
+  /* The raw failure text a lost, timed-out or unreadable answer carries is never shown. */
+  it.each([
+    new ApiError(transport), new ApiError({ kind: 'transport', message: 'Request timed out.' }), new ApiError(decode),
+    new ApiError(http(500, 'db_error', 'database is locked')), new Error('anything else'), 'not an error',
+  ])('shows the fixed unknown state for %o', (error) => {
+    expect(read(error)).toBe(DELETE_TEXT.unknown);
+  });
+});
+
+describe('writeClassOf', () => {
+  it('reads a rejection through the table, and a write that was not sent as refused', () => {
+    expect(writeClassOf(new ApiError(http(404, 'not_found')), DELETE_FAILURES)).toBe('done');
+    expect(writeClassOf(new ApiError(transport), DELETE_FAILURES)).toBe('unknown');
+    expect(writeClassOf(new Error('anything else'), DELETE_FAILURES)).toBe('unknown');
+    expect(writeClassOf(new NotSentError(), DELETE_FAILURES)).toBe('refused');
+  });
+});
+
+describe('refusedText', () => {
+  it('is the server’s reason, or the fixed refusal when it gave none or nothing was sent', () => {
+    expect(refusedText(http(429, 'rate_limited', 'slow down'), 'Not created.')).toBe('slow down');
+    expect(refusedText({ kind: 'http', status: 400, code: 'bad_request', message: '' }, 'Not created.')).toBe('Not created.');
+    expect(refusedText(new NotSentError(new Error('offline')), 'Not created.')).toBe('Not created.');
+    expect(refusedText(null, 'Not created.')).toBe('Not created.');
+  });
+});
+
+describe('a refusal that names a field', () => {
+  /** The kernel's exact answer to a create whose `template_input` misses a required key, through the real client. */
+  async function missingInput(): Promise<ApiFailure> {
+    const result = await performApiRequest(
+      { send: () => Promise.resolve({ status: 400, statusText: 'Bad Request', body: {
+        error: 'required field is missing', code: 'bad_request', field: 'template_input.issue_url',
+      } }) },
+      { method: 'POST', path: '/api/tracks', body: {}, responseSchema: z.unknown() },
+    );
+    if (result.status !== 'failed') throw new Error('the kernel answer must be a failure');
+    return result.error;
+  }
+
+  it('says which field in every sentence a reader is shown', async () => {
+    const failure = await missingInput();
+    const sentence = 'template_input.issue_url: required field is missing';
+    expect(failureReason(failure)).toBe(sentence);
+    expect(refusedText(failure, 'Not created.')).toBe(sentence);
+    expect(refusalText(failure, PLUGIN_CONFIG_FAILURES, 'Not created.')).toBe(sentence);
+    expect(new ApiError(failure).message).toBe(sentence);
+  });
+
+  it('leaves a refusal without a field in its own words', () => {
+    expect(failureReason(http(400, 'bad_request', 'config patch must be a JSON object'))).toBe('config patch must be a JSON object');
+  });
+});

@@ -1,0 +1,137 @@
+@layer features {
+  .host {
+    display: contents;
+  }
+
+  /*
+   * Both triggers, smaller and quieter than the field above them.
+   *
+   * These name a *setting* — what the next message will run with — and a
+   * setting is something you check, not something you read. At body size in
+   * full-strength text they were the loudest thing in the footer, on a row
+   * whose actual subject is the send button. Size and colour are the two
+   * properties overridden on the vendor button; both are tokens, and neither
+   * re-implements anything the button does.
+   *
+   * Settings promote neutral ink over interaction overlays; semantic values
+   * keep their own ink. The contrast recipes cover both composer surfaces.
+   */
+  .trigger,
+  .effort,
+  .setting {
+    font-size: var(--font-step-1-size);
+    color: var(--text-3);
+  }
+
+  /* Its labels are short and fixed, so it keeps its width rather than truncating. */
+  .setting {
+    border-radius: var(--radius-pill);
+    flex: none;
+  }
+
+  @media (hover: hover) {
+    .setting:hover:not(:disabled, [aria-disabled='true']) {
+      color: var(--text);
+    }
+  }
+
+  .setting:active:not(:disabled, [aria-disabled='true']),
+  .setting[aria-expanded='true'] {
+    color: var(--text);
+  }
+
+  .settingValue[data-nc-tone='warning'] {
+    color: var(--warn-text);
+    font-weight: var(--weight-medium);
+  }
+
+  .settingValue[data-nc-tone='danger'] {
+    color: var(--error-text);
+    font-weight: var(--weight-medium);
+  }
+
+  /* Astryx's public destructive variant colors the label, description and check. */
+  .destructiveChoice {
+    --color-error: var(--error-text);
+  }
+
+  /* Long model labels stay capped, while the owning composer and this
+     model/effort group wrap their controls when a sidebar is narrow. */
+  .group {
+    max-inline-size: 100%;
+    min-inline-size: 0;
+  }
+
+  .trigger {
+    border-radius: var(--radius-pill);
+    max-inline-size: 9rem;
+    min-inline-size: 0;
+  }
+
+  .groupHeading {
+    font-size: var(--font-step-1-size);
+    font-weight: var(--weight-medium);
+    padding: var(--space-1) var(--space-2);
+    color: var(--text-2);
+  }
+
+  /* Why a provider cannot run (#1817): a standing explanation like `.note`, a
+     little wider because it carries a fix, and broken anywhere because that fix
+     can hold a long path. */
+  .reason {
+    max-inline-size: 14rem;
+    padding: var(--space-half) var(--space-2);
+    overflow-wrap: anywhere;
+  }
+
+  /* A provider create still accepts: its rows stay pickable, so the reason is a warning. */
+  .warning {
+    color: var(--warn-text);
+  }
+
+  /* A Claude row (#1822, owner layout 2026-09-28): the name at the left, the
+     model it resolves to small and quiet at the right. The name keeps its
+     width; the id gives way, with an ellipsis. */
+  .resolvedRow {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-2);
+    min-inline-size: 0;
+  }
+
+  .resolvedName {
+    flex: none;
+  }
+
+  /* 10rem holds every id the pinned CLI reports (`claude-haiku-4-5-20251001`
+     is the longest) at `--text-xs`, and caps what a longer one asks of the
+     menu's width, which is sized to its content: without the cap, one long id
+     widened the menu past a 390px viewport. The auto margin puts every id at
+     the row's right edge, whatever the width of the name before it. */
+  .resolvedId {
+    font-size: var(--font-step-1-size);
+    flex: 0 1 auto;
+    min-inline-size: 0;
+    max-inline-size: 10rem;
+    margin-inline-start: auto;
+    overflow: hidden;
+    color: var(--text-3);
+    text-align: end;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* A standing explanation, not a menu row: it must not look pressable. The
+     type is `Text type="supporting"`; what is left here is the box. */
+  .note,
+  .settingNote {
+    max-inline-size: 9rem;
+    padding: var(--space-half) var(--space-1);
+    user-select: none;
+  }
+
+  /* Short and fixed, so it takes the menu's width rather than the model note's ceiling. */
+  .settingNote {
+    max-inline-size: none;
+  }
+}

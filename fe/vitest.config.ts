@@ -1,0 +1,178 @@
+import { markdownRuntimeAliases } from './tools/architecture/markdown-runtime-resolution.ts';
+import { defineConfig } from 'vitest/config';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { defineBrowserProvider } from '@vitest/browser';
+import { playwright } from '@vitest/browser-playwright';
+
+import { OPTIMIZED_DEPENDENCIES } from './tools/vitest/optimized-dependencies.ts';
+
+// Each of these no-ops where it does not apply, so the one list feeds every project.
+const setupFiles = [
+  './tools/vitest/build-constants.ts',
+  './tools/vitest/dom-diagnostics.ts',
+  './tools/vitest/jsdom-match-media.ts',
+  './tools/vitest/jsdom-resize-observer.ts',
+];
+
+// Use the real repository documents in route regressions. Vite checks both the
+// plain filename and its ?raw module ID; leave all other filesystem rules intact.
+const readmeFixtureFiles = Object.freeze(['.', '../docs/README.md', '../docs/README.md?raw', '../README.md', '../README.md?raw']);
+
+export default defineConfig({
+  resolve: {
+    alias: markdownRuntimeAliases(),
+    dedupe: ['react', 'react-dom'],
+  },
+  optimizeDeps: {
+    include: [...OPTIMIZED_DEPENDENCIES],
+  },
+  test: {
+    projects: [
+      {
+        resolve: { alias: markdownRuntimeAliases() },
+        test: {
+          name: 'platform-independent',
+          environment: 'node',
+          setupFiles,
+          include: ['core/**/*.test.ts', 'tools/**/*.test.ts'],
+          exclude: ['**/*.browser.test.{ts,tsx}', 'tools/architecture/fixtures/**'],
+        },
+      },
+      {
+        resolve: { alias: markdownRuntimeAliases() },
+        server: { fs: { allow: [...readmeFixtureFiles] } },
+        test: {
+          name: 'web-dom',
+          environment: 'jsdom',
+          setupFiles: [...setupFiles, './tools/vitest/jsdom-animation.ts'],
+          include: ['web/src/**/*.test.{ts,tsx}'],
+          exclude: ['**/*.browser.test.{ts,tsx}'],
+        },
+      },
+      {
+        resolve: { alias: markdownRuntimeAliases() },
+        server: { fs: { allow: [...readmeFixtureFiles] } },
+        optimizeDeps: {
+          // Browser projects are isolated Vite configs and do not inherit the
+          // root list, so use the complete roster rather than a partial copy.
+          include: [...OPTIMIZED_DEPENDENCIES],
+        },
+        test: {
+          name: 'browser',
+          include: ['**/*.browser.test.{ts,tsx}'],
+          /* `*.coarse.browser.test.*` is a `*.browser.test.*` too; the exclude is what makes the partition a partition. */
+          exclude: ['**/*.coarse.browser.test.{ts,tsx}', 'tools/architecture/fixtures/**'],
+          setupFiles,
+          browser: {
+            enabled: true,
+            headless: true,
+            provider: defineBrowserProvider(playwright()),
+            instances: [{ browser: 'chromium' }],
+            /* `prefers-reduced-motion` is a media feature only the driver can emulate, so it is exposed as a command. */
+            commands: {
+              mockChatPerformanceImage: async ({ page }, enabled: boolean) => {
+                const url = 'https://chat-benchmark.invalid/image.svg';
+                await page.unroute(url);
+                if (enabled) await page.route(url, async (route) => {
+                  await new Promise<void>((resolve) => setTimeout(resolve, 75));
+                  await route.fulfill({ contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480"><rect width="640" height="480" fill="#aac"/></svg>' });
+                });
+              },
+              recordChatPerformance: async (_context, count: number, report: string) => {
+                if (!Number.isInteger(count) || count < 1 || count > 10000) throw new Error('invalid benchmark row count');
+                await mkdir('test-results/chat-performance', { recursive: true });
+                await writeFile(`test-results/chat-performance/${count}.json`, report);
+              },
+              recordConversationSwitchPerformance: async (_context, count: number, report: string) => {
+                if (!Number.isInteger(count) || count < 1 || count > 10000) throw new Error('invalid benchmark row count');
+                await mkdir('test-results/conversation-switch', { recursive: true });
+                await writeFile(`test-results/conversation-switch/${count}.json`, report);
+              },
+              mouseButton: async ({ page, iframe }, selector: string, pressed: boolean) => {
+                if (pressed) {
+                  await iframe.locator(selector).hover();
+                  await page.mouse.down();
+                } else await page.mouse.up();
+              },
+              wheelScroll: async ({ page, iframe }, selector: string, deltaY: number, position?: { x: number; y: number }) => {
+                await iframe.locator(selector).hover({ position });
+                await page.mouse.wheel(0, deltaY);
+              },
+              nativeEdgeTouch: (() => {
+                const sessions = new WeakMap<import('playwright').Page, import('playwright').CDPSession>();
+                return async ({ page, iframe }: import('vitest/node').BrowserCommandContext, type: 'touchStart' | 'touchMove' | 'touchEnd' | 'touchCancel', x: number) => {
+                  const box = await iframe.locator('[data-test-native-edge]').boundingBox();
+                  if (box === null) throw new Error('Production edge is not visible');
+                  if (type === 'touchStart') {
+                    await sessions.get(page)?.detach();
+                    sessions.set(page, await page.context().newCDPSession(page));
+                  }
+                  const session = sessions.get(page);
+                  if (session === undefined) throw new Error('No active native touch');
+                  try {
+                    await session.send('Input.dispatchTouchEvent', { type,
+                      touchPoints: type === 'touchEnd' || type === 'touchCancel' ? [] : [{ x: box.x + x, y: box.y + 100 }] });
+                  } finally {
+                    if (type === 'touchEnd' || type === 'touchCancel') { sessions.delete(page); await session.detach(); }
+                  }
+                };
+              })(),
+              emulateReducedMotion: async ({ page }, reduce: boolean) => {
+                await page.emulateMedia({ reducedMotion: reduce ? 'reduce' : 'no-preference' });
+              },
+            },
+          },
+        },
+      },
+      /* `pointer: coarse` needs its own project: `Emulation.setTouchEmulationEnabled` is a one-way door and Vitest reuses one page per project.
+         `contextOptions.viewport` sizes the page; `browser.viewport` sizes the iframe, which is what `@media (width < 60rem)` is evaluated against. */
+      {
+        resolve: { alias: markdownRuntimeAliases() },
+        optimizeDeps: {
+          include: [...OPTIMIZED_DEPENDENCIES],
+        },
+        test: {
+          name: 'browser-coarse',
+          include: ['**/*.coarse.browser.test.{ts,tsx}'],
+          /* `tools/architecture/fixtures/**` holds deliberately broken sources, and `check-test-tier.mjs` drops
+           * it from `trackedTests`, so a coarse-suffixed file there would run while invisible to the partition check. */
+          exclude: ['tools/architecture/fixtures/**'],
+          setupFiles,
+          browser: {
+            enabled: true,
+            headless: true,
+            /* The suite's iframe; at the 414 × 896 default every case would lay out under `@media (width < 60rem)`. */
+            viewport: { width: 1024, height: 1366 },
+            provider: defineBrowserProvider(playwright({
+              contextOptions: {
+                hasTouch: true,
+                isMobile: true,
+                viewport: { width: 1024, height: 1366 },
+              },
+            })),
+            instances: [{ browser: 'chromium' }],
+            commands: {
+              swipe: async ({ page, iframe }, selector: string, distance: number) => {
+                const box = await iframe.locator(selector).boundingBox();
+                if (box === null) throw new Error('Swipe target is not visible');
+                const session = await page.context().newCDPSession(page);
+                const x = box.x + box.width / 2;
+                const y = box.y + Math.min(40, box.height / 2);
+                try {
+                  await session.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
+                  for (let step = 1; step <= 12; step++) {
+                    await session.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x, y: y + distance * step / 12 }] });
+                  }
+                  await session.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+                } finally { await session.detach(); }
+              },
+              tap: async ({ iframe }, selector: string) => {
+                await iframe.locator(selector).tap();
+              },
+            },
+          },
+        },
+      },
+    ],
+  },
+});

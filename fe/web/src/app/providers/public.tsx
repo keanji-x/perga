@@ -1,0 +1,114 @@
+import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
+import { useEffect, type ReactNode } from 'react';
+import { DATABASE_ID_KEY, DB_INSTANCE_ID_KEY } from '../../../../core/keys/storage.ts';
+import { readErrorText } from '../../../../core/domain/read-failure.ts';
+import type { SyncCursorPort } from '../../systems/events/cursor-port.ts';
+import { Dialog } from '../../ui/dialog/public.tsx';
+import { useState } from '../../ui/state/public.ts';
+import { ThemeProvider } from '../theme/public.tsx';
+import { BundledConnectionNotice } from '../auth/bundled-connection.tsx';
+import { DatabaseScopeProvider } from './ui-preferences.tsx';
+import styles from './preflight-status.module.css';
+import { LiveConnectionProvider } from './connection-status.tsx';
+
+/**
+ * This bundle's view of the negotiated wire contract. Must equal `WEB_COMPAT_VERSION` in
+ * `crates/calm-server/src/routes/version.rs` and `web/src/api/version.ts`; CI compares them textually.
+ */
+// #2618: timeout activity notices require an explicit decoder and presentation.
+// #2672: template purposes and readiness are required in the creation flow.
+// #3279: negotiated run reads require nullable exact current terminal evidence.
+// #3423: objective approvals carry complete frozen question details.
+// Track template selection and workspace isolation upgrades require compatible clients.
+export const WEB_COMPAT_VERSION = 72;
+/** `databaseId` is optional in the type so an older kernel still parses before the curtain decides; absent means a `null` database scope, under which no per-database choice applies. */
+export type ServerVersionInfo = Readonly<{ assistantProviders?: boolean; conversationCreateModel?: boolean; conversationInitialInput?: boolean; conversationSide?: boolean; webCompatVersion: number; minWebCompatVersion: number; syncEventVersion: number; dbInstanceId: string; databaseId?: string }>;
+export interface ProviderRuntime {
+  fetchVersion(): Promise<ServerVersionInfo>;
+  reload(): void;
+  deleteDatabase(name: string): void;
+  idbDatabaseName: string;
+  storage: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
+}
+
+export function retryUnless401(failureCount: number, error: unknown): boolean {
+  if (typeof error === 'object' && error !== null && 'failure' in error) {
+    const failure = error.failure;
+    if (typeof failure === 'object' && failure !== null && 'kind' in failure && failure.kind === 'unauthorized') return false;
+  }
+  return failureCount < 1;
+}
+
+export function AppProviders({ children, runtime, renderEventBridge, cursorStore, client }: {
+  children: ReactNode; runtime: ProviderRuntime; renderEventBridge?: (server: ServerVersionInfo) => ReactNode;
+  cursorStore: Pick<SyncCursorPort, 'clear'>; client: QueryClient;
+}) {
+  return <QueryClientProvider client={client}><ThemeProvider storage={runtime.storage}>
+    <LiveConnectionProvider><ServerCompatGate client={client} runtime={runtime} renderEventBridge={renderEventBridge} cursorStore={cursorStore}>{children}</ServerCompatGate></LiveConnectionProvider>
+  </ThemeProvider></QueryClientProvider>;
+}
+
+function safeRead(runtime: ProviderRuntime, key: string): string | null { try { return runtime.storage.getItem(key); } catch { return null; } }
+function safeWrite(runtime: ProviderRuntime, key: string, value: string): void { try { runtime.storage.setItem(key, value); } catch { /* no-op */ } }
+function safeDelete(runtime: ProviderRuntime): void { try { runtime.deleteDatabase(runtime.idbDatabaseName); } catch { /* no-op */ } }
+
+export function ServerCompatGate({ children: routeContent, runtime, client, renderEventBridge, cursorStore }: {
+  children: ReactNode; runtime: ProviderRuntime; client: QueryClient;
+  renderEventBridge?: (server: ServerVersionInfo) => ReactNode; cursorStore: Pick<SyncCursorPort, 'clear'>;
+}) {
+  const [busted, setBusted] = useState(false);
+  const [previousInstanceId] = useState(() => safeRead(runtime, DB_INSTANCE_ID_KEY));
+  const query = useQuery({ queryKey: ['server-version'], queryFn: () => runtime.fetchVersion(), staleTime: 0, gcTime: 0, retry: retryUnless401, refetchInterval: false }, client);
+
+  useEffect(() => {
+    const id = query.data?.dbInstanceId;
+    if (!id) return;
+    const previous = previousInstanceId;
+    if (previous && previous !== id) {
+      client.clear(); cursorStore.clear(); safeDelete(runtime);
+      safeWrite(runtime, DB_INSTANCE_ID_KEY, id); setBusted(true); runtime.reload(); return;
+    }
+    if (!previous) safeWrite(runtime, DB_INSTANCE_ID_KEY, id);
+  }, [client, cursorStore, previousInstanceId, query.data?.dbInstanceId, runtime]);
+
+  /* The database's STABLE id, remembered like the instance id but with none of the cache busting. */
+  const databaseId = query.data?.databaseId;
+  useEffect(() => {
+    if (databaseId === undefined) return;
+    if (safeRead(runtime, DATABASE_ID_KEY) !== databaseId) safeWrite(runtime, DATABASE_ID_KEY, databaseId);
+  }, [databaseId, runtime]);
+
+  const id = query.data?.dbInstanceId;
+  const verdict = id === undefined ? 'pending'
+    : previousInstanceId !== null && previousInstanceId !== id ? 'switched' : 'same';
+  // The database scope is the database identity, never the per-boot instance id; a kernel without one leaves it null.
+  const databaseScope = verdict === 'same' && databaseId !== undefined ? databaseId : null;
+  const children = <DatabaseScopeProvider id={databaseScope}>{routeContent}</DatabaseScopeProvider>;
+  if (busted) return __NC_BUNDLED__ ? <BundledConnectionNotice kind="checking" /> : null;
+  if (__NC_BUNDLED__ && query.data === undefined) return <BundledConnectionNotice kind={query.isError || query.fetchStatus === 'paused' ? 'unreachable' : 'checking'}>
+    {(query.isError || query.fetchStatus === 'paused') && <button type="button" disabled={query.isFetching} onClick={() => { void query.refetch(); }}>重试连接</button>}
+  </BundledConnectionNotice>;
+  if (__NC_BUNDLED__ && query.data && query.data.webCompatVersion < WEB_COMPAT_VERSION) return <BundledConnectionNotice kind="server-update" />;
+  if (__NC_BUNDLED__ && query.data && query.data.minWebCompatVersion > WEB_COMPAT_VERSION) return <BundledConnectionNotice kind="app-update" />;
+  if (query.data && query.data.minWebCompatVersion > WEB_COMPAT_VERSION) return <RefreshRequiredOverlay server={query.data} reload={() => runtime.reload()} />;
+  return <>{verdict === 'same' && renderEventBridge?.(query.data!)}{children}
+    {query.data === undefined && (query.isError || query.fetchStatus === 'paused') && (
+      <div className={styles.status} role="status">
+        <span>{query.fetchStatus === 'paused' ? 'Offline · Live updates paused'
+          : query.isFetching ? 'Reconnecting live updates…' : 'Live updates unavailable'}</span>
+        <button type="button" className={styles.retry} aria-label="Retry live updates"
+          title={readErrorText(query.error, 'Reconnect to restore live updates.')}
+          disabled={query.isFetching} onClick={() => { void query.refetch(); }}>Retry</button>
+      </div>
+    )}
+  </>;
+}
+
+export function RefreshRequiredOverlay({ server, reload }: { server: ServerVersionInfo; reload: () => void }) {
+  return <Dialog purpose="info" origin={{ kind: 'surface-center' }} open title="Please refresh" onClose={reload} hideTitleRow>
+    <section aria-label="Please refresh">
+      <h1>Please refresh</h1><p>A new server requires compat v{server.minWebCompatVersion}; this browser provides compat v{WEB_COMPAT_VERSION}.</p>
+      <button type="button" onClick={reload}>Refresh now</button>
+    </section>
+  </Dialog>;
+}

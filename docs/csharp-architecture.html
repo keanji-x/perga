@@ -1,0 +1,703 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Neige C# + Rust Terminal + 原生 JJ 架构拓扑图</title>
+<style>
+  :root {
+    --bg: #f8fafc;
+    --panel: #ffffff;
+    --panel-alt: #f1f5f9;
+    --border: #cbd5e1;
+    --border-strong: #94a3b8;
+    --text: #0f172a;
+    --muted: #475569;
+    --subtle: #64748b;
+    --blue: #2563eb;
+    --blue-fill: #eff6ff;
+    --purple: #7c3aed;
+    --purple-fill: #f5f3ff;
+    --amber: #d97706;
+    --amber-fill: #fffbeb;
+    --green: #059669;
+    --green-fill: #ecfdf5;
+    --teal: #0d9488;
+    --teal-fill: #f0fdfa;
+    --rose: #e11d48;
+    --rose-fill: #fff1f2;
+    --edge: #94a3b8;
+    --code-bg: #0f172a;
+    --code-fg: #e2e8f0;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0b1120;
+      --panel: #111827;
+      --panel-alt: #1e293b;
+      --border: #334155;
+      --border-strong: #475569;
+      --text: #f1f5f9;
+      --muted: #cbd5e1;
+      --subtle: #94a3b8;
+      --blue: #60a5fa;
+      --blue-fill: #172554;
+      --purple: #a78bfa;
+      --purple-fill: #2e1065;
+      --amber: #fbbf24;
+      --amber-fill: #451a03;
+      --green: #34d399;
+      --green-fill: #064e3b;
+      --teal: #2dd4bf;
+      --teal-fill: #134e4a;
+      --rose: #fb7185;
+      --rose-fill: #4c0519;
+      --edge: #64748b;
+      --code-bg: #020617;
+      --code-fg: #e2e8f0;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --bg: #0b1120;
+    --panel: #111827;
+    --panel-alt: #1e293b;
+    --border: #334155;
+    --border-strong: #475569;
+    --text: #f1f5f9;
+    --muted: #cbd5e1;
+    --subtle: #94a3b8;
+    --blue: #60a5fa;
+    --blue-fill: #172554;
+    --purple: #a78bfa;
+    --purple-fill: #2e1065;
+    --amber: #fbbf24;
+    --amber-fill: #451a03;
+    --green: #34d399;
+    --green-fill: #064e3b;
+    --teal: #2dd4bf;
+    --teal-fill: #134e4a;
+    --rose: #fb7185;
+    --rose-fill: #4c0519;
+    --edge: #64748b;
+    --code-bg: #020617;
+    --code-fg: #e2e8f0;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 10px 12px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    font-size: 12.5px;
+    line-height: 1.45;
+  }
+
+  .bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 8px;
+    flex-wrap: wrap;
+  }
+  .bar-left {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .bar-left h1 { margin: 0; font-size: 14.5px; font-weight: 700; }
+  .legend { display: flex; gap: 9px; font-size: 11.2px; color: var(--muted); align-items: center; flex-wrap: wrap; }
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 3px; vertical-align: middle; }
+
+  .bar-right { display: flex; gap: 6px; align-items: center; }
+  .seg-btn {
+    appearance: none;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    color: var(--muted);
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-size: 11.8px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .seg-btn.active { background: var(--blue); border-color: var(--blue); color: #fff; }
+
+  .view { display: none; }
+  .view.active { display: block; }
+
+  /* View 1: SVG Structural Graph + Right Boundary Drawer */
+  .main-split {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 335px;
+    gap: 10px;
+    align-items: stretch;
+  }
+  @media (max-width: 920px) { .main-split { grid-template-columns: 1fr; } }
+
+  .canvas-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+
+  svg#archSvg {
+    width: 100%;
+    height: auto;
+    max-height: 595px;
+    display: block;
+    user-select: none;
+  }
+
+  .zone-rect { rx: 10; ry: 10; stroke-width: 1.5; stroke-dasharray: 5 4; }
+  .zone-label { font-size: 10.8px; font-weight: 700; letter-spacing: 0.02em; }
+  .port-pill rect { rx: 5; ry: 5; fill: var(--panel); stroke-width: 1.5; }
+  .port-pill text {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 10px;
+    font-weight: 700;
+    fill: var(--text);
+  }
+
+  .mod-node { cursor: pointer; transition: opacity 0.15s ease; }
+  .mod-node rect.box {
+    rx: 7; ry: 7; stroke-width: 1.6;
+    transition: stroke-width 0.12s ease, filter 0.12s ease;
+  }
+  .mod-node:hover rect.box { stroke-width: 2.4; }
+  .mod-node.selected rect.box {
+    stroke-width: 2.8;
+    filter: drop-shadow(0 0 6px rgba(37, 99, 235, 0.35));
+  }
+  .mod-node.dimmed { opacity: 0.28; }
+
+  .mod-title { font-size: 11.8px; font-weight: 700; fill: var(--text); }
+  .mod-sub { font-size: 10px; fill: var(--muted); }
+  .mod-tag { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 9.5px; font-weight: 700; }
+
+  .dep-edge {
+    fill: none;
+    stroke: var(--edge);
+    stroke-width: 1.5;
+    transition: stroke 0.15s ease, stroke-width 0.15s ease, opacity 0.15s ease;
+  }
+  .dep-edge.ipc { stroke-dasharray: 4 3; }
+  .dep-edge.dimmed { opacity: 0.14; }
+  .dep-edge.out-active { stroke: var(--blue); stroke-width: 2.5; opacity: 1; }
+  .dep-edge.in-active { stroke: var(--green); stroke-width: 2.5; opacity: 1; }
+
+  .drawer {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 11px 13px;
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+  }
+  .d-head { border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+  .d-kind { display: inline-block; font-size: 10.2px; font-weight: 700; padding: 1px 7px; border-radius: 999px; margin-bottom: 3px; }
+  .d-title { margin: 0; font-size: 14px; font-weight: 700; }
+  .d-pkg { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 10.8px; color: var(--subtle); }
+  .d-sec { font-size: 11px; font-weight: 700; color: var(--blue); margin-top: 2px; }
+  .d-box { background: var(--panel-alt); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; font-size: 11.6px; }
+  .d-deps { display: flex; flex-wrap: wrap; gap: 4px; font-family: ui-monospace, SFMono-Regular, monospace; font-size: 10.5px; }
+  .chip-out { background: var(--blue-fill); color: var(--blue); border: 1px solid var(--blue); padding: 1px 6px; border-radius: 4px; }
+  .chip-in { background: var(--green-fill); color: var(--green); border: 1px solid var(--green); padding: 1px 6px; border-radius: 4px; }
+  .chip-none { color: var(--subtle); font-style: italic; }
+
+  pre.mini-code {
+    margin: 0;
+    background: var(--code-bg);
+    color: var(--code-fg);
+    padding: 7px 9px;
+    border-radius: 6px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 10.6px;
+    line-height: 1.42;
+    overflow-x: auto;
+  }
+
+  /* View 2: 3 Deep Solutions */
+  .sol-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+  }
+  @media (max-width: 960px) { .sol-grid { grid-template-columns: 1fr; } }
+  .sol-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 13px;
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+  }
+  .sol-card h3 { margin: 0; font-size: 13.5px; color: var(--text); }
+  .sol-card ul { margin: 0; padding-left: 17px; font-size: 12px; color: var(--muted); }
+  .sol-card li { margin-bottom: 5px; }
+  .sol-card li b { color: var(--text); }
+</style>
+</head>
+<body>
+
+<div class="bar">
+  <div class="bar-left">
+    <h1>Neige 终版模块化依赖与边界拓扑图</h1>
+    <div class="legend">
+      <span><i class="dot" style="background:var(--blue)"></i>Neige.Host (薄接入+内置工具)</span>
+      <span><i class="dot" style="background:var(--purple)"></i>Neige.Kernel (~2.2k LOC)</span>
+      <span><i class="dot" style="background:var(--green)"></i>C# 独立零耦合库 (libs/*)</span>
+      <span><i class="dot" style="background:var(--rose)"></i>Rust 跨平台终端 Sidecar</span>
+    </div>
+  </div>
+  <div class="bar-right">
+    <button class="seg-btn active" data-v="v-graph">1. 模块依赖与边界图</button>
+    <button class="seg-btn" data-v="v-sols">2. 三大痛点专项解法 (Harness / 终端 / JJ)</button>
+    <button class="seg-btn" id="themeBtn">明/暗</button>
+  </div>
+</div>
+
+<!-- VIEW 1: STRUCTURAL SVG TOPOLOGY -->
+<div class="view active" id="v-graph">
+  <div class="main-split">
+    <div class="canvas-card">
+      <svg id="archSvg" viewBox="0 0 890 580" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M 0 1 L 10 5 L 0 9 z" fill="var(--edge)" />
+          </marker>
+          <marker id="arrow-out" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M 0 1 L 10 5 L 0 9 z" fill="var(--blue)" />
+          </marker>
+          <marker id="arrow-in" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M 0 1 L 10 5 L 0 9 z" fill="var(--green)" />
+          </marker>
+        </defs>
+
+        <!-- ZONE 1: Neige.Host (App Entry + Pragmatic Builtin/Static MCP) -->
+        <rect class="zone-rect" x="12" y="10" width="866" height="118" fill="var(--blue-fill)" stroke="var(--blue)" />
+        <text class="zone-label" x="24" y="28" fill="var(--blue)">APP 组装与实用工具层 · Neige.Host (ASP.NET Core 宿主 · 静态 mcp-plugins.json 直挂常用外部 MCP)</text>
+
+        <!-- ZONE 2: Neige.Kernel -->
+        <rect class="zone-rect" x="12" y="162" width="548" height="174" fill="var(--purple-fill)" stroke="var(--purple)" />
+        <text class="zone-label" x="24" y="180" fill="var(--purple)">APP 领域微内核 · Neige.Kernel (~2.2k LOC · 零 VCS / 零 CLI 协议 / 零特定模板硬编码)</text>
+
+        <!-- ZONE 3: App SQLite Store -->
+        <rect class="zone-rect" x="576" y="162" width="302" height="174" fill="var(--amber-fill)" stroke="var(--amber)" />
+        <text class="zone-label" x="588" y="180" fill="var(--amber)">APP 存储实现 · Neige.Storage.Sqlite</text>
+
+        <!-- ZONE 4: C# Standalone Libraries (libs/*) -->
+        <rect class="zone-rect" x="12" y="380" width="654" height="188" fill="var(--green-fill)" stroke="var(--green)" />
+        <text class="zone-label" x="24" y="399" fill="var(--green)">STANDALONE C# LIBS · 零业务耦合独立库 (libs/* · 可独立单测与跨项目复用)</text>
+
+        <!-- ZONE 5: Rust Cross-Platform Terminal Sidecar -->
+        <rect class="zone-rect" x="680" y="380" width="198" height="188" fill="var(--rose-fill)" stroke="var(--rose)" />
+        <text class="zone-label" x="692" y="399" fill="var(--rose)">RUST 跨平台终端 Sidecar</text>
+
+        <!-- EDGES -->
+        <path class="dep-edge" data-from="host_api" data-to="kernel_actor" d="M 135 114 L 135 196" marker-end="url(#arrow)" />
+        <path class="dep-edge" data-from="host_kmcp" data-to="kernel_actor" d="M 380 114 L 225 196" marker-end="url(#arrow)" />
+        <path class="dep-edge" data-from="host_vcs" data-to="kernel_tpl" d="M 655 114 L 450 196" marker-end="url(#arrow)" />
+        <path class="dep-edge" data-from="host_vcs" data-to="lib_vcskit" d="M 720 114 C 585 245, 575 340, 565 416" marker-end="url(#arrow)" />
+        <path class="dep-edge ipc" data-from="host_api" data-to="rust_term" d="M 240 114 C 560 150, 775 260, 775 416" marker-end="url(#arrow)" />
+        <path class="dep-edge ipc" data-from="host_kmcp" data-to="rust_term" d="M 465 114 C 660 160, 795 270, 795 416" marker-end="url(#arrow)" />
+
+        <path class="dep-edge" data-from="store_sqlite" data-to="kernel_actor" d="M 592 252 L 292 252" marker-end="url(#arrow)" />
+        <path class="dep-edge" data-from="kernel_actor" data-to="lib_agentkit" d="M 135 320 L 135 416" marker-end="url(#arrow)" />
+        <path class="dep-edge" data-from="kernel_tpl" data-to="lib_policyvm" d="M 395 320 L 315 416" marker-end="url(#arrow)" />
+        <path class="dep-edge" data-from="kernel_actor" data-to="lib_doc" d="M 245 320 L 435 416" marker-end="url(#arrow)" />
+
+        <!-- INTERFACE FIREWALL PILLS -->
+        <g class="port-pill" transform="translate(72, 135)">
+          <rect width="146" height="19" stroke="var(--purple)" />
+          <text x="73" y="13" text-anchor="middle">ITrackCommand (无锁邮箱)</text>
+        </g>
+        <g class="port-pill" transform="translate(446, 242)">
+          <rect width="118" height="19" stroke="var(--amber)" />
+          <text x="59" y="13" text-anchor="middle">ITrackStore (仓储口)</text>
+        </g>
+        <g class="port-pill" transform="translate(38, 350)">
+          <rect width="194" height="19" stroke="var(--green)" />
+          <text x="97" y="13" text-anchor="middle">IAgentRuntime (最小 4 原语契约)</text>
+        </g>
+        <g class="port-pill" transform="translate(248, 350)">
+          <rect width="142" height="19" stroke="var(--green)" />
+          <text x="71" y="13" text-anchor="middle">IPolicyVm (.neige.js)</text>
+        </g>
+        <g class="port-pill" transform="translate(502, 350)">
+          <rect width="146" height="19" stroke="var(--green)" />
+          <text x="73" y="13" text-anchor="middle">IVcsWorkspace (JJ 优先)</text>
+        </g>
+        <g class="port-pill" transform="translate(692, 350)">
+          <rect width="174" height="19" stroke="var(--rose)" />
+          <text x="87" y="13" text-anchor="middle">Local WS/RPC (热重启不断连)</text>
+        </g>
+
+        <!-- NODES: ROW 1 (Neige.Host) -->
+        <g class="mod-node" data-id="host_api" transform="translate(26, 42)">
+          <rect class="box" width="235" height="72" fill="var(--panel)" stroke="var(--blue)" />
+          <text class="mod-title" x="11" y="21">REST /api/v1 &amp; WS EventHub</text>
+          <text class="mod-tag" x="180" y="20" fill="var(--blue)">~850 LOC</text>
+          <text class="mod-sub" x="11" y="39">对接 fe/ · 统一会话 API 与流式 Delta 广播</text>
+          <text class="mod-sub" x="11" y="55">终端二进制 WS 帧直通右侧 Rust 终端守护</text>
+        </g>
+
+        <g class="mod-node" data-id="host_kmcp" transform="translate(275, 42)">
+          <rect class="box" width="240" height="72" fill="var(--panel)" stroke="var(--blue)" />
+          <text class="mod-title" x="11" y="21">Kernel MCP (/mcp/kernel)</text>
+          <text class="mod-tag" x="185" y="20" fill="var(--blue)">~550 LOC</text>
+          <text class="mod-sub" x="11" y="39">Report / Task / Mail / Ask / TerminalRead</text>
+          <text class="mod-sub" x="11" y="55">Planner 与 Assistant 对等共享内核原语</text>
+        </g>
+
+        <g class="mod-node" data-id="host_vcs" transform="translate(529, 42)">
+          <rect class="box" width="334" height="72" fill="var(--panel)" stroke="var(--teal)" />
+          <text class="mod-title" x="11" y="21">内置常用工具集 (JJ Forge) + 静态 MCP 桥</text>
+          <text class="mod-tag" x="275" y="20" fill="var(--teal)">~500 LOC</text>
+          <text class="mod-sub" x="11" y="39">· 内置 /mcp/vcs (原生 JJ + gh PR) 与 Source 抓取</text>
+          <text class="mod-sub" x="11" y="55">· 常用外部 MCP (Wisburg/Market) 读静态 JSON 挂载+门禁</text>
+        </g>
+
+        <!-- NODES: ROW 2 (Neige.Kernel & SqliteStore) -->
+        <g class="mod-node" data-id="kernel_actor" transform="translate(26, 196)">
+          <rect class="box" width="266" height="124" fill="var(--panel)" stroke="var(--purple)" />
+          <text class="mod-title" x="11" y="22">TrackActor &amp; 宿主自管 Compaction</text>
+          <text class="mod-tag" x="205" y="21" fill="var(--purple)">~1.5k LOC</text>
+          <text class="mod-sub" x="11" y="42">· 单 Track 单协程邮箱，全内核 0 互斥锁</text>
+          <text class="mod-sub" x="11" y="59">· PrimarySessionId 代表路由 (接邮件/通知)</text>
+          <text class="mod-sub" x="11" y="76">· 【解毒!】Epoch 换页压缩：普通对话总结后</text>
+          <text class="mod-sub" x="11" y="92">  直接切新底层 Thread，绝不调 CLI 私有 /compact！</text>
+          <text class="mod-sub" x="11" y="109">· Planner / Assistant / Task 全是 AgentSession</text>
+        </g>
+
+        <g class="mod-node" data-id="kernel_tpl" transform="translate(306, 196)">
+          <rect class="box" width="238" height="124" fill="var(--panel)" stroke="var(--purple)" />
+          <text class="mod-title" x="11" y="22">TemplateHost (.neige.js 驱动)</text>
+          <text class="mod-tag" x="182" y="21" fill="var(--purple)">~700 LOC</text>
+          <text class="mod-sub" x="11" y="42">1. onCreate/Close (自动调 jj workspace)</text>
+          <text class="mod-sub" x="11" y="59">2. buildTurnContext (阶段指令注入)</text>
+          <text class="mod-sub" x="11" y="76">3. guardReportCommit (只读章节硬锁)</text>
+          <text class="mod-sub" x="11" y="93">4. guardToolCall (拦截未评审 PR 合并)</text>
+          <text class="mod-sub" x="11" y="110">5. onTaskSettled (记录 JJ ChangeId)</text>
+        </g>
+
+        <g class="mod-node" data-id="store_sqlite" transform="translate(592, 196)">
+          <rect class="box" width="270" height="124" fill="var(--panel)" stroke="var(--amber)" />
+          <text class="mod-title" x="11" y="22">SqliteWalStore (升级+防膨胀GC)</text>
+          <text class="mod-tag" x="212" y="21" fill="var(--amber)">~950 LOC</text>
+          <text class="mod-sub" x="11" y="42">· 单写微批 + schema_migrations 备份护航</text>
+          <text class="mod-sub" x="11" y="59">· auto_vacuum=INCREMENTAL + 全子表FK索引</text>
+          <text class="mod-sub" x="11" y="76">· &gt;64KB 大输出剥离外部 .zst 冷存储</text>
+          <text class="mod-sub" x="11" y="93">· events 滑窗 + 里程碑抽稀 + Epoch 裁剪</text>
+          <text class="mod-sub" x="11" y="110">· 0 SQLITE_BUSY · 物理文件可控不膨胀</text>
+        </g>
+
+        <!-- NODES: ROW 3 (C# Standalone Libs + Rust Sidecar) -->
+        <g class="mod-node selected" data-id="lib_agentkit" transform="translate(24, 416)">
+          <rect class="box" width="212" height="138" fill="var(--panel)" stroke="var(--green)" />
+          <text class="mod-title" x="10" y="21">libs/AgentKit (Harness解毒!)</text>
+          <text class="mod-tag" x="155" y="20" fill="var(--green)">~1.8k LOC</text>
+          <text class="mod-sub" x="10" y="39">· 全面收敛 ACP 协议 (Antigravity /</text>
+          <text class="mod-sub" x="10" y="53">  OpenCode / claude-acp / codex-acp)</text>
+          <text class="mod-sub" x="10" y="70">· 锁死最小 4 原语：Start / Prompt /</text>
+          <text class="mod-sub" x="10" y="84">  Cancel / Approve，禁碰私有子命令！</text>
+          <text class="mod-sub" x="10" y="101">· 沙箱统一外置给 OS Wrapper (bwrap/</text>
+          <text class="mod-sub" x="10" y="115">  sandbox-exec)，不拼 CLI 权限字符串！</text>
+        </g>
+
+        <g class="mod-node" data-id="lib_policyvm" transform="translate(248, 416)">
+          <rect class="box" width="124" height="138" fill="var(--panel)" stroke="var(--green)" />
+          <text class="mod-title" x="9" y="21">libs/PolicyVm</text>
+          <text class="mod-tag" x="9" y="36" fill="var(--green)">~500 LOC</text>
+          <text class="mod-sub" x="9" y="56">· 零手写解析!直跑ES6</text>
+          <text class="mod-sub" x="9" y="73">· @ts-check+.d.ts强校</text>
+          <text class="mod-sub" x="9" y="90">· Jint 内存/步数沙箱</text>
+          <text class="mod-sub" x="9" y="107">· State 快照演进</text>
+        </g>
+
+        <g class="mod-node" data-id="lib_doc" transform="translate(384, 416)">
+          <rect class="box" width="118" height="138" fill="var(--panel)" stroke="var(--green)" />
+          <text class="mod-title" x="9" y="21">libs/ReportDoc</text>
+          <text class="mod-tag" x="9" y="36" fill="var(--green)">~650 LOC</text>
+          <text class="mod-sub" x="9" y="56">· 块树与 Fence 解析</text>
+          <text class="mod-sub" x="9" y="73">· Anchor 冲突合并</text>
+          <text class="mod-sub" x="9" y="90">· Zstd 快照压缩</text>
+          <text class="mod-sub" x="9" y="107">· 纯内存无 IO 库</text>
+        </g>
+
+        <g class="mod-node" data-id="lib_vcskit" transform="translate(514, 416)">
+          <rect class="box" width="140" height="138" fill="var(--panel)" stroke="var(--green)" />
+          <text class="mod-title" x="9" y="21">libs/VcsKit (JJ+挂载缝)</text>
+          <text class="mod-tag" x="9" y="36" fill="var(--green)">~650 LOC · 一等支持</text>
+          <text class="mod-sub" x="9" y="55">· JjBackend (colocate)</text>
+          <text class="mod-sub" x="9" y="71">· jj workspace / op时光机</text>
+          <text class="mod-sub" x="9" y="87">· IWorkspaceDriver 挂载缝</text>
+          <text class="mod-sub" x="9" y="103">· 预留 OverlayFS CoW 租约</text>
+          <text class="mod-sub" x="9" y="119">· GitBackend 自动兜底</text>
+        </g>
+
+        <g class="mod-node" data-id="rust_term" transform="translate(692, 416)">
+          <rect class="box" width="174" height="138" fill="var(--panel)" stroke="var(--rose)" />
+          <text class="mod-title" x="10" y="21">neige-term-bridge</text>
+          <text class="mod-tag" x="10" y="36" fill="var(--rose)">直接提纯复用现有 rmux 栈!</text>
+          <text class="mod-sub" x="10" y="56">· 复用 calm-terminal-view</text>
+          <text class="mod-sub" x="10" y="71">  (rmux-core 屏幕/宽字符/模式)</text>
+          <text class="mod-sub" x="10" y="88">· 复用 screen_diff / text_wait</text>
+          <text class="mod-sub" x="10" y="105">· Unix 走现有 rmux-server；</text>
+          <text class="mod-sub" x="10" y="120">  Win 接 ConPTY 喂同一解析器</text>
+        </g>
+      </svg>
+    </div>
+
+    <div class="drawer" id="drawer"></div>
+  </div>
+</div>
+
+<!-- VIEW 2: THREE PAIN-POINT ENGINEERING SOLUTIONS -->
+<div class="view" id="v-sols">
+  <div class="sol-grid">
+    <div class="sol-card">
+      <h3>1. 彻底解毒「多 Harness 恶心 Corner Case」</h3>
+      <ul>
+        <li><b>病因诊断</b>：老版去调各家私有的 <code>/compact</code>、手拼 Claude 的 <code>Edit(//path/**)</code>（路径带括号就炸）、塞 Codex 的 <code>shell_environment_policy</code>（冲掉内置 rg），导致 CLI 升小版本就崩。</li>
+        <li><b>解法 ① 宿主自管换页压缩（消灭原生 Compaction 差异）</b>：上下文超限时，发一条普通对话让 Agent 输出结构化交接摘要，随后直接关闭旧底层 Thread、用「交接摘要 + 最新 Report」开新底层 Thread（前端仍是同一 SessionId）！<b>100% 通用，0 私有压缩协议！</b></li>
+        <li><b>解法 ② 沙箱外置给 OS Wrapper（消灭 CLI 权限语法坑）</b>：底层 CLI 统一以纯协议模式启动；隔离交给外层统一的 <code>bwrap</code> (Linux) / <code>sandbox-exec</code> (macOS)，高危业务工具交给 MCP DSL 拦截，与哪家 CLI 完全解耦！</li>
+        <li><b>解法 ③ 全面对齐 ACP 最小 4 原语</b>：Antigravity / OpenCode 原生走 ACP；Claude 与 Codex 优先走现成官方/社区 ACP 桥（<code>claude-agent-acp</code> / <code>codex-acp</code>）或极薄 4 原语管道（<code>Start / Prompt / Cancel / Approve</code>），严禁碰各家私有子命令！</li>
+      </ul>
+    </div>
+
+    <div class="sol-card">
+      <h3>2. Terminal 桥接：直接提纯复用你现有的 <code>rmux</code> 解析栈</h3>
+      <ul>
+        <li><b>源码核查结论：不仅能复用，而且新版写得非常地道！</b>老仓库之所以重，是因为同时留着旧版（<code>calm-session</code> 的 <code>vte</code> 手写网格 + <code>legacy_*</code>）和新版（<code>calm-terminal-view</code> + <code>calm-terminal-runtime</code> + <code>terminal_interaction</code>）两套实现。</li>
+        <li><b>直接保留复用的精华</b>：
+          <br/>1) <b><code>calm-terminal-view</code> (234行, <code>forbid(unsafe_code)</code>)</b>：基于 <code>rmux-core</code>，宽字符对齐、Alternate Screen 菜单识别、Bracketed Paste 模式感知、防重复终端应答都已经打磨好了，且纯内存<b>天然跨 Linux/macOS/Windows</b>！
+          <br/>2) <b><code>terminal_interaction</code> 核心算法</b>：<code>row_hashes</code> 屏幕静默稳定检测 (<code>settle_ms</code>)、<code>text_wait</code> 与自适应按键编码直接剥离 <code>RouteRepo</code> 复用！
+          <br/>3) <b>跨系统 PTY 底座</b>：Linux/macOS 直接跑现有的 <code>calm-terminal-runtime</code> (<code>rmux-server</code>，把 Linux 专属 <code>unshare</code> 改为按平台可选，自带热重启不断连)；Windows 只需用 <code>portable-pty</code> (ConPTY) 读字节喂给同一个 <code>TerminalView</code>！</li>
+      </ul>
+    </div>
+
+    <div class="sol-card">
+      <h3>3. 务实插件方案 + 原生一等支持 <code>jj</code> (Jujutsu)</h3>
+      <ul>
+        <li><b>为什么 JJ 是多 Agent 天选 VCS</b>：
+          <br/>· <b>无暂存区，工作区自动即 Commit (<code>@</code>)</b>：彻底省掉老版 5,300 行自动 <code>git add/commit</code> 候选状态机！
+          <br/>· <b>稳定 <code>ChangeId</code> + <code>jj workspace add</code></b>：多 Track 并行无需抢分支名；<code>jj op restore</code> 一键原子回滚失控 Worker！
+          <br/>· <b>一等公民冲突</b>：<code>jj rebase -d main@origin</code> 永远成功返回 0 不卡死，冲突存进树里直接派 Task 解决；开启 <code>--colocate</code> 后与 <code>gh</code> / Cargo 100% 兼容！</li>
+        <li><b>首期插件极简务实化</b>：
+          <br/>· <b>内置核心直接编译进 C#</b>：<code>vcs_jj</code>（原生 JJ + Git 兜底 + <code>gh</code> PR/Issue）、<code>terminal</code>、<code>source</code>（网页/研报存证）。
+          <br/>· <b>常用外部 MCP 静态直挂</b>：读一份简单的 <code>mcp-plugins.json</code>，把你常用的智堡 Wisburg、以及老仓库现成编译好的 <code>market</code> 二进制直接挂进来即可，首期不做复杂插件安装器！</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {
+  const root = document.documentElement;
+  document.getElementById('themeBtn').addEventListener('click', function() {
+    const cur = root.getAttribute('data-theme');
+    if (cur === 'dark') root.setAttribute('data-theme', 'light');
+    else if (cur === 'light') root.setAttribute('data-theme', 'dark');
+    else {
+      const dark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+      root.setAttribute('data-theme', dark ? 'light' : 'dark');
+    }
+  });
+
+  document.querySelectorAll('.seg-btn[data-v]').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      document.querySelectorAll('.seg-btn[data-v]').forEach(function(b) { b.classList.remove('active'); });
+      document.querySelectorAll('.view').forEach(function(v) { v.classList.remove('active'); });
+      btn.classList.add('active');
+      document.getElementById(btn.getAttribute('data-v')).classList.add('active');
+    });
+  });
+
+  const DETAILS = {
+    lib_agentkit: {
+      kind: 'C# 独立库 · libs/AgentKit',
+      kindColor: 'var(--green)',
+      title: 'AgentKit (Harness 兼容彻底解毒)',
+      pkg: 'libs/AgentKit (~1,800 LOC · 0 业务耦合)',
+      boundary: '对外只暴露最小 4 原语契约：OpenSession / StreamPrompt / CancelTurn / RespondApproval。绝不向上暴露任何 CLI 私有状态。',
+      hides: '1) 优先统一走标准 ACP 协议（Antigravity、OpenCode 原生支持；Claude/Codex 可直接挂成熟 ACP 桥或薄 stream-json/appserver 通道）；2) 外层统一 OS 沙箱包装器 (bwrap / sandbox-exec / Windows JobObject)，彻底告别手拼 CLI 权限规则字符串！',
+      code: '// 每个 Harness 只剩一张干净的启动描述表，不再碰私有 /compact 和权限语法糖\npublic sealed record HarnessProfile(\n  string Id, string Command, string[] Args,\n  SandboxWrapMode OsSandbox, string[] EnvAllowlist);'
+    },
+    rust_term: {
+      kind: '直接复用现有 Rust 精华 crate',
+      kindColor: 'var(--rose)',
+      title: 'neige-term-bridge (复用现有 rmux 解析栈)',
+      pkg: '提纯自 calm-terminal-view + calm-terminal-runtime + terminal_interaction',
+      boundary: '本地单端口 RPC/WS 边界：Spawn / WriteAction / Resize / Kill / StreamRaw / ObserveScreen(wait_for)。C# 侧纯托管异步调用，0 行 DllImport。',
+      hides: '扔掉旧代 calm-session(vte) 与 legacy_*，100% 保留你新版打磨好的 calm-terminal-view (rmux-core 宽字符/Alternate屏/BracketedPaste) + screen_diff 行哈希静默稳定检测！Unix 跑现有 rmux-server(热重启不断连)，Windows 接 ConPTY 喂同一套 TerminalView！',
+      code: '// 直接复用你写好的 234 行 #![forbid(unsafe_code)] 解析核心：\n// calm_terminal_view::TerminalView (基于 rmux_core::TerminalScreen)\n// + terminal_interaction::{screen_diff, text_wait, actions}'
+    },
+    lib_vcskit: {
+      kind: 'C# 独立库 · libs/VcsKit',
+      kindColor: 'var(--green)',
+      title: 'VcsKit (原生 JJ + IWorkspaceDriver 挂载缝)',
+      pkg: 'libs/VcsKit (~650 LOC · JJ First, OverlayFS Ready)',
+      boundary: '解耦两层契约：IVcsService (JJ/Git/gh 版本语义) + IWorkspaceDriver (Provision / EnsureMounted / AcquireAttemptLease / Settle / Teardown)。',
+      hides: '首期仅实现 Direct 与 VcsWorkspace 驱动（零额外挂载复杂度）；未来插入 fuse-overlayfs / kernel-overlayfs / bwrap-overlay 仅实现 IWorkspaceDriver，自动获得重启重挂、Per-Attempt CoW 试错租约与安全卸载不误删 lowerdir 共享缓存！',
+      code: '// 冻结工作区与 OverlayFS 挂载扩展缝（首期仅跑直通与 JJ Workspace）：\npublic interface IWorkspaceDriver {\n  bool SupportsParallelIsolatedWriteLeases { get; }\n  Task<MountedWorkspace> EnsureMountedAsync(WorkspaceSpec spec, CancellationToken ct);\n  Task<AttemptWorkspaceLease> AcquireAttemptLeaseAsync(MountedWorkspace ws, string attemptId, bool rw, CancellationToken ct);\n  Task SettleAttemptLeaseAsync(AttemptWorkspaceLease lease, AttemptLeaseDisposition disp, CancellationToken ct);\n}'
+    },
+    kernel_actor: {
+      kind: '业务微内核 · app/',
+      kindColor: 'var(--purple)',
+      title: 'TrackActor & 宿主换页 Compaction',
+      pkg: 'src/Neige.Kernel/Actors',
+      boundary: '单向接收 ITrackCommand；对下只调 IAgentRuntime 最小 4 原语与 ITrackStore。',
+      hides: '单协程无锁状态机、PrimarySessionId 代表路由，以及最关键的【宿主自管 Epoch 换页压缩】：用一次普通总结对话 + 切换新底层 Thread 替代恶心的 CLI 原生 Compaction 适配！',
+      code: '// 彻底不碰 CLI 原生 /compact 的通用换页压缩：\nvar summary = await RunSummaryPromptAsync(session, ct);\nvar freshNativeId = await _agentKit.StartFreshThreadWithSeedAsync(summary, report, ct);\nsession.AdvanceEpoch(freshNativeId);'
+    },
+    kernel_tpl: {
+      kind: '业务微内核 · app/',
+      kindColor: 'var(--purple)',
+      title: 'TemplateHost (.neige.js 策略驱动)',
+      pkg: 'src/Neige.Kernel/Templates',
+      boundary: '在 5 个生命周期切面调用 IPolicyVm，将模板策略与内核机制彻底解耦。',
+      hides: '例如研发模板在 onCreate 自动调 VcsKit/WorkspaceDriver，在 onTaskSettled 记录 JJ ChangeId 与 OpId，在 guardToolCall 拦截未过评审的 PR 合并。',
+      code: '// 研发模板里天然享受 JJ 的 ChangeId 与 OpId：\nctx.state.latestChangeId = attempt.meta.changeId;\nctx.state.rollbackOpId   = attempt.meta.opId;'
+    },
+    lib_policyvm: {
+      kind: 'C# 独立库 · libs/PolicyVm',
+      kindColor: 'var(--green)',
+      title: 'PolicyVm (零手写解析 · Jint ESM 沙箱)',
+      pkg: 'libs/PolicyVm (~500 LOC)',
+      boundary: 'Compile(jsModuleSource) + 5 大纯函数生命周期钩子 -> (NextState, GuardDecision)。',
+      hides: '彻底消灭手写 TS 类型擦除！直接运行 @ts-check + neige-template.d.ts 校验通过的标准 ES 模块 (.neige.js)，Jint 内置内存/10k 步数/50ms 沙箱隔离。',
+      code: '// @ts-check\n/// <reference path="./neige-template.d.ts" />\nexport default defineTemplate({ id: "dev", ... });'
+    },
+    lib_doc: {
+      kind: 'C# 独立库 · libs/ReportDoc',
+      kindColor: 'var(--green)',
+      title: 'ReportDoc (块文档与乐观锁库)',
+      pkg: 'libs/ReportDoc (~650 LOC)',
+      boundary: 'Parse / ApplyOps / CompressSnapshot 纯内存同步 API。',
+      hides: 'Markdown 切块、稳定 ID 锚点、已读版本并发冲突检测、Zstd 快照压缩。',
+      code: '// 纯内存无 IO 算法库'
+    },
+    store_sqlite: {
+      kind: '存储适配层 · app/',
+      kindColor: 'var(--amber)',
+      title: 'SqliteWalStore (单写通道 + 升级备份 + 防膨胀 GC)',
+      pkg: 'src/Neige.Storage.Sqlite (~950 LOC)',
+      boundary: '实现 Neige.Kernel 的 ITrackStore（含 RunMaintenancePassAsync 定期回收）。',
+      hides: '1) schema_migrations 校验 + 迁移前在线备份 + JSON "v":1 读取升级；2) 补齐全部外键级联子表索引；3) >64KB 大日志剥离外部 .zst 冷存储；4) events 滑窗 + report_revisions 抽稀 + Epoch 裁剪 + PRAGMA incremental_vacuum 真实归还磁盘页。',
+      code: '// 防膨胀核心约束：\nPRAGMA auto_vacuum = INCREMENTAL;\n// 仅存指针与 <=4KB 摘要进 B-Tree，大输出写 {dataDir}/blobs/{trackId}/*.zst'
+    },
+    host_api: {
+      kind: '接入层 · app/',
+      kindColor: 'var(--blue)',
+      title: 'REST /api/v1 & WS EventHub',
+      pkg: 'src/Neige.Host/Api',
+      boundary: '面向前端 fe/ 的精简 /api/v1 协议与实时事件流。',
+      hides: '统一会话读取接口、瞬态 Delta 内存广播、终端 WS 字节桥接。',
+      code: '// 前后端协同瘦身后的干净接口面'
+    },
+    host_kmcp: {
+      kind: '接入层 · app/',
+      kindColor: 'var(--blue)',
+      title: 'Kernel MCP (/mcp/kernel)',
+      pkg: 'src/Neige.Host/Mcp',
+      boundary: '向 Agent 暴露协作原语（Report/Task/Mail/Ask/Terminal）。',
+      hides: 'Planner 与 Assistant 默认拥有完全对等的协作权限。',
+      code: '// 极薄原语暴露层'
+    },
+    host_vcs: {
+      kind: '实用工具与静态插件层 · app/',
+      kindColor: 'var(--teal)',
+      title: '内置 JJ Forge + 常用外部 MCP 直挂',
+      pkg: 'src/Neige.Host/Builtins',
+      boundary: '首期不搞复杂插件商店：内置直接提供原生 JJ + gh PR + Source 工具；外部常用插件（智堡 Wisburg、复用老版 market 二进制）读静态 mcp-plugins.json 即插即用！',
+      hides: '工具调用转发前统一经过当前 Track 的 DSL guardToolCall 检查。',
+      code: '// mcp-plugins.json 静态配置即插即用，零过度工程：\n{\n  "wisburg": { "url": "..." },\n  "market":  { "command": "./bin/market-plugin" }\n}'
+    }
+  };
+
+  const nodes = document.querySelectorAll('.mod-node');
+  const edges = document.querySelectorAll('.dep-edge');
+  const drawer = document.getElementById('drawer');
+
+  function esc(s) {
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  function selectNode(id) {
+    const d = DETAILS[id];
+    if (!d) return;
+
+    const outTargets = [];
+    const inSources = [];
+    const connected = new Set([id]);
+
+    edges.forEach(function(e) {
+      const f = e.getAttribute('data-from');
+      const t = e.getAttribute('data-to');
+      e.classList.remove('out-active', 'in-active', 'dimmed');
+      if (f === id) {
+        e.classList.add('out-active');
+        e.setAttribute('marker-end', 'url(#arrow-out)');
+        outTargets.push(DETAILS[t] ? DETAILS[t].title.split(' ')[0] : t);
+        connected.add(t);
+      } else if (t === id) {
+        e.classList.add('in-active');
+        e.setAttribute('marker-end', 'url(#arrow-in)');
+        inSources.push(DETAILS[f] ? DETAILS[f].title.split(' ')[0] : f);
+        connected.add(f);
+      } else {
+        e.classList.add('dimmed');
+        e.setAttribute('marker-end', 'url(#arrow)');
+      }
+    });
+
+    nodes.forEach(function(n) {
+      const nid = n.getAttribute('data-id');
+      n.classList.toggle('selected', nid === id);
+      n.classList.toggle('dimmed', !connected.has(nid));
+    });
+
+    const outHtml = outTargets.length
+      ? outTargets.map(function(x) { return '<span class="chip-out">──▶ ' + x + '</span>'; }).join('')
+      : '<span class="chip-none">独立叶子组件（零下游依赖）</span>';
+    const inHtml = inSources.length
+      ? inSources.map(function(x) { return '<span class="chip-in">' + x + ' ──▶ 本组件</span>'; }).join('')
+      : '<span class="chip-none">顶层入口</span>';
+
+    drawer.innerHTML =
+      '<div class="d-head">' +
+        '<span class="d-kind" style="border:1px solid ' + d.kindColor + '; color:' + d.kindColor + ';">' + d.kind + '</span>' +
+        '<h2 class="d-title">' + d.title + '</h2>' +
+        '<div class="d-pkg">' + d.pkg + '</div>' +
+      '</div>' +
+      '<div class="d-sec">抽象边界（对外暴露什么）</div>' +
+      '<div class="d-box">' + d.boundary + '</div>' +
+      '<div class="d-sec">内部消化掉的脏活</div>' +
+      '<div class="d-box">' + d.hides + '</div>' +
+      '<div class="d-sec">依赖关系（点击画布节点切换）</div>' +
+      '<div class="d-deps">' + outHtml + '</div>' +
+      '<div class="d-deps" style="margin-top:3px;">' + inHtml + '</div>' +
+      '<div class="d-sec">设计契约示意</div>' +
+      '<pre class="mini-code">' + esc(d.code) + '</pre>';
+  }
+
+  nodes.forEach(function(n) {
+    n.addEventListener('click', function() { selectNode(n.getAttribute('data-id')); });
+  });
+  selectNode('lib_agentkit');
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,58 @@
+import { expect, test, type Page } from '@playwright/test';
+import { createArea, createTrack } from './helpers/seed.js';
+
+const createdAreaIds: string[] = [];
+
+function captureBrowserErrors(page: Page): string[] {
+  const errors: string[] = [];
+  page.on('console', (message) => { if (message.type() === 'error') errors.push(message.text()); });
+  page.on('pageerror', (error) => errors.push(error.message));
+  return errors;
+}
+
+test.beforeEach(() => { createdAreaIds.length = 0; });
+test.afterEach(async ({ request }) => {
+  for (const id of createdAreaIds) await request.delete(`/api/areas/${id}`);
+  createdAreaIds.length = 0;
+});
+
+test('the application routes are reachable through the real kernel', async ({ page, request }) => {
+  const errors = captureBrowserErrors(page);
+  const version = await request.get('/api/version');
+  expect(version.ok()).toBe(true);
+  expect(await version.json() as { dbInstanceId?: unknown }).toEqual(
+    expect.objectContaining({ dbInstanceId: expect.stringMatching(/^[0-9a-f-]{36}$/i) }),
+  );
+
+  const area = await createArea(request);
+  createdAreaIds.push(area.id);
+  const track = await createTrack(request, area.id);
+  const routes = [
+    /* The daily homepage keeps its dated Track title beside the Assistant. */
+    { path: '/next/', anchor: page.locator('[data-nc-page-title]').filter({ hasText: /\d{4}-\d{2}-\d{2}/ }) },
+    /* Anchored on the composer because the new-track page has no `data-nc-page-title`. */
+    { path: `/next/area/${area.id}/new`, anchor: page.getByLabel('What this track should do') },
+    { path: `/next/track/${track.id}`, anchor: page.locator('[data-nc-page-title]', { hasText: track.title }) },
+    { path: '/next/settings', anchor: page.getByRole('textbox', { name: 'HTTP proxy' }) },
+    { path: '/next/settings/network', anchor: page.getByRole('textbox', { name: 'HTTP proxy' }) },
+    { path: '/next/settings/appearance', anchor: page.getByRole('combobox', { name: 'Theme' }) },
+  ];
+
+  for (const route of routes) {
+    await page.goto(route.path);
+    await expect(page.locator('nav[aria-label="Workspace"]')).toBeVisible();
+    await expect(route.anchor).toBeVisible();
+    if (route.path === '/next/') {
+      const calendar = page.locator('[data-nc-desktop-panel]').getByRole('region', { name: 'Calendar tasks' });
+      await expect(calendar).toBeVisible();
+      const assistant = page.getByRole('region', { name: 'Today Assistant', exact: true });
+      await expect(assistant.getByRole('combobox', { name: 'Message', exact: true })).toBeVisible();
+      await page.getByRole('button', { name: 'Report changes', exact: true }).click();
+      await expect(calendar).toBeVisible();
+      await page.getByRole('button', { name: 'Back to Today Assistant', exact: true }).click();
+      await expect(assistant.getByRole('combobox', { name: 'Message', exact: true })).toBeVisible();
+      await expect(calendar).toBeVisible();
+    }
+  }
+  expect(errors).toEqual([]);
+});

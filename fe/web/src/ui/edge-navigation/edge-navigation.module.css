@@ -1,0 +1,111 @@
+@layer ui {
+  .rail {
+    --nc-rail-pitch: 20px;
+    --nc-rail-max: 320px;
+    --nc-rail-dot: 4px;
+    --nc-rail-dot-current: var(--dot-sm);
+    --nc-rail-ink: oklch(58% 0.01 250);
+    position: relative;
+    block-size: 100%;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+  [data-theme="dark"] .rail {
+    --nc-rail-ink: oklch(56% 0.012 245);
+  }
+  @media (pointer: coarse) {
+    .rail {
+      --nc-rail-pitch: calc(28px + var(--space-4));
+      --nc-rail-dot: var(--dot-sm);
+      --nc-rail-dot-current: var(--dot-md);
+    }
+  }
+  .railTrack {
+    display: flex;
+    flex-direction: column;
+    justify-content: safe center;
+    block-size: auto;
+    max-block-size: var(--nc-rail-max);
+    flex: none;
+    overflow-y: auto;
+    scrollbar-width: none;
+    overflow-anchor: none;
+  }
+  .railDot {
+    display: grid;
+    place-items: center;
+    flex: none;
+    inline-size: 100%;
+    block-size: var(--nc-rail-pitch);
+    padding: 0;
+    border: 0;
+    background: none;
+    cursor: pointer;
+  }
+  .railDot::before {
+    content: '';
+    --nc-dot-base: var(--nc-rail-dot);
+    inline-size: var(--nc-dot-base);
+    block-size: var(--nc-dot-base);
+    border-radius: var(--radius-pill);
+    background: var(--nc-rail-ink);
+    transition:
+      inline-size var(--motion-quick) ease-out,
+      block-size var(--motion-quick) ease-out,
+      background-color var(--motion-quick) var(--ease-feedback);
+  }
+  .railDot:hover::before {
+    background: var(--text-2);
+  }
+  .railDot:focus-visible::before {
+    inline-size: var(--dot-md);
+    block-size: var(--dot-md);
+  }
+  .railDot:focus-visible {
+    outline-offset: -2px;
+  }
+  .railDotActive::before {
+    --nc-dot-base: var(--nc-rail-dot-current);
+    background: var(--accent);
+  }
+  @media (pointer: fine) {
+    .railDot::before {
+      --nc-dot-size: calc(var(--nc-dot-base) + (var(--dot-md) - var(--nc-dot-base)) * var(--nc-dot-proximity, 0));
+      inline-size: var(--nc-dot-size);
+      block-size: var(--nc-dot-size);
+    }
+    .railDot:hover::before {
+      inline-size: var(--dot-md);
+      block-size: var(--dot-md);
+    }
+  }
+  .railPreview {
+    max-inline-size: min(17rem, var(--nc-rail-preview-max-inline-size, 17rem));
+    overflow-wrap: anywhere;
+    color: var(--text);
+  }
+  .previewTitle {
+    font-size: var(--font-step-2-size);
+    font-weight: var(--weight-medium);
+    line-height: var(--font-step-2-line);
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
+  }
+  .previewExcerpt {
+    font-size: var(--font-step-1-size);
+    font-weight: var(--weight-normal);
+    line-height: var(--font-step-1-line);
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 4;
+    overflow: hidden;
+    margin: var(--space-2) 0 0;
+    color: var(--text-2);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .railDot::before { transition: none; }
+  }
+}

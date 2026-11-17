@@ -1,0 +1,27 @@
+# Icon system
+
+`ui/icon` is the single semantic icon registry. Functional shapes come from the
+pinned `lucide-react` 0.468.0 package; Tools uses Wrench, terminal resources use
+SquareTerminal, agents use Bot, and disclosures use ChevronRight. Search uses Search and data views use ChartColumn. `share` uses Forward for sharing entry points; `link` uses Link2 for persisted URLs.
+`copy` uses Copy for clipboard actions; `check` uses Check for their success feedback. Running and
+waiting use Circle and Clock3 respectively. Running uses a complete, unfilled
+outline across navigation and inventory groups; compact activity markers also
+use an outlined ring. Status circles remain distinct
+from plain action controls.
+
+All graphics use Lucide's 24-unit SVG geometry, 2-unit rounded strokes and the
+same renderer. `--glyph-sm` supplies 14px auxiliary icons and `--glyph` supplies
+16px primary icons. There are no optical-inset groups, runtime geometry rewrites,
+brand-specific stroke overrides or DOM decoration. Controls own their hit areas.
+
+The approved lightweight Claude/Codex artwork is registered as immutable path
+data through the same Lucide renderer. Its coordinates are already normalized
+to the shared grid. The [Codex source](https://github.com/lobehub/lobe-icons)
+is credited in CODEX-LICENSE.txt; its browser contract pins the complete closed outline.
+
+The primitive contains no application policy. Features own kind-to-icon mappings
+and accessible names; core view derivation owns classifications and authoritative
+attention metadata. Unknown kinds preserve their text and actions.
+
+`delete` uses Lucide Trash2 for resource deletion. `close` uses X for closing,
+collapsing or dismissing a surface. Controls keep their descriptive accessible names.

@@ -1,0 +1,457 @@
+// @vitest-environment jsdom
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { useEffect, useLayoutEffect, useRef, type ReactNode } from 'react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { Drawer, type DrawerResize } from './public.tsx';
+import { Dialog } from '../dialog/public.tsx';
+import { useState } from '../state/public.ts';
+
+afterEach(cleanup);
+
+function open(props: Partial<Parameters<typeof Drawer>[0]> = {}) {
+  return render(
+    <Drawer
+      open={props.open ?? true}
+      title={props.title ?? 'Why the resolver drops a hop'}
+      mobileBackLabel={props.mobileBackLabel}
+      closeLabel={props.closeLabel}
+      onClose={props.onClose ?? vi.fn()}
+      footer={props.footer}
+    >
+      {props.children ?? <p>the transcript</p>}
+    </Drawer>,
+  );
+}
+
+describe('Drawer', () => {
+  it('is not in the tree before it opens', () => {
+    const railButton = document.body.appendChild(document.createElement('button'));
+    const pageTitle = document.body.appendChild(document.createElement('h1'));
+    pageTitle.tabIndex = -1; pageTitle.dataset.ncPageTitle = '';
+    railButton.focus();
+    render(<Drawer open={false} title="t" onClose={vi.fn()}><p>body</p></Drawer>);
+    expect(screen.queryByRole('complementary')).toBeNull();
+    expect(document.activeElement).toBe(railButton);
+    railButton.remove(); pageTitle.remove();
+  });
+
+  it('stays mounted through the retraction after open goes false', () => {
+    const { rerender } = open();
+    const panel = screen.getByRole('complementary');
+    rerender(<Drawer open={false} title="t" onClose={vi.fn()}><p>body</p></Drawer>);
+    expect(panel.isConnected).toBe(true);
+    expect(panel.hasAttribute('inert')).toBe(true);
+    expect(screen.queryByRole('complementary')).toBeNull();
+  });
+
+  /* The caller drops its selection the instant it asks for a close; a drawer that re-read its props on the way out would slide away blank. */
+  it('keeps the last content it had while retracting', () => {
+    const { rerender } = open({ title: 'Why the resolver drops a hop', children: <p>the transcript</p> });
+    rerender(<Drawer open={false} title="" onClose={vi.fn()}>{null}</Drawer>);
+    expect(screen.getByText('the transcript')).toBeTruthy();
+    // Retained paint keeps its title, but it is no longer an accessible surface.
+    expect(screen.getByText('Why the resolver drops a hop')).toBeTruthy();
+    expect(screen.queryByRole('complementary')).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Why the resolver drops a hop' })).toBeNull();
+  });
+
+  /* The page header's delete X sits 58px above this control in the same column; an X on both would mean "put away" and "destroy" a flick apart. */
+  it('closes with a collapse, not the delete X', () => {
+    const onClose = vi.fn();
+    open({ onClose });
+    const close = screen.getByRole('button', { name: 'Close conversation' });
+    expect(close.querySelector('svg')?.classList.contains('lucide-chevron-right')).toBe(true);
+    expect(close.querySelector('svg')?.classList.contains('lucide-x')).toBe(false);
+    expect(close.textContent).not.toContain('›');
+    close.click();
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it('lets the caller name what the close control closes', () => {
+    const onClose = vi.fn();
+    open({ onClose, closeLabel: '关闭来源' });
+    expect(screen.queryByRole('button', { name: 'Close conversation' })).toBeNull();
+    screen.getByRole('button', { name: '关闭来源' }).click();
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it('uses the standard compact Header with Back on the left', () => {
+    const onClose = vi.fn();
+    vi.stubGlobal('matchMedia', vi.fn(() => ({
+      matches: true,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    })));
+    try {
+      open({ title: 'Untitled', mobileBackLabel: 'Report', onClose });
+      expect(screen.getByRole('heading', { name: 'Untitled' })).toBeTruthy();
+      const back = screen.getByRole('button', { name: 'Back to Report' });
+      expect(screen.queryByRole('button', { name: 'Close conversation' })).toBeNull();
+      back.click();
+      expect(onClose).toHaveBeenCalledOnce();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('offers no resize edge unless the caller owns the width', () => {
+    open();
+    expect(screen.queryByRole('separator')).toBeNull();
+    expect(screen.getByRole('complementary').hasAttribute('data-nc-drawer-resizable')).toBe(false);
+  });
+
+  it('puts the resize edge after the header in the tab order, and resets it from the keyboard or a double click', () => {
+    const resize = { onPreview: vi.fn(), onCommit: vi.fn() };
+    render(<Drawer open title="Chat" onClose={vi.fn()} resize={resize}><p>body</p></Drawer>);
+    const edge = screen.getByRole('separator', { name: 'Resize conversation' });
+    expect(edge.getAttribute('aria-orientation')).toBe('vertical');
+    expect(edge.tabIndex).toBe(0);
+    expect(screen.getByRole('complementary').hasAttribute('data-nc-drawer-resizable')).toBe(true);
+    const close = screen.getByRole('button', { name: 'Close conversation' });
+    expect(close.compareDocumentPosition(edge) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    fireEvent.keyDown(edge, { key: 'Home' });
+    expect(resize.onPreview).toHaveBeenLastCalledWith(null);
+    expect(resize.onCommit).toHaveBeenLastCalledWith(null);
+    fireEvent.keyDown(edge, { key: 'Tab' });
+    expect(resize.onCommit).toHaveBeenCalledOnce();
+    fireEvent.doubleClick(edge);
+    expect(resize.onCommit).toHaveBeenCalledTimes(2);
+    expect(resize.onCommit).toHaveBeenLastCalledWith(null);
+  });
+
+  it('keeps a compact drawer at full width with no resize edge', () => {
+    vi.stubGlobal('matchMedia', vi.fn(() => ({
+      matches: true,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    })));
+    try {
+      render(<Drawer open title="Chat" onClose={vi.fn()} resize={{ onPreview: vi.fn(), onCommit: vi.fn() }}><p>body</p></Drawer>);
+      expect(screen.queryByRole('separator')).toBeNull();
+      expect(screen.getByRole('complementary').hasAttribute('data-nc-drawer-resizable')).toBe(false);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('puts the footer outside the scrolling body', () => {
+    open({ footer: <form aria-label="composer" /> });
+    const bodyInner = screen.getByText('the transcript').parentElement;
+    const scroll = bodyInner?.parentElement;
+    const drawer = screen.getByRole('complementary');
+    /* The controls float over the scroller as a sibling, so the body is its only child. */
+    expect(scroll?.firstElementChild).toBe(bodyInner);
+    expect(scroll?.childElementCount).toBe(1);
+    expect(scroll?.parentElement).toBe(drawer);
+    expect(screen.getByRole('button', { name: 'Close conversation' }).closest('[data-nc-drawer-scroll]'))
+      .toBeNull();
+    expect(scroll?.hasAttribute('data-nc-drawer-scroll')).toBe(true);
+    expect(screen.getByLabelText('composer').parentElement).toBe(drawer);
+  });
+
+  it('restores focus to the opener when it closes', () => {
+    const opener = document.body.appendChild(document.createElement('button'));
+    opener.focus();
+    const view = open();
+    expect(document.activeElement).toBe(screen.getByRole('complementary'));
+    view.rerender(<Drawer open={false} title="t" onClose={vi.fn()}><p>body</p></Drawer>);
+    expect(document.activeElement).toBe(opener);
+    opener.remove();
+  });
+
+  it('moves focus in without asking the browser to scroll the page', () => {
+    const opener = document.body.appendChild(document.createElement('button'));
+    opener.focus();
+    const focus = vi.spyOn(HTMLElement.prototype, 'focus');
+    open();
+    expect(focus).toHaveBeenCalledWith({ preventScroll: true });
+    focus.mockRestore();
+    opener.remove();
+  });
+
+  it('closes a real topmost dialog without closing the drawer below it', () => {
+    const onDrawerClose = vi.fn();
+    function Layers() {
+      const [dialogOpen, setDialogOpen] = useState(true);
+      return <><Drawer open title="Drawer" onClose={onDrawerClose}>body</Drawer>
+        <Dialog purpose="info" origin={{ kind: 'surface-center' }} open={dialogOpen} title="Confirm" onClose={() => setDialogOpen(false)} /></>;
+    }
+    render(<Layers />);
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(onDrawerClose).not.toHaveBeenCalled();
+    expect(screen.queryByRole('dialog', { name: 'Confirm' })).toBeNull();
+  });
+
+  it('closes the drawer when it is above a dialog', () => {
+    const onDrawerClose = vi.fn();
+    render(<Dialog purpose="info" origin={{ kind: 'surface-center' }} open title="Confirm" onClose={vi.fn()} />);
+    open({ title: 'Drawer', onClose: onDrawerClose });
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(onDrawerClose).toHaveBeenCalledOnce();
+    expect(screen.getByRole('dialog', { name: 'Confirm' })).toBeTruthy();
+  });
+
+  it('closes on Escape when it is the topmost layer', () => {
+    const onClose = vi.fn();
+    open({ onClose });
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it('closes from its own focused panel', () => {
+    const onClose = vi.fn();
+    open({ onClose });
+    fireEvent.keyDown(screen.getByRole('complementary'), { key: 'Escape' });
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it.each([{ isComposing: true }, { keyCode: 229 }])('keeps the drawer open for an IME Escape %o', properties => {
+    const onClose = vi.fn();
+    open({ onClose });
+    fireEvent.keyDown(screen.getByRole('complementary'), { key: 'Escape', ...properties });
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('does not consume Escape already handled by an inner menu', () => {
+    const onClose = vi.fn();
+    open({ onClose });
+    const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+    event.preventDefault();
+    document.dispatchEvent(event);
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('leaves the Escape layer stack while its closing frame retracts', () => {
+    const view = open();
+    const panel = screen.getByRole('complementary');
+    view.rerender(<Drawer open={false} title="t" onClose={vi.fn()}><p>body</p></Drawer>);
+    expect(panel.hasAttribute('data-nc-escape-layer')).toBe(false);
+    expect(screen.queryByRole('complementary')).toBeNull();
+  });
+
+  it('falls back to the page title when the opener has been removed', () => {
+    const opener = document.body.appendChild(document.createElement('button'));
+    const pageTitle = document.body.appendChild(document.createElement('h1'));
+    pageTitle.tabIndex = -1;
+    pageTitle.dataset.ncPageTitle = '';
+    opener.focus();
+    const view = open();
+    opener.remove();
+    view.rerender(<Drawer open={false} title="t" onClose={vi.fn()}><p>body</p></Drawer>);
+    expect(document.activeElement).toBe(pageTitle);
+    pageTitle.remove();
+  });
+
+  /* `focus()` lands in an `aria-hidden` subtree and reports success, so the outcome cannot be read back. Reduced motion removes the retraction wait so only the fallback decides. */
+  function withReducedMotion(run: () => void) {
+    vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() })));
+    try { run(); } finally { vi.unstubAllGlobals(); }
+  }
+
+  function hiddenOpenerPage(attribute: string, value: string) {
+    const shroud = document.body.appendChild(document.createElement('div'));
+    shroud.setAttribute(attribute, value);
+    const opener = shroud.appendChild(document.createElement('button'));
+    const pageTitle = document.body.appendChild(document.createElement('h1'));
+    pageTitle.tabIndex = -1; pageTitle.dataset.ncPageTitle = '';
+    opener.focus();
+    return { shroud, opener, pageTitle };
+  }
+
+  it('does not count a landing inside an aria-hidden subtree as a restore', () => {
+    withReducedMotion(() => {
+      const { shroud, opener, pageTitle } = hiddenOpenerPage('aria-hidden', 'true');
+      /* The ask itself succeeds, so an outcome-only test would call this a restore. */
+      expect(document.activeElement).toBe(opener);
+      const view = open();
+      view.rerender(<Drawer open={false} title="t" onClose={vi.fn()}><p>body</p></Drawer>);
+      expect(document.activeElement).not.toBe(opener);
+      expect(document.activeElement).toBe(pageTitle);
+      shroud.remove(); pageTitle.remove();
+    });
+  });
+
+  /* `inert` for the same reason, through the same door. */
+  it('does not count a landing inside an inert subtree as a restore', () => {
+    withReducedMotion(() => {
+      const { shroud, opener, pageTitle } = hiddenOpenerPage('inert', '');
+      const view = open();
+      view.rerender(<Drawer open={false} title="t" onClose={vi.fn()}><p>body</p></Drawer>);
+      expect(document.activeElement).not.toBe(opener);
+      expect(document.activeElement).toBe(pageTitle);
+      shroud.remove(); pageTitle.remove();
+    });
+  });
+
+  it('prefers a surviving opener over the page-title fallback', () => {
+    const opener = document.body.appendChild(document.createElement('button'));
+    const pageTitle = document.body.appendChild(document.createElement('h1'));
+    pageTitle.tabIndex = -1; pageTitle.dataset.ncPageTitle = '';
+    opener.focus();
+    const view = open();
+    view.rerender(<Drawer open={false} title="t" onClose={vi.fn()}><p>body</p></Drawer>);
+    expect(document.activeElement).toBe(opener);
+    opener.remove(); pageTitle.remove();
+  });
+
+  /* The open effect bows out when focus is already inside the panel; that line also decides who the opener was. */
+  function drawerAt(isOpen: boolean, children: ReactNode) {
+    return <Drawer open={isOpen} title="Why the resolver drops a hop" onClose={vi.fn()}>{children}</Drawer>;
+  }
+
+  /** Content that takes the caret as it mounts, the shape `focusOnMount` gives the composer. */
+  function SelfFocusing() {
+    const ref = useRef<HTMLInputElement>(null);
+    useEffect(() => { ref.current?.focus(); }, []);
+    return <input ref={ref} aria-label="Message" />;
+  }
+
+  /* A guarded open records no opener, so the close falls back to the page title. */
+  it('falls back to the page title after an open its content had already claimed', () => {
+    const opener = document.body.appendChild(document.createElement('button'));
+    const pageTitle = document.body.appendChild(document.createElement('h1'));
+    pageTitle.tabIndex = -1; pageTitle.dataset.ncPageTitle = '';
+    opener.focus();
+
+    const view = render(drawerAt(true, <SelfFocusing />));
+    expect(document.activeElement).toBe(screen.getByLabelText('Message'));
+
+    view.rerender(drawerAt(false, <SelfFocusing />));
+    expect(document.activeElement).toBe(pageTitle);
+    expect(document.activeElement).not.toBe(opener);
+    opener.remove(); pageTitle.remove();
+  });
+
+  /* A reopen mid-retraction reruns the effect with focus still inside the panel; without the guard the panel becomes its own restore target. */
+  it('does not record itself as its own opener when it is reopened mid-retraction', () => {
+    const column = document.body.appendChild(document.createElement('div'));
+    const opener = column.appendChild(document.createElement('button'));
+    const pageTitle = document.body.appendChild(document.createElement('h1'));
+    pageTitle.tabIndex = -1; pageTitle.dataset.ncPageTitle = '';
+    opener.focus();
+
+    const view = render(drawerAt(true, <p>the transcript</p>));
+    const panel = screen.getByRole('complementary');
+    expect(document.activeElement).toBe(panel);
+
+    // The opener's column hidden the way `app/shell` hides it: the restore declines and waits.
+    column.setAttribute('aria-hidden', 'true');
+    view.rerender(drawerAt(false, <p>the transcript</p>));
+    expect(document.activeElement).toBe(panel);
+
+    // Reopened before it finished retracting, with the caret still in here.
+    view.rerender(drawerAt(true, <p>the transcript</p>));
+    column.removeAttribute('aria-hidden');
+
+    view.rerender(drawerAt(false, <p>the transcript</p>));
+    expect(document.activeElement).toBe(opener);
+    column.remove(); pageTitle.remove();
+  });
+});
+
+/* jsdom lays nothing out and has no pointer capture: the card reports a fixed 480px and capture is a no-op, so these pin the drag's lifetime, not its geometry (that is `app/shell/drawer-seam.browser.test.tsx`). */
+describe('a held drag that is interrupted', () => {
+  const restore: (() => void)[] = [];
+  function stub<K extends keyof HTMLElement>(key: K, value: HTMLElement[K]) {
+    const had = Object.getOwnPropertyDescriptor(HTMLElement.prototype, key);
+    Object.defineProperty(HTMLElement.prototype, key, { configurable: true, value });
+    restore.push(() => { if (had === undefined) delete (HTMLElement.prototype as Partial<HTMLElement>)[key]; else Object.defineProperty(HTMLElement.prototype, key, had); });
+  }
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['requestAnimationFrame', 'cancelAnimationFrame'] });
+    stub('getBoundingClientRect', () => DOMRect.fromRect({ x: 0, y: 0, width: 480, height: 600 }));
+    stub('setPointerCapture', () => {});
+  });
+  afterEach(() => { vi.useRealTimers(); for (const undo of restore.splice(0).reverse()) undo(); });
+
+  const drawer = (resize: DrawerResize | undefined, open = true) => (
+    <Drawer open={open} title="Chat" onClose={vi.fn()} resize={resize}><p>body</p></Drawer>
+  );
+  /** Press the edge and move it 80px toward the page, one frame laid out, a second move left pending. */
+  function holdDrag() {
+    const edge = screen.getByRole('separator', { name: 'Resize conversation' });
+    fireEvent.pointerDown(edge, { pointerId: 1, button: 0, clientX: 500 });
+    fireEvent.pointerMove(edge, { pointerId: 1, clientX: 420 });
+    vi.advanceTimersToNextFrame();
+    fireEvent.pointerMove(edge, { pointerId: 1, clientX: 400 });
+  }
+
+  it.each([
+    ['closing the drawer', (rerender: (ui: ReactNode) => void, resize: DrawerResize) => { rerender(drawer(resize, false)); }],
+    ['losing the resize contract, as a compact viewport does', (rerender: (ui: ReactNode) => void) => { rerender(drawer(undefined)); }],
+  ])('keeps the width last laid out when %s ends it, drops the pending frame, and lets the next press drag', (_, interrupt) => {
+    const resize = { onPreview: vi.fn(), onCommit: vi.fn() };
+    const { rerender } = render(drawer(resize));
+    holdDrag();
+    expect(resize.onPreview).toHaveBeenLastCalledWith(35);
+    expect(resize.onCommit).not.toHaveBeenCalled();
+
+    interrupt(rerender, resize);
+    expect(screen.queryByRole('separator')).toBeNull();
+    expect(resize.onCommit).toHaveBeenCalledExactlyOnceWith(30);
+    vi.advanceTimersToNextFrame();
+    expect(resize.onPreview).toHaveBeenCalledOnce();
+
+    rerender(drawer(resize));
+    holdDrag();
+    expect(resize.onPreview).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps the width last laid out when the drawer unmounts mid-drag', () => {
+    const resize = { onPreview: vi.fn(), onCommit: vi.fn() };
+    const { unmount } = render(drawer(resize));
+    holdDrag();
+    unmount();
+    expect(resize.onCommit).toHaveBeenCalledExactlyOnceWith(30);
+    vi.advanceTimersToNextFrame();
+    expect(resize.onPreview).toHaveBeenCalledOnce();
+  });
+
+  /* Advances the queued frame inside the commit that removes the edge: a sibling's layout effect runs after the deleted subtree's layout cleanups and before any passive effect, so this is the window a passive cleanup would leave open. */
+  function FrameInCommit({ fire }: { fire: boolean }) {
+    useLayoutEffect(() => { if (fire) vi.advanceTimersToNextFrame(); }, [fire]);
+    return null;
+  }
+
+  it('drops the queued frame in the commit that removes the edge, before passive effects run', () => {
+    const resize = { onPreview: vi.fn(), onCommit: vi.fn() };
+    const { rerender } = render(<>{drawer(resize)}<FrameInCommit fire={false} /></>);
+    holdDrag();
+    rerender(<>{drawer(undefined)}<FrameInCommit fire /></>);
+    expect(resize.onPreview).toHaveBeenCalledOnce();
+    expect(resize.onCommit).toHaveBeenCalledExactlyOnceWith(30);
+  });
+
+  it('commits nothing when a press ends without a move', () => {
+    const resize = { onPreview: vi.fn(), onCommit: vi.fn() };
+    const { rerender } = render(drawer(resize));
+    const edge = screen.getByRole('separator', { name: 'Resize conversation' });
+    fireEvent.pointerDown(edge, { pointerId: 1, button: 0, clientX: 500 });
+    fireEvent.pointerUp(edge, { pointerId: 1, clientX: 500 });
+    fireEvent.pointerDown(edge, { pointerId: 2, button: 0, clientX: 500 });
+    rerender(drawer(resize, false));
+    expect(resize.onPreview).not.toHaveBeenCalled();
+    expect(resize.onCommit).not.toHaveBeenCalled();
+  });
+});
+
+it('keeps the default closed companion unmounted without a retention opt-in', () => {
+  render(<Drawer open={false} title="Main" onClose={vi.fn()} companion={() => <p>Companion resource</p>}>
+    <p>Main resource</p>
+  </Drawer>);
+  expect(screen.queryByText('Companion resource')).toBeNull();
+  expect(screen.queryByText('Main resource')).toBeNull();
+});
+
+it('retains only the companion while a closed primary has no DOM, marker or id', () => {
+  const companion = () => <p>Retained companion</p>;
+  const view = render(<Drawer open={false} retainCompanion id="main-pane" title="Main" onClose={vi.fn()} companion={companion}><p>Transferred content</p></Drawer>);
+  view.rerender(<Drawer open={false} retainCompanion id="main-pane" title="Main" onClose={vi.fn()} companion={companion} companionVisible={false}>{null}</Drawer>);
+  expect(screen.queryByText('Transferred content')).toBeNull();
+  expect(screen.getByText('Retained companion')).toBeTruthy();
+  expect(document.getElementById('main-pane')).toBeNull();
+  expect(document.querySelector('[data-nc-drawer-scroll]')).toBeNull();
+  expect(document.querySelector('[data-nc-drawer]')).toBeNull();
+});

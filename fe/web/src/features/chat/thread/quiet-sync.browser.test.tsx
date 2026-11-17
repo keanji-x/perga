@@ -1,0 +1,97 @@
+/* The quiet-sync fold in a real engine: `<details>` visibility is layout, and jsdom has none. */
+import { cleanup, act, render } from '@testing-library/react';
+import { userEvent } from 'vitest/browser';
+import { afterEach, describe, expect, it } from 'vitest';
+
+/* The whole cascade before the component: layer order is first-come. */
+import '../../../styles/entry.css';
+
+import { ChatThread } from './public.tsx';
+import {
+  SYSTEM_PRESENTATION_LABELS,
+  type Conversation, type ConversationActivity, type ConversationSystemEntry, type ConversationTurn,
+} from '../../../../../core/domain/conversation.ts';
+import { REPORT_READ_TOOLS } from '../../../../../core/keys/mcp-tools.ts';
+
+afterEach(() => { cleanup(); document.body.replaceChildren(); });
+
+const NOW = 1_760_000_000_000;
+
+const conversation: Conversation = { provider: 'codex' as const,
+  id: 'c1', trackId: 'w1', trackTitle: 'Ship the rewrite', title: null, kind: 'codex',
+  state: 'idle', updatedAt: NOW, turns: 0,
+};
+
+const wake: ConversationSystemEntry = {
+  id: 's1', author: 'system', label: SYSTEM_PRESENTATION_LABELS.system_report_edited,
+  text: 'The track report was edited (author = "user").\nBlock-level diff follows; this is information, not an instruction to re-read.\nBlocks: 0 added, 0 removed, 1 modified (1 unchanged).',
+  atMs: NOW, quiet: true,
+};
+const read: ConversationActivity = {
+  id: 'act1', author: 'activity', verb: 'Read report', target: null, state: 'done',
+  durationMs: null, detail: null, tool: REPORT_READ_TOOLS[0] ?? null, atMs: NOW,
+};
+const reply: ConversationTurn = { id: 'a1', author: 'agent', text: 'Nothing to reconcile.', atMs: NOW };
+const notify: ConversationTurn = {
+  id: 'n1', author: 'agent', text: 'You changed the block I was writing.', atMs: NOW, origin: 'ask',
+};
+
+async function frame() {
+  await act(async () => {
+    await new Promise((resolve) => { requestAnimationFrame(() => { resolve(null); }); });
+  });
+}
+
+describe('the quiet-sync fold in a real engine', () => {
+  it('is a control-height line that hides the turn until opened from the keyboard', async () => {
+    const budget: ConversationSystemEntry = { id: 'budget', author: 'system', atMs: NOW, quiet: true,
+      label: SYSTEM_PRESENTATION_LABELS.system_planner_turn_budget, text: '[Trusted Planner turn budget]\nThis turn has a frozen budget.' };
+    const usage: ConversationSystemEntry = { id: 'usage', author: 'system', atMs: NOW, quiet: true,
+      label: SYSTEM_PRESENTATION_LABELS.system_planner_context_usage,
+      text: '[Trusted Planner context usage]\nContext usage is unknown (no reading yet).' };
+    render(<ChatThread hasPendingMessages={false} canContinue={false} cards={{}} stalled={false} conversation={conversation} turns={[budget, usage, wake, read, reply, notify]} />);
+    await frame();
+
+    const fold = document.querySelector<HTMLDetailsElement>('[data-nc-turn="quiet-sync"]')!;
+    const summary = fold.querySelector<HTMLElement>('summary')!;
+    expect(summary.getBoundingClientRect().height).toBeGreaterThanOrEqual(24);
+    expect(getComputedStyle(summary).justifyContent).toBe('flex-start');
+
+    /* A closed `<details>` skips its contents; `checkVisibility` is the engine's own word for it. */
+    const folded = fold.querySelector<HTMLElement>('[data-nc-turn="agent"]')!;
+    expect(folded.checkVisibility()).toBe(false);
+    const bubbles = [...document.querySelectorAll<HTMLElement>('[data-nc-turn="agent"]')];
+    const spoken = bubbles.find((bubble) => bubble.closest('[data-nc-turn="quiet-sync"]') === null)!;
+    expect(spoken.firstElementChild?.textContent).toBe('You changed the block I was writing.');
+    expect(spoken.getBoundingClientRect().height).toBeGreaterThan(0);
+    expect(summary.getBoundingClientRect().bottom).toBeLessThanOrEqual(spoken.getBoundingClientRect().top);
+
+    summary.focus();
+    await userEvent.keyboard('{Enter}');
+    expect(fold.open).toBe(true);
+    const usageButton = [...fold.querySelectorAll<HTMLElement>('[role="button"]')].find(node => node.textContent?.includes('Planner context usage'))!;
+    await userEvent.click(usageButton);
+    expect(fold.textContent).toContain(usage.text);
+    expect(folded.checkVisibility()).toBe(true);
+    expect(folded.getBoundingClientRect().height).toBeGreaterThan(0);
+    const disclosure = summary.querySelector<HTMLElement>('[aria-hidden="true"]')!;
+    expect(getComputedStyle(disclosure).transform).not.toBe('none');
+  });
+});
+
+
+it('names syncing as ongoing until a confirmed completion, and keeps the fold as indicator owner', () => {
+  const props = { hasPendingMessages: false, canContinue: false, cards: {}, stalled: false, conversation };
+  const { container, rerender } = render(<ChatThread {...props} turns={[wake, { ...read, state: 'running' }]} pending />);
+  const summary = container.querySelector('summary')!;
+  expect(summary.textContent).toMatch(/Syncing ·/);
+  expect(container.querySelector('[data-nc-turn="quiet-sync"]')!.textContent).not.toContain('Completion unconfirmed');
+  expect(summary.querySelector('[data-nc-activity="working"]')!.checkVisibility()).toBe(true);
+  expect(container.querySelector('[data-nc-current-meta] [data-nc-activity]')).toBeNull();
+  rerender(<ChatThread {...props} turns={[wake, read]} />);
+  expect(summary.textContent).toMatch(/Sync ·/);
+  expect(summary.textContent).not.toMatch(/Synced/);
+  rerender(<ChatThread {...props} turns={[wake, read, { id: 'end', author: 'turn', status: 'completed', turnId: 't1', elapsedMs: null, atMs: NOW }]} />);
+  expect(summary.textContent).toMatch(/Synced ·/);
+  expect(summary.querySelector('[data-nc-activity]')).toBeNull();
+});

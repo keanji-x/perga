@@ -1,0 +1,125 @@
+// @vitest-environment jsdom
+import { QueryClient } from '@tanstack/react-query';
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { DB_INSTANCE_ID_KEY, SYNC_CURSOR_KEY } from '../../../../core/keys/storage.ts';
+import { AppProviders, ServerCompatGate, WEB_COMPAT_VERSION, type ProviderRuntime } from './public.tsx';
+import { useTheme as requireTheme } from '../theme/public.tsx';
+
+const compatible = { webCompatVersion: WEB_COMPAT_VERSION, minWebCompatVersion: WEB_COMPAT_VERSION, syncEventVersion: 2, dbInstanceId: 'db-a' };
+const noopCursorStore = { clear: () => undefined };
+function memoryStorage() { const values = new Map<string, string>(); return { values, getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => { values.set(key, value); }, removeItem: (key: string) => { values.delete(key); } }; }
+function runtime(overrides: Partial<ProviderRuntime> = {}): ProviderRuntime {
+  return { fetchVersion: () => Promise.resolve(compatible), reload: vi.fn(), deleteDatabase: vi.fn(), idbDatabaseName: 'neige-calm', storage: memoryStorage(), ...overrides };
+}
+afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+describe('provider behavior', () => {
+  it('shows unavailable live updates and retries version preflight into an active bridge', async () => {
+    const fetchVersion = vi.fn().mockRejectedValueOnce(new Error('Version service unavailable'))
+      .mockRejectedValueOnce(new Error('Version service unavailable')).mockResolvedValue(compatible);
+    const client = new QueryClient({ defaultOptions: { queries: { retryDelay: 0 } } });
+    render(<AppProviders client={client} runtime={runtime({ fetchVersion })} cursorStore={noopCursorStore}
+      renderEventBridge={() => <i>bridge</i>}><b>route</b></AppProviders>);
+    const status = await screen.findByRole('status');
+    expect(status.textContent).toContain('Live updates unavailable');
+    expect(screen.getByText('route')).toBeTruthy();
+    expect(screen.queryByText('bridge')).toBeNull();
+    /* A failed preflight is read by the shared rule: its thrown text is not the reader's. */
+    expect(screen.getByRole('button', { name: 'Retry live updates' }).getAttribute('title')).toBe('Reconnect to restore live updates.');
+    await userEvent.click(screen.getByRole('button', { name: 'Retry live updates' }));
+    await screen.findByText('bridge');
+    expect(screen.queryByRole('status')).toBeNull();
+    expect(fetchVersion).toHaveBeenCalledTimes(3);
+  });
+
+  it('keeps a compatible bridge active when a background version recheck fails', async () => {
+    const fetchVersion = vi.fn().mockResolvedValueOnce(compatible).mockRejectedValue(new Error('Version unavailable'));
+    const client = new QueryClient({ defaultOptions: { queries: { retryDelay: 0 } } });
+    render(<AppProviders client={client} runtime={runtime({ fetchVersion })} cursorStore={noopCursorStore}
+      renderEventBridge={() => <i>bridge</i>}>route</AppProviders>);
+    await screen.findByText('bridge');
+    await act(() => client.invalidateQueries({ queryKey: ['server-version'] }));
+    expect(screen.getByText('bridge')).toBeTruthy();
+    expect(screen.queryByRole('status')).toBeNull();
+  });
+
+  it('INV-APP-003 places one ThemeProvider above the complete children tree', () => {
+    function ThemeConsumer() {
+      const { resolved } = requireTheme();
+      return <span>route:{resolved}</span>;
+    }
+    render(<AppProviders client={new QueryClient()} runtime={runtime()} cursorStore={noopCursorStore}><ThemeConsumer /></AppProviders>);
+    expect(screen.getByText(/^route:(?:light|dark)$/u)).toBeTruthy();
+  });
+  it('CAP-APP-006 initially focuses the refresh action and exposes exactly one focusable exit inside the panel', async () => {
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { callback(0); return 1; });
+    vi.stubGlobal('cancelAnimationFrame', vi.fn());
+    const server = { ...compatible, minWebCompatVersion: WEB_COMPAT_VERSION + 1 };
+    render(<ServerCompatGate client={new QueryClient()} runtime={runtime({ fetchVersion: () => Promise.resolve(server) })} cursorStore={noopCursorStore}>route</ServerCompatGate>);
+    const action = await screen.findByRole('button', { name: 'Refresh now' });
+    expect(document.activeElement).toBe(action);
+    const panel = screen.getByRole('dialog');
+    expect(panel.querySelectorAll('a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])')).toHaveLength(1);
+  });
+  it('INV-APP-001 INV-APP-002 mounts the bridge only after a compatible verdict while children remain', async () => {
+    let resolve!: (value: typeof compatible) => void;
+    const fetchVersion = () => new Promise<typeof compatible>((done) => { resolve = done; });
+    render(<AppProviders client={new QueryClient()} runtime={runtime({ fetchVersion })} cursorStore={noopCursorStore} renderEventBridge={() => <i>bridge</i>}><b>route</b></AppProviders>);
+    expect(screen.getByText('route')).toBeTruthy(); expect(screen.queryByText('bridge')).toBeNull();
+    resolve(compatible); await waitFor(() => expect(screen.getByText('bridge')).toBeTruthy());
+  });
+
+  it('INV-APP-007 checks once per mount without retaining the version query', async () => {
+    const fetchVersion = vi.fn(() => Promise.resolve(compatible)); const first = render(<AppProviders client={new QueryClient()} runtime={runtime({ fetchVersion })} cursorStore={noopCursorStore}>ok</AppProviders>);
+    await waitFor(() => expect(fetchVersion).toHaveBeenCalledTimes(1)); first.unmount();
+    render(<AppProviders client={new QueryClient()} runtime={runtime({ fetchVersion })} cursorStore={noopCursorStore}>ok</AppProviders>);
+    await waitFor(() => expect(fetchVersion).toHaveBeenCalledTimes(2));
+  });
+
+  it('INV-APP-008 preserves children and skips cache work on a version failure', async () => {
+    const clear = vi.fn(); const client = new QueryClient(); vi.spyOn(client, 'clear').mockImplementation(clear);
+    render(<ServerCompatGate client={client} runtime={runtime({ fetchVersion: () => Promise.reject(new Error('offline')) })} cursorStore={noopCursorStore}>route</ServerCompatGate>);
+    expect(screen.getByText('route')).toBeTruthy(); await new Promise((done) => setTimeout(done, 0)); expect(clear).not.toHaveBeenCalled();
+  });
+
+  it('CAP-APP-010 INV-APP-011 INV-APP-014 silently busts all artifacts and hides children', async () => {
+    const storage = memoryStorage(); storage.setItem(DB_INSTANCE_ID_KEY, 'db-old'); storage.setItem(SYNC_CURSOR_KEY, 'cursor');
+    const clear = vi.fn(); const client = new QueryClient(); vi.spyOn(client, 'clear').mockImplementation(clear);
+    const reload = vi.fn(); const deleteDatabase = vi.fn(); const r = runtime({ storage, reload, deleteDatabase }); const confirm = vi.spyOn(window, 'confirm');
+    const cursorStore = { clear: vi.fn(() => { storage.removeItem(SYNC_CURSOR_KEY); }) };
+    render(<ServerCompatGate client={client} runtime={r} cursorStore={cursorStore}>route</ServerCompatGate>);
+    await waitFor(() => expect(reload).toHaveBeenCalledOnce());
+    expect(clear).toHaveBeenCalledOnce(); expect(deleteDatabase).toHaveBeenCalledWith('neige-calm');
+    expect(cursorStore.clear).toHaveBeenCalledOnce(); expect(storage.getItem(SYNC_CURSOR_KEY)).toBeNull(); expect(storage.getItem(DB_INSTANCE_ID_KEY)).toBe('db-a');
+    expect(confirm).not.toHaveBeenCalled(); expect(screen.queryByText('route')).toBeNull();
+  });
+
+  it('T-A2 never constructs the bridge when the persisted database instance has switched', async () => {
+    const storage = memoryStorage(); storage.setItem(DB_INSTANCE_ID_KEY, 'db-old');
+    storage.setItem(SYNC_CURSOR_KEY, JSON.stringify({ dbInstanceId: 'db-old', cursor: 99 }));
+    let socketConstructionCount = 0;
+    const renderEventBridge = vi.fn(() => { socketConstructionCount += 1; return <i>bridge</i>; }); const cursorStore = { clear: vi.fn() };
+    render(<ServerCompatGate client={new QueryClient()} runtime={runtime({ storage })} cursorStore={cursorStore} renderEventBridge={renderEventBridge}>route</ServerCompatGate>);
+    await waitFor(() => expect(cursorStore.clear).toHaveBeenCalledOnce());
+    expect(renderEventBridge).not.toHaveBeenCalled(); expect(socketConstructionCount).toBe(0); expect(screen.queryByText('bridge')).toBeNull();
+  });
+
+  it('INV-APP-012 INV-APP-013 preserves matching artifacts and first visit only records the id', async () => {
+    for (const prior of [null, 'db-a']) {
+      const storage = memoryStorage(); if (prior) storage.setItem(DB_INSTANCE_ID_KEY, prior); storage.setItem(SYNC_CURSOR_KEY, 'keep');
+      const reload = vi.fn(); const deleteDatabase = vi.fn(); const r = runtime({ storage, reload, deleteDatabase }); const client = new QueryClient(); const clear = vi.spyOn(client, 'clear');
+      const view = render(<ServerCompatGate client={client} runtime={r} cursorStore={noopCursorStore}>route</ServerCompatGate>);
+      await waitFor(() => expect(storage.getItem(DB_INSTANCE_ID_KEY)).toBe('db-a'));
+      expect(clear).not.toHaveBeenCalled(); expect(deleteDatabase).not.toHaveBeenCalled(); expect(reload).not.toHaveBeenCalled();
+      expect(storage.getItem(SYNC_CURSOR_KEY)).toBe('keep'); view.unmount();
+    }
+  });
+
+  it('INV-APP-015 degrades when storage and indexedDB adapters throw', async () => {
+    const broken = { getItem: () => { throw new Error('blocked'); }, setItem: () => { throw new Error('blocked'); }, removeItem: () => { throw new Error('blocked'); }, clear: vi.fn(), key: () => null, length: 0 } satisfies Storage;
+    render(<AppProviders client={new QueryClient()} runtime={runtime({ storage: broken, deleteDatabase: () => { throw new Error('blocked'); } })} cursorStore={noopCursorStore}>route</AppProviders>);
+    expect(screen.getByText('route')).toBeTruthy(); await new Promise((done) => setTimeout(done, 0)); expect(screen.getByText('route')).toBeTruthy();
+  });
+});

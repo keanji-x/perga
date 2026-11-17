@@ -1,0 +1,16 @@
+@layer features {
+  .empty {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-4);
+    min-block-size: 0;
+    block-size: 100%;
+    max-inline-size: var(--measure-prose);
+    margin-inline: auto;
+    padding: var(--space-6) var(--space-6);
+    text-align: center;
+  }
+}

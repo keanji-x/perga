@@ -8,11 +8,16 @@
 
 ### 1.1 仓库与 Solution 目录布局
 
-实现仓库位于 `/home/kenji/neige-workspaces/78d0fc64f6394212b88223f52273e9dd/0356c8755af142cab9f7919f5e82ce20`：
+实现仓库（`perga`）位于 `/home/kenji/neige-workspaces/78d0fc64f6394212b88223f52273e9dd/0356c8755af142cab9f7919f5e82ce20`：
 
 ```text
-Neige.Next.sln
+Neige.Next.sln                            # （待 Stage 0 生成）
+├── DESIGN.md                             # 本架构与冻结接口规范
+├── README.md / LICENSE / rust-toolchain.toml
 ├── Directory.Build.props                 # 统一 net9.0 / Nullable=enable / ImplicitUsings=enable / TreatWarningsAsErrors=true
+├── fe/                                   # 已迁移的前端（React + TypeScript + Astryx Design）
+├── docs/                                 # 架构拓扑图与前期 Rust 审计蓝图（已迁移）
+├── plugins/                              # 保留的独立领域插件（market / barra / invest / paper-trading / research-archive）
 ├── libs/                                 # 零业务耦合独立底座库（严禁引用任何 src/* 或彼此环路引用）
 │   ├── Neige.ReportDoc/
 │   │   └── Neige.ReportDoc.csproj        # 依赖: ZstdSharp.Port
@@ -26,15 +31,16 @@ Neige.Next.sln
 │       └── Neige.TermClient.csproj       # 轻量 UDS/TCP JSON-RPC + WebSocket 客户端对接 neige-term-bridge
 │
 ├── tools/
+│   ├── rust-terminal/                    # 已迁移的 Rust 终端种子（calm-terminal-view / calm-terminal-runtime / terminal_interaction_ref）
 │   └── neige-term-bridge/                # 独立纯 Rust 跨平台终端守护（#![forbid(unsafe_code)]）
-│       ├── Cargo.toml                    # 提纯复用自原仓库 rmux 解析栈（rmux-core / rmux-server / rmux-sdk / portable-pty）
+│       ├── Cargo.toml                    # 提纯组装自 tools/rust-terminal/（rmux-core / rmux-server / rmux-sdk / portable-pty）
 │       └── src/
 │           ├── main.rs                   # CLI 参数（--listen-uds / --listen-tcp）与双监听启动
-│           ├── view.rs                   # 提纯自 crates/calm-terminal-view/src/lib.rs
-│           ├── runtime.rs                # 提纯自 crates/calm-terminal-runtime（macOS 可选跳过 unshare + Windows ConPTY trait）
-│           ├── screen_diff.rs            # 提纯自 crates/calm-server/src/terminal_interaction/screen_diff.rs
-│           ├── actions.rs                # 提纯自 crates/calm-server/src/terminal_interaction/actions.rs
-│           ├── wait_plan.rs              # 提纯自 crates/calm-server/src/terminal_interaction/wait_plan.rs & text_wait.rs
+│           ├── view.rs                   # 提纯自 calm-terminal-view/src/lib.rs
+│           ├── runtime.rs                # 提纯自 calm-terminal-runtime（macOS 可选跳过 unshare + Windows ConPTY trait）
+│           ├── screen_diff.rs            # 提纯自 terminal_interaction_ref/screen_diff.rs
+│           ├── actions.rs                # 提纯自 terminal_interaction_ref/actions.rs
+│           ├── wait_plan.rs              # 提纯自 terminal_interaction_ref/wait_plan.rs & text_wait.rs
 │           ├── rpc.rs                    # JSON-RPC 2.0 分发（term.ensure / observe / action / resize / kill）
 │           └── ws.rs                     # 二进制 WS 流（0x01 raw PTY bytes, 0x02 JSON control）+ 64KB 环形缓冲回放
 │
@@ -826,11 +832,11 @@ public interface IGitHubForgeService
 
 ### 2.6 `tools/neige-term-bridge` (Rust) 与 `namespace Neige.TermClient` (C#)
 
-#### 提纯自现有 Rust 仓库的精确模块来源
-从 `/mnt/data2/kenji/neige-calm/.claude/worktrees/track-8625a233425245bea1929dbe5a1693ad` 中抽取并剥离业务依赖：
-1. **`crates/calm-terminal-view/src/lib.rs`**：原样保留 `TerminalView`、`Frame`、`Cursor`、`Cell`、`InputSurface`（含 `bracketed_paste()` 感知 `MODE_BRACKETPASTE`）、`key_bytes()`（感知 `MODE_KCURSOR`）及 `take_replies()` 防重复应答机制，基于 `rmux-core = "=0.10.0"` 与 `rmux-proto = "=0.10.0"`。
-2. **`crates/calm-terminal-runtime/src/lib.rs`**：保留 `rmux-server` / `rmux-sdk` 会话生命周期管理（确保主进程重启不杀终端）；将 `isolated_command` 中写死报错的 Linux `unshare` 改造为“Linux 下按开关可选，macOS 走普通子进程”，并抽取 `PtyBackend` trait 以便 Windows 使用 `portable-pty` ConPTY 向同一个 `TerminalView` 喂字节。
-3. **`crates/calm-server/src/terminal_interaction/`**：提取 `screen_diff.rs`（`CursorSnapshot`、`ScreenDiff`、`row_hashes`）、`actions.rs`（`ACTION_BYTES_MAX = 16384`、`SEQUENCE_KEYS`、`Encoded::{Bytes, Submit}`）、`wait_plan.rs`（`WaitFor::{Elapsed, Change, Signal, Text}`、`WAIT_MS_MAX = 20_000`、`SETTLE_MS_DEFAULT = 150`），彻底剔除 `RouteRepo`、`CardRole` 与 `fixtures` 钩子。
+#### 提纯自已迁移 Rust 终端种子（`tools/rust-terminal/`）的精确模块来源
+从本仓库已迁移的 `tools/rust-terminal/` 中抽取并剥离业务依赖：
+1. **`tools/rust-terminal/calm-terminal-view/src/lib.rs`**：原样保留 `TerminalView`、`Frame`、`Cursor`、`Cell`、`InputSurface`（含 `bracketed_paste()` 感知 `MODE_BRACKETPASTE`）、`key_bytes()`（感知 `MODE_KCURSOR`）及 `take_replies()` 防重复应答机制，基于 `rmux-core = "=0.10.0"` 与 `rmux-proto = "=0.10.0"`。
+2. **`tools/rust-terminal/calm-terminal-runtime/src/lib.rs`**：保留 `rmux-server` / `rmux-sdk` 会话生命周期管理（确保主进程重启不杀终端）；将 `isolated_command` 中写死报错的 Linux `unshare` 改造为“Linux 下按开关可选，macOS 走普通子进程”，并抽取 `PtyBackend` trait 以便 Windows 使用 `portable-pty` ConPTY 向同一个 `TerminalView` 喂字节。
+3. **`tools/rust-terminal/terminal_interaction_ref/`**：提取 `screen_diff.rs`（`CursorSnapshot`、`ScreenDiff`、`row_hashes`）、`actions.rs`（`ACTION_BYTES_MAX = 16384`、`SEQUENCE_KEYS`、`Encoded::{Bytes, Submit}`）、`wait_plan.rs`（`WaitFor::{Elapsed, Change, Signal, Text}`、`WAIT_MS_MAX = 20_000`、`SETTLE_MS_DEFAULT = 150`），彻底剔除 `RouteRepo`、`CardRole` 与 `fixtures` 钩子。
 
 #### Rust `neige-term-bridge` 对外协议（JSON-RPC 2.0 + 二进制 WS）
 监听 `--listen-uds <path>` 或 `--listen-tcp 127.0.0.1:<port>`：
@@ -1337,7 +1343,7 @@ CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at_ms);
    - `w-doc-vm`：实现 `libs/Neige.ReportDoc` + `libs/Neige.PolicyVm`（Jint 原生直跑 ESM，零手写解析）+ `templates/{tsconfig.json, *.neige.js}`（通过 `tsc --noEmit` 强类型检查）与单测。
    - `w-agentkit`：实现 `libs/Neige.AgentKit`（Codex / Claude stream-json / ACP + `bwrap` Wrapper）与 Mock CLI 协议测试。
    - `w-vcskit`：实现 `libs/Neige.VcsKit`（`jj --colocate` 一等支持 + `git` 兜底 + `gh` CLI + `IWorkspaceDriverRegistry` 与一期 `DirectWorkspaceDriver` / `VcsWorkspaceDriver`）与真实临时 `jj`/`git` 仓库及租约单测。
-   - `w-term-rust`：从 `neige-calm` 提纯移植 `tools/neige-term-bridge` + 实现 `libs/Neige.TermClient` 与 PTY 读写集成测试。
+   - `w-term-rust`：基于本仓库 `tools/rust-terminal/` 提纯组装 `tools/neige-term-bridge` + 实现 `libs/Neige.TermClient` 与 PTY 读写集成测试。
    - `w-sqlite`：实现 `src/Neige.Storage.Sqlite`（10 表群 DDL + `SqliteMigrator` 迁移备份 + `SqliteSingleWriter` 微批写入 + `ITrackStore` + >64KB 冷 Blob 剥离与 `RunMaintenancePassAsync` 确定性 GC）与高并发无 `SQLITE_BUSY`、外键级联索引、升级及防膨胀压测。
    - `w-kernel`：实现 `src/Neige.Kernel`（`TrackActor`、代表路由、Epoch 换页压缩、`TaskGraphScheduler`、`TemplateHost`、`BootReconciler`）与纯内存模拟测试。
    - 协调者按序审查并合入 `main`（或派 `v-libs` / `v-core` 验证每个分支 `dotnet test` / `cargo test` 全绿后再合并）。

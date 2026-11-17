@@ -1,0 +1,9 @@
+@layer ui {
+  .pathLabel {
+    font-size: var(--font-step-1-size);
+    display: grid;
+    gap: var(--space-half);
+    padding: var(--space-1) var(--space-2);
+    overflow-wrap: anywhere;
+  }
+}

@@ -1,0 +1,136 @@
+/*
+ * The frozen dialog primitive hard-codes its class names (ui/dialog/public.tsx),
+ * so this owns their layout; CardFrame owns panel paint. It is the only non-module
+ * CSS file in the `ui` layer (§2.7). Every class here is registered in
+ * global-classes.yaml; the manifest is a closed list, so a tenth dialog class is
+ * a planner change, not an implementation detail.
+ */
+@layer ui {
+  .dialog-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: var(--z-modal);
+    display: grid;
+    place-items: center;
+    padding: var(--space-4);
+    background: var(--overlay-scrim);
+    animation: dialog-backdrop-enter var(--motion-quick) var(--ease-feedback);
+  }
+
+  .dialog-panel {
+    display: flex;
+    flex-direction: column;
+    inline-size: min(var(--measure-form), calc(100vw - var(--space-6)));
+    max-block-size: calc(100dvh - var(--space-6));
+    padding: var(--space-4);
+
+    /* Shared Motion owns panel entry; dismissal and focus remain synchronous. */
+    transition: none;
+  }
+
+  /* The wide form carries child views, whose height changes as the user drills
+     in. Anchoring it to the block-start keeps the panel from jumping while they
+     read it; a centred panel moves on every push. */
+  .dialog-overlay-wide {
+    align-items: start;
+    padding-block: var(--space-6);
+  }
+
+  /* `wide` is the child-view form; only the measure changes. */
+  .dialog-panel-wide {
+    inline-size: min(var(--measure-page), calc(100vw - var(--space-6)));
+  }
+
+  .dialog-header {
+    font-weight: var(--weight-semibold);
+    line-height: var(--font-step-2-line);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+    min-block-size: var(--control-h-lg);
+    color: var(--text);
+  }
+
+  .dialog-header > span {
+    font-size: var(--font-step-2-size);
+  }
+
+  .dialog-body {
+    font-size: var(--font-step-2-size);
+    line-height: var(--font-step-2-line);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    overflow: auto;
+    color: var(--text);
+  }
+
+  .dialog-child-view {
+    min-block-size: var(--slot-h);
+  }
+
+  .confirm-dialog-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-2);
+    margin-block-start: var(--space-4);
+  }
+
+  /*
+   * The one solid-red button in the app (§4.3). It is scoped to the confirm
+   * dialog's action row on purpose: everywhere else `destructive` is §4.1's
+   * transparent-fill, --error-text recipe.
+   */
+  .confirm-dialog-actions [data-nc-action='destructive'] {
+    border-color: var(--error);
+    background: var(--error);
+    color: var(--text-on-accent);
+  }
+
+  .confirm-dialog-actions [data-nc-action='destructive']:hover,
+  .confirm-dialog-actions [data-nc-action='destructive']:focus-visible {
+    background: var(--error);
+    color: var(--text-on-accent);
+  }
+
+  /* busy keeps the solid fill and --text-on-accent: --text-3 on --error is below
+     every contrast floor, and swapping a red button to a grey chip under the
+     user's pointer is a colour jump (§5.1 rule 2). */
+  .confirm-dialog-actions [data-nc-action='destructive'][data-nc-state='busy'] {
+    background: var(--error);
+    color: var(--text-on-accent);
+  }
+
+  /*
+   * CR-7 — both labels live in one grid cell, so the button's width is the wider
+   * of the two and does not change when it goes busy. `min-inline-size` cannot
+   * express this: §9.1 admits only box-scale tokens there, and none of them is
+   * "the width of this label".
+   */
+  .confirm-dialog-label {
+    display: grid;
+    grid-template-areas: 'label';
+    place-items: center;
+  }
+
+  .confirm-dialog-label > * {
+    grid-area: label;
+  }
+
+  [data-nc-state='busy'] > .confirm-dialog-label > :first-child,
+  [data-nc-action]:not([data-nc-state='busy']) > .confirm-dialog-label > :last-child {
+    visibility: hidden;
+  }
+
+  @keyframes dialog-backdrop-enter {
+    from { background-color: transparent; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .dialog-panel,
+    .dialog-overlay {
+      animation: none;
+    }
+  }
+}

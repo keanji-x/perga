@@ -1,0 +1,197 @@
+{
+  "manifest_version": 3,
+  "id": "dev-neige-market",
+  "version": "0.2.0",
+  "min_kernel_version": "0.0.1",
+  "display_name": "Market data",
+  "entrypoint": {
+    "command": "bin/market"
+  },
+  "exposes_tools": [
+    {
+      "name": "market.quote",
+      "description": "Read one asset's current price. Specify its venue and use the returned native currency. US quotes are USD, CRYPTO quotes are USDT, and supported HK and mainland quotes use HKD and CNY.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "asset": {
+            "type": "string",
+            "description": "Asset name. Bare (`BTC`) means the crypto venue; a venue-qualified name is `<VENUE>:<SYMBOL>` over CRYPTO, US, HK, SH (Shanghai) and SZ (Shenzhen) — `CRYPTO:BTC`, `US:NVDA`, `HK:1810`, `SH:600519`, `SZ:000001`. A prefix counts only with the colon, so `USNVDA` is a crypto name. `CN:` is accepted only so holdings stored under the retired mainland venue still read back; it is never priced, and has to be re-recorded under the exchange that lists the code — `SH:<code>` for a Shanghai listing, `SZ:<code>` for a Shenzhen one, not whichever is convenient. A Hong Kong code folds to five zero-padded digits, so `HK:1810` and `HK:01810` are one holding."
+          }
+        },
+        "required": [
+          "asset"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "title": "Quote",
+        "readOnlyHint": true,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "market.holdings.set",
+      "description": "Set a holding's quantity in this Track. Zero removes it. Wakes the portfolio price refresh.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "asset": {
+            "type": "string",
+            "description": "Asset name. Bare (`BTC`) means the crypto venue; a venue-qualified name is `<VENUE>:<SYMBOL>` over CRYPTO, US, HK, SH (Shanghai) and SZ (Shenzhen) — `CRYPTO:BTC`, `US:NVDA`, `HK:1810`, `SH:600519`, `SZ:000001`. A prefix counts only with the colon, so `USNVDA` is a crypto name. `CN:` is accepted only so holdings stored under the retired mainland venue still read back; it is never priced, and has to be re-recorded under the exchange that lists the code — `SH:<code>` for a Shanghai listing, `SZ:<code>` for a Shenzhen one, not whichever is convenient. A Hong Kong code folds to five zero-padded digits, so `HK:1810` and `HK:01810` are one holding."
+          },
+          "quantity": {
+            "type": "number",
+            "description": "How much is held. 0 removes the holding."
+          }
+        },
+        "required": [
+          "asset",
+          "quantity"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "title": "Set Holding",
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "market.holdings.list",
+      "description": "Read holdings with native prices and converted values. Check whether the total is partial and inspect conversions for rate provenance. USDT is valued at 1 USD.",
+      "input_schema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "annotations": {
+        "title": "List Holdings",
+        "readOnlyHint": true,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "market.series",
+      "description": "Read daily, weekly or monthly bars for chart.series. as_of is the inclusive cutoff. Frozen mode, aggregated periods, US and crypto require a later daily bar to prove closure. Live daily HK, SH and SZ may include the cutoff day. Inspect per-asset status and complete_through. Timestamps are UTC midnight at the period start, with points in requested field order.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "series": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 8,
+            "items": {
+              "type": "string"
+            },
+            "description": "Venue-qualified asset names, `<VENUE>:<SYMBOL>` over CRYPTO, US, HK, SH and SZ (a bare name is CRYPTO). `CN:` and unknown venues answer `unknown_asset` for that item."
+          },
+          "fields": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 5,
+            "items": {
+              "type": "string",
+              "enum": [
+                "open",
+                "high",
+                "low",
+                "close",
+                "volume"
+              ]
+            },
+            "description": "Which values each point carries, in this order after `ts_ms`."
+          },
+          "period": {
+            "type": "string",
+            "enum": [
+              "day",
+              "week",
+              "month"
+            ],
+            "description": "Bar size. Week and month are aggregated from daily bars: open of the first day, close of the last, max high, min low, summed volume; `ts_ms` is the period's first day."
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "live",
+              "frozen"
+            ],
+            "description": "`frozen` for a block with its own `as_of`; `live` when the kernel filled `as_of` with yesterday UTC. Required — never defaulted."
+          },
+          "start": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "description": "First day of the window (inclusive), YYYY-MM-DD, a real calendar date, not later than `as_of`."
+          },
+          "as_of": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "description": "Cutoff day (inclusive), YYYY-MM-DD, a real calendar date."
+          },
+          "deadline_ms": {
+            "type": "integer",
+            "description": "Unix milliseconds after which the caller no longer wants the answer; a request dequeued past it is refused without a network request."
+          }
+        },
+        "required": [
+          "series",
+          "fields",
+          "period",
+          "mode",
+          "start",
+          "as_of",
+          "deadline_ms"
+        ],
+        "additionalProperties": false
+      },
+      "annotations": {
+        "title": "Historical series",
+        "readOnlyHint": true,
+        "openWorldHint": true
+      }
+    }
+  ],
+  "permissions": {
+    "overlays_write": [
+      "track"
+    ],
+    "kv_quota_bytes": 262144
+  },
+  "config_schema": {
+    "type": "object",
+    "properties": {
+      "quote": {
+        "type": "string",
+        "default": "USDT",
+        "description": "The currency a portfolio's total is stated in. Two values settle: USD and CNY. USDT is accepted and settles as USD, which is what the default means and what every install that never set this key gets; the USDT-to-USD step is an assumed parity of 1, not a quoted rate (the pair answered 0.99967 on 2026-09-07, so the approximation is about 3.3 basis points on the USDT-quoted part of a portfolio). Any other value, HKD included, settles nothing: each holding keeps its own market's currency, and a portfolio spanning two of them gets no total. A price is never converted: every price this plugin publishes is the number its own market quoted. What is converted is each holding's VALUE, and with it the total, at rates read from the quote source; a rate that cannot be read leaves its holdings without a value and out of the total, rather than being carried over from an earlier pass."
+      },
+      "poll_seconds": {
+        "type": "integer",
+        "default": 30,
+        "description": "Seconds between price refreshes (minimum 5)"
+      },
+      "binance_endpoint": {
+        "type": "string",
+        "default": "https://data-api.binance.vision",
+        "description": "Base URL of the Binance market-data source. api.binance.com is geo-restricted from some hosts; data-api.binance.vision serves the same /api/v3 paths with no key."
+      },
+      "sina_endpoint": {
+        "type": "string",
+        "default": "https://hq.sinajs.cn",
+        "description": "Base URL of the Sina quote list, the US, HK, SH and SZ source. Its /list= path is asked for one symbol at a time: gb_<symbol>, hk<5-digit code>, sh<code> or sz<code>."
+      },
+      "tencent_endpoint": {
+        "type": "string",
+        "default": "https://web.ifzq.gtimg.cn",
+        "description": "Tencent ifzq daily K-line source for US/HK/SH/SZ (`market.series`). Its /appstock/app/fqkline/get path is asked for one code per request, with an explicit start and end date."
+      },
+      "debug_clock_ms": {
+        "type": "integer",
+        "description": "Test seam: when set, the plugin's wall clock is frozen at this instant (unix milliseconds) — `market.series` reads it for its deadline check and its cache's UTC-date key. Never set it on a real install; the handshake warns on stderr when it is."
+      }
+    },
+    "additionalProperties": false
+  }
+}

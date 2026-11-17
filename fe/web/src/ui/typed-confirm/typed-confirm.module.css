@@ -1,0 +1,42 @@
+@layer ui {
+  .body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+
+  /* The consequence is content the user has to read, so it takes the body
+     tone, not the metadata tone. */
+  .consequence {
+    font-size: var(--font-step-2-size);
+    font-weight: var(--weight-normal);
+    line-height: var(--font-step-2-line);
+    color: var(--text);
+  }
+
+  /* The instruction is a hint about the control below it, one step down. */
+  .prompt {
+    font-size: var(--font-step-1-size);
+    font-weight: var(--weight-normal);
+    line-height: var(--font-step-1-line);
+    color: var(--text-3);
+  }
+
+  /* Mono announces "this is a literal you must reproduce" without spending a
+     size, a weight, or a colour on it. */
+  .name {
+    font-family: var(--font-mono);
+    color: var(--text-2);
+  }
+
+  .input {
+    font: var(--type-code-detail);
+    letter-spacing: var(--type-code-detail-tracking);
+    inline-size: 100%;
+    block-size: var(--control-h-lg);
+    padding-block: 0;
+    padding-inline: var(--space-0);
+    color: var(--text);
+  }
+
+}

@@ -1,0 +1,52 @@
+@layer features {
+  .bar {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    box-sizing: border-box;
+    block-size: var(--control-h-touch);
+    padding: var(--space-px);
+    background: var(--paper);
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius-pill);
+    box-shadow: var(--shadow-float);
+  }
+
+  .send {
+    background: var(--accent);
+    color: var(--text-on-accent);
+    display: grid;
+    place-items: center;
+    flex: none;
+    inline-size: var(--rail-w-collapsed);
+    block-size: var(--rail-w-collapsed);
+    border-radius: var(--radius-pill);
+    box-sizing: border-box;
+    padding: var(--space-half);
+    background-clip: content-box;
+    cursor: pointer;
+  }
+
+  .send svg {
+    inline-size: var(--glyph-xl);
+    block-size: var(--glyph-xl);
+  }
+
+  .send:disabled { background-color: var(--surface-chip); color: var(--text-2); cursor: default; }
+
+  .input {
+    font-size: var(--font-step-3-size);
+    line-height: var(--font-step-3-line);
+    flex: 1;
+    min-inline-size: 0;
+    block-size: var(--rail-w-collapsed);
+    padding: var(--space-3) var(--space-3);
+    border: 0;
+    box-shadow: none;
+    resize: none;
+    background: transparent;
+    color: var(--text);
+  }
+
+  .input::placeholder { color: var(--text-3); }
+}

@@ -1,0 +1,153 @@
+/*
+ * Astryx theme bridge.
+ *
+ * Astryx ships its components precompiled with their own variable
+ * namespace (`--color-*`, `--spacing-*`, `--radius-*`, `--text-*-size`),
+ * disjoint from ours — measured: zero name collisions against tokens.css.
+ * The vendor package documents `astryx-theme` as the layer where a host
+ * app overrides those variables, and that is exactly what this file is:
+ * structure stays Astryx's; appearance and shared press feedback stay ours.
+ *
+ * Ordering: entry.css imports vendor.css (which carries Astryx's own
+ * `astryx-base` sublayer) BEFORE this file, and both land inside the
+ * top-level `astryx` layer. Sublayer precedence follows first appearance,
+ * so `astryx-base` loses to this file. Moving this import above vendor.css
+ * silently reverses that and hands the app Astryx's default palette.
+ *
+ * Unmapped variables keep Astryx's defaults on purpose — a half-mapped
+ * palette is easier to review than a wholesale copy, and the hue ramps
+ * (blue/green/…) have no counterpart in our vocabulary yet.
+ */
+@layer astryx {
+  /*
+   * ── One field edge, not two ───────────────────────────────────────────────
+   *
+   * base.css states this app's text-field recipe as "a rule, not a box", and it
+   * states it on the element: every `<input>` carries a hairline underline and
+   * doubles it to a full-strength rule on focus. astryx draws the same edge in
+   * the other place — a bordered box on the *wrapper* around the input — so an
+   * astryx field rendered in this app shows both at once: a rule sitting inside
+   * a box, which is the one shape neither system meant to produce.
+   *
+   * Inside a wrapper the wrapper is the field's edge, so the inner element goes
+   * back to being just text. It is written here rather than in the two modules
+   * that render astryx inputs because it is a property of the seam between the
+   * two systems, not of either call site — a per-module copy is how one of them
+   * ends up keeping the double rule after the other is fixed.
+   *
+   * The class is astryx's own theme hook (`themeProps('text-input')`), which is
+   * why it is registered in `global-classes.yaml` alongside the other vendor
+   * surfaces this app restyles.
+   */
+  .astryx-text-input input,
+  .astryx-number-input input {
+    border-block-end: none;
+    box-shadow: none;
+  }
+
+  /* ChatSendButton publishes this hook; its default full fallback loses to
+     the composer's inherited concentric button radius. Send/Stop stay circles. */
+  .astryx-chat-send-button {
+    border-radius: var(--radius-full);
+  }
+
+  /* Published Button theme hook. UI DepthFeedback owns the only press
+     transform; neutralize vendor resting/active transforms in the theme layer.
+     Caller layout transforms (inline or component-layer) still win the cascade,
+     and the UI effect composes additively with them. No private StyleX classes. */
+  .astryx-button,
+  .astryx-button:active {
+    transform: none;
+  }
+
+  :root {
+    /* Surfaces */
+    --color-background-body: var(--bg);
+    --color-background-surface: var(--paper);
+    --color-background-card: var(--surface-card);
+    --color-background-popover: var(--paper);
+    --color-background-muted: var(--surface-chip);
+
+    /* Text */
+    --color-text-primary: var(--text);
+    --color-text-secondary: var(--text-2);
+    --color-text-disabled: var(--text-4);
+    --color-text-accent: var(--accent);
+    --color-icon-primary: var(--text);
+    --color-icon-secondary: var(--text-2);
+    --color-icon-disabled: var(--text-4);
+    --color-icon-accent: var(--accent);
+
+    /* Accent and status */
+    --color-on-accent: var(--text-on-accent);
+    --color-on-error: var(--text-on-accent);
+    --color-accent: var(--accent);
+    --color-accent-muted: var(--accent-soft);
+    --color-success: var(--success);
+    --color-error: var(--error);
+    --color-warning: var(--warn);
+
+    /* Structure. The app is hairline-built: borders carry the structure
+       and shadows stay a whisper, so both border tokens map straight
+       across rather than being derived from a surface. */
+    --color-border: var(--hairline);
+    --color-border-emphasized: var(--hairline-strong);
+
+    /* Interaction overlays */
+    --color-overlay: var(--overlay-scrim);
+    --color-overlay-hover: var(--overlay-hover);
+    --color-overlay-pressed: var(--overlay-active);
+
+    /* Radii */
+    --radius-inner: var(--radius-sm);
+    --radius-element: var(--radius-md);
+    --radius-container: var(--radius-lg);
+    --radius-chat: var(--radius-lg);
+    --radius-full: var(--radius-pill);
+
+    /* Typography follows the same source as native components. */
+    --text-body-size: var(--type-ui-size);
+    --text-body-leading: var(--type-ui-leading);
+    --text-large-size: var(--type-detail-size);
+    --text-supporting-size: var(--type-metadata-size);
+    --text-label-size: var(--type-label-size);
+    --text-code-size: var(--type-code-size);
+    --text-code-leading: var(--type-code-leading);
+    --font-size-xs: var(--type-metadata-size);
+    --font-size-sm: var(--type-ui-size);
+    --font-size-base: var(--type-ui-size);
+    --font-size-lg: var(--type-detail-size);
+    --font-size-xl: var(--type-heading-size);
+    /* Type families */
+    --font-family-body: var(--type-ui-family);
+    --font-family-heading: var(--type-ui-family);
+    --font-family-code: var(--font-mono);
+    --text-large-leading: var(--type-detail-leading);
+    --text-supporting-leading: var(--type-metadata-leading);
+    --text-label-leading: var(--type-label-leading);
+  }
+}
+
+@layer astryx {
+  /* Published Collapsible theme hook, scoped to the current metadata row.
+     Reversing its two presentation items keeps the native right/down arrow
+     immediately after the label without targeting private component children. */
+  [data-nc-current-meta] .astryx-icon {
+    font-size: var(--font-step-1-size);
+    inline-size: var(--glyph-meta);
+    block-size: var(--glyph-meta);
+    color: var(--text-3);
+  }
+
+  [data-nc-current-meta] .astryx-collapsible-trigger {
+    font-size: var(--font-step-1-size);
+    line-height: var(--font-step-1-line);
+    min-block-size: var(--control-h);
+    inline-size: fit-content;
+    max-inline-size: 100%;
+    flex-direction: row-reverse;
+    justify-content: flex-end;
+    align-items: center;
+    gap: var(--space-1);
+  }
+}

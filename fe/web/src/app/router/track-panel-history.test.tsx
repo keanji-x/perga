@@ -1,0 +1,221 @@
+// @vitest-environment jsdom
+/*
+ * The mobile panel's history strategy over a real memory history. History
+ * assertions read `router.history.length`: `window.history.length` is pinned at 1
+ * under jsdom and would pass no matter what this code did.
+ */
+import {
+  Outlet, RouterProvider, createMemoryHistory, createRootRoute, createRoute, createRouter,
+} from '@tanstack/react-router';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import {
+  useGoSameTrack, useRouteCardId, useRouteFilePath, useRouteFrom, useRouteHash, useRoutePanel,
+  useRouteParam, useTrackFileNavigation, useTrackPanelNavigation, validateTrackSearch,
+  type TrackSearch,
+} from './navigation.ts';
+
+function Probe() {
+  const trackId = useRouteParam('/track/') ?? '';
+  const { openPanel, closePanel } = useTrackPanelNavigation();
+  const { openFile, closeFile } = useTrackFileNavigation();
+  const goSameTrack = useGoSameTrack();
+  const panel = useRoutePanel();
+  const from = useRouteFrom();
+  const card = useRouteCardId();
+  const file = useRouteFilePath();
+  const hash = useRouteHash();
+  return (
+    <div>
+      <span>{`panel:${panel ?? 'none'}`}</span>
+      <span>{`from:${from ?? 'none'}`}</span>
+      <span>{`card:${card ?? 'none'}`}</span>
+      <span>{`file:${file ?? 'none'}`}</span>
+      <span>{`hash:${hash ?? 'none'}`}</span>
+      <button type="button" onClick={() => { openPanel(trackId, 'cards'); }}>open cards</button>
+      <button type="button" onClick={() => { openPanel(trackId, 'tasks'); }}>open tasks</button>
+      <button type="button" onClick={() => { closePanel(trackId); }}>close panel</button>
+      <button type="button" onClick={() => { openFile(trackId, 'docs/a.md'); }}>open file a</button>
+      <button type="button" onClick={() => { openFile(trackId, 'docs/b.md'); }}>open file b</button>
+      <button type="button" onClick={() => { closeFile(trackId); }}>close file</button>
+      <button type="button" onClick={() => { goSameTrack(trackId, { card: undefined }, { replace: true }); }}>drop card</button>
+      <button type="button" onClick={() => { goSameTrack('w9', { card: undefined }); }}>drop card on w9</button>
+      <button type="button" onClick={() => { goSameTrack(trackId, { from: undefined }); }}>drop from</button>
+    </div>
+  );
+}
+
+function setup(initialEntries: readonly string[]) {
+  const rootRoute = createRootRoute({ component: () => <Outlet /> });
+  const todayRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/',
+    component: () => <span>today</span>,
+  });
+  const trackRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: '/track/$trackId',
+    validateSearch: (search: Record<string, unknown>): TrackSearch => validateTrackSearch(search),
+    component: Probe,
+  });
+  const router = createRouter({
+    routeTree: rootRoute.addChildren([todayRoute, trackRoute]),
+    history: createMemoryHistory({ initialEntries: [...initialEntries] }),
+  });
+  render(<RouterProvider router={router} />);
+  return router;
+}
+
+const href = (router: ReturnType<typeof setup>) => router.state.location.href;
+const probe = (name: string, value: string) => screen.getByText(`${name}:${value}`);
+
+afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+
+describe('opening the mobile panel', () => {
+  it('pushes one entry carrying the marker', async () => {
+    const router = setup(['/', '/track/w1']);
+    await screen.findByText('open cards');
+    expect(router.history.length).toBe(2);
+
+    await userEvent.click(screen.getByText('open cards'));
+    await waitFor(() => { probe('panel', 'cards'); });
+    expect(href(router)).toBe('/track/w1?panel=cards');
+    expect(router.history.length).toBe(3);
+    expect(router.history.location.state.ncPanelPushed).toBe(true);
+  });
+
+  it('replaces when swapping panels, and keeps the marker', async () => {
+    const router = setup(['/', '/track/w1']);
+    await userEvent.click(await screen.findByText('open cards'));
+    await waitFor(() => { probe('panel', 'cards'); });
+
+    await userEvent.click(screen.getByText('open tasks'));
+    await waitFor(() => { probe('panel', 'tasks'); });
+    // One entry for the whole visit to the panel layer, not one per panel.
+    expect(router.history.length).toBe(3);
+    expect(router.history.location.state.ncPanelPushed).toBe(true);
+  });
+
+  it('ignores an illegal value and lets the route validator drop foreign ones', async () => {
+    const router = setup(['/track/w1?panel=bogus&debug=1']);
+    // The parser refuses the illegal value rather than throwing on it.
+    await waitFor(() => { probe('panel', 'none'); });
+
+    await userEvent.click(screen.getByText('open cards'));
+    /* Both facts are `validateTrackSearch`'s: `panel=cards` is kept and `debug=1` is not on the whitelist. */
+    await waitFor(() => { expect(href(router)).toBe('/track/w1?panel=cards'); });
+  });
+
+  it('keeps the return surface and the block anchor', async () => {
+    const router = setup(['/track/w1?from=area#b3']);
+    await userEvent.click(await screen.findByText('open cards'));
+    await waitFor(() => { probe('panel', 'cards'); });
+    expect(href(router)).toBe('/track/w1?panel=cards&from=area#b3');
+  });
+});
+
+describe('closing the mobile panel', () => {
+  it('[#1191 §0.3] pops the pushed entry instead of stacking a duplicate', async () => {
+    const router = setup(['/', '/track/w1']);
+    await userEvent.click(await screen.findByText('open cards'));
+    await waitFor(() => { expect(href(router)).toBe('/track/w1?panel=cards'); });
+
+    await userEvent.click(screen.getByText('close panel'));
+    await waitFor(() => { expect(href(router)).toBe('/track/w1'); });
+
+    /* A `replace`-only close leaves `[/, /track/w1, /track/w1]`, so this Back would
+         land on the track again. */
+    router.history.back();
+    await waitFor(() => { expect(router.state.location.pathname).toBe('/'); });
+    expect(await screen.findByText('today')).toBeTruthy();
+  });
+
+  it('survives three open/close cycles without growing the stack', async () => {
+    const router = setup(['/', '/track/w1']);
+    for (let cycle = 0; cycle < 3; cycle += 1) {
+      await userEvent.click(await screen.findByText('open cards'));
+      await waitFor(() => { probe('panel', 'cards'); });
+      await userEvent.click(screen.getByText('close panel'));
+      await waitFor(() => { probe('panel', 'none'); });
+    }
+    router.history.back();
+    await waitFor(() => { expect(router.state.location.pathname).toBe('/'); });
+  });
+
+  it('replaces on a cold-start deep link, and never steps out of the app', async () => {
+    const router = setup(['/track/w1?panel=cards&from=pages']);
+    await waitFor(() => { probe('panel', 'cards'); });
+    expect(router.history.canGoBack()).toBe(false);
+    const back = vi.spyOn(router.history, 'back');
+
+    await userEvent.click(screen.getByText('close panel'));
+    await waitFor(() => { expect(href(router)).toBe('/track/w1?from=pages'); });
+    // An unconditional `back()` here would leave the application entirely.
+    expect(back).not.toHaveBeenCalled();
+    expect(router.history.length).toBe(1);
+    expect(router.state.location.pathname).toBe('/track/w1');
+  });
+});
+
+describe('file history', () => {
+  it('uses one marked entry across file switches and pops back to the Report', async () => {
+    const router = setup(['/', '/track/w1']);
+    await userEvent.click(await screen.findByText('open file a'));
+    await waitFor(() => { probe('file', 'docs/a.md'); });
+    expect(router.history.length).toBe(3);
+    expect(router.history.location.state.ncFilePushed).toBe(true);
+
+    await userEvent.click(screen.getByText('open file b'));
+    await waitFor(() => { probe('file', 'docs/b.md'); });
+    expect(router.history.length).toBe(3);
+    expect(router.history.location.state.ncFilePushed).toBe(true);
+
+    await userEvent.click(screen.getByText('close file'));
+    await waitFor(() => { probe('file', 'none'); });
+    router.history.back();
+    await waitFor(() => { expect(router.state.location.pathname).toBe('/'); });
+  });
+
+  it('closes a cold-start file deep link with replace instead of leaving the app', async () => {
+    const router = setup(['/track/w1?file=README.md&from=pages']);
+    await waitFor(() => { probe('file', 'README.md'); });
+    const back = vi.spyOn(router.history, 'back');
+
+    await userEvent.click(screen.getByText('close file'));
+    await waitFor(() => { expect(href(router)).toBe('/track/w1?from=pages'); });
+    expect(back).not.toHaveBeenCalled();
+    expect(router.history.length).toBe(1);
+  });
+});
+
+describe('useGoSameTrack', () => {
+  it('keeps the panel, the return surface and the anchor while dropping the card', async () => {
+    const router = setup(['/track/w1?card=c1&from=area#b7']);
+    await waitFor(() => { probe('card', 'c1'); });
+
+    await userEvent.click(screen.getByText('drop card'));
+    await waitFor(() => { expect(href(router)).toBe('/track/w1?from=area#b7'); });
+    expect(router.history.length).toBe(1);
+  });
+
+  it('clears everything when the track it was given is not the track in the URL', async () => {
+    const router = setup(['/track/w1?card=c1&from=area#b7']);
+    await waitFor(() => { probe('card', 'c1'); });
+
+    // `w9` is not this URL's track, so this is an ordinary navigation and no
+    // parameter of `w1` may ride along.
+    await userEvent.click(screen.getByText('drop card on w9'));
+    await waitFor(() => { expect(router.state.location.pathname).toBe('/track/w9'); });
+    expect(href(router)).toBe('/track/w9');
+  });
+
+  it('distinguishes an explicit clear from a field it was not asked about', async () => {
+    const router = setup(['/track/w1?panel=tasks&from=area']);
+    await waitFor(() => { probe('from', 'area'); });
+
+    await userEvent.click(screen.getByText('drop from'));
+    await waitFor(() => { expect(href(router)).toBe('/track/w1?panel=tasks'); });
+  });
+});

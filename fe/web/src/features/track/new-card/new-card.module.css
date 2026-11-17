@@ -1,0 +1,28 @@
+/* The add menu's own surface, and the form's two app-level facts.
+   Every control inside the form is astryx's and is deliberately not restated
+   here; the menu's keyboard and focus behaviour is `ui/menu`'s and needs no
+   CSS at all. What is left is where the popup hangs and what it looks like. */
+/* What is left after the menu moved onto `@astryxdesign/core`'s `DropdownMenu`:
+   the trigger's box, and the form root's type/colour. The popover surface, the
+   item shape, the hover and the keyboard model are astryx's and are deliberately
+   not restated — restating them is how this file previously grew a border the
+   panel forbids and a hover the width of one word. */
+@layer features {
+  /* Match the shared context-card action box; the host owns its position. */
+  .trigger {
+    inline-size: var(--control-h-sm);
+    block-size: var(--control-h-sm);
+    min-inline-size: var(--control-h-sm);
+    min-block-size: var(--control-h-sm);
+    padding: 0;
+    border-radius: var(--radius-highlight);
+    color: var(--text-3);
+  }
+
+  /* As in `new-track.module.css`: the column and the gap are `VStack`'s, and the
+     only things astryx cannot know are the dialog's text colour and font. */
+  .form {
+    font-family: var(--font-sans);
+    color: var(--text);
+  }
+}

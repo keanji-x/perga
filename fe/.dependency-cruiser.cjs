@@ -1,0 +1,39 @@
+/** @type {import('dependency-cruiser').IConfiguration} */
+module.exports = {
+  forbidden: [
+    { name: 'core-no-web-layers', severity: 'error', from: { path: '^core/' }, to: { path: '^web/src/(app|features|styles|systems|ui)/' } },
+    // UI may consume branded/a11y primitives and core/state infrastructure types only;
+    // business-field domain types remain forbidden regardless of type-only imports.
+    { name: 'ui-only-core-type-whitelist', severity: 'error', from: { path: '^web/src/ui/', pathNot: '^web/src/ui/markdown/' }, to: { path: '^(web/src/(app|features|systems)/|core/(?!(types/(ids|a11y)|state/types)\\.ts$))' } },
+    // Markdown presentation may consume its syntax contract; business-domain imports remain forbidden.
+    { name: 'ui-markdown-core-whitelist', severity: 'error', from: { path: '^web/src/ui/markdown/' }, to: { path: '^(web/src/(app|features|systems)/|core/(?!(markdown/public|types/(ids|a11y)|state/types)\\.ts$))' } },
+    { name: 'ui-markdown-type-only', severity: 'error', from: { path: '^web/src/ui/markdown/' }, to: { path: '^core/markdown/public\\.ts$', dependencyTypesNot: ['type-only'] } },
+    { name: 'systems-no-features-or-app', severity: 'error', from: { path: '^web/src/systems/' }, to: { path: '^web/src/(features|app)/' } },
+    { name: 'features-no-app', severity: 'error', from: { path: '^web/src/features/' }, to: { path: '^web/src/app/' } },
+    { name: 'layers-no-main-entry', severity: 'error', from: { path: '^(core/|web/src/(features|systems|ui)/)' }, to: { path: '^web/src/main\\.tsx$' } },
+    { name: 'features-no-cross-domain', severity: 'error', from: { path: '^web/src/features/([^/]+)/' }, to: { path: '^web/src/features/', pathNot: '^web/src/features/$1/' } },
+    { name: 'core-no-react', severity: 'error', from: { path: '^core/' }, to: { path: '(^|node_modules/)(react|react-dom)(/|$)' } },
+    { name: 'no-barrel-index', severity: 'error', from: { path: '(^|/)index\\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$' }, to: { dependencyTypes: ['export', 'import'] } },
+    { name: 'cards-public-entry-only', severity: 'error', from: { path: '^(core/|web/src/)', pathNot: '^web/src/systems/cards/' }, to: { path: '^web/src/systems/cards/(?!public\\.ts$)' } },
+    { name: 'markdown-public-entry-only', severity: 'error', from: { path: '^(core/|web/src/)' }, to: { path: '^core/markdown/(?!public\\.ts$)' } },
+    { name: 'no-shared-directory', severity: 'error', from: {}, to: { path: '(^|/)shared(/|$)' } },
+    { name: 'styles-no-runtime-layers', severity: 'error', from: { path: '^web/src/styles/', pathNot: '\\.(?:test|spec)\\.[cm]?[jt]sx?$' }, to: { path: '^(core/|web/src/(app|features|systems|ui)/|web/src/main\\.tsx$)' } },
+    { name: 'runtime-no-verification-domains', severity: 'error', from: { path: '^(core/|web/src/)', pathNot: '\\.(?:test|spec)\\.[cm]?[jt]sx?$' }, to: { path: '^(mock|tools|e2e|web/e2e)/' } },
+    // `*.test.*` modules live beside production code, so the rule above cannot see them;
+    // the scope is exactly that suffix and case-sensitive by design.
+    { name: 'runtime-no-test-modules', severity: 'error', from: { path: '^(core/|web/src/)', pathNot: '\\.(?:test|spec)\\.[cm]?[jt]sx?$' }, to: { path: '\\.(?:test|spec)\\.[cm]?[jt]sx?$' } },
+    // Today reads the viewport bit only in `viewport-dispatch.tsx`, which is generic in both
+    // prop packs and cannot render a prop the compact ledger says the phone does not draw.
+    { name: 'today-viewport-bit-in-dispatcher-only', severity: 'error', from: { path: '^web/src/features/today/', pathNot: '^web/src/features/today/viewport-dispatch\\.tsx$' }, to: { path: '^web/src/ui/viewport/' } },
+    { name: 'not-to-unresolvable', severity: 'error', from: {}, to: { couldNotResolve: true } },
+    { name: 'no-circular', severity: 'error', from: {}, to: { circular: true } },
+  ],
+  options: {
+    tsPreCompilationDeps: true,
+    doNotFollow: { path: 'node_modules' },
+    exclude: { path: 'tools/architecture/fixtures' },
+    tsConfig: { fileName: 'tsconfig.app.json' },
+    enhancedResolveOptions: { exportsFields: ['exports'], conditionNames: ['import', 'types', 'default'] },
+    reporterOptions: { dot: { collapsePattern: 'node_modules/[^/]+' } },
+  },
+};

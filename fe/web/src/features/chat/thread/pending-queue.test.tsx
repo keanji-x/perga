@@ -1,0 +1,304 @@
+// @vitest-environment jsdom
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import type {
+  PendingQueueEntry, PlannerQueueWriteOutcome,
+} from '../../../../../core/domain/conversation.ts';
+import { PendingQueue, type PendingQueueProps } from './pending-queue.tsx';
+
+afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+
+const done: Promise<PlannerQueueWriteOutcome> = Promise.resolve({ kind: 'done' });
+
+function entry(overrides: Partial<PendingQueueEntry> = {}): PendingQueueEntry {
+  return { entry_id: 'e1', text: 'look at the report', rev: 0, queued_at_ms: 10, ...overrides };
+}
+
+function renderQueue(props: Partial<PendingQueueProps> = {}) {
+  const onDelete = vi.fn<PendingQueueProps['onDelete']>(() => done);
+  const view = render(<PendingQueue
+    entries={[entry()]} pendingInputCount={0} queueDisplayAccounting={{ displayed: [], suppressed: [] }}
+    overflow={0}
+    busy={false}
+    onDelete={onDelete}
+    onEdit={() => undefined} canEdit editingEntryId={null} savedEntry={null} onFocusComposer={() => undefined}
+    {...props}
+  />);
+  return { onDelete, ...view };
+}
+
+function rows(): HTMLElement[] {
+  return [...document.querySelectorAll<HTMLElement>('[data-nc-pending-entry]')];
+}
+
+/** Wait until a control will accept a press: Astryx's `clickAction` holds the control while its promise is unsettled, and a press inside that window is dropped rather than queued. */
+async function pressable(find: () => HTMLButtonElement): Promise<void> {
+  /* A getter, not an element: the strip re-renders while the write is in flight, so an element captured beforehand is detached and waiting on it waits forever. */
+  await waitFor(() => {
+    const button = find();
+    expect(button.disabled).toBe(false);
+    expect(button.getAttribute('aria-disabled')).not.toBe('true');
+    expect(button.getAttribute('aria-busy')).not.toBe('true');
+  });
+}
+
+describe('PendingQueue', () => {
+  it('displays a named Report pill and returns its original bytes for editing', async () => {
+    const text = '@``/a%2Fb/Report%2F%25%7E `x`#/report.md#b_1``';
+    const onEdit = vi.fn<PendingQueueProps['onEdit']>();
+    renderQueue({ entries: [entry({ text })], onEdit });
+    const pill = document.querySelector('[data-nc-sent-mention]');
+    expect(pill?.textContent).toBe('Report/%~ `x`# › b_1');
+    expect(pill?.getAttribute('title')).toBe(text);
+    await userEvent.click(screen.getByRole('button', { name: 'Edit queued message' }));
+    expect(onEdit.mock.calls[0][0].text).toBe(text);
+  });
+
+  it('shows the text of every queued message', () => {
+    renderQueue({ entries: [entry(), entry({ entry_id: 'e2', text: 'and the diff' })] });
+    expect(screen.getByText('look at the report')).toBeTruthy();
+    expect(screen.getByText('and the diff')).toBeTruthy();
+  });
+
+  it('renders nothing when there is no queue', () => {
+    const { container } = renderQueue({ entries: [] });
+    expect(container.querySelector('[data-nc-pending-queue]')).toBeNull();
+  });
+
+  it('retries against the revision the server reported, not the stale one', async () => {
+    const onDelete = vi.fn<PendingQueueProps['onDelete']>()
+      .mockResolvedValueOnce({ kind: 'stale', entryId: 'e1', text: 'theirs', rev: 9 })
+      .mockResolvedValueOnce({ kind: 'done' });
+    renderQueue({ entries: [entry({ rev: 3 })], onDelete });
+    await userEvent.click(screen.getByRole('button', { name: 'Delete this message' }));
+    await screen.findByText(/Nothing happened/);
+    expect(onDelete.mock.calls[0]?.[0]?.rev).toBe(3);
+
+    await pressable(() => screen.getByRole<HTMLButtonElement>('button', { name: 'Delete this message' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Delete this message' }));
+    await waitFor(() => expect(onDelete).toHaveBeenCalledTimes(2));
+    expect(onDelete.mock.calls[1]?.[0]?.rev).toBe(9);
+  });
+
+  it('shows a refusal on its own row and not on any other', async () => {
+    const onDelete = vi.fn<PendingQueueProps['onDelete']>()
+      .mockResolvedValue({ kind: 'stale', entryId: 'e2', text: 'theirs', rev: 9 });
+    renderQueue({
+      entries: [entry(), entry({ entry_id: 'e2', text: 'and the diff' })],
+      onDelete,
+    });
+    await userEvent.click(
+      screen.getAllByRole('button', { name: 'Delete this message' })[1],
+    );
+    await waitFor(() => expect(rows()[1]?.textContent).toContain('Nothing happened'));
+    expect(rows()[0]?.textContent).not.toContain('Nothing happened');
+  });
+
+  it('says the server’s own sentence when the write simply failed', async () => {
+    renderQueue({
+      onDelete: vi.fn<PendingQueueProps['onDelete']>(
+        () => Promise.resolve({ kind: 'failed', message: 'the kernel is not accepting writes' }),
+      ),
+    });
+    await userEvent.click(screen.getByRole('button', { name: 'Delete this message' }));
+    expect(await screen.findByText(/the kernel is not accepting writes/)).toBeTruthy();
+  });
+
+  it('blocks the control while another write on this card is unanswered', () => {
+    renderQueue({ busy: true });
+    const button = screen.getByRole<HTMLButtonElement>('button', { name: 'Delete this message' });
+    expect(button.disabled || button.getAttribute('aria-disabled') === 'true').toBe(true);
+  });
+
+  it('locks the other entry’s control while one delete is in flight', async () => {
+    let settle!: (outcome: PlannerQueueWriteOutcome) => void;
+    const onDelete = vi.fn<PendingQueueProps['onDelete']>(
+      () => new Promise((resolve) => { settle = resolve; }),
+    );
+    renderQueue({
+      entries: [entry(), entry({ entry_id: 'e2', text: 'and the diff' })],
+      onDelete,
+    });
+    await userEvent.click(screen.getAllByRole('button', { name: 'Delete this message' })[0]);
+    await waitFor(() => expect(onDelete).toHaveBeenCalledTimes(1));
+    await waitFor(() => {
+      const other = rows()[1].querySelector('button');
+      expect(other?.disabled || other?.getAttribute('aria-disabled') === 'true').toBe(true);
+    });
+    settle({ kind: 'done' });
+    await Promise.resolve();
+  });
+
+  it('counts the messages it cannot show, and offers them no controls', () => {
+    renderQueue({ entries: [], overflow: 3 });
+    expect(screen.getByText('3 queued messages are waiting but cannot be shown or edited here.'))
+      .toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Edit queued message' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Delete this message' })).toBeNull();
+  });
+
+  it('says “more” only when some of the queue is actually shown', () => {
+    renderQueue({ entries: [entry()], overflow: 2 });
+    expect(screen.getByText('2 more queued messages are waiting but cannot be shown or edited here.'))
+      .toBeTruthy();
+  });
+
+  it('agrees with itself about one', () => {
+    renderQueue({ entries: [], overflow: 1 });
+    expect(screen.getByText('1 queued message is waiting but cannot be shown or edited here.'))
+      .toBeTruthy();
+  });
+
+  it('offers "Say it now" only when a steer handler is given', () => {
+    renderQueue();
+    expect(screen.queryByRole('button', { name: 'Say it now' })).toBeNull();
+    expect(screen.getAllByRole('button')).toHaveLength(2);
+    cleanup();
+
+    const onSteer = vi.fn<NonNullable<PendingQueueProps['onSteer']>>(() => done);
+    renderQueue({ onSteer });
+    expect(screen.getByRole('button', { name: 'Say it now' })).toBeTruthy();
+    expect(screen.getAllByRole('button')).toHaveLength(3);
+  });
+
+  it('hands the entry, at the revision shown, to the steer handler', async () => {
+    const onSteer = vi.fn<NonNullable<PendingQueueProps['onSteer']>>(() => done);
+    renderQueue({ entries: [entry({ rev: 4 })], onSteer });
+    await userEvent.click(screen.getByRole('button', { name: 'Say it now' }));
+    await waitFor(() => expect(onSteer).toHaveBeenCalledTimes(1));
+    expect(onSteer.mock.calls[0]?.[0]).toMatchObject({ entry_id: 'e1', rev: 4 });
+  });
+
+  it('says the message stays queued when no turn took it', async () => {
+    const onSteer = vi.fn<NonNullable<PendingQueueProps['onSteer']>>(
+      () => Promise.resolve({ kind: 'not_running' }),
+    );
+    renderQueue({ onSteer });
+    await userEvent.click(screen.getByRole('button', { name: 'Say it now' }));
+    expect(await screen.findByText(/Still queued/)).toBeTruthy();
+    expect(screen.getByText(/stays queued and will go with the next turn/)).toBeTruthy();
+    expect(rows()).toHaveLength(1);
+    expect(screen.getByRole('button', { name: 'Delete this message' })).toBeTruthy();
+  });
+
+  it('says the outcome is not known when codex never answered the steer', async () => {
+    const onSteer = vi.fn<NonNullable<PendingQueueProps['onSteer']>>(
+      () => Promise.resolve({ kind: 'unanswered' }),
+    );
+    renderQueue({ onSteer });
+    await userEvent.click(screen.getByRole('button', { name: 'Say it now' }));
+    expect(await screen.findByText(/Still queued — not confirmed/)).toBeTruthy();
+    const notice = screen.getByText(/not known whether this message reached/);
+    expect(notice.textContent).toMatch(/stays queued and will go with the next turn/);
+    expect(notice.textContent).toMatch(/will also show up in the conversation/);
+    expect(notice.textContent).not.toMatch(/nothing happened/);
+    expect(rows()).toHaveLength(1);
+  });
+
+  it('locks every other control while a steer is in flight', async () => {
+    let settle!: (outcome: PlannerQueueWriteOutcome) => void;
+    const onSteer = vi.fn<NonNullable<PendingQueueProps['onSteer']>>(
+      () => new Promise((resolve) => { settle = resolve; }),
+    );
+    renderQueue({
+      entries: [entry(), entry({ entry_id: 'e2', text: 'and the diff' })],
+      onSteer,
+    });
+    await userEvent.click(screen.getAllByRole('button', { name: 'Say it now' })[0]);
+    await waitFor(() => expect(onSteer).toHaveBeenCalledTimes(1));
+    await waitFor(() => {
+      for (const button of screen.getAllByRole<HTMLButtonElement>('button').filter(button => !button.hasAttribute('data-nc-queue-toggle'))) {
+        expect(button.disabled || button.getAttribute('aria-disabled') === 'true').toBe(true);
+      }
+    });
+    settle({ kind: 'done' });
+    await Promise.resolve();
+  });
+
+  it('says nothing above the bubbles', () => {
+    renderQueue({ entries: [entry(), entry({ entry_id: 'e2', text: 'and the diff' })] });
+    expect(document.querySelector('[data-nc-pending-queue-caption]')).toBeNull();
+    expect(screen.queryByText(/waiting to send when this turn ends/)).toBeNull();
+  });
+
+});
+
+
+it('offers editing for every queued message', () => {
+  renderQueue({ entries: [entry(), entry({ entry_id: 'e2', text: 'middle message' }), entry({ entry_id: 'e3', text: 'last message' })] });
+  expect(screen.getAllByRole('button', { name: 'Edit queued message' })).toHaveLength(3);
+});
+
+
+it('marks the original bubble and hands editing to the existing composer owner', async () => {
+  const onEdit = vi.fn();
+  renderQueue({ entries: [entry()], onEdit, editingEntryId: 'e1' });
+  expect(document.querySelector('[data-nc-turn="unknown"][data-nc-editing]')?.textContent).toBe('look at the report');
+  expect(document.querySelector('[data-nc-composer]')).toBeNull();
+  await userEvent.click(screen.getByRole('button', { name: 'Edit queued message' }));
+  expect(onEdit).toHaveBeenCalledWith(entry());
+});
+
+it('reuses outgoing bubbles and exposes only icons without a queue header', () => {
+  renderQueue({ onSteer: () => done });
+  expect(document.querySelector('[data-nc-pending-entry] [data-nc-turn="unknown"]')?.textContent).toBe('look at the report');
+  expect(document.querySelector('[data-nc-queue-toggle]')).toBeNull();
+  const actions = screen.getAllByRole('button');
+  expect(actions).toHaveLength(3);
+  for (const action of actions) {
+    expect(action.querySelector('svg')).not.toBeNull();
+    expect(action.textContent).toBe('');
+  }
+});
+
+it.each([false, true])('follows authoritative queue order when a steered entry returns to the head (exit completed: %s)', async exited => {
+  if (exited) vi.spyOn(window, 'matchMedia').mockImplementation(query => ({
+    media: query, matches: query === '(prefers-reduced-motion: reduce)', onchange: null,
+    addListener: vi.fn(), removeListener: vi.fn(), addEventListener: vi.fn(), removeEventListener: vi.fn(), dispatchEvent: () => true,
+  }));
+  const first = entry({ entry_id: 'a', text: 'A waiting' });
+  const middle = entry({ entry_id: 'b', text: 'B waiting' });
+  const last = entry({ entry_id: 'c', text: 'C waiting' });
+  const props = { pendingInputCount: 0, entries: [first, middle, last], queueDisplayAccounting: { displayed: [], suppressed: [] }, overflow: 0, busy: false, onDelete: () => done,
+    onEdit: () => undefined, canEdit: true, editingEntryId: null, savedEntry: null, onFocusComposer: () => undefined };
+  const view = render(<PendingQueue {...props} />);
+  view.rerender(<PendingQueue {...props} entries={[first, last]} />);
+  if (exited) await waitFor(() => expect(screen.queryByText('B waiting')).toBeNull(), { timeout: 4000 });
+  const returned = { ...middle, text: 'B returned to the head', rev: 1 };
+  view.rerender(<PendingQueue {...props} entries={[returned, first, last]} />);
+  expect(rows().map(row => row.dataset.ncPendingEntry)).toEqual(['b', 'a', 'c']);
+});
+
+
+it('removes only departed source-accounted copies and preserves active rows and ordinary departure motion', () => {
+  const first = entry({ entry_id: 'first', text: 'Canonical carrier now owns this input' });
+  const second = entry({ entry_id: 'second', text: 'An ordinary deleted input still animates' });
+  const props = { pendingInputCount: 0, entries: [first, second], queueDisplayAccounting: { displayed: [{ id: first.entry_id, rev: first.rev }], suppressed: [] }, overflow: 0, busy: false,
+    onDelete: () => done, onEdit: () => undefined, canEdit: true, editingEntryId: null,
+    savedEntry: null, onFocusComposer: () => undefined };
+  const view = render(<PendingQueue {...props} />);
+  expect(rows()).toHaveLength(2);
+  expect(screen.getAllByRole<HTMLButtonElement>('button', { name: 'Delete this message' }).every(button => !button.disabled && button.getAttribute('aria-disabled') !== 'true')).toBe(true);
+  view.rerender(<PendingQueue {...props} entries={[second]} />);
+  expect(screen.queryByText(first.text)).toBeNull();
+  expect(rows().map(row => row.dataset.ncPendingEntry)).toEqual(['second']);
+  view.rerender(<PendingQueue {...props} entries={[]} />);
+  expect(screen.getByText(second.text).closest('[data-nc-collapse-presence]')?.getAttribute('aria-hidden')).toBe('true');
+});
+
+it('compares the actual saved departing revision with declared carrier versions', () => {
+  const original = entry({ entry_id: 'saved-version', rev: 0, text: 'Earlier cached text' });
+  const saved = { ...original, rev: 1, text: 'Actual acknowledged saved text' };
+  const props = { pendingInputCount: 0, entries: [original], queueDisplayAccounting: { displayed: [{ id: original.entry_id, rev: 0 }], suppressed: [] },
+    overflow: 0, busy: false, onDelete: () => done, onEdit: () => undefined, canEdit: true,
+    editingEntryId: null, savedEntry: null, onFocusComposer: () => undefined };
+  const view = render(<PendingQueue {...props} />);
+  view.rerender(<PendingQueue {...props} savedEntry={saved} />);
+  view.rerender(<PendingQueue {...props} entries={[]} savedEntry={saved} />);
+  expect(screen.getByText(saved.text).closest('[data-nc-collapse-presence]')?.getAttribute('aria-hidden')).toBe('true');
+  view.rerender(<PendingQueue {...props} entries={[]} savedEntry={saved}
+    queueDisplayAccounting={{ displayed: [{ id: saved.entry_id, rev: saved.rev }], suppressed: [] }} />);
+  expect(screen.queryByText(saved.text)).toBeNull();
+});

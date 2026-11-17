@@ -1,0 +1,797 @@
+/* The shell owns one interpolated allocation for the document and trailing panel. */
+@property --nc-panel-open {
+  syntax: '<number>';
+  inherits: true;
+  initial-value: 0;
+}
+
+/*
+ * The shell and the rail (§7.1, §7.4, §7.5).
+ *
+ * `@layer features` on purpose: a layer name is a cascade position, not a
+ * directory. `app` is the composition layer, so its styles have to sit at the
+ * same position as the features they compose.
+ */
+@layer features {
+  .workspaceOpener { position: fixed; inset-inline-start: var(--space-4); display: grid; place-items: center; box-sizing: border-box; inline-size: var(--control-h-touch); block-size: var(--control-h-touch); z-index: var(--z-sticky); cursor: pointer; }
+  .workspaceOpener[hidden] { display: none; }
+  .workspaceOpener svg { inline-size: var(--glyph-xl); block-size: var(--glyph-xl); }
+
+  /*
+   * A used `block-size`, not a minimum alone. A minimum-only shell grows with
+   * content and the whole app becomes one scrolling document: the rail scrolls
+   * away, the page header cannot stick, and a short page leaves a screen of
+   * empty ground below the fold. There are exactly two scroll containers —
+   * the rail and the page — and <body> is never one of them.
+   */
+  .shell {
+    --desktop-rail-w: var(--navigation-rail-width);
+    display: grid;
+    grid-template-columns: var(--desktop-rail-w) minmax(0, 1fr);
+    /* One flex-sized row so `.main` has a definite height. An implicit `auto`
+       row is sized by content, so page-level `1fr` / `flex: 1` / `100%` all
+       collapsed to the document's intrinsic height. */
+    grid-template-rows: minmax(0, 1fr);
+    /* Fill `#root` when the reset height chain is in place. `100dvh` is the
+       floor so a probe (or a parent whose percentage is auto) still gets a
+       definite viewport height — otherwise the rail collapses and the fixed
+       account menu sits below it. */
+    block-size: 100%;
+    min-block-size: 100dvh;
+    /* Same as `.main`: `hidden` is still a scrollport, and the entering
+       drawer overflows this edge too. Rail and page keep their own `auto`. */
+    overflow: clip;
+  }
+
+  .shellTrackOnly { grid-template-columns: minmax(0, 1fr); }
+
+  /* The manual collapse. Without this rule the toggle only swapped the rail's
+     contents and left a 200px column of empty ground beside them. */
+  .shellCollapsed {
+    grid-template-columns: var(--rail-w-collapsed) minmax(0, 1fr);
+  }
+
+  .shellExpanded {
+    grid-template-columns: var(--desktop-rail-w) minmax(0, 1fr);
+  }
+
+  /* Desktop keeps the existing rail as a direct grid child. The wrappers only
+     become real boxes in the compact/mobile presentation below. */
+  .navigationFrame,
+  .navigation,
+  .navigationPanel,
+  .navigationContent {
+    display: contents;
+  }
+
+  .main {
+    /*
+     * The ordinary trailing panel stays compact. An open foreground
+     * conversation temporarily lends its wider measure to that grid track, so
+     * the report can trade left margin for right-side room and keep its reading
+     * column centred in what remains visible.
+     */
+    position: relative;
+    container-type: inline-size;
+    --nc-panel-open: 0;
+    --panel-rest-span: max(15rem, 25cqi);
+    --panel-span: calc(var(--panel-rest-span) + (var(--conversation-span) - var(--panel-rest-span)) * var(--nc-panel-open));
+    --conversation-span: clamp(22rem, 40cqi, 40rem);
+    display: flex;
+    flex-direction: column;
+    min-inline-size: 0;
+    min-block-size: 0;
+    /* Clip, do not scroll. `hidden` still makes a scroll container, so focusing
+       the conversation drawer while it is translated off-edge would pan this
+       region and the page would jump. `clip` paints the same crop without a
+       scrollport. The page inside `.stage` is the only scroller. */
+    overflow: clip;
+  }
+
+  .stage[hidden] {
+    display: none;
+  }
+
+  .stage {
+    flex: 1 1 auto;
+    min-block-size: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* The open marker changes at the gesture; the retained exit node must not
+     keep the covered panel hidden. One registered spring progress allocates
+     document space continuously while the card and seam fade away. */
+  .main:has([data-nc-drawer-open]) {
+    --nc-panel-open: 1;
+  }
+
+  /*
+   * The dragged width (#2020). `app/shell/drawer-width.tsx` sets
+   * `--nc-drawer-width` on `.main` from the reader's choice, and `ui/drawer`
+   * stamps `data-nc-drawer-resizable` only for a caller that offers the handle
+   * — the conversation drawer, never the source card. So the choice applies
+   * exactly while a conversation is open, including under a source card
+   * stacked on top of it, which then takes the same width instead of letting
+   * the wider card show past its edge. Unset, the middle term is the default
+   * span above. The floor keeps the composer usable; 75cqi leaves the report a
+   * visible quarter of the region. The card's own `max-inline-size` still
+   * keeps both page pads, and everything that follows `--conversation-span`
+   * follows this too.
+   */
+  .main:has([data-nc-drawer-resizable]) {
+    --conversation-span: clamp(22rem, var(--nc-drawer-width, min(40cqi, 40rem)), 75cqi);
+  }
+
+  .main:has([data-nc-drawer-open]) [data-nc-panel] {
+    visibility: hidden;
+  }
+
+  @container (inline-size < calc(40rem + 64px)) {
+    .main:has([data-nc-drawer]) [data-nc-report] {
+      /* The conversation consumes the margin needed by the report's hanging numbers. */
+      --report-section-number-opacity: 0;
+    }
+  }
+
+  .rail {
+    --account-bottom-gutter: var(--space-4);
+    --row-h: var(--navigation-row-height);
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    min-block-size: 0;
+
+    /* Compact fallback retains its baseline inset; desktop uses the shared primary band. */
+    padding-block: calc(var(--header-baseline) - 17.5px) var(--account-bottom-gutter);
+
+    /* The only inline padding in the rail. A section that adds a second layer
+       would cut the usable width from 180 to 168 and flatten the asymmetric
+       gutter that does most of the work of separating rail from main. */
+    padding-inline: var(--space-3);
+
+    /* No hairline. The surface step alone is the boundary — §6.5's ladder
+       stops at its first satisfied rung, and step ③ (a different functional
+       region) is satisfied here, so step ② is a second statement of the same
+       fact. The rail and ground are one 1.25 contrast-ratio ladder step apart
+       in both themes, which is the unit the ladder is defined in. */
+    background: var(--surface-rail);
+    overflow: auto;
+  }
+
+  .brandRow,
+  .primaryNav,
+  .userRow {
+    flex-shrink: 0;
+  }
+
+  /* The existing compact breakpoint is also the mobile presentation boundary:
+     one breakpoint, two stable modes. Desktop keeps the three-column working
+     surface; compact/mobile makes Report the page and moves workspace
+     navigation into an explicit right-side layer. */
+  @media (width < 60rem) {
+    .shell,
+    .shellCollapsed,
+    .shellExpanded {
+      --mobile-dock-h: 0px;
+      grid-template-rows: auto minmax(0, 1fr);
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .navigationFrame {
+      z-index: var(--z-modal);
+      position: fixed;
+      inset: 0;
+      display: block;
+      pointer-events: none;
+    }
+
+    .navigation {
+      position: fixed;
+      inset: 0;
+      z-index: var(--z-modal);
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      visibility: hidden;
+      pointer-events: none;
+    }
+
+    .navigationOpen {
+      visibility: visible;
+    }
+
+    .navigationOpen:not([inert]) {
+      pointer-events: auto;
+    }
+
+    .navigationPanel {
+      position: relative;
+      grid-column: 1;
+      grid-row: 1;
+      display: flex;
+      flex-direction: column;
+      min-block-size: 0;
+      box-sizing: border-box;
+      background: var(--bg);
+    }
+
+    .main {
+      --panel-span: 100cqi;
+      --conversation-span: 100cqi;
+    }
+
+    /* A pushed page remains the painted background of both drawer motions.
+       TrackPage makes it inert while any foreground drawer is active. */
+    .main:has([data-nc-drawer]) [data-nc-panel][data-nc-mobile-page='open'] {
+      visibility: visible;
+    }
+
+    .main[aria-hidden='true'] [data-nc-mobile-report-chat] {
+      display: none !important;
+    }
+
+    .stage {
+      padding-block-end: calc(var(--mobile-dock-h) + env(safe-area-inset-bottom));
+    }
+
+    .settingsPageShell {
+      grid-template-rows: minmax(0, 1fr);
+    }
+
+    .navigationContent {
+      display: block;
+      flex: 1 1 auto;
+      min-block-size: 0;
+      overflow: clip;
+    }
+  }
+
+  /* 44 − 2×10 = 24px cannot hold a 28px control, so the collapsed strip drops
+     the inline padding entirely and each child centres itself in the full 44. */
+  .railCollapsed { padding-inline: var(--space-0); align-items: center; }
+
+  .brandRow {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    block-size: var(--navigation-header-height);
+  }
+
+  .brand {
+    display: inline-flex;
+    align-items: center;
+    min-inline-size: 0;
+    /* A full line box keeps clipped labels' ascenders and descenders visible. */
+    color: var(--text);
+    cursor: pointer;
+    font: var(--type-page-title);
+    letter-spacing: var(--type-page-title-tracking);
+  }
+
+  /*
+   * The source SVG remains a transparent, standalone brand asset. Here it is
+   * a mask so the rail owns the ink: `--text-2` in the expanded wordmark and
+   * `--text-3` in the collapsed control both adapt to the active theme without
+   * baking a second dark-mode SVG into the bundle.
+   */
+  .brandMark {
+    display: block;
+    flex: 0 0 auto;
+    inline-size: var(--glyph);
+    block-size: var(--glyph);
+    background: currentcolor;
+    -webkit-mask: url('../../ui/brand/neige-mark.svg') center / contain no-repeat;
+    mask: url('../../ui/brand/neige-mark.svg') center / contain no-repeat;
+  }
+
+  .brandText {
+    min-inline-size: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  .brand:hover,
+  .brand:focus-visible { color: var(--text); }
+
+  .iconButton {
+    line-height: 1;
+    display: grid;
+    place-items: center;
+    /* A percentage-sized source button must fill the slot, not an intrinsic grid column. */
+    grid-template-columns: minmax(0, 1fr);
+    inline-size: var(--control-h);
+    block-size: var(--control-h);
+    border-radius: var(--radius-highlight);
+    color: var(--text-3);
+    cursor: pointer;
+    transition: background-color var(--motion-quick) var(--ease-feedback), color var(--motion-quick) var(--ease-feedback);
+  }
+
+  .iconButton:hover,
+  .iconButton:focus-visible {
+    background: var(--overlay-hover-strong);
+    color: var(--text);
+  }
+
+  .brandActions { margin-inline-start: auto; }
+  .brandActions > :first-child { opacity: 0; transition: opacity var(--motion-quick) var(--ease-feedback); }
+  .brandActions > :first-child:has([aria-expanded='true']),
+  .brandRow:hover .brandActions > :first-child,
+  .brandRow:focus-within .brandActions > :first-child { opacity: 1; }
+  @media (hover: none) { .brandActions > :first-child { opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) { .brandActions > :first-child { transition: none; } }
+
+  .primaryNav {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-half);
+    padding-block-end: 0;
+    border-block-end: 0;
+  }
+
+  .primaryNavRow { color: var(--text-2); }
+
+  .primaryNavIcon {
+    line-height: 1;
+    color: var(--text-3);
+    pointer-events: none;
+  }
+
+  .primaryNavActive .primaryNavIcon,
+  .primaryNavRow:hover .primaryNavIcon { color: var(--text); }
+
+  /* Sibling headings share the primary navigation cadence; only the fixed boundary breathes. */
+  .sidebarSections {
+    flex: 1;
+    min-block-size: calc(var(--navigation-entry-height) + var(--space-half));
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    padding-block-start: var(--space-half);
+  }
+
+  .sidebarSections:has(.areaGroups) {
+    min-block-size: calc(var(--navigation-entry-height) + 2 * var(--space-2) + var(--space-px));
+    padding-block-start: var(--space-2);
+  }
+
+  /* Reserve a complete row per scrollport; an undersized rail can then scroll. */
+  .sidebarSections:has(.shortcuts):has(.areaGroups) {
+    min-block-size: calc(2 * var(--navigation-entry-height) + var(--space-half) + 2 * var(--space-2) + var(--space-px));
+    padding-block-start: var(--space-half);
+  }
+
+  /* Natural shortcut height until it needs half of the available tree space.
+     Both lists then scroll independently; the rail scrolls only below their row minima. */
+  .shortcuts {
+    flex: 0 1 auto;
+    max-block-size: 50%;
+    min-block-size: var(--navigation-entry-height);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-half);
+    overflow: auto;
+    overscroll-behavior: contain;
+  }
+
+  .shortcuts > *,
+  .areaGroups > *,
+  .collapsedFolders > * {
+    flex-shrink: 0;
+  }
+
+  .collapsedFolders {
+    flex: 1;
+    min-block-size: var(--navigation-entry-height);
+    inline-size: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    overflow: auto;
+    overscroll-behavior: contain;
+  }
+
+  .section,
+  .areaGroup {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+  }
+
+  .trackList {
+    --navigation-guide-color: color-mix(in srgb, var(--hairline-strong) 48%, transparent);
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+
+  .areaGroups {
+    flex: 1;
+    /* The scrollport border stays above its scrolling folder contents. */
+    border-block-start: var(--space-px) solid var(--hairline);
+    padding-block-start: var(--space-2);
+    min-block-size: calc(var(--navigation-entry-height) + var(--space-2) + var(--space-px));
+    overflow: auto;
+    overscroll-behavior: contain;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-half);
+  }
+
+  .areaRowWrap { position: relative; display: grid; }
+
+  /* Navigation-row owns icon/text/action columns; the shell owns appearance. */
+  .areaRow {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    align-items: center;
+    min-block-size: var(--navigation-entry-height);
+    padding-block: 0;
+    border-radius: var(--radius-highlight);
+    text-align: start;
+    cursor: pointer;
+    transition: background-color var(--motion-quick) var(--ease-feedback),
+      color var(--motion-quick) var(--ease-feedback);
+  }
+
+  .groupHeading,
+  .newAreaAnchor { display: grid; min-inline-size: 0; margin: 0; }
+
+  .folderIcon,
+  .newAreaIcon { line-height: 1; color: var(--text-3); pointer-events: none; }
+
+  .folderRow:hover .folderIcon,
+  .folderRow:focus-visible .folderIcon,
+  .newAreaRow:hover .newAreaIcon,
+  .newAreaRow:focus-visible .newAreaIcon { color: var(--text); }
+
+  .folderTitleWrap {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-half);
+    min-inline-size: 0;
+    max-inline-size: 100%;
+  }
+
+  .inlineChevron {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+    color: var(--text-3);
+    opacity: 0.72;
+    scale: 0.8;
+    pointer-events: none;
+    transition: none;
+  }
+
+  .folderRow:hover .inlineChevron,
+  .folderRow:focus-visible .inlineChevron { color: var(--text-2); opacity: 1; }
+
+  .areaRow:hover { background: var(--overlay-hover); }
+  .areaRow:focus-visible { outline-offset: -2px; }
+
+  .primaryNavActive {
+    background: var(--navigation-active-bg);
+    box-shadow: var(--navigation-active-shadow);
+    color: var(--text);
+  }
+
+  .primaryNavActive:hover {
+    background: var(--navigation-active-hover-bg);
+  }
+
+  /* Category captions stay quiet; actual Area names retain the group text role. */
+  .areaName {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    min-inline-size: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: clip;
+  }
+
+  .primaryNavRow .areaName,
+  .folderRow .areaName { color: var(--text-2); }
+  .newAreaRow .areaName { color: var(--text-3); }
+  .primaryNavActive .areaName,
+  .areaRow:hover .areaName,
+  .areaRow:focus-visible .areaName { color: var(--text); }
+
+  /* Hosts retain hit-target styling; shared slots position their centres. */
+  .areaActionsButton,
+  .areaNew {
+    line-height: 1;
+    display: grid;
+    place-items: center;
+    inline-size: var(--control-h-sm);
+    block-size: var(--control-h-sm);
+    border-radius: var(--radius-highlight);
+    color: var(--text-3);
+    cursor: pointer;
+  }
+
+  /* Reserved action slots remain hit targets while hover reveals their glyphs. */
+  .areaNew {
+    opacity: 0;
+    transition: background-color var(--motion-quick) var(--ease-feedback),
+      color var(--motion-quick) var(--ease-feedback);
+  }
+
+  .areaActions {
+    z-index: var(--z-raised);
+
+    opacity: 0;
+  }
+
+  .areaActionsButton {
+    min-inline-size: var(--control-h-sm);
+    min-block-size: var(--control-h-sm);
+    padding: 0;
+  }
+
+  /* The rail's colours belong only to the indicator vocabulary
+     (`ui/activity-indicator`: warn = waiting on you, error = broken,
+     accent = unread, grey = in motion) and to the current location
+     (`--selection-bg`); titles never carry a state colour; area identity
+     does not enter the rail. A create action is none of those, so it gets
+     the quiet tone at rest and only a fill on hover. */
+  .areaNew:hover,
+  .areaNew:focus-visible {
+    background: var(--overlay-hover-strong);
+    color: var(--text);
+  }
+
+  .areaRowWrap > .iconButton {
+    opacity: 0;
+  }
+
+  .areaActions:has([aria-expanded='true']),
+  .areaRowWrap:hover .areaActions,
+  .areaRowWrap:focus-within .areaActions,
+  .areaRowWrap:hover .areaNew,
+  .areaRowWrap:focus-within .areaNew,
+  .areaRowWrap:hover > .iconButton,
+  .areaRowWrap:focus-within > .iconButton {
+    opacity: 1;
+  }
+
+  @media (hover: none) {
+    .areaActions,
+    .areaNew,
+    .areaRowWrap > .iconButton {
+      opacity: 1;
+    }
+  }
+
+  .emptyArea { padding-inline: var(--space-6); }
+
+  .userRow {
+    z-index: var(--z-overlay);
+    margin-block: auto calc(-1 * var(--account-bottom-gutter));
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    padding-block: var(--space-2) var(--account-bottom-gutter);
+    padding-inline-start: var(--navigation-label-inset);
+    background: var(--surface-rail);
+    box-shadow: inset 0 1px 0 color-mix(in srgb, var(--hairline) 55%, transparent);
+  }
+
+  .railCollapsed .userRow {
+    padding-inline-start: 0;
+  }
+
+  .userName {
+    font: var(--type-content);
+    letter-spacing: var(--type-content-tracking);
+    font-weight: var(--weight-medium);
+    min-inline-size: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    color: var(--text);
+    pointer-events: none;
+  }
+
+  .userSettingsButton {
+    margin-inline-start: auto;
+  }
+
+  .menuWrap {
+    position: relative;
+  }
+
+  .avatar {
+    font-size: var(--type-metadata-size);
+    font-weight: var(--weight-medium);
+    line-height: 1;
+    display: grid;
+    place-items: center;
+    inline-size: var(--control-h-sm);
+    block-size: var(--control-h-sm);
+    border-radius: var(--radius-pill);
+    background: var(--surface-card);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--hairline) 85%, transparent),
+      0 1px 2px oklch(0% 0 0 / 0.04);
+    color: var(--text);
+    cursor: pointer;
+  }
+
+  .railCollapsed .avatar {
+    font-size: var(--font-step-1-size);
+    inline-size: var(--control-h);
+    block-size: var(--control-h);
+  }
+
+  .avatar:hover,
+  .avatar:focus-visible {
+    color: var(--text);
+  }
+
+  .menu {
+    position: fixed;
+    inset-block-end: calc(var(--control-h) + var(--account-bottom-gutter));
+    inset-inline-start: 10px;
+    z-index: var(--z-overlay);
+    display: flex;
+    flex-direction: column;
+    min-inline-size: var(--menu-w-min);
+    max-inline-size: var(--menu-w-max);
+    padding: var(--space-3);
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius-lg);
+    background: var(--paper);
+    box-shadow: var(--shadow-float);
+  }
+
+  .menuItem {
+    font-size: var(--font-step-2-size);
+    font-weight: var(--weight-normal);
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    inline-size: 100%;
+    block-size: var(--row-h-sm);
+    padding-inline: var(--space-2);
+    border-radius: var(--radius-highlight);
+    color: var(--text);
+    text-align: start;
+    cursor: pointer;
+  }
+
+  .menuItem:hover,
+  .menuItem:focus-visible {
+    background: var(--overlay-hover);
+  }
+
+  /* Collapsed strip: compact landmark icons and initials only. */
+  .stripItem {
+    display: grid;
+    place-items: center;
+    inline-size: var(--control-h);
+    block-size: var(--row-h);
+    border-radius: var(--radius-highlight);
+    cursor: pointer;
+  }
+
+  .stripItem:hover {
+    background: var(--overlay-hover);
+  }
+
+  .stripInitial {
+    font-size: var(--font-step-1-size);
+    font-weight: var(--weight-medium);
+    line-height: 1;
+    color: var(--text-3);
+  }
+
+  .stripItem:hover .stripInitial {
+    color: var(--text);
+  }
+
+  /* The single figure. Tone is the whole signal — see the note in sidebar.tsx. */
+  .stripWaiting {
+    font: var(--type-compact-metadata);
+    letter-spacing: var(--type-compact-metadata-tracking);
+    display: grid;
+    place-items: center;
+    block-size: var(--row-h);
+    color: var(--warn-text);
+    font-variant-numeric: tabular-nums;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .areaRow,
+    .areaActions,
+    .areaNew,
+    .iconButton {
+      transition: none;
+    }
+  }
+  @media (width >= 60rem) {
+    /* Composition geometry shared by the reading header, drawer and first
+       sidebar category; shortcut siblings share one undivided region. */
+    .shell {
+      --workspace-header-inset: var(--space-5);
+      --workspace-header-row-height: calc(var(--control-h) + var(--space-4) * 2);
+      --workspace-header-bottom: calc(var(--workspace-header-inset) + var(--workspace-header-row-height));
+      --workspace-title-center: calc((var(--workspace-header-bottom) - 1px) / 2);
+      --workspace-sidebar-brand-height: calc(var(--workspace-header-bottom) - var(--navigation-module-row-height) / 2);
+    }
+
+    .rail,
+    .userRow,
+    .brandRow {
+      background: color-mix(in srgb, var(--surface-rail) 52%, var(--bg));
+    }
+
+    .rail {
+      border-inline-end: 1px solid color-mix(in srgb, var(--hairline) 70%, transparent);
+      padding-block-start: 0;
+      scroll-padding-block-start: var(--workspace-sidebar-brand-height);
+    }
+
+    .brandRow {
+      position: sticky;
+      inset-block-start: 0;
+      z-index: var(--z-sticky);
+      flex-shrink: 0;
+      block-size: var(--workspace-sidebar-brand-height);
+      align-items: center;
+      padding-block-start: calc(var(--workspace-title-center) - var(--control-h) / 2);
+      padding-block-end: calc(var(--workspace-sidebar-brand-height) - var(--workspace-title-center) - var(--control-h) / 2);
+      margin-inline: calc(var(--space-3) * -1);
+      padding-inline: var(--space-3);
+      border-block-end: 0;
+    }
+
+    .railCollapsed .brandRow {
+      inline-size: 100%;
+      margin-inline: 0;
+      padding-inline: 0;
+      justify-content: center;
+    }
+
+    .main [data-nc-drawer-stack],
+    .main [data-nc-drawer-frame] {
+      inset-block: var(--workspace-header-inset);
+    }
+
+    .main [data-nc-drawer-stack],
+    .main [data-nc-drawer] {
+      --nc-card-header-height: var(--workspace-header-row-height);
+    }
+
+    /* The shared host owns header clearance; its cards stay inside their cells. */
+    .main [data-nc-drawer-stack] [data-nc-drawer-frame] {
+      inset-block: 0;
+    }
+
+    .brand {
+      min-block-size: var(--control-h);
+      font: var(--type-page-title);
+      letter-spacing: var(--type-page-title-tracking);
+      color: var(--text);
+    }
+
+    .brand .brandMark {
+      inline-size: var(--glyph);
+      block-size: var(--glyph);
+    }
+  }
+}
+
+@layer features {
+  .sourceButton {
+    display: grid;
+    place-items: center;
+    inline-size: 100%;
+    block-size: 100%;
+    border-radius: inherit;
+    color: inherit;
+  }
+}

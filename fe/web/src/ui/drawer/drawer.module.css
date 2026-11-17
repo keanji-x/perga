@@ -1,0 +1,420 @@
+@layer ui {
+  .positioner,
+  .seamPositioner,
+  .stack {
+    inset-block: 20px 28px;
+  }
+  /*
+   * §7.6's drawer, now shaped as **a card**: absolutely positioned inside the
+   * main region, on the trailing panel's track, `--z-overlay`, with a restrained local shadow.
+   *
+   * **Four corners, because there are four sides of page.** §7.6 asked for
+   * `--radius-lg` on the inline-start corners only, and an earlier round
+   * deleted even those — correctly, for the shape it then had. That drawer was
+   * full-height and welded to the window: three of its four sides *were* the
+   * window, and a radius says "this object has an edge here", which was true of
+   * exactly one of them. Rounding one side of a region made it read as a very
+   * tall card that had drifted off screen.
+   *
+   * The premise has changed rather than the reasoning. The drawer is inset on
+   * all four sides now, so all four are page, so all four are edges, so all
+   * four are rounded — one `border-radius`, `--radius-lg`, the same value every
+   * other card in the app uses. Cards are rounded because they are objects on a
+   * page; this one now is.
+   *
+   * **The track, and why it stops being a track vertically.** Horizontally the
+   * card keeps the trailing page pad but deliberately grows beyond the compact
+   * side-panel track: a live conversation is the foreground, not another
+   * status card. Vertically it is not on the panel's rails either.
+   *
+   * It used to start at `--header-band + --header-h + --space-8` — the offset
+   * `features/{area,track}/page` gives the sticky PanelCard — so that the two
+   * cards began on one line. Measured at 1512×950 that put the top edge at
+   * **y 68.3** while the bottom sat 28 off the window: 68 above, 28 below, for
+   * an object whose whole job is to be read. The alignment was real and the
+   * cost was 40px of nothing at the top of the only surface in the window you
+   * are actually operating.
+   *
+   * **So the card covers the page header instead of queuing under it.** While a
+   * conversation is open it is the foreground: the page underneath — its title,
+   * its report, its panel — is the thing being talked *about*, and a header is
+   * part of that page, not part of the chrome that outranks it. `--z-overlay`
+   * over the header's `--z-sticky` was already true; what changes here is that
+   * the geometry now says so too.
+   *
+   * **The price, stated plainly.** Whatever the page header puts in this
+   * column is unreachable while the card is open — on the track route that is
+   * *delete track*, and on any route the trailing end of the title row. You
+   * close the conversation first (`›`, or Escape), then you rename or delete.
+   * (The title itself and its rename control sit at `--document-start`, far
+   * inside the card's inline edge, so those stay reachable; do not read this
+   * paragraph as "the whole header is gone".) That is a real cost on a real
+   * control, accepted knowingly: acting on the track mid-conversation is rare,
+   * and the alternative was paying 40px of dead space on every conversation for
+   * it. It settles one thing for free — the earlier round measured the page's
+   * destructive ✕ and this card's close landing in the same column 8px apart,
+   * and a control that is covered cannot be mis-clicked.
+   *
+   * **The pair, 20 / 28, and why the top is not free to be prettier.** The
+   * header's topmost ink starts at `--header-band` — measured 20.3px from the
+   * window on every route, since the band is a constant and only the rows below
+   * it vary. A top inset larger than that leaves a live sliver of whatever is
+   * in this column *above* the card: at 24 the delete-track button was still
+   * hit-testable across y 22.3–24.0, a 1.7px strip of a destructive control
+   * with its own glyph hidden underneath the card. An invisible strip that
+   * deletes a track is worse than any spacing it buys. So the top is bounded by
+   * the band, and `--space-9` (20) is the largest tier under it.
+   *
+   * Compared in the same frame: 16/28 clears the band by more but reads
+   * top-heavy — the card visibly hangs off the window's top edge. 28/28 is
+   * metrically symmetric and leaves the sliver. 20/28 clears the band, and the
+   * 8px surplus at the bottom is the direction optical balance wants anyway (a
+   * shape centred by measurement sits low). The bottom stays 28 because it is
+   * `.page`'s own `padding-block-end`; the top has no such partner, only the
+   * band.
+   *
+   * Nothing here reads `--header-band` / `--header-h` any more, which is why
+   * `ui/page-header`'s publisher went back to the child combinator.
+   *
+   * **It still overlays.** The card remains absolute inside `.main`; it never
+   * becomes report content. The shell does make one deliberate companion
+   * adjustment while it is open: the hidden panel track takes this wider span,
+   * spending the report's left whitespace so its reading column stays centred
+   * beside the conversation rather than disappearing underneath it.
+   *
+   * The conversation is a persistent reading surface, so its shadow is
+   * narrower and lighter than a transient menu. Reuse the theme's scrim colour
+   * for both modes without changing the global float material. Shadow alone
+   * separates the card from the page; no second edge line is needed.
+   */
+  .drawer {
+    /*
+     * Concentric radii: card `--radius-lg` (16), inset `--space-4` (8), so the
+     * composer well and user bubble use `--radius-chat` = 8. `features/chat`
+     * reads both of these off this element.
+     */
+    --nc-card-inset: var(--space-2);
+    --nc-card-radius: var(--radius-lg);
+    --radius-chat: calc(var(--nc-card-radius) - var(--nc-card-inset));
+
+    position: relative;
+    pointer-events: auto;
+    display: flex;
+    flex-direction: column;
+    inline-size: 100%;
+    block-size: 100%;
+    opacity: 1;
+    translate: 0 0;
+    transition: none;
+  }
+
+  .positioner {
+    pointer-events: none;
+    position: absolute;
+    /* 20 top / 28 bottom. The 20 is bounded by the header band (20.3px of ink
+       clearance), not chosen freely — see the note above. */
+    inset-inline-end: var(--space-5);
+    z-index: var(--z-overlay);
+    display: flex;
+    flex-direction: column;
+    inline-size: var(--conversation-span, 40cqi);
+    /* Both page pads, kept even when the conversation's floor is wider than
+       what is left of a narrow main region: a card may not slide under the
+       rail on the side the page cannot pad. */
+    max-inline-size: calc(100% - var(--space-5) * 2);
+  }
+
+  /*
+   * ── The seam: the 24px of page between the card and the window ────────────
+   *
+   * **It is a mount point, not a decoration.** Nothing in `ui/drawer` paints
+   * here. What it exists for is a caller that needs to put something *beside*
+   * the card and cannot put it inside — today that is `features/chat`'s
+   * exchange rail, which was in the transcript's own gutter and is now here.
+   * The element is not handed down at all: it is stamped with
+   * `data-nc-drawer-seam` and a descendant *finds* it, through
+   * `drawerSeamAround()` in public.tsx, then `createPortal`s into what it
+   * finds — see that function's note for why the seam meets its caller on a
+   * data attribute rather than on a context or a prop. An unused seam is an
+   * empty box that paints nothing and takes no events.
+   *
+   * **Why a sibling and not a child.** `.drawer` is `overflow: hidden` — the
+   * clip that gives the card its rounded corners something to cut against —
+   * so anything parented to it that reaches past its edge is simply gone.
+   * There is no `overflow` value that clips the corners and lets a child out,
+   * and none of the alternatives (a second clipping context, `overflow:
+   * clip` with a positive `overflow-clip-margin`) survives contact with a
+   * radius. The two independent layout wrappers are siblings in the same
+   * containing block; each owns one paint node and only paint receives effects.
+   *
+   * **The geometry is the card's own, read off the same declarations.** The
+   * card sits at `inset-inline-end: var(--space-5)` and is at most
+   * `calc(100% - var(--space-5) * 2)` wide, so the trailing `--space-5` of
+   * the region is page at *every* viewport width — there is no window in which
+   * this strip closes up. The seam takes exactly that strip
+   * (`inset-inline-end: 0`, `inline-size: var(--space-5)`) and exactly the
+   * card's block range, so anything mounted here is vertically bounded by the
+   * card whether or not it can see it.
+   *
+   * **It is after the card in source order, and that is two decisions.** It
+   * puts the seam above the card at the same `z-index`, which is what lets a
+   * mounted layer float *over* the card (the rail's prompt preview does);
+   * and it puts whatever the seam holds after the card in the tab ring, so
+   * the first Tab off the drawer container still lands in its header. The cost,
+   * stated: a rail mounted here is the *last* stop in the drawer rather than
+   * the second, so a reader tabbing to the composer now passes it. That is
+   * one stop, because the rail roves (`features/chat/thread`), and it is the
+   * price of the card keeping the first stop it has always had.
+   *
+   * **Transparent by default, operable by exception.** The strip lies over the
+   * page's own trailing pad, so a seam that swallowed clicks would make 24px
+   * of every route dead while a conversation is open — for a box that is empty
+   * on every route that mounts nothing. `pointer-events` is therefore off on
+   * the seam and back on for its children, which is the pair that makes an
+   * empty seam indistinguishable from no seam at all.
+   *
+   * The background stays the page's; this is the one surface in the drawer's
+   * geometry that is *not* `--surface-card`, which is why anything painted here
+   * has to argue its contrast against `--bg`. `features/chat` does.
+   */
+  .seamPositioner {
+    pointer-events: none;
+    position: absolute;
+    /* The card's own block range, repeated from `.drawer` rather than derived,
+       because a seam that is taller than the card can put ink off the end of
+       it and there is nothing else in the layout to stop that. */
+    inset-inline-end: 0;
+    inline-size: var(--space-5);
+    z-index: var(--z-overlay);
+  }
+
+  .seam {
+    inline-size: 100%;
+    block-size: 100%;
+    /* Same transition, same duration, same easing, same source token as the
+       card above — the two enter and leave as one object, and any change to
+       one is a change to both. */
+    opacity: 1;
+    translate: 0 0;
+    transition: none;
+    pointer-events: none;
+  }
+
+
+  .seam > * {
+    pointer-events: auto;
+  }
+
+  /*
+   * The drawer takes focus when it opens (see the effect in public.tsx), and it
+   * is `tabindex="-1"` — a landing spot, not a control.
+   *
+   * Measured: `:focus-visible` does not match on the programmatic focus itself,
+   * so the drawer opens clean; but the *first key you press* while focus is
+   * still sitting on the container flips the browser into keyboard-modality and
+   * the global focus ring in base.css paints a 2px accent outline around all
+   * 396×900 of it. Press Enter with the composer unfocused and the whole drawer
+   * lights up blue to say that a container you cannot operate is focused.
+   *
+   * So this one has no ring. It costs nothing: a `tabindex="-1"` element is not
+   * in the tab order, so no keyboard user ever arrives here by tabbing — the
+   * only way in is this open effect, and the next Tab goes to Close, which does
+   * ring. What the ring would have communicated (the drawer opened) the drawer
+   * appearing already communicates.
+   */
+  .drawer:focus-visible {
+    outline: none;
+  }
+
+  /*
+   * ── The resize edge ────────────────────────────────────────────────────────
+   *
+   * An 8px strip down the card's leading side, over the content (the body's
+   * own inset is the same 8px, so it covers padding, not text). It paints
+   * nothing at rest — the shadow is already the edge — and draws one 2px line
+   * on hover, focus or drag, `--hairline-strong` for a pointer and `--accent`
+   * for the keyboard and a drag in progress, so the reader sees which edge
+   * moves before pressing. `touch-action: none` keeps a pen drag from
+   * scrolling the page. The drag holds pointer capture, so a fast pointer
+   * that outruns the strip keeps this cursor, and the press is cancelled, so
+   * it never starts a text selection.
+   */
+  .handle {
+    position: absolute;
+    inset-block: 0;
+    inset-inline-start: 0;
+    z-index: 1;
+    inline-size: var(--nc-card-inset, var(--space-2));
+    cursor: col-resize;
+    touch-action: none;
+  }
+
+  .handle::after {
+    position: absolute;
+    inset-block: var(--nc-card-radius, var(--radius-lg));
+    inset-inline-start: 0;
+    inline-size: 2px;
+    border-radius: 1px;
+    content: "";
+  }
+
+  .handle:hover::after {
+    background: var(--hairline-strong);
+  }
+
+  .handle:focus-visible {
+    outline: none;
+  }
+
+  .handle:focus-visible::after,
+  .handle[data-nc-resizing]::after {
+    background: var(--accent);
+  }
+
+  .scroll {
+    flex: 1;
+    min-block-size: 0;
+    overflow: auto;
+    padding: 0;
+    /* Reserve matching scrollbar lanes so the transcript stays centred and
+       becoming scrollable does not shift the column. */
+    scrollbar-gutter: stable both-edges;
+  }
+
+  .bodyInner {
+    min-block-size: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    padding:
+      var(--nc-card-inset, var(--space-2))
+      var(--nc-card-inset, var(--space-2))
+      var(--space-3);
+  }
+
+  /* Card and seam share the UI-owned camera depth and spring. Native exit
+     effects override this resting state until completion. Keep both parts
+     transparent after cancellation, before React removes the retained DOM;
+     no CSS travel may jump under a reversing native effect. */
+  .drawerClosing,
+  .seamClosing {
+    opacity: 0;
+  }
+
+  .drawerClosing {
+
+    /* It is on its way out; it must not intercept a click meant for the page
+       behind it. */
+    pointer-events: none;
+  }
+
+  /* The seam leaves on the card's timing, because it *is* the card as far as
+     the reader is concerned — see `.seam`. `pointer-events` is already off on
+     the seam itself; what this has to add is the children's, which `.seam > *`
+     turned back on and a box on its way out must not keep. */
+  .seamClosing > * {
+    pointer-events: none;
+  }
+
+  /* A side conversation on desktop becomes a pushed page on compact/mobile.
+     It keeps the same conversation state and focus lifecycle; only geometry
+     and motion change. */
+  @media (width < 60rem) {
+    .drawer {
+      --nc-card-inset: var(--space-4);
+      /* The viewport page stays flush; its composer and message surfaces
+         retain the same rounded contour as desktop conversation content. */
+      --nc-card-radius: var(--radius-lg);
+      --radius-chat: var(--radius-lg);
+      border-radius: 0;
+      background: var(--surface-card);
+      box-shadow: none;
+      transition: none;
+    }
+
+    /* The desktop exchange rail mounts in the page seam beside the card. A
+       full-width mobile page has no such seam; conversation history remains
+       available from the Report's Conversations list. */
+    .seam {
+      display: none;
+    }
+
+    .mobileHeader,
+    .mobileHeader > header {
+      background: var(--surface-card);
+    }
+
+    .mobileHeader {
+      flex: none;
+    }
+
+    .bodyInner {
+      padding: var(--space-4);
+    }
+
+
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .drawer,
+    .seam {
+      transition: none;
+    }
+  }
+
+  .stack {
+    position: absolute;
+    inset-inline-end: var(--space-5);
+    z-index: var(--z-overlay);
+    inline-size: var(--conversation-span, 40cqi);
+    max-inline-size: calc(100% - var(--space-5) * 2);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+
+  /* The cards carry the overlay rank inside the host. Keep the shared edge
+     above them so their scroll panes cannot intercept its pointer events. */
+  .stack > .handle {
+    z-index: var(--z-overlay);
+  }
+
+  .cell {
+    position: relative;
+    flex: 1;
+    min-block-size: 0;
+  }
+
+  .cell[hidden],
+  .positioner[hidden],
+  .drawer[hidden],
+  .stack[hidden] { display: none; }
+
+  .cell > .seamPositioner,
+  .embedded + .seamPositioner {
+    inset-block: 0;
+    inset-inline-end: calc(var(--space-5) * -1);
+  }
+
+  .cell > .positioner,
+  .embedded {
+    position: relative;
+    inset: auto;
+    inline-size: 100%;
+    max-inline-size: none;
+    block-size: 100%;
+  }
+
+
+  /* One viewport geometry for a standalone drawer and the stable pane host. */
+  @media (width < 60rem) {
+    .positioner,
+    .stack {
+      position: fixed;
+      inset: 0 0 calc(var(--mobile-dock-h, 0px) + env(safe-area-inset-bottom));
+      inline-size: 100%;
+      block-size: calc(100dvh - var(--mobile-dock-h, 0px) - env(safe-area-inset-bottom));
+      max-inline-size: none;
+    }
+  }
+}

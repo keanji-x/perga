@@ -1,0 +1,607 @@
+@layer features {
+    @layer components {
+  .shareTrigger { color: var(--text-3); }
+  .shareTrigger:hover, .shareTrigger:focus-visible { color: var(--text); }
+  .page {
+    /* One relative reading ceiling shared with the document and file overlay.
+       The remaining space becomes equal margins inside the document track;
+       opening a wider conversation spends those margins before shrinking text.
+       At the default root size, 40rem is 640px (about 35 CJK glyphs at 18px).
+       Keep this local: the global prose token also sizes unrelated UI surfaces. */
+    --document-measure-max: 40rem;
+    /* Preserve the reading measure whenever it fits. A wide
+       conversation may consume the margin before the shell reaches compact
+       mode; then the measure shrinks to the real first grid track instead of
+       painting underneath the drawer. */
+    --document-measure: min(
+      var(--document-measure-max),
+      max(0px, calc(100cqi - var(--space-5) * 3 - var(--panel-span)))
+    );
+    /* Leftover in the document track, not (1180 − 280) / 2. 100cqi is `.main`. */
+    --document-start: max(0px, calc((100cqi - var(--space-5) * 3 - var(--panel-span) - var(--document-measure)) / 2));
+
+    /*
+     * A **flex column, not a two-row grid**, and the difference is the whole
+     * reason the panel card stays put.
+     *
+     * It was `grid-template-rows: auto minmax(0, 1fr)`. A `1fr` row in a grid
+     * whose own height is definite gets exactly the leftover and never one
+     * pixel more: the row's box stayed one viewport tall while the report grew
+     * to three, and the document simply overflowed it. Nothing looked wrong,
+     * because overflow paints — but `.panel` is `position: sticky`, and sticky
+     * may only move inside *its containing block*. That block was `.content`,
+     * inside the 1fr row, so the card had ~700px of travel in a 3200px scroll
+     * and then slid off the top like ordinary content. Measured on a real track:
+     * at scrollTop 400 the card was still at y=68, at 900 it was at −280, and
+     * by 2000 it was 1380px above the window.
+     *
+     * A flex column is what lets the two halves be said separately, and they
+     * had to be: *fill* the leftover when the document is short (the reason the
+     * `1fr` was there — an empty document centres in the space it owns) and
+     * *grow past it* when the document is long, which is what gives sticky its
+     * travel. The first cut said both on `.workspace` with `flex: 1 0 auto` and
+     * broke the card board, whose containing block that box is; see the note
+     * there for where the two now live.
+     */
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+    /* Same as Today: fill `.main` so the panel sits on the trailing page pad
+       (24px), not 24px plus leftover from a 1180px page cap. */
+    max-inline-size: none;
+    inline-size: 100%;
+
+    flex: 1 1 auto;
+    min-block-size: 0;
+    overflow: auto;
+    padding-block: 0 var(--space-6);
+    padding-inline: var(--space-5);
+  }
+
+  .title {
+    min-inline-size: 0;
+    /* EditableTitle offsets its own inline padding into the leading gutter.
+       Inside the title/status flex cluster, intrinsic sizing otherwise counts
+       that negative margin against the control and clips its last 4px even
+       when the row has abundant room. Spend the matching space at the trailing
+       edge; the outer heading still owns truncation for genuinely long names. */
+    max-inline-size: calc(100% + var(--space-1));
+    letter-spacing: var(--type-page-title-tracking);
+    color: var(--text);
+      font: var(--type-page-title);
+  }
+
+  span.title {
+    display: block;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  /* Size the cluster to its content so the closed badge stays attached to
+     the title instead of being pushed into the middle of the header. It may
+     still shrink as one unit when a long title meets the trailing actions. */
+  .titleSlot {
+    display: contents;
+  }
+
+  .titleCluster {
+    display: flex;
+    flex: 0 1 auto;
+    align-items: center;
+    gap: var(--space-2);
+    min-inline-size: 0;
+    max-inline-size: 100%;
+  }
+
+  /* Grow inside the content-sized cluster so the rename control's
+     max-inline-size has a definite parent while long titles still truncate. */
+  .titleHeading {
+    flex: 1 1 auto;
+    min-inline-size: 0;
+    overflow: hidden;
+  }
+
+  .pageBoard {
+    overflow: hidden;
+  }
+
+  .headerBack {
+    display: grid;
+    flex: none;
+    place-items: center;
+    inline-size: var(--control-h);
+    block-size: var(--control-h);
+    border-radius: var(--radius-highlight);
+    color: var(--text);
+    cursor: pointer;
+  }
+
+  .headerBack:hover,
+  .headerBack:focus-visible {
+    background: var(--overlay-hover);
+  }
+
+  /*
+   * The header keeps its own height. Without this it is an ordinary flex item
+   * (`flex: 0 1 auto`), and once the row below grows past the page the free
+   * space goes negative and the *header* is what gives way.
+   *
+   * Positional, because `ui/page-header` renders its own element and this file
+   * cannot name it. That makes it (0,1,1) — higher than a bare `.workspace` —
+   * so the row below is written as `.page > .workspace` (0,2,0) rather than
+   * left to win on order: insert anything into `.page` ahead of the header and
+   * this rule would otherwise land on the workspace and silently undo the
+   * sticky fix.
+   */
+  .page > :first-child {
+    flex: none;
+  }
+
+  /*
+   * **This box stays one viewport. Its row does not.**
+   *
+   * `.workspace` is `position: relative` and the card board
+   * (`features/track/grid`) is `position: absolute; inset: 0` inside it, so this
+   * element's height *is* the board's height. The first cut of the sticky fix
+   * gave it `flex: 1 0 auto` — content-sized, never shrinking — and on a 4000px
+   * report the board became a 4000px overlay inside a `.page` that
+   * `.pageBoard` gives `overflow: hidden`: the top screenful visible and the
+   * rest unreachable. Not only a layout bug — `BoardHost` measures its
+   * container to choose terminal rows and resizes the PTY to match, so the
+   * number reaches a real process.
+   *
+   * The travel `.panel` needs was never this box's to give. Sticky moves inside
+   * *its own* containing block, which is `.content` one level down, and
+   * `.content` may overflow this box freely: nothing here clips, so its
+   * overflow still reaches `.page`'s scrollport and the page still scrolls the
+   * full document.
+   *
+   * So the two are separated: `flex: 1 1 auto` keeps the box itself at the
+   * viewport (it grows into the leftover on a short page and shrinks back on a
+   * long one), and `minmax(max-content, 1fr)` on the row is what actually
+   * carries the document's height — at least its content, and the leftover when
+   * there is less content than that.
+   */
+  .page > .workspace {
+    position: relative;
+    display: grid;
+    grid-template-rows: minmax(max-content, 1fr);
+    min-block-size: 0;
+    min-inline-size: 0;
+    flex: 1 1 auto;
+  }
+
+  /*
+   * Opening a card locks `.page` at the reader's current scroll offset. Keep
+   * the board's containing block in the visible content region at that offset:
+   * the absolute board still fills this viewport-high box, but the box itself
+   * no longer scrolls above the clipped page before the board is painted.
+   *
+   * Sticky is scoped to the open state. The ordinary workspace must stay in
+   * flow while the report scrolls so its overflowing `.content` continues to
+   * provide the panel's full sticky travel. The inset is the workspace's
+   * resting position — the sticky header's height plus the page gap — which
+   * preserves the Track title/back affordance instead of covering it. Because
+   * the containing block remains `.workspace`, the board also remains inside
+   * the shell's main column and cannot cover the navigation rail. Clip only
+   * this open-state box: the report deliberately overflows the ordinary
+   * workspace for panel sticky travel, but underneath an open board that same
+   * overflow would otherwise paint into the page's trailing padding. A paint
+   * clip, rather than `overflow: hidden`, keeps that overflow in `.page`'s
+   * scroll range so opening does not clamp the reader's retained `scrollTop`.
+   */
+  .pageBoard > .workspace {
+    position: sticky;
+    inset-block-start: calc(var(--header-band) + var(--header-h) + var(--space-4));
+    clip-path: inset(0);
+  }
+
+  /* Track-level mutations live behind one conventional overflow trigger. The
+     destructive colour belongs to the confirmation step, not permanently in
+     the page header. */
+  .headerActions {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    color: var(--text-2);
+  }
+
+  .trackActions button {
+    inline-size: var(--control-h) !important;
+    min-inline-size: var(--control-h) !important;
+    block-size: var(--control-h) !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    color: inherit !important;
+  }
+
+  .trackActions button:hover,
+  .trackActions button:focus-visible,
+  .trackActions button[aria-expanded='true'] {
+    color: var(--text) !important;
+  }
+
+  .mobilePanelButton,
+  .mobileReportChatFab,
+  .mobileReportChatDock,
+  .mobileTrackHeader,
+  .mobileListSurface {
+    display: none;
+  }
+
+  .desktopPanelSurface {
+    display: contents;
+  }
+
+  /* Main column plus the `--panel-span` track, separated by the standard
+     24px gutter. At 1440 / rail 240 that is leftover / 24 / 300. */
+  /*
+   * One row, and it fills. Left implicit, the row is sized by its tallest item
+   * — the panel card — so the document column ended where the card ended and an
+   * empty document could not centre itself in the space it owns. The panel
+   * pins to the top instead of stretching with it.
+   */
+  .content {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) var(--panel-span, 25%);
+    grid-template-rows: minmax(0, 1fr);
+    gap: var(--space-5);
+    min-block-size: 0;
+  }
+
+  /*
+   * Start-aligned, at the outline gutter — the same offset the title takes.
+   *
+   * It was centred, to keep the column's slack from all piling up between the
+   * last word and the panel card. That reasoning was about a document with
+   * nothing to its leading side; this one has the outline rail there, and a
+   * centred document put its first character 100px away from the title of the
+   * page it is the content of.
+   */
+  .doc {
+    /* Own the inline container so the report and its outline query the real
+       document column rather than `.main`, and resolve 100cqi against it. */
+    container-type: inline-size;
+    --document-measure: min(var(--document-measure-max), 100cqi);
+    --document-start: max(0px, calc((100cqi - var(--document-measure)) / 2));
+    display: flex;
+    flex-direction: column;
+    min-inline-size: 0;
+    min-block-size: 0;
+  }
+
+
+  /*
+   * The panel **stays** while the document scrolls under it.
+   *
+   * It is the page's controls and its inventory — the thing you scroll the
+   * document in order to act on — and it used to slide off the top with the
+   * prose, so acting on what you had just read meant scrolling back up to find
+   * the card again.
+   *
+   * The offset is the header's real height, `--header-band + --header-h`,
+   * published by `ui/page-header` onto this page (see its note on `:has(>
+   * .header)`). Plus the grid's own gutter, so the card clears the header by
+   * the same distance everything else on this page clears everything else.
+   *
+   * `max-block-size` with `overflow: auto` is the escape for a card taller than
+   * the viewport: sticky would otherwise pin its top and leave the bottom
+   * unreachable, which is worse than not sticking at all.
+   */
+  .panel {
+    position: sticky;
+    inset-block-start: calc(var(--header-band) + var(--header-h) + var(--space-4));
+    align-self: start;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    min-inline-size: 0;
+    max-block-size: calc(100dvh - var(--header-band) - var(--header-h) - var(--space-4) * 2);
+    overflow: auto;
+  }
+
+  .compactPanelContent {
+    flex: 0 0 auto;
+    min-inline-size: 0;
+    max-inline-size: var(--document-measure);
+    margin-inline-start: var(--document-start);
+    margin-block-end: var(--space-4);
+  }
+
+  /* Uppercase plus tracking standing in for a size the panel cannot spend. */
+  .sectionLabel {
+    font-size: var(--font-step-1-size);
+    font-weight: var(--weight-semibold);
+    line-height: 1;
+    letter-spacing: var(--font-step-1-tracking);
+    margin-block-start: var(--space-4);
+    color: var(--text-3);
+    text-transform: uppercase;
+  }
+
+  .sectionLabel:first-child {
+    margin-block-start: var(--space-0);
+  }
+
+  /* Compact/mobile is a navigation redesign, not a squeezed desktop grid.
+     Report is the root page. The inventory becomes a right-pushed page, and a
+     selected card becomes a second list-detail page without loading Grid. */
+  @media (width < 60rem) {
+    .page {
+      /* The mobile panel overlays the report instead of sharing its grid. */
+      --document-measure: var(--document-measure-max);
+      --document-start: 0px;
+      gap: var(--space-3);
+      padding-block-end: calc(env(safe-area-inset-bottom) + var(--space-5));
+      padding-inline: var(--space-4);
+    }
+
+    /* MobileHeader replaces PageHeader here: its top margin, 44px row and the
+       compact page gap are the visible content edge for a cold `?card=` open. */
+    .pageBoard > .workspace {
+      inset-block-start: calc(env(safe-area-inset-top) + var(--rail-w-collapsed) + 6px * 2 + var(--space-3));
+    }
+
+    .page > :first-child {
+      display: none;
+    }
+
+    .mobileHeaderIdentity {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-inline-size: 0;
+      gap: var(--space-1);
+    }
+
+    .titleHeading {
+      overflow: visible;
+    }
+
+    .mobileHeaderIdentity .titleHeading:has(> [data-nc-title-read-view]) {
+      display: none;
+    }
+
+    .mobileTitleReadHost {
+      flex: 1;
+      min-inline-size: 0;
+    }
+
+    .mobileHeaderIdentity h1 {
+      font: var(--type-detail);
+    font-weight: var(--weight-medium);
+      letter-spacing: var(--type-detail-tracking);
+      min-inline-size: 0;
+    }
+
+    .mobileTrackHeader {
+      display: block;
+      margin-inline: calc(var(--space-4) * -1);
+    }
+
+    .title {
+      white-space: normal;
+      text-overflow: clip;
+        font: var(--type-page-title);
+      letter-spacing: var(--type-page-title-tracking);
+  }
+
+    .mobileHeaderIdentity .title {
+      text-align: center;
+      white-space: nowrap;
+      font: var(--type-page-title);
+      margin: 0;
+        letter-spacing: var(--type-page-title-tracking);
+  }
+
+    .content {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 0;
+    }
+
+    .doc {
+      --document-measure: var(--document-measure-max);
+      --document-start: 0px;
+      inline-size: 100%;
+      max-inline-size: var(--document-measure);
+      margin-inline: auto;
+    }
+
+    .mobilePanelButton {
+      display: grid;
+      place-items: center;
+      inline-size: var(--rail-w-collapsed);
+      min-block-size: var(--rail-w-collapsed);
+      border: 0;
+      border-radius: var(--radius-pill);
+      background: transparent;
+      box-shadow: none;
+      color: var(--text-2);
+      cursor: pointer;
+    }
+
+    .mobilePanelButton button {
+      /* Astryx's `lg` icon button is 36px. Mobile keeps its ghost appearance
+         but expands the actual button—not a fake wrapper—to the 44px target. */
+      inline-size: var(--rail-w-collapsed) !important;
+      min-inline-size: var(--rail-w-collapsed) !important;
+      block-size: var(--rail-w-collapsed) !important;
+      min-block-size: var(--rail-w-collapsed) !important;
+      background: transparent !important;
+      box-shadow: none !important;
+    }
+
+    /* Timeout is independent of attention; old ask/down mobile presentation stays unchanged. */
+
+    .panel {
+      position: fixed;
+      inset: 0 0 calc(var(--mobile-dock-h, 0px) + env(safe-area-inset-bottom));
+      z-index: var(--z-overlay);
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-4);
+      inline-size: 100%;
+      block-size: calc(100dvh - var(--mobile-dock-h, 0px) - env(safe-area-inset-bottom));
+      min-block-size: calc(100dvh - var(--mobile-dock-h, 0px) - env(safe-area-inset-bottom));
+      max-block-size: none;
+      padding: 0;
+      overflow: hidden;
+      overscroll-behavior: contain;
+      background: var(--bg);
+    }
+
+    .mobilePanelOpen {
+      visibility: visible;
+    }
+
+    .mobilePanelClosed {
+      visibility: hidden;
+      pointer-events: none;
+    }
+
+    .mobileListSurface {
+      display: block;
+      inline-size: 100%;
+      block-size: 100%;
+      min-block-size: 0;
+      overflow: hidden;
+    }
+
+    .desktopPanelSurface {
+      display: none;
+    }
+
+    /* The mobile Cards row's quiet rank: the kind and `kernel-owned`, each its
+       own element because each is its own field carrier (#1234). They sit in
+       `MobileListItem`'s meta lane, which supplies the type scale; this only
+       keeps the two words apart. */
+    .mobileRowMeta {
+      display: inline-flex;
+      align-items: center;
+      gap: var(--space-1);
+    }
+
+    /* A withdrawn declaration, struck through — the mobile half of the rule the
+       desktop draws with `.taskWithdrawn`. `RowBadge.struck` has no carrier in
+       the projection framework at all, so this class and the behaviour
+       assertion that reads it are the only thing holding it on this surface
+       (#1234 S1b-4b). */
+    .mobileRowStruck {
+      text-decoration: line-through;
+    }
+
+    .mobileConversationList {
+      min-inline-size: 0;
+    }
+
+    .mobileConversationList ul {
+      max-block-size: none !important;
+      margin-inline: 0 !important;
+      overflow: visible !important;
+    }
+
+    .mobileConversationList button {
+      min-block-size: var(--rail-w-collapsed) !important;
+      padding-inline: var(--space-2) !important;
+    }
+
+    .mobileConversationList > p {
+      font-size: var(--font-step-1-size);
+      line-height: var(--font-step-1-line);
+      min-block-size: var(--rail-w-collapsed);
+      color: var(--text-3);
+    }
+
+    .page:has(.mobileReportChatDock) .doc {
+      padding-block-end: calc(var(--rail-w-collapsed) + var(--space-6));
+    }
+
+    .mobileChatInput { flex: 1; min-inline-size: 0; }
+    .mobileReportChatDock {
+      position: fixed;
+      inset-inline: calc(var(--space-4) + var(--rail-w-collapsed) + var(--space-1) + var(--space-2)) var(--space-4);
+      inset-block-end: calc(env(safe-area-inset-bottom) + var(--space-4));
+      z-index: var(--z-sticky);
+      display: flex;
+      align-items: center;
+      gap: var(--space-2);
+    }
+
+    .mobileReportChatFab {
+      font-size: var(--font-step-3-size);
+      font-weight: var(--weight-medium);
+      line-height: 1;
+      position: fixed;
+      inset-inline-end: 20px;
+      inset-block-end: calc(env(safe-area-inset-bottom) + 20px);
+      z-index: var(--z-sticky);
+      display: inline-flex;
+      min-block-size: calc(var(--rail-w-collapsed) + var(--space-3));
+      align-items: center;
+      justify-content: center;
+      gap: var(--space-2);
+      padding-inline: var(--space-5);
+      border: 1px solid var(--accent);
+      border-radius: var(--radius-pill);
+      background: var(--accent);
+      color: var(--text-on-accent);
+      box-shadow: var(--shadow-float);
+      cursor: pointer;
+    }
+
+    .mobileReportChatFab svg {
+      inline-size: var(--glyph-lg);
+      block-size: var(--glyph-lg);
+    }
+
+
+  }
+  /* Desktop controls stay separate from the compact Report action. */
+  @media (width >= 60rem) {.workHeaderBesideDrawer { padding-inline-end: calc(var(--conversation-span) + var(--space-4)); }
+    .page:has(> .workHeader) {
+      --header-band: 0px;
+      --header-h: var(--workspace-header-bottom, var(--navigation-header-height));
+    }
+
+    .workHeader {
+      /* Center the title in the full reading header, sharing its bottom
+         divider with the independently inset conversation card. */
+      --navigation-header-height: var(--header-h);
+      padding-block-start: var(--header-band);
+      border-block-end-color: var(--hairline);
+    }
+
+    .title {
+      font: var(--type-heading);
+      letter-spacing: var(--type-heading-tracking);
+    }
+
+    .desktopChatAction {
+      min-block-size: var(--control-h);
+      padding-inline: var(--space-3);
+      border: 1px solid var(--hairline-strong);
+      border-radius: var(--radius-md);
+      background: var(--surface-card);
+      color: var(--text);
+    }
+
+    .desktopChatAction:hover,
+    .desktopChatAction:focus-visible {
+      background: var(--accent-soft);
+      border-color: var(--accent);
+    }
+  }
+
+  @media (width < 60rem) {
+    .desktopChatAction {
+      display: none !important;
+    }
+  }
+
+  .fillReading { overflow: hidden; }
+  .fillReading .workHeader { border-block-end-color: transparent; }
+  .fillReading .workspace { grid-template-rows: minmax(0, 1fr); }
+}
+}

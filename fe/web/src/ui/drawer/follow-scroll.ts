@@ -1,0 +1,261 @@
+import { readContentSelection, sameContentSelection, type ContentSelection } from './selection.ts';
+
+/** Input owns following intent. Scroll/resize report geometry, including native
+ * anchoring and programmatic writes. Navigation and restoration are explicit. */
+export type ScrollFollower = Readonly<{
+  attach(pane: HTMLElement, content: HTMLElement): () => void;
+  followToEnd(): void;
+  followGrowth(): void;
+  navigate(position: () => void): void;
+}>;
+
+const RESTORATION_EVENT = 'nc-scroll-restoration';
+
+/** Let a position owner lay out and restore several panes as one synchronous
+ * operation. A follower waits until all captured reading places are restored. */
+export function withScrollRestoration<T>(panes: readonly HTMLElement[], restore: () => T): T {
+  for (const pane of panes) pane.dispatchEvent(new CustomEvent(RESTORATION_EVENT, { detail: true }));
+  try { return restore(); }
+  finally {
+    for (const pane of panes) pane.dispatchEvent(new CustomEvent(RESTORATION_EVENT, { detail: false }));
+  }
+}
+
+type Direction = 'up' | 'down';
+
+/** Only input reaching this pane is reported. Null revokes pending input on return or detach. */
+export type ScrollInput = Readonly<{ direction: Direction | null; top: number; height: number }>
+  & Readonly<{ source: 'keyboard'; key: string } | { source: 'wheel' | 'touch' | 'scrollbar' | 'return' | 'detach' }>;
+
+/** A nested scrollport consumes its input before this pane, unless it has run
+ * out of room and permits scroll chaining. Widgets may cancel keyboard defaults. */
+function reachesPane(event: Event, pane: HTMLElement, direction: Direction): boolean {
+  if (event.defaultPrevented) return false;
+  for (const node of event.composedPath()) {
+    if (node === pane) return true;
+    if (!(node instanceof HTMLElement)) continue;
+    const style = getComputedStyle(node);
+    if (!['auto', 'scroll', 'overlay'].includes(style.overflowY)) continue;
+    const room = direction === 'up' ? node.scrollTop : node.scrollHeight - node.clientHeight - node.scrollTop;
+    if (room > 0 || ['contain', 'none'].includes(style.overscrollBehaviorY)) return false;
+  }
+  return false;
+}
+
+/** Domain-free: the caller owns the return-to-end tolerance and any navigation
+ * targets. No message identities, transcript rules or global registry live here. */
+export function createScrollFollower(options: Readonly<{
+  bottomSlack: number;
+  onAwayChange: (away: boolean) => void;
+  onInput?: (input: ScrollInput) => void;
+}>): ScrollFollower {
+  let pane: HTMLElement | null = null;
+  let attachedContent: HTMLElement | null = null;
+  let observedSelection: ContentSelection = [];
+  let following = true;
+  let restoring = 0;
+  let gesture: { top: number; direction?: Direction } | null = null;
+  const distance = () => pane === null ? 0 : pane.scrollHeight - pane.scrollTop - pane.clientHeight;
+  const measure = () => { options.onAwayChange(distance() > options.bottomSlack); };
+  const acknowledgeSelection = () => {
+    observedSelection = attachedContent === null ? [] : readContentSelection(attachedContent);
+  };
+  const reconcileSelection = () => {
+    if (attachedContent === null || restoring !== 0) return;
+    const selection = readContentSelection(attachedContent);
+    const unchanged = sameContentSelection(attachedContent, selection, observedSelection);
+    observedSelection = selection;
+    if (!unchanged && selection.length > 0) { gesture = null; following = false; }
+  };
+  const resumeFollowing = () => { acknowledgeSelection(); following = true; };
+  const followGrowth = () => {
+    // selectionchange is queued; a layout observer can arrive first.
+    reconcileSelection();
+    if (pane !== null && following && gesture === null && restoring === 0 && distance() > 1) {
+      pane.scrollTop = pane.scrollHeight;
+    }
+    measure();
+  };
+  return {
+    followGrowth,
+    followToEnd() {
+      gesture = null;
+      options.onInput?.({ source: 'return', direction: null, top: pane?.scrollTop ?? 0, height: pane?.clientHeight ?? 0 });
+      resumeFollowing();
+      if (pane !== null && restoring === 0) pane.scrollTop = pane.scrollHeight;
+      measure();
+    },
+    navigate(position) {
+      gesture = null;
+      following = false;
+      position();
+      measure();
+    },
+    attach(target, content) {
+      pane = target;
+      attachedContent = content;
+      observedSelection = [];
+      following = true;
+      restoring = 0;
+      let attached = true;
+      let pointer: number | null = null;
+      let touchY: number | null = null;
+      let touchHeld = false;
+      const frames = new Set<number>();
+      const frame = (callback: () => void) => {
+        const id = requestAnimationFrame(() => { frames.delete(id); if (attached) callback(); });
+        frames.add(id);
+      };
+      const endGesture = () => {
+        const ended = gesture;
+        if (ended === null) return;
+        const top = ended.top;
+        // Native scrolling can continue after scrollend from an older gesture.
+        // Keep input provenance until two paints report no continuation.
+        frame(() => frame(() => {
+          if (gesture !== ended || ended.top !== top || pointer !== null || touchHeld) return;
+          if (ended.direction === 'down' && distance() <= options.bottomSlack) resumeFollowing();
+          gesture = null;
+          followGrowth();
+        }));
+      };
+      const begin = (event: Event, direction: Direction) => {
+        if (!reachesPane(event, target, direction) || restoring !== 0) return;
+        options.onInput?.({ ...(event instanceof KeyboardEvent ? { source: 'keyboard', key: event.key } as const
+          : { source: event instanceof WheelEvent ? 'wheel' : 'touch' } as const),
+          direction, top: target.scrollTop, height: target.clientHeight });
+        gesture = { top: gesture?.top ?? target.scrollTop, direction };
+        const room = direction === 'up' ? target.scrollTop : distance();
+        if (room > 0 || (direction === 'up' && distance() > options.bottomSlack)) following = false;
+        if (room <= 0) endGesture();
+      };
+      const onWheel = (event: WheelEvent) => {
+        if (event.ctrlKey || event.metaKey || event.deltaY === 0) return;
+        begin(event, event.deltaY < 0 ? 'up' : 'down');
+      };
+      const onKey = (event: KeyboardEvent) => {
+        const origin = event.target;
+        if (!(origin instanceof HTMLElement) || origin.isContentEditable
+          || origin.closest('input, textarea, select') !== null || event.isComposing || event.altKey || event.metaKey) return;
+        if (event.key === ' ' && origin.closest('button, summary, [role="button"]') !== null) return;
+        if (event.ctrlKey && event.key !== 'Home' && event.key !== 'End') return;
+        if (['ArrowUp', 'PageUp', 'Home'].includes(event.key) || (event.key === ' ' && event.shiftKey)) begin(event, 'up');
+        else if (['ArrowDown', 'PageDown', 'End', ' '].includes(event.key)) begin(event, 'down');
+      };
+      // Unbracketed content focus is a reading request. Automatic restoration
+      // declares its different intent through the existing restoration fence.
+      const onFocus = (event: FocusEvent) => {
+        if (restoring !== 0 || !(event.target instanceof Element) || !content.contains(event.target)) return;
+        const box = event.target.getBoundingClientRect();
+        const viewport = target.getBoundingClientRect();
+        // Covers engines that reveal before focus and those that reveal after.
+        if (distance() > options.bottomSlack || box.bottom <= viewport.top || box.top >= viewport.bottom) {
+          gesture = null;
+          following = false;
+        }
+      };
+      const onPointerDown = (event: PointerEvent) => {
+        if (event.defaultPrevented || event.button !== 0 || event.pointerType === 'touch' || event.target !== target) return;
+        pointer = event.pointerId;
+        gesture = { top: target.scrollTop };
+      };
+      const onPointerMove = (event: PointerEvent) => {
+        if (pointer === event.pointerId) gesture ??= { top: target.scrollTop };
+      };
+      const onPointerUp = (event: PointerEvent) => {
+        if (pointer === null || pointer !== event.pointerId) return;
+        pointer = null;
+        endGesture();
+      };
+      const onTouchStart = (event: TouchEvent) => {
+        touchHeld = true;
+        touchY = event.touches.length === 1 ? event.touches[0].clientY : null;
+      };
+      const onTouchMove = (event: TouchEvent) => {
+        const y = event.touches.length === 1 ? event.touches[0].clientY : null;
+        if (y !== null && touchY !== null && y !== touchY) begin(event, y < touchY ? 'down' : 'up');
+        touchY = y;
+      };
+      const onTouchEnd = (event: TouchEvent) => {
+        touchY = null;
+        if (event.touches.length > 0) return;
+        touchHeld = false;
+        endGesture();
+      };
+      const onScroll = () => {
+        if (gesture !== null && restoring === 0) {
+          const delta = target.scrollTop - gesture.top;
+          gesture.top = target.scrollTop;
+          if (delta !== 0) {
+            const direction = delta < 0 ? 'up' : 'down';
+            if (pointer !== null || gesture.direction === undefined || gesture.direction === direction) {
+              if (pointer !== null) options.onInput?.({ source: 'scrollbar', direction, top: target.scrollTop, height: target.clientHeight });
+              gesture.direction = direction;
+              following = false;
+            }
+          }
+        }
+        measure();
+      };
+      const onSelection = () => { reconcileSelection(); measure(); };
+      const onRestoration = (event: Event) => {
+        if (!(event instanceof CustomEvent)) return;
+        // Observe an already-pending reader request before suppressing restores.
+        if (event.detail === true && restoring === 0) reconcileSelection();
+        restoring += event.detail === true ? 1 : -1;
+        // Keep pending input, but rebase its offset: the restored displacement
+        // must not be mistaken for movement from the scrollbar or gesture.
+        if (event.detail === false && gesture !== null) gesture.top = target.scrollTop;
+        if (restoring === 0) {
+          acknowledgeSelection();
+          if (pointer === null && !touchHeld) endGesture();
+          followGrowth();
+        }
+      };
+      target.addEventListener('wheel', onWheel, { passive: true });
+      target.ownerDocument.addEventListener('selectionchange', onSelection);
+      content.addEventListener('focusin', onFocus);
+      target.ownerDocument.addEventListener('keydown', onKey);
+      target.addEventListener('pointerdown', onPointerDown);
+      target.addEventListener('pointermove', onPointerMove, { passive: true });
+      target.ownerDocument.addEventListener('pointerup', onPointerUp);
+      target.ownerDocument.addEventListener('pointercancel', onPointerUp);
+      target.addEventListener('touchstart', onTouchStart, { passive: true });
+      target.addEventListener('touchmove', onTouchMove, { passive: true });
+      target.addEventListener('touchend', onTouchEnd);
+      target.addEventListener('touchcancel', onTouchEnd);
+      target.addEventListener('scroll', onScroll, { passive: true });
+      target.addEventListener('scrollend', endGesture);
+      target.addEventListener(RESTORATION_EVENT, onRestoration);
+      const observer = new ResizeObserver(followGrowth);
+      observer.observe(target);
+      observer.observe(content);
+      // Attach follows once, including a pane whose first content just arrived.
+      reconcileSelection();
+      if (following) target.scrollTop = target.scrollHeight;
+      measure();
+      return () => {
+        attached = false;
+        options.onInput?.({ source: 'detach', direction: null, top: target.scrollTop, height: target.clientHeight });
+        for (const id of frames) cancelAnimationFrame(id);
+        observer.disconnect();
+        target.removeEventListener('wheel', onWheel);
+        target.ownerDocument.removeEventListener('selectionchange', onSelection);
+        content.removeEventListener('focusin', onFocus);
+        target.ownerDocument.removeEventListener('keydown', onKey);
+        target.removeEventListener('pointerdown', onPointerDown);
+        target.removeEventListener('pointermove', onPointerMove);
+        target.ownerDocument.removeEventListener('pointerup', onPointerUp);
+        target.ownerDocument.removeEventListener('pointercancel', onPointerUp);
+        target.removeEventListener('touchstart', onTouchStart);
+        target.removeEventListener('touchmove', onTouchMove);
+        target.removeEventListener('touchend', onTouchEnd);
+        target.removeEventListener('touchcancel', onTouchEnd);
+        target.removeEventListener('scroll', onScroll);
+        target.removeEventListener('scrollend', endGesture);
+        target.removeEventListener(RESTORATION_EVENT, onRestoration);
+        if (pane === target) { pane = null; attachedContent = null; observedSelection = []; gesture = null; }
+      };
+    },
+  };
+}

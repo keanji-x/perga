@@ -1,0 +1,380 @@
+// @vitest-environment jsdom
+// The panes are mocked: CodeMirror measures a layout jsdom does not have.
+
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('./code-pane.tsx', () => ({
+  CodePane: ({ path, text }: { path: string; text: string }) => (
+    <div data-testid="code-pane" data-path={path}>{text}</div>
+  ),
+  DiffPane: ({ path, headText, workingText }: {
+    path: string; headText: string | null; workingText: string | null;
+  }) => (
+    <div
+      data-testid="diff-pane"
+      data-path={path}
+      data-head={headText ?? ''}
+      data-working={workingText ?? ''}
+    />
+  ),
+}));
+
+import type { ApiFailure } from '../../../../core/api/types.ts';
+import type { CardFilesPort } from '../../../../core/domain/fs.ts';
+import { ApiError } from '../../../../core/domain/failure-class.ts';
+import { FileViewer, type ViewerSlots } from './public.tsx';
+
+/** A read rejected the way `runOperation` rejects it: the answer's failure, for the fs class table to read. */
+const rejectWith = (failure: ApiFailure): Promise<never> => Promise.reject(new ApiError(failure));
+const DENIED: ApiFailure = Object.freeze({ kind: 'http', status: 403, code: 'forbidden', message: 'permission denied reading /repo/notes.txt' });
+
+afterEach(cleanup);
+
+function slots(): ViewerSlots {
+  const values = new Map<string, unknown>();
+  return {
+    get<Value>(key: string, initial: Value | (() => Value)): Value {
+      if (!values.has(key)) values.set(key, typeof initial === 'function' ? (initial as () => Value)() : initial);
+      return values.get(key) as Value;
+    },
+    set<Value>(key: string, value: Value) { values.set(key, value); },
+  };
+}
+
+function port(overrides: Partial<CardFilesPort> = {}): CardFilesPort {
+  return Object.freeze({
+    listDirectory: () => Promise.resolve({
+      path: '/repo',
+      parent: '/',
+      entries: [{ name: 'src', is_dir: true }, { name: 'notes.txt', is_dir: false }],
+    }),
+    readFile: () => Promise.resolve({
+      path: '/repo/notes.txt', size: 4, text: 'body', truncated: false,
+    }),
+    gitStatus: () => Promise.resolve({
+      repo_root: '/repo',
+      files: [{ path: 'src/main.rs', status: 'modified' }],
+    }),
+    gitDiff: () => Promise.resolve({
+      path: 'src/main.rs', status: 'modified', head_text: 'was', working_text: 'is', truncated: false,
+    }),
+    rawUrl: (path: string) => `/api/fs/readfile-raw?path=${encodeURIComponent(path)}`,
+    ...overrides,
+  });
+}
+
+function renderViewer(files: CardFilesPort | null, path = '/repo') {
+  return render(<FileViewer path={path} files={files} theme="dark" slots={slots()} />);
+}
+
+describe('FileViewer', () => {
+  it.each(['Permission denied', 'Path not found'])('retries the selected file after %s without changing tabs', async (reason) => {
+    const readFile = vi.fn()
+      .mockRejectedValueOnce(new Error(`${reason}: /repo/notes.txt`))
+      .mockResolvedValueOnce({ path: '/repo/notes.txt', size: 8, text: 'restored', truncated: false });
+    renderViewer(port({ readFile }));
+    await userEvent.click(await screen.findByRole('button', { name: /notes\.txt/ }));
+    await screen.findByRole('alert');
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(await screen.findByText('restored')).toBeTruthy();
+    expect(readFile.mock.calls).toEqual([['/repo/notes.txt'], ['/repo/notes.txt']]);
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('retries a failed image in the selected code pane', async () => {
+    renderViewer(port({ listDirectory: () => Promise.resolve({
+      path: '/repo', parent: '/', entries: [{ name: 'logo.png', is_dir: false }],
+    }) }));
+    await userEvent.click(await screen.findByRole('button', { name: /logo\.png/ }));
+    const image = await screen.findByRole('img', { name: '/repo/logo.png' });
+    fireEvent.error(image);
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    const retried = await screen.findByRole('img', { name: '/repo/logo.png' });
+    expect(retried).not.toBe(image);
+    expect(retried.getAttribute('src')).toBe(image.getAttribute('src'));
+  });
+
+  it('retries a failed folder listing in place', async () => {
+    const listDirectory = vi.fn()
+      .mockResolvedValueOnce({ path: '/repo', parent: '/', entries: [{ name: 'src', is_dir: true }] })
+      .mockRejectedValueOnce(new Error('Permission denied: /repo/src'))
+      .mockResolvedValueOnce({ path: '/repo/src', parent: '/repo', entries: [{ name: 'ok.txt', is_dir: false }] });
+    renderViewer(port({ listDirectory }));
+    await userEvent.click(await screen.findByRole('button', { name: /src/ }));
+    await screen.findByRole('alert');
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(await screen.findByRole('button', { name: /ok\.txt/ })).toBeTruthy();
+    expect(listDirectory.mock.calls).toEqual([['/repo'], ['/repo/src'], ['/repo/src']]);
+  });
+
+  it.each(['status', 'diff'])('retries the failed git %s read', async (failure) => {
+    const gitStatus = vi.fn(port().gitStatus);
+    const gitDiff = vi.fn(port().gitDiff);
+    if (failure === 'status') gitStatus.mockRejectedValueOnce(new Error('Status unavailable'));
+    else gitDiff.mockRejectedValueOnce(new Error('Diff unavailable'));
+    renderViewer(port({ gitStatus, gitDiff }));
+    await screen.findByRole('button', { name: /notes\.txt/ });
+    await userEvent.click(screen.getByRole('tab', { name: 'Diff' }));
+    await screen.findByRole('alert');
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(await screen.findByTestId('diff-pane')).toBeTruthy();
+    expect(failure === 'status' ? gitStatus : gitDiff).toHaveBeenCalledTimes(2);
+  });
+
+  it('lists the card\'s folder', async () => {
+    renderViewer(port());
+    expect(await screen.findByRole('button', { name: /src/ })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /notes\.txt/ })).toBeTruthy();
+  });
+
+  it('shows hidden files and directories in the Grid file browser by default', async () => {
+    renderViewer(port({
+      listDirectory: () => Promise.resolve({
+        path: '/repo',
+        parent: '/',
+        entries: [{ name: '.config', is_dir: true }, { name: '.env', is_dir: false }],
+      }),
+    }));
+
+    expect(await screen.findByRole('button', { name: /\.config/ })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /\.env/ })).toBeTruthy();
+  });
+
+  it('opens a file into the code pane, and a folder into the listing instead', async () => {
+    const listDirectory = vi.fn((requested: string) => Promise.resolve({
+      path: requested,
+      parent: '/',
+      entries: requested === '/repo'
+        ? [{ name: 'src', is_dir: true }, { name: 'notes.txt', is_dir: false }]
+        : [{ name: 'main.rs', is_dir: false }],
+    }));
+    renderViewer(port({ listDirectory }));
+
+    await userEvent.click(await screen.findByRole('button', { name: /notes\.txt/ }));
+    const pane = await screen.findByTestId('code-pane');
+    expect(pane.getAttribute('data-path')).toBe('/repo/notes.txt');
+    expect(pane.textContent).toBe('body');
+
+    await userEvent.click(screen.getByRole('button', { name: /src/ }));
+    await waitFor(() => { expect(listDirectory).toHaveBeenCalledWith('/repo/src'); });
+    expect(await screen.findByRole('button', { name: /main\.rs/ })).toBeTruthy();
+  });
+
+  it('reads nothing until a file is picked', async () => {
+    const readFile = vi.fn(() => Promise.resolve({
+      path: '/repo', size: 0, text: '', truncated: false,
+    }));
+    renderViewer(port({ readFile }));
+    expect(await screen.findByText('选择一个文件以查看内容')).toBeTruthy();
+    expect(readFile).not.toHaveBeenCalled();
+  });
+
+  it('says the file was truncated, because the pane is showing a prefix', async () => {
+    renderViewer(port({
+      readFile: () => Promise.resolve({
+        path: '/repo/notes.txt', size: 9_000_000, text: 'body', truncated: true,
+      }),
+    }));
+    await userEvent.click(await screen.findByRole('button', { name: /notes\.txt/ }));
+    expect(await screen.findByText('Showing the first 2 MiB of this file.')).toBeTruthy();
+  });
+
+  it('renders an image by URL rather than reading it as text', async () => {
+    const readFile = vi.fn();
+    renderViewer(port({
+      readFile,
+      listDirectory: () => Promise.resolve({
+        path: '/repo', parent: '/', entries: [{ name: 'logo.png', is_dir: false }],
+      }),
+    }));
+    await userEvent.click(await screen.findByRole('button', { name: /logo\.png/ }));
+    const image = await screen.findByRole('img', { name: '/repo/logo.png' });
+    expect(image.getAttribute('src')).toBe('/api/fs/readfile-raw?path=%2Frepo%2Flogo.png');
+    expect(readFile).not.toHaveBeenCalled();
+  });
+
+  /* The browser loads an image itself and says nothing of why it failed: the image's own fixed sentence. */
+  it('says an image that did not load is an image that could not be read', async () => {
+    renderViewer(port({
+      listDirectory: () => Promise.resolve({
+        path: '/repo', parent: '/', entries: [{ name: 'logo.png', is_dir: false }],
+      }),
+    }));
+    await userEvent.click(await screen.findByRole('button', { name: /logo\.png/ }));
+    fireEvent.error(await screen.findByRole('img', { name: '/repo/logo.png' }));
+    const alert = await screen.findByRole('alert');
+    expect(alert.querySelector('span:not([aria-hidden])')?.textContent).toBe('Could not read this image.');
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(await screen.findByRole('img', { name: '/repo/logo.png' })).toBeTruthy();
+  });
+
+  it('shows the read failure instead of an empty pane', async () => {
+    renderViewer(port({ readFile: () => rejectWith(DENIED) }));
+    await userEvent.click(await screen.findByRole('button', { name: /notes\.txt/ }));
+    expect(await screen.findByRole('alert')).toHaveProperty('textContent', expect.stringContaining('Access denied.'));
+  });
+
+  /* The sentence is the answer's class on the fs routes, never its wording (`FILE_READ_FAILURES`). */
+  it.each([
+    ['403 forbidden', DENIED, 'Access denied. permission denied reading /repo/notes.txt', 'Check its permissions, then try again.'],
+    ['404 path_not_found', { kind: 'http', status: 404, code: 'path_not_found', message: 'path /repo/notes.txt not found' },
+      'File or folder not found. path /repo/notes.txt not found', 'Restore it at the same path, then try again.'],
+    /* The Track is gone: restoring a path cannot bring it back, so the hint does not offer that. */
+    ['404 not_found', { kind: 'http', status: 404, code: 'not_found', message: 'track w1' },
+      'This Track no longer exists. track w1', 'Its workspace files cannot be opened from here.'],
+    /* Any other refusal: generic, with the server's reason. */
+    ['400 bad_request', { kind: 'http', status: 400, code: 'bad_request', message: 'path /repo/notes.txt is not a regular file' },
+      'Could not load this file. path /repo/notes.txt is not a regular file', null],
+    /* Wording alone never picks a class, and a server fault's text never shows. */
+    ['500 naming a denial', { kind: 'http', status: 500, code: 'internal', message: 'fs /repo/notes.txt: Permission denied' },
+      'Could not load this file.', null],
+    ['a lost answer', { kind: 'transport', message: 'no such file or directory' }, 'Could not load this file.', null],
+  ] as const satisfies ReadonlyArray<readonly [string, ApiFailure, string, string | null]>)('reads %s by its class', async (_name, failure, text, description) => {
+    renderViewer(port({ readFile: () => rejectWith(failure) }));
+    await userEvent.click(await screen.findByRole('button', { name: /notes\.txt/ }));
+    const alert = await screen.findByRole('alert');
+    expect(alert.querySelector('span:not([aria-hidden])')?.textContent).toBe(text);
+    expect(alert.querySelector('p')?.textContent ?? null).toBe(description);
+    expect(alert.querySelector('details')).toBeNull();
+  });
+
+  describe('the diff tab', () => {
+    it('selects the first changed file and loads both of its sides', async () => {
+      renderViewer(port());
+      await userEvent.click(await screen.findByRole('tab', { name: 'Diff' }));
+      const pane = await screen.findByTestId('diff-pane');
+      expect(pane.getAttribute('data-head')).toBe('was');
+      expect(pane.getAttribute('data-working')).toBe('is');
+      expect(screen.getByRole('button', { name: /src\/main\.rs/ })).toBeTruthy();
+    });
+
+    it('asks for the diff by repository-root-joined path, not by the relative one', async () => {
+      const gitDiff = vi.fn(() => Promise.resolve({
+        path: 'src/main.rs', status: 'modified', head_text: null, working_text: 'is', truncated: false,
+      }));
+      renderViewer(port({ gitDiff }));
+      await userEvent.click(await screen.findByRole('tab', { name: 'Diff' }));
+      // The status list is repo-root-relative; the diff endpoint takes an absolute path.
+      await waitFor(() => { expect(gitDiff).toHaveBeenCalledWith('/repo/src/main.rs', undefined); });
+    });
+
+    it('joins against the repository root at the two edges of the shared rule', async () => {
+      const gitDiff = vi.fn(() => Promise.resolve({
+        path: 'main.rs', status: 'modified', head_text: 'was', working_text: 'is', truncated: false,
+      }));
+      renderViewer(port({
+        gitDiff,
+        gitStatus: () => Promise.resolve({ repo_root: '/', files: [{ path: 'main.rs', status: 'modified' }] }),
+      }));
+      await userEvent.click(await screen.findByRole('tab', { name: 'Diff' }));
+      await waitFor(() => { expect(gitDiff).toHaveBeenCalledWith('/main.rs', undefined); });
+
+      cleanup();
+      renderViewer(port({
+        gitDiff,
+        gitStatus: () => Promise.resolve({ repo_root: '/repo/', files: [{ path: 'main.rs', status: 'modified' }] }),
+      }));
+      await userEvent.click(await screen.findByRole('tab', { name: 'Diff' }));
+      await waitFor(() => { expect(gitDiff).toHaveBeenCalledWith('/repo/main.rs', undefined); });
+    });
+
+    it('carries old_path so a rename can be diffed against what it was', async () => {
+      const gitDiff = vi.fn(() => Promise.resolve({
+        path: 'src/new.rs', status: 'renamed', head_text: 'was', working_text: 'is', truncated: false,
+      }));
+      renderViewer(port({
+        gitDiff,
+        gitStatus: () => Promise.resolve({
+          repo_root: '/repo',
+          files: [{ path: 'src/new.rs', status: 'renamed', old_path: 'src/old.rs' }],
+        }),
+      }));
+      await userEvent.click(await screen.findByRole('tab', { name: 'Diff' }));
+      await waitFor(() => { expect(gitDiff).toHaveBeenCalledWith('/repo/src/new.rs', 'src/old.rs'); });
+    });
+
+    it('reports a folder that is not a repository rather than showing no changes', async () => {
+      renderViewer(port({
+        gitStatus: () => rejectWith({ kind: 'http', status: 400, code: 'bad_request', message: 'not a git repository' }),
+      }));
+      await userEvent.click(await screen.findByRole('tab', { name: 'Diff' }));
+      expect(await screen.findByRole('alert')).toHaveProperty('textContent', expect.stringContaining('Could not load these changes. not a git repository'));
+    });
+
+    /* Asserted on the intermediate state, with the second `gitStatus` still pending. */
+    it('drops the previous folder\'s changes while the new status is still in flight', async () => {
+      let releaseSub: ((value: { repo_root: string; files: never[] }) => void) | undefined;
+      const gitStatus = vi.fn((requested: string) => (requested === '/repo'
+        ? Promise.resolve({ repo_root: '/repo', files: [{ path: 'src/main.rs', status: 'modified' }] })
+        : new Promise<{ repo_root: string; files: never[] }>((resolve) => { releaseSub = resolve; })));
+      renderViewer(port({
+        gitStatus: gitStatus as unknown as CardFilesPort['gitStatus'],
+        listDirectory: (requested: string) => Promise.resolve({
+          path: requested,
+          parent: '/',
+          entries: requested === '/repo' ? [{ name: 'sub', is_dir: true }] : [],
+        }),
+      }));
+      await userEvent.click(await screen.findByRole('tab', { name: 'Diff' }));
+      expect(await screen.findByRole('button', { name: /src\/main\.rs/ })).toBeTruthy();
+      await screen.findByTestId('diff-pane');
+
+      await userEvent.click(screen.getByRole('button', { name: /sub/ }));
+      await waitFor(() => { expect(gitStatus).toHaveBeenCalledWith('/repo/sub'); });
+
+      expect(releaseSub).toBeTypeOf('function');
+      expect(screen.queryByRole('button', { name: /src\/main\.rs/ })).toBeNull();
+      expect(screen.queryByTestId('diff-pane')).toBeNull();
+      expect(screen.getByText('No changed file selected')).toBeTruthy();
+      expect(screen.getByText('Loading changes…')).toBeTruthy();
+    });
+
+    it('says so when the tree is clean', async () => {
+      renderViewer(port({ gitStatus: () => Promise.resolve({ repo_root: '/repo', files: [] }) }));
+      await userEvent.click(await screen.findByRole('tab', { name: 'Diff' }));
+      expect(await screen.findByText('工作区没有未提交的更改')).toBeTruthy();
+    });
+  });
+
+  /* `listDirectory` answers 400 for a file; without the climb the card sits on that error forever. */
+  it('shows a card opened on a file, listing the folder it lives in', async () => {
+    const listDirectory = vi.fn((requested: string) => (requested === '/repo'
+      ? Promise.resolve({
+        path: '/repo', parent: '/', entries: [{ name: 'notes.md', is_dir: false }],
+      })
+      : Promise.reject(new Error('/repo/notes.md is not a directory'))));
+    renderViewer(port({
+      listDirectory,
+      readFile: () => Promise.resolve({
+        path: '/repo/notes.md', size: 4, text: 'body', truncated: false,
+      }),
+    }), '/repo/notes.md');
+
+    const pane = await screen.findByTestId('code-pane');
+    expect(pane.getAttribute('data-path')).toBe('/repo/notes.md');
+    expect(pane.textContent).toBe('body');
+    expect(screen.getByRole('button', { name: /notes\.md/ })).toBeTruthy();
+    expect(listDirectory.mock.calls.map(([requested]) => requested))
+      .toEqual(['/repo/notes.md', '/repo']);
+  });
+
+  /* Only the card's own path climbs; one climb per unreadable ancestor would walk up to `/`. */
+  it('reports a folder the reader navigated into rather than climbing back out', async () => {
+    const listDirectory = vi.fn((requested: string) => (requested === '/repo'
+      ? Promise.resolve({ path: '/repo', parent: '/', entries: [{ name: 'src', is_dir: true }] })
+      : rejectWith(DENIED)));
+    renderViewer(port({ listDirectory }));
+
+    await userEvent.click(await screen.findByRole('button', { name: /src/ }));
+    expect(await screen.findByRole('alert')).toHaveProperty('textContent', expect.stringContaining('Access denied.'));
+    expect(listDirectory.mock.calls.map(([requested]) => requested))
+      .toEqual(['/repo', '/repo/src']);
+  });
+
+  it('states the missing capability when the host has no filesystem port', () => {
+    renderViewer(null);
+    expect(screen.getByText('This board was built without filesystem access.')).toBeTruthy();
+  });
+});

@@ -1,0 +1,16 @@
+fe/tools/mutation/fixtures/** -text
+
+# `report/legacy_initial_v4.md` is the frozen pre-header default body (#1635
+# S2a): byte-exact input to the header-less compatibility fallback of
+# `report_startup_read_required`. A CRLF checkout would silently change the
+# frozen bytes and every pre-header track would read as "written".
+crates/calm-types/src/report/*.md -text
+
+# Agent-facing prompt sources are byte-exact input to `include_str!` (#1635):
+# a CRLF checkout would change the rendered prompt and break its golden.
+crates/calm-server/prompts/** -text
+
+# The built-in template files are byte-exact input to `include_str!` and, after
+# their front matter, to `split_body` (#1635 S4): a CRLF checkout would change
+# where blocks split and what a `template_id` create instantiates.
+crates/calm-server/templates/builtin/*.md -text

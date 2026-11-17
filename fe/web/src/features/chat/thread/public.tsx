@@ -1,0 +1,686 @@
+import { isImeKeyEvent } from '@astryxdesign/core/utils';
+import { useHistoryPrefetch, type HistoryPrefetch } from './history-prefetch.ts';
+import { PrependReading } from './prepend-reading.tsx';
+import { dispatchComposerCommand, executeComposerCommand } from './composer-command.ts';
+import type { ComposerCommand } from './composer-command.ts';
+import type { RunRecovery } from '../../../../../core/domain/conversation-restart.ts';
+import { withEmptyTrigger } from '../../../ui/empty-state/astryx-trigger.tsx';
+import { EmptyState, type EmptyStateSchema } from '../../../ui/empty-state/public.tsx';
+import { useThreadReadingView, type ThreadReadingView } from './reading-view.tsx';
+import { useCompactViewport } from '../../../ui/viewport/public.ts';
+import { floatingControlClassName, floatingControlMaterialClassName } from '../../../ui/floating-control/public.ts';
+import mobileStyles from './mobile-composer.module.css';
+// The conversation itself: a transcript and the box you write into. The unit is the
+// exchange — one thing you said and everything that came back.
+
+import { Fragment, memo, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, type ReactNode, type Ref, type Dispatch, type SetStateAction } from 'react';
+import { createPortal } from 'react-dom';
+import {
+  ChatComposer as AstryxChatComposer,
+  ChatComposerInput,
+  ChatSendButton,
+  ChatLayoutScrollButton,
+  type ChatComposerTrigger,
+} from '@astryxdesign/core/Chat';
+import { Button } from '@astryxdesign/core/Button';
+import { Divider } from '@astryxdesign/core/Divider';
+import { HeldInputStatus } from './held-input.tsx';
+import { heldConversationInputs } from '../../../../../core/domain/conversation-display.ts';
+import type { ConversationActiveInput, ConversationSubmissionDelivery } from '../../../../../core/api/generated/wire.ts';
+import { useIcon } from '@astryxdesign/core/Icon';
+import { VisuallyHidden } from '@astryxdesign/core/VisuallyHidden';
+
+import { ActivityIndicator } from '../../../ui/activity-indicator/public.tsx';
+import { LoadingIndicator } from '../../../ui/activity-indicator/loading-indicator.tsx';
+import { ExchangeNavigation } from './exchange-navigation.tsx';
+import { createScrollFollower } from '../../../ui/drawer/follow-scroll.ts';
+import { readingHostAround } from '../../../ui/drawer/reading-host.tsx';
+import { Icon } from '../../../ui/icon/public.tsx';
+import { triggerMenuKeyRoute } from '../../../ui/trigger-menu-keys/public.ts';
+import { useState } from '../../../ui/state/public.ts';
+
+import { activityLabelOf, cardActivityOf, type CardActivity } from '../../../../../core/domain/activity.ts';
+import { projectTranscriptView, type TranscriptView } from '../../../../../core/domain/conversation-view.ts';
+import {
+  isQueuedConversationTurn, opensAfterGap, opensExchange,
+  type Conversation, type ConversationTurn, type ConversationActivity, type ConversationTurnOutcome,
+  type TranscriptEntry,
+} from '../../../../../core/domain/conversation.ts';
+import { QuietSyncFold } from './quiet-sync.tsx';
+import type { ReplyImageFiles, ReplyLinkRenderer } from './reply.tsx';
+import { MessageEntry } from './message-entry.tsx';
+import styles from './thread.module.css';
+import composerLayoutStyles from './composer-layout.module.css';
+import { currentResponseMessage, latestUserMessage } from '../../../../../core/domain/conversation-actions.ts';
+import { CurrentStatusNotice, HistoricalOutcomeNotice } from './outcome-notice.tsx';
+import { SizeMotion } from '../../../ui/motion/size.tsx';
+import { editedTurnMessageIds } from '../../../../../core/domain/conversation-composer.ts';
+import type { ConversationStopFeedback } from '../../../../../core/domain/conversation-stop.ts';
+import type { RunningTurnAnchor } from '../../../../../core/domain/conversation-meta.ts';
+import {
+  toolCallGroupShowsRunning, untouchedToolCallGroup, useToolCallFocus,
+} from './activity-groups.tsx';
+import { ActivityRun, toolCallOf } from './activity-run.tsx';
+import { SystemDisclosure } from './system-disclosure.tsx';
+
+/** Shared by an unsent draft and a persisted conversation with no transcript. */
+export function ChatEmpty({ working = false, children }: Readonly<{ working?: boolean; children?: ReactNode }>) {
+  return <div className={styles.empty} data-nc-thread-empty=""><EmptyState variant="panel" align="center" {...emptyConversationContent(working)} />{children}</div>;
+}
+
+function emptyConversationContent(working: boolean): EmptyStateSchema {
+  return { icon: working ? <ActivityIndicator state="working" motion="thinking" /> : <Icon name="chat" />, title: working ? '正在整理你的想法' : '聊聊你想做什么', description: working ? '回复会显示在这里。' : '从一个问题或想法开始。' };
+}
+
+export type ChatThreadProps = Readonly<{
+  hasPendingInputs?: boolean;
+  readingView?: ThreadReadingView;
+  historyPrefetch?: HistoryPrefetch;
+  conversation: Conversation;
+  /** Messages and the actions between them, in the order they happened. */
+  turns: readonly TranscriptEntry[];
+  /** Waiting inputs follow the current status without interleaving with its reply. */
+  pendingMessages?: ReactNode;
+  activeInput?: ConversationActiveInput | null;
+  keepInput?: (submission: ConversationSubmissionDelivery) => Promise<void>;
+  retryInput?: (submission: ConversationSubmissionDelivery) => Promise<void>;
+  /** Current pending inputs or their retained exit content; the mounted node alone does not declare presence. */
+  hasPendingMessages: boolean;
+  /** Current work confirmed by the run query while the activity overlay catches up. */
+  pending?: boolean;
+  /** Local dispatch is pending, independently of model execution and the displayed message. */
+  sending?: boolean;
+  /** Monotonic fresh local send request; `0` means none. Changes reveal it; mount and conversation changes only establish the baseline. */
+  submissionRequest?: number;
+  /** The kernel's per-card verdicts for this conversation's track; a caller with no overlay passes `{}`. */
+  cards: Readonly<Record<string, CardActivity>>;
+  /** The drawer's local wedge fact. A wedged planner's kernel verdict is still `working`, so a thread that did not know it was stuck would spin beside "This conversation is stuck". */
+  stalled: boolean;
+  /** The runtime reason is separate from the persisted terminal transcript. */
+  stalledReason?: string | null;
+  /** Server-declared recovery explains the current stalled status. */
+  recovery?: RunRecovery | null;
+  /** A failed status read cannot confirm current execution from cached facts. History stays readable. */
+  statusUnconfirmed?: boolean;
+  /** Read progress describes the status query, independently of model execution. */
+  statusLoading?: boolean;
+  stopFeedback?: ConversationStopFeedback | null;
+  currentResponseOutcome?: import('../../../../../core/domain/conversation-display.ts').CurrentConversationOutcome | null;
+  /** The caller declares composer availability; a transcript outcome cannot authorize sends. */
+  canContinue: boolean;
+  /** A limited viewer can copy responses while message-changing controls are absent. */
+  messageActions?: 'all' | 'copy-only';
+  copyText?: (text: string) => Promise<void>;
+  regenerateMessage?: (message: ConversationTurn) => Promise<void>;
+  /** Put the message of the turn that ends at `outcome` in the composer, in edit mode; the caller owns what Send then does. */
+  editMessage?: (outcome: ConversationTurnOutcome) => void;
+  /** The outcome of the turn being edited: its messages stay on screen, marked. */
+  editing?: string | null;
+  /** A failed send that replaces that turn: its message is drawn as the replacement, not as a second copy (#2068). */
+  replacement?: string | null;
+  /** Where the running turn's clock starts, from the run response; `null` draws `Running` with no number. */
+  runningAnchor?: RunningTurnAnchor | null;
+  /** Local reply images use the open conversation's workspace, never the browser's URL base. */
+  imageFiles?: ReplyImageFiles | null;
+  /** App supplies only href/children rendering; chat owns no destination policy. */
+  renderLink?: ReplyLinkRenderer;
+}>;
+
+export const ChatThread = memo(function ChatThread({ conversation, turns, pendingMessages, activeInput = null, keepInput, retryInput, hasPendingMessages, pending = false, sending = false, submissionRequest = 0, cards, stalled, stalledReason, recovery = null, statusUnconfirmed = false, statusLoading = false, stopFeedback = null, currentResponseOutcome = null, canContinue, messageActions = 'all', copyText, regenerateMessage, editMessage, editing = null, replacement = null, runningAnchor = null, imageFiles = null, renderLink, readingView, historyPrefetch, hasPendingInputs = false }: ChatThreadProps) {
+  const compactViewport = useCompactViewport();
+  // Observe the browser timezone on render; keep formatters stable for memoized rows.
+  const timeZone = new Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const gapClock = useMemo(() => new Intl.DateTimeFormat('en-US', {
+    hour: 'numeric', minute: '2-digit', timeZone,
+  }), [timeZone]);
+  const compactClock = useMemo(() => compactViewport ? new Intl.DateTimeFormat('zh-CN', {
+    hour: '2-digit', minute: '2-digit', hour12: false, timeZone,
+  }) : null, [compactViewport, timeZone]);
+  const localReading = useThreadReadingView(conversation.id);
+  const reading = readingView ?? localReading;
+  /* Only run/activity evidence claims execution. A local outgoing message has its own sending feedback.
+     Never use `conversation.state`, which can stay at `turn_pending`/`running` after a turn ended. */
+  const live = !statusUnconfirmed && !stalled && (pending || cardActivityOf({ cards }, conversation.id) === 'working');
+  const heldInputs = heldConversationInputs(activeInput, live);
+  const lastTurn = turns[turns.length - 1];
+  const currentOutcome = lastTurn?.author === 'turn' && lastTurn.imported !== true ? lastTurn : null;
+  const copyTarget = currentResponseMessage(turns, currentOutcome !== null && !statusUnconfirmed && !live && !stalled && stopFeedback === null);
+  const copyAction = copyText === undefined || copyTarget === null ? null
+    : { id: `${conversation.id}:${copyTarget.id}`, text: copyTarget.text, run: () => copyText(copyTarget.text) };
+  const regenerateTarget = latestUserMessage(turns);
+  const regenerateAction = regenerateMessage === undefined || regenerateTarget === null || statusUnconfirmed || live || stalled || currentOutcome === null
+    ? null : { id: `${conversation.id}:${regenerateTarget.id}`, run: () => regenerateMessage(regenerateTarget) };
+  /* Only the latest turn, and only one the reader started: its outcome names the turn the server removes. */
+  const editAction = editMessage === undefined || regenerateTarget === null || statusUnconfirmed || live || stalled || currentOutcome === null
+    || currentOutcome.turnId === '' ? null
+    : { id: `${conversation.id}:${currentOutcome.turnId}`, run: () => {
+      // Enter immediately. Presentation must not delay edit state or the caret.
+      editMessage(currentOutcome);
+    } };
+  const endRef = useRef<HTMLDivElement | null>(null);
+  /** The box every marker lookup starts from. Not `.thread` itself: the stylesheet's `> * + *` rules space that element's children. */
+  const frameRef = useRef<HTMLDivElement | null>(null);
+  const edited = useMemo(() => editing === null ? new Set<string>() : editedTurnMessageIds(turns, editing), [editing, turns]);
+  /* Drawn by block, not by entry: a quiet-sync fold is one line. The index map keeps `opensExchange`, `opensAfterGap` and the live-mark rule reading positions in `turns`. */
+  const indexOf = useMemo(
+    () => new Map(turns.map((entry, index) => [entry, index] as const)), [turns],
+  );
+  /* Run keys are read from the memory of the last *committed* transcript, advanced only in a layout effect: React renders transcripts it then throws away, and a memory advanced during render would hold keys for calls nobody saw. */
+  const committedGroupKeys = reading.groupKeys;
+  const committedView = useRef<Readonly<{ owner: ThreadReadingView['groupKeys']; id: string; view: TranscriptView }> | null>(null);
+  const projected = useMemo(
+    () => projectTranscriptView(turns, committedGroupKeys.current,
+      committedView.current?.owner === committedGroupKeys && committedView.current.id === conversation.id ? committedView.current.view : null),
+    [turns, committedGroupKeys, conversation.id],
+  );
+  const transcriptGroups = projected.groups;
+  useLayoutEffect(() => {
+    committedView.current = { owner: committedGroupKeys, id: conversation.id, view: projected };
+    committedGroupKeys.current = projected.memory;
+  }, [projected, committedGroupKeys, conversation.id]);
+  /* What the reader did to each run, by the run's carried key — held here because the vendor's element does not survive a page shift. A key is issued once and never reissued. */
+  const groupUi = reading.groups;
+  const updateGroupUi = reading.updateGroup;
+  const [untouchedGroupUi] = useState(untouchedToolCallGroup);
+  /* Where focus goes when the element under it goes; held on the transcript's element, which outlives every run's. */
+  const focus = useToolCallFocus(
+    transcriptGroups.filter(({ entry }) => entry.author !== 'turn'),
+    (activities) => activities.map(activity => toolCallOf(activity)),
+    (key) => groupUi.get(key) ?? untouchedGroupUi,
+  );
+  /* Active tool rows and background-sync summaries own their local marks.
+     Waiting and streamed replies use the current status row, never Markdown.
+     A closed tool group shows only its latest call; an open group shows each call. */
+  const tail = transcriptGroups[transcriptGroups.length - 1];
+  const tailQuiet = tail?.body.quiet ?? null;
+  const tailCarriesLiveMark = tail === undefined ? false
+    : tailQuiet !== null ? tailQuiet.entries.some((entry) => entry === lastTurn)
+    : tail.activities === null ? false
+    : toolCallGroupShowsRunning(tail.activities.map(activity => toolCallOf(activity)), groupUi.get(tail.key)?.expanded ?? false);
+  // The host owns navigation and overlay geometry; the reader supplies content.
+  // Portal nodes are read after the host's refs have committed.
+  const [railSeam, setRailSeam] = useState<HTMLElement | null>(null);
+  const [scrollOverlay, setScrollOverlay] = useState<HTMLElement | null>(null);
+  /* Keep one frame across the empty-to-streaming boundary so queued edits retain their owner. */
+  const hasTranscript = turns.length > 0;
+  useEffect(() => {
+    const readingHost = readingHostAround(frameRef.current);
+    setRailSeam(readingHost?.navigation?.current ?? null);
+    setScrollOverlay(readingHost?.overlay?.current ?? null);
+  }, [hasTranscript, compactViewport]);
+  /** Whether the reader is parked at the end of the transcript — the only state in which a newly appended turn may move the pane. */
+  const [scrolledUp, setScrolledUp] = useState(false);
+  const prefetchInput = useHistoryPrefetch(historyPrefetch);
+  const inputRef = useRef(prefetchInput);
+  useLayoutEffect(() => { inputRef.current = prefetchInput; });
+  const [scrollFollower] = useState(() => createScrollFollower({
+    bottomSlack: FOLLOW_BOTTOM_SLACK_PX, onAwayChange: setScrolledUp,
+    onInput: input => inputRef.current(input),
+  }));
+  const observedSubmission = useRef({ conversationId: conversation.id, request: submissionRequest });
+  useLayoutEffect(() => {
+    const before = observedSubmission.current;
+    observedSubmission.current = { conversationId: conversation.id, request: submissionRequest };
+    if (before.conversationId === conversation.id && submissionRequest > 0 && before.request !== submissionRequest) scrollFollower.followToEnd();
+  }, [scrollFollower, conversation.id, submissionRequest]);
+  /** The turn at the end of the transcript as of this render — what the follow
+   *  effect below both depends on and decides by. */
+  const newestId = lastTurn?.id;
+  /** How much of the newest reply there is: a streamed reply grows in place under one id. */
+  const newestLength = lastTurn?.author === 'agent' ? lastTurn.text.length : 0;
+  /** The newest turn as of the last run of the follow effect, so earlier history is not mistaken for an arrival. Updated on every run, including runs that decline to scroll. */
+  const followedTo = useRef<string | undefined>(undefined);
+  const followedLength = useRef(0);
+  const followedNotice = useRef<string | null>(null);
+  const noticeKind = statusUnconfirmed ? 'status-unconfirmed' : stalled ? 'paused' : stopFeedback?.kind ?? null;
+
+  // The controller retains this conversation's reading state while presentation
+  // replaces the transcript. Width-keyed offsets keep a responsive CSS reflow
+  // before React's host switch from overwriting the original reading position.
+  useEffect(() => {
+    const content = frameRef.current;
+    const readingHost = readingHostAround(content);
+    const scroller = content?.closest<HTMLElement>('[data-nc-drawer-scroll]');
+    if (content == null || scroller == null) return;
+    const detach = scrollFollower.attach(scroller, content);
+    const saved = readingHost === null ? undefined : reading.positions.get(readingHost.key)?.get(scroller.clientWidth);
+    if (saved !== undefined && !saved.atEnd) scrollFollower.navigate(() => { scroller.scrollTop = saved.top; });
+    const save = () => {
+      if (readingHost === null || scroller.clientHeight === 0 || !content.isConnected) return;
+      let positions = reading.positions.get(readingHost.key);
+      if (positions === undefined) { positions = new Map(); reading.positions.set(readingHost.key, positions); }
+      positions.set(scroller.clientWidth, {
+        top: scroller.scrollTop, atEnd: scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 1,
+      });
+    };
+    scroller.addEventListener('scroll', save, { passive: true });
+    return () => { save(); scroller.removeEventListener('scroll', save); detach(); };
+  }, [scrollFollower, hasTranscript, conversation.id, compactViewport, reading.positions]);
+
+  // Tail arrivals are distinct from older history being prepended. Content
+  // resize also follows late image loads, rewraps and disclosure growth.
+  useEffect(() => {
+    const arrived = newestId !== followedTo.current || newestLength !== followedLength.current
+      || noticeKind !== followedNotice.current;
+    followedNotice.current = noticeKind;
+    followedTo.current = newestId;
+    followedLength.current = newestLength;
+    if (arrived) scrollFollower.followGrowth();
+  }, [scrollFollower, newestId, newestLength, noticeKind]);
+
+  /* A run of calls, one or more, keyed by `key`: Astryx draws one call inline and two or more as a group. `runLive` is the live tail's alone — a run the conversation has moved past must not look like it resumed. */
+  const renderRun = (activities: readonly ConversationActivity[] | ConversationActivity, key: string, runLive: boolean, showMotion = runLive): ReactNode => (
+    <ActivityRun
+      /* Carried by membership, not read off any one call, so the run keeps its element as calls are appended, prepended or dropped. */
+      key={key}
+      entry={key}
+      activities={activities}
+      ui={groupUi.get(key) ?? untouchedGroupUi}
+      updateGroup={updateGroupUi}
+      live={runLive}
+      showMotion={showMotion}
+    />
+  );
+
+  /* One entry, in the position `turns` gives it; `index` is what the exchange, gap and live-mark rules are stated over. */
+  const renderEntry = (turn: TranscriptEntry, key = turn.id, showLive = live): ReactNode => {
+    const index = indexOf.get(turn) ?? -1;
+    const last = index === turns.length - 1;
+    if (turn.author === 'activity') return renderRun(turn, key, live && last, showLive && last);
+    if (turn.author === 'system') {
+      return (
+        <div key={turn.id} data-nc-entry={key}>
+          {opensAfterGap(turns, index) && index > 0 && (
+            <p className={styles.gap}>{clockTime(gapClock, turn.atMs)}</p>
+          )}
+          <SystemDisclosure turn={turn} />
+        </div>
+      );
+    }
+    // Outcomes retain their grouping boundary; only the current metadata row paints status.
+    if (turn.author === 'turn') return turn.imported === true ? <HistoricalOutcomeNotice key={turn.id} outcome={turn} /> : null;
+    return (
+      <MessageEntry key={turn.id} mobile={compactViewport} atMs={turn.atMs} timestampFormatter={turn.author === 'agent' ? compactClock : null} id={turn.id} entryKey={key} author={turn.author} human={turn.human} imported={turn.imported === true} text={turn.text}
+        attachments={turn.attachments} opens={opensExchange(turns, index)}
+        gapLabel={opensAfterGap(turns, index) && index > 0 ? clockTime(gapClock, turn.atMs) : null}
+        queued={isQueuedConversationTurn(turn)} edited={edited.has(turn.id)} replacement={turn.id === replacement}
+        imageFiles={imageFiles} renderLink={renderLink} />
+    );
+  };
+
+  const empty = turns.length === 0 && noticeKind === null && !hasPendingMessages && heldInputs.length === 0;
+
+  const currentMeta = <CurrentStatusNotice detailsExpanded={reading.expanded.get('current-status') ?? false}
+    leading={live && !empty && !tailCarriesLiveMark ? <ActivityIndicator state="working" motion="thinking" /> : undefined}
+    onDetailsExpandedChange={expanded => reading.setExpanded('current-status', expanded)} outcome={currentResponseOutcome ?? currentOutcome} canContinue={canContinue && !statusUnconfirmed} live={live} sending={sending} statusUnconfirmed={statusUnconfirmed} statusLoading={statusLoading}
+    hasPendingInputs={hasPendingInputs} stalled={stalled} recovery={recovery} stalledReason={stalledReason ?? null} feedback={stopFeedback} messageActions={messageActions} copyAction={copyAction} editAction={editAction} regenerateAction={regenerateAction} runningAnchor={runningAnchor} />;
+
+  const scrollControls = <div className={styles.scrollDockContent} data-nc-chat-scroll-dock="">
+    <ChatLayoutScrollButton isVisible className={styles.scrollButton} onClick={scrollFollower.followToEnd} />
+  </div>;
+
+  return (
+    <PrependReading frame={frameRef} turns={turns}><div className={`${styles.threadFrame} ${empty ? styles.emptyFrame : ''}`} ref={frameRef}>
+      <ExchangeNavigation turns={turns} frameRef={frameRef} seam={railSeam} navigate={scrollFollower.navigate} />
+      <div className={`${styles.thread} ${empty ? styles.empty : ''} ${compactViewport ? mobileStyles.transcript : ''}`} data-nc-thread="" data-nc-link-reading="" data-nc-thread-empty={empty ? '' : undefined} ref={focus.ref} onFocus={focus.onFocus} onBlur={focus.onBlur}>
+        {empty && <EmptyState variant="panel" align="center" {...emptyConversationContent(live)} />}
+        {transcriptGroups.map(({ entry: turn, activities, key, body, startsResponse }) => {
+          const block = body.quiet;
+          return <Fragment key={key}>
+            {startsResponse && <Divider label="新一轮回复" />}
+            {block !== null ? (
+              <div data-nc-entry={key}>
+                <QuietSyncFold expanded={reading.expanded.get(`quiet-${block.id}`) ?? false}
+                  onExpandedChange={expanded => reading.setExpanded(`quiet-${block.id}`, expanded)} group={block} time={clockTime(gapClock, block.atMs)}
+                  live={live && block.entries.some((entry) => entry === lastTurn)}>
+                  {block.entries.map((entry) => renderEntry(entry, entry.id, false))}
+                </QuietSyncFold>
+              </div>
+            ) : activities !== null ? renderRun(activities, key, live && activities.at(-1) === lastTurn) : renderEntry(turn, key)}
+          </Fragment>;
+        })}
+        {/* Decorative marks follow the visible activity or the current status row; this is the single spoken Working fact. */}
+        {live && <VisuallyHidden>{activityLabelOf('working')}</VisuallyHidden>}
+        {currentMeta}
+        <div key="pending-messages" className={styles.pendingMessages}>
+          <HeldInputStatus held={heldInputs} keepInput={keepInput} retryInput={retryInput} />
+          {pendingMessages}
+        </div>
+        <div ref={endRef} aria-hidden="true" />
+      </div>
+      {scrolledUp && (scrollOverlay !== null ? createPortal(scrollControls, scrollOverlay)
+        : <div className={styles.scrollDock}>{scrollControls}</div>)}
+    </div></PrependReading>
+  );
+
+});
+
+/** How far from the bottom still counts as reading the newest turn: 2.6 lines of the reply's 24.75px line box. */
+const FOLLOW_BOTTOM_SLACK_PX = 64;
+
+
+
+
+
+
+
+/** Astryx's ChatComposer; we own the value and the send callback so the kernel path stays a string. */
+export type ComposerFocusHandle = Readonly<{ ownsFocus: () => boolean }>;
+
+export function ChatComposer({
+  onSend, onStop, commands = [], disabled = false, sendWaiting = false, editing, focusOnMount = false, focusRequest = 0,
+  draft: controlledDraft, commandScope, footerActions, sendAdornment,
+  drawer, headerActions, allowEmptyText = false, mentionTrigger, onFiles, layout = 'standard', focusHandle,
+}: {
+  /** Hand over the words, or return `false` when they were not taken and stay in the field. Words of a send taken
+   * and later given back return through the caller's `draft`; the composer has no second way to restore them. */
+  onSend: (text: string) => boolean | void;
+  /** A route may retain unsent words across its recovery surfaces. */
+  draft?: Readonly<{ text: string; onChange: Dispatch<SetStateAction<string>> }>;
+  /** Interrupt the turn in flight; its presence turns Send into Stop. No `stopping` guard: `ChatSendButton` is unconditionally enabled while Stop is shown, so withholding the callback only empties its `onClick` — the rule lives at the top of the router's `interrupt()`. */
+  onStop?: () => void;
+  commands?: readonly ComposerCommand[];
+  /** Feedback belongs to this conversation generation; changing it does not remount or refocus the field. */
+  commandScope?: string;
+  disabled?: boolean;
+  /** A local send waits for its answer. Show a busy Send while preserving an existing Stop. */
+  sendWaiting?: boolean;
+  /** Edit mode: a bar names the message being replaced, ✕ or Esc leaves the mode, and Send is "Replace message". */
+  editing?: Readonly<{ preview: string; onCancel: () => void; submitLabel?: string; canSubmit?: boolean }>;
+  /** Put the caret in the field as this composer mounts. Read once, at mount; the composer has no `key` on the router's path, so raising the flag again on a mounted composer does nothing — one mount per intent is the caller's job. */
+  focusOnMount?: boolean;
+  /** Each new value asks once for the caret, on a mounted composer (an Edit's refill); the same wait as after a send. */
+  focusRequest?: number;
+  /** UI-only probe for a real owner handoff; cleanup never emits focus requests. */
+  focusHandle?: Ref<ComposerFocusHandle>;
+  /** Per-conversation controls beside the field: a pass-through to Astryx's `footerActions` slot, because the controls need router state and `features/**` may not import `app/**`. */
+  footerActions?: ReactNode;
+  /** Compact pill layout uses the same editor and send callbacks. */
+  layout?: 'standard' | 'mobile';
+  /** Something to stand immediately before Send, in the `sendActions` slot; rendered before the send-door button, not instead of it. */
+  sendAdornment?: ReactNode;
+  /** The composer's two vendor slots, passed as nodes: `features-no-cross-domain` forbids importing `features/planner`. */
+  drawer?: ReactNode;
+  headerActions?: ReactNode;
+  /** Whether a send with no words is a real send (an attached image); a prop because the drawer is an opaque node. */
+  allowEmptyText?: boolean;
+  /** Files dropped or pasted into the field; the caller owns attachment admission and upload. */
+  onFiles?: (files: File[]) => void;
+  /** The `@` menu (`useMentionTrigger`), present only where a Planner reads what is sent; the caller keeps it stable. */
+  mentionTrigger?: ChatComposerTrigger;
+}) {
+  const [localDraft, setLocalDraft] = useState('');
+  const draft = controlledDraft?.text ?? localDraft;
+  const sendIcon = useIcon('arrowUp');
+  const setDraft = controlledDraft?.onChange ?? setLocalDraft;
+  const stopShown = onStop != null;
+
+  const feedbackIdentity = useMemo(() => ({ commandScope }), [commandScope]);
+  const currentFeedbackIdentity = useRef(feedbackIdentity);
+  useLayoutEffect(() => { currentFeedbackIdentity.current = feedbackIdentity; }, [feedbackIdentity]);
+  const [commandFailure, setCommandFailure] = useState<{ identity: typeof feedbackIdentity; message: string } | null>(null);
+  const reportCommandFailure = (message: string) => {
+    if (currentFeedbackIdentity.current === feedbackIdentity) setCommandFailure({ identity: feedbackIdentity, message });
+  };
+  const runCommand = (command: ComposerCommand, argument: string, original: string) => {
+    const refuse = (message: string) => {
+      reportCommandFailure(message);
+      void Promise.resolve().then(() => setDraft(current => current === '' ? original : current));
+    };
+    setCommandFailure(null);
+    setDraft('');
+    void executeComposerCommand(command, argument).catch((reason: unknown) => {
+      refuse(reason instanceof Error ? reason.message : `/${command.name} failed.`);
+    });
+  };
+
+  const rootRef = useRef<HTMLDivElement>(null);
+  const messageInputRef = useRef<HTMLDivElement>(null);
+  const [sendCount, setSendCount] = useState(0);
+  const wantsFieldFocus = useRef(focusOnMount);
+  /** The element this component last put focus on; `null` while no restore is in flight. */
+  const parkedFocus = useRef<Element | null>(null);
+  const answeredFocusRequest = useRef(focusRequest);
+  useImperativeHandle(focusHandle, () => ({ ownsFocus: () => {
+    const active = document.activeElement;
+    const message = messageInputRef.current?.querySelector('[contenteditable], textarea');
+    return active === message || (active === rootRef.current && wantsFieldFocus.current && parkedFocus.current === active);
+  } }), []);
+
+  /* Put the caret back after a send, as a standing request: `disabled` goes true inside the very click that sends, Astryx turns the field `contenteditable="false"`, and Chromium hands the focus to `<body>`. While the field refuses focus it is parked on the composer's own box, and the restore continues only while focus is exactly where it was parked. */
+  useEffect(() => {
+    if (answeredFocusRequest.current !== focusRequest) {
+      answeredFocusRequest.current = focusRequest;
+      wantsFieldFocus.current = true;
+      parkedFocus.current = null;
+    }
+    if (!wantsFieldFocus.current) return;
+    const root = rootRef.current;
+    if (root === null) return;
+    const parked = parkedFocus.current;
+    if (parked !== null && document.activeElement !== parked) {
+      wantsFieldFocus.current = false;
+      parkedFocus.current = null;
+      return;
+    }
+    const messageField = root.querySelector<HTMLElement>('[contenteditable="true"], textarea');
+    messageField?.focus({ preventScroll: true });
+    if (messageField !== null && document.activeElement === messageField) {
+      wantsFieldFocus.current = false;
+      parkedFocus.current = null;
+      return;
+    }
+    if (!root.contains(document.activeElement)) root.focus({ preventScroll: true });
+    parkedFocus.current = document.activeElement;
+  }, [sendCount, disabled, focusRequest]);
+
+  // Metadata, not callback identity, controls the vendor trigger lifetime.
+  const menuKey = JSON.stringify(commands.filter(command => !command.hidden && command.unavailableReason === undefined)
+    .map(({ id, name, icon, hint, arguments: argumentShape }) => ({ id, name, icon, hint, argumentShape })));
+  const commandTrigger = useMemo<ChatComposerTrigger>(() => {
+    const items = JSON.parse(menuKey) as { id: string; name: string; icon: ComposerCommand['icon']; hint: string; argumentShape: ComposerCommand['arguments'] }[];
+    return withEmptyTrigger({
+      character: '/',
+      searchSource: {
+        search: query => items.filter(item => item.name.startsWith(query)).map(item => ({ ...item, label: item.name })),
+        bootstrap: () => items.map(item => ({ ...item, label: item.name })),
+      },
+      menuLabel: 'Commands',
+      renderItem: (item) => {
+        const command = items.find(command => command.id === item.id)!;
+        return <span className={styles.commandItem}>
+          <Icon name={command.icon} size="sm" />
+          <span className={styles.commandName}>{command.name}</span>
+          <span className={styles.commandHint}>{command.hint}</span>
+        </span>;
+      },
+      onSelect: (item) => {
+        const command = items.find(command => command.id === item.id)!;
+        return `/${command.name}${command.argumentShape === 'optional' ? ' ' : ''}`;
+      },
+    }, { icon: <Icon name="search" />, title: 'No command by that name', description: '试试其他命令名称。' });
+  }, [menuKey]);
+  // Discovery is only an aid: submit always parses the complete controlled draft.
+  const hasCommands = editing === undefined && menuKey !== '[]';
+  /* One array per combination: a new array per render would make `useTriggerMenu` drop an open menu. */
+  const triggers = useMemo<ChatComposerTrigger[]>(() => [
+    ...(hasCommands ? [commandTrigger] : []),
+    ...(mentionTrigger === undefined ? [] : [mentionTrigger]),
+  ], [hasCommands, commandTrigger, mentionTrigger]);
+
+  /** Hand one message to the caller. `stopShown` is not a reason to refuse: `POST /planner/input` queues the text behind the turn in flight. `disabled` is the router's "last POST has not settled". */
+  const submit = () => {
+    const value = draft;
+    const text = value.trim();
+    /* `allowEmptyText` is the caller saying the message carries an image. */
+    if ((text === '' && !allowEmptyText) || disabled || editing?.canSubmit === false) return;
+    if (editing === undefined && dispatchComposerCommand(commands, text, (command, argument) => runCommand(command, argument, value))) return;
+    const taken = onSend(text);
+    setDraft('');
+    /* Astryx clears after calling `onSend`: put an untaken message back after that clear, into an empty field. */
+    if (taken === false) void Promise.resolve().then(() => setDraft((current) => current === '' ? text : current));
+    /* The caret goes back from the effect above: `onSend` may already have queued the `disabled` that takes the field away. */
+    wantsFieldFocus.current = true;
+    /* A fresh request: the effect's first run must not compare against an earlier perch. */
+    parkedFocus.current = null;
+    setSendCount((count) => count + 1);
+  };
+
+  /* `Send image`: `ChatSendButton` takes its availability from `canSend`, false on an empty draft, and an image-only message is an empty draft. Shown only while the vendor's own button is unavailable. */
+  const commandError = commandFailure?.identity !== feedbackIdentity ? null : <p role="alert">{commandFailure.message}</p>;
+  const sendDoor = allowEmptyText && draft.trim() === '' && !stopShown && !sendWaiting && editing === undefined ? (
+    <button
+      type="button"
+      className={styles.queueSend}
+      data-nc-send-attachment=""
+      disabled={disabled}
+      onClick={() => { submit(); }}
+    >Send image</button>
+  ) : undefined;
+
+  return (
+    <div
+      ref={rootRef}
+      className={`${styles.composer} ${layout === 'mobile' ? mobileStyles.composer : composerLayoutStyles.standard}`}
+      data-nc-composer=""
+      /* Programmatic focus only: the perch the send effect parks on so focus taken off a disabling Send is not on `<body>`. */
+      tabIndex={-1}
+      /* Named, because focus is parked here during a send and a screen reader announces it; `group` rather than a landmark, and a name that builds on the field's `Message` rather than repeating it. */
+      role="group"
+      aria-label="Message composer"
+      aria-busy={sendWaiting || undefined}
+      onKeyDownCapture={(event) => {
+        /* Astryx clears its input after Enter even when its parent refuses
+           submission. Keep unsent words while disabled, and
+           let IME Enter accept its candidate without submitting. */
+        if (event.key !== 'Enter' && event.key !== 'Tab' && event.key !== 'Escape') return;
+        /* The drawer owns its inputs and keys; only the message input gets composer shortcuts. */
+        const field = event.target instanceof Element ? event.target.closest('[contenteditable], textarea, input') : null;
+        if (field === null || !messageInputRef.current?.contains(field)) return;
+        if (event.key === 'Escape') {
+          /* Esc leaves edit mode, unless it is closing an open `/` or `@` menu; handled, so the drawer stays open. */
+          if (editing === undefined || field.getAttribute('aria-expanded') === 'true' || isImeKeyEvent(event.nativeEvent)) return;
+          event.preventDefault();
+          event.stopPropagation();
+          editing.onCancel();
+          return;
+        }
+        const route = triggerMenuKeyRoute(event.nativeEvent, field);
+        if (route === 'composing' || route === 'swallow') {
+          if (route === 'swallow') event.preventDefault();
+          event.stopPropagation();
+          return;
+        }
+        if (route === 'menu' || event.key !== 'Enter' || event.shiftKey) return;
+        if (disabled || editing?.canSubmit === false) {
+          event.preventDefault();
+          event.stopPropagation();
+          return;
+        }
+        /* A send over an open menu with nothing to pick: Astryx's submit empties the field but leaves the
+           menu armed at the old offset, so the next pick throws. Its own Escape resets it first. Cancelable,
+           so Astryx's `preventDefault` marks it handled and the drawer's Escape does not close the drawer;
+           the router's Escape listener leaves an expanded combobox alone. */
+        if (field.getAttribute('aria-expanded') === 'true') {
+          field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+        }
+        /* Astryx's own `handleSubmit` refuses an empty draft (`if (!value.trim()) return;`), so an image-only send has to go through here. */
+        if (allowEmptyText && draft.trim() === '') {
+          event.preventDefault();
+          event.stopPropagation();
+          submit();
+        }
+      }}
+    >
+      <SizeMotion motionKey={editing !== undefined}>
+        <AstryxChatComposer
+          className={layout === 'mobile' ? `${mobileStyles.vendorComposer} ${floatingControlMaterialClassName}` : composerLayoutStyles.vendor}
+          density="compact"
+          elevation="none"
+          value={draft}
+          onChange={setDraft}
+          placeholder={layout === 'mobile' ? '说说你想做什么…' : 'Say something'}
+          isDisabled={disabled}
+          isStopShown={stopShown}
+          footerActions={layout === 'mobile' && footerActions !== undefined ? <details className={mobileStyles.options}>
+            <summary className={floatingControlClassName} aria-label="对话选项"><Icon name="plus" /></summary>
+            <div className={mobileStyles.optionsPanel}>{footerActions}</div>
+          </details> : footerActions}
+          /* Handed over whole — "one interrupt at a time" is the router's rule. */
+          onStop={onStop}
+          /* Astryx's own `handleSubmit` refuses only an empty draft and `isDisabled`, never `isStopShown`. */
+          onSubmit={submit}
+          {...(drawer === undefined && commandError === null ? {} : { drawer: <>{commandError}{drawer}</> })}
+          {...(editing === undefined && headerActions === undefined ? {} : { headerActions: editing === undefined ? headerActions : (
+            <div className={styles.editBar} data-nc-edit-bar="">
+              <span className={styles.editBarLabel}>Editing message</span>
+              <span className={styles.editBarPreview}>{editing.preview}</span>
+              <button type="button" className={styles.editBarCancel} aria-label="Cancel edit" title="Cancel edit"
+                disabled={sendWaiting} onClick={editing.onCancel}><Icon name="close" size="sm" /></button>
+            </div>
+          ) })}
+          sendActions={sendDoor === undefined && sendAdornment === undefined ? undefined : (
+            <>{sendAdornment}{sendDoor}</>
+          )}
+          input={(
+            <div ref={messageInputRef} className={layout === 'mobile' ? mobileStyles.input : `${styles.input} ${composerLayoutStyles.input}`}><ChatComposerInput
+              /* Longer drafts scroll inside the editor, leaving room for a shared pane's recovery strip and Send. */
+              maxRows={3}
+              onFiles={disabled ? undefined : onFiles}
+              label="Message"
+              placeholder={layout === 'mobile' ? '说说你想做什么…' : 'Say something'}
+              /* No triggers where there is neither a command nor a mention: otherwise the field becomes an `aria-expanded="false"` combobox that can never expand. */
+              {...(triggers.length === 0 ? {} : { triggers })}
+              /* The `@` source waits out keystrokes itself (`MENTION_SEARCH_DELAY_MS` says why Astryx's own delay must be off); the `/` source is synchronous and never delayed. */
+              debounceMs={0}
+            /></div>
+          )}
+          /* Send's availability is Astryx's own (`canSend`). Astryx renders `aria-disabled` only with a `tooltip`, which `ChatSendButton` does not take, so this is a native `disabled` that drops focus to `<body>` — the focus effect above moves it back into the field first. */
+          /* Keep the native Send/Stop control mounted. Its public icon slot gives
+             immediate decorative feedback; the local status names Sending. */
+          sendButton={editing === undefined ? <ChatSendButton sendIcon={
+            <span className={styles.sendGlyph} data-nc-waiting={sendWaiting && !stopShown} aria-hidden="true">
+              <span className={styles.sendArrow}>{layout === 'mobile' ? <Icon name="arrow-up" /> : sendIcon}</span>
+              <span className={styles.sendWait}><LoadingIndicator active={sendWaiting && !stopShown} /></span>
+            </span>
+          } />
+            : <Button label={sendWaiting ? 'Sending…' : editing.submitLabel ?? 'Replace message'} variant="primary" isIconOnly icon={sendIcon} className={styles.sendOwn}
+              isLoading={sendWaiting} isDisabled={disabled || editing.canSubmit === false || (draft.trim() === '' && !allowEmptyText)}
+              onClick={() => { submit(); }} />}
+        />
+      </SizeMotion>
+    </div>
+  );
+}
+
+/** The strip: an `alert` region welded to the top edge of the composer well, rendered above `<ChatComposer>`. */
+export function ChatFooterNotice({ children, tone = 'error' }: { children: ReactNode; tone?: 'error' | 'neutral' }) {
+  return <div role={tone === 'neutral' ? 'status' : 'alert'}
+    className={`${styles.footerNotice} ${tone === 'neutral' ? styles.footerNoticeNeutral : ''}`}>{children}</div>;
+}
+
+/** What went wrong, at caption rank; the strip around it carries the fill. */
+export function ChatFooterError({ message }: { message: string }) {
+  return <span className={styles.footerError}>{message}</span>;
+}
+
+/** The way out of that error, inline in the strip; `tertiary` so it does not compete with Send. */
+export function ChatFooterRemedy({ disabled = false, onClick, children }: {
+  disabled?: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button type="button" data-nc-action="tertiary" disabled={disabled} onClick={onClick}>
+      {children}
+    </button>
+  );
+}
+
+/** A wall clock, not a relative time: the separator exists to say *when*, and
+ *  "3h" is only useful when you already know when now is. */
+function clockTime(formatter: Intl.DateTimeFormat, atMs: number): string {
+  const date = new Date(atMs);
+  // Date#toLocaleTimeString previously displayed invalid gap dates rather than throwing.
+  return Number.isNaN(date.getTime()) ? date.toString() : formatter.format(date);
+}

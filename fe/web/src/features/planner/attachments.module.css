@@ -1,0 +1,27 @@
+/* #1505 S6 — what is left after the strip became Astryx `Thumbnail`s and the
+   attach control became an `IconButton`.
+   Two rules: a positioning context for the hidden file input, and the input's
+   own visually-hidden recipe. Everything the old file held — the pill, the
+   glyph, the 56px tile, the overlaid × with its hard-coded black — is the
+   design system's now, which is where the theme and the contrast maths live. */
+
+@layer features {
+  .attach {
+    position: relative;
+    display: inline-flex;
+  }
+
+  /* Off-screen and out of the tab order. It is not the control — the button
+     beside it is — so it carries no accessible name; see `PlannerAttachButton`. */
+  .attachInput {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: calc(-1 * var(--space-px));
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+  }
+}

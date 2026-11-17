@@ -1,0 +1,132 @@
+// @vitest-environment jsdom
+// `Conversation.state` is the server's session reading and reads into none of the fold: the harness
+// leaves it at `turn_pending` / `running` long after a turn ended.
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import { PLANNER_CONVERSATION_KIND, type Conversation } from '../../../../../core/domain/conversation.ts';
+import { ChatList, type ChatListProps } from './public.tsx';
+
+afterEach(cleanup);
+
+function conversation(overrides: Partial<Conversation> = {}): Conversation {
+  return { provider: 'codex' as const,
+    id: 'c1', trackId: 'w1', title: 'Assistant', kind: 'track-assistant',
+    state: 'turn_pending', updatedAt: 1, lastTurnCompletedAt: null, ...overrides,
+  };
+}
+
+function draw(props: Partial<ChatListProps> & Pick<ChatListProps, 'cards'>) {
+  render(<ChatList conversations={[conversation()]} showTrack={false} onOpen={vi.fn()} {...props} />);
+  const row = screen.getByRole('button', { name: /^Conversation Assistant/ });
+  const indicator = row.closest('li')?.querySelector('[data-nc-activity]')?.getAttribute('data-nc-activity');
+  const describedBy = row.getAttribute('aria-describedby');
+  return {
+    row,
+    indicator,
+    label: row.getAttribute('aria-label'),
+    description: describedBy === null ? null : document.getElementById(describedBy)?.textContent ?? null,
+  };
+}
+
+describe('conversation rows read activity.cards, not session state', () => {
+  it('shows nothing for a turn_pending row the kernel lists no verdict for', () => {
+    const { indicator, label, description } = draw({ cards: {} });
+    expect(indicator).toBeUndefined();
+    expect(label).toBe('Conversation Assistant');
+    expect(description).toBeNull();
+  });
+
+  it('spins, and says so in the name only, for a card the kernel calls working', () => {
+    const { indicator, label, description } = draw({ cards: { c1: 'working' } });
+    expect(indicator).toBe('working');
+    expect(label).toBe('Conversation Assistant, working');
+    expect(description).toBeNull();
+  });
+
+  it('describes a failed card as needing attention, not input, and never as live', () => {
+    const { indicator, label, description } = draw({ cards: { c1: 'failed' } });
+    expect(indicator).toBe('failed');
+    expect(label).toBe('Conversation Assistant');
+    expect(label).not.toMatch(/, (live|working)$/);
+    expect(description).toBe('Needs attention');
+  });
+
+  it('describes a card waiting for input as needing input', () => {
+    const { indicator, description } = draw({ cards: { c1: 'input' } });
+    expect(indicator).toBe('attention');
+    expect(description).toBe('Needs input');
+  });
+
+  it('reads another card’s verdict as nothing about this row', () => {
+    const { indicator } = draw({ cards: { other: 'working' } });
+    expect(indicator).toBeUndefined();
+  });
+
+  it('shows unread from the receipt set, below every kernel verdict', () => {
+    const unread = draw({ cards: {}, unreadIds: new Set(['c1']) });
+    expect(unread.indicator).toBe('unread');
+    expect(unread.description).toBe('Unread updates');
+    cleanup();
+    const working = draw({ cards: { c1: 'working' }, unreadIds: new Set(['c1']) });
+    expect(working.indicator).toBe('working');
+  });
+
+  it('keeps only the open row’s declared local echoes: the sender’s send and the drawer’s wedge', () => {
+    const sending = draw({ cards: {}, activeId: 'c1', local: { id: 'c1', working: true, stalled: false } });
+    expect(sending.indicator).toBe('working');
+    expect(sending.label).toBe('Conversation Assistant, working');
+    cleanup();
+    const stalled = draw({ cards: { c1: 'working' }, activeId: 'c1', local: { id: 'c1', working: false, stalled: true } });
+    expect(stalled.indicator).toBe('failed');
+    expect(stalled.description).toBe('Needs attention');
+    cleanup();
+    /* An echo for some other row is not this row's. */
+    const elsewhere = draw({ cards: {}, activeId: 'c2', local: { id: 'c2', working: true, stalled: false } });
+    expect(elsewhere.indicator).toBeUndefined();
+  });
+});
+
+
+it('distinguishes Planner and Assistant by their declared role even when their names are swapped', () => {
+  const onOpen = vi.fn();
+  const planner = conversation({ id: 'planner', title: 'Assistant', kind: PLANNER_CONVERSATION_KIND });
+  const assistant = conversation({ id: 'assistant', title: 'Planner', kind: 'track-assistant' });
+  render(<ChatList context cards={{}} showTrack={false} conversations={[planner, assistant]} onOpen={onOpen} />);
+  const plannerRow = screen.getByRole('button', { name: 'Conversation Assistant' });
+  const assistantRow = screen.getByRole('button', { name: 'Conversation Planner' });
+  const description = (row: HTMLElement) => document.getElementById(row.getAttribute('aria-describedby') ?? '')?.textContent;
+  expect(description(plannerRow)).toBe('Planner');
+  expect(description(assistantRow)).toBe('Assistant');
+  expect(plannerRow.querySelector('svg')?.innerHTML).not.toBe(assistantRow.querySelector('svg')?.innerHTML);
+  plannerRow.click(); assistantRow.click();
+  expect(onOpen.mock.calls).toEqual([[planner], [assistant]]);
+});
+
+
+it.each([false, true])('archives through either renderer and preserves failed rows (context=%s)', async context => {
+  const onArchive = vi.fn().mockRejectedValue(new Error('Archive refused'));
+  render(<ChatList context={context} cards={{}} onOpen={vi.fn()} onArchive={onArchive} conversations={[
+    conversation(), conversation({ id: 'planner', kind: PLANNER_CONVERSATION_KIND, title: 'Planner' }),
+  ]} />);
+  expect(screen.queryByRole('button', { name: 'Actions for conversation: Planner' })).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Actions for conversation: Assistant' }));
+  fireEvent.click(await screen.findByRole('menuitem', { name: 'Archive conversation' }));
+  await waitFor(() => expect(onArchive).toHaveBeenCalledWith('c1', true));
+  expect((await screen.findByRole('alert')).textContent).toBe('Archive refused');
+  expect(screen.getByRole('button', { name: 'Conversation Assistant' })).not.toBeNull();
+});
+
+it.each([false, true])('keeps archived history accessible and restores the original id (context=%s)', async context => {
+  const onArchive = vi.fn().mockResolvedValue(undefined);
+  const onOpen = vi.fn();
+  const row = conversation({ archivedAt: 5 });
+  render(<ChatList context={context} cards={{}} onOpen={onOpen} onArchive={onArchive} conversations={[row]} />);
+  expect(screen.queryByRole('button', { name: 'Conversation Assistant' })).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Archived conversations' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Conversation Assistant' }));
+  expect(onOpen).toHaveBeenCalledWith(row);
+  fireEvent.click(screen.getByRole('button', { name: 'Actions for conversation: Assistant' }));
+  fireEvent.click(await screen.findByRole('menuitem', { name: 'Restore conversation' }));
+  await waitFor(() => expect(onArchive).toHaveBeenCalledWith('c1', false));
+});

@@ -1,0 +1,130 @@
+# Conversation replies
+
+Stored and streamed agent replies use the shared Markdown parser and renderer. The app
+binds `ChatThread.imageFiles` to the open conversation's Track workspace, using
+`Track.agentCwd` and the existing Track-scoped raw image endpoint.
+
+To display a screenshot or other local image, save it in that workspace and
+include a Markdown image reference in the reply:
+
+```markdown
+![Screenshot](screenshots/page.png)
+```
+
+Workspace-relative paths, absolute paths inside the workspace, and `file://`
+paths inside the workspace resolve through the same file port. Encode spaces in
+destinations as `%20` (or use Markdown angle-bracket destinations). Paths outside
+the workspace are unavailable; the server also enforces containment when opening
+the file, including symlinks. Network images retain their URL. Failed image loads
+show an unavailable message with the alternative text.
+
+Image resolution only affects image nodes. `ChatThread.renderLink` is an optional
+`href`/`children` rendering slot passed unchanged to stored and incremental replies.
+The app composes the report document's `ReportTextLink` capability, which delegates
+to the current prepared/inert/reference-aware destination renderer. Chat does not
+classify destinations. Files and sources use the conversation's Track; nested
+reports retain their own Track. Reads remain lazy and external loading explicit.
+Application links stay in the router's namespace; rejected file paths stay inert.
+The app clears the source selection in the switching render, binding it to both
+conversation identity and Track, including a return to a previously opened row.
+`app/router/chat-link-hover.browser.test.tsx` exercises that production composition.
+Code examples, copied response text, user attachments, and transcript persistence retain their existing
+contracts. The image renderer owns sizing so screenshots fit narrow drawers.
+
+Review tier: L2. The app binds transient source selection to the conversation
+and Track isolation boundary; authorization and server file access keep their
+existing owners.
+
+`message-entry.tsx` owns ordinary user/agent message presentation. The transcript
+owner supplies scalar visual fields, attachments, the gap caption, queued/edit/
+replacement marks, live status and the existing scoped image port. Memoization
+leaves unchanged stored rows alone while the live tail grows, even if upstream
+replaces transcript objects. Changed words or marks still update the same node.
+All history remains mounted: this optimization reduces React work, not DOM count,
+and preserves exchange markers, browser selection and existing navigation.
+
+Measured through `app/router/chat-performance.browser.test.tsx`, with identical
+20/120/300/900-row fixtures and no CI timing threshold. True DOM windowing needs a
+separate contract for variable heights, history anchors, jumps, focus and cross-row
+selection; #2235 tracks that remaining decision.
+
+The generic `ui/content-presentation/public.ts` owns first-content admission.
+The app supplies the selected id and whether the existing transcript owner has
+content/status to render. Once eligible, the shell gets a rendering opportunity
+before a transition mounts the thread. A slow read starts this boundary when it
+arrives, rather than consuming the opportunity while the history is still unknown.
+Same-conversation updates remain immediate after mount; no deferred transcript,
+second cache, or business snapshot is created. Switching, closing, losing eligibility
+or unmounting cancels the pending frames; visit identity rejects late callbacks.
+
+The app gates read acknowledgements on this presentation boundary plus its existing
+history/error checks, so readiness alone cannot acknowledge an unmounted transcript.
+Sends, stops, drafts, uploads and query/outbox reconciliation retain their owners.
+The app keeps `/side` recognized while presentation is pending, but its command
+returns false until the source is mounted, preserving the draft. Removing the
+handler would incorrectly turn the command into an ordinary sent message.
+The same source readiness hides the selectable side command until it can run;
+the menu cannot offer a refused action that would consume its trigger text.
+Group keys and reading memory stay in the existing committed ChatThread path.
+`conversation-switch.browser.test.tsx` exercises the real router, cached and late
+history, first-frame closing, and receipt order. Its timing reports distinguish shell
+commit, animation-frame opportunity and body commit; none is a guarantee of paint
+latency or lower total loading time. Heavy DOM/layout remains a separate concern.
+
+Source-level profiling and the opt-in local build command are documented in
+[the presentation guide](../../../../../../docs/frontend-responsive-presentation.md).
+Active exchange lookup uses the transcript's ordered vertical flow, without a
+position cache or history windowing. Gap and compact timestamps share one locale
+formatter per style and thread timezone. Its stable identity lets unchanged rows
+skip formatting during live updates; browser timezone changes are observed on
+render and invalidate the formatters.
+
+`exchange-navigation.tsx` owns the lit exchange and its scroll/resize listener.
+Its local marker updates render the rail without rereading unchanged transcript
+rows. It still uses the thread's existing scroll follower for jumps and the
+drawer seam for its portal; transcript grouping, following intent and all message
+nodes remain in their existing owners. The native hotspot regression retains all
+900 message nodes and an actual cross-message selection while the marker moves.
+
+`ChatThread` uses React's default prop memoization. The app supplies committed,
+view-scoped action callbacks and stable history inputs; it never suppresses a
+changed callback or reading-state update with a custom comparator. Composer
+updates therefore leave an unchanged thread alone. An empty/nonempty draft may
+still change whether Edit is available, and real history/live/status changes
+still update the thread immediately.
+
+Outgoing messages are readable immediately, including the first draft and its
+handoff to canonical history. Their opacity and position do not depend on the
+network answer or physical DOM identity. Sending feedback uses the existing
+busy composer control, with a local status when needed. Running requires the
+existing run query or kernel activity. Stop remains available during a send to
+an already running conversation. No DOM windowing or delayed network dispatch
+is involved.
+
+The native Send/Stop control stays mounted through dispatch. Its public icon
+slot carries a decorative spinner for a pending Send while the control remains
+disabled through the vendor's authoritative composer context. The local status
+announces Sending; Stop keeps its own label/icon and action. No hidden vendor
+props or alternate admission policy are used. Replacement uses the existing
+Button loading contract while Edit remains displayed.
+
+The named Message composer group declares `aria-busy` for local dispatch, so a
+standalone composer exposes the pending fact even without a transcript status.
+Its Send purpose stays named Send; visual progress does not replace the control.
+
+The Send arrow and waiting ring remain mounted in one grid slot. Dispatch only
+changes visibility and pauses or runs the ring, avoiding glyph resource mounts
+during the send commit. The ring shares the UI
+indicator's reduced-motion contract and carries no model activity marker.
+
+`OutgoingMessage` owns the user-text bubble and canonical sent-mention pills.
+Both `MessageEntry` and the app's retained first draft consume that visual entry;
+a draft needs only its text and viewport, with no invented message ID, timestamp
+or delivery fact. Attachments, exchange grouping and queue explanations remain in
+`MessageEntry`, and dispatch/recovery remain in the app's existing owners.
+
+The pending queue owns ordinary accepted-input waiting, including source handoff.
+`ChatThread.hasPendingInputs` prevents a previous terminal result from appearing
+as current; it does not add a second waiting status. Actual execution refusals
+still appear in the current status, while running and declared recovery states
+keep their existing presentation.

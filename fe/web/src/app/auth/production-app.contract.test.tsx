@@ -1,0 +1,172 @@
+// @vitest-environment jsdom
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { createPortal } from 'react-dom';
+import { QueryClient } from '@tanstack/react-query';
+import { createMemoryHistory, createRootRoute, createRouter } from '@tanstack/react-router';
+import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
+import { Button } from '@astryxdesign/core';
+import type { ReactElement } from 'react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { IDB_DB_NAME } from '../../../../core/keys/storage.ts';
+import { mountProductionApp, ProductionApp } from './production-app.tsx';
+import { createAppRouter } from '../router/public.tsx';
+import { logoutOperation, runOperation } from '../providers/queries.ts';
+import { bootCards } from '../cards.ts';
+
+const mocks = vi.hoisted(() => ({ render: vi.fn(), cursorClear: vi.fn() }));
+
+vi.mock('react-dom/client', () => ({ createRoot: vi.fn(() => ({ render: mocks.render })) }));
+vi.mock('../composition.ts', () => ({ createBrowserEventComposition: vi.fn(() => ({
+  store: { clear: mocks.cursorClear }, stream: {},
+})) }));
+vi.mock('../providers/transport.ts', () => ({ createFetchTransport: vi.fn(() => ({ send: vi.fn() })) }));
+vi.mock('../router/public.tsx', () => ({ createAppRouter: vi.fn(() => ({})) }));
+vi.mock('../cards.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../cards.ts')>();
+  return { bootCards: vi.fn(actual.bootCards) };
+});
+vi.mock('../providers/queries.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../providers/queries.ts')>();
+  return { ...actual, logoutOperation: vi.fn(() => ({ method: 'POST', path: '/logout' })), runOperation: vi.fn() };
+});
+
+afterEach(() => { cleanup(); vi.clearAllMocks(); mocks.cursorClear.mockReset(); });
+
+describe('production app mount', () => {
+  it('assembles the production card host and defers the share router until access is resolved', () => {
+    window.history.replaceState(null, '', '/next/share/guest-token/track/guest-track#intro');
+    const storage = { length: 0, clear: vi.fn(), getItem: vi.fn(() => null), key: vi.fn(() => null),
+      removeItem: vi.fn(), setItem: vi.fn() } satisfies Storage;
+    try {
+      mountProductionApp(document.createElement('div'), { storage, reload: vi.fn(), deleteDatabase: vi.fn() });
+      expect(window.location.hash).toBe('');
+      expect(mocks.render).toHaveBeenCalledTimes(1);
+      expect(createAppRouter).not.toHaveBeenCalled();
+      expect(bootCards).toHaveBeenCalledOnce();
+      const rendered = mocks.render.mock.calls[0]?.[0] as ReactElement<Parameters<typeof ProductionApp>[0]>;
+      expect(rendered.props.shareLinkId).toBe('guest-token');
+      expect(typeof rendered.props.router).toBe('function');
+      expect(rendered.props.runtime.idbDatabaseName).toBe(`${IDB_DB_NAME}-share-guest-token`);
+      expect(runOperation).not.toHaveBeenCalled();
+    } finally { window.history.replaceState(null, '', '/next/'); }
+  });
+
+  it('keeps malformed share URLs out of owner session initialization', () => {
+    window.history.replaceState(null, '', '/next/share/%GG');
+    const storage = { length: 0, clear: vi.fn(), getItem: vi.fn(() => null), key: vi.fn(() => null),
+      removeItem: vi.fn(), setItem: vi.fn() } satisfies Storage;
+    try {
+      mountProductionApp(document.createElement('div'), { storage, reload: vi.fn(), deleteDatabase: vi.fn() });
+      expect(mocks.render).toHaveBeenCalledTimes(1);
+      expect(createAppRouter).not.toHaveBeenCalled();
+      expect(bootCards).not.toHaveBeenCalled();
+      expect(runOperation).not.toHaveBeenCalled();
+    } finally { window.history.replaceState(null, '', '/next/'); }
+  });
+
+  it('clears every session artifact after logout completion and then reloads the browser', async () => {
+    let finishLogout!: () => void;
+    vi.mocked(runOperation).mockReturnValue(new Promise<void>((resolve) => { finishLogout = resolve; }));
+    const sequence: string[] = [];
+    const reload = vi.fn(() => { sequence.push('reload'); });
+    const deleteDatabase = vi.fn((name: string) => { sequence.push(`indexed-db:${name}`); });
+    const root = document.createElement('div');
+    const storage = {
+      length: 0, clear: vi.fn(), getItem: vi.fn(() => null), key: vi.fn(() => null),
+      removeItem: vi.fn(), setItem: vi.fn(),
+    } satisfies Storage;
+
+    mountProductionApp(root, {
+      storage,
+      reload,
+      deleteDatabase,
+    });
+    const routerOptions = vi.mocked(createAppRouter).mock.calls[0]?.[0];
+    expect(routerOptions).toBeDefined();
+    const rendered = mocks.render.mock.calls[0]?.[0] as ReactElement<Parameters<typeof ProductionApp>[0]>;
+    const clear = rendered.props.client.clear.bind(rendered.props.client);
+    rendered.props.client.setQueryData(['private'], 'cached');
+    vi.spyOn(rendered.props.client, 'clear').mockImplementation(() => { sequence.push('query'); clear(); });
+    mocks.cursorClear.mockImplementation(() => { sequence.push('cursor'); });
+
+    routerOptions?.onSignOut();
+    expect(logoutOperation).toHaveBeenCalledOnce();
+    expect(runOperation).toHaveBeenCalledOnce();
+    expect(reload).not.toHaveBeenCalled();
+
+    finishLogout();
+    await vi.waitFor(() => expect(reload).toHaveBeenCalledOnce());
+    expect(rendered.props.client.getQueryData(['private'])).toBeUndefined();
+    expect(mocks.cursorClear).toHaveBeenCalledOnce();
+    expect(deleteDatabase).toHaveBeenCalledWith(IDB_DB_NAME);
+    expect(IDB_DB_NAME).toBe('neige-calm');
+    expect(sequence).toEqual(['query', 'cursor', `indexed-db:${IDB_DB_NAME}`, 'reload']);
+  });
+
+  it('assembles the card runtime exactly once and injects that instance into the router', () => {
+    const root = document.createElement('div');
+    const storage = {
+      length: 0, clear: vi.fn(), getItem: vi.fn(() => null), key: vi.fn(() => null),
+      removeItem: vi.fn(), setItem: vi.fn(),
+    } satisfies Storage;
+
+    mountProductionApp(root, { storage, reload: vi.fn(), deleteDatabase: vi.fn() });
+
+    // One mount, one boot: there is no module-level registry or "already registered" guard to fall back on.
+    expect(bootCards).toHaveBeenCalledOnce();
+    const cards = vi.mocked(createAppRouter).mock.calls[0]?.[0]?.cards;
+    expect(cards).toBeDefined();
+    // The booted registry is the one the router got — not a second instance.
+    expect(vi.mocked(bootCards).mock.calls[0]?.[0]).toBe(cards?.registry);
+    expect(cards?.registry.entries().map((entry) => entry.type))
+      .toEqual(['terminal', 'codex', 'planner', 'assistant', 'claude', 'track-report', 'file-viewer']);
+    expect(cards?.host).toBeDefined();
+    /* The host is built with the filesystem port, not bare: a card mounted on a
+       host without it renders "this board was built without filesystem access",
+       which is the shape of the defect this line exists to catch. */
+    expect(cards?.host.mount({ type: 'terminal', id: 'probe', title: null, terminalId: null, sessionState: null, cwd: null, gateCwd: null }).card.files)
+      .not.toBeNull();
+  });
+
+  it('gives each mount its own registry instead of sharing module state', () => {
+    const storage = {
+      length: 0, clear: vi.fn(), getItem: vi.fn(() => null), key: vi.fn(() => null),
+      removeItem: vi.fn(), setItem: vi.fn(),
+    } satisfies Storage;
+    const browser = { storage, reload: vi.fn(), deleteDatabase: vi.fn() };
+
+    mountProductionApp(document.createElement('div'), browser);
+    mountProductionApp(document.createElement('div'), browser);
+
+    expect(bootCards).toHaveBeenCalledTimes(2);
+    const [first, second] = vi.mocked(createAppRouter).mock.calls.map((call) => call[0]?.cards.registry);
+    expect(first).not.toBe(second);
+  });
+});
+
+it('installs one depth adapter through ProductionApp for native, Astryx and portal login actions', async () => {
+  const client = new QueryClient();
+  const unauthorized = createUnauthorizedChannel({ enqueue: task => task() });
+  const transport = { send: () => Promise.resolve({ status: 401, statusText: 'Unauthorized', body: {} }) };
+  const view = render(<ProductionApp transport={transport} unauthorized={unauthorized} client={client}
+    runtime={{ fetchVersion: vi.fn(), reload: vi.fn(), deleteDatabase: vi.fn(), idbDatabaseName: 'test', storage: { getItem: () => null, setItem: vi.fn(), removeItem: vi.fn() } }}
+    cursorStore={{ clear: vi.fn() }} router={createRouter({ routeTree: createRootRoute(), history: createMemoryHistory() })}
+    renderLogin={() => <><button>Native login</button><Button label="Astryx login">Astryx login</Button>{createPortal(<button>Portal login</button>, document.body)}</>}
+    renderError={() => <p>Error</p>} />);
+  await screen.findByRole('button', { name: 'Native login' });
+  for (const name of ['Native login', 'Astryx login', 'Portal login']) {
+    const button = screen.getByRole('button', { name });
+    const animate = vi.spyOn(button, 'animate');
+    fireEvent.keyDown(button, { key: ' ' });
+    expect(animate).toHaveBeenCalledOnce();
+    fireEvent.keyUp(button, { key: ' ' });
+    expect(animate).toHaveBeenCalledTimes(2);
+    animate.mockRestore();
+  }
+  const button = screen.getByRole('button', { name: 'Native login' });
+  const animate = vi.spyOn(button, 'animate');
+  fireEvent.keyDown(button, { key: 'Enter' });
+  const owned = animate.mock.results[0].value as Animation; view.unmount();
+  expect(owned.playState).toBe('idle');
+  animate.mockRestore();
+});

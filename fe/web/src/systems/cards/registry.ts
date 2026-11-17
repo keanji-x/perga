@@ -1,0 +1,186 @@
+import type { ComponentType } from 'react';
+import type { CardRuntimeView } from '../../../../core/api/schemas.js';
+import type { CardActivity } from '../../../../core/domain/activity.js';
+import type { CardHostCapabilities } from './contracts.js';
+
+export interface CardDataMap {
+  readonly _cardDataMapBrand?: never;
+}
+
+export type RegisteredCard = CardDataMap[Exclude<keyof CardDataMap, '_cardDataMapBrand'>];
+
+export interface KernelCardInput {
+  readonly id: string;
+  readonly kind: string;
+  readonly payload: unknown;
+  readonly runtime?: CardRuntimeView;
+}
+
+export interface CardSize {
+  readonly w: number;
+  readonly h: number;
+  readonly minW: number;
+  readonly minH: number;
+}
+
+export const FALLBACK_SIZE: CardSize = Object.freeze({ w: 4, h: 6, minW: 3, minH: 3 });
+
+export type CardKindClaim =
+  | Readonly<{ mode: 'exact'; kind: string }>
+  | Readonly<{ mode: 'prefix'; prefix: string }>;
+
+export type CardCreateStrategy =
+  | Readonly<{ mode: 'generic'; buildPayload(input: Readonly<Record<string, string>>): unknown }>
+  | Readonly<{ mode: 'atomic'; submit(input: Readonly<Record<string, string>>): Promise<{ cardId: string }> }>
+  | Readonly<{ mode: 'catalog'; catalog: string }>
+  | Readonly<{ mode: 'kernel-minted-only' }>;
+
+/** A surface's optional collapse action, independent of resource deletion. */
+export type CardHeaderPresentation = Readonly<{ onHide: () => void; hideLabel: string }>;
+
+export interface CardComponentProps<Card extends { readonly id: string; readonly type: string } = RegisteredCard> {
+  readonly card: Card;
+  readonly host: CardHostCapabilities;
+  /** Consumed by CardHead; absent keeps ordinary board presentation. */
+  readonly header?: CardHeaderPresentation;
+  /** Already resolved: `undefined` means no delete on this card, whether kernel-owned or the surface offers none. */
+  readonly onRemove?: () => void;
+  /** The kernel's activity verdict, or `null`; a prop rather than a capability because it changes every tick and `host` is frozen at mount. */
+  readonly activity: CardActivity | null;
+  /** A one-line state the composer supplies about this card (a task worker whose attempt has ended), or `null`. Shown as given; a prop for the same reason as `activity`. */
+  readonly notice: string | null;
+}
+
+/** One create-form input. `kind` is what the form renders; every value reaches the create path as a string. */
+export interface CardCreateField {
+  readonly key: string;
+  readonly label: string;
+  readonly kind: 'text' | 'directory' | 'file';
+  readonly required?: boolean;
+  readonly placeholder?: string;
+  readonly hint?: string;
+}
+
+/** Presence in the add menu; no `fields` means picking it creates the card immediately. */
+export interface CardAddPanel {
+  readonly label: string;
+  readonly fields?: readonly CardCreateField[];
+}
+
+export interface CardEntry<Card extends { readonly id: string; readonly type: string } = RegisteredCard> {
+  readonly type: Card['type'];
+  readonly component: ComponentType<CardComponentProps<Card>>;
+  readonly defaultSize: CardSize;
+  /** Opt into a sticky surface bounded by the board scrollport; the user's grid cell stays unchanged. */
+  readonly viewport?: 'board';
+  readonly claim?: CardKindClaim;
+  readonly title?: (card: Card) => string;
+  readonly accessibleName?: (card: Card) => string;
+  readonly create?: CardCreateStrategy;
+  readonly addPanel?: CardAddPanel;
+  readonly fromKernel?: (card: KernelCardInput) => Card | null;
+}
+
+export interface CardAddMenuEntry {
+  readonly type: string;
+  readonly label: string;
+  readonly fields: readonly CardCreateField[];
+}
+
+/** The add menu in registration order; `catalog` and `kernel-minted-only` entries are never offered. */
+export function cardAddMenuEntries(registry: CardRegistry): readonly CardAddMenuEntry[] {
+  const rows: CardAddMenuEntry[] = [];
+  for (const entry of registry.entries()) {
+    const addPanel = entry.addPanel;
+    if (addPanel === undefined) continue;
+    if (entry.create === undefined) continue;
+    if (entry.create.mode === 'catalog' || entry.create.mode === 'kernel-minted-only') continue;
+    rows.push(Object.freeze({
+      type: entry.type,
+      label: addPanel.label,
+      fields: Object.freeze([...(addPanel.fields ?? [])]),
+    }));
+  }
+  return Object.freeze(rows);
+}
+
+export interface CardRegistry {
+  register<Card extends RegisteredCard>(entry: CardEntry<Card>): void;
+  get(type: string): CardEntry | undefined;
+  resolve(card: KernelCardInput): RegisteredCard | null;
+  entries(): readonly CardEntry[];
+}
+
+function validateEntry(entry: CardEntry, exact: Map<string, CardEntry>, prefix: Map<string, CardEntry>): void {
+  if (entry.title === undefined) throw new Error(`EntryMissingMetadata(${entry.type}, title)`);
+  if (entry.accessibleName === undefined) throw new Error(`EntryMissingMetadata(${entry.type}, accessibleName)`);
+  if (entry.create === undefined) throw new Error(`MissingCreateStrategy(${entry.type})`);
+  if (entry.create.mode === 'generic' && entry.claim?.mode !== 'exact') {
+    throw new Error(`GenericCreateRequiresExactClaim(${entry.type})`);
+  }
+  if (entry.refreshBacking === 'controller' && entry.createController === undefined) {
+    throw new Error(`RefreshBackingMissingController(${entry.type})`);
+  }
+  if (entry.claim?.mode === 'exact') {
+    const previous = exact.get(entry.claim.kind);
+    if (previous !== undefined && previous.type !== entry.type) {
+      throw new Error(`DuplicateExactClaim(${entry.claim.kind})`);
+    }
+  }
+  if (entry.claim?.mode === 'prefix') {
+    const previous = prefix.get(entry.claim.prefix);
+    if (previous !== undefined && previous.type !== entry.type) {
+      throw new Error(`DuplicatePrefixClaim(${entry.claim.prefix})`);
+    }
+  }
+}
+
+export function createCardRegistry(): CardRegistry {
+  const entries = new Map<string, CardEntry>();
+  const exact = new Map<string, CardEntry>();
+  const prefix = new Map<string, CardEntry>();
+  return Object.freeze({
+    register<Card extends RegisteredCard>(typedEntry: CardEntry<Card>): void {
+      const entry = typedEntry as unknown as CardEntry;
+      validateEntry(entry, exact, prefix);
+      const previous = entries.get(entry.type);
+      if (previous?.claim?.mode === 'exact' && exact.get(previous.claim.kind) === previous) {
+        exact.delete(previous.claim.kind);
+      }
+      if (previous?.claim?.mode === 'prefix' && prefix.get(previous.claim.prefix) === previous) {
+        prefix.delete(previous.claim.prefix);
+      }
+      entries.set(entry.type, entry);
+      if (entry.claim?.mode === 'exact') exact.set(entry.claim.kind, entry);
+      if (entry.claim?.mode === 'prefix') prefix.set(entry.claim.prefix, entry);
+    },
+    get: (type: string) => entries.get(type),
+    resolve(card: KernelCardInput): RegisteredCard | null {
+      const tried = new Set<CardEntry>();
+      const exactEntry = exact.get(card.kind);
+      if (exactEntry !== undefined) tried.add(exactEntry);
+      const exactResult = exactEntry?.fromKernel?.(card);
+      if (exactResult != null) return exactResult;
+
+      let longest: CardEntry | undefined;
+      let longestLength = -1;
+      for (const [candidate, entry] of prefix) {
+        if (card.kind.startsWith(candidate) && candidate.length > longestLength) {
+          longest = entry;
+          longestLength = candidate.length;
+        }
+      }
+      if (longest !== undefined) tried.add(longest);
+      const prefixResult = longest?.fromKernel?.(card);
+      if (prefixResult != null) return prefixResult;
+
+      for (const entry of entries.values()) {
+        if (tried.has(entry) || entry.fromKernel === undefined) continue;
+        const result = entry.fromKernel(card);
+        if (result != null) return result;
+      }
+      return null;
+    },
+    entries: () => Object.freeze([...entries.values()]),
+  });
+}

@@ -1,0 +1,138 @@
+// @vitest-environment jsdom
+import { act, cleanup, fireEvent, render as renderDom, screen, waitFor } from '@testing-library/react';
+import type { ReactNode } from 'react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import { AppShell } from './public.tsx';
+import { NewTrackDraftProvider } from '../router/new-track-drafts.tsx';
+import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
+import type { Area } from '../../../../core/domain/area.ts';
+import { NEUTRAL_ACTIVITY, type Track } from '../../../../core/domain/track.ts';
+import { createUiPreferences, UiPreferencesProvider } from '../providers/ui-preferences.tsx';
+import { createReadReceiptsKernel, readReceiptsFixture } from '../providers/read-receipts-fixture.tsx';
+
+/* Real router/history state, with navigation effects isolated: an empty
+ * `useRouter` result hides required history fields. */
+vi.mock('@tanstack/react-router', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@tanstack/react-router')>();
+  const router = actual.createRouter({
+    routeTree: actual.createRootRoute(),
+    history: actual.createMemoryHistory({ initialEntries: ['/'] }),
+  });
+  return {
+    ...actual,
+    Outlet: () => <div>route</div>,
+    useNavigate: () => vi.fn(),
+    useRouter: () => router,
+    useRouterState: ({ select }: { select: (state: typeof router.state) => unknown }) => select(router.state),
+  };
+});
+// The kernel's read receipts; a case may replace them before it renders.
+let receipts = createReadReceiptsKernel();
+function render(node: ReactNode) {
+  return renderDom(readReceiptsFixture(receipts).wrap(<NewTrackDraftProvider>{node}</NewTrackDraftProvider>));
+}
+
+
+const AREA: Area = {
+  id: 'c1', name: 'Product', color: '#5B8DEF', sort: 1, kind: 'user',
+  defaultTemplateId: null, defaultCwd: null, createdAt: 0, updatedAt: 0,
+};
+const TRACK: Track = {
+  id: 'w1', areaId: 'c1', title: 'Responsive mobile UI', sort: 1, cwd: '/tmp', isolation: 'none', agentCwd: '/tmp',
+  pinnedAt: null, closedAt: null, createdAt: 0, updatedAt: 0, ...NEUTRAL_ACTIVITY,
+};
+// Read when `useWorkspace` is called, so a case may hand the shell its own rows.
+let workspaceTracks: readonly Track[] = [TRACK];
+
+// Authentication notifications have their own real query and browser coverage; this contract isolates navigation.
+vi.mock('./provider-authentication.tsx', () => ({ ProviderAuthenticationNotice: () => null }));
+
+vi.mock('../providers/queries.ts', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../providers/queries.ts')>(),
+  useWorkspace: () => ({
+    areas: [AREA], tracks: workspaceTracks, tracksByArea: new Map([['c1', workspaceTracks]]), trackErrorsByArea: new Map(), tracksLoadingByArea: new Map(),
+    areasError: null, overlaysError: null, areasLoading: false, overlaysLoading: false,
+    retryAreas: vi.fn(), retryOverlays: vi.fn(), retryTracks: vi.fn(),
+  }),
+  useAreaMutations: () => ({ create: vi.fn(), update: vi.fn(), remove: vi.fn() }),
+  useTrackMutations: () => ({ setPinned: vi.fn(), create: vi.fn(), remove: vi.fn() }),
+  // Blank-only is a working state, so the rail contract needs nothing more.
+}));
+/* A partial mock: `pathFor`, which the dock's selection rule reads the route
+ * table from, stays the real one. */
+vi.mock('../router/navigation.ts', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../router/navigation.ts')>()),
+  useCurrentPath: () => '/',
+  useGo: () => vi.fn(),
+  useGoSameTrack: () => vi.fn(),
+  routeParamFromPath: () => undefined,
+}));
+vi.mock('./sidebar.tsx', () => ({ Sidebar: ({ collapsed, onToggleCollapsed }: {
+  collapsed: boolean; onToggleCollapsed: () => void;
+}) => <button type="button" aria-expanded={!collapsed} onClick={onToggleCollapsed}>{collapsed ? 'Expand' : 'Collapse'}</button> }));
+
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); workspaceTracks = [TRACK]; receipts = createReadReceiptsKernel(); });
+
+function compactViewport() {
+  const listeners = new Set<() => void>();
+  vi.stubGlobal('matchMedia', vi.fn(() => ({
+    matches: true, media: '', onchange: null,
+    addEventListener: (_: string, listener: () => void) => listeners.add(listener),
+    removeEventListener: (_: string, listener: () => void) => listeners.delete(listener),
+    addListener: vi.fn(), removeListener: vi.fn(), dispatchEvent: vi.fn(),
+  })));
+}
+
+function memoryStorage() {
+  const values = new Map<string, string>();
+  return { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => { values.set(key, value); } };
+}
+
+describe('compact navigation interaction contracts', () => {
+  it('opens the workspace as a modal side page and Escape returns to content', async () => {
+    compactViewport();
+    const unauthorized = createUnauthorizedChannel({ enqueue: (task) => task() });
+    render(<AppShell transport={{} as never} unauthorized={unauthorized} onOpenSettings={vi.fn()} onOpenPlugins={vi.fn()} onSignOut={vi.fn()} />);
+    expect(screen.queryByRole('navigation', { name: 'Primary' })).toBeNull();
+    const opener = screen.getByRole('button', { name: 'Open workspace' });
+    fireEvent.click(opener);
+    expect(screen.getByRole('dialog', { name: 'Tracks and settings' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Settings' })).toBeNull();
+    expect(screen.getByRole('heading', { name: 'Areas' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /^Responsive mobile UI/ })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Product' }));
+    expect(screen.getByRole('button', { name: /^Responsive mobile UI/ })).toBeTruthy();
+    expect(document.querySelector('main')?.hasAttribute('inert')).toBe(true);
+    fireEvent.keyDown(document, { key: 'Escape' });
+    await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Tracks and settings' })).toBeNull(); });
+    const area = screen.getByRole('button', { name: 'Switch area, Product' });
+    fireEvent.click(area);
+    expect(screen.getByRole('menuitem', { name: 'Product' })).toBeTruthy();
+  });
+
+  /* `MobileTracks` alone cannot show this (its receipt is a prop); only the shell
+   * decides which receipt that prop is. */
+  it('hands the Track list the rail’s read receipt, so a newer completion is unread until it is read', async () => {
+    compactViewport();
+    workspaceTracks = [{ ...TRACK, activityAt: 150 }];
+    // The kernel's baseline is 100.
+    receipts = createReadReceiptsKernel({ baselineMs: 100 });
+    const preferences = createUiPreferences(memoryStorage());
+    const unauthorized = createUnauthorizedChannel({ enqueue: (task) => task() });
+    render(<UiPreferencesProvider preferences={preferences}>
+      <AppShell transport={{} as never} unauthorized={unauthorized} onOpenSettings={vi.fn()} onOpenPlugins={vi.fn()} onSignOut={vi.fn()} />
+    </UiPreferencesProvider>);
+    fireEvent.click(screen.getByRole('button', { name: 'Open workspace' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Product' }));
+    const marker = () => screen.getByRole('button', { name: /^Responsive mobile UI/ })
+      .querySelector('[data-nc-activity]')?.getAttribute('data-nc-activity') ?? null;
+    await waitFor(() => expect(marker()).toBe('unread'));
+    expect(screen.getByRole('button', { name: 'Responsive mobile UI' })).toBeTruthy();
+
+    // Read elsewhere; this tab sees it when it is shown again.
+    await receipts.transport.send({ method: 'POST', path: '/api/read-receipts/track/w1/read', credentials: 'include', body: { readThroughMs: 150 } });
+    act(() => { window.dispatchEvent(new Event('visibilitychange')); });
+    await waitFor(() => expect(marker()).toBeNull());
+  });
+});

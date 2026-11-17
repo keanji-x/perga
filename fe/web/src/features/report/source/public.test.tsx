@@ -1,0 +1,210 @@
+// @vitest-environment jsdom
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import type {
+  ReportSourceLinkTarget, SourceProvenance, TrackSourceDetail,
+} from '../../../../../core/domain/report-source.ts';
+import { SOURCE_PANEL_COPY, SOURCE_PROVENANCE_COPY } from './copy.ts';
+import { ReportSourcePanel, reportSourcePanelTitle } from './public.tsx';
+
+const scrollIntoView = vi.fn();
+beforeEach(() => {
+  Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: scrollIntoView });
+});
+afterEach(() => { cleanup(); scrollIntoView.mockReset(); });
+
+const BODY = '央行表示，9月加息概率接近九成。\n\n市场认为，9月加息概率接近九成的说法过于乐观。';
+
+function row(overrides: Partial<TrackSourceDetail> = {}): TrackSourceDetail {
+  return {
+    source_id: 'src_2c9e0a1b',
+    provenance: 'full_text',
+    origin: { kind: 'plugin', plugin_id: 'mcp-wisburg', tool: 'get_article_detail', args_sha256: 'ab', args_canon: 'v1', content_id: '752972' },
+    title: 'Mikko 全球市场日志 9-13',
+    published_at: '2026-09-13',
+    content_id: '752972',
+    body_bytes: 100,
+    body_sha256: 'cd',
+    captured_at: '2026-09-14T08:00:00Z',
+    quotes: [{ id: 'q1', text: '9月加息概率接近九成', start: 0, end: 0 }],
+    body: BODY,
+    ...overrides,
+  };
+}
+
+function target(destination: string, sourceId: string | null, quoteId: string | null): ReportSourceLinkTarget {
+  return { destination, sourceId, quoteId };
+}
+
+const WELL_FORMED = target('neige://source/src_2c9e0a1b#q1', 'src_2c9e0a1b', 'q1');
+const NO_ANCHOR = target('neige://source/src_2c9e0a1b', 'src_2c9e0a1b', null);
+
+describe('ReportSourcePanel', () => {
+  it.each(Object.keys(SOURCE_PROVENANCE_COPY) as SourceProvenance[])('names the %s provenance with the signed wording', (provenance) => {
+    render(<ReportSourcePanel target={NO_ANCHOR} resolution={{ status: 'ok', source: row({ provenance }) }} onRetry={() => undefined} />);
+    const badge = document.querySelector('[data-nc-report-source-provenance]');
+    expect(badge?.getAttribute('data-nc-report-source-provenance')).toBe(provenance);
+    expect(badge?.textContent).toBe(SOURCE_PROVENANCE_COPY[provenance]);
+    expect(SOURCE_PROVENANCE_COPY[provenance]).toBe({
+      full_text: '智堡全文', summary: '智堡摘要，非机构原文', web_page: '网页', manual: '手工录入，未经内核核验',
+    }[provenance]);
+  });
+
+  it('paints the title, dates and origin as text, and the body as raw text in a <pre>', () => {
+    const { container } = render(<ReportSourcePanel
+      target={NO_ANCHOR}
+      resolution={{ status: 'ok', source: row({ body: '看 [链接](https://example.com/x) 和 ![图](https://example.com/x.png) **不渲染**' }) }}
+      onRetry={() => undefined}
+    />);
+    expect(screen.getByRole('heading', { level: 2 }).textContent).toBe('Mikko 全球市场日志 9-13');
+    expect(container.textContent).toContain('2026-09-13');
+    expect(container.querySelector('time')?.getAttribute('dateTime')).toBe('2026-09-14T08:00:00Z');
+    expect(container.textContent).toContain('mcp-wisburg');
+    expect(container.textContent).toContain('get_article_detail');
+    expect(container.textContent).toContain('752972');
+    fireEvent.click(screen.getByRole('button', { name: '原文' }));
+    const body = container.querySelector('pre[data-nc-report-source-body]');
+    expect(body?.textContent).toBe('看 [链接](https://example.com/x) 和 ![图](https://example.com/x.png) **不渲染**');
+    expect(container.querySelectorAll('a, img, strong').length).toBe(0);
+    expect(container.querySelector('mark')).toBeNull();
+    expect(scrollIntoView).not.toHaveBeenCalled();
+  });
+
+  it('slices the first occurrence of the quote into a <mark> and scrolls it into view', () => {
+    const { container } = render(<ReportSourcePanel target={WELL_FORMED} resolution={{ status: 'ok', source: row() }} onRetry={() => undefined} />);
+    const body = container.querySelector('pre[data-nc-report-source-body]');
+    const marks = container.querySelectorAll('mark');
+    expect(marks.length).toBe(1);
+    expect(marks[0]?.textContent).toBe('9月加息概率接近九成');
+    expect(marks[0]?.getAttribute('data-nc-report-source-quote')).toBe('q1');
+    expect(body?.childNodes[0]?.textContent).toBe('央行表示，');
+    expect(body?.textContent).toBe(BODY);
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+    expect(scrollIntoView.mock.instances[0]).toBe(marks[0]);
+    expect(container.querySelector('[data-nc-report-source-missing]')).toBeNull();
+  });
+
+  it('keeps the source but shows the missing state with the destination when the anchor is not on the row', () => {
+    const missingAnchor = target('neige://source/src_2c9e0a1b#q7', 'src_2c9e0a1b', 'q7');
+    const { container } = render(<ReportSourcePanel target={missingAnchor} resolution={{ status: 'ok', source: row() }} onRetry={() => undefined} />);
+    expect(container.querySelector('[data-nc-report-source-provenance="full_text"]')?.textContent).toBe('智堡全文');
+    expect(screen.getByRole('heading', { level: 2 }).textContent).toBe('Mikko 全球市场日志 9-13');
+    expect(container.querySelector('mark')).toBeNull();
+    expect(container.querySelector('pre[data-nc-report-source-body]')?.textContent).toBe(BODY);
+    expect(scrollIntoView).not.toHaveBeenCalled();
+    const notice = container.querySelector('[data-nc-report-source-missing="anchor"]');
+    expect(notice).not.toBeNull();
+    expect(screen.getByRole('heading', { level: 3 }).textContent).toBe(SOURCE_PANEL_COPY.anchorMissingTitle);
+    expect(SOURCE_PANEL_COPY.anchorMissingTitle).toBe('引用锚点缺失');
+    expect(notice?.textContent).toContain(SOURCE_PANEL_COPY.anchorMissingDetail);
+    expect(notice?.querySelector('code')?.textContent).toBe('neige://source/src_2c9e0a1b#q7');
+    expect(container.querySelector('pre')?.textContent).not.toContain('引用锚点缺失');
+  });
+
+  it('treats a quote whose text is not in the body the same way', () => {
+    const source = row({ quotes: [{ id: 'q1', text: '不在正文里', start: 0, end: 0 }] });
+    const { container } = render(<ReportSourcePanel target={WELL_FORMED} resolution={{ status: 'ok', source }} onRetry={() => undefined} />);
+    expect(container.querySelector('mark')).toBeNull();
+    const notice = container.querySelector('[data-nc-report-source-missing="anchor"]');
+    expect(notice?.querySelector('code')?.textContent).toBe('neige://source/src_2c9e0a1b#q1');
+    expect(container.querySelector('pre[data-nc-report-source-body]')?.textContent).toBe(BODY);
+  });
+
+  it('shows no missing state at all when the anchor resolves or the citation has none', () => {
+    const { container, rerender } = render(<ReportSourcePanel target={WELL_FORMED} resolution={{ status: 'ok', source: row() }} onRetry={() => undefined} />);
+    expect(container.querySelector('[data-nc-report-source-missing]')).toBeNull();
+    rerender(<ReportSourcePanel target={NO_ANCHOR} resolution={{ status: 'ok', source: row() }} onRetry={() => undefined} />);
+    expect(container.querySelector('[data-nc-report-source-missing]')).toBeNull();
+  });
+
+  it('says the source is missing, with the destination, when the track has no such row (404)', () => {
+    const { container } = render(<ReportSourcePanel target={WELL_FORMED} resolution={{ status: 'missing' }} onRetry={() => undefined} />);
+    expect(screen.getByRole('heading', { level: 2 }).textContent).toBe(SOURCE_PANEL_COPY.missingTitle);
+    expect(container.querySelector('[data-nc-report-source-missing]')?.getAttribute('data-nc-report-source-missing')).toBe('dangling');
+    expect(container.textContent).toContain(SOURCE_PANEL_COPY.missingDangling);
+    expect(container.querySelector('code')?.textContent).toBe('neige://source/src_2c9e0a1b#q1');
+    expect(container.querySelector('pre')).toBeNull();
+  });
+
+  it('says the source is missing, with the destination, when the citation would not parse', () => {
+    const malformed = target('neige://source/src_dead#q0', null, null);
+    const { container } = render(<ReportSourcePanel target={malformed} resolution={{ status: 'ok', source: row() }} onRetry={() => undefined} />);
+    expect(screen.getByRole('heading', { level: 2 }).textContent).toBe(SOURCE_PANEL_COPY.missingTitle);
+    expect(container.querySelector('[data-nc-report-source-missing]')?.getAttribute('data-nc-report-source-missing')).toBe('malformed');
+    expect(container.textContent).toContain(SOURCE_PANEL_COPY.missingMalformed);
+    expect(container.querySelector('code')?.textContent).toBe('neige://source/src_dead#q0');
+    expect(container.querySelector('pre')).toBeNull();
+  });
+
+  it('shows the loading line, then the error box with a retry that repeats the read', () => {
+    const onRetry = vi.fn();
+    const { rerender } = render(<ReportSourcePanel target={WELL_FORMED} resolution={{ status: 'loading' }} onRetry={onRetry} />);
+    expect(screen.getByRole('status').textContent).toBe(SOURCE_PANEL_COPY.loading);
+    rerender(<ReportSourcePanel target={WELL_FORMED} resolution={{ status: 'error', failure: { kind: 'http', status: 500, code: 'internal', message: 'boom' } }} onRetry={onRetry} />);
+    /* A server fault shows only the fixed sentence, with no raw-text disclosure. */
+    expect(screen.getByRole('alert').textContent).toBe('无法读取来源。Retry');
+    expect(screen.getByRole('alert').querySelector('details')).toBeNull();
+    rerender(<ReportSourcePanel target={WELL_FORMED} resolution={{ status: 'error', failure: { kind: 'http', status: 404, code: 'not_found', message: 'source src_1' } }} onRetry={onRetry} />);
+    expect(screen.getByRole('alert').textContent).toBe('无法读取来源。 source src_1Retry');
+    screen.getByRole('button', { name: 'Retry' }).click();
+    expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+
+  it('never emits a native link, even for a manual source with a URL', () => {
+    const source = row({ provenance: 'manual', origin: { kind: 'manual', url: 'https://example.com/page' }, url: 'https://example.com/page', content_id: undefined });
+    const { container } = render(<ReportSourcePanel target={NO_ANCHOR} resolution={{ status: 'ok', source }} onRetry={() => undefined} />);
+    expect(container.textContent).toContain('https://example.com/page');
+    expect(container.querySelectorAll('a').length).toBe(0);
+    expect(container.querySelector('[data-nc-report-source-provenance="manual"]')?.textContent).toBe('手工录入，未经内核核验');
+  });
+
+  it('names the drawer after the row once it is known, and generically until then', () => {
+    expect(reportSourcePanelTitle({ status: 'loading' })).toBe(SOURCE_PANEL_COPY.panelTitle);
+    expect(reportSourcePanelTitle({ status: 'missing' })).toBe(SOURCE_PANEL_COPY.panelTitle);
+    expect(reportSourcePanelTitle({ status: 'error', failure: null })).toBe(SOURCE_PANEL_COPY.panelTitle);
+    expect(reportSourcePanelTitle({ status: 'ok', source: row() })).toBe('Mikko 全球市场日志 9-13');
+  });
+});
+
+
+it('reads captured Markdown as formatted text and preserves the exact original view', () => {
+  const body = '# 2026年三季度美股盈利前瞻\n\n## Summary\n\n1. **增长未见减速迹象**\n2. 保持观察';
+  const { container } = render(<ReportSourcePanel target={NO_ANCHOR} resolution={{ status: 'ok', source: row({ provenance: 'summary', body }) }} onRetry={() => undefined} />);
+  expect(screen.getByRole('heading', { name: '2026年三季度美股盈利前瞻' })).toBeTruthy();
+  expect(container.querySelector('strong')?.textContent).toBe('增长未见减速迹象');
+  expect(container.querySelectorAll('ol > li')).toHaveLength(2);
+  fireEvent.click(screen.getByRole('button', { name: '原文' }));
+  expect(container.querySelector('pre[data-nc-report-source-body]')?.textContent).toBe(body);
+  fireEvent.click(screen.getByRole('button', { name: '阅读' }));
+  expect(container.querySelector('strong')?.textContent).toBe('增长未见减速迹象');
+});
+
+
+it('formats untrusted evidence without author-controlled navigation, HTML or resource loads', () => {
+  const body = '## Safe heading\n\n**readable** [web](https://example.com/x) [file](./inside.md) [script](javascript:alert(1)) ![picture](https://external.invalid/pixel.png)\n\n<script>bad()</script>\n\n```html\n<img src="https://external.invalid/code.png">\n```';
+  const { container } = render(<ReportSourcePanel target={NO_ANCHOR} resolution={{ status: 'ok', source: row({ body }) }} onRetry={() => undefined} />);
+  const reading = container.querySelector('[data-nc-report-source-reading]')!;
+  expect(reading.querySelector('strong')?.textContent).toBe('readable');
+  expect(reading.textContent).toContain('web');
+  expect(reading.textContent).toContain('picture');
+  expect(reading.querySelectorAll('a, img, iframe, script')).toHaveLength(0);
+  expect(Array.from(reading.querySelectorAll('button'), button => button.textContent)).toEqual(['Copy code']);
+  expect(reading.textContent).not.toContain('bad()');
+  fireEvent.click(screen.getByRole('button', { name: '原文' }));
+  expect(container.querySelector('pre[data-nc-report-source-body]')?.textContent).toBe(body);
+});
+
+it('resets the view for a new source or quote arrival and keeps exact quote placement in original text', () => {
+  const { container, rerender } = render(<ReportSourcePanel target={NO_ANCHOR} resolution={{ status: 'ok', source: row() }} onRetry={() => undefined} />);
+  expect(screen.getByRole('button', { name: '阅读' }).getAttribute('aria-pressed')).toBe('true');
+  rerender(<ReportSourcePanel target={WELL_FORMED} resolution={{ status: 'ok', source: row() }} onRetry={() => undefined} />);
+  expect(screen.getByRole('button', { name: '原文' }).getAttribute('aria-pressed')).toBe('true');
+  expect(container.querySelector('mark')?.textContent).toBe('9月加息概率接近九成');
+  fireEvent.click(screen.getByRole('button', { name: '阅读' }));
+  fireEvent.click(screen.getByRole('button', { name: '原文' }));
+  expect(container.querySelector('pre')?.textContent).toBe(BODY);
+  expect(scrollIntoView).toHaveBeenCalledTimes(2);
+  rerender(<ReportSourcePanel target={NO_ANCHOR} resolution={{ status: 'ok', source: row({ source_id: 'src_0971fbde' }) }} onRetry={() => undefined} />);
+  expect(screen.getByRole('button', { name: '阅读' }).getAttribute('aria-pressed')).toBe('true');
+});

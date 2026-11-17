@@ -1,0 +1,45 @@
+# List typography
+
+Shared presentation roles for the workspace sidebar and context panels.
+
+| Role | Size | Weight | Line height | Use |
+| --- | --- | --- | --- | --- |
+| primary | 14px | 400 | 20px | Top-level navigation, folder disclosures, and expanded card/task names |
+| compact | 13px | 400 | 20px | Nested sidebar Track and reveal entries |
+| group | 14px | 400 | 20px | Inventory, status-group and conversation names |
+| section | 12px | 500 | 16px | Module headings, normal tracking |
+| secondary | 12px | 400 | 16px | Status and resource kind |
+| count | 12px | 400 | 16px | Right-aligned tabular numbers |
+
+All values refer to the existing global tokens. `ListText` applies these classes without an additional DOM wrapper and supports
+span, section-heading and button hosts. It preserves the caller’s attributes
+and actions. The colocated CSS Module defines typography;
+host components retain positioning, truncation and selection backgrounds.
+Text emphasis also belongs here: `emphasis="medium"` preserves the two-line
+Track row's 500 weight, and `emphasis="selected"` gives both Track and
+conversation names medium weight (`500`) and primary color (`--text`). Hosts pass state;
+they do not override the name's size, family or weight in local CSS.
+Tools, Tasks and Conversations are module headings. Their status groups and conversation names retain the group tone; top-level sidebar entries and folder disclosures use `primary`, while nested sidebar Tracks use `compact`. Expanded items correspond to Tracks. Panel entries use a 28px row cadence; sidebar entries use 30px,
+with no extra gap between collapsed groups and a 12px surface inset. Expanded
+groups keep their heading in place: no added top padding, 4px before the list
+and 8px below it. Rows stay 28px apart; both insets count toward the bounded
+module height. Leading icon slots never add a second
+text indent to a child row. A browser contract composes the actual Sidebar,
+Tools, Tasks and Conversations and checks both themes and their geometry.
+
+
+`fadeOverflow` enables a measured alpha fade only when the element's text exceeds
+its bounded width. Hosts retain layout/overflow ownership and use `text-overflow:
+clip` instead of an ellipsis when opting in. Full DOM text, native title and
+accessible names are preserved; resize and content updates remeasure overflow,
+and the observer disconnects on unmount. Short labels receive no mask.
+Initial overflow measurement runs in ResizeObserver after layout, so mounting labels does not force synchronous layout during React commits. Content changes coalesce their geometry reads into a cancellable animation-frame callback.
+Each opted-in element keeps its resize subscription for its mounted lifetime.
+A scoped content observer also measures committed text, child and attribute
+changes, including child updates that do not render the host. Recreated JSX
+with the same DOM does not reconnect observers or read geometry. Both observers
+disconnect when fading is disabled, the host tag changes or the element unmounts.
+
+Named tones own a complete font/tracking pair. Hosts choose a tone rather than overriding
+font and tracking independently. Navigation-row's required content schema selects
+`secondary` for captions, `primary` for top-level entries, and `compact` for nested entries; Inventory and Calendar keep `group`.

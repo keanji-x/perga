@@ -1,0 +1,216 @@
+// @vitest-environment jsdom
+// Invariants for the workspace rail.
+import { cleanup, render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import type { Area } from '../../../../core/domain/area.ts';
+import { NEUTRAL_ACTIVITY, type Track } from '../../../../core/domain/track.ts';
+import { ThemeProvider } from '../theme/public.tsx';
+import { SidebarFixture as Sidebar } from './sidebar-fixture.tsx';
+import { readReceiptsFixture } from '../providers/read-receipts-fixture.tsx';
+
+afterEach(() => { cleanup(); delete document.documentElement.dataset.theme; });
+
+function memoryStorage() {
+  const values = new Map<string, string>();
+  return { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => { values.set(key, value); } };
+}
+
+function area(overrides: Partial<Area> = {}): Area {
+  return {
+    id: 'c1', name: 'Work', color: '#5B8DEF', sort: 1, kind: 'user',
+    defaultTemplateId: null, defaultCwd: null, createdAt: 0, updatedAt: 0, ...overrides,
+  };
+}
+
+function track(overrides: Partial<Track> = {}): Track {
+  return {
+    id: 'w1', areaId: 'c1', title: 'Task', sort: 1, cwd: '/tmp', isolation: 'none', agentCwd: '/tmp',
+    pinnedAt: null, closedAt: null, createdAt: 0, updatedAt: 0,
+    ...NEUTRAL_ACTIVITY,
+    ...overrides,
+  };
+}
+
+function renderSidebar(props: Partial<Parameters<typeof Sidebar>[0]> = {}) {
+  const tracks = props.tracks ?? [];
+  return render(readReceiptsFixture().wrap(
+    <ThemeProvider storage={memoryStorage()}>
+      <Sidebar
+        areas={props.areas ?? [area()]}
+        tracksByArea={props.tracksByArea ?? new Map([['c1', tracks]])}
+        tracks={tracks}
+        currentPath={props.currentPath ?? '/'}
+        onGo={props.onGo ?? vi.fn()}
+        onShareTrack={props.onShareTrack}
+        onShareArea={props.onShareArea}
+        onRequestCreateArea={props.onRequestCreateArea ?? vi.fn()}
+        onRequestEditArea={props.onRequestEditArea ?? vi.fn()}
+        onDeleteArea={props.onDeleteArea ?? vi.fn()}
+        onNewTrack={props.onNewTrack ?? vi.fn()}
+        onSetPinned={props.onSetPinned ?? vi.fn()}
+        onDeleteTrack={props.onDeleteTrack ?? vi.fn()}
+        collapsed={props.collapsed ?? false}
+        onToggleCollapsed={props.onToggleCollapsed ?? vi.fn()}
+        onOpenSettings={props.onOpenSettings ?? vi.fn()}
+        onOpenPlugins={props.onOpenPlugins ?? vi.fn()}
+        onSignOut={props.onSignOut ?? vi.fn()}
+      />
+    </ThemeProvider>,
+  ));
+}
+
+describe('INV-SIDEBAR-007 Focus, Pinned and peer Areas, and pinning is not relocation', () => {
+  const unpinnedBlocked = track({ id: 'focus-1', title: 'Blocked', attention: 'input', pinnedAt: null });
+  const pinnedAndBlocked = track({ id: 'both', title: 'Both', attention: 'input', pinnedAt: 10 });
+
+  it('renders Focus, then Pinned, followed by peer Area disclosures', () => {
+    renderSidebar({ tracks: [unpinnedBlocked, pinnedAndBlocked] });
+    const headings = screen.getAllByRole('heading').map((node) => node.textContent);
+    expect(headings).toEqual(['Focus', 'Pinned']);
+    const pinnedGroup = screen.getByRole('group', { name: 'Pinned' });
+    const areaGroup = screen.getByRole('group', { name: 'area Work' });
+    expect(Boolean(pinnedGroup.compareDocumentPosition(areaGroup) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
+  });
+
+  it('keeps a pinned track in its area list as well as in the Pinned section', () => {
+    renderSidebar({ tracks: [track({ id: 'p', title: 'Pinned task', pinnedAt: 10 })] });
+    // One row under Pinned (carries the area name) and one inside the area list.
+    expect(screen.getAllByRole('button', { name: /^Track Pinned task/ })).toHaveLength(2);
+  });
+
+  it('surfaces unpinned attention tracks in Focus without duplicating pinned tracks', () => {
+    renderSidebar({ tracks: [unpinnedBlocked, pinnedAndBlocked] });
+    expect(screen.getAllByRole('button', { name: /^Track Blocked/ })).toHaveLength(2);
+    expect(screen.getAllByRole('button', { name: /^Track Both/ })).toHaveLength(2);
+  });
+
+  it('omits empty shortcut sections completely while keeping Area disclosures visible', () => {
+    renderSidebar({ tracks: [track()] });
+    expect(screen.queryAllByRole('heading')).toHaveLength(0);
+    expect(screen.getByRole('button', { name: 'Collapse area Work' })).toBeTruthy();
+  });
+});
+
+describe('INV-SIDEBAR-012 pinning remains accessible for every track', () => {
+  it('offers the current pin action in the row menu without a duplicate leading control', async () => {
+    renderSidebar({ tracks: [track({ id: 'u', title: 'Loose' }), track({ id: 'p', title: 'Stuck', pinnedAt: 10 })] });
+    expect(screen.queryByRole('button', { name: 'Pin Loose' })).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: 'Actions for track Loose' }));
+    expect(screen.getByRole('menuitem', { name: 'Pin globally' })).toBeTruthy();
+    await userEvent.keyboard('{Escape}');
+    await userEvent.click(screen.getAllByRole('button', { name: 'Actions for track Stuck' })[0]);
+    expect(screen.getByRole('menuitem', { name: 'Unpin globally' })).toBeTruthy();
+  });
+});
+
+describe('INV-SIDEBAR-013 every area row carries a permanent New track control', () => {
+  const areas = [area(), area({ id: 'c2', name: 'Reading', sort: 2 })];
+  const tracksByArea = new Map([['c1', []], ['c2', []]]);
+
+  /* One control per area, so `"New track"` alone would be N identically-named
+   * controls; the tooltip may not stand in for the accessible name. */
+  it('names each one for its own area and still carries a tooltip', () => {
+    renderSidebar({ areas, tracksByArea });
+    for (const areaName of ['Work', 'Reading']) {
+      const button = screen.getByRole('button', { name: `New track in ${areaName}` });
+      expect(button.getAttribute('title')).toBe('New track');
+      expect(button.tagName).toBe('BUTTON');
+    }
+    expect(screen.queryByRole('button', { name: 'New track' })).toBeNull();
+  });
+
+  /* jsdom cannot read positioned geometry, so this pins their separate styling hooks. */
+  it('keeps New track and Area actions in separate permanent control slots', () => {
+    renderSidebar({ areas, tracksByArea });
+    const create = screen.getByRole('button', { name: 'New track in Work' });
+    const actions = screen.getByRole('button', { name: 'Area actions for Work' });
+    expect(create.className).not.toBe(actions.className);
+    expect(create.className.split(/\s+/).some((token) => actions.className.split(/\s+/).includes(token)))
+      .toBe(false);
+  });
+
+  /** The collapsed rail has room for one glyph per area, and that glyph is the area. */
+  it('offers no New track control in the collapsed icon strip', () => {
+    renderSidebar({ areas, tracksByArea, collapsed: true });
+    expect(screen.queryByRole('button', { name: /^New track/ })).toBeNull();
+  });
+});
+
+describe('E2E-INV-SHELL-003 the kernel system area never reaches the rail', () => {
+  it('renders zero area rows for a workspace whose only area is a system area', () => {
+    renderSidebar({
+      areas: [area({ id: 'sys', name: 'System', kind: 'system' })],
+      tracks: [track({ id: 'k', areaId: 'sys', title: 'Kernel' })],
+      tracksByArea: new Map([['sys', [track({ id: 'k', areaId: 'sys', title: 'Kernel' })]]]),
+    });
+    expect(screen.queryByRole('button', { name: /^System/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Track Kernel/ })).toBeNull();
+    // When a region's emptiness has exactly one remedy, that remedy's own interface
+    // renders where the content would have been.
+    expect(screen.queryByText(/no areas/i)).toBeNull();
+    expect(screen.getByRole('heading', { name: '还没有 Area' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: '创建第一个 Area' })).toBeNull();
+  });
+});
+
+describe('INV-A11Y-058 there is intentionally no skip link', () => {
+  it('exposes no skip-to-content affordance', () => {
+    const { container } = renderSidebar({ tracks: [track()] });
+    expect(screen.queryByRole('link', { name: /skip/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /skip/i })).toBeNull();
+    expect(container.textContent).not.toMatch(/skip to/i);
+  });
+});
+
+describe('INV-A11Y-061 navigation shape', () => {
+  it('uses buttons for every navigation row and emits no native links', () => {
+    const onGo = vi.fn();
+    const { container } = renderSidebar({ tracks: [track({ id: 'w9', title: 'Row' })], onGo });
+    expect(container.querySelectorAll('a').length).toBe(0);
+    for (const node of screen.getAllByRole('button')) expect(node.tagName).toBe('BUTTON');
+  });
+
+  it('uses Area as a disclosure and routes only Track rows through onGo', async () => {
+    const onGo = vi.fn();
+    renderSidebar({ tracks: [track({ id: 'w9', title: 'Row' })], onGo });
+    await userEvent.click(screen.getByRole('button', { name: 'Collapse area Work' }));
+    expect(onGo).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole('button', { name: 'Expand area Work' }));
+    await userEvent.click(screen.getByRole('button', { name: /^Track Row/ }));
+    const targets: unknown[] = onGo.mock.calls.map((call) => (call as unknown[])[0]);
+    expect(targets).toEqual([{ name: 'track', trackId: 'w9' }]);
+  });
+});
+
+describe('active row', () => {
+  it('marks only the open Track with aria-current', () => {
+    renderSidebar({ tracks: [track({ id: 'w9', title: 'Row' })], currentPath: '/track/w9' });
+    expect(screen.getByRole('button', { name: /^Track Row/ }).getAttribute('aria-current')).toBe('page');
+    expect(screen.getByRole('button', { name: 'Collapse area Work' }).getAttribute('aria-current')).toBeNull();
+  });
+
+  /* "Focus" and "Pinned" are shortcuts into the tree; a location is shown
+   * where the thing lives. */
+  it('marks the open track once, in its area, not in the shortcut sections', () => {
+    const openFocus = track({ id: 'w9', title: 'Row', attention: 'input', pinnedAt: null });
+    const openPinned = track({ id: 'w10', title: 'Pinned row', attention: 'input', pinnedAt: 10 });
+    renderSidebar({ tracks: [openFocus, openPinned], currentPath: '/track/w9' });
+    const rows = screen.getAllByRole('button', { name: /^Track Row/ });
+    expect(rows).toHaveLength(2);
+    expect(rows.filter((row) => row.getAttribute('aria-current') === 'page')).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: /^Track Pinned row/ })).toHaveLength(2);
+  });
+});
+
+it('shares user-area Tracks and Areas through their desktop menus', async () => {
+  const onShareTrack = vi.fn(); const onShareArea = vi.fn();
+  renderSidebar({ tracks: [track()], onShareTrack, onShareArea });
+  await userEvent.click(screen.getByRole('button', { name: 'Actions for track Task' }));
+  await userEvent.click(screen.getByRole('menuitem', { name: 'Share track' }));
+  expect(onShareTrack).toHaveBeenCalledWith(track(), expect.objectContaining({ kind: 'anchor' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Area actions for Work' }));
+  await userEvent.click(screen.getByRole('menuitem', { name: 'Share area' }));
+  expect(onShareArea).toHaveBeenCalledWith(area(), expect.objectContaining({ kind: 'anchor' }));
+});

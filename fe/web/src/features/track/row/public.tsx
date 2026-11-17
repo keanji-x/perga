@@ -1,0 +1,160 @@
+import type { DialogOrigin } from '../../../ui/dialog/public.tsx';
+import { TrackTitle } from '../title/public.tsx';
+// The one track row, rendered by the sidebar rail and Today. It stays under `features/track` because it reads track predicates, which `ui/` may not.
+
+import { ListText } from '../../../ui/list-typography/public.tsx';
+import { useId, useRef, type Ref } from 'react';
+import { activityLabelOf, activityNameBit } from '../../../../../core/domain/activity.ts';
+import {
+  isClosed, trackActivityState, trackDisplayTitle, type Track,
+} from '../../../../../core/domain/track.ts';
+import { ActivityIndicator } from '../../../ui/activity-indicator/public.tsx';
+import { Icon } from '../../../ui/icon/public.tsx';
+import styles from './row.module.css';
+import { navigationRowClass as rowLayout, navigationRowPresentation, type NavigationEntrySpec } from '../../../ui/navigation-row/public.ts';
+import { TrackActions } from './actions.tsx';
+
+export type TrackRowVariant = 'default' | 'compact' | 'panel' | 'rail';
+
+export type TrackRowProps = Readonly<{
+  track: Pick<Track, 'id' | 'title' | 'closedAt' | 'pinnedAt' | 'updatedAt' | 'working' | 'attention'>;
+  /** Area name, when the surface does not already group by area. */
+  areaName?: string;
+  /** Agenda rows only: the hour bucket of a `ScheduledEvent`. */
+  hourLabel?: string;
+  active?: boolean;
+  unread?: boolean;
+  /** Pins "now" so relative times cannot drift between render and assertion. */
+  nowMs?: number;
+  onOpen: (trackId: string) => void;
+  /** Supplying this reveals a pin action. Sidebar actions appear on hover/focus or touch; other variants keep pinned actions visible. */
+  onSetPinned?: (trackId: string, pinned: boolean) => void;
+  /** Supplying this reveals a delete button. The caller owns the confirm. */
+  onDelete?: (trackId: string, origin: DialogOrigin) => void;
+  /** Hosts provide the same personal actions on every workspace surface. */
+  actions?: Readonly<{
+    areaPinned: boolean;
+    onSetPinned: (id: string, pinned: boolean) => void;
+    onSetAreaPinned: (id: string, pinned: boolean) => void;
+    onMarkUnread: (id: string) => void;
+    onShare?: (id: string, origin: DialogOrigin) => void;
+  }>;
+  rowRef?: Ref<HTMLButtonElement>;
+} & ({ variant: 'rail'; presentation: NavigationEntrySpec } | { variant?: Exclude<TrackRowVariant, 'rail'>; presentation?: never })>;
+
+function variantClass(variant: TrackRowVariant): string {
+  switch (variant) {
+    case 'default': return styles.variantDefault;
+    case 'compact': return styles.variantCompact;
+    case 'panel': return styles.variantPanel;
+    case 'rail': return styles.variantRail;
+  }
+}
+
+const MINUTE = 60_000;
+const HOUR = 60 * MINUTE;
+const DAY = 24 * HOUR;
+
+/** Relative time, floored and lower-case. Past 30 days it becomes an absolute date. */
+export function relativeTime(atMs: number, nowMs: number): string {
+  const elapsed = Math.max(0, nowMs - atMs);
+  if (elapsed >= 30 * DAY) {
+    return new Date(atMs).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  }
+  if (elapsed >= 7 * DAY) return `${Math.floor(elapsed / (7 * DAY))}w`;
+  if (elapsed >= DAY) return `${Math.floor(elapsed / DAY)}d`;
+  if (elapsed >= HOUR) return `${Math.floor(elapsed / HOUR)}h`;
+  if (elapsed >= MINUTE) return `${Math.floor(elapsed / MINUTE)}m`;
+  return 'now';
+}
+
+/** The row is a `<button>` and the pin/delete affordances are siblings, not children: nesting interactive elements is invalid HTML. Sidebar pin actions appear on hover/focus or touch; other variants keep the pinned mark visible. */
+export function TrackRow(props: TrackRowProps) {
+  const { track, variant = 'default', areaName, hourLabel, active = false, nowMs,
+    onOpen, onSetPinned, onDelete, actions, rowRef, unread = false } = props;
+  const presentation = props.variant === 'rail' ? navigationRowPresentation(props.presentation) : undefined;
+  const removeRef = useRef<HTMLSpanElement | null>(null);
+  const descriptionId = useId();
+  const pinned = track.pinnedAt !== null;
+  const title = trackDisplayTitle(track.title);
+  const hasPin = onSetPinned !== undefined && !(variant === 'rail' && actions !== undefined);
+  const hasRemove = onDelete !== undefined;
+  const now = nowMs ?? Date.now();
+
+  /* One state from the kernel's activity overlay plus the reader's receipt; the name's activity bit derives from the same value as the dot, never from the open/closed state. `unread` is the button's description, and only in the folded state. */
+  const activity = trackActivityState(track, unread);
+  const activityBit = activityNameBit(activity);
+  const label = `Track ${title}${activityBit ? `, ${activityBit}` : ''}${isClosed(track) ? ', closed' : ''}`
+    + (areaName === undefined ? '' : `, in area ${areaName}`);
+
+  /* Rail and panel status sit in detached trailing slots outside the row button. */
+  const detachedStatus = variant === 'rail' || variant === 'panel';
+
+  return (
+    <div className={[
+      styles.wrapper,
+      variant === 'rail' ? `${styles.wrapperRail} ${presentation!.className} ${actions === undefined ? '' : rowLayout('revealActions')}` : '',
+      variant === 'panel' ? styles.wrapperPanel : '',
+    ].filter(Boolean).join(' ')}>
+      <button
+        ref={rowRef}
+        type="button"
+        data-nc-role="row"
+        className={[
+          styles.row, variantClass(variant), variant === 'rail' ? rowLayout('content') : '',
+          variant === 'rail' && activity !== 'quiet' ? rowLayout('oneAction') : '',
+          variant === 'rail' && hasPin ? rowLayout('twoActions') : '',
+          active ? styles.rowActive : '',
+          hasPin ? styles.hasPin : '', hasRemove ? styles.hasRemove : '', actions !== undefined ? styles.hasMenu : '',
+        ].filter(Boolean).join(' ')}
+        aria-current={active ? 'page' : undefined}
+        aria-label={label}
+        aria-describedby={activity === 'unread' ? descriptionId : undefined}
+        onClick={() => onOpen(track.id)}
+      >
+        {!detachedStatus && (
+          <span className={styles.leadingStatus} aria-hidden="true"><ActivityIndicator state={activity} /></span>
+        )}
+        <span className={styles.titleRow}>
+          {hourLabel !== undefined && <span className={styles.hour}>{hourLabel}</span>}
+          <ListText tone={presentation?.tone ?? "primary"} emphasis={active ? 'selected' : variant === 'default' ? 'medium' : undefined}
+            className={styles.title} title={title} fadeOverflow={variant === 'rail' && (actions !== undefined || activity !== 'quiet')}><TrackTitle track={track} /></ListText>
+        </span>
+        {!detachedStatus && (
+          <span className={styles.age}>{relativeTime(track.updatedAt, now)}</span>
+        )}
+      </button>
+
+      {activity === 'unread' && <span hidden id={descriptionId}>{activityLabelOf('unread')}</span>}
+      {detachedStatus && activity !== 'quiet' && <span className={`${styles.statusSlot} ${variant === 'rail' ? rowLayout('outer') : ''}`} aria-hidden="true">
+        <ActivityIndicator state={activity} />
+      </span>}
+      {hasPin && onSetPinned !== undefined && (
+        <button
+          type="button"
+          data-nc-role="icon"
+          className={`${styles.action} ${styles.pin} ${variant === 'rail' ? rowLayout('inner') : ''} ${pinned ? styles.pinOn : ''}`}
+          aria-label={pinned ? `Unpin ${title}` : `Pin ${title}`}
+          aria-pressed={pinned}
+          onClick={() => onSetPinned(track.id, !pinned)}
+        >
+          <Icon name="arrow-up" size="sm" />
+        </button>
+      )}
+      {actions !== undefined && <span className={`${styles.menuSlot} ${variant === 'rail' ? rowLayout('inner') : ''}`}>
+        <TrackActions track={track} {...actions} onDelete={onDelete} className={styles.menuButton} />
+      </span>}
+      {onDelete !== undefined && (
+        <span ref={removeRef} className={`${styles.action} ${styles.remove} ${variant === 'rail' ? rowLayout('outer') : ''}`}><button
+          type="button"
+          data-nc-role="icon"
+          className={styles.removeButton}
+          aria-label={`Delete ${title}`}
+          onClick={() => onDelete(track.id, { kind: 'anchor', anchor: { ref: removeRef }, unavailable: 'surface-center' })}
+        >
+          <Icon name="delete" size="sm" />
+        </button></span>
+      )}
+    </div>
+  );
+}

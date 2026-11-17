@@ -1,0 +1,15 @@
+@layer features {
+  /* Holds a live table's or live slot's place while its data cannot be shown,
+     so a row keeps its layout around one degraded cell. */
+  .placeholder {
+    min-inline-size: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .text {
+    font-size: var(--font-step-1-size);
+    margin-block: 0 var(--space-2);
+    color: var(--text-3);
+    text-align: start;
+  }
+}

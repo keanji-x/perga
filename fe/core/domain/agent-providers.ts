@@ -1,0 +1,114 @@
+// Whether each Planner provider can run on this server right now, and why not (#1817).
+
+import { z } from 'zod';
+
+import { agentProviderSchema, type AgentProvider } from '../api/schemas.js';
+import type { ApiOperation } from '../api/types.js';
+import type { ProbeText } from './read-failure.js';
+import { NotSentError, writeClassOf, writeFailureOf, type FailureTable, type WriteClass, type WriteText } from './failure-class.js';
+
+const checkedAtSchema = z.number();
+const authenticationNoticeSchema = z.object({
+  kind: z.enum(['sign_in_required', 'refresh_error_reported', 'state_unavailable', 'retry_requested']),
+  text: z.string(),
+  revision: z.string(),
+}).nullable();
+
+/**
+ * One provider's answer. `reason` is the server's own sentence with its fix, present exactly when the
+ * provider is not `ready`; `not_configured` is a backend this server was not started with.
+ */
+export const providerAvailabilitySchema = z.discriminatedUnion('status', [
+  z.object({ provider: agentProviderSchema, status: z.literal('ready'), reason: z.null(), checked_at_ms: checkedAtSchema, authentication_method: z.string().nullable(), authentication_notice: authenticationNoticeSchema }),
+  z.object({ provider: agentProviderSchema, status: z.literal('unavailable'), reason: z.string(), checked_at_ms: checkedAtSchema, authentication_method: z.string().nullable(), authentication_notice: authenticationNoticeSchema }),
+  z.object({ provider: agentProviderSchema, status: z.literal('not_configured'), reason: z.string(), checked_at_ms: checkedAtSchema, authentication_method: z.string().nullable(), authentication_notice: authenticationNoticeSchema }),
+]);
+
+export type ProviderAvailability = z.infer<typeof providerAvailabilitySchema>;
+
+export const agentProvidersSchema = z.array(providerAvailabilitySchema);
+
+/** `GET /api/agent-providers`; `recheck` runs every check again instead of reading the server's 30 s cache. */
+export function agentProvidersOperation(recheck: boolean): ApiOperation<ProviderAvailability[]> {
+  return {
+    method: 'GET',
+    path: recheck ? '/api/agent-providers?refresh=true' : '/api/agent-providers',
+    responseSchema: agentProvidersSchema,
+  };
+}
+
+/** A failed Recheck, a read-only probe read by `probeFailureText`; the previous answer stays on screen either way. */
+export const RECHECK_TEXT: ProbeText = Object.freeze({ answered: 'The recheck failed.', unfinished: 'The recheck did not complete. Try again.' });
+
+/** Availability advice for fresh blank creation; the server owns admission of every shape. */
+export function unavailableCreationNote(provider: string): string {
+  return `A track can still be created; it runs once ${provider} is back.`;
+}
+
+/** `provider`'s entry, or `null` when the answer is not in yet or does not name it. */
+export function availabilityOf(
+  answers: readonly ProviderAvailability[] | undefined,
+  provider: AgentProvider,
+): ProviderAvailability | null {
+  return answers?.find((answer) => answer.provider === provider) ?? null;
+}
+
+export const authenticationRetryResponseSchema = z.object({
+  status: z.literal('retry_requested'),
+  requested_revision: z.string(),
+  recovery_notices: z.array(z.object({ card_id: z.string(), track_id: z.string(), title: z.string(), text: z.string() })),
+});
+export type AuthenticationRetryResponse = z.infer<typeof authenticationRetryResponseSchema>;
+/** Owner authorizes the original queued messages to retry after server-side sign-in. */
+export function codexAuthenticationRetryOperation(revision: string): ApiOperation<AuthenticationRetryResponse> {
+  return { method: 'POST', path: '/api/agent-providers/codex/retry',
+    body: { expected_revision: revision }, responseSchema: authenticationRetryResponseSchema };
+}
+
+/** Definite refusals precede the durable rearm. A 503 may follow its commit, so it is unknown. */
+export const AUTHENTICATION_RETRY_FAILURES: FailureTable<WriteClass> = Object.freeze({
+  rules: Object.freeze([Object.freeze({ status: Object.freeze([400, 403, 409]), is: 'refused' as const })]),
+  unauthorized: 'refused', otherwise: 'unknown',
+});
+export const AUTHENTICATION_RETRY_TEXT: WriteText = Object.freeze({
+  refused: 'The retry was not allowed. Read the current provider status before trying again.',
+  unknown: 'The retry could not be confirmed. Read the current provider status before trying again.',
+});
+export function authenticationRetryFailureText(error: unknown): string {
+  if (writeFailureOf(error) instanceof NotSentError) return 'Not sent. Reconnect before retrying queued messages.';
+  return writeClassOf(error, AUTHENTICATION_RETRY_FAILURES) === 'refused'
+    ? AUTHENTICATION_RETRY_TEXT.refused : AUTHENTICATION_RETRY_TEXT.unknown;
+}
+
+/** Backend-owned managed conversation capabilities; availability is the same cached check. */
+export const managedProviderAvailabilitySchema = z.object({
+  accepts_unavailable_blank_track: z.boolean(),
+  availability: providerAvailabilitySchema,
+  capabilities: z.object({
+    managed_conversation: z.boolean(),
+    steer: z.boolean(),
+    images: z.boolean(),
+    manual_compact: z.boolean(),
+    history_replacement: z.boolean(),
+    requires_ready_availability: z.boolean(),
+  }),
+});
+export type ManagedProviderAvailability = z.infer<typeof managedProviderAvailabilitySchema>;
+
+/** Provider menus consume this response instead of maintaining an Assistant provider list. */
+export function managedProvidersOperation(recheck: boolean): ApiOperation<ManagedProviderAvailability[]> {
+  return {
+    method: 'GET',
+    path: recheck ? '/api/agent-providers/managed?refresh=true' : '/api/agent-providers/managed',
+    responseSchema: z.array(managedProviderAvailabilitySchema),
+  };
+}
+
+/** A picker can offer only a declared managed backend. This does not describe Planner create admission. */
+export function managedProviderProblem(answers: readonly ManagedProviderAvailability[] | undefined, provider: AgentProvider): string | null {
+  const answer = answers?.find(({ availability }) => availability.provider === provider);
+  if (answer === undefined) return 'Managed provider capabilities are unavailable. Reconnect before sending.';
+  if (!answer.capabilities.managed_conversation) return 'This provider does not support managed conversations.';
+  return !answer.capabilities.requires_ready_availability || answer.availability.status === 'ready'
+    ? null : answer.availability.reason;
+}

@@ -1,0 +1,125 @@
+import { historicalConversationPage, conversationCardId, historicalConversationRun } from './conversation-read-data.ts';
+import { initialReceiptFor } from './initial-input-fixture.ts';
+import { prepareReportDocument } from '../../features/report/document/preparation.ts';
+import { WEB_COMPAT_VERSION } from '../providers/public.tsx';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { createMemoryHistory, RouterProvider } from '@tanstack/react-router';
+import { render } from '@testing-library/react';
+import type { AgentProvider } from '../../../../core/api/generated/wire.ts';
+import type { ApiRequest, ApiTransportPort } from '../../../../core/api/types.ts';
+import type { ManagedProviderAvailability } from '../../../../core/domain/agent-providers.ts';
+import { trackConversationCardId, type Conversation } from '../../../../core/domain/conversation.ts';
+import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
+import { createAppRouter, APP_BASEPATH } from './public.tsx';
+import { bootTestCardRuntime } from './test-card-runtime.ts';
+import { ThemeProvider } from '../theme/public.tsx';
+
+/** Real router/query/draft/store over explicit server declarations, without CLI credentials. */
+export function renderAssistantProviderFixture(options: {
+  answers: ManagedProviderAvailability[];
+  listRead?: 'pending' | 'failed';
+  failFirstCreate?: boolean;
+  landFirstCreate?: boolean;
+  hideLanded?: boolean;
+  existingProvider?: AgentProvider;
+  dormant?: boolean;
+  assistantProviders?: boolean;
+  mobile?: boolean;
+  webCompatVersion?: number;
+  catalogUnavailable?: boolean;
+  runAttachmentsSupported?: boolean;
+}) {
+  const requests: ApiRequest[] = [];
+  let attempts = 0;
+  let restarted = false;
+  let selectedModel: string | null = null;
+  const track = { workspace: { isolation: 'none' as const, kind: 'attached' as const, path: '/tmp', frozen_at: null }, id: 'provider-track', area_id: 'area', title: 'Provider discussion', sort: 1,
+    cwd: '/tmp', pinned_at: null, closed_at: null, created_at: 1, updated_at: 2 };
+  const rows: Conversation[] = options.existingProvider === undefined ? [] : [{
+    id: 'dormant', trackId: track.id, title: 'Saved Assistant', kind: 'track-assistant',
+    provider: options.existingProvider, state: null, updatedAt: 2, archivedAt: null, lastTurnCompletedAt: null,
+  }];
+  const catalog = { models: [{ id: 'selected', model: 'selected', display_name: 'Selected model', resolved_model: null,
+    description: '', is_default: false, default_reasoning_effort: 'high',
+    supported_reasoning_efforts: [{ reasoning_effort: 'low', description: 'Quick' }, { reasoning_effort: 'high', description: 'Thorough' }] }],
+    source: 'live', fetched_at_ms: 1, default_source: 'unknown',
+    default: { model: null, reasoning_effort: null, supported_reasoning_efforts: null } };
+  const transport: ApiTransportPort = { async send(request) {
+    await Promise.resolve();
+    requests.push(request);
+    let body: unknown = [];
+    let status = 200;
+    if (request.path === '/api/version') body = { assistantProviders: options.assistantProviders ?? true,
+      conversationInitialInput: true, conversationCreateModel: true, conversationSide: true, webCompatVersion: options.webCompatVersion ?? WEB_COMPAT_VERSION, minWebCompatVersion: options.webCompatVersion ?? WEB_COMPAT_VERSION,
+      syncEventVersion: 20, dbInstanceId: 'provider-browser' };
+    if (request.path.startsWith('/api/agent-providers/managed')) body = options.answers;
+    if (request.path.startsWith('/api/models?')) body = options.catalogUnavailable ? { ...catalog, models: [], source: 'unavailable' } : catalog;
+    if (request.path === '/api/areas') body = [{ id: 'area', name: 'Work', color: '#123456', sort: 1, kind: 'user', created_at: 1, updated_at: 1 }];
+    if (request.path === '/api/areas/area/tracks') body = [track];
+    if (request.path === '/api/settings') body = {};
+    if (request.path === `/api/tracks/${track.id}`) body = { track, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true,
+      cards: rows.map(row => ({ id: row.id, track_id: track.id, title: row.title, kind: 'codex', sort: 1,
+        payload: { harness_profile: 'assistant', assistant_provider: row.provider }, deletable: false, created_at: 1, updated_at: 2 })), overlays: [] };
+    if (request.path === `/api/tracks/${track.id}/conversations`) {
+      if (request.method === 'POST') {
+        attempts += 1;
+        if (options.failFirstCreate && !options.landFirstCreate && attempts === 1) return { status: 503, statusText: 'Unavailable', body: { code: 'service_unavailable', error: 'Unconfirmed' } };
+        const input = request.body as { provider: AgentProvider; side?: { source_card_id: string } };
+        const created: Conversation = { id: trackConversationCardId(track.id, request.headers?.['Idempotency-Key'] ?? ''),
+          trackId: track.id, provider: input.provider, title: 'Created Assistant', kind: 'track-assistant',
+          state: null, updatedAt: 3, archivedAt: null, lastTurnCompletedAt: null,
+          ...(input.side === undefined ? {} : { sourceCardId: input.side.source_card_id }) };
+        rows.push(created); body = { ...created, initialInput: { kind: 'known', receipt: initialReceiptFor(request, 'first-entry', 0) } }; status = 201;
+        if (options.landFirstCreate && attempts === 1) return { status: 503, statusText: 'Unavailable', body: { code: 'service_unavailable', error: 'Unconfirmed' } };
+      } else {
+        if (options.listRead === 'pending') return new Promise(() => {});
+        if (options.listRead === 'failed') throw new Error('List unavailable');
+        body = options.hideLanded ? [] : rows.map(row => ({ ...row }));
+      }
+    }
+    if (request.method === 'PATCH' && request.path === `/api/tracks/${track.id}/conversations/dormant/archive`) {
+      const index = rows.findIndex(row => row.id === 'dormant');
+      if (index >= 0) rows[index] = { ...rows[index], archivedAt: (request.body as { archived: boolean }).archived ? 123 : null };
+      status = 204; body = undefined;
+    }
+    if (request.path.endsWith('/initial-input')) {
+      const post = requests.find(candidate => candidate.method === 'POST' && candidate.path.endsWith('/conversations')
+        && candidate.headers?.['Idempotency-Key'] === request.headers?.['Idempotency-Key']);
+      if (post === undefined) throw new Error('No original creation request');
+      const receipt = initialReceiptFor(post, 'first-entry', 0);
+      body = { kind: 'queued', receipt, runtimeId: 'runtime', entryId: receipt.entryId, rev: 0,
+        text: (post.body as { text: string }).text, textSha256: receipt.textSha256 };
+    }
+    const cardId = request.path.split('/')[3];
+    if (request.path.includes('/planner/run?contract=conversation_v1')) body = historicalConversationRun({ card_id: cardId, worker_session_id: restarted ? 'replacement' : null,
+      phase: 'idle', model: selectedModel, reasoning_effort: null, permission_mode: null, blocked_reason: null,
+      attachments_supported: options.runAttachmentsSupported ?? false, manual_compact_supported: false, recovery: null, compact_outcome: null,
+      context_usage_invalidated: false, running_turn: null }, 'idle', options.answers.find(answer => answer.availability.provider === rows.find(row => row.id === cardId)?.provider)?.capabilities.history_replacement === true);
+    if (request.path.endsWith('/planner/model')) {
+      const input = request.body as { model: string | null; reasoning_effort: string | null };
+      selectedModel = input.model;
+      body = { card_id: cardId, ...input, effort_adjusted: false, unknown_model: false };
+    }
+    if (request.path.endsWith('/planner/input')) {
+      if (options.dormant && !restarted) return { status: 409, statusText: 'Conflict', body: {
+        code: 'planner_harness_dormant', error: 'Start a fresh session' } };
+      body = { card_id: cardId, worker_session_id: 'replacement' };
+    }
+    if (request.path.endsWith('/planner/restart')) {
+      restarted = true;
+      body = { card_id: cardId, terminal_id: '', new_thread_id: 'replacement-thread' };
+    }
+    if (request.path.includes('/harness/items') && cardId === 'dormant') body = historicalConversationPage(conversationCardId(request.path), [{ id: 1, worker_session_id: 'old',
+      card_id: cardId, track_id: track.id, thread_id: 'old-thread', turn_id: 'last-turn', turn_error_text: null,
+      item_uuid: null, item_type: 'agentMessage', method: 'item/completed', created_at_ms: 1,
+      params: JSON.stringify({ item: { id: 'reply', type: 'agentMessage', text: 'Saved reply' } }) }], null);
+    return { status, statusText: 'OK', body };
+  } };
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const router = createAppRouter({ prepareReport: prepareReportDocument, transport, client, cards: bootTestCardRuntime(),
+    unauthorized: createUnauthorizedChannel({ enqueue: task => task() }), onSignOut: () => undefined });
+  router.update({ history: createMemoryHistory({ initialEntries: [`${APP_BASEPATH}/track/${track.id}${options.mobile ? "" : "?panel=conversations"}`] }) });
+  const container = document.createElement('div'); container.id = 'root'; document.body.append(container);
+  render(<QueryClientProvider client={client}><ThemeProvider><RouterProvider router={router} /></ThemeProvider></QueryClientProvider>, { container });
+  return { requests, client, rows };
+}

@@ -1,0 +1,202 @@
+@layer features {
+  /* Bleed: the list pulls back by the row's own fill padding so the text lands
+     on the card's inset with the module's head label, while the fill keeps 4px
+     of air from the card edge. See the scale note in ui/panel-card. */
+  .list {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    min-inline-size: 0;
+    margin-inline: calc(var(--space-1) * -1);
+    /* Eight rows, then it scrolls. A panel module has no business setting the
+       height of the page it sits next to, and an unbounded list does exactly
+       that: one busy area pushed the conversation module below the fold and
+       moved it every time a track appeared. Eight is the count at which the last
+       row is still findable by eye rather than by reading — past that you are
+       scanning either way, so scrolling costs nothing. */
+    max-block-size: calc(var(--row-h) * 8);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+
+  /* The row recipe, at the panel's density. Same shape as every other row in
+     the app: no border, no background of its own, a 6px leading state column
+     and a fixed trailing column for the age (§6.0). */
+  /* One text column. The state dot moved to the trailing edge (see
+     `.statusSlot`) and the age is gone with it, so the label is the whole row —
+     the same shape a track row takes in a panel. */
+  .archiveNotice {
+    padding: var(--space-3);
+    color: var(--text-2);
+    font-size: var(--type-ui-size);
+  }
+
+  .archiveNotice button {
+    color: var(--text);
+    padding-block: var(--space-2);
+    cursor: pointer;
+  }
+
+  .archiveError {
+    color: var(--text-2);
+    font-size: var(--type-metadata-size);
+    padding: var(--space-2);
+  }
+
+  .actions {
+    position: absolute;
+    inset-block-start: 0;
+    inset-inline-end: 0;
+    display: flex;
+    align-items: center;
+    min-block-size: var(--row-h);
+  }
+
+  .item {
+    position: relative;
+  }
+
+  .row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    align-items: center;
+    inline-size: 100%;
+    min-block-size: var(--row-h);
+    padding-inline-start: var(--space-1);
+    padding-inline-end: calc(var(--space-1) + var(--control-h-sm));
+    border-radius: var(--radius-highlight);
+    text-align: start;
+    cursor: pointer;
+    transition: background-color var(--motion-quick) var(--ease-feedback);
+  }
+
+  .row:hover {
+    background: var(--overlay-hover);
+  }
+
+  .row:focus-visible {
+    outline-offset: -2px;
+  }
+
+  /* Fill + weight, no border — §5.1's two channels, same as every other
+     selected row in the app. */
+  .rowActive {
+    background: var(--selection-bg);
+  }
+
+  .rowActive:hover {
+    background: var(--selection-hover-bg);
+  }
+
+  /* Centred inside the 20px trailing slot the module head's `+` also occupies:
+     (20 − 6) / 2 = 7 from the list's edge puts the dot's centre on the `+`'s.
+     One trailing column for the whole module. */
+  .statusSlot {
+    display: grid;
+    place-items: center;
+    inline-size: var(--dot-sm);
+    position: absolute;
+    inset-block-start: 50%;
+    inset-inline-end: calc((var(--control-h-sm) - var(--dot-sm)) / 2);
+    translate: 0 -50%;
+  }
+
+  .withActions .row {
+    padding-inline-end: calc(var(--space-2) + var(--control-h-sm) * 2);
+  }
+
+  .withActions .statusSlot {
+    inset-inline-end: calc(var(--control-h-sm) + (var(--control-h-sm) - var(--dot-sm)) / 2);
+  }
+
+  /* Two things on one line, in the order the aria-label says them: what the
+     conversation is called, then — on the routes that show rows from more than
+     one track — where it lives. Two ranks and two tones, not two columns: the
+     track is the crumb (§3.3's `--text-xs` job), so the row still reads as one
+     name with a note after it, and a list of conversations from one track does
+     not turn into a list of repeated track titles.
+
+     Both truncate. `min-inline-size: 0` on each child is what lets them: a flex
+     item's automatic minimum size is its content, so without it the name would
+     push the track out of the row rather than ellipsing. Neither may be
+     `flex-shrink: 0` — a long name would then clip the track entirely.
+
+     But "share it in proportion to their length", which is what two equal
+     `flex: 0 1 auto` items do, is the wrong rule here, and it brought the
+     defect this pair was written to fix back in another shape. Flex distributes
+     shrinkage **weighted by flex base size**, so the longer item keeps more of
+     what it asked for: a 60-character track title next to `Assistant` in this
+     270px column takes ~228px and leaves the name ~38px — about five
+     characters. Every row under such a track then reads `Rena…` `Fix …` `Add …`
+     followed by the same long crumb, which is exactly the "N rows a reader
+     cannot tell apart" that `list/public.tsx` describes.
+
+     The row's identity is the conversation's name; the crumb is a note after
+     it. So the crumb gets a bound (`max-inline-size`) rather than a louder
+     shrink factor: a cap is a fact about the layout that holds whatever the two
+     strings happen to be, while a bigger `flex-shrink` only changes the ratio
+     and still hands most of a very long crumb the width. 40% is the largest
+     share that still leaves the name the majority of the line; below its own
+     content width the crumb is not capped at all, so a short crumb next to a
+     long name is unaffected and the name still ellipses first there. */
+  .label {
+    display: flex;
+    gap: var(--space-1);
+    align-items: baseline;
+    min-inline-size: 0;
+    overflow: hidden;
+  }
+
+  .name {
+    min-inline-size: 0;
+    flex: 0 1 auto;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  .track {
+    /* A floor as well as a ceiling, and the floor is about the separator.
+       Shrinkage is weighted by base size, so the *shorter* crumb is the one
+       that gets squeezed to nothing: a one-word track beside a 60-character
+       conversation name is handed about 8px — enough for the `·` below and
+       nothing else. The crumb then reads as a lone dot after the name, which
+       says "something was cut" about a string that would have fitted in two
+       more characters. 6ch is the dot, its 4px gap and about four characters of
+       `--text-xs` — a short track name whole, or a longer one visibly truncated
+       rather than erased. Below its own content width it never binds (a short
+       crumb is simply shown at its size), and it is an order under the 40%
+       ceiling at every width this panel takes, so the two cannot fight. */
+    min-inline-size: 6ch;
+    flex: 0 1 auto;
+    max-inline-size: 40%;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  /* A boundary the eye can find once both halves are ellipsed.
+     `Assis…` followed by 4px and `Very long track title` is two strings only if
+     you already know it is two strings — the size step and the tone step are
+     both small by design (the crumb is meant to be quiet), and an ellipsis at
+     the join removes the one cue a reader had, the word ending. The dot is
+     decorative and is generated content, so it is outside `textContent` and
+     outside the `aria-label` the button already spells out in words; nothing
+     reads it aloud. It sits inside `.track`, so it is clipped with the crumb
+     rather than surviving a crumb that has vanished — and because it is
+     *first*, while clipping happens at the inline end, "clipped with" needed
+     the floor above to be true: without it the dot is the one part of the crumb
+     that always survives. */
+  .track::before {
+    content: '·';
+    margin-inline-end: var(--space-half);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+
+    .row {
+      transition: none;
+    }
+  }
+}

@@ -1,0 +1,164 @@
+import { cleanup, render } from '@testing-library/react';
+import { page } from 'vitest/browser';
+import { afterEach, expect, it, vi } from 'vitest';
+import '../../styles/entry.css';
+import type { Area } from '../../../../core/domain/area.ts';
+import { NEUTRAL_ACTIVITY, type Track } from '../../../../core/domain/track.ts';
+import { deriveTrackPageView } from '../../../../core/view/track-page.ts';
+import { makeDesktopPainter, paintDesktopPanel } from '../../features/track/page/desktop-painter.tsx';
+import { ChatList } from '../../features/chat/list/public.tsx';
+import { PanelCard } from '../../ui/panel-card/public.tsx';
+import { SidebarFixture as Sidebar } from './sidebar-fixture.tsx';
+import { MobileTrackList } from './mobile-track-list.tsx';
+import { withFontRoleProbe } from '../../../../tools/styles/font-role-fixture.ts';
+import { readReceiptsFixture } from '../providers/read-receipts-fixture.tsx';
+
+const receipts = readReceiptsFixture();
+
+afterEach(() => { cleanup(); delete document.documentElement.dataset.theme; });
+
+function draw(selected = false) {
+  const area: Area = { id: 'work', name: 'Work', color: '#5B8DEF', sort: 1, kind: 'user',
+    defaultTemplateId: null, defaultCwd: null, createdAt: 1, updatedAt: 1 };
+  const tracks: Track[] = ['Left first', 'Left second'].map((title, i) => ({
+    id: `track-${i}`, areaId: area.id, title, sort: i, cwd: '/tmp', isolation: 'none', agentCwd: '/tmp',
+    pinnedAt: null, closedAt: null, createdAt: 1, updatedAt: 1, ...NEUTRAL_ACTIVITY,
+  }));
+  const view = deriveTrackPageView({
+    existingCardIds: new Set(['card-0', 'card-1']),
+    cards: ['Card first', 'Card second'].map((title, i) => ({
+      id: `card-${i}`, track_id: 'track-0', title, kind: 'terminal', sort: i, payload: { terminal_presentation: { source: 'manual', in_workbench: true } },
+      deletable: true, created_at: 1, updated_at: 1,
+      runtime: { worker_session_id: `runtime-${i}`, kind: 'terminal', status: 'running' },
+    })),
+    tasks: ['Task first', 'Task second'].map((key, i) => ({
+      blockId: `task-${i}`, key, state: 'ready', declaration: null, status: 'running', statusDetail: null,
+      kind: 'codex', workerCardId: null, pendingReason: null,
+    })),
+    activity: NEUTRAL_ACTIVITY,
+    openableCards: new Set(),
+  });
+  render(receipts.wrap(<div style={{ display: 'flex', gap: 32 }}>
+    <div style={{ inlineSize: 240, background: 'var(--surface-navigation)' }}><Sidebar areas={[area]} tracksByArea={new Map([[area.id, tracks]])}
+      tracks={tracks} currentPath={selected ? '/track/track-0' : '/'} onGo={vi.fn()} onRequestCreateArea={vi.fn()} onRequestEditArea={vi.fn()}
+      onDeleteArea={vi.fn()} onNewTrack={vi.fn()} onSetPinned={vi.fn()} onDeleteTrack={vi.fn()}
+      onOpenSettings={vi.fn()} onOpenPlugins={vi.fn()} onSignOut={vi.fn()} collapsed={false} onToggleCollapsed={vi.fn()} /></div>
+    <div style={{ inlineSize: 300 }}><PanelCard>{paintDesktopPanel(makeDesktopPainter({ progressDisclosure: { open: true, onOpenChange: vi.fn() }, taskSummary: '2',
+      cardEntries: <ChatList activeId={selected ? 'chat-0' : null} showTrack={false} onOpen={vi.fn()} cards={{}}
+        conversations={['Chat first', 'Chat second'].map((title, i) => ({ provider: 'codex' as const, id: `chat-${i}`, trackId: 'track-0', title,
+          kind: 'track-assistant', state: 'idle', updatedAt: 1 }))} />,
+    }), { ...view, rowModules: view.desktop.rowModules })}</PanelCard></div>
+  </div>));
+  return { tracks };
+}
+function element(node: HTMLElement | null) {
+  expect(node).not.toBeNull();
+  return node!;
+}
+function typography(node: HTMLElement) {
+  const style = getComputedStyle(node);
+  return [style.fontFamily, style.fontSize, style.fontWeight, style.lineHeight, style.letterSpacing, style.color];
+}
+
+it.each(['light', 'dark'])('uses the same named type hierarchy in both %s side panels', async theme => {
+  await page.viewport(1400, 900);
+  draw(); document.documentElement.dataset.theme = theme;
+  const name = element(document.querySelector<HTMLElement>('[title="Left first"]'));
+  const primary = [element(document.querySelector<HTMLElement>('[data-nc-module="cards"] [data-nc-field="title"]')),
+    element(document.querySelector<HTMLElement>('[data-nc-module="work"] [data-nc-field="title"]'))];
+  const assertRole = (node: HTMLElement, role: Parameters<typeof withFontRoleProbe>[0]) => {
+    withFontRoleProbe(role, document.documentElement, expected => {
+      expect(getComputedStyle(node)).toMatchObject(expected);
+    });
+  };
+  expect(getComputedStyle(name).fontFamily).toBe(getComputedStyle(primary[0]).fontFamily);
+  expect(getComputedStyle(name).fontSize).toBe('13px');
+  for (const node of primary) assertRole(node, '--type-content');
+  const group = element(document.querySelector<HTMLElement>('[title="Work"]'));
+  assertRole(group, '--type-content');
+  assertRole(element(document.querySelector<HTMLElement>('[title="Today"]')), '--type-content');
+  const inventoryGroup = element(document.querySelector<HTMLElement>('[data-nc-work-inventory] h2'));
+  assertRole(inventoryGroup, '--type-metadata');
+  expect(typography(element(document.querySelector<HTMLElement>('[aria-label="Conversation Chat first"] > span > span')))).toEqual(typography(primary[0]));
+  const workbenchTitle = element(document.querySelector<HTMLElement>('section[aria-label="Workbench"] h2'));
+  const progressTitle = element(document.querySelector<HTMLElement>('[data-nc-work-inventory] h2'));
+  expect(workbenchTitle.textContent).toBe('Workbench');
+  expect(progressTitle.textContent).toBe('Progress');
+  assertRole(workbenchTitle, '--type-metadata');
+  assertRole(progressTitle, '--type-metadata');
+
+});
+
+it('uses configured sidebar density and uses compact single-line contextual tool entries', async () => {
+  await page.viewport(1400, 900); draw();
+  const today = element(document.querySelector<HTMLElement>('[aria-current="page"]'));
+  const recipes = element(document.querySelector<HTMLElement>('[title="Recipes"]')).closest('button')!;
+  const area = element(document.querySelector<HTMLElement>('[aria-label="Collapse area Work"]'));
+  const rows = [
+    element(document.querySelector<HTMLElement>('[aria-label^="Track Left first"]')),
+    element(document.querySelector<HTMLElement>('[data-nc-module="cards"] [data-nc-row]')),
+    element(document.querySelector<HTMLElement>('[data-nc-module="work"] [data-nc-row]')),
+    element(document.querySelector<HTMLElement>('[aria-label="Conversation Chat first"]')),
+    element(document.querySelector<HTMLElement>('[data-nc-work-inventory] button[aria-expanded]')),
+  ];
+  for (const [index, row] of rows.entries()) expect(row.getBoundingClientRect().height).toBeCloseTo(index === 0 ? 30 : 28, 0);
+  expect(today.getBoundingClientRect().height).toBeCloseTo(30, 0);
+  expect(recipes.getBoundingClientRect().height).toBeCloseTo(30, 0);
+  expect(area.getBoundingClientRect().height).toBeCloseTo(30, 0);
+  const panelHeader = element(document.querySelector<HTMLElement>('[data-nc-module="cards"] section[aria-label="Workbench"] h2')).parentElement!;
+  expect(element(document.querySelector<HTMLElement>('[data-nc-module="cards"] [data-nc-card-inventory]')).getBoundingClientRect().top
+    - panelHeader.getBoundingClientRect().bottom).toBeCloseTo(0, 0);
+
+  expect(element(document.querySelector<HTMLElement>('[title="Work"]')).getBoundingClientRect().left).toBeCloseTo(element(document.querySelector<HTMLElement>('[title="Left first"]')).getBoundingClientRect().left, 1);
+  const pairs = [
+    [element(document.querySelector<HTMLElement>('[aria-label^="Track Left first"]')), element(document.querySelector<HTMLElement>('[aria-label^="Track Left second"]'))],
+    [element(document.querySelector<HTMLElement>('[data-nc-row="tool:card-0"]')), element(document.querySelector<HTMLElement>('[data-nc-row="tool:card-1"]'))],
+    [element(document.querySelector<HTMLElement>('[data-nc-row="task:task-0"]')), element(document.querySelector<HTMLElement>('[data-nc-row="task:task-1"]'))],
+    [element(document.querySelector<HTMLElement>('[aria-label="Conversation Chat first"]')), element(document.querySelector<HTMLElement>('[aria-label="Conversation Chat second"]'))],
+  ];
+  for (const [index, [first, second]] of pairs.entries()) expect(second.getBoundingClientRect().top - first.getBoundingClientRect().top).toBeCloseTo(index === 0 ? 30 : 28, 0);
+
+});
+
+// Rail selection lifts onto the card material while in-card lists use selection tokens; both stay opaque.
+it.each(['light', 'dark'])('uses opaque elevated selection on the rail and opaque selection tokens on lists (%s)', async theme => {
+  document.documentElement.dataset.theme = theme;
+  await page.viewport(1280, 900);
+  const { tracks } = draw(true);
+  const mobileView = render(<MobileTrackList tracks={tracks} currentTrackId={tracks[0].id}
+    onOpenTrack={vi.fn()} isUnread={() => false} />);
+  const mobile = element(mobileView.container.querySelector<HTMLElement>('[aria-current="page"]'));
+  const mobileRow = mobile.closest('li')!;
+  const rail = element(document.querySelector<HTMLElement>('[aria-label^="Track Left first"]'));
+  const chat = element(document.querySelector<HTMLElement>('[aria-label="Conversation Chat first"]'));
+  const probe = render(<div />).container.firstElementChild as HTMLDivElement;
+  const expected = (value: string) => { probe.style.background = value; return getComputedStyle(probe).backgroundColor; };
+  const paint = (node: HTMLElement, pseudo?: string) => getComputedStyle(node, pseudo).backgroundColor;
+  await page.elementLocator(document.body).hover();
+  const railSelected = expected('var(--surface-card)');
+  const selected = expected('var(--selection-bg)');
+  await expect.poll(() => paint(rail, '::before')).toBe(railSelected);
+  await expect.poll(() => paint(chat)).toBe(selected);
+  expect(paint(mobileRow)).toBe(selected);
+  for (const color of [railSelected, selected]) {
+    expect(color).not.toBe('rgba(0, 0, 0, 0)');
+    expect(color).not.toMatch(/rgba\(|\//);
+  }
+  const railSelectedHover = expected('color-mix(in srgb, var(--text) 2.5%, var(--surface-card))');
+  const selectedHover = expected('var(--selection-hover-bg)');
+  await page.elementLocator(rail).hover();
+  await expect.poll(() => paint(rail, '::before')).toBe(railSelectedHover);
+  await page.elementLocator(chat).hover();
+  await expect.poll(() => paint(chat)).toBe(selectedHover);
+  expect(getComputedStyle(chat).backgroundImage).toBe('none');
+  await page.elementLocator(mobile).hover();
+  await expect.poll(() => paint(mobileRow)).toBe(selectedHover);
+  expect(paint(mobile)).toBe('rgba(0, 0, 0, 0)');
+  cleanup();
+  draw(false);
+  const today = element(document.querySelector<HTMLElement>('[aria-current="page"]'));
+  await page.elementLocator(document.body).hover();
+  await expect.poll(() => paint(today)).toBe(railSelected);
+  await page.elementLocator(today).hover();
+  await expect.poll(() => paint(today)).toBe(railSelectedHover);
+});

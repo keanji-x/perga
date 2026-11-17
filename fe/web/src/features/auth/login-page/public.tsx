@@ -1,0 +1,66 @@
+import { useCallback, useId, useLayoutEffect, useRef, type ReactNode } from 'react';
+import { useState } from '../../../ui/state/public.ts';
+import styles from './login-page.module.css';
+import type { SessionIdentity } from '../../../../../core/api/auth.ts';
+
+export type LoginPageProps = Readonly<{
+  login: (username: string, password: string, signal: AbortSignal) => Promise<SessionIdentity | null>;
+  reload: () => void;
+  onBackToPairing?: () => void;
+}>;
+
+export function ConnectionNotice({ title, detail, busy, reconnectHref, children }: Readonly<{
+  title: string; detail: string; busy: boolean; reconnectHref: string; children?: ReactNode;
+}>) {
+  return <main className={styles.page}>
+    <section className={styles.form} aria-label={title}>
+      <h1>{title}</h1><p role={busy ? 'status' : undefined}>{detail}</p>
+      <a href={reconnectHref}>返回连接页</a>
+      {children}
+    </section>
+  </main>;
+}
+
+export function LoginPage({ login, reload, onBackToPairing }: LoginPageProps) {
+  const prefix = useId();
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const pending = useRef<AbortController | null>(null);
+  const cancel = useCallback(() => {
+    const attempt = pending.current; pending.current = null; attempt?.abort();
+  }, []);
+  useLayoutEffect(() => cancel, [cancel]);
+
+  return <main className={styles.page}>
+    <form className={styles.form} onSubmit={(event) => {
+      event.preventDefault();
+      if (pending.current !== null) return;
+      const attempt = new AbortController(); pending.current = attempt;
+      setSubmitting(true); setError(null);
+      void login(username, password, attempt.signal).then((result) => {
+        if (attempt.signal.aborted) return;
+        if (!result) { setError('Wrong username or password.'); setSubmitting(false); return; }
+        // A reload resets every persisted and in-memory cache under the new identity.
+        reload();
+      }).catch((cause: unknown) => {
+        if (attempt.signal.aborted) return;
+        setError(cause instanceof Error && cause.message ? cause.message : 'Sign-in failed.');
+        setSubmitting(false);
+      }).finally(() => {
+        if (pending.current === attempt) pending.current = null;
+      });
+    }}>
+      <h1>Sign in</h1>
+      {error !== null && <p role="alert" className={styles.error}>{error}</p>}
+      <label htmlFor={`${prefix}-username`}>Username</label>
+      {/* eslint-disable-next-line jsx-a11y/no-autofocus -- Single-purpose login screen intentionally starts at its first field. */}
+      <input id={`${prefix}-username`} name="username" autoFocus autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} />
+      <label htmlFor={`${prefix}-password`}>Password</label>
+      <input id={`${prefix}-password`} name="password" type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} />
+      <button type="submit" disabled={submitting}>{submitting ? 'Signing in…' : 'Sign in'}</button>
+      {onBackToPairing && <button type="button" onClick={() => { cancel(); onBackToPairing(); }}>返回扫码连接</button>}
+    </form>
+  </main>;
+}

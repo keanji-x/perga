@@ -1,0 +1,41 @@
+/*
+ * The sidebar Track groups' shared reveal control. All other group geometry lives
+ * with the rest of the shell, in `shell.module.css`.
+ */
+@layer features {
+  /*
+   * `Show N more` / `Show less` sits in the Track list's column: the rail
+   * Track row's height and its leading gutter (4 + 20 + 4), so the text starts
+   * where every Track title starts. Muted, like the other in-list action, because
+   * it is not a Track.
+   */
+  .showMore {
+    display: flex;
+    align-items: center;
+    margin-inline-start: var(--navigation-selection-inset, 0px);
+    inline-size: calc(100% - var(--navigation-selection-inset, 0px));
+    min-block-size: var(--navigation-entry-height, 1.875rem);
+    padding-block: 0;
+    padding-inline-start: calc(var(--navigation-label-start) - var(--navigation-selection-inset, 0px));
+    padding-inline-end: var(--space-2);
+    border-radius: var(--radius-highlight);
+    color: var(--text-3);
+    text-align: start;
+    cursor: pointer;
+  }
+
+  .showMoreLabel {
+    color: inherit;
+  }
+
+  .showMore:hover,
+  .showMore:focus-visible {
+    color: var(--text);
+    background: var(--overlay-hover);
+  }
+
+  /* Inset, because the list runs the full width of a rail that clips. */
+  .showMore:focus-visible {
+    outline-offset: -2px;
+  }
+}

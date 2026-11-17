@@ -1,0 +1,91 @@
+import type { z } from 'zod';
+import type { RecoveryPermit } from '../domain/recovery/access.js';
+
+/** Platform-neutral subset used to relay request cancellation to an adapter. */
+export type ApiAbortSignal = Readonly<{
+  aborted: boolean;
+  addEventListener(type: 'abort', listener: () => void, options?: { once?: boolean }): void;
+  removeEventListener(type: 'abort', listener: () => void): void;
+}>;
+
+export type ApiMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+
+/** Platform adapters must preserve session cookies on every API request. */
+export type ApiRequest = Readonly<{
+  method: ApiMethod;
+  path: string;
+  credentials: 'include';
+  headers?: Readonly<Record<string, string>>;
+  body?: unknown;
+  signal?: ApiAbortSignal;
+}>;
+
+export type ApiTransportResponse = Readonly<{
+  status: number;
+  statusText: string;
+  body: unknown;
+}>;
+
+/** A ticket is captured before accepting an intent, never when draining a queue. */
+export interface RecoveryAdmission {
+  capture(): RecoveryPermit;
+  checkpoint(): () => void;
+  scope(permit: RecoveryPermit): ApiTransportPort;
+}
+
+/** Browser, native, and test ends implement transport; core never calls a platform API. */
+export interface ApiTransportPort {
+  /** Present on bundled business transports; captures immutable intent admission. */
+  readonly recovery?: RecoveryAdmission;
+  send(request: ApiRequest): Promise<ApiTransportResponse>;
+}
+
+export type UnauthorizedFailure = Readonly<{
+  kind: 'unauthorized';
+  status: 401;
+  code: string;
+  message: string;
+  body?: unknown;
+}>;
+
+export type HttpFailure = Readonly<{
+  kind: 'http';
+  status: number;
+  code: string;
+  message: string;
+  /**
+   * The dotted path of the one request field the refusal is about (`config.retries`), whose reason `message` then
+   * is. Absent on every refusal of the request as a whole, the only answers the server sends without it.
+   */
+  field?: string;
+  body?: unknown;
+}>;
+
+export type TransportFailure = Readonly<{
+  kind: 'transport';
+  message: string;
+  cause?: unknown;
+}>;
+
+export type ApiDecodeFailure = Readonly<{
+  kind: 'decode';
+  message: string;
+  cause?: unknown;
+}>;
+
+export type ApiFailure = UnauthorizedFailure | HttpFailure | TransportFailure | ApiDecodeFailure;
+
+/** Mirrors core/state's data-valued `status: failed` error channel. */
+export type ApiResult<T> =
+  | Readonly<{ status: 'ready'; value: T }>
+  | Readonly<{ status: 'failed'; error: ApiFailure }>;
+
+export type ApiOperation<T> = Readonly<{
+  method: ApiMethod;
+  path: string;
+  responseSchema: z.ZodType<T>;
+  body?: unknown;
+  /** Request headers the operation itself needs, merged over the `content-type` the client adds for a body. */
+  headers?: Readonly<Record<string, string>>;
+  signal?: ApiAbortSignal;
+}>;

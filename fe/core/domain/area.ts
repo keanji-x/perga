@@ -1,0 +1,211 @@
+// Area: the workspace grouping a track belongs to. Wire decode + the pure helpers every end shares.
+
+import { z } from 'zod';
+
+import { areaSchema } from '../api/schemas.js';
+import type { ApiOperation } from '../api/types.js';
+import type { FailureTable, WriteClass, WriteText } from './failure-class.js';
+
+export type AreaKind = z.infer<typeof areaSchema>['kind'];
+export type AreaWire = z.infer<typeof areaSchema>;
+
+export type Area = Readonly<{
+  id: string;
+  name: string;
+  color: string;
+  sort: number;
+  kind: AreaKind;
+  defaultTemplateId: string | null;
+  defaultCwd: string | null;
+  createdAt: number;
+  updatedAt: number;
+}>;
+
+export function toArea(wire: AreaWire): Area {
+  return {
+    id: wire.id,
+    name: wire.name,
+    color: wire.color,
+    sort: wire.sort,
+    kind: wire.kind,
+    defaultTemplateId: wire.default_template_id,
+    defaultCwd: wire.default_cwd,
+    createdAt: wire.created_at,
+    updatedAt: wire.updated_at,
+  };
+}
+
+/**
+ * Chooses the newest authoritative snapshot of one Area. Equal versions deliberately accept
+ * the incoming carrier: historical event logs can contain same-millisecond updates.
+ */
+export function newestArea(current: Area, incoming: Area): Area {
+  return current.updatedAt > incoming.updatedAt ? current : incoming;
+}
+
+export function areaListOperation(): ApiOperation<AreaWire[]> {
+  return { method: 'GET', path: '/api/areas', responseSchema: z.array(areaSchema) };
+}
+
+/** The system area must never reach a user-visible surface; this is the client-side half of the server filter. */
+export function visibleAreas(areas: readonly Area[]): Area[] {
+  return areas.filter((area) => area.kind === 'user');
+}
+
+export function areaOf(areaId: string, areas: readonly Area[]): Area | undefined {
+  return areas.find((area) => area.id === areaId);
+}
+
+export function sortedAreas(areas: readonly Area[]): Area[] {
+  return [...areas].sort((left, right) => (left.sort !== right.sort
+    ? left.sort - right.sort
+    : left.id < right.id ? -1 : left.id > right.id ? 1 : 0));
+}
+
+export type NewAreaBody = Readonly<{
+  name: string;
+  color: string;
+  sort?: number;
+  default_template_id?: string | null;
+  default_cwd?: string | null;
+}>;
+export type AreaPatchBody = Readonly<{
+  name?: string;
+  color?: string;
+  sort?: number;
+  default_template_id?: string | null;
+  default_cwd?: string | null;
+}>;
+
+/** Old servers omit this capability and must never receive a keyed create. */
+export function areaCreationCapabilityOperation(): ApiOperation<'supported' | 'unsupported'> {
+  return {
+    method: 'GET', path: '/api/version',
+    responseSchema: z.object({ areaCreateIdempotency: z.unknown().optional() })
+      .transform((value) => value.areaCreateIdempotency === true ? 'supported' as const : 'unsupported' as const),
+  };
+}
+
+/**
+ * What one failed `POST /api/areas` means for its draft.
+ * - `key-spent`: the key is invalid, bound to another request (`idempotency_key_reused`) or its Area
+ *   was deleted (`idempotency_key_exhausted`). No retry under it can succeed, whatever an earlier
+ *   attempt did, so the request is dropped and the next Create mints a new key. Final.
+ * - `rejected`: refused before anything was created; it says nothing about an earlier attempt.
+ * - `unconfirmed`: the Area may have been created, so the request and its key are kept for a retry.
+ */
+export type AreaCreateFailure = 'key-spent' | 'rejected' | 'unconfirmed';
+
+export const AREA_CREATE_FAILURES: FailureTable<AreaCreateFailure> = Object.freeze({
+  rules: Object.freeze([
+    Object.freeze({ code: 'idempotency_key_invalid', is: 'key-spent' as const }),
+    Object.freeze({ code: 'idempotency_key_reused', is: 'key-spent' as const }),
+    Object.freeze({ code: 'idempotency_key_exhausted', is: 'key-spent' as const }),
+    Object.freeze({ status: Object.freeze([400, 403, 404, 413, 422, 429]), is: 'rejected' as const }),
+  ]),
+  unauthorized: 'rejected',
+  otherwise: 'unconfirmed',
+});
+
+/** A refused create, and one whose outcome is unknown: the kept key makes the next Create check the same area. */
+export const AREA_CREATE_TEXT: WriteText = Object.freeze({
+  refused: 'The area was not created.', unknown: 'Creation could not be confirmed. Try again to safely check the same area.',
+});
+
+/** One key identifies one exact creation intent, including every retry. */
+export function createAreaOperation(body: NewAreaBody, idempotencyKey: string): ApiOperation<AreaWire> {
+  return { method: 'POST', path: '/api/areas', body, headers: { 'Idempotency-Key': idempotencyKey }, responseSchema: areaSchema };
+}
+
+export function updateAreaOperation(areaId: string, body: AreaPatchBody): ApiOperation<AreaWire> {
+  return { method: 'PATCH', path: `/api/areas/${encodeURIComponent(areaId)}`, body, responseSchema: areaSchema };
+}
+
+/** What a failed `PATCH /api/areas/{id}` says: it sets values, so 400, 404, 413 and 422 store nothing; anything else may have. */
+export const AREA_PATCH_FAILURES: FailureTable<WriteClass> = Object.freeze({
+  rules: Object.freeze([Object.freeze({ status: Object.freeze([400, 404, 413, 422]), is: 'refused' as const })]),
+  unauthorized: 'refused',
+  otherwise: 'unknown',
+});
+
+export const AREA_PATCH_TEXT: WriteText = Object.freeze({ refused: 'The area was not updated.', unknown: 'The area update is unconfirmed.' });
+
+export function deleteAreaOperation(areaId: string): ApiOperation<undefined> {
+  return { method: 'DELETE', path: `/api/areas/${encodeURIComponent(areaId)}`, responseSchema: z.undefined() };
+}
+
+/** `id` is an autoincrement integer, not a uuid, because the row never enters the sync engine's event log. */
+export const areaFolderWireSchema = z.object({
+  id: z.number(),
+  area_id: z.string(),
+  path: z.string(),
+  created_at: z.number(),
+});
+export type AreaFolderWire = z.infer<typeof areaFolderWireSchema>;
+
+export type AreaFolder = Readonly<{
+  id: number;
+  areaId: string;
+  path: string;
+  createdAt: number;
+}>;
+
+export function toAreaFolder(wire: AreaFolderWire): AreaFolder {
+  return {
+    id: wire.id,
+    areaId: wire.area_id,
+    path: wire.path,
+    createdAt: wire.created_at,
+  };
+}
+
+export function areaFoldersOperation(areaId: string): ApiOperation<AreaFolderWire[]> {
+  return {
+    method: 'GET',
+    path: `/api/areas/${encodeURIComponent(areaId)}/folders`,
+    responseSchema: z.array(areaFolderWireSchema),
+  };
+}
+
+/** `path` ascending, ties broken by `id`; the kernel returns insertion order. */
+export function sortedAreaFolders(folders: readonly AreaFolder[]): AreaFolder[] {
+  return [...folders].sort((left, right) => (left.path !== right.path
+    ? (left.path < right.path ? -1 : 1)
+    : left.id - right.id));
+}
+
+/**
+ * The folder-clash body of `POST /api/tracks`. It carries no `error` key, so the generic failure
+ * normaliser only reports "Conflict".
+ */
+export const folderConflictSchema = z.object({
+  folder_id: z.number().int().safe().positive(),
+  area_id: z.string(),
+  conflict_path: z.string(),
+  conflict_kind: z.enum(['equal', 'ancestor', 'descendant']),
+});
+export type FolderConflict = z.infer<typeof folderConflictSchema>;
+
+/** `null` for any other error body; the caller falls back to its own wording. */
+export function asFolderConflict(body: unknown): FolderConflict | null {
+  const parsed = folderConflictSchema.safeParse(body);
+  return parsed.success ? parsed.data : null;
+}
+
+/**
+ * `areaName` is `null` when the conflicting area is not in the reader's list; the phrasing then
+ * degrades to "another area".
+ */
+export function folderConflictMessage(conflict: FolderConflict, areaName: string | null): string {
+  const owner = areaName === null ? 'another area' : `area “${areaName}”`;
+  switch (conflict.conflict_kind) {
+    case 'descendant':
+      return `That folder is already claimed by ${owner} (${conflict.conflict_path}). `
+        + 'Start the track in that area, or pick a different folder.';
+    case 'ancestor':
+      return `A narrower claim under ${conflict.conflict_path} (owned by ${owner}) blocks claiming `
+        + 'this folder. Remove the inner claim first, or pick a different folder.';
+    case 'equal':
+      return `That exact folder is already claimed by ${owner} (${conflict.conflict_path}).`;
+  }
+}

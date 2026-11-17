@@ -1,0 +1,301 @@
+/* Astryx owns control appearance. This file owns page layout, the composer's
+   local focus treatment and input size, plus the send button's full contour.
+   Shared default-pills own Folder widths and pill contours; no general
+   button recipe is restated here. */
+@layer features {
+  .editor {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-1);
+    min-inline-size: 0;
+  }
+
+  .editor > .input {
+    flex: 1;
+    min-inline-size: 0;
+  }
+
+  .send {
+    border-radius: var(--radius-pill);
+  }
+
+  /*
+   * #1211 — the page whose whole content is one composer.
+   *
+   * Centred on both axes, not pinned to the top: this route has exactly one
+   * thing to do, and a lone box in the upper-left of an empty page reads as the
+   * first row of a list that failed to load. The block centring is what makes
+   * it read as the subject of the page instead.
+   *
+   * `min-block-size: 0` and the flex fill are the same pair every other route
+   * uses on its `.page`; without them a centred child cannot know what it is
+   * centred inside.
+   */
+  /*
+   * `safe center` on both axes, not bare `center`.
+   *
+   * This is a scrolling flex container, and bare centring overflows in *both*
+   * directions once the content is taller than the box — the top goes to a
+   * negative scroll offset, which cannot be scrolled back to, so the greeting
+   * and the top of the composer become unreachable. Reachable at a normal
+   * desktop height and not at a short one, in landscape on a phone, at high
+   * zoom, or with the dev panel expanded, which is the whole
+   * problem: it looks fine until it silently is not.
+   */
+  .page {
+    font-family: var(--font-sans);
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    align-items: safe center;
+    justify-content: safe center;
+    min-block-size: 0;
+    padding-block: var(--space-5) var(--space-6);
+    padding-inline: var(--space-5);
+    overflow: auto;
+    color: var(--text);
+  }
+
+  /*
+   * Layout deliberately absent: `VStack` owns the column and the gap. The
+   * measure is the one thing it cannot know.
+   *
+   * `--measure-doc` (748) and not `--measure-form` (544). The form measure is
+   * sized for stacked labelled fields, which is what this surface stopped being
+   * when it stopped being a form: there is one field, it holds a sentence, and
+   * at 544 that sentence wrapped early enough to look cramped on a page whose
+   * whole content is that one box. 748 is the width of the document this
+   * instruction turns into, which is the honest pairing — you are writing at
+   * the measure you will be reading at.
+   */
+  .form {
+    font-family: var(--font-sans);
+    inline-size: min(var(--measure-doc), 100%);
+    color: var(--text);
+  }
+
+  /* The page prompt shares the composer's left edge, keeping one reading axis. */
+  .masthead {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-start;
+    gap: var(--space-2);
+    margin-block-end: var(--space-4);
+  }
+
+  .introduction {
+    font-size: var(--font-step-2-size);
+    line-height: var(--font-step-2-line);
+    margin-block: 0 var(--space-2);
+    color: var(--text-2);
+  }
+
+  .mark {
+    display: inline-block;
+    inline-size: 1em;
+    block-size: 1em;
+    vertical-align: middle;
+    margin-inline-end: var(--space-2);
+    color: var(--text-3);
+  }
+
+  /* The prompt is the main editorial heading; supporting copy stays in interface type. */
+  .greeting {
+    font: var(--type-heading);
+    letter-spacing: var(--type-heading-tracking);
+    color: var(--text);
+    text-align: start;
+  }
+
+  /*
+   * Flat, not floating.
+   *
+   * `ChatComposer` hangs a `--shadow-low` off its body and swaps it for
+   * `--shadow-med` on hover and focus-within — correct where it was designed
+   * to sit, docked at the bottom of a scrolling transcript, where the shadow is
+   * what separates it from the messages sliding under it. Here there is nothing
+   * to slide under it: it is the only object on the page. The shadow made it
+   * read as a floating panel over an empty document, and the hover swap made
+   * the one thing on screen twitch when the pointer crossed it.
+   *
+   * Nothing replaces it *at rest*. The body carries astryx's popover
+   * background, which is already a step off the page, and that is the whole
+   * edge this shape wants: a hairline was tried here first and read as a second
+   * box drawn around a box.
+   *
+   * Focus is the exception, and it is not decoration. `ChatComposerInput` sets
+   * `outline: none` on the editable (`ChatComposerInput.tsx`), so that
+   * `:focus-within` shadow was the composer's **only** focus indicator —
+   * removing it left a keyboard user with no way to see where they are, which
+   * is WCAG 2.4.7 and which axe-core does not test for, so `axe-smoke` stayed
+   * green through it. The ring below restores the affordance without bringing
+   * the resting shadow back. It is `--accent` at 2px to match `base.css`'s
+   * global `:focus-visible`, and `inset` so focus costs no layout.
+   *
+   * Written as a descendant rule in `@layer features` rather than a component
+   * override: the shadow is on an inner StyleX class with no prop behind it
+   * (`ChatComposer.tsx` — `styles.body`), so there is nothing to pass in. The
+   * layer order in `styles/entry.css` puts `features` after `astryx`, so this
+   * wins without `!important` and without a specificity fight.
+   *
+   * Two shapes were rejected, and both for reasons worth keeping:
+   *
+   *  * `:global(.astryx-chat-composer)` — the obvious way to name the
+   *    component, and stylelint rejects it outright (`:global` is not a known
+   *    pseudo-class to `stylelint-config-recommended`, and this file would be
+   *    the only use of it in the app).
+   *  * Re-declaring astryx's `--shadow-low` / `--shadow-med` on the wrapper,
+   *    which is the *documented* theming seam and is the wrong tool here: those
+   *    are inherited custom properties, so flattening them at the wrapper also
+   *    flattens the model menu's popup, which is a floating layer and needs
+   *    its shadow.
+   *
+   * `> [data-density] >` is therefore the selector: astryx reflects its visual
+   * props as data attributes (`themeProps`) and `density` is one this call site
+   * passes. Stated precisely, because the first version of this comment
+   * overclaimed: the two combinators keep the rule off anything *nested* inside
+   * the composer — the footer's chips, the model menu's popup layer — but it
+   * matches **every direct child of the root**, which is the body plus the
+   * status bar, and would match a `drawer` if this call site ever passed one.
+   * That is harmless because none of those carry a shadow of their own; it is
+   * written down so the next reader does not trust a narrower claim than the
+   * selector makes.
+   */
+  .composer > [data-density] > * {
+    box-shadow: none;
+  }
+
+  /*
+   * `:has(… :focus)` and not `:focus-within`, because the chips live inside
+   * this same element: with `:focus-within` the ring lit up around the whole
+   * composer whenever the model or folder chip took focus, on top of that
+   * button's own `:focus-visible` ring. Two rings for one focus is worse than
+   * none — it makes "where am I" ambiguous, which is the exact question the
+   * ring exists to answer. Scoped to the editable, it means one thing.
+   *
+   * `:focus` and not `:focus-visible`, which is where this departs from
+   * `base.css`'s global convention — so a pointer click rings it too. That is
+   * deliberate for a *text* field: the ring is saying "your keystrokes land
+   * here", which is as true after a click as after a Tab, and `base.css` itself
+   * treats fields specially for the same reason (it swaps their outline for a
+   * border rule rather than using the global ring). The colour and width still
+   * match the global ring so the two read as one system.
+   */
+  .composer > [data-density] > *:has([contenteditable="true"]:focus) {
+    box-shadow: inset 0 0 0 2px var(--accent);
+  }
+
+  /* The desktop request gets four lines so it remains the primary writing surface. */
+  .composer [contenteditable="true"] {
+    min-block-size: 88px;
+    min-block-size: 4lh;
+  }
+
+  /*
+   * The `@` menu (#1881), anchored and sized as the drawer composer's trigger
+   * menu is (`features/chat/thread/thread.module.css`, "The `/` command menu",
+   * which explains the three `!important`s: `useLayer` writes the anchor,
+   * area and fallbacks as inline styles). Two differences, both from this
+   * page: the menu opens *below* the composer, because the greeting sits
+   * directly above it and a menu there would cover it; and it may flip above
+   * when there is no room below (a short viewport, a phone keyboard), where
+   * the drawer's composer, docked at the bottom, never has room below.
+   * `[role='listbox']` is the trigger menu's ARIA contract; the chips' menus
+   * are `menu`s and are left alone.
+   */
+  .composer {
+    anchor-name: --nc-new-track-menu;
+  }
+
+  .composer [popover]:has([role='listbox']) {
+    position-anchor: --nc-new-track-menu !important;
+    position-area: none !important;
+    position-try-fallbacks: flip-block !important;
+    inset-block-start: anchor(bottom);
+    inset-block-end: auto;
+    inline-size: auto;
+    inset-inline-start: anchor(left);
+    inset-inline-end: anchor(right);
+  }
+
+
+
+
+
+  /* Preserve ChatComposer's desktop footer slots. */
+  .composer :has(> :first-child > [data-nc-composer-preferences]) {
+    flex-wrap: wrap;
+  }
+
+  .composer :has(> :first-child > [data-nc-composer-preferences]) > :last-child {
+    margin-inline-start: auto;
+  }
+
+  /* These wrappers leave the desktop footer's existing two slots intact. */
+  .modelControls {
+    display: contents;
+  }
+
+  @media (width < 60rem) {
+    .page {
+      font-family: var(--font-sans);
+      justify-content: safe center;
+      padding: var(--space-5) var(--space-3) clamp(var(--space-5), 27dvh, 14rem);
+    }
+
+    .masthead {
+      margin-block-end: var(--space-4);
+    }
+
+    .mark {
+      display: none;
+    }
+
+    .greeting {
+      font-family: var(--font-sans);
+      font-size: var(--font-step-5-size);
+      font-weight: var(--weight-medium);
+    }
+
+    .input > [contenteditable],
+    .input > [aria-hidden="true"] {
+      font-size: var(--font-step-3-size);
+      line-height: var(--font-step-3-line);
+    }
+
+    .composer .input > [contenteditable] {
+      min-block-size: 54px;
+      min-block-size: 2lh;
+    }
+
+    /* Keep the model and Create together. The preference helper measures the
+       remaining space and folds its two controls before their labels clip. */
+    .composer :has(> :first-child > [data-nc-composer-preferences]) {
+      flex-wrap: nowrap;
+      gap: var(--space-2);
+    }
+
+    .composer :has(> :first-child > [data-nc-composer-preferences]) > :first-child {
+      min-inline-size: 0;
+    }
+
+    .composer :has(> :first-child > [data-nc-composer-preferences]) > :last-child {
+      flex: none;
+      max-inline-size: calc(100% - var(--space-6) - var(--space-2));
+    }
+
+    .modelControls > * {
+      min-inline-size: 0;
+    }
+
+    .modelControls > * > span > button {
+      min-inline-size: 0;
+    }
+
+    .send {
+      flex: none;
+    }
+  }
+
+}

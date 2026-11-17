@@ -1,0 +1,2076 @@
+[
+  {
+    "mutation_id": "login-success-drop-reload",
+    "defends": [
+      "oracle:INV-LOGIN-001"
+    ],
+    "target": "web/src/features/auth/login-page/public.tsx",
+    "patch": "diff --git a/web/src/features/auth/login-page/public.tsx b/web/src/features/auth/login-page/public.tsx\nindex 735a0ff..719f4e2 100644\n--- a/web/src/features/auth/login-page/public.tsx\n+++ b/web/src/features/auth/login-page/public.tsx\n@@ -43,7 +43,7 @@ export function LoginPage({ login, reload, onBackToPairing }: LoginPageProps) {\n         if (attempt.signal.aborted) return;\n         if (!result) { setError('Wrong username or password.'); setSubmitting(false); return; }\n         // A reload resets every persisted and in-memory cache under the new identity.\n-        reload();\n+        setSubmitting(false);\n       }).catch((cause: unknown) => {\n         if (attempt.signal.aborted) return;\n         setError(cause instanceof Error && cause.message ? cause.message : 'Sign-in failed.');\n",
+    "expected_red": [
+      "login page oracle contracts INV-LOGIN-001 reloads the whole document after successful login"
+    ],
+    "selection_paths": [
+      "web/src/features/auth/login-page/public.contract.test.tsx"
+    ],
+    "why_more_than_one": "The success oracle alone should fail when the full-page reload is removed."
+  },
+  {
+    "mutation_id": "login-credentials-use-generic-error",
+    "defends": [
+      "oracle:CAP-LOGIN-002"
+    ],
+    "target": "web/src/features/auth/login-page/public.tsx",
+    "patch": "diff --git a/web/src/features/auth/login-page/public.tsx b/web/src/features/auth/login-page/public.tsx\nindex 735a0ff..d231b85 100644\n--- a/web/src/features/auth/login-page/public.tsx\n+++ b/web/src/features/auth/login-page/public.tsx\n@@ -41,7 +41,7 @@ export function LoginPage({ login, reload, onBackToPairing }: LoginPageProps) {\n       setSubmitting(true); setError(null);\n       void login(username, password, attempt.signal).then((result) => {\n         if (attempt.signal.aborted) return;\n-        if (!result) { setError('Wrong username or password.'); setSubmitting(false); return; }\n+        if (!result) { setError('Sign-in failed.'); setSubmitting(false); return; }\n         // A reload resets every persisted and in-memory cache under the new identity.\n         reload();\n       }).catch((cause: unknown) => {\n",
+    "expected_red": [
+      "login page oracle contracts CAP-LOGIN-002 distinguishes rejected credentials, exceptions, and submitting state",
+      "production login assembly CAP-LOGIN-002 maps a production 401 to credential copy without broadcasting"
+    ],
+    "selection_paths": [
+      "web/src/features/auth/login-page/public.contract.test.tsx",
+      "web/src/app/auth/login.contract.test.tsx"
+    ],
+    "why_more_than_one": "Both the component branch and production assembly oracle must reject generic copy for bad credentials."
+  },
+  {
+    "mutation_id": "login-drop-username-autocomplete",
+    "defends": [
+      "oracle:INV-LOGIN-003"
+    ],
+    "target": "web/src/features/auth/login-page/public.tsx",
+    "patch": "diff --git a/web/src/features/auth/login-page/public.tsx b/web/src/features/auth/login-page/public.tsx\nindex 735a0ff..8090dde 100644\n--- a/web/src/features/auth/login-page/public.tsx\n+++ b/web/src/features/auth/login-page/public.tsx\n@@ -56,7 +56,7 @@ export function LoginPage({ login, reload, onBackToPairing }: LoginPageProps) {\n       {error !== null && <p role=\"alert\" className={styles.error}>{error}</p>}\n       <label htmlFor={`${prefix}-username`}>Username</label>\n       {/* eslint-disable-next-line jsx-a11y/no-autofocus -- Single-purpose login screen intentionally starts at its first field. */}\n-      <input id={`${prefix}-username`} name=\"username\" autoFocus autoComplete=\"username\" value={username} onChange={(event) => setUsername(event.target.value)} />\n+      <input id={`${prefix}-username`} name=\"username\" autoFocus value={username} onChange={(event) => setUsername(event.target.value)} />\n       <label htmlFor={`${prefix}-password`}>Password</label>\n       <input id={`${prefix}-password`} name=\"password\" type=\"password\" autoComplete=\"current-password\" value={password} onChange={(event) => setPassword(event.target.value)} />\n       <button type=\"submit\" disabled={submitting}>{submitting ? 'Signing in…' : 'Sign in'}</button>\n",
+    "expected_red": [
+      "login page browser contract INV-LOGIN-003 focuses username and declares both credential autocomplete tokens"
+    ],
+    "selection_paths": [
+      "web/src/features/auth/login-page/login-page.browser.test.tsx"
+    ],
+    "why_more_than_one": "Only the browser autocomplete oracle should fail when the username token is removed."
+  },
+  {
+    "mutation_id": "no-class-dom-query-drop-closest",
+    "defends": [
+      "arch-rule:no-class-dom-query"
+    ],
+    "target": "tools/architecture/no-class-dom-query.mjs",
+    "patch": "diff --git a/tools/architecture/no-class-dom-query.mjs b/tools/architecture/no-class-dom-query.mjs\nindex f28edc5..5b771aa 100644\n--- a/tools/architecture/no-class-dom-query.mjs\n+++ b/tools/architecture/no-class-dom-query.mjs\n@@ -5,7 +5,7 @@ import selectorParser from 'postcss-selector-parser';\n  * closed; allowlist exceptions are exact file+selector pairs and require a container prefix.\n  */\n \n-const selectorMethods = new Set(['querySelector', 'querySelectorAll', 'closest', 'matches']);\n+const selectorMethods = new Set(['querySelector', 'querySelectorAll', 'matches']);\n \n /** @param {any} member */\n function memberName(member) {\n",
+    "expected_red": [
+      "architecture/no-class-dom-query rejects dom-selector/closest.ts"
+    ],
+    "selection_paths": [
+      "tools/architecture/architecture-rules.test.ts",
+      "tools/architecture/allowlists.mjs",
+      "tools/architecture/rule-fixtures/dom-selector/closest.ts"
+    ],
+    "why_more_than_one": "Only closest.ts should turn red; more than one means selector-method dispatch is coupled across syntax forms."
+  },
+  {
+    "mutation_id": "no-class-dom-query-drop-classname-api",
+    "defends": [
+      "arch-rule:no-class-dom-query"
+    ],
+    "target": "tools/architecture/no-class-dom-query.mjs",
+    "patch": "diff --git a/tools/architecture/no-class-dom-query.mjs b/tools/architecture/no-class-dom-query.mjs\nindex f28edc5..0c54f1e 100644\n--- a/tools/architecture/no-class-dom-query.mjs\n+++ b/tools/architecture/no-class-dom-query.mjs\n@@ -81,7 +81,7 @@ export const noClassDomQuery = {\n       CallExpression(/** @type {any} */ node) {\n         if (node.callee.type !== 'MemberExpression') return;\n         const method = memberName(node.callee);\n-        if (method === 'getElementsByClassName') {\n+        if (method === 'getElementsByClassNames') {\n           context.report({ node, messageId: 'classNameApi' });\n           return;\n         }\n",
+    "expected_red": [
+      "architecture/no-class-dom-query rejects dom-selector/get-elements-by-class-name.ts"
+    ],
+    "selection_paths": [
+      "tools/architecture/architecture-rules.test.ts",
+      "tools/architecture/allowlists.mjs",
+      "tools/architecture/rule-fixtures/dom-selector/get-elements-by-class-name.ts"
+    ],
+    "why_more_than_one": "Only the dedicated DOM API fixture should turn red; extra reds expose coupling to CSS selector parsing."
+  },
+  {
+    "mutation_id": "no-class-dom-query-drop-module-const-resolution",
+    "defends": [
+      "arch-rule:no-class-dom-query"
+    ],
+    "target": "tools/architecture/no-class-dom-query.mjs",
+    "patch": "diff --git a/tools/architecture/no-class-dom-query.mjs b/tools/architecture/no-class-dom-query.mjs\nindex f28edc5..bd622db 100644\n--- a/tools/architecture/no-class-dom-query.mjs\n+++ b/tools/architecture/no-class-dom-query.mjs\n@@ -24,7 +24,7 @@ function moduleConstLiteral(context, node) {\n     || definition?.type !== 'Variable' || definition.parent?.kind !== 'const'\n     || definition.node.init?.type !== 'Literal' || typeof definition.node.init.value !== 'string'\n     || resolved.references.filter((reference) => reference.isWrite()).length !== 1) return null;\n-  return definition.node.init.value;\n+  return null;\n }\n \n /** @param {string} selector */\n",
+    "expected_red": [
+      "architecture/no-class-dom-query accepts a module-scope single-assignment const string without a class",
+      "architecture/no-class-dom-query rejects a class in a module-scope single-assignment const as a class selector"
+    ],
+    "selection_paths": [
+      "tools/architecture/architecture-rules.test.ts",
+      "tools/architecture/allowlists.mjs",
+      "tools/architecture/rule-fixtures/dom-selector/module-const-data.ts",
+      "tools/architecture/rule-fixtures/dom-selector/module-const-class.ts"
+    ],
+    "why_more_than_one": "Both safe and unsafe module-const syntax forms must turn red because resolution is shared; any third red is coupling leakage."
+  },
+  {
+    "mutation_id": "test-tier-map-jsdom-to-node",
+    "defends": [
+      "oracle:INV-LOGIN-001"
+    ],
+    "target": "tools/test-tier/checker.ts",
+    "patch": "diff --git a/tools/test-tier/checker.ts b/tools/test-tier/checker.ts\nindex e32b039..2dbf0ca 100644\n--- a/tools/test-tier/checker.ts\n+++ b/tools/test-tier/checker.ts\n@@ -16,7 +16,7 @@ const LOCATION = /^([^\\s:]+):(\\d+)(?:-(\\d+))?$/;\n  * only in reported media features, so it is listed everywhere `browser` is. */\n const EXPECTED_PROJECTS = Object.freeze({\n   browser: Object.freeze(['browser', 'browser-coarse', 'playwright']),\n-  jsdom: Object.freeze(['web-dom', 'browser', 'browser-coarse']),\n+  jsdom: Object.freeze(['web-dom']),\n   static: Object.freeze(['platform-independent', 'web-dom', 'browser', 'browser-coarse', 'playwright']),\n   none: Object.freeze(['platform-independent', 'web-dom', 'browser', 'browser-coarse', 'playwright']),\n } as const);\n",
+    "expected_red": [
+      "test-tier-project fixtures checks whether jsdom tier has sufficient capability in browser",
+      "test-tier-project fixtures checks whether jsdom tier has sufficient capability in browser-coarse"
+    ],
+    "selection_paths": [
+      "tools/test-tier/checker.ts",
+      "tools/test-tier/checker.test.ts"
+    ],
+    "why_more_than_one": "The edit strips the jsdom row's browser escape hatch, and there are now two browser projects in it, so both higher-capability jsdom-to-browser cases turn red — dropping only one of them would leave a jsdom-tier oracle landing in browser-coarse still accepted, which is the acceptance this mutation exists to remove. Any third red indicates unrelated tier behavior changed."
+  },
+  {
+    "mutation_id": "test-tier-allow-browser-overlap",
+    "defends": [
+      "oracle:INV-LOGIN-001"
+    ],
+    "target": "vitest.config.ts",
+    "patch": "diff --git a/vitest.config.ts b/vitest.config.ts\nindex 63734af..a5d1cb8 100644\n--- a/vitest.config.ts\n+++ b/vitest.config.ts\n@@ -27,7 +27,7 @@ export default defineConfig({\n           environment: 'node',\n           setupFiles,\n           include: ['core/**/*.test.ts', 'tools/**/*.test.ts'],\n-          exclude: ['**/*.browser.test.{ts,tsx}', 'tools/architecture/fixtures/**'],\n+          exclude: ['tools/architecture/fixtures/**'],\n         },\n       },\n       {\n",
+    "expected_red": [
+      "test-tier-project fixtures accepts the positive directory",
+      "uses a layout engine for rendered element geometry",
+      "vitest project partition assigns representative path tools/probe.browser.test.ts exactly once",
+      "vitest project partition assigns representative path tools/probe.coarse.browser.test.ts exactly once",
+      "the a11y failure report (#1161) announces its own truncation instead of silently dropping subtrees",
+      "the a11y failure report (#1161) collapses whitespace in class names so the report stays strippable",
+      "the a11y failure report (#1161) counts a hidden element that is itself the queryable one",
+      "the a11y failure report (#1161) counts an implicit role as queryable, not as decoration",
+      "the a11y failure report (#1161) does not call an element hidden when it overrides visibility back to visible",
+      "the a11y failure report (#1161) does not stack a second report when the setup module is evaluated again",
+      "the a11y failure report (#1161) does not truncate a message whose own query text contains the marker",
+      "the a11y failure report (#1161) finds a subtree hidden by CSS, which no attribute selector can express",
+      "the a11y failure report (#1161) finds visibility:hidden and the hidden attribute too",
+      "the a11y failure report (#1161) is appended to the real Testing Library error rather than replacing it",
+      "the a11y failure report (#1161) keeps content that merely looks like a report in the middle of a message",
+      "the a11y failure report (#1161) keeps the report last through the findBy timeout re-wrap",
+      "the a11y failure report (#1161) leaves decoration out while still listing a real hidden subtree",
+      "the a11y failure report (#1161) leaves the multiple-matches message whole",
+      "the a11y failure report (#1161) lets waitFor settle when its callback throws a non-Error",
+      "the a11y failure report (#1161) lists body children so an absent portal is distinguishable from a hidden one",
+      "the a11y failure report (#1161) names aria-hidden as the reason a present element is unqueryable",
+      "the a11y failure report (#1161) names body itself when body carries a hiding attribute",
+      "the a11y failure report (#1161) names body itself when the whole page is hidden",
+      "the a11y failure report (#1161) names the documentElement when the hiding attribute is on <html>",
+      "the a11y failure report (#1161) names the outermost hidden ancestor once, not every element under it",
+      "the a11y failure report (#1161) reports inert subtrees even though Testing Library does not treat them as hidden",
+      "the a11y failure report (#1161) reports the DOM eagerly when a synchronous query fails",
+      "the a11y failure report (#1161) returns the original error untouched when its message cannot be written",
+      "the a11y failure report (#1161) still defers the report on a waitFor poll"
+    ],
+    "selection_paths": [
+      "tools/test-tier/checker.test.ts",
+      "tools/test-tier/vitest-projects.test.ts",
+      "tools/vitest/dom-diagnostics.browser.test.ts"
+    ],
+    "why_more_than_one": "Four entries exist for their own sake: the positive browser fixture, the layout-engine probe, and the representative partition case — which now reds twice, once per representative, because `browser` and `browser-coarse` each have one and dropping the browser-suffix exclude lands both in a second project at once. Those detect the overlap from inside the checker and are what would stay red if every collected browser test happened to survive node. The rest are the overlap being felt: the node project's `tools/**/*.test.ts` include collects browser tests that then run without a `document`. Not every `tools/**` browser test qualifies — `tools/architecture/fixtures/**` stays out under its own exclude, and a `.tsx` browser test never matched the `.ts` include. Three files are collected: `layout.browser.test.ts` and, since #1161, `tools/vitest/dom-diagnostics.browser.test.ts` both reach `document` and so crash, every case for the same single reason, while `tools/test-tier/fixtures/positive/browser.browser.test.ts` is collected too and stays green only because it never touches `document` — not because any exclude keeps it out, which is worth saying so a future edit to that fixture is not mistaken for an unrelated regression. Anything red beyond this set would mean the overlap reached a file that does not need a DOM at all."
+  },
+  {
+    "mutation_id": "test-tier-ignore-migrated",
+    "defends": [
+      "oracle:INV-LOGIN-001"
+    ],
+    "target": "tools/test-tier/checker.ts",
+    "patch": "diff --git a/tools/test-tier/checker.ts b/tools/test-tier/checker.ts\nindex e32b039..72a1890 100644\n--- a/tools/test-tier/checker.ts\n+++ b/tools/test-tier/checker.ts\n@@ -101,7 +101,7 @@ export function checkTestTier(entries: readonly TierEntry[], projects: readonly\n   repoRoot: string, configRoot: string): TierViolation[] {\n   const violations: TierViolation[] = [];\n   for (const entry of entries) {\n-    if (entry.migration !== 'migrated' || typeof entry.id !== 'string' || typeof entry.authoritative_test !== 'string') continue;\n+    if (entry.migration === 'migrated' || typeof entry.id !== 'string' || typeof entry.authoritative_test !== 'string') continue;\n     const expected = EXPECTED_PROJECTS[entry.test_tier as keyof typeof EXPECTED_PROJECTS];\n     if (!expected) continue;\n     if (entry.authoritative_test === 'NONE') {\n",
+    "expected_red": [
+      "test-tier-project fixtures accepts the positive directory",
+      "test-tier-project fixtures checks whether browser tier has sufficient capability in platform-independent",
+      "test-tier-project fixtures checks whether browser tier has sufficient capability in web-dom",
+      "test-tier-project fixtures checks whether jsdom tier has sufficient capability in platform-independent",
+      "test-tier-project fixtures enforces tier mismatch only after migration",
+      "test-tier-project fixtures parses every authoritative location composition without textual path heuristics",
+      "test-tier-project fixtures rejects a migrated jsdom authoritative test collected by platform-independent",
+      "test-tier-project fixtures rejects a test collected by the expected project and an extra project",
+      "test-tier-project fixtures rejects a wrong tier even when exactly one project collects the test",
+      "test-tier-project fixtures rejects every negative source with its own rule",
+      "test-tier-project fixtures rejects overlap for jsdom as well as browser",
+      "test-tier-project fixtures rejects migrated entries without a real authoritative test",
+      "tier gate decisions reports an oracle tier/project mismatch"
+    ],
+    "selection_paths": [
+      "tools/test-tier/checker.test.ts"
+    ],
+    "why_more_than_one": "All migrated mismatch and overlap cases must turn red when migrated entries are skipped; pending-only coverage remains green."
+  },
+  {
+    "mutation_id": "test-tier-ignore-capability",
+    "defends": [
+      "oracle:INV-LOGIN-001"
+    ],
+    "target": "tools/test-tier/checker.ts",
+    "patch": "diff --git a/tools/test-tier/checker.ts b/tools/test-tier/checker.ts\nindex e32b039..6c14761 100644\n--- a/tools/test-tier/checker.ts\n+++ b/tools/test-tier/checker.ts\n@@ -112,7 +112,7 @@ export function checkTestTier(entries: readonly TierEntry[], projects: readonly\n     for (const source of new Set(referencedPaths(entry.authoritative_test))) {\n       const testPath = configRelativePath(repoRoot, configRoot, source);\n       const actual = testPath === null ? [] : projectsForPath(testPath, projects);\n-      if (actual.length !== 1 || !expected.some((project) => project === actual[0])) violations.push({\n+      if (actual.length !== 1) violations.push({\n         id: entry.id, rule: 'test-tier-project', source,\n         message: `test_tier ${String(entry.test_tier)} requires ${expected.join(' or ')}; ${source} belongs to ${actual.length ? actual.join(', ') : 'no test project'}`,\n       });\n",
+    "expected_red": [
+      "test-tier-project fixtures checks whether browser tier has sufficient capability in platform-independent",
+      "test-tier-project fixtures checks whether browser tier has sufficient capability in web-dom",
+      "test-tier-project fixtures checks whether jsdom tier has sufficient capability in platform-independent",
+      "test-tier-project fixtures enforces tier mismatch only after migration",
+      "test-tier-project fixtures rejects a migrated jsdom authoritative test collected by platform-independent",
+      "test-tier-project fixtures rejects a wrong tier even when exactly one project collects the test",
+      "test-tier-project fixtures rejects every negative source with its own rule",
+      "tier gate decisions reports an oracle tier/project mismatch"
+    ],
+    "selection_paths": [
+      "tools/test-tier/checker.test.ts"
+    ],
+    "why_more_than_one": "Every isolated insufficient-capability and migrated mismatch case must turn red; overlap-only cases remain unaffected."
+  },
+  {
+    "mutation_id": "test-tier-allow-overlap",
+    "defends": [
+      "oracle:INV-LOGIN-001"
+    ],
+    "target": "tools/test-tier/checker.ts",
+    "patch": "diff --git a/tools/test-tier/checker.ts b/tools/test-tier/checker.ts\nindex e32b039..a7699b9 100644\n--- a/tools/test-tier/checker.ts\n+++ b/tools/test-tier/checker.ts\n@@ -112,7 +112,7 @@ export function checkTestTier(entries: readonly TierEntry[], projects: readonly\n     for (const source of new Set(referencedPaths(entry.authoritative_test))) {\n       const testPath = configRelativePath(repoRoot, configRoot, source);\n       const actual = testPath === null ? [] : projectsForPath(testPath, projects);\n-      if (actual.length !== 1 || !expected.some((project) => project === actual[0])) violations.push({\n+      if (!expected.some((project) => project === actual[0])) violations.push({\n         id: entry.id, rule: 'test-tier-project', source,\n         message: `test_tier ${String(entry.test_tier)} requires ${expected.join(' or ')}; ${source} belongs to ${actual.length ? actual.join(', ') : 'no test project'}`,\n       });\n",
+    "expected_red": [
+      "test-tier-project fixtures rejects a test collected by the expected project and an extra project",
+      "test-tier-project fixtures rejects overlap for jsdom as well as browser"
+    ],
+    "selection_paths": [
+      "tools/test-tier/checker.test.ts"
+    ],
+    "why_more_than_one": "The browser and jsdom overlap cases must both detect multiple collection; any third red indicates capability matching changed."
+  },
+  {
+    "mutation_id": "app-theme-accept-sepia-drop-system",
+    "defends": [
+      "oracle:INV-APP-073",
+      "oracle:E2E-CAP-THEME-011"
+    ],
+    "target": "web/src/app/theme/public.tsx",
+    "patch": "diff --git a/web/src/app/theme/public.tsx b/web/src/app/theme/public.tsx\nindex 80cd803..d78d3ee 100644\n--- a/web/src/app/theme/public.tsx\n+++ b/web/src/app/theme/public.tsx\n@@ -12,7 +12,7 @@ declare global { interface Window { __calmSetTheme?: (mode: ThemeMode) => void }\n const ThemeContext = createContext<ThemeContextValue | null>(null);\n \n export function parseThemeMode(raw: unknown): ThemeMode | null {\n-  return raw === 'light' || raw === 'dark' || raw === 'system' ? raw : null;\n+  return raw === 'light' || raw === 'dark' || raw === 'sepia' ? raw : null;\n }\n \n export type ThemeStorage = Pick<Storage, 'getItem' | 'setItem'>;\n",
+    "selection_paths": [
+      "web/src/app/theme/public.contract.test.tsx",
+      "web/src/app/theme/public.test.tsx"
+    ],
+    "expected_red": [
+      "ThemeProvider behavior INV-APP-073 accepts valid persistence, rejects invalid values, and survives storage failures",
+      "app/theme contracts E2E-CAP-THEME-011 exposes exactly three parseable modes"
+    ],
+    "why_more_than_one": "The parser's exhaustive public-mode contract and invalid-persistence fallback independently turn red; any third failure would expose coupling outside mode validation."
+  },
+  {
+    "mutation_id": "app-theme-freeze-dataset-mirror-after-mount",
+    "defends": [
+      "oracle:E2E-CAP-THEME-011"
+    ],
+    "target": "web/src/app/theme/public.tsx",
+    "patch": "diff --git a/web/src/app/theme/public.tsx b/web/src/app/theme/public.tsx\nindex 247d8845..a80a76e0 100644\n--- a/web/src/app/theme/public.tsx\n+++ b/web/src/app/theme/public.tsx\n@@ -42,7 +42,7 @@ export function ThemeProvider({ children, storage }: { children: ReactNode; stor\n   }, [mode]);\n \n   const resolved = mode === 'system' ? systemPreference : mode;\n-  useEffect(() => { if (typeof document !== 'undefined') document.documentElement.dataset.theme = resolved; }, [resolved]);\n+  useEffect(() => { if (typeof document !== 'undefined') document.documentElement.dataset.theme = resolved; }, []);\n \n   const setMode = useCallback((next: ThemeMode) => {\n     setModeState(next);\n",
+    "selection_paths": [
+      "web/src/app/theme/public.test.tsx",
+      "web/src/app/theme/public.contract.test.tsx"
+    ],
+    "expected_red": [
+      "ThemeProvider behavior E2E-CAP-THEME-011 mirrors every explicit mode change to the document dataset",
+      "app/theme contracts theme dataset writes are driven by an effect keyed only by resolved"
+    ],
+    "why_more_than_one": "One implementation change is independently caught by E2E-CAP-THEME-011's behavioral mirror assertion and a local structural assertion; the latter does not claim INV-APP-070's unique-writer contract."
+  },
+  {
+    "mutation_id": "app-theme-drop-match-media-unsubscribe",
+    "defends": [
+      "oracle:CAP-APP-074"
+    ],
+    "target": "web/src/app/theme/public.tsx",
+    "patch": "diff --git a/web/src/app/theme/public.tsx b/web/src/app/theme/public.tsx\nindex 247d8845..ed28a80e 100644\n--- a/web/src/app/theme/public.tsx\n+++ b/web/src/app/theme/public.tsx\n@@ -38,7 +38,7 @@ export function ThemeProvider({ children, storage }: { children: ReactNode; stor\n     setSystemPreference(media.matches ? 'dark' : 'light');\n     const change = (event: MediaQueryListEvent) => setSystemPreference(event.matches ? 'dark' : 'light');\n     media.addEventListener('change', change);\n-    return () => media.removeEventListener('change', change);\n+    return undefined;\n   }, [mode]);\n \n   const resolved = mode === 'system' ? systemPreference : mode;\n",
+    "selection_paths": [
+      "web/src/app/theme/public.test.tsx"
+    ],
+    "expected_red": [
+      "ThemeProvider behavior CAP-APP-074 INV-APP-075 tracks system immediately and unsubscribes in explicit mode"
+    ],
+    "why_more_than_one": "Measured: the actual red set exactly matched expected_red; only the listener-ownership contract failed when the stale listener remained registered."
+  },
+  {
+    "mutation_id": "app-theme-drop-ssr-window-guard",
+    "defends": [
+      "oracle:INV-APP-077"
+    ],
+    "target": "web/src/app/theme/public.tsx",
+    "patch": "diff --git a/web/src/app/theme/public.tsx b/web/src/app/theme/public.tsx\nindex 247d8845..94d4a413 100644\n--- a/web/src/app/theme/public.tsx\n+++ b/web/src/app/theme/public.tsx\n@@ -23,7 +23,7 @@ function readPersistedMode(storage: ThemeStorage | undefined): ThemeMode {\n }\n \n function readSystemPreference(): ResolvedTheme {\n-  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return 'light';\n+  if (typeof window.matchMedia !== 'function') return 'light';\n   try { return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'; } catch { return 'light'; }\n }\n \n",
+    "selection_paths": [
+      "web/src/app/theme/public.ssr.contract.test.tsx"
+    ],
+    "expected_red": [
+      "ThemeProvider server contract INV-APP-077 renders without window, matchMedia, or document and has a positive light fallback"
+    ],
+    "why_more_than_one": "Only the SSR contract fails because it alone evaluates ThemeProvider with window absent; the single failure shows the window guard has a deliberately narrow server-rendering responsibility."
+  },
+  {
+    "mutation_id": "app-theme-drop-provider-remediation-path",
+    "defends": [
+      "oracle:INV-APP-078"
+    ],
+    "target": "web/src/app/theme/public.tsx",
+    "patch": "diff --git a/web/src/app/theme/public.tsx b/web/src/app/theme/public.tsx\nindex 247d8845..c02973a7 100644\n--- a/web/src/app/theme/public.tsx\n+++ b/web/src/app/theme/public.tsx\n@@ -64,6 +64,6 @@ export function ThemeProvider({ children, storage }: { children: ReactNode; stor\n \n export function useTheme(): ThemeContextValue {\n   const value = useContext(ThemeContext);\n-  if (!value) throw new Error('useTheme() requires <ThemeProvider>; mount it from web/src/app/providers/public.tsx.');\n+  if (!value) throw new Error('useTheme() requires <ThemeProvider>.');\n   return value;\n }\n",
+    "selection_paths": [
+      "web/src/app/theme/public.test.tsx"
+    ],
+    "expected_red": [
+      "ThemeProvider behavior INV-APP-078 fails descriptively outside the provider"
+    ],
+    "why_more_than_one": "Measured: the actual red set exactly matched expected_red; only the diagnostic-path assertion depended on the remediation text."
+  },
+  {
+    "mutation_id": "app-providers-remove-refresh-modal",
+    "defends": [
+      "oracle:CAP-APP-006"
+    ],
+    "target": "web/src/app/providers/public.tsx",
+    "patch": "diff --git a/web/src/app/providers/public.tsx b/web/src/app/providers/public.tsx\nindex 78eea81..50555fe 100644\n--- a/web/src/app/providers/public.tsx\n+++ b/web/src/app/providers/public.tsx\n@@ -101,10 +101,10 @@ export function ServerCompatGate({ children: routeContent, runtime, client, rend\n }\n \n export function RefreshRequiredOverlay({ server, reload }: { server: ServerVersionInfo; reload: () => void }) {\n-  return <Dialog purpose=\"info\" origin={{ kind: 'surface-center' }} open title=\"Please refresh\" onClose={reload} hideTitleRow>\n+  return <section aria-label=\"Please refresh\">\n     <section aria-label=\"Please refresh\">\n-      <h1>Please refresh</h1><p>A new server requires compat v{server.minWebCompatVersion}; this browser provides compat v{WEB_COMPAT_VERSION}.</p>\n+      <h1>Please refresh</h1><p>A new server requires compat v{server.minWebCompatVersion}.</p>\n       <button type=\"button\" onClick={reload}>Refresh now</button>\n     </section>\n-  </Dialog>;\n+  </section>;\n }\n",
+    "selection_paths": [
+      "web/src/app/providers/public.test.tsx",
+      "web/src/app/providers/providers.browser.test.tsx"
+    ],
+    "expected_red": [
+      "provider behavior CAP-APP-006 initially focuses the refresh action and exposes exactly one focusable exit inside the panel",
+      "browser provider contracts CAP-APP-006 reports both versions and removes the incompatible tree",
+      "browser provider contracts INV-APP-009 routes button and Escape through the same reload handler"
+    ],
+    "why_more_than_one": "Removing Dialog and the client-version text simultaneously removes initial modal focus and dual-version reporting; the button still calls reload directly, but Escape no longer reaches the same handler, so the consolidated button-and-Escape routing contract also fails."
+  },
+  {
+    "mutation_id": "app-providers-stop-exporting-retry-policy",
+    "defends": [
+      "oracle:INV-APP-060"
+    ],
+    "target": "web/src/app/providers/public.tsx",
+    "patch": "diff --git a/web/src/app/providers/public.tsx b/web/src/app/providers/public.tsx\nindex 78eea81..6965994 100644\n--- a/web/src/app/providers/public.tsx\n+++ b/web/src/app/providers/public.tsx\n@@ -24,7 +24,7 @@ export interface ProviderRuntime {\n   storage: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;\n }\n \n-export function retryUnless401(failureCount: number, error: unknown): boolean {\n+function retryUnless401(failureCount: number, error: unknown): boolean {\n   if (typeof error === 'object' && error !== null && 'failure' in error) {\n     const failure = error.failure;\n     if (typeof failure === 'object' && failure !== null && 'kind' in failure && failure.kind === 'unauthorized') return false;\n",
+    "selection_paths": [
+      "web/src/app/providers/public.contract.test.tsx"
+    ],
+    "expected_red": [
+      "app/providers contracts INV-APP-059 INV-APP-060 never retries 401 and retries other failures once"
+    ],
+    "why_more_than_one": "Measured: removing the export only breaks the direct named-import retry-policy contract; the source-AST assertion remains green because export visibility is outside its semantics. Any additional red indicates unrelated provider behavior changed."
+  },
+  {
+    "mutation_id": "app-providers-replace-query-retry-policy-with-count",
+    "defends": [
+      "oracle:INV-APP-059"
+    ],
+    "target": "web/src/app/providers/public.tsx",
+    "patch": "diff --git a/web/src/app/providers/public.tsx b/web/src/app/providers/public.tsx\nindex 78eea81..b5944c8 100644\n--- a/web/src/app/providers/public.tsx\n+++ b/web/src/app/providers/public.tsx\n@@ -51,7 +51,7 @@ export function ServerCompatGate({ children: routeContent, runtime, client, rend\n }) {\n   const [busted, setBusted] = useState(false);\n   const [previousInstanceId] = useState(() => safeRead(runtime, DB_INSTANCE_ID_KEY));\n-  const query = useQuery({ queryKey: ['server-version'], queryFn: () => runtime.fetchVersion(), staleTime: 0, gcTime: 0, retry: retryUnless401, refetchInterval: false }, client);\n+  const query = useQuery({ queryKey: ['server-version'], queryFn: () => runtime.fetchVersion(), staleTime: 0, gcTime: 0, retry: 3, refetchInterval: false }, client);\n \n   useEffect(() => {\n     const id = query.data?.dbInstanceId;\n",
+    "selection_paths": [
+      "web/src/app/providers/public.contract.test.tsx"
+    ],
+    "expected_red": [
+      "app/providers contracts ServerCompatGate passes retryUnless401 as its query retry option"
+    ],
+    "why_more_than_one": "Review measured exactly this one source-shape assertion turning red; the orchestrator still needs to rerun and confirm the recorded red set."
+  },
+  {
+    "mutation_id": "app-providers-drop-busted-state",
+    "defends": [
+      "oracle:CAP-APP-010",
+      "oracle:INV-APP-011",
+      "oracle:INV-APP-014"
+    ],
+    "target": "web/src/app/providers/public.tsx",
+    "patch": "diff --git a/web/src/app/providers/public.tsx b/web/src/app/providers/public.tsx\nindex 78eea81..765366b 100644\n--- a/web/src/app/providers/public.tsx\n+++ b/web/src/app/providers/public.tsx\n@@ -59,7 +59,7 @@ export function ServerCompatGate({ children: routeContent, runtime, client, rend\n     const previous = previousInstanceId;\n     if (previous && previous !== id) {\n       client.clear(); cursorStore.clear(); safeDelete(runtime);\n-      safeWrite(runtime, DB_INSTANCE_ID_KEY, id); setBusted(true); runtime.reload(); return;\n+      safeWrite(runtime, DB_INSTANCE_ID_KEY, id); runtime.reload(); return;\n     }\n     if (!previous) safeWrite(runtime, DB_INSTANCE_ID_KEY, id);\n   }, [client, cursorStore, previousInstanceId, query.data?.dbInstanceId, runtime]);\n",
+    "selection_paths": [
+      "web/src/app/providers/public.test.tsx"
+    ],
+    "expected_red": [
+      "provider behavior CAP-APP-010 INV-APP-011 INV-APP-014 silently busts all artifacts and hides children"
+    ],
+    "why_more_than_one": "Measured: the actual red set exactly matched expected_red; only the consolidated blast-path contract failed because cleanup and reload still occurred, but children were no longer hidden."
+  },
+  {
+    "mutation_id": "app-providers-bust-first-visit",
+    "defends": [
+      "oracle:INV-APP-012",
+      "oracle:INV-APP-013"
+    ],
+    "target": "web/src/app/providers/public.tsx",
+    "patch": "diff --git a/web/src/app/providers/public.tsx b/web/src/app/providers/public.tsx\nindex 78eea81..0e23859 100644\n--- a/web/src/app/providers/public.tsx\n+++ b/web/src/app/providers/public.tsx\n@@ -57,7 +57,7 @@ export function ServerCompatGate({ children: routeContent, runtime, client, rend\n     const id = query.data?.dbInstanceId;\n     if (!id) return;\n     const previous = previousInstanceId;\n-    if (previous && previous !== id) {\n+    if (previous !== id) {\n       client.clear(); cursorStore.clear(); safeDelete(runtime);\n       safeWrite(runtime, DB_INSTANCE_ID_KEY, id); setBusted(true); runtime.reload(); return;\n     }\n",
+    "selection_paths": [
+      "web/src/app/providers/public.test.tsx"
+    ],
+    "expected_red": [
+      "EventBridge contracts restores actual event-driven query refresh after retrying a failed preflight",
+      "EventBridge contracts INV-APP-001 mounts inside ServerCompatGate and never exists before the compat verdict",
+      "provider behavior shows unavailable live updates and retries version preflight into an active bridge",
+      "provider behavior keeps a compatible bridge active when a background version recheck fails",
+      "provider behavior CAP-APP-006 initially focuses the refresh action and exposes exactly one focusable exit inside the panel",
+      "provider behavior INV-APP-012 INV-APP-013 preserves matching artifacts and first visit only records the id",
+      "browser provider contracts CAP-APP-006 reports both versions and removes the incompatible tree"
+    ],
+    "why_more_than_one": "Measured in the registered witness selection: first-visit cache busting prevents compatible recovery, so the three new preflight recovery witnesses fail alongside the original four contracts."
+  },
+  {
+    "mutation_id": "app-providers-drop-bridge-data-guard",
+    "defends": [
+      "oracle:INV-APP-001",
+      "oracle:INV-APP-002"
+    ],
+    "target": "web/src/app/providers/public.tsx",
+    "patch": "diff --git a/web/src/app/providers/public.tsx b/web/src/app/providers/public.tsx\nindex 78eea81..5efb95c 100644\n--- a/web/src/app/providers/public.tsx\n+++ b/web/src/app/providers/public.tsx\n@@ -87,7 +87,7 @@ export function ServerCompatGate({ children: routeContent, runtime, client, rend\n   if (__NC_BUNDLED__ && query.data && query.data.webCompatVersion < WEB_COMPAT_VERSION) return <BundledConnectionNotice kind=\"server-update\" />;\n   if (__NC_BUNDLED__ && query.data && query.data.minWebCompatVersion > WEB_COMPAT_VERSION) return <BundledConnectionNotice kind=\"app-update\" />;\n   if (query.data && query.data.minWebCompatVersion > WEB_COMPAT_VERSION) return <RefreshRequiredOverlay server={query.data} reload={() => runtime.reload()} />;\n-  return <>{verdict === 'same' && renderEventBridge?.(query.data!)}{children}\n+  return <>{renderEventBridge?.(query.data!)}{children}\n     {query.data === undefined && (query.isError || query.fetchStatus === 'paused') && (\n       <div className={styles.status} role=\"status\">\n         <span>{query.fetchStatus === 'paused' ? 'Offline · Live updates paused'\n",
+    "selection_paths": [
+      "web/src/app/providers/public.test.tsx"
+    ],
+    "expected_red": [
+      "EventBridge contracts restores actual event-driven query refresh after retrying a failed preflight",
+      "EventBridge contracts INV-APP-001 mounts inside ServerCompatGate and never exists before the compat verdict",
+      "provider behavior shows unavailable live updates and retries version preflight into an active bridge",
+      "provider behavior INV-APP-001 INV-APP-002 mounts the bridge only after a compatible verdict while children remain",
+      "provider behavior T-A2 never constructs the bridge when the persisted database instance has switched"
+    ],
+    "why_more_than_one": "Measured in the registered witness selection: the bridge starts before any verdict, violating the three existing gate contracts and both new failed-preflight recovery witnesses."
+  },
+  {
+    "mutation_id": "app-cursor-read-from-storage",
+    "defends": [
+      "oracle:INV-APP-106"
+    ],
+    "target": "web/src/app/events/browser-cursor-store.ts",
+    "patch": "diff --git a/web/src/app/events/browser-cursor-store.ts b/web/src/app/events/browser-cursor-store.ts\n--- a/web/src/app/events/browser-cursor-store.ts\n+++ b/web/src/app/events/browser-cursor-store.ts\n@@ -54,7 +54,7 @@\n   };\n \n   return {\n-    read: () => adoptedInstanceId === null ? null : cursor,\n+    read: () => adoptedInstanceId === null ? null : persistedCursor(storage.getItem(SYNC_CURSOR_KEY), adoptedInstanceId),\n     write: (value) => {\n       cursor = value;\n       if (adoptedInstanceId === null) {\n",
+    "expected_red": [
+      "browser cursor store T-C1 write is synchronously visible from memory",
+      "browser cursor store T-C5 contains storage failures without losing the in-memory cursor"
+    ],
+    "selection_paths": [
+      "web/src/app/events/browser-cursor-store.test.ts"
+    ],
+    "why_more_than_one": "Only the synchronous memory-authority assertion reads before the queued idle flush."
+  },
+  {
+    "mutation_id": "app-cursor-drop-idle-batching",
+    "defends": [
+      "oracle:INV-APP-050"
+    ],
+    "target": "web/src/app/events/browser-cursor-store.ts",
+    "patch": "diff --git a/web/src/app/events/browser-cursor-store.ts b/web/src/app/events/browser-cursor-store.ts\n--- a/web/src/app/events/browser-cursor-store.ts\n+++ b/web/src/app/events/browser-cursor-store.ts\n@@ -67,7 +67,7 @@\n         try { storage.removeItem(SYNC_CURSOR_KEY); } catch { /* persistence is best-effort */ }\n         return;\n       }\n-      if (idleHandle === null) idleHandle = idle.schedule(flush);\n+      idleHandle = idle.schedule(flush);\n     },\n     adopt: (dbInstanceId) => {\n       const changed = adoptedInstanceId !== dbInstanceId;\n",
+    "expected_red": [
+      "browser cursor store T-C2 batches writes into one idle flush carrying the latest cursor"
+    ],
+    "selection_paths": [
+      "web/src/app/events/browser-cursor-store.test.ts"
+    ],
+    "why_more_than_one": "Only T-C2 performs multiple writes before draining idle work."
+  },
+  {
+    "mutation_id": "app-cursor-clear-allows-stale-flush",
+    "defends": [
+      "oracle:INV-APP-107"
+    ],
+    "target": "web/src/app/events/browser-cursor-store.ts",
+    "patch": "diff --git a/web/src/app/events/browser-cursor-store.ts b/web/src/app/events/browser-cursor-store.ts\n--- a/web/src/app/events/browser-cursor-store.ts\n+++ b/web/src/app/events/browser-cursor-store.ts\n@@ -47,7 +47,7 @@\n \n   const flush = (): void => {\n     idleHandle = null;\n-    if (adoptedInstanceId === null || cursor === null) return;\n+    if (adoptedInstanceId === null) return;\n     try {\n       storage.setItem(SYNC_CURSOR_KEY, JSON.stringify({ dbInstanceId: adoptedInstanceId, cursor }));\n     } catch { /* persistence is best-effort; memory remains authoritative */ }\n@@ -81,7 +81,6 @@\n       catch { cursor = null; }\n     },\n     clear: () => {\n-      if (idleHandle !== null) idle.cancel(idleHandle);\n       idleHandle = null;\n       cursor = null;\n       writtenBeforeAdopt = false;\n",
+    "expected_red": [
+      "accepts all real oracle data without exceptions",
+      "browser cursor store T-C3 clear prevents even an already-dequeued idle callback from restoring a cursor"
+    ],
+    "selection_paths": [
+      "web/src/app/events/browser-cursor-store.test.ts"
+    ],
+    "why_more_than_one": "The combined patch removes both independent stale-flush defenses; deleting either one alone is intentionally absorbed by the other."
+  },
+  {
+    "mutation_id": "app-cursor-ignore-database-stamp",
+    "defends": [
+      "oracle:INV-APP-107"
+    ],
+    "target": "web/src/app/events/browser-cursor-store.ts",
+    "patch": "diff --git a/web/src/app/events/browser-cursor-store.ts b/web/src/app/events/browser-cursor-store.ts\n--- a/web/src/app/events/browser-cursor-store.ts\n+++ b/web/src/app/events/browser-cursor-store.ts\n@@ -28,7 +28,6 @@\n     const value: unknown = JSON.parse(raw);\n     if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;\n     const record = value as Record<string, unknown>;\n-    if (record.dbInstanceId !== dbInstanceId) return null;\n     return typeof record.cursor === 'number' && Number.isSafeInteger(record.cursor) && record.cursor >= 0\n       ? record.cursor : null;\n   } catch {\n",
+    "expected_red": [
+      "accepts all real oracle data without exceptions",
+      "browser cursor store T-C4 rejects a persisted cursor stamped for another database instance"
+    ],
+    "selection_paths": [
+      "web/src/app/events/browser-cursor-store.test.ts"
+    ],
+    "why_more_than_one": "Only T-C4 supplies a valid persisted object stamped for a different instance."
+  },
+  {
+    "mutation_id": "app-cursor-let-flush-storage-error-escape",
+    "defends": [
+      "oracle:INV-APP-107"
+    ],
+    "target": "web/src/app/events/browser-cursor-store.ts",
+    "patch": "diff --git a/web/src/app/events/browser-cursor-store.ts b/web/src/app/events/browser-cursor-store.ts\n--- a/web/src/app/events/browser-cursor-store.ts\n+++ b/web/src/app/events/browser-cursor-store.ts\n@@ -48,9 +48,7 @@\n   const flush = (): void => {\n     idleHandle = null;\n     if (adoptedInstanceId === null || cursor === null) return;\n-    try {\n-      storage.setItem(SYNC_CURSOR_KEY, JSON.stringify({ dbInstanceId: adoptedInstanceId, cursor }));\n-    } catch { /* persistence is best-effort; memory remains authoritative */ }\n+    storage.setItem(SYNC_CURSOR_KEY, JSON.stringify({ dbInstanceId: adoptedInstanceId, cursor }));\n   };\n \n   return {\n",
+    "expected_red": [
+      "accepts all real oracle data without exceptions",
+      "browser cursor store T-C5 contains storage failures without losing the in-memory cursor"
+    ],
+    "selection_paths": [
+      "web/src/app/events/browser-cursor-store.test.ts"
+    ],
+    "why_more_than_one": "Only T-C5 injects a setItem failure and drains the scheduled flush."
+  },
+  {
+    "mutation_id": "app-cursor-read-before-adopt",
+    "defends": [
+      "oracle:INV-APP-107"
+    ],
+    "target": "web/src/app/events/browser-cursor-store.ts",
+    "patch": "diff --git a/web/src/app/events/browser-cursor-store.ts b/web/src/app/events/browser-cursor-store.ts\n--- a/web/src/app/events/browser-cursor-store.ts\n+++ b/web/src/app/events/browser-cursor-store.ts\n@@ -54,7 +54,7 @@\n   };\n \n   return {\n-    read: () => adoptedInstanceId === null ? null : cursor,\n+    read: () => adoptedInstanceId === null ? (JSON.parse(storage.getItem(SYNC_CURSOR_KEY) ?? 'null')?.cursor ?? null) : cursor,\n     write: (value) => {\n       cursor = value;\n       if (adoptedInstanceId === null) {\n",
+    "expected_red": [
+      "browser cursor store T-C6 fails closed before adopt and does not persist pre-adopt writes"
+    ],
+    "selection_paths": [
+      "web/src/app/events/browser-cursor-store.test.ts"
+    ],
+    "why_more_than_one": "Only T-C6 reads a valid persisted object before adopt."
+  },
+  {
+    "mutation_id": "app-cursor-accept-bare-number",
+    "defends": [
+      "oracle:INV-APP-107"
+    ],
+    "target": "web/src/app/events/browser-cursor-store.ts",
+    "patch": "diff --git a/web/src/app/events/browser-cursor-store.ts b/web/src/app/events/browser-cursor-store.ts\n--- a/web/src/app/events/browser-cursor-store.ts\n+++ b/web/src/app/events/browser-cursor-store.ts\n@@ -26,6 +26,7 @@\n   if (raw === null) return null;\n   try {\n     const value: unknown = JSON.parse(raw);\n+    if (typeof value === 'number') return value;\n     if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;\n     const record = value as Record<string, unknown>;\n     if (record.dbInstanceId !== dbInstanceId) return null;\n",
+    "expected_red": [
+      "browser cursor store T-C7 rejects the legacy web bare-number value without throwing"
+    ],
+    "selection_paths": [
+      "web/src/app/events/browser-cursor-store.test.ts"
+    ],
+    "why_more_than_one": "Only T-C7 supplies the legacy bare-number representation."
+  },
+  {
+    "mutation_id": "app-providers-render-bridge-before-instance-verdict",
+    "defends": [
+      "oracle:INV-APP-107"
+    ],
+    "target": "web/src/app/providers/public.tsx",
+    "patch": "diff --git a/web/src/app/providers/public.tsx b/web/src/app/providers/public.tsx\nindex 78eea81..b89cb89 100644\n--- a/web/src/app/providers/public.tsx\n+++ b/web/src/app/providers/public.tsx\n@@ -87,7 +87,7 @@ export function ServerCompatGate({ children: routeContent, runtime, client, rend\n   if (__NC_BUNDLED__ && query.data && query.data.webCompatVersion < WEB_COMPAT_VERSION) return <BundledConnectionNotice kind=\"server-update\" />;\n   if (__NC_BUNDLED__ && query.data && query.data.minWebCompatVersion > WEB_COMPAT_VERSION) return <BundledConnectionNotice kind=\"app-update\" />;\n   if (query.data && query.data.minWebCompatVersion > WEB_COMPAT_VERSION) return <RefreshRequiredOverlay server={query.data} reload={() => runtime.reload()} />;\n-  return <>{verdict === 'same' && renderEventBridge?.(query.data!)}{children}\n+  return <>{query.data && renderEventBridge?.(query.data)}{children}\n     {query.data === undefined && (query.isError || query.fetchStatus === 'paused') && (\n       <div className={styles.status} role=\"status\">\n         <span>{query.fetchStatus === 'paused' ? 'Offline · Live updates paused'\n",
+    "expected_red": [
+      "provider behavior T-A2 never constructs the bridge when the persisted database instance has switched"
+    ],
+    "selection_paths": [
+      "web/src/app/providers/public.test.tsx"
+    ],
+    "why_more_than_one": "Only T-A2 combines a persisted old instance with a newly fetched instance and observes bridge construction during that render."
+  },
+  {
+    "mutation_id": "app-providers-retry-reads-top-level-status",
+    "defends": [
+      "oracle:INV-APP-059"
+    ],
+    "target": "web/src/app/providers/public.tsx",
+    "patch": "diff --git a/web/src/app/providers/public.tsx b/web/src/app/providers/public.tsx\nindex 78eea81..9215361 100644\n--- a/web/src/app/providers/public.tsx\n+++ b/web/src/app/providers/public.tsx\n@@ -25,10 +25,7 @@ export interface ProviderRuntime {\n }\n \n export function retryUnless401(failureCount: number, error: unknown): boolean {\n-  if (typeof error === 'object' && error !== null && 'failure' in error) {\n-    const failure = error.failure;\n-    if (typeof failure === 'object' && failure !== null && 'kind' in failure && failure.kind === 'unauthorized') return false;\n-  }\n+  if (typeof error === 'object' && error !== null && 'status' in error && error.status === 401) return false;\n   return failureCount < 1;\n }\n \n",
+    "expected_red": [
+      "app/providers contracts INV-APP-059 INV-APP-060 never retries 401 and retries other failures once"
+    ],
+    "selection_paths": [
+      "web/src/app/providers/public.contract.test.tsx"
+    ],
+    "why_more_than_one": "Only the retry-policy contract passes real ApiError instances whose HTTP status is nested under failure."
+  },
+  {
+    "mutation_id": "events-driver-drop-subscription",
+    "defends": [
+      "oracle:INV-APP-049"
+    ],
+    "target": "web/src/systems/events/websocket-driver.ts",
+    "patch": "diff --git a/web/src/systems/events/websocket-driver.ts b/web/src/systems/events/websocket-driver.ts\n--- a/web/src/systems/events/websocket-driver.ts\n+++ b/web/src/systems/events/websocket-driver.ts\n@@ -102,7 +102,6 @@\n       if (this.closed || epoch !== this.epoch) { socket.close(); return; }\n       opened = true;\n       if (!__NC_BUNDLED__) this.retryDelay = 500;\n-      socket.send(JSON.stringify(eventSubscriptionFrame(configuration.topics, this.cursor.read())));\n     };\n     socket.onmessage = (event) => {\n       if (this.closed || epoch !== this.epoch) return;\n",
+    "expected_red": [
+      "WebSocketDriver contracts T-D1 T-D3 publishes the protocol subscription frame with the current cursor",
+      "WebSocketDriver contracts T-D2 publishes the sticky subscription again after reconnect",
+      "event composition T-A1 shares one cursor store so reconnect subscribes from the synchronously delivered event id",
+      "event composition T-B3 snapshot-required clears once and bounces to exactly one since-zero socket"
+    ],
+    "selection_paths": [
+      "web/src/systems/events/websocket-driver.contract.test.ts"
+    ],
+    "why_more_than_one": "T-D1 directly observes the first open publication."
+  },
+  {
+    "mutation_id": "events-driver-subscribe-first-open-only",
+    "defends": [
+      "oracle:INV-APP-055"
+    ],
+    "target": "web/src/systems/events/websocket-driver.ts",
+    "patch": "diff --git a/web/src/systems/events/websocket-driver.ts b/web/src/systems/events/websocket-driver.ts\n--- a/web/src/systems/events/websocket-driver.ts\n+++ b/web/src/systems/events/websocket-driver.ts\n@@ -102,7 +102,7 @@\n       if (this.closed || epoch !== this.epoch) { socket.close(); return; }\n       opened = true;\n       if (!__NC_BUNDLED__) this.retryDelay = 500;\n-      socket.send(JSON.stringify(eventSubscriptionFrame(configuration.topics, this.cursor.read())));\n+      if (this.retryDelay !== 500) socket.send(JSON.stringify(eventSubscriptionFrame(configuration.topics, this.cursor.read())));\n     };\n     socket.onmessage = (event) => {\n       if (this.closed || epoch !== this.epoch) return;\n",
+    "expected_red": [
+      "WebSocketDriver contracts T-D1 T-D3 publishes the protocol subscription frame with the current cursor",
+      "WebSocketDriver contracts T-D2 publishes the sticky subscription again after reconnect",
+      "event composition T-A1 shares one cursor store so reconnect subscribes from the synchronously delivered event id",
+      "event composition T-B3 snapshot-required clears once and bounces to exactly one since-zero socket"
+    ],
+    "selection_paths": [
+      "web/src/systems/events/websocket-driver.contract.test.ts"
+    ],
+    "why_more_than_one": "T-D2 uniquely observes the second open."
+  },
+  {
+    "mutation_id": "events-driver-handmade-subscription",
+    "defends": [
+      "oracle:INV-APP-049"
+    ],
+    "target": "web/src/systems/events/websocket-driver.ts",
+    "patch": "diff --git a/web/src/systems/events/websocket-driver.ts b/web/src/systems/events/websocket-driver.ts\n--- a/web/src/systems/events/websocket-driver.ts\n+++ b/web/src/systems/events/websocket-driver.ts\n@@ -102,7 +102,7 @@\n       if (this.closed || epoch !== this.epoch) { socket.close(); return; }\n       opened = true;\n       if (!__NC_BUNDLED__) this.retryDelay = 500;\n-      socket.send(JSON.stringify(eventSubscriptionFrame(configuration.topics, this.cursor.read())));\n+      socket.send(JSON.stringify({ sub: configuration.topics }));\n     };\n     socket.onmessage = (event) => {\n       if (this.closed || epoch !== this.epoch) return;\n",
+    "expected_red": [
+      "WebSocketDriver contracts T-D1 T-D3 publishes the protocol subscription frame with the current cursor",
+      "WebSocketDriver contracts T-D2 publishes the sticky subscription again after reconnect",
+      "event composition T-A1 shares one cursor store so reconnect subscribes from the synchronously delivered event id",
+      "event composition T-B3 snapshot-required clears once and bounces to exactly one since-zero socket"
+    ],
+    "selection_paths": [
+      "web/src/systems/events/websocket-driver.contract.test.ts"
+    ],
+    "why_more_than_one": "Both first and sticky subscription assertions consume the shared protocol frame."
+  },
+  {
+    "mutation_id": "events-driver-connect-on-open",
+    "defends": [
+      "oracle:INV-APP-044"
+    ],
+    "target": "web/src/systems/events/websocket-driver.ts",
+    "patch": "diff --git a/web/src/systems/events/websocket-driver.ts b/web/src/systems/events/websocket-driver.ts\n--- a/web/src/systems/events/websocket-driver.ts\n+++ b/web/src/systems/events/websocket-driver.ts\n@@ -101,6 +101,7 @@\n     socket.onopen = () => {\n       if (this.closed || epoch !== this.epoch) { socket.close(); return; }\n       opened = true;\n+      sink.connectionState('connected');\n       if (!__NC_BUNDLED__) this.retryDelay = 500;\n       socket.send(JSON.stringify(eventSubscriptionFrame(configuration.topics, this.cursor.read())));\n     };\n",
+    "expected_red": [
+      "WebSocketDriver contracts T-D4 stays connecting on open and becomes connected only before replay-complete delivery"
+    ],
+    "selection_paths": [
+      "web/src/systems/events/websocket-driver.contract.test.ts"
+    ],
+    "why_more_than_one": "Only T-D4 records state before replay completion."
+  },
+  {
+    "mutation_id": "events-driver-drop-retry-epoch-guards",
+    "defends": [
+      "oracle:INV-APP-108"
+    ],
+    "target": "web/src/systems/events/websocket-driver.ts",
+    "patch": "diff --git a/web/src/systems/events/websocket-driver.ts b/web/src/systems/events/websocket-driver.ts\n--- a/web/src/systems/events/websocket-driver.ts\n+++ b/web/src/systems/events/websocket-driver.ts\n@@ -85,7 +85,7 @@\n   }\n \n   private connect(epoch: number): void {\n-    if (this.closed || epoch !== this.epoch) return;\n+    // mutated: connect guard removed\n     const configuration = this.configuration;\n     const sink = this.sink;\n     if (configuration === null || sink === null) return;\n@@ -136,7 +136,7 @@\n     const delay = __NC_BUNDLED__ ? this.retryDelay * (0.75 + Math.random() * 0.5) : this.retryDelay;\n     this.retryDelay = Math.min(this.retryDelay * 2, 8000);\n     this.retryTimer = setTimeout(() => {\n-      if (this.closed || epoch !== this.epoch) return;\n+      // mutated: timer guard removed\n       this.retryTimer = null;\n       this.connect(epoch);\n     }, delay);\n",
+    "expected_red": [
+      "WebSocketDriver contracts T-D5a rejects an already-dequeued retry callback after stop"
+    ],
+    "selection_paths": [
+      "web/src/systems/events/websocket-driver.contract.test.ts"
+    ],
+    "why_more_than_one": "Combined patch removes the timer closed check, timer epoch check, and connect entry check represented by the two compound guards."
+  },
+  {
+    "mutation_id": "events-driver-drop-clear-retry",
+    "defends": [
+      "oracle:INV-APP-109"
+    ],
+    "target": "web/src/systems/events/websocket-driver.ts",
+    "patch": "diff --git a/web/src/systems/events/websocket-driver.ts b/web/src/systems/events/websocket-driver.ts\n--- a/web/src/systems/events/websocket-driver.ts\n+++ b/web/src/systems/events/websocket-driver.ts\n@@ -69,7 +69,6 @@\n     ++this.epoch;\n     this.closed = true;\n     this.probeInFlight = false;\n-    if (this.retryTimer !== null) clearTimeout(this.retryTimer);\n     this.retryTimer = null;\n     if (this.handshakeTimer !== null) clearTimeout(this.handshakeTimer);\n     this.handshakeTimer = null;\n",
+    "expected_red": [
+      "WebSocketDriver contracts T-D5b cancels pending retry and old close work cannot create a second live socket"
+    ],
+    "selection_paths": [
+      "web/src/systems/events/websocket-driver.contract.test.ts"
+    ],
+    "why_more_than_one": "T-D5b separately observes cancellation and live socket balance."
+  },
+  {
+    "mutation_id": "events-driver-stop-before-start-throws",
+    "defends": [
+      "oracle:INV-APP-109"
+    ],
+    "target": "web/src/systems/events/websocket-driver.ts",
+    "patch": "diff --git a/web/src/systems/events/websocket-driver.ts b/web/src/systems/events/websocket-driver.ts\n--- a/web/src/systems/events/websocket-driver.ts\n+++ b/web/src/systems/events/websocket-driver.ts\n@@ -65,6 +65,7 @@\n   }\n \n   stop(): void {\n+    if (this.socket === null) throw new Error('not started');\n     ++this.epoch;\n     this.closed = true;\n     this.probeInFlight = false;\n",
+    "expected_red": [
+      "WebSocketDriver contracts T-B3 completes close-side driver writes before the reentrant sink boundary",
+      "WebSocketDriver contracts T-D11 ignores an old epoch probe continuation",
+      "WebSocketDriver contracts T-D5a rejects an already-dequeued retry callback after stop",
+      "WebSocketDriver contracts T-D5b cancels pending retry and old close work cannot create a second live socket",
+      "WebSocketDriver contracts T-D5c stop is idempotent before start and after stop"
+    ],
+    "selection_paths": [
+      "web/src/systems/events/websocket-driver.contract.test.ts"
+    ],
+    "why_more_than_one": "Only T-D5c stops before start."
+  },
+  {
+    "mutation_id": "events-driver-remove-backoff-cap-reset",
+    "defends": [
+      "oracle:INV-APP-046"
+    ],
+    "target": "web/src/systems/events/websocket-driver.ts",
+    "patch": "diff --git a/web/src/systems/events/websocket-driver.ts b/web/src/systems/events/websocket-driver.ts\n--- a/web/src/systems/events/websocket-driver.ts\n+++ b/web/src/systems/events/websocket-driver.ts\n@@ -101,7 +101,6 @@\n     socket.onopen = () => {\n       if (this.closed || epoch !== this.epoch) { socket.close(); return; }\n       opened = true;\n-      if (!__NC_BUNDLED__) this.retryDelay = 500;\n       socket.send(JSON.stringify(eventSubscriptionFrame(configuration.topics, this.cursor.read())));\n     };\n     socket.onmessage = (event) => {\n@@ -134,7 +133,7 @@\n   private scheduleRetry(epoch: number): void {\n     if (this.closed || epoch !== this.epoch || this.retryTimer !== null) return;\n     const delay = __NC_BUNDLED__ ? this.retryDelay * (0.75 + Math.random() * 0.5) : this.retryDelay;\n-    this.retryDelay = Math.min(this.retryDelay * 2, 8000);\n+    this.retryDelay *= 2;\n     this.retryTimer = setTimeout(() => {\n       if (this.closed || epoch !== this.epoch) return;\n       this.retryTimer = null;\n",
+    "expected_red": [
+      "WebSocketDriver contracts T-D6 backs off at 500/1000/2000/4000/8000/8000 and resets after open"
+    ],
+    "selection_paths": [
+      "web/src/systems/events/websocket-driver.contract.test.ts"
+    ],
+    "why_more_than_one": "The assertion locks both cap and open reset."
+  },
+  {
+    "mutation_id": "events-driver-probe-live-close",
+    "defends": [
+      "oracle:INV-APP-047"
+    ],
+    "target": "web/src/systems/events/websocket-driver.ts",
+    "patch": "diff --git a/web/src/systems/events/websocket-driver.ts b/web/src/systems/events/websocket-driver.ts\n--- a/web/src/systems/events/websocket-driver.ts\n+++ b/web/src/systems/events/websocket-driver.ts\n@@ -125,7 +125,7 @@\n       if (this.handshakeTimer !== null) clearTimeout(this.handshakeTimer);\n       this.handshakeTimer = null;\n       if (this.socket === socket) this.socket = null;\n-      if (!opened) this.probe(epoch);\n+      this.probe(epoch);\n       this.scheduleRetry(epoch);\n       sink.connectionState('connecting');\n     };\n",
+    "expected_red": [
+      "WebSocketDriver contracts T-D7 probes only a connection that closes before open"
+    ],
+    "selection_paths": [
+      "web/src/systems/events/websocket-driver.contract.test.ts"
+    ],
+    "why_more_than_one": "T-D7 contrasts pre-open and post-open close."
+  },
+  {
+    "mutation_id": "events-driver-drop-probe-latch",
+    "defends": [
+      "oracle:INV-APP-048"
+    ],
+    "target": "web/src/systems/events/websocket-driver.ts",
+    "patch": "diff --git a/web/src/systems/events/websocket-driver.ts b/web/src/systems/events/websocket-driver.ts\n--- a/web/src/systems/events/websocket-driver.ts\n+++ b/web/src/systems/events/websocket-driver.ts\n@@ -135,7 +135,6 @@\n   }\n \n   private probe(epoch: number): void {\n-    if (this.probeInFlight) return;\n     this.probeInFlight = true;\n     void this.probeUnauthorized().then(() => {\n       if (this.closed || epoch !== this.epoch) return;\n",
+    "expected_red": [
+      "WebSocketDriver contracts T-D8 permits only one unauthorized probe in flight"
+    ],
+    "selection_paths": [
+      "web/src/systems/events/websocket-driver.contract.test.ts"
+    ],
+    "why_more_than_one": "T-D8 creates two closes while the first probe remains pending."
+  },
+  {
+    "mutation_id": "events-driver-notify-every-401",
+    "defends": [
+      "oracle:INV-APP-110"
+    ],
+    "target": "web/src/systems/events/websocket-driver.ts",
+    "patch": "diff --git a/web/src/systems/events/websocket-driver.ts b/web/src/systems/events/websocket-driver.ts\n--- a/web/src/systems/events/websocket-driver.ts\n+++ b/web/src/systems/events/websocket-driver.ts\n@@ -142,7 +142,7 @@\n       this.unauthorized = false;\n     }).catch((error: unknown) => {\n       if (this.closed || epoch !== this.epoch) return;\n-      if (isUnauthorized(error) && !this.unauthorized) {\n+      if (isUnauthorized(error)) {\n         this.unauthorized = true;\n         this.onUnauthorized();\n       }\n",
+    "expected_red": [
+      "WebSocketDriver contracts T-D9 continues normal retry and notifies only on an ok-to-unauthorized transition across epochs"
+    ],
+    "selection_paths": [
+      "web/src/systems/events/websocket-driver.contract.test.ts"
+    ],
+    "why_more_than_one": "T-D9 observes repeated 401s within and across epochs."
+  },
+  {
+    "mutation_id": "events-driver-let-constructor-throw",
+    "defends": [
+      "oracle:INV-APP-108"
+    ],
+    "target": "web/src/systems/events/websocket-driver.ts",
+    "patch": "diff --git a/web/src/systems/events/websocket-driver.ts b/web/src/systems/events/websocket-driver.ts\n--- a/web/src/systems/events/websocket-driver.ts\n+++ b/web/src/systems/events/websocket-driver.ts\n@@ -90,8 +90,7 @@\n     const sink = this.sink;\n     if (configuration === null || sink === null) return;\n     let socket: SocketPort;\n-    try { socket = this.socketFactory(this.url); }\n-    catch { this.scheduleRetry(epoch); return; }\n+    socket = this.socketFactory(this.url);\n     if (this.closed || epoch !== this.epoch) { socket.close(); return; }\n     this.socket = socket;\n     if (__NC_BUNDLED__) this.handshakeTimer = setTimeout(() => {\n",
+    "expected_red": [
+      "WebSocketDriver contracts T-D10 contains socket construction failures and retries"
+    ],
+    "selection_paths": [
+      "web/src/systems/events/websocket-driver.contract.test.ts"
+    ],
+    "why_more_than_one": "Only T-D10 injects a throwing constructor."
+  },
+  {
+    "mutation_id": "events-driver-old-probe-mutates-new-epoch",
+    "defends": [
+      "oracle:INV-APP-108"
+    ],
+    "target": "web/src/systems/events/websocket-driver.ts",
+    "patch": "diff --git a/web/src/systems/events/websocket-driver.ts b/web/src/systems/events/websocket-driver.ts\n--- a/web/src/systems/events/websocket-driver.ts\n+++ b/web/src/systems/events/websocket-driver.ts\n@@ -141,7 +141,7 @@\n       if (this.closed || epoch !== this.epoch) return;\n       this.unauthorized = false;\n     }).catch((error: unknown) => {\n-      if (this.closed || epoch !== this.epoch) return;\n+      // mutated: stale probe continuation allowed\n       if (isUnauthorized(error) && !this.unauthorized) {\n         this.unauthorized = true;\n         this.onUnauthorized();\n",
+    "expected_red": [
+      "WebSocketDriver contracts T-D11 ignores an old epoch probe continuation"
+    ],
+    "selection_paths": [
+      "web/src/systems/events/websocket-driver.contract.test.ts"
+    ],
+    "why_more_than_one": "T-D11 resolves epoch one after epoch two starts."
+  },
+  {
+    "mutation_id": "app-composition-split-cursor-store",
+    "defends": [
+      "oracle:INV-APP-111"
+    ],
+    "target": "web/src/app/composition.ts",
+    "patch": "diff --git a/web/src/app/composition.ts b/web/src/app/composition.ts\n--- a/web/src/app/composition.ts\n+++ b/web/src/app/composition.ts\n@@ -49,7 +49,7 @@\n   const store = options.cursorStore ?? createBrowserCursorStore(options.storage, options.idle);\n   const createDriver = options.driverFactory ?? ((driverOptions) => new WebSocketDriver(driverOptions));\n   const driver = createDriver({\n-    cursor: store,\n+    cursor: createBrowserCursorStore(options.storage, options.idle),\n     // The driver owns the single unauthorized notification for its probe.\n     probeUnauthorized: options.probeUnauthorized ?? (() => runOperation(options.transport, whoamiOperation(), undefined)),\n     onUnauthorized: options.onUnauthorized ?? (() => undefined),\n",
+    "expected_red": [
+      "event composition T-A1 shares one cursor store so reconnect subscribes from the synchronously delivered event id"
+    ],
+    "selection_paths": [
+      "web/src/app/composition.test.tsx"
+    ],
+    "why_more_than_one": "T-A1 writes through the bridge store before the idle flush and observes the driver store."
+  },
+  {
+    "mutation_id": "app-bridge-reopen-on-context-change",
+    "defends": [
+      "oracle:INV-APP-020"
+    ],
+    "target": "web/src/app/events/event-bridge.tsx",
+    "patch": "diff --git a/web/src/app/events/event-bridge.tsx b/web/src/app/events/event-bridge.tsx\nindex 32c277b..0159623 100644\n--- a/web/src/app/events/event-bridge.tsx\n+++ b/web/src/app/events/event-bridge.tsx\n@@ -51,7 +51,7 @@ export function EventBridge({ client, stream, syncEventVersion, dbInstanceId, cu\n       unsubscribe();\n       configured.stop();\n     };\n-  }, [stream, syncEventVersion]);\n+  }, [stream, syncEventVersion, context]);\n \n   return <span data-nc-event-bridge=\"\" hidden />;\n }\n",
+    "expected_red": [
+      "EventBridge contracts INV-APP-020 starts exactly once per stream instance across re-renders and remounts"
+    ],
+    "selection_paths": [
+      "web/src/app/events/event-bridge.contract.test.tsx"
+    ],
+    "why_more_than_one": "The contract rerenders with fresh context identities."
+  },
+  {
+    "mutation_id": "app-adapter-drop-track-invalidation",
+    "defends": [
+      "oracle:CAP-APP-032"
+    ],
+    "target": "web/src/app/events/query-invalidation-adapter.ts",
+    "patch": "diff --git a/web/src/app/events/query-invalidation-adapter.ts b/web/src/app/events/query-invalidation-adapter.ts\n--- a/web/src/app/events/query-invalidation-adapter.ts\n+++ b/web/src/app/events/query-invalidation-adapter.ts\n@@ -53,7 +53,7 @@\n         continue;\n       }\n       for (const key of effect.keys) {\n-        invalidateQuery(client, key);\n+        if (key[0] !== 'track') invalidateQuery(client, key);\n       }\n       continue;\n     }\n",
+    "expected_red": [
+      "EventBridge contracts resolves a runtime card through cached track detail before invalidating",
+      "event composition T-B2 carries a real socket card event through the bridge into track invalidation",
+      "query invalidation adapter drives the conversation-list keys all the way onto the query client",
+      "query invalidation adapter invalidates each planned key of an invalidate effect",
+      "query invalidation adapter turns each real harness plan into its exact live query invalidations",
+      "replaces initial detail metadata for deleted (transport abort=false)",
+      "replaces initial detail metadata for edited (transport abort=false)",
+      "replaces initial detail metadata for cleared (transport abort=false)",
+      "replaces initial detail metadata for persisted (transport abort=false)",
+      "replaces initial detail metadata for deleted (transport abort=true)",
+      "replaces initial detail metadata for edited (transport abort=true)",
+      "replaces initial detail metadata for cleared (transport abort=true)",
+      "replaces initial detail metadata for persisted (transport abort=true)",
+      "replaces initial detail metadata for presentation (transport abort=false)",
+      "replaces initial detail metadata for presentation (transport abort=true)",
+      "keeps adjacent detail input events scoped and the latest replacement authoritative",
+      "marks inactive detail metadata stale without eagerly reading it"
+    ],
+    "selection_paths": [
+      "web/src/app/composition.test.tsx"
+    ],
+    "why_more_than_one": "T-B2 follows a decoded socket event through reducer and adapter. The harness-phase contract also fails because Planner activity now requires the same Track-detail invalidation; CI measured this additional witness. The production detail-query witnesses also require this mapping for each input event, adjacent replacement, and inactive staleness; list witnesses remain green because their separate mapping is intact."
+  },
+  {
+    "mutation_id": "events-driver-drop-all-epoch-protection",
+    "defends": [
+      "oracle:INV-APP-108"
+    ],
+    "target": "web/src/systems/events/websocket-driver.ts",
+    "patch": "diff --git a/web/src/systems/events/websocket-driver.ts b/web/src/systems/events/websocket-driver.ts\n--- a/web/src/systems/events/websocket-driver.ts\n+++ b/web/src/systems/events/websocket-driver.ts\n@@ -54,7 +54,7 @@\n   }\n \n   start(configuration: EventStreamConfiguration, url: string, sink: EventStreamSink): void {\n-    const epoch = ++this.epoch;\n+    const epoch = this.epoch;\n     this.closed = false;\n     this.probeInFlight = false;\n     this.configuration = configuration;\n@@ -66,7 +66,6 @@\n   }\n \n   stop(): void {\n-    ++this.epoch;\n     this.closed = true;\n     this.probeInFlight = false;\n     if (this.retryTimer !== null) clearTimeout(this.retryTimer);\n@@ -85,7 +84,7 @@\n   }\n \n   private connect(epoch: number): void {\n-    if (this.closed || epoch !== this.epoch) return;\n+    if (this.closed) return;\n     const configuration = this.configuration;\n     const sink = this.sink;\n     if (configuration === null || sink === null) return;\n@@ -121,7 +120,6 @@\n       sink.frame(decoded.frame);\n     };\n     socket.onclose = () => {\n-      if (this.closed || epoch !== this.epoch) return;\n       if (this.handshakeTimer !== null) clearTimeout(this.handshakeTimer);\n       this.handshakeTimer = null;\n       if (this.socket === socket) this.socket = null;\n",
+    "expected_red": [
+      "WebSocketDriver contracts T-B3 rechecks epoch after connected delivery before delivering replay-complete",
+      "WebSocketDriver contracts T-B4 stop prevents any new socket construction from an in-flight old close continuation",
+      "WebSocketDriver contracts T-D11 ignores an old epoch probe continuation"
+    ],
+    "selection_paths": [
+      "web/src/systems/events/websocket-driver.contract.test.ts"
+    ],
+    "why_more_than_one": "The combined mutation removes epoch advancement and representative callback/connect guards; T-B4 asserts construction count after stop. All three behavioral witnesses remain required. The former static-oracle failure was incidental: deleting two lines from the old 151-line driver invalidated source ranges ending at 151. The recovery driver is longer, so the unchanged range validator correctly stays green; no behavioral assertion or oracle check is relaxed."
+  },
+  {
+    "mutation_id": "events-reducer-reconnect-before-persist",
+    "defends": [
+      "oracle:INV-APP-113"
+    ],
+    "target": "core/events/reducer.ts",
+    "patch": "diff --git a/core/events/reducer.ts b/core/events/reducer.ts\n--- a/core/events/reducer.ts\n+++ b/core/events/reducer.ts\n@@ -32,7 +32,7 @@\n   if (frame.type === 'snapshot-required') {\n     return {\n       state: { ...state, cursor: null },\n-      effects: [{ type: 'persist-cursor', id: null }, { type: 'clear-cache' }, { type: 'reconnect' }],\n+      effects: [{ type: 'reconnect' }, { type: 'persist-cursor', id: null }, { type: 'clear-cache' }],\n     };\n   }\n   if (frame.type === 'replay-complete') {\n",
+    "expected_red": [
+      "event reducer behavior turns control frames into pure cache and reconnect effects"
+    ],
+    "selection_paths": [
+      "web/src/systems/events/websocket-driver.contract.test.ts"
+    ],
+    "why_more_than_one": "Reducer effect order is independently observable through the reconnect cursor."
+  },
+  {
+    "mutation_id": "events-driver-post-sink-close-write",
+    "defends": [
+      "oracle:INV-APP-108"
+    ],
+    "target": "web/src/systems/events/websocket-driver.ts",
+    "patch": "diff --git a/web/src/systems/events/websocket-driver.ts b/web/src/systems/events/websocket-driver.ts\n--- a/web/src/systems/events/websocket-driver.ts\n+++ b/web/src/systems/events/websocket-driver.ts\n@@ -125,9 +125,9 @@\n       if (this.handshakeTimer !== null) clearTimeout(this.handshakeTimer);\n       this.handshakeTimer = null;\n       if (this.socket === socket) this.socket = null;\n+      sink.connectionState('connecting');\n       if (!opened) this.probe(epoch);\n       this.scheduleRetry(epoch);\n-      sink.connectionState('connecting');\n     };\n   }\n \n",
+    "expected_red": [
+      "WebSocketDriver contracts T-B3 completes close-side driver writes before the reentrant sink boundary"
+    ],
+    "selection_paths": [
+      "web/src/systems/events/websocket-driver.contract.test.ts"
+    ],
+    "why_more_than_one": "Moves close-side state writes after the first sink call and removes the recheck that would absorb the mutation."
+  },
+  {
+    "mutation_id": "events-driver-401-stops-retry",
+    "defends": [
+      "oracle:INV-APP-110"
+    ],
+    "target": "web/src/systems/events/websocket-driver.ts",
+    "patch": "diff --git a/web/src/systems/events/websocket-driver.ts b/web/src/systems/events/websocket-driver.ts\n--- a/web/src/systems/events/websocket-driver.ts\n+++ b/web/src/systems/events/websocket-driver.ts\n@@ -143,6 +143,8 @@\n     }).catch((error: unknown) => {\n       if (this.closed || epoch !== this.epoch) return;\n       if (isUnauthorized(error) && !this.unauthorized) {\n+        if (this.retryTimer !== null) clearTimeout(this.retryTimer);\n+        this.retryTimer = null;\n         this.unauthorized = true;\n         this.onUnauthorized();\n       }\n",
+    "expected_red": [
+      "WebSocketDriver contracts T-D9 continues normal retry and notifies only on an ok-to-unauthorized transition across epochs"
+    ],
+    "selection_paths": [
+      "web/src/systems/events/websocket-driver.contract.test.ts"
+    ],
+    "why_more_than_one": "T-D9 observes construction continuing after unauthorized."
+  },
+  {
+    "mutation_id": "events-driver-401-expands-backoff",
+    "defends": [
+      "oracle:INV-APP-110"
+    ],
+    "target": "web/src/systems/events/websocket-driver.ts",
+    "patch": "diff --git a/web/src/systems/events/websocket-driver.ts b/web/src/systems/events/websocket-driver.ts\n--- a/web/src/systems/events/websocket-driver.ts\n+++ b/web/src/systems/events/websocket-driver.ts\n@@ -144,6 +144,7 @@\n       if (this.closed || epoch !== this.epoch) return;\n       if (isUnauthorized(error) && !this.unauthorized) {\n         this.unauthorized = true;\n+        this.retryDelay = 60_000;\n         this.onUnauthorized();\n       }\n     }).finally(() => {\n",
+    "expected_red": [
+      "WebSocketDriver contracts T-D9 continues normal retry and notifies only on an ok-to-unauthorized transition across epochs"
+    ],
+    "selection_paths": [
+      "web/src/systems/events/websocket-driver.contract.test.ts"
+    ],
+    "why_more_than_one": "T-D9 locks the normal retry schedule after unauthorized."
+  },
+  {
+    "mutation_id": "events-driver-unauthorized-per-epoch",
+    "defends": [
+      "oracle:INV-APP-110"
+    ],
+    "target": "web/src/systems/events/websocket-driver.ts",
+    "patch": "diff --git a/web/src/systems/events/websocket-driver.ts b/web/src/systems/events/websocket-driver.ts\n--- a/web/src/systems/events/websocket-driver.ts\n+++ b/web/src/systems/events/websocket-driver.ts\n@@ -56,6 +56,7 @@\n     const epoch = ++this.epoch;\n     this.closed = false;\n     this.probeInFlight = false;\n+    this.unauthorized = false;\n     this.configuration = configuration;\n     this.url = url;\n     this.sink = sink;\n",
+    "expected_red": [
+      "WebSocketDriver contracts T-D9 continues normal retry and notifies only on an ok-to-unauthorized transition across epochs"
+    ],
+    "selection_paths": [
+      "web/src/systems/events/websocket-driver.contract.test.ts"
+    ],
+    "why_more_than_one": "T-D9 restarts and proves the transition latch is instance-scoped across epochs."
+  },
+  {
+    "mutation_id": "app-browser-composition-silence-unauthorized",
+    "defends": [
+      "oracle:INV-APP-112"
+    ],
+    "target": "web/src/app/composition.ts",
+    "patch": "diff --git a/web/src/app/composition.ts b/web/src/app/composition.ts\n--- a/web/src/app/composition.ts\n+++ b/web/src/app/composition.ts\n@@ -31,7 +31,7 @@\n     url: options.url,\n     storage: options.storage,\n     transport: options.transport,\n-    onUnauthorized: () => unauthorized.notify(),\n+    onUnauthorized: () => undefined,\n     probeUnauthorized: options.probeUnauthorized,\n     cursorStore: options.cursorStore,\n   });\n",
+    "expected_red": [
+      "event composition T-A3 publishes driver unauthorized transitions through the browser channel"
+    ],
+    "selection_paths": [
+      "web/src/app/composition.test.tsx"
+    ],
+    "why_more_than_one": "T-A3 directly observes the browser composition's injected channel notification."
+  },
+  {
+    "mutation_id": "app-track-lookup-always-misses",
+    "defends": [
+      "oracle:INV-APP-034",
+      "oracle:CAP-APP-036"
+    ],
+    "target": "web/src/app/events/track-lookup.ts",
+    "patch": "diff --git a/web/src/app/events/track-lookup.ts b/web/src/app/events/track-lookup.ts\n--- a/web/src/app/events/track-lookup.ts\n+++ b/web/src/app/events/track-lookup.ts\n@@ -10,7 +10,7 @@\n       for (const [key, detail] of client.getQueriesData<TrackDetailWire>({ queryKey: ['track'] })) {\n         if (detail?.cards.some((card) => card.id === cardId)) {\n           const trackId = key[1];\n-          return typeof trackId === 'string' ? trackId : null;\n+          return null;\n         }\n       }\n       return null;\n",
+    "expected_red": [
+      "EventBridge contracts resolves a runtime card through cached track detail before invalidating",
+      "track lookup context finds a card in cached track details and returns null when it is absent"
+    ],
+    "selection_paths": [
+      "web/src/app/events/track-lookup.test.ts",
+      "web/src/app/events/event-bridge.contract.test.tsx"
+    ],
+    "why_more_than_one": "T-G1 locks the lookup directly and through the production bridge default context."
+  },
+  {
+    "mutation_id": "app-adapter-write-through-drops-other-areas",
+    "defends": [
+      "oracle:INV-APP-030"
+    ],
+    "target": "web/src/app/events/query-invalidation-adapter.ts",
+    "patch": "diff --git a/web/src/app/events/query-invalidation-adapter.ts b/web/src/app/events/query-invalidation-adapter.ts\n--- a/web/src/app/events/query-invalidation-adapter.ts\n+++ b/web/src/app/events/query-invalidation-adapter.ts\n@@ -70,9 +70,7 @@\n         const existing = client.getQueryData<readonly ReturnType<typeof toArea>[]>(write.key);\n         if (existing === undefined || !existing.some((area) => area.id === write.value.id)) continue;\n         const updated = toArea(write.value);\n-        client.setQueryData(write.key, existing.map((area) => area.id === updated.id\n-          ? newestArea(area, updated)\n-          : area));\n+        client.setQueryData(write.key, [updated]);\n       }\n       continue;\n     }\n",
+    "expected_red": [
+      "query invalidation adapter write-through replaces one existing area and preserves every other row",
+      "query invalidation adapter write-through ignores an older area event that arrives after a newer cache version"
+    ],
+    "selection_paths": [
+      "web/src/app/events/query-invalidation-adapter.test.ts"
+    ],
+    "why_more_than_one": "T-G2a observes both properties this whole-list replacement destroys: preserving an independent row and retaining a newer version of the replaced row."
+  },
+  {
+    "mutation_id": "app-adapter-write-through-creates-phantom",
+    "defends": [
+      "oracle:INV-APP-031"
+    ],
+    "target": "web/src/app/events/query-invalidation-adapter.ts",
+    "patch": "diff --git a/web/src/app/events/query-invalidation-adapter.ts b/web/src/app/events/query-invalidation-adapter.ts\n--- a/web/src/app/events/query-invalidation-adapter.ts\n+++ b/web/src/app/events/query-invalidation-adapter.ts\n@@ -68,7 +68,11 @@\n           continue;\n         }\n         const existing = client.getQueryData<readonly ReturnType<typeof toArea>[]>(write.key);\n-        if (existing === undefined || !existing.some((area) => area.id === write.value.id)) continue;\n+        if (existing === undefined) continue;\n+        if (!existing.some((area) => area.id === write.value.id)) {\n+          client.setQueryData(write.key, [toArea(write.value)]);\n+          continue;\n+        }\n         const updated = toArea(write.value);\n         client.setQueryData(write.key, existing.map((area) => area.id === updated.id\n           ? newestArea(area, updated)\n",
+    "expected_red": [
+      "query invalidation adapter write-through never creates a phantom area when the row is absent"
+    ],
+    "selection_paths": [
+      "web/src/app/events/query-invalidation-adapter.test.ts"
+    ],
+    "why_more_than_one": "T-G2b starts with an unrelated cached row and rejects insertion of the event payload."
+  },
+  {
+    "mutation_id": "app-adapter-write-through-creates-phantom-without-area-cache",
+    "defends": [
+      "oracle:INV-APP-031"
+    ],
+    "target": "web/src/app/events/query-invalidation-adapter.ts",
+    "patch": "diff --git a/web/src/app/events/query-invalidation-adapter.ts b/web/src/app/events/query-invalidation-adapter.ts\n--- a/web/src/app/events/query-invalidation-adapter.ts\n+++ b/web/src/app/events/query-invalidation-adapter.ts\n@@ -68,7 +68,11 @@\n           continue;\n         }\n         const existing = client.getQueryData<readonly ReturnType<typeof toArea>[]>(write.key);\n-        if (existing === undefined || !existing.some((area) => area.id === write.value.id)) continue;\n+        if (existing === undefined) {\n+          client.setQueryData(write.key, [toArea(write.value)]);\n+          continue;\n+        }\n+        if (!existing.some((area) => area.id === write.value.id)) continue;\n         const updated = toArea(write.value);\n         client.setQueryData(write.key, existing.map((area) => area.id === updated.id\n           ? newestArea(area, updated)\n",
+    "expected_red": [
+      "query invalidation adapter write-through leaves an uninitialized area cache absent"
+    ],
+    "selection_paths": [
+      "web/src/app/events/query-invalidation-adapter.test.ts"
+    ],
+    "why_more_than_one": "The undefined-cache witness isolates the first arm from the initialized-list missing-row arm."
+  },
+  {
+    "mutation_id": "app-area-create-response-drops-newer-version",
+    "defends": [
+      "oracle:INV-APP-115"
+    ],
+    "target": "web/src/app/providers/queries.ts",
+    "patch": "diff --git a/web/src/app/providers/queries.ts b/web/src/app/providers/queries.ts\n--- a/web/src/app/providers/queries.ts\n+++ b/web/src/app/providers/queries.ts\n@@ -790,7 +790,7 @@\n         const existing = current.find((area) => area.id === created.id);\n         return sortedAreas([\n           ...current.filter((area) => area.id !== created.id),\n-          existing === undefined ? created : newestArea(existing, created),\n+          existing === undefined ? created : created,\n         ]);\n       });\n       void cancelThenInvalidate(client, queryKeys.areas());\n",
+    "expected_red": [
+      "delete mutation wiring does not let a delayed Area POST response overwrite a newer event row"
+    ],
+    "selection_paths": [
+      "web/src/app/providers/queries.contract.test.ts"
+    ],
+    "why_more_than_one": "The held-response witness isolates the same-id create-response reconciliation branch."
+  },
+  {
+    "mutation_id": "app-area-create-failure-does-not-await-reconciliation",
+    "defends": [
+      "oracle:INV-APP-116"
+    ],
+    "target": "web/src/app/providers/queries.ts",
+    "patch": "diff --git a/web/src/app/providers/queries.ts b/web/src/app/providers/queries.ts\n--- a/web/src/app/providers/queries.ts\n+++ b/web/src/app/providers/queries.ts\n@@ -796,7 +796,7 @@\n       void cancelThenInvalidate(client, queryKeys.areas());\n     },\n     // A lost response can follow a committed creation; the retained creation key makes the next POST safe.\n-    onError: () => client.invalidateQueries({ queryKey: queryKeys.areas() }),\n+    onError: () => { void client.invalidateQueries({ queryKey: queryKeys.areas() }); },\n   });\n   const update = useRecoveryMutation(transport, {\n     mutationFn: ({ areaId, body }: { areaId: string; body: AreaPatchBody }, transport: ApiTransportPort) =>\n",
+    "expected_red": [
+      "delete mutation wiring invalidates Areas after a failed POST that may already have committed"
+    ],
+    "selection_paths": [
+      "web/src/app/providers/queries.contract.test.ts"
+    ],
+    "why_more_than_one": "The held refetch proves the rejected mutation stays pending until reconciliation, not merely that invalidation was started."
+  },
+  {
+    "mutation_id": "app-area-update-failure-does-not-await-reconciliation",
+    "defends": [
+      "oracle:INV-APP-116"
+    ],
+    "target": "web/src/app/providers/queries.ts",
+    "patch": "diff --git a/web/src/app/providers/queries.ts b/web/src/app/providers/queries.ts\nindex 3fb5295..46963eb 100644\n--- a/web/src/app/providers/queries.ts\n+++ b/web/src/app/providers/queries.ts\n@@ -739,7 +739,7 @@ export function useAreaMutations(transport: ApiTransportPort, unauthorized: Unau\n       ));\n     },\n     // A transport failure may still follow a committed write, so failure cannot leave cached defaults authoritative.\n-    onSettled: () => client.invalidateQueries({ queryKey: queryKeys.areas() }),\n+    onSettled: () => { void client.invalidateQueries({ queryKey: queryKeys.areas() }); },\n   });\n   const remove = useRecoveryMutation(transport, {\n     mutationFn: ({ areaId, signal }: { areaId: string; signal?: AbortSignal }, transport: ApiTransportPort) =>\n",
+    "expected_red": [
+      "delete mutation wiring invalidates Areas after a failed PATCH"
+    ],
+    "selection_paths": [
+      "web/src/app/providers/queries.contract.test.ts"
+    ],
+    "why_more_than_one": "The held PATCH refetch separately pins awaiting the update mutation's onSettled branch."
+  },
+  {
+    "mutation_id": "events-derived-kind-list-drops-gate-result",
+    "defends": [
+      "oracle:INV-APP-035"
+    ],
+    "target": "core/events/invalidation-plan.ts",
+    "patch": "diff --git a/core/events/invalidation-plan.ts b/core/events/invalidation-plan.ts\n--- a/core/events/invalidation-plan.ts\n+++ b/core/events/invalidation-plan.ts\n@@ -64,7 +64,7 @@\n   'worker_session.started', 'worker_session.status_changed', 'worker_session.superseded',\n   'terminal.deleted', 'codex.hook', 'claude.hook',\n   'codex.worker_requested', 'terminal.worker_requested',\n-  'task.completed', 'task.failed', 'task.git_delivery_settled', 'task.dispatched', 'task.gate_result',\n+  'task.completed', 'task.failed', 'task.git_delivery_settled', 'task.dispatched',\n ] as const);\n \n /**\n",
+    "expected_red": [
+      "invalidation plan contract pins track-report invalidation to exactly the task-verdict invalidating kinds"
+    ],
+    "selection_paths": [
+      "core/events/invalidation-plan.contract.test.ts"
+    ],
+    "why_more_than_one": "T-G3a derives the actual set from all wire kinds, independently of the exported list."
+  },
+  {
+    "mutation_id": "events-derived-call-drops-report-key",
+    "defends": [
+      "oracle:INV-APP-035"
+    ],
+    "target": "core/events/invalidation-plan.ts",
+    "patch": "diff --git a/core/events/invalidation-plan.ts b/core/events/invalidation-plan.ts\n--- a/core/events/invalidation-plan.ts\n+++ b/core/events/invalidation-plan.ts\n@@ -232,7 +232,7 @@\n     }\n     return result(keys);\n   }),\n-  'terminal.deleted': plan((event, context) => result(taskVerdicts(derivedTrackId(event.data, context)))),\n+  'terminal.deleted': plan(() => result([])),\n   'plugin.state': plan(() => result([eventKeys.plugins(), eventKeys.trackTemplates()])),\n   'plugin.data.changed': plan((event) => result([eventKeys.pluginDataPrefix(event.data.plugin_id)])),\n   'plugin.tool.registered': noop('No plugin-tool catalog query exists.'),\n",
+    "expected_red": [
+      "invalidation plan behavior invalidates terminal runtime projection through card ownership",
+      "invalidation plan contract pins track-report invalidation to exactly the task-verdict invalidating kinds"
+    ],
+    "selection_paths": [
+      "core/events/invalidation-plan.contract.test.ts",
+      "core/events/invalidation-plan.test.ts"
+    ],
+    "why_more_than_one": "T-G3b makes production behavior disagree with the independently fixed expected set."
+  },
+  {
+    "mutation_id": "events-report-edited-drops-report-key",
+    "defends": [
+      "oracle:CAP-APP-037"
+    ],
+    "target": "core/events/invalidation-plan.ts",
+    "patch": "diff --git a/core/events/invalidation-plan.ts b/core/events/invalidation-plan.ts\n--- a/core/events/invalidation-plan.ts\n+++ b/core/events/invalidation-plan.ts\n@@ -207,7 +207,7 @@\n   ], [], event.data.change === 'restored'\n     ? [{ key: eventKeys.transcript(event.data.card_id), mode: 'reset-query' }] : [])),\n   'track.report_edited': plan((event) => result([\n-    eventKeys.trackReportPrefix(), eventKeys.trackBacklinksPrefix(),\n+    eventKeys.trackBacklinksPrefix(),\n     eventKeys.trackDetail(event.data.track_id),\n   ])),\n   'overlay.set': plan((event, context) => {\n",
+    "expected_red": [
+      "invalidation plan contract pins ordinary query-key literals independently from production definitions",
+      "invalidation plan contract pins track-report invalidation to exactly the task-verdict invalidating kinds"
+    ],
+    "selection_paths": [
+      "core/events/invalidation-plan.contract.test.ts"
+    ],
+    "why_more_than_one": "T-G3c independently pins the report-edit plan and the all-kind track-report set."
+  },
+  {
+    "mutation_id": "app-providers-retry-401-as-400",
+    "defends": [
+      "oracle:INV-APP-059"
+    ],
+    "target": "web/src/app/providers/public.tsx",
+    "patch": "diff --git a/web/src/app/providers/public.tsx b/web/src/app/providers/public.tsx\nindex 78eea81..9e2bfc8 100644\n--- a/web/src/app/providers/public.tsx\n+++ b/web/src/app/providers/public.tsx\n@@ -27,7 +27,7 @@ export interface ProviderRuntime {\n export function retryUnless401(failureCount: number, error: unknown): boolean {\n   if (typeof error === 'object' && error !== null && 'failure' in error) {\n     const failure = error.failure;\n-    if (typeof failure === 'object' && failure !== null && 'kind' in failure && failure.kind === 'unauthorized') return false;\n+    if (typeof failure === 'object' && failure !== null && 'kind' in failure && failure.kind === 'authorized') return false;\n   }\n   return failureCount < 1;\n }\n",
+    "selection_paths": [
+      "web/src/app/providers/public.contract.test.tsx"
+    ],
+    "expected_red": [
+      "app/providers contracts INV-APP-059 INV-APP-060 never retries 401 and retries other failures once"
+    ],
+    "why_more_than_one": "Only the shared retry-policy contract should turn red; more than one would mean unrelated provider behavior depends on error classification."
+  },
+  {
+    "mutation_id": "app-theme-swap-light-dark-bg",
+    "defends": [
+      "oracle:E2E-CAP-AXE-005"
+    ],
+    "target": "web/src/styles/tokens.css",
+    "patch": "diff --git a/web/src/styles/tokens.css b/web/src/styles/tokens.css\n--- a/web/src/styles/tokens.css\n+++ b/web/src/styles/tokens.css\n@@ -124,4 +124,4 @@\n-    --bg: oklch(96% 0.005 90);\n+    --bg: oklch(24.5% 0.015 250);\n     --paper: oklch(99.4% 0.004 90);\n     --hairline: oklch(84% 0.006 87);\n     --hairline-strong: oklch(74% 0.006 86);\n@@ -174,7 +174,7 @@\n   }\n \n   [data-theme=\"dark\"] {\n-    --bg: oklch(24.5% 0.015 250);\n+    --bg: oklch(96% 0.005 90);\n     --paper: oklch(31.4% 0.013 251);\n     --hairline: oklch(42% 0.01 253);\n     --hairline-strong: oklch(50% 0.008 254);\n",
+    "expected_red": [
+      "real theme tokens E2E-CAP-AXE-005 keeps the dark page ground darker than the light page ground",
+      "browser theme contracts E2E-CAP-AXE-005 a direct structured dataset write repaints token consumers",
+      "the exchange rail, as the engine lays it out paints the resting dot between 3:1 and the text ladder, against the page",
+      "the track closed status in the page header keeps the subdued closed colour readable in both themes",
+      "dark theme contrast matrix --accent on --bg clears the non-text floor",
+      "dark theme contrast matrix --bg → --surface-card is at least 3.0 L apart",
+      "dark theme contrast matrix --error on --bg clears the non-text floor",
+      "dark theme contrast matrix --error-text on --bg clears the AA body floor",
+      "dark theme contrast matrix --success on --bg clears the non-text floor",
+      "dark theme contrast matrix --success-text on --bg clears the AA body floor",
+      "dark theme contrast matrix --text on --bg clears the AA body floor",
+      "dark theme contrast matrix --text-2 on --bg clears the AA body floor",
+      "dark theme contrast matrix --text-3 on --bg clears the AA body floor",
+      "dark theme contrast matrix --warn on --bg clears the non-text floor",
+      "dark theme contrast matrix --warn-text on --bg clears the AA body floor",
+      "dark theme contrast matrix ground and card stay in one hue family (|ΔC| ≤ 0.005)",
+      "dark theme contrast matrix the ladder runs the same direction in both themes",
+      "light theme contrast matrix --accent on --bg clears the non-text floor",
+      "light theme contrast matrix --error on --bg clears the non-text floor",
+      "light theme contrast matrix --error-text on --bg clears the AA body floor",
+      "light theme contrast matrix --success-text on --bg clears the AA body floor",
+      "light theme contrast matrix --surface-chip → --bg is at least 3.0 L apart",
+      "light theme contrast matrix --text on --bg clears the AA body floor",
+      "light theme contrast matrix --text-2 on --bg clears the AA body floor",
+      "light theme contrast matrix --text-3 on --bg clears the AA body floor",
+      "light theme contrast matrix --warn on --bg clears the non-text floor",
+      "light theme contrast matrix --warn-text on --bg clears the AA body floor",
+      "light theme contrast matrix ground and card stay in one hue family (|ΔC| ≤ 0.005)",
+      "light theme contrast matrix the ladder runs the same direction in both themes",
+      "light theme contrast matrix --text on --surface-navigation clears the AA body floor",
+      "light theme contrast matrix --text-2 on --surface-navigation clears the AA body floor",
+      "light theme contrast matrix --text-3 on --surface-navigation clears the AA body floor",
+      "light theme contrast matrix --warn-text on --surface-navigation clears the AA body floor",
+      "light theme contrast matrix --error-text on --surface-navigation clears the AA body floor",
+      "light theme contrast matrix --success-text on --surface-navigation clears the AA body floor",
+      "light theme contrast matrix --accent on --surface-navigation clears the non-text floor",
+      "light theme contrast matrix --warn on --surface-navigation clears the non-text floor",
+      "light theme contrast matrix --error on --surface-navigation clears the non-text floor",
+      "light theme contrast matrix --success on --surface-navigation clears the non-text floor",
+      "dark theme contrast matrix --text on --surface-navigation clears the AA body floor",
+      "dark theme contrast matrix --text-2 on --surface-navigation clears the AA body floor",
+      "dark theme contrast matrix --text-3 on --surface-navigation clears the AA body floor",
+      "dark theme contrast matrix --warn-text on --surface-navigation clears the AA body floor",
+      "dark theme contrast matrix --error-text on --surface-navigation clears the AA body floor",
+      "dark theme contrast matrix --success-text on --surface-navigation clears the AA body floor",
+      "dark theme contrast matrix --accent on --surface-navigation clears the non-text floor",
+      "dark theme contrast matrix --warn on --surface-navigation clears the non-text floor",
+      "dark theme contrast matrix --error on --surface-navigation clears the non-text floor",
+      "dark theme contrast matrix --success on --surface-navigation clears the non-text floor",
+      "dark Astryx filled actions destructive text clears 4.5:1 on its actual fill",
+      "dark Astryx filled actions primary text clears 4.5:1 on its actual fill",
+      "light Astryx filled actions destructive text clears 4.5:1 on its actual fill",
+      "light Astryx filled actions primary text clears 4.5:1 on its actual fill",
+      "keeps the clickable Area quieter and uses the same cadence as its Track rows"
+    ],
+    "selection_paths": [
+      "tools/styles/styles.test.ts",
+      "web/src/app/theme/theme.browser.test.tsx",
+      "web/src/styles/contrast-matrix.browser.test.ts",
+      "web/src/features/chat/thread/thread.browser.test.tsx",
+      "web/src/features/track/page/header-status.browser.test.tsx",
+      "web/src/app/shell/sidebar.hover.browser.test.tsx"
+    ],
+    "why_more_than_one": "Swapping the two grounds is a cross-theme edit, and every per-theme floor is tuned against its own ground: light's foregrounds land on dark's 24.5% ground and dark's land on light's 96%, so the AA body / non-text floors, both 3.0-L rungs that straddle `--bg`, the ground-vs-card chroma gap and the shared ladder direction all fail by construction — there is no ground inversion that leaves the contrast matrix green. The two entries listed first are the ones this mutation exists for: they are the only assertions that read the two grounds *against each other*, and they are what would stay red if every contrast floor were relaxed. The 27 that follow are the same edit noticed from inside each theme: 25 in the contrast matrix, plus the rail dot and the closed status, whose per-theme colours are measured against the rendered page ground and therefore fail on an inverted ground for exactly the reason every matrix rung does. Anything red beyond this set would mean the ground direction leaked somewhere that does not model a ground at all. The generated stylesheet keeps this same production mutation; refreshed hunk context follows the central theme migration. The new derived navigation surface adds twenty independently predicted floor failures (six text and four non-text per mode) because it retains 28% of its rail and mixes 72% of the inverted ground. Decorative navigation floors, the opaque census and surface uniqueness stay green. S1 adds four Astryx filled-action witnesses (primary and destructive in both themes): both foregrounds resolve through `--color-on-accent` / `--color-on-error` to `--text-on-accent`, which aliases `--bg`. Swapping the grounds therefore swaps their text colours while leaving the accent and error fills unchanged, so all four actual-fill contrast checks fall below 4.5:1. The Chat-entry contrast witness measures its own opaque card fill, so swapping the page ground no longer makes that witness red; its 4.5:1 floor is unchanged. No witness or assertion is removed. The sidebar Area-label contrast contract observes the same swapped page ground."
+  },
+  {
+    "mutation_id": "events-harness-item-plan-becomes-empty",
+    "defends": [
+      "oracle:CAP-APP-117"
+    ],
+    "target": "core/events/invalidation-plan.ts",
+    "patch": "diff --git a/core/events/invalidation-plan.ts b/core/events/invalidation-plan.ts\n--- a/core/events/invalidation-plan.ts\n+++ b/core/events/invalidation-plan.ts\n@@ -170,11 +170,7 @@\n   'worker_session.started': plan((event, context) => runtimePlan(event.data.card_id, context)),\n   'worker_session.status_changed': plan((event, context) => runtimePlan(event.data.card_id, context)),\n   'worker_session.superseded': plan((event, context) => runtimePlan(event.data.card_id, context)),\n-  'harness.item.added': plan((event) => result([\n-    eventKeys.transcript(event.data.card_id), eventKeys.initialInput(event.data.track_id, event.data.card_id),\n-    // The row is already persisted; only user input can change the first-input title.\n-    ...(event.data.method === 'item/completed' && isUserMessage(event.data.item_type) ? conversationInputMetadata(event.data.track_id) : []),\n-  ])),\n+  'harness.item.added': plan(() => result([])),\n   'harness.presentation.changed': plan((event) => result([\n     eventKeys.transcript(event.data.card_id), eventKeys.plannerRun(event.data.card_id),\n     ...conversationInputMetadata(event.data.track_id),\n",
+    "expected_red": [
+      "invalidation plan behavior plans each harness event against the projections it can change",
+      "invalidation plan behavior refreshes metadata for persisted user input but not agent/tool/turn items",
+      "query invalidation adapter turns each real harness plan into its exact live query invalidations",
+      "replaces initial detail metadata for persisted (transport abort=false)",
+      "replaces initial detail metadata for persisted (transport abort=true)",
+      "replaces initial list metadata for persisted (transport abort=false)",
+      "replaces initial list metadata for persisted (transport abort=true)"
+    ],
+    "selection_paths": [
+      "core/events/invalidation-plan.test.ts",
+      "web/src/app/events/query-invalidation-adapter.test.ts"
+    ],
+    "why_more_than_one": "T-G4a independently observes the pure plan and its production adapter path. The four initial-read witnesses use production query options and a held transport (both abort behaviors); removing the persisted-user event plan also prevents their replacement metadata read."
+  },
+  {
+    "mutation_id": "app-adapter-drops-harness-items",
+    "defends": [
+      "oracle:CAP-APP-117"
+    ],
+    "target": "web/src/app/events/query-invalidation-adapter.ts",
+    "patch": "diff --git a/web/src/app/events/query-invalidation-adapter.ts b/web/src/app/events/query-invalidation-adapter.ts\n--- a/web/src/app/events/query-invalidation-adapter.ts\n+++ b/web/src/app/events/query-invalidation-adapter.ts\n@@ -53,7 +53,7 @@\n         continue;\n       }\n       for (const key of effect.keys) {\n-        invalidateQuery(client, key);\n+        if (key[0] !== 'harness-items') invalidateQuery(client, key);\n       }\n       continue;\n     }\n",
+    "expected_red": [
+      "presentation event replaces an in-flight old empty conversation page before its late response",
+      "query invalidation adapter turns each real harness plan into its exact live query invalidations"
+    ],
+    "selection_paths": [
+      "web/src/app/events/query-invalidation-adapter.test.ts"
+    ],
+    "why_more_than_one": "The adapter passes shared addresses directly; the production harness plans and held initial transcript read must still reach the query cache."
+  },
+  {
+    "mutation_id": "session-gate-drop-query-cache-clear",
+    "defends": [
+      "oracle:INV-APP-114",
+      "oracle:CAP-APP-064"
+    ],
+    "target": "web/src/app/auth/session-gate.tsx",
+    "patch": "diff --git a/web/src/app/auth/session-gate.tsx b/web/src/app/auth/session-gate.tsx\nindex 323447d..637d7d4 100644\n--- a/web/src/app/auth/session-gate.tsx\n+++ b/web/src/app/auth/session-gate.tsx\n@@ -20,7 +20,6 @@ export function clearSessionArtifacts(\n   cursorStore: SessionCursorStore,\n   runtime: SessionCleanupRuntime,\n ): void {\n-  try { client.clear(); } catch { /* cleanup is best-effort */ }\n   try { cursorStore.clear(); } catch { /* storage may be unavailable */ }\n   try { runtime.deleteDatabase(runtime.idbDatabaseName); } catch { /* indexedDB may be unavailable */ }\n }\n",
+    "expected_red": [
+      "session gate contracts renders login on 401, error with retry on transport failure, and clears on broadcast 401",
+      "session gate contracts CAP-APP-064 clears query data, the sync cursor, and IndexedDB in order before rendering login",
+      "session gate contracts clears session artifacts before rendering login for an initial unauthenticated verdict",
+      "production app mount clears every session artifact after logout completion and then reloads the browser",
+      "projects actual whoami UID/name and clears old artifacts on a verified UID switch"
+    ],
+    "selection_paths": [
+      "web/src/app/auth/session-gate.contract.test.tsx",
+      "web/src/app/auth/production-app.contract.test.tsx",
+      "web/src/app/auth/production-app.tsx",
+      "web/src/app/router/test-card-runtime.ts",
+      "web/src/app/auth/current-user.contract.test.tsx"
+    ],
+    "why_more_than_one": "The original global-401 assertion observes the missing cache clear directly; the CAP-APP-064 test, the initial unauthenticated verdict, and the successful sign-out path independently observe that their ordered cleanup lost its first step. Cursor clearing, IndexedDB deletion, and login or reload remain functional. The current-user production contract independently observes the cache reset on a verified UID switch."
+  },
+  {
+    "mutation_id": "session-gate-drop-sync-cursor-clear",
+    "defends": [
+      "oracle:CAP-APP-064"
+    ],
+    "target": "web/src/app/auth/session-gate.tsx",
+    "patch": "diff --git a/web/src/app/auth/session-gate.tsx b/web/src/app/auth/session-gate.tsx\nindex 323447d..4a4e6c5 100644\n--- a/web/src/app/auth/session-gate.tsx\n+++ b/web/src/app/auth/session-gate.tsx\n@@ -21,7 +21,6 @@ export function clearSessionArtifacts(\n   runtime: SessionCleanupRuntime,\n ): void {\n   try { client.clear(); } catch { /* cleanup is best-effort */ }\n-  try { cursorStore.clear(); } catch { /* storage may be unavailable */ }\n   try { runtime.deleteDatabase(runtime.idbDatabaseName); } catch { /* indexedDB may be unavailable */ }\n }\n \n",
+    "expected_red": [
+      "session gate contracts CAP-APP-064 clears query data, the sync cursor, and IndexedDB in order before rendering login",
+      "session gate contracts clears session artifacts before rendering login for an initial unauthenticated verdict",
+      "production app mount clears every session artifact after logout completion and then reloads the browser"
+    ],
+    "selection_paths": [
+      "web/src/app/auth/session-gate.contract.test.tsx",
+      "web/src/app/auth/production-app.contract.test.tsx",
+      "web/src/app/auth/production-app.tsx"
+    ],
+    "why_more_than_one": "The global unauthorized, initial unauthenticated, and successful sign-out paths independently require the shared cursor cleanup. Cache clearing, IndexedDB deletion, and login or reload remain functional after cursor cleanup is removed."
+  },
+  {
+    "mutation_id": "cards-headless-filter-display-index",
+    "defends": [
+      "oracle:INV-CARD-226"
+    ],
+    "target": "web/src/systems/cards/builtins/headless-filter.ts",
+    "patch": "diff --git a/web/src/systems/cards/builtins/headless-filter.ts b/web/src/systems/cards/builtins/headless-filter.ts\n--- a/web/src/systems/cards/builtins/headless-filter.ts\n+++ b/web/src/systems/cards/builtins/headless-filter.ts\n@@ -33,10 +33,10 @@ export function partitionTrackCards(\n   cards.forEach((wire, originalIndex) => {\n     const card = registry.resolve(wire);\n     if (card === null) {\n-      if (wire.kind !== 'track-report') unknown.push(Object.freeze({ wire, originalIndex }));\n+      if (wire.kind !== 'track-report') unknown.push(Object.freeze({ wire, originalIndex: unknown.length }));\n       return;\n     }\n     if (registry.get(card.type)?.headless === true) return;\n-    visible.push(Object.freeze({ card, wire, originalIndex }));\n+    visible.push(Object.freeze({ card, wire, originalIndex: visible.length }));\n   });\n   return Object.freeze({ visible: Object.freeze(visible), unknown: Object.freeze(unknown) });\n }\n",
+    "expected_red": [
+      "headless card filtering [INV-CARD-226] binds originalIndex before filtering, so surviving cards still address the wire array",
+      "headless card filtering [INV-CARD-226] filters raw track-report kinds out of the unknown branch defensively",
+      "headless card filtering routes cards with a surface into the visible branch with their wire and index",
+      "track route CARDS panel [INV-CARD-226] preserves every surviving card and its wire order within each tool type",
+      "track route CARDS panel preserves titled tools and gives anonymous terminals a distinct numbered name"
+    ],
+    "selection_paths": [
+      "web/src/systems/cards/builtins/headless-filter.test.ts",
+      "web/src/app/router/track-cards-panel.test.tsx",
+      "web/src/app/router/test-card-runtime.ts",
+      "web/src/systems/cards/builtins/register.ts",
+      "web/src/systems/cards/registry.ts"
+    ],
+    "why_more_than_one": "The originalIndex oracles are the only thing standing between a filtered card list and deleting the wrong card. The fifth entry is the panel's #1149 name/kind row, and it is a genuine witness rather than collateral: the router merges the visible and unknown branches and re-sorts on originalIndex (app/router `panelCards`), so renumbering either branch reorders the surviving entries within a tool type — that test reads the complete type-grouped list in order, and its fixture has cards in both branches, so it sees the reordering. It is listed rather than loosened because asserting the list unordered would give up the wire order INV-CARD-226 is about."
+  },
+  {
+    "mutation_id": "s2a-track-activity-state-from-open-state",
+    "defends": [
+      "oracle:INV-APP-118"
+    ],
+    "target": "core/domain/track.ts",
+    "patch": "diff --git a/core/domain/track.ts b/core/domain/track.ts\n--- a/core/domain/track.ts\n+++ b/core/domain/track.ts\n@@ -819,7 +819,7 @@\n \n /** The one indicator state for a track on every surface; `unread` is the reader's receipt, the rest is the overlay's. */\n export function trackActivityState(track: Pick<Track, 'working' | 'attention'>, unread: boolean): ActivityState {\n-  return activityStateOf({ working: isWorking(track), attention: track.attention, unread });\n+  return activityStateOf({ working: !isClosed(track as Track), attention: track.attention, unread });\n }\n \n /** A closed track schedules no new work; only the user reopens it. */\n",
+    "expected_red": [
+      "TrackPage header paints one activity indicator beside the title, from the overlay rather than the open/closed state",
+      "activity predicates read only the kernel activity overlay (INV-APP-118) does not derive working from an open track",
+      "activity predicates read only the kernel activity overlay (INV-APP-118) reads attention and failure from the overlay verdict",
+      "navigation activity markers derives the marker and the name from the activity overlay, not the open/closed state",
+      "MobileTracks has one Area header, a More edit action, and grouped actions above the selected Track",
+      "MobileTracks track rows carry the activity indicator and name bit from the overlay, never the open/closed state",
+      "Track mobile presentation keeps Report as the root and pushes Cards in as a full-width page",
+      "Unified mobile headers measures the same header frame across the composed mobile pages at 320px",
+      "Unified mobile headers measures the same header frame across the composed mobile pages at 390px",
+      "Unified mobile headers switches Tracks from the title and reserves renaming for the independent Edit button",
+      "Unified mobile headers switches complete Area pages directly and gives Tracks matching file icons",
+      "Unified mobile headers uses clean Area rows and a separate Tracks page with the same actions",
+      "acknowledges a repeated desktop selection only in the rendered Track view",
+      "clears manual unread when reopening the current Track through mobile navigation",
+      "compact navigation interaction contracts hands the Track list the rail’s read receipt, so a newer completion is unread until it is read",
+      "fades only overflowing rail titles and keeps the action menu distinct",
+      "keeps a long title truncated and its switch visible at 320px",
+      "keeps a long title truncated and its switch visible at 390px",
+      "keeps a manual unread after a page refresh",
+      "keeps a visited track read after a page refresh, with nothing kept in browser storage",
+      "keeps manually unread until the selected Track view acknowledges it",
+      "keeps mobile navigation labels and pointer targets usable at 320px",
+      "keeps mobile navigation labels and pointer targets usable at 390px",
+      "keeps unchanged Track title observers and measurements out of a real row selection",
+      "keeps workspace navigation as Area and Track lists with no filters",
+      "offers personal Track actions without navigation and pins before the Area limit",
+      "opens a pinned current report by closing its existing chat without sending its draft",
+      "opens the existing Track page from the title and returns directly to the report",
+      "reads the track receipt against the activity high-water mark, not updatedAt",
+      "reserves room for menu actions and metadata in Today compact rows",
+      "retains unread when a selected Track detail cannot be loaded",
+      "returns from mobile track creation to its workspace without writes from /area/project-area/new",
+      "returns from mobile track creation to its workspace without writes from /track/project",
+      "returns to the latest report opener and releases Track selection before paint finishes",
+      "reveals Track controls on hover or focus and lets the title use idle space",
+      "shared Track title in production hosts strikes only closed title text in the compact row and restores it on reopen",
+      "shared Track title in production hosts strikes only closed title text in the default row and restores it on reopen",
+      "shared Track title in production hosts strikes only closed title text in the panel row and restores it on reopen",
+      "shared Track title in production hosts strikes only closed title text in the rail row and restores it on reopen",
+      "shows a second browser profile the same state once it is focused again",
+      "switches four sidebar views using current history and real workspace groups at 320px",
+      "switches four sidebar views using current history and real workspace groups at 390px",
+      "uses the highlight contour for selected and hovered mobile Tracks in dark",
+      "uses the highlight contour for selected and hovered mobile Tracks in light",
+      "uses the three-dot Track menu with keyboard and keeps actions separate from navigation",
+      "workspace header navigation writes ?from= when navigation opens the track"
+    ],
+    "selection_paths": [
+      "core/domain/track.test.ts",
+      "web/src/features/track/page/public.test.tsx",
+      "web/src/features/track/row/public.test.tsx",
+      "web/src/app/providers/read-state-refresh.browser.test.tsx",
+      "web/src/app/router/daily-planner.browser.test.tsx",
+      "web/src/app/router/mobile-chat.browser.test.tsx",
+      "web/src/app/router/mobile-history.browser.test.tsx",
+      "web/src/app/router/mobile-report-navigation.test.tsx",
+      "web/src/app/shell/list-overflow.browser.test.tsx",
+      "web/src/app/shell/mobile-highlight.browser.test.tsx",
+      "web/src/app/shell/mobile-tracks.test.tsx",
+      "web/src/app/shell/mobile.browser.test.tsx",
+      "web/src/app/shell/responsive.contract.test.tsx",
+      "web/src/app/shell/sidebar.groups.browser.test.tsx",
+      "web/src/app/shell/sidebar.test.tsx",
+      "web/src/app/shell/track-title.browser.test.tsx",
+      "web/src/app/shell/unified-mobile-header.browser.test.tsx"
+    ],
+    "why_more_than_one": "The kernel predicate, TrackPage header, desktop Track rows and mobile Track list all consume the same activity-state owner. Deriving working from open/closed state invents working on quiet or unread open tracks and hides working on closed tracks. The exact red set therefore includes marker and receipt assertions plus production hosts that address those rows by their declared accessible names: sidebar actions, title hosts, overflow, mobile navigation, header switching and report return. The narrowed production input remains unchanged; the mutation casts only its intentionally invalid closed-state read."
+  },
+  {
+    "mutation_id": "s2a-activity-overlay-plugin-gate-dropped",
+    "defends": [
+      "oracle:INV-APP-118"
+    ],
+    "target": "core/domain/track.ts",
+    "patch": "diff --git a/core/domain/track.ts b/core/domain/track.ts\nindex b3fb6b9b3..13e7ab44f 100644\n--- a/core/domain/track.ts\n+++ b/core/domain/track.ts\n@@ -223,7 +223,7 @@ export function trackActivityFrom(trackId: string, overlays: readonly OverlayWir\n     if (overlay.kind === 'progress' && typeof value === 'number') activity = { ...activity, progress: value };\n     else if (overlay.kind === 'eta' && typeof text === 'string') activity = { ...activity, eta: text };\n     else if (overlay.kind === 'now' && typeof text === 'string') activity = { ...activity, now: text };\n-    else if (overlay.kind === 'activity' && overlay.plugin_id === KERNEL_OVERLAY_PLUGIN_ID) {\n+    else if (overlay.kind === 'activity') {\n       const recentAt = newerFinite(activity.recentAt, overlay.updated_at);\n       const fields = activityOverlayFields(overlay.payload);\n       activity = fields === null ? { ...activity, recentAt } : {\n",
+    "expected_red": [
+      "trackActivityFrom: the kernel activity overlay applies only the kernel-owned activity row; a plugin-owned one leaves the track quiet",
+      "trackActivityFrom: the kernel activity overlay bulk-folds interleaved entities in original order without weakening activity authority",
+      "track conversations ignores a retired kernel/card/status row and a plugin-authored activity row"
+    ],
+    "selection_paths": [
+      "core/domain/track.test.ts",
+      "web/src/app/router/track-conversation.test.tsx"
+    ],
+    "why_more_than_one": "Both the direct plugin-owned row case and the bulk interleaved-entity fold independently reject a non-kernel activity row; both call the same canonical fold whose plugin_id gate is removed. The route contract also rejects plugin-authored activity when deriving its notification surface."
+  },
+  {
+    "mutation_id": "s2a-track-row-name-from-open-state",
+    "defends": [
+      "oracle:INV-APP-118"
+    ],
+    "target": "web/src/features/track/row/public.tsx",
+    "patch": "diff --git a/web/src/features/track/row/public.tsx b/web/src/features/track/row/public.tsx\n--- a/web/src/features/track/row/public.tsx\n+++ b/web/src/features/track/row/public.tsx\n@@ -70,7 +70,9 @@\n \n   /* One state from the kernel's activity overlay plus the reader's receipt; the name's activity bit derives from the same value as the dot, never from the open/closed state. `unread` is the button's description, and only in the folded state. */\n   const activity = trackActivityState(track, unread);\n-  const activityBit = activityNameBit(activity);\n+  const activityBit = !isClosed(track) ? 'running'\n+    : activity === 'attention' ? 'waiting on you'\n+      : activity === 'failed' ? 'needs attention' : '';\n   const label = `Track ${title}${activityBit ? `, ${activityBit}` : ''}${isClosed(track) ? ', closed' : ''}`\n     + (areaName === undefined ? '' : `, in area ${areaName}`);\n \n",
+    "expected_red": [
+      "accessible name names the area only when the surface supplies one",
+      "accessible name names the attention state when there is one, and nothing for an open track",
+      "navigation activity markers derives the marker and the name from the activity overlay, not the open/closed state",
+      "navigation activity markers describes an unread track only in the folded state, never beside a working name",
+      "acknowledges a repeated desktop selection only in the rendered Track view",
+      "fades only overflowing rail titles and keeps the action menu distinct",
+      "keeps a manual unread after a page refresh",
+      "keeps a visited track read after a page refresh, with nothing kept in browser storage",
+      "keeps manually unread until the selected Track view acknowledges it",
+      "keeps unchanged Track title observers and measurements out of a real row selection",
+      "offers personal Track actions without navigation and pins before the Area limit",
+      "reserves room for menu actions and metadata in Today compact rows",
+      "retains unread when a selected Track detail cannot be loaded",
+      "reveals Track controls on hover or focus and lets the title use idle space",
+      "shared Track title in production hosts strikes only closed title text in the compact row and restores it on reopen",
+      "shared Track title in production hosts strikes only closed title text in the default row and restores it on reopen",
+      "shared Track title in production hosts strikes only closed title text in the panel row and restores it on reopen",
+      "shared Track title in production hosts strikes only closed title text in the rail row and restores it on reopen",
+      "shared sidebar groups orders Focus by failed, waiting, then running while excluding pinned tracks",
+      "shows a second browser profile the same state once it is focused again",
+      "uses the three-dot Track menu with keyboard and keeps actions separate from navigation"
+    ],
+    "selection_paths": [
+      "web/src/features/track/row/public.test.tsx",
+      "web/src/app/providers/read-state-refresh.browser.test.tsx",
+      "web/src/app/shell/list-overflow.browser.test.tsx",
+      "web/src/app/shell/mobile.browser.test.tsx",
+      "web/src/app/shell/sidebar.groups.browser.test.tsx",
+      "web/src/app/shell/sidebar.test.tsx",
+      "web/src/app/shell/track-title.browser.test.tsx"
+    ],
+    "why_more_than_one": "The accessible name is derived from the same state as the dot: every open-track fixture now gains \", running\" in place of its overlay bit (the attention, working and area-name cases), and the fixture that disagrees with the open/closed state in both directions reddens. Production sidebar, read-receipt, title and overflow hosts address the same accessible row name, so they also reject deriving its activity bit from open/closed state."
+  },
+  {
+    "mutation_id": "s2a-needs-attention-closed-or",
+    "defends": [
+      "oracle:INV-APP-118"
+    ],
+    "target": "core/domain/track.ts",
+    "patch": "diff --git a/core/domain/track.ts b/core/domain/track.ts\n--- a/core/domain/track.ts\n+++ b/core/domain/track.ts\n@@ -801,7 +801,7 @@\n \n /** The kernel says a person has to give input somewhere on this track. */\n export function needsUserAttention(track: Track): boolean {\n-  return track.attention === 'input';\n+  return isClosed(track) || track.attention === 'input';\n }\n \n /** The kernel says something on this track is broken and needs repair. */\n",
+    "expected_red": [
+      "collapse toggle shows the waiting count as the strip's only figure, with no dot beside it",
+      "activity predicates read only the kernel activity overlay (INV-APP-118) does not derive attention or failure from the open/closed state",
+      "activity predicates read only the kernel activity overlay (INV-APP-118) reads attention and failure from the overlay verdict",
+      "Closed tracks in the rail Show N more never counts a hidden closed track",
+      "Closed tracks in the rail Show closed brings every closed track back, Hide closed hides them again, and the choice persists",
+      "Closed tracks in the rail hides a closed track that is read and not open",
+      "Closed tracks in the rail keeps the Area row when every track in it is hidden",
+      "Closed tracks in the rail keeps the choice per Area",
+      "Closed tracks in the rail shows a closed unread track",
+      "Closed tracks in the rail shows the closed track open in the view"
+    ],
+    "selection_paths": [
+      "core/domain/track.test.ts",
+      "web/src/app/shell/sidebar.test.tsx",
+      "web/src/app/shell/area-group.test.tsx"
+    ],
+    "why_more_than_one": "Kernel attention predicates and the sidebar waiting strip independently reject deriving attention from the open/closed state. The rail retention contracts also consume attention: treating closed tracks as attention incorrectly retains or duplicates them across Show closed and per-Area choices."
+  },
+  {
+    "mutation_id": "s2a-activity-precedence-working-first",
+    "defends": [
+      "oracle:INV-APP-118"
+    ],
+    "target": "core/domain/activity.ts",
+    "patch": "diff --git a/core/domain/activity.ts b/core/domain/activity.ts\nindex 239336a..d3fb1fa 100644\n--- a/core/domain/activity.ts\n+++ b/core/domain/activity.ts\n@@ -28,9 +28,9 @@ export type ActivityItem = Readonly<{\n export function activityStateOf(\n   s: Readonly<{ working: boolean; attention: AttentionKind; unread: boolean }>,\n ): ActivityState {\n+  if (s.working) return 'working';\n   if (s.attention === 'failed') return 'failed';\n   if (s.attention === 'input') return 'attention';\n-  if (s.working) return 'working';\n   if (s.unread) return 'unread';\n   return 'quiet';\n }\n",
+    "expected_red": [
+      "navigation activity markers gives needs-input precedence over working and unread, and failed over all three",
+      "activityStateOf working=true attention=input unread=false → attention",
+      "activityStateOf working=true attention=input unread=true → attention",
+      "activityStateOf working=true attention=failed unread=false → failed",
+      "activityStateOf working=true attention=failed unread=true → failed",
+      "activityStateOf ranks a person-needed state above motion when both hold at once",
+      "activity predicates read only the kernel activity overlay (INV-APP-118) reads attention and failure from the overlay verdict",
+      "planner conversation regressions phase wedged applies stalled policy to markers, composer state and subsequent sends",
+      "conversation rows read activity.cards, not session state keeps only the open row’s declared local echoes: the sender’s send and the drawer’s wedge",
+      "uses explicit pending-question ownership without changing other conversations or failure precedence",
+      "uses the active drawer echo and the same failure precedence as the ordinary list"
+    ],
+    "selection_paths": [
+      "core/domain/activity.test.ts",
+      "core/domain/track.test.ts",
+      "web/src/app/router/planner-conversation.test.tsx",
+      "web/src/features/track/row/public.test.tsx",
+      "core/view/conversation-list.test.ts",
+      "web/src/features/chat/list/public.test.tsx"
+    ],
+    "why_more_than_one": "The exhaustive 2x3x2 table names each row the reordered chain gets wrong; the row-level precedence test and the core predicate test are the two consumers that see the same swap. Since S2b r1 the router wedge case seeds the kernel's working verdict for the wedged planner beside its local failed, so the swapped chain reads that row as working instead of failed. The ordinary conversation list, active drawer echo and pending-question ownership consume the same precedence and must retain attention and failure ahead of working."
+  },
+  {
+    "mutation_id": "n2596-receipt-write-stays-local",
+    "defends": [
+      "oracle:INV-APP-118"
+    ],
+    "target": "web/src/app/providers/read-receipts.tsx",
+    "patch": "diff --git a/web/src/app/providers/read-receipts.tsx b/web/src/app/providers/read-receipts.tsx\n--- a/web/src/app/providers/read-receipts.tsx\n+++ b/web/src/app/providers/read-receipts.tsx\n@@ -38,6 +38,7 @@\n     await cancelReads();\n     client.setQueryData<ReadState>(queryKey, (state) => state === undefined ? state : intent.optimistic(state));\n     await previous;\n+    return; // MUT-2596-1: the write stays in this page and never reaches the kernel.\n     const receipt = await runOperation(admitted, intent.operation, unauthorized);\n     // A later write of the same target keeps its own optimistic state until it answers.\n     if (ledger.tails.get(key) === tail) {\n",
+    "expected_red": [
+      "acknowledges the open target on a bundled cold start once the workspace is connected",
+      "acknowledges the open target once a bundled resume admits writes again",
+      "keeps a manual unread of the open target across a bundled event-stream reconnect",
+      "marks unread optimistically, posts it, and refetches",
+      "puts the kernel state back when a write fails",
+      "acknowledges the open target only while the tab is visible, and again when its activity moves",
+      "keeps a manual unread of the open target until it is opened again",
+      "keeps a manual unread posted while the first read is still loading",
+      "acknowledges a target opened while a refetch reveals another device’s manual unread",
+      "keeps a second write optimistic until it settles, whatever the first write reads back",
+      "sends one target’s writes in order, even over a network that answers out of order",
+      "acknowledges a target opened offline once the browser is back online",
+      "keeps a failed acknowledgement owed until the next focus",
+      "keeps an acknowledgement recorded after a manual unread, behind an earlier one still in flight",
+      "retries a failed acknowledgement on the next focus, even after its read-back failed",
+      "acknowledges a reopen at the same instant after another device marked it unread while the first answer was held",
+      "sends once more after a failed attempt when a trigger fired while it was in flight",
+      "keeps a newer acknowledgement owed when an older one commits and the newer one fails",
+      "replays a missed trigger for its own target only, so two failing targets do not keep replaying each other",
+      "sends failing acknowledgements once per trigger, however long the reader waits",
+      "retries an acknowledgement whose read-back an outside refresh replaced, on the next focus",
+      "offers personal Track actions without navigation and pins before the Area limit",
+      "keeps manually unread until the selected Track view acknowledges it",
+      "uses a spinner while a closed conversation runs, a blue unread dot on completion, and no dot after reading",
+      "keeps new replies unread while reopening cached history is still loading",
+      "shows a closed Planner working and preserves unread completion until its history is read",
+      "the injected planner row reads activity.cards and last_turn_completed_ms",
+      "keeps a visited track read after a page refresh, with nothing kept in browser storage",
+      "keeps a manual unread after a page refresh",
+      "shows a second browser profile the same state once it is focused again",
+      "clears manual unread when reopening the current Track through mobile navigation",
+      "retains unread when a selected Track detail cannot be loaded",
+      "acknowledges a repeated desktop selection only in the rendered Track view",
+      "uses the three-dot Track menu with keyboard and keeps actions separate from navigation"
+    ],
+    "selection_paths": [
+      "web/src/app/providers/read-state-refresh.browser.test.tsx",
+      "web/src/app/providers/read-receipts.test.tsx",
+      "web/src/app/providers/read-receipts-recovery.test.tsx",
+      "web/src/app/shell/sidebar.test.tsx",
+      "web/src/app/router/track-conversation.test.tsx",
+      "web/src/app/shell/mobile.browser.test.tsx",
+      "web/src/app/shell/sidebar.groups.browser.test.tsx"
+    ],
+    "why_more_than_one": "#2596: read state is the kernel's. A receipt write that stays in the page is lost on the next read: across a refresh, on a second profile, and in every rail, mobile and conversation-list case that reads a mark back from the kernel."
+  },
+  {
+    "mutation_id": "n2596-no-verdict-before-read",
+    "defends": [
+      "oracle:INV-APP-118"
+    ],
+    "target": "web/src/app/providers/read-receipts.tsx",
+    "patch": "diff --git a/web/src/app/providers/read-receipts.tsx b/web/src/app/providers/read-receipts.tsx\n--- a/web/src/app/providers/read-receipts.tsx\n+++ b/web/src/app/providers/read-receipts.tsx\n@@ -139,7 +139,7 @@\n   const { data } = useQuery(readReceiptsQueryOptions(channel.transport, channel.unauthorized));\n   return useMemo<ReadReceipts>(() => ({\n     markRead: channel.markRead, markUnread: channel.markUnread, ready: data !== undefined,\n-    isUnread: (kind, id, activityAt) => data !== undefined && isUnread(data, kind, id, activityAt),\n+    isUnread: (kind, id, activityAt) => isUnread(data ?? toReadState({ baselineMs: 0, receipts: [] }), kind, id, activityAt), // MUT-2596-2: no verdict reads as a baseline of zero.\n   }), [data, channel]);\n }\n \n",
+    "expected_red": [
+      "reads nothing as unread until the kernel answers, then applies its baseline and receipts",
+      "reads the track receipt against the activity high-water mark, not updatedAt"
+    ],
+    "selection_paths": [
+      "web/src/app/providers/read-receipts.test.tsx",
+      "web/src/app/shell/sidebar.test.tsx"
+    ],
+    "why_more_than_one": "#2596: until the kernel's receipts are read there is no verdict, so nothing is unread. The provider case pins it directly; the rail case reads its first frame before the receipts land."
+  },
+  {
+    "mutation_id": "n2596-no-self-trigger",
+    "defends": [
+      "oracle:INV-APP-118"
+    ],
+    "target": "web/src/app/providers/read-receipts.tsx",
+    "patch": "diff --git a/web/src/app/providers/read-receipts.tsx b/web/src/app/providers/read-receipts.tsx\n--- a/web/src/app/providers/read-receipts.tsx\n+++ b/web/src/app/providers/read-receipts.tsx\n@@ -107,6 +107,7 @@\n   }), [transport, unauthorized, owed, flush]);\n   useEffect(() => onlineManager.subscribe((online) => { if (online) flush(); }), [flush]);\n   useEffect(() => focusManager.subscribe((focused) => { if (focused) flush(); }), [flush]);\n+  useEffect(() => client.getQueryCache().subscribe((event) => { if (event.type === 'updated' && event.action.type === 'success') flush(); }), [client, flush]); // MUT-2596-3: a receipts read, the writes' own included, is a trigger.\n   const connected = useConnectionStatus()?.connected === true;\n   useEffect(() => { if (connected) flush(); }, [connected, flush]);\n   return <ReadReceiptsContext.Provider value={channel}>{children}</ReadReceiptsContext.Provider>;\n",
+    "expected_red": [
+      "keeps a failed acknowledgement owed until the next focus",
+      "retries a failed acknowledgement on the next focus, even after its read-back failed",
+      "keeps a newer acknowledgement owed when an older one commits and the newer one fails",
+      "replays a missed trigger for its own target only, so two failing targets do not keep replaying each other",
+      "sends failing acknowledgements once per trigger, however long the reader waits",
+      "retries an acknowledgement whose read-back an outside refresh replaced, on the next focus"
+    ],
+    "selection_paths": [
+      "web/src/app/providers/read-receipts.test.tsx"
+    ],
+    "why_more_than_one": "#2596: a trigger a receipt write can cause feeds every failing acknowledgement back into another send. The loop-bound case pins it by count; each case that waits through a failed send for an external trigger also sees the extra sends."
+  },
+  {
+    "mutation_id": "s2a-failed-dot-uses-warn",
+    "defends": [
+      "oracle:INV-APP-118"
+    ],
+    "target": "web/src/ui/activity-indicator/activity-indicator.module.css",
+    "patch": "diff --git a/web/src/ui/activity-indicator/activity-indicator.module.css b/web/src/ui/activity-indicator/activity-indicator.module.css\nindex e4e178ea0..9939425e8 100644\n--- a/web/src/ui/activity-indicator/activity-indicator.module.css\n+++ b/web/src/ui/activity-indicator/activity-indicator.module.css\n@@ -5,7 +5,7 @@\n      tell two 6px dots apart (#1722 decision (b)); the browser test pins the\n      hue distance. */\n   .attention { background: var(--warn); }\n-  .failed { background: var(--error); }\n+  .failed { background: var(--warn); }\n   .working {\n     inline-size: 10px;\n     block-size: 10px;\n",
+    "expected_red": [
+      "activity indicator colours light: attention and failed sit more than 30° apart in OKLCH hue",
+      "activity indicator colours dark: attention and failed sit more than 30° apart in OKLCH hue"
+    ],
+    "selection_paths": [
+      "web/src/ui/activity-indicator/activity-indicator.browser.test.tsx"
+    ],
+    "why_more_than_one": "The hue-distance test runs once per theme, and the failed dot falling back to the warn family collapses the distance in both."
+  },
+  {
+    "mutation_id": "s2b-conversation-row-from-session-state",
+    "defends": [
+      "oracle:INV-APP-118"
+    ],
+    "target": "core/view/conversation-list.ts",
+    "patch": "diff --git a/core/view/conversation-list.ts b/core/view/conversation-list.ts\n--- a/core/view/conversation-list.ts\n+++ b/core/view/conversation-list.ts\n@@ -22,7 +22,9 @@\n     const echo = input.local?.id === conversation.id ? input.local : null;\n     const unread = input.unreadIds?.has(conversation.id) ?? false;\n     const cardAttention = attentionOfCard(verdict);\n-    const activity = activityStateOf({ working: verdict === 'working' || (echo?.working ?? false),\n+    const activity = activityStateOf({ working: verdict === 'working' || (echo?.working ?? false)\n+      // MUT-1722-S2B-1: the shared fold spins on the server's session reading again\n+      || conversation.state === 'starting' || conversation.state === 'running' || conversation.state === 'turn_pending',\n       attention: echo?.stalled || cardAttention === 'failed' ? 'failed'\n         : input.awaitingInputIds?.has(conversation.id) ? 'input' : cardAttention, unread });\n     return { conversation, name: conversationName(conversation), activity, unread };\n",
+    "expected_red": [
+      "conversation rows read activity.cards, not session state",
+      "conversation rows read activity.cards, not session state keeps only the open row’s declared local echoes: the sender’s send and the drawer’s wedge",
+      "conversation rows read activity.cards, not session state reads another card’s verdict as nothing about this row",
+      "conversation rows read activity.cards, not session state shows nothing for a turn_pending row the kernel lists no verdict for",
+      "conversation rows read activity.cards, not session state shows unread from the receipt set, below every kernel verdict",
+      "the injected planner row reads activity.cards and last_turn_completed_ms",
+      "distinguishes Planner and Assistant by their declared role even when their names are swapped",
+      "keeps questions, failures and unread distinct from idle session state",
+      "archives through either renderer and preserves failed rows (context=false)",
+      "archives through either renderer and preserves failed rows (context=true)",
+      "keeps archived history accessible and restores the original id (context=false)",
+      "keeps archived history accessible and restores the original id (context=true)"
+    ],
+    "selection_paths": [
+      "web/src/app/router/track-conversation.test.tsx",
+      "web/src/features/chat/list/public.test.tsx",
+      "core/view/conversation-list.test.ts"
+    ],
+    "why_more_than_one": "The shared core fold, ordinary/contextual ChatList cases and the Track-route Planner row reject session-state activity inference. The role-swap case also detects a spurious working suffix on otherwise quiet rows. The four archive/restore renderer cases also require the quiet row's exact accessible name. Their fixture deliberately retains turn_pending with no activity verdict; inferring working from that stale session state adds a working suffix in both renderers, so all four independently reject the same mutation."
+  },
+  {
+    "mutation_id": "s2b-planner-row-from-runtime-status",
+    "defends": [
+      "oracle:INV-APP-118"
+    ],
+    "target": "web/src/app/router/public.tsx",
+    "patch": "diff --git a/web/src/app/router/public.tsx b/web/src/app/router/public.tsx\nindex 1c6677f..182e895 100644\n--- a/web/src/app/router/public.tsx\n+++ b/web/src/app/router/public.tsx\n@@ -1995,7 +1995,10 @@ function TrackRouteBody({\n       scopeId: track.id,\n       rows,\n       /* The track's own overlay-derived verdicts (`toTrack(detail, detailActivity)`). */\n-      cards: track.cards,\n+      // MUT-1722-S2B-2: the injected planner row's verdict re-derived from its runtime status\n+      cards: plannerCard?.runtime !== undefined && (plannerCard.runtime.status === 'turn_pending'\n+        || plannerCard.runtime.status === 'running' || plannerCard.runtime.status === 'starting')\n+        ? { ...track.cards, [plannerCard.id]: 'working' } : track.cards,\n       /* These rows are on a track the reader can be sent to, so Today may hold and\n                open them; the store checks each row's `trackId` against this. */\n       rememberOn: track.id,\n",
+    "expected_red": [
+      "the injected planner row reads activity.cards and last_turn_completed_ms"
+    ],
+    "selection_paths": [
+      "web/src/app/router/track-conversation.test.tsx"
+    ],
+    "why_more_than_one": "Only the injected planner row is re-derived from its runtime status here; the router case whose planner runtime says turn_pending with no verdict is the one that reddens."
+  },
+  {
+    "mutation_id": "s2b-thread-live-from-session-state",
+    "defends": [
+      "oracle:INV-APP-118"
+    ],
+    "target": "web/src/features/chat/thread/public.tsx",
+    "patch": "diff --git a/web/src/features/chat/thread/public.tsx b/web/src/features/chat/thread/public.tsx\n--- a/web/src/features/chat/thread/public.tsx\n+++ b/web/src/features/chat/thread/public.tsx\n@@ -105,9 +105,11 @@\n   const localReading = useThreadReadingView(conversation.id);\n   const reading = readingView ?? localReading;\n   /* Only run/activity evidence claims execution. A local outgoing message has its own sending feedback.\n      Never use `conversation.state`, which can stay at `turn_pending`/`running` after a turn ended. */\n-  const live = !statusUnconfirmed && !stalled && (pending || cardActivityOf({ cards }, conversation.id) === 'working');\n+  const live = !statusUnconfirmed && !stalled && (pending || cardActivityOf({ cards }, conversation.id) === 'working'\n+    // MUT-1722-S2B-3: the drawer's live mark reads the session state again\n+    || conversation.state === 'starting' || conversation.state === 'running' || conversation.state === 'turn_pending');\n   const heldInputs = heldConversationInputs(activeInput, live);\n   const lastTurn = turns[turns.length - 1];\n   const currentOutcome = lastTurn?.author === 'turn' && lastTurn.imported !== true ? lastTurn : null;\n   const copyTarget = currentResponseMessage(turns, currentOutcome !== null && !statusUnconfirmed && !live && !stalled && stopFeedback === null);\n",
+    "expected_red": [
+      "ChatThread thread live mark follows activity.cards",
+      "tool activity groups does not spin for a call left running by a conversation that is no longer live",
+      "hands the live mark between the status row and an executing tool without duplication",
+      "keeps the streaming indicator beside Running for paragraphs, code and tables (192px, 16px text)",
+      "keeps the streaming indicator beside Running for paragraphs, code and tables (232px, 32px text)",
+      "keeps the streaming indicator beside Running for paragraphs, code and tables (320px, 16px text)",
+      "replaces the running animation with a visible completion icon",
+      "shows a static, truthful status for unfinished calls after interruption (grouped: false)",
+      "shows a static, truthful status for unfinished calls after interruption (grouped: true)",
+      "uses the execution mark in a collapsed and expanded tool group and removes it when the turn ends"
+    ],
+    "selection_paths": [
+      "web/src/features/chat/thread/activity-groups.browser.test.tsx",
+      "web/src/features/chat/thread/public.test.tsx",
+      "web/src/features/chat/thread/motion.browser.test.tsx",
+      "web/src/features/chat/thread/running-status-layout.browser.test.tsx"
+    ],
+    "why_more_than_one": "The drawer's live mark is read from one place, so a session-state OR relights every thread case that renders a running/turn_pending conversation without a verdict: the jsdom live-mark case and the browser cases that rerender a finished call under a still-running session reading. The real tool-group and running-status browser contracts also require the execution mark to disappear when a turn ends or is interrupted."
+  },
+  {
+    "mutation_id": "s2b-thread-live-ignores-stalled",
+    "defends": [
+      "oracle:INV-APP-118"
+    ],
+    "target": "web/src/features/chat/thread/public.tsx",
+    "patch": "diff --git a/web/src/features/chat/thread/public.tsx b/web/src/features/chat/thread/public.tsx\n--- a/web/src/features/chat/thread/public.tsx\n+++ b/web/src/features/chat/thread/public.tsx\n@@ -105,9 +105,10 @@\n   const localReading = useThreadReadingView(conversation.id);\n   const reading = readingView ?? localReading;\n   /* Only run/activity evidence claims execution. A local outgoing message has its own sending feedback.\n      Never use `conversation.state`, which can stay at `turn_pending`/`running` after a turn ended. */\n-  const live = !statusUnconfirmed && !stalled && (pending || cardActivityOf({ cards }, conversation.id) === 'working');\n+  // MUT-1722-S2B-R1-1: the drawer's live mark ignores the local wedge again\n+  const live = !statusUnconfirmed && (pending || cardActivityOf({ cards }, conversation.id) === 'working');\n   const heldInputs = heldConversationInputs(activeInput, live);\n   const lastTurn = turns[turns.length - 1];\n   const currentOutcome = lastTurn?.author === 'turn' && lastTurn.imported !== true ? lastTurn : null;\n   const copyTarget = currentResponseMessage(turns, currentOutcome !== null && !statusUnconfirmed && !live && !stalled && stopFeedback === null);\n",
+    "expected_red": [
+      "ChatThread the local wedge suppresses the kernel’s stale working verdict",
+      "planner conversation regressions phase wedged applies stalled policy to markers, composer state and subsequent sends"
+    ],
+    "selection_paths": [
+      "web/src/app/router/planner-conversation.test.tsx",
+      "web/src/features/chat/thread/public.test.tsx"
+    ],
+    "why_more_than_one": "The drawer's local wedge is the second declared local echo (#1722 §5.3): the thread unit case renders stalled with a working verdict, and the router wedge case seeds the kernel's stale working verdict for the wedged planner and asserts the drawer is not live while its row stays failed — dropping `!stalled &&` relights both."
+  },
+  {
+    "mutation_id": "s2b-card-row-from-runtime-status",
+    "defends": [
+      "oracle:INV-APP-118"
+    ],
+    "target": "core/view/track-page.ts",
+    "patch": "diff --git a/core/view/track-page.ts b/core/view/track-page.ts\n--- a/core/view/track-page.ts\n+++ b/core/view/track-page.ts\n@@ -92,7 +92,8 @@\n     kind: title !== null || card.kind === 'terminal' || agentProviderSchema.safeParse(card.kind).success ? card.kind : null,\n     badges,\n     status,\n-    activity: rowActivity(activity, card.id),\n+    // MUT-1722-S2B-4: a card row spins on its runtime status again\n+    activity: rowActivity(activity, card.id) ?? (card.runtime?.status === 'running' ? 'working' : null),\n     actions,\n   };\n }\n",
+    "expected_red": [
+      "TrackPage task inventory card and task rows paint activity.cards, not runtime status"
+    ],
+    "selection_paths": [
+      "web/src/features/track/page/public.test.tsx"
+    ],
+    "why_more_than_one": "The derivation is shared by both painters; the page invariant includes an independent running resource with no kernel verdict so task-worker absorption cannot hide the mutation. Only that invariant reaches this fallback; projection suites compare the derivation to itself."
+  },
+  {
+    "mutation_id": "s2b-task-row-from-token",
+    "defends": [
+      "oracle:INV-APP-118"
+    ],
+    "target": "core/view/track-page.ts",
+    "patch": "diff --git a/core/view/track-page.ts b/core/view/track-page.ts\nindex d062a59..3ac797a 100644\n--- a/core/view/track-page.ts\n+++ b/core/view/track-page.ts\n@@ -104,7 +104,8 @@ function taskRow(task: ReportTaskRow, activity: TrackPageActivity, openableCards\n     status,\n     /* Keyed by the worker card's identity, never the openable subset: a worker the board cannot draw\n            is still the card the kernel reports on. */\n-    activity: rowActivity(activity, workerCardId),\n+    // MUT-1722-S2B-5: a task row spins on its status token again\n+    activity: rowActivity(activity, workerCardId) ?? (currentStatus === 'running' ? 'working' : null),\n     actions,\n   };\n }\n",
+    "expected_red": [
+      "TrackPage task inventory card and task rows paint activity.cards, not runtime status",
+      "TrackPage task inventory keeps the full status on the reveal control without a duplicate status graphic",
+      "TrackPage task inventory reveals the block from the row even when the task has a worker card"
+    ],
+    "selection_paths": [
+      "web/src/features/track/page/public.test.tsx"
+    ],
+    "why_more_than_one": "Only the page case with a running execution whose worker card the kernel did not list, and a running task with no worker card at all, reaches the token fallback. Since S2b r1 the row speaks its verdict inside the reveal control, so a running task the mutation wrongly marks working is named `alpha Working` and the two exact-name lookups of that control miss."
+  },
+  {
+    "mutation_id": "s2b-task-row-loses-worker-identity",
+    "defends": [
+      "oracle:INV-APP-118"
+    ],
+    "target": "core/view/track-page.ts",
+    "patch": "diff --git a/core/view/track-page.ts b/core/view/track-page.ts\nindex d062a59..537da97 100644\n--- a/core/view/track-page.ts\n+++ b/core/view/track-page.ts\n@@ -104,7 +104,8 @@ function taskRow(task: ReportTaskRow, activity: TrackPageActivity, openableCards\n     status,\n     /* Keyed by the worker card's identity, never the openable subset: a worker the board cannot draw\n            is still the card the kernel reports on. */\n-    activity: rowActivity(activity, workerCardId),\n+    // MUT-1722-S2B-R5-1: the verdict is looked up through the openable subset again\n+    activity: rowActivity(activity, workerCardId !== null && openableCards.has(workerCardId) ? workerCardId : null),\n     actions,\n   };\n }\n",
+    "expected_red": [
+      "deriveTrackPageView tasks keeps the worker’s identity for the activity verdict when the card is not openable, and only drops the control",
+      "track route TASKS panel shows the kernel verdict on a task whose worker no adapter claims, and still offers no control"
+    ],
+    "selection_paths": [
+      "core/view/track-page.test.ts",
+      "web/src/app/router/track-cards-panel.test.tsx"
+    ],
+    "why_more_than_one": "Identity and openability are two inputs to the task row (#1722 S2b r5): looking the verdict up through the openable subset erases it for exactly the worker the board cannot draw, and only two cases hand the derivation such a worker with a verdict — the unit case with an empty openable set and a failed/working verdict, and the route case whose `no-adapter` task runs on the unclaimed card the real registry cannot draw while the overlay reports it working. Every other case names openable workers or no verdict, and the twin cases (openable worker, verdict and control) stay green."
+  },
+  {
+    "mutation_id": "s2b-terminal-head-from-session-state",
+    "defends": [
+      "oracle:INV-APP-118"
+    ],
+    "target": "web/src/systems/cards/builtins/terminal-card.tsx",
+    "patch": "diff --git a/web/src/systems/cards/builtins/terminal-card.tsx b/web/src/systems/cards/builtins/terminal-card.tsx\nindex 3746515b5..903cc5cc5 100644\n--- a/web/src/systems/cards/builtins/terminal-card.tsx\n+++ b/web/src/systems/cards/builtins/terminal-card.tsx\n@@ -67,9 +67,10 @@ export function TerminalCardView({\n       <CardHead\n         className=\"card-drag-handle\"\n         title={card.title || fallbackTitle}\n-        status={activity === null && statusText === null && headActions === null ? undefined : <>\n-          {activity !== null && (\n-            <ActivityIndicator state={cardActivityState(activity)} spoken={activityLabelOf(cardActivityState(activity))} />\n+        status={activity === null && statusText === null && headActions === null && card.sessionState !== 'running' ? undefined : <>\n+          {/* MUT-1722-S2B-6: the head spins on the session reading again */}\n+          {(activity !== null || card.sessionState === 'running') && (\n+            <ActivityIndicator state={cardActivityState(activity ?? 'working')} spoken={activityLabelOf(cardActivityState(activity ?? 'working'))} />\n           )}\n           {statusText !== null && <span role=\"status\">{statusText}</span>}\n           {headActions}\n",
+    "expected_red": [
+      "accepts input and later automatically reconnects after a recoverable ownership rejection and successful owner claim",
+      "bundled recovery fences input and automatically reattaches the same terminal only after synchronization",
+      "claude terminal head, connected says nothing at all with no verdict",
+      "claude terminal lifecycle after refresh terminal head paints activity.cards, not runtime.status",
+      "claude terminal lifecycle after refresh uses the runtime terminal identity instead of a stale payload identity",
+      "codex terminal head, connected says nothing at all with no verdict",
+      "codex terminal lifecycle after refresh terminal head paints activity.cards, not runtime.status",
+      "codex terminal lifecycle after refresh uses the runtime terminal identity instead of a stale payload identity",
+      "does not revive input after BadHandshake when a late owner notification arrives",
+      "does not revive input after BadSequence when a late owner notification arrives",
+      "does not revive input after SnapshotMissing when a late owner notification arrives",
+      "does not revive input after UnsupportedEncoding when a late owner notification arrives",
+      "does not revive input after UnsupportedVersion when a late owner notification arrives",
+      "does not revive input after closed when a late owner notification arrives",
+      "does not revive input after exited when a late owner notification arrives",
+      "retains process exit truth when REST still says running",
+      "shows a refused connection and reconnects the same terminal without creating a process",
+      "terminal terminal head, connected says nothing at all with no verdict",
+      "terminal terminal lifecycle after refresh terminal head paints activity.cards, not runtime.status",
+      "terminal terminal lifecycle after refresh uses the runtime terminal identity instead of a stale payload identity"
+    ],
+    "selection_paths": [
+      "web/src/systems/cards/builtins/terminal-head-activity.test.tsx",
+      "web/src/systems/cards/builtins/terminal-lifecycle.test.tsx",
+      "web/src/systems/cards/builtins/terminal-reconnect.browser.test.tsx"
+    ],
+    "why_more_than_one": "Every terminal-kind mount with runtime.status running and a null verdict grows an indicator: the three-kind lifecycle cases and the reconnect browser cases that connect a running terminal all assert its absence. The connected-head suite (S2b r1, a mocked surface that reports connected) mounts a running terminal with no verdict and asserts an empty head, so its three no-verdict cases redden too."
+  },
+  {
+    "mutation_id": "s2b-terminal-head-from-connection",
+    "defends": [
+      "oracle:INV-APP-118"
+    ],
+    "target": "web/src/systems/cards/builtins/terminal-card.tsx",
+    "patch": "diff --git a/web/src/systems/cards/builtins/terminal-card.tsx b/web/src/systems/cards/builtins/terminal-card.tsx\nindex 3746515b5..a1e7633ff 100644\n--- a/web/src/systems/cards/builtins/terminal-card.tsx\n+++ b/web/src/systems/cards/builtins/terminal-card.tsx\n@@ -67,9 +67,10 @@ export function TerminalCardView({\n       <CardHead\n         className=\"card-drag-handle\"\n         title={card.title || fallbackTitle}\n-        status={activity === null && statusText === null && headActions === null ? undefined : <>\n-          {activity !== null && (\n-            <ActivityIndicator state={cardActivityState(activity)} spoken={activityLabelOf(cardActivityState(activity))} />\n+        status={activity === null && statusText === null && headActions === null && !(attached && !ended && status === 'connected') ? undefined : <>\n+          {/* MUT-1722-S2B-7: the head spins on this tab's connection again */}\n+          {(activity !== null || (attached && !ended && status === 'connected')) && (\n+            <ActivityIndicator state={cardActivityState(activity ?? 'working')} spoken={activityLabelOf(cardActivityState(activity ?? 'working'))} />\n           )}\n           {statusText !== null && <span role=\"status\">{statusText}</span>}\n           {headActions}\n",
+    "expected_red": [
+      "accepts input and later automatically reconnects after a recoverable ownership rejection and successful owner claim",
+      "bundled recovery fences input and automatically reattaches the same terminal only after synchronization",
+      "claude terminal head, connected says nothing at all with no verdict",
+      "codex terminal head, connected says nothing at all with no verdict",
+      "shows a refused connection and reconnects the same terminal without creating a process",
+      "terminal terminal head, connected says nothing at all with no verdict"
+    ],
+    "selection_paths": [
+      "web/src/systems/cards/builtins/terminal-head-activity.test.tsx",
+      "web/src/systems/cards/builtins/terminal-reconnect.browser.test.tsx"
+    ],
+    "why_more_than_one": "jsdom never connects, so only the browser cases that bring a socket up on a running terminal and then assert no indicator can see a connection-derived spinner; the lifecycle suite stays green, which is why those browser files are selection paths. Since S2b r1 the connected-head jsdom suite mocks the surface to report connected, so its three no-verdict cases also see the connection-derived spinner."
+  },
+  {
+    "mutation_id": "s2b-board-cell-drops-activity",
+    "defends": [
+      "oracle:INV-APP-118"
+    ],
+    "target": "web/src/systems/cards/ui/card-cell.tsx",
+    "patch": "diff --git a/web/src/systems/cards/ui/card-cell.tsx b/web/src/systems/cards/ui/card-cell.tsx\n--- a/web/src/systems/cards/ui/card-cell.tsx\n+++ b/web/src/systems/cards/ui/card-cell.tsx\n@@ -92,2 +92,3 @@\n-  return <><span ref={elementRef} hidden /><Component card={cardRef.current} host={capabilities} onRemove={onRemove} activity={item.activity} notice={item.notice} header={header} /></>;\n+  // MUT-1722-S2B-8: the cell drops the verdict on the floor\n+  return <><span ref={elementRef} hidden /><Component card={cardRef.current} host={capabilities} onRemove={onRemove} activity={null} notice={item.notice} header={header} /></>;\n }\n",
+    "expected_red": [
+      "claude terminal head, connected speaks a request for input",
+      "claude terminal head, connected speaks the kernel verdict beside its marker",
+      "claude terminal lifecycle after refresh terminal head paints activity.cards, not runtime.status",
+      "codex terminal head, connected speaks a request for input",
+      "codex terminal head, connected speaks the kernel verdict beside its marker",
+      "codex terminal lifecycle after refresh terminal head paints activity.cards, not runtime.status",
+      "terminal terminal head, connected speaks a request for input",
+      "terminal terminal head, connected speaks the kernel verdict beside its marker",
+      "terminal terminal lifecycle after refresh terminal head paints activity.cards, not runtime.status"
+    ],
+    "selection_paths": [
+      "web/src/systems/cards/builtins/terminal-head-activity.test.tsx",
+      "web/src/systems/cards/builtins/terminal-lifecycle.test.tsx"
+    ],
+    "why_more_than_one": "Only the lifecycle case that mounts a card with a working/failed verdict through the real BoardHost sees the cell drop it; every other board case mounts with a null verdict. The connected-head suite (S2b r1) mounts working and input verdicts through the same BoardHost, so its six verdict cases redden as well."
+  },
+  {
+    "mutation_id": "s2b-notifications-from-card-status",
+    "defends": [
+      "oracle:INV-APP-118"
+    ],
+    "target": "web/src/app/router/public.tsx",
+    "patch": "diff --git a/web/src/app/router/public.tsx b/web/src/app/router/public.tsx\n--- a/web/src/app/router/public.tsx\n+++ b/web/src/app/router/public.tsx\n@@ -1249,10 +1249,15 @@\n     if (rows.some((row) => row.id === requestedOpenId)) return;\n     registry.clearOpenRequest();\n   }, [conversationsQuery.isError, registry, rows, openRequest]);\n-  const inputNotifications = useMemo(\n-    () => trackNotifications(track.attentionItems),\n-    [track.attentionItems],\n-  );\n+  // MUT-1722-S2B-9: the aside reads the per-card `kernel/card/status` rows again\n+  const inputNotifications = useMemo((): readonly TrackInputNotification[] => overlays.flatMap((overlay) => {\n+    if (overlay.plugin_id !== 'kernel' || overlay.entity_kind !== 'card' || overlay.kind !== 'status') return [];\n+    const state = (overlay.payload as { state?: unknown } | null)?.state;\n+    if (state !== 'AwaitingInput' && state !== 'Errored') return [];\n+    return [{ key: `status:${overlay.entity_id}`, kind: state === 'AwaitingInput' ? 'ask' : 'planner-down',\n+      text: state === 'AwaitingInput' ? 'Requires input to continue.' : 'Stopped with an error and needs attention.',\n+      atMs: overlay.updated_at }];\n+  }), [overlays]);\n   /* Stable across renders that do not change the overlays, so a live table is\n      not handed a new resolver identity on every keystroke elsewhere. */\n   const resolveOverlay = useCallback(\n",
+    "expected_red": [
+      "degraded workspace reads stay usable prefers track-detail overlays to the neutral workspace fallback",
+      "track conversations Dismiss posts the item key",
+      "track conversations both notification kinds show the kernel's words and a row click opens the Planner composer",
+      "track conversations counts an ask and planner down as two notifications",
+      "track conversations ignores a retired kernel/card/status row and a plugin-authored activity row",
+      "track conversations opens and dismisses a timeout while attention is none and the Planner is idle"
+    ],
+    "selection_paths": [
+      "web/src/app/router/read-fallbacks.contract.test.tsx",
+      "web/src/app/router/track-conversation.test.tsx"
+    ],
+    "why_more_than_one": "Reading the retired per-card status rows again instead of activity.items empties the aside for every fixture that carries its items in the activity overlay and fills it for the fixture that carries a retired status row: the two-kinds Reply case, the Dismiss case, the ask-plus-planner-down count case, the retired-row case and the read-fallbacks detail case all move. The timeout route case also reads activity.items while attention is none and the Planner is idle; retired card status cannot supply its Notifications row (original CI report: missing Notifications)."
+  },
+  {
+    "mutation_id": "n1829-decoder-accepts-v1",
+    "defends": [
+      "oracle:INV-APP-118"
+    ],
+    "target": "core/domain/track.ts",
+    "patch": "diff --git a/core/domain/track.ts b/core/domain/track.ts\n--- a/core/domain/track.ts\n+++ b/core/domain/track.ts\n@@ -168,7 +168,8 @@\n /** Mirrors `calm_truth::validation::KERNEL_OVERLAY_PLUGIN_ID`. */\n const KERNEL_OVERLAY_PLUGIN_ID = 'kernel';\n const activityOverlayWireSchema = z.object({\n-  schemaVersion: z.literal(4),\n+  // MUT-1829-S1-1: a v1 row decodes again\n+  schemaVersion: z.union([z.literal(1), z.literal(4)]),\n   working: z.boolean(),\n   attention: attentionKindSchema,\n   activity_at_ms: z.number().nullable(),\n",
+    "expected_red": [
+      "trackActivityFrom: the kernel activity overlay v1 activity overlay is ignored"
+    ],
+    "selection_paths": [
+      "core/domain/track.test.ts"
+    ],
+    "why_more_than_one": "Only the v1 case feeds a schemaVersion 1 row; every other activity fixture in the file is v4 (or v2, v3, or not an activity payload at all) and decodes the same whether or not v1 is accepted."
+  },
+  {
+    "mutation_id": "n1829-row-placeholder-text",
+    "defends": [
+      "oracle:INV-APP-118"
+    ],
+    "target": "web/src/features/track/page/public.tsx",
+    "patch": "diff --git a/web/src/features/track/page/public.tsx b/web/src/features/track/page/public.tsx\n--- a/web/src/features/track/page/public.tsx\n+++ b/web/src/features/track/page/public.tsx\n@@ -649,7 +649,7 @@\n                     {/* The kernel's words are markdown, rendered as the chat renders a reply. An ask is read whole;\n                         a failure is clamped, its full text is in the Planner conversation. */}\n                     <div className={`${notificationStyles.noticeBody} ${notification.kind === 'planner-down' ? notificationStyles.noticeBodyClamped : ''}`}>\n-                      <Markdown density=\"compact\" headingLevelStart={3}>{notification.text}</Markdown>\n+                      <Markdown density=\"compact\" headingLevelStart={3}>{'The Planner needs you.'}</Markdown>\n                       {notification.kind === 'planner-turn-timeout' && <p className={notificationStyles.noticeTimestamp}>\n                         Recorded at <time dateTime={new Date(notification.atMs).toISOString()}>{new Date(notification.atMs).toISOString()}</time>\n                       </p>}\n",
+    "expected_red": [
+      "TrackPage header turns a Planner ask into a bottom-right notification whose whole row answers it",
+      "TrackPage header names a row by the first 80 characters of its text",
+      "TrackPage header renders an item as markdown under a plain-words label, and nests no control inside another",
+      "track conversations both notification kinds show the kernel's words and a row click opens the Planner composer",
+      "the track closed status in the page header floats a Planner ask at the viewport corner; the whole row answers it and its × dismisses it",
+      "the track closed status in the page header clamps a planner-down reason to three lines and never an ask",
+      "the track closed status in the page header keeps three type steps: the title largest, the body at body size, the meta line smallest",
+      "track conversations opens and dismisses a timeout while attention is none and the Planner is idle",
+      "keeps timeout text and open/dismiss controls visible with none attention at 1200px",
+      "keeps timeout text and open/dismiss controls visible with none attention at 390px",
+      "keeps timeout text and open/dismiss controls visible with none attention at 390px under a coarse pointer"
+    ],
+    "selection_paths": [
+      "web/src/features/track/page/public.test.tsx",
+      "web/src/features/track/page/header-status.browser.test.tsx",
+      "web/src/app/router/track-conversation.test.tsx",
+      "web/src/features/track/page/header-status.coarse.browser.test.tsx"
+    ],
+    "why_more_than_one": "Every case that reads a row's body reddens: the page cases read its text, its markdown and a link in it; the route's two-kinds case reads the kernel's words; the browser cases hit-test a link in the body, measure an ask body longer than three lines, and size the body's heading and code. Cases that only count rows, click the × or read the header stay green. The timeout route case requires its exact kernel body, and both 1200px and 390px browser cases require /Turn stopped at/ in the body, so all three additionally redden. Their labels, timestamp and controls are unchanged. The coarse-pointer timeout contract has a distinct test ID and independently requires the exact kernel body at 390px."
+  },
+  {
+    "mutation_id": "n1829-dismiss-not-posted",
+    "defends": [
+      "oracle:INV-APP-118"
+    ],
+    "target": "web/src/app/router/public.tsx",
+    "patch": "diff --git a/web/src/app/router/public.tsx b/web/src/app/router/public.tsx\n--- a/web/src/app/router/public.tsx\n+++ b/web/src/app/router/public.tsx\n@@ -1687,7 +1687,7 @@\n         center?.onOpenAssistant();\n         registry.requestOpen(plannerCard.id, { focusComposer: true });\n       }}\n-      onDismiss={(key) => trackMutations.dismissActivityItem(track.id, key)}\n+      onDismiss={() => Promise.resolve()}\n       onRenameTrack={(title) => trackMutations.patch(track.id, track.areaId, { title }).then(() => undefined)}\n       closedControl={closedControl}\n       onDeleteTrack={shareAccess === null ? (signal) => trackMutations.remove(track.id, track.areaId, signal) : undefined}\n",
+    "expected_red": [
+      "track conversations Dismiss posts the item key",
+      "track conversations opens and dismisses a timeout while attention is none and the Planner is idle"
+    ],
+    "selection_paths": [
+      "web/src/app/router/track-conversation.test.tsx"
+    ],
+    "why_more_than_one": "Both the original Dismiss case and the timeout route case click the same onDismiss callback and require the exact posted item key; the timeout case expects planner_turn_timeout:9 (original CI report: undefined request body). Other route cases only read rows or open the Planner; page cases do not exercise route wiring."
+  },
+  {
+    "mutation_id": "s2b-mobile-painter-no-indicator",
+    "defends": [
+      "oracle:INV-APP-118"
+    ],
+    "target": "web/src/features/track/page/mobile-painter.tsx",
+    "patch": "diff --git a/web/src/features/track/page/mobile-painter.tsx b/web/src/features/track/page/mobile-painter.tsx\n--- a/web/src/features/track/page/mobile-painter.tsx\n+++ b/web/src/features/track/page/mobile-painter.tsx\n@@ -99,9 +99,7 @@\n   const meta: readonly ReactNode[] = [\n     ...row.badges.map(taskBadge),\n     /* The same indicator the desktop row paints, spoken for the same reason: no control here names the verdict. */\n-    ...(row.activity === null ? [] : [\n-      <ActivityIndicator key=\"activity\" state={row.activity} spoken={activityLabelOf(row.activity)} />,\n-    ]),\n+    // MUT-1722-S2B-11: the mobile row paints no indicator\n     ...(row.status === null ? [] : [statusWord(\n       row.status,\n       row.status.token !== 'pending' || action === null || action.hint === null,\n@@ -136,9 +134,7 @@\n       : [<span key=\"kind\" {...mark(MARKER.field, FIELD.kind)}><InventoryKind kind={row.kind} /></span>]),\n     ...row.badges.map(cardBadge),\n     /* Spoken, as on the desktop card row: the status word is a different fact. */\n-    ...(row.activity === null ? [] : [\n-      <ActivityIndicator key=\"activity\" state={row.activity} spoken={activityLabelOf(row.activity)} />,\n-    ]),\n+    // MUT-1722-S2B-11: the mobile row paints no indicator\n     ...(row.status === null ? [] : [statusWord(row.status, true)]),\n   ];\n   return (\n",
+    "expected_red": [
+      "mobile and desktop paint the same data-nc-activity set on the cards module",
+      "mobile and desktop paint the same data-nc-activity set on the tasks module"
+    ],
+    "selection_paths": [
+      "web/src/features/track/page/mobile-projection.test.tsx"
+    ],
+    "why_more_than_one": "The same-set comparison runs once per row module, and both modules lose their indicators on the mobile side at once."
+  },
+  {
+    "mutation_id": "s3-mobile-track-row-from-open-state",
+    "defends": [
+      "oracle:INV-APP-118"
+    ],
+    "target": "web/src/app/shell/mobile-track-list.tsx",
+    "patch": "diff --git a/web/src/app/shell/mobile-track-list.tsx b/web/src/app/shell/mobile-track-list.tsx\n--- a/web/src/app/shell/mobile-track-list.tsx\n+++ b/web/src/app/shell/mobile-track-list.tsx\n@@ -23,7 +23,8 @@\n           {tracks.map((track) => {\n             /* The same state the rail row shows: the kernel's activity overlay plus this reader's receipt, never the open/closed state.\n                The indicator is decorative here; `unread` is the button's description, never part of its name. Each list owns its description IDs, including when another list is mounted behind the drawer. */\n-            const activity = trackActivityState(track, isUnread(track));\n+            // MUT-1722-S3-1: the phone row spins on the open state again\n+            const activity = !isClosed(track) ? 'working' : 'quiet';\n             const activityBit = activityNameBit(activity);\n             const descriptionId = `${listId}-track-${track.id}-unread`;\n             return <li key={track.id} className={styles.trackRow}>\n",
+    "expected_red": [
+      "MobileTracks has one Area header, a More edit action, and grouped actions above the selected Track",
+      "MobileTracks track rows carry the activity indicator and name bit from the overlay, never the open/closed state",
+      "Unified mobile headers measures the same header frame across the composed mobile pages at 320px",
+      "Unified mobile headers measures the same header frame across the composed mobile pages at 390px",
+      "Unified mobile headers switches Tracks from the title and reserves renaming for the independent Edit button",
+      "Unified mobile headers switches complete Area pages directly and gives Tracks matching file icons",
+      "Unified mobile headers uses clean Area rows and a separate Tracks page with the same actions",
+      "compact navigation interaction contracts hands the Track list the rail’s read receipt, so a newer completion is unread until it is read",
+      "workspace header navigation writes ?from= when navigation opens the track",
+      "Track mobile presentation keeps Report as the root and pushes Cards in as a full-width page",
+      "clears manual unread when reopening the current Track through mobile navigation",
+      "returns to the latest report opener and releases Track selection before paint finishes",
+      "uses the highlight contour for selected and hovered mobile Tracks in dark",
+      "uses the highlight contour for selected and hovered mobile Tracks in light"
+    ],
+    "selection_paths": [
+      "web/src/app/router/mobile-report-navigation.test.tsx",
+      "web/src/app/shell/mobile-tracks.test.tsx",
+      "web/src/app/shell/responsive.contract.test.tsx",
+      "web/src/app/shell/unified-mobile-header.browser.test.tsx",
+      "web/src/app/shell/mobile-highlight.browser.test.tsx",
+      "web/src/app/shell/mobile.browser.test.tsx",
+      "web/src/app/shell/sidebar.groups.browser.test.tsx",
+      "web/src/app/shell/sidebar.test.tsx"
+    ],
+    "why_more_than_one": "The phone row's dot and its name bit come from one value, so an open-state-driven state changes both: the row case sees a spinner on an idle open track and no spinner on a closed track with work in flight, the shell case sees `working` where the receipt says `unread`, and every case that finds an open row by its exact name — the MobileTracks header case, the router's `?from=` case and the two unified-header browser cases, all of which mount an open track with no overlay — misses it because the name now ends in `, working`. The Track title switch now reuses this same navigation page: its exact-name row selection and both composed-header geometry cases also lose the idle open row when its name becomes ', working'. These three callers therefore join the complete red set; the mutation does not alter header geometry or renaming policy. Mobile report navigation, read acknowledgement and selection-paint contracts also observe the same row activity and accessible names."
+  },
+  {
+    "mutation_id": "ownership-squash-skip-source-path-binding",
+    "defends": [
+      "oracle:GATE-OWNERSHIP-010"
+    ],
+    "target": "tools/ownership/validator.ts",
+    "patch": "diff --git a/tools/ownership/validator.ts b/tools/ownership/validator.ts\n--- a/tools/ownership/validator.ts\n+++ b/tools/ownership/validator.ts\n@@ -236,7 +236,7 @@ export async function ownershipCommitsForEvent(\n         .map((trailer) => [trailer.text, trailer] as const);\n     }));\n     const authorizedPaths = new Set(Array.from(trailers.values(), ({ path }) => path));\n-    const unauthorized = [...new Set(changedFrozenPaths)].filter((path) => !authorizedPaths.has(path));\n+    const unauthorized = [...new Set(changedFrozenPaths)].filter((path) => false && !authorizedPaths.has(path));\n     if (unauthorized.length > 0) {\n       throw new Error(`cannot audit ownership squash ${commit.sha}: original PR commits do not authorize final frozen paths: ${unauthorized.join(', ')}`);\n     }\n",
+    "expected_red": [
+      "does not borrow a trailer from a source commit that did not change that path"
+    ],
+    "selection_paths": [
+      "tools/ownership/squash.test.ts"
+    ],
+    "why_more_than_one": "Measured in the exclusive lease worktree: disabling only the source-path binding produced exactly this one red and 39 green tests in the selected file; any additional red would indicate unrelated ownership behavior moved."
+  },
+  {
+    "mutation_id": "s2131-card-key-per-attempt",
+    "defends": [
+      "oracle:INV-APP-119"
+    ],
+    "target": "web/src/app/providers/idempotency-key.ts",
+    "patch": "diff --git a/web/src/app/providers/idempotency-key.ts b/web/src/app/providers/idempotency-key.ts\nindex a68e0e40b..a57fefb14 100644\n--- a/web/src/app/providers/idempotency-key.ts\n+++ b/web/src/app/providers/idempotency-key.ts\n@@ -36,7 +36,7 @@ export function useKeyedIntent<Draft, Body>(sameDraft: (held: Draft, next: Draft\n   return {\n     held,\n     request: (draft: Draft, build: () => Body): KeyedRequest<Draft, Body> => {\n-      const next = held !== null && sameDraft(held.draft, draft) ? held : Object.freeze({ key: mintIdempotencyKey(), draft, body: build() });\n+      const next = Object.freeze({ key: mintIdempotencyKey(), draft, body: build() });\n       setHeld(next);\n       return next;\n     },\n",
+    "expected_red": [
+      "a keyed card create keeps the key when Create is pressed again on the same draft, and mints a new one for a changed draft",
+      "a keyed card create resends the held key and body when the same fieldless kind is picked again",
+      "AppShell Area editor flow retries a lost create confirmation with the same identity and payload after reopening",
+      "AppShell Area editor flow keeps the original create identity after an unknown attempt followed by 413",
+      "keeps a legacy unknown Area body and key when the new builder omits templates"
+    ],
+    "selection_paths": [
+      "web/src/app/router/new-card.test.tsx",
+      "web/src/app/shell/area-editor-flow.test.tsx"
+    ],
+    "why_more_than_one": "useKeyedIntent is the one keyed-create lifecycle for card and Area create, so minting on every press reddens the four cases that press again on an unknown outcome through it: the card form's second Create of the same draft, a second pick of the same fieldless kind, Area's Try again after reopening, and Area's retry after an unknown attempt followed by 413, which must keep the original create identity. Card Try again resends the held request directly and stays green, as do the cases whose next press is meant to mint."
+  },
+  {
+    "mutation_id": "s2131-plugin-install-retry-conflict-refused",
+    "defends": [
+      "oracle:INV-APP-120"
+    ],
+    "target": "core/domain/plugins.ts",
+    "patch": "diff --git a/core/domain/plugins.ts b/core/domain/plugins.ts\n--- a/core/domain/plugins.ts\n+++ b/core/domain/plugins.ts\n@@ -95,7 +95,7 @@ export const PLUGIN_INSTALL_FAILURES: FailureTable<WriteClass> = Object.freeze({\n  */\n export const PLUGIN_INSTALL_RETRY_FAILURES: FailureTable<WriteClass> = Object.freeze({\n   rules: Object.freeze([\n-    Object.freeze({ status: Object.freeze([409]), code: 'plugin_conflict', is: 'done' as const }),\n+    Object.freeze({ status: Object.freeze([409]), code: 'plugin_conflict', is: 'refused' as const }),\n     Object.freeze({ status: Object.freeze([400, 409, 413, 415, 422]), is: 'refused' as const }),\n   ]),\n   unauthorized: 'refused',\n",
+    "expected_red": [
+      "a retry that meets proof of the intent is done an add answered \"already installed\" after a lost answer leaves the form for the re-read list",
+      "classifying a failed POST /plugins/install, after an unknown answer reads { kind: 'http', status: 409, code: 'plugin_conflict', message: 'answered', body: { error: 'answered', code: 'plugin_conflict' } } as done"
+    ],
+    "selection_paths": [
+      "web/src/app/shell/settings-write-failures.contract.test.tsx",
+      "core/domain/failure-class.test.ts"
+    ],
+    "why_more_than_one": "PLUGIN_INSTALL_RETRY_FAILURES is the only place a repeated install's 409 plugin_conflict becomes done, so reading it as refused reddens the table case for that answer and the one route case that adds again after a lost answer; the first-attempt conflict case already expects a refusal and stays green."
+  },
+  {
+    "mutation_id": "i2175-plugin-enable-wait-refused",
+    "defends": [
+      "oracle:INV-APP-120"
+    ],
+    "target": "core/domain/plugins.ts",
+    "patch": "diff --git a/core/domain/plugins.ts b/core/domain/plugins.ts\n--- a/core/domain/plugins.ts\n+++ b/core/domain/plugins.ts\n@@ -56,7 +56,7 @@ export function pluginsOperation(): ApiOperation<PluginListItem[]> {\n  */\n export const PLUGIN_TOGGLE_FAILURES: FailureTable<WriteClass> = Object.freeze({\n   rules: Object.freeze([\n-    Object.freeze({ status: Object.freeze([503]), code: 'service_unavailable', is: 'done' as const }),\n+    Object.freeze({ status: Object.freeze([503]), code: 'service_unavailable', is: 'refused' as const }),\n     Object.freeze({ status: Object.freeze([400, 404, 409, 422]), is: 'refused' as const }),\n   ]),\n   unauthorized: 'refused',\n",
+    "expected_red": [
+      "a retry that meets proof of the intent is done an enable answered 503 landed: the row shows the kernel's reason once, as the plugin's state",
+      "classifying a failed POST /plugins/{id}/enable|disable reads { kind: 'http', status: 503, code: 'service_unavailable', message: 'answered', body: { error: 'answered', code: 'service_unavailable' } } as done"
+    ],
+    "selection_paths": [
+      "web/src/app/shell/settings-write-failures.contract.test.tsx",
+      "core/domain/failure-class.test.ts"
+    ],
+    "why_more_than_one": "PLUGIN_TOGGLE_FAILURES is the only place an enable's 503 service_unavailable becomes done, so reading it as refused reddens the table case for that answer and the one route case where the enable landed and the row shows the kernel's reason once; a 503 without that code stays unknown either way."
+  },
+  {
+    "mutation_id": "s2131-cas-retry-skips-read-back",
+    "defends": [
+      "oracle:INV-APP-121"
+    ],
+    "target": "core/domain/failure-class.ts",
+    "patch": "diff --git a/core/domain/failure-class.ts b/core/domain/failure-class.ts\nindex d9b0c199f..73fb87bec 100644\n--- a/core/domain/failure-class.ts\n+++ b/core/domain/failure-class.ts\n@@ -153,7 +153,7 @@ export function casAttempts(table: FailureTable<CasClass>) {\n   let unknown: string | null = null;\n   return async <R>(attempt: unknown, write: () => Promise<R>, landed: () => Promise<Landed<R>>): Promise<R> => {\n     const id = JSON.stringify(attempt);\n-    const retried = unknown === id;\n+    const retried = false;\n     if (!retried) unknown = null;\n     try {\n       const value = await write();\n",
+    "expected_red": [
+      "casAttempts reads back a stale answer to a retry of an unknown attempt, and confirms it with what holds",
+      "casAttempts still reads back 'a recipe save' after a 401 refusal of the same attempt that followed an unknown one",
+      "casAttempts still reads back 'a recipe save' after a 400 refusal of the same attempt that followed an unknown one",
+      "casAttempts still reads back 'a calendar update' after a 503 refusal of the same attempt that followed an unknown one",
+      "casAttempts leaves a retry unknown when its read-back fails, and reads back again on the next retry",
+      "a recipe write whose answer was lost confirms a retried save whose 409 is its own first save, landed",
+      "a calendar update whose answer was lost confirms a retried save whose 409 is its own first save, landed",
+      "a calendar update whose answer was lost confirms a retried cancel whose 409 is its own first cancel, landed"
+    ],
+    "selection_paths": [
+      "core/domain/cas-writes.test.ts",
+      "web/src/app/router/recipes-route.test.tsx",
+      "web/src/app/router/calendar-writes.test.tsx"
+    ],
+    "why_more_than_one": "casAttempts is the one compare-after-unknown rule for every CAS writer, so never treating a stale answer as a retry of an unknown attempt reddens its unit cases that read back (directly, after a refusal of the same attempt, and after a failed read-back) and each production path that meets its own landed write: the recipe save, the calendar edit and the calendar cancel. The first-409, changed-attempt, settled-attempt and genuine-concurrent-edit cases stay green, because they must be stale either way."
+  },
+  {
+    "mutation_id": "s2131-s4-failed-operation-read-as-unknown",
+    "defends": [
+      "oracle:INV-APP-119"
+    ],
+    "target": "core/domain/track.ts",
+    "patch": "diff --git a/core/domain/track.ts b/core/domain/track.ts\n--- a/core/domain/track.ts\n+++ b/core/domain/track.ts\n@@ -758,7 +758,6 @@ export function createCardOperation(trackId: string, body: NewCardBody, idempote\n export const CARD_CREATE_FAILURES: FailureTable<KeyedCreateClass> = Object.freeze({\n   rules: Object.freeze([\n     Object.freeze({ code: 'idempotency_key_reused', is: 'refused' as const }),\n-    Object.freeze({ code: 'operation_failed', is: 'refused' as const }),\n     Object.freeze({ code: 'operation_stuck', is: 'stuck' as const }),\n     Object.freeze({ status: Object.freeze([409]), code: 'conflict', is: 'refused' as const }),\n     Object.freeze({ status: Object.freeze([400, 403, 404, 422]), is: 'refused' as const }),\n",
+    "expected_red": [
+      "a keyed card create reads a create that failed for good under its key as a final refusal with the server’s reason: no Try again, and the next press mints a new key",
+      "classifying a failed POST a card reads { kind: 'http', status: 500, code: 'operation_failed', message: 'answered', body: { error: 'answered', code: 'operation_failed' } } as refused"
+    ],
+    "selection_paths": [
+      "web/src/app/router/new-card.test.tsx",
+      "core/domain/failure-class.test.ts"
+    ],
+    "why_more_than_one": "Removing the operation_failed rule makes both the keyed-create route contract and the shared failure-class table read a final refusal as unknown, exposing Try again under a spent key. Other answers still match their own rules."
+  },
+  {
+    "mutation_id": "k1b-stuck-create-read-as-unknown",
+    "defends": [
+      "oracle:INV-APP-119"
+    ],
+    "target": "core/domain/track.ts",
+    "patch": "diff --git a/core/domain/track.ts b/core/domain/track.ts\n--- a/core/domain/track.ts\n+++ b/core/domain/track.ts\n@@ -759,7 +759,6 @@ export const CARD_CREATE_FAILURES: FailureTable<KeyedCreateClass> = Object.freez\n   rules: Object.freeze([\n     Object.freeze({ code: 'idempotency_key_reused', is: 'refused' as const }),\n     Object.freeze({ code: 'operation_failed', is: 'refused' as const }),\n-    Object.freeze({ code: 'operation_stuck', is: 'stuck' as const }),\n     Object.freeze({ status: Object.freeze([409]), code: 'conflict', is: 'refused' as const }),\n     Object.freeze({ status: Object.freeze([400, 403, 404, 422]), is: 'refused' as const }),\n   ]),\n",
+    "expected_red": [
+      "a keyed card create reads a create that stopped part way as final: the card may exist, no Try again, and the next press mints a new key",
+      "classifying a failed POST a card reads { kind: 'http', status: 500, code: 'operation_stuck', message: 'answered', body: { error: 'answered', code: 'operation_stuck' } } as stuck"
+    ],
+    "selection_paths": [
+      "web/src/app/router/new-card.test.tsx",
+      "core/domain/failure-class.test.ts"
+    ],
+    "why_more_than_one": "Removing the operation_stuck rule makes both the keyed-create route contract and the shared failure-class table read the final stuck outcome as unknown, exposing Try again under a key that only replays that outcome. Other answers still match their own rules."
+  },
+  {
+    "mutation_id": "s2131-s7-create-retry-shows-raw-text",
+    "defends": [
+      "oracle:INV-APP-122"
+    ],
+    "target": "core/domain/conversation.ts",
+    "patch": "diff --git a/core/domain/conversation.ts b/core/domain/conversation.ts\nindex 11f90dc39..5c7d386d3 100644\n--- a/core/domain/conversation.ts\n+++ b/core/domain/conversation.ts\n@@ -793,7 +793,7 @@ export const CONVERSATION_CREATE_TEXT: WriteText = Object.freeze({\n  */\n export function conversationCreateFailure(failure: ApiFailure | null): ConversationCreateFailure {\n   const kind = classifyFailure(failure, CONVERSATION_CREATE_FAILURES);\n-  return { kind, message: kind === 'retry' ? CONVERSATION_CREATE_TEXT.unknown : refusedText(failure, CONVERSATION_CREATE_TEXT.refused) };\n+  return { kind, message: refusedText(failure, CONVERSATION_CREATE_TEXT.refused) };\n }\n \n const DIFF_PREFIX = '## Track state changes since your last turn';\n",
+    "expected_red": [
+      "track conversations says { kind: 'transport', message: 'Transport request failed' } as Starting the conversation is unconfirmed. Try again to check the same conversation.",
+      "track conversations says { kind: 'decode', message: 'API response did not match its schema' } as Starting the conversation is unconfirmed. Try again to check the same conversation.",
+      "track conversations says null as Starting the conversation is unconfirmed. Try again to check the same conversation.",
+      "track conversations says { kind: 'unauthorized', status: 401, code: 'unauthorized', message: 'signed out' } as Starting the conversation is unconfirmed. Try again to check the same conversation.",
+      "track conversations says { kind: 'http', status: 500, code: 'internal', message: 'db exploded' } as Starting the conversation is unconfirmed. Try again to check the same conversation.",
+      "track conversations says { kind: 'http', status: 503, code: 'service_unavailable', message: 'try later' } as Starting the conversation is unconfirmed. Try again to check the same conversation.",
+      "track conversations says { kind: 'http', status: 409, code: 'idempotency_key_concurrent', message: 'in flight' } as Starting the conversation is unconfirmed. Try again to check the same conversation.",
+      "track conversations [#2131 S7] a conversation create that fails a lost answer: says the create is unconfirmed and keeps the words and Try again"
+    ],
+    "selection_paths": [
+      "core/domain/conversation.test.ts",
+      "web/src/app/router/track-conversation.test.tsx"
+    ],
+    "why_more_than_one": "Measured in the exclusive worktree: conversationCreateFailure is the one place a draft create's failure gets its sentence, so reading every kind as the answer's own text reddens each ambiguous case of its sentence table (a lost, unreadable or absent answer, a 401, a 500, a 503, a concurrent key) and the one route case whose create answer is lost, which then shows the transport text. The answered refusals keep their server reason and stay green, as do the not-sent and recovery-change cases, whose sentences the route reads from CONVERSATION_CREATE_TEXT directly."
+  }
+]

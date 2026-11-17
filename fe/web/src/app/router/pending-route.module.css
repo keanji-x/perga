@@ -1,0 +1,56 @@
+@layer features {
+  .panel {
+    font-family: var(--font-sans);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    padding: var(--space-3);
+    color: var(--text);
+  }
+
+  .title {
+    font-size: var(--font-step-5-size);
+    letter-spacing: var(--font-step-5-tracking);
+    margin: 0;
+  }
+
+  .body {
+    font-size: var(--font-step-2-size);
+    margin: 0;
+    color: var(--text-2);
+  }
+
+  .meta {
+    font-size: var(--font-step-2-size);
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: var(--space-half) var(--space-2);
+    margin: 0;
+    color: var(--text-3);
+  }
+
+  .meta dt {
+    color: var(--text-3);
+  }
+
+  .meta dd {
+    font-family: var(--font-mono);
+    margin: 0;
+  }
+
+  .back {
+    font: inherit;
+    font-size: var(--font-step-2-size);
+    align-self: start;
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius-sm);
+    background: var(--surface-chip);
+    color: var(--text);
+    padding: var(--space-1) var(--space-2);
+    cursor: pointer;
+  }
+
+  .back:hover {
+    background: var(--overlay-hover);
+  }
+}

@@ -1,0 +1,87 @@
+@layer ui {
+  .header {
+    position: sticky;
+    inset-block-start: 0;
+    z-index: var(--z-sticky);
+    display: grid;
+    grid-template-columns: calc(var(--rail-w-collapsed) + var(--space-1)) minmax(0, 1fr) calc(var(--rail-w-collapsed) + var(--space-1));
+    align-items: center;
+    gap: var(--space-2);
+    min-block-size: calc(env(safe-area-inset-top) + var(--header-primary-h));
+    padding: calc(env(safe-area-inset-top) + var(--space-4)) var(--space-4) var(--space-4);
+    border-radius: 0;
+    background: var(--bg);
+    backdrop-filter: none;
+  }
+
+  .leading,
+  .trailing {
+    display: flex;
+    min-inline-size: var(--rail-w-collapsed);
+    align-items: center;
+  }
+
+  .trailing[hidden] { display: none; }
+
+  .leading {
+    justify-content: flex-start;
+  }
+
+  .trailing {
+    justify-content: flex-end;
+  }
+
+  .titleGroup {
+    display: flex;
+    min-inline-size: 0;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-1);
+  }
+
+  .leading svg,
+  .trailing button:not([role='menuitem']) svg {
+    inline-size: var(--glyph-xl) !important;
+    block-size: var(--glyph-xl) !important;
+  }
+
+  .leading button span:has(> svg), .trailing button:not([role='menuitem']) span:has(> svg) { inline-size: var(--glyph-xl) !important; block-size: var(--glyph-xl) !important; }
+
+  .trailing button {
+    color: var(--text-2) !important;
+  }
+
+  .leading button,
+  .trailing button:not([role='menuitem']) {
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius-pill) !important;
+    background-color: var(--paper);
+    box-shadow: var(--shadow-float);
+  }
+
+  .leading button:active,
+  .trailing button:not([role='menuitem']):active {
+    background-image: linear-gradient(var(--overlay-active), var(--overlay-active)) !important;
+  }
+
+  .title {
+    min-inline-size: 0;
+    overflow: hidden;
+    color: var(--text);
+    white-space: nowrap;
+    text-align: center;
+    text-overflow: ellipsis;
+    font: var(--type-page-title);
+    letter-spacing: var(--type-page-title-tracking);
+  }
+
+  .back {
+    inline-size: var(--control-h-touch) !important;
+    min-inline-size: var(--control-h-touch) !important;
+    block-size: var(--control-h-touch) !important;
+    min-block-size: var(--control-h-touch) !important;
+    border-radius: var(--radius-pill) !important;
+    color: var(--text-2) !important;
+  }
+
+}

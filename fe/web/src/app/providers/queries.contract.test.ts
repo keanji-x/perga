@@ -1,0 +1,1190 @@
+import { historicalConversationPage } from '../router/conversation-read-data.ts';
+// @vitest-environment jsdom
+// Invariants owned by the shared query layer.
+import { observedWindow, type History } from '../conversations/history.ts';
+import { onlineManager, QueryClient, QueryClientProvider, QueryObserver } from '@tanstack/react-query';
+import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createElement, type ReactNode } from 'react';
+import { z } from 'zod';
+
+import type { ApiRequest, ApiTransportPort, ApiTransportResponse } from '../../../../core/api/types.ts';
+import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
+import { areaSchema } from '../../../../core/api/schemas.ts';
+import { toArea } from '../../../../core/domain/area.ts';
+import {
+  readTrackReport, TRACK_REPORT_CARD_KIND, type TaskVerdict,
+} from '../../../../core/domain/report.ts';
+import { NEUTRAL_ACTIVITY } from '../../../../core/domain/track.ts';
+import { RecoveryAccess } from '../../../../core/domain/recovery/access.ts';
+import { createRecoveryTransports } from '../../systems/recovery/transport.ts';
+import { coordinateRecoveryQueries } from './recovery-queries.ts';
+import { ApiError, NotSentError } from '../../../../core/domain/failure-class.ts';
+import {
+  areaListQueryOptions, conversationHistoryQueryOptions as transcriptQueryOptions, queryKeys, runOperation, taskVerdictsRefetchInterval,
+  trackOverlaysQueryOptions, trackDetailQueryOptions, trackConversationsQueryOptions,
+  useAreaMutations, usePlannerMutations, useTrackMutations, useWorkspace, tracksInAreaQueryOptions,
+  useTrackConversationMutations, useTrackRecipeMutations,
+  seriesRefetchInterval, trackReportSeriesQueryOptions, trackSourceQueryOptions, type SeriesRead,
+} from './queries.ts';
+
+function recordingTransport(reply: (request: ApiRequest) => ApiTransportResponse) {
+  const paths: string[] = [];
+  const transport: ApiTransportPort = {
+    send(request) {
+      paths.push(request.path);
+      return Promise.resolve(reply(request));
+    },
+  };
+  return { transport, paths };
+}
+
+function ok(body: unknown): ApiTransportResponse {
+  return { status: 200, statusText: 'OK', body };
+}
+
+const systemArea = { id: 'sys', name: 'system', color: '#000', sort: 0, kind: 'system', created_at: 1, updated_at: 1 };
+const userArea = { id: 'c1', name: 'Work', color: '#5B8DEF', sort: 2, kind: 'user', created_at: 1, updated_at: 1 };
+const unauthorized = createUnauthorizedChannel({ enqueue: (task) => task() });
+const baseTrackWire = { workspace: { isolation: 'none' as const, kind: 'attached' as const, path: '/tmp', frozen_at: null },
+  id: 'w1', area_id: 'c1', title: 'Ship it', sort: 1, cwd: '/tmp',
+  pinned_at: null, closed_at: null, created_at: 1, updated_at: 2,
+};
+
+afterEach(() => { cleanup(); onlineManager.setOnline(true); });
+
+describe('Area creation capability', () => {
+  it.each([{}, { areaCreateIdempotency: false }, { areaCreateIdempotency: 'true' }])(
+    'refuses to POST before an older or malformed server proves safe creation: %j', async (version) => {
+      const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
+      const send = vi.fn(() => Promise.resolve(ok(version)));
+      const { result } = renderHook(() => useAreaMutations({ send }, unauthorized), {
+        wrapper: ({ children }: { children: ReactNode }) => createElement(QueryClientProvider, { client }, children),
+      });
+      await expect(result.current.create({ name: 'Safe', color: '#123456' }, 'safe-key')).rejects.toThrow();
+      expect(send.mock.calls).toHaveLength(1);
+      expect(send.mock.calls[0]).toEqual([expect.objectContaining({ method: 'GET', path: '/api/version' })]);
+    },
+  );
+});
+
+describe('writes never queue an offline submission, in either build', () => {
+  function useWrites(transport: ApiTransportPort) {
+    return {
+      area: useAreaMutations(transport, unauthorized),
+      track: useTrackMutations(transport, unauthorized),
+      recipe: useTrackRecipeMutations(transport, unauthorized),
+      conversation: useTrackConversationMutations(transport, 'w1', unauthorized),
+    };
+  }
+  const cases: [string, (writes: ReturnType<typeof useWrites>) => Promise<unknown>][] = [
+    ['area create', ({ area }) => area.create({ name: 'Offline area', color: '#123456' }, 'offline-area')],
+    ['area update', ({ area }) => area.update('c1', { name: 'Offline rename' })],
+    ['track create', ({ track }) => track.create({ area_id: 'c1', planner_provider: 'codex', theme: { fg: [0, 0, 0], bg: [255, 255, 255] } }, 'offline-track')],
+    ['terminal create', ({ track }) => track.createTerminal('w1', { theme: { fg: [0, 0, 0], bg: [255, 255, 255] } }, 'offline-terminal')],
+    ['codex create', ({ track }) => track.createCodex('w1', { theme: { fg: [0, 0, 0], bg: [255, 255, 255] } }, 'offline-codex')],
+    ['card create', ({ track }) => track.createCard('w1', { kind: 'note', title: 'Offline note', payload: {} }, 'offline-card')],
+    ['recipe create', ({ recipe }) => recipe.create({ title: 'Offline recipe', body: '' }, 'offline-recipe')],
+    ['recipe save', ({ recipe }) => recipe.save('recipe-1', { title: 'Offline recipe', body: '', if_revision: 1 })],
+    ['conversation create', ({ conversation }) => conversation.create('Offline message', 'offline-key', 'codex', { model: null, reasoning_effort: null }, undefined, () => undefined)],
+    /* The writes that never had a guard of their own: in the web build they used to pause offline and fire on reconnect (#2131). */
+    ['track rename', ({ track }) => track.patch('w1', 'c1', { title: 'Offline rename' })],
+    ['track pin', ({ track }) => track.setPinned('w1', 'c1', true, 1)],
+    ['track close', ({ track }) => track.patch('w1', 'c1', { closed: true })],
+    ['track delete', ({ track }) => track.remove('w1', 'c1')],
+    ['card delete', ({ track }) => track.removeCard('w1', 'card-1')],
+    ['area delete', ({ area }) => area.remove('c1')],
+    ['recipe delete', ({ recipe }) => recipe.remove('recipe-1')],
+    ['notification dismiss', ({ track }) => track.dismissActivityItem('w1', 'ask:1')],
+    ['ask answer', ({ track }) => track.answerAsk('w1', 1, [{ option: 0 }])],
+  ];
+  it.each(cases)('rejects %s before dispatch and does not replay it on reconnect', async (_name, submit) => {
+    const send = vi.fn(() => Promise.resolve(ok({})));
+    const transport: ApiTransportPort = { send };
+    const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
+    const wrapper = ({ children }: { children: ReactNode }) => createElement(QueryClientProvider, { client }, children);
+    const { result } = renderHook(() => useWrites(transport), { wrapper });
+    act(() => onlineManager.setOnline(false));
+    const rejected = vi.fn<(error: unknown) => void>();
+    act(() => { void submit(result.current).catch(rejected); });
+    await act(async () => { await Promise.resolve(); });
+    await act(async () => { onlineManager.setOnline(true); await client.resumePausedMutations(); });
+    expect(send).not.toHaveBeenCalled();
+    await waitFor(() => expect(rejected).toHaveBeenCalledOnce());
+    /* Refused, not unknown: nothing was sent. Why is the connection indicator's to say, never the write's. */
+    const failure = rejected.mock.calls[0]?.[0];
+    expect(failure).toBeInstanceOf(NotSentError);
+    expect(failure instanceof Error ? failure.message : '').not.toMatch(/offline|reconnect|connection/i);
+  });
+});
+
+describe('E2E-INV-SHELL-003 the system area never reaches the workspace surface', () => {
+  it('filters a system area out of the list the shell renders', async () => {
+    const { transport } = recordingTransport(() => ok([systemArea, userArea]));
+    const areas = await areaListQueryOptions(transport, unauthorized).queryFn({ signal: new AbortController().signal });
+    expect(areas.map((area) => area.id)).toEqual(['c1']);
+  });
+
+  it('yields zero area rows for a fresh workspace that only has the system area', async () => {
+    const { transport } = recordingTransport(() => ok([systemArea]));
+    expect(await areaListQueryOptions(transport, unauthorized).queryFn({ signal: new AbortController().signal })).toEqual([]);
+  });
+
+  it('orders the surviving areas by sort so the rail is stable', async () => {
+    const { transport } = recordingTransport(() => ok([
+      { ...userArea, id: 'b', sort: 3 }, { ...userArea, id: 'a', sort: 1 },
+    ]));
+    expect((await areaListQueryOptions(transport, unauthorized).queryFn({ signal: new AbortController().signal })).map((area) => area.id)).toEqual(['a', 'b']);
+  });
+});
+
+describe('failure channel', () => {
+  it('requires callers to choose the unauthorized policy explicitly', () => {
+    const transport: ApiTransportPort = { send: vi.fn() };
+    if (transport.send === undefined) {
+      // @ts-expect-error The channel/policy argument is deliberately mandatory.
+      void runOperation(transport, { method: 'GET', path: '/private', responseSchema: z.unknown() });
+    }
+    expect(runOperation.length).toBe(3);
+  });
+
+  it('passes the transport unauthorized channel to every operation', async () => {
+    const listener = vi.fn();
+    const channel = createUnauthorizedChannel({ enqueue: (task) => task() });
+    channel.subscribe(listener);
+    const transport: ApiTransportPort = {
+      send: () => Promise.resolve({ status: 401, statusText: 'Unauthorized', body: {} }),
+    };
+    await expect(runOperation(transport, { method: 'GET', path: '/private', responseSchema: z.unknown() }, channel)).rejects.toBeInstanceOf(ApiError);
+    expect(listener).toHaveBeenCalledOnce();
+  });
+  it('rejects with ApiError carrying the normalized failure so Query can surface it', async () => {
+    const { transport } = recordingTransport(() => ({ status: 500, statusText: 'Server Error', body: { code: 'boom', error: 'kaboom' } }));
+    await expect(areaListQueryOptions(transport, unauthorized).queryFn({ signal: new AbortController().signal })).rejects.toBeInstanceOf(ApiError);
+  });
+
+  it('keeps neutral tracks readable while exporting an overlay failure', async () => {
+    const track = { workspace: { isolation: 'none' as const, kind: 'attached' as const, path: '/tmp', frozen_at: null }, id: 'w1', area_id: 'c1', title: 'Task', sort: 1, cwd: '/tmp',
+      pinned_at: null, closed_at: null, created_at: 1, updated_at: 1 };
+    const { transport } = recordingTransport((request) => {
+      if (request.path === '/api/areas') return ok([userArea]);
+      if (request.path === '/api/areas/c1/tracks') return ok([track]);
+      return { status: 500, statusText: 'Server Error', body: { error: 'overlays down' } };
+    });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const wrapper = ({ children }: { children: ReactNode }) => createElement(QueryClientProvider, { client }, children);
+    const { result } = renderHook(() => useWorkspace(transport, unauthorized), { wrapper });
+    await waitFor(() => expect(result.current.tracks).toHaveLength(1));
+    expect(result.current.areasError).toBeNull();
+    expect(result.current.overlaysError).toBeInstanceOf(ApiError);
+    expect(result.current.tracks[0]).toMatchObject(NEUTRAL_ACTIVITY);
+  });
+
+  it('rejects when the payload does not match the schema instead of rendering junk', async () => {
+    const { transport } = recordingTransport(() => ok([{ id: 'c1' }]));
+    await expect(areaListQueryOptions(transport, unauthorized).queryFn({ signal: new AbortController().signal })).rejects.toBeInstanceOf(ApiError);
+  });
+});
+
+describe('track list', () => {
+  it('reads one area at a time so each area keeps its own cache entry', async () => {
+    const { transport, paths } = recordingTransport(() => ok([]));
+    await tracksInAreaQueryOptions(transport, 'c1', unauthorized).queryFn({ signal: new AbortController().signal });
+    await tracksInAreaQueryOptions(transport, 'c2', unauthorized).queryFn({ signal: new AbortController().signal });
+    expect(paths).toEqual(['/api/areas/c1/tracks', '/api/areas/c2/tracks']);
+  });
+
+  it('passes the Query cancellation signal to the track-overlay request', async () => {
+    let requestSignal: AbortSignal | undefined;
+    const transport: ApiTransportPort = {
+      send: (request) => {
+        requestSignal = request.signal as AbortSignal;
+        return Promise.resolve(ok([]));
+      },
+    };
+    const controller = new AbortController();
+    await trackOverlaysQueryOptions(transport, unauthorized).queryFn({ signal: controller.signal });
+    expect(requestSignal).toBe(controller.signal);
+  });
+
+  it('sorts each Area by recent activity without changing the flat workspace or track caches', async () => {
+    const secondArea = { ...userArea, id: 'c2', name: 'Other', sort: 3 };
+    const old = { ...baseTrackWire, id: 'old', sort: 1, updated_at: 20 };
+    const recent = { ...baseTrackWire, id: 'recent', sort: 2, updated_at: 10 };
+    const second = { ...baseTrackWire, id: 'second', area_id: 'c2', sort: 1, updated_at: 30 };
+    const activityOverlay = {
+      id: 'activity-recent', plugin_id: 'kernel', entity_kind: 'track', entity_id: 'recent',
+      kind: 'activity', payload: { schemaVersion: 4 }, updated_at: 100,
+    };
+    const { transport } = recordingTransport((request) => {
+      if (request.path === '/api/areas') return ok([userArea, secondArea]);
+      if (request.path === '/api/areas/c1/tracks') return ok([old, recent]);
+      if (request.path === '/api/areas/c2/tracks') return ok([second]);
+      if (request.path === '/api/overlays?entity_kind=track') return ok([activityOverlay]);
+      throw new Error(`unexpected request: ${request.path}`);
+    });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client }, children);
+    const { result } = renderHook(() => useWorkspace(transport, unauthorized), { wrapper });
+    await waitFor(() => expect(result.current.tracks).toHaveLength(3));
+    await waitFor(() => expect(result.current.tracksByArea.get('c1')?.map((row) => row.id))
+      .toEqual(['recent', 'old']));
+
+    expect(result.current.tracks.map((row) => row.id)).toEqual(['old', 'recent', 'second']);
+    expect(client.getQueryData<readonly { id: string }[]>(queryKeys.tracksInArea('c1'))?.map((row) => row.id))
+      .toEqual(['old', 'recent']);
+    expect(result.current.tracksByArea.get('c2')?.map((row) => row.id)).toEqual(['second']);
+  });
+});
+
+describe('delete mutation wiring', () => {
+  function mutationWrapper(client: QueryClient) {
+    return ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client }, children);
+  }
+
+  it.each([
+    ['track', (transport: ApiTransportPort) => useTrackMutations(transport, unauthorized),
+      (mutations: ReturnType<typeof useTrackMutations>, signal: AbortSignal) => mutations.remove('w1', 'c1', signal)],
+    ['area', (transport: ApiTransportPort) => useAreaMutations(transport, unauthorized),
+      (mutations: ReturnType<typeof useAreaMutations>, signal: AbortSignal) => mutations.remove('c1', signal)],
+  ] as const)('relays the caller signal through the real %s mutation operation', async (_kind, useMutations, remove) => {
+    let requestSignal: AbortSignal | undefined;
+    const transport: ApiTransportPort = { send: vi.fn((request: ApiRequest) => {
+      requestSignal = request.signal as AbortSignal;
+      return new Promise<ApiTransportResponse>((_resolve, reject) => requestSignal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError'))));
+    }) };
+    const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
+    const { result } = renderHook(() => useMutations(transport), { wrapper: mutationWrapper(client) });
+    const controller = new AbortController();
+    let pending!: Promise<void>;
+    act(() => { pending = remove(result.current as never, controller.signal); });
+    await waitFor(() => expect(requestSignal).toBe(controller.signal));
+    controller.abort();
+    await expect(pending).rejects.toBeInstanceOf(ApiError);
+    expect(requestSignal?.aborted).toBe(true);
+  });
+
+  it('invalidates the track list even when an aborted delete may have committed', async () => {
+    const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
+    client.setQueryData(queryKeys.tracksInArea('c1'), [{ id: 'w1' }]);
+    const invalidate = vi.spyOn(client, 'invalidateQueries');
+    const transport: ApiTransportPort = { send: () => Promise.reject(new DOMException('aborted', 'AbortError')) };
+    const { result } = renderHook(() => useTrackMutations(transport, unauthorized), { wrapper: mutationWrapper(client) });
+    const controller = new AbortController();
+    controller.abort();
+    await expect(result.current.remove('w1', 'c1', controller.signal)).rejects.toBeInstanceOf(ApiError);
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.tracksInArea('c1') });
+  });
+
+  it.each([
+    ['track delete', (mutations: ReturnType<typeof useTrackMutations>) => mutations.remove('w1', 'c1')],
+    ['card delete', (mutations: ReturnType<typeof useTrackMutations>) => mutations.removeCard('w1', 'card-a')],
+  ] as const)('%s aborts an active track-overlay read before the replacement starts', async (_name, remove) => {
+    const signals: AbortSignal[] = [];
+    const order: string[] = [];
+    const transport: ApiTransportPort = {
+      send: (request) => {
+        if (request.method === 'DELETE') return Promise.resolve(ok(undefined));
+        if (request.path !== '/api/overlays?entity_kind=track') {
+          return Promise.resolve(ok(request.path.includes('/tracks/') ? { ...baseTrackWire } : []));
+        }
+        const signal = request.signal as AbortSignal;
+        const index = signals.length;
+        signals.push(signal);
+        order.push(`start-${index + 1}`);
+        if (index > 0) return Promise.resolve(ok([]));
+        return new Promise<ApiTransportResponse>((_resolve, reject) => {
+          signal.addEventListener('abort', () => {
+            order.push('abort-1');
+            reject(new DOMException('aborted', 'AbortError'));
+          }, { once: true });
+        });
+      },
+    };
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    const observer = new QueryObserver(client, trackOverlaysQueryOptions(transport, unauthorized));
+    const unsubscribe = observer.subscribe(() => undefined);
+    await waitFor(() => expect(signals).toHaveLength(1));
+    const { result } = renderHook(() => useTrackMutations(transport, unauthorized), {
+      wrapper: mutationWrapper(client),
+    });
+
+    await act(() => remove(result.current));
+
+    await waitFor(() => expect(signals).toHaveLength(2));
+    expect(signals[0]?.aborted).toBe(true);
+    expect(order).toEqual(['start-1', 'abort-1', 'start-2']);
+    unsubscribe();
+  });
+
+  it('invalidates the area list even when an aborted delete may have committed', async () => {
+    const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
+    client.setQueryData(queryKeys.areas(), [userArea]);
+    const invalidate = vi.spyOn(client, 'invalidateQueries');
+    const transport: ApiTransportPort = { send: () => Promise.reject(new DOMException('aborted', 'AbortError')) };
+    const { result } = renderHook(() => useAreaMutations(transport, unauthorized), { wrapper: mutationWrapper(client) });
+    const controller = new AbortController();
+    controller.abort();
+    await expect(result.current.remove('c1', controller.signal)).rejects.toBeInstanceOf(ApiError);
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.areas() });
+  });
+
+  it('writes an Area PATCH response through before its background refetch', async () => {
+    const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
+    const original = toArea(areaSchema.parse(userArea));
+    client.setQueryData(queryKeys.areas(), [original]);
+    const updatedWire = {
+      ...userArea,
+      name: 'Studio',
+      default_template_id: 'small-change',
+      default_cwd: '/srv/studio',
+      updated_at: original.updatedAt + 1,
+    };
+    const transport: ApiTransportPort = { send: () => Promise.resolve(ok(updatedWire)) };
+    const { result } = renderHook(() => useAreaMutations(transport, unauthorized), {
+      wrapper: mutationWrapper(client),
+    });
+
+    await act(() => result.current.update('c1', {
+      name: 'Studio', default_template_id: 'small-change', default_cwd: '/srv/studio',
+    }));
+
+    expect(client.getQueryData<ReturnType<typeof toArea>[]>(queryKeys.areas())).toEqual([
+      expect.objectContaining({
+        name: 'Studio', defaultTemplateId: 'small-change', defaultCwd: '/srv/studio',
+      }),
+    ]);
+  });
+
+  it('invalidates Areas after a failed PATCH', async () => {
+    const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
+    client.setQueryData(queryKeys.areas(), [toArea(areaSchema.parse(userArea))]);
+    let releaseRefetch!: () => void;
+    const refetchHeld = new Promise<void>((resolve) => { releaseRefetch = resolve; });
+    const invalidate = vi.spyOn(client, 'invalidateQueries').mockReturnValue(refetchHeld);
+    const transport: ApiTransportPort = {
+      send: () => Promise.reject(new Error('PATCH failed')),
+    };
+    const { result } = renderHook(() => useAreaMutations(transport, unauthorized), {
+      wrapper: mutationWrapper(client),
+    });
+
+    const pending = result.current.update('c1', { name: 'Studio' });
+    let settled = false;
+    void pending.then(() => { settled = true; }, () => { settled = true; });
+    await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.areas() }));
+    expect(settled).toBe(false);
+    releaseRefetch();
+    await expect(pending).rejects.toBeInstanceOf(ApiError);
+    expect(settled).toBe(true);
+  });
+
+  it('invalidates Areas after a failed POST that may already have committed', async () => {
+    const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
+    client.setQueryData(queryKeys.areas(), [toArea(areaSchema.parse(userArea))]);
+    let releaseRefetch!: () => void;
+    const refetchHeld = new Promise<void>((resolve) => { releaseRefetch = resolve; });
+    const invalidate = vi.spyOn(client, 'invalidateQueries').mockReturnValue(refetchHeld);
+    const transport: ApiTransportPort = {
+      send: (request) => request.path === '/api/version'
+        ? Promise.resolve(ok({ areaCreateIdempotency: true })) : Promise.reject(new Error('POST response lost')),
+    };
+    const { result } = renderHook(() => useAreaMutations(transport, unauthorized), {
+      wrapper: mutationWrapper(client),
+    });
+
+    const pending = result.current.create({ name: 'Reading', color: '#5B8DEF' }, 'reading-key');
+    let settled = false;
+    void pending.then(() => { settled = true; }, () => { settled = true; });
+    await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.areas() }));
+    expect(settled).toBe(false);
+    releaseRefetch();
+    await expect(pending).rejects.toBeInstanceOf(ApiError);
+    expect(settled).toBe(true);
+  });
+
+  it('resolves Area creation before its background list refresh settles', async () => {
+    const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
+    client.setQueryData(queryKeys.areas(), [toArea(areaSchema.parse(userArea))]);
+    let releaseRefetch!: () => void;
+    const refetchHeld = new Promise<void>((resolve) => { releaseRefetch = resolve; });
+    const invalidate = vi.spyOn(client, 'invalidateQueries').mockReturnValue(refetchHeld);
+    const createdWire = {
+      ...userArea,
+      id: 'c-new',
+      name: 'Reading',
+      default_template_id: null,
+      default_cwd: null,
+    };
+    const transport: ApiTransportPort = {
+      send: (request) => Promise.resolve(ok(
+        request.path === '/api/version' ? { areaCreateIdempotency: true } : createdWire,
+      )),
+    };
+    const { result } = renderHook(() => useAreaMutations(transport, unauthorized), {
+      wrapper: mutationWrapper(client),
+    });
+
+    const created = await act(() => result.current.create({ name: 'Reading', color: '#5B8DEF' }, 'reading-key'));
+    expect(created).toMatchObject({ id: 'c-new', name: 'Reading' });
+    await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: queryKeys.areas() }));
+    releaseRefetch();
+  });
+
+  it('aborts an in-flight initial Area list read when Area creation succeeds so the replacement read includes the created Area', async () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    const createdWire = {
+      ...userArea,
+      id: 'c-new',
+      name: 'Reading',
+      sort: userArea.sort + 1,
+      default_template_id: null,
+      default_cwd: null,
+    };
+    let releaseInitial!: () => void;
+    const initialHeld = new Promise<void>((resolve) => { releaseInitial = resolve; });
+    let initialRead = true;
+    const transport: ApiTransportPort = {
+      send: async (request) => {
+        if (request.path === '/api/version') return ok({ areaCreateIdempotency: true });
+        if (request.path === '/api/areas' && request.method === 'POST') return ok(createdWire);
+        if (request.path === '/api/areas' && request.method === 'GET' && initialRead) {
+          initialRead = false;
+          await initialHeld;
+          return ok([userArea]);
+        }
+        return ok([userArea, createdWire]);
+      },
+    };
+    const observer = new QueryObserver(client, areaListQueryOptions(transport, unauthorized));
+    const unsubscribe = observer.subscribe(() => undefined);
+    try {
+      const { result } = renderHook(() => useAreaMutations(transport, unauthorized), {
+        wrapper: mutationWrapper(client),
+      });
+
+      const created = await act(() => result.current.create({ name: 'Reading', color: '#5B8DEF' }, 'reading-key'));
+      expect(created).toMatchObject({ id: 'c-new', name: 'Reading' });
+      releaseInitial();
+      await waitFor(() => expect(client.getQueryData<ReturnType<typeof toArea>[]>(queryKeys.areas())?.map((area) => area.id))
+        .toEqual(['c1', 'c-new']));
+    } finally {
+      releaseInitial();
+      unsubscribe();
+    }
+  });
+
+  it('does not let a delayed Area PATCH response overwrite a newer event row', async () => {
+    const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
+    const original = toArea(areaSchema.parse(userArea));
+    client.setQueryData(queryKeys.areas(), [original]);
+
+    const responseWire = {
+      ...userArea,
+      name: 'My edit',
+      default_template_id: 'small-change',
+      default_cwd: '/srv/mine',
+      updated_at: original.updatedAt + 1,
+    };
+    let releaseResponse!: () => void;
+    const responseHeld = new Promise<void>((resolve) => { releaseResponse = resolve; });
+    const send = vi.fn(async () => {
+      await responseHeld;
+      return ok(responseWire);
+    });
+    const transport: ApiTransportPort = { send };
+    const { result } = renderHook(() => useAreaMutations(transport, unauthorized), {
+      wrapper: mutationWrapper(client),
+    });
+
+    let pending!: ReturnType<typeof result.current.update>;
+    act(() => {
+      pending = result.current.update('c1', {
+        name: 'My edit', default_template_id: 'small-change', default_cwd: '/srv/mine',
+      });
+    });
+    await waitFor(() => expect(send).toHaveBeenCalledOnce());
+
+    // `area_update_tx` assigns the later PATCH a strictly greater row version even within one
+    // wall-clock millisecond; its event reaches this cache before the older HTTP response.
+    const newerEvent = {
+      ...original,
+      name: 'Remote edit',
+      defaultTemplateId: null,
+      defaultCwd: '/srv/remote',
+      updatedAt: responseWire.updated_at + 1,
+    };
+    act(() => { client.setQueryData(queryKeys.areas(), [newerEvent]); });
+    releaseResponse();
+    await act(async () => { await pending; });
+
+    expect(client.getQueryData(queryKeys.areas())).toEqual([newerEvent]);
+  });
+
+  it('writes a created Area into an empty cache before the zero-state opener disappears', async () => {
+    const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
+    client.setQueryData(queryKeys.areas(), []);
+    const createdWire = {
+      ...userArea,
+      id: 'c-new',
+      name: 'Reading',
+      default_template_id: null,
+      default_cwd: null,
+    };
+    const transport: ApiTransportPort = { send: (request) => Promise.resolve(ok(
+      request.path === '/api/version' ? { areaCreateIdempotency: true } : createdWire,
+    )) };
+    const { result } = renderHook(() => useAreaMutations(transport, unauthorized), {
+      wrapper: mutationWrapper(client),
+    });
+
+    await act(() => result.current.create({ name: 'Reading', color: '#5B8DEF' }, 'reading-key'));
+
+    expect(client.getQueryData<ReturnType<typeof toArea>[]>(queryKeys.areas()))
+      .toEqual([expect.objectContaining({ id: 'c-new', name: 'Reading' })]);
+  });
+
+  it('does not let a delayed Area POST response overwrite a newer event row', async () => {
+    const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
+    client.setQueryData(queryKeys.areas(), []);
+    const responseWire = {
+      ...userArea,
+      id: 'c-new',
+      name: 'Reading',
+      default_template_id: null,
+      default_cwd: null,
+      updated_at: 2,
+    };
+    let releaseResponse!: () => void;
+    const responseHeld = new Promise<void>((resolve) => { releaseResponse = resolve; });
+    const send = vi.fn(async (request: ApiRequest) => {
+      if (request.path === '/api/version') return ok({ areaCreateIdempotency: true });
+      await responseHeld;
+      return ok(responseWire);
+    });
+    const transport: ApiTransportPort = { send };
+    const { result } = renderHook(() => useAreaMutations(transport, unauthorized), {
+      wrapper: mutationWrapper(client),
+    });
+
+    let pending!: ReturnType<typeof result.current.create>;
+    act(() => { pending = result.current.create({ name: 'Reading', color: '#5B8DEF' }, 'reading-key'); });
+    await waitFor(() => expect(send).toHaveBeenCalledTimes(2));
+
+    const newerEvent = {
+      ...toArea(areaSchema.parse(responseWire)),
+      name: 'Reading list',
+      defaultTemplateId: 'small-change',
+      defaultCwd: '/srv/reading',
+      updatedAt: 3,
+    };
+    act(() => { client.setQueryData(queryKeys.areas(), [newerEvent]); });
+    releaseResponse();
+    await act(async () => { await pending; });
+
+    await expect(pending).resolves.toEqual(newerEvent);
+    expect(client.getQueryData(queryKeys.areas())).toEqual([newerEvent]);
+  });
+
+  it('does not promote one created Area into a complete list when the cache is uninitialized', async () => {
+    const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
+    const createdWire = {
+      ...userArea,
+      id: 'c-new',
+      name: 'Reading',
+      default_template_id: null,
+      default_cwd: null,
+    };
+    const transport: ApiTransportPort = { send: (request) => Promise.resolve(ok(
+      request.path === '/api/version' ? { areaCreateIdempotency: true } : createdWire,
+    )) };
+    const { result } = renderHook(() => useAreaMutations(transport, unauthorized), {
+      wrapper: mutationWrapper(client),
+    });
+
+    await act(() => result.current.create({ name: 'Reading', color: '#5B8DEF' }, 'reading-key'));
+
+    expect(client.getQueryData(queryKeys.areas())).toBeUndefined();
+    expect(client.getQueryState(queryKeys.areas())).toBeUndefined();
+  });
+
+  it('preserves a failed no-data Area list instead of replacing it with one created row', async () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    await expect(client.fetchQuery({
+      queryKey: queryKeys.areas(),
+      queryFn: () => Promise.reject(new Error('areas unavailable')),
+    })).rejects.toThrow('areas unavailable');
+    const createdWire = {
+      ...userArea,
+      id: 'c-new',
+      name: 'Reading',
+      default_template_id: null,
+      default_cwd: null,
+    };
+    const transport: ApiTransportPort = { send: (request) => Promise.resolve(ok(
+      request.path === '/api/version' ? { areaCreateIdempotency: true } : createdWire,
+    )) };
+    const { result } = renderHook(() => useAreaMutations(transport, unauthorized), {
+      wrapper: mutationWrapper(client),
+    });
+
+    await act(() => result.current.create({ name: 'Reading', color: '#5B8DEF' }, 'reading-key'));
+
+    expect(client.getQueryData(queryKeys.areas())).toBeUndefined();
+    expect(client.getQueryState(queryKeys.areas())?.status).toBe('error');
+  });
+
+  it('expires loaded history only after a successful replacement ACK before its source refresh', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const key = queryKeys.harnessItems('card-1');
+    const rows = Array.from({ length: 120 }, (_, index) => ({
+      id: index + 1, worker_session_id: 'runtime', card_id: 'card-1', track_id: 'track-1', thread_id: 'thread',
+      turn_id: null, turn_error_text: null, item_uuid: null, item_type: 'agentMessage', method: 'item/completed',
+      params: '{}', created_at_ms: index,
+    }));
+    client.setQueryData<History>(key, { latest: observedWindow(historicalConversationPage('card-1', rows.slice(60), {contract:'conversation_v1',source:'historical_raw',card_id:'card-1',position:61}), { kind: 'latest' }),
+      retained: [observedWindow(historicalConversationPage('card-1', rows.slice(0, 60), null), { kind: 'before', cursor: {contract:'conversation_v1',source:'historical_raw',card_id:'card-1',position:61} })] });
+    const order: string[] = [];
+    const reset = vi.spyOn(client, 'resetQueries');
+    reset.mockImplementation(filters => {
+      order.push('reset');
+      expect(filters).toEqual({ queryKey: key });
+      return Promise.resolve();
+    });
+    const transport: ApiTransportPort = { send: () => Promise.resolve(ok({ card_id: 'card-1', worker_session_id: 'runtime-1' })) };
+    const { result } = renderHook(() => usePlannerMutations(transport, 'card-1', null, unauthorized), { wrapper: mutationWrapper(client) });
+    await result.current.send('replacement', [], 'replace-key', 'old-turn', transport, () => { order.push('answered'); });
+    expect(order).toEqual(['answered', 'reset']);
+    expect(reset).toHaveBeenCalledOnce();
+    client.clear();
+  });
+
+  it('does not turn an acknowledged planner send into a send failure when refresh fails', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const order: string[] = [];
+    vi.spyOn(client, 'cancelQueries').mockImplementation(() => { order.push('cancel'); return Promise.resolve(); });
+    const invalidate = vi.spyOn(client, 'invalidateQueries')
+      .mockImplementation(() => { order.push('refresh'); return Promise.reject(new Error('history refresh failed')); });
+    const transport: ApiTransportPort = {
+      send: () => Promise.resolve(ok({ card_id: 'card-1', worker_session_id: 'runtime-1' })),
+    };
+    const { result } = renderHook(() => usePlannerMutations(transport, 'card-1', null, unauthorized), {
+      wrapper: mutationWrapper(client),
+    });
+
+    await expect(result.current.send('accepted by the server', [], 'send-key', null, transport, () => { order.push('answered'); }))
+      .resolves.toMatchObject({ card_id: 'card-1' });
+    await waitFor(() => expect(invalidate).toHaveBeenCalledTimes(3));
+    /* The answer is noted before any refresh read starts, and a read still out from before it is cancelled first. */
+    expect(order).toEqual(['answered', 'cancel', 'cancel', 'cancel', 'refresh', 'refresh', 'refresh']);
+  });
+});
+
+/* Both mutations write `['track', trackId]` directly: a terminal card left on screen for a round-trip
+ * keeps a PTY attached to a torn-down card, and the board can only draw a card the cache already holds.
+ * Nothing observes the key, so the queued invalidation cannot refetch — the assertions read the write. */
+/* #2131: a DELETE answered 404 is done (`DELETE_FAILURES`), so it drops what a success drops: the area's track list, the
+ * track's detail. The settle-time invalidation does not touch either key, so only the done drop can clear it. */
+describe('a delete answered done drops its cache entry like a success', () => {
+  const notFound = (): Promise<ApiTransportResponse> =>
+    Promise.resolve({ status: 404, statusText: 'Not Found', body: { error: 'gone', code: 'not_found' } });
+  const lost = (): Promise<ApiTransportResponse> => Promise.reject(new Error('socket hang up'));
+  const wrapper = (client: QueryClient) => ({ children }: { children: ReactNode }) =>
+    createElement(QueryClientProvider, { client }, children);
+
+  it.each([['done', notFound, false], ['unknown', lost, true]] as const)('area delete answered %s', async (_name, answer, kept) => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData(queryKeys.tracksInArea('c1'), [baseTrackWire]);
+    const transport: ApiTransportPort = { send: (request) => (request.method === 'GET' ? new Promise(() => undefined) : answer()) };
+    const { result } = renderHook(() => useAreaMutations(transport, unauthorized), { wrapper: wrapper(client) });
+    await act(() => expect(result.current.remove('c1')).rejects.toBeInstanceOf(ApiError));
+    expect(client.getQueryData(queryKeys.tracksInArea('c1')) !== undefined).toBe(kept);
+  });
+
+  it.each([['done', notFound, false], ['unknown', lost, true]] as const)('track delete answered %s', async (_name, answer, kept) => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client.setQueryData(queryKeys.trackDetail('w1'), { track: baseTrackWire, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true, cards: [], overlays: [] });
+    const transport: ApiTransportPort = { send: (request) => (request.method === 'GET' ? new Promise(() => undefined) : answer()) };
+    const { result } = renderHook(() => useTrackMutations(transport, unauthorized), { wrapper: wrapper(client) });
+    await act(() => expect(result.current.remove('w1', 'c1')).rejects.toBeInstanceOf(ApiError));
+    expect(client.getQueryData(queryKeys.trackDetail('w1')) !== undefined).toBe(kept);
+  });
+});
+
+describe('track detail mutation cache writes', () => {
+  const cardWire = (id: string) => ({
+    id, track_id: 'w1', kind: 'terminal', title: null, sort: 1, payload: {},
+    deletable: true, created_at: 1, updated_at: 2,
+  });
+  const detail = {
+    track: { ...baseTrackWire }, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true,
+    cards: [cardWire('card-a'), cardWire('card-b')], overlays: [],
+  };
+
+  function mounted(transport: ApiTransportPort) {
+    const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client }, children);
+    const { result } = renderHook(() => useTrackMutations(transport, unauthorized), { wrapper });
+    return { client, result };
+  }
+
+  it('drops the deleted row from the cached track detail without waiting for a refetch', async () => {
+    let reads = 0;
+    const transport: ApiTransportPort = {
+      send: (request) => {
+        if (request.method === 'GET') { reads += 1; return new Promise<ApiTransportResponse>(() => undefined); }
+        return Promise.resolve(ok(undefined));
+      },
+    };
+    const { client, result } = mounted(transport);
+    client.setQueryData(queryKeys.trackDetail('w1'), detail);
+
+    await act(() => result.current.removeCard('w1', 'card-a'));
+
+    const after = client.getQueryData<typeof detail>(queryKeys.trackDetail('w1'));
+    expect(after?.cards.map((card) => card.id)).toEqual(['card-b']);
+    // And it was this write, not a re-read: the detail was never fetched at all.
+    expect(reads).toBe(0);
+  });
+
+  /* #2131: a DELETE answered 404 is done (`DELETE_FAILURES`), and a done delete leaves the board the same way. */
+  it('drops a card whose delete was answered 404 without waiting for a refetch', async () => {
+    let reads = 0;
+    const transport: ApiTransportPort = {
+      send: (request) => {
+        if (request.method === 'GET') { reads += 1; return new Promise<ApiTransportResponse>(() => undefined); }
+        return Promise.resolve({ status: 404, statusText: 'Not Found', body: { error: 'card not found', code: 'not_found' } });
+      },
+    };
+    const { client, result } = mounted(transport);
+    client.setQueryData(queryKeys.trackDetail('w1'), detail);
+
+    await act(() => expect(result.current.removeCard('w1', 'card-a')).rejects.toBeInstanceOf(ApiError));
+
+    expect(client.getQueryData<typeof detail>(queryKeys.trackDetail('w1'))?.cards.map((card) => card.id)).toEqual(['card-b']);
+    expect(reads).toBe(0);
+  });
+
+  it('keeps a card whose delete was refused or unanswered', async () => {
+    for (const answer of [
+      () => Promise.resolve<ApiTransportResponse>({ status: 409, statusText: 'Conflict', body: { error: 'busy', code: 'terminal_disposal' } }),
+      () => Promise.reject<ApiTransportResponse>(new Error('socket hang up')),
+    ]) {
+      const transport: ApiTransportPort = {
+        send: (request) => (request.method === 'GET' ? new Promise<ApiTransportResponse>(() => undefined) : answer()),
+      };
+      const { client, result } = mounted(transport);
+      client.setQueryData(queryKeys.trackDetail('w1'), detail);
+      await act(() => expect(result.current.removeCard('w1', 'card-a')).rejects.toBeInstanceOf(ApiError));
+      expect(client.getQueryData<typeof detail>(queryKeys.trackDetail('w1'))?.cards.map((card) => card.id))
+        .toEqual(['card-a', 'card-b']);
+    }
+  });
+
+  it('leaves a detail it has no copy of alone rather than inventing one', async () => {
+    const transport: ApiTransportPort = { send: () => Promise.resolve(ok(undefined)) };
+    const { client, result } = mounted(transport);
+    await act(() => result.current.removeCard('w1', 'card-a'));
+    expect(client.getQueryData(queryKeys.trackDetail('w1'))).toBeUndefined();
+  });
+
+  it('writes a created card into the cached detail so the board can draw it at once', async () => {
+    const created = cardWire('card-new');
+    const transport: ApiTransportPort = {
+      send: (request) => (request.method === 'POST'
+        ? Promise.resolve(ok(created))
+        : new Promise<ApiTransportResponse>(() => undefined)),
+    };
+    const { client, result } = mounted(transport);
+    client.setQueryData(queryKeys.trackDetail('w1'), detail);
+
+    await act(() => result.current.createCard('w1', { kind: 'file-viewer', payload: { path: '/x' } }, 'card-key'));
+
+    expect(client.getQueryData<typeof detail>(queryKeys.trackDetail('w1'))?.cards.map((card) => card.id))
+      .toEqual(['card-a', 'card-b', 'card-new']);
+  });
+
+  /* A replayed create answers with a row the cache already holds. */
+  it('does not duplicate a card the cached detail already carries', async () => {
+    const transport: ApiTransportPort = {
+      send: (request) => (request.method === 'POST'
+        ? Promise.resolve(ok(cardWire('card-b')))
+        : new Promise<ApiTransportResponse>(() => undefined)),
+    };
+    const { client, result } = mounted(transport);
+    client.setQueryData(queryKeys.trackDetail('w1'), detail);
+
+    await act(() => result.current.createCodex('w1', { theme: { fg: [0, 0, 0], bg: [1, 1, 1] } }, 'replayed-key'));
+
+    expect(client.getQueryData<typeof detail>(queryKeys.trackDetail('w1'))?.cards.map((card) => card.id))
+      .toEqual(['card-a', 'card-b']);
+  });
+});
+
+describe('track create folders cache', () => {
+  it('drops a successful empty folders cache after attach_folder create', async () => {
+    const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
+    client.setQueryData(queryKeys.areaFolders('c1'), []);
+    const transport: ApiTransportPort = {
+      send: () => Promise.resolve(ok({ workspace: { isolation: 'none' as const, kind: 'attached' as const, path: '', frozen_at: null },
+        id: 'w1', area_id: 'c1', title: 'Ship', sort: 0, created_at: 1, updated_at: 1,
+      })),
+    };
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client }, children);
+    const { result } = renderHook(() => useTrackMutations(transport, unauthorized), { wrapper });
+    await act(() => result.current.create({
+      area_id: 'c1',
+      planner_provider: 'codex',
+      title: 'Ship',
+      cwd: '/tmp/x',
+      theme: { fg: [1, 2, 3], bg: [4, 5, 6] },
+      attach_folder: true,
+    }, 'draft-key'));
+    expect(client.getQueryData(queryKeys.areaFolders('c1'))).toBeUndefined();
+  });
+});
+
+describe('planner history pagination', () => {
+  it('uses the returned contract cursor rather than a raw item row id', async () => {
+    const cursor = { contract:'conversation_v1',card_id:'card',source:'presentation',position:7 } as const;
+    const { transport, paths } = recordingTransport(request => ok({
+      contract:'conversation_v1',source:'presentation',items:[],next_cursor:request.path.includes('&cursor=') ? null : cursor,
+    }));
+    const options = transcriptQueryOptions(transport, 'card', unauthorized);
+    const page = await options.queryFn({ position: { kind: 'latest' } });
+    expect(page.next_cursor).toEqual(cursor);
+    await options.queryFn({ position: { kind: 'before', cursor } });
+    expect(paths[1]).toContain(`cursor=${encodeURIComponent(JSON.stringify(cursor))}`);
+    expect(paths[1]).not.toContain('after_id=');
+  });
+});
+
+/* The kernel's `mark_running` stamps `worker_card_id` without emitting anything, so a wrong `false`
+ * here leaves the panel's click-through dead until reload. */
+describe('task-verdict poll interval', () => {
+  /* The live branch asks whether the PANEL has a live row, not whether the wire has a live verdict. */
+  const declaration = (id: string, key: string) => ({
+    id, kind: 'task', rev: 1, payload: { key, kind: 'codex', declared_by: 'spec', ready: true, goal: 'g' },
+  });
+  const blocks = (declarations = [declaration('b-1', 'k')]) => readTrackReport([{
+    id: 'c1', track_id: 'w1', kind: TRACK_REPORT_CARD_KIND, title: null, sort: 0,
+    payload: { body: 'x', blocks: declarations }, deletable: false, created_at: 0, updated_at: 0,
+  }])?.blocks ?? null;
+  const interval = taskVerdictsRefetchInterval(blocks());
+  const state = (over: Partial<{ data: TaskVerdict[]; errorUpdateCount: number }>) =>
+    ({ state: { errorUpdateCount: 0, ...over } });
+  const at = (status: string): TaskVerdict[] =>
+    [{ blockId: 'b-1', key: 'k', schedulable: true, status, workerCardId: null }];
+
+  it('polls while a run sits inside the eventless window', () => {
+    expect(interval(state({ data: at('running') }))).toBe(3000);
+  });
+
+  it('stops once the read shows nothing left for a timer to find', () => {
+    expect(interval(state({ data: at('done') }))).toBe(false);
+    expect(interval(state({ data: [] }))).toBe(false);
+  });
+
+  /* A failed refetch keeps react-query's last good data, so an error leaves this branch unchanged. */
+  it('keeps polling a live run through a failed refetch, on the retained data', () => {
+    expect(interval(state({ data: at('running'), errorUpdateCount: 3 })))
+      .toBe(3000);
+  });
+
+  /* When the FIRST load fails there is no data, so `hasLiveTaskRun` is vacuously false. */
+  it('still schedules a retry when the initial load failed and there is no data', () => {
+    expect(interval(state({ errorUpdateCount: 1 }))).toBe(15_000);
+  });
+
+  /* Bounded: the report route also fails permanently (deleted track 404s, missing report card 500s). */
+  it('gives up after a bounded number of failed loads rather than hammering a dead route', () => {
+    expect(interval(state({ errorUpdateCount: 4 }))).toBe(15_000);
+    expect(interval(state({ errorUpdateCount: 5 }))).toBe(false);
+    expect(interval(state({ errorUpdateCount: 99 }))).toBe(false);
+  });
+
+  /* No timer while the very first fetch is still on the wire. */
+  it('does not schedule anything before the first fetch has resolved', () => {
+    expect(interval(state({}))).toBe(false);
+  });
+
+  /* The kernel synthesises a verdict for a deleted declaration (`blockId: ''`); no row is built for it,
+   * so nothing on screen can converge and a refetch on its account is unbounded cost. */
+  it('does not poll for an in-flight run the report has no row for', () => {
+    expect(interval(state({
+      data: [{ blockId: '', key: 'deleted', schedulable: true, status: 'running', workerCardId: 'c-9' }],
+    }))).toBe(false);
+  });
+
+  /* Premise for both of the above: the same verdict on a declaration this report DOES have still polls. */
+  it('still polls a live run whose declaration is in the document', () => {
+    expect(taskVerdictsRefetchInterval(blocks([declaration('b-1', 'deleted')]))(state({
+      data: [{ blockId: '', key: 'deleted', schedulable: true, status: 'running', workerCardId: 'c-9' }],
+    }))).toBe(3000);
+  });
+});
+
+/* The key carries the block's rev and the query turns a 409 into a value, so a report edit refetches
+ * only the blocks it changed and a query that outran the document waits instead of failing. */
+describe('chart.series query', () => {
+  const pending = { status: 'pending', view: 'line', field: 'close', period: 'day', range: '1Y' };
+  const signal = new AbortController().signal;
+
+  it('keys by track, block and rev, and asks for the full row by default', async () => {
+    const { transport, paths } = recordingTransport(() => ok(pending));
+    const options = trackReportSeriesQueryOptions(transport, 'w1', 'b-1', 4, unauthorized);
+    expect(options.queryKey).toEqual(['track-report-series', 'w1', 'b-1', 4]);
+    expect(options.queryKey[0]).not.toBe(queryKeys.trackReportPrefix()[0]);
+    expect(options.staleTime).toBeGreaterThan(0);
+    await expect(options.queryFn({ signal })).resolves.toEqual(pending);
+    expect(paths).toEqual(['/api/tracks/w1/report/series/b-1?rev=4&detail=full']);
+    await trackReportSeriesQueryOptions(transport, 'w1', 'b-1', 4, unauthorized, 'summary').queryFn({ signal });
+    expect(paths[1]).toBe('/api/tracks/w1/report/series/b-1?rev=4&detail=summary');
+  });
+
+  it('stale rev 409 is a wait, not an error', async () => {
+    const { transport } = recordingTransport(() => ({ status: 409, statusText: 'Conflict', body: { current_rev: 5 } }));
+    const options = trackReportSeriesQueryOptions(transport, 'w1', 'b-1', 4, unauthorized);
+    // Resolves, so react-query has nothing to retry; the block reads `stale-rev` and waits.
+    await expect(options.queryFn({ signal })).resolves.toEqual({ status: 'stale-rev', current_rev: 5 });
+    // Every other failure is still a failure.
+    const failing = recordingTransport(() => ({ status: 500, statusText: 'Internal Server Error', body: {} }));
+    await expect(trackReportSeriesQueryOptions(failing.transport, 'w1', 'b-1', 4, unauthorized).queryFn({ signal }))
+      .rejects.toBeInstanceOf(ApiError);
+    const notFound = recordingTransport(() => ({ status: 404, statusText: 'Not Found', body: {} }));
+    await expect(trackReportSeriesQueryOptions(notFound.transport, 'w1', 'b-1', 4, unauthorized).queryFn({ signal }))
+      .rejects.toBeInstanceOf(ApiError);
+  });
+
+  it('polls only while the row is pending, and backs off after two minutes of it', () => {
+    const state = (data: SeriesRead | undefined, dataUpdateCount = 1) => ({ state: { data, dataUpdateCount } });
+    expect(seriesRefetchInterval(state(pending as SeriesRead))).toBe(3000);
+    expect(seriesRefetchInterval(state(pending as SeriesRead, 40))).toBe(3000);
+    expect(seriesRefetchInterval(state(pending as SeriesRead, 41))).toBe(30_000);
+    expect(seriesRefetchInterval(state({ status: 'stale-rev', current_rev: 5 }))).toBe(false);
+    expect(seriesRefetchInterval(state({ ...pending, status: 'unavailable', reason: 'x', resolved_at: 't' } as SeriesRead))).toBe(false);
+    expect(seriesRefetchInterval(state({
+      ...pending, status: 'ok', as_of: '2026-09-11', resolved_at: 't', pinned: true, series: [],
+    } as SeriesRead))).toBe(false);
+    expect(seriesRefetchInterval(state(undefined, 0))).toBe(false);
+  });
+});
+
+/* The 404 is data: a dangling citation is a state the design admits. */
+describe('track source query', () => {
+  const signal = new AbortController().signal;
+  const row = {
+    source_id: 'src_2c9e0a1b', provenance: 'summary',
+    origin: { kind: 'plugin', plugin_id: 'p', tool: 't', args_sha256: 'ab', args_canon: 'v1' },
+    title: 'T', body_bytes: 3, body_sha256: 'cd', captured_at: '2026-09-14T00:00:00Z',
+    quotes: [{ id: 'q1', text: 'abc', start: 0, end: 3 }], body: 'abc',
+  };
+
+  it('keys by track and source id, under its own prefix, and never refetches on focus', async () => {
+    const { transport, paths } = recordingTransport(() => ok(row));
+    const options = trackSourceQueryOptions(transport, 'w1', 'src_2c9e0a1b', unauthorized);
+    expect(options.queryKey).toEqual(['track-source', 'w1', 'src_2c9e0a1b']);
+    expect(options.queryKey).toEqual(queryKeys.trackSource('w1', 'src_2c9e0a1b'));
+    expect(options.queryKey[0]).not.toBe(queryKeys.trackReportPrefix()[0]);
+    expect(options.refetchOnWindowFocus).toBe(false);
+    await expect(options.queryFn({ signal })).resolves.toMatchObject({ status: 'found', source: { body: 'abc', provenance: 'summary' } });
+    expect(paths).toEqual(['/api/tracks/w1/sources/src_2c9e0a1b']);
+  });
+
+  it('a 404 is a missing source, not an error; every other failure still fails', async () => {
+    const notFound = recordingTransport(() => ({ status: 404, statusText: 'Not Found', body: { error: 'source not found', code: 'not_found' } }));
+    await expect(trackSourceQueryOptions(notFound.transport, 'w1', 'src_0badf00d', unauthorized).queryFn({ signal }))
+      .resolves.toEqual({ status: 'missing' });
+    const failing = recordingTransport(() => ({ status: 500, statusText: 'Internal Server Error', body: {} }));
+    await expect(trackSourceQueryOptions(failing.transport, 'w1', 'src_0badf00d', unauthorized).queryFn({ signal }))
+      .rejects.toBeInstanceOf(ApiError);
+    const malformed = recordingTransport(() => ok({ ...row, body: 7 }));
+    await expect(trackSourceQueryOptions(malformed.transport, 'w1', 'src_2c9e0a1b', unauthorized).queryFn({ signal }))
+      .rejects.toBeInstanceOf(ApiError);
+  });
+});
+
+
+describe('input metadata mutation reconciliation', () => {
+  it.each(['offline', 'expired', '401', 'local denial'] as const)(
+    'keeps input metadata stale until recovery admits reads after %s, preserving the send failure', async outcome => {
+      const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+      const access = new RecoveryAccess(); access.change('connected');
+      const paths: string[] = [];
+      const channel = createUnauthorizedChannel({ enqueue: task => task() });
+      const unsubscribe = channel.subscribe(() => access.invalidate('login'));
+      const transport = createRecoveryTransports({ send: request => {
+        paths.push(request.path);
+        if (request.method === 'GET') return Promise.resolve(ok({ track: baseTrackWire,
+          planner_revision: 0, can_reopen: false, can_admin: false, can_close: true, overlays: [], cards: [] }));
+        if (outcome === '401') return Promise.resolve({ status: 401, statusText: 'Unauthorized', body: { error: 'Sign in' } });
+        if (outcome === 'offline') access.change('offline');
+        else { access.invalidate('recovering'); access.change('connected'); }
+        return Promise.reject(new Error('answer lost'));
+      } }, access).business;
+      client.mount();
+      const releaseRecovery = coordinateRecoveryQueries(access, client);
+      const options = trackDetailQueryOptions(transport, 'w1', channel);
+      await client.fetchQuery(options);
+      const observer = new QueryObserver(client, options);
+      const release = observer.subscribe(() => undefined);
+      const admitted = transport.recovery!.scope(transport.recovery!.capture());
+      if (outcome === 'local denial') access.invalidate('offline');
+      const answered = vi.fn();
+      const cancel = vi.spyOn(client, 'cancelQueries');
+      const { result, unmount } = renderHook(() => usePlannerMutations(transport, 'card-1', 'w1', channel), {
+        wrapper: ({ children }: { children: ReactNode }) => createElement(QueryClientProvider, { client }, children),
+      });
+      let failure: unknown;
+      await act(async () => {
+        try { await result.current.send('Keep my words', [], 'key', null, admitted, answered); }
+        catch (error) { failure = error; }
+      });
+      expect(failure).toBeInstanceOf(Error);
+      // runOperation's checkpoint remains authoritative; reconciliation cannot replace it.
+      expect((failure as Error).message).toBe('连接状态已改变，请重新操作。');
+      expect(cancel.mock.calls.filter(([filters]) => filters?.queryKey !== undefined)).toEqual([]);
+      expect(answered).not.toHaveBeenCalled();
+      expect(paths).toEqual(['/api/tracks/w1', ...(outcome === 'local denial' ? [] : ['/api/cards/card-1/planner/input'])]);
+      expect(client.getQueryState(queryKeys.trackDetail('w1'))).toMatchObject({ status: 'success', isInvalidated: true });
+      expect(client.getQueryState(queryKeys.trackConversations('w1'))).toBeUndefined();
+      // The existing recovery coordinator, rather than a retained write or custom retry, resumes stale reads.
+      act(() => { access.invalidate('recovering'); access.change('connected'); });
+      await waitFor(() => expect(paths.filter(path => path === '/api/tracks/w1')).toHaveLength(2));
+      expect(client.getQueryState(queryKeys.trackDetail('w1'))?.isInvalidated).toBe(false);
+      release(); unmount(); unsubscribe(); releaseRecovery(); client.unmount(); client.clear();
+    },
+  );
+
+  it('retains an input 401 without starting reconciliation reads even without a recovery channel subscriber', async () => {
+    const client = new QueryClient();
+    const invalidate = vi.spyOn(client, 'invalidateQueries');
+    const cancel = vi.spyOn(client, 'cancelQueries');
+    const transport: ApiTransportPort = { send: () => Promise.resolve({ status: 401, statusText: 'Unauthorized', body: { error: 'Sign in' } }) };
+    const channel = createUnauthorizedChannel({ enqueue: task => task() });
+    const { result } = renderHook(() => usePlannerMutations(transport, 'card-1', 'w1', channel), {
+      wrapper: ({ children }: { children: ReactNode }) => createElement(QueryClientProvider, { client }, children),
+    });
+    const answered = vi.fn();
+    await expect(result.current.send('Kept', [], 'key', null, transport, answered))
+      .rejects.toMatchObject({ failure: { kind: 'unauthorized', status: 401 } });
+    expect(answered).not.toHaveBeenCalled();
+    expect(cancel).not.toHaveBeenCalled();
+    expect(invalidate.mock.calls).toEqual([
+      [{ queryKey: queryKeys.trackDetail('w1'), refetchType: 'none' }],
+      [{ queryKey: queryKeys.trackConversations('w1'), refetchType: 'none' }],
+    ]);
+  });
+
+  it.each(['edit', 'delete', 'steer', 'send'] as const)(
+    'refreshes owned input metadata after %s outcomes and preserves the existing run/history policy', async action => {
+      for (const outcome of ['success', 'stale', 'gone', 'unknown'] as const) {
+        const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+        let title = 'Original';
+        const paths: string[] = [];
+        const transport: ApiTransportPort = { send: async request => {
+          await Promise.resolve();
+          paths.push(request.path);
+          if (request.path === '/api/tracks/w1') return ok({ track: baseTrackWire,
+            planner_revision: 0, can_reopen: false, can_admin: false, can_close: true, overlays: [], cards: [{
+              id: 'card-1', track_id: 'w1', kind: 'codex', title, sort: 0, payload: { planner_harness: true },
+              deletable: true, created_at: 1, updated_at: 2,
+            }] });
+          if (request.path === '/api/tracks/w1/conversations') return ok([{
+            id: 'assistant', trackId: 'w1', title, kind: 'track-assistant', provider: 'codex', state: 'idle', updatedAt: 2, archivedAt: null, lastTurnCompletedAt: null,
+          }]);
+          title = 'Edited';
+          if (outcome === 'unknown') throw new Error('connection lost after write');
+          if (outcome !== 'success') return { status: outcome === 'gone' ? 404 : 409, statusText: 'Refused',
+            body: { code: 'planner_input_stale', error: 'Changed', text: title, rev: 1, entry_id: 'entry' } };
+          return ok({ card_id: 'card-1', worker_session_id: 'runtime', entry_id: 'entry', text: title, rev: 1, steered: true, turn_id: 'running-turn' });
+        } };
+        const detailOptions = trackDetailQueryOptions(transport, 'w1', unauthorized);
+        const listOptions = trackConversationsQueryOptions(transport, 'w1', unauthorized);
+        await client.fetchQuery(detailOptions); await client.fetchQuery(listOptions);
+        const detail = new QueryObserver(client, detailOptions);
+        const list = new QueryObserver(client, listOptions);
+        const releaseDetail = detail.subscribe(() => undefined);
+        const releaseList = list.subscribe(() => undefined);
+        for (const key of [queryKeys.trackDetail('foreign'), queryKeys.trackConversations('foreign')]) client.setQueryData(key, 'untouched');
+        const clear = vi.spyOn(client, 'clear');
+        // Active reads make accidental run/history refresh observable; inactive cache entries cannot.
+        const reads = { run: 0, history: 0 };
+        const transcriptKey = queryKeys.harnessItems('card-1');
+        const releases = (['run', 'history'] as const).map(surface => {
+          const observer = new QueryObserver(client, {
+            queryKey: surface === 'run' ? queryKeys.plannerRun('card-1') : transcriptKey,
+            queryFn: () => { reads[surface] += 1; return Promise.resolve(surface); },
+          });
+          return observer.subscribe(() => undefined);
+        });
+        await waitFor(() => expect(reads).toEqual({ run: 1, history: 1 }));
+        const cancel = vi.spyOn(client, 'cancelQueries');
+        const answered = vi.fn();
+        const { result, unmount } = renderHook(() => usePlannerMutations(transport, 'card-1', 'w1', unauthorized), {
+          wrapper: ({ children }: { children: ReactNode }) => createElement(QueryClientProvider, { client }, children),
+        });
+        const entry = { entry_id: 'entry', text: 'Original', rev: 0, queued_at_ms: 1 };
+        await act(async () => {
+          try {
+            if (action === 'edit') await result.current.editQueued(entry, 'Edited', () => undefined);
+            if (action === 'delete') await result.current.deleteQueued('entry', 0, () => undefined);
+            if (action === 'steer') await result.current.steerQueued('entry', 0, () => undefined);
+            if (action === 'send') await result.current.send('Edited', [], 'key', null, transport, answered);
+          } catch { /* Sends reject on refusal/unknown; reconciliation is still required. */ }
+        });
+        await waitFor(() => expect(detail.getCurrentResult().data?.cards[0]?.title).toBe('Edited'));
+        await waitFor(() => expect(list.getCurrentResult().data?.[0]?.title).toBe('Edited'));
+        for (const key of [queryKeys.trackDetail('foreign'), queryKeys.trackConversations('foreign')]) {
+          expect(client.getQueryData(key)).toBe('untouched');
+          expect(client.getQueryState(key)?.isInvalidated).toBe(false);
+        }
+        const refreshExisting = action !== 'send' || outcome === 'success';
+        await waitFor(() => expect(reads).toEqual({ run: refreshExisting ? 2 : 1, history: refreshExisting ? 2 : 1 }));
+        expect(cancel.mock.calls.map(([filters]) => filters?.queryKey)).toEqual([
+          ...(outcome === 'success' ? [transcriptKey, queryKeys.plannerRun('card-1'), queryKeys.initialInputPrefix()] : []),
+          queryKeys.trackDetail('w1'), queryKeys.trackConversations('w1'),
+          ...(action !== 'send' && outcome !== 'success' ? [queryKeys.initialInputPrefix()] : []),
+        ]);
+        expect(answered).toHaveBeenCalledTimes(action === 'send' && outcome === 'success' ? 1 : 0);
+        for (const release of releases) release();
+        expect(paths.some(path => path.includes('/harness/items'))).toBe(false);
+        expect(clear).not.toHaveBeenCalled();
+        releaseDetail(); releaseList(); unmount(); client.clear();
+      }
+    },
+  );
+});
+
+it.each([200,409])('Keep reconciles the run and history on status %s without caching its response as delivery', async status => {
+  const args = {carrier_id:'carrier',submission_id:'submission',attempt_id:'attempt',revision:'7'};
+  const requests:ApiRequest[]=[];
+  const transport:ApiTransportPort={send:request=>{
+    requests.push(request);
+    return Promise.resolve(status === 200 ? ok({...args,revision:'8',waiting_for_settlement:true})
+      : {status:409,statusText:'Conflict',body:{code:'conflict',message:'Revision changed'}});
+  }};
+  const client = new QueryClient();
+  const runKey=queryKeys.plannerRun('card'); const historyKey=transcriptQueryOptions(transport,'card',unauthorized).queryKey;
+  const before={unchanged:true}; client.setQueryData(runKey,before); client.setQueryData(historyKey,before);
+  const {result}=renderHook(()=>usePlannerMutations(transport,'card','track',unauthorized),{
+    wrapper:({children}:{children:ReactNode})=>createElement(QueryClientProvider,{client},children),
+  });
+  if(status === 200) await result.current.keep(args,'same-key');
+  else await expect(result.current.keep(args,'same-key')).rejects.toThrow();
+  expect(requests).toMatchObject([{method:'POST',path:'/api/cards/card/conversation/input/keep',headers:{'Idempotency-Key':'same-key'},body:args}]);
+  await waitFor(()=>expect(client.getQueryState(runKey)?.isInvalidated).toBe(true));
+  expect(client.getQueryState(historyKey)?.isInvalidated).toBe(true);
+  expect(client.getQueryData(runKey)).toBe(before);
+  client.clear();
+});

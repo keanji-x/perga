@@ -1,0 +1,97 @@
+@layer features {
+  .trackIdentity {
+    position: relative;
+    display: flex;
+    align-items: center;
+    min-inline-size: 0;
+  }
+
+  .trackHeading {
+    font: inherit;
+    inline-size: 100%;
+    min-inline-size: 0;
+    margin: 0;
+  }
+
+  .trackButton { font: inherit; display: flex; align-items: center; gap: var(--space-2); min-inline-size: 0; max-inline-size: 100%; inline-size: fit-content; margin-inline-start: auto; min-block-size: var(--control-h-touch); padding-inline: var(--space-2); border: 0; border-radius: var(--radius-md); background: transparent; cursor: pointer; }
+  .trackButton svg { flex: none; inline-size: var(--glyph-xl); block-size: var(--glyph-xl); }
+  .trackLabel { font-weight: var(--weight-medium); min-inline-size: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+
+  .area {
+    position: relative;
+    min-inline-size: 0;
+    justify-self: center;
+    max-inline-size: 100%;
+    inline-size: 100%;
+  }
+
+  .trackIdentity .area {
+    position: static;
+  }
+
+  .button {
+    min-inline-size: 0;
+    max-inline-size: 100%;
+    min-block-size: var(--rail-w-collapsed);
+    padding-inline: var(--space-2);
+      font: var(--type-page-title);
+      letter-spacing: var(--type-page-title-tracking);
+  }
+
+  .menu {
+    position: absolute;
+    z-index: var(--z-overlay);
+    inset-block-start: calc(100% + 6px);
+    inset-inline-start: 50%;
+    translate: -50% 0;
+    inline-size: min(19rem, calc(100vw - var(--space-4)));
+    max-block-size: 60dvh;
+    overflow: auto;
+    padding: var(--space-1);
+    background: var(--paper);
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-float);
+  }
+
+  .item {
+    font-size: var(--font-step-3-size);
+    display: flex;
+    gap: var(--space-2);
+    align-items: center;
+    min-block-size: var(--rail-w-collapsed);
+    inline-size: 100%;
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-highlight);
+    text-align: start;
+    overflow-wrap: anywhere;
+    cursor: pointer;
+  }
+
+  .item svg {
+    flex: none;
+    inline-size: var(--glyph-xl);
+    block-size: var(--glyph-xl);
+    color: var(--text-3);
+  }
+
+  .item:hover,
+  .item:focus-visible {
+    background: var(--overlay-hover-strong);
+  }
+
+  .item[aria-current='page'] {
+    background: var(--selection-bg);
+    color: var(--accent);
+  }
+  .item[aria-current='page']:hover { background: var(--selection-hover-bg); }
+
+  .item:active {
+    background-image: linear-gradient(var(--overlay-active), var(--overlay-active));
+  }
+
+  .separator {
+    margin-block: var(--space-2);
+    border-block-start: 1px solid var(--hairline);
+  }
+}
