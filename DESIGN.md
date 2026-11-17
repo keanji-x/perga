@@ -134,6 +134,8 @@ public sealed record TrackDto(
     string? ParentAttemptId,
     string Title,
     string Cwd,
+    string WorkspaceDriver,
+    JsonElement WorkspaceSpec,
     string? PrimarySessionId,
     string? TemplateId,
     JsonElement TemplateInputs,
@@ -219,6 +221,7 @@ public sealed record TaskAttemptDto(
     string Status,
     JsonElement? WorkerResult,
     JsonElement Meta,
+    JsonElement? WorkspaceLease,
     JsonElement? GateVerdict,
     long StartedAtMs,
     long? FinishedAtMs);
@@ -403,6 +406,8 @@ public sealed record CompiledTemplateManifest(
     IReadOnlyList<SectionRule> Sections,
     int? MaxProseChars,
     bool RequireGateForReadWrite,
+    string? WorkspaceDriver,
+    IReadOnlyList<string> WorkspaceLowerCacheDirs,
     string? WorkspaceCreateCmd,
     string? WorkspaceCloseCmd,
     string? AfterWorkerDoneCmd,
@@ -500,6 +505,8 @@ export interface NeigeTemplateDefinition<TState = Record<string, any>, TInputs =
   initialState?: (inputs: TInputs) => TState;
   initialMarkdown?: string;
   workspace?: {
+    driver?: string;
+    lowerCacheDirs?: string[];
     onCreateCmd?: string;
     onCloseCmd?: string;
   };
@@ -558,7 +565,7 @@ export declare function defineTemplate<TState = Record<string, any>, TInputs = R
 
 **三条工程铁律（写死在 `Neige.AgentKit` 实现中）**：
 1. **严禁调用任何 CLI 原生 `/compact` 命令或私有 compaction RPC**：上下文压缩由 `Neige.Kernel` 通过 Epoch 换页完成。
-2. **严禁拼接 CLI 私有路径/权限 DSL 字符串**（如 Claude `Edit(//path/**)` 或 Codex `shell_environment_policy`）：统一外置给 `OsSandboxWrapper`（Linux 使用 `/usr/bin/bwrap`，macOS 使用 `sandbox-exec`）隔离工作目录边界，保留 CLI 自身完整性。
+2. **严禁拼接 CLI 私有路径/权限 DSL 字符串**（如 Claude `Edit(//path/**)` 或 Codex `shell_environment_policy`）：统一外置给 `OsSandboxWrapper`（Linux 使用 `/usr/bin/bwrap`，macOS 使用 `sandbox-exec`）隔离工作目录边界，保留 CLI 自身完整性。一期在当前宿主机 `bwrap 0.8.0` 下直接绑定传入的 `Cwd`（即解析后的 `AttemptWorkspaceLease.EffectiveCwd`），同时通过 `OverlayMounts` 字段预留升级到 `bwrap >= 0.9` 时按进程直注 `--overlay-src / --overlay` 层的能力。
 3. **锁死最小 4 原语表面**：Antigravity / OpenCode 原生走 ACP JSON-RPC 2.0（`initialize` -> `session/new` / `session/load` -> `session/prompt` -> `session/cancel` -> `session/request_permission`）；Claude 走 `--print --verbose --input-format stream-json --output-format stream-json --mcp-config <tempJson>`（或 `claude-agent-acp`）；Codex 走 `codex app-server` JSON-RPC 2.0（`thread/start` / `thread/resume` / `turn/start` / `turn/steer` / `turn/interrupt`）。
 
 ```csharp
@@ -585,6 +592,12 @@ public abstract record McpServerConfig
         IReadOnlyDictionary<string, string> Env) : McpServerConfig;
 }
 
+public sealed record OverlayMountSpec(
+    IReadOnlyList<string> LowerDirs,
+    string? UpperDir,
+    string? WorkDir,
+    string TargetPath);
+
 public sealed record HarnessLaunchSpec(
     string Provider,   // "codex" | "claude" | "acp:antigravity" | "acp:opencode"
     string? Model,
@@ -592,7 +605,8 @@ public sealed record HarnessLaunchSpec(
     string? ResumeNativeThreadId,
     string? SystemPrompt,
     IReadOnlyDictionary<string, McpServerConfig> McpServers,
-    OsSandboxMode Sandbox = OsSandboxMode.None);
+    OsSandboxMode Sandbox = OsSandboxMode.None,
+    IReadOnlyList<OverlayMountSpec>? OverlayMounts = null);
 
 public sealed record TurnInput(
     string Prompt,
@@ -643,15 +657,94 @@ public interface IAgentRuntime : IAsyncDisposable
 
 ---
 
-### 2.5 `namespace Neige.VcsKit`（原生 Jujutsu `jj` 一等支持 + `git` 兜底 + `gh` Forge）
+### 2.5 `namespace Neige.VcsKit`（原生 Jujutsu `jj` + `git`/`gh` + 可插拔 `IWorkspaceDriver` 挂载扩展缝）
 
-- **探测逻辑 (`DetectAsync`)**：检查 `jj` CLI 是否存在及目录是否包含 `.jj`；若含 `.git` 但未初始化 `.jj` 且用户开启自动共存模式，支持调用 `jj git init --colocate`。若无 `jj` 则降级为 `GitWorktree`；非 VCS 目录返回 `PlainDirectory`。
+- **存储隔离与版本语义彻底解耦**：
+  - `IWorkspaceDriver` 负责**物理工作区制备、挂载恢复、Per-Attempt Copy-on-Write 租约与安全卸载**（决定进程看到什么目录树及能否并行写）；
+  - `IVcsService` 负责**代码版本历史语义**（`jj` / `git` 的快照、ChangeId、Rebase 与 Push）。
+  - **一期实现边界**：Stage 1 仅实现极薄的 `DirectWorkspaceDriver`（`"direct"`：原目录直通）与 `VcsWorkspaceDriver`（`"vcs-workspace"`：委托 `IVcsService.CreateWorkspaceAsync` 创建隔离 `jj workspace` 或 `git worktree`）。未来接入 `"fuse-overlayfs"`、`"kernel-overlayfs"` 或 `"bwrap-overlay"` 仅需向 `IWorkspaceDriverRegistry` 注册新驱动，**无需修改 `Kernel`、`SQLite` 表结构、`AgentKit` 或前端任何契约**：
+    - `EnsureMountedAsync` 解决宿主机或 Daemon 重启后 Overlay 挂载点丢失的重挂问题（一期驱动为零开销透传）；
+    - `TeardownTrackAsync` 先卸载 `MergedCwd` 再清理 `UpperDir` / `WorkDir`，确保挂载时作为只读 `lowerdir` 共享的全局依赖缓存（如 `target/`、`node_modules/`）绝不会被误删；
+    - `AcquireAttemptLeaseAsync` / `SettleAttemptLeaseAsync` 预留了 Per-Attempt 临时 `upperdir`（`Promote` 晋升 / `Discard` 秒级丢弃并解锁 `SupportsParallelIsolatedWriteLeases` 并行写能力）。
+- **VCS 探测逻辑 (`DetectAsync`)**：检查 `jj` CLI 是否存在及目录是否包含 `.jj`；若含 `.git` 但未初始化 `.jj` 且用户开启自动共存模式，支持调用 `jj git init --colocate`。若无 `jj` 则降级为 `GitWorktree`；非 VCS 目录返回 `PlainDirectory`。
 - **`jj` 核心语义优势**：
   - `SnapshotWorkingCopyAsync` 在 `JjColocated` 下不执行 `git add/commit`，直接运行 `jj log -r @ --no-graph -T ...` 与 `jj op log -n 1` 获取稳定 `ChangeId`、`CommitId`、`OpId` 与冲突标志。
   - `RebaseOntoUpstreamAsync` 运行 `jj git fetch && jj rebase -s <root> -d main@origin`——`jj` 将冲突作为一等树状态提交并退出码为 0，绝不会像 `git rebase` 一样卡死工作区在半途 `REBASING` 状态。
 
 ```csharp
+using System.Text.Json;
+
 namespace Neige.VcsKit;
+
+// -------- 1. 工作区存储/挂载与 CoW 租约抽象（预留 OverlayFS，一期仅实现 direct / vcs-workspace） --------
+
+public enum AttemptLeaseDisposition
+{
+    Promote,
+    Discard
+}
+
+public sealed record WorkspaceOverlayLayer(
+    IReadOnlyList<string> LowerDirs,
+    string? UpperDir,
+    string? WorkDir,
+    string TargetPath);
+
+public sealed record WorkspaceProvisionRequest(
+    string TrackId,
+    string SourcePath,
+    string TargetRootDir,
+    IReadOnlyList<string> LowerCacheDirs,
+    string? BaseRevision = null);
+
+public sealed record WorkspaceSpec(
+    string DriverId,
+    string LogicalRoot,
+    IReadOnlyList<string> LowerDirs,
+    string? UpperDir,
+    string? WorkDir,
+    string MergedCwd,
+    JsonElement Metadata);
+
+public sealed record MountedWorkspace(
+    string DriverId,
+    string MergedCwd,
+    IReadOnlyList<WorkspaceOverlayLayer>? ProcessOverlayLayers = null);
+
+public sealed record AttemptWorkspaceLease(
+    string DriverId,
+    string AttemptId,
+    string EffectiveCwd,
+    bool IsIsolatedCopyOnWrite,
+    JsonElement Metadata,
+    IReadOnlyList<WorkspaceOverlayLayer>? ProcessOverlayLayers = null);
+
+public interface IWorkspaceDriver
+{
+    string DriverId { get; }
+    bool SupportsParallelIsolatedWriteLeases { get; }
+
+    Task<WorkspaceSpec> ProvisionTrackAsync(WorkspaceProvisionRequest req, CancellationToken ct = default);
+    Task<MountedWorkspace> EnsureMountedAsync(WorkspaceSpec spec, CancellationToken ct = default);
+    Task<AttemptWorkspaceLease> AcquireAttemptLeaseAsync(
+        MountedWorkspace workspace,
+        string attemptId,
+        bool readWrite,
+        CancellationToken ct = default);
+    Task SettleAttemptLeaseAsync(
+        AttemptWorkspaceLease lease,
+        AttemptLeaseDisposition disposition,
+        CancellationToken ct = default);
+    Task TeardownTrackAsync(WorkspaceSpec spec, CancellationToken ct = default);
+}
+
+public interface IWorkspaceDriverRegistry
+{
+    IWorkspaceDriver GetRequired(string driverId);
+    IReadOnlyList<string> RegisteredDrivers { get; }
+}
+
+// -------- 2. 版本控制与 Forge 抽象（JJ 一等支持 + Git 兜底 + gh CLI） --------
 
 public enum VcsBackendKind
 {
@@ -821,8 +914,9 @@ public interface ITerminalBridgeClient : IAsyncDisposable
 ### 2.7 `namespace Neige.Kernel`（微内核编排、`TrackActor`、Epoch 换页与 `ITrackStore`）
 
 #### 核心机制设计
-1. **`TrackActor` 单写者模型**：
+1. **`TrackActor` 单写者模型与按需挂载激活**：
    - `TrackActorRegistry` 维护 `ConcurrentDictionary<string, TrackActor>`；每个活跃 Track 拥有独立无锁 `Channel<Func<TrackActor, Task>>`，确保该 Track 内的会话输入、Report 提交、Task 声明/状态推进、Worker 完成回调、Ask 回答、Mail 投递与 Track 删除严格顺序执行。
+   - **激活重挂（Hydration Mount Hook）**：`TrackActor` 从 SQLite 唤醒水合时，在启动任何 `AgentSession`、`Terminal` 或 `TaskAttempt` 前必先调用 `IWorkspaceDriverRegistry.GetRequired(track.WorkspaceDriver).EnsureMountedAsync(workspaceSpec)` 并将返回的 `MountedWorkspace`（含 `MergedCwd` 与可选 `ProcessOverlayLayers`）注入会话与终端启动参数；一期 `Direct` / `VcsWorkspace` 为空操作，未来接 `OverlayFS` / `fuse-overlayfs` 时可零修改恢复宿主机重启丢失的挂载点。
    - 当某 Track 无运行中 Turn/Task 且空闲超过 `10 分钟` 时自动从字典休眠卸载，保留 SQLite 快照。
 2. **`PrimarySessionId` 代表路由**：
    - `AgentSession` 在 `Interactive` 模式下代码与工具权限完全对等（均可通过 `ReportDoc` 块级 Anchor 乐观锁安全协作）。
@@ -833,11 +927,11 @@ public interface ITerminalBridgeClient : IAsyncDisposable
      2. 关闭旧底层 `IAgentSession` 实例；
      3. 在数据库更新该 `AgentSession` 的 `Epoch = Epoch + 1`、`NativeThreadId = null`、`ContextUsageRatio = 0.0`；
      4. 用「最新 Report 全文 + 交接摘要」作为系统种子打开全新底层 `IAgentSession` 并绑定新 `NativeThreadId`（前端 `SessionId` 与历史消息流水保持连贯不断）。
-4. **`TaskGraphScheduler` 纯函数调度与 `afterWorkerDoneCmd`**：
-   - `ComputeSchedulable(tasks)`：筛选 `ready == true`、所有 `depends_on` 任务处于 `Done`、非 `Draft`/`Running`/`Verifying`/`Done`/`Failed`/`Canceled` 的任务；若存在在途 `ReadWrite` 任务则返回空；若存在在途 `ReadOnly` 任务仅放行 `ReadOnly` 任务；否则按优先级与创建时间放行 `ReadOnly` 集合或单个最高优 `ReadWrite` 任务。
-   - **统一模板钩子槽 `afterWorkerDoneCmd`**：当 `TaskAttempt` 会话调用 `neige_task_done` 后、执行 `GateSpec` 前，若当前绑定的 `CompiledTemplateManifest.AfterWorkerDoneCmd` 非空，在 `Track.Cwd` 下运行该命令，解析其 `stdout` **最后一行非空合法 JSON** 并入 `task_attempts.meta_json`，然后传给 `PolicyVm.OnTaskSettled`（从而同时覆盖 Git/JJ 快照收集与 Objective 指标收集）。
+4. **`TaskGraphScheduler` 租约感知调度与 `afterWorkerDoneCmd`**：
+   - `ComputeSchedulable(tasks, bool allowParallelWriteLeases = false)`：筛选 `ready == true`、所有 `depends_on` 任务处于 `Done`、非 `Draft`/`Running`/`Verifying`/`Done`/`Failed`/`Canceled` 的任务；当 `driver.SupportsParallelIsolatedWriteLeases == false`（一期默认）时，存在在途 `ReadWrite` 任务则返回空，存在在途 `ReadOnly` 任务仅放行 `ReadOnly`，无在途则按优先级与创建时间放行 `ReadOnly` 集合或单个最高优 `ReadWrite`；未来若挂载了支持独立 per-attempt CoW `upperdir` 的 `OverlayFS` 驱动（`SupportsParallelIsolatedWriteLeases == true`），调度器无需改动即可并发放行多个相互隔离的投机写 Attempt。
+   - **Attempt 租约与统一钩子槽 `afterWorkerDoneCmd`**：派发 Attempt 前先向 `IWorkspaceDriver.AcquireAttemptLeaseAsync` 申请 `AttemptWorkspaceLease`（并将快照持久化至 `task_attempts.workspace_lease_json`）；Worker 会话、`afterWorkerDoneCmd` 与 `GateSpec` 门禁均在 `lease.EffectiveCwd`（以及透传映射到 `HarnessLaunchSpec.OverlayMounts` 的层配置）内执行。`neige_task_done` 后若 `CompiledTemplateManifest.AfterWorkerDoneCmd` 非空，在 `lease.EffectiveCwd` 下运行该命令并解析 `stdout` **最后一行非空合法 JSON** 并入 `task_attempts.meta_json` 后传给 `PolicyVm.OnTaskSettled`；最终门禁通过调 `SettleAttemptLeaseAsync(lease, AttemptLeaseDisposition.Promote)`，门禁失败/取消/Fail 调 `SettleAttemptLeaseAsync(lease, AttemptLeaseDisposition.Discard)`（秒级 O(1) 抛弃脏层）。
 5. **启动收口 `BootReconciler`**：
-   - 启动监听前扫描数据库 `status IN ('Running', 'Verifying')` 的 `task_attempts` 与 `conversation_turns`，统一标记为 `interrupted`，释放内存占坑，并向受影响的开放 Track 投递 `SystemWake` 通知 `PrimarySessionId` 恢复决策。
+   - 启动监听前扫描数据库 `status IN ('Running', 'Verifying')` 的 `task_attempts` 与 `session_turns`：统一标记为 `interrupted`；对仍持有非空 `workspace_lease_json` 的中断 Attempt 调用 `SettleAttemptLeaseAsync(lease, Discard)` 清理残留临时挂载与 CoW 层；释放内存占坑后向受影响的开放 Track 投递 `SystemWake` 通知 `PrimarySessionId` 恢复决策。
 
 #### 冻结仓储端口 `ITrackStore` 与 `ITrackReadStore`
 
@@ -927,7 +1021,7 @@ CREATE TABLE IF NOT EXISTS areas (
     updated_at_ms       INTEGER NOT NULL
 );
 
--- 2. Track 核心表（含代表指针与模板快照/状态槽；零 Git 强耦合字段）
+-- 2. Track 核心表（含代表指针、工作区挂载描述与模板快照/状态槽；零 Git 强耦合字段）
 CREATE TABLE IF NOT EXISTS tracks (
     id                      TEXT PRIMARY KEY,
     area_id                 TEXT NOT NULL REFERENCES areas(id) ON DELETE CASCADE,
@@ -935,6 +1029,8 @@ CREATE TABLE IF NOT EXISTS tracks (
     parent_attempt_id       TEXT,
     title                   TEXT NOT NULL DEFAULT '',
     cwd                     TEXT NOT NULL,
+    workspace_driver        TEXT NOT NULL DEFAULT 'direct',
+    workspace_spec_json     TEXT NOT NULL DEFAULT '{}',
     cleanup_cmd             TEXT,
     primary_session_id      TEXT,
     template_id             TEXT,
@@ -998,18 +1094,19 @@ CREATE TABLE IF NOT EXISTS tasks (
 );
 CREATE INDEX IF NOT EXISTS idx_tasks_track_status ON tasks(track_id, status);
 
--- 6. 任务执行 Attempt 轨迹（含 afterWorkerDoneCmd 采集的通用 meta_json）
+-- 6. 任务执行 Attempt 轨迹（含 afterWorkerDoneCmd 采集的通用 meta_json 与 Per-Attempt 租约快照）
 CREATE TABLE IF NOT EXISTS task_attempts (
-    attempt_id          TEXT PRIMARY KEY,
-    task_id             TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-    track_id            TEXT NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
-    session_id          TEXT,
-    status              TEXT NOT NULL,
-    worker_result_json  TEXT,
-    meta_json           TEXT NOT NULL DEFAULT '{}',
-    gate_verdict_json   TEXT,
-    started_at_ms       INTEGER NOT NULL,
-    finished_at_ms      INTEGER
+    attempt_id           TEXT PRIMARY KEY,
+    task_id              TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    track_id             TEXT NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+    session_id           TEXT,
+    status               TEXT NOT NULL,
+    worker_result_json   TEXT,
+    meta_json            TEXT NOT NULL DEFAULT '{}',
+    workspace_lease_json TEXT,
+    gate_verdict_json    TEXT,
+    started_at_ms        INTEGER NOT NULL,
+    finished_at_ms       INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_attempts_task ON task_attempts(task_id, started_at_ms);
 
@@ -1130,10 +1227,10 @@ CREATE INDEX IF NOT EXISTS idx_events_track_id ON events(track_id, id);
 | Area | `PATCH /api/v1/areas/{areaId}` | 部分更新名称/颜色/目录绑定 → `200 AreaDto` |
 | Area | `DELETE /api/v1/areas/{areaId}` | 级联删除 Area 及下属 Track → `204` |
 | Track | `GET /api/v1/areas/{areaId}/tracks` | 查询 `?includeClosed=true\|false` → `TrackDto[]` |
-| Track | `POST /api/v1/tracks` | `{ areaId, title?, cwd?, templateId?, templateInputs?, provider?, model?, firstMessage? }` → `201 TrackAggregateSnapshot` |
+| Track | `POST /api/v1/tracks` | `{ areaId, title?, cwd?, workspaceDriver?, templateId?, templateInputs?, provider?, model?, firstMessage? }` → `201 TrackAggregateSnapshot` |
 | Track | `GET /api/v1/tracks/{trackId}` | 返回完整 `TrackAggregateSnapshot` |
 | Track | `PATCH /api/v1/tracks/{trackId}` | `{ title?, closed?, pinned?, enabledPlugins?, primarySessionId? }` → `200 TrackDto` |
-| Track | `DELETE /api/v1/tracks/{trackId}` | 停止 Actor 与会话、调用模板 `onCloseCmd`、删除行 → `204` |
+| Track | `DELETE /api/v1/tracks/{trackId}` | 停止 Actor 与会话、调用模板 `onCloseCmd`、`TeardownTrackAsync` 安全卸载工作区并删除行 → `204` |
 | 文件 | `GET /api/v1/tracks/{trackId}/files` | `?path=` 目录列表或读取工作区安全文本文件 |
 | Diff | `GET /api/v1/tracks/{trackId}/vcs-diff` | 调用 `IVcsService.DiffAsync` 返回变更文件列表与 Diff 文本 |
 | 报告 | `GET /api/v1/tracks/{trackId}/report` | 返回 `{ docRev, summary, blocks, tasks, diagnostics }` |
@@ -1193,7 +1290,7 @@ CREATE INDEX IF NOT EXISTS idx_events_track_id ON events(track_id, id);
 2. **Stage 1（6 路 `workspace: "share"` 并行开发 + 2 名只读 Verifier）**：
    - `w-doc-vm`：实现 `libs/Neige.ReportDoc` + `libs/Neige.PolicyVm` + 3 个 `.neige.ts` 模板与单测。
    - `w-agentkit`：实现 `libs/Neige.AgentKit`（Codex / Claude stream-json / ACP + `bwrap` Wrapper）与 Mock CLI 协议测试。
-   - `w-vcskit`：实现 `libs/Neige.VcsKit`（`jj --colocate` 一等支持 + `git` 兜底 + `gh` CLI）与真实临时 `jj`/`git` 仓库单测。
+   - `w-vcskit`：实现 `libs/Neige.VcsKit`（`jj --colocate` 一等支持 + `git` 兜底 + `gh` CLI + `IWorkspaceDriverRegistry` 与一期 `DirectWorkspaceDriver` / `VcsWorkspaceDriver`）与真实临时 `jj`/`git` 仓库及租约单测。
    - `w-term-rust`：从 `neige-calm` 提纯移植 `tools/neige-term-bridge` + 实现 `libs/Neige.TermClient` 与 PTY 读写集成测试。
    - `w-sqlite`：实现 `src/Neige.Storage.Sqlite`（10 表群 DDL + `SqliteSingleWriter` 微批写入 + `ITrackStore`）与高并发无 `SQLITE_BUSY` 压测。
    - `w-kernel`：实现 `src/Neige.Kernel`（`TrackActor`、代表路由、Epoch 换页压缩、`TaskGraphScheduler`、`TemplateHost`、`BootReconciler`）与纯内存模拟测试。
