@@ -357,8 +357,8 @@
           <rect class="box" width="240" height="72" fill="var(--panel)" stroke="var(--blue)" />
           <text class="mod-title" x="11" y="21">Kernel MCP (/mcp/kernel)</text>
           <text class="mod-tag" x="185" y="20" fill="var(--blue)">~550 LOC</text>
-          <text class="mod-sub" x="11" y="39">Report / Task / Mail / Ask / TerminalRead</text>
-          <text class="mod-sub" x="11" y="55">Planner 与 Assistant 对等共享内核原语</text>
+          <text class="mod-sub" x="11" y="39">Report / Task / Mail / Ask / Terminal</text>
+          <text class="mod-sub" x="11" y="55">Lead 与 Subagent 统一鉴权与协作原语</text>
         </g>
 
         <g class="mod-node" data-id="host_vcs" transform="translate(529, 42)">
@@ -375,10 +375,10 @@
           <text class="mod-title" x="11" y="22">TrackActor &amp; 宿主自管 Compaction</text>
           <text class="mod-tag" x="205" y="21" fill="var(--purple)">~1.5k LOC</text>
           <text class="mod-sub" x="11" y="42">· 单 Track 单协程邮箱，全内核 0 互斥锁</text>
-          <text class="mod-sub" x="11" y="59">· PrimarySessionId 代表路由 (接邮件/通知)</text>
+          <text class="mod-sub" x="11" y="59">· 二元会话模型：Lead 主理 + Subagent 协作</text>
           <text class="mod-sub" x="11" y="76">· 【解毒!】Epoch 换页压缩：普通对话总结后</text>
           <text class="mod-sub" x="11" y="92">  直接切新底层 Thread，绝不调 CLI 私有 /compact！</text>
-          <text class="mod-sub" x="11" y="109">· Planner / Assistant / Task 全是 AgentSession</text>
+          <text class="mod-sub" x="11" y="109">· Subagent 可自由协作，亦可绑定 Task Attempt</text>
         </g>
 
         <g class="mod-node" data-id="kernel_tpl" transform="translate(306, 196)">
@@ -559,7 +559,7 @@
       title: 'TrackActor & 宿主换页 Compaction',
       pkg: 'src/Neige.Kernel/Actors',
       boundary: '单向接收 ITrackCommand；对下只调 IAgentRuntime 最小 4 原语与 ITrackStore。',
-      hides: '单协程无锁状态机、PrimarySessionId 代表路由，以及最关键的【宿主自管 Epoch 换页压缩】：用一次普通总结对话 + 切换新底层 Thread 替代恶心的 CLI 原生 Compaction 适配！',
+      hides: '单协程无锁状态机、Lead / Subagent 二元会话（LeadSessionId 收件路由，Subagent 既可自由探索也可绑 Attempt 交卷），以及【宿主自管 Epoch 换页压缩】：用普通总结对话 + 切换新底层 Thread 替代 CLI 原生 Compaction 适配！',
       code: '// 彻底不碰 CLI 原生 /compact 的通用换页压缩：\nvar summary = await RunSummaryPromptAsync(session, ct);\nvar freshNativeId = await _agentKit.StartFreshThreadWithSeedAsync(summary, report, ct);\nsession.AdvanceEpoch(freshNativeId);'
     },
     kernel_tpl: {
@@ -612,9 +612,9 @@
       kindColor: 'var(--blue)',
       title: 'Kernel MCP (/mcp/kernel)',
       pkg: 'src/Neige.Host/Mcp',
-      boundary: '向 Agent 暴露协作原语（Report/Task/Mail/Ask/Terminal）。',
-      hides: 'Planner 与 Assistant 默认拥有完全对等的协作权限。',
-      code: '// 极薄原语暴露层'
+      boundary: '向 Lead 与 Subagent 暴露协作原语（Report/Task/Mail/Ask/Terminal）。',
+      hides: '所有会话默认共享对等读/终端工具；仅凭 BoundAttemptId 是否为空区分「治理解锁 (accept/reject/cancel)」与「交卷锁 (task_done/fail) + 禁改 task 块」。',
+      code: '// 一套会话统一鉴权，无需 Planner/Assistant/Worker 三套重型机制'
     },
     host_vcs: {
       kind: '实用工具与静态插件层 · app/',

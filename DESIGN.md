@@ -115,14 +115,13 @@ using System.Text.Json;
 
 namespace Neige.Contracts;
 
-public enum SessionKind { Interactive, TaskAttempt }
 public enum AccessMode { ReadOnly, ReadWrite }
 public enum TaskRunStatus { Draft, Pending, Running, Verifying, Done, Failed, Canceled }
 public enum TaskTriggerSource { Manual, Scheduler, Wake }
 public enum SemanticVerdict { None, Accepted, Rejected }
 public enum AskStatus { Open, Answered, Withdrawn }
 public enum TerminalStatus { Running, Exited }
-public enum EditActorKind { Human, Planner, Assistant, System }
+public enum EditActorKind { Human, Lead, Subagent, System }
 
 public sealed record AreaDto(
     string Id,
@@ -143,7 +142,7 @@ public sealed record TrackDto(
     string Cwd,
     string WorkspaceDriver,
     JsonElement WorkspaceSpec,
-    string? PrimarySessionId,
+    string? LeadSessionId,
     string? TemplateId,
     JsonElement TemplateInputs,
     JsonElement TemplateState,
@@ -157,9 +156,9 @@ public sealed record TrackDto(
 public sealed record AgentSessionDto(
     string Id,
     string TrackId,
-    SessionKind Kind,
-    bool IsPrimary,
-    string? TaskId,
+    bool IsLead,
+    string? BoundTaskId,
+    string? BoundAttemptId,
     string? Title,
     string Provider,
     string? Model,
@@ -441,14 +440,14 @@ public sealed record PolicyEvalResult<T>(
 public sealed record PolicyTurnContext(
     string TrackId,
     string SessionId,
-    bool IsPrimarySession,
-    string SessionKind,
+    bool IsLead,
+    string? BoundAttemptId,
     double ContextUsageRatio,
     JsonElement Inputs);
 
 public sealed record PolicyReportCommitContext(
     string TrackId,
-    string EditorRole,     // "human" | "planner" | "assistant" | "system"
+    string EditorRole,     // "human" | "lead" | "subagent" | "system"
     string PrevMarkdown,
     string NextMarkdown,
     IReadOnlyList<string> TouchedSections,
@@ -458,7 +457,8 @@ public sealed record PolicyReportCommitContext(
 public sealed record PolicyToolCallContext(
     string TrackId,
     string SessionId,
-    bool IsPrimarySession,
+    bool IsLead,
+    string? BoundAttemptId,
     string McpServer,      // "neige" | "vcs" | "<pluginId>"
     string ToolName,
     JsonElement Arguments,
@@ -497,7 +497,7 @@ export type GuardDecision =
 export interface SectionSpec {
   h1: string;
   omitIfEmpty?: boolean;
-  editableBy?: Array<"human" | "planner" | "assistant" | "system">;
+  editableBy?: Array<"human" | "lead" | "subagent" | "system">;
 }
 
 export interface TemplateContext<TState = Record<string, any>, TInputs = Record<string, any>> {
@@ -545,13 +545,14 @@ export interface NeigeTemplateDefinition<TState = Record<string, any>, TInputs =
   };
   buildTurnContext?: (ctx: TemplateContext<TState, TInputs>, session: {
     sessionId: string;
-    isPrimary: boolean;
-    sessionKind: string;
+    isLead: boolean;
+    boundAttemptId?: string;
     contextUsageRatio: number;
   }) => string | void;
   guardToolCall?: (ctx: TemplateContext<TState, TInputs>, call: {
     sessionId: string;
-    isPrimary: boolean;
+    isLead: boolean;
+    boundAttemptId?: string;
     mcpServer: string;
     toolName: string;
     arguments: Record<string, any>;
@@ -930,12 +931,13 @@ public interface ITerminalBridgeClient : IAsyncDisposable
 
 #### 核心机制设计
 1. **`TrackActor` 单写者模型与按需挂载激活**：
-   - `TrackActorRegistry` 维护 `ConcurrentDictionary<string, TrackActor>`；每个活跃 Track 拥有独立无锁 `Channel<Func<TrackActor, Task>>`，确保该 Track 内的会话输入、Report 提交、Task 声明/状态推进、Worker 完成回调、Ask 回答、Mail 投递与 Track 删除严格顺序执行。
+   - `TrackActorRegistry` 维护 `ConcurrentDictionary<string, TrackActor>`；每个活跃 Track 拥有独立无锁 `Channel<Func<TrackActor, Task>>`，确保该 Track 内的会话输入、Report 提交、Task 声明/状态推进、Subagent 交卷回调、Ask 回答、Mail 投递与 Track 删除严格顺序执行。
    - **激活重挂（Hydration Mount Hook）**：`TrackActor` 从 SQLite 唤醒水合时，在启动任何 `AgentSession`、`Terminal` 或 `TaskAttempt` 前必先调用 `IWorkspaceDriverRegistry.GetRequired(track.WorkspaceDriver).EnsureMountedAsync(workspaceSpec)` 并将返回的 `MountedWorkspace`（含 `MergedCwd` 与可选 `ProcessOverlayLayers`）注入会话与终端启动参数；一期 `Direct` / `VcsWorkspace` 为空操作，未来接 `OverlayFS` / `fuse-overlayfs` 时可零修改恢复宿主机重启丢失的挂载点。
    - 当某 Track 无运行中 Turn/Task 且空闲超过 `10 分钟` 时自动从字典休眠卸载，保留 SQLite 快照。
-2. **`PrimarySessionId` 代表路由**：
-   - `AgentSession` 在 `Interactive` 模式下代码与工具权限完全对等（均可通过 `ReportDoc` 块级 Anchor 乐观锁安全协作）。
-   - `Track.PrimarySessionId` 仅作为默认代表指针：接收外部 `Mail` 到达唤醒、后台 `Task` 完结/失败唤醒、用户在 UI 上提交的 `Ask` 回答与外部 `Report` 修改唤醒；可通过 `SetPrimarySessionAsync` 随时切换代表。
+2. **`LeadSessionId` 主理路由与二元会话模型（`Lead` + `Subagent`）**：
+   - 废除传统 `Planner` / `Assistant` / `Worker` 三重角色包袱，全 Track 统一为同一 `AgentSession`（仅由两个正交属性刻画）：
+     - **`Lead`（主理代表：`Track.LeadSessionId == session.Id` / `IsLead == true`）**：默认代表指针，接收外部 `Mail` 到达唤醒、后台 `Task` 完结/失败唤醒、UI 上提交的 `Ask` 回答与外部 `Report` 修改唤醒；可通过 `SetLeadSessionAsync` 随时切换主理会话。
+     - **`Subagent`（协作者：`IsLead == false`）**：分为 **自由协作（`BoundAttemptId == null`）** 与 **契约协作（`BoundAttemptId != null`，由 `TaskGraphScheduler` 按 Task 派发）**；两者在前端共享同一会话流式查看与实时 Steer 纠偏能力，均可读写 `ReportDoc`（乐观锁防盲写）与调用 `neige_terminal_open/read`；唯一硬边界由内核在 `/mcp/kernel` 统一看守——绑定了在途 `BoundAttemptId` 的 `Subagent` 拥有 `neige_task_done / fail`，并被禁止改动 `task` 块或调用 `neige_task_accept/reject/cancel` 自我判过。
 3. **宿主自管 Epoch 换页压缩（Host-Owned Epoch Handover Compaction）**：
    - 当 `ContextUsageRatio >= 0.80` 或用户触发 `CompactSessionAsync`：
      1. 向当前底层 `IAgentSession` 发送一条普通对话 Turn，要求输出结构化交接摘要（当前进展、关键路径、已验证结论、下一步）；
@@ -944,9 +946,9 @@ public interface ITerminalBridgeClient : IAsyncDisposable
      4. 用「最新 Report 全文 + 交接摘要」作为系统种子打开全新底层 `IAgentSession` 并绑定新 `NativeThreadId`（前端 `SessionId` 与历史消息流水保持连贯不断）。
 4. **`TaskGraphScheduler` 租约感知调度与 `afterWorkerDoneCmd`**：
    - `ComputeSchedulable(tasks, bool allowParallelWriteLeases = false)`：筛选 `ready == true`、所有 `depends_on` 任务处于 `Done`、非 `Draft`/`Running`/`Verifying`/`Done`/`Failed`/`Canceled` 的任务；当 `driver.SupportsParallelIsolatedWriteLeases == false`（一期默认）时，存在在途 `ReadWrite` 任务则返回空，存在在途 `ReadOnly` 任务仅放行 `ReadOnly`，无在途则按优先级与创建时间放行 `ReadOnly` 集合或单个最高优 `ReadWrite`；未来若挂载了支持独立 per-attempt CoW `upperdir` 的 `OverlayFS` 驱动（`SupportsParallelIsolatedWriteLeases == true`），调度器无需改动即可并发放行多个相互隔离的投机写 Attempt。
-   - **Attempt 租约与统一钩子槽 `afterWorkerDoneCmd`**：派发 Attempt 前先向 `IWorkspaceDriver.AcquireAttemptLeaseAsync` 申请 `AttemptWorkspaceLease`（并将快照持久化至 `task_attempts.workspace_lease_json`）；Worker 会话、`afterWorkerDoneCmd` 与 `GateSpec` 门禁均在 `lease.EffectiveCwd`（以及透传映射到 `HarnessLaunchSpec.OverlayMounts` 的层配置）内执行。`neige_task_done` 后若 `CompiledTemplateManifest.AfterWorkerDoneCmd` 非空，在 `lease.EffectiveCwd` 下运行该命令并解析 `stdout` **最后一行非空合法 JSON** 并入 `task_attempts.meta_json` 后传给 `PolicyVm.OnTaskSettled`；最终门禁通过调 `SettleAttemptLeaseAsync(lease, AttemptLeaseDisposition.Promote)`，门禁失败/取消/Fail 调 `SettleAttemptLeaseAsync(lease, AttemptLeaseDisposition.Discard)`（秒级 O(1) 抛弃脏层）。
+   - **Attempt 租约与统一钩子槽 `afterWorkerDoneCmd`**：派发 Attempt 前先向 `IWorkspaceDriver.AcquireAttemptLeaseAsync` 申请 `AttemptWorkspaceLease`（并将快照持久化至 `task_attempts.workspace_lease_json`）；契约 `Subagent` 会话、`afterWorkerDoneCmd` 与 `GateSpec` 门禁均在 `lease.EffectiveCwd`（以及透传映射到 `HarnessLaunchSpec.OverlayMounts` 的层配置）内执行。`neige_task_done` 后若 `CompiledTemplateManifest.AfterWorkerDoneCmd` 非空，在 `lease.EffectiveCwd` 下运行该命令并解析 `stdout` **最后一行非空合法 JSON** 并入 `task_attempts.meta_json` 后传给 `PolicyVm.OnTaskSettled`；最终门禁通过调 `SettleAttemptLeaseAsync(lease, AttemptLeaseDisposition.Promote)`，门禁失败/取消/Fail 调 `SettleAttemptLeaseAsync(lease, AttemptLeaseDisposition.Discard)`（秒级 O(1) 抛弃脏层）。
 5. **启动收口 `BootReconciler`**：
-   - 启动监听前扫描数据库 `status IN ('Running', 'Verifying')` 的 `task_attempts` 与 `session_turns`：统一标记为 `interrupted`；对仍持有非空 `workspace_lease_json` 的中断 Attempt 调用 `SettleAttemptLeaseAsync(lease, Discard)` 清理残留临时挂载与 CoW 层；释放内存占坑后向受影响的开放 Track 投递 `SystemWake` 通知 `PrimarySessionId` 恢复决策。
+   - 启动监听前扫描数据库 `status IN ('Running', 'Verifying')` 的 `task_attempts` 与 `session_turns`：统一标记为 `interrupted`；对仍持有非空 `workspace_lease_json` 的中断 Attempt 调用 `SettleAttemptLeaseAsync(lease, Discard)` 清理残留临时挂载与 CoW 层；释放内存占坑后向受影响的开放 Track 投递 `SystemWake` 通知 `LeadSessionId` 恢复决策。
 
 #### 冻结仓储端口 `ITrackStore` 与 `ITrackReadStore`
 
@@ -986,7 +988,7 @@ public interface ITrackStore : ITrackReadStore
     Task<AreaDto> UpsertAreaAsync(AreaDto area, CancellationToken ct);
     Task DeleteAreaAsync(string areaId, CancellationToken ct);
 
-    Task CreateTrackAsync(TrackDto track, ReportDocument initialReport, string? templateSnapshot, AgentSessionDto initialPrimarySession, CancellationToken ct);
+    Task CreateTrackAsync(TrackDto track, ReportDocument initialReport, string? templateSnapshot, AgentSessionDto initialLeadSession, CancellationToken ct);
     Task UpdateTrackAndEmitAsync(TrackDto track, EventEnvelopeDto? evt, CancellationToken ct);
     Task DeleteTrackAsync(string trackId, CancellationToken ct);
 
@@ -1047,7 +1049,7 @@ CREATE TABLE IF NOT EXISTS areas (
     updated_at_ms       INTEGER NOT NULL
 );
 
--- 2. Track 核心表（含代表指针、工作区挂载描述与模板快照/状态槽；零 Git 强耦合字段）
+-- 2. Track 核心表（含主理指针、工作区挂载描述与模板快照/状态槽；零 Git 强耦合字段）
 CREATE TABLE IF NOT EXISTS tracks (
     id                      TEXT PRIMARY KEY,
     area_id                 TEXT NOT NULL REFERENCES areas(id) ON DELETE CASCADE,
@@ -1058,7 +1060,7 @@ CREATE TABLE IF NOT EXISTS tracks (
     workspace_driver        TEXT NOT NULL DEFAULT 'direct',
     workspace_spec_json     TEXT NOT NULL DEFAULT '{}',
     cleanup_cmd             TEXT,
-    primary_session_id      TEXT,
+    lead_session_id         TEXT,
     template_id             TEXT,
     template_snapshot       TEXT,
     template_inputs_json    TEXT NOT NULL DEFAULT '{}',
@@ -1138,12 +1140,12 @@ CREATE TABLE IF NOT EXISTS task_attempts (
 CREATE INDEX IF NOT EXISTS idx_attempts_task ON task_attempts(task_id, started_at_ms);
 CREATE INDEX IF NOT EXISTS idx_attempts_track ON task_attempts(track_id);
 
--- 7. 大一统会话表（Planner / Assistant / Task Worker 完全统一）
+-- 7. 大一统会话表（二元模型：Lead 由 tracks.lead_session_id 指针认定，其余均为 Subagent，彻底消除 Planner/Assistant/Worker 三态）
 CREATE TABLE IF NOT EXISTS agent_sessions (
     id                  TEXT PRIMARY KEY,
     track_id            TEXT NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
-    kind                TEXT NOT NULL,        -- 'interactive' | 'task_attempt'
-    task_id             TEXT,
+    bound_task_id       TEXT,                 -- 非空表示该 Subagent 关联某 Task；空则为自由协作 Subagent
+    bound_attempt_id    TEXT,                 -- 非空表示当前背负在途/历史 TaskAttempt（启用 task_done/fail 并锁 task 块改写）
     title               TEXT,
     provider            TEXT NOT NULL,
     model               TEXT,
@@ -1200,7 +1202,7 @@ CREATE TABLE IF NOT EXISTS asks (
 );
 CREATE INDEX IF NOT EXISTS idx_asks_track ON asks(track_id, status);
 
--- 9B. 跨 Track 邮件（投递后自动唤醒目标 Track 的 primary_session_id）
+-- 9B. 跨 Track 邮件（投递后自动唤醒目标 Track 的 lead_session_id）
 CREATE TABLE IF NOT EXISTS mails (
     id                  TEXT PRIMARY KEY,
     from_track_id       TEXT NOT NULL,
@@ -1259,8 +1261,8 @@ CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at_ms);
    - 保留窗口上限：**最近 `7 天` 且最多 `50,000` 条**；超出部分按每批 `1,000` 行渐进 `DELETE`（不长事务堵读写）；更早断线的 WS 客户端由 `/api/v1/events` 契约直接返回 `_snapshot_required` 刷新首屏即可。
 3. **`report_revisions` 里程碑抽稀**：
    - 活跃 Track 默认完整保留**最近 `100` 个修订版**；更早历史（`doc_rev <= latest - 100`）或已关闭超过 `14 天` 的 Track，自动抽稀为仅保留 `doc_rev % 10 == 0` 的里程碑版本 + 初始版本与最新版本。
-4. **已换页旧 Epoch 与终态 Worker 条目瘦身**：
-   - 对已经历过宿主换页的会话（`session_turns.epoch < agent_sessions.epoch - 1`）以及已完结超过 `14 天` 的 `task_attempt` 会话：自动删除历史 `kind = 'thinking'` 过程块，并将超 `4 KB` 的 `tool_result` 替换为精简墓碑（保留完整 `user`、`assistant_text` 与工具调用索引），同时清理对应的冷 Blob 引用。
+4. **已换页旧 Epoch 与终态契约 `Subagent` 条目瘦身**：
+   - 对已经历过宿主换页的会话（`session_turns.epoch < agent_sessions.epoch - 1`）以及已完结超过 `14 天` 的契约协作会话（`bound_attempt_id IS NOT NULL`）：自动删除历史 `kind = 'thinking'` 过程块，并将超 `4 KB` 的 `tool_result` 替换为精简墓碑（保留完整 `user`、`assistant_text` 与工具调用索引），同时清理对应的冷 Blob 引用。
 5. **物理文件真实缩容（`INCREMENTAL auto_vacuum`）**：
    - 每次 GC 批次结束后，仅当空闲页达阈值时执行 `PRAGMA incremental_vacuum(500);`（将释放页面真实截断归还给操作系统）并执行 `PRAGMA wal_checkpoint(TRUNCATE);`，确保 `.db` 与 `.db-wal` 长期运行也不会无限单调膨胀。
 
@@ -1281,20 +1283,20 @@ CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at_ms);
 | Track | `GET /api/v1/areas/{areaId}/tracks` | 查询 `?includeClosed=true\|false` → `TrackDto[]` |
 | Track | `POST /api/v1/tracks` | `{ areaId, title?, cwd?, workspaceDriver?, templateId?, templateInputs?, provider?, model?, firstMessage? }` → `201 TrackAggregateSnapshot` |
 | Track | `GET /api/v1/tracks/{trackId}` | 返回完整 `TrackAggregateSnapshot` |
-| Track | `PATCH /api/v1/tracks/{trackId}` | `{ title?, closed?, pinned?, enabledPlugins?, primarySessionId? }` → `200 TrackDto` |
+| Track | `PATCH /api/v1/tracks/{trackId}` | `{ title?, closed?, pinned?, enabledPlugins?, leadSessionId? }` → `200 TrackDto` |
 | Track | `DELETE /api/v1/tracks/{trackId}` | 停止 Actor 与会话、调用模板 `onCloseCmd`、`TeardownTrackAsync` 安全卸载工作区并删除行 → `204` |
 | 文件 | `GET /api/v1/tracks/{trackId}/files` | `?path=` 目录列表或读取工作区安全文本文件 |
 | Diff | `GET /api/v1/tracks/{trackId}/vcs-diff` | 调用 `IVcsService.DiffAsync` 返回变更文件列表与 Diff 文本 |
 | 报告 | `GET /api/v1/tracks/{trackId}/report` | 返回 `{ docRev, summary, blocks, tasks, diagnostics }` |
-| 报告 | `PUT /api/v1/tracks/{trackId}/report/blocks/{blockId}` | 人类直接编辑报告块 `{ docRev, knownBlockRev, markdown?, payload? }`；更新后唤醒代表会话 |
+| 报告 | `PUT /api/v1/tracks/{trackId}/report/blocks/{blockId}` | 人类直接编辑报告块 `{ docRev, knownBlockRev, markdown?, payload? }`；更新后唤醒主理会话 (`LeadSessionId`) |
 | 任务 | `GET /api/v1/tracks/{trackId}/tasks/{taskKey}/attempts` | 返回该 Task 的历史 `TaskAttemptDto[]`（含 `meta` 与 Gate 日志） |
-| 会话 | `GET /api/v1/tracks/{trackId}/sessions` | 统一返回该 Track 下所有 `AgentSessionDto`（含 `Interactive` 与 `TaskAttempt`） |
-| 会话 | `POST /api/v1/tracks/{trackId}/sessions` | 新开交互式会话 `{ title?, provider, model? }` → `201 AgentSessionDto` |
+| 会话 | `GET /api/v1/tracks/{trackId}/sessions` | 统一返回该 Track 下所有 `AgentSessionDto`（含 `Lead`、自由 `Subagent` 与契约 `Subagent`） |
+| 会话 | `POST /api/v1/tracks/{trackId}/sessions` | 新开自由协作 `Subagent` 会话 `{ title?, provider, model? }` → `201 AgentSessionDto` |
 | 会话 | `GET /api/v1/sessions/{sessionId}/items` | `?afterId=0&limit=100` 分页读取 `SessionItemDto[]` 与当前在途 Turn 状态 |
 | 会话 | `POST /api/v1/sessions/{sessionId}/messages` | 必填 Header `Idempotency-Key`；Body `{ content, steerIfRunning? }` → `200 SessionTurnDto` |
 | 会话 | `POST /api/v1/sessions/{sessionId}/interrupt` | 中断当前在途 Turn → `200` |
 | 会话 | `POST /api/v1/sessions/{sessionId}/compact` | 触发宿主自管 Epoch 换页压缩 → `200 AgentSessionDto` |
-| 决策/终端 | `POST /api/v1/tracks/{trackId}/asks/{askId}/answer` | 提交 `{ answers: [...] }` 回答并唤醒 `PrimarySessionId` |
+| 决策/终端 | `POST /api/v1/tracks/{trackId}/asks/{askId}/answer` | 提交 `{ answers: [...] }` 回答并唤醒 `LeadSessionId` |
 | 决策/终端 | `GET / POST / DELETE /api/v1/tracks/{trackId}/terminals/{termId?}` | 列出/打开/关闭终端实例 |
 
 *(说明：共 22 个逻辑 REST 操作路径，`GET/POST/DELETE terminals` 计为 1 组终端资源端点，加上 `bootstrap`/`templates` 共 24 条路由。)*
@@ -1310,11 +1312,12 @@ CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at_ms);
 
 ### 4.3 多源 MCP 路由体系（内核 + 内置 JJ Forge + 静态外挂插件）
 
-会话启动前由 `Neige.Host` 为每个 `AgentSession` 生成唯一短期内存 Token `ng_<guid>` 映射 `(TrackId, SessionId, SessionKind, AttemptId?)` 并通过 `HarnessLaunchSpec.McpServers` 注入多路 URL：
+会话启动前由 `Neige.Host` 为每个 `AgentSession` 生成唯一短期内存 Token `ng_<guid>` 映射 `(TrackId, SessionId, IsLead, BoundAttemptId?)` 并通过 `HarnessLaunchSpec.McpServers` 注入多路 URL：
 
 1. **`/mcp/kernel`（服务名 `"neige"`，官方 `ModelContextProtocol.AspNetCore`）**：
-   - `Interactive` 会话（Planner 与 Assistant 完全平权）：`neige_report_read`, `neige_report_commit`, `neige_task_ls`, `neige_task_cancel`, `neige_task_accept`, `neige_task_reject`, `neige_user_ask`, `neige_mail_send`, `neige_mail_ls`, `neige_mail_cat`, `neige_track_status`, `neige_track_rename`, `neige_track_close`, `neige_terminal_open`, `neige_terminal_read`, `neige_terminal_input`。
-   - `TaskAttempt` 会话：`neige_report_read`, `neige_task_ls`, `neige_task_done`, `neige_task_fail`。
+   - **全会话共享原语**（`Lead` 与所有 `Subagent` 平权共享）：`neige_report_read`, `neige_report_commit`（若 `BoundAttemptId != null` 则内核硬拦截修改 `task` 块，正文块遵循模板 `editableBy`）, `neige_task_ls`, `neige_user_ask`, `neige_mail_ls`, `neige_mail_cat`, `neige_track_status`, `neige_terminal_open`, `neige_terminal_read`, `neige_terminal_input`。
+   - **治理解锁原语**（仅 `BoundAttemptId == null` 的 `Lead` 与自由 `Subagent`）：`neige_task_cancel`, `neige_task_accept`, `neige_task_reject`, `neige_mail_send`, `neige_track_rename`, `neige_track_close`。
+   - **契约交卷原语**（仅 `BoundAttemptId != null` 的契约 `Subagent`）：`neige_task_done`, `neige_task_fail`。
 2. **`/mcp/vcs`（服务名 `"vcs"`，基于 `libs/Neige.VcsKit`）**：
    - 暴露：`vcs_status`, `vcs_diff`, `vcs_restore_op` (JJ 时光机), `vcs_rebase_upstream`, `vcs_publish_pr`, `vcs_pr_checks`, `vcs_ci_evidence`, `vcs_pr_merge`, `vcs_issue_view`。
 3. **`/mcp/p/{pluginId}`（静态配置文件 `mcp-plugins.json` 挂载外部标准 MCP）**：
@@ -1345,7 +1348,7 @@ CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at_ms);
    - `w-vcskit`：实现 `libs/Neige.VcsKit`（`jj --colocate` 一等支持 + `git` 兜底 + `gh` CLI + `IWorkspaceDriverRegistry` 与一期 `DirectWorkspaceDriver` / `VcsWorkspaceDriver`）与真实临时 `jj`/`git` 仓库及租约单测。
    - `w-term-rust`：基于本仓库 `tools/rust-terminal/` 提纯组装 `tools/neige-term-bridge` + 实现 `libs/Neige.TermClient` 与 PTY 读写集成测试。
    - `w-sqlite`：实现 `src/Neige.Storage.Sqlite`（10 表群 DDL + `SqliteMigrator` 迁移备份 + `SqliteSingleWriter` 微批写入 + `ITrackStore` + >64KB 冷 Blob 剥离与 `RunMaintenancePassAsync` 确定性 GC）与高并发无 `SQLITE_BUSY`、外键级联索引、升级及防膨胀压测。
-   - `w-kernel`：实现 `src/Neige.Kernel`（`TrackActor`、代表路由、Epoch 换页压缩、`TaskGraphScheduler`、`TemplateHost`、`BootReconciler`）与纯内存模拟测试。
+   - `w-kernel`：实现 `src/Neige.Kernel`（`TrackActor`、`LeadSessionId` 主理与 `Subagent` 二元路由、Epoch 换页压缩、`TaskGraphScheduler`、`TemplateHost`、`BootReconciler`）与纯内存模拟测试。
    - 协调者按序审查并合入 `main`（或派 `v-libs` / `v-core` 验证每个分支 `dotnet test` / `cargo test` 全绿后再合并）。
 3. **Stage 2（组合根 `Neige.Host` + 前端 `fe/` 协同瘦身切换）**：
    - `w-host`：实现 `src/Neige.Host`（REST / WS / `/mcp/kernel` / `/mcp/vcs` / `/mcp/p/{id}` 拦截器 / `Cronos` 调度 + 定期 `RunMaintenancePassAsync` / E2E 集成测试）。
