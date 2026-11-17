@@ -10,7 +10,8 @@ import {
   type LiveReplyCopy, type LiveReplyObservation, type LiveReplyTranscriptRow,
 } from '../../../../core/domain/conversation-live.ts';
 import { cancelThenInvalidate } from '../events/query-refresh.ts';
-import { harnessLiveQueryOptions } from '../providers/queries.ts';
+import type { SessionLiveBuffer } from '../events/query-invalidation-adapter.ts';
+import { harnessLiveQueryOptions, queryKeys } from '../providers/queries.ts';
 import { type History, type TranscriptReads } from './history.ts';
 import { useState } from '../../ui/state/public.ts';
 
@@ -103,15 +104,38 @@ export function useLiveReplies({ transport, unauthorized, cardId, enabled, phase
         : { kind: 'poll', reply, atMs: Date.now(), activeTurnId: scope.turnId }) });
   }
 
-  /* Drawn from the copies the current transcript does not retire, so a stored row and its live
-     copy never share a frame; the effect below forgets the retired ones. */
+  const sessionLiveKey = useMemo(() => queryKeys.sessionLive(cardId), [cardId]);
+  const sessionLiveHash = useMemo(() => hashKey(sessionLiveKey), [sessionLiveKey]);
+  const subscribeToSessionLive = useCallback((notify: () => void) => {
+    const scheduled = notifyManager.batchCalls(notify);
+    return client.getQueryCache().subscribe((event) => {
+      if (event.query.queryHash === sessionLiveHash) scheduled();
+    });
+  }, [client, sessionLiveHash]);
+  const wsLive = useSyncExternalStore(
+    subscribeToSessionLive,
+    () => client.getQueryData<SessionLiveBuffer>(sessionLiveKey),
+  );
+
+  /* Drawn from the copies the current transcript does not retire, plus any WS delta stream in `sessionLive`. */
   const visible = useMemo(
     () => {
-      const current = canonical || scope.turnId === null ? copies
+      let current = canonical || scope.turnId === null ? copies
         : reconcileLiveReplies(copies, { kind: 'active-turn', turnId: scope.turnId });
+      if (wsLive !== undefined && wsLive.turnId !== null && wsLive.text.trim() !== '') {
+        current = reconcileLiveReplies(current, {
+          kind: 'poll',
+          reply: {
+            turn_id: wsLive.turnId,
+            items: [{ item_id: `ws-${wsLive.turnId}`, text: wsLive.text }],
+          },
+          atMs: wsLive.updatedAtMs,
+          activeTurnId: null,
+        });
+      }
       return reconcileLiveReplies(current, { kind: 'transcript', items, readStart: transcriptStart });
     },
-    [copies, items, transcriptStart, scope.turnId,canonical],
+    [copies, items, transcriptStart, scope.turnId, canonical, wsLive],
   );
 
   /* Only a read started after this point stands for the phase, however late an earlier one lands.

@@ -73,13 +73,14 @@ export function setup(path: string, areaName: string = AREA.name, onRequest: (re
       onRequest(request);
       const receipt = await receipts?.reply(request);
       if (receipt !== undefined) return receipt;
-      if (request.path === '/api/version') return Promise.resolve(ok({ areaCreateIdempotency: true }));
-      if (request.path === '/api/areas' && request.method === 'POST') {
+      if (request.path === '/api/v1/bootstrap') return Promise.resolve(ok({ areaCreateIdempotency: true }));
+      if (request.path === '/api/v1/areas' && request.method === 'POST') {
         const body = request.body as {
           name: string;
           color: string;
           default_template_id?: string | null;
           default_cwd?: string | null;
+          defaultCwd?: string | null;
         };
         const created = {
           id: `c${areas.length + 1}`,
@@ -88,25 +89,25 @@ export function setup(path: string, areaName: string = AREA.name, onRequest: (re
           sort: areas.length + 1,
           kind: 'user' as const,
           default_template_id: body.default_template_id ?? null,
-          default_cwd: body.default_cwd ?? null,
+          default_cwd: body.defaultCwd ?? body.default_cwd ?? null,
           created_at: 2,
           updated_at: 2,
         };
         areas.push(created);
         return Promise.resolve({ status: 201, statusText: 'Created', body: created });
       }
-      if (request.path.endsWith('/planner/run')) return Promise.resolve(ok({ card_id: 'card-review', worker_session_id: 'runtime', phase: 'idle', model: null, reasoning_effort: null, permission_mode: 'never', blocked_reason: null, manual_compact_supported: true, recovery: null, compact_outcome: null, context_usage_invalidated: false, running_turn: null }));
+      if (request.path.includes('&view=planner-run')) return Promise.resolve(ok({ card_id: 'card-review', worker_session_id: 'runtime', phase: 'idle', model: null, reasoning_effort: null, permission_mode: 'never', blocked_reason: null, manual_compact_supported: true, recovery: null, compact_outcome: null, context_usage_invalidated: false, running_turn: null }));
       if (request.path === '/api/settings') return Promise.resolve(ok({ settings: {} }));
-      if (request.path === '/api/areas') return Promise.resolve(ok(areas));
-      if (request.path === '/api/areas/c1/tracks') return Promise.resolve(ok([TRACK, OTHER_TRACK]));
-      if (request.path === '/api/areas/c2/tracks') return Promise.resolve(ok([]));
-      if (request.path === '/api/tracks/w1') {
+      if (request.path === '/api/v1/areas') return Promise.resolve(ok(areas));
+      if (request.path === '/api/v1/areas/c1/tracks?includeClosed=true') return Promise.resolve(ok([TRACK, OTHER_TRACK]));
+      if (request.path === '/api/v1/areas/c2/tracks?includeClosed=true') return Promise.resolve(ok([]));
+      if (request.path === '/api/v1/tracks/w1') {
         return Promise.resolve(ok({
           track: TRACK, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true,
           cards: [REPORT_CARD, TERMINAL_CARD, REVIEW_CARD], overlays: [],
         }));
       }
-      if (request.path === '/api/tracks/w1/report') return Promise.resolve(ok({ taskDiagnostics: [] }));
+      if (request.path === '/api/v1/tracks/w1/report') return Promise.resolve(ok({ taskDiagnostics: [] }));
       return Promise.resolve(ok([]));
     },
   };

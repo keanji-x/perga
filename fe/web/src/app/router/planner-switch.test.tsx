@@ -32,14 +32,14 @@ async function type(input: HTMLElement, text: string) {
 async function submit(input: HTMLElement, text = '/planner') {
   await type(input, text); fireEvent.click(screen.getByRole('button', { name: 'Send' }));
 }
-const writes = (fixture: ReturnType<typeof renderPlannerSwitchFixture>) => fixture.requests.filter(request => request.method === 'POST');
+const writes = (fixture: ReturnType<typeof renderPlannerSwitchFixture>) => fixture.requests.filter(request => request.method === 'PATCH' && typeof request.body === 'object' && request.body !== null && 'leadSessionId' in request.body);
 afterEach(() => { cleanup(); document.getElementById('root')?.remove(); });
 
 it.each(['/track/daily?panel=conversations', '/'])('switches the selected Assistant using its real Track CAS pair on %s', async initial => {
   const fixture = renderPlannerSwitchFixture({ initial });
   const input = await open(); await submit(input);
   await waitFor(() => expect(writes(fixture).map(({ path, body }) => ({ path, body }))).toEqual([{
-    path: '/api/tracks/daily/planner/switch', body: { target_assistant_card_id: 'second-planner', expected_planner_card_id: 'daily-planner', expected_revision: 7 },
+    path: '/api/v1/tracks/daily', body: { leadSessionId: 'second-planner' },
   }]));
   await waitFor(() => expect(screen.getByRole('button', { name: /Role: Member/ })).toBeTruthy());
   expect(input.textContent).toBe('');
@@ -112,7 +112,7 @@ it.each(['success', 'response lost'])('settles %s offline as unconfirmed without
     await screen.findByText('Planner switching is unconfirmed. Refresh to check.');
     await waitFor(() => expect(input.textContent).toBe('/planner'));
     expect(fixture.requests.filter(request => request.method === 'GET' &&
-      (request.path === '/api/tracks/daily' || request.path === '/api/tracks/daily/conversations')).length).toBeGreaterThan(2);
+      (request.path === '/api/v1/tracks/daily' || request.path === '/api/v1/tracks/daily/sessions')).length).toBeGreaterThan(2);
     expect(writes(fixture)).toHaveLength(1);
     await submit(input);
     await screen.findByText('Planner switching was not sent.');
@@ -206,9 +206,8 @@ it('uses the selected scope rather than the page Track, reads an uncached pair o
     id: 'actual-track', cardId: 'second-planner', provider: 'codex', kind: 'track-assistant', cardTitle: null, updatedAt: 2,
   }), { wrapper });
   await act(async () => { await expect(hook.result.current()).rejects.toThrow('The Planner changed.'); });
-  expect(requests.filter(request => request.method === 'POST').map(({ path, body }) => ({ path, body }))).toEqual([{
-    path: '/api/tracks/actual-track/planner/switch', body: { target_assistant_card_id: 'second-planner',
-      expected_planner_card_id: 'daily-planner', expected_revision: 42 },
+  expect(requests.filter(request => request.method === 'PATCH').map(({ path, body }) => ({ path, body }))).toEqual([{
+    path: '/api/v1/tracks/actual-track', body: { leadSessionId: 'second-planner' },
   }]);
 });
 
@@ -304,14 +303,14 @@ it('uses the listed Assistant provider through model, capabilities and side', as
   await screen.findByText('Saved reply');
   await userEvent.click(screen.getByRole('button', { name: /^Model:/ }));
   await screen.findByRole('menuitem', { name: 'Selected model' });
-  expect(fixture.requests.filter(request => request.path.startsWith('/api/models')).map(request => request.path)).toContain('/api/models?card_id=dormant');
+  expect(fixture.requests.filter(request => request.path.startsWith('/api/v1/bootstrap?card_id=')).map(request => request.path)).toContain('/api/v1/bootstrap?card_id=dormant');
   expect(screen.queryByRole('group', { name: 'Codex' })).toBeNull();
   await userEvent.click(screen.getByRole('menuitem', { name: 'Selected model' }));
   await waitFor(() => expect(fixture.requests.some(request => request.path === '/api/cards/dormant/planner/model')).toBe(true));
   expect(screen.getByRole('button', { name: 'Attach an image' }).getAttribute('aria-disabled')).toBe('true');
   expect(screen.queryByRole('button', { name: /Compact/ })).toBeNull();
   await submit(input, '/side Keep this backend');
-  await waitFor(() => expect(fixture.requests.find(request => request.method === 'POST' && request.path.endsWith('/conversations'))?.body)
+  await waitFor(() => expect(fixture.requests.find(request => request.method === 'POST' && request.path.endsWith('/sessions'))?.body)
     .toMatchObject({ provider: 'claude', side: { source_card_id: 'dormant' } }));
 });
 
@@ -380,10 +379,10 @@ it.each([
   fixture.commit();
   const resolvers = new Map<string, () => void>();
   const transport: ApiTransportPort = { send: request => {
-    if (request.method === 'POST') return Promise.resolve(fixture.receipt());
-    return new Promise(resolve => resolvers.set(request.path.endsWith('/conversations') ? 'list-first' : 'detail-first', () => resolve({
-      status: request.path.endsWith('/conversations') && list === 'failed' ? 503 : 200, statusText: 'OK',
-      body: request.path.endsWith('/conversations')
+    if (request.method === 'PATCH') return Promise.resolve(fixture.receipt());
+    return new Promise(resolve => resolvers.set(request.path.endsWith('/sessions') ? 'list-first' : 'detail-first', () => resolve({
+      status: request.path.endsWith('/sessions') && list === 'failed' ? 503 : 200, statusText: 'OK',
+      body: request.path.endsWith('/sessions')
         ? list === 'missing' ? [] : list === 'stale' ? [...fixture.list(), { ...fixture.list()[0], id: 'second-planner' }] : fixture.list()
         : { ...snapshot, cards: fixture.cards(), planner_revision: 8 },
     })));

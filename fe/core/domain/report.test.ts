@@ -819,7 +819,7 @@ describe('trackTaskVerdictsOperation', () => {
   it('GETs the track report route with the id escaped', () => {
     const operation = trackTaskVerdictsOperation('w/1');
     expect(operation.method).toBe('GET');
-    expect(operation.path).toBe('/api/tracks/w%2F1/report');
+    expect(operation.path).toBe('/api/v1/tracks/w%2F1/report');
   });
 
   it('reads only the task diagnostics out of the response', () => {

@@ -54,8 +54,8 @@ export function createEvidencePreviewTransport(): ApiTransportPort {
   return Object.freeze({ send: async (request: ApiRequest) => {
     await new Promise(resolve => { setTimeout(resolve, 300); });
     if (request.method !== 'GET') return { status: 405, statusText: 'Method Not Allowed', body: { error: 'Read-only preview' } };
-    if (request.path === '/api/tracks/reference-demo' || request.path === '/api/tracks/link-preview') {
-      const trackId = request.path.slice('/api/tracks/'.length);
+    if (request.path === '/api/v1/tracks/reference-demo' || request.path === '/api/v1/tracks/link-preview') {
+      const trackId = request.path.slice('/api/v1/tracks/'.length);
       const report = trackId === 'reference-demo' ? referencedReport() : evidenceExamples();
       return ok({ track: { workspace: { isolation: 'none' as const, kind: 'attached' as const, path: '/preview', frozen_at: null }, id: trackId, title: trackId === 'reference-demo' ? '另一份报告' : '来源预览', area_id: 'examples',
         sort: 1, cwd: '/preview', created_at: 1, updated_at: 1 }, planner_revision: 0, can_reopen: false, can_admin: false, can_close: false, overlays: [],

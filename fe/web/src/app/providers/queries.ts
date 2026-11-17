@@ -16,7 +16,7 @@ import { hasReadFailure } from './query-read-feedback.ts';
 import { useMemo, useRef } from 'react';
 import { admitTransport, useRecoveryMutation } from './recovery-mutation.ts';
 import { z } from 'zod';
-import type { AgentProvider } from '../../../../core/api/generated/wire.ts';
+import { bootstrapDtoSchema, type AgentProvider, type ReportReadResultDto } from '../../../../core/api/schemas.ts';
 
 import { performApiRequest } from '../../../../core/api/client.ts';
 import type { ApiOperation, ApiTransportPort } from '../../../../core/api/types.ts';
@@ -28,13 +28,14 @@ import {
 } from '../../../../core/domain/area.ts';
 import {
   deriveReportTasks, hasLiveTaskRun, trackBacklinksOperation, trackPreviewsOperation, trackTaskVerdictsOperation,
-  type ReportBlock, type TaskVerdict, type TrackBacklinks, type TrackPreviews,
+  updateTrackReportBlockOperation,
+  type HumanReportBlockUpdateBody, type ReportBlock, type TaskVerdict, type TrackBacklinks, type TrackPreviews,
 } from '../../../../core/domain/report.ts';
 import {
   staleRevBodySchema, trackReportSeriesOperation, type ResolvedSeries, type SeriesDetail,
 } from '../../../../core/domain/report-series.ts';
 import { trackSourceOperation, type TrackSourceDetail } from '../../../../core/domain/report-source.ts';
-import { dismissActivityItemOperation } from '../../../../core/domain/activity.ts';
+import { dismissActivityItemOperation, type AskId, type AskQuestion } from '../../../../core/domain/activity.ts';
 import { answerAskOperation } from '../../../../core/domain/ask.ts';
 import { probeFailureText, readErrorText } from '../../../../core/domain/read-failure.ts';
 import {
@@ -51,8 +52,8 @@ import {
 } from '../../../../core/domain/settings.ts';
 import {
   createCardOperation, createClaudeCardOperation, createCodexCardOperation, createTerminalCardOperation, setTerminalWorkbenchOperation, createTrackOperation,
-  createTrackRecipeOperation, deleteCardOperation, deleteTrackOperation, deleteTrackRecipeOperation,
-  overlaysByKindOperation, recipeSaveAttempts, recipeSaveLanded, toTrack, updateTrackOperation, updateTrackRecipeOperation,
+  createTrackRecipeOperation, deleteTerminalOperation, deleteTrackOperation, deleteTrackRecipeOperation,
+  listTrackTerminalsOperation, overlaysByKindOperation, recipeSaveAttempts, recipeSaveLanded, toTrack, updateTrackOperation, updateTrackRecipeOperation,
   NEUTRAL_ACTIVITY, sortAreaTracksByRecent, trackActivitiesFrom, trackDetailOperation, trackRecipeOperation, trackRecipesOperation,
   tracksInAreaOperation,
   type CardWire, type NewCardBody, type NewClaudeCardBody, type NewCodexCardBody, type NewTerminalCardBody,
@@ -76,7 +77,7 @@ import {
 } from '../../../../core/domain/failure-class.ts';
 import { useState } from '../../ui/state/public.ts';
 import { useCommittedCallback } from '../../ui/state/committed-callback.ts';
-import type { ServerVersionInfo } from './public.tsx';
+import { WEB_COMPAT_VERSION, type ServerVersionInfo } from './public.tsx';
 import type {
   AskAnswer, PlannerPermissionMode, SetPlannerPermissionModeResponse, UploadAttachmentResponse,
 } from '../../../../core/api/generated/wire.ts';
@@ -365,8 +366,21 @@ export function useTrackConversationMutations(
 ): ConversationMutations {
   const client = useQueryClient();
   const create = useRecoveryMutation(transport, {
-    mutationFn: ({ text, idempotencyKey, provider, selection, side }: { text: string; idempotencyKey: string; provider: AgentProvider; selection: ModelSelection; side?: SideConversation; answered: (result: CreatedConversation) => void }, transport: ApiTransportPort) =>
-      runOperation(transport, createTrackConversationOperation(trackId, text, idempotencyKey, provider, selection, side), unauthorized),
+    mutationFn: async ({ text, idempotencyKey, provider, selection, side }: { text: string; idempotencyKey: string; provider: AgentProvider; selection: ModelSelection; side?: SideConversation; answered: (result: CreatedConversation) => void }, transport: ApiTransportPort) => {
+      const created = await runOperation(
+        transport,
+        createTrackConversationOperation(trackId, text, idempotencyKey, provider, selection, side),
+        unauthorized,
+      );
+      if (created.needsInitialMessageSend && text.trim() !== '') {
+        await runOperation(
+          transport,
+          sendPlannerInputOperation(created.conversation.id, text, [], `${idempotencyKey}:msg`, null),
+          unauthorized,
+        );
+      }
+      return created;
+    },
     onSuccess: (result, { answered }) => {
       answered(result);
       const row = result.conversation;
@@ -423,7 +437,23 @@ const serverVersionSchema = z.object({
 });
 
 export function serverVersionOperation(): ApiOperation<ServerVersionInfo> {
-  return { method: 'GET', path: '/api/version', responseSchema: serverVersionSchema };
+  return {
+    method: 'GET',
+    path: '/api/v1/bootstrap',
+    responseSchema: z.union([
+      bootstrapDtoSchema.transform((bootstrap): ServerVersionInfo => ({
+        assistantProviders: true,
+        conversationCreateModel: true,
+        conversationInitialInput: true,
+        conversationSide: false,
+        webCompatVersion: WEB_COMPAT_VERSION,
+        minWebCompatVersion: WEB_COMPAT_VERSION,
+        syncEventVersion: 1,
+        dbInstanceId: `perga-${bootstrap.version}`,
+      })),
+      serverVersionSchema,
+    ]),
+  };
 }
 
 /** Sign-out is a server-side session kill; the caller reloads afterwards so
@@ -448,8 +478,14 @@ export function areaListQueryOptions(transport: ApiTransportPort, unauthorized: 
 export function trackOverlaysQueryOptions(transport: ApiTransportPort, unauthorized: UnauthorizedChannel) {
   return {
     queryKey: queryKeys.overlaysByKind('track'),
-    queryFn: ({ signal }: { signal: AbortSignal }): Promise<OverlayWire[]> =>
-      runOperation(transport, { ...overlaysByKindOperation('track'), signal }, unauthorized),
+    queryFn: async ({ signal }: { signal: AbortSignal }): Promise<OverlayWire[]> => {
+      try {
+        return await runOperation(transport, { ...overlaysByKindOperation('track'), signal }, unauthorized);
+      } catch (error) {
+        if (isNotFound(error)) return [];
+        throw error;
+      }
+    },
   };
 }
 
@@ -474,8 +510,22 @@ export function tracksInAreaQueryOptions(transport: ApiTransportPort, areaId: st
 export function trackDetailQueryOptions(transport: ApiTransportPort, trackId: string, unauthorized: UnauthorizedChannel) {
   return {
     queryKey: queryKeys.trackDetail(trackId),
-    queryFn: ({ signal }: { signal: AbortSignal }): Promise<TrackDetailWire> =>
-      runOperation(transport, { ...trackDetailOperation(trackId), signal }, unauthorized),
+    queryFn: async ({ signal }: { signal: AbortSignal }): Promise<TrackDetailWire> => {
+      const detail = await runOperation(transport, { ...trackDetailOperation(trackId), signal }, unauthorized);
+      const reportCard = detail.cards[0];
+      const isPergaSnapshot = reportCard?.kind === 'track-report'
+        && (reportCard.payload as { pergaSnapshot?: unknown } | null)?.pergaSnapshot === true;
+      if (!isPergaSnapshot) return detail;
+      try {
+        const terminals = await runOperation(transport, { ...listTrackTerminalsOperation(trackId), signal }, unauthorized);
+        if (terminals.length === 0) return detail;
+        const existingIds = new Set(detail.cards.map((card) => card.id));
+        const merged = [...detail.cards, ...terminals.filter((card) => !existingIds.has(card.id))];
+        return { ...detail, cards: merged };
+      } catch {
+        return detail;
+      }
+    },
   };
 }
 
@@ -820,7 +870,9 @@ export type TrackMutations = Readonly<{
   /** Dismiss one notification item by its kernel key. A `404` rejects too: `DISMISS_FAILURES` reads it as done. */
   dismissActivityItem: (trackId: string, key: string) => Promise<void>;
   /** Answer one ask, one answer per question in order. A `409` rejects too: `ANSWER_ASK_FAILURES` reads it as done. */
-  answerAsk: (trackId: string, askId: number, answers: readonly AskAnswer[]) => Promise<void>;
+  answerAsk: (trackId: string, askId: AskId, answers: readonly AskAnswer[], questions?: readonly AskQuestion[]) => Promise<void>;
+  /** Update one report block by human CAS edit (`PUT /api/v1/tracks/{trackId}/report/blocks/{blockId}`). */
+  updateReportBlock: (trackId: string, blockId: string, body: HumanReportBlockUpdateBody) => Promise<ReportReadResultDto>;
 }>;
 
 export function useTrackMutations(transport: ApiTransportPort, unauthorized: UnauthorizedChannel): TrackMutations {
@@ -918,8 +970,8 @@ export function useTrackMutations(transport: ApiTransportPort, unauthorized: Una
     });
   };
   const removeCard = useRecoveryMutation(transport, {
-    mutationFn: ({ cardId, signal }: { trackId: string; cardId: string; signal?: AbortSignal }, transport: ApiTransportPort) =>
-      runOperation(transport, { ...deleteCardOperation(cardId), signal }, unauthorized),
+    mutationFn: ({ trackId, cardId, signal }: { trackId: string; cardId: string; signal?: AbortSignal }, transport: ApiTransportPort) =>
+      runOperation(transport, { ...deleteTerminalOperation(trackId, cardId), signal }, unauthorized),
     onSuccess: dropCard,
     onError: (error, variables) => { if (deleteDone(error)) dropCard(undefined, variables); },
     onSettled: (_result, _error, { trackId }) => {
@@ -936,11 +988,19 @@ export function useTrackMutations(transport: ApiTransportPort, unauthorized: Una
   /* An answer may apply a lifecycle action; refresh detail/lists even after an uncertain response.
    * The projector's overlay remains authoritative for removing the question itself. */
   const answerAsk = useRecoveryMutation(transport, {
-    mutationFn: ({ trackId, askId, answers }: { trackId: string; askId: number; answers: readonly AskAnswer[] }, transport: ApiTransportPort) =>
-      runOperation(transport, answerAskOperation(trackId, askId, answers), unauthorized),
+    mutationFn: ({ trackId, askId, answers, questions }: { trackId: string; askId: AskId; answers: readonly AskAnswer[]; questions?: readonly AskQuestion[] }, transport: ApiTransportPort) =>
+      runOperation(transport, answerAskOperation(trackId, askId, answers, questions), unauthorized),
     onSettled: (_answer, _error, { trackId }) => {
       void client.invalidateQueries({ queryKey: queryKeys.trackDetail(trackId) });
       void client.invalidateQueries({ queryKey: queryKeys.trackLists() });
+    },
+  });
+  const updateReportBlock = useRecoveryMutation(transport, {
+    mutationFn: ({ trackId, blockId, body }: { trackId: string; blockId: string; body: HumanReportBlockUpdateBody }, transport: ApiTransportPort) =>
+      runOperation(transport, updateTrackReportBlockOperation(trackId, blockId, body), unauthorized),
+    onSettled: (_result, _error, { trackId }) => {
+      void client.invalidateQueries({ queryKey: queryKeys.trackDetail(trackId) });
+      void client.invalidateQueries({ queryKey: queryKeys.trackReport(trackId) });
     },
   });
   const patchTrack = async (trackId: string, areaId: string, body: TrackPatchBody) =>
@@ -962,7 +1022,8 @@ export function useTrackMutations(transport: ApiTransportPort, unauthorized: Una
       patchTrack(trackId, areaId, { pinned_at: pinned ? nowMs : null }),
     remove: async (trackId, areaId, signal) => { await remove.mutateAsync({ trackId, areaId, signal }); },
     dismissActivityItem: async (trackId, key) => { await dismissItem.mutateAsync({ trackId, key }); },
-    answerAsk: async (trackId, askId, answers) => { await answerAsk.mutateAsync({ trackId, askId, answers }); },
+    answerAsk: async (trackId, askId, answers, questions) => { await answerAsk.mutateAsync({ trackId, askId, answers, questions }); },
+    updateReportBlock: async (trackId, blockId, body) => updateReportBlock.mutateAsync({ trackId, blockId, body }),
   };
 }
 

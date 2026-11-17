@@ -1,6 +1,6 @@
 import * as eventKeys from './query-keys.js';
 import { isUserMessage } from '../domain/conversation.js';
-import type { Area, WireEvent } from '../api/schemas.js';
+import type { Area, PergaStreamDelta, WireEvent } from '../api/schemas.js';
 
 export type EventKind = WireEvent['ev'];
 export type EventOf<K extends EventKind> = Extract<WireEvent, { ev: K }>;
@@ -8,6 +8,8 @@ export type QueryKey = readonly unknown[];
 
 export type CacheWrite = Readonly<{ key: QueryKey; mode: 'replace-existing-area'; value: Area }>
   | Readonly<{ key: QueryKey; mode: 'reset-query' }>
+  | Readonly<{ key: QueryKey; mode: 'session-delta'; delta: PergaStreamDelta }>
+  | Readonly<{ key: QueryKey; mode: 'session-turn-completed'; turnId: string }>
   | Readonly<{ mode: 'area-deleted'; areaId: string }>;
 export type InvalidationPlan = Readonly<{
   invalidate: readonly QueryKey[];
@@ -111,6 +113,7 @@ export function taskVerdictInvalidatingKinds(): readonly EventKind[] {
     ...TRACK_FILES_DERIVED_KINDS.filter((kind) => kind !== 'codex.hook' && kind !== 'claude.hook'),
     'track.report_edited', 'track.updated', 'track.deleted', 'area.deleted',
     'card.added', 'card.deleted', 'plan.updated',
+    'report.updated', 'task.updated',
   ];
 }
 
@@ -273,6 +276,89 @@ function policies(): PolicyMap {
   'worktree.removed': noop('Worktree rows have no query consumer.'),
   'task.gate_result': plan((event, context) => result(taskVerdicts(derivedTrackId(event.data, context)))),
   'task.regate_requested': plan((event, context) => result(taskVerdicts(derivedTrackId(event.data, context)))),
+  'report.updated': plan((event) => result([
+    ...taskVerdicts(event.data.track_id ?? null),
+    ...(event.data.track_id ? [eventKeys.trackDetail(event.data.track_id)] : []),
+  ])),
+  'task.updated': plan((event) => result([
+    ...taskVerdicts(event.data.track_id ?? null),
+    ...(event.data.track_id
+      ? [eventKeys.trackDetail(event.data.track_id), eventKeys.taskAttemptsPrefix(event.data.track_id)]
+      : []),
+  ])),
+  'session.updated': plan((event) => {
+    const sessionId = event.data.session?.id;
+    return result([
+      ...(event.data.track_id ? [eventKeys.trackDetail(event.data.track_id)] : []),
+      trackConversations(event.data.track_id ?? null),
+      ...(sessionId ? [eventKeys.plannerRun(sessionId), eventKeys.transcript(sessionId)] : []),
+    ]);
+  }),
+  'turn.completed': plan((event, context) => {
+    const sessionId = event.data.turn?.sessionId;
+    const turnId = event.data.turn?.id;
+    const trackId = event.data.track_id ?? (sessionId ? context.findTrackOwningCard(sessionId) : null);
+    return result([
+      ...(sessionId ? [eventKeys.plannerRun(sessionId), eventKeys.transcript(sessionId)] : []),
+      ...(trackId === null ? [eventKeys.trackConversationsPrefix()] : [
+        eventKeys.trackDetail(trackId),
+        eventKeys.trackConversations(trackId),
+      ]),
+    ], [], sessionId && turnId ? [{
+      key: eventKeys.sessionLive(sessionId),
+      mode: 'session-turn-completed',
+      turnId,
+    }] : []);
+  }),
+  'ask.changed': plan((event) => result([
+    eventKeys.trackDetail(event.data.track_id),
+    eventKeys.trackLists(),
+  ])),
+  'mail.received': plan((event) => result([
+    eventKeys.trackDetail(event.data.track_id),
+    eventKeys.trackConversations(event.data.track_id),
+  ])),
+  'terminal.changed': plan((event) => result([
+    eventKeys.trackDetail(event.data.track_id),
+    eventKeys.trackTerminals(event.data.track_id),
+  ])),
+  'session.text_delta': plan((event) => result([], [], [{
+    key: eventKeys.sessionLive(event.data.sessionId),
+    mode: 'session-delta',
+    delta: {
+      kind: 'session.text_delta',
+      sessionId: event.data.sessionId,
+      turnId: event.data.turnId,
+      delta: event.data.delta,
+      createdAtMs: event.data.createdAtMs,
+    },
+  }])),
+  'session.thinking_delta': plan((event) => result([], [], [{
+    key: eventKeys.sessionLive(event.data.sessionId),
+    mode: 'session-delta',
+    delta: {
+      kind: 'session.thinking_delta',
+      sessionId: event.data.sessionId,
+      turnId: event.data.turnId,
+      delta: event.data.delta,
+      createdAtMs: event.data.createdAtMs,
+    },
+  }])),
+  'session.tool_progress': plan((event) => result([], [], [{
+    key: eventKeys.sessionLive(event.data.sessionId),
+    mode: 'session-delta',
+    delta: {
+      kind: 'session.tool_progress',
+      sessionId: event.data.sessionId,
+      turnId: event.data.turnId,
+      phase: event.data.phase,
+      callId: event.data.callId,
+      name: event.data.name ?? null,
+      args: event.data.args ?? null,
+      isError: event.data.isError === true,
+      createdAtMs: event.data.createdAtMs,
+    },
+  }])),
   });
 }
 

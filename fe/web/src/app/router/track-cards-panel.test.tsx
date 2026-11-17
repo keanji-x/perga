@@ -121,19 +121,19 @@ function setup(
   const transport: ApiTransportPort = {
     send(request) {
       requests.push(`${request.method} ${request.path}`);
-      if (request.path === '/api/areas') return Promise.resolve(ok([AREA]));
-      if (request.path === '/api/areas/c1/tracks') return Promise.resolve(ok([TRACK]));
+      if (request.path === '/api/v1/areas') return Promise.resolve(ok([AREA]));
+      if (request.path === '/api/v1/areas/c1/tracks?includeClosed=true') return Promise.resolve(ok([TRACK]));
       if (request.path === '/api/overlays?entity_kind=track') return Promise.resolve(ok([]));
-      if (request.path === '/api/tracks/w1') {
+      if (request.path === '/api/v1/tracks/w1') {
         return Promise.resolve(ok({ track: TRACK, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true, cards: [...cards], overlays: [...overlays] }));
       }
-      if (request.path === '/api/tracks/w1/report') {
+      if (request.path === '/api/v1/tracks/w1/report') {
         reportReads += 1;
         return Promise.resolve(ok({
           taskDiagnostics: typeof taskDiagnostics === 'function' ? taskDiagnostics() : taskDiagnostics,
         }));
       }
-      if (request.path === '/api/tracks/w1/workspace/readfile?path=fe%2Fweb%2Fsrc%2Fapp%2Frouter%2Fpublic.tsx') {
+      if (request.path === '/api/v1/tracks/w1/files?path=fe%2Fweb%2Fsrc%2Fapp%2Frouter%2Fpublic.tsx') {
         return Promise.resolve(ok({
           path: 'fe/web/src/app/router/public.tsx', size: 1, text: 'x', truncated: false,
         }));

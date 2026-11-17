@@ -26,11 +26,11 @@ export function renderCompactFixture(provider: AgentProvider, supported: boolean
   const readRun = (value: typeof run) => ({ ...historicalConversationRun(value, value.runtime_state, true),
     input_contract: canonical ? 'canonical' : 'historical' });
   return { run, ...renderDailyFixture({ initial: '/track/daily?panel=conversations', extraPlanner: true, plannerProvider: provider, reply: request => {
-    if (request.path === '/api/tracks/daily/conversations') return { status: 200, statusText: 'OK', body: [{ id: 'second-planner', trackId: 'daily', title: 'Other conversation', kind: 'track-assistant', provider, state: 'idle', updatedAt: 2, archivedAt: null, lastTurnCompletedAt: null }] };
-    if (request.path === '/api/cards/second-planner/planner/run?contract=conversation_v1') return { status: 200, statusText: 'OK', body: readRun({ ...run, card_id: 'second-planner', worker_session_id: 'runtime2', compact_outcome: null, context_usage_invalidated: false, token_usage: null }) };
-    if (request.path.includes('/planner/run?contract=conversation_v1')) return { status: 200, statusText: 'OK', body: readRun(run) };
-    if (request.path.endsWith('/planner/compact')) return compactReply ?? { status: 200, statusText: 'OK', body: { card_id: run.card_id, started: true } };
-    if (request.path.includes('/harness/items')) return historyReady
+    if (request.path === '/api/v1/tracks/daily/sessions') return { status: 200, statusText: 'OK', body: [{ id: 'second-planner', trackId: 'daily', title: 'Other conversation', kind: 'track-assistant', provider, state: 'idle', updatedAt: 2, archivedAt: null, lastTurnCompletedAt: null }] };
+    if (request.path === '/api/v1/sessions/second-planner/items?afterId=0&limit=1&view=run') return { status: 200, statusText: 'OK', body: readRun({ ...run, card_id: 'second-planner', worker_session_id: 'runtime2', compact_outcome: null, context_usage_invalidated: false, token_usage: null }) };
+    if (request.path.includes('&view=run')) return { status: 200, statusText: 'OK', body: readRun(run) };
+    if (request.path.endsWith('/compact')) return compactReply ?? { status: 200, statusText: 'OK', body: { card_id: run.card_id, started: true } };
+    if (request.path.includes('/items?') && !request.path.includes('&view=')) return historyReady
       ? { status: 200, statusText: 'OK', body: canonical ? presentationPage(rows.map(row => nativePresentation(conversationCardId(request.path), { ...row, item_uuid: `compact-fixture-${row.id}` }))) : historicalConversationPage(conversationCardId(request.path), rows, null) }
       : { status: 503, statusText: 'Unavailable', body: { error: 'internal', message: 'History unavailable' } };
     return undefined;

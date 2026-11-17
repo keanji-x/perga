@@ -14,11 +14,11 @@ it('offers the side menu only after the source mounts, while keeping the trigger
   vi.stubGlobal('cancelAnimationFrame', (id: number) => { frames.delete(id); });
   const fixture = renderDailyFixture({ initial: '/track/daily?panel=conversations', extraPlanner: true,
     reply: request => {
-      if (request.path === '/api/version') return { status: 200, statusText: 'OK', body: {
+      if (request.path === '/api/v1/bootstrap') return { status: 200, statusText: 'OK', body: {
         assistantProviders: true, conversationInitialInput: true, conversationSide: true, webCompatVersion: WEB_COMPAT_VERSION, minWebCompatVersion: WEB_COMPAT_VERSION,
         syncEventVersion: 29, dbInstanceId: 'presentation-menu',
       } };
-      if (request.path.includes('/second-planner/harness/items')) return { status: 200, statusText: 'OK', body: historicalConversationPage(conversationCardId(request.path), [{
+      if (request.path.includes('/second-planner/items') && !request.path.includes('view=')) return { status: 200, statusText: 'OK', body: historicalConversationPage(conversationCardId(request.path), [{
         id: 1, worker_session_id: 'runtime', card_id: 'second-planner', track_id: 'daily', thread_id: 'thread',
         turn_id: null, turn_error_text: null, item_uuid: null, item_type: 'agentMessage', method: 'item/completed',
         params: JSON.stringify({ item: { text: 'Source ready for presentation.' } }), created_at_ms: 1,
@@ -54,6 +54,6 @@ it('offers the side menu only after the source mounts, while keeping the trigger
     await userEvent.keyboard('{Enter}');
     await screen.findByRole('region', { name: 'Side conversation · Codex' });
     expect(fixture.requests.filter(request => request.method === 'POST'
-      && request.path.endsWith('/planner/input'))).toHaveLength(0);
+      && request.path.endsWith('/messages'))).toHaveLength(0);
   } finally { cleanup(); fixture.client.clear(); }
 });

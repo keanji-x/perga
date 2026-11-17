@@ -35,23 +35,23 @@ function renderTrack(closedAt: number | null, { failRefetch = false } = {}): Har
   const transport: ApiTransportPort = {
     send(request) {
       requests.push(request);
-      if (request.path === '/api/areas') return Promise.resolve(ok([area]));
-      if (request.path === '/api/areas/c1/tracks') return Promise.resolve(ok([track]));
+      if (request.path === '/api/v1/areas') return Promise.resolve(ok([area]));
+      if (request.path === '/api/v1/areas/c1/tracks?includeClosed=true') return Promise.resolve(ok([track]));
       if (request.path === '/api/overlays?entity_kind=track') return Promise.resolve(ok([]));
-      if (request.method === 'PATCH' && request.path === '/api/tracks/w1') {
+      if (request.method === 'PATCH' && request.path === '/api/v1/tracks/w1') {
         const { closed } = request.body as { closed: boolean };
         track = { ...track, closed_at: closed ? 42 : null, updated_at: track.updated_at + 1 };
         refetchFails = failRefetch;
         return Promise.resolve(ok(track));
       }
-      if (request.path === '/api/tracks/w1') {
+      if (request.path === '/api/v1/tracks/w1') {
         if (refetchFails) {
           return Promise.resolve({ status: 500, statusText: 'Refresh failed', body: {} });
         }
         const closed = track.closed_at !== null;
         return Promise.resolve(ok({ track, planner_revision: 0, can_reopen: closed, can_admin: false, can_close: !closed, cards: [], overlays: [] }));
       }
-      if (request.path.endsWith('/conversations')) return Promise.resolve(ok([]));
+      if (request.path.endsWith('/sessions')) return Promise.resolve(ok([]));
       if (request.path === '/api/settings') return Promise.resolve(ok({}));
       return Promise.resolve(ok([]));
     },
@@ -73,7 +73,7 @@ function renderTrack(closedAt: number | null, { failRefetch = false } = {}): Har
 }
 
 function patches(requests: readonly ApiRequest[]): ApiRequest[] {
-  return requests.filter((request) => request.method === 'PATCH' && request.path === '/api/tracks/w1');
+  return requests.filter((request) => request.method === 'PATCH' && request.path === '/api/v1/tracks/w1');
 }
 
 it('PATCHes closed: false and drops the Closed badge after Reopen', async () => {
@@ -119,7 +119,7 @@ it('after Close, a failed detail refetch leaves the last detail and its action, 
     expect(patches(requests)).toEqual([expect.objectContaining({ body: { closed: true } })]);
   });
   await waitFor(() => {
-    expect(requests.filter((request) => request.method === 'GET' && request.path === '/api/tracks/w1').length)
+    expect(requests.filter((request) => request.method === 'GET' && request.path === '/api/v1/tracks/w1').length)
       .toBeGreaterThan(1);
   });
   /* No half-written detail: the page keeps the server's last one, where Close waits for the answer. */

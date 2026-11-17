@@ -63,7 +63,7 @@ describe('Area creation capability', () => {
       });
       await expect(result.current.create({ name: 'Safe', color: '#123456' }, 'safe-key')).rejects.toThrow();
       expect(send.mock.calls).toHaveLength(1);
-      expect(send.mock.calls[0]).toEqual([expect.objectContaining({ method: 'GET', path: '/api/version' })]);
+      expect(send.mock.calls[0]).toEqual([expect.objectContaining({ method: 'GET', path: '/api/v1/bootstrap' })]);
     },
   );
 });
@@ -167,8 +167,8 @@ describe('failure channel', () => {
     const track = { workspace: { isolation: 'none' as const, kind: 'attached' as const, path: '/tmp', frozen_at: null }, id: 'w1', area_id: 'c1', title: 'Task', sort: 1, cwd: '/tmp',
       pinned_at: null, closed_at: null, created_at: 1, updated_at: 1 };
     const { transport } = recordingTransport((request) => {
-      if (request.path === '/api/areas') return ok([userArea]);
-      if (request.path === '/api/areas/c1/tracks') return ok([track]);
+      if (request.path === '/api/v1/areas') return ok([userArea]);
+      if (request.path === '/api/v1/areas/c1/tracks?includeClosed=true') return ok([track]);
       return { status: 500, statusText: 'Server Error', body: { error: 'overlays down' } };
     });
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -191,7 +191,7 @@ describe('track list', () => {
     const { transport, paths } = recordingTransport(() => ok([]));
     await tracksInAreaQueryOptions(transport, 'c1', unauthorized).queryFn({ signal: new AbortController().signal });
     await tracksInAreaQueryOptions(transport, 'c2', unauthorized).queryFn({ signal: new AbortController().signal });
-    expect(paths).toEqual(['/api/areas/c1/tracks', '/api/areas/c2/tracks']);
+    expect(paths).toEqual(['/api/v1/areas/c1/tracks?includeClosed=true', '/api/v1/areas/c2/tracks?includeClosed=true']);
   });
 
   it('passes the Query cancellation signal to the track-overlay request', async () => {
@@ -217,9 +217,9 @@ describe('track list', () => {
       kind: 'activity', payload: { schemaVersion: 4 }, updated_at: 100,
     };
     const { transport } = recordingTransport((request) => {
-      if (request.path === '/api/areas') return ok([userArea, secondArea]);
-      if (request.path === '/api/areas/c1/tracks') return ok([old, recent]);
-      if (request.path === '/api/areas/c2/tracks') return ok([second]);
+      if (request.path === '/api/v1/areas') return ok([userArea, secondArea]);
+      if (request.path === '/api/v1/areas/c1/tracks?includeClosed=true') return ok([old, recent]);
+      if (request.path === '/api/v1/areas/c2/tracks?includeClosed=true') return ok([second]);
       if (request.path === '/api/overlays?entity_kind=track') return ok([activityOverlay]);
       throw new Error(`unexpected request: ${request.path}`);
     });
@@ -390,7 +390,7 @@ describe('delete mutation wiring', () => {
     const refetchHeld = new Promise<void>((resolve) => { releaseRefetch = resolve; });
     const invalidate = vi.spyOn(client, 'invalidateQueries').mockReturnValue(refetchHeld);
     const transport: ApiTransportPort = {
-      send: (request) => request.path === '/api/version'
+      send: (request) => request.path === '/api/v1/bootstrap'
         ? Promise.resolve(ok({ areaCreateIdempotency: true })) : Promise.reject(new Error('POST response lost')),
     };
     const { result } = renderHook(() => useAreaMutations(transport, unauthorized), {
@@ -422,7 +422,7 @@ describe('delete mutation wiring', () => {
     };
     const transport: ApiTransportPort = {
       send: (request) => Promise.resolve(ok(
-        request.path === '/api/version' ? { areaCreateIdempotency: true } : createdWire,
+        request.path === '/api/v1/bootstrap' ? { areaCreateIdempotency: true } : createdWire,
       )),
     };
     const { result } = renderHook(() => useAreaMutations(transport, unauthorized), {
@@ -452,9 +452,9 @@ describe('delete mutation wiring', () => {
     let initialRead = true;
     const transport: ApiTransportPort = {
       send: async (request) => {
-        if (request.path === '/api/version') return ok({ areaCreateIdempotency: true });
-        if (request.path === '/api/areas' && request.method === 'POST') return ok(createdWire);
-        if (request.path === '/api/areas' && request.method === 'GET' && initialRead) {
+        if (request.path === '/api/v1/bootstrap') return ok({ areaCreateIdempotency: true });
+        if (request.path === '/api/v1/areas' && request.method === 'POST') return ok(createdWire);
+        if (request.path === '/api/v1/areas' && request.method === 'GET' && initialRead) {
           initialRead = false;
           await initialHeld;
           return ok([userArea]);
@@ -538,7 +538,7 @@ describe('delete mutation wiring', () => {
       default_cwd: null,
     };
     const transport: ApiTransportPort = { send: (request) => Promise.resolve(ok(
-      request.path === '/api/version' ? { areaCreateIdempotency: true } : createdWire,
+      request.path === '/api/v1/bootstrap' ? { areaCreateIdempotency: true } : createdWire,
     )) };
     const { result } = renderHook(() => useAreaMutations(transport, unauthorized), {
       wrapper: mutationWrapper(client),
@@ -564,7 +564,7 @@ describe('delete mutation wiring', () => {
     let releaseResponse!: () => void;
     const responseHeld = new Promise<void>((resolve) => { releaseResponse = resolve; });
     const send = vi.fn(async (request: ApiRequest) => {
-      if (request.path === '/api/version') return ok({ areaCreateIdempotency: true });
+      if (request.path === '/api/v1/bootstrap') return ok({ areaCreateIdempotency: true });
       await responseHeld;
       return ok(responseWire);
     });
@@ -602,7 +602,7 @@ describe('delete mutation wiring', () => {
       default_cwd: null,
     };
     const transport: ApiTransportPort = { send: (request) => Promise.resolve(ok(
-      request.path === '/api/version' ? { areaCreateIdempotency: true } : createdWire,
+      request.path === '/api/v1/bootstrap' ? { areaCreateIdempotency: true } : createdWire,
     )) };
     const { result } = renderHook(() => useAreaMutations(transport, unauthorized), {
       wrapper: mutationWrapper(client),
@@ -630,7 +630,7 @@ describe('delete mutation wiring', () => {
       default_cwd: null,
     };
     const transport: ApiTransportPort = { send: (request) => Promise.resolve(ok(
-      request.path === '/api/version' ? { areaCreateIdempotency: true } : createdWire,
+      request.path === '/api/v1/bootstrap' ? { areaCreateIdempotency: true } : createdWire,
     )) };
     const { result } = renderHook(() => useAreaMutations(transport, unauthorized), {
       wrapper: mutationWrapper(client),
@@ -1055,12 +1055,12 @@ describe('input metadata mutation reconciliation', () => {
       expect((failure as Error).message).toBe('连接状态已改变，请重新操作。');
       expect(cancel.mock.calls.filter(([filters]) => filters?.queryKey !== undefined)).toEqual([]);
       expect(answered).not.toHaveBeenCalled();
-      expect(paths).toEqual(['/api/tracks/w1', ...(outcome === 'local denial' ? [] : ['/api/cards/card-1/planner/input'])]);
+      expect(paths).toEqual(['/api/v1/tracks/w1', ...(outcome === 'local denial' ? [] : ['/api/v1/sessions/card-1/messages'])]);
       expect(client.getQueryState(queryKeys.trackDetail('w1'))).toMatchObject({ status: 'success', isInvalidated: true });
       expect(client.getQueryState(queryKeys.trackConversations('w1'))).toBeUndefined();
       // The existing recovery coordinator, rather than a retained write or custom retry, resumes stale reads.
       act(() => { access.invalidate('recovering'); access.change('connected'); });
-      await waitFor(() => expect(paths.filter(path => path === '/api/tracks/w1')).toHaveLength(2));
+      await waitFor(() => expect(paths.filter(path => path === '/api/v1/tracks/w1')).toHaveLength(2));
       expect(client.getQueryState(queryKeys.trackDetail('w1'))?.isInvalidated).toBe(false);
       release(); unmount(); unsubscribe(); releaseRecovery(); client.unmount(); client.clear();
     },
@@ -1095,12 +1095,12 @@ describe('input metadata mutation reconciliation', () => {
         const transport: ApiTransportPort = { send: async request => {
           await Promise.resolve();
           paths.push(request.path);
-          if (request.path === '/api/tracks/w1') return ok({ track: baseTrackWire,
+          if (request.path === '/api/v1/tracks/w1') return ok({ track: baseTrackWire,
             planner_revision: 0, can_reopen: false, can_admin: false, can_close: true, overlays: [], cards: [{
               id: 'card-1', track_id: 'w1', kind: 'codex', title, sort: 0, payload: { planner_harness: true },
               deletable: true, created_at: 1, updated_at: 2,
             }] });
-          if (request.path === '/api/tracks/w1/conversations') return ok([{
+          if (request.path === '/api/v1/tracks/w1/sessions') return ok([{
             id: 'assistant', trackId: 'w1', title, kind: 'track-assistant', provider: 'codex', state: 'idle', updatedAt: 2, archivedAt: null, lastTurnCompletedAt: null,
           }]);
           title = 'Edited';

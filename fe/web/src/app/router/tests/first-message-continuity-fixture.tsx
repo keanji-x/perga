@@ -55,17 +55,17 @@ export function renderFirstMessageFixture(options: { onCommit?: () => void; vers
   }
   const view = renderDailyFixture({ initial: `/track/daily${options.mobile ? '' : '?panel=conversations'}`, onCommit: options.onCommit, routeProbe: <RegistryProbe />,
     reply: async request => {
-      if (request.path === '/api/version') {
+      if (request.path === '/api/v1/bootstrap') {
         if (options.versionReply !== undefined) await options.versionReply;
         return ok({ assistantProviders: true, conversationInitialInput: options.capability ?? true,
         conversationSide: true, conversationCreateModel: true, webCompatVersion: WEB_COMPAT_VERSION, minWebCompatVersion: WEB_COMPAT_VERSION,
         syncEventVersion: 29, dbInstanceId: 'first-message-continuity' });
       }
-      if (request.path.startsWith('/api/agent-providers/managed')) return ok([{
+      if (request.path.startsWith('/api/v1/bootstrap?scope=managed')) return ok([{
         availability: { provider: 'codex', status: 'ready', reason: null, checked_at_ms: 1, authentication_method: null, authentication_notice: null },
         accepts_unavailable_blank_track: true, capabilities: { managed_conversation: true, steer: true, images: true, manual_compact: true, history_replacement: true, requires_ready_availability: false },
       }]);
-      if (request.path === '/api/tracks/daily/conversations') {
+      if (request.path === '/api/v1/tracks/daily/sessions') {
         if (request.method === 'POST') {
           original = request;
           const key = request.headers?.['Idempotency-Key'];
@@ -97,9 +97,8 @@ export function renderFirstMessageFixture(options: { onCommit?: () => void; vers
         }
         return result;
       }
-      if (created !== null && request.path.includes(`/${created.id}/harness/items`)) {
+      if (created !== null && request.path.includes(`/${created.id}/items?`) && !request.path.includes('&view=')) {
         const parameters = new URL(request.path, 'http://fixture.test').searchParams;
-        if (parameters.get('contract') !== 'conversation_v1') throw new Error('The history request lacks its declared contract.');
         const rawCursor = parameters.get('cursor');
         const cursor = rawCursor === null ? null : conversationCursorSchema.parse(JSON.parse(rawCursor));
         if (cursor !== null && (cursor.card_id !== created.id || cursor.source !== 'historical_raw')) throw new Error('Wrong historical cursor scope.');
@@ -112,14 +111,14 @@ export function renderFirstMessageFixture(options: { onCommit?: () => void; vers
         if (options.holdHistory) return await new Promise<ApiTransportResponse>(resolve => { heldHistory.push(() => { resolve(result); }); });
         return result;
       }
-      if (request.method === 'POST' && request.path.endsWith('/planner/input')) {
+      if (request.method === 'POST' && request.path.endsWith('/messages')) {
         const tail = pending.find(entry => entry.entry_id === 'ordinary-entry');
         if (tail !== undefined) {
           const text = (request.body as { text: unknown }).text;
           if (typeof text !== 'string') throw new Error('Ordinary fold lacks actual submitted text.');
           pending = pending.map(entry => entry === tail ? { ...entry, rev: entry.rev + 1, text: `${entry.text}\n\n${text}` } : entry);
         }
-        return ok({ card_id: request.path.split('/')[3], worker_session_id: 'runtime', entry_id: 'ordinary-entry' });
+        return ok({ card_id: conversationCardId(request.path), worker_session_id: 'runtime', entry_id: 'ordinary-entry' });
       }
       if (options.refuseQueueDelete && request.method === 'DELETE' && request.path.endsWith('/planner/input/first-entry')) {
         return { status: 409, statusText: 'Conflict', body: { code: 'planner_input_stale', error: 'Entry changed.',
@@ -148,7 +147,7 @@ export function renderFirstMessageFixture(options: { onCommit?: () => void; vers
         pending = pending.filter(candidate => candidate.entry_id !== entry.entry_id);
         return ok({ card_id: created?.id, entry_id: entry.entry_id, steered: true, turn_id: 'running-first-input' });
       }
-      if (created !== null && request.path.endsWith('/planner/run?contract=conversation_v1')
+      if (created !== null && request.path.includes('&view=run')
         && conversationCardId(request.path) === created.id) {
         if (failRun && created !== null && request.path.includes(`/${created.id}/`)) return { status: 500, statusText: 'Error', body: { error: 'Run unavailable.' } };
         const result = ok(historicalConversationRun({ card_id: conversationCardId(request.path), worker_session_id: 'runtime',

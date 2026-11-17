@@ -37,7 +37,7 @@ it('surfaces a report while ready and performs no login or reset', async () => {
   expect(screen.getByText('Messages can still run. Check the server’s sign-in if they stop.')).toBeTruthy();
   await userEvent.click(screen.getByRole('button', { name: 'Settings' }));
   expect(app.open).toHaveBeenCalledOnce();
-  expect(app.requests).toEqual(['GET /api/agent-providers']);
+  expect(app.requests).toEqual(['GET /api/v1/bootstrap?scope=providers']);
 });
 it('keeps queued reassurance and clears on a later server answer', async () => {
   const app = mount(entry('sign_in_required'));

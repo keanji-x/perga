@@ -26,7 +26,7 @@ function recordingTransport(): { transport: ApiTransportPort; paths: string[] } 
       return Promise.resolve({
         status: 200,
         statusText: 'OK',
-        body: request.path === '/api/areas' ? [AREA] : request.path === '/api/today/daily' ? null : [],
+        body: request.path === '/api/v1/areas' ? [AREA] : request.path === '/api/today/daily' ? null : [],
       });
     },
   };
@@ -47,7 +47,7 @@ describe('INV-APP-084 the index loader primes areas and nothing else', () => {
     const { transport, paths } = recordingTransport();
     const tree = createRouteTree({ prepareReport: prepareReportDocument, transport, unauthorized, client: new QueryClient(), cards: bootTestCardRuntime(), onSignOut: () => undefined });
     await routeByPath(tree, '/').options.loader?.();
-    expect(paths).toEqual(['/api/areas']);
+    expect(paths).toEqual(['/api/v1/areas']);
   });
 
   it('leaves the area → tracks fan-out off the loader so one slow area cannot block the commit', async () => {

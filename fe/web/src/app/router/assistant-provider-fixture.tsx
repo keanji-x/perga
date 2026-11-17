@@ -49,18 +49,18 @@ export function renderAssistantProviderFixture(options: {
     requests.push(request);
     let body: unknown = [];
     let status = 200;
-    if (request.path === '/api/version') body = { assistantProviders: options.assistantProviders ?? true,
+    if (request.path === '/api/v1/bootstrap') body = { assistantProviders: options.assistantProviders ?? true,
       conversationInitialInput: true, conversationCreateModel: true, conversationSide: true, webCompatVersion: options.webCompatVersion ?? WEB_COMPAT_VERSION, minWebCompatVersion: options.webCompatVersion ?? WEB_COMPAT_VERSION,
       syncEventVersion: 20, dbInstanceId: 'provider-browser' };
-    if (request.path.startsWith('/api/agent-providers/managed')) body = options.answers;
-    if (request.path.startsWith('/api/models?')) body = options.catalogUnavailable ? { ...catalog, models: [], source: 'unavailable' } : catalog;
-    if (request.path === '/api/areas') body = [{ id: 'area', name: 'Work', color: '#123456', sort: 1, kind: 'user', created_at: 1, updated_at: 1 }];
-    if (request.path === '/api/areas/area/tracks') body = [track];
+    if (request.path.startsWith('/api/v1/bootstrap?scope=managed')) body = options.answers;
+    if (request.path.startsWith('/api/v1/bootstrap?card_id=') || request.path.startsWith('/api/v1/bootstrap?provider=')) body = options.catalogUnavailable ? { ...catalog, models: [], source: 'unavailable' } : catalog;
+    if (request.path === '/api/v1/areas') body = [{ id: 'area', name: 'Work', color: '#123456', sort: 1, kind: 'user', created_at: 1, updated_at: 1 }];
+    if (request.path === '/api/v1/areas/area/tracks?includeClosed=true') body = [track];
     if (request.path === '/api/settings') body = {};
-    if (request.path === `/api/tracks/${track.id}`) body = { track, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true,
+    if (request.path === `/api/v1/tracks/${track.id}`) body = { track, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true,
       cards: rows.map(row => ({ id: row.id, track_id: track.id, title: row.title, kind: 'codex', sort: 1,
         payload: { harness_profile: 'assistant', assistant_provider: row.provider }, deletable: false, created_at: 1, updated_at: 2 })), overlays: [] };
-    if (request.path === `/api/tracks/${track.id}/conversations`) {
+    if (request.path === `/api/v1/tracks/${track.id}/sessions`) {
       if (request.method === 'POST') {
         attempts += 1;
         if (options.failFirstCreate && !options.landFirstCreate && attempts === 1) return { status: 503, statusText: 'Unavailable', body: { code: 'service_unavailable', error: 'Unconfirmed' } };
@@ -83,15 +83,16 @@ export function renderAssistantProviderFixture(options: {
       status = 204; body = undefined;
     }
     if (request.path.endsWith('/initial-input')) {
-      const post = requests.find(candidate => candidate.method === 'POST' && candidate.path.endsWith('/conversations')
+      const post = requests.find(candidate => candidate.method === 'POST' && candidate.path.endsWith('/sessions')
         && candidate.headers?.['Idempotency-Key'] === request.headers?.['Idempotency-Key']);
       if (post === undefined) throw new Error('No original creation request');
       const receipt = initialReceiptFor(post, 'first-entry', 0);
       body = { kind: 'queued', receipt, runtimeId: 'runtime', entryId: receipt.entryId, rev: 0,
         text: (post.body as { text: string }).text, textSha256: receipt.textSha256 };
     }
-    const cardId = request.path.split('/')[3];
-    if (request.path.includes('/planner/run?contract=conversation_v1')) body = historicalConversationRun({ card_id: cardId, worker_session_id: restarted ? 'replacement' : null,
+    const sessionOrCardMatch = /^\/api\/(?:v1\/sessions|cards)\/([^/]+)\//.exec(new URL(request.path, 'http://fixture').pathname);
+    const cardId = sessionOrCardMatch !== null ? decodeURIComponent(sessionOrCardMatch[1]) : request.path.split('/')[3];
+    if (request.path.includes('&view=run')) body = historicalConversationRun({ card_id: cardId, worker_session_id: restarted ? 'replacement' : null,
       phase: 'idle', model: selectedModel, reasoning_effort: null, permission_mode: null, blocked_reason: null,
       attachments_supported: options.runAttachmentsSupported ?? false, manual_compact_supported: false, recovery: null, compact_outcome: null,
       context_usage_invalidated: false, running_turn: null }, 'idle', options.answers.find(answer => answer.availability.provider === rows.find(row => row.id === cardId)?.provider)?.capabilities.history_replacement === true);
@@ -100,7 +101,7 @@ export function renderAssistantProviderFixture(options: {
       selectedModel = input.model;
       body = { card_id: cardId, ...input, effort_adjusted: false, unknown_model: false };
     }
-    if (request.path.endsWith('/planner/input')) {
+    if (request.path.endsWith('/messages') && request.method === 'POST') {
       if (options.dormant && !restarted) return { status: 409, statusText: 'Conflict', body: {
         code: 'planner_harness_dormant', error: 'Start a fresh session' } };
       body = { card_id: cardId, worker_session_id: 'replacement' };
@@ -109,7 +110,7 @@ export function renderAssistantProviderFixture(options: {
       restarted = true;
       body = { card_id: cardId, terminal_id: '', new_thread_id: 'replacement-thread' };
     }
-    if (request.path.includes('/harness/items') && cardId === 'dormant') body = historicalConversationPage(conversationCardId(request.path), [{ id: 1, worker_session_id: 'old',
+    if (request.path.includes('/items?') && !request.path.includes('&view=') && cardId === 'dormant') body = historicalConversationPage(conversationCardId(request.path), [{ id: 1, worker_session_id: 'old',
       card_id: cardId, track_id: track.id, thread_id: 'old-thread', turn_id: 'last-turn', turn_error_text: null,
       item_uuid: null, item_type: 'agentMessage', method: 'item/completed', created_at_ms: 1,
       params: JSON.stringify({ item: { id: 'reply', type: 'agentMessage', text: 'Saved reply' } }) }], null);

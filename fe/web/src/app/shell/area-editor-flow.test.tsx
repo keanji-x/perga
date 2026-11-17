@@ -175,19 +175,19 @@ describe('AppShell Area editor flow', () => {
     const send = vi.fn((request: ApiRequest) => Promise.resolve({ status: 503, statusText: 'Unavailable', body: { path: request.path } }));
     renderShell(false, { send });
     await userEvent.click(screen.getByRole('button', { name: 'New area' }));
-    expect(send.mock.calls.filter(([request]) => request.path.startsWith('/api/track-templates'))).toEqual([]);
+    expect(send.mock.calls.filter(([request]) => request.path.startsWith('/api/v1/templates'))).toEqual([]);
     await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     await openDesktopEditor();
-    expect(send.mock.calls.filter(([request]) => request.path.startsWith('/api/track-templates'))).toEqual([]);
+    expect(send.mock.calls.filter(([request]) => request.path.startsWith('/api/v1/templates'))).toEqual([]);
   });
 
   function areaTransport(replies: (() => ApiTransportResponse)[]) {
     const writes: ApiRequest[] = [];
     const transport: ApiTransportPort = { send: (request) => {
-      if (request.path === '/api/agent-providers') {
+      if (request.path === '/api/v1/bootstrap?scope=providers') {
         return Promise.resolve({ status: 200, statusText: 'OK', body: [] });
       }
-      if (request.path === '/api/version') {
+      if (request.path === '/api/v1/bootstrap') {
         return Promise.resolve({ status: 200, statusText: 'OK', body: { areaCreateIdempotency: true } });
       }
       writes.push(request);
@@ -257,7 +257,7 @@ describe('AppShell Area editor flow', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     expect((await screen.findByRole('alert')).textContent).toContain(text);
     expect(writes).toHaveLength(1);
-    expect(writes[0]).toMatchObject({ method: 'PATCH', path: '/api/areas/c1', body: { name: 'Changed' } });
+    expect(writes[0]).toMatchObject({ method: 'PATCH', path: '/api/v1/areas/c1', body: { name: 'Changed' } });
     expect(input.disabled).toBe(false);
   });
 

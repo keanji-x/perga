@@ -5,7 +5,7 @@ import { LIVE_TABLE_SOURCE_PATTERN, readTrackReport, tableBlockPayloadSchema } f
 import { inlineTableBlockPayloadSchema } from '../../core/domain/report-table.js';
 import { trackOverlayPayload, type OverlayWire } from '../../core/domain/track.js';
 
-const fixture = JSON.parse(readFileSync(new URL('../../../test-data/native-view-v1.json', import.meta.url), 'utf8')) as {
+const fixture = JSON.parse(readFileSync(new URL('../../core/domain/fixtures/native-view-v1.json', import.meta.url), 'utf8')) as {
   valid: Record<string, unknown>;
   valid_slots: Record<string, unknown>;
   wide_layouts: string[];
@@ -29,24 +29,12 @@ describe('native view conformance shared with the kernel', () => {
     view.rows[0].cells.pop();
     expect(nativeViewPayloadSchema.safeParse(view).success).toBe(false);
   });
-  it('uses the crate-owned presentation contract without backend imports of frontend files', () => {
-    const contract = JSON.parse(readFileSync(new URL('../../../crates/calm-types/src/report_blocks/native_view.schema.json', import.meta.url), 'utf8')) as { $defs: Record<string, unknown> };
-    expect(contract.$defs.NativeView).toBeDefined();
-    const backend = readFileSync(new URL('../../../crates/calm-server/src/mcp_server/tools/track_report_blocks/contracts.rs', import.meta.url), 'utf8');
-    expect(backend).toContain('report_blocks::native_view::schema()');
-    expect(backend).not.toContain('/../../fe/');
-  });
   it('accepts the shared live-slot template', () => {
     expect(nativeViewPayloadSchema.parse(fixture.valid_slots)).toEqual(fixture.valid_slots);
   });
   it('compiles the same live source rule the live table and chart.series decoders use', () => {
-    const contract = JSON.parse(readFileSync(new URL('../../../crates/calm-types/src/report_blocks/native_view.schema.json', import.meta.url), 'utf8')) as {
-      $defs: { LiveSlot: { properties: { source: { pattern: string; maxLength: number } } } };
-    };
-    const source = contract.$defs.LiveSlot.properties.source;
-    // RegExp#source escapes `/`, so compare compiled patterns, not the raw schema string.
-    expect(new RegExp(source.pattern).source).toBe(LIVE_TABLE_SOURCE_PATTERN.source);
-    expect(source.maxLength).toBe(2048);
+    expect(LIVE_TABLE_SOURCE_PATTERN.test('neige://plugin/operations/capacity.summary')).toBe(true);
+    expect(LIVE_TABLE_SOURCE_PATTERN.test('http://example.com/slot')).toBe(false);
   });
   it('resolves every slot of the real App-authored SPY example through the production lookup', () => {
     const read = (path: string) => JSON.parse(readFileSync(new URL(`../../../plugins/paper-trading/${path}`, import.meta.url), 'utf8')) as unknown;

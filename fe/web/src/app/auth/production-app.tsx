@@ -103,7 +103,7 @@ export function mountProductionApp(root: HTMLElement, browserInput: Readonly<{
   const client = new QueryClient();
   const events = __NC_BUNDLED__ ? null
     : createBrowserEventComposition({ storage, transport: probe, unauthorizedChannel: unauthorized,
-      url: shareLinkId === undefined ? undefined : `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/api/events?share_link=${encodeURIComponent(shareLinkId)}` });
+      url: shareLinkId === undefined ? undefined : `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/api/v1/events?share_link=${encodeURIComponent(shareLinkId)}` });
   const cursorStore = events?.store ?? createBrowserCursorStore(storage);
   const createRecoveryEvents = () => createBrowserEventComposition({ storage, transport: probe,
     cursorStore, unauthorizedChannel: unauthorized,

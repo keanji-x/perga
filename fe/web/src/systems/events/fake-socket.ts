@@ -1,12 +1,15 @@
 export type FakeSocketFactoryOptions = Readonly<{ throwOnConstruct?: () => Error | undefined }>;
 
 export class FakeSocket {
+  readonly url: string;
   onopen: ((event: Event) => void) | null = null;
   onmessage: ((event: MessageEvent) => void) | null = null;
   onclose: ((event: CloseEvent) => void) | null = null;
   onerror: ((event: Event) => void) | null = null;
   readonly sent: string[] = [];
   closeCount = 0;
+
+  constructor(url = '') { this.url = url; }
 
   send(value: string): void { this.sent.push(value); }
   open(): void { this.onopen?.(new Event('open')); }
@@ -27,7 +30,7 @@ export function createFakeSocketFactory(options: FakeSocketFactoryOptions = {}) 
     constructionCount += 1;
     const error = options.throwOnConstruct?.();
     if (error !== undefined) throw error;
-    const socket = new FakeSocket();
+    const socket = new FakeSocket(url);
     sockets.push(socket);
     return socket;
   };

@@ -120,7 +120,7 @@ describe('track wire decode', () => {
   });
 
   it('percent-encodes the area id into the list path', () => {
-    expect(tracksInAreaOperation('a/b').path).toBe('/api/areas/a%2Fb/tracks');
+    expect(tracksInAreaOperation('a/b').path).toBe('/api/v1/areas/a%2Fb/tracks?includeClosed=true');
   });
 });
 
@@ -171,7 +171,7 @@ describe('card operations', () => {
   it('mints a terminal card on its own atomic endpoint, not the generic one', () => {
     const operation = createTerminalCardOperation('w1', { theme }, 'intent-key');
     expect(operation.method).toBe('POST');
-    expect(operation.path).toBe('/api/tracks/w1/terminal-cards');
+    expect(operation.path).toBe('/api/v1/tracks/w1/terminals');
     expect(operation.headers).toEqual({ 'Idempotency-Key': 'intent-key' });
   });
 
@@ -203,7 +203,7 @@ describe('open and closed', () => {
   it('builds the reopen PATCH without a parallel endpoint', () => {
     const operation = updateTrackOperation('w/1', { closed: false });
     expect(operation).toMatchObject({
-      method: 'PATCH', path: '/api/tracks/w%2F1', body: { closed: false },
+      method: 'PATCH', path: '/api/v1/tracks/w%2F1', body: { closed: false },
     });
   });
 

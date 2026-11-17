@@ -19,7 +19,7 @@ it.each([
 ])('resolves local image destination %s through the Track file port', (destination, path) => {
   render(<Reply text={`![Screenshot](${destination})`} imageFiles={imageFiles()} />);
   expect(screen.getByRole('img', { name: 'Screenshot' }).getAttribute('src'))
-    .toBe(`/api/tracks/track-1/workspace/readfile-raw?path=${path}`);
+    .toBe(`/api/v1/tracks/track-1/files?path=${path}`);
 });
 
 it.each([
@@ -39,7 +39,7 @@ it('waits for the workspace instead of loading a browser-relative image', () => 
   expect(screen.queryByRole('img')).toBeNull();
   rerender(<Reply text={text} imageFiles={imageFiles()} />);
   expect(screen.getByRole('img', { name: 'Screenshot' }).getAttribute('src'))
-    .toBe('/api/tracks/track-1/workspace/readfile-raw?path=screenshots%2Fpage.png');
+    .toBe('/api/v1/tracks/track-1/files?path=screenshots%2Fpage.png');
 });
 
 it('keeps network images and leaves code fences and ordinary links untouched', () => {
@@ -61,7 +61,7 @@ it('shows a failed image as unavailable and recovers when the streamed destinati
   expect(screen.getByText('Image unavailable: Screenshot')).toBeTruthy();
   rerender(<Reply text="![Screenshot](screenshots/page.png)" imageFiles={files} />);
   expect(screen.getByRole('img', { name: 'Screenshot' }).getAttribute('src'))
-    .toBe('/api/tracks/track-1/workspace/readfile-raw?path=screenshots%2Fpage.png');
+    .toBe('/api/v1/tracks/track-1/files?path=screenshots%2Fpage.png');
 });
 
 it('reuses a stored reply through unrelated parent updates and still accepts changed content', () => {
@@ -147,7 +147,7 @@ it.each([
 it('renders a currency reference image alongside real math', () => {
   const { container } = render(<Reply imageFiles={imageFiles('/')} text={'![item $5] costs $10 and $x$\n\n[item $5]: /url'} />);
   expect(screen.getByRole('img', { name: 'item $5' }).getAttribute('src'))
-    .toBe('/api/tracks/track-1/workspace/readfile-raw?path=url');
+    .toBe('/api/v1/tracks/track-1/files?path=url');
   expect(container.querySelectorAll('math')).toHaveLength(1);
   expect(container.querySelector('annotation')?.textContent).toBe('x');
   expect(container.textContent).toContain('costs $10 and');
@@ -166,7 +166,7 @@ it.each([
   const { container } = render(<Reply imageFiles={imageFiles('/')} text={text} />);
   if (type === 'link') expect(screen.getByRole('link', { name: label }).getAttribute('href')).toBe('/url');
   else expect(screen.getByRole('img', { name: label }).getAttribute('src'))
-    .toBe('/api/tracks/track-1/workspace/readfile-raw?path=url');
+    .toBe('/api/v1/tracks/track-1/files?path=url');
   expect(container.querySelectorAll('math')).toHaveLength(hasMath ? 1 : 0);
   if (hasMath) expect(container.querySelector('annotation')?.textContent).toBe('x');
   expect(container.textContent).not.toContain('£');

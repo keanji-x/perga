@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { EventFrame } from '../../../../core/events/protocol.ts';
 import { createFakeSocketFactory } from './fake-socket.ts';
 import type { EventStreamSink } from './event-stream.ts';
-import { WebSocketDriver } from './websocket-driver.ts';
+import { WebSocketDriver, wsUrl } from './websocket-driver.ts';
 
 const configuration = { syncEventVersion: 3, topics: ['*'] as const };
 const unauthorized = Object.assign(new Error('unauthorized'), { failure: { kind: 'unauthorized' } });
@@ -225,5 +225,17 @@ describe('WebSocketDriver contracts', () => {
     const afterRestart = fake.constructionCount;
     vi.runAllTimers();
     expect(fake.constructionCount).toBe(afterRestart);
+  });
+
+  it('connects Perga /api/v1/events with since and optional trackId query params and tipId replay-complete', () => {
+    expect(wsUrl({ protocol: 'http:', host: '127.0.0.1:5199' })).toBe('ws://127.0.0.1:5199/api/v1/events');
+    const { driver, fake, sink, states, frames } = harness();
+    driver.start({ ...configuration, trackId: 'trk_1' }, 'ws://example/api/v1/events', sink);
+    expect(fake.sockets[0].url).toBe('ws://example/api/v1/events?since=17&trackId=trk_1');
+    fake.sockets[0].open();
+    expect(fake.sockets[0].sent).toEqual([]);
+    fake.sockets[0].message(JSON.stringify({ kind: '_replay_complete', tipId: 25 }));
+    expect(states).toEqual(['connecting', 'connected']);
+    expect(frames).toEqual([{ type: 'replay-complete', id: 25 }]);
   });
 });

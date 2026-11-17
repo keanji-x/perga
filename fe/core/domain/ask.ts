@@ -2,16 +2,24 @@
 // kernel's activity overlay; the one write is `POST /api/tracks/{id}/asks/{ask_id}/answer`.
 
 import { z } from 'zod';
+import { askDtoSchema } from '../api/schemas.js';
 import type { AskAction, AskAnswer } from '../api/generated/wire.js';
 import type { ApiOperation } from '../api/types.js';
-import type { ActivityItem, AskDelivery, AskQuestion } from './activity.js';
+import type { ActivityItem, AskDelivery, AskId, AskQuestion } from './activity.js';
 import { writeClassOf, writeFailureText, type FailureTable, type WriteClass, type WriteText } from './failure-class.js';
 
 /**
  * One open ask as the questions drawer shows it: the answer route's id, its questions in order, and
  * where the answer goes.
  */
-export type OpenAsk = Readonly<{ askId: number; questions: readonly AskQuestion[]; delivery: AskDelivery; action?: AskAction }>;
+export type OpenAsk = Readonly<{ askId: AskId; questions: readonly AskQuestion[]; delivery: AskDelivery; action?: AskAction }>;
+
+function compareAskIds(left: AskId, right: AskId): number {
+  if (typeof left === 'number' && typeof right === 'number') return left - right;
+  const leftStr = String(left);
+  const rightStr = String(right);
+  return leftStr < rightStr ? -1 : leftStr > rightStr ? 1 : 0;
+}
 
 /**
  * The track's open asks: every `hold` ask first, since each one blocks the running turn (#2348), then the
@@ -26,7 +34,7 @@ export function openAsksOf(items: readonly ActivityItem[]): readonly OpenAsk[] {
     });
   }
   const blocking = (ask: OpenAsk) => (ask.delivery === 'hold' ? 0 : 1);
-  return asks.sort((left, right) => blocking(left) - blocking(right) || left.askId - right.askId);
+  return asks.sort((left, right) => blocking(left) - blocking(right) || compareAskIds(left.askId, right.askId));
 }
 
 /**
@@ -80,15 +88,27 @@ export function clampAskAnswer(text: string): string {
 }
 
 /**
- * Answer every question of one ask. `204` is the answer; the row leaves the overlay when the
- * projector's `overlay.set` lands. Its failures read through {@link ANSWER_ASK_FAILURES}.
+ * Answer every question of one ask via `POST /api/v1/tracks/{trackId}/asks/{askId}/answer`.
+ * Accepts both Perga's `200 AskDto` and `204` responses; failures read through {@link ANSWER_ASK_FAILURES}.
  */
-export function answerAskOperation(trackId: string, askId: number, answers: readonly AskAnswer[]): ApiOperation<undefined> {
+export function answerAskOperation(
+  trackId: string,
+  askId: AskId,
+  answers: readonly AskAnswer[],
+  questions?: readonly AskQuestion[],
+): ApiOperation<undefined> {
+  const mappedAnswers = questions === undefined
+    ? [...answers]
+    : answers.map((answer, index) => {
+      if ('text' in answer) return { ...answer, value: answer.text };
+      const label = questions[index]?.options[answer.option];
+      return label !== undefined ? { ...answer, value: label } : answer;
+    });
   return {
     method: 'POST',
-    path: `/api/tracks/${encodeURIComponent(trackId)}/asks/${askId}/answer`,
-    body: { answers: [...answers] },
-    responseSchema: z.undefined(),
+    path: `/api/v1/tracks/${encodeURIComponent(trackId)}/asks/${encodeURIComponent(String(askId))}/answer`,
+    body: { answers: mappedAnswers },
+    responseSchema: z.union([askDtoSchema.transform(() => undefined), z.undefined()]),
   };
 }
 

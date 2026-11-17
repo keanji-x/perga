@@ -2,7 +2,13 @@
 
 import { z } from 'zod';
 
-import { agentProviderSchema, type AgentProvider } from '../api/schemas.js';
+import {
+  agentProviderSchema,
+  bootstrapDtoSchema,
+  normalizeWireAgentProvider,
+  type AgentProvider,
+  type ProviderStatusDto,
+} from '../api/schemas.js';
 import type { ApiOperation } from '../api/types.js';
 import type { ProbeText } from './read-failure.js';
 import { NotSentError, writeClassOf, writeFailureOf, type FailureTable, type WriteClass, type WriteText } from './failure-class.js';
@@ -28,12 +34,41 @@ export type ProviderAvailability = z.infer<typeof providerAvailabilitySchema>;
 
 export const agentProvidersSchema = z.array(providerAvailabilitySchema);
 
-/** `GET /api/agent-providers`; `recheck` runs every check again instead of reading the server's 30 s cache. */
+export function providerStatusToAvailability(dto: ProviderStatusDto): ProviderAvailability | null {
+  const provider = normalizeWireAgentProvider(dto.provider);
+  if (provider === null) return null;
+  if (dto.available) {
+    return {
+      provider,
+      status: 'ready',
+      reason: null,
+      checked_at_ms: Date.now(),
+      authentication_method: dto.version ?? 'cli',
+      authentication_notice: null,
+    };
+  }
+  return {
+    provider,
+    status: 'unavailable',
+    reason: dto.reason ?? `${provider} is unavailable.`,
+    checked_at_ms: Date.now(),
+    authentication_method: null,
+    authentication_notice: null,
+  };
+}
+
+/** `GET /api/v1/bootstrap`; `recheck` appends `?refresh=true` to bypass cached reads. */
 export function agentProvidersOperation(recheck: boolean): ApiOperation<ProviderAvailability[]> {
   return {
     method: 'GET',
-    path: recheck ? '/api/agent-providers?refresh=true' : '/api/agent-providers',
-    responseSchema: agentProvidersSchema,
+    path: recheck ? '/api/v1/bootstrap?scope=providers&refresh=true' : '/api/v1/bootstrap?scope=providers',
+    responseSchema: z.union([
+      bootstrapDtoSchema.transform((bootstrap) => bootstrap.providers.flatMap((provider) => {
+        const mapped = providerStatusToAvailability(provider);
+        return mapped === null ? [] : [mapped];
+      })),
+      agentProvidersSchema,
+    ]),
   };
 }
 
@@ -95,12 +130,30 @@ export const managedProviderAvailabilitySchema = z.object({
 });
 export type ManagedProviderAvailability = z.infer<typeof managedProviderAvailabilitySchema>;
 
-/** Provider menus consume this response instead of maintaining an Assistant provider list. */
+/** Provider menus consume `/api/v1/bootstrap` instead of maintaining an Assistant provider list. */
 export function managedProvidersOperation(recheck: boolean): ApiOperation<ManagedProviderAvailability[]> {
   return {
     method: 'GET',
-    path: recheck ? '/api/agent-providers/managed?refresh=true' : '/api/agent-providers/managed',
-    responseSchema: z.array(managedProviderAvailabilitySchema),
+    path: recheck ? '/api/v1/bootstrap?scope=managed&refresh=true' : '/api/v1/bootstrap?scope=managed',
+    responseSchema: z.union([
+      bootstrapDtoSchema.transform((bootstrap) => bootstrap.providers.flatMap((provider) => {
+        const availability = providerStatusToAvailability(provider);
+        if (availability === null) return [];
+        return [{
+          accepts_unavailable_blank_track: true,
+          availability,
+          capabilities: {
+            managed_conversation: true,
+            steer: true,
+            images: false,
+            manual_compact: true,
+            history_replacement: false,
+            requires_ready_availability: false,
+          },
+        }];
+      })),
+      z.array(managedProviderAvailabilitySchema),
+    ]),
   };
 }
 

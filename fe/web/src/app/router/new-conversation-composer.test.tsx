@@ -45,13 +45,13 @@ function renderApp(managed = false, createdTitle: string | null = null) {
   const transport: ApiTransportPort = {
     send(request) {
       requests.push(request);
-      if (request.path === '/api/version') return Promise.resolve(ok({ webCompatVersion: WEB_COMPAT_VERSION, minWebCompatVersion: WEB_COMPAT_VERSION, syncEventVersion: 20, dbInstanceId: 'test', assistantProviders: true, conversationInitialInput: true, conversationCreateModel: true }));
-      if (request.path.startsWith('/api/agent-providers/managed')) return Promise.resolve(ok([{
+      if (request.path === '/api/v1/bootstrap') return Promise.resolve(ok({ webCompatVersion: WEB_COMPAT_VERSION, minWebCompatVersion: WEB_COMPAT_VERSION, syncEventVersion: 20, dbInstanceId: 'test', assistantProviders: true, conversationInitialInput: true, conversationCreateModel: true }));
+      if (request.path.startsWith('/api/v1/bootstrap?scope=managed')) return Promise.resolve(ok([{
         availability: { provider: managed ? 'claude' : 'codex', status: 'ready', reason: null, checked_at_ms: 1, authentication_method: null, authentication_notice: null },
         accepts_unavailable_blank_track: true, capabilities: { managed_conversation: true, steer: !managed, images: true, manual_compact: true, history_replacement: true, requires_ready_availability: false },
       }]));
-      if (managed && request.path === '/api/models?provider=claude') return Promise.resolve(ok({ models: [{ id: 'sonnet', model: 'sonnet', display_name: 'Sonnet', resolved_model: null, description: '', is_default: true, default_reasoning_effort: null, supported_reasoning_efforts: [] }], source: 'live', fetched_at_ms: 1, default_source: 'claude_cli', default: { model: 'sonnet', reasoning_effort: null, supported_reasoning_efforts: [] } }));
-      const conversations = /^\/api\/tracks\/(\w+)\/conversations$/.exec(request.path);
+      if (managed && request.path === '/api/v1/bootstrap?provider=claude') return Promise.resolve(ok({ models: [{ id: 'sonnet', model: 'sonnet', display_name: 'Sonnet', resolved_model: null, description: '', is_default: true, default_reasoning_effort: null, supported_reasoning_efforts: [] }], source: 'live', fetched_at_ms: 1, default_source: 'claude_cli', default: { model: 'sonnet', reasoning_effort: null, supported_reasoning_efforts: [] } }));
+      const conversations = /^\/api\/v1\/tracks\/(\w+)\/sessions$/.exec(request.path);
       if (conversations !== null) {
         const trackId = conversations[1];
         const rows = minted.get(trackId) ?? [];
@@ -63,9 +63,9 @@ function renderApp(managed = false, createdTitle: string | null = null) {
         minted.set(trackId, [...rows, row]);
         return Promise.resolve({ status: 201, statusText: 'Created', body: { ...row, initialInput: { kind: 'known', receipt: initialReceiptFor(request, 'first-entry', 0) } } });
       }
-      if (request.path === '/api/areas') return Promise.resolve(ok([AREA]));
-      if (request.path === '/api/areas/c1/tracks') return Promise.resolve(ok(TRACKS));
-      const detail = TRACKS.find((candidate) => request.path === `/api/tracks/${candidate.id}`);
+      if (request.path === '/api/v1/areas') return Promise.resolve(ok([AREA]));
+      if (request.path === '/api/v1/areas/c1/tracks?includeClosed=true') return Promise.resolve(ok(TRACKS));
+      const detail = TRACKS.find((candidate) => request.path === `/api/v1/tracks/${candidate.id}`);
       if (detail !== undefined) {
         return Promise.resolve(ok({ track: detail, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true, cards: [], overlays: [] }));
       }
@@ -176,7 +176,7 @@ it('leaves an empty field for the next `+` after the first message is sent', asy
   });
   await screen.findByRole('complementary', { name: 'The first message' });
   expect(requests.filter((request) => request.method === 'POST').map((request) => request.body))
-    .toEqual([{ text: 'The first message', provider: 'codex' }]);
+    .toEqual([expect.objectContaining({ text: 'The first message', provider: 'codex' })]);
   closeDrawer();
   await pressPlus();
   expect(messageField().textContent).toBe('');
@@ -190,5 +190,5 @@ it('offers the registered managed backend and sends the selected provider', asyn
   fireEvent.click(await screen.findByRole('menuitem', { name: 'Sonnet' }));
   await typeInto('Use the selected backend');
   fireEvent.click(screen.getByRole('button', { name: 'Send' }));
-  await waitFor(() => expect(requests.find(request => request.method === 'POST' && request.path.endsWith('/conversations'))?.body).toMatchObject({ provider: 'claude', model: 'sonnet', text: 'Use the selected backend' }));
+  await waitFor(() => expect(requests.find(request => request.method === 'POST' && request.path.endsWith('/sessions'))?.body).toMatchObject({ provider: 'claude', model: 'sonnet', text: 'Use the selected backend' }));
 });

@@ -1,5 +1,6 @@
 import { NotSentError } from './failure-class.js';
 import { z } from 'zod';
+import { trackDtoSchema } from '../api/schemas.js';
 import type { ApiFailure, ApiOperation } from '../api/types.js';
 
 export type PlannerSwitchRequest = Readonly<{
@@ -13,8 +14,20 @@ export const plannerSwitchResponseSchema = z.object({
 });
 export type PlannerSwitchResponse = z.infer<typeof plannerSwitchResponseSchema>;
 export function plannerSwitchOperation(trackId: string, body: PlannerSwitchRequest): ApiOperation<PlannerSwitchResponse> {
-  return { method: 'POST', path: `/api/tracks/${encodeURIComponent(trackId)}/planner/switch`, body,
-    responseSchema: plannerSwitchResponseSchema };
+  return {
+    method: 'PATCH',
+    path: `/api/v1/tracks/${encodeURIComponent(trackId)}`,
+    body: { leadSessionId: body.target_assistant_card_id },
+    responseSchema: z.union([
+      trackDtoSchema.transform((dto) => ({
+        track_id: dto.id,
+        planner_card_id: dto.leadSessionId ?? body.target_assistant_card_id,
+        demoted_card_id: body.expected_planner_card_id,
+        planner_revision: body.expected_revision + 1,
+      })),
+      plannerSwitchResponseSchema,
+    ]),
+  };
 }
 
 // Protocol closed set; provider capability remains server-owned. English is the current UI default.

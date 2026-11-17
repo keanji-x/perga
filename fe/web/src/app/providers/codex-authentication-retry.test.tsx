@@ -29,7 +29,7 @@ it('double clicks send one CAS intent and re-read status after its receipt witho
   expect(sent.find((request) => request.method === 'POST')?.body).toEqual({ expected_revision: '7' });
   release({ status: 200, statusText: 'OK', body: { status: 'retry_requested', requested_revision: '8', recovery_notices: [] } });
   await waitFor(() => expect(hook.result.current.pending).toBe(false));
-  for (const path of ['/api/agent-providers', '/api/agent-providers/managed']) {
+  for (const path of ['/api/v1/bootstrap?scope=providers', '/api/v1/bootstrap?scope=managed']) {
     await waitFor(() => expect(sent.filter((request) => request.path === path)).toHaveLength(2));
   }
   expect(hook.result.current.error).toBeNull();

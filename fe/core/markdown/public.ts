@@ -648,8 +648,96 @@ export function extractOutline<Context>(
   return outline;
 }
 
+const PERGA_BLOCK_MARKER_PATTERN = /^<!--\s*perga:([A-Za-z0-9_-]+)(?:\s+rev=(\d+))?\s*-->$/;
+
+export type PergaMarkdownBlockSlice = Readonly<{
+  id: string | null;
+  rev: number;
+  kind: string;
+  markdown: string;
+  payload: unknown;
+}>;
+
+/**
+ * Parses Perga ReportDoc markdown containing `<!-- perga:b_xxxx -->` markers and
+ * ```` ```perga-block <kind> ```` fenced JSON blocks (`ReportDocEngine.cs` 1:1).
+ */
+export function parsePergaMarkdownBlocks(markdown: string): readonly PergaMarkdownBlockSlice[] {
+  const lines = markdown.replace(/\r\n?/g, '\n').split('\n');
+  const blocks: PergaMarkdownBlockSlice[] = [];
+  let pendingId: string | null = null;
+  let pendingRev = 1;
+  let proseLines: string[] = [];
+
+  const flushProse = () => {
+    const text = proseLines.join('\n').trim();
+    proseLines = [];
+    if (text === '' && pendingId === null) return;
+    blocks.push({
+      id: pendingId,
+      rev: pendingRev,
+      kind: 'prose',
+      markdown: text,
+      payload: { markdown: text },
+    });
+    pendingId = null;
+    pendingRev = 1;
+  };
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i] ?? '';
+    const marker = PERGA_BLOCK_MARKER_PATTERN.exec(line.trim());
+    if (marker !== null) {
+      flushProse();
+      pendingId = marker[1] ?? null;
+      pendingRev = marker[2] !== undefined ? Number.parseInt(marker[2], 10) : 1;
+      continue;
+    }
+    const fence = /^ {0,3}(`{3,}|~{3,})perga-block\s+([A-Za-z0-9._-]+)\s*$/.exec(line);
+    if (fence !== null) {
+      const fenceChars = fence[1] ?? '```';
+      const kind = fence[2] ?? 'prose';
+      if (proseLines.join('\n').trim() !== '') {
+        const orphanText = proseLines.join('\n').trim();
+        proseLines = [];
+        blocks.push({ id: null, rev: 1, kind: 'prose', markdown: orphanText, payload: { markdown: orphanText } });
+      }
+      const bodyLines: string[] = [];
+      let k = i + 1;
+      while (k < lines.length) {
+        const candidate = lines[k] ?? '';
+        if (closesFence(candidate, { marker: fenceChars[0] ?? '`', size: fenceChars.length })) break;
+        bodyLines.push(candidate);
+        k += 1;
+      }
+      i = k;
+      const rawBody = bodyLines.join('\n');
+      let payload: unknown = null;
+      if (kind === 'prose') {
+        payload = { markdown: rawBody };
+      } else {
+        try { payload = JSON.parse(rawBody); } catch { payload = null; }
+      }
+      blocks.push({ id: pendingId, rev: pendingRev, kind, markdown: rawBody, payload });
+      pendingId = null;
+      pendingRev = 1;
+      continue;
+    }
+    proseLines.push(line);
+  }
+  flushProse();
+  return blocks;
+}
+
+function isPergaMarkerHtml(value: string): boolean {
+  return PERGA_BLOCK_MARKER_PATTERN.test(value.trim());
+}
+
 function sanitizeInline(node: NormalizedInline, policy: SanitizeAstPolicy): SafeInline | null {
-  if (node.type === 'html') return policy.rawHtml === 'drop' ? null : { type: 'text', value: node.value, position: node.position };
+  if (node.type === 'html') {
+    if (policy.rawHtml === 'drop' || isPergaMarkerHtml(node.value)) return null;
+    return { type: 'text', value: node.value, position: node.position };
+  }
   if (node.type === 'link' || node.type === 'delete' || node.type === 'emphasis' || node.type === 'strong') {
     return { ...node, children: node.children.flatMap((child) => {
       const safe = sanitizeInline(child, policy);
@@ -660,9 +748,12 @@ function sanitizeInline(node: NormalizedInline, policy: SanitizeAstPolicy): Safe
 }
 
 function sanitizeBlock(node: NormalizedBlock, policy: SanitizeAstPolicy): SafeBlock | null {
-  if (node.type === 'html') return policy.rawHtml === 'drop' ? null : {
-    type: 'paragraph', position: node.position, children: [{ type: 'text', value: node.value, position: node.position }],
-  };
+  if (node.type === 'html') {
+    if (policy.rawHtml === 'drop' || isPergaMarkerHtml(node.value)) return null;
+    return {
+      type: 'paragraph', position: node.position, children: [{ type: 'text', value: node.value, position: node.position }],
+    };
+  }
   if (node.type === 'blockquote') {
     return { ...node, children: node.children.flatMap((child) => {
       const safe = sanitizeBlock(child, policy);

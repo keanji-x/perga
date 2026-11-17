@@ -8,7 +8,7 @@ import { renderDailyFixture } from './daily-planner-fixture.tsx';
 const SOURCE = '# Prepared report\n\nStored **evidence** with a [reference](https://github.com/example/project/issues/1).';
 function setup() {
   const fixture = renderDailyFixture({ initial: '/track/daily', reply: request => {
-    if (request.path === '/api/tracks/daily') return { status: 200, statusText: 'OK', body: {
+    if (request.path === '/api/v1/tracks/daily') return { status: 200, statusText: 'OK', body: {
       track: { workspace: { isolation: 'none' as const, kind: 'attached' as const, path: '/tmp', frozen_at: null }, id: 'daily', area_id: 'daily-area', title: 'Report preparation', sort: 0, cwd: '/tmp',
         pinned_at: null, closed_at: null, created_at: 1, updated_at: 2 },
       planner_revision: 0, can_reopen: false, can_close: false, can_admin: false, overlays: [], cards: [{
@@ -19,7 +19,7 @@ function setup() {
         ] },
       }],
     } };
-    if (/^\/api\/tracks\/(daily|project)\/report$/.test(request.path)) return { status: 200, statusText: 'OK', body: { taskDiagnostics: [] } };
+    if (/^\/api\/v1\/tracks\/(daily|project)\/report$/.test(request.path)) return { status: 200, statusText: 'OK', body: { taskDiagnostics: [] } };
     if (/^\/api\/tracks\/(daily|project)\/backlinks$/.test(request.path)) return { status: 200, statusText: 'OK', body: { backlinks: [], truncated: false, skipped_sources: 0 } };
     return undefined;
   } });

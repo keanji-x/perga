@@ -1,0 +1,35 @@
+{
+  "accept": [
+    "index.html",
+    "report.htm",
+    "Nested/Page.HTML",
+    "dashboards/2026/summary.html",
+    "a.b/c-d_e.html"
+  ],
+  "refuse": [
+    "",
+    "/index.html",
+    "//example.com/index.html",
+    "../index.html",
+    "docs/../escape/../../index.html",
+    "docs/../../index.html",
+    "http://example.com/index.html",
+    "https://example.com/index.html",
+    "javascript:alert(1).html",
+    "data:text/html,<h1>x</h1>.html",
+    "docs\\index.html",
+    "index.html?x=1",
+    "index.html#frag",
+    " index.html",
+    "index.html ",
+    "\tindex.html",
+    "index.html\n",
+    ".html",
+    "docs/.html",
+    "docs/.htm",
+    "docs/readme.md",
+    "docs/script.js",
+    "docs/index\u0000.html",
+    "docs/index\u007f.html"
+  ]
+}

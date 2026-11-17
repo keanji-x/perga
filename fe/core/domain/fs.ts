@@ -3,6 +3,7 @@
 
 import { z } from 'zod';
 
+import { diffSummaryDtoSchema, workspaceFileResultDtoSchema, type DiffSummaryDto } from '../api/schemas.js';
 import type { ApiOperation } from '../api/types.js';
 import type { FailureTable } from './failure-class.js';
 
@@ -52,21 +53,71 @@ export function rawFileUrl(path: string): string {
   return `/api/fs/readfile-raw?path=${encodeURIComponent(path)}`;
 }
 
-/** A Track-scoped read: the kernel, not the browser, owns the workspace root. */
+/** A Track-scoped read via `GET /api/v1/tracks/{trackId}/files`: the kernel owns the workspace root. */
 export function readTrackWorkspaceFileOperation(
   trackId: string,
   path: string,
 ): ApiOperation<ReadFileWire> {
   return {
     method: 'GET',
-    path: `/api/tracks/${encodeURIComponent(trackId)}/workspace/readfile?path=${encodeURIComponent(path)}`,
-    responseSchema: readFileWireSchema,
+    path: `/api/v1/tracks/${encodeURIComponent(trackId)}/files?path=${encodeURIComponent(path)}`,
+    responseSchema: z.union([
+      workspaceFileResultDtoSchema.transform((dto) => ({
+        path: dto.relativePath || path,
+        size: (dto.content ?? '').length,
+        text: dto.content ?? '',
+        truncated: dto.truncated,
+      })),
+      readFileWireSchema,
+    ]),
+  };
+}
+
+export function listTrackWorkspaceDirectoryOperation(
+  trackId: string,
+  path?: string,
+): ApiOperation<DirectoryListingWire> {
+  const query = path === undefined || path === '' ? '' : `?path=${encodeURIComponent(path)}`;
+  return {
+    method: 'GET',
+    path: `/api/v1/tracks/${encodeURIComponent(trackId)}/files${query}`,
+    responseSchema: z.union([
+      workspaceFileResultDtoSchema.transform((dto) => ({
+        path: dto.relativePath,
+        parent: dto.relativePath === ''
+          ? null
+          : dto.relativePath.includes('/')
+            ? dto.relativePath.slice(0, dto.relativePath.lastIndexOf('/'))
+            : '',
+        entries: (dto.entries ?? []).map((entry) => ({
+          name: entry.name,
+          is_dir: entry.isDirectory,
+        })),
+      })),
+      directoryListingWireSchema,
+    ]),
+  };
+}
+
+export function trackVcsDiffOperation(
+  trackId: string,
+  fromRev?: string,
+  toRev?: string,
+): ApiOperation<DiffSummaryDto> {
+  const parts: string[] = [];
+  if (fromRev !== undefined && fromRev !== '') parts.push(`fromRev=${encodeURIComponent(fromRev)}`);
+  if (toRev !== undefined && toRev !== '') parts.push(`toRev=${encodeURIComponent(toRev)}`);
+  const query = parts.join('&');
+  return {
+    method: 'GET',
+    path: `/api/v1/tracks/${encodeURIComponent(trackId)}/vcs-diff${query === '' ? '' : `?${query}`}`,
+    responseSchema: diffSummaryDtoSchema,
   };
 }
 
 /** Raw image counterpart to {@link readTrackWorkspaceFileOperation}. */
 export function trackWorkspaceRawFileUrl(trackId: string, path: string): string {
-  return `/api/tracks/${encodeURIComponent(trackId)}/workspace/readfile-raw?path=${encodeURIComponent(path)}`;
+  return `/api/v1/tracks/${encodeURIComponent(trackId)}/files?path=${encodeURIComponent(path)}`;
 }
 
 /** The only filesystem capabilities an agent-authored Report file may use. */

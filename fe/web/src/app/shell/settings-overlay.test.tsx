@@ -33,10 +33,10 @@ afterEach(() => {
 });
 
 function bodyFor(path: string): unknown {
-  if (path === '/api/areas') return [];
+  if (path === '/api/v1/areas') return [];
   if (path === '/api/settings') return { settings: {} };
   if (path === '/api/plugins') return [];
-  if (path === '/api/track-templates') return [];
+  if (path === '/api/v1/templates') return [];
   return [];
 }
 

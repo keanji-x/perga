@@ -27,3 +27,6 @@ export const modelCatalog = (scope: ModelCatalogScope) => ['model-catalog', scop
 export const modelCatalogPrefix = () => ['model-catalog'] as const;
 export const trackConversations = (trackId: string) => ['track-conversations', trackId] as const;
 export const trackConversationsPrefix = () => ['track-conversations'] as const;
+export const sessionLive = (sessionId: string) => ['session-live', sessionId] as const;
+export const trackTerminals = (trackId: string) => ['track-terminals', trackId] as const;
+export const taskAttemptsPrefix = (trackId: string) => ['task-attempts', trackId] as const;

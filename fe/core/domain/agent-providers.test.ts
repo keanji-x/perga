@@ -18,7 +18,7 @@ it('preserves the selected authentication method and rejects missing or malforme
 
 it('decodes registered managed capabilities and preserves availability notices', () => {
   const operation = managedProvidersOperation(true);
-  expect(operation.path).toBe('/api/agent-providers/managed?refresh=true');
+  expect(operation.path).toBe('/api/v1/bootstrap?scope=managed&refresh=true');
   expect(operation.responseSchema.parse([READY])).toEqual([READY]);
   expect(managedProviderProblem([READY], 'claude')).toBeNull();
   const unavailable = { ...READY, availability: { ...READY.availability, status: 'unavailable', reason: 'Sign in first', authentication_method: null, authentication_notice: { kind: 'sign_in_required', text: 'Authenticate on this server', revision: 'r1' } } };

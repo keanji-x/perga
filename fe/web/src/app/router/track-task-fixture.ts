@@ -23,14 +23,14 @@ export function createTrackTaskFixture() {
   const transport: ApiTransportPort = { send(request) {
     requests.push(request);
     if (request.method !== 'GET') throw new Error(`Unexpected write: ${request.method} ${request.path}`);
-    if (request.path === '/api/areas') return Promise.resolve(ok([area]));
-    if (request.path === '/api/areas/c1/tracks') return Promise.resolve(ok([track]));
-    if (request.path === '/api/tracks/w1') return Promise.resolve(ok({ track, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true, cards: [reportCard], overlays: [] }));
-    if (request.path === '/api/tracks/w1/report') return Promise.resolve(ok({ ...reportCard.payload, taskDiagnostics: [
+    if (request.path === '/api/v1/areas') return Promise.resolve(ok([area]));
+    if (request.path === '/api/v1/areas/c1/tracks?includeClosed=true') return Promise.resolve(ok([track]));
+    if (request.path === '/api/v1/tracks/w1') return Promise.resolve(ok({ track, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true, cards: [reportCard], overlays: [] }));
+    if (request.path === '/api/v1/tracks/w1/report') return Promise.resolve(ok({ ...reportCard.payload, taskDiagnostics: [
       { blockId: declaration.id, key: taskKey, schedulable: true, status: first.status,
         statusDetail: first.status_detail, workerCardId: null, diagnostics: [] },
     ] }));
-    if (request.path === `/api/tracks/w1/tasks/${taskKey}/attempts`) return Promise.resolve(ok(history));
+    if (request.path === `/api/v1/tracks/w1/tasks/${taskKey}/attempts`) return Promise.resolve(ok(history));
     if (request.path === '/api/settings') return Promise.resolve(ok({}));
     return Promise.resolve(ok([]));
   } };

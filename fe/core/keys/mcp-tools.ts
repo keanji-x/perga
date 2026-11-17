@@ -1,41 +1,41 @@
-/** The kernel's own MCP tool names, as they appear on the wire. Not exhaustive: an unrecognised tool keeps its wire name. */
+/** Perga MCP tool names (`/mcp/kernel` `perga_*` and `/mcp/vcs` `vcs_*`), as they appear on the wire. */
 
-/** Everything that changes the report. `commit` is the batched form (blocks + summary); `upsert`
- *  names the retired single-block writer in stored history (#2003 migration). */
+/** Everything that changes the report. `perga_report_commit` is the canonical Perga batch/block writer. */
 export const REPORT_WRITE_TOOLS: readonly string[] = Object.freeze([
-  'neige_report_write',
-  'neige_report_upsert',
-  'neige_report_commit',
+  'perga_report_write',
+  'perga_report_upsert',
+  'perga_report_commit',
 ]);
 
-/** The retired single-op block delete, as stored history names it (#2003 migration). */
-export const REPORT_DELETE_TOOL = 'neige_report_delete';
-/** The Planner's two decisions on a task attempt. */
-export const TASK_ACCEPT_TOOL = 'neige_task_accept';
-export const TASK_REJECT_TOOL = 'neige_task_reject';
-export const TASK_LS_TOOL = 'neige_task_ls';
+/** Single-op block delete in stored history. */
+export const REPORT_DELETE_TOOL = 'perga_report_delete';
+/** Governance decisions on a task attempt. */
+export const TASK_ACCEPT_TOOL = 'perga_task_accept';
+export const TASK_REJECT_TOOL = 'perga_task_reject';
+export const TASK_CANCEL_TOOL = 'perga_task_cancel';
+export const TASK_DONE_TOOL = 'perga_task_done';
+export const TASK_FAIL_TOOL = 'perga_task_fail';
+export const TASK_LS_TOOL = 'perga_task_ls';
 
 /** Reads of the report. */
 export const REPORT_READ_TOOLS: readonly string[] = Object.freeze([
-  'neige_report_read',
-  'neige_report_describe',
-  'neige_link_ls',
+  'perga_report_read',
 ]);
 
-/** Every report tool, read or write, is under this prefix: a report tool this file has never
- *  heard of counts as a change, so a new write can never read as silence. */
-export const REPORT_TOOL_PREFIX = 'neige_report_';
+/** Every report tool, read or write, is under this prefix: an unknown report tool counts as a change. */
+export const REPORT_TOOL_PREFIX = 'perga_report_';
 
-export const TRACK_TOOL_PREFIX = 'neige_track_';
+export const TRACK_TOOL_PREFIX = 'perga_track_';
 
-/** A `neige_track_*` tool that is a WRITE — keep it out of the `TRACK_TOOL_PREFIX` read bucket. */
-export const TRACK_RENAME_TOOL = 'neige_track_rename';
+/** A `perga_track_*` tool that is a WRITE — keep it out of the `TRACK_TOOL_PREFIX` read bucket. */
+export const TRACK_RENAME_TOOL = 'perga_track_rename';
+export const TRACK_CLOSE_TOOL = 'perga_track_close';
 
-/** Development publication: pushes the candidate branch and opens or reuses its PR. */
-export const DEV_PUBLISH_TOOL = 'plugin_gitforge_publish';
+/** VCS publication: pushes the candidate branch and opens or reuses its PR (`/mcp/vcs`). */
+export const DEV_PUBLISH_TOOL = 'vcs_publish_pr';
 
-/** The planner's one way to ask the reader (#2209); rendered as an agent turn whose text is its questions. */
-export const USER_ASK_TOOL = 'neige_user_ask';
+/** Human approval/question prompt (`perga_user_ask`). */
+export const USER_ASK_TOOL = 'perga_user_ask';
 
-/** Mail to another Track of the Area (#2130); its line names the mail by `arguments.summary`. */
-export const MAIL_SEND_TOOL = 'neige_mail_send';
+/** Cross-track mail (`perga_mail_send`). */
+export const MAIL_SEND_TOOL = 'perga_mail_send';

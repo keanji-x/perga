@@ -51,13 +51,13 @@ function setup(path: string) {
   const transport: ApiTransportPort = {
     send(request) {
       if (request.path.startsWith('/api/today/daily')) return Promise.resolve(ok(null));
-      if (request.path === '/api/areas') return Promise.resolve(ok([AREA, OTHER_AREA]));
-      if (request.path === '/api/areas/c1/tracks') return Promise.resolve(ok([TRACK]));
-      if (request.path === '/api/areas/c2/tracks') return Promise.resolve(ok([]));
-      if (request.path === '/api/tracks/w1') return Promise.resolve(ok({
+      if (request.path === '/api/v1/areas') return Promise.resolve(ok([AREA, OTHER_AREA]));
+      if (request.path === '/api/v1/areas/c1/tracks?includeClosed=true') return Promise.resolve(ok([TRACK]));
+      if (request.path === '/api/v1/areas/c2/tracks?includeClosed=true') return Promise.resolve(ok([]));
+      if (request.path === '/api/v1/tracks/w1') return Promise.resolve(ok({
         track: TRACK, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true, cards: [CARD, REPORT_CARD], overlays: [],
       }));
-      if (request.path === '/api/tracks/w1/report') return Promise.resolve(ok({ taskDiagnostics: [] }));
+      if (request.path === '/api/v1/tracks/w1/report') return Promise.resolve(ok({ taskDiagnostics: [] }));
       return Promise.resolve(ok([]));
     },
   };

@@ -38,22 +38,22 @@ export function setupWorkbench({ cards: initial = [] as CardWire[], defer = fals
     if (receipt !== undefined) return receipt;
     const { path, method } = request;
     if (path === '/api/today/daily') return ok({ date: '2026-10-17', time_zone: 'Asia/Shanghai', track_id: track.id });
-    if (path === '/api/version') return ok({ assistantProviders: true, conversationSide: true, webCompatVersion: WEB_COMPAT_VERSION,
+    if (path === '/api/v1/bootstrap') return ok({ assistantProviders: true, conversationSide: true, webCompatVersion: WEB_COMPAT_VERSION,
       minWebCompatVersion: WEB_COMPAT_VERSION, syncEventVersion: 1, dbInstanceId: 'workbench-tests' });
-    if (path.startsWith('/api/agent-providers/managed')) return ok([{ availability: { provider: 'codex', status: 'ready', reason: null, checked_at_ms: 1, authentication_method: null, authentication_notice: null },
+    if (path.startsWith('/api/v1/bootstrap?scope=managed')) return ok([{ availability: { provider: 'codex', status: 'ready', reason: null, checked_at_ms: 1, authentication_method: null, authentication_notice: null },
       accepts_unavailable_blank_track: true, capabilities: { managed_conversation: true, steer: true, images: true, manual_compact: true, history_replacement: true, requires_ready_availability: false } }]);
-    if (path === '/api/areas') return ok([{ id: 'area', name: 'Work', color: '#123456', sort: 1, kind: 'user', created_at: 1, updated_at: 1 }]);
-    if (path === '/api/areas/area/tracks') return ok([track]);
+    if (path === '/api/v1/areas') return ok([{ id: 'area', name: 'Work', color: '#123456', sort: 1, kind: 'user', created_at: 1, updated_at: 1 }]);
+    if (path === '/api/v1/areas/area/tracks?includeClosed=true') return ok([track]);
     if (path === '/api/settings') return ok({});
-    if (path === '/api/tracks/other') return ok({ track: { ...track, id: 'other', title: 'Other track' }, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true, cards: [...otherCards], overlays: [] });
-    if (path === '/api/tracks/workbench') return ok({ track, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true, cards: [...cards], overlays: [] });
-    if (secondaryReads !== null && ['/api/tracks/workbench/report', '/api/tracks/workbench/conversations', '/api/tracks/workbench/backlinks'].includes(path)) await secondaryReads;
-    if (path === '/api/tracks/workbench/report') return ok({ taskDiagnostics: [] });
-    if (path === '/api/tracks/workbench/conversations') return ok(rows);
-    if (path === '/api/tracks/other/terminal-cards' && method === 'POST') {
+    if (path === '/api/v1/tracks/other') return ok({ track: { ...track, id: 'other', title: 'Other track' }, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true, cards: [...otherCards], overlays: [] });
+    if (path === '/api/v1/tracks/workbench') return ok({ track, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true, cards: [...cards], overlays: [] });
+    if (secondaryReads !== null && ['/api/v1/tracks/workbench/report', '/api/v1/tracks/workbench/sessions', '/api/tracks/workbench/backlinks'].includes(path)) await secondaryReads;
+    if (path === '/api/v1/tracks/workbench/report') return ok({ taskDiagnostics: [] });
+    if (path === '/api/v1/tracks/workbench/sessions') return ok(rows);
+    if (path === '/api/v1/tracks/other/terminals' && method === 'POST') {
       const card = terminalCard('other-terminal', { source: 'manual', in_workbench: true }, 'other'); otherCards.push(card); return ok(card);
     }
-    if (path === '/api/tracks/workbench/terminal-cards' && method === 'POST') {
+    if (path === '/api/v1/tracks/workbench/terminals' && method === 'POST') {
       if (defer) await new Promise<void>(resolve => releases.push(resolve));
       const outcome = failure; failure = null;
       if (outcome === 'definite') return { status: 400, statusText: 'Bad Request', body: { code: 'bad_request', error: 'Terminal refused' } };
@@ -74,12 +74,20 @@ export function setupWorkbench({ cards: initial = [] as CardWire[], defer = fals
       } } };
       return ok(cards[index]);
     }
+    if (method === 'DELETE' && (path.startsWith('/api/v1/tracks/') && path.includes('/terminals/'))) {
+      const termId = decodeURIComponent(path.split('/').at(-1) ?? '');
+      cards.splice(cards.findIndex(card => card.id === termId), 1);
+      return ok(undefined);
+    }
     if (method === 'DELETE' && path.startsWith('/api/cards/')) { cards.splice(cards.findIndex(card => card.id === path.split('/')[3]), 1); return ok(undefined); }
-    if (path.includes('/planner/run?contract=conversation_v1')) return ok(historicalConversationRun({ card_id: conversationCardId(path), worker_session_id: 'session-parent', phase: live.text === '' ? 'idle' : 'issuing_turn', model: null,
+    if (path.includes('&view=run')) return ok(historicalConversationRun({ card_id: conversationCardId(path), worker_session_id: 'session-parent', phase: live.text === '' ? 'idle' : 'issuing_turn', model: null,
       reasoning_effort: null, permission_mode: null, blocked_reason: null, recovery: null, manual_compact_supported: true, compact_outcome: null, context_usage_invalidated: false, running_turn: null }, live.text === '' ? 'idle' : 'running', true));
-    if (path.includes('/harness/items?contract=conversation_v1')) return ok(historicalConversationPage(conversationCardId(path), [], null));
-    if (path.endsWith('/harness/live')) return ok(live.text === '' ? { turn_id: null, items: [] }
-      : { turn_id: 'streamed-turn', items: [{ item_id: 'streamed-message', text: live.text }] });
+    if (path.includes('/items?') && !path.includes('&view=')) return ok(historicalConversationPage(conversationCardId(path), [], null));
+    if (path.endsWith('&view=live') || path.endsWith('&view=live-legacy')) return ok(live.text === ''
+      ? (path.endsWith('&view=live') ? { contract: 'conversation_v1', turn: null } : { turn_id: null, items: [] })
+      : (path.endsWith('&view=live')
+        ? { contract: 'conversation_v1', turn: { thread_id: 'thread-parent', turn_id: 'streamed-turn', items: [{ item_id: 'streamed-message', text: live.text }] } }
+        : { turn_id: 'streamed-turn', items: [{ item_id: 'streamed-message', text: live.text }] }));
     return ok([]);
   } };
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
@@ -90,7 +98,7 @@ export function setupWorkbench({ cards: initial = [] as CardWire[], defer = fals
   router.update({ history: createMemoryHistory({ initialEntries: [`${APP_BASEPATH}${daily ? '/' : '/track/workbench'}${initialCard === null ? '' : `?card=${encodeURIComponent(initialCard)}`}`] }) });
   const container = document.createElement('div'); container.id = 'root'; document.body.append(container);
   const view = render(<QueryClientProvider client={client}><ThemeProvider><RouterProvider router={router} /></ThemeProvider></QueryClientProvider>, { container });
-  return { ...view, requests, releases, router, client, runtime, cards, live, posts: () => requests.filter(request => request.method === 'POST' && request.path.endsWith('/terminal-cards')) };
+  return { ...view, requests, releases, router, client, runtime, cards, live, posts: () => requests.filter(request => request.method === 'POST' && request.path.endsWith('/terminals')) };
 }
 
 

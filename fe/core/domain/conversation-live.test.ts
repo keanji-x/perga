@@ -120,7 +120,7 @@ describe('replyMayStream', () => {
 describe('harnessLiveOperation', () => {
   it('reads the card\'s live replies and decodes the wire shape', () => {
     const operation = harnessLiveOperation('card/1');
-    expect(operation).toMatchObject({ method: 'GET', path: '/api/cards/card%2F1/harness/live' });
+    expect(operation).toMatchObject({ method: 'GET', path: '/api/v1/sessions/card%2F1/items?afterId=0&limit=1&view=live-legacy' });
     expect(operation.responseSchema.parse({ turn_id: null, items: [] })).toEqual({ turn_id: null, items: [] });
     expect(operation.responseSchema.safeParse({ turn_id: 'T', items: [{ item_id: 'x' }] }).success).toBe(false);
   });

@@ -42,7 +42,7 @@ describe('session gate contracts', () => {
     expect(screen.getByRole('navigation', { name: '恢复页面导航' })).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'Track' })).toBeTruthy();
     expect(screen.getByRole('status').textContent).toContain('正在恢复连接');
-    expect(paths).toEqual(['/api/auth/whoami']);
+    expect(paths).toEqual(['/api/v1/bootstrap?scope=whoami']);
     expect(fetchVersion).not.toHaveBeenCalled();
   });
   it('bundled assembly without recovery admission never mounts business routes after successful identity and version', async () => {
@@ -58,7 +58,7 @@ describe('session gate contracts', () => {
     render(<ProductionApp transport={transport} client={client} unauthorized={unauthorized} runtime={runtime}
       cursorStore={{ clear: vi.fn() }} router={router} renderLogin={() => <b>login</b>} renderError={() => <b>retry</b>} />);
     await waitFor(() => expect(fetchVersion).toHaveBeenCalledOnce());
-    expect(paths).toEqual(['/api/auth/whoami']); expect(screen.getByRole('heading', { name: 'Track' })).toBeTruthy();
+    expect(paths).toEqual(['/api/v1/bootstrap?scope=whoami']); expect(screen.getByRole('heading', { name: 'Track' })).toBeTruthy();
   });
 
   it('does not mount the real AppProviders ServerCompatGate before an unauthenticated verdict', async () => {
@@ -71,7 +71,7 @@ describe('session gate contracts', () => {
     const router = createAppRouter({ prepareReport: prepareReportDocument, transport, unauthorized, client, cards: bootTestCardRuntime(), onSignOut: vi.fn() });
     render(<ProductionApp transport={transport} client={client} unauthorized={unauthorized} runtime={runtime}
       cursorStore={{ clear: vi.fn() }} router={router} renderLogin={() => <b>login</b>} renderError={() => <b>retry</b>} />);
-    expect(paths).toEqual(['/api/auth/whoami']);
+    expect(paths).toEqual(['/api/v1/bootstrap?scope=whoami']);
     expect(await screen.findByText('login')).toBeTruthy();
     expect(fetchVersion).not.toHaveBeenCalled();
   });

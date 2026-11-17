@@ -27,12 +27,12 @@ it('cold-loads the exact docs/README.md deep link after track detail arrives', a
   let release = () => {};
   const ready = new Promise<void>(resolve => { release = resolve; });
   const { router, requests } = renderReadmeFixture(README_FILE_URL, ready);
-  await waitFor(() => expect(requests.some(request => request.path === `/api/tracks/${README_TRACK_ID}`)).toBe(true));
-  expect(requests.some(request => request.path.includes('/readfile'))).toBe(false);
+  await waitFor(() => expect(requests.some(request => request.path === `/api/v1/tracks/${README_TRACK_ID}`)).toBe(true));
+  expect(requests.some(request => request.path.includes('/files?'))).toBe(false);
   await act(async () => { release(); await ready; });
   await readmeDocument();
-  expect(requests.filter(request => request.path.includes('/readfile')).map(request => request.path))
-    .toEqual([`/api/tracks/${README_TRACK_ID}/workspace/readfile?path=docs%2FREADME.md`]);
+  expect(requests.filter(request => request.path.includes('/files?')).map(request => request.path))
+    .toEqual([`/api/v1/tracks/${README_TRACK_ID}/files?path=docs%2FREADME.md`]);
   expect(router.history.location.href).toBe(README_FILE_URL);
   const back = vi.spyOn(router.history, 'back');
   fireEvent.click(screen.getByRole('button', { name: 'Back to track' }));
@@ -76,9 +76,9 @@ it('resolves the real README parent link through the same scoped file navigation
   await within(parent).findByRole('heading', { name: 'Why Neige Calm?', level: 3 });
   expect(router.history.location.href).toBe(`${README_TRACK_URL}?file=README.md`);
   expect(router.history.length).toBe(1);
-  expect(requests.filter(request => request.path.includes('/readfile')).map(request => request.path)).toEqual([
-    `/api/tracks/${README_TRACK_ID}/workspace/readfile?path=docs%2FREADME.md`,
-    `/api/tracks/${README_TRACK_ID}/workspace/readfile?path=README.md`,
+  expect(requests.filter(request => request.path.includes('/files?')).map(request => request.path)).toEqual([
+    `/api/v1/tracks/${README_TRACK_ID}/files?path=docs%2FREADME.md`,
+    `/api/v1/tracks/${README_TRACK_ID}/files?path=README.md`,
   ]);
 });
 
@@ -93,7 +93,7 @@ it('suppresses HTTP 500 details and retries the same workspace read into the rea
   fixture.recoverFileRead();
   fireEvent.click(within(file).getByRole('button', { name: 'Retry' }));
   await readmeDocument();
-  expect(fixture.requests.filter(request => request.path.includes('/readfile')).map(request => request.path))
-    .toEqual(Array<string>(2).fill(`/api/tracks/${README_TRACK_ID}/workspace/readfile?path=docs%2FREADME.md`));
+  expect(fixture.requests.filter(request => request.path.includes('/files?')).map(request => request.path))
+    .toEqual(Array<string>(2).fill(`/api/v1/tracks/${README_TRACK_ID}/files?path=docs%2FREADME.md`));
   expect(fixture.router.history.location.href).toBe(README_FILE_URL);
 });

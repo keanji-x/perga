@@ -30,8 +30,8 @@ it.each(['claude', 'codex', 'opencode', 'grok'] as const)('compact uses the decl
   await screen.findByRole('option', { name: /^compact/ });
   await userEvent.keyboard('{Enter}');
   await userEvent.keyboard('{Enter}');
-  await waitFor(() => expect(fixture.requests.filter(request => request.method === 'POST' && request.path.endsWith('/planner/compact'))).toHaveLength(1));
-  expect(fixture.requests.filter(request => request.method === 'POST' && request.path.endsWith('/planner/input'))).toHaveLength(0);
+  await waitFor(() => expect(fixture.requests.filter(request => request.method === 'POST' && request.path.endsWith('/compact'))).toHaveLength(1));
+  expect(fixture.requests.filter(request => request.method === 'POST' && request.path.endsWith('/messages'))).toHaveLength(0);
 });
 
 it.each(['claude', 'codex', 'opencode', 'grok'] as const)('compact is hidden when the %s session declares no capability', async provider => {
@@ -87,7 +87,7 @@ it('compact POST started and idle phase never imply success', async () => {
   await screen.findByRole('option', { name: /^compact/ });
   await userEvent.keyboard('{Enter}');
   await userEvent.keyboard('{Enter}');
-  await waitFor(() => expect(fixture.requests.some(request => request.path.endsWith('/planner/compact'))).toBe(true));
+  await waitFor(() => expect(fixture.requests.some(request => request.path.endsWith('/compact'))).toBe(true));
   expect(screen.queryByText('已压缩')).toBeNull();
 });
 

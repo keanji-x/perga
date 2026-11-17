@@ -24,10 +24,10 @@ it('requires the shared confirmation before deleting a sidebar track', async () 
   };
   const transport: ApiTransportPort = { send(request): Promise<ApiTransportResponse> {
     requests.push(request);
-    if (request.path === '/api/areas') return Promise.resolve({ status: 200, statusText: 'OK', body: [
+    if (request.path === '/api/v1/areas') return Promise.resolve({ status: 200, statusText: 'OK', body: [
       { id: 'c1', name: 'Work', color: '#123456', sort: 1, kind: 'user', created_at: 1, updated_at: 1 },
     ] });
-    if (request.path === '/api/areas/c1/tracks') return Promise.resolve({ status: 200, statusText: 'OK', body: deleted ? [] : [track] });
+    if (request.path === '/api/v1/areas/c1/tracks?includeClosed=true') return Promise.resolve({ status: 200, statusText: 'OK', body: deleted ? [] : [track] });
     if (request.method === 'DELETE') deleted = true;
     return Promise.resolve({ status: 200, statusText: 'OK', body: request.method === 'DELETE' ? undefined : [] });
   } };
@@ -54,11 +54,11 @@ it('does not navigate on a delete success that arrives after cancellation', asyn
     pinned_at: null, closed_at: null, created_at: 1, updated_at: 1 };
   const transport: ApiTransportPort = { send(request): Promise<ApiTransportResponse> {
     if (request.method === 'DELETE') return new Promise((resolve) => { resolveDelete = resolve; });
-    if (request.path === '/api/areas') return Promise.resolve({ status: 200, statusText: 'OK', body: [
+    if (request.path === '/api/v1/areas') return Promise.resolve({ status: 200, statusText: 'OK', body: [
       { id: 'c1', name: 'Work', color: '#123456', sort: 1, kind: 'user', created_at: 1, updated_at: 1 },
     ] });
-    if (request.path === '/api/areas/c1/tracks') return Promise.resolve({ status: 200, statusText: 'OK', body: [track] });
-    if (request.path === '/api/tracks/w1') return Promise.resolve({
+    if (request.path === '/api/v1/areas/c1/tracks?includeClosed=true') return Promise.resolve({ status: 200, statusText: 'OK', body: [track] });
+    if (request.path === '/api/v1/tracks/w1') return Promise.resolve({
       status: 200, statusText: 'OK', body: { track, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true, cards: [], overlays: [] },
     });
     if (request.path === '/api/settings') return Promise.resolve({ status: 200, statusText: 'OK', body: {} });
@@ -84,10 +84,10 @@ it('does not navigate on an area delete success that arrives after cancellation'
   let resolveDelete!: (response: ApiTransportResponse) => void;
   const transport: ApiTransportPort = { send(request): Promise<ApiTransportResponse> {
     if (request.method === 'DELETE') return new Promise((resolve) => { resolveDelete = resolve; });
-    if (request.path === '/api/areas') return Promise.resolve({ status: 200, statusText: 'OK', body: [
+    if (request.path === '/api/v1/areas') return Promise.resolve({ status: 200, statusText: 'OK', body: [
       { id: 'c1', name: 'Work', color: '#123456', sort: 1, kind: 'user', created_at: 1, updated_at: 1 },
     ] });
-    if (request.path === '/api/areas/c1/tracks') return Promise.resolve({ status: 200, statusText: 'OK', body: [] });
+    if (request.path === '/api/v1/areas/c1/tracks?includeClosed=true') return Promise.resolve({ status: 200, statusText: 'OK', body: [] });
     return Promise.resolve({ status: 200, statusText: 'OK', body: [] });
   } };
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -114,11 +114,11 @@ it('round-trips an encoded track id through useGo, TanStack history, and useRout
     pinned_at: null, closed_at: null, created_at: 1, updated_at: 1 };
   const transport: ApiTransportPort = { send(request): Promise<ApiTransportResponse> {
     requests.push(request);
-    if (request.path === '/api/areas') return Promise.resolve({ status: 200, statusText: 'OK', body: [
+    if (request.path === '/api/v1/areas') return Promise.resolve({ status: 200, statusText: 'OK', body: [
       { id: 'c1', name: 'Work', color: '#123456', sort: 1, kind: 'user', created_at: 1, updated_at: 1 },
     ] });
-    if (request.path === '/api/areas/c1/tracks') return Promise.resolve({ status: 200, statusText: 'OK', body: [track] });
-    if (request.path.includes('/api/tracks/')) return Promise.resolve({
+    if (request.path === '/api/v1/areas/c1/tracks?includeClosed=true') return Promise.resolve({ status: 200, statusText: 'OK', body: [track] });
+    if (request.path.includes('/api/v1/tracks/')) return Promise.resolve({
       status: 200, statusText: 'OK', body: { track, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true, cards: [], overlays: [] },
     });
     return Promise.resolve({ status: 200, statusText: 'OK', body: [] });

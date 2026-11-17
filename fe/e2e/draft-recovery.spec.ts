@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 
-test('keeps the Today Assistant and calendar usable when Areas is unavailable', async ({ page }) => {
+test('keeps the Today Assistant usable when Areas is unavailable', async ({ page }) => {
   let recovered = false;
   let served = 0;
   await page.route('**/api/areas', async (route) => {
@@ -11,7 +11,6 @@ test('keeps the Today Assistant and calendar usable when Areas is unavailable', 
   });
   await page.goto('/next/');
   await expect.poll(() => served).toBeGreaterThan(0);
-  await expect(page.getByRole('region', { name: 'Calendar tasks' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Rename track' })).toBeVisible();
   await expect(page.getByRole('region', { name: 'Today Assistant', exact: true }).getByRole('combobox', { name: 'Message', exact: true })).toBeVisible();
   const indicator = page.getByRole('button', { name: /连接状态：(?:连接异常|.*数据读取失败)/ });

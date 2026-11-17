@@ -3,7 +3,24 @@
 
 import { z } from 'zod';
 
-import { agentProviderSchema, askActionSchema, askQuestionSchema, cardSchema, overlaySchema, trackWorkspaceSchema } from '../api/schemas.js';
+import {
+  askActionSchema,
+  askQuestionDtoSchema,
+  askQuestionSchema,
+  cardSchema,
+  compiledTemplateManifestDtoSchema,
+  normalizeWireAgentProvider,
+  overlaySchema,
+  terminalDtoSchema,
+  toWireAgentProvider,
+  trackAggregateSnapshotDtoSchema,
+  trackDtoSchema,
+  trackWorkspaceSchema,
+  type AskDto,
+  type TerminalDto,
+  type TrackAggregateSnapshotDto,
+  type TrackDto,
+} from '../api/schemas.js';
 import type { AgentProvider, WorkspaceIsolation } from '../api/generated/wire.js';
 import type { ApiFailure, ApiOperation } from '../api/types.js';
 import {
@@ -142,7 +159,7 @@ const activityItemWireSchema = z.discriminatedUnion('source', [
     key: z.string(),
     text: z.string(),
     at_ms: z.number(),
-    ask_id: z.number(),
+    ask_id: z.union([z.number(), z.string()]),
     questions: z.array(askQuestionSchema),
     delivery: z.enum(['wake', 'hold']),
     action: askActionSchema.optional(),
@@ -356,8 +373,7 @@ export function isBlankForKernel(text: string): boolean {
 export function plannerProviderOf(payload: unknown): AgentProvider {
   const value = typeof payload === 'object' && payload !== null
     ? (payload as { planner_provider?: unknown }).planner_provider : undefined;
-  const parsed = agentProviderSchema.safeParse(value);
-  return parsed.success ? parsed.data : 'codex';
+  return normalizeWireAgentProvider(value) ?? 'codex';
 }
 
 export type NewTrackBody = Readonly<{
@@ -419,7 +435,23 @@ export const trackTemplateSchema = z.object({
 export type TrackTemplate = z.infer<typeof trackTemplateSchema>;
 
 export function trackTemplatesOperation(): ApiOperation<TrackTemplate[]> {
-  return { method: 'GET', path: '/api/track-templates', responseSchema: z.array(trackTemplateSchema) };
+  return {
+    method: 'GET',
+    path: '/api/v1/templates',
+    responseSchema: z.union([
+      z.array(trackTemplateSchema),
+      z.array(compiledTemplateManifestDtoSchema).transform((manifests) => manifests.map((manifest) => ({
+        id: manifest.id,
+        title: manifest.title,
+        description: manifest.description,
+        availability: { status: 'ready' as const },
+        ...(manifest.inputsSchema !== null && manifest.inputsSchema !== undefined
+          ? { input_schema: manifest.inputsSchema }
+          : {}),
+        tasks: [],
+      }))),
+    ]),
+  };
 }
 
 /** A user-defined starting point for a new track — a `track_recipes` row. */
@@ -563,33 +595,242 @@ export type TrackPatchBody = Readonly<{
   title?: string;
   sort?: number;
   pinned_at?: number | null;
+  pinned?: boolean;
+  enabled_plugins?: readonly string[];
+  lead_session_id?: string;
   /** `true` closes the track, `false` reopens it; the server stamps the time. */
   closed?: boolean;
 }>;
 
-export function tracksInAreaOperation(areaId: string): ApiOperation<TrackWire[]> {
+export function trackDtoToWire(dto: TrackDto): TrackWire {
+  const spec = typeof dto.workspaceSpec === 'object' && dto.workspaceSpec !== null
+    ? (dto.workspaceSpec as Record<string, unknown>)
+    : {};
+  const worktreePath = typeof spec.mergedCwd === 'string' && spec.mergedCwd !== ''
+    ? spec.mergedCwd
+    : typeof spec.worktreePath === 'string' && spec.worktreePath !== ''
+      ? spec.worktreePath
+      : typeof spec.workspacePath === 'string' && spec.workspacePath !== ''
+        ? spec.workspacePath
+        : undefined;
+  const logicalRoot = typeof spec.logicalRoot === 'string' && spec.logicalRoot !== ''
+    ? spec.logicalRoot
+    : dto.cwd;
+  const isWorktree = dto.workspaceDriver === 'vcs-workspace'
+    || dto.workspaceDriver === 'vcs'
+    || dto.workspaceDriver === 'git-worktree'
+    || dto.workspaceDriver === 'jj'
+    || dto.workspaceDriver === 'worktree';
+  const isAttachedNone = (dto.workspaceDriver === 'direct' || dto.workspaceDriver === 'none') && dto.cwd !== '';
+  const workspace = isWorktree
+    ? {
+      isolation: 'worktree' as const,
+      kind: 'attached' as const,
+      path: logicalRoot,
+      frozen_at: null,
+      ...(worktreePath !== undefined ? { worktree: worktreePath } : {}),
+    }
+    : isAttachedNone
+      ? { isolation: 'none' as const, kind: 'attached' as const, path: dto.cwd, frozen_at: null }
+      : { isolation: 'managed' as const, kind: 'managed' as const, path: dto.cwd, frozen_at: null };
+  return {
+    id: dto.id,
+    area_id: dto.areaId,
+    title: dto.title,
+    sort: dto.sortOrder,
+    cwd: dto.cwd,
+    workspace,
+    pinned_at: dto.pinnedAtMs ?? null,
+    closed_at: dto.closedAtMs ?? null,
+    admin_granted_at: null,
+    created_at: dto.createdAtMs,
+    updated_at: dto.updatedAtMs,
+  };
+}
+
+const trackWireOrDtoSchema: z.ZodType<TrackWire> = z.union([
+  trackDtoSchema.transform(trackDtoToWire),
+  trackWireSchema,
+]);
+
+function normalizeAskQuestions(raw: unknown): readonly z.infer<typeof askQuestionSchema>[] {
+  const source = typeof raw === 'string'
+    ? (() => { try { return JSON.parse(raw) as unknown; } catch { return []; } })()
+    : raw;
+  if (!Array.isArray(source)) return [];
+  return source.flatMap((entry) => {
+    const legacy = askQuestionSchema.safeParse(entry);
+    if (legacy.success) return [legacy.data];
+    const dto = askQuestionDtoSchema.safeParse(entry);
+    if (dto.success) return [{ title: dto.data.question, options: [...dto.data.options] }];
+    return [];
+  });
+}
+
+function askDtoToActivityItem(ask: AskDto): z.infer<typeof activityItemWireSchema> {
+  const questions = normalizeAskQuestions(ask.questions);
+  return {
+    source: 'ask',
+    key: `ask:${ask.id}`,
+    text: questions.map((question) => question.title).join('\n') || 'Question waiting for your answer',
+    at_ms: ask.createdAtMs,
+    ask_id: ask.id,
+    questions: [...questions],
+    delivery: 'wake',
+  };
+}
+
+export function terminalDtoToCardWire(dto: TerminalDto, sort = 100): CardWire {
+  return {
+    id: dto.id,
+    track_id: dto.trackId,
+    kind: 'terminal',
+    title: dto.title,
+    sort,
+    payload: {
+      terminal_id: dto.id,
+      cwd: dto.cwd,
+      program: dto.program ?? null,
+      status: dto.status,
+      exit_code: dto.exitCode ?? null,
+      in_workbench: true,
+    },
+    runtime: {
+      worker_session_id: dto.id,
+      kind: 'terminal',
+      status: dto.status === 'running' ? 'running' : 'exited',
+      terminal_id: dto.id,
+      updated_at_ms: dto.exitedAtMs ?? dto.createdAtMs,
+    },
+    deletable: true,
+    created_at: dto.createdAtMs,
+    updated_at: dto.exitedAtMs ?? dto.createdAtMs,
+  };
+}
+
+export function snapshotToTrackDetailWire(snapshot: TrackAggregateSnapshotDto): TrackDetailWire {
+  const track = trackDtoToWire(snapshot.track);
+  const cards: CardWire[] = [{
+    id: `report-${snapshot.track.id}`,
+    track_id: snapshot.track.id,
+    kind: 'track-report',
+    title: snapshot.report.summary || snapshot.track.title || null,
+    sort: 0,
+    payload: {
+      pergaSnapshot: true,
+      docRev: snapshot.report.docRev,
+      summary: snapshot.report.summary,
+      body: '',
+      blocks: snapshot.report.blocks,
+    },
+    deletable: false,
+    created_at: snapshot.track.createdAtMs,
+    updated_at: snapshot.track.updatedAtMs,
+  }];
+
+  const lead = snapshot.sessions.find((session) => session.isLead || session.id === snapshot.track.leadSessionId)
+    ?? snapshot.sessions[0];
+  if (lead !== undefined) {
+    cards.push({
+      id: lead.id,
+      track_id: snapshot.track.id,
+      kind: 'shared-spec',
+      title: lead.title ?? null,
+      sort: 1,
+      payload: {
+        planner_provider: normalizeWireAgentProvider(lead.provider) ?? lead.provider,
+        is_lead: lead.isLead,
+        epoch: lead.epoch,
+      },
+      deletable: false,
+      created_at: lead.createdAtMs,
+      updated_at: lead.updatedAtMs,
+    });
+  }
+
+  const openAskItems = snapshot.openAsks
+    .filter((ask) => ask.status === 'open')
+    .map(askDtoToActivityItem);
+  const working = snapshot.tasks.some((task) => task.status === 'running' || task.status === 'verifying')
+    || snapshot.sessions.some((session) => session.status === 'running');
+  const attention = openAskItems.length > 0
+    ? 'input'
+    : snapshot.tasks.some((task) => task.status === 'failed')
+      ? 'failed'
+      : 'none';
+  const overlays: OverlayWire[] = [{
+    id: `activity-${snapshot.track.id}`,
+    plugin_id: KERNEL_OVERLAY_PLUGIN_ID,
+    entity_kind: 'track',
+    entity_id: snapshot.track.id,
+    kind: 'activity',
+    payload: {
+      schemaVersion: 4,
+      working,
+      attention,
+      activity_at_ms: snapshot.track.updatedAtMs,
+      items: openAskItems,
+      cards: snapshot.sessions
+        .filter((session) => session.status === 'running')
+        .map((session) => ({ card_id: session.id, state: 'working' })),
+    },
+    updated_at: snapshot.track.updatedAtMs,
+  }];
+
+  return {
+    planner_revision: snapshot.report.docRev,
+    track,
+    can_reopen: snapshot.track.closedAtMs !== null && snapshot.track.closedAtMs !== undefined,
+    can_close: snapshot.track.closedAtMs === null || snapshot.track.closedAtMs === undefined,
+    can_admin: false,
+    cards,
+    overlays,
+  };
+}
+
+export function tracksInAreaOperation(areaId: string, includeClosed = true): ApiOperation<TrackWire[]> {
   return {
     method: 'GET',
-    path: `/api/areas/${encodeURIComponent(areaId)}/tracks`,
-    responseSchema: z.array(trackWireSchema),
+    path: `/api/v1/areas/${encodeURIComponent(areaId)}/tracks?includeClosed=${includeClosed ? 'true' : 'false'}`,
+    responseSchema: z.array(trackWireOrDtoSchema),
   };
 }
 
 export function trackDetailOperation(trackId: string): ApiOperation<TrackDetailWire> {
-  return { method: 'GET', path: `/api/tracks/${encodeURIComponent(trackId)}`, responseSchema: trackDetailSchema };
+  return {
+    method: 'GET',
+    path: `/api/v1/tracks/${encodeURIComponent(trackId)}`,
+    responseSchema: z.union([
+      trackAggregateSnapshotDtoSchema.transform(snapshotToTrackDetailWire),
+      trackDetailSchema,
+    ]),
+  };
 }
 
 /**
- * `POST /api/tracks`, keyed per draft on every create, with or without `first_message` (#2131): a retry under the key
- * answers with the track the first attempt made, where an unkeyed one would make a second track.
+ * `POST /api/v1/tracks`, keyed per draft on every create, with or without `first_message`.
  */
 export function createTrackOperation(body: NewTrackBody, idempotencyKey: string): ApiOperation<TrackWire> {
+  const wireBody = {
+    ...body,
+    areaId: body.area_id,
+    provider: toWireAgentProvider(body.planner_provider),
+    ...(body.isolation !== undefined
+      ? { workspaceDriver: body.isolation === 'worktree' ? 'vcs-workspace' : 'direct' }
+      : {}),
+    ...(body.template_id !== undefined ? { templateId: body.template_id } : {}),
+    ...(body.template_input !== undefined ? { templateInputs: body.template_input } : {}),
+    ...(body.first_message !== undefined ? { firstMessage: body.first_message } : {}),
+  };
   return {
     method: 'POST',
-    path: '/api/tracks',
-    body,
+    path: '/api/v1/tracks',
+    body: wireBody,
     headers: { 'Idempotency-Key': idempotencyKey },
-    responseSchema: trackWireSchema,
+    responseSchema: z.union([
+      trackAggregateSnapshotDtoSchema.transform((snapshot) => trackDtoToWire(snapshot.track)),
+      trackWireOrDtoSchema,
+    ]),
   };
 }
 
@@ -631,7 +872,25 @@ export function trackCreateWorkspaceError(failure: ApiFailure | null): string | 
 }
 
 export function updateTrackOperation(trackId: string, body: TrackPatchBody): ApiOperation<TrackWire> {
-  return { method: 'PATCH', path: `/api/tracks/${encodeURIComponent(trackId)}`, body, responseSchema: trackWireSchema };
+  const wireBody = {
+    ...(body.title !== undefined ? { title: body.title } : {}),
+    ...(body.closed !== undefined ? { closed: body.closed } : {}),
+    ...(body.pinned !== undefined
+      ? { pinned: body.pinned }
+      : body.pinned_at !== undefined
+        ? { pinned: body.pinned_at !== null, pinned_at: body.pinned_at }
+        : {}),
+    ...(body.enabled_plugins !== undefined ? { enabledPlugins: [...body.enabled_plugins] } : {}),
+    ...(body.lead_session_id !== undefined ? { leadSessionId: body.lead_session_id } : {}),
+    ...(body.sort !== undefined ? { sortOrder: body.sort, sort: body.sort } : {}),
+    ...(body.admin !== undefined ? { admin: body.admin } : {}),
+  };
+  return {
+    method: 'PATCH',
+    path: `/api/v1/tracks/${encodeURIComponent(trackId)}`,
+    body: wireBody,
+    responseSchema: trackWireOrDtoSchema,
+  };
 }
 
 /**
@@ -655,7 +914,7 @@ export const TRACK_PATCH_TEXT = Object.freeze({
 }) satisfies Readonly<Record<string, WriteText>>;
 
 export function deleteTrackOperation(trackId: string): ApiOperation<undefined> {
-  return { method: 'DELETE', path: `/api/tracks/${encodeURIComponent(trackId)}`, responseSchema: z.undefined() };
+  return { method: 'DELETE', path: `/api/v1/tracks/${encodeURIComponent(trackId)}`, responseSchema: z.undefined() };
 }
 
 export type NewTerminalCardBody = Readonly<{
@@ -673,21 +932,50 @@ export function setTerminalWorkbenchOperation(cardId: string, inWorkbench: boole
     body: { in_workbench: inWorkbench }, responseSchema: cardWireSchema };
 }
 
+export function listTrackTerminalsOperation(trackId: string): ApiOperation<CardWire[]> {
+  return {
+    method: 'GET',
+    path: `/api/v1/tracks/${encodeURIComponent(trackId)}/terminals`,
+    responseSchema: z.union([
+      z.array(terminalDtoSchema).transform((dtos) => dtos.map((dto, index) => terminalDtoToCardWire(dto, 100 + index))),
+      z.array(cardWireSchema),
+    ]),
+  };
+}
+
 /**
- * `POST /api/tracks/:id/terminal-cards`. Keyed per add-card intent, not per call: a retry under the key joins the card the
- * first attempt made, where an unkeyed one would make a second terminal.
+ * `POST /api/v1/tracks/:id/terminals`. Keyed per add-card intent, not per call: a retry under the key joins the terminal
+ * the first attempt made, where an unkeyed one would make a second terminal.
  */
 export function createTerminalCardOperation(
   trackId: string,
   body: NewTerminalCardBody,
   idempotencyKey: string,
 ): ApiOperation<CardWire> {
+  const wireBody = {
+    ...(body.title !== undefined && body.title !== null ? { title: body.title } : {}),
+    ...(body.program !== undefined ? { program: body.program } : {}),
+    ...(body.cwd !== undefined ? { cwd: body.cwd } : {}),
+    ...(body.env !== undefined ? { env: body.env } : {}),
+    idempotencyKey,
+  };
   return {
     method: 'POST',
-    path: `/api/tracks/${encodeURIComponent(trackId)}/terminal-cards`,
-    body,
+    path: `/api/v1/tracks/${encodeURIComponent(trackId)}/terminals`,
+    body: wireBody,
     headers: { 'Idempotency-Key': idempotencyKey },
-    responseSchema: cardWireSchema,
+    responseSchema: z.union([
+      terminalDtoSchema.transform((dto) => terminalDtoToCardWire(dto)),
+      cardWireSchema,
+    ]),
+  };
+}
+
+export function deleteTerminalOperation(trackId: string, termId: string): ApiOperation<undefined> {
+  return {
+    method: 'DELETE',
+    path: `/api/v1/tracks/${encodeURIComponent(trackId)}/terminals/${encodeURIComponent(termId)}`,
+    responseSchema: z.union([terminalDtoSchema.transform(() => undefined), z.undefined()]),
   };
 }
 

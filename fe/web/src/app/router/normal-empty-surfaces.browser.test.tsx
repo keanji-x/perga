@@ -13,7 +13,6 @@ import { MobileTracks } from '../shell/mobile-tracks.tsx';
 import { ChatEmpty } from '../../features/chat/thread/public.tsx';
 import { ReportDocument } from '../../features/report/document/public.tsx';
 import { ReportPreviewBlock } from '../../features/report/preview/public.tsx';
-import { CalendarTasks } from '../../features/calendar/public.tsx';
 
 it('catalog report changes without changes', async () => {
   await page.viewport(1440,900);
@@ -106,12 +105,6 @@ it('catalog mobile Pages groups', async () => {
   await expect.element(page.getByText('还没有最近浏览的 Page')).toBeVisible(); await shot('09-pages-recent', ["还没有最近浏览的 Page"]);
   await page.getByRole('radio',{name:'Pinned',exact:true}).click();
   await expect.element(page.getByText('还没有置顶的 Page')).toBeVisible(); await shot('10-pages-pinned', ["还没有置顶的 Page"]);
-});
-it('catalog calendar without plugin', async () => {
-  await page.viewport(900,650);
-  mount(<CalendarTasks date="2026-10-19" timezone="Asia/Shanghai" month={{ entries:[],loading:false,error:null }} day={{ entries:[],loading:false,error:null }} enabled={false} pending={false} onDateChange={noop} onWindowChange={noop} onRetry={noop} onReload={noop} onSettings={noop} onOpenTrack={noop} onSave={()=>Promise.resolve()} />, true);
-  await expect.element(page.getByText('Calendar is temporarily unavailable.')).toBeVisible();
-  await shot('16-calendar-unavailable', []);
 });
 it.each(['code','diff'] as const)('catalog file viewer %s', async tab => {
   await page.viewport(1000,650);

@@ -119,7 +119,7 @@ const ok = (body: unknown): ApiTransportResponse => ({ status: 200, statusText: 
 function baseline(request: ApiRequest): ApiTransportResponse | null {
   if (request.path === '/api/plugins') return ok([ROW]);
   if (request.path === '/api/settings') return ok({ settings: {} });
-  if (request.path === '/api/areas' || request.path === '/api/track-templates') return ok([]);
+  if (request.path === '/api/v1/areas' || request.path === '/api/v1/templates') return ok([]);
   return null;
 }
 

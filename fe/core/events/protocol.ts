@@ -42,16 +42,21 @@ export function decodeEventFrame(input: unknown): EventFrameDecodeResult {
     };
   }
   const envelope = input as Record<string, unknown>;
-  if (envelope.ev === '_replay_complete') {
-    return { status: 'ready', frame: { type: 'replay-complete', id: finiteNumber(envelope._id) } };
+  // Perga /api/v1/events control frames (`kind: '_replay_complete'` with `tipId`, `kind: '_snapshot_required'`)
+  // as well as legacy `ev` discriminators.
+  if (envelope.kind === '_replay_complete' || envelope.ev === '_replay_complete') {
+    return {
+      status: 'ready',
+      frame: { type: 'replay-complete', id: finiteNumber(envelope.tipId) ?? finiteNumber(envelope._id) },
+    };
   }
-  if (envelope.ev === '_snapshot_required') {
+  if (envelope.kind === '_snapshot_required' || envelope.ev === '_snapshot_required') {
     return { status: 'ready', frame: { type: 'snapshot-required' } };
   }
 
   const normalized = normalizeLegacyEvent(envelope);
   const decoded = decodeWireEvent(normalized);
-  const id = finiteNumber(envelope._id);
+  const id = finiteNumber(envelope.eventId) ?? finiteNumber(envelope._id);
   const eventVersion = finiteNumber(envelope.eventVersion);
   if (decoded.status === 'failed') {
     return {

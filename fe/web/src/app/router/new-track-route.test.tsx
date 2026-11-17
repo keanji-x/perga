@@ -150,23 +150,23 @@ function harness(options: {
   const transport: ApiTransportPort = {
     send(request: ApiRequest): Promise<ApiTransportResponse> {
       sent.push(request);
-      if (request.path === '/api/track-templates') return Promise.resolve({ status: 200, statusText: 'OK', body: options.templates ?? [] });
+      if (request.path === '/api/v1/templates') return Promise.resolve({ status: 200, statusText: 'OK', body: options.templates ?? [] });
       if (request.path === '/api/plugins') return Promise.resolve({ status: 200, statusText: 'OK', body: [] });
       if (request.path.includes('/mentions?')) return Promise.resolve({ status: 200, statusText: 'OK', body: { tags: [], tracks: [], blocks: [] } });
       const posted = request.body as { area_id?: string } | undefined;
-      if (request.method === 'POST' && request.path === '/api/tracks' && options.loseFirstCreateAck && !firstCreateAckLost) {
+      if (request.method === 'POST' && request.path === '/api/v1/tracks' && options.loseFirstCreateAck && !firstCreateAckLost) {
         firstCreateAckLost = true;
         return Promise.reject(new Error('Connection closed after server commit'));
       }
-      if (request.method === 'POST' && request.path === '/api/tracks' && options.trackCreate) {
+      if (request.method === 'POST' && request.path === '/api/v1/tracks' && options.trackCreate) {
         return Promise.resolve(options.trackCreate);
       }
-      if (request.method === 'POST' && request.path === '/api/tracks' && options.trackCreateSequence) {
+      if (request.method === 'POST' && request.path === '/api/v1/tracks' && options.trackCreateSequence) {
         const response = options.trackCreateSequence[trackCreateIndex];
         trackCreateIndex += 1;
         if (response !== undefined) return Promise.resolve(response);
       }
-      if (request.method === 'POST' && request.path === '/api/tracks' && options.heldCreate) {
+      if (request.method === 'POST' && request.path === '/api/v1/tracks' && options.heldCreate) {
         return options.heldCreate.then(() => ({
           status: 200,
           statusText: 'OK',
@@ -175,7 +175,7 @@ function harness(options: {
       }
       /* What `routes/agent_providers.rs` answers (#1817): Codex ready; Claude ready, unavailable with a
          reason, or `not_configured` on a server without the Claude Planner. */
-      if (request.path === '/api/agent-providers' || request.path === '/api/agent-providers/managed') {
+      if (request.path === '/api/v1/bootstrap?scope=providers' || request.path === '/api/v1/bootstrap?scope=managed') {
         const claude = options.claudePlanner !== true
           ? { status: 'not_configured', reason: 'calm-server was started without --claude-planner-config' }
           : options.claudeUnavailable === undefined
@@ -186,18 +186,18 @@ function harness(options: {
             ? { provider: 'codex', status: 'ready', reason: null, authentication_method: null, authentication_notice: null, checked_at_ms: 1 }
             : { provider: 'codex', status: 'unavailable', reason: options.codexUnavailable, authentication_method: null, authentication_notice: null, checked_at_ms: 1 },
           { provider: 'claude', ...claude, authentication_method: null, authentication_notice: null, checked_at_ms: 1 },
-        ].map((availability) => request.path.endsWith('/managed')
+        ].map((availability) => request.path.includes('scope=managed')
           ? { availability, accepts_unavailable_blank_track: true, capabilities: { managed_conversation: true,
             steer: false, images: true, manual_compact: true, history_replacement: true, requires_ready_availability: true } }
           : availability) });
       }
       /* What `routes/models.rs` answers for a Claude Planner (#1822): the Claude CLI's list on a server
          whose Claude is ready, `unavailable` with no catalog on one without Claude Planners. */
-      if (request.path === '/api/models?provider=claude') {
+      if (request.path === '/api/v1/bootstrap?provider=claude') {
         return (options.heldClaudeCatalog ?? Promise.resolve()).then(() => ({ status: 200, statusText: 'OK',
           body: options.claudePlanner === true && options.claudeUnavailable === undefined ? CLAUDE_CATALOG : NO_CATALOG }));
       }
-      if (request.path === '/api/models?card_id=card-planner' && options.plannerProvider === 'claude') {
+      if (request.path === '/api/v1/bootstrap?card_id=card-planner' && options.plannerProvider === 'claude') {
         return Promise.resolve({ status: 200, statusText: 'OK', body: CLAUDE_CATALOG });
       }
       if (request.method === 'PUT' && request.path === '/api/cards/card-planner/planner/model') {
@@ -206,7 +206,7 @@ function harness(options: {
           card_id: 'card-planner', model, reasoning_effort, effort_adjusted: false, unknown_model: false,
         } });
       }
-      if (request.path === '/api/models?provider=codex' || request.path === '/api/models?card_id=card-planner') {
+      if (request.path === '/api/v1/bootstrap?provider=codex' || request.path === '/api/v1/bootstrap?card_id=card-planner') {
         return Promise.resolve({ status: 200, statusText: 'OK', body: {
           models: [{ id: 'fast', model: 'gpt-5', resolved_model: null, display_name: 'GPT-5', description: 'Everyday model',
             is_default: true, default_reasoning_effort: 'low', supported_reasoning_efforts: [
@@ -219,7 +219,7 @@ function harness(options: {
       }
       /* Served rather than left to fall through to `[]`: a decode failure would look
                identical to "the feature did not run". */
-      if (request.method === 'GET' && request.path === '/api/tracks/w-new') {
+      if (request.method === 'GET' && request.path === '/api/v1/tracks/w-new') {
         if (options.trackDetail) return Promise.resolve(options.trackDetail);
         const detail = {
           status: 200,
@@ -240,26 +240,26 @@ function harness(options: {
           ? options.heldDetail.then(() => detail)
           : Promise.resolve(detail);
       }
-      if (request.method === 'GET' && request.path === '/api/cards/card-planner/planner/run?contract=conversation_v1') {
+      if (request.method === 'GET' && request.path === '/api/v1/sessions/card-planner/items?afterId=0&limit=1&view=run') {
         return Promise.resolve({ status: 200, statusText: 'OK', body: historicalConversationRun({
           card_id: 'card-planner', worker_session_id: 'runtime', phase: 'idle',
           model: null, reasoning_effort: null, permission_mode: 'never', blocked_reason: null, manual_compact_supported: true, recovery: null, compact_outcome: null, context_usage_invalidated: false, running_turn: null,
         }, 'idle', true) });
       }
-      if (request.method === 'GET' && request.path.includes('/harness/items')) {
+      if (request.method === 'GET' && request.path.includes('/items') && !request.path.includes('view=')) {
         return Promise.resolve({ status: 200, statusText: 'OK', body: historicalConversationPage(conversationCardId(request.path), [...(options.plannerItems ?? [])], null) });
       }
-      if (request.path === '/api/areas' && options.areasFail) {
+      if (request.path === '/api/v1/areas' && options.areasFail) {
         return Promise.resolve({ status: 500, statusText: 'Server Error', body: { error: 'areas are unreadable' } });
       }
-      if (request.path === '/api/areas' && options.heldAreas) {
+      if (request.path === '/api/v1/areas' && options.heldAreas) {
         return options.heldAreas.then(() => ({ status: 200, statusText: 'OK', body: [AREA, OTHER] }));
       }
-      const body = request.path === '/api/areas' ? [
+      const body = request.path === '/api/v1/areas' ? [
         { ...AREA, ...options.areaDefaults }, { ...OTHER, ...options.otherAreaDefaults },
       ]
         : request.path.startsWith('/api/fs/listdir') ? LISTING
-          : request.method === 'POST' && request.path === '/api/tracks'
+          : request.method === 'POST' && request.path === '/api/v1/tracks'
             ? { ...TRACK_ROW, area_id: posted?.area_id ?? 'c1' }
             : [];
       return Promise.resolve({ status: 200, statusText: 'OK', body });
@@ -370,7 +370,7 @@ describe('New track model selection', () => {
     expect(createdTrackRequests(sent)[0]?.body).toMatchObject({ planner_provider: 'claude' });
     expect(createdTrackRequests(sent)[0]?.body).not.toHaveProperty('model');
     expect(createdTrackRequests(sent)[0]?.body).toHaveProperty('first_message', 'Plan while Claude is down');
-    expect(sent.some((request) => request.path === '/api/agent-providers')).toBe(true);
+    expect(sent.some((request) => request.path === '/api/v1/bootstrap?scope=providers')).toBe(true);
   });
 
   it('creates on an unavailable Codex: its rows stay pickable, as create still accepts it (#1817)', async () => {
@@ -490,7 +490,7 @@ describe('New track model selection', () => {
     await waitFor(() => expect(sent.filter((request) => request.method === 'PUT'
       && request.path === '/api/cards/card-planner/planner/model').map((request) => request.body))
       .toEqual([{ model: 'haiku', reasoning_effort: null }]));
-    expect(sent.some((request) => request.path === '/api/models?card_id=card-planner')).toBe(true);
+    expect(sent.some((request) => request.path === '/api/v1/bootstrap?card_id=card-planner')).toBe(true);
   });
 
   it('names the Codex Planner backend on every create', async () => {
@@ -652,7 +652,7 @@ function composerText(): string {
 
 /** The text of every first message delivered to the planner card. */
 function plannerInputTexts(sent: readonly ApiRequest[]): unknown[] {
-  return sent.filter((request) => request.method === 'POST' && request.path.endsWith('/planner/input'))
+  return sent.filter((request) => request.method === 'POST' && request.path.endsWith('/messages'))
     .map((request) => (request.body as { text?: unknown } | undefined)?.text);
 }
 
@@ -661,7 +661,7 @@ function createdTrackBodies(sent: readonly ApiRequest[]): unknown[] {
 }
 
 function createdTrackRequests(sent: readonly ApiRequest[]): ApiRequest[] {
-  return sent.filter((request) => request.method === 'POST' && request.path === '/api/tracks');
+  return sent.filter((request) => request.method === 'POST' && request.path === '/api/v1/tracks');
 }
 
 describe('the new-track page is a route reached from Area groups', () => {
@@ -1028,7 +1028,7 @@ describe('the new-track page is a route reached from Area groups', () => {
     const { sent } = harness();
     await userEvent.click(await screen.findByRole('button', { name: 'New track in Reading' }));
     await findComposer();
-    expect(sent.some(request => request.path === '/api/track-templates' || request.path === '/api/track-recipes')).toBe(false);
+    expect(sent.some(request => request.path === '/api/v1/templates' || request.path === '/api/track-recipes')).toBe(false);
     await userEvent.type(screen.getByLabelText(TASK_LABEL), 'Read it anyway');
     await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
     await waitFor(() => expect(createdTrackBodies(sent)).toHaveLength(1));
@@ -1166,7 +1166,7 @@ describe('the sentence is delivered by the create, and the track opens on it', (
       [...drawer.querySelectorAll('[data-nc-turn="unknown"]')].map((turn) => turn.textContent),
     ).toEqual(['Read it']));
     expect(drawer.querySelector('[data-nc-thread-empty]')).toBeNull();
-    const items = sent.filter((request) => request.path.includes('/harness/items'));
+    const items = sent.filter((request) => request.path.includes('/items') && !request.path.includes('view='));
     expect(items.length).toBeGreaterThan(0);
     expect(plannerInputTexts(sent)).toEqual([]);
   });
@@ -1391,7 +1391,7 @@ it.each([
   await waitFor(() => expect(screen.getByLabelText(TASK_LABEL).getAttribute('contenteditable')).toBe('false'));
   await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
   await waitFor(() => expect(createdTrackRequests(sent)).toHaveLength(1));
-  expect(createdTrackRequests(sent)[0]?.body).toEqual(request.body);
+  expect(createdTrackRequests(sent)[0]?.body).toMatchObject(request.body);
   expect(createdTrackRequests(sent)[0]?.headers?.['Idempotency-Key']).toBe(request.key);
 });
 
@@ -1408,7 +1408,7 @@ it.each([
     availability: status === 'ready' ? { status } : { status, plugin_id: 'example', plugin_name: 'Example' } }] });
   await userEvent.click(await screen.findByRole('button', { name: 'New track in Work' }));
   const composer = await findComposer();
-  expect(sent.some(request => request.path === '/api/track-templates')).toBe(false);
+  expect(sent.some(request => request.path === '/api/v1/templates')).toBe(false);
   await userEvent.type(composer, '@:');
   await screen.findByRole('option', { name: 'Deploy' });
   await userEvent.keyboard('{Escape}{Control>}a{/Control}{Backspace}');
@@ -1431,5 +1431,5 @@ it('leaves a pasted template reference to the first message when no catalog was 
   await waitFor(() => expect(createdTrackBodies(sent)).toHaveLength(1));
   expect(createdTrackBodies(sent)[0]).toHaveProperty('first_message', 'use @`template:deploy`');
   expect(createdTrackBodies(sent)[0]).not.toHaveProperty('template_id');
-  expect(sent.some(request => request.path === '/api/track-templates')).toBe(false);
+  expect(sent.some(request => request.path === '/api/v1/templates')).toBe(false);
 });

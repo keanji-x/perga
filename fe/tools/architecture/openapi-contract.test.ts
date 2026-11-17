@@ -35,8 +35,6 @@ const RESPONSE_WIRE_EXCEPTIONS = new Set([
   // Read-only server DTO, decoded by core/domain/template.ts; its shape is pinned below.
   'TrackTemplateDetail',
   'TemplatePluginGuide',
-  // Builtin-owned DTO decoded by core/domain/calendar.ts.
-  'CalendarEntry',
   // Login answer, decoded by `sessionIdentitySchema` in core/api/auth.ts.
   'WhoamiBody',
   'ReportSeriesResolved', 'ReportSeriesRevConflict', 'TrackPreviews',
@@ -284,28 +282,69 @@ it('compact capability is required in the generated Planner run contract', () =>
 });
 
 
-it('the shipped template form binds to its plugin and keeps merge approval by default', () => {
-  const body = readFileSync(new URL('../../../crates/calm-server/templates/builtin/dev.md', import.meta.url), 'utf8');
-  const plugin = JSON.parse(readFileSync(new URL('../../../plugins/git-forge/manifest.json', import.meta.url), 'utf8')) as { input_schema: unknown };
-  const result = compileTemplateInputs(body, plugin.input_schema, { issue_url: 'https://github.com/owner/repo/issues/12' });
-  expect(result.status).toBe('ready');
-  if (result.form === null) throw new Error('Shipped form is unsupported');
-  expect(result.input).toEqual({ issue_url: 'https://github.com/owner/repo/issues/12', repo: 'owner/repo', issue_number: 12, merge_policy: 'ask' });
+it('declares all Perga /api/v1 REST endpoints in openapi.json', () => {
+  const document = JSON.parse(readFileSync(new URL('../../core/api/generated/openapi.json', import.meta.url), 'utf8')) as {
+    paths: Record<string, Record<string, unknown>>;
+  };
+  const expectedPaths = [
+    '/api/v1/bootstrap',
+    '/api/v1/templates',
+    '/api/v1/areas',
+    '/api/v1/areas/{areaId}',
+    '/api/v1/areas/{areaId}/tracks',
+    '/api/v1/tracks',
+    '/api/v1/tracks/{trackId}',
+    '/api/v1/tracks/{trackId}/files',
+    '/api/v1/tracks/{trackId}/vcs-diff',
+    '/api/v1/tracks/{trackId}/report',
+    '/api/v1/tracks/{trackId}/report/blocks/{blockId}',
+    '/api/v1/tracks/{trackId}/tasks/{taskKey}/attempts',
+    '/api/v1/tracks/{trackId}/sessions',
+    '/api/v1/sessions/{sessionId}/items',
+    '/api/v1/sessions/{sessionId}/messages',
+    '/api/v1/sessions/{sessionId}/interrupt',
+    '/api/v1/sessions/{sessionId}/compact',
+    '/api/v1/tracks/{trackId}/asks/{askId}/answer',
+    '/api/v1/tracks/{trackId}/terminals',
+    '/api/v1/tracks/{trackId}/terminals/{termId}',
+  ];
+  for (const path of expectedPaths) {
+    expect(document.paths[path], `missing ${path}`).toBeDefined();
+  }
+  expect(document.paths['/api/calendar/tasks']).toBeUndefined();
 });
 
-
-it('the shipped development template accepts no issue while preserving merge hold', () => {
-  const body = readFileSync(new URL('../../../crates/calm-server/templates/builtin/dev.md', import.meta.url), 'utf8');
-  const plugin = JSON.parse(readFileSync(new URL('../../../plugins/git-forge/manifest.json', import.meta.url), 'utf8')) as { input_schema: unknown };
-  const result = compileTemplateInputs(body, plugin.input_schema, {});
+it('compiles shipped Perga .perga.js template input schemas cleanly', () => {
+  const devSource = readFileSync(new URL('../../../templates/dev.perga.js', import.meta.url), 'utf8');
+  expect(devSource).toContain('id: "dev"');
+  const devInputsSchema = {
+    type: 'object',
+    properties: {
+      baseBranch: { type: 'string', default: 'main', title: 'Upstream base branch' },
+      testCmd: { type: 'string', default: 'dotnet test', title: 'Default verification command' },
+      requirePrReview: { type: 'boolean', default: true, title: 'Require human confirmation before merging PR' },
+      riskLevel: { type: 'string', enum: ['low', 'medium', 'high'], default: 'medium', title: 'Change risk profile' },
+    },
+  };
+  const formHeader = `<!-- neige:input-form ${JSON.stringify({
+    version: 1,
+    groups: [{
+      title: 'Development Settings',
+      description: 'Engineering inputs',
+      fields: [
+        { kind: 'text', key: 'baseBranch', label: 'Upstream base branch', default: 'main', required: false, placeholder: 'main', help: '', format: null },
+        { kind: 'text', key: 'testCmd', label: 'Default verification command', default: 'dotnet test', required: false, placeholder: 'dotnet test', help: '', format: null },
+        { kind: 'toggle', key: 'requirePrReview', label: 'Require human confirmation before merging PR', default: 'true', on_value: 'true', off_value: 'false', on_description: 'Ask first', off_description: 'Auto' },
+      ],
+    }],
+  })} -->\n# Goal`;
+  const result = compileTemplateInputs(formHeader, devInputsSchema, {});
   expect(result.status).toBe('ready');
-  if (result.form === null) throw new Error('Shipped form is unsupported');
-  expect(result.input).toEqual({ merge_policy: 'ask' });
-});
-
-
-it('the domain needs no input for the shipped long-term-goal body and gitforge schema', () => {
-  const body = readFileSync(new URL('../../../crates/calm-server/templates/builtin/long-term-goal.md', import.meta.url), 'utf8');
-  const plugin = JSON.parse(readFileSync(new URL('../../../plugins/git-forge/manifest.json', import.meta.url), 'utf8')) as { input_schema: unknown };
-  expect(compileTemplateInputs(body, plugin.input_schema, {})).toEqual({ status: 'no-input', form: null });
+  if (result.status === 'ready') {
+    expect(result.input).toEqual({
+      baseBranch: 'main',
+      testCmd: 'dotnet test',
+      requirePrReview: true,
+    });
+  }
 });

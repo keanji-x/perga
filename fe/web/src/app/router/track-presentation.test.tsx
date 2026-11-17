@@ -15,7 +15,7 @@ function setup(prepareReport: ReportPreparationPort = prepareReportDocument, ini
   const kernel = createReadReceiptsKernel();
   const fixture = renderDailyFixture({ initial, prepareReport, receipts: kernel, reply: async request => {
     const extra = await reply?.(request); if (extra !== undefined) return extra;
-    if (request.path === '/api/tracks/daily') return { status: 200, statusText: 'OK', body: {
+    if (request.path === '/api/v1/tracks/daily') return { status: 200, statusText: 'OK', body: {
       track: { workspace: { isolation: 'none' as const, kind: 'attached' as const, path: '/tmp', frozen_at: null }, id: 'daily', area_id: 'daily-area', title: 'Staged Track', sort: 0, cwd: '/tmp',
         pinned_at: null, closed_at: null, created_at: 1, updated_at: 2 },
       planner_revision: 0, can_reopen: false, can_close: false, can_admin: false, overlays: [], cards: [{
@@ -26,7 +26,7 @@ function setup(prepareReport: ReportPreparationPort = prepareReportDocument, ini
         ] },
       }],
     } };
-    if (request.path === '/api/tracks/daily/report') return { status: 200, statusText: 'OK', body: { taskDiagnostics: [] } };
+    if (request.path === '/api/v1/tracks/daily/report') return { status: 200, statusText: 'OK', body: { taskDiagnostics: [] } };
     if (request.path === '/api/tracks/daily/backlinks') return { status: 200, statusText: 'OK', body: { backlinks: [], truncated: false, skipped_sources: 0 } };
     return undefined;
   } });
@@ -51,7 +51,7 @@ it('commits the Track shell before report preparation and content', async () => 
   const fixture = setup(); fixtures.push(fixture);
   await screen.findByRole('button', { name: 'Rename track' });
   await waitFor(() => expect(fixture.client.isFetching()).toBe(0));
-  expect(fixture.requests.some(request => request.path === '/api/tracks/daily')).toBe(true);
+  expect(fixture.requests.some(request => request.path === '/api/v1/tracks/daily')).toBe(true);
   expect(parse.mock.calls.filter(([source]) => source === SOURCE)).toHaveLength(0);
   expect(document.querySelector('[data-nc-report]')).toBeNull();
   expect(screen.getByRole('button', { name: '讨论这项工作' })).toBeTruthy();
@@ -221,11 +221,11 @@ it('starts detail immediately and keeps a neutral shell until the selected detai
   const frame = frames(); let release!: () => void;
   const gate = new Promise<void>(resolve => { release = resolve; });
   const fixture = setup(prepareReportDocument, '/track/daily', async request => {
-    if (request.path === '/api/tracks/daily') await gate;
+    if (request.path === '/api/v1/tracks/daily') await gate;
     return undefined;
   }); fixtures.push(fixture);
   try {
-    await waitFor(() => expect(fixture.requests.some(request => request.path === '/api/tracks/daily')).toBe(true));
+    await waitFor(() => expect(fixture.requests.some(request => request.path === '/api/v1/tracks/daily')).toBe(true));
     await screen.findByText('Loading track…');
     expect(screen.queryByRole('button', { name: 'Rename track' })).toBeNull();
     expect(document.querySelector('[data-nc-report]')).toBeNull();

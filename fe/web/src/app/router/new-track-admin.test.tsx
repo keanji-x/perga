@@ -28,15 +28,15 @@ function harness() {
   const sent: ApiRequest[] = [];
   const transport: ApiTransportPort = { send(request) {
     sent.push(request);
-    if (request.method === 'POST' && request.path === '/api/tracks') return Promise.reject(new Error('Connection closed'));
-    return Promise.resolve({ status: 200, statusText: 'OK', body: request.path === '/api/areas' ? AREAS : [] });
+    if (request.method === 'POST' && request.path === '/api/v1/tracks') return Promise.reject(new Error('Connection closed'));
+    return Promise.resolve({ status: 200, statusText: 'OK', body: request.path === '/api/v1/areas' ? AREAS : [] });
   } };
   window.history.pushState({}, '', `${APP_BASEPATH}/`);
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const router = createAppRouter({ prepareReport: prepareReportDocument, transport, client, cards: bootTestCardRuntime(), onSignOut: vi.fn(),
     unauthorized: createUnauthorizedChannel({ enqueue: (task) => task() }) });
   render(<QueryClientProvider client={client}><ThemeProvider><RouterProvider router={router} /></ThemeProvider></QueryClientProvider>);
-  return { creates: () => sent.filter((request) => request.method === 'POST' && request.path === '/api/tracks') };
+  return { creates: () => sent.filter((request) => request.method === 'POST' && request.path === '/api/v1/tracks') };
 }
 
 async function openArea(name: string): Promise<void> {

@@ -83,108 +83,10 @@ it.each([
 });
 
 
-it.each([1000, 768, 600])('shares one right sidebar card between calendar and inventory at height %s', async (height) => {
-  await page.viewport(1440, height);
-  renderDailyFixture({ initial: '/?day=2026-10-04' });
-  await page.getByText('Prioritize the release.', { exact: false }).findElement();
-  const calendar = page.getByRole('region', { name: 'Calendar tasks' });
-  await expect.element(calendar).toBeVisible();
-  const surface = document.querySelector('[data-nc-desktop-panel]')!;
-  expect(surface.contains(calendar.element())).toBe(true);
-  const card = surface.firstElementChild!;
-  expect(card.contains(calendar.element())).toBe(true);
-  expect(card.contains(page.getByRole('heading', { name: 'Conversations', exact: true }).element())).toBe(true);
-  const report = page.getByText('Prioritize the release.', { exact: false }).element();
-  expect(calendar.element().getBoundingClientRect().left).toBeGreaterThan(report.getBoundingClientRect().right);
-  await calendar.getByRole('link', { name: /October 3, 2026/ }).click();
-  await page.getByRole('radio', { name: 'Month', exact: true }).click();
-  await page.screenshot({ path: `../../../../test-results/today-sidebar-${height}.png` });
-  await page.getByRole('button', { name: '讨论这项工作', exact: true }).click();
-  const drawer = page.getByRole('complementary', { name: 'Daily Planner conversation' });
-  await expect.element(drawer).toBeVisible();
-  const field = page.getByRole('combobox', { name: 'Message', exact: true });
-  await field.fill('Plan my day');
-  await expect.element(field).toHaveTextContent('Plan my day');
-  expect(page.getByRole('button', { name: 'Send', exact: true }).element().getBoundingClientRect().bottom).toBeLessThanOrEqual(height);
-  await page.screenshot({ path: `../../../../test-results/today-sidebar-conversation-${height}.png` });
-  expect(getComputedStyle(card).visibility).toBe('hidden');
-  await page.getByRole('button', { name: 'Close conversation' }).click();
-  await expect.element(calendar).toBeVisible();
-  await expect.element(page.getByRole('heading', { name: 'Sat, Oct 3' })).toBeVisible();
-  await expect.element(page.getByRole('radio', { name: 'Month', exact: true })).toBeChecked();
-});
-
-
-it.each([1024, 1280])('fits the calendar date badges inside the sidebar at width %s', async (width) => {
-  await page.viewport(width, 768);
-  const entries = Array.from({ length: 20 }, (_, index) => ({ id: `sidebar-${index}`, version: 1, cancelled: false,
-    source_track_id: null, created_by: 'user', created_at: 1, updated_at: 1, occurrences: [],
-    task: { title: `Commitment ${index}`, description: '', schedule: { kind: 'all_day', date: '2026-09-28' } } }));
-  renderDailyFixture({ initial: '/?day=2026-10-04', reply: (request) => request.path.startsWith('/api/calendar/tasks?')
-    ? { status: 200, statusText: 'OK', body: request.path.includes('until=2026-10-05') ? entries : [] } : undefined });
-  const calendar = page.getByRole('region', { name: 'Calendar tasks' });
-  await expect.element(calendar).toBeVisible();
-  await expect.element(page.getByLabelText('20 tasks', { exact: true })).toBeVisible();
-  const panel = calendar.element().closest('[data-nc-panel]')!;
-  expect(panel.scrollWidth).toBeLessThanOrEqual(panel.clientWidth);
-  for (const header of calendar.element().querySelectorAll('[role="columnheader"]')) {
-    const link = header.querySelector('[role="link"]')!;
-    expect(link.getBoundingClientRect().right).toBeLessThanOrEqual(header.getBoundingClientRect().right);
-    const badge = link.querySelector<HTMLElement>('[class*="dateBadge"]')!;
-    expect(badge.scrollWidth).toBeLessThanOrEqual(badge.clientWidth);
-  }
-  await page.getByRole('radio', { name: 'Month', exact: true }).click();
-  expect(panel.scrollWidth).toBeLessThanOrEqual(panel.clientWidth);
-});
-
-
-it.each(['light', 'dark'])('uses the sidebar text roles and surfaces in %s theme', async (theme) => {
-  await page.viewport(1440, 768);
-  renderDailyFixture({ initial: '/?day=2026-10-04' });
-  const calendar = page.getByRole('region', { name: 'Calendar tasks' });
-  await expect.element(calendar).toBeVisible();
-  document.documentElement.dataset.theme = theme;
-  try {
-    const monthHeading = calendar.getByRole('heading', { name: 'October 2026' });
-    await expect.element(monthHeading).toBeVisible();
-    const month = getComputedStyle(monthHeading.element());
-    const date = getComputedStyle(page.getByRole('heading', { name: 'Sun, Oct 4' }).element());
-    expect(month.fontFamily).toBe(date.fontFamily);
-    expect(month.fontSize).toBe('14px');
-    expect(date.fontSize).toBe(month.fontSize);
-    expect(date.lineHeight).toBe('20px');
-    await expect.element(page.getByText('这一天没有安排任务')).toBeVisible();
-    const empty = getComputedStyle(page.getByText('这一天没有安排任务').element());
-    const reference = document.createElement('span');
-    reference.style.cssText = 'font:var(--type-action);color:var(--text)';
-    document.body.append(reference);
-    try {
-      const metadata = getComputedStyle(reference);
-      expect(empty.fontFamily).toBe(metadata.fontFamily);
-      expect(empty.fontSize).toBe(metadata.fontSize);
-      expect(empty.lineHeight).toBe('20px');
-      expect(empty.color).toBe(metadata.color);
-    } finally { reference.remove(); }
-    const surface = document.querySelector('[data-nc-desktop-panel]')!.firstElementChild!;
-    const cardBox = surface.getBoundingClientRect();
-    const switchBox = page.getByRole('radio', { name: 'Month', exact: true }).element().getBoundingClientRect();
-    expect(switchBox.top - cardBox.top).toBeGreaterThanOrEqual(8);
-    expect(cardBox.right - switchBox.right).toBeGreaterThanOrEqual(16);
-    expect(getComputedStyle(surface).backgroundColor).not.toBe(getComputedStyle(document.body).backgroundColor);
-    await page.screenshot({ path: `../../../../test-results/today-sidebar-${theme}.png` });
-  } finally {
-    document.documentElement.dataset.theme = 'light';
-  }
-});
-
-
-it('keeps one calendar and the daily report usable at phone width', async () => {
+it('keeps the daily report usable at phone width', async () => {
   await page.viewport(390, 844);
   renderDailyFixture({ initial: '/?day=2026-10-04' });
   await page.getByText('Prioritize the release.', { exact: false }).findElement();
-  const calendar = page.getByRole('region', { name: 'Calendar tasks' });
-  await expect.element(calendar).toBeVisible();
-  expect(calendar.all()).toHaveLength(1);
   expect(page.getByRole('button', { name: 'Track actions', exact: true }).query()).toBeNull();
   const headers = [...document.querySelectorAll('[data-nc-mobile-header]')].filter((header) => header.getBoundingClientRect().width > 0);
   expect(headers).toHaveLength(1);
@@ -205,7 +107,6 @@ it.each([1000, 768, 600])('keeps the composer inside its conversation card with 
   renderDailyFixture({ initial: '/?day=2026-10-04', reply: (request) => request.path.includes('/harness/items')
     ? { status: 200, statusText: 'OK', body: historicalConversationPage(conversationCardId(request.path), history, null) } : undefined });
   await page.getByText('Prioritize the release.', { exact: false }).findElement();
-  await page.getByRole('radio', { name: 'Month', exact: true }).click();
   await page.getByRole('button', { name: '讨论这项工作', exact: true }).click();
   const drawer = page.getByRole('complementary', { name: 'Daily Planner conversation' });
   await expect.element(drawer).toBeVisible();
@@ -246,7 +147,6 @@ it.each([['/?day=2026-10-04', 1000], ['/?day=2026-10-04', 768], ['/?day=2026-10-
     dbInstanceId: 'fixture-instance', databaseId: 'fixture-database',
   } } : undefined });
   if (initial !== '/') await page.getByText('Prioritize the release.', { exact: false }).findElement();
-  await page.getByRole('radio', { name: 'Month', exact: true }).click();
   if (initial !== '/') await page.getByRole('button', { name: '讨论这项工作', exact: true }).click();
   const main = initial === '/' ? page.getByRole('region', { name: 'Today Assistant', exact: true }) : page.getByRole('complementary', { name: 'Daily Planner conversation' });
   await expect.element(main.getByText('聊聊你想做什么', { exact: true })).toBeVisible();
@@ -293,7 +193,6 @@ it.each([768, 600])('keeps both inputs inside their cards when the parent footer
     return undefined;
   } });
   await page.getByText('Prioritize the release.', { exact: false }).findElement();
-  await page.getByRole('radio', { name: 'Month', exact: true }).click();
   await page.getByRole('button', { name: '讨论这项工作', exact: true }).click();
   const main = page.getByRole('complementary', { name: 'Daily Planner conversation' });
   await expect.element(main.getByText('聊聊你想做什么', { exact: true })).toBeVisible();
@@ -320,10 +219,6 @@ it.each([768, 600])('keeps both inputs inside their cards when the parent footer
   }
   await page.getByRole('button', { name: 'Close side conversation' }).click();
   await page.getByRole('button', { name: 'Close conversation' }).click();
-  const calendar = page.getByRole('region', { name: 'Calendar tasks' });
-  await expect.element(calendar).toBeVisible();
-  await calendar.getByRole('button', { name: 'Previous month' }).click();
-  await expect.element(calendar.getByRole('heading', { name: 'September 2026' })).toBeVisible();
 });
 
 it.each([1024, 1440])('aligns reading and chat headers independently of sidebar navigation sections at %ipx', async (width) => {
@@ -359,17 +254,6 @@ it.each([1024, 1440])('aligns reading and chat headers independently of sidebar 
   expect(page.getByRole('button', { name: '讨论这项工作', exact: true }).query()).toBeNull();
 });
 
-it('keeps conversations ahead of the Today calendar without changing the calendar owner', async () => {
-  await page.viewport(1440, 1000);
-  renderDailyFixture({ initial: '/?day=2026-10-04' });
-  await expect.element(page.getByRole('region', { name: 'Calendar tasks' })).toBeVisible();
-  const root = document.querySelector<HTMLElement>('[data-nc-desktop-panel]')!;
-  const conversations = root.querySelector<HTMLElement>('section[aria-label="Conversations"]')!;
-  const calendar = page.getByRole('heading', { name: 'Calendar', exact: true }).element();
-  expect(conversations.getBoundingClientRect().top).toBeLessThan(calendar.getBoundingClientRect().top);
-  expect(calendar.getBoundingClientRect().left).toBe(conversations.querySelector('h2')!.getBoundingClientRect().left);
-});
-
 it('uses the shared daily empty report for the heading-only skeleton', async () => {
   await page.viewport(1440, 900);
   renderDailyFixture({ initial: '/?day=2026-10-04', reportBody: '# 概要\n\n# 今日计划' });
@@ -402,7 +286,6 @@ it('shows observed SQLite writes and deferred workspaces to the owner', async ()
   await expect.element(page.getByText('最早退役时间')).toBeVisible();
   await expect.element(page.getByText('历史巡检', { exact: true })).toBeVisible();
   await expect.element(page.getByRole('button', { name: 'Back to Today Assistant' })).toBeVisible();
-  await expect.element(page.getByRole('region', { name: 'Calendar tasks' })).toBeVisible();
 });
 
 it('does not show the Supervisor to a non-owner with the owner role label', async () => {
@@ -430,22 +313,18 @@ it('can inspect scheduler recovery before the daily Track exists', async () => {
   await expect.element(page.getByText('调度器启动扫描尚未完成', { exact: true })).toBeVisible();
 });
 
-it.each([1024, 1440])('keeps the real Today conversation, draft and calendar in separate columns at %ipx', async width => {
+it.each([1024, 1440])('keeps the real Today conversation and draft in separate columns at %ipx', async width => {
   await page.viewport(width, 800);
   const { requests } = renderDailyFixture();
   const assistant = page.getByRole('region', { name: 'Today Assistant', exact: true });
   const field = assistant.getByRole('combobox', { name: 'Message', exact: true });
   await expect.element(field).toBeVisible();
   await field.fill('Help me plan today');
-  const calendar = page.getByRole('region', { name: 'Calendar tasks' });
-  await expect.element(calendar).toBeVisible();
   const send = assistant.getByRole('button', { name: 'Send', exact: true });
   expect(send.element().getBoundingClientRect().bottom).toBeLessThanOrEqual(800);
-  expect(assistant.element().getBoundingClientRect().right).toBeLessThan(calendar.element().getBoundingClientRect().left);
   await page.screenshot({ path: `../../../../test-results/v10-today-assistant-${width}.png` });
   await page.getByRole('button', { name: 'Report changes', exact: true }).click();
   await expect.element(page.getByRole('heading', { name: /Report changes · 2026-10-03/ })).toBeVisible();
-  await expect.element(calendar).toBeVisible();
   await page.screenshot({ path: `../../../../test-results/v10-today-changes-${width}.png` });
   await page.getByRole('button', { name: 'Back to Today Assistant', exact: true }).click();
   await expect.element(field).toHaveTextContent('Help me plan today');
@@ -453,7 +332,7 @@ it.each([1024, 1440])('keeps the real Today conversation, draft and calendar in 
   expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(window.innerWidth);
 });
 
-it('scrolls real Planner history above the fixed Today composer and retains calendar selection across views', async () => {
+it('scrolls real Planner history above the fixed Today composer across views', async () => {
   await page.viewport(1440, 600);
   const history = Array.from({ length: 20 }, (_, index) => ({
     id: index + 1, worker_session_id: 'runtime', card_id: 'daily-planner', track_id: 'daily', thread_id: 'thread',
@@ -469,14 +348,9 @@ it('scrolls real Planner history above the fixed Today composer and retains cale
   expect(scroll.scrollHeight).toBeGreaterThan(scroll.clientHeight);
   const field = assistant.getByRole('combobox', { name: 'Message', exact: true });
   await field.fill('A preserved draft');
-  const calendar = page.getByRole('region', { name: 'Calendar tasks' });
-  await page.getByRole('radio', { name: 'Month', exact: true }).click();
-  await calendar.getByRole('button', { name: 'Previous month' }).click();
-  await expect.element(calendar.getByRole('heading', { name: 'September 2026' })).toBeVisible();
   await page.getByRole('button', { name: 'Report changes', exact: true }).click();
   await page.getByRole('button', { name: 'Back to Today Assistant', exact: true }).click();
   await expect.element(field).toHaveTextContent('A preserved draft');
-  await expect.element(calendar.getByRole('heading', { name: 'September 2026' })).toBeVisible();
   expect(assistant.getByRole('button', { name: 'Send', exact: true }).element().getBoundingClientRect().bottom).toBeLessThanOrEqual(600);
   await page.screenshot({ path: '../../../../test-results/v10-today-history.png' });
 });
@@ -717,7 +591,5 @@ it.each(['terminal', 'compact'])('isolates Today side visible effects while hidd
   await page.getByRole('button', { name: 'Back to Today Assistant', exact: true }).click();
   await expect.element(mainField).toHaveTextContent('Main draft survives');
   await side.getByRole('button', { name: 'Close side conversation', exact: true }).click();
-  await expect.element(page.getByRole('region', { name: 'Calendar tasks', exact: true })).toBeVisible();
-  if (hiddenBy === 'terminal') await expect.element(page.getByRole('radio', { name: 'Month', exact: true })).toBeChecked();
   await page.screenshot({ path: `../../../../test-results/today-side-${hiddenBy}-restored.png` });
 });

@@ -66,19 +66,19 @@ function setup(options: Options = {}) {
   const transport: ApiTransportPort = {
     send(request) {
       requests.push(request);
-      if (request.path === '/api/areas') return Promise.resolve(ok([AREA]));
-      if (request.path === '/api/areas/c1/tracks') {
+      if (request.path === '/api/v1/areas') return Promise.resolve(ok([AREA]));
+      if (request.path === '/api/v1/areas/c1/tracks?includeClosed=true') {
         return Promise.resolve(ok(created.id === track.id ? [track] : [track, created]));
       }
       if (request.path === '/api/overlays?entity_kind=track') return Promise.resolve(ok([]));
-      if (request.path === '/api/track-templates') return Promise.resolve(ok([]));
-      if (request.method === 'POST' && request.path === '/api/tracks') return Promise.resolve(ok(created));
-      const patched = request.method === 'PATCH' ? details.get(request.path.slice('/api/tracks/'.length)) : undefined;
+      if (request.path === '/api/v1/templates') return Promise.resolve(ok([]));
+      if (request.method === 'POST' && request.path === '/api/v1/tracks') return Promise.resolve(ok(created));
+      const patched = request.method === 'PATCH' ? details.get(request.path.slice('/api/v1/tracks/'.length)) : undefined;
       if (patched !== undefined) {
         return Promise.resolve(ok({ ...patched.track, ...(request.body as object) }));
       }
-      if (request.path.endsWith('/conversations')) return Promise.resolve(ok([]));
-      const detail = details.get(request.path.slice('/api/tracks/'.length));
+      if (request.path.endsWith('/sessions')) return Promise.resolve(ok([]));
+      const detail = details.get(request.path.slice('/api/v1/tracks/'.length));
       if (detail !== undefined) {
         if (detail.track.id === created.id && created.id !== track.id && gate.createdDetailFails) {
           return Promise.resolve({ status: 500, statusText: 'Server Error', body: {} });
@@ -87,10 +87,10 @@ function setup(options: Options = {}) {
           track: detail.track, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true, cards: detail.cards, overlays: [],
         }));
       }
-      if (request.path.includes('/planner/run?contract=conversation_v1')) {
+      if (request.path.includes('view=run')) {
         return Promise.resolve(ok(historicalConversationRun({ card_id: conversationCardId(request.path), worker_session_id: 'r', phase: 'idle', manual_compact_supported: true, recovery: null, compact_outcome: null, context_usage_invalidated: false }, 'idle', true)));
       }
-      if (request.path.includes('/harness/items?contract=conversation_v1')) return Promise.resolve(ok(historicalConversationPage(conversationCardId(request.path), [], null)));
+      if (request.path.includes('/items') && !request.path.includes('view=')) return Promise.resolve(ok(historicalConversationPage(conversationCardId(request.path), [], null)));
       if (request.path === '/api/settings') return Promise.resolve(ok({}));
       return Promise.resolve(ok([]));
     },
@@ -278,7 +278,7 @@ describe('clearing the track title', () => {
     await userEvent.type(screen.getByRole('textbox', { name: 'Track title' }), '{Enter}');
 
     await waitFor(() => {
-      expect(requests.filter((request) => request.method === 'PATCH' && request.path === '/api/tracks/w1'))
+      expect(requests.filter((request) => request.method === 'PATCH' && request.path === '/api/v1/tracks/w1'))
         .toEqual([expect.objectContaining({ body: { title: '' } })]);
     });
   });

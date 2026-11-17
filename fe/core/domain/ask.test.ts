@@ -79,7 +79,7 @@ describe('answerAskOperation', () => {
   it('posts every answer to the ask under its track', () => {
     const operation = answerAskOperation('track/1', 42, [{ option: 0 }, { text: 'To ship' }]);
     expect(operation.method).toBe('POST');
-    expect(operation.path).toBe('/api/tracks/track%2F1/asks/42/answer');
+    expect(operation.path).toBe('/api/v1/tracks/track%2F1/asks/42/answer');
     expect(operation.body).toEqual({ answers: [{ option: 0 }, { text: 'To ship' }] });
     expect(operation.responseSchema.safeParse(undefined).success).toBe(true);
   });

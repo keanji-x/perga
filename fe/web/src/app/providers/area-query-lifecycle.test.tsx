@@ -23,7 +23,7 @@ it.each(['local', 'done', 'ws'] as const)('%s deletion retires mounted child que
   const transport: ApiTransportPort = { send: request => {
     if (request.method === 'DELETE') return Promise.resolve(source === 'done'
       ? { status: 404, statusText: 'Not Found', body: { error: 'gone' } } : { status: 204, statusText: 'No Content', body: undefined });
-    if (request.path === '/api/areas') return new Promise(resolve => parents.push({ request, resolve }));
+    if (request.path === '/api/v1/areas') return new Promise(resolve => parents.push({ request, resolve }));
     if (request.path.includes('/tracks')) {
       children.push(request);
       return children.length === 1 ? Promise.resolve(ok([])) : new Promise(() => undefined);

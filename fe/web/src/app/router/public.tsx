@@ -175,7 +175,7 @@ type ConversationPanelSource = ConversationCreationSource & Readonly<{
      * asks/answerAsk serve open asks above the composer; role supplies the Area admin state. */
     planner: Readonly<{
       cardId: string; areaId: string; asks: readonly OpenAsk[];
-      answerAsk: (askId: number, answers: readonly AskAnswer[]) => Promise<void>;
+      answerAsk: (askId: import('../../../../core/domain/activity.ts').AskId, answers: readonly AskAnswer[]) => Promise<void>;
       role: PlannerRoleControl;
       commands?: (stop: (() => void) | undefined) => CommandBindings;
     }> | null;
@@ -679,7 +679,7 @@ function useConversationPane(
   const roleDisabledReason = plannerRow?.role.disabledReason;
   const roleChange = plannerRow?.role.onChange;
   /* Without a Planner row the drawer lists no ask, so nothing can be answered from here: nothing is sent. */
-  const answerAsk = useCommittedCallback(existingId, (askId: number, answers: readonly AskAnswer[]) => plannerRow === null
+  const answerAsk = useCommittedCallback(existingId, (askId: import('../../../../core/domain/activity.ts').AskId, answers: readonly AskAnswer[]) => plannerRow === null
     ? Promise.reject(new NotSentError()) : plannerRow.answerAsk(askId, answers));
   const attach = useCommittedCallback(existingId, attachments.attach);
   const removeAttachment = useCommittedCallback(existingId, attachments.remove);
@@ -1324,7 +1324,12 @@ function TrackRouteBody({
       refresh: conversationMutations.refresh,
       planner: plannerCard === undefined ? null : {
         cardId: plannerCard.id, areaId: track.areaId, asks: openAsks,
-        answerAsk: (askId, answers) => trackMutations.answerAsk(track.id, askId, answers),
+        answerAsk: (askId, answers) => trackMutations.answerAsk(
+          track.id,
+          askId,
+          answers,
+          typeof askId === 'string' ? openAsks.find((item) => item.askId === askId)?.questions : undefined,
+        ),
         role: plannerRole,
         commands: plannerCommands,
       },
@@ -1657,6 +1662,16 @@ function TrackRouteBody({
         onOpenLink={openReportLink}
         onOpenFileLink={openReportFile}
         onOpenSourceLink={openReportSource}
+        onSaveProseBlock={report?.docRev !== undefined
+          ? async (blockId, markdown) => {
+            await trackMutations.updateReportBlock(track.id, blockId, {
+              docRev: report.docRev!,
+              knownBlockRev: report.blockRevs?.[blockId] ?? 1,
+              kind: 'prose',
+              markdown,
+            });
+          }
+          : undefined}
         fileRoot={track.agentCwd}
         linkPreview={linkPreview}
         outlineEmpty={reportEmpty}

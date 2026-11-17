@@ -8,7 +8,7 @@ import { renderPage } from '../../features/track/page/test-fixtures.tsx';
 import { ReportDocument } from '../../features/report/document/public.tsx';
 import { ReportFileViewer } from '../../features/report/file-viewer/public.tsx';
 import shell from '../shell/shell.module.css';
-import nativeSource from '../../../../../test-data/native-view-v1.json?raw';
+import nativeSource from '../../../../core/domain/fixtures/native-view-v1.json?raw';
 import { nativeViewPayloadSchema } from '../../../../core/domain/report-view.ts';
 
 const markdown = '# Findings\n\n报告正文保持稳定的行长。窗口变窄时自动重排，打开文件时继续使用相同的阅读宽度。';

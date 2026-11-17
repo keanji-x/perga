@@ -6,7 +6,7 @@ import { NewTrackForm } from '../../features/area/new-track/public.tsx';
 import { AddCardMenu, NewCardForm } from '../../features/track/new-card/public.tsx';
 import type { CardAddMenuEntry } from '../../systems/cards/public.ts';
 import { nativeViewPayloadSchema } from '../../../../core/domain/report-view.ts';
-import source from '../../../../../test-data/native-view-v1.json?raw';
+import source from '../../../../core/domain/fixtures/native-view-v1.json?raw';
 import { Dialog, type DialogOrigin } from '../../ui/dialog/public.tsx';
 import { useState } from '../../ui/state/public.ts';
 import { renderPage } from '../../features/track/page/test-fixtures.tsx';

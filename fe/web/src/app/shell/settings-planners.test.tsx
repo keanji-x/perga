@@ -45,7 +45,7 @@ function answer(claude: Readonly<{ status: string; reason: string | null }>) {
 
 /** The managed endpoint wraps the same availability answer as the shell subscription. */
 function providerResponse(request: ApiRequest, entries: ReturnType<typeof answer>): ApiTransportResponse {
-  return { status: 200, statusText: 'OK', body: request.path.startsWith('/api/agent-providers') && !request.path.includes('/managed')
+  return { status: 200, statusText: 'OK', body: request.path.startsWith('/api/v1/bootstrap?scope=providers')
     ? entries.map(({ availability }) => availability) : entries };
 }
 
@@ -57,13 +57,13 @@ function renderPlanners(recheck?: () => Promise<ApiTransportResponse>,
   const transport: ApiTransportPort = {
     send(request): Promise<ApiTransportResponse> {
       sent.push(request);
-      if (providersReply !== undefined && request.path.startsWith('/api/agent-providers')) return providersReply(request);
-      if (request.path === '/api/agent-providers') return Promise.resolve(providerResponse(request, answer({ status: 'unavailable', reason: LOGGED_OUT })));
+      if (providersReply !== undefined && (request.path.startsWith('/api/v1/bootstrap?scope=') || request.path.startsWith('/api/agent-providers'))) return providersReply(request);
+      if (request.path === '/api/v1/bootstrap?scope=providers') return Promise.resolve(providerResponse(request, answer({ status: 'unavailable', reason: LOGGED_OUT })));
       if (settingsReply !== undefined && request.path === '/api/settings') return settingsReply(request);
-      if (recheck !== undefined && request.path === '/api/agent-providers?refresh=true') return recheck();
-      const body = request.path === '/api/agent-providers/managed'
+      if (recheck !== undefined && request.path === '/api/v1/bootstrap?scope=providers&refresh=true') return recheck();
+      const body = request.path === '/api/v1/bootstrap?scope=managed'
         ? answer({ status: 'unavailable', reason: LOGGED_OUT })
-        : request.path === '/api/agent-providers?refresh=true'
+        : request.path === '/api/v1/bootstrap?scope=providers&refresh=true'
           ? answer({ status: 'ready', reason: null }).map(({ availability }) => availability)
           : request.path === '/api/settings' ? { settings: {} } : [];
       return Promise.resolve({ status: 200, statusText: 'OK', body });
@@ -102,17 +102,17 @@ it('lists each provider with its status and reason, and Recheck replaces the ans
   await screen.findByText(`${LOGGED_OUT} ${unavailableCreationNote('Claude')}`);
   expect(within(row('Claude')).getByText('Unavailable')).toBeTruthy();
   expect(within(row('Codex')).getByText('Ready')).toBeTruthy();
-  expect(sent.filter((request) => request.path === '/api/agent-providers?refresh=true')).toHaveLength(0);
+  expect(sent.filter((request) => request.path === '/api/v1/bootstrap?scope=providers&refresh=true')).toHaveLength(0);
   expect(client.getQueryState(claudeCatalog)?.isInvalidated).toBe(false);
-  const readsBeforeRecheck = sent.filter((request) => request.path === '/api/agent-providers/managed').length;
+  const readsBeforeRecheck = sent.filter((request) => request.path === '/api/v1/bootstrap?scope=managed').length;
 
   await userEvent.click(screen.getByRole('button', { name: 'Recheck planners' }));
   await waitFor(() => expect(screen.queryByText(`${LOGGED_OUT} ${unavailableCreationNote('Claude')}`)).toBeNull());
   expect(within(row('Claude')).getByText('Ready')).toBeTruthy();
-  expect(sent.filter((request) => request.path === '/api/agent-providers?refresh=true')).toHaveLength(1);
+  expect(sent.filter((request) => request.path === '/api/v1/bootstrap?scope=providers&refresh=true')).toHaveLength(1);
   /* The recheck re-fetched the Claude CLI's model list on the server (#1822). */
   expect(client.getQueryState(claudeCatalog)?.isInvalidated).toBe(true);
-  expect(sent.filter((request) => request.path === '/api/agent-providers/managed')).toHaveLength(readsBeforeRecheck);
+  expect(sent.filter((request) => request.path === '/api/v1/bootstrap?scope=managed')).toHaveLength(readsBeforeRecheck);
   expect(client.getQueryData(queryKeys.agentProviders())).toEqual(answer({ status: 'ready', reason: null }).map(({ availability }) => availability));
 });
 
@@ -251,7 +251,7 @@ it('keeps fresh Recheck availability when an older managed read resolves later',
   fresh[1].availability.checked_at_ms += 120_000;
   const { client } = renderPlanners(undefined, undefined, (request) => {
     if (request.path.endsWith('refresh=true')) return Promise.resolve(providerResponse(request, fresh));
-    if (hold && request.path === '/api/agent-providers/managed') return new Promise((resolve) => { release = resolve; });
+    if (hold && request.path === '/api/v1/bootstrap?scope=managed') return new Promise((resolve) => { release = resolve; });
     return Promise.resolve(providerResponse(request, stale));
   });
   await screen.findByText(`${LOGGED_OUT} ${unavailableCreationNote('Claude')}`);
@@ -272,16 +272,16 @@ it('keeps fresh Recheck availability when an older managed read resolves later',
   expect(client.getQueryData(queryKeys.agentProviders())).toEqual(fresh.map(({ availability }) => availability));
 });
 
-it.each(['/api/agent-providers', '/api/agent-providers/managed'])('keeps Checking until %s arrives and joins capabilities by provider', async (delayedPath) => {
+it.each(['/api/v1/bootstrap?scope=providers', '/api/v1/bootstrap?scope=managed'])('keeps Checking until %s arrives and joins capabilities by provider', async (delayedPath) => {
   let release!: (value: ApiTransportResponse) => void;
   const live = answer({ status: 'unavailable', reason: LOGGED_OUT });
   const managed = answer({ status: 'ready', reason: null }).reverse();
   renderPlanners(undefined, undefined, (request) => request.path === delayedPath
     ? new Promise((resolve) => { release = resolve; })
-    : Promise.resolve(providerResponse(request, request.path === '/api/agent-providers' ? live : managed)));
+    : Promise.resolve(providerResponse(request, request.path === '/api/v1/bootstrap?scope=providers' ? live : managed)));
   await screen.findByText('Checking providers…');
   await waitFor(() => expect(release).toBeTypeOf('function'));
-  act(() => { release(providerResponse({ path: delayedPath } as ApiRequest, delayedPath === '/api/agent-providers' ? live : managed)); });
+  act(() => { release(providerResponse({ path: delayedPath } as ApiRequest, delayedPath === '/api/v1/bootstrap?scope=providers' ? live : managed)); });
   await screen.findByText(`${LOGGED_OUT} ${unavailableCreationNote('Claude')}`);
   expect(within(row('Claude')).getByText('Unavailable')).toBeTruthy();
   expect(screen.getAllByRole('listitem').indexOf(row('Codex'))).toBeLessThan(screen.getAllByRole('listitem').indexOf(row('Claude')));
@@ -291,15 +291,15 @@ it('reports missing managed capabilities explicitly and retries both reads', asy
   let missing = true;
   const { sent } = renderPlanners(undefined, undefined, (request) => {
     const entries = answer({ status: 'unavailable', reason: LOGGED_OUT });
-    return Promise.resolve(providerResponse(request, missing && request.path === '/api/agent-providers/managed' ? entries.slice(0, 1) : entries));
+    return Promise.resolve(providerResponse(request, missing && request.path === '/api/v1/bootstrap?scope=managed' ? entries.slice(0, 1) : entries));
   });
   await screen.findByText('Planner capabilities are unavailable for claude.');
   expect(screen.queryByText(`${LOGGED_OUT} ${unavailableCreationNote('Claude')}`)).toBeNull();
   missing = false;
   await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
   await screen.findByText(`${LOGGED_OUT} ${unavailableCreationNote('Claude')}`);
-  expect(sent.filter(({ path }) => path === '/api/agent-providers').length).toBeGreaterThan(1);
-  expect(sent.filter(({ path }) => path === '/api/agent-providers/managed').length).toBeGreaterThan(1);
+  expect(sent.filter(({ path }) => path === '/api/v1/bootstrap?scope=providers').length).toBeGreaterThan(1);
+  expect(sent.filter(({ path }) => path === '/api/v1/bootstrap?scope=managed').length).toBeGreaterThan(1);
 });
 
 it('shares Settings availability with the shell notice through Recheck and Codex retry', async () => {

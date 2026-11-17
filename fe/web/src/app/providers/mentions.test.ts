@@ -89,7 +89,7 @@ it.each(['', 'deploy', ':deploy', '：deploy'])('loads templates on search %s an
   const seen: unknown[] = [];
   const transport: ApiTransportPort = { send(request) {
     requests.push(request);
-    return Promise.resolve({ status: 200, statusText: 'OK', body: request.path === '/api/track-templates'
+    return Promise.resolve({ status: 200, statusText: 'OK', body: request.path === '/api/v1/templates'
       ? templates : request.path === '/api/plugins' ? [] : { tags: [], tracks: [], blocks: [] } });
   } };
   const search = mentionSearchOf(transport, createUnauthorizedChannel({ enqueue: task => task() }), 'area', null,
@@ -99,13 +99,13 @@ it.each(['', 'deploy', ':deploy', '：deploy'])('loads templates on search %s an
     { id: 'template:deploy', kind: 'template', label: 'Deploy', chip: 'Deploy', detail: null, insert: '@`template:deploy`' },
   ]);
   expect(seen).toEqual([templates]);
-  expect(requests.filter(request => request.path === '/api/track-templates')).toHaveLength(1);
+  expect(requests.filter(request => request.path === '/api/v1/templates')).toHaveLength(1);
   if (typed.startsWith(':') || typed.startsWith('：')) expect(requests).toHaveLength(1);
 });
 
 it('retains templates when the other mention sources fail', async () => {
   const transport: ApiTransportPort = { send(request) {
-    return Promise.resolve(request.path === '/api/track-templates'
+    return Promise.resolve(request.path === '/api/v1/templates'
       ? { status: 200, statusText: 'OK', body: [{ id: 'deploy', title: 'Deploy', description: null, availability: { status: 'ready' }, tasks: [] }] }
       : { status: 500, statusText: 'Error', body: { error: 'unavailable' } });
   } };

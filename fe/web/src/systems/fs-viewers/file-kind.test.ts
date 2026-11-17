@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { isHtmlPath } from './file-kind.ts';
 
 /** The html block's shared kernel fixture: what the block accepts, the viewer frames, and the route serves as a page. */
-const fixture = JSON.parse(readFileSync(new URL('../../../../../test-data/report-html-path-v1.json', import.meta.url), 'utf8')) as {
+const fixture = JSON.parse(readFileSync(new URL('../../../../core/domain/fixtures/report-html-path-v1.json', import.meta.url), 'utf8')) as {
   accept: string[];
   refuse: string[];
 };

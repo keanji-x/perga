@@ -5,6 +5,7 @@ import {
   plugins, pluginDataPrefix, trackTemplates,
   transcriptPrefix, transcript as harnessItems, plannerRun, modelCatalog,
   modelCatalogPrefix, trackConversations, trackConversationsPrefix,
+  sessionLive, trackTerminals, taskAttemptsPrefix,
 } from '../../../../core/events/query-keys.ts';
 
 // Key shapes match the legacy app so a cache dump reads the same in both.
@@ -74,4 +75,7 @@ export const queryKeys = Object.freeze({
    * card in a track nobody has open resolves to null. A fallback, not the house shape.
    */
   trackConversationsPrefix,
+  sessionLive,
+  trackTerminals,
+  taskAttemptsPrefix,
 });

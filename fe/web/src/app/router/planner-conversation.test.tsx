@@ -80,20 +80,20 @@ function setup(reply?: Reply) {
         const response = await reply(request);
         if (response) return response;
       }
-      if (request.path.startsWith('/api/agent-providers/managed')) return ok(steerAnswer('codex', true));
-      if (request.path === '/api/areas') return ok([AREA]);
-      if (request.path === '/api/areas/c1/tracks') return ok([TRACK, TRACK_B]);
+      if (request.path.startsWith('/api/v1/bootstrap?scope=managed')) return ok(steerAnswer('codex', true));
+      if (request.path === '/api/v1/areas') return ok([AREA]);
+      if (request.path === '/api/v1/areas/c1/tracks?includeClosed=true') return ok([TRACK, TRACK_B]);
       if (request.path === '/api/overlays?entity_kind=track') return ok([]);
-      if (request.path === '/api/tracks/w1') return ok({
+      if (request.path === '/api/v1/tracks/w1') return ok({
         track: TRACK, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true, cards: [CARD], overlays: [],
       });
-      if (request.path === '/api/tracks/w2') return ok({
+      if (request.path === '/api/v1/tracks/w2') return ok({
         track: TRACK_B, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true, cards: [CARD_B], overlays: [],
       });
-      if (request.path.includes('/harness/items')) return ok(historicalConversationPage(conversationCardId(request.path), [], null));
-      if (request.path.includes('/planner/run?contract=conversation_v1')) return ok(historicalConversationRun(PLANNER_RUN_IDLE, 'idle', true));
-      if (request.path.endsWith('/planner/input')) return ok({ card_id: CARD.id, worker_session_id: 'runtime' });
-      if (request.path.endsWith('/planner/interrupt')) return ok({ card_id: CARD.id, worker_session_id: 'runtime', stopped: true });
+      if ((request.path.includes('/items?') && !request.path.includes('view='))) return ok(historicalConversationPage(conversationCardId(request.path), [], null));
+      if (request.path.includes('view=run')) return ok(historicalConversationRun(PLANNER_RUN_IDLE, 'idle', true));
+      if (request.path.endsWith('/messages')) return ok({ card_id: CARD.id, worker_session_id: 'runtime' });
+      if (request.path.endsWith('/interrupt')) return ok({ card_id: CARD.id, worker_session_id: 'runtime', stopped: true });
       if (request.path === '/api/settings') return ok({});
       return ok([]);
     },
@@ -114,8 +114,8 @@ async function openConversation() {
 it('refreshes a mounted agent catalog when its first turn settles', async () => {
   let configured = false;
   const { client } = setup((request) => {
-    if (request.path === '/api/tracks/w1') return ok({ track: TRACK, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true, cards: [{ ...CARD, payload: { planner_harness: true, planner_provider: 'opencode' } }], overlays: [] });
-    if (request.path.includes('/models')) return ok({
+    if (request.path === '/api/v1/tracks/w1') return ok({ track: TRACK, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true, cards: [{ ...CARD, payload: { planner_harness: true, planner_provider: 'opencode' } }], overlays: [] });
+    if ((request.path.startsWith('/api/v1/bootstrap?card_id=') || request.path.startsWith('/api/v1/bootstrap?provider='))) return ok({
       models: configured ? [{ id: 'declared', model: 'declared', resolved_model: null, display_name: 'Declared model', description: '', is_default: true, supported_reasoning_efforts: [], default_reasoning_effort: null }] : [],
       default: { model: configured ? 'declared' : null, reasoning_effort: null, supported_reasoning_efforts: null },
       default_source: configured ? 'acp_session' : 'unknown', source: configured ? 'live' : 'unavailable', fetched_at_ms: configured ? 1 : null,
@@ -144,7 +144,7 @@ function messageField(): HTMLElement {
 
 function setupWithTurns(reply?: Reply) {
   return setup(async (request) => await reply?.(request)
-    ?? (request.path.includes('/harness/items') ? ok(historicalConversationPage(conversationCardId(request.path), harnessRows(1), null)) : undefined));
+    ?? ((request.path.includes('/items?') && !request.path.includes('view=')) ? ok(historicalConversationPage(conversationCardId(request.path), harnessRows(1), null)) : undefined));
 }
 
 async function openConversationWithTurns() {
@@ -182,11 +182,11 @@ afterEach(() => {
 it('renders local screenshot references from planner history using the agent worktree', async () => {
   const agentRoot = '/tmp/planner-worktree';
   setup((request) => {
-    if (request.path === '/api/tracks/w1') return ok({
+    if (request.path === '/api/v1/tracks/w1') return ok({
       track: { ...TRACK, workspace: { ...TRACK.workspace, isolation: 'worktree', worktree: agentRoot } },
       planner_revision: 0, can_reopen: false, can_admin: false, can_close: true, cards: [CARD], overlays: [],
     });
-    if (request.path.includes('/harness/items')) return ok(historicalConversationPage(conversationCardId(request.path), [{
+    if ((request.path.includes('/items?') && !request.path.includes('view='))) return ok(historicalConversationPage(conversationCardId(request.path), [{
       ...harnessRows(1)[0],
       params: JSON.stringify({ item: { text:
         `![Screenshot](${agentRoot}/screenshots/page.png)\n\n![Detail](screenshots/detail.png)` } }),
@@ -195,23 +195,23 @@ it('renders local screenshot references from planner history using the agent wor
   });
   await openConversation();
   await waitFor(() => expect(screen.getByRole('img', { name: 'Screenshot' }).getAttribute('src'))
-    .toBe('/api/tracks/w1/workspace/readfile-raw?path=screenshots%2Fpage.png'));
+    .toBe('/api/v1/tracks/w1/files?path=screenshots%2Fpage.png'));
   expect(screen.getByRole('img', { name: 'Detail' }).getAttribute('src'))
-    .toBe('/api/tracks/w1/workspace/readfile-raw?path=screenshots%2Fdetail.png');
+    .toBe('/api/v1/tracks/w1/files?path=screenshots%2Fdetail.png');
 });
 
 it('binds the same relative screenshot path to the newly opened conversation track', async () => {
-  const { router } = setup((request) => request.path.includes('/harness/items') ? ok(historicalConversationPage(conversationCardId(request.path), [{
+  const { router } = setup((request) => (request.path.includes('/items?') && !request.path.includes('view=')) ? ok(historicalConversationPage(conversationCardId(request.path), [{
     ...harnessRows(1)[0], params: JSON.stringify({ item: { text: '![Screenshot](screenshots/page.png)' } }),
   }], null)) : undefined);
   await openConversation();
   expect((await screen.findByRole('img', { name: 'Screenshot' })).getAttribute('src'))
-    .toBe('/api/tracks/w1/workspace/readfile-raw?path=screenshots%2Fpage.png');
+    .toBe('/api/v1/tracks/w1/files?path=screenshots%2Fpage.png');
   await act(async () => { await router.navigate({ to: '/track/w2' }); });
   fireEvent.click(await screen.findByRole('button', { name: 'Conversation Second chat' }));
   const secondDrawer = await screen.findByRole('complementary', { name: 'Second chat' });
   expect((await within(secondDrawer).findByRole('img', { name: 'Screenshot' })).getAttribute('src'))
-    .toBe('/api/tracks/w2/workspace/readfile-raw?path=screenshots%2Fpage.png');
+    .toBe('/api/v1/tracks/w2/files?path=screenshots%2Fpage.png');
 });
 
 /* `fireEvent.change` cannot drive Astryx's `contenteditable` composer (no value
@@ -241,7 +241,7 @@ async function sendWithEnter(field: HTMLElement) {
 /** Wait out one `POST /planner/input` plus one macrotask, past the promise chain's `finally` where `sending` is released. */
 async function settleOneSend(requests: ApiRequest[], expected = 1) {
   await waitFor(() => {
-    expect(requests.filter((request) => request.path.endsWith('/planner/input')))
+    expect(requests.filter((request) => request.path.endsWith('/messages')))
       .toHaveLength(expected);
   });
   await act(async () => { await new Promise((resolve) => { setTimeout(resolve, 0); }); });
@@ -267,7 +267,7 @@ const PHASE_SENDS = Object.freeze(Object.entries(PHASE_SEND_TABLE));
 
 describe('planner conversation regressions', () => {
   it('does not repeat the run phase above the composer while the planner is working', async () => {
-    setupWithTurns((request) => request.path.includes('/planner/run?contract=conversation_v1')
+    setupWithTurns((request) => request.path.includes('view=run')
       ? ok(historicalConversationRun({ ...PLANNER_RUN_IDLE, phase: 'turn_running' }, 'idle', true))
       : undefined);
     await openConversationWithTurns();
@@ -299,7 +299,7 @@ describe('planner conversation regressions', () => {
   });
 
   it('shows why a queued message is not being sent when the reader has to act', async () => {
-    setupWithTurns((request) => request.path.includes('/planner/run?contract=conversation_v1')
+    setupWithTurns((request) => request.path.includes('view=run')
       ? ok(historicalConversationRun({
         ...PLANNER_RUN_IDLE,
         blocked_reason: 'This conversation follows the default model, and codex\'s configuration '
@@ -383,7 +383,7 @@ describe('planner conversation regressions', () => {
     await screen.findByRole('button', { name: 'Conversation Planner chat' });
     expect(requests.filter((request) => request.path.endsWith('/planner/reset'))).toHaveLength(0);
     /* The pressing above actually did something, so an inert sweep cannot pass. */
-    expect(requests.filter((request) => request.path.endsWith('/planner/input'))).toHaveLength(1);
+    expect(requests.filter((request) => request.path.endsWith('/messages'))).toHaveLength(1);
   });
 
   it('offers /new in the track composer, now that a track can hold a second conversation', async () => {
@@ -403,7 +403,7 @@ describe('planner conversation regressions', () => {
   });
 
   it('follows a card swapped out and back, showing the transcript of whichever row is open', async () => {
-    const { client } = setup((request) => request.path.includes('/harness/items')
+    const { client } = setup((request) => (request.path.includes('/items?') && !request.path.includes('view='))
       ? ok(historicalConversationPage(conversationCardId(request.path), harnessRows(3), null)) : undefined);
     fireEvent.click(await screen.findByRole('button', { name: 'Conversation Planner chat' }));
     /* Wait for all transcript messages before swapping the selected conversation. */
@@ -425,7 +425,7 @@ describe('planner conversation regressions', () => {
   });
 
   it('renders a server-sent reply from the history fixture', async () => {
-    setup((request) => request.path.includes('/harness/items') ? ok(historicalConversationPage(conversationCardId(request.path), harnessRows(1), null)) : undefined);
+    setup((request) => (request.path.includes('/items?') && !request.path.includes('view=')) ? ok(historicalConversationPage(conversationCardId(request.path), harnessRows(1), null)) : undefined);
     await openConversation();
     expect(await screen.findByText('reply 0')).toBeTruthy();
   });
@@ -445,7 +445,7 @@ describe('planner conversation regressions', () => {
         params: JSON.stringify({ completedAtMs: 30, item: { command: 'npm test', exitCode: 0 } }),
       },
     ];
-    setup((request) => request.path.includes('/harness/items') ? ok(historicalConversationPage(conversationCardId(request.path), rows, null)) : undefined);
+    setup((request) => (request.path.includes('/items?') && !request.path.includes('view=')) ? ok(historicalConversationPage(conversationCardId(request.path), rows, null)) : undefined);
     await openConversation();
     /* The history is fetched when the row is opened, so the transcript lands a round trip after the drawer. */
     await screen.findByText('interleaved reply');
@@ -469,7 +469,7 @@ describe('planner conversation regressions', () => {
       command(3, 'command-2', 'item/completed', { command: 'ls', exitCode: 0, durationMs: 12 }),
       command(4, 'command-3', 'item/started', { command: 'cargo build' }),
     ];
-    const { client } = setup((request) => request.path.includes('/harness/items') ? ok(historicalConversationPage(conversationCardId(request.path), rows, null)) : undefined);
+    const { client } = setup((request) => (request.path.includes('/items?') && !request.path.includes('view=')) ? ok(historicalConversationPage(conversationCardId(request.path), rows, null)) : undefined);
     await openConversation();
     const group = await screen.findByRole('group', { name: '3 tool calls' });
     const header = group.querySelector<HTMLElement>(':scope > [role="button"][aria-expanded="false"]')!;
@@ -516,7 +516,7 @@ describe('planner conversation regressions', () => {
       command(99, 'command-99', 'item/completed', { command: 'old command 1', exitCode: 0 }),
       command(100, 'command-100', 'item/completed', { command: 'old command 2', exitCode: 0 }),
     ];
-    const { requests } = setup((request) => request.path.includes('/harness/items')
+    const { requests } = setup((request) => (request.path.includes('/items?') && !request.path.includes('view='))
       ? ok(historicalConversationPage(CARD.id, !new URL(request.path, 'http://fixture').searchParams.has('cursor') ? firstPage : earlierPage,
         !new URL(request.path, 'http://fixture').searchParams.has('cursor') ? {contract:'conversation_v1',source:'historical_raw',card_id:CARD.id,position:firstPage[0].id} : null)) : undefined);
     await openConversation();
@@ -534,7 +534,7 @@ describe('planner conversation regressions', () => {
     expect(order.every((position, index) => position >= 0 && (index === 0 || position > order[index - 1]))).toBe(true);
     const drawer = screen.getByRole('complementary', { name: 'Planner chat' });
     expect((drawer.textContent ?? '').indexOf('Let me check.')).toBeLessThan((drawer.textContent ?? '').indexOf('old command 1'));
-    expect(requests.filter((request) => request.path.includes('/harness/items'))
+    expect(requests.filter((request) => (request.path.includes('/items?') && !request.path.includes('view=')))
       .map(request => { const cursor=new URL(request.path, 'http://fixture').searchParams.get('cursor');
         return cursor === null ? null : conversationCursorSchema.parse(JSON.parse(cursor)).position; })).toEqual([null, 101]);
   });
@@ -561,7 +561,7 @@ describe('planner conversation regressions', () => {
       ...Array.from({ length: TRANSCRIPT_PAGE_LIMIT - 1 }, (_, i) => reply(103 + i)),
     ];
     let refetched = false;
-    const { client } = setup((request) => request.path.includes('/harness/items')
+    const { client } = setup((request) => (request.path.includes('/items?') && !request.path.includes('view='))
       ? ok(historicalConversationPage(CARD.id, !new URL(request.path, 'http://fixture').searchParams.has('cursor') ? (refetched ? shifted : initial) : [initial[0]],
         !new URL(request.path, 'http://fixture').searchParams.has('cursor') ? {contract:'conversation_v1',source:'historical_raw',card_id:CARD.id,position:(refetched ? shifted : initial)[0].id} : null))
       : undefined);
@@ -601,7 +601,7 @@ describe('planner conversation regressions', () => {
     const initial = [failed, ...retained, ...Array.from({ length: TRANSCRIPT_PAGE_LIMIT - 3 }, (_, i) => reply(104 + i))];
     const shifted = [...retained, ...Array.from({ length: TRANSCRIPT_PAGE_LIMIT - 2 }, (_, i) => reply(104 + i))];
     let refetched = false;
-    const { client } = setup((request) => request.path.includes('/harness/items')
+    const { client } = setup((request) => (request.path.includes('/items?') && !request.path.includes('view='))
       ? ok(historicalConversationPage(CARD.id, !new URL(request.path, 'http://fixture').searchParams.has('cursor') ? (refetched ? shifted : initial) : [failed],
         !new URL(request.path, 'http://fixture').searchParams.has('cursor') ? {contract:'conversation_v1',source:'historical_raw',card_id:CARD.id,position:(refetched ? shifted : initial)[0].id} : null))
       : undefined);
@@ -641,7 +641,7 @@ describe('planner conversation regressions', () => {
     const initial = [...calls, ...Array.from({ length: TRANSCRIPT_PAGE_LIMIT - 2 }, (_, i) => reply(103 + i))];
     const shifted = Array.from({ length: TRANSCRIPT_PAGE_LIMIT }, (_, i) => reply(103 + i));
     let refetched = false;
-    const { client } = setup((request) => request.path.includes('/harness/items')
+    const { client } = setup((request) => (request.path.includes('/items?') && !request.path.includes('view='))
       ? ok(historicalConversationPage(CARD.id, !new URL(request.path, 'http://fixture').searchParams.has('cursor') ? (refetched ? shifted : initial) : calls,
         !new URL(request.path, 'http://fixture').searchParams.has('cursor') ? {contract:'conversation_v1',source:'historical_raw',card_id:CARD.id,position:(refetched ? shifted : initial)[0].id} : null))
       : undefined);
@@ -665,7 +665,7 @@ describe('planner conversation regressions', () => {
       ...harnessRows(1)[0], item_uuid: 'thought-1', item_type: 'reasoning',
       params: JSON.stringify({ item: { summary: [] } }),
     };
-    setup((request) => request.path.includes('/harness/items') ? ok(historicalConversationPage(conversationCardId(request.path), [thought], null)) : undefined);
+    setup((request) => (request.path.includes('/items?') && !request.path.includes('view=')) ? ok(historicalConversationPage(conversationCardId(request.path), [thought], null)) : undefined);
     await openConversation();
     expect(await screen.findByText('Thought')).toBeTruthy();
     const field = messageField();
@@ -676,37 +676,37 @@ describe('planner conversation regressions', () => {
   });
 
   it('does not read older bodies after initial presentation, idle, resize or initial top', async () => {
-    const { requests } = setup(request => request.path.includes('/harness/items')
+    const { requests } = setup(request => (request.path.includes('/items?') && !request.path.includes('view='))
       ? historyReply(harnessRows(TRANSCRIPT_PAGE_LIMIT)) : undefined);
     await openConversationWithTurns();
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 60)); });
     const scroller = drawerElement().querySelector('[data-nc-drawer-scroll]')!;
     fireEvent.scroll(scroller);
     fireEvent(window, new Event('resize'));
-    expect(requests.filter(request => request.path.includes('/harness/items'))).toHaveLength(1);
+    expect(requests.filter(request => (request.path.includes('/items?') && !request.path.includes('view=')))).toHaveLength(1);
     expect(screen.queryByText('Loading earlier messages… Navigation covers loaded history.')).toBeNull();
   });
 
   it('consumes one upward input for at most one page without response chaining', async () => {
     const rows = harnessRows(TRANSCRIPT_PAGE_LIMIT * 3);
     const { requests } = setup(request => {
-      if (!request.path.includes('/harness/items')) return undefined;
+      if (!(request.path.includes('/items?') && !request.path.includes('view='))) return undefined;
       const cursor = Number(historyPosition(request.path));
       return historyReply(cursor === 0 ? rows.slice(-TRANSCRIPT_PAGE_LIMIT) : rows.filter(row => row.id < cursor).slice(-TRANSCRIPT_PAGE_LIMIT));
     });
     await openConversation();
     await screen.findByText(`reply ${TRANSCRIPT_PAGE_LIMIT * 3 - 1}`);
     fireEvent.wheel(drawerElement().querySelector('[data-nc-drawer-scroll]')!, { deltaY: -40 });
-    await waitFor(() => expect(requests.filter(request => request.path.includes('/harness/items'))).toHaveLength(2));
+    await waitFor(() => expect(requests.filter(request => (request.path.includes('/items?') && !request.path.includes('view=')))).toHaveLength(2));
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 60)); });
-    expect(requests.filter(request => request.path.includes('/harness/items'))).toHaveLength(2);
+    expect(requests.filter(request => (request.path.includes('/items?') && !request.path.includes('view=')))).toHaveLength(2);
   });
 
   it('presents the first page before upward input and stops after a full final page plus an empty page', async () => {
-    const { requests } = setup((request) => request.path.includes('/harness/items')
+    const { requests } = setup((request) => (request.path.includes('/items?') && !request.path.includes('view='))
       ? historyReply(historyPosition(request.path) === '0' ? harnessRows(TRANSCRIPT_PAGE_LIMIT) : []) : undefined);
     await openConversation();
-    const historyRequests = () => requests.filter((request) => request.path.includes('/harness/items'));
+    const historyRequests = () => requests.filter((request) => (request.path.includes('/items?') && !request.path.includes('view=')));
     await waitFor(() => expect(historyRequests()).toHaveLength(1));
     await readEarlierWithInput();
     await waitFor(() => expect(historyRequests()).toHaveLength(2));
@@ -718,17 +718,17 @@ describe('planner conversation regressions', () => {
     let release!: (response: ApiTransportResponse) => void;
     const rows = harnessRows(TRANSCRIPT_PAGE_LIMIT * 2);
     const { requests } = setup(request => {
-      if (!request.path.includes('/harness/items')) return undefined;
+      if (!(request.path.includes('/items?') && !request.path.includes('view='))) return undefined;
       if (historyPosition(request.path) === '0') return historyReply(rows.slice(TRANSCRIPT_PAGE_LIMIT));
       if (historyPosition(request.path) === String(TRANSCRIPT_PAGE_LIMIT + 1)) return new Promise(resolve => { release = resolve; });
       return historyReply([]);
     });
     await openConversation();
     await readEarlierWithInput();
-    expect(requests.filter(request => request.path.includes('/harness/items'))).toHaveLength(2);
+    expect(requests.filter(request => (request.path.includes('/items?') && !request.path.includes('view=')))).toHaveLength(2);
     await act(async () => { release(historyReply(rows.slice(0, TRANSCRIPT_PAGE_LIMIT))); await Promise.resolve(); });
     await readEarlierWithInput();
-    expect(requests.filter(request => request.path.includes('/harness/items')).map(request =>
+    expect(requests.filter(request => (request.path.includes('/items?') && !request.path.includes('view='))).map(request =>
       historyPosition(request.path))).toEqual(['0', String(TRANSCRIPT_PAGE_LIMIT + 1), '1']);
     expect(screen.queryByText('Loading earlier messages… Navigation covers loaded history.')).toBeNull();
   });
@@ -737,29 +737,29 @@ describe('planner conversation regressions', () => {
     let release!: (response: ApiTransportResponse) => void;
     let hold = false;
     const rows = harnessRows(TRANSCRIPT_PAGE_LIMIT);
-    const { client, requests } = setup(request => request.path.includes('/harness/items')
+    const { client, requests } = setup(request => (request.path.includes('/items?') && !request.path.includes('view='))
       ? hold ? new Promise(resolve => { release = resolve; }) : historyReply(rows) : undefined);
     await openConversationWithTurns();
     hold = true;
     act(() => { void client.invalidateQueries({ queryKey: transcriptQueryKey() }); });
-    await waitFor(() => expect(requests.filter(request => request.path.includes('/harness/items'))).toHaveLength(2));
+    await waitFor(() => expect(requests.filter(request => (request.path.includes('/items?') && !request.path.includes('view=')))).toHaveLength(2));
     await readEarlierWithInput();
     cleanup();
     await act(async () => { release(historyReply(rows)); await Promise.resolve(); });
-    expect(requests.filter(request => request.path.includes('/harness/items'))).toHaveLength(2);
+    expect(requests.filter(request => (request.path.includes('/items?') && !request.path.includes('view=')))).toHaveLength(2);
   });
 
   it('pauses on failure and explicitly retries only the failed page', async () => {
     let fail = true;
     const { requests } = setup(request => {
-      if (!request.path.includes('/harness/items')) return undefined;
+      if (!(request.path.includes('/items?') && !request.path.includes('view='))) return undefined;
       if (historyPosition(request.path) === '0') return historyReply(harnessRows(TRANSCRIPT_PAGE_LIMIT));
       return fail ? { status: 503, statusText: 'Unavailable', body: null } : historyReply([]);
     });
     await openConversation();
     await readEarlierWithInput();
     await screen.findByRole('button', { name: 'Reload history' });
-    const reads = () => requests.filter(request => request.path.includes('/harness/items'));
+    const reads = () => requests.filter(request => (request.path.includes('/items?') && !request.path.includes('view=')));
     expect(reads()).toHaveLength(2);
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 80)); });
     expect(reads()).toHaveLength(2);
@@ -774,7 +774,7 @@ describe('planner conversation regressions', () => {
     let hold = false;
     const rows = harnessRows(TRANSCRIPT_PAGE_LIMIT);
     const { client, requests } = setup(request => {
-      if (!request.path.includes('/harness/items')) return undefined;
+      if (!(request.path.includes('/items?') && !request.path.includes('view='))) return undefined;
       if (historyPosition(request.path) !== '0') return historyReply([]);
       return hold ? new Promise(resolve => { release = resolve; }) : historyReply(rows);
     });
@@ -782,12 +782,12 @@ describe('planner conversation regressions', () => {
     await waitFor(() => expect(drawerElement().querySelector('[data-nc-thread]')).not.toBeNull());
     hold = true;
     act(() => { void client.invalidateQueries({ queryKey: transcriptQueryKey() }); });
-    await waitFor(() => expect(requests.filter(request => request.path.includes('/harness/items'))).toHaveLength(2));
+    await waitFor(() => expect(requests.filter(request => (request.path.includes('/items?') && !request.path.includes('view=')))).toHaveLength(2));
     fireEvent.wheel(drawerElement().querySelector('[data-nc-drawer-scroll]')!, { deltaY: -40 });
     hold = false;
     await act(async () => { release(historyReply(rows)); await Promise.resolve(); });
-    await waitFor(() => expect(requests.filter(request => request.path.includes('/harness/items'))).toHaveLength(3));
-    expect(requests.filter(request => request.path.includes('/harness/items')).map(request =>
+    await waitFor(() => expect(requests.filter(request => (request.path.includes('/items?') && !request.path.includes('view=')))).toHaveLength(3));
+    expect(requests.filter(request => (request.path.includes('/items?') && !request.path.includes('view='))).map(request =>
       historyPosition(request.path))).toEqual(['0', '0', '1']);
   });
 
@@ -799,8 +799,8 @@ describe('planner conversation regressions', () => {
     let releaseNewest!: (response: ApiTransportResponse) => void;
     let release!: (response: ApiTransportResponse) => void;
     const { client, requests } = setup(request => {
-      if (request.path === '/api/tracks/w1') return ok({ track: TRACK, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true, cards: [CARD], overlays: [] });
-      if (!request.path.includes('/harness/items')) return undefined;
+      if (request.path === '/api/v1/tracks/w1') return ok({ track: TRACK, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true, cards: [CARD], overlays: [] });
+      if (!(request.path.includes('/items?') && !request.path.includes('view='))) return undefined;
       if (request.path.includes(CARD_SAME_TRACK.id)) return historyReply([]);
       if (historyPosition(request.path) === '0') return holdNewest ? new Promise(resolve => { releaseNewest = resolve; }) : historyReply(first);
       if (historyPosition(request.path) === '121') return holdEarlier ? new Promise(resolve => { release = resolve; }) : historyReply(middle);
@@ -810,12 +810,12 @@ describe('planner conversation regressions', () => {
     await waitFor(() => expect(drawerElement().querySelector('[data-nc-thread]')).not.toBeNull());
     holdNewest = true;
     act(() => { void client.invalidateQueries({ queryKey: transcriptQueryKey() }); });
-    await waitFor(() => expect(requests.filter(request => request.path.includes('/harness/items'))).toHaveLength(2));
+    await waitFor(() => expect(requests.filter(request => (request.path.includes('/items?') && !request.path.includes('view=')))).toHaveLength(2));
     await readEarlierWithInput();
     fireEvent.click(screen.getByRole('button', { name: 'Close conversation' }));
     holdNewest = false;
     await act(async () => { releaseNewest(historyReply(first)); await Promise.resolve(); });
-    expect(requests.filter(request => request.path.includes('/harness/items'))).toHaveLength(2);
+    expect(requests.filter(request => (request.path.includes('/items?') && !request.path.includes('view=')))).toHaveLength(2);
     await openConversation();
     await readEarlierWithInput();
     act(() => { client.setQueryData(queryKeys.trackDetail(TRACK.id), { track: TRACK, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true, cards: [CARD_SAME_TRACK], overlays: [] }); });
@@ -830,24 +830,24 @@ describe('planner conversation regressions', () => {
   });
 
   it('reports a nonadvancing history cursor instead of looping or claiming completion', async () => {
-    const { requests } = setup(request => request.path.includes('/harness/items') ? historyReply(harnessRows(TRANSCRIPT_PAGE_LIMIT)) : undefined);
+    const { requests } = setup(request => (request.path.includes('/items?') && !request.path.includes('view=')) ? historyReply(harnessRows(TRANSCRIPT_PAGE_LIMIT)) : undefined);
     await openConversation();
     await readEarlierWithInput();
     await screen.findByRole('button', { name: 'Reload history' });
-    expect(requests.filter(request => request.path.includes('/harness/items'))).toHaveLength(2);
+    expect(requests.filter(request => (request.path.includes('/items?') && !request.path.includes('view=')))).toHaveLength(2);
     expect(screen.getByText('Earlier history is incomplete. Navigation covers loaded messages.')).toBeTruthy();
   });
 
   it('surfaces send failures and prevents a second send while the first is pending', async () => {
     let reject!: (reason: Error) => void;
     const pending = new Promise<ApiTransportResponse>((_resolve, rejectPromise) => { reject = rejectPromise; });
-    const { requests } = setup((request) => request.path.endsWith('/planner/input') ? pending : undefined);
+    const { requests } = setup((request) => request.path.endsWith('/messages') ? pending : undefined);
     await openConversation();
     const field = messageField();
     await typeInto(field, 'hello');
     await sendWithEnter(field);
     await sendWithEnter(field);
-    expect(requests.filter((request) => request.path.endsWith('/planner/input'))).toHaveLength(1);
+    expect(requests.filter((request) => request.path.endsWith('/messages'))).toHaveLength(1);
     reject(new Error('send exploded'));
     expect(within(await screen.findByRole('alert')).getByText('Delivery is unconfirmed.')).toBeTruthy();
   });
@@ -855,7 +855,7 @@ describe('planner conversation regressions', () => {
   /* `send_planner_input` accepts at any phase and queues the text behind the running
      turn; `data-nc-queued` is present only on the send that was actually queued. */
   it('posts a message sent while a turn is running, and marks it queued', async () => {
-    const { requests } = setup((request) => request.path.includes('/planner/run?contract=conversation_v1')
+    const { requests } = setup((request) => request.path.includes('view=run')
       ? ok(historicalConversationRun({ ...PLANNER_RUN_IDLE, phase: 'turn_running' }, 'idle', true))
       : undefined);
     await openConversation();
@@ -868,7 +868,7 @@ describe('planner conversation regressions', () => {
     await sendWithEnter(field);
 
     await waitFor(() => {
-      expect(requests.filter((request) => request.path.endsWith('/planner/input'))).toHaveLength(1);
+      expect(requests.filter((request) => request.path.endsWith('/messages'))).toHaveLength(1);
     });
     expect(await screen.findByText('queued words')).toBeTruthy();
     const queued = document.querySelector('[data-nc-queued]');
@@ -883,13 +883,13 @@ describe('planner conversation regressions', () => {
     const entry = { entry_id: 'entry-9', text: 'queued once', rev: 0, queued_at_ms: 5 };
     let listed = false;
     setup((request) => {
-      if (request.path.includes('/planner/run?contract=conversation_v1')) {
+      if (request.path.includes('view=run')) {
         return ok(historicalConversationRun({
           ...PLANNER_RUN_IDLE, phase: 'turn_running',
           pending: listed ? [entry] : [], pending_overflow: 0,
         }, 'idle', true));
       }
-      if (request.method === 'POST' && request.path.endsWith('/planner/input')) {
+      if (request.method === 'POST' && request.path.endsWith('/messages')) {
         listed = true;
         return ok({ card_id: CARD.id, worker_session_id: 'runtime', entry_id: entry.entry_id });
       }
@@ -930,13 +930,13 @@ describe('planner conversation regressions', () => {
     };
     let listed = true;
     const { client } = setup((request) => {
-      if (request.path.includes('/planner/run?contract=conversation_v1')) {
+      if (request.path.includes('view=run')) {
         return ok(historicalConversationRun({
           ...PLANNER_RUN_IDLE, phase: 'issuing_turn',
           pending: listed ? [entry] : [], pending_overflow: 0,
         }, 'idle', true));
       }
-      if (request.path.includes('/harness/items')) return ok(historicalConversationPage(conversationCardId(request.path), [projection], null));
+      if ((request.path.includes('/items?') && !request.path.includes('view='))) return ok(historicalConversationPage(conversationCardId(request.path), [projection], null));
       return undefined;
     });
     await openConversation();
@@ -963,7 +963,7 @@ describe('planner conversation regressions', () => {
   it('sends the listed revision as if_entry_rev when removing a queued message', async () => {
     const entry = { entry_id: 'entry-9', text: 'first words', rev: 3, queued_at_ms: 5 };
     const { requests } = setup((request) => {
-      if (request.path.includes('/planner/run?contract=conversation_v1')) {
+      if (request.path.includes('view=run')) {
         return ok(historicalConversationRun({ ...PLANNER_RUN_IDLE, phase: 'turn_running', pending: [entry], pending_overflow: 0 }, 'idle', true));
       }
       if (request.method === 'DELETE' && request.path.includes('/planner/input/')) {
@@ -995,7 +995,7 @@ describe('planner conversation regressions', () => {
   it('offers "Say it now" while a turn is running, and posts the listed revision to the steer route', async () => {
     const entry = { entry_id: 'entry-9', text: 'now please', rev: 3, queued_at_ms: 5 };
     const { requests } = setup((request) => {
-      if (request.path.includes('/planner/run?contract=conversation_v1')) {
+      if (request.path.includes('view=run')) {
         return ok(historicalConversationRun({ ...PLANNER_RUN_IDLE, phase: 'turn_running', pending: [entry], pending_overflow: 0 }, 'idle', true));
       }
       if (request.method === 'POST' && request.path.endsWith('/steer')) {
@@ -1034,7 +1034,7 @@ describe('planner conversation regressions', () => {
     let served = { entry_id: 'entry-9', text: 'came back', rev: 3, queued_at_ms: 5 };
     let runReads = 0;
     const { client, requests } = setup((request) => {
-      if (request.path.includes('/planner/run?contract=conversation_v1')) {
+      if (request.path.includes('view=run')) {
         runReads += 1;
         return ok(historicalConversationRun({ ...PLANNER_RUN_IDLE, phase: 'turn_running', pending: [served], pending_overflow: 0 }, 'idle', true));
       }
@@ -1091,7 +1091,7 @@ describe('planner conversation regressions', () => {
   it('does not offer "Say it now" while the turn is still being issued', async () => {
     const entry = { entry_id: 'entry-9', text: 'not yet', rev: 0, queued_at_ms: 5 };
     setup((request) => {
-      if (request.path.includes('/planner/run?contract=conversation_v1')) {
+      if (request.path.includes('view=run')) {
         return ok(historicalConversationRun({ ...PLANNER_RUN_IDLE, phase: 'issuing_turn', pending: [entry], pending_overflow: 0 }, 'idle', true));
       }
       return undefined;
@@ -1107,7 +1107,7 @@ describe('planner conversation regressions', () => {
   it('says the message stays queued when the steer finds no running turn', async () => {
     const entry = { entry_id: 'entry-9', text: 'too late', rev: 0, queued_at_ms: 5 };
     setup((request) => {
-      if (request.path.includes('/planner/run?contract=conversation_v1')) {
+      if (request.path.includes('view=run')) {
         return ok(historicalConversationRun({ ...PLANNER_RUN_IDLE, phase: 'turn_running', pending: [entry], pending_overflow: 0 }, 'idle', true));
       }
       if (request.method === 'POST' && request.path.endsWith('/steer')) {
@@ -1141,7 +1141,7 @@ describe('planner conversation regressions', () => {
   it('says the outcome is not known when the steer times out on the kernel side', async () => {
     const entry = { entry_id: 'entry-9', text: 'did it land', rev: 0, queued_at_ms: 5 };
     setup((request) => {
-      if (request.path.includes('/planner/run?contract=conversation_v1')) {
+      if (request.path.includes('view=run')) {
         return ok(historicalConversationRun({ ...PLANNER_RUN_IDLE, phase: 'turn_running', pending: [entry], pending_overflow: 0 }, 'idle', true));
       }
       if (request.method === 'POST' && request.path.endsWith('/steer')) {
@@ -1179,13 +1179,13 @@ describe('planner conversation regressions', () => {
     let deleted = false;
     let listed = false;
     setup((request) => {
-      if (request.path.includes('/planner/run?contract=conversation_v1')) {
+      if (request.path.includes('view=run')) {
         return ok(historicalConversationRun({
           ...PLANNER_RUN_IDLE, phase: 'turn_running',
           pending: listed && !deleted ? [entry] : [], pending_overflow: 0,
         }, 'idle', true));
       }
-      if (request.method === 'POST' && request.path.endsWith('/planner/input')) {
+      if (request.method === 'POST' && request.path.endsWith('/messages')) {
         listed = true;
         return ok({ card_id: CARD.id, worker_session_id: 'runtime', entry_id: entry.entry_id });
       }
@@ -1234,10 +1234,10 @@ describe('planner conversation regressions', () => {
     let settle!: (response: ApiTransportResponse) => void;
     const pending = new Promise<ApiTransportResponse>((resolve) => { settle = resolve; });
     const { requests } = setup((request) => {
-      if (request.path.includes('/planner/run?contract=conversation_v1')) {
+      if (request.path.includes('view=run')) {
         return ok(historicalConversationRun({ ...PLANNER_RUN_IDLE, phase: 'turn_running' }, 'idle', true));
       }
-      return request.path.endsWith('/planner/input') ? pending : undefined;
+      return request.path.endsWith('/messages') ? pending : undefined;
     });
     await openConversation();
     await screen.findByRole('button', { name: 'Stop' });
@@ -1246,7 +1246,7 @@ describe('planner conversation regressions', () => {
     await sendWithEnter(field);
     await typeInto(field, 'second');
     await sendWithEnter(field);
-    expect(requests.filter((request) => request.path.endsWith('/planner/input'))).toHaveLength(1);
+    expect(requests.filter((request) => request.path.endsWith('/messages'))).toHaveLength(1);
 
     /* The release is followed through: a body the response schema rejects would take
          the failure path and leave the count above green. */
@@ -1263,12 +1263,12 @@ describe('planner conversation regressions', () => {
   /* A queued echo can never be counted down: the pending queue writes no transcript
      row until the turn ends. Requests, not DOM: only the transport says a second message left. */
   it('keeps taking messages after one has been queued behind a running turn', async () => {
-    const { requests } = setup((request) => request.path.includes('/planner/run?contract=conversation_v1')
+    const { requests } = setup((request) => request.path.includes('view=run')
       ? ok(historicalConversationRun({ ...PLANNER_RUN_IDLE, phase: 'turn_running' }, 'idle', true))
       : undefined);
     await openConversation();
     await screen.findByRole('button', { name: 'Stop' });
-    const input = () => requests.filter((request) => request.path.endsWith('/planner/input'));
+    const input = () => requests.filter((request) => request.path.endsWith('/messages'));
 
     const field = messageField();
     await typeInto(field, 'first queued');
@@ -1296,7 +1296,7 @@ describe('planner conversation regressions', () => {
   });
 
   it('leaves the composer open after a queued send', async () => {
-    const { requests } = setup((request) => request.path.includes('/planner/run?contract=conversation_v1')
+    const { requests } = setup((request) => request.path.includes('view=run')
       ? ok(historicalConversationRun({ ...PLANNER_RUN_IDLE, phase: 'turn_running' }, 'idle', true))
       : undefined);
     await openConversation();
@@ -1310,11 +1310,11 @@ describe('planner conversation regressions', () => {
   it.each(PHASE_SENDS)(
     'phase %s applies %s policy to markers, composer state and subsequent sends',
     async (phase, policy) => {
-      const { client, requests } = setup((request) => request.path.includes('/planner/run?contract=conversation_v1')
+      const { client, requests } = setup((request) => request.path.includes('view=run')
         ? ok(historicalConversationRun({ card_id: CARD.id, worker_session_id: 'runtime', phase, model: null, reasoning_effort: null, permission_mode: 'never', blocked_reason: null, manual_compact_supported: true, recovery: phase === 'wedged' ? { cause: 'wedged', action: 'restart_session' } : null, compact_outcome: null, context_usage_invalidated: false, running_turn: null }, 'idle', true))
         /* The wedged case also carries the kernel's stale `working` verdict: the drawer's
                    own wedge must outrank it. */
-        : policy === 'stalled' && request.path === '/api/tracks/w1'
+        : policy === 'stalled' && request.path === '/api/v1/tracks/w1'
           ? ok(historicalConversationRun({ track: TRACK, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true, cards: [CARD],
               overlays: [trackActivityOverlay([{ card_id: CARD.id, state: 'working' }])] }, 'idle', true))
           : undefined);
@@ -1326,7 +1326,7 @@ describe('planner conversation regressions', () => {
           { card_id: CARD.id, worker_session_id: 'runtime', phase, model: null, reasoning_effort: null, permission_mode: 'never', blocked_reason: null, manual_compact_supported: true, recovery: phase === 'wedged' ? { cause: 'wedged', action: 'restart_session' } : null, compact_outcome: null, context_usage_invalidated: false, running_turn: null });
         await Promise.resolve();
       });
-      const input = () => requests.filter((request) => request.path.endsWith('/planner/input'));
+      const input = () => requests.filter((request) => request.path.endsWith('/messages'));
       if (policy === 'stalled') {
         expect(messageField().getAttribute('contenteditable')).toBe('false');
         expect(await screen.findByRole('button', { name: 'Paused', expanded: false })).toBeTruthy();
@@ -1362,7 +1362,7 @@ describe('planner conversation regressions', () => {
   );
 
   it('keeps Stop working, and offers nothing else beside it', async () => {
-    const { requests } = setup((request) => request.path.includes('/planner/run?contract=conversation_v1')
+    const { requests } = setup((request) => request.path.includes('view=run')
       ? ok(historicalConversationRun({ ...PLANNER_RUN_IDLE, phase: 'turn_running' }, 'idle', true))
       : undefined);
     await openConversation();
@@ -1370,7 +1370,7 @@ describe('planner conversation regressions', () => {
     expect(screen.queryByRole('button', { name: 'Queue message' })).toBeNull();
     fireEvent.click(stop);
     await waitFor(() => {
-      expect(requests.filter((request) => request.path.endsWith('/planner/interrupt'))).toHaveLength(1);
+      expect(requests.filter((request) => request.path.endsWith('/interrupt'))).toHaveLength(1);
     });
   });
 
@@ -1382,10 +1382,10 @@ describe('planner conversation regressions', () => {
       vi.setSystemTime(1_000_000);
       let elapsed = 18_000;
       const { client } = setupWithTurns((request) => {
-        if (request.path.includes('/planner/run?contract=conversation_v1')) {
+        if (request.path.includes('view=run')) {
           return ok(historicalConversationRun({ ...PLANNER_RUN_IDLE, phase: 'turn_running', manual_compact_supported: true, recovery: null, compact_outcome: null, context_usage_invalidated: false, running_turn: { turn_id: 'turn-1', elapsed_ms: elapsed } }, 'idle', true));
         }
-        return request.path === '/api/tracks/w1'
+        return request.path === '/api/v1/tracks/w1'
           ? ok({ track: TRACK, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true, cards: [CARD],
               overlays: [trackActivityOverlay([{ card_id: CARD.id, state: 'working' }])] })
           : undefined;
@@ -1415,17 +1415,17 @@ describe('planner conversation regressions', () => {
     const { requests } = setup();
     await openConversation();
     await waitFor(() => {
-      expect(requests.filter((request) => request.path.includes('/harness/items')).length).toBeGreaterThan(0);
-      expect(requests.filter((request) => request.path.includes('/planner/run?contract=conversation_v1')).length).toBeGreaterThan(0);
+      expect(requests.filter((request) => (request.path.includes('/items?') && !request.path.includes('view='))).length).toBeGreaterThan(0);
+      expect(requests.filter((request) => request.path.includes('view=run')).length).toBeGreaterThan(0);
     });
-    const beforeHistory = requests.filter((request) => request.path.includes('/harness/items')).length;
-    const beforeRun = requests.filter((request) => request.path.includes('/planner/run?contract=conversation_v1')).length;
+    const beforeHistory = requests.filter((request) => (request.path.includes('/items?') && !request.path.includes('view='))).length;
+    const beforeRun = requests.filter((request) => request.path.includes('view=run')).length;
     const field = messageField();
     await typeInto(field, 'hello');
     await sendWithEnter(field);
     await waitFor(() => {
-      expect(requests.filter((request) => request.path.includes('/harness/items'))).toHaveLength(beforeHistory + 1);
-      expect(requests.filter((request) => request.path.includes('/planner/run?contract=conversation_v1'))).toHaveLength(beforeRun + 1);
+      expect(requests.filter((request) => (request.path.includes('/items?') && !request.path.includes('view=')))).toHaveLength(beforeHistory + 1);
+      expect(requests.filter((request) => request.path.includes('view=run'))).toHaveLength(beforeRun + 1);
     });
   });
 
@@ -1433,13 +1433,13 @@ describe('planner conversation regressions', () => {
     let resolveInterrupt!: (response: ApiTransportResponse) => void;
     const pendingInterrupt = new Promise<ApiTransportResponse>((resolve) => { resolveInterrupt = resolve; });
     const { requests } = setup((request) => {
-      if (request.path.includes('/planner/run?contract=conversation_v1')) {
+      if (request.path.includes('view=run')) {
         return ok(historicalConversationRun({
           card_id: CARD.id, worker_session_id: 'runtime', phase: 'turn_running',
           model: null, reasoning_effort: null, permission_mode: 'never', blocked_reason: null, manual_compact_supported: true, recovery: null, compact_outcome: null, context_usage_invalidated: false, running_turn: null,
         }, 'idle', true));
       }
-      return request.path.endsWith('/planner/interrupt') ? pendingInterrupt : undefined;
+      return request.path.endsWith('/interrupt') ? pendingInterrupt : undefined;
     });
     const opener = await screen.findByRole('button', { name: /Conversation Planner chat/ });
     opener.focus();
@@ -1449,12 +1449,12 @@ describe('planner conversation regressions', () => {
        the query is still loading (idle Escape legitimately closes the pane). */
     await within(drawer).findByRole('button', { name: 'Stop' });
     fireEvent.keyDown(drawer, { key: 'Escape' });
-    await waitFor(() => expect(requests.filter((request) => request.path.endsWith('/planner/interrupt'))).toHaveLength(1));
+    await waitFor(() => expect(requests.filter((request) => request.path.endsWith('/interrupt'))).toHaveLength(1));
     expect(screen.getByRole('complementary', { name: 'Planner chat' })).toBe(drawer);
     const title = within(drawer).getByRole('heading', { name: 'Planner chat' });
     const field = within(drawer).getByRole('combobox', { name: 'Message' });
     fireEvent.keyDown(drawer, { key: 'Escape' });
-    expect(requests.filter((request) => request.path.endsWith('/planner/interrupt'))).toHaveLength(1);
+    expect(requests.filter((request) => request.path.endsWith('/interrupt'))).toHaveLength(1);
     /* A pending stop yields Escape to the drawer owner. Its last tree remains
        for paint, with interaction and accessibility revoked in this commit. */
     expect(screen.queryByRole('complementary', { name: 'Planner chat' })).toBeNull();

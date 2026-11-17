@@ -35,24 +35,24 @@ export function renderDailyFixture({ history, identity, routeProbe, withTranspor
     requests.push(request);
     const response = await reply?.(request);
     if (response !== undefined) return response;
-    if (request.path === '/api/auth/whoami' && identity !== undefined) return ok(identity);
-    if (request.path === '/api/areas') return ok(emptyWorkspace ? [] : [projectArea]);
-    if (request.path === '/api/areas/daily-area/tracks') return ok([track]);
-    if (request.path === '/api/areas/project-area/tracks') return ok([project]);
+    if (request.path === '/api/v1/bootstrap?scope=whoami' && identity !== undefined) return ok(identity);
+    if (request.path === '/api/v1/areas') return ok(emptyWorkspace ? [] : [projectArea]);
+    if (request.path === '/api/v1/areas/daily-area/tracks?includeClosed=true') return ok([track]);
+    if (request.path === '/api/v1/areas/project-area/tracks?includeClosed=true') return ok([project]);
     if (request.path.startsWith('/api/today/daily')) {
       const date = new URL(request.path, 'http://fixture').searchParams.get('date');
       return ok(date === null || date === '2026-10-04' ? { date: '2026-10-04', time_zone: 'Asia/Shanghai', track_id: track.id } : null);
     }
-    if (request.path === '/api/tracks/daily') return ok({ track, planner_revision: 0, can_reopen: false, can_admin: false, can_close: false, cards: [card, ...(extraPlanner ? [{ ...card, id: 'second-planner', title: 'Other conversation', payload: { harness_profile: 'assistant', assistant_provider: plannerProvider }, deletable: false }] : []), report], overlays: [] });
-    if (request.path === '/api/tracks/daily/conversations') return ok(extraPlanner ? [{ id: 'second-planner', trackId: 'daily', title: 'Other conversation', kind: 'track-assistant', provider: 'codex', state: 'idle', updatedAt: 2, archivedAt: null, lastTurnCompletedAt: null }] : []);
-    if (request.path === '/api/tracks/project') return ok({ track: project, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true, cards: [{ ...report, id: 'project-report', track_id: project.id, payload: { schemaVersion: 3, docRev: 0, summary: '', body: '# Project result\n\nRelease is ready.\n' } }], overlays: [] });
+    if (request.path === '/api/v1/tracks/daily') return ok({ track, planner_revision: 0, can_reopen: false, can_admin: false, can_close: false, cards: [card, ...(extraPlanner ? [{ ...card, id: 'second-planner', title: 'Other conversation', payload: { harness_profile: 'assistant', assistant_provider: plannerProvider }, deletable: false }] : []), report], overlays: [] });
+    if (request.path === '/api/v1/tracks/daily/sessions') return ok(extraPlanner ? [{ id: 'second-planner', trackId: 'daily', title: 'Other conversation', kind: 'track-assistant', provider: 'codex', state: 'idle', updatedAt: 2, archivedAt: null, lastTurnCompletedAt: null }] : []);
+    if (request.path === '/api/v1/tracks/project') return ok({ track: project, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true, cards: [{ ...report, id: 'project-report', track_id: project.id, payload: { schemaVersion: 3, docRev: 0, summary: '', body: '# Project result\n\nRelease is ready.\n' } }], overlays: [] });
     if (request.path.startsWith('/api/today/report-changes')) return failChanges
       ? { status: 500, statusText: 'Error', body: { error: 'Report history unavailable' } }
       : ok({ date: '2026-10-03', timezone: 'Asia/Shanghai', through_event_id: 42, next_cursor: null, changes: [{ track_id: project.id, track_title: project.title, area_id: projectArea.id, area_name: projectArea.name, edit_count: 2, first_event_id: 10, last_event_id: 42, summary_before: 'In progress', summary_after: 'Ready', patch: '--- a/report.md\n+++ b/report.md\n@@ -1 +1 @@\n-Building\n+Release is ready.\n', patch_truncated: false }] });
     if (request.path.startsWith('/api/today/report-edits')) return ok({ next_cursor: null, edits: [{ event_id: 42, at: Date.parse('2026-10-03T01:00:00Z'), edit: { track_id: project.id, edit_id: 'edit-42', summary_before: 'In progress', summary_after: 'Ready', body_before: '# Before release\n\nBuilding', body_after: '# After release\n\nRelease is ready.' } }] });
-    if (request.path.includes('/planner/run?contract=conversation_v1')) return ok(historicalConversationRun({ card_id: card.id, worker_session_id: 'runtime', phase: 'idle', model: null, reasoning_effort: null, permission_mode: 'never', blocked_reason: null, pending_queue: [], manual_compact_supported: true, recovery: null, compact_outcome: null, context_usage_invalidated: false, running_turn: null, final_reply: null }, 'idle', true));
-    if (request.path.includes('/harness/items')) return ok(historicalConversationPage(conversationCardId(request.path), [], null));
-    if (request.path === '/api/plugins') return ok([{ id: 'calendar', version: '0.1.0', enabled: true, state: 'running', manifest_name: 'Calendar', has_config: false, can_uninstall: false, can_disable: false }]);
+    if (request.path.includes('&view=run')) return ok(historicalConversationRun({ card_id: card.id, worker_session_id: 'runtime', phase: 'idle', model: null, reasoning_effort: null, permission_mode: 'never', blocked_reason: null, pending_queue: [], manual_compact_supported: true, recovery: null, compact_outcome: null, context_usage_invalidated: false, running_turn: null, final_reply: null }, 'idle', true));
+    if (request.path.includes('/items?') && !request.path.includes('&view=')) return ok(historicalConversationPage(conversationCardId(request.path), [], null));
+    if (request.path === '/api/plugins') return ok([]);
     if (request.path === '/api/settings') return ok({});
     return ok([]);
   } };
@@ -94,14 +94,14 @@ export function renderWorkingDailySideFixture({ paginated = false, routeProbe, u
     identity: { userId: 'local-owner', displayName: 'Owner', role: 'owner', sessionId: 'side-lifecycle' },
     reply: request => {
       const ok = (body: unknown) => ({ status: 200, statusText: 'OK', body });
-      if (request.path === '/api/version') return ok({ assistantProviders: true, conversationInitialInput: true, conversationSide: true, conversationCreateModel: true,
+      if (request.path === '/api/v1/bootstrap') return ok({ assistantProviders: true, conversationInitialInput: true, conversationSide: true, conversationCreateModel: true,
         webCompatVersion: WEB_COMPAT_VERSION, minWebCompatVersion: WEB_COMPAT_VERSION, syncEventVersion: 26, dbInstanceId: 'daily-side' });
-      if (request.path.startsWith('/api/models?')) return ok({ models: [{ id: 'probe-model', model: 'probe-model', resolved_model: null, display_name: 'Probe Model', description: 'Probe', is_default: false, supported_reasoning_efforts: [{ reasoning_effort: 'low', description: 'Low' }, { reasoning_effort: 'high', description: 'High' }], default_reasoning_effort: 'low' }], default: { model: 'installation-default', reasoning_effort: null, supported_reasoning_efforts: null }, default_source: 'config_read', source: 'live', fetched_at_ms: 1 });
-      if (request.path.startsWith('/api/agent-providers/managed')) return ok([{
+      if (request.path.startsWith('/api/v1/bootstrap?card_id=') || request.path.startsWith('/api/v1/bootstrap?provider=')) return ok({ models: [{ id: 'probe-model', model: 'probe-model', resolved_model: null, display_name: 'Probe Model', description: 'Probe', is_default: false, supported_reasoning_efforts: [{ reasoning_effort: 'low', description: 'Low' }, { reasoning_effort: 'high', description: 'High' }], default_reasoning_effort: 'low' }], default: { model: 'installation-default', reasoning_effort: null, supported_reasoning_efforts: null }, default_source: 'config_read', source: 'live', fetched_at_ms: 1 });
+      if (request.path.startsWith('/api/v1/bootstrap?scope=managed')) return ok([{
         availability: { provider: 'codex', status: 'ready', reason: null, checked_at_ms: 1, authentication_method: null, authentication_notice: null },
         accepts_unavailable_blank_track: true, capabilities: { managed_conversation: true, steer: true, images: true, manual_compact: true, history_replacement: true, requires_ready_availability: false },
       }]);
-      if (request.path === '/api/tracks/daily/conversations') {
+      if (request.path === '/api/v1/tracks/daily/sessions') {
         if (request.method !== 'POST') return ok([...(extraPlanner ? [{ id: 'second-planner', trackId: 'daily', title: 'Other conversation', kind: 'track-assistant', provider: 'codex', state: 'idle', updatedAt: 2, archivedAt: null, lastTurnCompletedAt: null }] : []), ...rows]);
         const id = trackConversationCardId('daily', request.headers?.['Idempotency-Key'] ?? '');
         const row: Conversation = { id, trackId: 'daily', title: 'Adopted side', kind: 'track-assistant', provider: 'codex', state: 'running',
@@ -113,14 +113,14 @@ export function renderWorkingDailySideFixture({ paginated = false, routeProbe, u
       if (request.path.endsWith('/initial-input') && !creations.has(request.path.split('/')[5])) {
         return { status: 404, statusText: 'Not Found', body: { code: 'not_found', error: 'Conversation not created' } };
       }
-      if (request.path.includes('/planner/run?contract=conversation_v1')) {
+      if (request.path.includes('&view=run')) {
         const id = conversationCardId(request.path);
         const input = creations.get(id)?.body as { text: string; model?: string; reasoning_effort?: string } | undefined;
         return ok(historicalConversationRun({ card_id: id, worker_session_id: 'runtime', phase: stopped.has(id) ? 'idle' : 'turn_running', model: input?.model ?? null,
           reasoning_effort: input?.reasoning_effort ?? null, permission_mode: 'never', blocked_reason: null, pending: id === 'daily-planner' ? [] : [{ entry_id: 'side-first', rev: 0, text: input?.text ?? 'Explore independently', queued_at_ms: 100 }], pending_overflow: 0, manual_compact_supported: true, recovery: null,
           compact_outcome: null, context_usage_invalidated: false, running_turn: null, final_reply: null }, stopped.has(id) ? 'idle' : 'running', true));
       }
-      if (request.path.includes('/harness/items')) {
+      if (request.path.includes('/items?') && !request.path.includes('&view=')) {
         const id = conversationCardId(request.path);
         if (request.path.includes('&cursor=')) return ok(historicalConversationPage(id, [], null));
         const position = paginated ? 101 + generation * 10 : 1 + generation;
@@ -128,14 +128,14 @@ export function renderWorkingDailySideFixture({ paginated = false, routeProbe, u
           turn_id: null, turn_error_text: null, item_uuid: `reply-${generation}`, item_type: 'agentMessage', method: 'item/completed', created_at_ms: position,
           params: JSON.stringify({ item: { type: 'agentMessage', text: (generation > 0 ? 'Updated source after first snapshot. ' : '') + 'Working on [Side evidence](mailto:side@example.test).' + (paginated ? '\n\n' + Array.from({ length: 35 }, (_, n) => `Paragraph ${n}. ${'Independent conversation reading. '.repeat(8)}`).join('\n\n') : '') } }) }], paginated ? { contract: 'conversation_v1', source: 'historical_raw', card_id: id, position: position - 1 } : null));
       }
-      if (request.path.endsWith('/planner/input') && request.method === 'POST') return ok({
+      if (request.path.endsWith('/messages') && request.method === 'POST') return ok({
         card_id: conversationCardId(request.path), worker_session_id: 'runtime', entry_id: 'side-continuation',
       });
-      if (request.path.endsWith('/planner/interrupt')) {
+      if (request.path.endsWith('/interrupt')) {
         const id = conversationCardId(request.path); stopped.add(id);
         return ok({ card_id: id, worker_session_id: 'runtime', stopped: true });
       }
-      if (request.path === '/api/tracks/daily/terminal-cards' && request.method === 'POST') return { status: 400, statusText: 'Bad Request', body: { code: 'bad_request', error: 'Fixture has no terminal runtime' } };
+      if (request.path === '/api/v1/tracks/daily/terminals' && request.method === 'POST') return { status: 400, statusText: 'Bad Request', body: { code: 'bad_request', error: 'Fixture has no terminal runtime' } };
       if (request.path === '/api/today/supervisor') return ok({ observed_at_ms: 1, kernel_version: '1.2.3', build_sha: null,
         settled_worker_cleanup_candidates: 0, write_bucket_ms: 300000, write_bucket_count: 12, database_writes: [], scheduler_boot_sweep_completed: true, retired_workspaces: null });
       return undefined;

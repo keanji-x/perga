@@ -65,6 +65,7 @@ describe('event stream typestate contract', () => {
     expectTypeOf<EventStreamConfiguration>().toEqualTypeOf<Readonly<{
       syncEventVersion: number | null;
       topics: readonly ('*' | `area:${string}` | `track:${string}` | `card:${string}`)[];
+      trackId?: string | null;
     }>>();
     expectTypeOf<ConnectionState>().toEqualTypeOf<'connecting' | 'connected' | 'disconnected'>();
     expectTypeOf<EventStreamDriver['start']>().parameters.toEqualTypeOf<[

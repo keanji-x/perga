@@ -56,22 +56,23 @@ describe('area wire decode', () => {
 
   it('requires explicit capability proof from older and malformed version responses', () => {
     const operation = areaCreationCapabilityOperation();
-    expect(operation).toMatchObject({ method: 'GET', path: '/api/version' });
+    expect(operation).toMatchObject({ method: 'GET', path: '/api/v1/bootstrap' });
     for (const wire of [{}, { areaCreateIdempotency: false }, { areaCreateIdempotency: 'true' }]) {
       expect(operation.responseSchema.parse(wire)).toBe('unsupported');
     }
     expect(operation.responseSchema.parse({ areaCreateIdempotency: true })).toBe('supported');
+    expect(operation.responseSchema.parse({ version: '0.1.0' })).toBe('supported');
   });
 
   it('carries the caller-owned creation identity independently of the payload', () => {
     const body = { name: 'Work', color: '#123456' };
     expect(createAreaOperation(body, 'create-intent')).toMatchObject({
-      method: 'POST', path: '/api/areas', body, headers: { 'Idempotency-Key': 'create-intent' },
+      method: 'POST', path: '/api/v1/areas', body, headers: { 'Idempotency-Key': 'create-intent' },
     });
   });
 
   it('reads the areas list from the documented path', () => {
-    expect(areaListOperation()).toMatchObject({ method: 'GET', path: '/api/areas' });
+    expect(areaListOperation()).toMatchObject({ method: 'GET', path: '/api/v1/areas' });
   });
 });
 
@@ -119,8 +120,8 @@ describe('area folders', () => {
     expect(toAreaFolder(wire)).toEqual({ id: 7, areaId: 'c1', path: '/srv/a', createdAt: 5 });
   });
 
-  it('reads the folders of one area, id-encoded into the path', () => {
-    expect(areaFoldersOperation('c/1')).toMatchObject({ method: 'GET', path: '/api/areas/c%2F1/folders' });
+  it('reads the folders of one area from /api/v1/areas', () => {
+    expect(areaFoldersOperation('c/1')).toMatchObject({ method: 'GET', path: '/api/v1/areas?folders=c%2F1' });
   });
 
   it('orders by path and breaks ties by id without mutating the input', () => {

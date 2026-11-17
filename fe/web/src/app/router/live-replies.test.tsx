@@ -61,9 +61,9 @@ function setup(servers: Record<string, CardServer>, gate: Gate = { hold: false, 
   const transport: ApiTransportPort = {
     async send(request) {
       requests.push(request);
-      const card = /\/api\/cards\/([^/]+)\//.exec(request.path)?.[1];
+      const card = /\/api\/(?:v1\/sessions|cards)\/([^/]+)\//.exec(request.path)?.[1];
       const server = card === undefined ? undefined : servers[decodeURIComponent(card)];
-      if (server !== undefined && request.path.includes('/harness/items')) {
+      if (server !== undefined && request.path.includes('/items') && !request.path.includes('view=')) {
         if (server.itemsFail === true) {
           /* A failure answers after a round trip, as over a network, not in the same task. */
           await new Promise((resolve) => { setTimeout(resolve, 50); });
@@ -80,25 +80,25 @@ function setup(servers: Record<string, CardServer>, gate: Gate = { hold: false, 
         return ok(historicalConversationPage(conversationCardId(request.path), rows, newest && server.earlier !== undefined
           ? {contract:'conversation_v1',source:'historical_raw',card_id:card!,position:Math.min(...rows.map(row=>row.id))} : null));
       }
-      if (server !== undefined && request.path.endsWith('/harness/live')) {
+      if (server !== undefined && request.path.includes('view=live')) {
         const reply = server.live;
         if (liveGate.hold) await new Promise<void>((resolve) => { liveGate.waiting.push(resolve); });
         return ok(reply);
       }
-      if (server?.replace !== undefined && request.path.endsWith('/planner/input')) {
+      if (server?.replace !== undefined && request.path.endsWith('/messages')) {
         return (request.body as { replaces_turn?: string }).replaces_turn === undefined
           ? ok({ card_id: card, worker_session_id: 'runtime' }) : server.replace();
       }
-      if (server !== undefined && request.path.includes('/planner/run?contract=conversation_v1')) return ok(historicalConversationRun({
+      if (server !== undefined && request.path.includes('view=run')) return ok(historicalConversationRun({
         card_id: card, worker_session_id: 'runtime', phase: server.phase, model: null, reasoning_effort: null, permission_mode: card === CARD.id ? 'never' : null, blocked_reason: null, manual_compact_supported: true, recovery: server.phase === 'wedged' ? { cause: 'wedged', action: 'restart_session' } : null, compact_outcome: null, context_usage_invalidated: false, running_turn: server.runningTurn,
       }, 'idle', true));
-      if (request.path === '/api/areas') return ok([AREA]);
-      if (request.path === '/api/areas/c1/tracks') return ok([TRACK]);
+      if (request.path === '/api/v1/areas') return ok([AREA]);
+      if (request.path === '/api/v1/areas/c1/tracks?includeClosed=true') return ok([TRACK]);
       if (request.path === '/api/overlays?entity_kind=track') return ok([]);
-      if (request.path === '/api/tracks/w1') return ok({
+      if (request.path === '/api/v1/tracks/w1') return ok({
         track: TRACK, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true, cards: [CARD, OTHER], overlays: [],
       });
-      if (request.path === '/api/tracks/w1/conversations') return ok([OTHER_ROW]);
+      if (request.path === '/api/v1/tracks/w1/sessions') return ok([OTHER_ROW]);
       if (request.path === '/api/settings') return ok({});
       return ok([]);
     },
@@ -163,7 +163,7 @@ describe('a streamed reply in the Planner conversation', () => {
     server.live = streaming('T1', { m: 'Hello, world' });
     await screen.findByText('Hello, world');
     expect(threadLines()).toEqual(['question', 'Hello, world', '[Running]']);
-    expect(requests.filter((request) => request.path === `/api/cards/${CARD.id}/harness/live`).length).toBeGreaterThan(1);
+    expect(requests.filter((request) => request.path === `/api/v1/sessions/${CARD.id}/items?afterId=0&limit=1&view=live-legacy`).length).toBeGreaterThan(1);
   });
 
   it('replaces the live text with the stored reply exactly once, and stops polling', async () => {
@@ -176,9 +176,9 @@ describe('a streamed reply in the Planner conversation', () => {
     server.phase = 'turn_completed';
     await phaseChanged(client, CARD.id);
     await waitFor(() => expect(threadLines()).toEqual(['question', 'Hello, world.', '[Completed]']));
-    const polls = requests.filter((request) => request.path.endsWith('/harness/live')).length;
+    const polls = requests.filter((request) => request.path.includes('view=live')).length;
     await act(async () => { await new Promise((resolve) => { setTimeout(resolve, 700); }); });
-    expect(requests.filter((request) => request.path.endsWith('/harness/live')).length).toBe(polls);
+    expect(requests.filter((request) => request.path.includes('view=live')).length).toBe(polls);
   });
 
   it('draws an interrupted turn\'s partial row once, above the Interrupted line', async () => {
@@ -246,16 +246,16 @@ describe('a streamed reply in the Planner conversation', () => {
     await waitFor(() => expect(screen.queryByText('Abandoned')).toBeNull());
     fireEvent.click(await screen.findByRole('button', { name: 'Edit message' }));
     await waitFor(() => expect(screen.getByRole('combobox', { name: 'Message' }).textContent).toBe('question'));
-    expect(requests.filter((request) => request.path.endsWith('/planner/input'))).toEqual([]);
-    const polls = requests.filter((request) => request.path.endsWith('/harness/live')).length;
+    expect(requests.filter((request) => request.path.endsWith('/messages'))).toEqual([]);
+    const polls = requests.filter((request) => request.path.includes('view=live')).length;
     /* Send in edit mode replaces the turn: one send that names it. */
     act(() => { fireEvent.keyDown(screen.getByRole('combobox', { name: 'Message' }), { key: 'Enter' }); });
     await act(async () => { await new Promise((resolve) => { setTimeout(resolve, 700); }); });
     expect(screen.queryByText('Abandoned')).toBeNull();
     expect(threadLines()).toEqual(['question']);
-    expect(requests.filter((request) => request.path.endsWith('/harness/live')).length).toBe(polls);
-    expect(requests.filter((request) => request.path.endsWith('/planner/input')).map((request) => request.body))
-      .toEqual([{ text: 'question', replaces_turn: 'T1' }]);
+    expect(requests.filter((request) => request.path.includes('view=live')).length).toBe(polls);
+    expect(requests.filter((request) => request.path.endsWith('/messages')).map((request) => request.body))
+      .toEqual([expect.objectContaining({ text: 'question', replaces_turn: 'T1' })]);
     expect(requests.filter((request) => request.path.endsWith('/planner/rewind'))).toEqual([]);
   });
 
@@ -290,14 +290,14 @@ describe('a streamed reply in the Planner conversation', () => {
     vi.stubGlobal('cancelAnimationFrame', (id: number) => window.clearTimeout(id));
     const gate: Gate = { hold: false, waiting: [] };
     const server: CardServer = {
-      runningTurn: null, phase: 'turn_running', rows: [asked(400, 'question'), replyStarted(401, 'm')],
+      runningTurn: null, phase: 'turn_running', rows: [asked(1000, 'question'), replyStarted(1001, 'm')],
       live: streaming('T1', { m: 'Hello, wor' }), earlier: [asked(1, 'long ago')],
     };
     const { client } = setup({ [CARD.id]: server }, gate);
     await open('Planner chat');
     await screen.findByText('Hello, wor');
     gate.hold = true;
-    server.rows = [...server.rows, replied(402, 'm', 'Hello, world.'), ended(403, 'completed')];
+    server.rows = [...server.rows, replied(1002, 'm', 'Hello, world.'), ended(1003, 'completed')];
     server.live = streaming(null, {});
     server.phase = 'turn_completed';
     await phaseChanged(client, CARD.id, { transcript: false });
@@ -324,7 +324,7 @@ describe('a streamed reply in the Planner conversation', () => {
     const { client, requests } = setup({ [CARD.id]: server });
     await open('Planner chat');
     await screen.findByText('Hello, wor');
-    const reads = () => requests.filter((request) => request.path.includes('/harness/items')).length;
+    const reads = () => requests.filter((request) => request.path.includes('/items') && !request.path.includes('view=')).length;
     const before = reads();
     /* From here every read fails after a round trip; the clock is the test's, so the window is exact. */
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] });

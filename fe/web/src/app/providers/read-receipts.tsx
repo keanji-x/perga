@@ -2,6 +2,7 @@ import { focusManager, onlineManager, useQuery, useQueryClient, type QueryClient
 import { createContext, useContext, useEffect, useMemo, useRef, type ReactNode } from 'react';
 import type { ApiOperation, ApiTransportPort } from '../../../../core/api/types.ts';
 import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
+import { ApiError } from '../../../../core/domain/failure-class.ts';
 import {
   isUnread, markReadOperation, markUnreadOperation, readReceiptsOperation, receiptKey, toReadState, withMarkedRead,
   withMarkedUnread, withReceipt, type ReadReceipt, type ReadReceiptKind, type ReadState,
@@ -113,8 +114,21 @@ export function ReadReceiptsProvider({ transport, unauthorized, children }: Read
 }
 
 export function readReceiptsQueryOptions(transport: ApiTransportPort, unauthorized: UnauthorizedChannel) {
-  return { queryKey: queryKeys.readReceipts(), staleTime: 0, refetchOnWindowFocus: true,
-    queryFn: async (): Promise<ReadState> => toReadState(await runOperation(transport, readReceiptsOperation(), unauthorized)) };
+  return {
+    queryKey: queryKeys.readReceipts(),
+    staleTime: 0,
+    refetchOnWindowFocus: true,
+    queryFn: async (): Promise<ReadState> => {
+      try {
+        return toReadState(await runOperation(transport, readReceiptsOperation(), unauthorized));
+      } catch (error) {
+        if (error instanceof ApiError && error.failure.kind === 'http' && error.failure.status === 404) {
+          return toReadState({ baselineMs: 0, receipts: [] });
+        }
+        throw error;
+      }
+    },
+  };
 }
 
 export type ReadReceipts = Readonly<{

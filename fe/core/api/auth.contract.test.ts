@@ -2,6 +2,7 @@ import { describe, expect, expectTypeOf, it } from 'vitest';
 import type { z } from 'zod';
 
 import {
+  bootstrapOperation,
   loginRequestSchema,
   loginOperation,
   sessionIdentitySchema,
@@ -22,15 +23,28 @@ describe('core/api auth contract', () => {
     }
   });
 
-  it('freezes the whoami operation', () => {
-    expect(whoamiOperation()).toMatchObject({ method: 'GET', path: '/api/auth/whoami' });
+  it('freezes the bootstrap and whoami operations on Perga /api/v1/bootstrap', () => {
+    expect(bootstrapOperation()).toMatchObject({ method: 'GET', path: '/api/v1/bootstrap' });
+    expect(whoamiOperation()).toMatchObject({ method: 'GET', path: '/api/v1/bootstrap?scope=whoami' });
+    const parsed = whoamiOperation().responseSchema.parse({
+      version: '1.0.0',
+      providers: [],
+      templates: [],
+      areas: [],
+    });
+    expect(parsed).toEqual({
+      userId: 'local-owner',
+      displayName: 'Local Operator',
+      role: 'owner',
+      sessionId: 'perga-1.0.0',
+    });
   });
 
   it.each([
-    ['method', 'POST'],
-    ['path', '/api/auth/login'],
+    ['method', 'GET'],
+    ['path', '/api/v1/bootstrap?scope=login'],
     ['body', { username: 'u', password: 'p' }],
-  ] as const)('freezes the login operation: %s', (field, expected) => {
+  ] as const)('freezes the login probe operation: %s', (field, expected) => {
     expect(loginOperation({ username: 'u', password: 'p' })[field]).toEqual(expected);
   });
 });

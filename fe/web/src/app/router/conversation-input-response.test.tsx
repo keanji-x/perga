@@ -45,22 +45,22 @@ function heldResponse() {
 }
 function mount({ phase = 'idle', input }: { phase?: string; input?: Promise<ApiTransportResponse> } = {}) {
   return renderDailyFixture({ initial: '/track/daily?panel=conversations', extraPlanner: true, reply: request => {
-    if (request.path === '/api/version') return ok({ assistantProviders: true, conversationInitialInput: true, conversationCreateModel: true,
+    if (request.path === '/api/v1/bootstrap') return ok({ assistantProviders: true, conversationInitialInput: true, conversationCreateModel: true,
       webCompatVersion: WEB_COMPAT_VERSION, minWebCompatVersion: WEB_COMPAT_VERSION, syncEventVersion: 29, dbInstanceId: 'input-response' });
-    if (request.path.startsWith('/api/agent-providers/managed')) return ok([{
+    if (request.path.startsWith('/api/v1/bootstrap?scope=managed')) return ok([{
       availability: { provider: 'codex', status: 'ready', reason: null, checked_at_ms: 1, authentication_method: null, authentication_notice: null },
       accepts_unavailable_blank_track: true, capabilities: { managed_conversation: true, steer: true, images: true, manual_compact: true, history_replacement: true, requires_ready_availability: false },
     }]);
-    if (request.path === '/api/cards/second-planner/planner/run?contract=conversation_v1') return ok(historicalConversationRun({ card_id: 'second-planner', worker_session_id: 'runtime',
+    if (request.path === '/api/v1/sessions/second-planner/items?afterId=0&limit=1&view=run') return ok(historicalConversationRun({ card_id: 'second-planner', worker_session_id: 'runtime',
       phase, model: null, reasoning_effort: null, permission_mode: 'never', blocked_reason: null, manual_compact_supported: true,
       recovery: null, compact_outcome: null, context_usage_invalidated: false, running_turn: null }, 'idle', true));
-    if (request.path.includes('/second-planner/harness/items')) return ok(historicalConversationPage(conversationCardId(request.path), Array.from({ length: 120 }, (_, index) => ({
+    if (request.path.includes('/second-planner/items') && !request.path.includes('view=')) return ok(historicalConversationPage(conversationCardId(request.path), Array.from({ length: 120 }, (_, index) => ({
       id: index + 1, worker_session_id: 'runtime', card_id: 'second-planner', track_id: 'daily', thread_id: 'thread',
       turn_id: null, turn_error_text: null, item_uuid: null, item_type: 'agentMessage', method: 'item/completed',
       params: JSON.stringify({ item: { text: `Stored reply ${index}. **Evidence** remains readable.` } }), created_at_ms: index + 1,
     })), null));
-    if (input !== undefined && request.path.endsWith('/planner/input')) return input;
-    if (input !== undefined && request.method === 'POST' && request.path.endsWith('/conversations')) return input;
+    if (input !== undefined && request.path.endsWith('/messages')) return input;
+    if (input !== undefined && request.method === 'POST' && request.path.endsWith('/sessions')) return input;
     return undefined;
   } });
 }
@@ -107,7 +107,7 @@ it.each(['idle', 'turn_running'])('shows the local sending state before a held %
     await openExisting(); await type('Send without waiting for the server');
     vi.mocked(buildTranscript).mockClear(); vi.mocked(toTranscriptTurns).mockClear();
     fireEvent.keyDown(field(), { key: 'Enter' });
-    await waitFor(() => expect(view.requests.filter(request => request.path.endsWith('/planner/input'))).toHaveLength(1));
+    await waitFor(() => expect(view.requests.filter(request => request.path.endsWith('/messages'))).toHaveLength(1));
     const localMessage = phase === 'turn_running' ? document.querySelector('[data-nc-pending-send]') : document.querySelector('[data-nc-thread] [data-nc-entry] [data-nc-turn="you"]');
     expect(localMessage?.textContent).toContain('Send without waiting for the server');
     if (phase === 'turn_running') expect(localMessage?.closest('[data-nc-pending-queue]')).not.toBeNull();
@@ -122,7 +122,7 @@ it.each(['idle', 'turn_running'])('shows the local sending state before a held %
       expect(screen.queryByText('Running', { exact: true })).toBeNull();
     }
     fireEvent.keyDown(field(), { key: 'Enter' });
-    expect(view.requests.filter(request => request.path.endsWith('/planner/input'))).toHaveLength(1);
+    expect(view.requests.filter(request => request.path.endsWith('/messages'))).toHaveLength(1);
   } finally { await response.release({ card_id: 'second-planner', worker_session_id: 'runtime' }); cleanup(); view.client.clear(); }
 });
 
@@ -135,7 +135,7 @@ it('shows first-message sending feedback while conversation creation is held', a
     await waitFor(() => expect(view.client.getQueryData(['managed-providers'])).toHaveLength(1));
     await type('The first local message');
     fireEvent.keyDown(field(), { key: 'Enter' });
-    await waitFor(() => expect(view.requests.some(request => request.method === 'POST' && request.path.endsWith('/conversations'))).toBe(true));
+    await waitFor(() => expect(view.requests.some(request => request.method === 'POST' && request.path.endsWith('/sessions'))).toBe(true));
     expect(document.querySelector('[data-nc-turn="you"]')?.textContent).toBe('The first local message');
     expect(screen.getByText('Sending…')).toBeDefined();
     expect(screen.getByRole('button', { name: 'Send' }).hasAttribute('disabled')).toBe(true);
