@@ -5,8 +5,8 @@
 ## 仓库目录结构
 
 - `DESIGN.md`：冻结架构规范、工程依赖矩阵、核心接口契约、`SQLite WAL` Schema 与三阶段并行实施路线。
-- `fe/`：迁移自 `neige-calm/fe` 的下一代 React 前端与架构校验工具链（待 Stage 2 协同瘦身对接 `/api/v1`）。
-- `tools/rust-terminal/`：迁移保留的 `calm-terminal-view`（`rmux-core` 屏幕与宽字符解析）、`calm-terminal-runtime`（`rmux-server` 持久化 PTY 底座）与 `terminal_interaction_ref/` 参考算法，用于提纯组装跨平台守护 `tools/neige-term-bridge`。
+- `fe/`：已迁移的下一代 React 前端与架构校验工具链（待 Stage 2 协同瘦身对接 `/api/v1`）。
+- `tools/rust-terminal/`：迁移保留的 `calm-terminal-view`（`rmux-core` 屏幕与宽字符解析）、`calm-terminal-runtime`（`rmux-server` 持久化 PTY 底座）与 `terminal_interaction_ref/` 参考算法，用于提纯组装跨平台守护 `tools/perga-term-bridge`。
 - `plugins/`：保留的有价值独立领域插件源码（`market`、`barra`、`invest`、`paper-trading`、`research-archive`），已剔除虚拟桌面 `desktop` 与旧 `git-forge`（由原生 `VcsKit` 接管）。
 - `docs/`：架构拓扑图（`csharp-architecture.html`）、源码审计预研报告（`csharp-rewrite-prestudy.md`）与架构蓝图（`csharp-rewrite-blueprint.md`）。
 - `libs/`、`src/`、`templates/`、`tests/`：将按 `DESIGN.md` 第 5 节的 Stage 0 / Stage 1 / Stage 2 路线落地 `.NET 9` 微内核与底座库。

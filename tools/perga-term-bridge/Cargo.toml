@@ -1,0 +1,13 @@
+[package]
+name = "perga-term-bridge"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[[bin]]
+name = "perga-term-bridge"
+path = "src/main.rs"
+
+[lib]
+name = "perga_term_bridge"
+path = "src/lib.rs"

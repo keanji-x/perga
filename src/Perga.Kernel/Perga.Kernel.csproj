@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="..\Perga.Contracts\Perga.Contracts.csproj" />
+    <ProjectReference Include="..\..\libs\Perga.ReportDoc\Perga.ReportDoc.csproj" />
+    <ProjectReference Include="..\..\libs\Perga.PolicyVm\Perga.PolicyVm.csproj" />
+    <ProjectReference Include="..\..\libs\Perga.AgentKit\Perga.AgentKit.csproj" />
+    <ProjectReference Include="..\..\libs\Perga.VcsKit\Perga.VcsKit.csproj" />
+    <ProjectReference Include="..\..\libs\Perga.TermClient\Perga.TermClient.csproj" />
+  </ItemGroup>
+</Project>
