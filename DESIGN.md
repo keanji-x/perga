@@ -48,11 +48,12 @@ Neige.Next.sln
 │   └── Neige.Host/
 │       └── Neige.Host.csproj             # ASP.NET Core 组合根；引用 src/* + ModelContextProtocol.AspNetCore + Cronos
 │
-├── templates/                            # 内置动态可编程模板与 TS 环境声明
+├── templates/                            # 内置动态可编程模板与 TS 类型检查声明（Jint 直接跑 .neige.js）
+│   ├── tsconfig.json                     # { allowJs: true, checkJs: true, noEmit: true } (编辑期/CI 强类型校验)
 │   ├── neige-template.d.ts
-│   ├── dev.neige.ts
-│   ├── long-term-goal.neige.ts
-│   └── investment-research.neige.ts
+│   ├── dev.neige.js
+│   ├── long-term-goal.neige.js
+│   └── investment-research.neige.js
 │
 ├── scripts/hooks/                        # 供模板可选调用的标准生命周期脚本示例
 └── tests/
@@ -168,6 +169,7 @@ public sealed record SessionTurnDto(
     string Id,
     string SessionId,
     int TurnIndex,
+    int Epoch,
     string TriggerKind,
     JsonElement Input,
     string Status,
@@ -269,6 +271,12 @@ public sealed record EventEnvelopeDto(
     string Kind,
     JsonElement Payload,
     long CreatedAtMs);
+
+public sealed record DbMaintenanceStatsDto(
+    int PrunedEvents,
+    int ThinnedRevisions,
+    int CompactedItems,
+    int ReclaimedPages);
 ```
 
 ---
@@ -367,12 +375,13 @@ public interface IReportDocEngine
 
 ---
 
-### 2.3 `namespace Neige.PolicyVm` 与 `.neige.ts` SDK（受限策略虚拟机）
+### 2.3 `namespace Neige.PolicyVm` 与 `.neige.js` SDK（零手写解析 · 受限策略虚拟机）
 
-- **职责**：编译与缓存 TypeScript/JS 模板策略（先做轻量化无外部工具依赖的 TS 类型擦除预处理：`export default` / `interface` / `type` / `: Type` / `as Type`），在 **Jint 严苛纯函数沙箱**中执行 5 个生命周期钩子。
+- **职责（彻底消灭手写类型擦除解析器）**：`Neige.PolicyVm` **不做任何手写正则或字符串类型擦除**，直接接收标准 **ECMAScript Module (`.neige.js`)**，由 **Jint 4.x 内置 Acornima JS/ESM 引擎**原生编译执行 5 个生命周期钩子，堆栈行号 1:1 精确对齐。
+- **编辑期/CI 强类型保障**：所有 `.neige.js` 头部声明 `// @ts-check` 与 `/// <reference path="./neige-template.d.ts" />`（配合 `templates/tsconfig.json` 的 `allowJs + checkJs + noEmit`），编辑器与 CI 通过 `tsc --noEmit` 直接享受与 `.ts` 同等的完整泛型推断与只读类型检查；若未来外部作者确需用 `.ts` 编写策略，应在打包发布前由离线构建链（如 Node 22 原生 `module.stripTypeScriptTypes` 或 `esbuild`）输出标准 `.neige.js` 再交由内核加载。
 - **沙箱安全硬约束**：
   - `Options`: `.Strict()`, `.LimitMemory(16 * 1024 * 1024)`, `.MaxStatements(10_000)`, `.TimeoutInterval(TimeSpan.FromMilliseconds(50))`, `.LimitRecursion(64)`。
-  - **禁止暴露**任何 CLR 类型反射、文件系统、`HttpClient`、进程或环境变量读取能力；`globalThis` 仅保留纯 JSON 数据操作与 `Allow` / `Deny` / `AskHuman` / `Ok` / `Reject` 辅助构造函数。
+  - **禁止暴露**任何 CLR 类型反射、文件系统、`HttpClient`、进程或环境变量读取能力；`globalThis` 与模板全局变量仅注入纯 JSON 辅助函数 `defineTemplate` / `Allow` / `Deny` / `AskHuman`（模块无需依赖外部 `node_modules` 解析即可直接 `export default defineTemplate(...)`）。
 
 ```csharp
 using System.Text.Json;
@@ -416,8 +425,7 @@ public sealed record CompiledTemplateManifest(
 
 public sealed record CompiledPolicy(
     string TemplateId,
-    string SourceSnapshot,
-    string TranspiledJs,
+    string JsSource,
     CompiledTemplateManifest Manifest);
 
 public sealed record PolicyEvalResult<T>(
@@ -462,7 +470,7 @@ public sealed record PolicyTaskSettledContext(
 
 public interface IPolicyVm
 {
-    CompiledPolicy Compile(string tsOrJsSource);
+    CompiledPolicy Compile(string jsModuleSource);
     PolicyEvalResult<JsonElement> InitState(CompiledPolicy policy, JsonElement inputs);
     PolicyEvalResult<string?> BuildTurnContext(CompiledPolicy policy, PolicyTurnContext ctx, JsonElement state);
     PolicyEvalResult<GuardDecision> GuardReportCommit(CompiledPolicy policy, PolicyReportCommitContext ctx, JsonElement state);
@@ -472,17 +480,13 @@ public interface IPolicyVm
 }
 ```
 
-#### `templates/neige-template.d.ts`（冻结脚本契约）
+#### `templates/neige-template.d.ts`（冻结脚本契约 · `@ts-check` + Jint 原生直跑）
 
 ```ts
 export type GuardDecision =
   | { kind: "allow" }
   | { kind: "deny"; reason: string }
   | { kind: "ask_human"; title: string; options?: string[] };
-
-export declare function Allow(): GuardDecision;
-export declare function Deny(reason: string): GuardDecision;
-export declare function AskHuman(title: string, options?: string[]): GuardDecision;
 
 export interface SectionSpec {
   h1: string;
@@ -554,9 +558,14 @@ export interface NeigeTemplateDefinition<TState = Record<string, any>, TInputs =
   }>;
 }
 
-export declare function defineTemplate<TState = Record<string, any>, TInputs = Record<string, any>>(
-  def: NeigeTemplateDefinition<TState, TInputs>
-): NeigeTemplateDefinition<TState, TInputs>;
+declare global {
+  function Allow(): GuardDecision;
+  function Deny(reason: string): GuardDecision;
+  function AskHuman(title: string, options?: string[]): GuardDecision;
+  function defineTemplate<TState = Record<string, any>, TInputs = Record<string, any>>(
+    def: NeigeTemplateDefinition<TState, TInputs>
+  ): NeigeTemplateDefinition<TState, TInputs>;
+}
 ```
 
 ---
@@ -994,20 +1003,31 @@ public interface ITrackStore : ITrackReadStore
     Task UpsertTerminalAsync(TerminalDto terminal, EventEnvelopeDto? evt, CancellationToken ct);
     Task AppendEventAsync(EventEnvelopeDto evt, CancellationToken ct);
     Task<IReadOnlyList<string>> MarkInFlightInterruptedOnBootAsync(CancellationToken ct);
+    Task<DbMaintenanceStatsDto> RunMaintenancePassAsync(long nowMs, CancellationToken ct);
 }
 ```
 
 ---
 
-## 3. 完整冻结 SQLite 10-表群 WAL Schema 与 `SqliteSingleWriter`
+## 3. 完整冻结 SQLite 10-表群 WAL Schema、升级规范与防膨胀 GC
 
-> 全库收敛为以下 10 组清晰正交的表（物理表共 13 张核心表，含 3 张轻量附属明细表 `conversation/session_turns`、`session_items`、`events`），废除老版 `operations`、`track_vcs_*`、`cards`、`harness_items` 等全部 70 余张冗余表。
+> 全库收敛为以下 10 组清晰正交的表（含 `schema_migrations` 元表，废除老版 `operations`、`track_vcs_*`、`cards`、`harness_items` 等全部 70 余张冗余表），从建库第一天即开启 `INCREMENTAL auto_vacuum`、全量外键级联子表索引、大对象冷剥离与确定性滑窗回收。
 
 ```sql
+-- 必须在首次建表前设置，使数据库支持逐页增量回收给 OS 而无需全库阻塞 VACUUM
+PRAGMA auto_vacuum = INCREMENTAL;
 PRAGMA journal_mode = WAL;
 PRAGMA synchronous = NORMAL;
 PRAGMA foreign_keys = ON;
 PRAGMA temp_store = MEMORY;
+
+-- 0. 迁移账本（字节冻结内嵌脚本 + SHA-256 校验）
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    version             INTEGER PRIMARY KEY,
+    name                TEXT NOT NULL,
+    checksum_sha256     TEXT NOT NULL,
+    applied_at_ms       INTEGER NOT NULL
+);
 
 -- 1. 领域分组与声明目录
 CREATE TABLE IF NOT EXISTS areas (
@@ -1045,6 +1065,7 @@ CREATE TABLE IF NOT EXISTS tracks (
     updated_at_ms           INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_tracks_area ON tracks(area_id, sort_order);
+CREATE INDEX IF NOT EXISTS idx_tracks_parent ON tracks(parent_track_id) WHERE parent_track_id IS NOT NULL;
 
 -- 3. Report 当前文档态
 CREATE TABLE IF NOT EXISTS reports (
@@ -1109,6 +1130,7 @@ CREATE TABLE IF NOT EXISTS task_attempts (
     finished_at_ms       INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_attempts_task ON task_attempts(task_id, started_at_ms);
+CREATE INDEX IF NOT EXISTS idx_attempts_track ON task_attempts(track_id);
 
 -- 7. 大一统会话表（Planner / Assistant / Task Worker 完全统一）
 CREATE TABLE IF NOT EXISTS agent_sessions (
@@ -1129,11 +1151,12 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_track ON agent_sessions(track_id);
 
--- 8A. 会话轮次（含 Idempotency-Key 去重）
+-- 8A. 会话轮次（含 Idempotency-Key 去重与 Epoch 归属索引）
 CREATE TABLE IF NOT EXISTS session_turns (
     id                  TEXT PRIMARY KEY,
     session_id          TEXT NOT NULL REFERENCES agent_sessions(id) ON DELETE CASCADE,
     turn_index          INTEGER NOT NULL,
+    epoch               INTEGER NOT NULL DEFAULT 1,
     idempotency_key     TEXT,
     trigger_kind        TEXT NOT NULL,        -- 'user' | 'wake' | 'system'
     input_json          TEXT NOT NULL,
@@ -1144,8 +1167,10 @@ CREATE TABLE IF NOT EXISTS session_turns (
     completed_at_ms     INTEGER,
     UNIQUE (session_id, idempotency_key)
 );
+CREATE UNIQUE INDEX IF NOT EXISTS idx_turns_session_idx ON session_turns(session_id, turn_index);
+CREATE INDEX IF NOT EXISTS idx_turns_session_epoch ON session_turns(session_id, epoch);
 
--- 8B. 会话完整条目（流式 Delta 走内存 WS，仅完成块落盘）
+-- 8B. 会话完整条目（流式 Delta 走内存 WS，仅完成块落盘；>64KB 大输出剥离外部冷存储）
 CREATE TABLE IF NOT EXISTS session_items (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id          TEXT NOT NULL REFERENCES agent_sessions(id) ON DELETE CASCADE,
@@ -1155,6 +1180,7 @@ CREATE TABLE IF NOT EXISTS session_items (
     created_at_ms       INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_items_session ON session_items(session_id, id);
+CREATE INDEX IF NOT EXISTS idx_items_turn ON session_items(turn_id);
 
 -- 9A. 用户审批问答
 CREATE TABLE IF NOT EXISTS asks (
@@ -1166,6 +1192,7 @@ CREATE TABLE IF NOT EXISTS asks (
     created_at_ms       INTEGER NOT NULL,
     answered_at_ms      INTEGER
 );
+CREATE INDEX IF NOT EXISTS idx_asks_track ON asks(track_id, status);
 
 -- 9B. 跨 Track 邮件（投递后自动唤醒目标 Track 的 primary_session_id）
 CREATE TABLE IF NOT EXISTS mails (
@@ -1193,8 +1220,9 @@ CREATE TABLE IF NOT EXISTS terminals (
     created_at_ms       INTEGER NOT NULL,
     exited_at_ms        INTEGER
 );
+CREATE INDEX IF NOT EXISTS idx_terminals_track ON terminals(track_id);
 
--- 10B. 增量事件流水（供 WS ?since= 断线重放）
+-- 10B. 增量事件流水（供 WS ?since= 断线重放，受滑窗上限约束）
 CREATE TABLE IF NOT EXISTS events (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
     area_id             TEXT,
@@ -1204,13 +1232,31 @@ CREATE TABLE IF NOT EXISTS events (
     created_at_ms       INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_events_track_id ON events(track_id, id);
+CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at_ms);
 ```
 
-### `SqliteSingleWriter` 单写协程契约
-- `SqliteSingleWriter` 启动时打开**唯一**写连接 `_writeConnection`（`Mode=ReadWriteCreate;Pooling=False`）并配置 `PRAGMA journal_mode=WAL; synchronous=NORMAL; foreign_keys=ON;`。
-- 拥有有界通道 `Channel<WriteBatchItem>`（容量 `4096`）。
-- 写协程循环每批最多从队列连续提取 `32` 个待写入闭包，打开单次 `BEGIN IMMEDIATE ... COMMIT` 事务顺序执行，提交成功后逐个回调 `TaskCompletionSource` 与 `EventHub` 广播；失败时整体 `ROLLBACK` 并传递精确异常。
-- 所有 `ITrackReadStore` 查询使用独立的 `Mode=ReadOnly` 连接池并发无锁快照读。
+### 3.1 `SqliteSingleWriter` 单写协程与平滑升级契约（`SqliteMigrator`）
+- **`SqliteSingleWriter` 单写通道**：
+  - 启动时打开**唯一**写连接 `_writeConnection`（`Mode=ReadWriteCreate;Pooling=False`）并配置 `PRAGMA journal_mode=WAL; synchronous=NORMAL; foreign_keys=ON;`。
+  - 拥有有界通道 `Channel<WriteBatchItem>`（容量 `4096`），每批最多提取 `32` 个写入闭包在单次 `BEGIN IMMEDIATE ... COMMIT` 中提交，失败整体 `ROLLBACK`；所有 `ITrackReadStore` 查询走独立 `Mode=ReadOnly` 连接池并发无锁快照读。
+- **平滑可逆升级规则（不再重蹈老版 221 个迁移失控覆辙）**：
+  1. **字节冻结迁移 + 迁移前在线备份**：所有迁移脚本以内嵌资源 `Migrations/NNNN_*.sql` 存放；`SqliteMigrator` 启动时先核对已应用脚本的 `checksum_sha256`，发现待升级脚本前通过 SQLite Online Backup API 自动生成 `{dbPath}.bak-v{current}`，再在事务中顺序执行增量迁移。
+  2. **热关系列最小化 + JSON `"v": 1` 读取期 Upcaster**：仅对用于外键、索引或调度的字段建模为物理列；易演进的扩展属性（`workspace_spec_json`、`template_state_json`、`meta_json`、`gate_verdict_json`、`payload_json`）在应用层统一携带 `"v": 1` 并通过 C# 读取期 Upcaster 兼容旧版缺省字段，**日常新增可选字段 0 `ALTER TABLE` 成本**。
+  3. **默认只增不毁与外键级联索引强制**：普通版本升级优先采用纯增列（`ADD COLUMN ... DEFAULT`）或新增索引；若必须重建表，必须遵循 `PRAGMA foreign_keys = OFF` -> 事务重建 -> `PRAGMA foreign_key_check`；**每张引用父表带 `ON DELETE CASCADE` 的子表均已强制配备子表外键索引**，防止删除 Track/Turn 时触发全表扫描锁死写协程。
+
+### 3.2 防无序膨胀与确定性垃圾回收（`SqliteMaintenance`）
+`Neige.Host` 的后台定时维护服务（默认每 `6 小时` 或空闲时，亦可手动触发）调用 `ITrackStore.RunMaintenancePassAsync(nowMs, ct)`，按以下 5 条确定性规则控制数据库物理体积与 B-Tree 碎片：
+
+1. **64 KB 大对象外部冷剥离（拒绝多 MB 日志写进 SQLite B-Tree）**：
+   - `RecordTurnAndItemsAsync` 与 `UpsertTaskAndAttemptAsync` 在写入前检测：`session_items.payload_json`（如超大 `tool_result`）或 `task_attempts.gate_verdict_json` 超过 **64 KB** 时，自动将其 Zstd 压缩写入 `{dataDir}/blobs/{trackId}/{sha256}.zst`，库内只保留 `{ "v": 1, "blobRef": "blobs/...", "bytes": ..., "preview": "前 2KB..." }`；删除 Track 时 O(1) 同步删除目录 `{dataDir}/blobs/{trackId}`。
+2. **`events` 滑窗环形裁剪**：
+   - 保留窗口上限：**最近 `7 天` 且最多 `50,000` 条**；超出部分按每批 `1,000` 行渐进 `DELETE`（不长事务堵读写）；更早断线的 WS 客户端由 `/api/v1/events` 契约直接返回 `_snapshot_required` 刷新首屏即可。
+3. **`report_revisions` 里程碑抽稀**：
+   - 活跃 Track 默认完整保留**最近 `100` 个修订版**；更早历史（`doc_rev <= latest - 100`）或已关闭超过 `14 天` 的 Track，自动抽稀为仅保留 `doc_rev % 10 == 0` 的里程碑版本 + 初始版本与最新版本。
+4. **已换页旧 Epoch 与终态 Worker 条目瘦身**：
+   - 对已经历过宿主换页的会话（`session_turns.epoch < agent_sessions.epoch - 1`）以及已完结超过 `14 天` 的 `task_attempt` 会话：自动删除历史 `kind = 'thinking'` 过程块，并将超 `4 KB` 的 `tool_result` 替换为精简墓碑（保留完整 `user`、`assistant_text` 与工具调用索引），同时清理对应的冷 Blob 引用。
+5. **物理文件真实缩容（`INCREMENTAL auto_vacuum`）**：
+   - 每次 GC 批次结束后，仅当空闲页达阈值时执行 `PRAGMA incremental_vacuum(500);`（将释放页面真实截断归还给操作系统）并执行 `PRAGMA wal_checkpoint(TRUNCATE);`，确保 `.db` 与 `.db-wal` 长期运行也不会无限单调膨胀。
 
 ---
 
@@ -1221,7 +1267,7 @@ CREATE INDEX IF NOT EXISTS idx_events_track_id ON events(track_id, id);
 | 分组 | 方法与路径 | 请求 / 响应契约概要 |
 | :--- | :--- | :--- |
 | 系统 | `GET /api/v1/bootstrap` | 一次返回 `{ version, providers: ProviderStatus[], templates: CompiledTemplateManifest[], areas: AreaDto[] }` |
-| 系统 | `GET /api/v1/templates` | 返回所有可用 `.neige.ts` 模板及其 `inputs` JSON Schema |
+| 系统 | `GET /api/v1/templates` | 返回所有可用 `.neige.js` 模板及其 `inputs` JSON Schema |
 | Area | `GET /api/v1/areas` | 返回 `AreaDto[]` |
 | Area | `POST /api/v1/areas` | `{ name, color?, defaultCwd?, folders? }` → `201 AreaDto` |
 | Area | `PATCH /api/v1/areas/{areaId}` | 部分更新名称/颜色/目录绑定 → `200 AreaDto` |
@@ -1288,13 +1334,13 @@ CREATE INDEX IF NOT EXISTS idx_events_track_id ON events(track_id, id);
    - 安装 `dotnet` 9 SDK 与 `jj` 到用户目录并验证版本。
    - 在 `/home/kenji/neige-workspaces/78d0fc64f6394212b88223f52273e9dd/0356c8755af142cab9f7919f5e82ce20` 落地 `Directory.Build.props`、`Neige.Next.sln`、全部 15 个 `.csproj`（及 `tools/neige-term-bridge/Cargo.toml`）、**以及第 2 节中全部冻结接口文件**，提交到 `main` 并确认 `dotnet build` 编译全绿。
 2. **Stage 1（6 路 `workspace: "share"` 并行开发 + 2 名只读 Verifier）**：
-   - `w-doc-vm`：实现 `libs/Neige.ReportDoc` + `libs/Neige.PolicyVm` + 3 个 `.neige.ts` 模板与单测。
+   - `w-doc-vm`：实现 `libs/Neige.ReportDoc` + `libs/Neige.PolicyVm`（Jint 原生直跑 ESM，零手写解析）+ `templates/{tsconfig.json, *.neige.js}`（通过 `tsc --noEmit` 强类型检查）与单测。
    - `w-agentkit`：实现 `libs/Neige.AgentKit`（Codex / Claude stream-json / ACP + `bwrap` Wrapper）与 Mock CLI 协议测试。
    - `w-vcskit`：实现 `libs/Neige.VcsKit`（`jj --colocate` 一等支持 + `git` 兜底 + `gh` CLI + `IWorkspaceDriverRegistry` 与一期 `DirectWorkspaceDriver` / `VcsWorkspaceDriver`）与真实临时 `jj`/`git` 仓库及租约单测。
    - `w-term-rust`：从 `neige-calm` 提纯移植 `tools/neige-term-bridge` + 实现 `libs/Neige.TermClient` 与 PTY 读写集成测试。
-   - `w-sqlite`：实现 `src/Neige.Storage.Sqlite`（10 表群 DDL + `SqliteSingleWriter` 微批写入 + `ITrackStore`）与高并发无 `SQLITE_BUSY` 压测。
+   - `w-sqlite`：实现 `src/Neige.Storage.Sqlite`（10 表群 DDL + `SqliteMigrator` 迁移备份 + `SqliteSingleWriter` 微批写入 + `ITrackStore` + >64KB 冷 Blob 剥离与 `RunMaintenancePassAsync` 确定性 GC）与高并发无 `SQLITE_BUSY`、外键级联索引、升级及防膨胀压测。
    - `w-kernel`：实现 `src/Neige.Kernel`（`TrackActor`、代表路由、Epoch 换页压缩、`TaskGraphScheduler`、`TemplateHost`、`BootReconciler`）与纯内存模拟测试。
    - 协调者按序审查并合入 `main`（或派 `v-libs` / `v-core` 验证每个分支 `dotnet test` / `cargo test` 全绿后再合并）。
 3. **Stage 2（组合根 `Neige.Host` + 前端 `fe/` 协同瘦身切换）**：
-   - `w-host`：实现 `src/Neige.Host`（REST / WS / `/mcp/kernel` / `/mcp/vcs` / `/mcp/p/{id}` 拦截器 / `Cronos` 调度 / E2E 集成测试）。
+   - `w-host`：实现 `src/Neige.Host`（REST / WS / `/mcp/kernel` / `/mcp/vcs` / `/mcp/p/{id}` 拦截器 / `Cronos` 调度 + 定期 `RunMaintenancePassAsync` / E2E 集成测试）。
    - `w-fe`：在独立前端分支将 `fe/core/{api,events}` 对接到 `/api/v1`，裁剪冗余旧恢复/桌面/日历模块并通过 `npm run build` + Playwright 验证。
