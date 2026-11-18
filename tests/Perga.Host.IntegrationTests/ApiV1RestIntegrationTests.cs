@@ -351,6 +351,11 @@ public sealed class ApiV1RestIntegrationTests
         Assert.Equal(HttpStatusCode.OK, steerResp.StatusCode);
         Assert.Contains("Adjust course now", steeredPrompts);
 
+        using var supplement = await client.PostAsJsonAsync($"/api/v1/sessions/{subSession.Id}/messages/steer",
+            new { turnId = inFlight.TurnId, content = "Supplement the running turn" });
+        Assert.Equal(HttpStatusCode.OK, supplement.StatusCode);
+        Assert.Contains("Supplement the running turn", steeredPrompts);
+
         // POST /api/v1/sessions/{sessionId}/interrupt -> cancels slow turn!
         using var interruptResp = await client.PostAsync($"/api/v1/sessions/{subSession.Id}/interrupt", null);
         Assert.Equal(HttpStatusCode.OK, interruptResp.StatusCode);

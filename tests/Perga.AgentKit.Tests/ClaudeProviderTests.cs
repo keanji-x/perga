@@ -33,7 +33,7 @@ public sealed class ClaudeProviderTests : IDisposable
         await using (var session = await runtime.OpenSessionAsync(spec, CancellationToken.None))
         {
             Assert.False(session.SupportsNativeSteer);
-            Assert.False(await session.TrySteerAsync("ignored"));
+            Assert.Equal(SteerDelivery.Declined, await session.SteerAsync("turn", "ignored", CancellationToken.None));
 
             var claudeSession = Assert.IsType<ClaudeAgentSession>(session);
             mcpTempFilePath = claudeSession.McpConfigFilePath;

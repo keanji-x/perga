@@ -44,11 +44,12 @@ import { projectTranscriptView, type TranscriptView } from '../../../../../core/
 import {
   isQueuedConversationTurn, opensAfterGap, opensExchange,
   type Conversation, type ConversationTurn, type ConversationActivity, type ConversationTurnOutcome,
-  type TranscriptEntry,
+  type TranscriptEntry, type SteeringMessage,
 } from '../../../../../core/domain/conversation.ts';
 import { QuietSyncFold } from './quiet-sync.tsx';
 import type { ReplyImageFiles, ReplyLinkRenderer } from './reply.tsx';
 import { MessageEntry } from './message-entry.tsx';
+import { OutgoingMessage } from './outgoing-message.tsx';
 import styles from './thread.module.css';
 import composerLayoutStyles from './composer-layout.module.css';
 import { currentResponseMessage, latestUserMessage } from '../../../../../core/domain/conversation-actions.ts';
@@ -84,6 +85,7 @@ export type ChatThreadProps = Readonly<{
   activeInput?: ConversationActiveInput | null;
   keepInput?: (submission: ConversationSubmissionDelivery) => Promise<void>;
   retryInput?: (submission: ConversationSubmissionDelivery) => Promise<void>;
+  steeringMessages?: readonly SteeringMessage[];
   /** Current pending inputs or their retained exit content; the mounted node alone does not declare presence. */
   hasPendingMessages: boolean;
   /** Current work confirmed by the run query while the activity overlay catches up. */
@@ -126,7 +128,7 @@ export type ChatThreadProps = Readonly<{
   renderLink?: ReplyLinkRenderer;
 }>;
 
-export const ChatThread = memo(function ChatThread({ conversation, turns, pendingMessages, activeInput = null, keepInput, retryInput, hasPendingMessages, pending = false, sending = false, submissionRequest = 0, cards, stalled, stalledReason, recovery = null, statusUnconfirmed = false, statusLoading = false, stopFeedback = null, currentResponseOutcome = null, canContinue, messageActions = 'all', copyText, regenerateMessage, editMessage, editing = null, replacement = null, runningAnchor = null, imageFiles = null, renderLink, readingView, historyPrefetch, hasPendingInputs = false }: ChatThreadProps) {
+export const ChatThread = memo(function ChatThread({ conversation, turns, pendingMessages, steeringMessages, activeInput = null, keepInput, retryInput, hasPendingMessages, pending = false, sending = false, submissionRequest = 0, cards, stalled, stalledReason, recovery = null, statusUnconfirmed = false, statusLoading = false, stopFeedback = null, currentResponseOutcome = null, canContinue, messageActions = 'all', copyText, regenerateMessage, editMessage, editing = null, replacement = null, runningAnchor = null, imageFiles = null, renderLink, readingView, historyPrefetch, hasPendingInputs = false }: ChatThreadProps) {
   const compactViewport = useCompactViewport();
   // Observe the browser timezone on render; keep formatters stable for memoized rows.
   const timeZone = new Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -301,14 +303,14 @@ export const ChatThread = memo(function ChatThread({ conversation, turns, pendin
     if (turn.author === 'turn') return turn.imported === true ? <HistoricalOutcomeNotice key={turn.id} outcome={turn} /> : null;
     return (
       <MessageEntry key={turn.id} mobile={compactViewport} atMs={turn.atMs} timestampFormatter={turn.author === 'agent' ? compactClock : null} id={turn.id} entryKey={key} author={turn.author} human={turn.human} imported={turn.imported === true} text={turn.text}
-        attachments={turn.attachments} opens={opensExchange(turns, index)}
+        attachments={turn.attachments} deliveryError={turn.deliveryError} opens={opensExchange(turns, index)}
         gapLabel={opensAfterGap(turns, index) && index > 0 ? clockTime(gapClock, turn.atMs) : null}
         queued={isQueuedConversationTurn(turn)} edited={edited.has(turn.id)} replacement={turn.id === replacement}
         imageFiles={imageFiles} renderLink={renderLink} />
     );
   };
 
-  const empty = turns.length === 0 && noticeKind === null && !hasPendingMessages && heldInputs.length === 0;
+  const empty = turns.length === 0 && noticeKind === null && !hasPendingMessages && heldInputs.length === 0 && !steeringMessages?.length;
 
   const currentMeta = <CurrentStatusNotice detailsExpanded={reading.expanded.get('current-status') ?? false}
     leading={live && !empty && !tailCarriesLiveMark ? <ActivityIndicator state="working" motion="thinking" /> : undefined}
@@ -345,6 +347,10 @@ export const ChatThread = memo(function ChatThread({ conversation, turns, pendin
         <div key="pending-messages" className={styles.pendingMessages}>
           <HeldInputStatus held={heldInputs} keepInput={keepInput} retryInput={retryInput} />
           {pendingMessages}
+          {steeringMessages?.map(message => <div key={message.id}>
+            <OutgoingMessage speaker="you" text={message.text} mobile={compactViewport} />
+            <p className={styles.queuedNote} role="status">{message.status}</p>
+          </div>)}
         </div>
         <div ref={endRef} aria-hidden="true" />
       </div>
@@ -368,7 +374,7 @@ const FOLLOW_BOTTOM_SLACK_PX = 64;
 export type ComposerFocusHandle = Readonly<{ ownsFocus: () => boolean }>;
 
 export function ChatComposer({
-  onSend, onStop, commands = [], disabled = false, sendWaiting = false, editing, focusOnMount = false, focusRequest = 0,
+  onSend, onStop, commands = [], disabled = false, sendWaiting = false, canSendSupplement = false, editing, focusOnMount = false, focusRequest = 0,
   draft: controlledDraft, commandScope, footerActions, sendAdornment,
   drawer, headerActions, allowEmptyText = false, mentionTrigger, onFiles, layout = 'standard', focusHandle,
 }: {
@@ -385,6 +391,7 @@ export function ChatComposer({
   disabled?: boolean;
   /** A local send waits for its answer. Show a busy Send while preserving an existing Stop. */
   sendWaiting?: boolean;
+  canSendSupplement?: boolean;
   /** Edit mode: a bar names the message being replaced, ✕ or Esc leaves the mode, and Send is "Replace message". */
   editing?: Readonly<{ preview: string; onCancel: () => void; submitLabel?: string; canSubmit?: boolean }>;
   /** Put the caret in the field as this composer mounts. Read once, at mount; the composer has no `key` on the router's path, so raising the flag again on a mounted composer does nothing — one mount per intent is the caller's job. */
@@ -536,6 +543,8 @@ export function ChatComposer({
       disabled={disabled}
       onClick={() => { submit(); }}
     >Send image</button>
+  ) : canSendSupplement && stopShown && draft.trim() !== '' && !sendWaiting && editing === undefined ? (
+    <button type="button" className={styles.queueSend} disabled={disabled} onClick={submit}>Send supplement</button>
   ) : undefined;
 
   return (

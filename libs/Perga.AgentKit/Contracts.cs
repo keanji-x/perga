@@ -68,6 +68,8 @@ public sealed record ProviderStatus(
     string? Reason,
     IReadOnlyList<string> Models);
 
+public enum SteerDelivery { Accepted, Declined, Unconfirmed }
+
 public interface IAgentSession : IAsyncDisposable
 {
     string? NativeThreadId { get; }
@@ -76,7 +78,7 @@ public interface IAgentSession : IAsyncDisposable
     IAsyncEnumerable<UnifiedAgentEvent> StreamTurnAsync(TurnInput input, CancellationToken ct);
     Task CancelTurnAsync(CancellationToken ct);
     Task RespondApprovalAsync(string requestId, bool approved, string? reason = null, CancellationToken ct = default);
-    Task<bool> TrySteerAsync(string message, CancellationToken ct = default);
+    Task<SteerDelivery> SteerAsync(string turnCorrelationId, string message, CancellationToken ct);
 }
 
 public interface IAgentRuntime : IAsyncDisposable

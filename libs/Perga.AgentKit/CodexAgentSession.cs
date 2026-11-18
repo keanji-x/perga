@@ -11,8 +11,9 @@ public sealed class CodexAgentSession : IAgentSession
 {
     private sealed record PendingApproval(JsonElement RawId, string Method);
 
-    private sealed class TurnStreamState
+    private sealed class TurnStreamState(string correlationId)
     {
+        public string CorrelationId { get; } = correlationId;
         public Channel<UnifiedAgentEvent> Events { get; } = Channel.CreateUnbounded<UnifiedAgentEvent>(
             new UnboundedChannelOptions { SingleReader = true, SingleWriter = false });
 
@@ -116,7 +117,7 @@ public sealed class CodexAgentSession : IAgentSession
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
 
         await _turnLock.WaitAsync(ct).ConfigureAwait(false);
-        var turnState = new TurnStreamState();
+        var turnState = new TurnStreamState(input.CorrelationId);
         Volatile.Write(ref _currentTurn, turnState);
 
         try
@@ -201,25 +202,25 @@ public sealed class CodexAgentSession : IAgentSession
         await _rpc.SendResultResponseAsync(pending.RawId, payload, ct).ConfigureAwait(false);
     }
 
-    public async Task<bool> TrySteerAsync(string message, CancellationToken ct = default)
+    public async Task<SteerDelivery> SteerAsync(string turnCorrelationId, string message, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(message);
         if (Volatile.Read(ref _disposed) != 0)
         {
-            return false;
+            return SteerDelivery.Declined;
         }
 
         var turnState = Volatile.Read(ref _currentTurn);
         var threadId = NativeThreadId;
-        if (turnState is null || string.IsNullOrWhiteSpace(threadId))
+        if (turnState?.CorrelationId != turnCorrelationId || string.IsNullOrWhiteSpace(threadId))
         {
-            return false;
+            return SteerDelivery.Declined;
         }
 
         var turnId = await TryWaitTurnIdAsync(turnState, TimeSpan.FromSeconds(1), ct).ConfigureAwait(false);
-        if (string.IsNullOrWhiteSpace(turnId))
+        if (string.IsNullOrWhiteSpace(turnId) || !ReferenceEquals(turnState, Volatile.Read(ref _currentTurn)))
         {
-            return false;
+            return SteerDelivery.Declined;
         }
 
         var steerParams = new Dictionary<string, object?>
@@ -242,20 +243,31 @@ public sealed class CodexAgentSession : IAgentSession
             var result = await _rpc.SendRequestAsync("turn/steer", steerParams, ct).ConfigureAwait(false);
             if (result.ValueKind == JsonValueKind.Object &&
                 result.TryGetProperty("accepted", out var acceptedProp) &&
-                acceptedProp.ValueKind is JsonValueKind.True or JsonValueKind.False)
+                acceptedProp.ValueKind == JsonValueKind.False)
             {
-                return acceptedProp.GetBoolean();
+                return SteerDelivery.Declined;
             }
 
-            return true;
+            return result.ValueKind == JsonValueKind.Object
+                && result.TryGetProperty("turnId", out var responseTurnId)
+                && responseTurnId.ValueKind == JsonValueKind.String
+                && responseTurnId.GetString() == turnId
+                ? SteerDelivery.Accepted
+                : SteerDelivery.Unconfirmed;
+        }
+        catch (JsonRpcRemoteException ex) when (ex.Code == -32600 &&
+            (ex.Message.Equals("no active turn to steer", StringComparison.OrdinalIgnoreCase)
+             || ex.Message.StartsWith($"expected active turn id `{turnId}` but found `", StringComparison.Ordinal)))
+        {
+            return SteerDelivery.Declined;
         }
         catch (JsonRpcRemoteException)
         {
-            return false;
+            return SteerDelivery.Unconfirmed;
         }
-        catch (InvalidOperationException)
+        catch (Exception ex) when (ex is InvalidOperationException or IOException)
         {
-            return false;
+            return SteerDelivery.Unconfirmed;
         }
     }
 

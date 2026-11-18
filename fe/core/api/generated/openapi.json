@@ -14968,6 +14968,81 @@
         }
       }
     },
+    "/api/v1/sessions/{sessionId}/messages/steer": {
+      "post": {
+        "summary": "Deliver supplemental text to an observed turn",
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "turnId",
+                  "content"
+                ],
+                "properties": {
+                  "turnId": {
+                    "type": "string"
+                  },
+                  "content": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Steering delivery outcome",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "inputId",
+                    "delivery"
+                  ],
+                  "properties": {
+                    "inputId": {
+                      "type": "string"
+                    },
+                    "delivery": {
+                      "type": "string",
+                      "enum": [
+                        "accepted",
+                        "queued",
+                        "unconfirmed"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing turn or content"
+          },
+          "404": {
+            "description": "Session not found"
+          },
+          "409": {
+            "description": "An unresolved turn holds the session"
+          }
+        }
+      }
+    },
     "/api/v1/sessions/{sessionId}/inputs/{inputId}": {
       "parameters": [
         {
@@ -16329,6 +16404,9 @@
               "created_at_ms": {
                 "type": "integer",
                 "format": "int64"
+              },
+              "delivery_error": {
+                "type": "string"
               },
               "kind": {
                 "type": "string",

@@ -144,6 +144,7 @@ export type ConversationTurn = NativeTurnContext & Readonly<{
   origin?: 'ask';
   /** Exact input provenance, including a known acceptance receipt; only inputSource names raw stored source. */
   queueEntryId?: string | null;
+  deliveryError?: string;
   /** Canonical structured-input source; rendered ids remain the renderer's separate identity. */
   inputSource?: Readonly<{ cardId: string; threadId: string; itemId: number; segmentIndex: number; turnId: string | null; entryRev: number | null }>;
 }>;
@@ -651,6 +652,17 @@ export const PLANNER_MODEL_FAILURES: FailureTable<WriteFailure> = Object.freeze(
 export const MODEL_CHANGE_TEXT = Object.freeze({ refused: 'The model was not changed.', unknown: 'The model change is unconfirmed.' });
 
 /** What a `POST /planner/input` answers, including where the text landed. */
+export type SteeringMessage = Readonly<{ id: string; text: string; status: string; queuedInputId?: string }>;
+
+export function steerSessionMessageOperation(sessionId: string, turnId: string, content: string) {
+  return {
+    method: 'POST',
+    path: `/api/v1/sessions/${encodeURIComponent(sessionId)}/messages/steer`,
+    body: { turnId, content },
+    responseSchema: z.object({ inputId: z.string().min(1), delivery: z.enum(['accepted', 'queued', 'unconfirmed']) }),
+  } satisfies ApiOperation<unknown>;
+}
+
 export type SentPlannerInput = Readonly<{
   card_id: string;
   worker_session_id: string;

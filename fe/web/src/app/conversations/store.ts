@@ -29,6 +29,7 @@ import { useLiveReplies } from './live-replies.ts';
 import { useConversationOutbox, useRunReads } from './outbox.ts';
 import type { ConversationRouteIntent, ConversationStore, PlannerConversationScope } from './contracts.ts';
 
+import { useSteeringMessages } from './steering.ts';
 /** Tombstone key: entry ids are unique per card, not globally. */
 function forgottenKey(card: string, entryId: string): string {
   return `${card}\u0000${entryId}`;
@@ -205,6 +206,9 @@ export function useConversationStore(
   const landedTranscript = transcriptReads.startOf(history.data);
   /* A refetch keeping `run.data` restamps it; this re-renders only because `run.dataUpdatedAt` is read above (#2068). */
   const landed = useMemo(() => ({ transcript: landedTranscript, run: landedRun }), [landedTranscript, landedRun]);
+  const steeringTarget = pergaInputProtocol && phase === 'turn_running' && working && run.error === null
+    ? run.data?.running_turn?.turn_id ?? null : null;
+  const steering = useSteeringMessages(cardId, transport, serverEntries, mutations.steerSessionMessage);
   const outbox = useConversationOutbox({
     removedMessages, viewerId:currentUser?.userId ?? null,
     cardId, transport, send: mutations.send, serverEntries, serverTurns, liveReplies, queuedEntries: pendingQueue,
@@ -336,6 +340,8 @@ export function useConversationStore(
   return {
     conversations,
     turns: conversation === null ? NO_TURNS : presentation.transcript,
+    steeringMessages: steering.messages,
+    canSendSupplement: steeringTarget !== null,
     pending: pendingConversationIds(conversation, working, !stalled && view.sending),
     working,
     canStop,
@@ -346,7 +352,7 @@ export function useConversationStore(
     stopping,
     stopFeedback,
     sending: view.sending,
-    sendBlocked: view.blocked || run.data?.unknown_session_input != null || (pergaInputProtocol && working),
+    sendBlocked: view.blocked || run.data?.unknown_session_input != null || (pergaInputProtocol && working && steeringTarget === null),
     initialInputChecking: view.checkingInitialInput && initialInputError === null,
     initialInputError,
     retryInitialInput: () => { void initialObservation.refetch().catch(() => undefined); void history.refetch().catch(() => undefined); },
@@ -379,7 +385,15 @@ export function useConversationStore(
     retrySend: outbox.retrySend,
     discardFailedSend: outbox.discardFailedSend,
     dismissFailedSend: outbox.dismissFailedSend,
-    send: outbox.send,
+    send: (id, text, attachments, fromComposer, replaces) => {
+      if (steeringTarget !== null && fromComposer && replaces === null) {
+        if (id !== cardId || attachments.length > 0 || text.trim().length === 0 || view.blocked) return null;
+        const attempt = steering.send(steeringTarget, text);
+        if (attempt !== null) { setActionError(null); stop.clearFeedback(); restart.clearError(); }
+        return attempt;
+      }
+      return outbox.send(id, text, attachments, fromComposer, replaces);
+    },
     attachmentsSupported: (run.data?.attachments_supported ?? false) && (scopeKind !== 'track-assistant' || (!capabilities.isError
       && capabilities.data?.find(answer => answer.availability.provider === provider)?.capabilities.images === true)),
     historyReplacementSupported,
