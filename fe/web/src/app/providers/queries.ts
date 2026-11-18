@@ -381,7 +381,7 @@ export type ConversationMutations = Readonly<{
   archive: (cardId: string, archived: boolean) => Promise<void>;
   /** The key identifies the DRAFT, not the attempt: a retry after a timeout must reuse it, or it mints a second conversation. */
   create: (text: string, idempotencyKey: string, provider: AgentProvider, selection: ModelSelection, side: SideConversation | undefined,
-    answered: (result: CreatedConversation) => void) => Promise<CreatedConversation>;
+    answered: (result: CreatedConversation) => void, permissionMode?: string | null) => Promise<CreatedConversation>;
   inspect: (cardId: string, idempotencyKey: string) => Promise<ConversationInitialInputObservation>;
   /** Re-read the list and hand back what it now holds. */
   refresh: (beforePublish: (rows: readonly Conversation[]) => void) => Promise<Conversation[]>;
@@ -404,10 +404,10 @@ export function useTrackConversationMutations(
 ): ConversationMutations {
   const client = useQueryClient();
   const create = useRecoveryMutation(transport, {
-    mutationFn: async ({ text, idempotencyKey, provider, selection, side }: { text: string; idempotencyKey: string; provider: AgentProvider; selection: ModelSelection; side?: SideConversation; answered: (result: CreatedConversation) => void }, transport: ApiTransportPort) => {
+    mutationFn: async ({ text, idempotencyKey, provider, selection, side, permissionMode }: { text: string; idempotencyKey: string; provider: AgentProvider; selection: ModelSelection; side?: SideConversation; answered: (result: CreatedConversation) => void; permissionMode?: string | null }, transport: ApiTransportPort) => {
       return runOperation(
         transport,
-        createTrackConversationOperation(trackId, text, idempotencyKey, provider, selection, side),
+        createTrackConversationOperation(trackId, text, idempotencyKey, provider, selection, side, permissionMode),
         unauthorized,
       );
     },
@@ -437,7 +437,8 @@ export function useTrackConversationMutations(
     (cardId: string, archived: boolean) => archive.mutateAsync({ cardId, archived }));
   return {
     archive: changeArchive,
-    create: (text, idempotencyKey, provider, selection, side, answered) => create.mutateAsync({ text, idempotencyKey, provider, selection, side, answered }),
+    create: (text, idempotencyKey, provider, selection, side, answered, permissionMode) =>
+      create.mutateAsync({ text, idempotencyKey, provider, selection, side, answered, permissionMode }),
     inspect: (cardId, key) => runOperation(transport, initialInputObservationOperation(trackId, cardId, key), unauthorized),
     refresh: async (beforePublish) => {
       const admitted = admitTransport(transport);

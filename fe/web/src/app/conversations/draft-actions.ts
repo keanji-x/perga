@@ -217,7 +217,7 @@ export function createConversationDraftActions({ registry, draft, creating, sour
         attempt = { ...attempt, text, submitted };
         await create(submitted.text, attempt.key, attempt.provider, attempt.model, attempt.side, (result) => {
           if (current()) adopt(attempt, result);
-        });
+        }, attempt.permissionMode);
       } catch (error: unknown) {
         if (error instanceof NotSentError) {
           // Marking a request optimistically must not invent dispatch when the

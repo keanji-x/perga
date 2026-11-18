@@ -415,6 +415,19 @@ public static class ApiV1Endpoints
             return Results.Json(settings, PergaJsonDefaults.ApiOptions);
         });
 
+        v1.MapPut("/sessions/{sessionId}/permission-mode", async (string sessionId, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
+        {
+            var body = await ReadRequiredJsonBodyAsync<SetPermissionModeHttpBody>(ctx, ct).ConfigureAwait(false);
+            var mode = body.PermissionModeSnake ?? body.PermissionModeCamel;
+            if (string.IsNullOrWhiteSpace(mode))
+            {
+                return HttpErrorHandling.BadRequest("invalid_argument", "permission_mode is required.");
+            }
+
+            var updated = await kernel.SetSessionPermissionModeAsync(sessionId, mode, ct).ConfigureAwait(false);
+            return Results.Json(updated, PergaJsonDefaults.ApiOptions);
+        });
+
         // ------------------- Asks -------------------
         v1.MapPost("/tracks/{trackId}/asks/{askId}/answer", async (string trackId, string askId, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
         {
@@ -579,4 +592,8 @@ public static class ApiV1Endpoints
                ext.Equals(".svg", StringComparison.OrdinalIgnoreCase) ||
                ext.Equals(".xml", StringComparison.OrdinalIgnoreCase);
     }
+
+    private sealed record SetPermissionModeHttpBody(
+        [property: System.Text.Json.Serialization.JsonPropertyName("permission_mode")] string? PermissionModeSnake,
+        [property: System.Text.Json.Serialization.JsonPropertyName("permissionMode")] string? PermissionModeCamel);
 }

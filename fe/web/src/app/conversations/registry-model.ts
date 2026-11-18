@@ -21,6 +21,7 @@ export type ConversationDraft = Readonly<{
   /** Chosen before sending and locked while delivery is unconfirmed. */
   provider: AgentProvider;
   model: ModelSelection;
+  permissionMode?: string | null;
   /** Identifies the draft to the server; minted once, never once per send. */
   key: string;
   /** The words the drawer is holding after its composer clears on send. */

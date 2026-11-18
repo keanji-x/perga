@@ -50,6 +50,7 @@ public sealed partial class TrackActor : IAsyncDisposable
     private readonly Dictionary<string, TerminalDto> _terminals = new(StringComparer.Ordinal);
     private readonly Dictionary<string, int> _nextTurnIndexBySession = new(StringComparer.Ordinal);
     private readonly Dictionary<string, IAgentSession> _openAgentSessions = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string?> _openAgentSessionPermissionModes = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Guid> _reservedWakeSessions = new(StringComparer.Ordinal);
     private readonly Dictionary<string, ActiveTurnState> _activeTurns = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Queue<PendingWake>> _pendingWakes = new(StringComparer.Ordinal);
@@ -703,6 +704,21 @@ public sealed partial class TrackActor : IAsyncDisposable
         var provider = string.IsNullOrWhiteSpace(req.Provider)
             ? GetDefaultProviderCore()
             : (TaskBlockSynchronizer.NormalizeProviderId(req.Provider) ?? req.Provider!.Trim());
+        string? permissionMode;
+        if (!string.IsNullOrWhiteSpace(req.PermissionMode))
+        {
+            if (!ProviderPermissionModes.IsSupported(provider, req.PermissionMode))
+            {
+                throw KernelException.InvalidArgument(
+                    $"Unsupported permission mode '{req.PermissionMode}' for provider '{provider}'.");
+            }
+            permissionMode = req.PermissionMode.Trim();
+        }
+        else
+        {
+            permissionMode = ProviderPermissionModes.GetDefaultMode(provider);
+        }
+
         return new AgentSessionDto(
             Id: $"ses_{Guid.NewGuid():N}",
             TrackId: TrackId,
@@ -718,7 +734,8 @@ public sealed partial class TrackActor : IAsyncDisposable
             ContextUsageRatio: 0.0,
             ArchivedAtMs: null,
             CreatedAtMs: now,
-            UpdatedAtMs: now);
+            UpdatedAtMs: now,
+            PermissionMode: permissionMode);
     }
 
     public Task<AgentSessionDto> PatchSessionAsync(string sessionId, PatchSessionRequest req, CancellationToken ct = default)
@@ -945,6 +962,59 @@ public sealed partial class TrackActor : IAsyncDisposable
         });
 
         return await tcs.Task.WaitAsync(ct).ConfigureAwait(false);
+    }
+
+    public async Task<AgentSessionDto> SetSessionPermissionModeAsync(string sessionId, string permissionMode, CancellationToken ct = default)
+    {
+        IAgentSession? toDispose = null;
+        var updated = await EnqueueAsync(async _ =>
+        {
+            await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
+            var session = RequireSessionCore(sessionId);
+            if (session.BoundTaskId is not null)
+            {
+                throw KernelException.InvalidArgument("Cannot change permission mode on a task-bound session.");
+            }
+
+            if (string.IsNullOrWhiteSpace(permissionMode) ||
+                !ProviderPermissionModes.IsSupported(session.Provider, permissionMode))
+            {
+                throw KernelException.InvalidArgument(
+                    $"Unsupported permission mode '{permissionMode}' for provider '{session.Provider}'.");
+            }
+
+            var trimmed = permissionMode.Trim();
+            if (string.Equals(session.PermissionMode, trimmed, StringComparison.Ordinal))
+            {
+                return session;
+            }
+
+            var next = session with
+            {
+                PermissionMode = trimmed,
+                UpdatedAtMs = NowMs()
+            };
+            await PersistAndEmitSessionUpdatedCoreAsync(next, next.UpdatedAtMs, ct).ConfigureAwait(false);
+            _sessions[sessionId] = next;
+
+            // If idle (neither running a turn nor compacting), close any cached provider subprocess so the next turn launches with the new mode.
+            if (!_activeTurns.ContainsKey(sessionId) &&
+                !_compactingSessions.Contains(sessionId) &&
+                _openAgentSessions.Remove(sessionId, out var open))
+            {
+                _openAgentSessionPermissionModes.Remove(sessionId);
+                toDispose = open;
+            }
+
+            return next;
+        }, ct).ConfigureAwait(false);
+
+        if (toDispose is not null)
+        {
+            await toDispose.DisposeAsync().ConfigureAwait(false);
+        }
+
+        return updated;
     }
 
     // ------------------- Tasks, Governance & Attempt Settlement -------------------
@@ -3042,8 +3112,12 @@ public sealed partial class TrackActor : IAsyncDisposable
                 var seedPrompt = BuildEpochSeedSystemPrompt(compacted, latestReportMarkdown, handoverSummary);
 
                 // Seed fresh IAgentSession with ResumeNativeThreadId == null and SystemPrompt = Report + Handover Summary.
+                var desiredMode = compacted.BoundTaskId is null
+                    ? compacted.PermissionMode ?? ProviderPermissionModes.GetDefaultMode(compacted.Provider)
+                    : null;
                 var freshAgentSession = await OpenFreshAgentSessionCoreAsync(compacted, seedPrompt, ct).ConfigureAwait(false);
                 _openAgentSessions[sessionId] = freshAgentSession;
+                _openAgentSessionPermissionModes[sessionId] = desiredMode;
 
                 return compacted;
             }, ct).ConfigureAwait(false);
@@ -3065,13 +3139,23 @@ public sealed partial class TrackActor : IAsyncDisposable
         string? overrideSystemPrompt,
         CancellationToken ct)
     {
+        var desiredMode = session.BoundTaskId is null
+            ? session.PermissionMode ?? ProviderPermissionModes.GetDefaultMode(session.Provider)
+            : null;
+
         if (_openAgentSessions.TryGetValue(session.Id, out var existing))
         {
-            return existing;
+            if (!_openAgentSessionPermissionModes.TryGetValue(session.Id, out var openMode) ||
+                string.Equals(openMode, desiredMode, StringComparison.Ordinal))
+                return existing;
+            _openAgentSessions.Remove(session.Id);
+            _openAgentSessionPermissionModes.Remove(session.Id);
+            await existing.DisposeAsync().ConfigureAwait(false);
         }
 
         var opened = await OpenFreshAgentSessionCoreAsync(session, overrideSystemPrompt, ct).ConfigureAwait(false);
         _openAgentSessions[session.Id] = opened;
+        _openAgentSessionPermissionModes[session.Id] = desiredMode;
         return opened;
     }
 
@@ -3135,7 +3219,10 @@ public sealed partial class TrackActor : IAsyncDisposable
             Sandbox: sandboxMode,
             OverlayMounts: overlayMounts,
             StateKey: session.Id,
-            ConfigureWorker: session.BoundAttemptId is not null);
+            ConfigureWorker: session.BoundAttemptId is not null,
+            PermissionMode: session.BoundTaskId is null
+                ? session.PermissionMode ?? ProviderPermissionModes.GetDefaultMode(session.Provider)
+                : null);
     }
 
     private async Task DispatchLeadWakePromptIfNeededAsync(string triggerKind, string wakePrompt, CancellationToken ct, string? mailId = null, bool recovering = false)

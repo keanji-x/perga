@@ -46,7 +46,8 @@ public sealed record CreateTrackRequest(
     IReadOnlyList<string>? EnabledPlugins = null,
     string? BaseRevision = null,
     double? SortOrder = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? WorkspaceOptionId = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? WorkspaceOptionId = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? PermissionMode = null);
 
 public sealed record TrackWorkspaceOptionDto(string Id, string Label, string Description);
 
@@ -95,7 +96,8 @@ public sealed record CreateSessionRequest(
     string? Provider = null,
     string? Model = null,
     string? Text = null,
-    string? IdempotencyKey = null);
+    string? IdempotencyKey = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? PermissionMode = null);
 
 public sealed record PatchSessionRequest(
     string? Title = null,

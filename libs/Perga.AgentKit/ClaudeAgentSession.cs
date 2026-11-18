@@ -128,6 +128,12 @@ public sealed class ClaudeAgentSession : IAgentSession
                 cliArgs.Add(spec.SystemPrompt);
             }
 
+            if (!string.IsNullOrWhiteSpace(spec.PermissionMode))
+            {
+                cliArgs.Add("--permission-mode");
+                cliArgs.Add(spec.PermissionMode.Trim());
+            }
+
             var rawInvocation = new CommandInvocation(
                 commandSpec.FileName,
                 cliArgs,

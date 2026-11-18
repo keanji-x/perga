@@ -428,6 +428,16 @@ public sealed class CodexAgentSession : IAgentSession
             threadParams["developerInstructions"] = spec.SystemPrompt;
         }
 
+        if (!string.IsNullOrWhiteSpace(spec.PermissionMode))
+        {
+            var (approvalPolicy, sandbox) = MapCodexPermissionMode(spec.PermissionMode.Trim());
+            threadParams["approvalPolicy"] = approvalPolicy;
+            if (sandbox is not null)
+            {
+                threadParams["sandbox"] = sandbox;
+            }
+        }
+
         string method;
         if (!string.IsNullOrWhiteSpace(spec.ResumeNativeThreadId))
         {
@@ -451,6 +461,15 @@ public sealed class CodexAgentSession : IAgentSession
         if (_configureWorker)
             WorkerConfiguration = await ReadWorkerConfigurationAsync(spec.Cwd, ct).ConfigureAwait(false);
     }
+
+    private static (string ApprovalPolicy, string? Sandbox) MapCodexPermissionMode(string mode) =>
+        mode switch
+        {
+            "never" => ("never", "workspace-write"),
+            "ask" => ("on-request", "workspace-write"),
+            "full" => ("never", "danger-full-access"),
+            _ => (mode, null)
+        };
 
     private async Task<WorkerProviderConfiguration?> ReadWorkerConfigurationAsync(string cwd, CancellationToken ct)
     {

@@ -334,6 +334,7 @@ public sealed class AgentRuntime : IAgentRuntime
     private async Task<ProviderStatus> ProbeSingleProviderAsync(string provider, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
+        var permissionModes = ProviderPermissionModes.GetModesForProvider(provider);
 
         ProviderCommandOverride cmdSpec;
         var appendAcpSubcommand = false;
@@ -358,7 +359,7 @@ public sealed class AgentRuntime : IAgentRuntime
         }
         catch (Exception ex)
         {
-            return new ProviderStatus(provider, Available: false, Version: null, Reason: ex.Message, Models: []);
+            return new ProviderStatus(provider, Available: false, Version: null, Reason: ex.Message, Models: [], PermissionModes: permissionModes);
         }
 
         var env = BuildProcessEnvironment(cmdSpec.Env);
@@ -370,7 +371,8 @@ public sealed class AgentRuntime : IAgentRuntime
                 Available: false,
                 Version: null,
                 Reason: $"Executable '{cmdSpec.FileName}' was not found on PATH.",
-                Models: []);
+                Models: [],
+                PermissionModes: permissionModes);
         }
 
         var psi = new ProcessStartInfo
@@ -410,7 +412,8 @@ public sealed class AgentRuntime : IAgentRuntime
                     Available: false,
                     Version: null,
                     Reason: $"Failed to start '{resolvedExe} --version'.",
-                    Models: []);
+                    Models: [],
+                    PermissionModes: permissionModes);
             }
 
             process.StandardInput.Close();
@@ -433,7 +436,8 @@ public sealed class AgentRuntime : IAgentRuntime
                     Available: false,
                     Version: null,
                     Reason: $"Timed out after {_options.ProbeTimeout.TotalMilliseconds.ToString("F0", CultureInfo.InvariantCulture)}ms running --version.",
-                    Models: []);
+                    Models: [],
+                    PermissionModes: permissionModes);
             }
 
             var stdout = await SafeAwaitOutputAsync(stdoutTask).ConfigureAwait(false);
@@ -449,7 +453,8 @@ public sealed class AgentRuntime : IAgentRuntime
                     Available: false,
                     Version: null,
                     Reason: errDetail,
-                    Models: []);
+                    Models: [],
+                    PermissionModes: permissionModes);
             }
 
             var version = ExtractVersionString(stdout) ?? ExtractVersionString(stderr) ?? "unknown";
@@ -466,7 +471,8 @@ public sealed class AgentRuntime : IAgentRuntime
                 Available: true,
                 Version: version,
                 Reason: null,
-                Models: models);
+                Models: models,
+                PermissionModes: permissionModes);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -481,7 +487,8 @@ public sealed class AgentRuntime : IAgentRuntime
                 Available: false,
                 Version: null,
                 Reason: ex.Message,
-                Models: []);
+                Models: [],
+                PermissionModes: permissionModes);
         }
     }
 

@@ -90,7 +90,10 @@ public sealed partial class TrackActor
         if (request.Text is { } text && string.IsNullOrWhiteSpace(text))
             throw KernelException.InvalidArgument("First message cannot be empty.");
 
-        var hash = RequestIdentity.Hash(new { version = 1, request.Title, request.Provider, request.Model, request.Text });
+        // Preserve existing receipt hashes when no permission mode was supplied.
+        var hash = string.IsNullOrWhiteSpace(request.PermissionMode)
+            ? RequestIdentity.Hash(new { version = 1, request.Title, request.Provider, request.Model, request.Text })
+            : RequestIdentity.Hash(new { version = 1, request.Title, request.Provider, request.Model, request.Text, request.PermissionMode });
         var intent = new SessionCreateIntent(TrackId, key, hash);
         return EnqueueAsync<(SessionCreationReceipt, bool)>(async _ =>
         {

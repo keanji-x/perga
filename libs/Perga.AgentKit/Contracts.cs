@@ -37,7 +37,8 @@ public sealed record HarnessLaunchSpec(
     OsSandboxMode Sandbox = OsSandboxMode.None,
     IReadOnlyList<OverlayMountSpec>? OverlayMounts = null,
     string? StateKey = null,
-    bool ConfigureWorker = false);
+    bool ConfigureWorker = false,
+    string? PermissionMode = null);
 
 public sealed record TurnInput(
     string Prompt,
@@ -65,12 +66,20 @@ public abstract record UnifiedAgentEvent
     public sealed record TurnError(string Code, string Message, bool IsRetryable, bool IsConclusive = false, bool BeforePrompt = false) : UnifiedAgentEvent;
 }
 
+public sealed record PermissionModeOption(
+    string Id,
+    string Label,
+    string Description,
+    string Tone = "neutral",
+    bool IsDefault = false);
+
 public sealed record ProviderStatus(
     string Provider,
     bool Available,
     string? Version,
     string? Reason,
-    IReadOnlyList<string> Models);
+    IReadOnlyList<string> Models,
+    IReadOnlyList<PermissionModeOption>? PermissionModes = null);
 
 public enum SteerDelivery { Accepted, Declined, Unconfirmed }
 

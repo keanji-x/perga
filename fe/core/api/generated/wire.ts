@@ -643,7 +643,7 @@ export type PlannerNotification = "notify" | "suppress" | "legacy";
  * person allows when asked, or anything, with no sandbox at all. Stored on the card as the server-owned payload key `permission_mode`; new Planner
  * cards use their ACP registration’s declared default, or `never` without one; delegated children inherit their parent’s mode. Only `PUT /api/cards/{id}/planner/permission-mode` changes it.
  */
-export type PlannerPermissionMode = "never" | "ask" | "full";
+export type PlannerPermissionMode = string;
 
 /**
  * Position anchor for proposed block creation / moves, expressed against stable block ids, never

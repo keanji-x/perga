@@ -102,6 +102,7 @@ public interface IPergaKernel : IAsyncDisposable
     Task<SessionTurnDto> SendMessageAsync(string sessionId, SendMessageRequest req, CancellationToken ct = default);
     Task InterruptSessionAsync(string sessionId, CancellationToken ct = default);
     Task<AgentSessionDto> CompactSessionAsync(string sessionId, CancellationToken ct = default);
+    Task<AgentSessionDto> SetSessionPermissionModeAsync(string sessionId, string permissionMode, CancellationToken ct = default);
 
     // Asks
     Task<JsonElement> AskUserAsync(string trackId, string? callerSessionId, IReadOnlyList<AskQuestionDto> questions, CancellationToken ct = default);
@@ -667,6 +668,22 @@ public sealed partial class PergaKernelService : IPergaKernel
         var firstInput = string.IsNullOrWhiteSpace(req.FirstMessage) ? null
             : new SessionInputRequest($"init:{trackId}",
                 RequestIdentity.Hash(new { version = 1, Content = req.FirstMessage, SteerIfRunning = false }), req.FirstMessage);
+        var leadProvider = string.IsNullOrWhiteSpace(req.Provider) ? _options.DefaultProvider
+            : TaskBlockSynchronizer.NormalizeProviderId(req.Provider) ?? req.Provider.Trim();
+        string? leadPermissionMode;
+        if (!string.IsNullOrWhiteSpace(req.PermissionMode))
+        {
+            if (!ProviderPermissionModes.IsSupported(leadProvider, req.PermissionMode))
+            {
+                throw KernelException.InvalidArgument(
+                    $"Unsupported permission mode '{req.PermissionMode}' for provider '{leadProvider}'.");
+            }
+            leadPermissionMode = req.PermissionMode.Trim();
+        }
+        else
+        {
+            leadPermissionMode = ProviderPermissionModes.GetDefaultMode(leadProvider);
+        }
 
         var leadSession = new AgentSessionDto(
             Id: leadSessionId,
@@ -675,8 +692,7 @@ public sealed partial class PergaKernelService : IPergaKernel
             BoundTaskId: null,
             BoundAttemptId: null,
             Title: "Lead",
-            Provider: string.IsNullOrWhiteSpace(req.Provider) ? _options.DefaultProvider
-                : TaskBlockSynchronizer.NormalizeProviderId(req.Provider) ?? req.Provider.Trim(),
+            Provider: leadProvider,
             Model: req.Model ?? _options.DefaultModel,
             NativeThreadId: null,
             Epoch: 1,
@@ -684,7 +700,8 @@ public sealed partial class PergaKernelService : IPergaKernel
             ContextUsageRatio: 0.0,
             ArchivedAtMs: null,
             CreatedAtMs: now,
-            UpdatedAtMs: now);
+            UpdatedAtMs: now,
+            PermissionMode: leadPermissionMode);
 
         var initialTasks = TaskBlockSynchronizer.SyncTasksFromReport(
             trackId, initialReport, existingTasks: [],
@@ -1217,6 +1234,12 @@ public sealed partial class PergaKernelService : IPergaKernel
     {
         var trackId = await ResolveTrackIdForSessionAsync(sessionId, ct).ConfigureAwait(false);
         return await Actors.GetOrActivate(trackId).CompactSessionAsync(sessionId, ct).ConfigureAwait(false);
+    }
+
+    public async Task<AgentSessionDto> SetSessionPermissionModeAsync(string sessionId, string permissionMode, CancellationToken ct = default)
+    {
+        var trackId = await ResolveTrackIdForSessionAsync(sessionId, ct).ConfigureAwait(false);
+        return await Actors.GetOrActivate(trackId).SetSessionPermissionModeAsync(sessionId, permissionMode, ct).ConfigureAwait(false);
     }
 
     // ------------------- Asks -------------------

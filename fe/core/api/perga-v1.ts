@@ -31,12 +31,22 @@ export type AskStatus = z.infer<typeof askStatusSchema>;
 export const terminalStatusSchema = z.enum(['running', 'exited']);
 export type TerminalStatus = z.infer<typeof terminalStatusSchema>;
 
+export const permissionModeOptionDtoSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  description: z.string(),
+  tone: z.enum(['neutral', 'warning', 'danger']).optional().default('neutral'),
+  isDefault: z.boolean().optional().default(false),
+});
+export type PermissionModeOptionDto = z.infer<typeof permissionModeOptionDtoSchema>;
+
 export const providerStatusDtoSchema = z.object({
   provider: z.string(),
   available: z.boolean(),
   version: z.string().nullish(),
   reason: z.string().nullish(),
   models: z.array(z.string()).nullish().transform((v) => v ?? []),
+  permissionModes: z.array(permissionModeOptionDtoSchema).nullish().transform((v) => v ?? []),
 });
 export type ProviderStatusDto = z.infer<typeof providerStatusDtoSchema>;
 
@@ -263,6 +273,7 @@ export const agentSessionDtoSchema = z.object({
   archivedAtMs: z.number().nullish(),
   createdAtMs: z.number(),
   updatedAtMs: z.number(),
+  permissionMode: z.string().nullish(),
 });
 export type AgentSessionDto = z.infer<typeof agentSessionDtoSchema>;
 

@@ -308,6 +308,18 @@ public sealed class AcpAgentSession : IAgentSession
             throw new InvalidOperationException($"ACP '{method}' response did not contain a sessionId.");
         }
 
+        if (!string.IsNullOrWhiteSpace(spec.PermissionMode))
+        {
+            await _rpc.SendRequestAsync(
+                "session/set_mode",
+                new Dictionary<string, object?>
+                {
+                    ["sessionId"] = resolvedSessionId,
+                    ["modeId"] = spec.PermissionMode.Trim()
+                },
+                ct).ConfigureAwait(false);
+        }
+
         Volatile.Write(ref _nativeThreadId, resolvedSessionId);
         _configureWorker = spec.ConfigureWorker;
         if (_configureWorker)

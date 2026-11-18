@@ -6,7 +6,9 @@ import {
   agentProviderSchema,
   bootstrapDtoSchema,
   normalizeWireAgentProvider,
+  permissionModeOptionDtoSchema,
   type AgentProvider,
+  type PermissionModeOptionDto,
   type ProviderStatusDto,
 } from '../api/schemas.js';
 import type { ApiOperation } from '../api/types.js';
@@ -119,6 +121,7 @@ export function authenticationRetryFailureText(error: unknown): string {
 export const managedProviderAvailabilitySchema = z.object({
   accepts_unavailable_blank_track: z.boolean(),
   availability: providerAvailabilitySchema,
+  permission_modes: z.array(permissionModeOptionDtoSchema).optional(),
   capabilities: z.object({
     managed_conversation: z.boolean(),
     steer: z.boolean(),
@@ -142,6 +145,7 @@ export function managedProvidersOperation(recheck: boolean): ApiOperation<Manage
         return [{
           accepts_unavailable_blank_track: false,
           availability,
+          permission_modes: provider.permissionModes,
           capabilities: {
             managed_conversation: true,
             steer: true,
@@ -155,6 +159,18 @@ export function managedProvidersOperation(recheck: boolean): ApiOperation<Manage
       z.array(managedProviderAvailabilitySchema),
     ]),
   };
+}
+
+export function permissionModesForProvider(
+  answers: readonly ManagedProviderAvailability[] | undefined,
+  provider: AgentProvider,
+): readonly PermissionModeOptionDto[] {
+  return answers?.find(({ availability }) => availability.provider === provider)?.permission_modes ?? [];
+}
+
+export function defaultPermissionModeFor(options: readonly PermissionModeOptionDto[]): string | null {
+  if (options.length === 0) return null;
+  return (options.find((option) => option.isDefault) ?? options[0]).id;
 }
 
 /** A picker can offer only a declared managed backend. This does not describe Planner create admission. */

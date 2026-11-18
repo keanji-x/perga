@@ -13,7 +13,8 @@ import { Text } from '@astryxdesign/core/Text';
 import { VisuallyHidden } from '@astryxdesign/core/VisuallyHidden';
 import { Fragment, useRef, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
 
-import type { AgentProvider, PlannerPermissionMode } from '../../../../../core/api/generated/wire.ts';
+import type { AgentProvider } from '../../../../../core/api/generated/wire.ts';
+import type { PermissionModeOptionDto } from '../../../../../core/api/perga-v1.ts';
 import {
   unavailableCreationNote, type ProviderAvailability,
 } from '../../../../../core/domain/agent-providers.ts';
@@ -347,8 +348,8 @@ function EffortPill({
 type SettingTone = 'neutral' | 'warning' | 'danger';
 type SettingOption = Readonly<{ label: string; description: string; tone?: SettingTone }>;
 
-/** Total over `PlannerPermissionMode`, in menu order, so a new mode is a compile error here rather than a missing row. */
-const PERMISSION_MODES: Readonly<Record<PlannerPermissionMode, SettingOption>> = Object.freeze({
+/** Fallback options when no provider-declared list is supplied. */
+const DEFAULT_PERMISSION_MODES: Readonly<Record<string, SettingOption>> = Object.freeze({
   never: Object.freeze({ label: 'Never', description: 'Sandbox only; never asks.' }),
   ask: Object.freeze({ label: 'Ask me', description: 'Pauses the turn to ask you.', tone: 'warning' }),
   full: Object.freeze({ label: 'Full access', description: "No sandbox; never asks. Runs with your account's access.", tone: 'danger' }),
@@ -357,15 +358,28 @@ const PERMISSION_MODES: Readonly<Record<PlannerPermissionMode, SettingOption>> =
 /** The kernel reads the mode when it starts a turn, so a change never reaches the one already running. */
 const PERMISSION_NOTE = 'Applies from the next turn.';
 
-/** A Planner conversation's approval setting (#2348, #2441): whether its turns stay in the sandbox, may pause to ask before leaving it, or run without one. */
-export function PermissionModePill({ mode, onChange, isDisabled = false, placement = 'above' }: Readonly<{
-  /** What the card has stored. */
-  mode: PlannerPermissionMode;
-  onChange: (mode: PlannerPermissionMode) => void;
+/** A session's approval setting: renders provider-declared modes or the default set when omitted. */
+export function PermissionModePill({ mode, options, onChange, isDisabled = false, placement = 'above' }: Readonly<{
+  /** What the session has stored (or selected in draft). */
+  mode: string;
+  options?: readonly PermissionModeOptionDto[];
+  onChange: (mode: string) => void;
   isDisabled?: boolean;
   placement?: 'above' | 'below';
 }>) {
-  return <SettingPill name="Approvals" options={PERMISSION_MODES} value={mode} onChange={onChange}
+  if (options !== undefined && options.length === 0) return null;
+  const optionMap: Readonly<Record<string, SettingOption>> = options === undefined
+    ? DEFAULT_PERMISSION_MODES
+    : Object.fromEntries(options.map((opt) => [
+      opt.id,
+      { label: opt.label, description: opt.description, ...(opt.tone === 'neutral' ? {} : { tone: opt.tone }) },
+    ]));
+  const effectiveMode = Object.prototype.hasOwnProperty.call(optionMap, mode)
+    ? mode
+    : options !== undefined
+      ? (options.find((opt) => opt.isDefault) ?? options[0]).id
+      : 'never';
+  return <SettingPill name="Approvals" options={optionMap} value={effectiveMode} onChange={onChange}
     note={PERMISSION_NOTE} isDisabled={isDisabled} placement={placement} />;
 }
 
