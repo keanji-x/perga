@@ -1,0 +1,97 @@
+{
+  "source_heads": {
+    "development": "80a573042933fee60d55e46747ec7450d93ea2ab",
+    "main": "c4b754f5d006f35f566e740a0ec8997960180bdf",
+    "merge_base": "1c8cea7"
+  },
+  "released_migrations": [
+    {
+      "source": "80a573042933fee60d55e46747ec7450d93ea2ab",
+      "path": "src/Perga.Storage.Sqlite/Migrations/0001_init.sql",
+      "sha256": "05e8403f4c72725eb6afd5410ba4b500fa9f1073ef4488ab03a547db343d04cf"
+    },
+    {
+      "source": "c4b754f5d006f35f566e740a0ec8997960180bdf",
+      "path": "src/Perga.Storage.Sqlite/Migrations/0001_init.sql",
+      "sha256": "05e8403f4c72725eb6afd5410ba4b500fa9f1073ef4488ab03a547db343d04cf"
+    },
+    {
+      "source": "c4b754f5d006f35f566e740a0ec8997960180bdf",
+      "path": "src/Perga.Storage.Sqlite/Migrations/0002_workspace_preparation.sql",
+      "sha256": "c572d8678b42e6ec862aada1374f3433c56cdc7de8b6cbd4d3a87e98433a0ecd"
+    },
+    {
+      "source": "c4b754f5d006f35f566e740a0ec8997960180bdf",
+      "path": "src/Perga.Storage.Sqlite/Migrations/0003_worker_messages.sql",
+      "sha256": "1660966ae93c7361ae7f7cd8ac8a5662994f5abbc02bc9e934a292e869922ed0"
+    },
+    {
+      "source": "c4b754f5d006f35f566e740a0ec8997960180bdf",
+      "path": "src/Perga.Storage.Sqlite/Migrations/0004_provider_session_resume.sql",
+      "sha256": "50493bfb1500538638e8ce71ea09a9807cab28bdea0db8e199224f8d704325cf"
+    },
+    {
+      "source": "c4b754f5d006f35f566e740a0ec8997960180bdf",
+      "path": "src/Perga.Storage.Sqlite/Migrations/0005_blob_reference_indexes.sql",
+      "sha256": "48032d89cfe2d6a3f81d3508153939809b0c95efe63c703a0346983d926d6acb"
+    },
+    {
+      "source": "c4b754f5d006f35f566e740a0ec8997960180bdf",
+      "path": "src/Perga.Storage.Sqlite/Migrations/0006_session_messages.sql",
+      "sha256": "2b2c9f01019982d0d1bec61a46f321eb0ff114e3c8f857c1b86cb34b3233c6f3"
+    }
+  ],
+  "live_browser": {
+    "url": "http://127.0.0.1:4286/next/track/trk_82bbe26df8ed481abcf829c78f7bd4dd",
+    "templateSelectors": 0,
+    "body": "Neige\nToday\nIntegration smoke\nUntitled Track\nNew area\nY\nYou\nUntitled Track\n\u6e90\u6587\u4ef6\u5939\u6a21\u5f0f \u00b7 \u672a\u9694\u79bb\nDispatch Worker\n\nTrack initialized.\n\nEdit\nLead\n\nIntegration smoke without a template selector\n\nFailed\n\nFailed\nSay something\nDefault\nRole: Member",
+    "requests": [
+      {
+        "path": "/api/v1/areas",
+        "status": 200
+      },
+      {
+        "path": "/api/v1/areas/area_1b127b59969c403a85402ec4fff8638c/tracks",
+        "status": 200
+      },
+      {
+        "path": "/api/v1/areas/area_1b127b59969c403a85402ec4fff8638c/workspace-options",
+        "status": 200
+      },
+      {
+        "path": "/api/v1/bootstrap",
+        "status": 200
+      },
+      {
+        "path": "/api/v1/overlays",
+        "status": 200
+      },
+      {
+        "path": "/api/v1/sessions/ses_7fee073c6d9a4bc98d8626d8f9a38c57/items",
+        "status": 200
+      },
+      {
+        "path": "/api/v1/tracks",
+        "status": 201
+      },
+      {
+        "path": "/api/v1/tracks/trk_82bbe26df8ed481abcf829c78f7bd4dd",
+        "status": 200
+      },
+      {
+        "path": "/api/v1/tracks/trk_82bbe26df8ed481abcf829c78f7bd4dd/report",
+        "status": 200
+      },
+      {
+        "path": "/api/v1/tracks/trk_82bbe26df8ed481abcf829c78f7bd4dd/sessions",
+        "status": 200
+      },
+      {
+        "path": "/api/v1/tracks/trk_82bbe26df8ed481abcf829c78f7bd4dd/terminals",
+        "status": 200
+      }
+    ],
+    "errors": [],
+    "provider_execution": "Local executables exit 1; no real provider sessions. Failed turn is expected for this smoke test."
+  }
+}

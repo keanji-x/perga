@@ -200,6 +200,8 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
             return Task.CompletedTask;
         }
 
+        public Task<bool> TrySetModelAsync(string? model, string? reasoningEffort = null, CancellationToken ct = default) => Task.FromResult(false);
+
         public async Task<SteerDelivery> SteerAsync(string turnCorrelationId, string message, CancellationToken ct)
         {
             var accepted = _owner._steerHandler is null || await _owner._steerHandler(message).WaitAsync(ct);

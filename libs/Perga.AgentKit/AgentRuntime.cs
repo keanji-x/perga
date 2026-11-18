@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
 using System.Text;
+using System.Text.Json;
 using Perga.AgentKit.Internal;
 
 namespace Perga.AgentKit;
@@ -18,14 +19,8 @@ public sealed class AgentRuntime : IAgentRuntime
 
     private static readonly string[] DefaultCodexModels = ["gpt-5.4", "gpt-5.3-codex", "o4-mini"];
     private static readonly string[] DefaultClaudeModels = ["claude-sonnet-4-6", "claude-opus-4-6"];
-    private static readonly string[] DefaultAntigravityModels =
-    [
-        "gemini-4-carbon-medium",
-        "gemini-4-carbon-high",
-        "gemini-3.8-flash-high",
-        "claude-sonnet-5-5-medium"
-    ];
     private static readonly Encoding Utf8NoBom = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
+
 
     private readonly AgentRuntimeOptions _options;
     private readonly OsSandboxWrapper _sandboxWrapper;
@@ -458,13 +453,26 @@ public sealed class AgentRuntime : IAgentRuntime
             }
 
             var version = ExtractVersionString(stdout) ?? ExtractVersionString(stderr) ?? "unknown";
-            var models = cmdSpec.Models ?? await ProbeModelsForProviderAsync(
-                provider,
-                resolvedExe,
-                cmdSpec.PrependArgs,
-                appendAcpSubcommand,
-                env,
-                ct).ConfigureAwait(false);
+            IReadOnlyList<string> models;
+            IReadOnlyList<ProviderModelInfo> catalog;
+            if (cmdSpec.Models is not null)
+            {
+                models = cmdSpec.Models;
+                catalog = BuildSimpleModelCatalog(models);
+            }
+            else if (provider.StartsWith("acp:", StringComparison.OrdinalIgnoreCase))
+            {
+                (models, catalog) = await ProbeAcpModelsAsync(provider, ct).ConfigureAwait(false);
+            }
+            else if (string.Equals(provider, "codex", StringComparison.OrdinalIgnoreCase))
+            {
+                (models, catalog) = await ProbeCodexModelsAsync(ct).ConfigureAwait(false);
+            }
+            else
+            {
+                models = GetDefaultModelsForProvider(provider);
+                catalog = BuildSimpleModelCatalog(models);
+            }
 
             return new ProviderStatus(
                 provider,
@@ -472,6 +480,7 @@ public sealed class AgentRuntime : IAgentRuntime
                 Version: version,
                 Reason: null,
                 Models: models,
+                ModelCatalog: catalog,
                 PermissionModes: permissionModes);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -492,91 +501,28 @@ public sealed class AgentRuntime : IAgentRuntime
         }
     }
 
-    private async Task<IReadOnlyList<string>> ProbeModelsForProviderAsync(
+    private TimeSpan GetModelProbeTimeout() =>
+        TimeSpan.FromMilliseconds(Math.Min(_options.ModelProbeTimeout.TotalMilliseconds,
+            Math.Min(_options.ProbeTimeout.TotalMilliseconds, _options.HandshakeTimeout.TotalMilliseconds)));
+
+    private async Task<(IReadOnlyList<string> Models, IReadOnlyList<ProviderModelInfo> Catalog)> ProbeAcpModelsAsync(
         string provider,
-        string resolvedExe,
-        IReadOnlyList<string>? prependArgs,
-        bool appendAcpSubcommand,
-        IReadOnlyDictionary<string, string> env,
         CancellationToken ct)
     {
-        var fallback = GetDefaultModelsForProvider(provider);
-        var budgetMs = Math.Min(
-            _options.ModelProbeTimeout.TotalMilliseconds,
-            _options.ProbeTimeout.TotalMilliseconds);
-        if (budgetMs <= 0)
-        {
-            return fallback;
-        }
-
-        var budget = TimeSpan.FromMilliseconds(budgetMs);
-
-        if (string.Equals(provider, "codex", StringComparison.OrdinalIgnoreCase))
-        {
-            var probed = await TryProbeCodexModelsAsync(resolvedExe, prependArgs, env, budget, ct)
-                .ConfigureAwait(false);
-            return probed is { Count: > 0 } ? probed : fallback;
-        }
-
-        if (string.Equals(provider, "acp:antigravity", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(provider, "acp:opencode", StringComparison.OrdinalIgnoreCase))
-        {
-            var probed = await TryProbeAcpModelsAsync(resolvedExe, prependArgs, appendAcpSubcommand, env, budget, ct)
-                .ConfigureAwait(false);
-            return probed is { Count: > 0 } ? probed : fallback;
-        }
-
-        return fallback;
-    }
-
-    private static async Task<IReadOnlyList<string>?> TryProbeCodexModelsAsync(
-        string resolvedExe,
-        IReadOnlyList<string>? prependArgs,
-        IReadOnlyDictionary<string, string> env,
-        TimeSpan budget,
-        CancellationToken ct)
-    {
-        var args = new List<string>();
-        if (prependArgs is not null)
-        {
-            args.AddRange(prependArgs);
-        }
-
-        args.Add("app-server");
-        var invocation = new CommandInvocation(resolvedExe, args, Path.GetTempPath(), env);
-
-        StdioSubprocess? process = null;
-        JsonRpcStdioConnection? rpc = null;
+        using var probeCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        probeCts.CancelAfter(GetModelProbeTimeout());
         try
         {
-            using var probeCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            probeCts.CancelAfter(budget);
-
-            process = StdioSubprocess.Start(invocation);
-            rpc = new JsonRpcStdioConnection(
-                process,
-                onNotification: static (_, _) => { },
-                onServerRequest: static (_, _, _) => { },
-                onDisconnected: static _ => { });
-
-            var initParams = new Dictionary<string, object?>
+            await using var session = await OpenSessionAsync(new HarnessLaunchSpec(
+                provider, null, Path.GetTempPath(), null, null,
+                new Dictionary<string, McpServerConfig>()), probeCts.Token).ConfigureAwait(false);
+            var acp = (AcpAgentSession)session;
+            var catalog = acp.AvailableModelCatalog;
+            var models = catalog.Count > 0 ? catalog.Select(m => m.Model).ToArray() : acp.AvailableModels;
+            if (models.Count > 0)
             {
-                ["clientInfo"] = new Dictionary<string, object?>
-                {
-                    ["name"] = "perga-agentkit",
-                    ["version"] = "1.0.0"
-                },
-                ["capabilities"] = new Dictionary<string, object?>
-                {
-                    ["experimentalApi"] = true
-                }
-            };
-
-            await rpc.SendRequestAsync("initialize", initParams, probeCts.Token).ConfigureAwait(false);
-            await rpc.SendNotificationAsync("initialized", new Dictionary<string, object?>(), probeCts.Token).ConfigureAwait(false);
-            var listResult = await rpc.SendRequestAsync("model/list", new Dictionary<string, object?>(), probeCts.Token)
-                .ConfigureAwait(false);
-            return ModelListParsers.ParseCodexModels(listResult);
+                return (models, catalog);
+            }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -584,91 +530,187 @@ public sealed class AgentRuntime : IAgentRuntime
         }
         catch
         {
-            return null;
+            // Fall through to provider-specific fallback or empty list.
         }
-        finally
+
+        if (string.Equals(provider, "acp:opencode", StringComparison.OrdinalIgnoreCase))
         {
-            if (rpc is not null)
+            var cliModels = await ProbeOpenCodeCliModelsAsync(ct).ConfigureAwait(false);
+            if (cliModels.Count > 0)
             {
-                await rpc.DisposeAsync().ConfigureAwait(false);
+                return (cliModels, BuildSimpleModelCatalog(cliModels));
             }
-            else if (process is not null)
+        }
+
+        return ([], []);
+    }
+
+    private async Task<IReadOnlyList<string>> ProbeOpenCodeCliModelsAsync(CancellationToken ct)
+    {
+        using var probeCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        probeCts.CancelAfter(GetModelProbeTimeout());
+        try
+        {
+            var (cmdOverride, _) = ResolveAcpCommandSpec("acp:opencode");
+            var env = BuildProcessEnvironment(cmdOverride.Env);
+            var exePath = FindExecutableOnPath(cmdOverride.FileName, env);
+            if (exePath is null)
             {
-                await process.DisposeAsync().ConfigureAwait(false);
+                return [];
             }
+
+            var psi = new ProcessStartInfo
+            {
+                FileName = exePath,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+            psi.ArgumentList.Add("models");
+            foreach (var (k, v) in env)
+            {
+                psi.Environment[k] = v;
+            }
+
+            using var process = Process.Start(psi);
+            if (process is null)
+            {
+                return [];
+            }
+
+            var stdoutTask = process.StandardOutput.ReadToEndAsync(probeCts.Token);
+            var stderrTask = process.StandardError.ReadToEndAsync(probeCts.Token);
+            string stdout;
+            try
+            {
+                await process.WaitForExitAsync(probeCts.Token).ConfigureAwait(false);
+                stdout = await SafeAwaitOutputAsync(stdoutTask).ConfigureAwait(false);
+                await SafeAwaitOutputAsync(stderrTask).ConfigureAwait(false);
+                probeCts.Token.ThrowIfCancellationRequested();
+                if (process.ExitCode != 0)
+                {
+                    TryKillProcessTree(process);
+                    return [];
+                }
+            }
+            catch
+            {
+                TryKillProcessTree(process);
+                throw;
+            }
+            finally
+            {
+                await SafeAwaitOutputAsync(stdoutTask).ConfigureAwait(false);
+                await SafeAwaitOutputAsync(stderrTask).ConfigureAwait(false);
+            }
+
+            return stdout
+                .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Where(static line => line.Contains('/', StringComparison.Ordinal) && !line.Contains(' ', StringComparison.Ordinal))
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            return [];
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch
+        {
+            return [];
         }
     }
 
-    private static async Task<IReadOnlyList<string>?> TryProbeAcpModelsAsync(
-        string resolvedExe,
-        IReadOnlyList<string>? prependArgs,
-        bool appendAcpSubcommand,
-        IReadOnlyDictionary<string, string> env,
-        TimeSpan budget,
+    private async Task<(IReadOnlyList<string> Models, IReadOnlyList<ProviderModelInfo> Catalog)> ProbeCodexModelsAsync(
         CancellationToken ct)
     {
-        var args = new List<string>();
-        if (prependArgs is not null)
-        {
-            args.AddRange(prependArgs);
-        }
-
-        if (appendAcpSubcommand)
-        {
-            args.Add("acp");
-        }
-
-        var probeCwd = Path.GetFullPath(Path.GetTempPath());
-        var invocation = new CommandInvocation(resolvedExe, args, probeCwd, env);
-
-        StdioSubprocess? process = null;
-        JsonRpcStdioConnection? rpc = null;
+        using var probeCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        probeCts.CancelAfter(GetModelProbeTimeout());
         try
         {
-            using var probeCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            probeCts.CancelAfter(budget);
+            var cmdOverride = ResolveCommandSpec("codex", defaultExecutable: "codex");
+            var args = new List<string>();
+            if (cmdOverride.PrependArgs is not null)
+            {
+                args.AddRange(cmdOverride.PrependArgs);
+            }
 
-            process = StdioSubprocess.Start(invocation);
-            rpc = new JsonRpcStdioConnection(
+            args.Add("app-server");
+            var env = BuildProcessEnvironment(cmdOverride.Env);
+            var invocation = new CommandInvocation(cmdOverride.FileName, args, Path.GetTempPath(), env);
+            var process = StdioSubprocess.Start(invocation);
+            await using var rpc = new JsonRpcStdioConnection(
                 process,
                 onNotification: static (_, _) => { },
-                onServerRequest: static (_, _, _) => { },
+                onServerRequest: static (_, _, _) => Task.FromResult<object?>(new { }),
                 onDisconnected: static _ => { });
 
-            var initParams = new Dictionary<string, object?>
+            await rpc.SendRequestAsync("initialize", new
             {
-                ["protocolVersion"] = 1,
-                ["clientCapabilities"] = new Dictionary<string, object?>
+                clientInfo = new { name = "perga-probe", version = "1.0.0" }
+            }, probeCts.Token).ConfigureAwait(false);
+
+            var response = await rpc.SendRequestAsync("model/list", new { }, probeCts.Token).ConfigureAwait(false);
+            if (response.ValueKind == JsonValueKind.Object &&
+                response.TryGetProperty("data", out var data) &&
+                data.ValueKind == JsonValueKind.Array)
+            {
+                var catalog = new List<ProviderModelInfo>();
+                foreach (var item in data.EnumerateArray())
                 {
-                    ["fs"] = new Dictionary<string, object?>
+                    if (item.ValueKind != JsonValueKind.Object)
                     {
-                        ["readTextFile"] = false,
-                        ["writeTextFile"] = false
-                    },
-                    ["terminal"] = false
-                },
-                ["clientInfo"] = new Dictionary<string, object?>
-                {
-                    ["name"] = "perga-agentkit",
-                    ["version"] = "1.0.0"
+                        continue;
+                    }
+
+                    if (item.TryGetProperty("hidden", out var hiddenProp) &&
+                        hiddenProp.ValueKind == JsonValueKind.True)
+                    {
+                        continue;
+                    }
+
+                    var model = TryGetJsonString(item, "model") ?? TryGetJsonString(item, "id");
+                    if (string.IsNullOrWhiteSpace(model))
+                    {
+                        continue;
+                    }
+
+                    var displayName = TryGetJsonString(item, "displayName") ?? model;
+                    var description = TryGetJsonString(item, "description") ?? string.Empty;
+                    var isDefault = item.TryGetProperty("isDefault", out var defProp) && defProp.ValueKind == JsonValueKind.True;
+                    var defaultEffort = TryGetJsonString(item, "defaultReasoningEffort");
+                    var efforts = new List<ProviderModelEffort>();
+                    if (item.TryGetProperty("supportedReasoningEfforts", out var effArr) &&
+                        effArr.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (var eff in effArr.EnumerateArray())
+                        {
+                            var effName = TryGetJsonString(eff, "reasoningEffort");
+                            if (!string.IsNullOrWhiteSpace(effName))
+                            {
+                                efforts.Add(new ProviderModelEffort(effName, TryGetJsonString(eff, "description") ?? string.Empty));
+                            }
+                        }
+                    }
+
+                    catalog.Add(new ProviderModelInfo(
+                        Model: model,
+                        DisplayName: displayName,
+                        Description: description,
+                        IsDefault: isDefault,
+                        DefaultReasoningEffort: defaultEffort,
+                        SupportedReasoningEfforts: efforts));
                 }
-            };
 
-            var initResult = await rpc.SendRequestAsync("initialize", initParams, probeCts.Token).ConfigureAwait(false);
-            var sessionParams = new Dictionary<string, object?>
-            {
-                ["cwd"] = probeCwd,
-                ["mcpServers"] = Array.Empty<object>()
-            };
-            var sessionResult = await rpc.SendRequestAsync("session/new", sessionParams, probeCts.Token).ConfigureAwait(false);
-
-            var sessionModels = ModelListParsers.ParseAcpModels(sessionResult);
-            if (sessionModels.Count > 0)
-            {
-                return sessionModels;
+                if (catalog.Count > 0)
+                {
+                    return (catalog.Select(m => m.Model).ToArray(), catalog);
+                }
             }
-
-            return ModelListParsers.ParseAcpModels(initResult);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -676,20 +718,19 @@ public sealed class AgentRuntime : IAgentRuntime
         }
         catch
         {
-            return null;
+            // Fall back to static defaults when codex app-server probe fails (e.g. mock CLI).
         }
-        finally
-        {
-            if (rpc is not null)
-            {
-                await rpc.DisposeAsync().ConfigureAwait(false);
-            }
-            else if (process is not null)
-            {
-                await process.DisposeAsync().ConfigureAwait(false);
-            }
-        }
+
+        return (DefaultCodexModels, BuildSimpleModelCatalog(DefaultCodexModels));
     }
+
+    private static IReadOnlyList<ProviderModelInfo> BuildSimpleModelCatalog(IReadOnlyList<string> models) =>
+        models.Select((m, i) => new ProviderModelInfo(m, m, string.Empty, i == 0, null, [])).ToArray();
+
+    private static string? TryGetJsonString(JsonElement obj, string property) =>
+        obj.TryGetProperty(property, out var val) && val.ValueKind == JsonValueKind.String
+            ? val.GetString()
+            : null;
 
     private static IReadOnlyList<string> GetDefaultModelsForProvider(string provider)
     {
@@ -701,11 +742,6 @@ public sealed class AgentRuntime : IAgentRuntime
         if (string.Equals(provider, "claude", StringComparison.OrdinalIgnoreCase))
         {
             return DefaultClaudeModels;
-        }
-
-        if (string.Equals(provider, "acp:antigravity", StringComparison.OrdinalIgnoreCase))
-        {
-            return DefaultAntigravityModels;
         }
 
         return [];
@@ -799,6 +835,18 @@ public sealed class AgentRuntime : IAgentRuntime
             rawPath,
             homeDir,
             allowAppendWhenMissing: !pathExplicitlyOverridden);
+        // Retain OpenCode's installer location for the default environment while
+        // respecting a caller's explicit PATH boundary.
+        if (!pathExplicitlyOverridden && !string.IsNullOrWhiteSpace(homeDir))
+        {
+            var openCodeBin = Path.Combine(homeDir, ".opencode", "bin");
+            if (Directory.Exists(openCodeBin))
+            {
+                var segments = prioritizedPath.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries);
+                if (!segments.Contains(openCodeBin, OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal))
+                    prioritizedPath = string.Join(Path.PathSeparator, [.. segments, openCodeBin]);
+            }
+        }
         if (!string.IsNullOrWhiteSpace(prioritizedPath))
         {
             env["PATH"] = prioritizedPath;

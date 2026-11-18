@@ -11,6 +11,7 @@ public sealed class RuntimeLifecycleAndResilienceTests : IDisposable
     {
         await using var runtime = new AgentRuntime(new AgentRuntimeOptions
         {
+            ProviderOverrides = _fixture.UnavailableProviders(),
             ProbeTimeout = TimeSpan.FromSeconds(2)
         });
 

@@ -36,6 +36,7 @@ public sealed record HarnessLaunchSpec(
     IReadOnlyDictionary<string, McpServerConfig> McpServers,
     OsSandboxMode Sandbox = OsSandboxMode.None,
     IReadOnlyList<OverlayMountSpec>? OverlayMounts = null,
+    string? ReasoningEffort = null,
     string? StateKey = null,
     bool ConfigureWorker = false,
     string? PermissionMode = null);
@@ -66,6 +67,18 @@ public abstract record UnifiedAgentEvent
     public sealed record TurnError(string Code, string Message, bool IsRetryable, bool IsConclusive = false, bool BeforePrompt = false) : UnifiedAgentEvent;
 }
 
+public sealed record ProviderModelEffort(
+    string ReasoningEffort,
+    string Description);
+
+public sealed record ProviderModelInfo(
+    string Model,
+    string DisplayName,
+    string Description,
+    bool IsDefault,
+    string? DefaultReasoningEffort,
+    IReadOnlyList<ProviderModelEffort> SupportedReasoningEfforts);
+
 public sealed record PermissionModeOption(
     string Id,
     string Label,
@@ -79,6 +92,7 @@ public sealed record ProviderStatus(
     string? Version,
     string? Reason,
     IReadOnlyList<string> Models,
+    IReadOnlyList<ProviderModelInfo>? ModelCatalog = null,
     IReadOnlyList<PermissionModeOption>? PermissionModes = null);
 
 public enum SteerDelivery { Accepted, Declined, Unconfirmed }
@@ -97,6 +111,7 @@ public interface IAgentSession : IAsyncDisposable
     IAsyncEnumerable<UnifiedAgentEvent> StreamTurnAsync(TurnInput input, CancellationToken ct);
     Task CancelTurnAsync(CancellationToken ct);
     Task RespondApprovalAsync(string requestId, bool approved, string? reason = null, CancellationToken ct = default);
+    Task<bool> TrySetModelAsync(string? model, string? reasoningEffort = null, CancellationToken ct = default);
     Task<SteerDelivery> SteerAsync(string turnCorrelationId, string message, CancellationToken ct);
 }
 

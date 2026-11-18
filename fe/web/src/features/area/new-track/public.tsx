@@ -154,7 +154,7 @@ export function NewTrackForm({
     if (hasTemplates) {
       onDraftChange?.({ message, cwd, isolation, templateId, templateInputs, activeTemplateId, ...workspace });
     } else {
-      onDraftChange?.({ message, cwd, isolation });
+      onDraftChange?.({ message, cwd, isolation, ...workspace });
     }
   }, [message, cwd, isolation, templateId, templateInputs, activeTemplateId, workspaceChoice, hasTemplates, onDraftChange]);
 

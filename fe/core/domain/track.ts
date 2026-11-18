@@ -737,7 +737,7 @@ export function snapshotToTrackDetailWire(snapshot: TrackAggregateSnapshotDto): 
         planner_harness: true,
         planner_provider: leadProvider,
         model: lead.model ?? null,
-        is_lead: true,
+        is_lead: lead.isLead,
         epoch: lead.epoch,
       },
       runtime: {
@@ -895,6 +895,7 @@ export function createTrackOperation(body: NewTrackBody, idempotencyKey: string)
     ...(body.template_id !== undefined ? { templateId: body.template_id } : {}),
     ...(body.template_input !== undefined ? { templateInputs: body.template_input } : {}),
     ...(body.first_message !== undefined ? { firstMessage: body.first_message } : {}),
+    ...(body.reasoning_effort !== undefined ? { reasoningEffort: body.reasoning_effort } : {}),
   };
   return {
     method: 'POST',

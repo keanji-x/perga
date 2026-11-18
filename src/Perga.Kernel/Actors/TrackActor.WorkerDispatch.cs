@@ -92,7 +92,7 @@ public sealed partial class TrackActor
             depends_on = request.DependsOn, gate,
             context = new { workerDispatch = true, initialModel = request.Model ??
                 (request.Provider is null || string.Equals(request.Provider, GetDefaultProviderCore(), StringComparison.OrdinalIgnoreCase)
-                    ? GetDefaultModelCore() : null) }
+                    ? GetDefaultModelCore(request.Provider ?? GetDefaultProviderCore()) : null) }
         });
         var position = report.Blocks.Count;
         if (defaults?.Section is { } section)
@@ -112,7 +112,7 @@ public sealed partial class TrackActor
     {
         if (task.Context is not { } context || !JsonHelpers.TryGetPropertyIgnoreCase(context, ["workerDispatch"], out var dispatched) ||
             dispatched.ValueKind != System.Text.Json.JsonValueKind.True)
-            return GetDefaultModelCore();
+            return GetDefaultModelCore(task.Provider ?? GetDefaultProviderCore());
         return JsonHelpers.TryGetPropertyIgnoreCase(context, ["initialModel"], out var model) && model.ValueKind == System.Text.Json.JsonValueKind.String
             ? model.GetString() : null;
     }

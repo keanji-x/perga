@@ -1,3 +1,4 @@
+import { managedProvidersQueryOptions } from '../providers/managed-providers.ts';
 import { ApiError, NotSentError } from '../../../../core/domain/failure-class.ts';
 import type { WorkerMessageBody, WorkerMessageMode } from '../../../../core/domain/worker-session.ts';
 import { pendingQueueWithCurrentHumanVersions, pendingQueueOwnsHumanEntry } from '../../../../core/domain/conversation-queue-controls.ts';
@@ -20,7 +21,6 @@ import { readErrorText } from '../../../../core/domain/read-failure.ts';
 import type { ConversationStopFeedback } from '../../../../core/domain/conversation-stop.ts';
 import { anchorRunningTurn, type RunningTurnAnchor } from '../../../../core/domain/conversation-meta.ts';
 import { conversationHistoryQueryOptions, modelCatalogQueryOptions, plannerRunQueryOptions, usePlannerMutations } from '../providers/queries.ts';
-import { managedProvidersQueryOptions } from '../providers/managed-providers.ts';
 import { useState } from '../../ui/state/public.ts';
 import { useConversationCommands, useConversationSendOps, useConversationQueueWriteOut, useConversationRememberedTurns, useRememberedConversations, useWorkerSendIntent } from './public.tsx';
 import type { WorkerSendIntent } from './registry-model.ts';
@@ -58,8 +58,8 @@ export function useConversationStore(
   const cardTitle = scope?.cardTitle;
   const scopeUpdatedAt = scope?.updatedAt;
   const scopeKind = scope?.kind ?? 'shared-spec';
-  const capabilities = useQuery({ ...managedProvidersQueryOptions(transport, unauthorized), enabled: scope?.kind === 'track-assistant' });
   const scopeState = scope?.state ?? null;
+  const capabilities = useQuery({ ...managedProvidersQueryOptions(transport, unauthorized), enabled: scope?.kind === 'track-assistant' });
   const serverRows = routeIntent.rows;
   const rememberOn = routeIntent.rememberOn;
   const ownedCardIds = routeIntent.ownedCardIds;
@@ -90,7 +90,7 @@ export function useConversationStore(
   /* The catalog rides alongside the run query: the trigger has to render the chosen
        model's name, and `planner-run` gives only its slug. */
   const modelCatalog = useQuery({
-    ...modelCatalogQueryOptions(transport, { kind: 'card', cardId }, unauthorized, provider === undefined ? undefined : { provider }), enabled: scope !== null,
+    ...modelCatalogQueryOptions(transport, { kind: 'card', cardId, provider: provider ?? 'codex' }, unauthorized), enabled: scope !== null,
   });
   const historyReplacementSupported = run.data?.history_replacement_supported === true;
   const displayItems = history.loadedRows;
@@ -579,15 +579,6 @@ export function useConversationStore(
       /* Dropped when it settles while another conversation is shown: kept, it would show for one commit on the way back (#2068). */
       const fail = (message: string) => { if (shownCardId.current === setFor) setActionError({ cardId: setFor, message }); };
       void mutations.setModel(selection)
-        .then((result) => {
-          /* Both flags are reported: the write succeeded, but the value stored is not
-                       quite the value asked for. */
-          if (result.effort_adjusted) {
-            fail(`That reasoning effort is not available on this model; it now uses ${result.reasoning_effort ?? 'the default'}.`);
-          } else if (result.unknown_model) {
-            fail('codex does not list that model for this account. It is saved; turns may fail.');
-          }
-        })
         .catch((error: unknown) => {
           fail(refusalText(writeFailureOf(error), PLANNER_MODEL_FAILURES, MODEL_CHANGE_TEXT.refused) ?? MODEL_CHANGE_TEXT.unknown);
         });

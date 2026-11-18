@@ -39,11 +39,10 @@ export function renderAssistantProviderFixture(options: {
     id: 'dormant', trackId: track.id, title: 'Saved Assistant', kind: 'track-assistant',
     provider: options.existingProvider, state: null, updatedAt: 2, archivedAt: null, lastTurnCompletedAt: null,
   }];
-  const catalog = { models: [{ id: 'selected', model: 'selected', display_name: 'Selected model', resolved_model: null,
-    description: '', is_default: false, default_reasoning_effort: 'high',
-    supported_reasoning_efforts: [{ reasoning_effort: 'low', description: 'Quick' }, { reasoning_effort: 'high', description: 'Thorough' }] }],
-    source: 'live', fetched_at_ms: 1, default_source: 'unknown',
-    default: { model: null, reasoning_effort: null, supported_reasoning_efforts: null } };
+  const catalog = { version: 'test', providers: options.answers.map(answer => ({
+    provider: answer.availability.provider, available: !options.catalogUnavailable,
+    models: options.catalogUnavailable ? [] : ['selected'],
+  })) };
   const transport: ApiTransportPort = { async send(request) {
     await Promise.resolve();
     requests.push(request);
@@ -53,7 +52,7 @@ export function renderAssistantProviderFixture(options: {
       conversationInitialInput: true, conversationCreateModel: true, conversationSide: true, webCompatVersion: options.webCompatVersion ?? WEB_COMPAT_VERSION, minWebCompatVersion: options.webCompatVersion ?? WEB_COMPAT_VERSION,
       syncEventVersion: 20, dbInstanceId: 'provider-browser' };
     if (request.path.startsWith('/api/v1/bootstrap?scope=managed')) body = options.answers;
-    if (request.path.startsWith('/api/v1/bootstrap?card_id=') || request.path.startsWith('/api/v1/bootstrap?provider=')) body = options.catalogUnavailable ? { ...catalog, models: [], source: 'unavailable' } : catalog;
+    if (request.path.startsWith('/api/v1/bootstrap?card_id=') || request.path.startsWith('/api/v1/bootstrap?provider=')) body = catalog;
     if (request.path === '/api/v1/areas') body = [{ id: 'area', name: 'Work', color: '#123456', sort: 1, kind: 'user', created_at: 1, updated_at: 1 }];
     if (request.path === '/api/v1/areas/area/tracks?includeClosed=true') body = [track];
     if (request.path === '/api/settings') body = {};
@@ -96,10 +95,10 @@ export function renderAssistantProviderFixture(options: {
       phase: 'idle', model: selectedModel, reasoning_effort: null, permission_mode: null, blocked_reason: null,
       attachments_supported: options.runAttachmentsSupported ?? false, manual_compact_supported: false, recovery: null, compact_outcome: null,
       context_usage_invalidated: false, running_turn: null }, 'idle', options.answers.find(answer => answer.availability.provider === rows.find(row => row.id === cardId)?.provider)?.capabilities.history_replacement === true);
-    if (request.path.endsWith('/planner/model')) {
+    if (request.path.endsWith('/model')) {
       const input = request.body as { model: string | null; reasoning_effort: string | null };
       selectedModel = input.model;
-      body = { card_id: cardId, ...input, effort_adjusted: false, unknown_model: false };
+      body = { id: cardId, trackId: track.id, provider: options.existingProvider ?? 'codex', model: input.model, createdAtMs: 1, updatedAtMs: 2 };
     }
     if (request.path.endsWith('/messages') && request.method === 'POST') {
       if (options.dormant && !restarted) return { status: 409, statusText: 'Conflict', body: {

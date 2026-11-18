@@ -50,7 +50,7 @@ function renderApp(managed = false, createdTitle: string | null = null) {
         availability: { provider: managed ? 'claude' : 'codex', status: 'ready', reason: null, checked_at_ms: 1, authentication_method: null, authentication_notice: null },
         accepts_unavailable_blank_track: true, capabilities: { managed_conversation: true, steer: !managed, images: true, manual_compact: true, history_replacement: true, requires_ready_availability: false },
       }]));
-      if (managed && request.path === '/api/v1/bootstrap?provider=claude') return Promise.resolve(ok({ models: [{ id: 'sonnet', model: 'sonnet', display_name: 'Sonnet', resolved_model: null, description: '', is_default: true, default_reasoning_effort: null, supported_reasoning_efforts: [] }], source: 'live', fetched_at_ms: 1, default_source: 'claude_cli', default: { model: 'sonnet', reasoning_effort: null, supported_reasoning_efforts: [] } }));
+      if (managed && request.path === '/api/v1/bootstrap?provider=claude') return Promise.resolve(ok({ version: 'test', providers: [{ provider: 'claude', available: true, models: ['sonnet'] }] }));
       const conversations = /^\/api\/v1\/tracks\/(\w+)\/sessions$/.exec(request.path);
       if (conversations !== null) {
         const trackId = conversations[1];
@@ -187,7 +187,7 @@ it('offers the registered managed backend and sends the selected provider', asyn
   await expectEmptyConversationList();
   await pressPlus();
   fireEvent.click(await screen.findByRole('button', { name: /Model:/ }));
-  fireEvent.click(await screen.findByRole('menuitem', { name: 'Sonnet' }));
+  fireEvent.click(await screen.findByRole('menuitem', { name: 'sonnet' }));
   await typeInto('Use the selected backend');
   fireEvent.click(screen.getByRole('button', { name: 'Send' }));
   await waitFor(() => expect(requests.find(request => request.method === 'POST' && request.path.endsWith('/sessions'))?.body).toMatchObject({ provider: 'claude', model: 'sonnet', text: 'Use the selected backend' }));

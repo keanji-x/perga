@@ -1,5 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Runtime.CompilerServices;
 using Dapper;
@@ -117,6 +119,70 @@ public sealed class DurableSessionInputTests
         {
             directory.Delete(recursive: true);
         }
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData(" \t ")]
+    public async Task BaselineCreateReceiptReplaysAfterHostRestart(string? reasoningEffort)
+    {
+        var directory = Directory.CreateTempSubdirectory("perga-baseline-create-");
+        try
+        {
+            string trackId;
+            SessionCreationReceipt created;
+            var request = new { title = "Legacy", provider = "codex", model = (string?)null, text = (string?)null, reasoningEffort };
+            await using (var host = new PergaHostTestCluster(directory.FullName))
+            {
+                (trackId, _) = await host.CreateTrackAsync();
+                using var response = await SendAsync(host.Client, $"/api/v1/tracks/{trackId}/sessions", "legacy-key", request);
+                Assert.Equal(HttpStatusCode.Created, response.StatusCode);
+                created = (await response.Content.ReadFromJsonAsync<SessionCreationReceipt>(PergaJsonDefaults.ApiOptions))!;
+            }
+
+            // Freeze the pre-effort byte layout independently of the current request serializer.
+            const string baselineJson = """{"version":1,"Title":"Legacy","Provider":"codex","Model":null,"Text":null}""";
+            var baselineHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(baselineJson)));
+            await using (var db = new SqliteConnection($"Data Source={Path.Combine(directory.FullName, "perga.db")};Pooling=False"))
+            {
+                await db.OpenAsync();
+                Assert.Equal(1, await db.ExecuteAsync(
+                    "UPDATE creation_receipts SET request_hash = @Hash WHERE operation = 'session' AND scope_id = @TrackId AND request_key = 'legacy-key'",
+                    new { Hash = baselineHash, TrackId = trackId }));
+            }
+
+            await using var reopened = new PergaHostTestCluster(directory.FullName);
+            var path = $"/api/v1/tracks/{trackId}/sessions";
+            using var replay = await SendAsync(reopened.Client, path, "legacy-key", request);
+            Assert.Equal(HttpStatusCode.OK, replay.StatusCode);
+            var recovered = (await replay.Content.ReadFromJsonAsync<SessionCreationReceipt>(PergaJsonDefaults.ApiOptions))!;
+            Assert.Equal(created.Session.Id, recovered.Session.Id);
+            Assert.Null(recovered.FirstInput);
+            using var mismatch = await SendAsync(reopened.Client, path, "legacy-key", request with { reasoningEffort = "high" });
+            Assert.Equal(HttpStatusCode.Conflict, mismatch.StatusCode);
+            Assert.Empty(reopened.AgentRuntime.ExecutedTurns);
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData("low")]
+    [InlineData(" low ")]
+    public async Task CreateReceiptRejectsChangedReasoningEffort(string reasoningEffort)
+    {
+        await using var host = new PergaHostTestCluster();
+        var (trackId, _) = await host.CreateTrackAsync();
+        var path = $"/api/v1/tracks/{trackId}/sessions";
+        var request = new { title = "Assistant", provider = "codex", model = "chosen", reasoningEffort };
+        using var created = await SendAsync(host.Client, path, "effort-key", request);
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        using var replay = await SendAsync(host.Client, path, "effort-key", request with { reasoningEffort = "low" });
+        Assert.Equal(HttpStatusCode.OK, replay.StatusCode);
+        using var mismatch = await SendAsync(host.Client, path, "effort-key", request with { reasoningEffort = "high" });
+        Assert.Equal(HttpStatusCode.Conflict, mismatch.StatusCode);
     }
 
     [Theory]

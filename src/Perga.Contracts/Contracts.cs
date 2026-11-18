@@ -56,6 +56,7 @@ public sealed record AgentSessionDto(
     long? ArchivedAtMs,
     long CreatedAtMs,
     long UpdatedAtMs,
+    string? ReasoningEffort = null,
     string? PermissionMode = null);
 
 public sealed record SessionTurnDto(

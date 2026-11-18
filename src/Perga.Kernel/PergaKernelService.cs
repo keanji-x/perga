@@ -31,6 +31,8 @@ public interface IPergaKernel : IAsyncDisposable
     Task<TrackOverlaysResponseDto> GetOverlaysAsync(bool includeClosed = false, CancellationToken ct = default);
     HostListDirResultDto ListHostDirectory(string? path = null);
     IReadOnlyList<CompiledTemplateManifest> ListTemplates();
+    JsonElement InspectTemplate(string? templateId);
+    Task<TrackDto> SetTrackTemplateAsync(string trackId, string callerSessionId, string? templateId, string? source, string expectedPolicyGeneration, JsonElement? inputs = null, CancellationToken ct = default);
     Task<BootReconcileResult> ReconcileOnBootAsync(CancellationToken ct = default);
     Task<DbMaintenanceStatsDto> RunMaintenancePassAsync(CancellationToken ct = default);
 
@@ -100,6 +102,7 @@ public interface IPergaKernel : IAsyncDisposable
     Task<SteeringResult> SteerMessageAsync(string sessionId, string turnId, string content, CancellationToken ct, string? requestKey = null);
 
     Task<SessionTurnDto> SendMessageAsync(string sessionId, SendMessageRequest req, CancellationToken ct = default);
+    Task<AgentSessionDto> UpdateSessionModelAsync(string sessionId, UpdateSessionModelRequest req, CancellationToken ct = default);
     Task InterruptSessionAsync(string sessionId, CancellationToken ct = default);
     Task<AgentSessionDto> CompactSessionAsync(string sessionId, CancellationToken ct = default);
     Task<AgentSessionDto> SetSessionPermissionModeAsync(string sessionId, string permissionMode, CancellationToken ct = default);
@@ -123,7 +126,7 @@ public interface IPergaKernel : IAsyncDisposable
     Uri GetTerminalWebSocketRelayUri(string terminalId);
 
     // MCP Policy Guard, Tool Dispatch & Schedules
-    Task GuardMcpToolCallAsync(string trackId, string sessionId, string mcpServer, string toolName, JsonElement arguments, CancellationToken ct = default);
+    Task<string> GuardMcpToolCallAsync(string trackId, string sessionId, string mcpServer, string toolName, JsonElement arguments, CancellationToken ct = default);
     Task<JsonElement> InvokeKernelMcpToolAsync(McpSessionPrincipal caller, string toolName, JsonElement arguments, CancellationToken ct = default);
     Task TriggerScheduleWakeAsync(string trackId, string scheduleId, CancellationToken ct = default);
 
@@ -460,6 +463,31 @@ public sealed partial class PergaKernelService : IPergaKernel
 
     public IReadOnlyList<CompiledTemplateManifest> ListTemplates() => Templates.ListManifests();
 
+    public JsonElement InspectTemplate(string? templateId)
+    {
+        if (templateId is null or "__contract__")
+        {
+            var path = _options.TemplatesDirectory is { } directory
+                ? Path.Combine(directory, "perga-template.d.ts") : null;
+            string contract;
+            if (path is not null && File.Exists(path))
+                contract = File.ReadAllText(path);
+            else
+            {
+                using var stream = typeof(PergaKernelService).Assembly.GetManifestResourceStream("Perga.TemplateContract")!;
+                using var reader = new StreamReader(stream);
+                contract = reader.ReadToEnd();
+            }
+            return JsonHelpers.ToElement(new { contract });
+        }
+        var policy = Templates.GetRequiredPolicy(templateId);
+        return JsonHelpers.ToElement(new { policy.Manifest, policy.JsSource });
+    }
+
+    public Task<TrackDto> SetTrackTemplateAsync(string trackId, string callerSessionId, string? templateId,
+        string? source, string expectedPolicyGeneration, JsonElement? inputs = null, CancellationToken ct = default) =>
+        Actors.GetOrActivate(trackId).SetTemplateBySessionAsync(callerSessionId, templateId, source, expectedPolicyGeneration, inputs, ct);
+
     public Task<BootReconcileResult> ReconcileOnBootAsync(CancellationToken ct = default) =>
         BootReconciler.ReconcileAsync(ct);
 
@@ -701,6 +729,7 @@ public sealed partial class PergaKernelService : IPergaKernel
             ArchivedAtMs: null,
             CreatedAtMs: now,
             UpdatedAtMs: now,
+            ReasoningEffort: string.IsNullOrWhiteSpace(req.ReasoningEffort) ? null : req.ReasoningEffort.Trim(),
             PermissionMode: leadPermissionMode);
 
         var initialTasks = TaskBlockSynchronizer.SyncTasksFromReport(
@@ -1224,6 +1253,13 @@ public sealed partial class PergaKernelService : IPergaKernel
         return await Actors.GetOrActivate(trackId).SendMessageAsync(sessionId, req, ct).ConfigureAwait(false);
     }
 
+    public async Task<AgentSessionDto> UpdateSessionModelAsync(
+        string sessionId, UpdateSessionModelRequest req, CancellationToken ct = default)
+    {
+        var trackId = await ResolveTrackIdForSessionAsync(sessionId, ct).ConfigureAwait(false);
+        return await Actors.GetOrActivate(trackId).UpdateSessionModelAsync(sessionId, req, ct).ConfigureAwait(false);
+    }
+
     public async Task InterruptSessionAsync(string sessionId, CancellationToken ct = default)
     {
         var trackId = await ResolveTrackIdForSessionAsync(sessionId, ct).ConfigureAwait(false);
@@ -1336,7 +1372,7 @@ public sealed partial class PergaKernelService : IPergaKernel
 
     // ------------------- MCP Policy Guard, Tool Dispatch & Schedules -------------------
 
-    public Task GuardMcpToolCallAsync(
+    public Task<string> GuardMcpToolCallAsync(
         string trackId,
         string sessionId,
         string mcpServer,

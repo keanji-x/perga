@@ -141,6 +141,7 @@ public sealed class CodexAgentSession : IAgentSession
     private readonly SemaphoreSlim _turnLock = new(1, 1);
     private readonly ConcurrentDictionary<string, PendingApproval> _pendingApprovals = new(StringComparer.Ordinal);
     private readonly HashSet<string> _startedToolCallIds = new(StringComparer.Ordinal);
+    private readonly string? _reasoningEffort;
     private TurnStreamState? _currentTurn;
     private string? _nativeThreadId;
     private string? _lastEmittedThreadId;
@@ -152,9 +153,11 @@ public sealed class CodexAgentSession : IAgentSession
         StdioSubprocess process,
         string? initialThreadId,
         string? configuredModel,
+        string? reasoningEffort,
         Action<IAgentSession>? onDispose)
     {
         _nativeThreadId = initialThreadId;
+        _reasoningEffort = string.IsNullOrWhiteSpace(reasoningEffort) ? null : reasoningEffort.Trim();
         _configuredModel = string.IsNullOrWhiteSpace(configuredModel) ? null : configuredModel.Trim();
         _onDispose = onDispose;
         _rpc = new JsonRpcStdioConnection(
@@ -181,7 +184,7 @@ public sealed class CodexAgentSession : IAgentSession
         string? sandboxApiKey = null)
     {
         var process = StdioSubprocess.Start(wrappedCommand);
-        var session = new CodexAgentSession(process, spec.ResumeNativeThreadId, spec.Model, onDispose);
+        var session = new CodexAgentSession(process, spec.ResumeNativeThreadId, spec.Model, spec.ReasoningEffort, onDispose);
         try
         {
             using var handshakeCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -288,6 +291,8 @@ public sealed class CodexAgentSession : IAgentSession
 
         await _rpc.SendResultResponseAsync(pending.RawId, payload, ct).ConfigureAwait(false);
     }
+
+    public Task<bool> TrySetModelAsync(string? model, string? reasoningEffort = null, CancellationToken ct = default) => Task.FromResult(false);
 
     public async Task<SteerDelivery> SteerAsync(string turnCorrelationId, string message, CancellationToken ct)
     {
@@ -422,6 +427,11 @@ public sealed class CodexAgentSession : IAgentSession
             threadParams["model"] = spec.Model;
         }
 
+        if (!string.IsNullOrWhiteSpace(spec.ReasoningEffort))
+        {
+            threadParams["effort"] = spec.ReasoningEffort;
+        }
+
         if (!string.IsNullOrWhiteSpace(spec.SystemPrompt))
         {
             threadParams["baseInstructions"] = spec.SystemPrompt;
@@ -530,6 +540,11 @@ public sealed class CodexAgentSession : IAgentSession
                 }
             }
         };
+
+        if (!string.IsNullOrWhiteSpace(_reasoningEffort))
+        {
+            turnParams["effort"] = _reasoningEffort;
+        }
 
         if (!string.IsNullOrWhiteSpace(modelOverride))
         {

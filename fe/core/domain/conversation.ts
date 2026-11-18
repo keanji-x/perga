@@ -460,7 +460,7 @@ export function plannerRunOperation(cardId: string): ApiOperation<PlannerRun> {
           pending: [],
           pending_overflow: 0,
           model: page.session.model ?? null,
-          reasoning_effort: null,
+          reasoning_effort: page.session.reasoningEffort ?? null,
           permission_mode: page.session.boundTaskId ? null : (page.session.permissionMode ?? null),
           blocked_reason: page.session.status === 'unknown' ? 'The previous message has an unknown outcome.' : null,
           recovery: null,
@@ -486,7 +486,7 @@ export function plannerRunOperation(cardId: string): ApiOperation<PlannerRun> {
   };
 }
 
-/** What one conversation has chosen; `null` means "follow the installation default". The server requires both keys. */
+/** Composer selection; `null` follows the provider default. Session updates persist model and reasoning effort. */
 export type ModelSelection = Readonly<{ model: string | null; reasoning_effort: string | null }>;
 
 export const FOLLOW_INSTALLATION_DEFAULT: ModelSelection = Object.freeze({
@@ -538,65 +538,78 @@ export type ModelCatalog = z.infer<typeof modelCatalogSchema>;
 
 /**
  * Whose catalog: an existing card's, or one for a conversation about to be created on `provider`.
- * A Claude Planner's (either way) is the Claude CLI's list the server cached (#1822).
  */
 export type ModelCatalogScope =
-  | Readonly<{ kind: 'card'; cardId: string }>
+  | Readonly<{ kind: 'card'; cardId: string; provider: AgentProvider }>
   | Readonly<{ kind: 'provider'; provider: AgentProvider }>;
 
-/** Derives model catalog from `/api/v1/bootstrap` provider statuses; also accepts legacy `ModelCatalog` fixtures. */
+/** Derives the conversation provider's catalog and availability from `/api/v1/bootstrap`. */
 export function modelCatalogOperation(
-  scope: ModelCatalogScope,
-  options?: Readonly<{ provider?: AgentProvider; refresh?: boolean }>,
+  scope: ModelCatalogScope, options?: Readonly<{ provider?: AgentProvider; refresh?: boolean }>,
 ): ApiOperation<ModelCatalog> {
-  const targetProvider = scope.kind === 'provider' ? scope.provider : options?.provider;
   const refreshSuffix = options?.refresh === true ? '&refresh=true' : '';
   return {
     method: 'GET',
     path: scope.kind === 'card'
       ? `/api/v1/bootstrap?card_id=${encodeURIComponent(scope.cardId)}${refreshSuffix}`
       : `/api/v1/bootstrap?provider=${scope.provider}${refreshSuffix}`,
-    responseSchema: z.union([
-      bootstrapDtoSchema.transform((bootstrap): ModelCatalog => {
-        const providerEntry = targetProvider === undefined
-          ? undefined
-          : bootstrap.providers.find((p) => normalizeWireAgentProvider(p.provider) === targetProvider);
-        const providerModels = targetProvider !== undefined
-          ? (providerEntry?.models ?? [])
-          : bootstrap.providers.flatMap((p) => p.models);
-        const unique = [...new Set(providerModels)];
-        return {
-          models: unique.map((model, index) => ({
-            id: model,
-            model,
-            resolved_model: null,
-            display_name: model,
-            description: '',
-            is_default: index === 0,
-            supported_reasoning_efforts: [],
-            default_reasoning_effort: null,
+    responseSchema: z.union([bootstrapDtoSchema.transform((bootstrap): ModelCatalog => {
+      const providerStatus = bootstrap.providers.find((p) => normalizeWireAgentProvider(p.provider) === scope.provider);
+      const richCatalog = providerStatus?.modelCatalog ?? [];
+      if (richCatalog.length > 0) {
+        const models = richCatalog.map((entry) => ({
+          id: entry.model,
+          model: entry.model,
+          resolved_model: null,
+          display_name: entry.displayName,
+          description: entry.description,
+          is_default: entry.isDefault,
+          supported_reasoning_efforts: entry.supportedReasoningEfforts.map((effort) => ({
+            reasoning_effort: effort.reasoningEffort,
+            description: effort.description,
           })),
+          default_reasoning_effort: entry.defaultReasoningEffort,
+        }));
+        const defaultEntry = models.find((entry) => entry.is_default) ?? models[0] ?? null;
+        return {
+          models,
           default: {
-            model: unique[0] ?? null,
-            reasoning_effort: null,
-            supported_reasoning_efforts: null,
+            model: defaultEntry?.model ?? null,
+            reasoning_effort: defaultEntry?.default_reasoning_effort ?? null,
+            supported_reasoning_efforts: defaultEntry?.supported_reasoning_efforts ?? null,
           },
-          default_source: 'unknown',
-          source: providerEntry?.available === false ? 'unavailable' : 'live',
+          default_source: defaultEntry ? 'config_read' : 'unknown',
+          source: providerStatus?.available ? 'live' : 'unavailable',
           fetched_at_ms: Date.now(),
         };
-      }),
-      modelCatalogSchema,
-    ]),
+      }
+      const providerModels = providerStatus?.models ?? [];
+      const unique = [...new Set(providerModels)];
+      return {
+        models: unique.map((model, index) => ({
+          id: model,
+          model,
+          resolved_model: null,
+          display_name: model,
+          description: '',
+          is_default: index === 0,
+          supported_reasoning_efforts: [],
+          default_reasoning_effort: null,
+        })),
+        default: {
+          model: unique[0] ?? null,
+          reasoning_effort: null,
+          supported_reasoning_efforts: null,
+        },
+        default_source: 'unknown',
+        source: providerStatus?.available ? 'live' : 'unavailable',
+        fetched_at_ms: Date.now(),
+      };
+    }), modelCatalogSchema]),
   };
 }
 
-export type ModelSelectionResult = Readonly<{
-  model: string | null;
-  reasoning_effort: string | null;
-  effort_adjusted: boolean;
-  unknown_model: boolean;
-}>;
+export type ModelSelectionResult = AgentSessionDto;
 
 /**
  * Run writes one at a time, keeping only the LATEST waiting intent while one is in flight;
@@ -647,53 +660,18 @@ export function createSerialWriter<TArgs, TResult>(
   };
 }
 
-export function setPlannerModelOperation(
-  cardId: string, selection: ModelSelection, options?: Readonly<{ perga?: boolean }>,
-): ApiOperation<ModelSelectionResult> {
-  const usePerga = options?.perga === true || cardId.startsWith('ses_');
-  if (!usePerga) {
-    return {
-      method: 'PUT',
-      path: `/api/cards/${encodeURIComponent(cardId)}/planner/model`,
-      body: selection,
-      responseSchema: z.object({
-        card_id: z.string(),
-        model: z.string().nullable(),
-        reasoning_effort: z.string().nullable(),
-        effort_adjusted: z.boolean(),
-        unknown_model: z.boolean(),
-      }),
-    };
-  }
+export function setPlannerModelOperation(cardId: string, selection: ModelSelection): ApiOperation<ModelSelectionResult> {
   return {
-    method: 'PATCH',
-    path: `/api/v1/sessions/${encodeURIComponent(cardId)}`,
-    body: {
-      model: selection.model,
-      ...(selection.model === null ? { clearModel: true } : {}),
-      reasoning_effort: selection.reasoning_effort,
-    },
-    responseSchema: z.union([
-      agentSessionDtoSchema.transform((dto): ModelSelectionResult => ({
-        model: dto.model ?? null,
-        reasoning_effort: selection.reasoning_effort,
-        effort_adjusted: false,
-        unknown_model: false,
-      })),
-      z.object({
-        card_id: z.string(),
-        model: z.string().nullable(),
-        reasoning_effort: z.string().nullable(),
-        effort_adjusted: z.boolean(),
-        unknown_model: z.boolean(),
-      }),
-    ]),
+    method: 'PUT',
+    path: `/api/v1/sessions/${encodeURIComponent(cardId)}/model`,
+    body: { model: selection.model, reasoningEffort: selection.reasoning_effort },
+    responseSchema: agentSessionDtoSchema,
   };
 }
 
 /**
- * What a failed `PUT /planner/model` says. Each listed status is answered before anything is stored: 400 (a Claude
- * card while Claude is not ready), 403, 404 and 422. A 5xx, a lost or an unreadable answer may follow a stored one.
+ * What a failed `PUT /api/v1/sessions/{sessionId}/model` says. Each listed status is answered before anything is stored:
+ * 400, 403, 404 and 422. A 5xx, a lost or an unreadable answer may follow a stored one.
  */
 export const PLANNER_MODEL_FAILURES: FailureTable<WriteFailure> = Object.freeze({
   rules: Object.freeze([Object.freeze({ status: Object.freeze([400, 403, 404, 422]), is: 'refused' as const })]),
@@ -1104,7 +1082,7 @@ export function createTrackConversationOperation(
       provider: toWireAgentProvider(provider),
       ...(side === undefined ? {} : { side }),
       ...(selection.model === null ? {} : { model: selection.model }),
-      ...(selection.reasoning_effort === null ? {} : { reasoning_effort: selection.reasoning_effort }),
+      ...(selection.reasoning_effort === null ? {} : { reasoningEffort: selection.reasoning_effort }),
       ...(permissionMode == null ? {} : { permissionMode }),
     },
     responseSchema: z.union([

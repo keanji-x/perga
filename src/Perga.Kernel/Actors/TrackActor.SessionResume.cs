@@ -196,6 +196,8 @@ public sealed partial class TrackActor
                 if (session.Status == "running")
                     throw KernelException.PreconditionFailed("The previous turn outcome could not be recorded.");
                 _openAgentSessions.Remove(sessionId);
+                _boundAgentModels.Remove(sessionId);
+                _openAgentSessionPermissionModes.Remove(sessionId);
                 rebinding = true;
                 _mcpBridge.RevokeSession(sessionId);
                 return await BuildAgentLaunchSpecCoreAsync(session with { NativeThreadId = hold.NativeId }, null, ct)
@@ -234,6 +236,8 @@ public sealed partial class TrackActor
 
                 _sessions[sessionId] = updated;
                 _openAgentSessions[sessionId] = replacement;
+                _boundAgentModels[sessionId] = (spec.Model, spec.ReasoningEffort);
+                _openAgentSessionPermissionModes[sessionId] = spec.PermissionMode;
                 return updated;
             }, CancellationToken.None).ConfigureAwait(false);
             success = true;
