@@ -786,6 +786,21 @@ internal sealed class InMemoryTrackStore : ITrackStore
         }
     }
 
+    public Task<IReadOnlyList<InterruptedAttemptLeaseDto>> ListInFlightAttemptLeasesAsync(CancellationToken ct = default)
+    {
+        lock (_gate)
+        {
+            IReadOnlyList<InterruptedAttemptLeaseDto> leases = _attemptsByTask.Values.SelectMany(attempts => attempts)
+                .Where(attempt => attempt.WorkspaceLease.HasValue &&
+                    (string.Equals(attempt.Status, "running", StringComparison.OrdinalIgnoreCase) ||
+                     string.Equals(attempt.Status, "verifying", StringComparison.OrdinalIgnoreCase)))
+                .Select(attempt => new InterruptedAttemptLeaseDto(
+                    attempt.AttemptId, attempt.TaskId, attempt.TrackId, attempt.WorkspaceLease!.Value))
+                .ToArray();
+            return Task.FromResult(leases);
+        }
+    }
+
     public Task<IReadOnlyList<string>> MarkInFlightInterruptedOnBootAsync(CancellationToken ct)
     {
         lock (_gate)

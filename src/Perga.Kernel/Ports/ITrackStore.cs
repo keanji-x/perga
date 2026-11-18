@@ -40,6 +40,9 @@ public sealed record WorkerDispatchIntent(string TrackId, string AuthorId, strin
 public sealed record StoredWorkerDispatch(string RequestHash, string TaskId);
 public sealed record ProviderSessionResumeFence(string SessionId, string TurnId, string NativeId, bool Quiescent);
 
+public sealed record InterruptedAttemptLeaseDto(
+    string AttemptId, string TaskId, string TrackId, JsonElement WorkspaceLease);
+
 public interface ITrackReadStore
 {
     string DatabaseId => string.Empty;
@@ -141,6 +144,7 @@ public interface ITrackStore : ITrackReadStore
     Task UpsertTerminalAsync(TerminalDto terminal, EventEnvelopeDto? evt, CancellationToken ct);
     Task DeleteTerminalAsync(string trackId, string terminalId, EventEnvelopeDto? evt, CancellationToken ct);
     Task AppendEventAsync(EventEnvelopeDto evt, CancellationToken ct);
+    Task<IReadOnlyList<InterruptedAttemptLeaseDto>> ListInFlightAttemptLeasesAsync(CancellationToken ct = default);
     Task<IReadOnlyList<string>> MarkInFlightInterruptedOnBootAsync(CancellationToken ct);
     Task<DbMaintenanceStatsDto> RunMaintenancePassAsync(long nowMs, CancellationToken ct);
 }

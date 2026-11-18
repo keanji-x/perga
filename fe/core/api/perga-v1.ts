@@ -564,7 +564,7 @@ export type PergaPersistentEvent =
   | Readonly<{ kind: 'track.updated'; eventId: number; areaId: string | null; trackId: string | null; payload: TrackDto; createdAtMs: number }>
   | Readonly<{ kind: 'track.deleted'; eventId: number; areaId: string | null; trackId: string | null; payload: Readonly<{ id: string; areaId: string }>; createdAtMs: number }>
   | Readonly<{ kind: 'report.updated'; eventId: number; areaId: string | null; trackId: string | null; payload: Readonly<{ docRev?: number; summary?: string | null }>; createdAtMs: number }>
-  | Readonly<{ kind: 'task.updated'; eventId: number; areaId: string | null; trackId: string | null; payload: Readonly<{ task?: TaskDto | null; attempt?: TaskAttemptDto | null; tasks?: readonly TaskDto[] | null }>; createdAtMs: number }>
+  | Readonly<{ kind: 'task.updated'; eventId: number; areaId: string | null; trackId: string | null; payload: Readonly<Record<string, never>>; createdAtMs: number }>
   | Readonly<{ kind: 'session.updated'; eventId: number; areaId: string | null; trackId: string | null; payload: AgentSessionDto; createdAtMs: number }>
   | Readonly<{ kind: 'turn.completed'; eventId: number; areaId: string | null; trackId: string | null; payload: SessionTurnDto; createdAtMs: number }>
   | Readonly<{ kind: 'ask.changed'; eventId: number; areaId: string | null; trackId: string | null; payload: AskDto; createdAtMs: number }>
@@ -656,16 +656,8 @@ export function decodePergaEventEnvelope(input: unknown): PergaEventDecodeResult
       if (!parsed.success) return { status: 'failed', error: { kind: 'decode', message: 'Invalid report.updated payload', cause: parsed.error } };
       return { status: 'ready', kind: 'persistent', event: { kind, eventId: resolvedId, areaId: resolvedArea, trackId: resolvedTrack, payload: parsed.data, createdAtMs } };
     }
-    case 'task.updated': {
-      const parsed = z.object({
-        task: taskDtoSchema.nullish(),
-        attempt: taskAttemptDtoSchema.nullish(),
-        tasks: z.array(taskDtoSchema).nullish(),
-      }).passthrough().safeParse(payload ?? {});
-      if (!parsed.success) return { status: 'failed', error: { kind: 'decode', message: 'Invalid task.updated payload', cause: parsed.error } };
-      const derivedTrack = resolvedTrack ?? parsed.data.task?.trackId ?? parsed.data.attempt?.trackId ?? parsed.data.tasks?.[0]?.trackId ?? null;
-      return { status: 'ready', kind: 'persistent', event: { kind, eventId: resolvedId, areaId: resolvedArea, trackId: derivedTrack, payload: parsed.data, createdAtMs } };
-    }
+    case 'task.updated':
+      return { status: 'ready', kind: 'persistent', event: { kind, eventId: resolvedId, areaId: resolvedArea, trackId: resolvedTrack, payload: {}, createdAtMs } };
     case 'session.updated': {
       const parsed = agentSessionDtoSchema.safeParse(payload);
       if (!parsed.success) return { status: 'failed', error: { kind: 'decode', message: 'Invalid session.updated payload', cause: parsed.error } };

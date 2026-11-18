@@ -12,8 +12,6 @@ import {
   sessionThinkingDeltaPayloadSchema,
   sessionToolProgressPayloadSchema,
   sessionTurnDtoSchema,
-  taskAttemptDtoSchema,
-  taskDtoSchema,
   terminalDtoSchema,
   type PergaStreamDelta,
 } from './perga-v1.js';
@@ -1044,9 +1042,6 @@ export const pergaTaskUpdatedSchema = z.object({
   ev: z.literal('task.updated'),
   data: z.object({
     track_id: z.string().nullable().default(null),
-    task: taskDtoSchema.nullish(),
-    attempt: taskAttemptDtoSchema.nullish(),
-    tasks: z.array(taskDtoSchema).nullish(),
   }),
 });
 
@@ -1376,7 +1371,7 @@ export function decodeWireEvent(input: unknown): WireEventDecodeResult {
       case 'report.updated':
         return { status: 'ready', value: { ev: 'report.updated', data: { track_id: evt.trackId, docRev: evt.payload.docRev, summary: evt.payload.summary } } };
       case 'task.updated':
-        return { status: 'ready', value: { ev: 'task.updated', data: { track_id: evt.trackId, task: evt.payload.task, attempt: evt.payload.attempt, tasks: evt.payload.tasks ? [...evt.payload.tasks] : undefined } } };
+        return { status: 'ready', value: { ev: 'task.updated', data: { track_id: evt.trackId } } };
       case 'session.updated':
         return { status: 'ready', value: { ev: 'session.updated', data: { track_id: evt.trackId ?? evt.payload.trackId, session: evt.payload } } };
       case 'turn.completed':

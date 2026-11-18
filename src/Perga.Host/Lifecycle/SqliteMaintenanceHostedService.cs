@@ -36,13 +36,16 @@ public sealed class SqliteMaintenanceHostedService : BackgroundService
             LastStats = stats;
             Interlocked.Increment(ref _completedPasses);
 
-            if (stats.PrunedEvents > 0 || stats.ThinnedRevisions > 0 || stats.CompactedItems > 0 || stats.ReclaimedPages > 0)
+            if (stats is { PrunedEvents: > 0 } or { ThinnedRevisions: > 0 } or { CompactedItems: > 0 }
+                or { CompactedAttempts: > 0 } or { ReclaimedBlobs: > 0 } or { ReclaimedPages: > 0 })
             {
                 _logger.LogInformation(
-                    "SQLite maintenance pass completed: prunedEvents={PrunedEvents}, thinnedRevisions={ThinnedRevisions}, compactedItems={CompactedItems}, reclaimedPages={ReclaimedPages}.",
+                    "SQLite maintenance pass completed: prunedEvents={PrunedEvents}, thinnedRevisions={ThinnedRevisions}, compactedItems={CompactedItems}, compactedAttempts={CompactedAttempts}, reclaimedBlobs={ReclaimedBlobs}, reclaimedPages={ReclaimedPages}.",
                     stats.PrunedEvents,
                     stats.ThinnedRevisions,
                     stats.CompactedItems,
+                    stats.CompactedAttempts,
+                    stats.ReclaimedBlobs,
                     stats.ReclaimedPages);
             }
 

@@ -45,7 +45,7 @@ internal sealed class ColdBlobStore
             return rawJson;
         }
 
-        return WriteColdBlobAndBuildEnvelope(trackId, rawJson, rawBytes);
+        return WriteColdBlobAndBuildEnvelope(trackId, payload, rawJson, rawBytes);
     }
 
     public string? StoreOrInlineNullable(string trackId, JsonElement? payload)
@@ -58,7 +58,7 @@ internal sealed class ColdBlobStore
         return StoreOrInline(trackId, value);
     }
 
-    private string WriteColdBlobAndBuildEnvelope(string trackId, string rawJson, byte[] rawBytes)
+    private string WriteColdBlobAndBuildEnvelope(string trackId, JsonElement payload, string rawJson, byte[] rawBytes)
     {
         var safeTrackDir = ValidateTrackDirectorySegment(trackId);
         var sha256 = Convert.ToHexStringLower(SHA256.HashData(rawBytes));
@@ -106,6 +106,7 @@ internal sealed class ColdBlobStore
             writer.WriteString("blobRef", blobRef);
             writer.WriteNumber("bytes", rawBytes.Length);
             writer.WriteString("preview", preview);
+            WriteToolResultIdentity(writer, payload);
             writer.WriteEndObject();
         }
 
@@ -139,91 +140,67 @@ internal sealed class ColdBlobStore
 
         var blobRef = blobRefProp.GetString();
         var physicalPath = TryResolvePhysicalBlobPath(blobRef);
-        if (physicalPath is null || !File.Exists(physicalPath))
+        if (physicalPath is null)
         {
-            // Return compact envelope/tombstone cleanly if cold blob was pruned or deleted.
             return element;
-        }
-
-        var compressedBytes = File.ReadAllBytes(physicalPath);
-        using var input = new MemoryStream(compressedBytes, writable: false);
-        using var zstd = new DecompressionStream(input);
-        using var output = new MemoryStream();
-        zstd.CopyTo(output);
-
-        var rawMemory = new ReadOnlyMemory<byte>(output.GetBuffer(), 0, (int)output.Length);
-        using var doc = JsonDocument.Parse(rawMemory);
-        return doc.RootElement.Clone();
-    }
-
-    public static bool TryInspectEnvelope(
-        string? storedJson,
-        out string? blobRef,
-        out long bytes,
-        out string? preview,
-        out bool isCompacted)
-    {
-        blobRef = null;
-        bytes = 0;
-        preview = null;
-        isCompacted = false;
-
-        if (string.IsNullOrWhiteSpace(storedJson) || !storedJson.AsSpan().TrimStart().StartsWith("{", StringComparison.Ordinal))
-        {
-            return false;
         }
 
         try
         {
-            using var doc = JsonDocument.Parse(storedJson);
-            var root = doc.RootElement;
-            if (root.ValueKind != JsonValueKind.Object)
-            {
-                return false;
-            }
+            using var input = File.Open(physicalPath, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete);
+            using var zstd = new DecompressionStream(input);
+            using var output = new MemoryStream();
+            zstd.CopyTo(output);
 
-            if (root.TryGetProperty("compacted", out var compProp) && compProp.ValueKind == JsonValueKind.True)
-            {
-                isCompacted = true;
-            }
-
-            if (root.TryGetProperty("blobRef", out var refProp) && refProp.ValueKind == JsonValueKind.String)
-            {
-                blobRef = refProp.GetString();
-            }
-
-            if (root.TryGetProperty("bytes", out var bytesProp) && bytesProp.ValueKind == JsonValueKind.Number && bytesProp.TryGetInt64(out var parsedBytes))
-            {
-                bytes = parsedBytes;
-            }
-
-            if (root.TryGetProperty("preview", out var prevProp) && prevProp.ValueKind == JsonValueKind.String)
-            {
-                preview = prevProp.GetString();
-            }
-
-            return blobRef is not null || isCompacted;
+            var rawMemory = new ReadOnlyMemory<byte>(output.GetBuffer(), 0, (int)output.Length);
+            using var doc = JsonDocument.Parse(rawMemory);
+            return doc.RootElement.Clone();
         }
-        catch
+        catch (IOException ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
         {
-            return false;
+            // A reader can hold an older reference after maintenance committed.
+            return element;
+        }
+    }
+
+    public IEnumerable<string> EnumerateBlobRefs()
+    {
+        if (!Directory.Exists(_blobsRootDir))
+        {
+            yield break;
+        }
+
+        var options = new EnumerationOptions
+        {
+            RecurseSubdirectories = true,
+            MaxRecursionDepth = 1,
+            AttributesToSkip = FileAttributes.ReparsePoint
+        };
+        foreach (var file in Directory.EnumerateFiles(_blobsRootDir, "*.zst", options))
+        {
+            var parent = Path.GetDirectoryName(file);
+            var name = Path.GetFileNameWithoutExtension(file);
+            if (parent is not null && parent != _blobsRootDir && name.Length == 64 && name.All(char.IsAsciiHexDigit))
+            {
+                yield return $"blobs/{Path.GetFileName(parent)}/{Path.GetFileName(file)}";
+            }
         }
     }
 
     public static string BuildCompactedTombstone(string rawPayloadJson)
     {
-        long originalBytes;
-        string previewSource;
-
-        if (TryInspectEnvelope(rawPayloadJson, out _, out var envBytes, out var envPreview, out _) && envBytes > 0)
+        using var doc = JsonDocument.Parse(rawPayloadJson);
+        var payload = doc.RootElement;
+        var originalBytes = (long)Encoding.UTF8.GetByteCount(rawPayloadJson);
+        var previewSource = rawPayloadJson;
+        if (payload.ValueKind == JsonValueKind.Object &&
+            payload.TryGetProperty("blobRef", out var reference) && reference.ValueKind == JsonValueKind.String &&
+            payload.TryGetProperty("bytes", out var bytes) && bytes.TryGetInt64(out var blobBytes))
         {
-            originalBytes = envBytes;
-            previewSource = envPreview ?? string.Empty;
-        }
-        else
-        {
-            originalBytes = Encoding.UTF8.GetByteCount(rawPayloadJson);
-            previewSource = rawPayloadJson;
+            originalBytes = blobBytes;
+            previewSource = payload.TryGetProperty("preview", out var storedPreview) && storedPreview.ValueKind == JsonValueKind.String
+                ? storedPreview.GetString() ?? string.Empty
+                : string.Empty;
         }
 
         var preview = SqliteJsonUpcaster.TruncateUtf8Safe(previewSource, TombstonePreviewBytes);
@@ -235,10 +212,32 @@ internal sealed class ColdBlobStore
             writer.WriteBoolean("compacted", true);
             writer.WriteNumber("bytes", originalBytes);
             writer.WriteString("preview", preview);
+            if (WriteToolResultIdentity(writer, payload))
+            {
+                writer.WriteStartObject("output");
+                writer.WriteBoolean("compacted", true);
+                writer.WriteString("preview", preview);
+                writer.WriteEndObject();
+            }
+
             writer.WriteEndObject();
         }
 
         return Encoding.UTF8.GetString(buffer.GetBuffer(), 0, (int)buffer.Length);
+    }
+
+    private static bool WriteToolResultIdentity(Utf8JsonWriter writer, JsonElement payload)
+    {
+        if (payload.ValueKind != JsonValueKind.Object ||
+            !payload.TryGetProperty("callId", out var callId) || callId.ValueKind != JsonValueKind.String ||
+            !payload.TryGetProperty("isError", out var isError) || isError.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+        {
+            return false;
+        }
+
+        writer.WriteString("callId", callId.GetString());
+        writer.WriteBoolean("isError", isError.GetBoolean());
+        return true;
     }
 
     public void DeleteTrackBlobsDirectory(string trackId)

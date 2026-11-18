@@ -80,8 +80,7 @@ public static class EventsWebSocketHandler
                         maxDeliveredPersistentId = id;
                     }
 
-                    var normalized = PergaJsonDefaults.NormalizeEventEnvelope(persisted);
-                    await SendJsonFrameAsync(webSocket, normalized, ct).ConfigureAwait(false);
+                    await SendJsonFrameAsync(webSocket, persisted, ct).ConfigureAwait(false);
                 }
 
                 await SendJsonFrameAsync(
@@ -108,8 +107,7 @@ public static class EventsWebSocketHandler
                     maxDeliveredPersistentId = liveId;
                 }
 
-                var normalized = PergaJsonDefaults.NormalizeEventEnvelope(live);
-                await SendJsonFrameAsync(webSocket, normalized, ct).ConfigureAwait(false);
+                await SendJsonFrameAsync(webSocket, live, ct).ConfigureAwait(false);
             }
         }
         catch (OperationCanceledException)

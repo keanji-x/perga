@@ -146,9 +146,9 @@ public sealed class WebSocketsIntegrationTests
         Assert.Contains(replayedFrames, f => f.GetProperty("kind").GetString() == KernelEventKinds.TrackUpdated);
 
         var taskUpdatedFrame = replayedFrames.First(f => f.GetProperty("kind").GetString() == KernelEventKinds.TaskUpdated);
-        Assert.Equal(
-            "read_only",
-            taskUpdatedFrame.GetProperty("payload").GetProperty("tasks")[0].GetProperty("access").GetString());
+        var payload = taskUpdatedFrame.GetProperty("payload");
+        Assert.False(payload.TryGetProperty("tasks", out _));
+        Assert.False(payload.TryGetProperty("attempt", out _));
 
         // Configure AgentRuntime to emit ThinkingDelta, ToolCallStarted, ToolCallCompleted, and TextDelta!
         cluster.AgentRuntime.SetTurnHandler(StreamRichDeltasAsync);

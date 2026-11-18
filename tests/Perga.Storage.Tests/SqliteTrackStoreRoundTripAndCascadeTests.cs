@@ -399,17 +399,15 @@ public sealed class SqliteTrackStoreRoundTripAndCascadeTests
             updatedSession: null,
             ct);
 
-        var leasesBeforeMark = await store.GetInterruptedAttemptLeasesOnBootAsync(ct);
+        var leasesBeforeMark = await store.ListInFlightAttemptLeasesAsync(ct);
         var leaseBefore = Assert.Single(leasesBeforeMark);
         Assert.Equal("att_verifying", leaseBefore.AttemptId);
         Assert.Equal("/tmp/lease1", leaseBefore.WorkspaceLease.GetProperty("effectiveCwd").GetString());
 
-        var affectedOpenTracks = await store.MarkInFlightInterruptedOnBootAsync(ct);
-        Assert.Equal(["trk_open_1", "trk_open_2"], affectedOpenTracks.ToArray());
+        var affectedTracks = await store.MarkInFlightInterruptedOnBootAsync(ct);
+        Assert.Equal(["trk_closed", "trk_open_1", "trk_open_2"], affectedTracks.ToArray());
 
-        // Leases remain accessible via cached snapshot even after MarkInFlightInterruptedOnBootAsync updated status -> 'interrupted'
-        var leasesAfterMark = await store.GetInterruptedAttemptLeasesOnBootAsync(ct);
-        Assert.Single(leasesAfterMark);
+        Assert.Empty(await store.ListInFlightAttemptLeasesAsync(ct));
 
         var recoveredTrack = (await store.LoadTrackAggregateAsync(openTrack2.Id, ct))!;
         Assert.Equal(TaskRunStatus.Failed, Assert.Single(recoveredTrack.Tasks, task => task.Id == legacyTask.Id).Status);

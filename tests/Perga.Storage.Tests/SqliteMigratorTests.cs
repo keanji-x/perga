@@ -116,6 +116,8 @@ public sealed class SqliteMigratorTests
                 "idx_terminals_track",
                 "idx_events_track_id",
                 "idx_events_created",
+                "idx_session_items_blob_ref",
+                "idx_attempts_gate_blob_ref",
                 "idx_worker_messages_queue"
             ];
 

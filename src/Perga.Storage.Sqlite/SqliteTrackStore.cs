@@ -15,14 +15,6 @@ namespace Perga.Storage.Sqlite;
 /// </summary>
 public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
 {
-    private const long DayMs = 86_400_000L;
-    private const long EventRetentionWindowMs = 7L * DayMs;
-    private const int EventRetentionMaxRows = 50_000;
-    private const int EventPruneBatchSize = 1_000;
-    private const int ActiveRevisionFullWindow = 100;
-    private const long SettledRetentionWindowMs = 14L * DayMs;
-    private const int ToolResultInlineCompactThresholdBytes = 4_096;
-
     private readonly SqliteStorageOptions _options;
     private readonly SqliteMigrator _migrator;
     private readonly SqliteSingleWriter _writer;
@@ -32,7 +24,6 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
     private readonly string _readConnectionString;
     private readonly SemaphoreSlim _initLock = new(1, 1);
 
-    private volatile IReadOnlyList<InterruptedAttemptLeaseDto> _bootInterruptedLeases = Array.Empty<InterruptedAttemptLeaseDto>();
     private string _databaseId = string.Empty;
     private bool _initialized;
     private int _disposed;
@@ -867,10 +858,6 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
         ArgumentNullException.ThrowIfNull(task);
         EnsureInitialized();
 
-        var gateVerdictStoredJson = attempt is null
-            ? null
-            : _coldBlobStore.StoreOrInlineNullable(attempt.TrackId, attempt.GateVerdict);
-
         var nextTemplateStateJson = nextTemplateState.HasValue
             ? SqliteJsonUpcaster.SerializeElement(nextTemplateState.Value)
             : null;
@@ -918,7 +905,7 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                                 WorkerResultJson = SqliteJsonUpcaster.SerializeNullableElement(attempt.WorkerResult),
                                 MetaJson = SqliteJsonUpcaster.SerializeElement(attempt.Meta),
                                 WorkspaceLeaseJson = SqliteJsonUpcaster.SerializeNullableElement(attempt.WorkspaceLease),
-                                GateVerdictJson = gateVerdictStoredJson,
+                                GateVerdictJson = _coldBlobStore.StoreOrInlineNullable(attempt.TrackId, attempt.GateVerdict),
                                 attempt.StartedAtMs,
                                 attempt.FinishedAtMs
                             },
@@ -1689,10 +1676,9 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
     // -------------------------------------------------------------------------
 
     /// <summary>
-    /// Returns any in-flight <c>task_attempts</c> carrying a non-null <c>workspace_lease_json</c>
-    /// (works whether called before or after <see cref="MarkInFlightInterruptedOnBootAsync"/>).
+    /// Returns in-flight attempts with a lease to settle before boot marks them interrupted.
     /// </summary>
-    public async Task<IReadOnlyList<InterruptedAttemptLeaseDto>> GetInterruptedAttemptLeasesOnBootAsync(
+    public async Task<IReadOnlyList<InterruptedAttemptLeaseDto>> ListInFlightAttemptLeasesAsync(
         CancellationToken ct = default)
     {
         EnsureInitialized();
@@ -1711,18 +1697,9 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                 """,
                 cancellationToken: ct)).ConfigureAwait(false)).ToList();
 
-        if (liveRows.Count > 0)
-        {
-            return liveRows
-                .Select(static r => new InterruptedAttemptLeaseDto(
-                    r.AttemptId,
-                    r.TaskId,
-                    r.TrackId,
-                    SqliteJsonUpcaster.ParseElementOrDefault(r.WorkspaceLeaseJson)))
-                .ToList();
-        }
-
-        return _bootInterruptedLeases;
+        return liveRows.Select(static r => new InterruptedAttemptLeaseDto(
+            r.AttemptId, r.TaskId, r.TrackId,
+            SqliteJsonUpcaster.ParseElementOrDefault(r.WorkspaceLeaseJson))).ToArray();
     }
 
     public Task<IReadOnlyList<string>> MarkInFlightInterruptedOnBootAsync(CancellationToken ct)
@@ -1733,36 +1710,18 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
         return _writer.EnqueueAsync<IReadOnlyList<string>>(
             async (conn, tx, innerCt) =>
             {
-                var leaseRows = (await conn.QueryAsync<InterruptedLeaseRow>(
-                    new CommandDefinition(
-                        """
-                        SELECT attempt_id AS AttemptId,
-                               task_id AS TaskId,
-                               track_id AS TrackId,
-                               workspace_lease_json AS WorkspaceLeaseJson
-                        FROM task_attempts
-                        WHERE LOWER(status) IN ('running', 'verifying')
-                          AND workspace_lease_json IS NOT NULL;
-                        """,
-                        transaction: tx,
-                        cancellationToken: innerCt)).ConfigureAwait(false)).ToList();
-
-                _bootInterruptedLeases = leaseRows
-                    .Select(static r => new InterruptedAttemptLeaseDto(
-                        r.AttemptId,
-                        r.TaskId,
-                        r.TrackId,
-                        SqliteJsonUpcaster.ParseElementOrDefault(r.WorkspaceLeaseJson)))
-                    .ToList();
-
-                var affectedOpenTrackIds = (await conn.QueryAsync<string>(
+                var affectedTrackIds = (await conn.QueryAsync<string>(
                     new CommandDefinition(
                         """
                         SELECT DISTINCT tr.id
                         FROM tracks tr
-                        WHERE tr.closed_at_ms IS NULL
-                          AND (
+                        WHERE (
                               EXISTS (
+                                  SELECT 1 FROM tasks task
+                                  WHERE task.track_id = tr.id
+                                    AND task.status IN ('running', 'verifying')
+                              )
+                              OR EXISTS (
                                   SELECT 1 FROM task_attempts a
                                   WHERE a.track_id = tr.id
                                     AND LOWER(a.status) IN ('running', 'verifying')
@@ -1827,359 +1786,10 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                         transaction: tx,
                         cancellationToken: innerCt)).ConfigureAwait(false);
 
-                return affectedOpenTrackIds;
+                return affectedTrackIds;
             },
             ct);
     }
-
-    // -------------------------------------------------------------------------
-    // Deterministic Sliding-Window GC & Maintenance (DESIGN.md 3.2)
-    // -------------------------------------------------------------------------
-
-    public async Task<DbMaintenanceStatsDto> RunMaintenancePassAsync(long nowMs, CancellationToken ct)
-    {
-        EnsureInitialized();
-
-        var prunedEvents = await PruneEventsInBatchesAsync(nowMs, ct).ConfigureAwait(false);
-        var thinnedRevisions = await ThinReportRevisionsAsync(nowMs, ct).ConfigureAwait(false);
-        var compactedItems = await SlimEligibleSessionItemsAsync(nowMs, ct).ConfigureAwait(false);
-        var reclaimedPages = await VacuumAndCheckpointAsync(ct).ConfigureAwait(false);
-
-        return new DbMaintenanceStatsDto(
-            PrunedEvents: prunedEvents,
-            ThinnedRevisions: thinnedRevisions,
-            CompactedItems: compactedItems,
-            ReclaimedPages: reclaimedPages);
-    }
-
-    private async Task<int> PruneEventsInBatchesAsync(long nowMs, CancellationToken ct)
-    {
-        var totalPruned = 0;
-        var ageCutoffMs = nowMs - EventRetentionWindowMs;
-
-        // 1A. Prune events older than 7 days in batches of 1,000.
-        while (true)
-        {
-            ct.ThrowIfCancellationRequested();
-            var deleted = await _writer.EnqueueAsync<int>(
-                async (conn, tx, innerCt) =>
-                {
-                    return await conn.ExecuteAsync(
-                        new CommandDefinition(
-                            """
-                            DELETE FROM events
-                            WHERE id IN (
-                                SELECT id FROM events
-                                WHERE created_at_ms <= @AgeCutoffMs
-                                ORDER BY id ASC
-                                LIMIT @BatchSize
-                            );
-                            """,
-                            new { AgeCutoffMs = ageCutoffMs, BatchSize = EventPruneBatchSize },
-                            transaction: tx,
-                            cancellationToken: innerCt)).ConfigureAwait(false);
-                },
-                ct).ConfigureAwait(false);
-
-            totalPruned += deleted;
-            if (deleted < EventPruneBatchSize)
-            {
-                break;
-            }
-        }
-
-        // 1B. Enforce hard cap of 50,000 rows in batches of up to 1,000.
-        while (true)
-        {
-            ct.ThrowIfCancellationRequested();
-            var deleted = await _writer.EnqueueAsync<int>(
-                async (conn, tx, innerCt) =>
-                {
-                    var remaining = await conn.ExecuteScalarAsync<long>(
-                        new CommandDefinition(
-                            "SELECT COUNT(1) FROM events;",
-                            transaction: tx,
-                            cancellationToken: innerCt)).ConfigureAwait(false);
-
-                    if (remaining <= EventRetentionMaxRows)
-                    {
-                        return 0;
-                    }
-
-                    var toDelete = (int)Math.Min(EventPruneBatchSize, remaining - EventRetentionMaxRows);
-                    return await conn.ExecuteAsync(
-                        new CommandDefinition(
-                            """
-                            DELETE FROM events
-                            WHERE id IN (
-                                SELECT id FROM events
-                                ORDER BY id ASC
-                                LIMIT @BatchSize
-                            );
-                            """,
-                            new { BatchSize = toDelete },
-                            transaction: tx,
-                            cancellationToken: innerCt)).ConfigureAwait(false);
-                },
-                ct).ConfigureAwait(false);
-
-            totalPruned += deleted;
-            if (deleted == 0)
-            {
-                break;
-            }
-        }
-
-        return totalPruned;
-    }
-
-    private Task<int> ThinReportRevisionsAsync(long nowMs, CancellationToken ct)
-    {
-        var closedCutoffMs = nowMs - SettledRetentionWindowMs;
-
-        return _writer.EnqueueAsync<int>(
-            async (conn, tx, innerCt) =>
-            {
-                var trackBounds = (await conn.QueryAsync<RevisionBoundsRow>(
-                    new CommandDefinition(
-                        """
-                        SELECT r.track_id AS TrackId,
-                               MIN(r.doc_rev) AS MinRev,
-                               MAX(r.doc_rev) AS MaxRev,
-                               t.closed_at_ms AS ClosedAtMs
-                        FROM report_revisions r
-                        JOIN tracks t ON t.id = r.track_id
-                        GROUP BY r.track_id;
-                        """,
-                        transaction: tx,
-                        cancellationToken: innerCt)).ConfigureAwait(false)).ToList();
-
-                var thinned = 0;
-                foreach (var bound in trackBounds)
-                {
-                    var isSettledClosed = bound.ClosedAtMs.HasValue && bound.ClosedAtMs.Value <= closedCutoffMs;
-                    if (isSettledClosed)
-                    {
-                        thinned += await conn.ExecuteAsync(
-                            new CommandDefinition(
-                                """
-                                DELETE FROM report_revisions
-                                WHERE track_id = @TrackId
-                                  AND doc_rev != @MinRev
-                                  AND doc_rev != @MaxRev
-                                  AND (doc_rev % 10) != 0;
-                                """,
-                                new
-                                {
-                                    bound.TrackId,
-                                    bound.MinRev,
-                                    bound.MaxRev
-                                },
-                                transaction: tx,
-                                cancellationToken: innerCt)).ConfigureAwait(false);
-                    }
-                    else
-                    {
-                        var maxThinRev = bound.MaxRev - ActiveRevisionFullWindow;
-                        if (maxThinRev >= bound.MinRev)
-                        {
-                            thinned += await conn.ExecuteAsync(
-                                new CommandDefinition(
-                                    """
-                                    DELETE FROM report_revisions
-                                    WHERE track_id = @TrackId
-                                      AND doc_rev <= @MaxThinRev
-                                      AND doc_rev != @MinRev
-                                      AND doc_rev != @MaxRev
-                                      AND (doc_rev % 10) != 0;
-                                    """,
-                                    new
-                                    {
-                                        bound.TrackId,
-                                        MaxThinRev = maxThinRev,
-                                        bound.MinRev,
-                                        bound.MaxRev
-                                    },
-                                    transaction: tx,
-                                    cancellationToken: innerCt)).ConfigureAwait(false);
-                        }
-                    }
-                }
-
-                return thinned;
-            },
-            ct);
-    }
-
-    private async Task<int> SlimEligibleSessionItemsAsync(long nowMs, CancellationToken ct)
-    {
-        var settledCutoffMs = nowMs - SettledRetentionWindowMs;
-
-        var (compactedCount, candidateBlobRefs) = await _writer.EnqueueAsync<(int Compacted, HashSet<string> BlobRefs)>(
-            async (conn, tx, innerCt) =>
-            {
-                var candidateItems = (await conn.QueryAsync<SessionItemRow>(
-                    new CommandDefinition(
-                        """
-                        SELECT i.id AS Id,
-                               i.session_id AS SessionId,
-                               i.turn_id AS TurnId,
-                               i.kind AS Kind,
-                               i.payload_json AS PayloadJson,
-                               i.created_at_ms AS CreatedAtMs
-                        FROM session_items i
-                        JOIN session_turns t ON t.id = i.turn_id
-                        JOIN agent_sessions s ON s.id = i.session_id
-                        LEFT JOIN task_attempts a ON a.attempt_id = s.bound_attempt_id
-                        WHERE LOWER(i.kind) IN ('thinking', 'tool_result')
-                          AND (
-                              t.epoch < (s.epoch - 1)
-                              OR (
-                                  s.bound_attempt_id IS NOT NULL
-                                  AND NOT EXISTS (
-                                      SELECT 1 FROM session_turns tr
-                                      WHERE tr.session_id = s.id
-                                        AND LOWER(tr.status) IN ('running', 'verifying')
-                                  )
-                                  AND (
-                                      a.attempt_id IS NULL
-                                      OR (
-                                          LOWER(a.status) NOT IN ('running', 'verifying')
-                                          AND COALESCE(a.finished_at_ms, a.started_at_ms) <= @SettledCutoffMs
-                                      )
-                                  )
-                                  AND (
-                                      SELECT MAX(COALESCE(t2.completed_at_ms, t2.started_at_ms))
-                                      FROM session_turns t2
-                                      WHERE t2.session_id = s.id
-                                  ) <= @SettledCutoffMs
-                              )
-                          )
-                        ORDER BY i.id ASC;
-                        """,
-                        new { SettledCutoffMs = settledCutoffMs },
-                        transaction: tx,
-                        cancellationToken: innerCt)).ConfigureAwait(false)).ToList();
-
-                var compacted = 0;
-                var blobRefs = new HashSet<string>(StringComparer.Ordinal);
-
-                foreach (var item in candidateItems)
-                {
-                    if (string.Equals(item.Kind, "thinking", StringComparison.OrdinalIgnoreCase))
-                    {
-                        if (ColdBlobStore.TryInspectEnvelope(item.PayloadJson, out var thinkingBlobRef, out _, out _, out _) &&
-                            !string.IsNullOrWhiteSpace(thinkingBlobRef))
-                        {
-                            blobRefs.Add(thinkingBlobRef);
-                        }
-
-                        var deleted = await conn.ExecuteAsync(
-                            new CommandDefinition(
-                                "DELETE FROM session_items WHERE id = @Id;",
-                                new { item.Id },
-                                transaction: tx,
-                                cancellationToken: innerCt)).ConfigureAwait(false);
-                        compacted += deleted;
-                        continue;
-                    }
-
-                    if (string.Equals(item.Kind, "tool_result", StringComparison.OrdinalIgnoreCase))
-                    {
-                        var hasEnvelope = ColdBlobStore.TryInspectEnvelope(
-                            item.PayloadJson,
-                            out var toolBlobRef,
-                            out _,
-                            out _,
-                            out var isAlreadyCompacted);
-
-                        if (isAlreadyCompacted)
-                        {
-                            continue;
-                        }
-
-                        var isColdBlob = hasEnvelope && !string.IsNullOrWhiteSpace(toolBlobRef);
-                        var inlineByteCount = Encoding.UTF8.GetByteCount(item.PayloadJson);
-                        if (!isColdBlob && inlineByteCount <= ToolResultInlineCompactThresholdBytes)
-                        {
-                            continue;
-                        }
-
-                        var tombstoneJson = ColdBlobStore.BuildCompactedTombstone(item.PayloadJson);
-                        var updated = await conn.ExecuteAsync(
-                            new CommandDefinition(
-                                "UPDATE session_items SET payload_json = @PayloadJson WHERE id = @Id;",
-                                new { item.Id, PayloadJson = tombstoneJson },
-                                transaction: tx,
-                                cancellationToken: innerCt)).ConfigureAwait(false);
-
-                        if (updated > 0)
-                        {
-                            compacted += updated;
-                            if (isColdBlob && toolBlobRef is not null)
-                            {
-                                blobRefs.Add(toolBlobRef);
-                            }
-                        }
-                    }
-                }
-
-                return (compacted, blobRefs);
-            },
-            ct).ConfigureAwait(false);
-
-        if (candidateBlobRefs.Count > 0)
-        {
-            await using var readConn = await OpenReadConnectionAsync(ct).ConfigureAwait(false);
-            foreach (var blobRef in candidateBlobRefs)
-            {
-                var pattern = $"%\"{blobRef}\"%";
-                var remainingRefs = await readConn.ExecuteScalarAsync<long>(
-                    new CommandDefinition(
-                        """
-                        SELECT (
-                            (SELECT COUNT(1) FROM session_items WHERE payload_json LIKE @Pattern) +
-                            (SELECT COUNT(1) FROM task_attempts WHERE gate_verdict_json LIKE @Pattern)
-                        );
-                        """,
-                        new { Pattern = pattern },
-                        cancellationToken: ct)).ConfigureAwait(false);
-
-                if (remainingRefs == 0)
-                {
-                    _coldBlobStore.DeleteBlobFileIfPresent(blobRef);
-                }
-            }
-        }
-
-        return compactedCount;
-    }
-
-    private Task<int> VacuumAndCheckpointAsync(CancellationToken ct) =>
-        _writer.EnqueueNonTransactionalAsync<int>(
-            async (conn, innerCt) =>
-            {
-                var freeBefore = await conn.ExecuteScalarAsync<long>(
-                    new CommandDefinition("PRAGMA freelist_count;", cancellationToken: innerCt)).ConfigureAwait(false);
-
-                var reclaimed = 0;
-                if (freeBefore > _options.FreePageVacuumThreshold)
-                {
-                    await conn.ExecuteAsync(
-                        new CommandDefinition("PRAGMA incremental_vacuum(500);", cancellationToken: innerCt)).ConfigureAwait(false);
-
-                    var freeAfter = await conn.ExecuteScalarAsync<long>(
-                        new CommandDefinition("PRAGMA freelist_count;", cancellationToken: innerCt)).ConfigureAwait(false);
-
-                    reclaimed = (int)Math.Max(0L, freeBefore - freeAfter);
-                }
-
-                await conn.ExecuteAsync(
-                    new CommandDefinition("PRAGMA wal_checkpoint(TRUNCATE);", cancellationToken: innerCt)).ConfigureAwait(false);
-
-                return reclaimed;
-            },
-            ct);
 
     // -------------------------------------------------------------------------
     // Internal SQL & Mapping Helpers
@@ -2811,11 +2421,4 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
         public long UpdatedAtMs { get; init; }
     }
 
-    private sealed class RevisionBoundsRow
-    {
-        public string TrackId { get; init; } = string.Empty;
-        public long MinRev { get; init; }
-        public long MaxRev { get; init; }
-        public long? ClosedAtMs { get; init; }
-    }
 }
