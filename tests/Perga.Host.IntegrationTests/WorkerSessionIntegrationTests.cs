@@ -127,6 +127,21 @@ public sealed class WorkerSessionIntegrationTests
             Assert.Equal(replayed, again);
             Assert.Equal(0, steers);
             Assert.DoesNotContain(host.AgentRuntime.ExecutedTurns, turn => turn.Input.Prompt == "Look at dates");
+            var extra = new { sessionId = worker.Id, attemptId = worker.BoundAttemptId, content = "Withdraw this", mode = "queue", requestKey = "withdraw" };
+            var (extraText, extraError) = await CallToolAsync(host, "/mcp/kernel", lead.Principal.Token, KernelMcpToolNames.SessionSend, extra, ct);
+            Assert.False(extraError, extraText);
+            var extraReceipt = JsonSerializer.Deserialize<WorkerMessageReceipt>(extraText, PergaJsonDefaults.ApiOptions)!;
+            var queuePath = $"/api/v1/sessions/{worker.Id}/messages/queue/{extraReceipt.InputId}";
+            var workerPage = await kernel.GetSessionItemsAsync(worker.Id, ct: ct);
+            Assert.Contains(workerPage.QueuedMessages, entry => entry.Id == extraReceipt.InputId);
+            using var withdrawn = await host.Client.DeleteAsync(queuePath, ct);
+            Assert.Equal(HttpStatusCode.NoContent, withdrawn.StatusCode);
+            var (withdrawAgain, withdrawError) = await CallToolAsync(host, "/mcp/kernel", lead.Principal.Token, KernelMcpToolNames.SessionWithdraw,
+                new { sessionId = worker.Id, attemptId = worker.BoundAttemptId, inputId = extraReceipt.InputId }, ct);
+            Assert.False(withdrawError, withdrawAgain);
+            var (replayWithdrawal, withdrawalError) = await CallToolAsync(host, "/mcp/kernel", lead.Principal.Token, KernelMcpToolNames.SessionSend, extra, ct);
+            Assert.False(withdrawalError, replayWithdrawal);
+            Assert.Equal("withdrawn", JsonSerializer.Deserialize<WorkerMessageReceipt>(replayWithdrawal, PergaJsonDefaults.ApiOptions)!.Delivery);
             var (wrongTarget, wrongTargetError) = await CallToolAsync(host, "/mcp/kernel", lead.Principal.Token, KernelMcpToolNames.SessionSend,
                 new { sessionId = worker.Id, attemptId = worker.BoundAttemptId, turnId, content = "Wrong queue target", mode = "queue", requestKey = "bad-queue" }, ct);
             Assert.True(wrongTargetError);
@@ -142,11 +157,16 @@ public sealed class WorkerSessionIntegrationTests
         }
         await kernel.WaitForTrackIdleAsync(trackId, ct);
         Assert.Single(host.AgentRuntime.ExecutedTurns, turn => turn.Input.Prompt == "Look at dates");
+        Assert.DoesNotContain(host.AgentRuntime.ExecutedTurns, turn => turn.Input.Prompt == "Withdraw this");
         Assert.Single(host.AgentRuntime.ExecutedTurns, turn => turn.Input.Prompt == "Lead follow-up");
         var (delivered, deliveredError) = await CallToolAsync(host, "/mcp/kernel", lead.Principal.Token, KernelMcpToolNames.SessionSend, leadQueue, ct);
         Assert.False(deliveredError, delivered);
         Assert.Equal("delivered", JsonSerializer.Deserialize<WorkerMessageReceipt>(delivered, PergaJsonDefaults.ApiOptions)!.Delivery);
         Assert.Single(host.AgentRuntime.ExecutedTurns, turn => turn.Input.Prompt == "Lead follow-up");
+        var persisted = await kernel.GetSessionItemsAsync(worker.Id, ct: ct);
+        var followup = Assert.Single(persisted.Items, item => item.Kind == "user" &&
+            item.Payload.GetProperty("content").GetString() == "Lead follow-up");
+        Assert.Equal("delivered", followup.InputDelivery);
         await kernel.CancelTaskAsync(trackId, leadId, dispatched.Task.TaskKey, ct: ct);
         var (afterCancel, afterCancelError) = await CallToolAsync(host, "/mcp/kernel", lead.Principal.Token, KernelMcpToolNames.SessionSend,
             new { sessionId = worker.Id, attemptId = worker.BoundAttemptId, turnId = "old-turn", content = "Stale steer", mode = "steer", requestKey = "stale" }, ct);

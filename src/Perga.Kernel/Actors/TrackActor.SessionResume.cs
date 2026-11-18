@@ -257,18 +257,17 @@ public sealed partial class TrackActor
             finally
             {
                 if (!_actorShutdownCts.IsCancellationRequested)
-                    await EnqueueAsync(_ =>
+                    await EnqueueAsync(async _ =>
                     {
                         hold.Busy = false;
                         if (success)
                         {
                             ReleaseSessionResumeCore(sessionId);
-                            SchedulePendingWakeCore(sessionId);
+                            await SchedulePendingWakeCoreAsync(sessionId).ConfigureAwait(false);
                         }
                         else if (rebinding)
                             _mcpBridge.RevokeSession(sessionId);
                         NotifyQueueChangedCore(sessionId);
-                        return Task.CompletedTask;
                     }, CancellationToken.None).ConfigureAwait(false);
             }
         }

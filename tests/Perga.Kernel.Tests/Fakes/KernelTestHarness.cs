@@ -604,7 +604,7 @@ internal sealed class InMemoryTrackStore : ITrackStore
         SessionTurnDto turn,
         IReadOnlyList<SessionItemDto> newItems,
         AgentSessionDto? updatedSession,
-        CancellationToken ct = default)
+        CancellationToken ct = default, SessionMessage? dispatchMessage = null)
     {
         lock (_gate)
         {

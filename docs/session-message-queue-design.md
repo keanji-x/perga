@@ -4,9 +4,11 @@
 
 普通会话和 Worker 共用消息身份、送达记录和会话时间线。浏览器和 MCP 继续使用原请求键重试。Kernel 在同一个地方决定下一条消息何时可以发，以及它能否进入指定轮次。
 
-## 现状
+## 实现
 
-普通会话的 `session_inputs` 绑定唯一轮次，等待中的补充消息保存在 `TrackActor` 的内存队列。Worker 的 `worker_messages` 可以在没有轮次时持久化，也可以记录原生 Steer 的目标轮次和实际送达。Worker 启动、暂停、结算和工作区租约继续由 Attempt 管理。相关入口见 [普通会话输入](../src/Perga.Kernel/Actors/TrackActor.SessionInputs.cs)、[内存队列](../src/Perga.Kernel/Actors/TrackActor.MessageQueue.cs)和 [Worker 消息](../src/Perga.Kernel/Actors/TrackActor.WorkerSessions.cs)。
+迁移 0006 将 `session_inputs` 和 `worker_messages` 的回执复制到 `session_messages`，并把旧时间线条目关联到同一个消息身份。此次升级会按现有迁移流程保留升级前的数据库备份。旧版内存等待队列没有可迁移的数据，升级前可以等它排空。
+
+浏览器的普通会话和 Worker 共用队列列表和撤回入口。Lead 可以用 `perga_session_withdraw` 撤回等待中的 Worker 消息，也可以用 `perga_session_steer_queued` 把它送入明确指定的当前轮次。
 
 ## 消息身份与操作
 
@@ -24,7 +26,9 @@
 
 ## 重启与并发
 
-同一会话的 Actor 在取得执行槽时重查当前轮次和 Attempt。普通会话可恢复仍为 `queued` 的消息。Worker 消息只在原 Attempt 仍可继续且工作区租约有效时恢复。Attempt 已中断或结束时，将余下排队消息标记为 `interrupted`。重启后，尚无确认的 `dispatching` 转为 `unknown`，请求键仍指向原消息。系统在取得明确结果前保持送达未知状态。
+同一会话的 Actor 在取得执行槽时重查当前轮次和 Attempt。普通会话可恢复仍为 `queued` 的消息。Host 重启会回收在途 Worker 的租约、结束旧 Attempt 并归档旧会话。余下等待中的 Worker 消息标记为 `interrupted`。人或 Lead 重新派发时建立新的 Attempt、会话和队列。原会话的历史和收据仍可查。重启后，尚无确认的 `dispatching` 转为 `unknown`，请求键仍指向原消息。系统在取得明确结果前保持送达未知状态。
+
+普通会话的直接 Steer 要求指定仍在运行的轮次。已有队列消息的每次 Steer 按消息及目标轮次保存回执。若系统确定没有向目标发送，已排队的消息可以继续等候。撤回仅受理尚未绑定轮次的等待消息。
 
 Provider 调用在 Actor 外执行，Actor 负责领取、状态转换和轮次关联。完成回调核对消息和原执行身份。Worker 首轮启动、暂停、继续与 Task 验证的租约规则继续生效。消息队列只能在这些条件允许时继续发。
 

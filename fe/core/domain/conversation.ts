@@ -710,7 +710,7 @@ export function steerQueuedSessionMessageOperation(sessionId: string, inputId: s
     method: 'POST',
     path: `/api/v1/sessions/${encodeURIComponent(sessionId)}/messages/queue/${encodeURIComponent(inputId)}/steer`,
     body: { turnId },
-    responseSchema: z.object({ inputId: z.literal(inputId), delivery: z.enum(['accepted', 'queued', 'unconfirmed']) }),
+    responseSchema: z.object({ inputId: z.literal(inputId), delivery: z.enum(['accepted', 'queued', 'unconfirmed', 'rejected']) }),
   } satisfies ApiOperation<unknown>;
 }
 
@@ -759,7 +759,8 @@ export function sendPlannerInputOperation(
     },
     headers: { 'Idempotency-Key': idempotencyKey },
     responseSchema: z.union([
-      z.object({ sessionId: z.literal(cardId), inputId: z.string().min(1), messageId: z.string().min(1).optional(), queued: z.literal(true) }).transform(receipt => ({
+      z.object({ sessionId: z.literal(cardId), inputId: z.string().min(1), messageId: z.string().min(1).optional(),
+        queued: z.literal(true), delivery: z.enum(['queued', 'dispatching', 'delivered', 'rejected', 'unknown', 'interrupted', 'withdrawn']).optional() }).transform(receipt => ({
         card_id: cardId, worker_session_id: cardId, entry_id: receipt.messageId ?? receipt.inputId, queued: true,
       })),
       sessionInputReceiptSchema.refine(receipt => receipt.sessionId === cardId).transform((receipt) => ({

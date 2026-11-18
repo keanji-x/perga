@@ -1,60 +1,71 @@
 using Perga.Contracts;
+using Perga.Kernel.Ports;
 
 namespace Perga.Kernel.Actors;
 
 public sealed partial class TrackActor
 {
-    private enum QueuedMessageState { Waiting, Steering, Sending, Processing, Unconfirmed, Removed, HandedOff }
+    private const string InstallationAuthor = "owner:installation";
+    private ISessionMessageStore Messages => _store.SessionMessages ?? throw new InvalidOperationException("Session message storage is unavailable.");
 
-    private sealed class QueuedMessage(string id, string hash, string text, long queuedAtMs)
+    private async Task<(IReadOnlyList<QueuedSessionMessageDto> Queue, IReadOnlyList<string> Handoffs)> ReadMessageQueueCoreAsync(
+        string sessionId, CancellationToken ct)
     {
-        public string Id { get; } = id;
-        public string Hash { get; } = hash;
-        public string Text { get; private set; } = text;
-        public long QueuedAtMs { get; } = queuedAtMs;
-        public QueuedMessageState State { get; set; }
+        if (_store.SessionMessages is null) return ([], []);
+        var messages = await Messages.ListQueueAsync(sessionId, ct).ConfigureAwait(false);
+        var queue = messages.Select(message => new QueuedSessionMessageDto(message.Id, message.Content, message.CreatedAtMs,
+            message.Delivery switch { "dispatching" => "steering", "unknown" => "unconfirmed", _ => "waiting" })).ToArray();
+        return (queue, await Messages.ListHandoffsAsync(sessionId, ct).ConfigureAwait(false));
+    }
 
-        public void Remove(bool stored = false)
+    private async Task SchedulePendingWakeCoreAsync(string sessionId, bool allowWorker = true)
+    {
+        if (!WorkspaceReady || _track.ClosedAtMs is not null || _sessionResumeHolds.ContainsKey(sessionId) ||
+            _activeTurns.ContainsKey(sessionId) || _steering.ContainsKey(sessionId) || _compactingSessions.Contains(sessionId) || _reservedWakeSessions.ContainsKey(sessionId) ||
+            !_sessions.TryGetValue(sessionId, out var session) || HoldsDurableSlot(session))
+            return;
+
+        ActiveAttemptState? attempt = null;
+        if (session.BoundAttemptId is { } attemptId &&
+            (!allowWorker || !_activeAttempts.TryGetValue(attemptId, out attempt) || attempt.Paused || attempt.Settling ||
+                attempt.InterruptionUnconfirmed || !string.Equals(attempt.AttemptDto.Status, "running", StringComparison.OrdinalIgnoreCase) ||
+                RequireTaskCore(attempt.TaskId).LatestAttemptId != attemptId))
+            return;
+
+        if (_store.SessionMessages is not null &&
+            await Messages.NextAsync(sessionId, session.BoundAttemptId, CancellationToken.None).ConfigureAwait(false) is { } next)
         {
-            State = stored ? QueuedMessageState.HandedOff : QueuedMessageState.Removed;
-            Text = string.Empty;
-        }
-    }
-
-    private readonly Dictionary<(string SessionId, string RequestKey), QueuedMessage> _queuedMessageRequests = [];
-
-    private QueuedMessage AddQueuedMessageCore(string sessionId, SendMessageRequest request, string hash)
-    {
-        var message = new QueuedMessage($"queued_{Guid.NewGuid():N}", hash, request.Content, NowMs());
-        _queuedMessageRequests.Add((sessionId, request.IdempotencyKey), message);
-        EnqueuePendingWakeCore(sessionId, "user", message.Text, inputId: message.Id, message: message);
-        return message;
-    }
-
-    private QueuedMessage RequireQueuedMessageCore(string sessionId, string inputId) =>
-        _queuedMessageRequests.FirstOrDefault(pair => pair.Key.SessionId == sessionId && pair.Value.Id == inputId
-            && pair.Value.State is not (QueuedMessageState.Removed or QueuedMessageState.HandedOff)).Value
-        ?? throw KernelException.NotFound("This message is no longer in the queue.");
-
-    private bool HasPendingUserMessagesCore(string sessionId) =>
-        _pendingWakes.TryGetValue(sessionId, out var pending) &&
-        pending.Any(wake => wake.Message?.State is QueuedMessageState.Waiting or QueuedMessageState.Steering);
-
-    private IReadOnlyList<QueuedSessionMessageDto> ReadQueuedMessagesCore(string sessionId) =>
-        _queuedMessageRequests.Where(pair => pair.Key.SessionId == sessionId && pair.Value.State is not (QueuedMessageState.Removed or QueuedMessageState.HandedOff))
-            .Select(pair => pair.Value).OrderBy(message => message.QueuedAtMs)
-            .Select(message => new QueuedSessionMessageDto(message.Id, message.Text, message.QueuedAtMs, message.State switch
+            if (attempt is not null)
+                await ScheduleWorkerMessageCoreAsync(next, attempt).ConfigureAwait(false);
+            else
             {
-                QueuedMessageState.Steering => "steering",
-                QueuedMessageState.Sending => "sending",
-                QueuedMessageState.Processing => "processing",
-                QueuedMessageState.Unconfirmed => "unconfirmed",
-                _ => "waiting",
-            })).ToArray();
+                var queued = session with { Status = "queued", UpdatedAtMs = NowMs() };
+                var evt = SessionUpdatedEvent(queued);
+                await _eventHub.EnsureInitializedFromStoreAsync(_store, CancellationToken.None).ConfigureAwait(false);
+                var input = await _store.SessionInputs.PromoteQueuedAsync(queued, next, evt, CancellationToken.None).ConfigureAwait(false);
+                if (input is not null)
+                {
+                    RegisterAcceptedInput(queued, input);
+                    await PublishInputEventAsync(evt).ConfigureAwait(false);
+                }
+            }
+            return;
+        }
 
-    private IReadOnlyList<string> ReadQueueHandoffsCore(string sessionId) =>
-        _queuedMessageRequests.Where(pair => pair.Key.SessionId == sessionId && pair.Value.State == QueuedMessageState.HandedOff)
-            .Select(pair => pair.Value).OrderByDescending(message => message.QueuedAtMs).Take(128).Select(message => message.Id).ToArray();
+        if (!_pendingWakes.TryGetValue(sessionId, out var wakes) || !wakes.TryDequeue(out var wake)) return;
+        if (wake.MailId is not null) Interlocked.Decrement(ref _queuedMailWakes);
+        var reservation = Guid.NewGuid();
+        _reservedWakeSessions.Add(sessionId, reservation);
+        _ = TrackBackgroundJob(() => RunReservedWakeAsync(sessionId, wake.TriggerKind, wake.Prompt, reservation,
+            _actorShutdownCts.Token, wake.MailId));
+    }
+
+    internal Task RecoverQueuedMessagesAsync(string sessionId, CancellationToken ct) =>
+        EnqueueAsync(async _ =>
+        {
+            await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
+            await SchedulePendingWakeCoreAsync(sessionId).ConfigureAwait(false);
+        }, ct);
 
     private static SessionItemDto WithMessageStatus(SessionItemDto item, ActiveTurnState? running)
     {
@@ -80,7 +91,7 @@ public sealed partial class TrackActor
 
     private void NotifyQueueChangedCore(string sessionId)
     {
-        // The notification carries only the existing session snapshot. Queue text stays in memory.
+        // Queue changes invalidate the existing session projection without publishing message content.
         var ct = _actorShutdownCts.Token;
         _ = TrackBackgroundJob(() => EnqueueAsync(async _ =>
         {
@@ -91,20 +102,28 @@ public sealed partial class TrackActor
         }, ct));
     }
 
-    internal Task<SteeringResult> SteerQueuedMessageAsync(string sessionId, string inputId, string turnId, CancellationToken ct) =>
-        AcceptSteeringAsync(sessionId, turnId, null, inputId, ct);
+    internal Task<SteeringResult> SteerQueuedMessageAsync(string sessionId, string inputId, string turnId, CancellationToken ct,
+        string? callerSessionId = null, string? attemptId = null) =>
+        AcceptSteeringAsync(sessionId, turnId, null, inputId, ct, callerSessionId: callerSessionId, attemptId: attemptId);
 
-    internal Task RemoveQueuedMessageAsync(string sessionId, string inputId, CancellationToken ct) =>
+    internal Task RemoveQueuedMessageAsync(string sessionId, string inputId, CancellationToken ct, string? callerSessionId = null, string? attemptId = null) =>
         EnqueueAsync(async _ =>
         {
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
-            ct.ThrowIfCancellationRequested();
-            var message = RequireQueuedMessageCore(sessionId, inputId);
-            if (message.State is QueuedMessageState.Steering or QueuedMessageState.Sending or QueuedMessageState.Processing)
-                throw KernelException.Conflict("This message is already being sent.");
+            RequireWorkerOperatorCore(callerSessionId);
+            var session = RequireSessionCore(sessionId);
+            if (callerSessionId is not null && session.BoundAttemptId is null)
+                throw KernelException.Forbidden("This tool withdraws Worker messages on the current Track.");
+            var worker = session.BoundAttemptId is not null;
+            var message = await Messages.GetAsync(sessionId, worker, inputId, ct).ConfigureAwait(false)
+                ?? throw KernelException.NotFound("Message not found in this session.");
+            if (attemptId is not null && attemptId != message.AttemptId)
+                throw KernelException.Conflict("The message belongs to another Worker attempt.");
+            if (message.Delivery == "withdrawn") return;
+            if (message.TurnId is not null || !await Messages.TransitionAsync(message with { Delivery = "withdrawn" }, "queued", ct).ConfigureAwait(false))
+                throw KernelException.Conflict("Only waiting messages can be withdrawn.");
 
-            message.Remove();
-            SchedulePendingWakeCore(sessionId);
             NotifyQueueChangedCore(sessionId);
+            await SchedulePendingWakeCoreAsync(sessionId, allowWorker: false).ConfigureAwait(false);
         }, ct);
 }

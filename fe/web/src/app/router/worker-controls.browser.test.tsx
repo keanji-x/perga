@@ -16,6 +16,7 @@ it('shows Worker progress and approvals, preserves retry targets, and stops the 
   let paused = false;
   let approvalOpen = true;
   let queuedRequests = 0;
+  let queuedVisible = false;
   let staleSteers = 0;
   let currentTurn = 'turn-1';
   const approval = { id: 'worker-ask', trackId: 'daily', status: 'open', createdAtMs: 4,
@@ -36,6 +37,7 @@ it('shows Worker progress and approvals, preserves retry targets, and stops the 
     if (request.path.startsWith(`${path}/items?`)) return ok({
       session: { id, trackId: 'daily', provider: 'codex', boundTaskId: 'task-1', boundAttemptId: 'attempt-1', status: paused ? 'idle' : 'running', createdAtMs: 1, updatedAtMs: 2 },
       items: [], unknownInput: null,
+      queuedMessages: queuedVisible ? [{ id: 'input-2', text: 'Inspect later', queuedAtMs: 2, state: 'waiting' }] : [],
       activeTurn: paused ? null : { id: currentTurn, sessionId: id, status: 'running', startedAtMs: Date.now() },
       worker: { task: { id: 'task-1', trackId: 'daily', blockId: 'block-1', taskKey: 'inspect', kind: 'agent', status: 'running', createdAtMs: 1, updatedAtMs: 2 },
         attemptId: 'attempt-1', phase: paused ? 'paused' : 'running', nativeSteer: true, sequence: 1, reset: false,
@@ -57,6 +59,10 @@ it('shows Worker progress and approvals, preserves retry targets, and stops the 
       settings = { ...(request.body as typeof settings), version: settings.version + 1 };
       return ok(settings);
     }
+    if (request.path === `${path}/messages/queue/input-2` && request.method === 'DELETE') {
+      queuedVisible = false;
+      return { status: 204, statusText: 'No Content', body: undefined };
+    }
     if (request.path === `${path}/messages`) {
       const body = request.body as { mode?: string; content?: string };
       if (body.content === 'Steer before the turn changes') {
@@ -69,6 +75,7 @@ it('shows Worker progress and approvals, preserves retry targets, and stops the 
       }
       if (body.mode !== 'queue') return ok({ inputId: 'input-1', turnId: currentTurn, delivery: 'delivered' });
       queuedRequests++;
+      queuedVisible = queuedRequests > 1;
       return queuedRequests === 1
         ? { status: 502, statusText: 'Bad gateway', body: { error: 'The response was lost.' } }
         : ok({ inputId: 'input-2', delivery: 'queued' });
@@ -133,6 +140,12 @@ it('shows Worker progress and approvals, preserves retry targets, and stops the 
     expect(queued[0].headers?.['Idempotency-Key']).toBeTruthy();
     expect(queued[1].headers?.['Idempotency-Key']).toBe(queued[0].headers?.['Idempotency-Key']);
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Retry same message' })).toBeNull());
+    const sharedQueue = within(await screen.findByRole('region', { name: 'Queued messages' }));
+    expect(await sharedQueue.findByText('Inspect later')).toBeVisible();
+    fireEvent.click(sharedQueue.getByRole('button', { name: 'Delete this message' }));
+    await waitFor(() => expect(view.requests.some(request =>
+      request.method === 'DELETE' && request.path === `${path}/messages/queue/input-2`)).toBe(true));
+    await waitFor(() => expect(document.querySelector('[data-nc-pending-entry="input-2"]')).toBeNull());
 
     fireEvent.change(screen.getByRole('combobox', { name: 'Delivery' }), { target: { value: 'steer' } });
     await act(async () => { composer.textContent = 'Steer before the turn changes'; fireEvent.input(composer); await Promise.resolve(); });
@@ -186,5 +199,46 @@ it('dispatches a Worker from the report with only a goal', async () => {
     expect(advanced.body).toEqual({ goal: 'Inspect the release', access: 'read_only', acceptance: 'List missing checks',
       dependsOn: ['build', 'review'], gate: 'dotnet test', provider: 'codex', model: 'gpt-5.4' });
     expect(advanced.headers?.['Idempotency-Key']).not.toBe(request?.headers?.['Idempotency-Key']);
+  } finally { view.client.clear(); }
+});
+
+it('keeps one timeline item when a waiting conversation message is steered', async () => {
+  await page.viewport(1280, 820);
+  const id = 'second-planner';
+  const path = `/api/v1/sessions/${id}`;
+  const text = 'Use the shared message identity';
+  let handedOff = false;
+  const view = renderDailyFixture({ initial: '/track/daily?panel=conversations', extraPlanner: true, reply: request => {
+    if (request.path === '/api/v1/bootstrap') return ok({ assistantProviders: true, conversationInitialInput: true,
+      webCompatVersion: WEB_COMPAT_VERSION, minWebCompatVersion: WEB_COMPAT_VERSION, syncEventVersion: 29, dbInstanceId: 'queue-handoff' });
+    if (request.path.startsWith(`${path}/items?`)) return ok({
+      session: { id, trackId: 'daily', provider: 'codex', status: 'running', createdAtMs: 1, updatedAtMs: 2 },
+      activeTurn: { id: 'turn-1', sessionId: id, status: 'running', startedAtMs: Date.now() },
+      unknownInput: null, canSteer: true,
+      queuedMessages: handedOff ? [] : [{ id: 'message-1', text, queuedAtMs: 2, state: 'waiting' }],
+      queueHandoffIds: handedOff ? ['message-1'] : [],
+      items: [{
+        id: 4, sessionId: id, turnId: 'turn-1', kind: 'user', createdAtMs: 1, turnStatus: 'running',
+        messageStatus: 'processing', payload: { v: 1, inputId: 'initial', content: 'Start this turn', triggerKind: 'user' },
+      }, ...(handedOff ? [{
+        id: 5, sessionId: id, turnId: 'turn-1', kind: 'user', createdAtMs: 3, turnStatus: 'running',
+        messageStatus: 'processing', payload: { v: 1, inputId: 'message-1', content: text, triggerKind: 'user', steered: true },
+      }] : [])],
+    });
+    if (request.path === `${path}/messages/queue/message-1/steer`) {
+      expect(request.body).toEqual({ turnId: 'turn-1' });
+      handedOff = true;
+      return ok({ inputId: 'message-1', delivery: 'accepted' });
+    }
+    return undefined;
+  } });
+  try {
+    fireEvent.click(await screen.findByRole('button', { name: /Conversation Other conversation/ }));
+    const queue = within(await screen.findByRole('region', { name: 'Queued messages' }));
+    expect(await queue.findByText(text)).toBeVisible();
+    await page.getByRole('button', { name: 'Say it now' }).click();
+    await waitFor(() => expect(view.requests.some(request => request.path === `${path}/messages/queue/message-1/steer`)).toBe(true));
+    await waitFor(() => expect(document.querySelector('[data-nc-pending-entry="message-1"]')).toBeNull());
+    await waitFor(() => expect(screen.getAllByText(text)).toHaveLength(1));
   } finally { view.client.clear(); }
 });

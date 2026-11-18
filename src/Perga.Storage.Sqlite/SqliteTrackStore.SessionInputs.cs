@@ -12,11 +12,12 @@ public sealed partial class SqliteTrackStore : ISessionInputStore
     private const string OwnerAuthor = "owner:installation";
     private const string InputSelect = """
         SELECT i.id AS InputId, i.turn_id AS TurnId, i.session_id AS SessionId,
-               i.delivery_state AS DeliveryState, i.resolved_at_ms AS ResolvedAtMs, t.status AS TurnStatus,
+               CASE WHEN i.delivery = 'queued' THEN 'accepted' ELSE i.delivery END AS DeliveryState, i.resolved_at_ms AS ResolvedAtMs, t.status AS TurnStatus,
                i.request_hash AS RequestHash, i.content AS Content, t.turn_index AS TurnIndex,
+               i.kind IN ('queue', 'steer') AS IsQueuedFollowUp,
                t.epoch AS Epoch, t.provider AS Provider, t.model AS Model, s.track_id AS TrackId,
                track.area_id AS AreaId, t.started_at_ms AS StartedAtMs
-        FROM session_inputs i
+        FROM session_messages i
         JOIN session_turns t ON t.session_id = i.session_id AND t.id = i.turn_id
         JOIN agent_sessions s ON s.id = i.session_id
         JOIN tracks track ON track.id = s.track_id
@@ -46,16 +47,16 @@ public sealed partial class SqliteTrackStore : ISessionInputStore
             new { SessionId = sessionId }, tx, cancellationToken: ct));
 
     public Task<PersistedSessionInput?> FindByKeyAsync(string sessionId, string key, CancellationToken ct) =>
-        FindInputAsync("WHERE i.session_id = @SessionId AND i.author_id = @Author AND i.request_key = @Key",
+        FindInputAsync("WHERE i.session_id = @SessionId AND i.source = 'session' AND i.author_id = @Author AND i.request_key = @Key AND i.kind = 'input'",
             new { SessionId = sessionId, Author = OwnerAuthor, Key = key }, ct);
 
     public Task<PersistedSessionInput?> FindByIdAsync(string sessionId, string inputId, CancellationToken ct) =>
-        FindInputAsync("WHERE i.session_id = @SessionId AND i.author_id = @Author AND i.id = @InputId",
+        FindInputAsync("WHERE i.session_id = @SessionId AND i.source = 'session' AND i.author_id = @Author AND i.id = @InputId",
             new { SessionId = sessionId, Author = OwnerAuthor, InputId = inputId }, ct);
 
     public Task<PersistedSessionInput?> FindUnresolvedAsync(string sessionId, CancellationToken ct) =>
         FindInputAsync("""
-            WHERE i.session_id = @SessionId AND i.author_id = @Author AND i.resolved_at_ms IS NULL
+            WHERE i.session_id = @SessionId AND i.source = 'session' AND i.author_id = @Author AND i.resolved_at_ms IS NULL
               AND t.status = 'unknown' ORDER BY t.turn_index DESC LIMIT 1
             """, new { SessionId = sessionId, Author = OwnerAuthor }, ct);
 
@@ -64,7 +65,7 @@ public sealed partial class SqliteTrackStore : ISessionInputStore
         EnsureInitialized();
         await using var conn = await OpenReadConnectionAsync(ct).ConfigureAwait(false);
         var rows = await conn.QueryAsync<InputRow>(new CommandDefinition(
-            InputSelect + "\nWHERE s.track_id = @TrackId AND i.delivery_state = 'accepted' AND t.status = 'queued';",
+            InputSelect + "\nWHERE s.track_id = @TrackId AND i.source = 'session' AND i.delivery = 'queued' AND t.status = 'queued';",
             new { TrackId = trackId }, cancellationToken: ct)).ConfigureAwait(false);
         return rows.Select(row => row.ToInput()).ToArray();
     }
@@ -101,17 +102,35 @@ public sealed partial class SqliteTrackStore : ISessionInputStore
         AgentSessionDto session, SessionInputRequest request, EventEnvelopeDto sessionEvent, CancellationToken ct) =>
         _writer.EnqueueAsync(async (conn, tx, innerCt) =>
         {
-            var reserved = await conn.ExecuteAsync(new CommandDefinition(
-                """
-                UPDATE agent_sessions SET status = 'queued', updated_at_ms = @UpdatedAtMs
-                WHERE id = @Id AND status NOT IN ('queued', 'running', 'unknown');
-                """, new { session.Id, session.UpdatedAtMs }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
-            if (reserved != 1)
+            if (!await ReserveInputSlotAsync(conn, tx, session, innerCt).ConfigureAwait(false))
                 throw Perga.Kernel.KernelException.Conflict("The session already has an active or unresolved turn.");
             var input = await InsertInputAsync(conn, tx, session, request, innerCt).ConfigureAwait(false);
             await InsertEventInternalAsync(conn, tx, sessionEvent, innerCt).ConfigureAwait(false);
             return input;
         }, ct);
+
+    public Task<PersistedSessionInput?> PromoteQueuedAsync(AgentSessionDto session, SessionMessage message,
+        EventEnvelopeDto sessionEvent, CancellationToken ct) =>
+        _writer.EnqueueAsync<PersistedSessionInput?>(async (conn, tx, innerCt) =>
+        {
+            if (!await conn.ExecuteScalarAsync<bool>(new CommandDefinition("""
+                SELECT EXISTS(SELECT 1 FROM session_messages WHERE session_id = @SessionId AND source = 'session'
+                    AND id = @Id AND delivery = 'queued' AND turn_id IS NULL);
+                """, new { SessionId = session.Id, message.Id }, tx, cancellationToken: innerCt)).ConfigureAwait(false))
+                return null;
+            if (!await ReserveInputSlotAsync(conn, tx, session, innerCt).ConfigureAwait(false))
+                return null;
+            var input = await BindInputAsync(conn, tx, session, message, existing: true, innerCt).ConfigureAwait(false);
+            await InsertEventInternalAsync(conn, tx, sessionEvent, innerCt).ConfigureAwait(false);
+            return input;
+        }, ct);
+
+    private static async Task<bool> ReserveInputSlotAsync(SqliteConnection conn, SqliteTransaction tx,
+        AgentSessionDto session, CancellationToken ct) =>
+        await conn.ExecuteAsync(new CommandDefinition("""
+            UPDATE agent_sessions SET status = 'queued', updated_at_ms = @UpdatedAtMs
+            WHERE id = @Id AND status NOT IN ('queued', 'running', 'unknown');
+            """, new { session.Id, session.UpdatedAtMs }, tx, cancellationToken: ct)).ConfigureAwait(false) == 1;
 
     public Task<PersistedSessionInput?> CreateAsync(
         SessionCreateIntent intent, AgentSessionDto session, SessionInputRequest? firstInput,
@@ -132,26 +151,41 @@ public sealed partial class SqliteTrackStore : ISessionInputStore
             return input;
         }, ct);
 
-    private static async Task<PersistedSessionInput> InsertInputAsync(
-        SqliteConnection conn, SqliteTransaction tx, AgentSessionDto session, SessionInputRequest request, CancellationToken ct)
+    private static Task<PersistedSessionInput> InsertInputAsync(
+        SqliteConnection conn, SqliteTransaction tx, AgentSessionDto session, SessionInputRequest request, CancellationToken ct) =>
+        BindInputAsync(conn, tx, session,
+            new SessionMessage($"inp_{Guid.NewGuid():N}", session.Id, null, OwnerAuthor, request.Key, request.Hash,
+                null, null, request.Content, "queued", session.UpdatedAtMs, "input"), existing: false, ct);
+
+    private static async Task<PersistedSessionInput> BindInputAsync(SqliteConnection conn, SqliteTransaction tx,
+        AgentSessionDto session, SessionMessage message, bool existing, CancellationToken ct)
     {
         var turnIndex = checked(await ReadLastTurnIndexAsync(conn, tx, session.Id, ct).ConfigureAwait(false) + 1);
         var turnId = $"trn_{turnIndex:D6}_{Guid.NewGuid():N}";
-        var inputId = $"inp_{Guid.NewGuid():N}";
         await conn.ExecuteAsync(new CommandDefinition(
             """
             INSERT INTO session_turns (id, session_id, turn_index, epoch, trigger_kind, status, accepted_at_ms, provider, model)
             VALUES (@TurnId, @SessionId, @TurnIndex, @Epoch, 'user', 'queued', @Now, @Provider, @Model);
-            INSERT INTO session_inputs (id, session_id, turn_id, author_id, request_key, request_hash, content, accepted_at_ms, delivery_state)
-            VALUES (@InputId, @SessionId, @TurnId, @Author, @Key, @Hash, @Content, @Now, 'accepted');
-            INSERT INTO session_items (session_id, turn_id, kind, payload_json, created_at_ms, accepted_input_id)
-            VALUES (@SessionId, @TurnId, 'user', '{}', @Now, @InputId);
-            """, new { TurnId = turnId, InputId = inputId, SessionId = session.Id, TurnIndex = turnIndex,
-                session.Epoch, Now = session.UpdatedAtMs, session.Provider, session.Model,
-                Author = OwnerAuthor, request.Key, request.Hash, request.Content }, tx, cancellationToken: ct)).ConfigureAwait(false);
+            """, new { TurnId = turnId, SessionId = session.Id, TurnIndex = turnIndex,
+                session.Epoch, Now = session.UpdatedAtMs, session.Provider, session.Model }, tx, cancellationToken: ct)).ConfigureAwait(false);
 
-        return new PersistedSessionInput(new(inputId, turnId, session.Id, "accepted", "queued", null),
-            request.Hash, request.Content, turnIndex, session.Epoch, session.Provider, session.Model);
+        long ordinal;
+        if (existing)
+            ordinal = await conn.ExecuteScalarAsync<long>(new CommandDefinition("""
+                UPDATE session_messages SET turn_id = @TurnId WHERE session_id = @SessionId AND source = 'session'
+                    AND id = @Id AND delivery = 'queued' AND turn_id IS NULL RETURNING ordinal;
+                """, new { TurnId = turnId, SessionId = session.Id, message.Id }, tx, cancellationToken: ct)).ConfigureAwait(false);
+        else
+            ordinal = await InsertSessionMessageAsync(conn, tx, message with { TurnId = turnId }, ct).ConfigureAwait(false);
+
+        await conn.ExecuteAsync(new CommandDefinition("""
+            INSERT INTO session_items (session_id, turn_id, kind, payload_json, created_at_ms, message_ordinal)
+            VALUES (@SessionId, @TurnId, 'user', '{}', @Now, @Ordinal);
+            """, new { SessionId = session.Id, TurnId = turnId, Now = session.UpdatedAtMs, Ordinal = ordinal },
+            tx, cancellationToken: ct)).ConfigureAwait(false);
+
+        return new PersistedSessionInput(new(message.Id, turnId, session.Id, "accepted", "queued", null),
+            message.RequestHash, message.Content, turnIndex, session.Epoch, session.Provider, session.Model, existing);
     }
 
     public Task<bool> ClaimAsync(
@@ -160,9 +194,9 @@ public sealed partial class SqliteTrackStore : ISessionInputStore
         {
             var updated = await conn.ExecuteAsync(new CommandDefinition(
                 """
-                UPDATE session_inputs SET delivery_state = 'dispatching', dispatch_started_at_ms = @Now
-                WHERE id = @InputId AND delivery_state = 'accepted';
-                """, new { input.Receipt.InputId, Now = session.UpdatedAtMs }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
+                UPDATE session_messages SET delivery = 'dispatching'
+                WHERE turn_id = @TurnId AND source = 'session' AND id = @InputId AND delivery = 'queued';
+                """, new { input.Receipt.InputId, input.Receipt.TurnId }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
             if (updated == 0) return false;
             RequireOne(updated);
             RequireOne(await conn.ExecuteAsync(new CommandDefinition(
@@ -178,9 +212,9 @@ public sealed partial class SqliteTrackStore : ISessionInputStore
         {
             RequireOne(await conn.ExecuteAsync(new CommandDefinition(
                 """
-                UPDATE session_inputs SET delivery_state = 'delivered'
-                WHERE id = @InputId AND delivery_state IN ('dispatching', 'delivered');
-                """, new { input.Receipt.InputId }, tx, cancellationToken: innerCt)).ConfigureAwait(false));
+                UPDATE session_messages SET delivery = 'delivered', delivered_turn_id = turn_id
+                WHERE turn_id = @TurnId AND source = 'session' AND id = @InputId AND delivery IN ('dispatching', 'delivered');
+                """, new { input.Receipt.InputId, input.Receipt.TurnId }, tx, cancellationToken: innerCt)).ConfigureAwait(false));
             await conn.ExecuteAsync(new CommandDefinition(
                 """
                 UPDATE agent_sessions SET native_thread_id = COALESCE(@Thread, native_thread_id) WHERE id = @SessionId;
@@ -195,8 +229,8 @@ public sealed partial class SqliteTrackStore : ISessionInputStore
         _writer.EnqueueAsync(async (conn, tx, innerCt) =>
         {
             RequireOne(await conn.ExecuteAsync(new CommandDefinition(
-                "UPDATE session_inputs SET delivery_state = @Delivery WHERE id = @InputId AND delivery_state IN ('dispatching', 'delivered');",
-                new { Delivery = delivery, input.Receipt.InputId }, tx, cancellationToken: innerCt)).ConfigureAwait(false));
+                "UPDATE session_messages SET delivery = @Delivery WHERE turn_id = @TurnId AND source = 'session' AND id = @InputId AND delivery IN ('dispatching', 'delivered');",
+                new { Delivery = delivery, input.Receipt.InputId, input.Receipt.TurnId }, tx, cancellationToken: innerCt)).ConfigureAwait(false));
             RequireOne(await conn.ExecuteAsync(new CommandDefinition(
                 """
                 UPDATE session_turns SET status = @Status, usage_json = @UsageJson, error_text = @ErrorText,
@@ -223,10 +257,10 @@ public sealed partial class SqliteTrackStore : ISessionInputStore
     {
         RequireOne(await conn.ExecuteAsync(new CommandDefinition(
             """
-            UPDATE session_inputs SET resolved_at_ms = @Now
-            WHERE id = @InputId AND resolved_at_ms IS NULL
+            UPDATE session_messages SET resolved_at_ms = @Now
+            WHERE source = 'session' AND turn_id = @TurnId AND id = @InputId AND resolved_at_ms IS NULL
               AND EXISTS (SELECT 1 FROM session_turns WHERE id = turn_id AND status = 'unknown');
-            """, new { input.Receipt.InputId, Now = now }, tx, cancellationToken: ct)).ConfigureAwait(false));
+            """, new { input.Receipt.InputId, input.Receipt.TurnId, Now = now }, tx, cancellationToken: ct)).ConfigureAwait(false));
     }
 
     public Task<IReadOnlyList<(string TrackId, PersistedSessionInput Input)>> RecoverSessionInputsAsync(CancellationToken ct) =>
@@ -234,18 +268,17 @@ public sealed partial class SqliteTrackStore : ISessionInputStore
         {
             var now = _timeProvider.GetUtcNow().ToUnixTimeMilliseconds();
             var interrupted = await conn.QueryAsync<InputRow>(new CommandDefinition(
-                InputSelect + "\nWHERE t.status = 'running';", transaction: tx, cancellationToken: innerCt)).ConfigureAwait(false);
+                InputSelect + "\nWHERE i.source = 'session' AND t.status = 'running';", transaction: tx, cancellationToken: innerCt)).ConfigureAwait(false);
             await conn.ExecuteAsync(new CommandDefinition(
                 """
                 UPDATE agent_sessions SET status = 'unknown', updated_at_ms = @Now
                 WHERE id IN (
-                    SELECT i.session_id FROM session_inputs i JOIN session_turns t ON t.id = i.turn_id
-                    WHERE t.status = 'running');
+                    SELECT i.session_id FROM session_messages i JOIN session_turns t ON t.id = i.turn_id
+                    WHERE i.source = 'session' AND t.status = 'running');
                 UPDATE session_turns SET status = 'unknown', error_text = 'Host stopped during dispatch.'
-                WHERE status = 'running' AND id IN (SELECT turn_id FROM session_inputs);
-                UPDATE session_inputs SET delivery_state = 'unknown' WHERE delivery_state = 'dispatching';
-                UPDATE worker_messages SET delivery = 'unknown' WHERE delivery = 'dispatching';
-                UPDATE worker_messages SET delivery = 'interrupted' WHERE delivery = 'queued';
+                WHERE status = 'running' AND id IN (SELECT turn_id FROM session_messages WHERE source = 'session');
+                UPDATE session_messages SET delivery = 'unknown' WHERE delivery = 'dispatching';
+                UPDATE session_message_steers SET delivery = 'unknown' WHERE delivery = 'dispatching';
                 """, new { Now = now }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
 
             foreach (var row in interrupted)
@@ -260,7 +293,7 @@ public sealed partial class SqliteTrackStore : ISessionInputStore
             }
 
             var queued = await conn.QueryAsync<InputRow>(new CommandDefinition(
-                InputSelect + "\nWHERE i.delivery_state = 'accepted' ORDER BY i.accepted_at_ms, i.id;",
+                InputSelect + "\nWHERE i.source = 'session' AND i.delivery = 'queued' ORDER BY i.ordinal;",
                 transaction: tx, cancellationToken: innerCt)).ConfigureAwait(false);
             return queued.Select(row => (row.TrackId, row.ToInput())).ToArray();
         }, ct);
@@ -286,6 +319,7 @@ public sealed partial class SqliteTrackStore : ISessionInputStore
         public long? ResolvedAtMs { get; init; }
         public string RequestHash { get; init; } = "";
         public string Content { get; init; } = "";
+        public bool IsQueuedFollowUp { get; init; }
         public int TurnIndex { get; init; }
         public int Epoch { get; init; }
         public string Provider { get; init; } = "";
@@ -293,6 +327,6 @@ public sealed partial class SqliteTrackStore : ISessionInputStore
 
         public PersistedSessionInput ToInput() => new(
             new(InputId, TurnId, SessionId, DeliveryState, TurnStatus, ResolvedAtMs),
-            RequestHash, Content, TurnIndex, Epoch, Provider, Model);
+            RequestHash, Content, TurnIndex, Epoch, Provider, Model, IsQueuedFollowUp);
     }
 }

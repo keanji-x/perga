@@ -34,6 +34,8 @@ public static class KernelMcpToolNames
     public const string TaskFail = "perga_task_fail";
     public const string SessionRead = "perga_session_read";
     public const string SessionSend = "perga_session_send";
+    public const string SessionWithdraw = "perga_session_withdraw";
+    public const string SessionSteerQueued = "perga_session_steer_queued";
     public const string SessionInterrupt = "perga_session_interrupt";
     public const string SessionUpdateSettings = "perga_session_update_settings";
     public const string TaskDispatch = "perga_task_dispatch";
@@ -60,6 +62,8 @@ public static class KernelMcpToolNames
         TaskFail,
         SessionRead,
         SessionSend,
+        SessionWithdraw,
+        SessionSteerQueued,
         SessionInterrupt,
         SessionUpdateSettings,
         TaskDispatch
@@ -99,7 +103,8 @@ public static class KernelMcpCatalog
         KernelMcpToolNames.TaskFail;
 
     public static bool IsWorkerOperatorOnly(string toolName) => toolName is
-        KernelMcpToolNames.SessionRead or KernelMcpToolNames.SessionSend or KernelMcpToolNames.SessionInterrupt or
+        KernelMcpToolNames.SessionRead or KernelMcpToolNames.SessionSend or KernelMcpToolNames.SessionWithdraw or
+        KernelMcpToolNames.SessionSteerQueued or KernelMcpToolNames.SessionInterrupt or
         KernelMcpToolNames.SessionUpdateSettings or KernelMcpToolNames.TaskDispatch;
 
     private static IReadOnlyList<McpToolDescriptor> BuildDescriptors()
@@ -148,6 +153,10 @@ public static class KernelMcpCatalog
                 Schema("""{"type":"object","required":["sessionId"],"properties":{"sessionId":{"type":"string"},"beforeId":{"type":"integer"},"limit":{"type":"integer","minimum":1,"maximum":100},"activityTurnId":{"type":"string"},"afterSequence":{"type":"integer","minimum":0},"waitMs":{"type":"integer","minimum":0,"maximum":10000}}}""")),
             new(KernelMcpToolNames.SessionSend, "Set mode to steer with the current turnId, or queue without turnId for the next turn. Queue keeps an interrupted Worker paused. Omit mode and turnId to send to an idle Worker or resume a paused Worker. Retry an uncertain send with its original requestKey, target and content.",
                 Schema("""{"type":"object","required":["sessionId","attemptId","content","requestKey"],"properties":{"sessionId":{"type":"string"},"attemptId":{"type":"string"},"turnId":{"type":"string"},"content":{"type":"string"},"requestKey":{"type":"string"},"mode":{"type":"string","enum":["steer","queue"]},"allowQueue":{"type":"boolean","description":"Legacy fallback for providers without native steering. Use mode for explicit delivery."}}}""")),
+            new(KernelMcpToolNames.SessionWithdraw, "Withdraw a waiting Worker message using its inputId. Retry with the same inputId.",
+                Schema("""{"type":"object","required":["sessionId","attemptId","inputId"],"properties":{"sessionId":{"type":"string"},"attemptId":{"type":"string"},"inputId":{"type":"string"}}}""")),
+            new(KernelMcpToolNames.SessionSteerQueued, "Steer a waiting Worker message into the exact running turn, preserving its inputId.",
+                Schema("""{"type":"object","required":["sessionId","attemptId","inputId","turnId"],"properties":{"sessionId":{"type":"string"},"attemptId":{"type":"string"},"inputId":{"type":"string"},"turnId":{"type":"string"}}}""")),
             new(KernelMcpToolNames.SessionInterrupt, "Interrupt the specified Worker turn and keep its Attempt available for continuation.",
                 Schema("""{"type":"object","required":["sessionId","attemptId","turnId"],"properties":{"sessionId":{"type":"string"},"attemptId":{"type":"string"},"turnId":{"type":"string"}}}""")),
             new(KernelMcpToolNames.SessionUpdateSettings, "Set a Worker's configuration for the next turn. Read the latest providerConfiguration and settings first. Use null for a reported provider default. Restoring approval requests after deny requires installation owner authorization through the human HTTP interface.",
@@ -266,6 +275,16 @@ public static class KernelMcpDispatcher
                     JsonHelpers.TryGetPropertyIgnoreCase(args, ["allowQueue"], out var allowQueue) && allowQueue.ValueKind == JsonValueKind.True, mode);
                 return JsonHelpers.ToElement(await kernel.SendWorkerMessageAsync(sessionId, request, caller, ct).ConfigureAwait(false));
             }
+
+            case KernelMcpToolNames.SessionWithdraw:
+                await kernel.RemoveQueuedMessageAsync(RequireStringArg(args, ["sessionId"]), RequireStringArg(args, ["inputId"]),
+                    ct, caller, RequireStringArg(args, ["attemptId"])).ConfigureAwait(false);
+                return JsonHelpers.ToElement(new { ok = true });
+
+            case KernelMcpToolNames.SessionSteerQueued:
+                return JsonHelpers.ToElement(await kernel.SteerQueuedMessageAsync(RequireStringArg(args, ["sessionId"]),
+                    RequireStringArg(args, ["inputId"]), RequireStringArg(args, ["turnId"]), ct, caller,
+                    RequireStringArg(args, ["attemptId"])).ConfigureAwait(false));
 
             case KernelMcpToolNames.SessionInterrupt:
                 await kernel.InterruptWorkerAsync(RequireStringArg(args, ["sessionId"]), RequireStringArg(args, ["attemptId"]),

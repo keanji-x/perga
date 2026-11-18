@@ -112,7 +112,7 @@ public sealed record SendMessageRequest(
     bool SteerIfRunning = false,
     bool QueueIfBusy = false);
 
-public sealed record QueuedMessageReceipt(string SessionId, string InputId, bool Queued = true)
+public sealed record QueuedMessageReceipt(string SessionId, string InputId, bool Queued = true, string? Delivery = null)
 {
     public string MessageId => InputId;
 }
@@ -162,7 +162,10 @@ public sealed record WorkerMessageRequest(
 
 public sealed record WorkerCompletionOrigin(string Token, string TurnId);
 
-public sealed record WorkerMessageReceipt(string? TurnId, string Delivery, string InputId);
+public sealed record WorkerMessageReceipt(string? TurnId, string Delivery, string InputId)
+{
+    public string MessageId => InputId;
+}
 
 public sealed record DispatchWorkerRequest(string Goal, string? Access = null, string? Acceptance = null,
     IReadOnlyList<string>? DependsOn = null, string? Gate = null, string? Provider = null, string? Model = null);

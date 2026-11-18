@@ -142,8 +142,8 @@ export function useConversationStore(
        up is shown again (`tombstoneHides`). */
   const [forgotten, setForgotten] = useState<ReadonlyMap<string, number>>(() => new Map());
   // Let the initial-input owner account for its suppressed rows before ordinary local tombstones filter the queue.
-  const savedMessageIds = useMemo(() => new Set(serverTurns.flatMap(turn =>
-    isUserConversationTurn(turn) && turn.human !== undefined ? [turn.human.messageId] : [])), [serverTurns]);
+  const savedMessageIds = useMemo(() => new Set(displayItems.flatMap(item =>
+    item.source.kind === 'human' ? [item.source.message_id] : [])), [displayItems]);
   const [handoff, setHandoff] = useState(() => ({ cardId, source: servedQueue, saved: savedMessageIds, ids: run.data?.queue_handoff_ids, rows: servedQueue }));
   let handoffRows = handoff.rows;
   if (handoff.cardId !== cardId || handoff.source !== servedQueue || handoff.saved !== savedMessageIds || handoff.ids !== run.data?.queue_handoff_ids) {
@@ -359,7 +359,8 @@ export function useConversationStore(
       async () => {
         if (pergaInputProtocol) {
           const result = await mutations.steerQueuedSessionMessage(entry.entry_id, steeringTarget!);
-          if (result.delivery === 'queued') return { kind: 'not_running' };
+          if (result.delivery === 'queued' || result.delivery === 'rejected') return { kind: 'not_running' };
+          if (result.delivery === 'unconfirmed') return { kind: 'unanswered' };
           return { kind: 'done' };
         }
         return (canonical

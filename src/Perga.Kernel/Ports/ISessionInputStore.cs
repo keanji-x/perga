@@ -6,7 +6,7 @@ public sealed record SessionInputRequest(string Key, string Hash, string Content
 
 public sealed record PersistedSessionInput(
     SessionInputReceipt Receipt, string RequestHash, string Content, int TurnIndex, int Epoch,
-    string Provider, string? Model);
+    string Provider, string? Model, bool IsQueuedFollowUp = false);
 
 public sealed record SessionCreateIntent(string TrackId, string Key, string Hash);
 
@@ -21,6 +21,8 @@ public interface ISessionInputStore
     Task<StoredSessionCreation?> FindCreationAsync(SessionCreateIntent intent, CancellationToken ct);
     Task<PersistedSessionInput> AcceptAsync(
         AgentSessionDto session, SessionInputRequest request, EventEnvelopeDto sessionEvent, CancellationToken ct);
+    Task<PersistedSessionInput?> PromoteQueuedAsync(AgentSessionDto session, SessionMessage message,
+        EventEnvelopeDto sessionEvent, CancellationToken ct);
     Task<PersistedSessionInput?> CreateAsync(
         SessionCreateIntent intent, AgentSessionDto session, SessionInputRequest? firstInput,
         EventEnvelopeDto sessionEvent, CancellationToken ct);

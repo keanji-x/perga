@@ -341,7 +341,11 @@ public static class ApiV1Endpoints
             if (string.IsNullOrWhiteSpace(body.Content) || string.IsNullOrWhiteSpace(body.TurnId))
                 return HttpErrorHandling.BadRequest("invalid_argument", "A target turn and message are required.");
 
-            var result = await kernel.SteerMessageAsync(sessionId, body.TurnId, body.Content, ct).ConfigureAwait(false);
+            var keys = ctx.Request.Headers["Idempotency-Key"];
+            if (keys.Count > 1)
+                return HttpErrorHandling.BadRequest("invalid_argument", "Only one Idempotency-Key is allowed.");
+            var result = await kernel.SteerMessageAsync(sessionId, body.TurnId, body.Content, ct,
+                keys.Count == 0 ? null : keys.ToString().Trim()).ConfigureAwait(false);
             return Results.Json(result, PergaJsonDefaults.ApiOptions);
         });
 
