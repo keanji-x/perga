@@ -15,7 +15,7 @@ public sealed partial class SqliteTrackStore : ISessionInputStore
                CASE WHEN i.delivery = 'queued' THEN 'accepted' ELSE i.delivery END AS DeliveryState, i.resolved_at_ms AS ResolvedAtMs, t.status AS TurnStatus,
                i.request_hash AS RequestHash, i.content AS Content, t.turn_index AS TurnIndex,
                i.kind IN ('queue', 'steer') AS IsQueuedFollowUp,
-               t.epoch AS Epoch, t.provider AS Provider, t.model AS Model, s.track_id AS TrackId,
+               t.epoch AS Epoch, t.provider AS Provider, t.model AS Model, t.reasoning_effort AS ReasoningEffort, s.track_id AS TrackId,
                track.area_id AS AreaId, t.started_at_ms AS StartedAtMs
         FROM session_messages i
         JOIN session_turns t ON t.session_id = i.session_id AND t.id = i.turn_id
@@ -164,10 +164,10 @@ public sealed partial class SqliteTrackStore : ISessionInputStore
         var turnId = $"trn_{turnIndex:D6}_{Guid.NewGuid():N}";
         await conn.ExecuteAsync(new CommandDefinition(
             """
-            INSERT INTO session_turns (id, session_id, turn_index, epoch, trigger_kind, status, accepted_at_ms, provider, model)
-            VALUES (@TurnId, @SessionId, @TurnIndex, @Epoch, 'user', 'queued', @Now, @Provider, @Model);
+            INSERT INTO session_turns (id, session_id, turn_index, epoch, trigger_kind, status, accepted_at_ms, provider, model, reasoning_effort)
+            VALUES (@TurnId, @SessionId, @TurnIndex, @Epoch, 'user', 'queued', @Now, @Provider, @Model, @ReasoningEffort);
             """, new { TurnId = turnId, SessionId = session.Id, TurnIndex = turnIndex,
-                session.Epoch, Now = session.UpdatedAtMs, session.Provider, session.Model }, tx, cancellationToken: ct)).ConfigureAwait(false);
+                session.Epoch, Now = session.UpdatedAtMs, session.Provider, session.Model, session.ReasoningEffort }, tx, cancellationToken: ct)).ConfigureAwait(false);
 
         long ordinal;
         if (existing)
@@ -185,7 +185,7 @@ public sealed partial class SqliteTrackStore : ISessionInputStore
             tx, cancellationToken: ct)).ConfigureAwait(false);
 
         return new PersistedSessionInput(new(message.Id, turnId, session.Id, "accepted", "queued", null),
-            message.RequestHash, message.Content, turnIndex, session.Epoch, session.Provider, session.Model, existing);
+            message.RequestHash, message.Content, turnIndex, session.Epoch, session.Provider, session.Model, session.ReasoningEffort, existing);
     }
 
     public Task<bool> ClaimAsync(
@@ -324,9 +324,10 @@ public sealed partial class SqliteTrackStore : ISessionInputStore
         public int Epoch { get; init; }
         public string Provider { get; init; } = "";
         public string? Model { get; init; }
+        public string? ReasoningEffort { get; init; }
 
         public PersistedSessionInput ToInput() => new(
             new(InputId, TurnId, SessionId, DeliveryState, TurnStatus, ResolvedAtMs),
-            RequestHash, Content, TurnIndex, Epoch, Provider, Model, IsQueuedFollowUp);
+            RequestHash, Content, TurnIndex, Epoch, Provider, Model, ReasoningEffort, IsQueuedFollowUp);
     }
 }

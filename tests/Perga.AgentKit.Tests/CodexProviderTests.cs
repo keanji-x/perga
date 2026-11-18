@@ -1,3 +1,5 @@
+using System.Text.Json;
+
 namespace Perga.AgentKit.Tests;
 
 public sealed class CodexProviderTests : IDisposable
@@ -14,6 +16,33 @@ public sealed class CodexProviderTests : IDisposable
                 ["codex"] = new(_fixture.MockCodexPath)
             }
         });
+
+    [Theory]
+    [InlineData(null, "high")]
+    [InlineData("A", "low")]
+    [InlineData("B", null)]
+    public async Task OrdinaryTurnSendsLaunchEffortIndependentlyOfModel(string? model, string? effort)
+    {
+        var log = Path.Combine(_fixture.RootDir, "codex-selection.jsonl");
+        await using var runtime = new AgentRuntime(new AgentRuntimeOptions
+        {
+            ProviderOverrides = new Dictionary<string, ProviderCommandOverride>
+            {
+                ["codex"] = new(_fixture.MockCodexPath, Env: new Dictionary<string, string> { ["MOCK_CODEX_LOG"] = log })
+            }
+        });
+        await using var session = await runtime.OpenSessionAsync(new HarnessLaunchSpec(
+            "codex", model, _fixture.WorkspaceDir, null, null,
+            new Dictionary<string, McpServerConfig>(), ReasoningEffort: effort), CancellationToken.None);
+        await DrainTurnAsync(session, new TurnInput("selected settings", "selection"));
+        var call = Assert.Single(File.ReadAllLines(log).Select(line => JsonSerializer.Deserialize<JsonElement>(line)),
+            call => call.GetProperty("method").GetString() == "turn/start");
+        var parameters = call.GetProperty("params");
+        Assert.Equal(effort, parameters.TryGetProperty("effort", out var value) ? value.GetString() : null);
+        var thread = Assert.Single(File.ReadAllLines(log).Select(line => JsonSerializer.Deserialize<JsonElement>(line)),
+            call => call.GetProperty("method").GetString() == "thread/start");
+        Assert.Equal(model, thread.GetProperty("params").TryGetProperty("model", out var selection) ? selection.GetString() : null);
+    }
 
     [Fact]
     public async Task WorkerConfigurationUsesLiveModelEffortsAndTheEffectiveDirectoryDefault()

@@ -12,11 +12,52 @@ using Perga.Contracts;
 using Perga.Host.IntegrationTests.Fixtures;
 using Perga.Host.Serialization;
 using Perga.Kernel;
+using Perga.Kernel.Ports;
+using Perga.Kernel.Events;
 
 namespace Perga.Host.IntegrationTests;
 
 public sealed class DurableSessionInputTests
 {
+    [Theory]
+    [InlineData("low")]
+    [InlineData(null)]
+    public async Task AcceptedSelectionRecoversWithoutUsingCurrentEffort(string? effort)
+    {
+        var directory = Directory.CreateTempSubdirectory("perga-frozen-input-");
+        try
+        {
+            string trackId;
+            string sessionId;
+            SessionInputReceipt receipt;
+            await using (var host = new PergaHostTestCluster(directory.FullName))
+            {
+                (trackId, sessionId) = await host.CreateTrackAsync();
+                var kernel = host.Services.GetRequiredService<IPergaKernel>();
+                var selected = await kernel.UpdateSessionModelAsync(sessionId, new("A", effort));
+                var store = host.Services.GetRequiredService<ITrackStore>();
+                // Commit the production acceptance transaction, then stop before dispatch.
+                receipt = (await store.SessionInputs.AcceptAsync(selected with { Status = "queued" },
+                    new("frozen-recovery", "hash", "recover selection"),
+                    new(null, null, trackId, KernelEventKinds.SessionUpdated,
+                        JsonSerializer.SerializeToElement(selected), selected.UpdatedAtMs), CancellationToken.None)).Receipt;
+                using var update = await host.Client.PutAsJsonAsync($"/api/v1/sessions/{sessionId}/model", new { model = "B", reasoningEffort = "high" });
+                update.EnsureSuccessStatusCode();
+            }
+            await using var reopened = new PergaHostTestCluster(directory.FullName);
+            var resumed = reopened.Services.GetRequiredService<IPergaKernel>();
+            await resumed.WaitForTrackIdleAsync(trackId).WaitAsync(TimeSpan.FromSeconds(10));
+            var execution = Assert.Single(reopened.AgentRuntime.ExecutedTurns);
+            Assert.Equal(receipt.TurnId, execution.Input.CorrelationId);
+            Assert.Equal("A", execution.Spec.Model);
+            Assert.Equal(effort, execution.Spec.ReasoningEffort);
+            var desired = Assert.Single(await resumed.ListSessionsAsync(trackId));
+            Assert.Equal("B", desired.Model);
+            Assert.Equal("high", desired.ReasoningEffort);
+        }
+        finally { directory.Delete(recursive: true); }
+    }
+
     [Fact]
     public async Task SameMessageAfterHostRestartKeepsItsTurnAndDispatchesOnce()
     {
@@ -206,14 +247,14 @@ public sealed class DurableSessionInputTests
                 var turnStatus = state == "accepted" ? "queued" : "running";
                 await db.ExecuteAsync(
                     """
-                    INSERT INTO session_turns (id, session_id, turn_index, trigger_kind, status, accepted_at_ms, provider)
-                    VALUES ('fixture-turn', @SessionId, 1, 'user', @TurnStatus, 1, 'codex');
+                    INSERT INTO session_turns (id, session_id, turn_index, trigger_kind, status, accepted_at_ms, provider, model)
+                    VALUES ('fixture-turn', @SessionId, 1, 'user', @TurnStatus, 1, 'codex', 'A');
                     INSERT INTO session_messages (id, session_id, source, kind, turn_id, author_id, request_key, request_hash, content, created_at_ms, delivery, delivered_turn_id)
                     VALUES ('fixture-input', @SessionId, 'session', 'input', 'fixture-turn', 'owner:installation', 'fixture-key',
                             'fixture-hash', 'Recover me', 1, @State, CASE WHEN @State = 'delivered' THEN 'fixture-turn' END);
                     INSERT INTO session_items (session_id, turn_id, kind, payload_json, created_at_ms, message_ordinal)
                     VALUES (@SessionId, 'fixture-turn', 'user', '{}', 1, last_insert_rowid());
-                    UPDATE agent_sessions SET status = @TurnStatus, native_thread_id = 'old-thread' WHERE id = @SessionId;
+                    UPDATE agent_sessions SET status = @TurnStatus, native_thread_id = 'old-thread', model = 'B', reasoning_effort = 'high' WHERE id = @SessionId;
                     """, new { SessionId = sessionId, TurnStatus = turnStatus, State = state == "accepted" ? "queued" : state });
             }
 
@@ -224,7 +265,10 @@ public sealed class DurableSessionInputTests
             if (state == "accepted")
             {
                 Assert.Equal("completed", receipt.TurnStatus);
-                Assert.Equal("fixture-turn", Assert.Single(reopened.AgentRuntime.ExecutedTurns).Input.CorrelationId);
+                var execution = Assert.Single(reopened.AgentRuntime.ExecutedTurns);
+                Assert.Equal("fixture-turn", execution.Input.CorrelationId);
+                Assert.Equal("A", execution.Spec.Model);
+                Assert.Null(execution.Spec.ReasoningEffort); // Historical turn has no recorded effort.
                 return;
             }
 

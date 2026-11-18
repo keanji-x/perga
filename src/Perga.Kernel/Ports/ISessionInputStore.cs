@@ -6,7 +6,7 @@ public sealed record SessionInputRequest(string Key, string Hash, string Content
 
 public sealed record PersistedSessionInput(
     SessionInputReceipt Receipt, string RequestHash, string Content, int TurnIndex, int Epoch,
-    string Provider, string? Model, bool IsQueuedFollowUp = false);
+    string Provider, string? Model, string? ReasoningEffort, bool IsQueuedFollowUp = false);
 
 public sealed record SessionCreateIntent(string TrackId, string Key, string Hash);
 

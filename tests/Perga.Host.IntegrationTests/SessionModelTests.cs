@@ -73,6 +73,59 @@ public sealed class SessionModelTests
             directory.Delete(recursive: true);
         }
     }
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task DefaultModelKeepsIndependentEffortAcrossRestart(bool lead)
+    {
+        var directory = Directory.CreateTempSubdirectory("perga-default-effort-");
+        try
+        {
+            string trackId;
+            string sessionId;
+            await using (var host = new PergaHostTestCluster(directory.FullName))
+            {
+                (trackId, sessionId) = await host.CreateTrackAsync();
+                var kernel = host.Services.GetRequiredService<IPergaKernel>();
+                if (!lead)
+                    sessionId = (await kernel.CreateSubagentSessionAsync(trackId, new CreateSessionRequest(Provider: "codex"))).Id;
+                await kernel.UpdateSessionModelAsync(sessionId, new("chosen", "low"));
+                using var permission = await host.Client.PutAsJsonAsync($"/api/v1/sessions/{sessionId}/permission-mode", new { permissionMode = "ask" });
+                permission.EnsureSuccessStatusCode();
+                using var response = await host.Client.PutAsJsonAsync($"/api/v1/sessions/{sessionId}/model",
+                    new { model = (string?)null, reasoningEffort = " high " });
+                response.EnsureSuccessStatusCode();
+                var selected = (await response.Content.ReadFromJsonAsync<AgentSessionDto>(PergaJsonDefaults.ApiOptions))!;
+                Assert.Null(selected.Model);
+                Assert.Equal("high", selected.ReasoningEffort);
+            }
+            await using (var reopened = new PergaHostTestCluster(directory.FullName))
+            {
+                var restoredKernel = reopened.Services.GetRequiredService<IPergaKernel>();
+                var restored = Assert.Single(await restoredKernel.ListSessionsAsync(trackId), s => s.Id == sessionId);
+                Assert.Null(restored.Model);
+                Assert.Equal("high", restored.ReasoningEffort);
+                await restoredKernel.SendMessageAsync(sessionId, new SendMessageRequest("use default", "default-effort"));
+                var launch = Assert.Single(reopened.AgentRuntime.ExecutedTurns).Spec;
+                Assert.Null(launch.Model);
+                Assert.Equal("high", launch.ReasoningEffort);
+                Assert.Equal("ask", launch.PermissionMode);
+                using var clearEffort = await reopened.Client.PutAsJsonAsync($"/api/v1/sessions/{sessionId}/model",
+                    new { model = "chosen", reasoningEffort = (string?)null });
+                clearEffort.EnsureSuccessStatusCode();
+                var cleared = (await clearEffort.Content.ReadFromJsonAsync<AgentSessionDto>(PergaJsonDefaults.ApiOptions))!;
+                Assert.Equal("chosen", cleared.Model);
+                Assert.Null(cleared.ReasoningEffort);
+            }
+            await using var clearedHost = new PergaHostTestCluster(directory.FullName);
+            var persisted = Assert.Single(await clearedHost.Services.GetRequiredService<IPergaKernel>().ListSessionsAsync(trackId), s => s.Id == sessionId);
+            Assert.Equal("chosen", persisted.Model);
+            Assert.Null(persisted.ReasoningEffort);
+            Assert.Equal("ask", persisted.PermissionMode);
+        }
+        finally { directory.Delete(recursive: true); }
+    }
+
     [Fact]
     public async Task ConversationModelEndpointCannotBypassWorkerSettings()
     {
