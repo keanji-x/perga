@@ -133,6 +133,7 @@ export function mountProductionApp(root: HTMLElement, browserInput: Readonly<{
   }, { input: takeScanInput(window, window.location.origin, Date.now()), pairing: createScanPairingPort(base) }) : undefined;
   const buildRouter = (shareScope: ShareScope | null = null) => createAppRouter({
     basepath: shareRoute?.basepath, shareScope, shareLinkId,
+    submittedStorage: browser.submittedStorage,
     prepareReport,
     transport,
     unauthorized,

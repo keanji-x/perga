@@ -41,7 +41,7 @@ import { TrackReportRegion, useTrackReportPresentation, useTrackReportArrival } 
 import type { ReportPreparationPort } from '../../features/report/document/preparation.ts';
 import { TrackPending } from '../../features/track/page/pending.tsx';
 import { HStack } from '@astryxdesign/core/HStack';
-import { useQuery, type QueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, type QueryClient } from '@tanstack/react-query';
 
 import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import type { AgentProvider, AskAnswer } from '../../../../core/api/generated/wire.ts';
@@ -53,6 +53,7 @@ import {
 import {
   trackOverlayPayload, toTrack, trackActivityFrom, trackDisplayTitle,
   type Track, type TrackActivity, type TrackDetailWire,
+  retryTrackWorkspaceOperation,
 } from '../../../../core/domain/track.ts';
 import { cardActivityOf, type CardActivity } from '../../../../core/domain/activity.ts';
 import { parkedWorkerNotices, workbenchTerminalCardIds } from '../../../../core/view/track-page.ts';
@@ -148,6 +149,7 @@ import {
 } from '../providers/recent-files.ts';
 import { readHostThemeRgb } from '../theme/host-rgb.ts';
 import { PendingRoute } from './pending-route.tsx';
+import { Banner } from '@astryxdesign/core/Banner';
 import { ErrorBox } from '../../ui/error-box/public.tsx';
 import { PlannerAskDrawer } from '../../features/planner/public.ts';
 import { openAsksOf, type OpenAsk } from '../../../../core/domain/ask.ts';
@@ -196,6 +198,7 @@ export type AppRouterDeps = Readonly<{
   prepareReport: ReportPreparationPort;
   recentFiles?: RecentFileHistory;
   uiPreferences?: UiPreferences;
+  submittedStorage?: () => Storage;
 }>;
 
 function renderNothing(): null { return null; }
@@ -206,7 +209,7 @@ export function createRouteTree(deps: AppRouterDeps): AnyRoute {
   const preferences = deps.uiPreferences ?? createUiPreferences();
   const rootRoute = createRootRouteWithContext<DraftBackContext>()({ component: () => (
     <ShareScopeProvider value={deps.shareScope == null || deps.shareLinkId === undefined ? null : { scope: deps.shareScope, shareLinkId: deps.shareLinkId }}><UiPreferencesProvider preferences={preferences}><ReadReceiptsProvider transport={transport} unauthorized={unauthorized}>
-      <TrackViewProvider><DraftBackLifecycle><MobileConversationProvider><ShellRoute shareScope={deps.shareScope ?? null} transport={transport} unauthorized={unauthorized} onSignOut={onSignOut} /></MobileConversationProvider></DraftBackLifecycle></TrackViewProvider>
+      <TrackViewProvider><DraftBackLifecycle><MobileConversationProvider><ShellRoute submittedStorage={deps.submittedStorage} shareScope={deps.shareScope ?? null} transport={transport} unauthorized={unauthorized} onSignOut={onSignOut} /></MobileConversationProvider></DraftBackLifecycle></TrackViewProvider>
     </ReadReceiptsProvider></UiPreferencesProvider></ShareScopeProvider>
   ) });
 
@@ -326,10 +329,10 @@ export function createAppRouter(deps: AppRouterDeps) {
   return router;
 }
 
-function ShellRoute({ transport, unauthorized, onSignOut, shareScope }: { shareScope: ShareScope | null; transport: ApiTransportPort; unauthorized: UnauthorizedChannel; onSignOut: () => void }) {
+function ShellRoute({ transport, unauthorized, onSignOut, shareScope, submittedStorage }: { submittedStorage?: () => Storage; shareScope: ShareScope | null; transport: ApiTransportPort; unauthorized: UnauthorizedChannel; onSignOut: () => void }) {
   const go = useGo();
   return (
-    <ConversationProvider><NewTrackDraftProvider>
+    <ConversationProvider><NewTrackDraftProvider submittedStorage={submittedStorage}>
       <AppShell shareScope={shareScope}
         transport={transport}
         unauthorized={unauthorized}
@@ -356,6 +359,7 @@ type ConversationPanelOptions = Readonly<{
   showTrack?: boolean;
   resizable?: boolean;
   reportComposer?: Readonly<{ ready: boolean; returnLabel: string }>;
+  workspace?: Readonly<{ waiting: boolean; notice?: ReactNode }>;
 }>;
 
 /** Two independent cards share the existing creation/recovery path and registry. */
@@ -442,6 +446,7 @@ function useConversationPane(
   source: ConversationPanelSource,
   target: ReturnType<typeof useConversationPaneTarget>,
   options?: { onPresent?: () => void; embedded?: EmbeddedConversationPresentation; onArchive?: (cardId: string, archived: boolean) => Promise<void>; onTerminal?: () => void; retainCompanion?: boolean; companionVisible?: boolean; reportComposer?: Readonly<{ ready: boolean; returnLabel: string; conversationId: string | null }>; showSideCommand?: boolean; stacked?: boolean; sideError?: string | null; ownedCardIds?: readonly string[]; showTrack?: boolean; resizable?: boolean; inline?: boolean; slotId?: string; enabled?: boolean; presented?: boolean;
+    workspace?: ConversationPanelOptions['workspace'];
     companion?: (group: PaneResizeGroup) => React.ReactNode; onSide?: (source: Conversation, entries: readonly TranscriptEntry[], question: string) => void | boolean },
 ) {
   /* Existing conversation selection survives navigation; unfinished drafts
@@ -746,6 +751,7 @@ function useConversationPane(
     planner: plannerSwitchBinding,
   }), [options?.inline, options?.showSideCommand, newConversation, composerView.manualCompactSupported, composerView.historyReady,
     composerView.compact, hasSideConversation, sideQuestion, sideSourceReady, onTerminal, compactComposer, plannerCommands, composerStop, plannerSwitchBinding]);
+  const draftOnly = options?.workspace?.waiting === true && composerView.sendBlocked;
   const composerNode = useMemo(() => existingId === null ? null : (
             <ConversationComposer target={{ kind: 'card', id: existingId }} layout={compactComposer ? 'mobile' : 'standard'}
               /* Read at mount only, which is what makes it one-shot; the flag is dropped
@@ -753,7 +759,8 @@ function useConversationPane(
               focusOnMount={panePresented && composerFocusFor === existingId}
               focusRequest={composerFocusRequest}
               changeText={changeComposer}
-              disabled={composerView.sendBlocked || !composerView.historyReady || replacing}
+              disabled={(!draftOnly && composerView.sendBlocked) || !composerView.historyReady || replacing}
+              sendDisabled={draftOnly}
               sendWaiting={composerView.sending || edit.queuedSaving} {...(editingBar === undefined ? {} : { editing: editingBar })}
               /* The images stay with the composer until the store reports them delivered; the press waits out its Edit. */
               commands={paneCommands}
@@ -814,7 +821,7 @@ function useConversationPane(
                 </HStack>
               )}
             />
-  ), [existingId, compactComposer, panePresented, composerFocusFor, composerFocusRequest, changeComposer, composerView,
+  ), [existingId, compactComposer, panePresented, composerFocusFor, composerFocusRequest, changeComposer, composerView, draftOnly,
     paneCommands, composerStop, replacing, editingQueue, edit.queuedSaving, editingBar,
     sendText, composerAttachments, mentionTrigger, scopeProvider, plannerAsks, answerAsk,
     roleValue, roleDisabled, roleDisabledReason, roleChange]);
@@ -938,7 +945,7 @@ function useConversationPane(
             {!store.stalled && !store.executionHeld && store.terminalTimeout !== null && (
               <ChatFooterNotice tone="neutral">The previous response stopped after reaching its time limit. Send a message to continue.</ChatFooterNotice>
             )}
-            {plannerRow !== null && <OperationFeedback feedback={plannerRow.role.feedback} />}
+            {plannerRow !== null && <>{options?.workspace?.notice}<OperationFeedback feedback={plannerRow.role.feedback} /></>}
             {composerNode}
           </>
         )}
@@ -1070,6 +1077,11 @@ function TrackRoute({ transport, unauthorized, cardRuntime, recentFiles, prepare
   const detail = useQuery({
     ...trackDetailQueryOptions(transport, trackId ?? '', unauthorized),
     enabled: trackId !== undefined,
+    refetchInterval: (query) => query.state.data?.workspacePreparation === 'pending' && !query.state.data.can_reopen ? 1000 : false,
+  });
+  const retry = useMutation({
+    mutationFn: (id: string) => runOperation(transport, retryTrackWorkspaceOperation(id), unauthorized),
+    onSettled: () => detail.refetch(),
   });
   /* One `Track` per detail read, not per render: the body memoises on it. */
   const detailData = detail.data;
@@ -1105,6 +1117,20 @@ function TrackRoute({ transport, unauthorized, cardRuntime, recentFiles, prepare
       transport={transport}
       unauthorized={unauthorized}
       track={track}
+      workspaceWaiting={detail.data.workspacePreparation != null}
+      workspaceNotice={detail.data.workspacePreparation === 'failed' && detail.data.can_reopen
+        ? <Banner status="error" title="Reopen this Track to retry workspace setup." />
+        : detail.data.workspacePreparation === 'failed'
+        ? <ErrorBox message={retry.isError
+          ? readErrorText(retry.error, 'Workspace setup could not be restarted.')
+          : 'Workspace setup failed. Work that needs the workspace is waiting.'}
+          actionLabel="Retry workspace setup" pending={retry.isPending}
+          onRetry={() => retry.mutate(track.id)} />
+        : detail.data.workspacePreparation === 'unknown'
+        ? <Banner status="error" title="The last workspace setup result could not be confirmed. Work that needs the workspace is waiting." />
+        : detail.data.workspacePreparation === 'pending'
+        ? <p role="status">Preparing the workspace.</p>
+        : undefined}
       canReopenTrack={detail.data.can_reopen}
       canCloseTrack={detail.data.can_close}
       adminGrantedAt={detail.data.track.admin_granted_at}
@@ -1137,7 +1163,7 @@ function trackNotifications(items: TrackActivity['attentionItems']): readonly Tr
 }
 
 function TrackRouteBody({
-  transport, unauthorized, track, canReopenTrack, canCloseTrack, adminGrantedAt, canAdminTrack, cards, overlays, cardRuntime, recentFiles, reportEvidence, reportHeader, reportEmpty, panelContent, mobileReportIntro, prepareReport, center,
+  transport, unauthorized, track, canReopenTrack, canCloseTrack, adminGrantedAt, canAdminTrack, cards, overlays, cardRuntime, recentFiles, reportEvidence, reportHeader, reportEmpty, panelContent, mobileReportIntro, prepareReport, center, workspaceWaiting = false, workspaceNotice,
 }: {
   transport: ApiTransportPort;
   unauthorized: UnauthorizedChannel;
@@ -1153,6 +1179,8 @@ function TrackRouteBody({
   center?: DailyCenterPresentation;
   reportEvidence?: ReactNode;
   reportHeader?: ReactNode;
+  workspaceWaiting?: boolean;
+  workspaceNotice?: ReactNode;
   panelContent?: ReactNode;
   mobileReportIntro?: ReactNode;
   prepareReport: ReportPreparationPort;
@@ -1338,7 +1366,7 @@ function TrackRouteBody({
         commands: plannerCommands,
       },
     },
-    { defaultRowId: center !== undefined && plannerCard !== undefined ? plannerCard.id : null, onPresent: center?.onOpenAssistant, presented: centerActive ? center?.presented : undefined, embedded: center === undefined ? undefined : { active: centerActive, host: centerHost, footerPrefix: center.footerPrefix, label: center.title }, onArchive: conversationMutations.archive, terminal: { workbench, render: () => <TerminalWorkbenchView workbench={workbench} host={cardRuntime.host}
+    { workspace: { waiting: workspaceWaiting, notice: workspaceNotice }, defaultRowId: center !== undefined && plannerCard !== undefined ? plannerCard.id : null, onPresent: center?.onOpenAssistant, presented: centerActive ? center?.presented : undefined, embedded: center === undefined ? undefined : { active: centerActive, host: centerHost, footerPrefix: center.footerPrefix, label: center.title }, onArchive: conversationMutations.archive, terminal: { workbench, render: () => <TerminalWorkbenchView workbench={workbench} host={cardRuntime.host}
       items={workbench.ordinaryHost ? [] : gridItems.filter(item => workbench.cardIds.has(item.card.id))} visible={!compactViewport && workbench.open}
       onRemove={(id) => cardDeletion.request(id, { kind: 'surface-center' })} /> }, showTrack: false, reportComposer: { ready: plannerCard !== undefined || conversationsQuery.isSuccess, returnLabel: routePanel === 'conversations' ? 'Conversations' : 'Report' } },
   );
@@ -1642,7 +1670,7 @@ function TrackRouteBody({
         {center !== undefined && <div className={mobileChatStyles.embeddedSlot} hidden={!centerActive}>
           {center.render(<div ref={setCenterHost} className={mobileChatStyles.embeddedSlot} />)}
         </div>}
-        {!centerActive && <>{reportHeader}<TrackReportRegion
+        {!centerActive && <>{reportHeader}{(!chat.isOpen || chat.selectedConversationId !== plannerCard?.id) && workspaceNotice}<TrackReportRegion
         presentation={reportPresentation}
         trackId={track.id}
         activityAt={track.activityAt}

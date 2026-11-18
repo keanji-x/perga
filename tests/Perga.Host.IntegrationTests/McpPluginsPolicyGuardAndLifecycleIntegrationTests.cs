@@ -203,6 +203,7 @@ public sealed class McpPluginsPolicyGuardAndLifecycleIntegrationTests
             using var snap = JsonDocument.Parse(await trackResp.Content.ReadAsStringAsync(ct));
             var trackId = snap.RootElement.GetProperty("track").GetProperty("id").GetString()!;
 
+            await kernel.WaitForTrackIdleAsync(trackId, ct);
             var openedLead = Assert.Single(cluster.AgentRuntime.OpenedSessions);
             var httpQuoteServer = Assert.IsType<Perga.AgentKit.McpServerConfig.HttpMcpServer>(openedLead.Spec.McpServers["http-quote"]);
             var token = httpQuoteServer.Headers["Authorization"]["Bearer ".Length..];

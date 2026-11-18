@@ -352,6 +352,7 @@ export const trackDetailSchema = z.object({
   can_admin: z.boolean(),
   cards: z.array(cardWireSchema),
   overlays: z.array(overlaySchema),
+  workspacePreparation: trackAggregateSnapshotDtoSchema.shape.workspacePreparation,
 });
 export type TrackDetailWire = z.infer<typeof trackDetailSchema>;
 
@@ -735,10 +736,11 @@ export function snapshotToTrackDetailWire(snapshot: TrackAggregateSnapshotDto): 
     cards.push({
       id: lead.id,
       track_id: snapshot.track.id,
-      kind: 'shared-spec',
+      kind: 'codex',
       title: lead.title ?? null,
       sort: 1,
       payload: {
+        planner_harness: true,
         planner_provider: normalizeWireAgentProvider(lead.provider) ?? lead.provider,
         is_lead: lead.isLead,
         epoch: lead.epoch,
@@ -786,6 +788,7 @@ export function snapshotToTrackDetailWire(snapshot: TrackAggregateSnapshotDto): 
     can_admin: false,
     cards,
     overlays,
+    ...(snapshot.workspacePreparation == null ? {} : { workspacePreparation: snapshot.workspacePreparation }),
   };
 }
 
@@ -805,6 +808,14 @@ export function trackDetailOperation(trackId: string): ApiOperation<TrackDetailW
       trackAggregateSnapshotDtoSchema.transform(snapshotToTrackDetailWire),
       trackDetailSchema,
     ]),
+  };
+}
+
+export function retryTrackWorkspaceOperation(trackId: string): ApiOperation<unknown> {
+  return {
+    method: 'POST',
+    path: `/api/v1/tracks/${encodeURIComponent(trackId)}/workspace/retry`,
+    responseSchema: z.unknown(),
   };
 }
 

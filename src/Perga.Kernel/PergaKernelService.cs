@@ -34,13 +34,14 @@ public interface IPergaKernel : IAsyncDisposable
     // Areas
     Task<IReadOnlyList<AreaDto>> ListAreasAsync(CancellationToken ct = default);
     Task<AreaDto?> GetAreaAsync(string areaId, CancellationToken ct = default);
-    Task<AreaDto> CreateAreaAsync(CreateAreaRequest req, CancellationToken ct = default);
+    Task<AreaDto> CreateAreaAsync(CreateAreaRequest req, CancellationToken ct = default, string? requestKey = null);
     Task<AreaDto> PatchAreaAsync(string areaId, PatchAreaRequest req, CancellationToken ct = default);
     Task DeleteAreaAsync(string areaId, CancellationToken ct = default);
 
     // Tracks
     Task<IReadOnlyList<TrackDto>> ListTracksAsync(string? areaId = null, bool includeClosed = false, CancellationToken ct = default);
-    Task<TrackAggregateSnapshot> CreateTrackAsync(CreateTrackRequest req, CancellationToken ct = default);
+    Task<TrackAggregateSnapshot> CreateTrackAsync(CreateTrackRequest req, CancellationToken ct = default, string? requestKey = null);
+    Task RetryWorkspaceAsync(string trackId, CancellationToken ct = default);
     Task<TrackAggregateSnapshot> GetTrackAggregateAsync(string trackId, CancellationToken ct = default);
     Task<TrackStatusDto> GetTrackStatusAsync(string trackId, CancellationToken ct = default);
     Task<TrackDto> PatchTrackAsync(string trackId, PatchTrackRequest req, CancellationToken ct = default);
@@ -207,8 +208,12 @@ public sealed class PergaKernelService : IPergaKernel
     public Task<AreaDto?> GetAreaAsync(string areaId, CancellationToken ct = default) =>
         _store.GetAreaAsync(areaId, ct);
 
-    public async Task<AreaDto> CreateAreaAsync(CreateAreaRequest req, CancellationToken ct = default)
+    public async Task<AreaDto> CreateAreaAsync(CreateAreaRequest req, CancellationToken ct = default, string? requestKey = null)
     {
+        var key = CreateKey("area", "", requestKey, req);
+        if (key is not null && await _store.FindCreationAsync(key, ct).ConfigureAwait(false) is { } replay)
+            return await ReadCreatedAreaAsync(replay, ct).ConfigureAwait(false);
+
         if (string.IsNullOrWhiteSpace(req.Name))
         {
             throw KernelException.InvalidArgument("Area name cannot be empty.");
@@ -225,7 +230,21 @@ public sealed class PergaKernelService : IPergaKernel
             CreatedAtMs: now,
             UpdatedAtMs: now);
 
-        return await _store.UpsertAreaAsync(area, ct).ConfigureAwait(false);
+        var id = await _store.CreateAreaAsync(area, key, ct).ConfigureAwait(false);
+        return await ReadCreatedAreaAsync(id, ct).ConfigureAwait(false);
+    }
+
+    private async Task<AreaDto> ReadCreatedAreaAsync(string id, CancellationToken ct) =>
+        await _store.GetAreaAsync(id, ct).ConfigureAwait(false) ??
+        throw new KernelException(KernelErrorCode.IdempotencyKeyExhausted, "The created Area was deleted.");
+
+    private static ResourceCreationKey? CreateKey<T>(string operation, string scope, string? key, T request)
+    {
+        if (key is null)
+            return null;
+        if (string.IsNullOrWhiteSpace(key) || key.Length > 256)
+            throw new KernelException(KernelErrorCode.IdempotencyKeyInvalid, "Idempotency-Key must contain 1 to 256 characters.");
+        return new(operation, scope, key, RequestIdentity.Hash(new { Version = 1, Request = request }));
     }
 
     public async Task<AreaDto> PatchAreaAsync(string areaId, PatchAreaRequest req, CancellationToken ct = default)
@@ -260,7 +279,7 @@ public sealed class PergaKernelService : IPergaKernel
             await DeleteTrackAsync(track.Id, ct).ConfigureAwait(false);
         }
 
-        await _store.DeleteAreaAsync(areaId, ct).ConfigureAwait(false);
+        await _store.DeleteAreaAsync(areaId, ct, requireEmpty: true).ConfigureAwait(false);
     }
 
     // ------------------- Tracks -------------------
@@ -271,8 +290,12 @@ public sealed class PergaKernelService : IPergaKernel
         CancellationToken ct = default) =>
         _store.ListTracksAsync(areaId, includeClosed, ct);
 
-    public async Task<TrackAggregateSnapshot> CreateTrackAsync(CreateTrackRequest req, CancellationToken ct = default)
+    public async Task<TrackAggregateSnapshot> CreateTrackAsync(CreateTrackRequest req, CancellationToken ct = default, string? requestKey = null)
     {
+        var key = CreateKey("track", req.AreaId, requestKey, req);
+        if (key is not null && await _store.FindCreationAsync(key, ct).ConfigureAwait(false) is { } replay)
+            return await ReadCreatedTrackAsync(replay, ct).ConfigureAwait(false);
+
         var area = await _store.GetAreaAsync(req.AreaId, ct).ConfigureAwait(false)
                    ?? throw KernelException.NotFound($"Area '{req.AreaId}' not found.");
 
@@ -301,28 +324,10 @@ public sealed class PergaKernelService : IPergaKernel
         var targetRootDir = Path.Combine(_options.WorkspacesRootDirectory, trackId);
         var lowerCacheDirs = policy?.Manifest.WorkspaceLowerCacheDirs ?? [];
 
-        var driver = _workspaceDrivers.GetRequired(driverId);
-        var workspaceSpec = await driver.ProvisionTrackAsync(
-            new WorkspaceProvisionRequest(trackId, sourcePath, targetRootDir, lowerCacheDirs, req.BaseRevision),
-            ct).ConfigureAwait(false);
-        var mountedWorkspace = await driver.EnsureMountedAsync(workspaceSpec, ct).ConfigureAwait(false);
-
-        if (!string.IsNullOrWhiteSpace(policy?.Manifest.WorkspaceCreateCmd))
-        {
-            var createCmdResult = await _commandRunner.RunAsync(
-                new ShellCommandRequest(
-                    policy!.Manifest.WorkspaceCreateCmd!,
-                    mountedWorkspace.MergedCwd,
-                    TimeSpan.FromSeconds(_options.DefaultHookTimeoutSecs)),
-                ct).ConfigureAwait(false);
-
-            if (createCmdResult.ExitCode != 0 || createCmdResult.TimedOut)
-            {
-                await driver.TeardownTrackAsync(workspaceSpec, CancellationToken.None).ConfigureAwait(false);
-                throw KernelException.PreconditionFailed(
-                    $"WorkspaceCreateCmd failed with exit code {createCmdResult.ExitCode}: {createCmdResult.Stderr}");
-            }
-        }
+        _workspaceDrivers.GetRequired(driverId);
+        var preparation = new WorkspacePreparation(
+            new WorkspaceProvisionRequest(trackId, Path.GetFullPath(sourcePath), Path.GetFullPath(targetRootDir), lowerCacheDirs, req.BaseRevision),
+            policy?.Manifest.WorkspaceCreateCmd);
 
         var templateInputs = JsonHelpers.EnsureClonedObject(req.TemplateInputs);
         var templateState = JsonHelpers.EmptyObject;
@@ -351,9 +356,9 @@ public sealed class PergaKernelService : IPergaKernel
             ParentTrackId: req.ParentTrackId,
             ParentAttemptId: req.ParentAttemptId,
             Title: title,
-            Cwd: mountedWorkspace.MergedCwd,
+            Cwd: string.Empty,
             WorkspaceDriver: driverId,
-            WorkspaceSpec: JsonHelpers.ToElement(workspaceSpec),
+            WorkspaceSpec: JsonHelpers.EmptyObject,
             LeadSessionId: leadSessionId,
             TemplateId: policy?.TemplateId,
             TemplateInputs: templateInputs,
@@ -364,6 +369,10 @@ public sealed class PergaKernelService : IPergaKernel
             SortOrder: req.SortOrder ?? 0.0,
             CreatedAtMs: now,
             UpdatedAtMs: now);
+
+        var firstInput = string.IsNullOrWhiteSpace(req.FirstMessage) ? null
+            : new SessionInputRequest($"init:{trackId}",
+                RequestIdentity.Hash(new { version = 1, Content = req.FirstMessage, SteerIfRunning = false }), req.FirstMessage);
 
         var leadSession = new AgentSessionDto(
             Id: leadSessionId,
@@ -376,95 +385,49 @@ public sealed class PergaKernelService : IPergaKernel
             Model: req.Model ?? _options.DefaultModel,
             NativeThreadId: null,
             Epoch: 1,
-            Status: "idle",
+            Status: firstInput is null ? "idle" : "queued",
             ContextUsageRatio: 0.0,
             ArchivedAtMs: null,
             CreatedAtMs: now,
             UpdatedAtMs: now);
 
+        var initialTasks = TaskBlockSynchronizer.SyncTasksFromReport(
+            trackId, initialReport, existingTasks: [],
+            requireGateForReadWrite: policy?.Manifest.RequireGateForReadWrite ?? false, nowMs: now).SyncedTasks;
+        EventEnvelopeDto[] events =
+        [
+            new(null, area.Id, trackId, KernelEventKinds.TrackUpdated, JsonHelpers.ToElement(track), now),
+            new(null, area.Id, trackId, KernelEventKinds.SessionUpdated, JsonHelpers.ToElement(leadSession), now)
+        ];
+
         await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
-        await _store.CreateTrackAsync(track, initialReport, policy?.JsSource, leadSession, ct).ConfigureAwait(false);
-
-        // Sync initial task blocks if template initialMarkdown contained task blocks.
-        var initialTaskSync = TaskBlockSynchronizer.SyncTasksFromReport(
-            trackId,
-            initialReport,
-            existingTasks: [],
-            requireGateForReadWrite: policy?.Manifest.RequireGateForReadWrite ?? false,
-            nowMs: now);
-
-        if (initialTaskSync.SyncedTasks.Count > 0)
+        var id = await _store.CreateTrackAsync(
+            new(track, initialReport, policy?.JsSource, leadSession, initialTasks, firstInput, preparation, events),
+            key, ct).ConfigureAwait(false);
+        var snapshot = await ReadCreatedTrackAsync(id, CancellationToken.None).ConfigureAwait(false);
+        if (id == track.Id)
         {
-            var compressed = _reportEngine.CompressZstd(initialReport.Blocks);
-            var initReportEvt = new EventEnvelopeDto(
-                EventId: null,
-                AreaId: area.Id,
-                TrackId: trackId,
-                Kind: KernelEventKinds.ReportUpdated,
-                Payload: JsonHelpers.ToElement(new { docRev = initialReport.DocRev }),
-                CreatedAtMs: now);
-            await _store.SaveReportAndTasksAsync(
-                trackId,
-                initialReport,
-                compressed,
-                leadSessionId,
-                "Initial template report",
-                initialTaskSync.SyncedTasks,
-                templateState,
-                initReportEvt,
-                ct).ConfigureAwait(false);
-            await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, initReportEvt, ct).ConfigureAwait(false);
+            foreach (var evt in events)
+                await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, evt, CancellationToken.None, allowFallback: false).ConfigureAwait(false);
         }
-
-        var trackCreatedEvt = new EventEnvelopeDto(
-            EventId: null,
-            AreaId: area.Id,
-            TrackId: trackId,
-            Kind: KernelEventKinds.TrackUpdated,
-            Payload: JsonHelpers.ToElement(track),
-            CreatedAtMs: now);
-        await _store.AppendEventAsync(trackCreatedEvt, ct).ConfigureAwait(false);
-        await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, trackCreatedEvt, ct).ConfigureAwait(false);
-
-        var sessionCreatedEvt = new EventEnvelopeDto(
-            EventId: null,
-            AreaId: area.Id,
-            TrackId: trackId,
-            Kind: KernelEventKinds.SessionUpdated,
-            Payload: JsonHelpers.ToElement(leadSession),
-            CreatedAtMs: now);
-        await _store.AppendEventAsync(sessionCreatedEvt, ct).ConfigureAwait(false);
-        await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, sessionCreatedEvt, ct).ConfigureAwait(false);
-
-        var actor = Actors.GetOrActivate(trackId);
-        await actor.EnqueueAsync(_ =>
-        {
-            actor.SeedHydratedState(
-                track,
-                initialReport,
-                initialTaskSync.SyncedTasks,
-                [leadSession],
-                policy,
-                policy?.JsSource,
-                mountedWorkspace);
-            return Task.CompletedTask;
-        }, ct).ConfigureAwait(false);
-
-        if (initialTaskSync.SyncedTasks.Count > 0)
-        {
-            await actor.TriggerSchedulerAsync(ct).ConfigureAwait(false);
-        }
-
-        if (!string.IsNullOrWhiteSpace(req.FirstMessage))
-        {
-            await actor.SendMessageAsync(
-                leadSessionId,
-                new SendMessageRequest(req.FirstMessage!, IdempotencyKey: $"init:{trackId}"),
-                ct).ConfigureAwait(false);
-        }
-
-        return await actor.GetAggregateSnapshotAsync(ct).ConfigureAwait(false);
+        return snapshot;
     }
+
+    private async Task<TrackAggregateSnapshot> ReadCreatedTrackAsync(string id, CancellationToken ct)
+    {
+        var actor = Actors.GetOrActivate(id);
+        try
+        {
+            return await actor.GetAggregateSnapshotAsync(ct).ConfigureAwait(false);
+        }
+        catch (KernelException e) when (e.Code == KernelErrorCode.NotFound)
+        {
+            throw new KernelException(KernelErrorCode.IdempotencyKeyExhausted, "The created Track was deleted.");
+        }
+    }
+
+    public Task RetryWorkspaceAsync(string trackId, CancellationToken ct = default) =>
+        Actors.GetOrActivate(trackId).RetryWorkspaceAsync(ct);
 
     public Task<TrackAggregateSnapshot> GetTrackAggregateAsync(string trackId, CancellationToken ct = default) =>
         Actors.GetOrActivate(trackId).GetAggregateSnapshotAsync(ct);
@@ -488,14 +451,8 @@ public sealed class PergaKernelService : IPergaKernel
     public async Task DeleteTrackAsync(string trackId, CancellationToken ct = default)
     {
         var actor = Actors.GetOrActivate(trackId);
-        try
-        {
-            await actor.TeardownAndDeleteTrackAsync(ct).ConfigureAwait(false);
-        }
-        finally
-        {
-            await Actors.RemoveAndDisposeAsync(trackId).ConfigureAwait(false);
-        }
+        await actor.TeardownAndDeleteTrackAsync(ct).ConfigureAwait(false);
+        await Actors.RemoveAndDisposeAsync(trackId).ConfigureAwait(false);
     }
 
     // ------------------- Workspace Files & VCS Diff -------------------

@@ -357,6 +357,7 @@ export const trackAggregateSnapshotDtoSchema = z.object({
   sessions: z.array(agentSessionDtoSchema).default([]),
   openAsks: z.array(askDtoSchema).default([]),
   templateSnapshotSource: z.string().nullish(),
+  workspacePreparation: z.enum(['pending', 'failed', 'unknown']).nullish(),
 });
 export type TrackAggregateSnapshotDto = z.infer<typeof trackAggregateSnapshotDtoSchema>;
 

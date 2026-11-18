@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Perga.Contracts;
 using Perga.ReportDoc;
+using Perga.VcsKit;
 
 namespace Perga.Kernel.Ports;
 
@@ -10,7 +11,30 @@ public sealed record TrackAggregateSnapshot(
     IReadOnlyList<TaskDto> Tasks,
     IReadOnlyList<AgentSessionDto> Sessions,
     IReadOnlyList<AskDto> OpenAsks,
-    string? TemplateSnapshotSource);
+    string? TemplateSnapshotSource,
+    string? WorkspacePreparation = null);
+
+public sealed record ResourceCreationKey(string Operation, string ScopeId, string Key, string Hash);
+
+// Stored as JSON numbers by SQLite.
+public enum WorkspacePreparationPhase
+{
+    Pending = 0,
+    Provisioning = 1,
+    Mounting = 2,
+    Initializing = 3,
+    Failed = 4,
+    Unknown = 5,
+    Ready = 6,
+    Provisioned = 7
+}
+
+public sealed record WorkspacePreparation(WorkspaceProvisionRequest Request, string? Command,
+    WorkspacePreparationPhase Phase = WorkspacePreparationPhase.Pending, WorkspaceSpec? Spec = null);
+
+public sealed record TrackCreation(TrackDto Track, ReportDocument Report, string? TemplateSnapshot,
+    AgentSessionDto Lead, IReadOnlyList<TaskDto> Tasks, SessionInputRequest? FirstInput,
+    WorkspacePreparation? Preparation, IReadOnlyList<EventEnvelopeDto> Events);
 
 public interface ITrackReadStore
 {
@@ -34,9 +58,16 @@ public interface ITrackReadStore
 public interface ITrackStore : ITrackReadStore
 {
     Task<AreaDto> UpsertAreaAsync(AreaDto area, CancellationToken ct);
-    Task DeleteAreaAsync(string areaId, CancellationToken ct);
+    Task<string?> FindCreationAsync(ResourceCreationKey key, CancellationToken ct);
+    Task<string> CreateAreaAsync(AreaDto area, ResourceCreationKey? key, CancellationToken ct);
+    Task DeleteAreaAsync(string areaId, CancellationToken ct, bool requireEmpty = false);
 
-    Task CreateTrackAsync(TrackDto track, ReportDocument initialReport, string? templateSnapshot, AgentSessionDto initialLeadSession, CancellationToken ct);
+    Task<string> CreateTrackAsync(TrackCreation creation, ResourceCreationKey? key, CancellationToken ct);
+    Task<WorkspacePreparation?> GetWorkspacePreparationAsync(string trackId, CancellationToken ct);
+    Task<IReadOnlyList<PersistedSessionInput>> ListAcceptedTrackInputsAsync(string trackId, CancellationToken ct);
+    Task<IReadOnlyList<string>> RecoverWorkspacePreparationsAsync(CancellationToken ct);
+    Task<bool> TryClaimWorkspacePreparationAsync(string trackId, WorkspacePreparationPhase expected, WorkspacePreparation claimed, CancellationToken ct);
+    Task SaveWorkspacePreparationAsync(string trackId, WorkspacePreparation preparation, TrackDto? readyTrack, EventEnvelopeDto? evt, CancellationToken ct);
     Task UpdateTrackAndEmitAsync(TrackDto track, EventEnvelopeDto? evt, CancellationToken ct);
     Task DeleteTrackAsync(string trackId, CancellationToken ct);
 

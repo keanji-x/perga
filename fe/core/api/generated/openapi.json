@@ -14466,6 +14466,13 @@
         }
       },
       "post": {
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "schema": { "type": "string", "minLength": 1, "maxLength": 256 }
+          }
+        ],
         "responses": {
           "201": {
             "content": {
@@ -14541,6 +14548,13 @@
     },
     "/api/v1/tracks": {
       "post": {
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "schema": { "type": "string", "minLength": 1, "maxLength": 256 }
+          }
+        ],
         "responses": {
           "201": {
             "content": {
@@ -14596,6 +14610,21 @@
           "204": {
             "description": "Deleted"
           }
+        }
+      }
+    },
+    "/api/v1/tracks/{trackId}/workspace/retry": {
+      "post": {
+        "parameters": [
+          {
+            "name": "trackId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "202": { "description": "Workspace retry accepted" }
         }
       }
     },
@@ -24921,6 +24950,9 @@
             "items": {
               "$ref": "#/components/schemas/AskDto"
             }
+          },
+          "workspacePreparation": {
+            "enum": ["pending", "failed", "unknown", null]
           },
           "templateSnapshotSource": {
             "type": [

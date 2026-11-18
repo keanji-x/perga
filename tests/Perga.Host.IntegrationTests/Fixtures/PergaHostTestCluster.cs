@@ -14,6 +14,7 @@ using Perga.AgentKit;
 using Perga.Contracts;
 using Perga.Host.Configuration;
 using Perga.Host.Serialization;
+using Perga.Kernel;
 using Perga.VcsKit;
 
 namespace Perga.Host.IntegrationTests.Fixtures;
@@ -321,7 +322,9 @@ public sealed class PergaHostTestCluster : IAsyncDisposable
         trackResponse.EnsureSuccessStatusCode();
         using var snapshot = JsonDocument.Parse(await trackResponse.Content.ReadAsStringAsync());
         var track = snapshot.RootElement.GetProperty("track");
-        return (track.GetProperty("id").GetString()!, track.GetProperty("leadSessionId").GetString()!);
+        var trackId = track.GetProperty("id").GetString()!;
+        await Services.GetRequiredService<IPergaKernel>().WaitForTrackIdleAsync(trackId);
+        return (trackId, track.GetProperty("leadSessionId").GetString()!);
     }
 
     public async Task<WebSocket> ConnectEventsWebSocketAsync(string query = "", CancellationToken ct = default)

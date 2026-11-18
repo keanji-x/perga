@@ -1,0 +1,9 @@
+# Area and Track creation
+
+Area and Track creation acknowledge a committed resource. The optional `Idempotency-Key` header scopes retries to the installation owner, operation and parent. The SQLite writer commits the receipt with the resource. Track creation also commits the initial report, tasks, Lead and optional queued input. Matching requests return the same resource. A different request under the same key returns 409. A receipt survives deletion and a matching replay returns 410.
+
+A Track owns its preparation intent. The Kernel resolves and saves the driver's inputs and the template command at creation. One actor-owned background operation claims preparation in SQLite before invoking the driver. Provisioning, mounting and template initialization run outside the request and actor mailbox. The final write publishes the workspace path and spec. While setup is pending, `cwd` is empty and `workspaceSpec` is empty. Existing Tracks with no intent already have a provisioned workspace. Migration 0002 adds the preparation table and leaves existing Track rows intact.
+
+The Track page can refresh, edit metadata and compose while preparation runs. Workspace-dependent actions wait for readiness. When preparation reports a known failure, the user can retry from the Track and preserve the queued input. A timed-out command or an interrupted provision or command stays unresolved. An unresolved provision with no saved workspace spec retains its intent for manual reconciliation before deletion. Boot also resumes untouched preparations and recovers queued inputs and runnable tasks after a committed readiness update.
+
+The browser retains a submitted Track draft's key and payload in the current tab, scoped to the signed-in user and Area. Area submits reuse the key while the form is active.

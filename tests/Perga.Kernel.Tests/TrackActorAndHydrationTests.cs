@@ -160,10 +160,12 @@ public sealed class TrackActorAndHydrationTests
         Assert.Equal(1, evicted);
         Assert.False(ctx.Kernel.Actors.IsTrackActiveInMemory(trackId));
 
-        // Subsequent call transparently re-hydrates and invokes EnsureMountedAsync again
+        // A metadata read rehydrates without mounting. A workspace operation mounts on demand.
         var mountsBefore = ctx.DirectDriver.EnsureMountedCalls.Count;
         var rehydrated = await ctx.Kernel.GetTrackAggregateAsync(trackId);
         Assert.Equal(trackId, rehydrated.Track.Id);
+        Assert.Equal(mountsBefore, ctx.DirectDriver.EnsureMountedCalls.Count);
+        await ctx.Kernel.Actors.GetOrActivate(trackId).EnsureMountedAsync();
         Assert.Equal(mountsBefore + 1, ctx.DirectDriver.EnsureMountedCalls.Count);
     }
 
@@ -183,16 +185,15 @@ public sealed class TrackActorAndHydrationTests
         var area = await ctx.Kernel.CreateAreaAsync(new CreateAreaRequest("Backend", DefaultCwd: "/repo/perga"));
         var created = await ctx.Kernel.CreateTrackAsync(new CreateTrackRequest(
             AreaId: area.Id,
-            TemplateId: "dev",
-            FirstMessage: "Bootstrap project"));
+            TemplateId: "dev"));
 
         var trackId = created.Track.Id;
         var initialLeadId = created.Track.LeadSessionId!;
+        await ctx.Kernel.Actors.GetOrActivate(trackId).EnsureMountedAsync();
 
-        // WorkspaceCreateCmd executed during creation, InitState applied, FirstMessage turn executed
+        // WorkspaceCreateCmd executed in preparation and InitState was applied.
         Assert.Contains(ctx.CommandRunner.ExecutedCommands, c => c.Command == "echo init-ws" && c.WorkingDirectory == "/repo/perga");
         Assert.True(created.Track.TemplateState.GetProperty("initialized").GetBoolean());
-        Assert.Single(ctx.Store.GetTurnsForSession(initialLeadId));
 
         // Create a free Subagent and switch LeadSessionId to it
         var subagent = await ctx.Kernel.CreateSubagentSessionAsync(trackId, new CreateSessionRequest(Title: "Co-Lead"));

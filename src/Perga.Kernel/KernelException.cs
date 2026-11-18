@@ -8,7 +8,10 @@ public enum KernelErrorCode
     Conflict,
     Forbidden,
     PolicyDenied,
-    PreconditionFailed
+    PreconditionFailed,
+    IdempotencyKeyInvalid,
+    IdempotencyKeyReused,
+    IdempotencyKeyExhausted
 }
 
 public sealed class KernelException : Exception

@@ -9,7 +9,7 @@ public sealed class SqliteMigratorTests
     [Fact]
     public void EmbeddedInitMigration_MatchesDesignMdSection3ByteForByte()
     {
-        var init = Assert.Single(SqliteMigrator.LoadEmbeddedMigrations());
+        var init = Assert.Single(SqliteMigrator.LoadEmbeddedMigrations(), migration => migration.Version == 1);
         Assert.Equal(1, init.Version);
         Assert.Equal("0001_init.sql", init.Name);
         Assert.Equal(64, init.ChecksumSha256.Length);
@@ -78,6 +78,7 @@ public sealed class SqliteMigratorTests
                 "session_items",
                 "session_inputs",
                 "creation_receipts",
+                "track_workspace_preparations",
                 "asks",
                 "mails",
                 "terminals",
@@ -167,9 +168,13 @@ public sealed class SqliteMigratorTests
             var v1Migrator = new SqliteMigrator([v1]);
             await v1Migrator.MigrateAsync(dbPath);
 
-            await using (var store = await SqliteTrackStore.OpenAsync(dbPath))
+            await using (var connection = new SqliteConnection($"Data Source={dbPath};Pooling=False"))
             {
-                await store.UpsertAreaAsync(StorageTestHarness.CreateArea("area_v1", "V1 Data"), CancellationToken.None);
+                await connection.OpenAsync();
+                await connection.ExecuteAsync("""
+                    INSERT INTO areas (id, name, color, created_at_ms, updated_at_ms)
+                    VALUES ('area_v1', 'V1 Data', '#64748b', 0, 0);
+                    """);
             }
 
             // 1. Failing v2 migration must create .bak-v1 BEFORE running v2 AND roll back live DB to v1.

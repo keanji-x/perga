@@ -44,6 +44,10 @@ public sealed class McpKernelAndVcsIntegrationTests
             ct);
         trackResp.EnsureSuccessStatusCode();
 
+        using var created = JsonDocument.Parse(await trackResp.Content.ReadAsStringAsync(ct));
+        var createdTrackId = created.RootElement.GetProperty("track").GetProperty("id").GetString()!;
+        await cluster.Services.GetRequiredService<IPergaKernel>().WaitForTrackIdleAsync(createdTrackId, ct);
+
         // Verify HarnessLaunchSpec captured Host-minted pg_<guid> token & MCP server URLs!
         var launched = Assert.Single(cluster.AgentRuntime.OpenedSessions);
         Assert.True(launched.Spec.McpServers.ContainsKey("perga"));
@@ -188,6 +192,8 @@ public sealed class McpKernelAndVcsIntegrationTests
         var trackAId = snapA.RootElement.GetProperty("track").GetProperty("id").GetString()!;
         var trackALeadId = snapA.RootElement.GetProperty("track").GetProperty("leadSessionId").GetString()!;
 
+        await cluster.Services.GetRequiredService<IPergaKernel>().WaitForTrackIdleAsync(trackAId, ct);
+        await cluster.Services.GetRequiredService<IPergaKernel>().WaitForTrackIdleAsync(trackBId, ct);
         var hostBridge = cluster.Services.GetRequiredService<HostMcpSessionBridge>();
         var leadToken = hostBridge.GetTokenForSession(trackALeadId)!;
         var peerLeadToken = hostBridge.GetTokenForSession(trackBLeadId)!;

@@ -183,38 +183,10 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
         ArgumentNullException.ThrowIfNull(area);
         EnsureInitialized();
 
-        var foldersJson = SqliteJsonUpcaster.SerializeStringList(area.Folders);
-
         return _writer.EnqueueAsync<AreaDto>(
             async (conn, tx, innerCt) =>
             {
-                await conn.ExecuteAsync(
-                    new CommandDefinition(
-                        """
-                        INSERT INTO areas (id, name, color, default_cwd, folders_json, sort_order, created_at_ms, updated_at_ms)
-                        VALUES (@Id, @Name, @Color, @DefaultCwd, @FoldersJson, @SortOrder, @CreatedAtMs, @UpdatedAtMs)
-                        ON CONFLICT(id) DO UPDATE SET
-                            name = excluded.name,
-                            color = excluded.color,
-                            default_cwd = excluded.default_cwd,
-                            folders_json = excluded.folders_json,
-                            sort_order = excluded.sort_order,
-                            updated_at_ms = excluded.updated_at_ms;
-                        """,
-                        new
-                        {
-                            area.Id,
-                            area.Name,
-                            area.Color,
-                            area.DefaultCwd,
-                            FoldersJson = foldersJson,
-                            area.SortOrder,
-                            area.CreatedAtMs,
-                            area.UpdatedAtMs
-                        },
-                        transaction: tx,
-                        cancellationToken: innerCt)).ConfigureAwait(false);
-
+                await UpsertAreaInternalAsync(conn, tx, area, innerCt).ConfigureAwait(false);
                 var persisted = await conn.QuerySingleAsync<AreaRow>(
                     new CommandDefinition(
                         """
@@ -238,7 +210,38 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
             ct);
     }
 
-    public async Task DeleteAreaAsync(string areaId, CancellationToken ct)
+    private static async Task UpsertAreaInternalAsync(SqliteConnection conn, SqliteTransaction tx, AreaDto area, CancellationToken ct)
+    {
+        var foldersJson = SqliteJsonUpcaster.SerializeStringList(area.Folders);
+        await conn.ExecuteAsync(
+            new CommandDefinition(
+                """
+                INSERT INTO areas (id, name, color, default_cwd, folders_json, sort_order, created_at_ms, updated_at_ms)
+                VALUES (@Id, @Name, @Color, @DefaultCwd, @FoldersJson, @SortOrder, @CreatedAtMs, @UpdatedAtMs)
+                ON CONFLICT(id) DO UPDATE SET
+                    name = excluded.name,
+                    color = excluded.color,
+                    default_cwd = excluded.default_cwd,
+                    folders_json = excluded.folders_json,
+                    sort_order = excluded.sort_order,
+                    updated_at_ms = excluded.updated_at_ms;
+                """,
+                new
+                {
+                    area.Id,
+                    area.Name,
+                    area.Color,
+                    area.DefaultCwd,
+                    FoldersJson = foldersJson,
+                    area.SortOrder,
+                    area.CreatedAtMs,
+                    area.UpdatedAtMs
+                },
+                transaction: tx,
+                cancellationToken: ct)).ConfigureAwait(false);
+    }
+
+    public async Task DeleteAreaAsync(string areaId, CancellationToken ct, bool requireEmpty = false)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(areaId);
         EnsureInitialized();
@@ -252,6 +255,9 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                         new { AreaId = areaId },
                         transaction: tx,
                         cancellationToken: innerCt)).ConfigureAwait(false)).ToList();
+
+                if (requireEmpty && trackIds.Count != 0)
+                    throw Perga.Kernel.KernelException.Conflict("This Area has Tracks that must be removed before deletion.");
 
                 await conn.ExecuteAsync(
                     new CommandDefinition(
@@ -274,16 +280,13 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
     // Tracks & Aggregates
     // -------------------------------------------------------------------------
 
-    public Task CreateTrackAsync(
-        TrackDto track,
-        ReportDocument initialReport,
-        string? templateSnapshot,
-        AgentSessionDto initialLeadSession,
-        CancellationToken ct)
+    public Task<string> CreateTrackAsync(TrackDto track, ReportDocument report, string? templateSnapshot,
+        AgentSessionDto lead, CancellationToken ct) =>
+        CreateTrackAsync(new(track, report, templateSnapshot, lead, [], null, null, []), null, ct);
+
+    public Task<string> CreateTrackAsync(TrackCreation creation, ResourceCreationKey? key, CancellationToken ct)
     {
-        ArgumentNullException.ThrowIfNull(track);
-        ArgumentNullException.ThrowIfNull(initialReport);
-        ArgumentNullException.ThrowIfNull(initialLeadSession);
+        var (track, initialReport, templateSnapshot, initialLeadSession, tasks, firstInput, preparation, events) = creation;
         EnsureInitialized();
 
         var leadSessionId = string.IsNullOrWhiteSpace(track.LeadSessionId)
@@ -297,9 +300,16 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
         var blocksJson = SqliteJsonUpcaster.SerializeReportBlocks(initialReport.Blocks);
         var initialBlocksZstd = SqliteJsonUpcaster.CompressReportBlocksZstd(initialReport.Blocks);
 
-        return _writer.EnqueueAsync(
+        return _writer.EnqueueAsync<string>(
             async (conn, tx, innerCt) =>
             {
+                var replay = await FindCreationInternalAsync(conn, tx, key, innerCt).ConfigureAwait(false);
+                if (replay is not null)
+                    return replay;
+                if (await conn.ExecuteScalarAsync<string?>(new CommandDefinition(
+                    "SELECT id FROM areas WHERE id = @AreaId;", new { track.AreaId }, tx, cancellationToken: innerCt)).ConfigureAwait(false) is null)
+                    throw Perga.Kernel.KernelException.NotFound($"Area '{track.AreaId}' not found.");
+
                 await conn.ExecuteAsync(
                     new CommandDefinition(
                         """
@@ -380,6 +390,18 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                         cancellationToken: innerCt)).ConfigureAwait(false);
 
                 await UpsertSessionInternalAsync(conn, tx, initialLeadSession, innerCt).ConfigureAwait(false);
+                foreach (var task in tasks)
+                    await UpsertTaskInternalAsync(conn, tx, task, innerCt).ConfigureAwait(false);
+                var input = firstInput is null ? null
+                    : await InsertInputAsync(conn, tx, initialLeadSession, firstInput, innerCt).ConfigureAwait(false);
+                if (preparation is not null)
+                    await conn.ExecuteAsync(new CommandDefinition(
+                    "INSERT INTO track_workspace_preparations VALUES (@Id, @Intent);",
+                    new { track.Id, Intent = JsonSerializer.Serialize(preparation) }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
+                await InsertResourceReceiptAsync(conn, tx, key, track.Id, track.CreatedAtMs, input?.Receipt.InputId, innerCt).ConfigureAwait(false);
+                foreach (var evt in events)
+                    await InsertEventInternalAsync(conn, tx, evt, innerCt).ConfigureAwait(false);
+                return track.Id;
             },
             ct);
     }
