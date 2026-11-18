@@ -1,6 +1,6 @@
 # Perga 详细架构设计与冻结接口规范（DESIGN.md）
 
-> **文档性质**：本规范为 **Perga（C# .NET 10 微内核 + 零耦合独立库 + 提纯 Rust 终端守护 + 原生 Jujutsu `jj`）** 的唯一权威设计基线与冻结契约。后续 Stage 0 脚手架搭建与 Stage 1 / Stage 2 Swarm 并行实现必须严格遵守本文档第 2–4 节定义的命名空间、接口签名、SQL DDL 与线协议，未经架构协调者批准不得擅自变更跨模块公开契约。
+> **文档性质**：本规范为 **Perga（C# .NET 11 微内核 + 零耦合独立库 + 提纯 Rust 终端守护 + 原生 Jujutsu `jj`）** 的唯一权威设计基线与冻结契约。后续 Stage 0 脚手架搭建与 Stage 1 / Stage 2 Swarm 并行实现必须严格遵守本文档第 2–4 节定义的命名空间、接口签名、SQL DDL 与线协议，未经架构协调者批准不得擅自变更跨模块公开契约。
 
 ---
 
@@ -14,7 +14,7 @@
 Perga.sln                                 # 统一注册全部 17 个 .csproj 工程
 ├── DESIGN.md                             # 本架构与冻结接口规范
 ├── README.md / LICENSE / rust-toolchain.toml
-├── Directory.Build.props                 # 统一 net10.0 / Nullable=enable / ImplicitUsings=enable / TreatWarningsAsErrors=true / LangVersion=14
+├── Directory.Build.props                 # 统一 net11.0 / Nullable=enable / ImplicitUsings=enable / TreatWarningsAsErrors=true / LangVersion=15
 ├── fe/                                   # 已迁移的前端（React + TypeScript + Astryx Design）
 ├── docs/                                 # 架构拓扑图与前期 Rust 审计蓝图（已迁移）
 ├── plugins/                              # 保留的独立领域插件（market / barra / invest / paper-trading / research-archive）
@@ -80,11 +80,11 @@ Perga.sln                                 # 统一注册全部 17 个 .csproj �
 ```xml
 <Project>
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFramework>net11.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
-    <LangVersion>14</LangVersion>
+    <LangVersion>15</LangVersion>
   </PropertyGroup>
 </Project>
 ```
@@ -1335,7 +1335,7 @@ CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at_ms);
 ### 5.1 已探测宿主机工具链现状
 - **已就绪**：`rustc` / `cargo` (`/home/kenji/.cargo/bin`), `git` (`/usr/bin/git`), `gh` (`/usr/bin/gh`), `node` / `npm` (`v22.22.2`), `bwrap` (`/usr/bin/bwrap`)。
 - **待 Stage 0 用户态安装（无需 root）**：
-  - `.NET 10 SDK` → 安装至 `~/.dotnet`（使用官方 `dotnet-install.sh --channel 10.0`）；
+  - `.NET 11 SDK` → 安装至 `~/.dotnet`（使用官方 `dotnet-install.sh --channel 11.0`）；
   - `jj` (Jujutsu) → 下载官方预编译静态二进制或 `cargo install jj-cli` 至 `~/.local/bin/jj`。
 
 ### 5.2 三阶段 Swarm 并行实施编排（Compact 后下一回合直接启动）
