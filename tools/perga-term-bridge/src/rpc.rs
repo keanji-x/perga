@@ -173,11 +173,8 @@ pub async fn handle_rpc_http(
 
     if let Some(batch) = parsed.as_array() {
         if batch.is_empty() {
-            let resp = JsonRpcResponse::err(
-                Value::Null,
-                JSONRPC_INVALID_REQUEST,
-                "empty JSON-RPC batch",
-            );
+            let resp =
+                JsonRpcResponse::err(Value::Null, JSONRPC_INVALID_REQUEST, "empty JSON-RPC batch");
             return Json(serde_json::to_value(resp).unwrap_or(Value::Null));
         }
         let mut results = Vec::with_capacity(batch.len());

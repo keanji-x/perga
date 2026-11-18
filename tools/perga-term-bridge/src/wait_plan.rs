@@ -20,12 +20,8 @@ pub const REPAINT_MS_DEFAULT: u64 = 1_500;
 pub const WAIT_TEXT_MAX_PATTERNS: usize = 8;
 pub const WAIT_TEXT_MAX_BYTES: usize = 200;
 
-pub const TERMINAL_SIGNAL_EVENTS: [&str; 4] = [
-    "stop",
-    "notification",
-    "permission_request",
-    "session_end",
-];
+pub const TERMINAL_SIGNAL_EVENTS: [&str; 4] =
+    ["stop", "notification", "permission_request", "session_end"];
 pub const DEFAULT_SIGNAL_EVENTS: [&str; 4] = TERMINAL_SIGNAL_EVENTS;
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
@@ -529,15 +525,22 @@ mod tests {
 
     #[test]
     fn omitted_wait_ms_and_rpc_observe_normalization() {
-        let plan = WaitPlan::new(Some(WaitFor::Change), None, None, None, None, None, None).unwrap();
+        let plan =
+            WaitPlan::new(Some(WaitFor::Change), None, None, None, None, None, None).unwrap();
         assert_eq!(plan.budget_ms, CHANGE_WAIT_MS_DEFAULT);
         assert_eq!(plan.settle_ms, SETTLE_MS_DEFAULT);
 
         // `DESIGN.md` example passes empty `wait_text: []`, `wait_text_absent: []` even for non-text waits.
         assert!(
-            WaitPlan::from_observe_rpc(Some("none"), Some(0), Some(150), Some(vec![]), Some(vec![]))
-                .unwrap()
-                .is_none()
+            WaitPlan::from_observe_rpc(
+                Some("none"),
+                Some(0),
+                Some(150),
+                Some(vec![]),
+                Some(vec![])
+            )
+            .unwrap()
+            .is_none()
         );
         let text_plan = WaitPlan::from_observe_rpc(
             Some("text"),

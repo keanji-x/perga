@@ -209,9 +209,7 @@ pub fn encode_rpc_action(kind: &str, payload: &Value, surface: &InputSurface) ->
             Ok(Encoded::Bytes(text.as_bytes().to_vec()))
         }
         "submit" => {
-            let text = if payload.is_null()
-                || payload.as_object().is_some_and(|o| o.is_empty())
-            {
+            let text = if payload.is_null() || payload.as_object().is_some_and(|o| o.is_empty()) {
                 ""
             } else {
                 extract_string_field(payload, &["text", "line", "command", "value"]).ok_or_else(
@@ -281,9 +279,10 @@ pub fn encode_rpc_action(kind: &str, payload: &Value, surface: &InputSurface) ->
             Ok(Encoded::Bytes(out))
         }
         "paste" => {
-            let text = extract_string_field(payload, &["text", "content", "value"]).ok_or_else(
-                || anyhow::anyhow!("paste action payload must provide string 'text'"),
-            )?;
+            let text =
+                extract_string_field(payload, &["text", "content", "value"]).ok_or_else(|| {
+                    anyhow::anyhow!("paste action payload must provide string 'text'")
+                })?;
             ensure!(
                 text.len() <= ACTION_BYTES_MAX,
                 "paste payload exceeds {ACTION_BYTES_MAX} bytes"
@@ -367,8 +366,7 @@ mod tests {
         );
         assert_eq!(sequence_steps(&edit), Some(4));
         for key in SEQUENCE_KEYS {
-            let steps =
-                json!({"type":"sequence","steps":[{"type":"key","key":key},{"type":"text","text":"x"}]});
+            let steps = json!({"type":"sequence","steps":[{"type":"key","key":key},{"type":"text","text":"x"}]});
             let bytes = encode(&steps, &surface).unwrap().into_bytes();
             assert!(!bytes.contains(&b'\r') && !bytes.contains(&b'\n'));
         }

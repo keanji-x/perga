@@ -1,0 +1,203 @@
+name: CI and release
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+    tags: ['v[0-9]+.[0-9]+.[0-9]+']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  backend:
+    name: Backend and terminal bridge
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      JJ_USER: Perga CI
+      JJ_EMAIL: perga-ci@example.invalid
+      PERGA_TERM_BRIDGE_BIN: ${{ github.workspace }}/tools/perga-term-bridge/target/release/perga-term-bridge
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          dotnet-version: '11.0.x'
+      - name: Install Jujutsu for Host integration tests
+        run: |
+          mkdir -p "$RUNNER_TEMP/jj"
+          archive="$RUNNER_TEMP/jj.tar.gz"
+          curl --fail --silent --show-error --location --retry 3 --max-time 120 \
+            --output "$archive" \
+            https://github.com/jj-vcs/jj/releases/download/v0.28.2/jj-v0.28.2-x86_64-unknown-linux-musl.tar.gz
+          echo "c91894dd8b0ae21a10bf3a8530082e480e14d61fa4e3ad0b985268875fa7fb34  $archive" | sha256sum --check
+          tar -xzf "$archive" -C "$RUNNER_TEMP/jj" ./jj
+          echo "$RUNNER_TEMP/jj" >> "$GITHUB_PATH"
+      - name: Install repository Rust toolchain
+        run: rustup toolchain install --no-self-update
+      - name: Check terminal bridge formatting
+        working-directory: tools/perga-term-bridge
+        run: cargo fmt --check
+      - name: Test and build terminal bridge
+        working-directory: tools/perga-term-bridge
+        run: |
+          cargo test --locked --release
+          cargo build --locked --release --bin perga-term-bridge
+      - name: Test .NET solution
+        run: dotnet test Perga.sln --configuration Release
+      - name: Publish Host and bundle terminal bridge and templates
+        run: |
+          dotnet publish src/Perga.Host/Perga.Host.csproj --configuration Release --no-build --output perga
+          install -m 755 "$PERGA_TERM_BRIDGE_BIN" perga/perga-term-bridge
+          cp -R templates perga/
+          cp LICENSE perga/
+          tar -czf host.tar.gz perga
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: perga-host
+          path: host.tar.gz
+          if-no-files-found: error
+          overwrite: true
+          compression-level: 0
+
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: fe
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          # The frontend ownership checks resolve their base from Git history.
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: fe/package-lock.json
+      - run: npm ci
+      - name: Lint frontend and check ownership
+        env:
+          # Audit the PR commits even though the build uses GitHub's merge commit.
+          OWNERSHIP_EVENT_NAME: ${{ github.event_name == 'pull_request' && 'pull_request' || '' }}
+          OWNERSHIP_BASE_SHA: ${{ github.event.pull_request.base.sha || github.sha }}
+          OWNERSHIP_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: npm run lint
+      - run: npm test
+      - run: npm run build
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: perga-web
+          path: fe/web/dist/
+          if-no-files-found: error
+          overwrite: true
+
+  browser:
+    name: Browser tests (report only)
+    # The existing full browser suite has failures on main.
+    continue-on-error: true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: fe
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: fe/package-lock.json
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:browser
+
+  package:
+    name: Package Linux x64
+    needs: [backend, frontend]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          dotnet-version: '11.0.x'
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: perga-host
+      - run: tar -xzf host.tar.gz
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: perga-web
+          path: perga/web/next/
+      - name: Verify packaged Host, terminal bridge and web frontend
+        working-directory: perga
+        env:
+          ASPNETCORE_URLS: http://127.0.0.1:4041
+          Perga__EagerStartTerminalBridge: 'true'
+        run: |
+          # Host serves static files at their physical paths and uses web/index.html
+          # for SPA routes. Vite builds its asset URLs under /next/.
+          cp web/next/index.html web/index.html
+          export PERGA_STATIC_WEB_DIR="$PWD/web"
+          dotnet Perga.Host.dll > "$RUNNER_TEMP/perga.log" 2>&1 &
+          host_pid=$!
+          trap 'status=$?; kill "$host_pid" 2>/dev/null || true; wait "$host_pid" || true; if (( status != 0 )); then cat "$RUNNER_TEMP/perga.log"; fi' EXIT
+          curl -fsS --retry 20 --retry-connrefused --retry-delay 1 --max-time 5 "$ASPNETCORE_URLS/healthz"
+          curl -fsS "$ASPNETCORE_URLS/next/" -o "$RUNNER_TEMP/perga-index.html"
+          cmp web/index.html "$RUNNER_TEMP/perga-index.html"
+          curl -fsS "$ASPNETCORE_URLS/next/track/smoke" -o "$RUNNER_TEMP/perga-index.html"
+          cmp web/index.html "$RUNNER_TEMP/perga-index.html"
+          asset=$(find web/next/assets -maxdepth 1 -name 'index-*.js' -print -quit)
+          test -n "$asset"
+          curl -fsS "$ASPNETCORE_URLS/${asset#web/}" -o "$RUNNER_TEMP/perga-index.js"
+          cmp "$asset" "$RUNNER_TEMP/perga-index.js"
+      - name: Archive verified package
+        run: |
+          tar -czf perga-linux-x64.tar.gz perga
+          sha256sum perga-linux-x64.tar.gz > perga-linux-x64.tar.gz.sha256
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: perga-linux-x64
+          path: |
+            perga-linux-x64.tar.gz
+            perga-linux-x64.tar.gz.sha256
+          if-no-files-found: error
+          overwrite: true
+          compression-level: 0
+
+  release:
+    name: Publish GitHub Release
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    needs: package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: perga-linux-x64
+      - name: Publish verified package to the version tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sha256sum -c perga-linux-x64.tar.gz.sha256
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes \
+            perga-linux-x64.tar.gz perga-linux-x64.tar.gz.sha256

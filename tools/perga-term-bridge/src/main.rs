@@ -10,7 +10,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 #[derive(Debug, Parser)]
-#[command(name = "perga-term-bridge", about = "Perga cross-platform terminal bridge daemon")]
+#[command(
+    name = "perga-term-bridge",
+    about = "Perga cross-platform terminal bridge daemon"
+)]
 struct Cli {
     /// Listen on a Unix Domain Socket path (can be combined with --listen-tcp).
     #[arg(long = "listen-uds")]

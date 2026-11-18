@@ -305,7 +305,9 @@ mod tests {
                 .unwrap_or_else(|error| panic!("offset {offset}: {error}"));
             assert_eq!(frame.scroll_offset, offset);
             assert_eq!(frame.cells.len(), 20 * 3);
-            let expected: Vec<String> = (0..3).map(|row| format!("red{}", 4 - offset + row)).collect();
+            let expected: Vec<String> = (0..3)
+                .map(|row| format!("red{}", 4 - offset + row))
+                .collect();
             assert_eq!(frame.text, expected, "offset {offset}");
             let padded = &frame.cells[4];
             assert_eq!(padded.text, blank.text, "offset {offset}");

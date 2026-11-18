@@ -141,7 +141,9 @@ async fn dual_listener_jsonrpc_and_ws_64kb_replay_and_exit_roundtrip() -> Result
         json!({
             "terminal_id": "t_dual",
             "program": "/bin/sh",
-            "args": [],
+            // Exercise PTY I/O without the shell restoring its foreground
+            // process group on exit, which can mask the requested exit code.
+            "args": ["+m"],
             "cwd": cwd.to_string_lossy(),
             "env": { "PERGA_BRIDGE_MARKER": "verified" },
             "cols": 100,
@@ -211,7 +213,10 @@ async fn dual_listener_jsonrpc_and_ws_64kb_replay_and_exit_roundtrip() -> Result
     assert!(joined.contains("HIST_TAIL_verified"), "{joined}");
 
     // 3. Connect WebSocket to `/ws/t_dual` and verify immediate 64KB `0x01` replay frame.
-    let ws_url = format!("{}/ws/t_dual", bridge.tcp_url.replacen("http://", "ws://", 1));
+    let ws_url = format!(
+        "{}/ws/t_dual",
+        bridge.tcp_url.replacen("http://", "ws://", 1)
+    );
     let (mut ws, _) = tokio_tungstenite::connect_async(&ws_url).await?;
 
     let first_frame = tokio::time::timeout(Duration::from_secs(3), ws.next())
@@ -276,7 +281,7 @@ async fn dual_listener_jsonrpc_and_ws_64kb_replay_and_exit_roundtrip() -> Result
     }
     assert!(collected_live.contains("WS_LIVE_OK"), "{collected_live}");
     let exit_ctrl = exit_ctrl.expect("expected 0x02 exit control frame");
-    assert_eq!(exit_ctrl["exit_code"], 9);
+    assert_eq!(exit_ctrl["exit_code"], 9, "{collected_live:?}");
 
     // 6. Verify `term.kill` on an active process terminates cleanly and reports exited=true.
     let _ = rpc_tcp(
