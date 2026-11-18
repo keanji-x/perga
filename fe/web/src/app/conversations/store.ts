@@ -1,4 +1,5 @@
-import { ApiError } from '../../../../core/domain/failure-class.ts';
+import { ApiError, NotSentError } from '../../../../core/domain/failure-class.ts';
+import type { WorkerMessageBody, WorkerMessageMode } from '../../../../core/domain/worker-session.ts';
 import { pendingQueueWithCurrentHumanVersions, pendingQueueOwnsHumanEntry } from '../../../../core/domain/conversation-queue-controls.ts';
 import { mintIdempotencyKey } from '../providers/idempotency-key.ts';
 import { useCurrentUser } from '../auth/current-user.tsx';
@@ -21,7 +22,8 @@ import { anchorRunningTurn, type RunningTurnAnchor } from '../../../../core/doma
 import { conversationHistoryQueryOptions, modelCatalogQueryOptions, plannerRunQueryOptions, usePlannerMutations } from '../providers/queries.ts';
 import { managedProvidersQueryOptions } from '../providers/managed-providers.ts';
 import { useState } from '../../ui/state/public.ts';
-import { useConversationCommands, useConversationSendOps, useConversationQueueWriteOut, useConversationRememberedTurns, useRememberedConversations } from './public.tsx';
+import { useConversationCommands, useConversationSendOps, useConversationQueueWriteOut, useConversationRememberedTurns, useRememberedConversations, useWorkerSendIntent } from './public.tsx';
+import type { WorkerSendIntent } from './registry-model.ts';
 import { NO_TURNS } from './registry-owner.ts';
 import { useConversationStop } from './stop.ts';
 import { useConversationRestart } from './restart.ts';
@@ -80,6 +82,10 @@ export function useConversationStore(
     query.state.data?.worker?.phase === 'running' || query.state.data?.worker?.phase === 'interrupting' ? 1000 : false });
   const worker = run.data?.worker ?? null;
   const workerTurn = worker === null ? undefined : run.data?.running_turn?.turn_id;
+  const workerSendIntent = useWorkerSendIntent(worker === null ? null : cardId);
+  const [deliveryChoice, setDeliveryChoice] = useState<Readonly<{ cardId: string; turnId: string; mode: WorkerMessageMode }> | null>(null);
+  const workerMode = worker?.nativeSteer !== true ? 'queue'
+    : deliveryChoice?.cardId === cardId && deliveryChoice.turnId === workerTurn ? deliveryChoice.mode : 'steer';
   const pendingInputs = useMemo(() => run.data === undefined ? EMPTY_PENDING_INPUTS : orderedPendingInputs(run.data.pending_inputs), [run.data]);
   /* The catalog rides alongside the run query: the trigger has to render the chosen
        model's name, and `planner-run` gives only its slug. */
@@ -196,8 +202,6 @@ export function useConversationStore(
   const resumeState = resumePending.has(cardId) ? 'resuming' : providerResume?.state;
   const recoveryHoldsSend = resumeState === 'resuming' || resumeState === 'paused';
   const [actionError, setActionError] = useState<Readonly<{ cardId: string; message: string }> | null>(null);
-  const [workerSending, setWorkerSending] = useState<string | null>(null);
-  const workerSendLease = useRef<string | null>(null);
   /** The card shown now; a model write's answer is that of the card it was made in. */
   const shownCardId = useRef(cardId);
   shownCardId.current = cardId;
@@ -379,28 +383,46 @@ export function useConversationStore(
       throw error;
     }
   };
-  const sendWorker: ConversationStore['send'] = (conversationId, content, attachments, _fromComposer, replaces) => {
-    if (worker === null || conversationId !== cardId || workerSendLease.current !== null ||
-      attachments.length !== 0 || replaces !== null || !['running', 'paused'].includes(worker.phase)) return null;
-    workerSendLease.current = cardId;
-    setWorkerSending(cardId);
+  const deliverWorkerMessage = (intent: WorkerSendIntent): Promise<void> => {
     setActionError(null);
-    return mutations.sendWorker(mintIdempotencyKey(), { attemptId: worker.attemptId, content,
-      ...(workerTurn === undefined ? {} : { turnId: workerTurn }), allowQueue: workerTurn !== undefined && !worker.nativeSteer,
-    }).then(receipt => {
-      if (receipt.delivery === 'rejected') {
-        registry.refillComposer(cardId, { text: content, attachments: [] });
-        if (shownCardId.current === cardId) setActionError({ cardId, message: 'The provider did not accept the steer.' });
-      } else if (receipt.delivery === 'unknown' && shownCardId.current === cardId) {
-        setActionError({ cardId, message: 'Worker message delivery could not be confirmed. Check the Worker activity before sending again.' });
+    const finish = (unconfirmed: boolean) => registry.editWorkerSend(cardId, current => current?.key !== intent.key
+      ? current : unconfirmed ? { ...intent, state: 'unconfirmed' } : undefined);
+    const refill = (message: string) => {
+      registry.refillComposer(cardId, { text: intent.body.content, attachments: [] });
+      if (shownCardId.current === cardId) setActionError({ cardId, message });
+    };
+    return mutations.sendWorker(intent.key, intent.body).then(receipt => {
+      finish(receipt.delivery === 'unknown' || receipt.delivery === 'dispatching');
+      if (receipt.delivery === 'rejected' || receipt.delivery === 'interrupted') {
+        refill(receipt.delivery === 'rejected' ? 'The provider did not accept the steer.' : 'The Worker message was interrupted.');
       }
     }, (error: unknown) => {
-      const refused = error instanceof ApiError && error.failure.kind === 'http' && [400, 403, 404, 409, 422].includes(error.failure.status);
-      if (refused) registry.refillComposer(cardId, { text: content, attachments: [] });
-      if (shownCardId.current === cardId) setActionError({ cardId, message: error instanceof Error ? error.message : 'Could not send the Worker message.' });
+      // This response is emitted after the Kernel checks the receipt and finds no accepted message for the original turn.
+      const staleWorkerTurn = error instanceof ApiError && error.failure.kind === 'http' && error.failure.code === 'worker_turn_changed';
+      const refused = error instanceof NotSentError || (error instanceof ApiError && (error.failure.kind === 'unauthorized' ||
+        (error.failure.kind === 'http' && [400, 403, 404, 409, 422].includes(error.failure.status))));
+      if (staleWorkerTurn || (refused && intent.state === 'sending')) {
+        finish(false);
+        refill(error.message);
+      } else {
+        finish(true);
+        if (refused && shownCardId.current === cardId)
+          setActionError({ cardId, message: error.message });
+      }
       void run.refetch();
-    }).finally(() => { workerSendLease.current = null; setWorkerSending(null); });
+    });
   };
+  const sendWorker: ConversationStore['send'] = (conversationId, content, attachments, _fromComposer, replaces) => {
+    if (worker === null || conversationId !== cardId || attachments.length !== 0 || replaces !== null ||
+      !['running', 'paused'].includes(worker.phase)) return null;
+    const body: WorkerMessageBody = workerTurn === undefined ? { attemptId: worker.attemptId, content }
+      : workerMode === 'steer' ? { attemptId: worker.attemptId, content, mode: workerMode, turnId: workerTurn }
+        : { attemptId: worker.attemptId, content, mode: workerMode };
+    const intent: WorkerSendIntent = { key: mintIdempotencyKey(), body, state: 'sending' };
+    if (registry.editWorkerSend(cardId, current => current ?? intent) !== intent) return null;
+    return deliverWorkerMessage(intent);
+  };
+  const unconfirmed = workerSendIntent?.state === 'unconfirmed' ? workerSendIntent : null;
   const toolEvent = worker?.events.findLast(event => event.kind === 'session.tool_progress');
   const toolPayload = toolEvent?.payload;
   const toolName = typeof toolPayload === 'object' && toolPayload !== null && 'name' in toolPayload && typeof toolPayload.name === 'string'
@@ -409,12 +431,25 @@ export function useConversationStore(
   const workerStatus = worker?.lastError != null ? `Worker turn failed: ${worker.lastError}`
     : worker?.phase === 'interrupt_unknown' ? 'The Worker stop could not be confirmed.'
     : worker?.phase === 'paused' ? 'Worker paused. Send a message to continue.'
-    : workerTurn !== undefined && worker?.nativeSteer === false ? 'Messages sent now will queue for the Worker’s next turn.'
     : latestWorkerMessage !== undefined ? `Worker message ${latestWorkerMessage.delivery}: ${latestWorkerMessage.content}`
     : toolName === null ? null : `Worker tool: ${toolName}`;
   return {
     worker,
     updateWorkerSettings: mutations.updateWorkerSettings,
+    answerWorkerAsk: (ask, answers) => trackId === undefined ? Promise.reject(new NotSentError())
+      : mutations.answerWorkerAsk(trackId, ask.askId, answers, ask.questions),
+    workerDelivery: worker?.phase !== 'running' || workerTurn === undefined ? null : {
+      mode: workerMode,
+      select: mode => setDeliveryChoice({ cardId, turnId: workerTurn, mode }),
+    },
+    unconfirmedWorkerSend: unconfirmed === null ? null : {
+      retry: () => {
+        const sending: WorkerSendIntent = { ...unconfirmed, state: 'sending' };
+        if (registry.editWorkerSend(cardId, current => current === unconfirmed ? sending : current) === sending)
+          void deliverWorkerMessage(unconfirmed);
+      },
+      dismiss: () => { registry.editWorkerSend(cardId, current => current === unconfirmed ? undefined : current); },
+    },
     workerStatus,
     conversations,
     turns: conversation === null ? NO_TURNS : presentation.transcript,
@@ -429,9 +464,10 @@ export function useConversationStore(
     executionHeld,
     stopping,
     stopFeedback,
-    sending: view.sending || workerSending === cardId,
+    sending: view.sending || workerSendIntent?.state === 'sending',
     sendBlocked: recoveryHoldsSend || view.blocked || run.data?.unknown_session_input != null ||
-      (worker === null ? pergaInputProtocol && working && !canQueueWhileRunning : !['running', 'paused'].includes(worker.phase)),
+      (worker === null ? pergaInputProtocol && working && !canQueueWhileRunning
+        : !['running', 'paused'].includes(worker.phase) || workerSendIntent !== null),
     initialInputChecking: view.checkingInitialInput && initialInputError === null,
     initialInputError,
     retryInitialInput: () => { void initialObservation.refetch().catch(() => undefined); void history.refetch().catch(() => undefined); },

@@ -6,7 +6,6 @@ import { z } from 'zod';
 
 import {
   askActionSchema,
-  askQuestionDtoSchema,
   askQuestionSchema,
   cardSchema,
   compiledTemplateManifestDtoSchema,
@@ -31,6 +30,7 @@ import {
   activityStateOf, type ActivityItem, type ActivityState, type AttentionKind, type CardActivity,
 } from './activity.js';
 import { visibleAreas, type Area } from './area.js';
+import { normalizeAskQuestions } from './ask.js';
 import {
   casAttempts, classifyFailure, NotSentError, refusedText, writeFailureOf,
   type FailureTable, type Landed, type WriteClass, type WriteFailure, type WriteText,
@@ -660,20 +660,6 @@ const trackWireOrDtoSchema: z.ZodType<TrackWire> = z.union([
   trackDtoSchema.transform(trackDtoToWire),
   trackWireSchema,
 ]);
-
-function normalizeAskQuestions(raw: unknown): readonly z.infer<typeof askQuestionSchema>[] {
-  const source = typeof raw === 'string'
-    ? (() => { try { return JSON.parse(raw) as unknown; } catch { return []; } })()
-    : raw;
-  if (!Array.isArray(source)) return [];
-  return source.flatMap((entry) => {
-    const legacy = askQuestionSchema.safeParse(entry);
-    if (legacy.success) return [legacy.data];
-    const dto = askQuestionDtoSchema.safeParse(entry);
-    if (dto.success) return [{ title: dto.data.question, options: [...dto.data.options] }];
-    return [];
-  });
-}
 
 function askDtoToActivityItem(ask: AskDto): z.infer<typeof activityItemWireSchema> {
   const questions = normalizeAskQuestions(ask.questions);

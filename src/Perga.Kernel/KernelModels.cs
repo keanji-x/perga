@@ -153,8 +153,11 @@ public sealed record UpdateWorkerSettingsRequest(
 
 public sealed record WorkerMessageActivity(string Id, string Author, string Content, string? TurnId, string Delivery, long CreatedAtMs);
 
+public enum WorkerMessageMode { Steer, Queue }
+
 public sealed record WorkerMessageRequest(
-    string AttemptId, string Content, string RequestKey, string? TurnId = null, bool AllowQueue = false);
+    string AttemptId, string Content, string RequestKey, string? TurnId = null, bool AllowQueue = false,
+    WorkerMessageMode? Mode = null);
 
 public sealed record WorkerCompletionOrigin(string Token, string TurnId);
 

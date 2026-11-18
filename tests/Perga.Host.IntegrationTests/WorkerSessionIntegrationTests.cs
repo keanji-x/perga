@@ -19,6 +19,85 @@ namespace Perga.Host.IntegrationTests;
 public sealed class WorkerSessionIntegrationTests
 {
     [Fact]
+    public async Task ExplicitQueueOnANativeWorkerWaitsAndReplaysTheSameReceipt()
+    {
+        await using var host = new PergaHostTestCluster();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        var ct = timeout.Token;
+        var kernel = host.Services.GetRequiredService<IPergaKernel>();
+        var (trackId, leadId) = await host.CreateTrackAsync();
+        var lead = kernel.McpSessionBridge.RegisterSession(trackId, leadId, true, null, null, []);
+        var started = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var steers = 0;
+        host.AgentRuntime.SetSteerHandler(_ => { Interlocked.Increment(ref steers); return Task.FromResult(true); });
+        host.AgentRuntime.SetTurnHandler(Turns);
+
+        var dispatched = await kernel.DispatchWorkerAsync(trackId, new("Inspect the report"), "dispatch", null, ct);
+        var worker = Assert.Single(await kernel.ListSessionsAsync(trackId, ct), session => session.BoundTaskId == dispatched.Task.Id);
+        var leadQueue = new { sessionId = worker.Id, attemptId = worker.BoundAttemptId, content = "Lead follow-up", mode = "queue", requestKey = "lead-queue" };
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/sessions/{worker.Id}/messages")
+            {
+                Content = JsonContent.Create(new { attemptId = worker.BoundAttemptId, content = "Look at dates", mode = "queue" })
+            };
+            request.Headers.Add("Idempotency-Key", "queued-request");
+            using var response = await host.Client.SendAsync(request, ct);
+            Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+            var receipt = (await response.Content.ReadFromJsonAsync<WorkerMessageReceipt>(PergaJsonDefaults.ApiOptions, ct))!;
+            Assert.Equal("queued", receipt.Delivery);
+            Assert.Equal(0, steers);
+            var turnId = await started.Task.WaitAsync(ct);
+
+            var (replayed, replayError) = await CallToolAsync(host, "/mcp/kernel", lead.Principal.Token, KernelMcpToolNames.SessionSend,
+                leadQueue, ct);
+            Assert.False(replayError, replayed);
+            var (again, againError) = await CallToolAsync(host, "/mcp/kernel", lead.Principal.Token, KernelMcpToolNames.SessionSend,
+                leadQueue, ct);
+            Assert.False(againError, again);
+            Assert.Equal(replayed, again);
+            Assert.Equal(0, steers);
+            Assert.DoesNotContain(host.AgentRuntime.ExecutedTurns, turn => turn.Input.Prompt == "Look at dates");
+            var (wrongTarget, wrongTargetError) = await CallToolAsync(host, "/mcp/kernel", lead.Principal.Token, KernelMcpToolNames.SessionSend,
+                new { sessionId = worker.Id, attemptId = worker.BoundAttemptId, turnId, content = "Wrong queue target", mode = "queue", requestKey = "bad-queue" }, ct);
+            Assert.True(wrongTargetError);
+            Assert.Contains("Omit turnId", wrongTarget);
+            var (stale, staleError) = await CallToolAsync(host, "/mcp/kernel", lead.Principal.Token, KernelMcpToolNames.SessionSend,
+                new { sessionId = worker.Id, attemptId = worker.BoundAttemptId, turnId = "old-turn", content = "Stale steer", mode = "steer", requestKey = "stale" }, ct);
+            Assert.True(staleError);
+            Assert.Contains("worker_turn_changed", stale);
+        }
+        finally
+        {
+            release.TrySetResult();
+        }
+        await kernel.WaitForTrackIdleAsync(trackId, ct);
+        Assert.Single(host.AgentRuntime.ExecutedTurns, turn => turn.Input.Prompt == "Look at dates");
+        Assert.Single(host.AgentRuntime.ExecutedTurns, turn => turn.Input.Prompt == "Lead follow-up");
+        var (delivered, deliveredError) = await CallToolAsync(host, "/mcp/kernel", lead.Principal.Token, KernelMcpToolNames.SessionSend, leadQueue, ct);
+        Assert.False(deliveredError, delivered);
+        Assert.Equal("delivered", JsonSerializer.Deserialize<WorkerMessageReceipt>(delivered, PergaJsonDefaults.ApiOptions)!.Delivery);
+        Assert.Single(host.AgentRuntime.ExecutedTurns, turn => turn.Input.Prompt == "Lead follow-up");
+        await kernel.CancelTaskAsync(trackId, leadId, dispatched.Task.TaskKey, ct: ct);
+        var (afterCancel, afterCancelError) = await CallToolAsync(host, "/mcp/kernel", lead.Principal.Token, KernelMcpToolNames.SessionSend,
+            new { sessionId = worker.Id, attemptId = worker.BoundAttemptId, turnId = "old-turn", content = "Stale steer", mode = "steer", requestKey = "stale" }, ct);
+        Assert.True(afterCancelError);
+        Assert.Contains("worker_turn_changed", afterCancel);
+
+        async IAsyncEnumerable<UnifiedAgentEvent> Turns(HarnessLaunchSpec spec, TurnInput input,
+            [EnumeratorCancellation] CancellationToken token)
+        {
+            if (input.Prompt.Contains("Execute contract task", StringComparison.Ordinal))
+            {
+                started.TrySetResult(input.CorrelationId);
+                await release.Task.WaitAsync(token);
+            }
+            yield return new UnifiedAgentEvent.TurnCompleted(null);
+        }
+    }
+
+    [Fact]
     public async Task RestartRejectsAnAcceptedLegacyInputToAnInterruptedWorker()
     {
         var directory = Directory.CreateTempSubdirectory("perga-legacy-worker-");

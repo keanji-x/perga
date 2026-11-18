@@ -61,7 +61,7 @@ import {
   type Track, type TrackDetailWire, type TrackPatchBody, type TrackRecipe,
 } from '../../../../core/domain/track.ts';
 import {
-  abandonSessionInputOperation, resumeProviderSessionOperation, compactPlannerOperation, interruptPlannerOperation, sendPlannerInputOperation, sendWorkerMessageOperation, steerQueuedSessionMessageOperation, removeQueuedSessionMessageOperation,
+  abandonSessionInputOperation, resumeProviderSessionOperation, compactPlannerOperation, interruptPlannerOperation, sendPlannerInputOperation, steerQueuedSessionMessageOperation, removeQueuedSessionMessageOperation,
   createTrackConversationOperation, trackConversationsOperation, setConversationArchiveOperation,
   createSerialWriter, deletePlannerInputOperation, editPlannerInputOperation, steerPlannerInputOperation,
   modelCatalogOperation, plannerQueueWriteFailure, setPlannerModelOperation,
@@ -71,7 +71,7 @@ import {
 } from '../../../../core/domain/conversation.ts';
 import { harnessLiveOperation } from '../../../../core/domain/conversation-live.ts';
 import { setPlannerPermissionModeOperation } from '../../../../core/domain/planner-permission-mode.ts';
-import { updateWorkerSettingsOperation } from '../../../../core/domain/worker-session.ts';
+import { sendWorkerMessageOperation, updateWorkerSettingsOperation } from '../../../../core/domain/worker-session.ts';
 import { recoverConversationOperation, abandonConversationOperation, restartPlannerOperation, type RunRecovery } from '../../../../core/domain/conversation-restart.ts';
 import {
   ApiError, classifyFailure, DELETE_FAILURES, DELETE_TEXT, refusalText, writeFailureOf, writeFailureText,
@@ -279,6 +279,13 @@ export function usePlannerMutations(transport: ApiTransportPort, cardId: string,
     updateWorkerSettings: (settings: Parameters<typeof updateWorkerSettingsOperation>[1]) =>
       Promise.resolve().then(() => admitTransport(transport))
         .then(admitted => runOperation(admitted, updateWorkerSettingsOperation(cardId, settings), unauthorized)).then(refreshAfter),
+    answerWorkerAsk: (trackId: string, askId: AskId, answers: readonly AskAnswer[], questions: readonly AskQuestion[]) =>
+      Promise.resolve().then(() => admitTransport(transport))
+        .then(admitted => runOperation(admitted, answerAskOperation(trackId, askId, answers, questions), unauthorized))
+        .finally(() => {
+          refreshAfter(undefined);
+          void client.invalidateQueries({ queryKey: queryKeys.trackDetail(trackId) });
+        }),
     /* Settles once the run read started after the answer has landed, so what follows reads the new session, not the
        wedge it replaced (#2192). A failure refreshes too: one whose outcome is unknown may have started a session. */
     restart: (recovery?: RunRecovery | null) => {

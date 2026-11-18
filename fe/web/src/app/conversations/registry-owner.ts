@@ -5,7 +5,7 @@ import { beginSendOp, withConfirmedSends, type ConversationOutboxOp } from '../.
 import { EMPTY_COMPOSER, isSameComposer, tookEveryImage, withRefill, type ComposerContent } from '../../../../core/domain/conversation-composer.ts';
 import { NO_UPLOAD, type UploadState } from '../../features/planner/attachments.tsx';
 import { moveDraft, slotHolds, type ConversationRegistry, type ConversationEdit, type ConversationOpenRequest,
-  type DraftSlots, type EditNotice, type InputResolutionIntent, type RememberedConversation } from './registry-model.ts';
+  type DraftSlots, type EditNotice, type InputResolutionIntent, type RememberedConversation, type WorkerSendIntent } from './registry-model.ts';
 
 export const NO_SENDS: readonly ConversationOutboxOp[] = Object.freeze([]);
 export const NO_ROWS: readonly string[] = Object.freeze([]);
@@ -19,6 +19,7 @@ export type ConversationSnapshot = Readonly<{
   drafts: DraftSlots;
   openRequest: ConversationOpenRequest | null;
   outboxes: ById<readonly ConversationOutboxOp[]>;
+  workerSends: ById<WorkerSendIntent>;
   spentRows: ById<readonly string[]>;
   composers: ById<ComposerContent>;
   newComposers: ById<string>;
@@ -76,7 +77,7 @@ function withoutEdit(state: ConversationSnapshot, id: string): ConversationSnaps
 /** The only local conversation authority. Commands finish before any observer is notified. */
 export function createConversationOwner() {
   let state: ConversationSnapshot = {
-    entries: {}, conversations: NO_CONVERSATIONS, drafts: {}, openRequest: null, outboxes: {}, spentRows: {},
+    entries: {}, conversations: NO_CONVERSATIONS, drafts: {}, openRequest: null, outboxes: {}, workerSends: {}, spentRows: {},
     composers: {}, newComposers: {}, uploads: {}, edits: {}, notices: {}, queueWrites: {}, restarts: {}, resolutions: {},
   };
   let read = 0;
@@ -174,6 +175,12 @@ export function createConversationOwner() {
       const before = state.outboxes[id] ?? NO_SENDS;
       const after = update(before);
       if (after !== before) commit(withOutbox(state, id, after));
+      return after;
+    },
+    editWorkerSend: (id, update) => {
+      const before = state.workerSends[id];
+      const after = update(before);
+      if (before !== after) commit({ ...state, workerSends: put(state.workerSends, id, after) });
       return after;
     },
     retireSends: (id, retired) => {

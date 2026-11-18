@@ -84,7 +84,7 @@ import { ContextRing } from '../../features/chat/thread/context-ring.tsx';
 import { useMentionTrigger } from '../../features/chat/thread/mention-trigger.tsx';
 import { ReportBacklinks } from '../../features/report/backlinks/public.tsx';
 import { TaskRecovery, useCurrentTaskRows } from './task-recovery.tsx';
-import { WorkerDispatchControl, WorkerSettingsControl } from './worker-controls.tsx';
+import { WorkerActivityControl, WorkerDeliveryControl, WorkerDispatchControl, WorkerSettingsControl } from './worker-controls.tsx';
 import { useReportPreviewResolver, useReportPreviewViewports } from './report-preview.ts';
 import { useReportSeriesResolver } from './report-series.ts';
 import { ReportReferencePreview } from './report-reference.tsx';
@@ -155,12 +155,12 @@ import { PendingRoute } from './pending-route.tsx';
 import { Banner } from '@astryxdesign/core/Banner';
 import { ErrorBox } from '../../ui/error-box/public.tsx';
 import { PlannerAskDrawer } from '../../features/planner/public.ts';
-import { openAsksOf, type OpenAsk } from '../../../../core/domain/ask.ts';
+import { openAsksOf, workerOpenAsks, type OpenAsk } from '../../../../core/domain/ask.ts';
 import { useCompactViewport } from '../../ui/viewport/public.ts';
 
 export const APP_BASEPATH = '/next';
 
-/** A conversation that is not a Planner's asks nothing; one frozen value, so the composer's memo holds. */
+/** One stable value for a conversation without pending questions. */
 const NO_ASKS: readonly OpenAsk[] = Object.freeze([]);
 
 /** A route-owned server list whose rows open in this panel's drawer. */
@@ -683,6 +683,7 @@ function useConversationPane(
   const setPermissionMode = useCommittedCallback(existingId, store.setPermissionMode);
   const worker = store.worker;
   const updateWorkerSettings = store.updateWorkerSettings;
+  const workerDelivery = store.workerDelivery;
   const [submission, setSubmission] = useState<Readonly<{ conversationId: string; request: number }> | null>(null);
   /* Only a new admitted op asks the shown thread to follow. Retries retain their
      key and reading place; pending work on mount is not a fresh local press. */
@@ -701,15 +702,21 @@ function useConversationPane(
     if (open === null || options?.onSide === undefined || !sideSourceReady) return false;
     return options.onSide(open, store.turns, question);
   });
-  const plannerAsks = plannerRow?.asks ?? NO_ASKS;
+  const workerOpen = worker?.openAsks;
+  const workerAsks = useMemo(() => workerOpen === undefined || shareAccess !== null ? NO_ASKS : workerOpenAsks(workerOpen), [workerOpen, shareAccess]);
+  const conversationAsks = worker == null ? plannerRow?.asks ?? NO_ASKS : workerAsks;
   /* Read field by field: the control is rebuilt each render, and the composer's memo keys on what it shows. */
   const roleValue = plannerRow?.role.value ?? null;
   const roleDisabled = plannerRow?.role.isDisabled ?? true;
   const roleDisabledReason = plannerRow?.role.disabledReason;
   const roleChange = plannerRow?.role.onChange;
-  /* Without a Planner row the drawer lists no ask, so nothing can be answered from here: nothing is sent. */
-  const answerAsk = useCommittedCallback(existingId, (askId: import('../../../../core/domain/activity.ts').AskId, answers: readonly AskAnswer[]) => plannerRow === null
-    ? Promise.reject(new NotSentError()) : plannerRow.answerAsk(askId, answers));
+  const answerAsk = useCommittedCallback(existingId, (askId: import('../../../../core/domain/activity.ts').AskId, answers: readonly AskAnswer[]) => {
+    if (worker != null) {
+      const ask = workerAsks.find(candidate => candidate.askId === askId);
+      return ask === undefined || store.answerWorkerAsk === undefined ? Promise.reject(new NotSentError()) : store.answerWorkerAsk(ask, answers);
+    }
+    return plannerRow === null ? Promise.reject(new NotSentError()) : plannerRow.answerAsk(askId, answers);
+  });
   const attach = useCommittedCallback(existingId, attachments.attach);
   const removeAttachment = useCommittedCallback(existingId, attachments.remove);
   const { items: attachmentItems, ids: attachmentIds, busy: attachmentBusy, error: attachmentError, atCapacity } = attachments;
@@ -798,7 +805,7 @@ function useConversationPane(
               drawer={(
                 <>
                   {/* Above the images: those belong to the message being written, so they stay next to its field. */}
-                  <PlannerAskDrawer key={`asks-${existingId}`} asks={plannerAsks} onAnswer={answerAsk} />
+                  <PlannerAskDrawer key={`asks-${existingId}`} asks={conversationAsks} onAnswer={answerAsk} />
                   <PlannerAttachmentDrawer attachments={composerAttachments} />
                 </>
               )}
@@ -834,6 +841,9 @@ function useConversationPane(
                   />}
                   {worker != null && updateWorkerSettings !== undefined &&
                     <WorkerSettingsControl key={worker.attemptId} worker={worker} update={updateWorkerSettings} />}
+                  {worker != null && <WorkerActivityControl key={`activity-${worker.attemptId}`} worker={worker} />}
+                  {worker != null && workerDelivery != null &&
+                    <WorkerDeliveryControl {...workerDelivery} nativeSteer={worker.nativeSteer} />}
                   {/* A Planner's only (#2348): any other conversation reads `null` and has no approvals to set. */}
                   {composerView.permissionMode !== null && (
                     <PermissionModePill mode={composerView.permissionMode} onChange={composerView.setPermissionMode}
@@ -849,8 +859,8 @@ function useConversationPane(
             />
   ), [existingId, compactComposer, panePresented, composerFocusFor, composerFocusRequest, changeComposer, composerView, draftOnly,
     paneCommands, composerStop, replacing, editingQueue, edit.queuedSaving, editingBar,
-    sendText, composerAttachments, mentionTrigger, scopeProvider, plannerAsks, answerAsk,
-    roleValue, roleDisabled, roleDisabledReason, roleChange, worker, updateWorkerSettings]);
+    sendText, composerAttachments, mentionTrigger, scopeProvider, conversationAsks, answerAsk,
+    roleValue, roleDisabled, roleDisabledReason, roleChange, worker, updateWorkerSettings, workerDelivery]);
 
   const renderDrawer = (resizeGroup: PaneResizeGroup | null = null) => (
       <ConversationSurface
@@ -949,6 +959,11 @@ function useConversationPane(
             {store.loadingEarlier && <ChatFooterNotice tone="neutral">Loading earlier messages… Navigation covers loaded history.</ChatFooterNotice>}
             {store.compacting && <ChatFooterNotice>Compacting conversation context…</ChatFooterNotice>}
             {store.workerStatus != null && <ChatFooterNotice tone="neutral">{store.workerStatus}</ChatFooterNotice>}
+            {store.unconfirmedWorkerSend != null && <ChatFooterNotice>
+              <ChatFooterError message="The Worker message’s delivery is unconfirmed." />
+              <ChatFooterRemedy onClick={store.unconfirmedWorkerSend.retry}>Retry same message</ChatFooterRemedy>
+              <ChatFooterRemedy onClick={store.unconfirmedWorkerSend.dismiss}>Dismiss</ChatFooterRemedy>
+            </ChatFooterNotice>}
             {store.actionError !== null && (
               <ChatFooterNotice><ChatFooterError message={store.actionError} /></ChatFooterNotice>
             )}

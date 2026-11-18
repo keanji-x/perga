@@ -6,10 +6,16 @@ import type { RunRecovery } from '../../../../core/domain/conversation-restart.t
 import type { RunningTurnAnchor } from '../../../../core/domain/conversation-meta.ts';
 import type { UploadAttachment } from '../../features/planner/attachments.tsx';
 import type { RestartStrip } from './restart.ts';
+import type { WorkerMessageMode } from '../../../../core/domain/worker-session.ts';
+import type { OpenAsk } from '../../../../core/domain/ask.ts';
+import type { AskAnswer } from '../../../../core/api/generated/wire.ts';
 
 export type ConversationStore = Readonly<{
   worker?: import('../../../../core/api/perga-v1.ts').WorkerActivity | null;
   updateWorkerSettings?: (settings: import('../../../../core/api/perga-v1.ts').WorkerSettings & { attemptId: string }) => Promise<unknown>;
+  answerWorkerAsk?: (ask: OpenAsk, answers: readonly AskAnswer[]) => Promise<void>;
+  workerDelivery?: Readonly<{ mode: WorkerMessageMode; select: (mode: WorkerMessageMode) => void }> | null;
+  unconfirmedWorkerSend?: Readonly<{ retry: () => void; dismiss: () => void }> | null;
   workerStatus?: string | null;
   conversations: readonly Conversation[];
   /** This selected scope's messages and actions, in canonical display order. */
