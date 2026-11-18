@@ -107,8 +107,9 @@ Resulting per-kind behavior (all unchanged by the address refactor):
 | unknown / future kind | ignored, no throw |
 
 Control frames: `replay-complete` → invalidate everything (`keys: null`) plus a
-cursor write; `snapshot-required` → clear the cache, drop the cursor, and
-reconnect.
+cursor write. A snapshot frame with a tip pauses the stream, retires inactive data,
+refreshes active reads, and resumes at that tip. Older frames without a tip clear the
+cache and reconnect from zero.
 
 ### Effect ownership
 

@@ -56,27 +56,20 @@ public static class EventsWebSocketHandler
         try
         {
             // 2. Check pruning boundary against global event ledger + query missed persisted events.
+            var missed = await readStore.ListEventsSinceAsync(since, trackId, limit: MaxReplayEvents + 1, ct)
+                .ConfigureAwait(false);
+            // Check retention after reading the suffix so concurrent pruning cannot hide a gap.
             var earliestGlobal = await readStore.ListEventsSinceAsync(0, trackId: null, limit: 1, ct).ConfigureAwait(false);
             var earliestRetainedId = earliestGlobal.Count > 0 ? earliestGlobal[0].EventId : null;
-
-            var wasPrunedBeforeSince =
-                (earliestRetainedId is null && since > 0) ||
-                (earliestRetainedId is > 1 && since < earliestRetainedId.Value);
-
-            IReadOnlyList<EventEnvelopeDto> missed = [];
-            if (!wasPrunedBeforeSince)
-            {
-                missed = await readStore.ListEventsSinceAsync(since, trackId, limit: MaxReplayEvents + 1, ct)
-                    .ConfigureAwait(false);
-            }
+            var wasPrunedBeforeSince = earliestRetainedId is { } earliest ? since < earliest - 1 : since > 0;
 
             long maxDeliveredPersistentId = since;
 
             if (wasPrunedBeforeSince || missed.Count > MaxReplayEvents)
             {
                 // Determine current store tip so subsequent live frames do not duplicate pre-snapshot history.
-                maxDeliveredPersistentId = await ResolveCurrentStoreTipIdAsync(readStore, since, ct).ConfigureAwait(false);
-                await SendJsonFrameAsync(webSocket, new { kind = "_snapshot_required" }, ct).ConfigureAwait(false);
+                maxDeliveredPersistentId = await readStore.GetEventTipIdAsync(ct).ConfigureAwait(false);
+                await SendJsonFrameAsync(webSocket, new { kind = "_snapshot_required", tipId = maxDeliveredPersistentId }, ct).ConfigureAwait(false);
             }
             else
             {
@@ -151,42 +144,6 @@ public static class EventsWebSocketHandler
                 {
                     // Ignore close handshake errors.
                 }
-            }
-        }
-    }
-
-    private static async Task<long> ResolveCurrentStoreTipIdAsync(
-        ITrackReadStore readStore,
-        long minCursor,
-        CancellationToken ct)
-    {
-        var cursor = Math.Max(0, minCursor);
-        while (true)
-        {
-            var page = await readStore.ListEventsSinceAsync(cursor, trackId: null, limit: 1_000, ct).ConfigureAwait(false);
-            if (page.Count == 0)
-            {
-                return cursor;
-            }
-
-            var maxInPage = cursor;
-            foreach (var evt in page)
-            {
-                if (evt.EventId is { } id && id > maxInPage)
-                {
-                    maxInPage = id;
-                }
-            }
-
-            if (maxInPage <= cursor)
-            {
-                return cursor;
-            }
-
-            cursor = maxInPage;
-            if (page.Count < 1_000)
-            {
-                return cursor;
             }
         }
     }

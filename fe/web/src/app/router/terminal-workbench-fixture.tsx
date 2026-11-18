@@ -3,6 +3,7 @@ import { createMemoryHistory, RouterProvider } from '@tanstack/react-router';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { ApiRequest, ApiTransportPort, ApiTransportResponse } from '../../../../core/api/types.ts';
 import type { TerminalPresentation } from '../../../../core/domain/terminal-presentation.ts';
+import type { TerminalDto } from '../../../../core/api/perga-v1.ts';
 import type { CardWire } from '../../../../core/domain/track.ts';
 import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { prepareReportDocument } from '../../features/report/document/preparation.ts';
@@ -18,7 +19,7 @@ export function terminalCard(id: string, presentation: TerminalPresentation, tra
 }
 
 /** HTTP boundary fixture; production router, mutations, card registry and lifecycle remain real. */
-export function setupWorkbench({ cards: initial = [] as CardWire[], defer = false, lost = false, daily = false, failure = null as null | 'definite' | 'unknown', initialCard = null as string | null, secondaryReads = null as Promise<void> | null, createdTerminalId = null as string | null } = {}) {
+export function setupWorkbench({ cards: initial = [] as CardWire[], defer = false, lost = false, daily = false, failure = null as null | 'definite' | 'unknown', initialCard = null as string | null, secondaryReads = null as Promise<void> | null, hostTerminals = null as TerminalDto[] | null, createdTerminalId = null as string | null } = {}) {
   const requests: ApiRequest[] = [];
   const receipts = createReadReceiptsKernel({ baselineMs: 0 });
   const cards = [...initial];
@@ -46,6 +47,24 @@ export function setupWorkbench({ cards: initial = [] as CardWire[], defer = fals
     if (path === '/api/v1/areas/area/tracks?includeClosed=true') return ok([track]);
     if (path === '/api/settings') return ok({});
     if (path === '/api/v1/tracks/other') return ok({ track: { ...track, id: 'other', title: 'Other track' }, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true, cards: [...otherCards], overlays: [] });
+    if (hostTerminals !== null) {
+      if (path === '/api/v1/tracks/workbench') return ok({
+        track: { id: track.id, areaId: 'area', title: track.title, createdAtMs: 1, updatedAtMs: 1 },
+        report: { blocks: [] },
+      });
+      if (path === '/api/v1/tracks/workbench/terminals') {
+        if (method === 'GET') return ok([...hostTerminals]);
+        if (method === 'POST') {
+          const dto = { id: 'pty-1', trackId: track.id, title: 'Host shell', status: 'running', cwd: '/tmp', createdAtMs: 1 };
+          hostTerminals.push(dto);
+          return ok(dto);
+        }
+      }
+      if (method === 'DELETE' && path === '/api/v1/tracks/workbench/terminals/pty-1') {
+        hostTerminals[0] = { ...hostTerminals[0], status: 'exited', exitCode: 0, exitedAtMs: 2 };
+        return ok(undefined);
+      }
+    }
     if (path === '/api/v1/tracks/workbench') return ok({ track, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true, cards: [...cards], overlays: [] });
     if (secondaryReads !== null && ['/api/v1/tracks/workbench/report', '/api/v1/tracks/workbench/sessions', '/api/tracks/workbench/backlinks'].includes(path)) await secondaryReads;
     if (path === '/api/v1/tracks/workbench/report') return ok({ taskDiagnostics: [] });

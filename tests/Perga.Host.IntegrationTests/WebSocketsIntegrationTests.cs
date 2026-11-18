@@ -178,6 +178,7 @@ public sealed class WebSocketsIntegrationTests
         {
             using var firstFrame = await PergaHostTestCluster.ReceiveTextJsonFrameAsync(prunedWs, ct);
             Assert.Equal("_snapshot_required", firstFrame.RootElement.GetProperty("kind").GetString());
+            Assert.Equal(6, firstFrame.RootElement.GetProperty("tipId").GetInt64());
         }
 
         // 2. Append 2,005 recent events after event 6 -> reconnecting with since=6 (> 2,000 missed) -> _snapshot_required!
@@ -192,6 +193,20 @@ public sealed class WebSocketsIntegrationTests
         {
             using var firstFrame = await PergaHostTestCluster.ReceiveTextJsonFrameAsync(overflowWs, ct);
             Assert.Equal("_snapshot_required", firstFrame.RootElement.GetProperty("kind").GetString());
+            var resumeId = firstFrame.RootElement.GetProperty("tipId").GetInt64();
+            Assert.Equal(2011, resumeId);
+            await store.AppendEventAsync(
+                new EventEnvelopeDto(null, null, "trk_flood", KernelEventKinds.TrackUpdated, payload, recentMs), ct);
+            using var resumed = await cluster.ConnectEventsWebSocketAsync($"?since={resumeId}", ct);
+            using var next = await PergaHostTestCluster.ReceiveTextJsonFrameAsync(resumed, ct);
+            Assert.Equal(resumeId + 1, next.RootElement.GetProperty("eventId").GetInt64());
+            using var ready = await PergaHostTestCluster.ReceiveTextJsonFrameAsync(resumed, ct);
+            Assert.Equal("_replay_complete", ready.RootElement.GetProperty("kind").GetString());
+            var live = new EventEnvelopeDto(resumeId + 2, null, "trk_flood", KernelEventKinds.TrackUpdated, payload, recentMs);
+            await store.AppendEventAsync(live, ct);
+            kernel.EventBus.PublishPersistent(live);
+            using var delivered = await PergaHostTestCluster.ReceiveTextJsonFrameAsync(resumed, ct);
+            Assert.Equal(live.EventId, delivered.RootElement.GetProperty("eventId").GetInt64());
         }
     }
 

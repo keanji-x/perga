@@ -10,7 +10,7 @@ describe('event reducer contract', () => {
     }>>();
     expectTypeOf<EventReduction['effects']>().toEqualTypeOf<readonly EventEffect[]>();
     expectTypeOf<EventEffect['type']>().toEqualTypeOf<
-      'persist-cursor' | 'invalidate' | 'remove' | 'write-through' | 'clear-cache' | 'reconnect'
+      'persist-cursor' | 'invalidate' | 'remove' | 'write-through' | 'clear-cache' | 'reconnect' | 'refresh-snapshot'
     >();
   });
 });
