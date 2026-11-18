@@ -17,7 +17,8 @@ public sealed record SendMessageHttpBody(
     bool? QueueIfBusy = null,
     string? AttemptId = null,
     string? TurnId = null,
-    bool AllowQueue = false);
+    bool AllowQueue = false,
+    WorkerMessageMode? Mode = null);
 
 public sealed record InterruptWorkerHttpBody(string AttemptId, string TurnId);
 
@@ -303,11 +304,14 @@ public static class ApiV1Endpoints
             if (body.AttemptId is not null)
             {
                 var result = await kernel.SendWorkerMessageAsync(sessionId,
-                    new WorkerMessageRequest(body.AttemptId, body.Content, idempotencyKey, body.TurnId, body.AllowQueue),
+                    new WorkerMessageRequest(body.AttemptId, body.Content, idempotencyKey, body.TurnId, body.AllowQueue, body.Mode),
                     caller: null, ct).ConfigureAwait(false);
                 return Results.Json(result, PergaJsonDefaults.ApiOptions,
                     statusCode: result.Delivery == "queued" ? StatusCodes.Status202Accepted : StatusCodes.Status200OK);
             }
+
+            if (body.Mode is not null)
+                return HttpErrorHandling.BadRequest("invalid_argument", "Worker delivery mode requires attemptId.");
 
             if (body.SteerIfRunning == true && body.QueueIfBusy == true)
                 return HttpErrorHandling.BadRequest("invalid_argument", "Choose either queuing or steering.");

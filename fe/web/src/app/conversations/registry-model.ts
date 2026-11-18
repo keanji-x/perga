@@ -127,7 +127,14 @@ export type RememberedConversation = Readonly<{
 
 export type InputResolutionIntent = Readonly<{ decision: 'keep' | 'retry'; key: string; args: Readonly<KeepConversationInputRequest>; status: 'sending' | 'unknown' }>;
 
+export type WorkerSendIntent = Readonly<{
+  key: string;
+  body: import('../../../../core/domain/worker-session.ts').WorkerMessageBody;
+  state: 'sending' | 'unconfirmed';
+}>;
+
 export type ConversationRegistry = Readonly<{
+  editWorkerSend: (conversationId: string, update: (current: WorkerSendIntent | undefined) => WorkerSendIntent | undefined) => WorkerSendIntent | undefined;
   beginResolution: (card: string, decision: 'keep' | 'retry', args: KeepConversationInputRequest, key: string) => InputResolutionIntent | null;
   finishResolution: (card: string, key: string, status: 'unknown' | 'done') => void;
   turnsOf: (conversationId: string) => readonly TranscriptEntry[];

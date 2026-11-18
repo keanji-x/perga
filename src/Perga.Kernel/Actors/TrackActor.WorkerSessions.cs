@@ -106,7 +106,17 @@ public sealed partial class TrackActor
         ValidateRequestKey(request.RequestKey);
         if (string.IsNullOrWhiteSpace(request.Content) || string.IsNullOrWhiteSpace(request.AttemptId))
             throw KernelException.InvalidArgument("A Worker message requires attemptId and non-empty content.");
-        var hash = RequestIdentity.Hash(new { version = 1, request.AttemptId, request.TurnId, request.Content, request.AllowQueue });
+        if (request.Mode is { } mode && (!Enum.IsDefined(mode) || request.AllowQueue))
+            throw KernelException.InvalidArgument("Choose an explicit Worker delivery mode or allowQueue.");
+        if (request.Mode == WorkerMessageMode.Steer && string.IsNullOrWhiteSpace(request.TurnId))
+            throw KernelException.InvalidArgument("Steering requires the current turnId.");
+        if (request.Mode == WorkerMessageMode.Queue && request.TurnId is not null)
+            throw KernelException.InvalidArgument("Queued Worker messages target an attempt. Omit turnId.");
+
+        // Existing receipts hash the original request shape. Explicit delivery choices use a new request version.
+        var hash = request.Mode is null
+            ? RequestIdentity.Hash(new { version = 1, request.AttemptId, request.TurnId, request.Content, request.AllowQueue })
+            : RequestIdentity.Hash(new { version = 2, request.AttemptId, request.TurnId, request.Content, request.Mode });
         var author = callerSessionId ?? "owner:installation";
 
         var delivery = await EnqueueAsync(async actor =>
@@ -121,16 +131,19 @@ public sealed partial class TrackActor
                 return Task.FromResult(ToWorkerMessageReceipt(replay));
             }
 
-            var (_, attempt) = RequireCurrentWorkerCore(sessionId, request.AttemptId);
             _activeTurns.TryGetValue(sessionId, out var active);
             if (request.TurnId is not null && (active?.TurnDto.Id != request.TurnId || active.Interrupted))
-                throw KernelException.Conflict("The Worker turn changed. Refresh the session before steering.");
-            if (attempt.InterruptionUnconfirmed ||
-                (request.TurnId is null && (active is not null || _reservedWakeSessions.ContainsKey(sessionId))))
+                throw new KernelException(request.Mode == WorkerMessageMode.Steer ? KernelErrorCode.WorkerTurnChanged : KernelErrorCode.Conflict,
+                    "The Worker turn changed. Refresh the session before steering.");
+            var (_, attempt) = RequireCurrentWorkerCore(sessionId, request.AttemptId);
+            if (attempt.InterruptionUnconfirmed)
+                throw KernelException.Conflict("The previous Worker interruption could not be confirmed.");
+            var explicitQueue = request.Mode == WorkerMessageMode.Queue;
+            if (!explicitQueue && request.TurnId is null && (active is not null || _reservedWakeSessions.ContainsKey(sessionId)))
                 throw KernelException.Conflict("A Worker turn is already running or starting. Target a turn to steer it.");
 
-            var native = active?.AgentSession.SupportsNativeSteer == true;
-            if (active is not null && !native && !request.AllowQueue)
+            var native = !explicitQueue && active?.AgentSession.SupportsNativeSteer == true;
+            if (active is not null && !native && !explicitQueue && !request.AllowQueue)
                 throw KernelException.Conflict("This provider requires explicit permission to queue the message for the next turn.");
 
             var message = new WorkerMessage($"inp_{Guid.NewGuid():N}", sessionId, attempt.AttemptId, author,
@@ -141,11 +154,10 @@ public sealed partial class TrackActor
             if (!native)
             {
                 attempt.HasQueuedMessages = true;
-                if (active is null)
-                {
+                if (active is null && !explicitQueue)
                     attempt.Paused = false;
+                if (active is null && !attempt.Paused)
                     await ScheduleWorkerMessageCoreAsync(sessionId).ConfigureAwait(false);
-                }
                 return Task.FromResult(ToWorkerMessageReceipt(message));
             }
 

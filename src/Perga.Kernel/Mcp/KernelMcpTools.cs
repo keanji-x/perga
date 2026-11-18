@@ -146,8 +146,8 @@ public static class KernelMcpCatalog
                 Schema("""{"type":"object","required":["reason"],"properties":{"reason":{"type":"string"},"result":{}}}""")),
             new(KernelMcpToolNames.SessionRead, "Read recent Worker messages, current turn progress, and open approvals. Find the session through perga_track_status.",
                 Schema("""{"type":"object","required":["sessionId"],"properties":{"sessionId":{"type":"string"},"beforeId":{"type":"integer"},"limit":{"type":"integer","minimum":1,"maximum":100},"activityTurnId":{"type":"string"},"afterSequence":{"type":"integer","minimum":0},"waitMs":{"type":"integer","minimum":0,"maximum":10000}}}""")),
-            new(KernelMcpToolNames.SessionSend, "Send to an idle or interrupted Worker, or steer its exact current turn. Set allowQueue to queue on providers without native steer. Reuse requestKey to retry.",
-                Schema("""{"type":"object","required":["sessionId","attemptId","content","requestKey"],"properties":{"sessionId":{"type":"string"},"attemptId":{"type":"string"},"turnId":{"type":"string"},"content":{"type":"string"},"requestKey":{"type":"string"},"allowQueue":{"type":"boolean"}}}""")),
+            new(KernelMcpToolNames.SessionSend, "Set mode to steer with the current turnId, or queue without turnId for the next turn. Queue keeps an interrupted Worker paused. Omit mode and turnId to send to an idle Worker or resume a paused Worker. Retry an uncertain send with its original requestKey, target and content.",
+                Schema("""{"type":"object","required":["sessionId","attemptId","content","requestKey"],"properties":{"sessionId":{"type":"string"},"attemptId":{"type":"string"},"turnId":{"type":"string"},"content":{"type":"string"},"requestKey":{"type":"string"},"mode":{"type":"string","enum":["steer","queue"]},"allowQueue":{"type":"boolean","description":"Legacy fallback for providers without native steering. Use mode for explicit delivery."}}}""")),
             new(KernelMcpToolNames.SessionInterrupt, "Interrupt the specified Worker turn and keep its Attempt available for continuation.",
                 Schema("""{"type":"object","required":["sessionId","attemptId","turnId"],"properties":{"sessionId":{"type":"string"},"attemptId":{"type":"string"},"turnId":{"type":"string"}}}""")),
             new(KernelMcpToolNames.SessionUpdateSettings, "Set a Worker's configuration for the next turn. Read its latest settings and capability first.",
@@ -253,9 +253,17 @@ public static class KernelMcpDispatcher
             case KernelMcpToolNames.SessionSend:
             {
                 var sessionId = RequireStringArg(args, ["sessionId"]);
+                WorkerMessageMode? mode = null;
+                if (JsonHelpers.TryGetPropertyIgnoreCase(args, ["mode"], out var modeElement) && modeElement.ValueKind != JsonValueKind.Null)
+                    mode = modeElement.ValueKind == JsonValueKind.String ? modeElement.GetString() switch
+                    {
+                        "steer" => WorkerMessageMode.Steer,
+                        "queue" => WorkerMessageMode.Queue,
+                        _ => throw KernelException.InvalidArgument("Worker delivery mode must be steer or queue.")
+                    } : throw KernelException.InvalidArgument("Worker delivery mode must be steer or queue.");
                 var request = new WorkerMessageRequest(RequireStringArg(args, ["attemptId"]), RequireStringArg(args, ["content"]),
                     RequireStringArg(args, ["requestKey"]), OptionalStringArg(args, ["turnId"]),
-                    JsonHelpers.TryGetPropertyIgnoreCase(args, ["allowQueue"], out var allowQueue) && allowQueue.ValueKind == JsonValueKind.True);
+                    JsonHelpers.TryGetPropertyIgnoreCase(args, ["allowQueue"], out var allowQueue) && allowQueue.ValueKind == JsonValueKind.True, mode);
                 return JsonHelpers.ToElement(await kernel.SendWorkerMessageAsync(sessionId, request, caller, ct).ConfigureAwait(false));
             }
 

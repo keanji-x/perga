@@ -11,7 +11,8 @@ public enum KernelErrorCode
     PreconditionFailed,
     IdempotencyKeyInvalid,
     IdempotencyKeyReused,
-    IdempotencyKeyExhausted
+    IdempotencyKeyExhausted,
+    WorkerTurnChanged
 }
 
 public sealed class KernelException : Exception

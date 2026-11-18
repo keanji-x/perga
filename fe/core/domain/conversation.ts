@@ -993,19 +993,6 @@ export function interruptPlannerOperation(cardId: string, worker?: { attemptId: 
   };
 }
 
-export function sendWorkerMessageOperation(cardId: string, key: string, body: {
-  attemptId: string; turnId?: string; content: string; allowQueue: boolean;
-}) {
-  return {
-    method: 'POST' as const,
-    path: `/api/v1/sessions/${encodeURIComponent(cardId)}/messages`,
-    headers: { 'Idempotency-Key': key },
-    body,
-    responseSchema: z.object({ turnId: z.string().nullish(), inputId: z.string(),
-      delivery: z.enum(['queued', 'dispatching', 'delivered', 'rejected', 'unknown', 'interrupted']) }),
-  };
-}
-
 const conversationStateSchema = z.enum([
   'starting', 'running', 'idle', 'turn_pending', 'exited', 'failed', 'superseded',
 ]);

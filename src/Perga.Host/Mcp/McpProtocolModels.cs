@@ -75,6 +75,9 @@ public static class McpToolResultFormatter
                     },
                     PergaJsonDefaults.ApiOptions)),
 
+            KernelException { Code: KernelErrorCode.WorkerTurnChanged } stale => Error(
+                JsonSerializer.Serialize(new { code = "worker_turn_changed", error = stale.Message }, PergaJsonDefaults.ApiOptions)),
+
             KernelException kex => string.IsNullOrWhiteSpace(kex.NextStep)
                 ? Error(kex.Message)
                 : Error($"{kex.Message} (nextStep: {kex.NextStep})"),

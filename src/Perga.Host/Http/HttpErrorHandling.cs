@@ -93,6 +93,7 @@ public static class HttpErrorHandling
             KernelErrorCode.Forbidden => (StatusCodes.Status403Forbidden, "forbidden"),
             KernelErrorCode.PolicyDenied => (StatusCodes.Status403Forbidden, "policy_denied"),
             KernelErrorCode.Conflict => (StatusCodes.Status409Conflict, "conflict"),
+            KernelErrorCode.WorkerTurnChanged => (StatusCodes.Status409Conflict, "worker_turn_changed"),
             KernelErrorCode.PreconditionFailed => (StatusCodes.Status409Conflict, "precondition_failed"),
             _ => (StatusCodes.Status400BadRequest, "kernel_error")
         };

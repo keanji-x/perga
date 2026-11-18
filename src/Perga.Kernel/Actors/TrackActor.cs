@@ -1952,7 +1952,9 @@ public sealed partial class TrackActor : IAsyncDisposable
         else
         {
             var prompt = BuildContractSubagentPrompt(runningTask);
-            _ = TrackBackgroundJob(() => RunSubagentTaskAttemptInBackgroundAsync(attemptId, subagent.Id, prompt, attemptToken));
+            var startupReservation = Guid.NewGuid();
+            _reservedWakeSessions.Add(subagent.Id, startupReservation);
+            _ = TrackBackgroundJob(() => RunSubagentTaskAttemptInBackgroundAsync(attemptId, subagent.Id, prompt, startupReservation, attemptToken));
         }
 
         var evt = sessionEvent ?? CreateTaskUpdatedEventCore(now);
@@ -2021,11 +2023,12 @@ public sealed partial class TrackActor : IAsyncDisposable
         string attemptId,
         string subagentSessionId,
         string prompt,
+        Guid reservation,
         CancellationToken ct)
     {
         try
         {
-            var turn = await ExecuteSessionTurnPipelineAsync(subagentSessionId, "wake", prompt, ct).ConfigureAwait(false);
+            var turn = await ExecuteSessionTurnPipelineAsync(subagentSessionId, "wake", prompt, ct, wakeReservation: reservation).ConfigureAwait(false);
             if (string.Equals(turn.Status, "failed", StringComparison.OrdinalIgnoreCase))
             {
                 var stillActive = await EnqueueAsync(_ => Task.FromResult(_activeAttempts.ContainsKey(attemptId)), CancellationToken.None)
@@ -2053,6 +2056,16 @@ public sealed partial class TrackActor : IAsyncDisposable
                 await CompleteAttemptFailByAttemptIdAsync(attemptId, ex.Message, null, CancellationToken.None)
                     .ConfigureAwait(false);
             }
+        }
+        finally
+        {
+            if (!_actorShutdownCts.IsCancellationRequested)
+                await EnqueueAsync(_ =>
+                {
+                    if (_reservedWakeSessions.TryGetValue(subagentSessionId, out var held) && held == reservation)
+                        _reservedWakeSessions.Remove(subagentSessionId);
+                    return Task.CompletedTask;
+                }, CancellationToken.None).ConfigureAwait(false);
         }
     }
 

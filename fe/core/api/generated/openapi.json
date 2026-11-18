@@ -15080,7 +15080,15 @@
                   "allowQueue": {
                     "type": "boolean",
                     "default": false,
-                    "description": "Allow a Worker message to queue where native steering is unavailable."
+                    "description": "Legacy fallback for a Worker without native steering. Use mode for explicit delivery."
+                  },
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "steer",
+                      "queue"
+                    ],
+                    "description": "Worker delivery mode. Steer requires the expected current turnId. Queue takes no turnId and leaves a paused Worker paused. Omit mode and turnId to send to an idle Worker or resume a paused Worker."
                   }
                 }
               }
@@ -15112,7 +15120,7 @@
             }
           },
           "202": {
-            "description": "Input committed or admitted to the in-memory queue",
+            "description": "Input committed, admitted to the session queue, or queued for the Worker's next turn.",
             "content": {
               "application/json": {
                 "schema": {
@@ -15135,12 +15143,12 @@
                 "schema": {
                   "type": "string"
                 },
-                "description": "Present for durable input receipts."
+                "description": "Present for SessionInputReceipt responses."
               }
             }
           },
           "409": {
-            "description": "Session busy or conflicting request key"
+            "description": "Session busy, conflicting request key, or changed Worker turn. Explicit stale steering returns worker_turn_changed when no matching receipt exists."
           }
         }
       }

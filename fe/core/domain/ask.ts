@@ -2,7 +2,8 @@
 // kernel's activity overlay; the one write is `POST /api/tracks/{id}/asks/{ask_id}/answer`.
 
 import { z } from 'zod';
-import { askDtoSchema } from '../api/schemas.js';
+import { askDtoSchema, askQuestionSchema } from '../api/schemas.js';
+import { askQuestionDtoSchema, type AskDto } from '../api/perga-v1.js';
 import type { AskAction, AskAnswer } from '../api/generated/wire.js';
 import type { ApiOperation } from '../api/types.js';
 import type { ActivityItem, AskDelivery, AskId, AskQuestion } from './activity.js';
@@ -35,6 +36,28 @@ export function openAsksOf(items: readonly ActivityItem[]): readonly OpenAsk[] {
   }
   const blocking = (ask: OpenAsk) => (ask.delivery === 'hold' ? 0 : 1);
   return asks.sort((left, right) => blocking(left) - blocking(right) || compareAskIds(left.askId, right.askId));
+}
+
+export function normalizeAskQuestions(raw: unknown): readonly z.infer<typeof askQuestionSchema>[] {
+  const source = typeof raw === 'string'
+    ? (() => { try { return JSON.parse(raw) as unknown; } catch { return []; } })()
+    : raw;
+  if (!Array.isArray(source)) return [];
+  return source.flatMap((entry) => {
+    const legacy = askQuestionSchema.safeParse(entry);
+    if (legacy.success) return [legacy.data];
+    const dto = askQuestionDtoSchema.safeParse(entry);
+    if (dto.success) return [{ title: dto.data.question, options: [...dto.data.options] }];
+    return [];
+  });
+}
+
+export function workerOpenAsks(asks: readonly AskDto[]): readonly OpenAsk[] {
+  return asks.flatMap(ask => {
+    if (ask.status !== 'open') return [];
+    const questions = normalizeAskQuestions(ask.questions);
+    return questions.length === 0 ? [] : [{ askId: ask.id, delivery: 'hold', questions }];
+  });
 }
 
 /**
