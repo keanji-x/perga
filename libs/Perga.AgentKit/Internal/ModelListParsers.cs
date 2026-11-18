@@ -5,6 +5,45 @@ namespace Perga.AgentKit.Internal;
 
 internal static partial class ModelListParsers
 {
+    public static WorkerProviderConfiguration? ParseCodexWorkerConfiguration(JsonElement result, JsonElement configuration)
+    {
+        if (result.ValueKind != JsonValueKind.Object || !result.TryGetProperty("data", out var data) ||
+            data.ValueKind != JsonValueKind.Array)
+            return null;
+
+        var models = new List<WorkerModelOption>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        string? listedDefault = null;
+        foreach (var item in data.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.Object ||
+                (TryGetString(item, "model") ?? TryGetString(item, "id")) is not { Length: > 0 } id || !seen.Add(id))
+                continue;
+            var efforts = item.TryGetProperty("supportedReasoningEfforts", out var options) && options.ValueKind == JsonValueKind.Array
+                ? options.EnumerateArray().Select(option => TryGetString(option, "reasoningEffort"))
+                    .OfType<string>().Where(value => value.Length > 0).Distinct(StringComparer.Ordinal).ToArray()
+                : [];
+            var effort = TryGetString(item, "defaultReasoningEffort");
+            models.Add(new WorkerModelOption(id, TryGetString(item, "displayName") ?? id, efforts,
+                efforts.Contains(effort, StringComparer.Ordinal) ? effort : null));
+            if (TryGetBool(item, "isDefault") == true)
+                listedDefault ??= id;
+        }
+
+        if (models.Count == 0)
+            return null;
+        if (configuration.ValueKind != JsonValueKind.Object || !configuration.TryGetProperty("config", out var config) ||
+            config.ValueKind != JsonValueKind.Object)
+            return new WorkerProviderConfiguration(models);
+
+        var defaultId = TryGetString(config, "model") ?? listedDefault;
+        var defaultModel = models.FirstOrDefault(model => model.Id == defaultId);
+        var configuredEffort = TryGetString(config, "model_reasoning_effort");
+        var defaultEffort = configuredEffort is null ? defaultModel?.DefaultReasoningEffort
+            : defaultModel?.ReasoningEfforts.Contains(configuredEffort, StringComparer.Ordinal) == true ? configuredEffort : null;
+        return new WorkerProviderConfiguration(models, defaultModel?.Id, defaultEffort);
+    }
+
     public static (IReadOnlyList<string> Models, string? DefaultModel) ParseCodexModelsWithDefault(JsonElement result)
     {
         var list = new List<string>();

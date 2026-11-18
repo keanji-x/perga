@@ -145,6 +145,7 @@ public sealed class CodexAgentSession : IAgentSession
     private string? _nativeThreadId;
     private string? _lastEmittedThreadId;
     private string? _fallbackModel;
+    private bool _configureWorker;
     private int _disposed;
 
     private CodexAgentSession(
@@ -166,6 +167,7 @@ public sealed class CodexAgentSession : IAgentSession
     public string? NativeThreadId => Volatile.Read(ref _nativeThreadId);
 
     public bool SupportsNativeSteer => true;
+    public WorkerProviderConfiguration? WorkerConfiguration { get; private set; }
     public bool ShutdownConfirmed => _rpc.ShutdownConfirmed;
     public bool SupportsSessionResume => true;
     public bool RequiresTerminalStop => true;
@@ -415,7 +417,7 @@ public sealed class CodexAgentSession : IAgentSession
             }
         };
 
-        if (!string.IsNullOrWhiteSpace(spec.Model))
+        if ((!spec.ConfigureWorker || string.IsNullOrWhiteSpace(spec.ResumeNativeThreadId)) && !string.IsNullOrWhiteSpace(spec.Model))
         {
             threadParams["model"] = spec.Model;
         }
@@ -445,6 +447,36 @@ public sealed class CodexAgentSession : IAgentSession
         }
 
         Volatile.Write(ref _nativeThreadId, resolvedThreadId);
+        _configureWorker = spec.ConfigureWorker;
+        if (_configureWorker)
+            WorkerConfiguration = await ReadWorkerConfigurationAsync(spec.Cwd, ct).ConfigureAwait(false);
+    }
+
+    private async Task<WorkerProviderConfiguration?> ReadWorkerConfigurationAsync(string cwd, CancellationToken ct)
+    {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeout.CancelAfter(TimeSpan.FromMilliseconds(600));
+        var models = await QueryAsync("model/list", new Dictionary<string, object?>()).ConfigureAwait(false);
+        if (models.ValueKind == JsonValueKind.Undefined)
+            return null;
+        var config = await QueryAsync("config/read", new Dictionary<string, object?> { ["cwd"] = cwd }).ConfigureAwait(false);
+        return ModelListParsers.ParseCodexWorkerConfiguration(models, config);
+
+        async Task<JsonElement> QueryAsync(string method, Dictionary<string, object?> args)
+        {
+            try
+            {
+                return await _rpc.SendRequestAsync(method, args, timeout.Token).ConfigureAwait(false);
+            }
+            catch (JsonRpcRemoteException)
+            {
+                return default;
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                return default;
+            }
+        }
     }
 
     private Task StartTurnRpcAsync(
@@ -494,20 +526,32 @@ public sealed class CodexAgentSession : IAgentSession
                 var turnId = ExtractTurnId(response);
                 if (turnId is null)
                     throw new InvalidOperationException("Codex did not return the native turn ID.");
-                if (!ReferenceEquals(Volatile.Read(ref _currentTurn), turnState) || !turnState.TrySetTurnId(turnId))
+                if (!ReferenceEquals(Volatile.Read(ref _currentTurn), turnState) || turnState.IsTurnIgnored(turnId))
                     return;
 
-                turnState.Events.Writer.TryWrite(new UnifiedAgentEvent.TurnAccepted(turnId));
-                if (turnState.TakeEarlyCompletion(turnId) is { } early)
-                    OnNotification("turn/completed", early);
+                var turn = response.ValueKind == JsonValueKind.Object && response.TryGetProperty("turn", out var result)
+                    ? result : default;
+                var failed = string.Equals(TryGetString(turn, "status"), "failed", StringComparison.OrdinalIgnoreCase);
+                var early = turnState.TakeEarlyCompletion(turnId);
+                if (_configureWorker && !turnState.HasEmittedProgress &&
+                    (FindWorkerConfigurationRejection(input, response) ??
+                        (early is { } terminal ? FindWorkerConfigurationRejection(input, terminal) : null)) is { } rejection)
+                {
+                    turnState.TryFinish(new UnifiedAgentEvent.TurnError(rejection.Code, rejection.Message, rejection.Retryable,
+                        IsConclusive: true, BeforePrompt: true));
+                    return;
+                }
 
-                if (turnState.IsTurnIgnored(turnId) || response.ValueKind != JsonValueKind.Object ||
-                    !response.TryGetProperty("turn", out var turn) || turn.ValueKind != JsonValueKind.Object)
+                if (!turnState.TrySetTurnId(turnId)) return;
+                turnState.Events.Writer.TryWrite(new UnifiedAgentEvent.TurnAccepted(turnId));
+                if (early is { } completion)
+                    OnNotification("turn/completed", completion);
+
+                if (turnState.IsTurnIgnored(turnId) || turn.ValueKind != JsonValueKind.Object)
                     return;
 
                 turnState.LatestUsage = TryParseUsage(turn) ?? TryParseUsage(response) ?? turnState.LatestUsage;
-                if (!string.Equals(TryGetString(turn, "status"), "failed", StringComparison.OrdinalIgnoreCase))
-                    return;
+                if (!failed) return;
 
                 var (code, message, retryable) = ExtractCodexError(turn);
                 if (allowFallback && CanTriggerModelFallback(turnState, code, message) && turnState.TryClaimModelFallback())
@@ -528,6 +572,12 @@ public sealed class CodexAgentSession : IAgentSession
         catch (JsonRpcRemoteException rpcEx)
         {
             var (code, msg, retryable) = ExtractCodexRpcExceptionError(rpcEx);
+            if (_configureWorker && !turnState.HasEmittedProgress && IsWorkerConfigurationRejection(input, code, msg))
+            {
+                turnState.TryFinish(new UnifiedAgentEvent.TurnError(code, msg, retryable, IsConclusive: true, BeforePrompt: true));
+                return;
+            }
+
             if (allowFallback &&
                 CanTriggerModelFallback(turnState, code, msg) &&
                 turnState.TryClaimModelFallback())
@@ -599,11 +649,31 @@ public sealed class CodexAgentSession : IAgentSession
     }
 
     private bool CanTriggerModelFallback(TurnStreamState turnState, string code, string message) =>
+        (!_configureWorker || turnState.Input is { Model: null, ReasoningEffort: null }) &&
         _configuredModel is null &&
         Volatile.Read(ref _fallbackModel) is null &&
         !turnState.CancelRequested &&
         !turnState.HasEmittedProgress &&
         IsUnsupportedOrMissingModelError(code, message);
+
+    private static bool IsWorkerConfigurationRejection(TurnInput input, string code, string message) =>
+        (input.Model is not null && IsUnsupportedOrMissingModelError(code, message)) ||
+        (input.ReasoningEffort is not null && (
+            (code.Contains("reasoning_effort", StringComparison.OrdinalIgnoreCase) &&
+                (code.Contains("unsupported", StringComparison.OrdinalIgnoreCase) || code.Contains("invalid", StringComparison.OrdinalIgnoreCase))) ||
+            (message.Contains("reasoning effort", StringComparison.OrdinalIgnoreCase) &&
+                (message.Contains("not supported", StringComparison.OrdinalIgnoreCase) || message.Contains("invalid", StringComparison.OrdinalIgnoreCase)))));
+
+    private static (string Code, string Message, bool Retryable)? FindWorkerConfigurationRejection(TurnInput input, JsonElement response)
+    {
+        var turn = response.ValueKind == JsonValueKind.Object && response.TryGetProperty("turn", out var result) &&
+            result.ValueKind == JsonValueKind.Object ? result : response;
+        var status = TryGetString(response, "status") ?? TryGetString(turn, "status");
+        if (!string.Equals(status, "failed", StringComparison.OrdinalIgnoreCase)) return null;
+
+        var error = ExtractCodexError(turn);
+        return IsWorkerConfigurationRejection(input, error.Code, error.Message) ? error : null;
+    }
 
     private static bool IsUnsupportedOrMissingModelError(string code, string message)
     {

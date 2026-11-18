@@ -30,6 +30,7 @@ export function createFetchTransport({ shareLinkId }: Readonly<{ shareLinkId?: s
         const response = await fetch(request.path, {
           method: request.method,
           credentials: request.credentials,
+          ...(request.redirect === undefined ? {} : { redirect: request.redirect }),
           ...(request.headers === undefined && shareLinkId === undefined ? {} : {
             headers: { ...request.headers, ...(shareLinkId === undefined ? {} : { 'X-Calm-Share-Link': shareLinkId }) },
           }),

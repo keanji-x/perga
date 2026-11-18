@@ -92,7 +92,8 @@ public interface IPergaKernel : IAsyncDisposable
         string? activityTurnId = null, long? afterSequence = null, int waitMs = 0);
     Task<WorkerMessageReceipt> SendWorkerMessageAsync(string sessionId, WorkerMessageRequest request, McpSessionPrincipal? caller, CancellationToken ct);
     Task InterruptWorkerAsync(string sessionId, string attemptId, string turnId, McpSessionPrincipal? caller, CancellationToken ct);
-    Task<WorkerSettings> UpdateWorkerSettingsAsync(string sessionId, UpdateWorkerSettingsRequest request, McpSessionPrincipal? caller, CancellationToken ct);
+    Task<WorkerSettings> UpdateWorkerSettingsAsync(string sessionId, UpdateWorkerSettingsRequest request, McpSessionPrincipal? caller,
+        CancellationToken ct, bool verifiedApprovalOwner = false);
     Task<SteeringResult> SteerQueuedMessageAsync(string sessionId, string inputId, string turnId, CancellationToken ct);
     Task RemoveQueuedMessageAsync(string sessionId, string inputId, CancellationToken ct);
     Task<SteeringResult> SteerMessageAsync(string sessionId, string turnId, string content, CancellationToken ct);
@@ -1169,10 +1170,11 @@ public sealed partial class PergaKernelService : IPergaKernel
         await Actors.GetOrActivate(trackId).InterruptWorkerAsync(sessionId, attemptId, turnId, caller?.SessionId, ct).ConfigureAwait(false);
     }
 
-    public async Task<WorkerSettings> UpdateWorkerSettingsAsync(string sessionId, UpdateWorkerSettingsRequest request, McpSessionPrincipal? caller, CancellationToken ct)
+    public async Task<WorkerSettings> UpdateWorkerSettingsAsync(string sessionId, UpdateWorkerSettingsRequest request, McpSessionPrincipal? caller,
+        CancellationToken ct, bool verifiedApprovalOwner = false)
     {
         var trackId = caller?.TrackId ?? await ResolveTrackIdForSessionAsync(sessionId, ct).ConfigureAwait(false);
-        return await Actors.GetOrActivate(trackId).UpdateWorkerSettingsAsync(sessionId, request, caller?.SessionId, ct).ConfigureAwait(false);
+        return await Actors.GetOrActivate(trackId).UpdateWorkerSettingsAsync(sessionId, request, caller?.SessionId, ct, verifiedApprovalOwner).ConfigureAwait(false);
     }
 
     public async Task<SteeringResult> SteerQueuedMessageAsync(string sessionId, string inputId, string turnId, CancellationToken ct)

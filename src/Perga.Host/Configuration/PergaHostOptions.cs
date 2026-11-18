@@ -20,6 +20,7 @@ public sealed class PergaHostOptions
     public string DefaultProvider { get; set; } = "codex";
     public string? DefaultModel { get; set; }
     public string? CodexSandboxApiKey { get; set; }
+    public string? WorkerApprovalAuthorizationSha256 { get; set; }
     public string DefaultWorkspaceDriver { get; set; } = "direct";
     public bool DispatchWakesInBackground { get; set; } = true;
 

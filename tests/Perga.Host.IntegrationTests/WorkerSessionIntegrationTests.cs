@@ -1,6 +1,8 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Runtime.CompilerServices;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Perga.AgentKit;
@@ -18,6 +20,72 @@ namespace Perga.Host.IntegrationTests;
 
 public sealed class WorkerSessionIntegrationTests
 {
+    [Fact]
+    public async Task WorkerSettingsUseReportedDefaultsAndRequireAnOwnerProofToRestoreApprovals()
+    {
+        var ownerKey = new string('a', 64);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        var ct = timeout.Token;
+        await using var host = new PergaHostTestCluster(configureHostOptions: options =>
+            options.WorkerApprovalAuthorizationSha256 = Convert.ToHexString(SHA256.HashData(Encoding.ASCII.GetBytes(ownerKey))));
+        var kernel = host.Services.GetRequiredService<IPergaKernel>();
+        var (trackId, leadId) = await host.CreateTrackAsync();
+        var dispatched = await kernel.DispatchWorkerAsync(trackId, new("Inspect the report"), "settings", null, ct);
+        await kernel.WaitForTrackIdleAsync(trackId, ct);
+        var worker = Assert.Single(await kernel.ListSessionsAsync(trackId, ct), session => session.BoundTaskId == dispatched.Task.Id);
+        var attemptId = worker.BoundAttemptId!;
+        var page = await kernel.GetSessionItemsAsync(worker.Id, ct: ct);
+        Assert.True(page.Worker!.ApprovalAuthorizationConfigured);
+        Assert.Equal("gpt-5.4", page.Worker.ProviderConfiguration!.DefaultModel);
+        Assert.Equal(["low"], page.Worker.ProviderConfiguration.GetReasoningEfforts("gpt-5.4-mini"));
+
+        using var incompatible = await UpdateAsync(new(attemptId, 0, "gpt-5.4-mini", "high", "deny"));
+        Assert.Equal(HttpStatusCode.BadRequest, incompatible.StatusCode);
+        using var denied = await UpdateAsync(new(attemptId, 0, "gpt-5.4", "high", "deny"));
+        Assert.Equal(HttpStatusCode.OK, denied.StatusCode);
+
+        var restore = new UpdateWorkerSettingsRequest(attemptId, 1, null, null, "ask");
+        using var missingProof = await UpdateAsync(restore);
+        Assert.Equal(HttpStatusCode.Forbidden, missingProof.StatusCode);
+        using var wrongProof = await UpdateAsync(restore, new string('b', 64));
+        Assert.Equal(HttpStatusCode.Forbidden, wrongProof.StatusCode);
+        using var insecureProof = await UpdateAsync(restore, ownerKey, scheme: "http");
+        Assert.Equal(HttpStatusCode.Forbidden, insecureProof.StatusCode);
+
+        var lead = kernel.McpSessionBridge.RegisterSession(trackId, leadId, true, null, null, []);
+        var leadSettings = JsonSerializer.SerializeToElement(new { sessionId = worker.Id, attemptId, version = 1,
+            model = (string?)null, reasoningEffort = (string?)null, approvalMode = "ask" });
+        var (leadReply, leadError) = await CallToolAsync(host, "/mcp/kernel", lead.Principal.Token, KernelMcpToolNames.SessionUpdateSettings,
+            leadSettings, ct);
+        Assert.True(leadError);
+        Assert.Contains("installation owner", leadReply);
+
+        using var authorized = await UpdateAsync(restore, ownerKey);
+        Assert.Equal(HttpStatusCode.OK, authorized.StatusCode);
+        var saved = (await authorized.Content.ReadFromJsonAsync<WorkerSettings>(PergaJsonDefaults.ApiOptions, ct))!;
+        Assert.Null(saved.Model);
+        Assert.Null(saved.ReasoningEffort);
+        Assert.Equal("ask", saved.ApprovalMode);
+        var stored = await host.Services.GetRequiredService<ITrackStore>().WorkerSettings!.ReadAsync(worker.Id, ct);
+        Assert.Equal(saved, stored);
+
+        await kernel.SendWorkerMessageAsync(worker.Id, new(attemptId, "Verify restored defaults", "verify"), null, ct);
+        await kernel.WaitForTrackIdleAsync(trackId, ct);
+        var turn = Assert.Single(host.AgentRuntime.ExecutedTurns, entry => entry.Input.Prompt == "Verify restored defaults");
+        Assert.Equal("gpt-5.4", turn.Input.Model);
+        Assert.Equal("low", turn.Input.ReasoningEffort);
+
+        async Task<HttpResponseMessage> UpdateAsync(UpdateWorkerSettingsRequest settings, string? key = null, string scheme = "https")
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Patch, $"{scheme}://localhost/api/v1/sessions/{worker.Id}/settings")
+            {
+                Content = JsonContent.Create(settings)
+            };
+            if (key is not null) request.Headers.Add("X-Perga-Worker-Approval-Key", key);
+            return await host.Client.SendAsync(request, ct);
+        }
+    }
+
     [Fact]
     public async Task ExplicitQueueOnANativeWorkerWaitsAndReplaysTheSameReceipt()
     {

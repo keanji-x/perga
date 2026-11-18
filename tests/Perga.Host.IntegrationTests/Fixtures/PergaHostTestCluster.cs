@@ -152,6 +152,12 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
 
         public string? NativeThreadId { get; }
         public bool SupportsNativeSteer => _owner.SupportsSteering;
+        public WorkerProviderConfiguration? WorkerConfiguration => _spec.ConfigureWorker && _spec.Provider == "codex"
+            ? new([
+                new WorkerModelOption("gpt-5.4", "GPT 5.4", ["low", "high"], "low"),
+                new WorkerModelOption("gpt-5.4-mini", "GPT 5.4 Mini", ["low"], "low"),
+            ], "gpt-5.4", "low")
+            : null;
         public bool SupportsSessionResume => true;
         public bool SupportsScopedClose => _owner.CloseHandler is not null;
 

@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { performApiRequest } from '../../../../core/api/client.ts';
+import { updateWorkerSettingsOperation } from '../../../../core/domain/worker-session.ts';
 import { createFetchTransport } from './transport.ts';
 
 const request = { method: 'DELETE', path: '/api/tracks/w1', credentials: 'include' } as const;
@@ -42,6 +44,23 @@ describe('fetch transport cancellation', () => {
 });
 
 describe('fetch transport bodies', () => {
+  it('sends Worker approval proof in a header and rejects redirects', async () => {
+    const settings = { attemptId: 'attempt', version: 1, model: null, reasoningEffort: null, approvalMode: 'ask' } as const;
+    const proof = 'a'.repeat(64);
+    const fetch = vi.fn<(path: string, init: RequestInit) => Promise<Response>>()
+      .mockResolvedValue(new Response('{}', { status: 400 }));
+    vi.stubGlobal('fetch', fetch);
+
+    await performApiRequest(createFetchTransport(), updateWorkerSettingsOperation('worker', settings, proof));
+
+    expect(fetch).toHaveBeenCalledTimes(1);
+    const [path, init] = fetch.mock.calls[0];
+    expect(path).toBe('/api/v1/sessions/worker/settings');
+    expect(init.redirect).toBe('error');
+    expect(new Headers(init.headers).get('X-Perga-Worker-Approval-Key')).toBe(proof);
+    expect(init.body).toBe(JSON.stringify(settings));
+  });
+
   function capture() {
     const seen: { body?: BodyInit | null } = {};
     vi.stubGlobal('fetch', vi.fn((_path: string, init?: RequestInit) => {

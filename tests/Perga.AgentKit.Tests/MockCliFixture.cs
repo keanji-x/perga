@@ -392,6 +392,8 @@ for raw_line in sys.stdin:
                     ]
                 }
             })
+    elif method == "config/read" and os.environ.get("MOCK_CODEX_CONFIG_JSON"):
+        send({"jsonrpc": "2.0", "id": msg_id, "result": {"config": json.loads(os.environ["MOCK_CODEX_CONFIG_JSON"])}})
     elif method in ("thread/start", "thread/resume"):
         state["thread_method"] = method
         state["model"] = params.get("model")
@@ -414,6 +416,16 @@ for raw_line in sys.stdin:
         prompt_text = inputs[0].get("text", "") if inputs else ""
         corr_id = params.get("correlationId", "")
         turn_model = params.get("model")
+        if prompt_text in ("REJECT_WORKER_CONFIGURATION", "REJECT_WORKER_CONFIGURATION_EARLY_EVENT"):
+            failed = {"id": turn_id, "status": "failed",
+                      "error": {"code": "model_not_found", "message": "Model not found"}}
+            if prompt_text == "REJECT_WORKER_CONFIGURATION_EARLY_EVENT":
+                send({"jsonrpc": "2.0", "method": "turn/completed",
+                      "params": {"threadId": state["thread_id"], "turn": failed}})
+                send({"jsonrpc": "2.0", "id": msg_id, "result": {"turn": {"id": turn_id, "status": "inProgress"}}})
+                continue
+            send({"jsonrpc": "2.0", "id": msg_id, "result": {"turn": failed}})
+            continue
         if prompt_text == "FAIL_BEFORE_START_REPLY" and turn_model is None:
             failed = {"id": turn_id, "status": "failed",
                       "error": {"code": "model_not_found", "message": "Model not found"}}
@@ -808,7 +820,8 @@ def handle_prompt(req_id, params):
         }
     })
     mcp_names = ",".join(sorted(s.get("name", "") for s in state["mcp_servers"]))
-    summary = f"acp[{state['session_method']}|{state['session_id']}|sub={state['subcommand_acp']}|model={state['model']}|via={state['model_set_method']}|mcp={mcp_names}]:{prompt_text}"
+    worker_effort = f"|effort={state.get('worker_effort', 'normal')}" if os.environ.get("MOCK_ACP_WORKER_OPTIONS") == "1" else ""
+    summary = f"acp[{state['session_method']}|{state['session_id']}|sub={state['subcommand_acp']}|model={state['model']}|via={state['model_set_method']}|mcp={mcp_names}{worker_effort}]:{prompt_text}"
     send({
         "jsonrpc": "2.0",
         "method": "session/update",
@@ -828,6 +841,17 @@ def handle_prompt(req_id, params):
             "usage": {"inputTokens": 200, "outputTokens": 75, "cachedInputTokens": 40, "contextWindowTokens": 1048576}
         }
     })
+
+def worker_config_options():
+    models = [{"value": "large", "name": "Large"}]
+    if state["session_method"] == "session/new":
+        models.insert(0, {"value": "small", "name": "Small"})
+    return [
+        {"id": "worker-model", "category": "model", "type": "select", "currentValue": state["model"],
+         "options": models},
+        {"id": "worker-thought", "category": "thought_level", "type": "select", "currentValue": state.get("worker_effort", "normal"),
+         "options": [{"value": "normal", "name": "Normal"}, {"value": "deep", "name": "Deep"}]}
+    ]
 
 for raw_line in sys.stdin:
     line = raw_line.strip()
@@ -866,11 +890,17 @@ for raw_line in sys.stdin:
             state["session_id"] = params.get("sessionId")
             if os.environ.get("MOCK_ACP_INVALID_RESUME") == "1":
                 send({"jsonrpc": "2.0", "id": msg_id})
+            elif os.environ.get("MOCK_ACP_WORKER_OPTIONS") == "1":
+                state["model"] = "large"
+                send({"jsonrpc": "2.0", "id": msg_id, "result": {"configOptions": worker_config_options()}})
             else:
                 send({"jsonrpc": "2.0", "id": msg_id, "result": {}})
         else:
             state["session_id"] = "acp_sess_001"
-            if os.environ.get("MOCK_ACP_CONFIG_OPTIONS_MODELS") == "1":
+            if os.environ.get("MOCK_ACP_WORKER_OPTIONS") == "1":
+                state["model"] = "small"
+                send({"jsonrpc": "2.0", "id": msg_id, "result": {"sessionId": state["session_id"], "configOptions": worker_config_options()}})
+            elif os.environ.get("MOCK_ACP_CONFIG_OPTIONS_MODELS") == "1":
                 send({
                     "jsonrpc": "2.0",
                     "id": msg_id,
@@ -919,6 +949,13 @@ for raw_line in sys.stdin:
             state["model_set_method"] = "session/set_model"
             send({"jsonrpc": "2.0", "id": msg_id, "result": {}})
     elif method == "session/set_config_option":
+        if os.environ.get("MOCK_ACP_WORKER_OPTIONS") == "1":
+            if params.get("configId") == "worker-model":
+                state["model"] = params.get("value")
+            if params.get("configId") == "worker-thought" and os.environ.get("MOCK_ACP_REJECT_WORKER_EFFORT") != "1":
+                state["worker_effort"] = params.get("value")
+            send({"jsonrpc": "2.0", "id": msg_id, "result": {"configOptions": worker_config_options()}})
+            continue
         if params.get("configId") == "model":
             state["model"] = params.get("value")
             state["model_set_method"] = "session/set_config_option"

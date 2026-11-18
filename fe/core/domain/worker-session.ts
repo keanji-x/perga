@@ -16,8 +16,9 @@ export function workerDispatchOperation(trackId: string, key: string, goal: stri
     headers: { 'Idempotency-Key': key }, body: { goal, ...options }, responseSchema: workerDispatchReceiptSchema };
 }
 
-export function updateWorkerSettingsOperation(sessionId: string, body: WorkerSettings & { attemptId: string }): ApiOperation<WorkerSettings> {
+export function updateWorkerSettingsOperation(sessionId: string, body: WorkerSettings & { attemptId: string }, approvalKey?: string): ApiOperation<WorkerSettings> {
   return { method: 'PATCH', path: `/api/v1/sessions/${encodeURIComponent(sessionId)}/settings`, body,
+    ...(approvalKey === undefined ? {} : { redirect: 'error', headers: { 'X-Perga-Worker-Approval-Key': approvalKey } }),
     responseSchema: workerSettingsSchema };
 }
 

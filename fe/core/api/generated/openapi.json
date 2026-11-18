@@ -15870,6 +15870,17 @@
         }
       ],
       "patch": {
+        "parameters": [
+          {
+            "name": "X-Perga-Worker-Approval-Key",
+            "in": "header",
+            "description": "Installation owner proof required to restore approval requests after deny. Accepted over HTTPS.",
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-fA-F0-9]{64}$"
+            }
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -15915,6 +15926,9 @@
           }
         },
         "responses": {
+          "403": {
+            "description": "Restoring approval requests requires verified authorization from the installation owner."
+          },
           "200": {
             "description": "Settings saved for the next Worker turn.",
             "content": {
@@ -26188,6 +26202,28 @@
           }
         }
       },
+      "WorkerProviderConfiguration": {
+        "type": "object",
+        "required": ["models"],
+        "properties": {
+          "models": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["id", "name", "reasoningEfforts"],
+              "properties": {
+                "id": { "type": "string" },
+                "name": { "type": "string" },
+                "reasoningEfforts": { "type": "array", "items": { "type": "string" } },
+                "defaultReasoningEffort": { "type": ["string", "null"] }
+              }
+            }
+          },
+          "defaultModel": { "type": ["string", "null"] },
+          "defaultReasoningEffort": { "type": ["string", "null"] },
+          "sessionReasoningEfforts": { "type": ["array", "null"], "items": { "type": "string" } }
+        }
+      },
       "WorkerActivityDto": {
         "type": "object",
         "required": [
@@ -26207,6 +26243,15 @@
           "reasoningEfforts"
         ],
         "properties": {
+          "approvalAuthorizationConfigured": {
+            "type": "boolean"
+          },
+          "providerConfiguration": {
+            "anyOf": [
+              { "$ref": "#/components/schemas/WorkerProviderConfiguration" },
+              { "type": "null" }
+            ]
+          },
           "task": {
             "$ref": "#/components/schemas/TaskDto"
           },

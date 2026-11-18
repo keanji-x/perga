@@ -22,6 +22,71 @@ public sealed class AcpProviderTests : IDisposable
         });
 
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task WorkerSettingsUseNegotiatedOptionsAndRequireAcknowledgmentBeforePrompt(bool rejectsEffort)
+    {
+        await using var runtime = CreateRuntime(new Dictionary<string, string>
+        {
+            ["MOCK_ACP_WORKER_OPTIONS"] = "1",
+            ["MOCK_ACP_REJECT_WORKER_EFFORT"] = rejectsEffort ? "1" : "0"
+        });
+        var spec = new HarnessLaunchSpec("acp:opencode", null, _fixture.WorkspaceDir, null, null,
+            MockCliFixture.CreateSampleMcpServers(), ConfigureWorker: true);
+        await using var session = await runtime.OpenSessionAsync(spec, CancellationToken.None);
+        Assert.Equal("small", session.WorkerConfiguration!.DefaultModel);
+        Assert.Equal("normal", session.WorkerConfiguration.DefaultReasoningEffort);
+        Assert.Equal(["normal", "deep"], session.WorkerConfiguration.GetReasoningEfforts("large"));
+
+        var events = await DrainTurnAsync(session, new TurnInput("process request", "acp-worker-config", "large", "deep"));
+        if (rejectsEffort)
+        {
+            Assert.Contains(events, item => item is UnifiedAgentEvent.TurnError { BeforePrompt: true });
+            Assert.DoesNotContain(events, item => item is UnifiedAgentEvent.TextDelta or UnifiedAgentEvent.TurnCompleted);
+        }
+        else
+        {
+            var output = string.Concat(events.OfType<UnifiedAgentEvent.TextDelta>().Select(item => item.Delta));
+            Assert.Contains("model=large", output, StringComparison.Ordinal);
+            Assert.Contains("effort=deep", output, StringComparison.Ordinal);
+            Assert.Single(events.OfType<UnifiedAgentEvent.TurnCompleted>());
+        }
+    }
+
+    [Fact]
+    public async Task WorkerWithLegacyAcpModelKeepsItsExplicitLaunchModel()
+    {
+        await using var runtime = CreateRuntime();
+        var spec = new HarnessLaunchSpec("acp:opencode", "gemini-4-carbon-high", _fixture.WorkspaceDir, null, null,
+            MockCliFixture.CreateSampleMcpServers(), ConfigureWorker: true);
+        await using var session = await runtime.OpenSessionAsync(spec, CancellationToken.None);
+        Assert.Null(session.WorkerConfiguration);
+
+        var events = await DrainTurnAsync(session,
+            new TurnInput("use launch model", "acp-worker-launch", spec.Model));
+        var output = string.Concat(events.OfType<UnifiedAgentEvent.TextDelta>().Select(item => item.Delta));
+        Assert.Contains("model=gemini-4-carbon-high|via=session/set_model", output, StringComparison.Ordinal);
+        Assert.Single(events.OfType<UnifiedAgentEvent.TurnCompleted>());
+    }
+
+    [Fact]
+    public async Task WorkerResumeUsesTurnSelectionWhenOriginalLaunchModelIsGone()
+    {
+        await using var runtime = CreateRuntime(new Dictionary<string, string> { ["MOCK_ACP_WORKER_OPTIONS"] = "1" });
+        var spec = new HarnessLaunchSpec("acp:opencode", "small", _fixture.WorkspaceDir, "stored-session", null,
+            MockCliFixture.CreateSampleMcpServers(), ConfigureWorker: true);
+        await using var session = await runtime.OpenSessionAsync(spec, CancellationToken.None);
+        Assert.Equal("large", Assert.Single(session.WorkerConfiguration!.Models).Id);
+        Assert.Null(session.WorkerConfiguration.DefaultModel);
+
+        var events = await DrainTurnAsync(session, new TurnInput("continue Worker", "acp-worker-resume", "large", "deep"));
+        var output = string.Concat(events.OfType<UnifiedAgentEvent.TextDelta>().Select(item => item.Delta));
+        Assert.Contains("model=large", output, StringComparison.Ordinal);
+        Assert.Contains("effort=deep", output, StringComparison.Ordinal);
+        Assert.Single(events.OfType<UnifiedAgentEvent.TurnCompleted>());
+    }
+
+    [Theory]
     [InlineData("acp:antigravity", true)]
     [InlineData("acp:opencode", true)]
     [InlineData("antigravity", true)]
