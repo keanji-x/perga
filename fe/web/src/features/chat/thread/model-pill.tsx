@@ -5,13 +5,16 @@
 // Beside it, a Planner conversation's approval setting (#2348), and the Planner's role on the new-track page and in
 // an existing Planner conversation, triggers of the same kind.
 
+import * as RadixSlider from '@radix-ui/react-slider';
+import { Button } from '@astryxdesign/core/Button';
 import { DropdownMenu, DropdownMenuItem } from '@astryxdesign/core/DropdownMenu';
 import { Divider } from '@astryxdesign/core/Divider';
 import { HStack } from '@astryxdesign/core/HStack';
 import { Icon as AstryxIcon } from '@astryxdesign/core/Icon';
+import { Popover } from '@astryxdesign/core/Popover';
 import { Text } from '@astryxdesign/core/Text';
 import { VisuallyHidden } from '@astryxdesign/core/VisuallyHidden';
-import { Fragment, useRef, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
+import { useRef, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
 
 import type { AgentProvider } from '../../../../../core/api/generated/wire.ts';
 import type { PermissionModeOptionDto } from '../../../../../core/api/perga-v1.ts';
@@ -29,27 +32,30 @@ const FOLLOW_DEFAULT_LABEL = 'Default';
  * Total over AgentProvider, so a new backend is a compile error until its Planner presentation is declared.
  * `unavailable` says why that provider's `source: 'unavailable'` catalog is empty. A Claude group waits for
  * its availability and catalog before it joins a menu that offers other providers (`hiddenUntilKnown`); a
- * Codex one stays while the daemon is down, saying so.
+ * Codex one stays while the daemon is down, saying so. Only codex compacts (`switchNote`).
  * The host supplies the server's blank-creation capability only on the new-track surface.
  */
 const PROVIDERS: Readonly<Record<AgentProvider, Readonly<{
-  label: string; unavailable: string; hiddenUntilKnown: boolean;
+  label: string; unavailable: string; hiddenUntilKnown: boolean; switchNote: boolean;
 }>>> = Object.freeze({
   codex: Object.freeze({
-    label: 'Codex', unavailable: 'codex is not running', hiddenUntilKnown: false,
+    label: 'Codex', unavailable: 'codex is not running', hiddenUntilKnown: false, switchNote: true,
   }),
   claude: Object.freeze({
     label: 'Claude', unavailable: 'Claude cannot run on this server right now', hiddenUntilKnown: true,
+    switchNote: false,
   }),
   opencode: Object.freeze({
     label: 'OpenCode', unavailable: 'OpenCode cannot run on this server right now', hiddenUntilKnown: true,
+    switchNote: false,
   }),
   antigravity: Object.freeze({
-    label: 'Antigravity', unavailable: 'Antigravity cannot run on this server right now', hiddenUntilKnown: true,
+    label: 'Antigravity (agy)', unavailable: 'Antigravity (agy) cannot run on this server right now', hiddenUntilKnown: true,
     switchNote: false,
   }),
   grok: Object.freeze({
     label: 'Grok', unavailable: 'Grok cannot run on this server right now', hiddenUntilKnown: true,
+    switchNote: false,
   }),
 });
 
@@ -73,8 +79,8 @@ function legacyPresentation(provider: string) {
 }
 
 /** Managed display needs no provider-specific UI registration. */
-function providerLabel<Provider extends string>(_group: ModelGroup<Provider> | undefined, provider: Provider): string {
-  return legacyPresentation(provider)?.label ?? provider;
+function providerLabel<Provider extends string>(group: ModelGroup<Provider> | undefined, provider: Provider): string {
+  return group?.selectionProblem !== undefined ? provider : (legacyPresentation(provider)?.label ?? provider);
 }
 
 type CatalogEntry = ModelCatalog['models'][number];
@@ -111,6 +117,42 @@ function defaultNameOf(catalog: ModelCatalog | null): string | null {
     : null;
 }
 
+function catalogReason<Provider extends string>(group: ModelGroup<Provider>): {
+  reason: string | null;
+  refused: boolean;
+  blocked: string | null;
+} {
+  const reason = group.selectionProblem === undefined
+    ? (group.availability?.status === 'unavailable' ? group.availability.reason : null)
+    : group.selectionProblem;
+  const refused = group.selectionProblem !== undefined || group.acceptsUnavailableBlankTrack !== true;
+  const blocked = refused ? reason : null;
+  return { reason, refused, blocked };
+}
+
+function effortsFor<Provider extends string>(
+  group: ModelGroup<Provider> | undefined,
+  modelId: string | null,
+): {
+  efforts: CatalogEntry['supported_reasoning_efforts'];
+  effortDefault: string | null;
+} {
+  const catalog = group?.catalog ?? null;
+  const models = catalog?.models ?? [];
+  const followed = catalog?.default.model == null
+    ? undefined
+    : models.find((model) => model.model === catalog.default.model);
+  const chosen = modelId === null
+    ? followed
+    : models.find((model) => model.model === modelId);
+  const efforts = (modelId === null ? catalog?.default.supported_reasoning_efforts : null)
+    ?? chosen?.supported_reasoning_efforts ?? [];
+  const effortDefault = modelId === null
+    ? catalog?.default.reasoning_effort ?? null
+    : chosen?.default_reasoning_effort ?? null;
+  return { efforts, effortDefault };
+}
+
 export function ModelPill<Provider extends string = AgentProvider>({
   groups, provider, selection, onChange, isDisabled = false, placement = 'above', triggerId, effortControl = 'separate',
 }: Readonly<{
@@ -125,110 +167,171 @@ export function ModelPill<Provider extends string = AgentProvider>({
   isDisabled?: boolean;
   placement?: 'above' | 'below';
   triggerId?: string;
-  /** A narrow host can keep model and effort inside a single menu. */
+  /** Kept for caller compatibility; all surfaces render the unified two-column + effort slider picker. */
   effortControl?: 'separate' | 'in-menu';
 }>) {
   const [open, setOpen] = useState(false);
+  const [viewedProvider, setViewedProvider] = useState<Provider>(provider);
+  const [dragEffortIndex, setDragEffortIndex] = useState<number | null>(null);
   const hostRef = useRef<HTMLSpanElement | null>(null);
 
   const shown = visibleModelGroups(groups, provider);
   const grouped = shown.length > 1 || shown.some(group => group.selectionProblem !== undefined);
-  const catalog = groups.find((group) => group.provider === provider)?.catalog ?? null;
+  const activeGroup = groups.find((group) => group.provider === provider);
+  const catalog = activeGroup?.catalog ?? null;
   const models = catalog?.models ?? [];
   const unreachable = shown.length > 0
     && shown.every((group) => group.catalog !== null && group.catalog.source === 'unavailable');
   const defaultName = defaultNameOf(catalog);
-  /* Following the installation default is still running a model, so the effort control belongs here too: these are the efforts of whatever the default resolves to now. */
   const followed = catalog?.default.model == null
     ? undefined
     : models.find((model) => model.model === catalog.default.model);
   const chosen = selection.model === null
     ? followed
     : models.find((model) => model.model === selection.model);
-  /* A Claude default resolves to a model a listed entry also runs (#1822): that entry's name is the one to show. */
   const defaultEntry = defaultName === null ? undefined : models.find((model) => model.resolved_model === defaultName);
-  /* The trigger names the model, not the route to it; `Default` alone only when nothing truer can be said, and an unlisted slug still names what runs. */
   const named = selection.model === null
     ? (defaultEntry?.display_name ?? defaultName ?? FOLLOW_DEFAULT_LABEL)
     : (chosen?.display_name ?? selection.model);
-  /* With more than one provider on offer, the pick is a provider too, and the trigger says whose. */
-  const label = grouped ? `${providerLabel(groups.find(group => group.provider === provider), provider)} ${named}` : named;
-  /* The accessible name keeps what the visible one dropped. A person reading
-     the pill has the menu one press away; a person hearing it does not. */
+  const { efforts, effortDefault } = effortsFor(activeGroup, selection.model);
+  const activeEffortLabel = selection.reasoning_effort ?? effortDefault;
+  const baseLabel = grouped ? `${providerLabel(activeGroup, provider)} ${named}` : named;
+  const label = efforts.length > 0 && activeEffortLabel !== null ? `${baseLabel} · ${activeEffortLabel}` : baseLabel;
+
   const spokenLabel = selection.model === null && defaultName !== null
     ? `Model: ${label} (this installation's default)`
     : `Model: ${label}`;
 
-  /* A Claude default is no row of its own: the catalog's `default` carries the efforts it takes. */
-  const efforts = (selection.model === null ? catalog?.default.supported_reasoning_efforts : null)
-    ?? chosen?.supported_reasoning_efforts ?? [];
-  const effortDefault = selection.model === null
-    ? catalog?.default.reasoning_effort ?? null
-    : chosen?.default_reasoning_effort ?? null;
+  const triggerDisabled = isDisabled
+    || (unreachable && !shown.some(group => group.selectionProblem === null || group.acceptsUnavailableBlankTrack === true));
+
+  const viewedGroup = shown.find((group) => group.provider === viewedProvider)
+    ?? shown.find((group) => group.provider === provider)
+    ?? shown[0];
+
+  const handleOpenChange = (nextOpen: boolean) => {
+    if (nextOpen) setViewedProvider(provider);
+    setDragEffortIndex(null);
+    setOpen(nextOpen);
+  };
+
+  const viewedIsCurrent = viewedGroup !== undefined && viewedGroup.provider === provider;
+  const viewedModelId = viewedIsCurrent ? selection.model : null;
+  const viewedEffortValue = viewedIsCurrent ? selection.reasoning_effort : null;
+  const viewedEffortInfo = effortsFor(viewedGroup, viewedModelId);
+  const viewedReason = viewedGroup ? catalogReason(viewedGroup) : { reason: null, refused: false, blocked: null };
+
+  const effortStops = viewedEffortInfo.efforts.map((entry) => ({
+    value: entry.reasoning_effort,
+    label: entry.reasoning_effort,
+  }));
+  const defaultStopIndex = viewedEffortInfo.effortDefault === null
+    ? 0
+    : Math.max(0, effortStops.findIndex((stop) => stop.value === viewedEffortInfo.effortDefault));
+  const committedEffortIndex = viewedEffortValue === null
+    ? defaultStopIndex
+    : Math.max(0, effortStops.findIndex((stop) => stop.value === viewedEffortValue));
+  const sliderIndex = dragEffortIndex !== null && dragEffortIndex < effortStops.length
+    ? dragEffortIndex
+    : committedEffortIndex;
+  const currentStopLabel = effortStops.at(sliderIndex)?.label ?? FOLLOW_DEFAULT_LABEL;
+  const displayedEffortLabel = viewedEffortInfo.efforts.length === 0
+    ? 'N/A'
+    : dragEffortIndex === null && viewedEffortValue === null && viewedEffortInfo.effortDefault !== null
+      ? `${currentStopLabel} (${FOLLOW_DEFAULT_LABEL})`
+      : currentStopLabel;
+
+  const popoverContent = viewedGroup === undefined ? null : (
+    <div className={styles.pickerPanel}>
+      <div className={styles.pickerColumns}>
+        <div className={styles.providerColumn} role="group" aria-label="Providers">
+          {shown.map((group) => {
+            const heading = providerLabel(group, group.provider);
+            const isViewed = group.provider === viewedGroup.provider;
+            const isSelectedProvider = group.provider === provider;
+            return (
+              <button
+                key={group.provider}
+                type="button"
+                role="radio"
+                aria-checked={isViewed}
+                data-nc-active={isViewed ? 'true' : 'false'}
+                className={styles.pickerRow}
+                onClick={() => {
+                  setDragEffortIndex(null);
+                  setViewedProvider(group.provider);
+                }}
+              >
+                <span className={styles.pickerRowLabel}>{heading}</span>
+                {isSelectedProvider && (
+                  <AstryxIcon icon="check" size="sm" color="accent" className={styles.pickerCheck} />
+                )}
+              </button>
+            );
+          })}
+        </div>
+        <div className={styles.modelColumn} role="group" aria-label="Models">
+          <GroupChoices
+            group={viewedGroup}
+            selection={viewedIsCurrent ? selection : null}
+            onChange={(next) => {
+              setDragEffortIndex(null);
+              onChange(next, viewedGroup.provider);
+            }}
+          />
+        </div>
+      </div>
+      <Divider />
+      <div className={styles.effortSection}>
+        <div className={styles.effortHeader}>
+          <span>Effort</span>
+          <span className={styles.effortValue}>{displayedEffortLabel}</span>
+        </div>
+        <EffortSlider
+          stops={viewedEffortInfo.efforts.length > 0 ? effortStops : [{ value: null, label: 'N/A' }]}
+          selectedIndex={viewedEffortInfo.efforts.length > 0 ? sliderIndex : 0}
+          isDisabled={viewedEffortInfo.efforts.length === 0 || viewedReason.blocked !== null}
+          onPreviewIndex={setDragEffortIndex}
+          onCommitIndex={(idx) => {
+            setDragEffortIndex(null);
+            const stop = effortStops.at(idx);
+            if (!stop) return;
+            onChange({ model: viewedModelId, reasoning_effort: stop.value }, viewedGroup.provider);
+          }}
+        />
+      </div>
+    </div>
+  );
 
   return (
     <HStack gap={1} align="center" wrap="wrap" className={styles.group}>
       <span ref={hostRef} className={styles.host} onKeyDownCapture={closeOnEscape(open, setOpen, hostRef)}>
-        <DropdownMenu
+        <Popover
           placement={placement}
-          isMenuOpen={open}
-          onOpenChange={setOpen}
-          hasChevron={false}
-          button={{
-            id: triggerId,
-            label: spokenLabel,
-            /* `type`/`color` inherit, and that is load-bearing: `Text` would re-assert body size and primary colour over the trigger's own. */
-            children: (
-              <Text type="inherit" color="inherit" maxLines={1} hasTruncateTooltip>
-                {label}
-              </Text>
-            ),
-            variant: effortControl === 'in-menu' ? 'secondary' : 'ghost',
-            size: 'sm',
-            isDisabled: isDisabled || (unreachable && !shown.some(group => group.selectionProblem === null || group.acceptsUnavailableBlankTrack === true)),
-            className: styles.trigger,
-          }}
+          alignment="start"
+          width="19rem"
+          label="Select model and reasoning effort"
+          hasCloseButton={false}
+          className={styles.compactPopover}
+          isOpen={open && !triggerDisabled}
+          onOpenChange={(next) => { handleOpenChange(next && !triggerDisabled); }}
+          isEnabled={!triggerDisabled}
+          content={popoverContent}
         >
-          {shown.map((group, index) => {
-            const heading = group.provider === 'opencode' ? 'OpenCode (Beta)' : providerLabel(group, group.provider);
-            const choices = (
-              <GroupChoices group={group} selection={group.provider === provider ? selection : null}
-                onChange={(next) => onChange(next, group.provider)} />
-            );
-            return grouped ? (
-              <Fragment key={group.provider}>
-                {index > 0 && <Divider />}
-                <div role="group" aria-label={heading}>
-                  <div className={styles.groupHeading} aria-hidden="true">{heading}</div>
-                  {choices}
-                </div>
-              </Fragment>
-            ) : <Fragment key={group.provider}>{choices}</Fragment>;
-          })}
-          {effortControl === 'in-menu' && efforts.length > 1 && (
-            <>
-              <Divider />
-              <div role="group" aria-label="Reasoning effort">
-                <div className={styles.groupHeading} aria-hidden="true">Reasoning effort</div>
-                <EffortChoices defaultName={effortDefault} efforts={efforts} value={selection.reasoning_effort}
-                  onChange={(effort) => onChange({ model: selection.model, reasoning_effort: effort }, provider)} />
-              </div>
-            </>
-          )}
-
-        </DropdownMenu>
+          <Button
+            id={triggerId}
+            label={spokenLabel}
+            variant={effortControl === 'in-menu' ? 'secondary' : 'ghost'}
+            size="sm"
+            isDisabled={triggerDisabled}
+            className={styles.trigger}
+          >
+            <Text type="inherit" color="inherit" maxLines={1} hasTruncateTooltip>
+              {label}
+            </Text>
+          </Button>
+        </Popover>
       </span>
-      {effortControl === 'separate' && efforts.length > 1 && (
-        <EffortPill
-          efforts={efforts}
-          value={selection.reasoning_effort}
-          /* While a model is chosen the entry's own `default_reasoning_effort` applies; while the default is followed, the catalog's. */
-          defaultName={effortDefault}
-          isDisabled={isDisabled}
-          placement={placement}
-          onChange={(effort) => onChange({ model: selection.model, reasoning_effort: effort }, provider)}
-        />
-      )}
     </HStack>
   );
 }
@@ -242,12 +345,13 @@ function GroupChoices<Provider extends string>({ group, selection, onChange }: R
   const models: readonly CatalogEntry[] = group.catalog?.models ?? [];
   const defaultName = defaultNameOf(group.catalog);
   const unreachable = group.catalog !== null && group.catalog.source === 'unavailable';
-  /* A provider that cannot run now says why in the server's own words; one create refuses then offers
-     nothing to pick, and one create still accepts stays pickable under a warning. */
-  const reason = group.selectionProblem === undefined
-    ? (group.availability?.status === 'unavailable' ? group.availability.reason : null) : group.selectionProblem;
-  const refused = group.selectionProblem !== undefined || group.acceptsUnavailableBlankTrack !== true;
-  const blocked = refused ? reason : null;
+  const { reason, refused, blocked } = catalogReason(group);
+  const defaultLabel = group.catalog?.default_source === 'acp_session'
+    ? `Session settings (${defaultName ?? 'current'})`
+    : defaultName === null ? FOLLOW_DEFAULT_LABEL
+      : group.catalog?.default_source === 'claude_cli' ? <ResolvedLabel name={FOLLOW_DEFAULT_LABEL} resolved={defaultName} />
+        : `${FOLLOW_DEFAULT_LABEL} (${defaultName})`;
+
   return <>
     {group.selectionProblem !== undefined && group.availability?.authentication_notice != null && (
       <div className={styles.reason} role="note"><Text type="supporting">{group.availability.authentication_notice.text}</Text></div>
@@ -259,20 +363,15 @@ function GroupChoices<Provider extends string>({ group, selection, onChange }: R
         </Text>
       </div>
     )}
-    <Choice
-      /* A Claude default is described by the CLI's own entry: "Default", and the model it resolves to beside it. */
-      label={group.catalog?.default_source === 'acp_session' ? `Session settings (${defaultName ?? 'current'})`
-        : defaultName === null ? FOLLOW_DEFAULT_LABEL
-        : group.catalog?.default_source === 'claude_cli' ? <ResolvedLabel name={FOLLOW_DEFAULT_LABEL} resolved={defaultName} />
-          : `${FOLLOW_DEFAULT_LABEL} (${defaultName})`}
+    <ModelRow
+      label={defaultLabel}
       isSelected={selection !== null && selection.model === null}
       isDisabled={blocked !== null}
       onSelect={() => onChange({ model: null, reasoning_effort: null })}
     />
     {models.map((model) => (
-      <Choice
+      <ModelRow
         key={model.id}
-        /* What the entry runs, where its provider says (a Claude entry's resolved model, #1822). */
         label={model.resolved_model === null ? model.display_name
           : <ResolvedLabel name={model.display_name} resolved={model.resolved_model} />}
         isSelected={selection !== null && selection.model === model.model}
@@ -282,52 +381,105 @@ function GroupChoices<Provider extends string>({ group, selection, onChange }: R
       />
     ))}
     {models.length === 0 && reason === null && (
-      <DropdownMenuItem
-        label={unreachable ? (group.selectionProblem !== undefined ? `${group.provider} model catalog is unavailable`
+      <div className={styles.pickerEmpty}>
+        {unreachable ? (group.selectionProblem !== undefined ? `${group.provider} model catalog is unavailable`
           : legacyPresentation(group.provider)?.unavailable ?? `${group.provider} is unavailable`) : 'No models available on this account'}
-        isDisabled
-      />
+      </div>
     )}
   </>;
 }
 
-function EffortPill({
-  efforts, value, defaultName, onChange, placement, isDisabled,
+function ModelRow({
+  label, isSelected, isDisabled = false, onSelect,
 }: Readonly<{
-  efforts: CatalogEntry['supported_reasoning_efforts'];
-  value: string | null;
-  /** What "Default" resolves to, or `null` when nothing has said. */
-  defaultName: string | null;
-  onChange: (value: string | null) => void;
-  placement: 'above' | 'below';
-  isDisabled: boolean;
+  label: ReactNode;
+  isSelected: boolean;
+  isDisabled?: boolean;
+  onSelect: () => void;
 }>) {
-  const [open, setOpen] = useState(false);
-  const hostRef = useRef<HTMLSpanElement | null>(null);
-  /* Same rule as the model trigger: the effort, not the route to it. */
-  const label = value ?? defaultName ?? FOLLOW_DEFAULT_LABEL;
-  const spokenLabel = value === null && defaultName !== null
-    ? `Reasoning effort: ${label} (the default)`
-    : `Reasoning effort: ${label}`;
   return (
-    <span ref={hostRef} className={styles.host} onKeyDownCapture={closeOnEscape(open, setOpen, hostRef)}>
-      <DropdownMenu
-        placement={placement}
-        isMenuOpen={open}
-        onOpenChange={setOpen}
-        hasChevron={false}
-        button={{
-          label: spokenLabel,
-          children: label,
-          variant: 'ghost',
-          size: 'sm',
-          isDisabled,
-          className: styles.effort,
-        }}
-      >
-        <EffortChoices defaultName={defaultName} efforts={efforts} value={value} onChange={onChange} />
-      </DropdownMenu>
-    </span>
+    <button
+      type="button"
+      role="radio"
+      aria-checked={isSelected}
+      disabled={isDisabled}
+      className={styles.pickerRow}
+      onClick={onSelect}
+    >
+      <span className={styles.pickerRowLabel}>{label}</span>
+      {isSelected && (
+        <>
+          <AstryxIcon icon="check" size="sm" color="accent" className={styles.pickerCheck} />
+          <VisuallyHidden>Selected</VisuallyHidden>
+        </>
+      )}
+    </button>
+  );
+}
+
+function EffortSlider({
+  stops, selectedIndex, isDisabled, onPreviewIndex, onCommitIndex,
+}: Readonly<{
+  stops: readonly Readonly<{ value: string | null; label: string }>[];
+  selectedIndex: number;
+  isDisabled: boolean;
+  onPreviewIndex: (index: number | null) => void;
+  onCommitIndex: (index: number) => void;
+}>) {
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const pointerActiveRef = useRef(false);
+  const segments = Math.max(1, stops.length - 1);
+  const value = dragIndex ?? selectedIndex;
+
+  return (
+    <RadixSlider.Root
+      className={styles.radixSliderRoot}
+      min={0}
+      max={segments}
+      step={1}
+      value={[value]}
+      disabled={isDisabled || stops.length <= 1}
+      aria-label="Reasoning effort"
+      onPointerDown={() => {
+        pointerActiveRef.current = true;
+      }}
+      onValueChange={([idx]) => {
+        if (idx === undefined || !pointerActiveRef.current) return;
+        setDragIndex(idx);
+        onPreviewIndex(idx);
+      }}
+      onValueCommit={([idx]) => {
+        pointerActiveRef.current = false;
+        setDragIndex(null);
+        if (idx === undefined) return;
+        onCommitIndex(idx);
+      }}
+    >
+      <RadixSlider.Track className={styles.radixSliderTrack}>
+        <RadixSlider.Range className={styles.radixSliderRange} />
+        {stops.length > 1 && stops.map((stop, idx) => {
+          const tickPos = idx === 0
+            ? '6px'
+            : idx === segments
+              ? 'calc(100% - 6px)'
+              : `${(idx / segments) * 100}%`;
+          return (
+            <span
+              key={stop.value ?? idx}
+              className={styles.radixSliderTick}
+              data-nc-filled={idx <= value ? 'true' : 'false'}
+              style={{ insetInlineStart: tickPos }}
+            />
+          );
+        })}
+      </RadixSlider.Track>
+      <RadixSlider.Thumb
+        className={styles.radixSliderThumb}
+        aria-label="Reasoning effort"
+        aria-disabled={isDisabled || stops.length <= 1}
+        aria-valuetext={stops.at(selectedIndex)?.label ?? FOLLOW_DEFAULT_LABEL}
+      />
+    </RadixSlider.Root>
   );
 }
 
@@ -454,23 +606,6 @@ function SettingPill<Value extends string>({
       </DropdownMenu>
     </span>
   );
-}
-
-function EffortChoices({ efforts, value, defaultName, onChange }: Readonly<{
-  defaultName: string | null;
-  efforts: CatalogEntry['supported_reasoning_efforts'];
-  value: string | null;
-  onChange: (value: string | null) => void;
-}>) {
-  return <>
-    <Choice label={defaultName === null ? FOLLOW_DEFAULT_LABEL : `${FOLLOW_DEFAULT_LABEL} (${defaultName})`} isSelected={value === null}
-      onSelect={() => onChange(null)} />
-    {efforts.map((effort) => (
-      <Choice key={effort.reasoning_effort} label={effort.reasoning_effort}
-        description={effort.description ?? undefined} isSelected={value === effort.reasoning_effort}
-        onSelect={() => onChange(effort.reasoning_effort)} />
-    ))}
-  </>;
 }
 
 /**

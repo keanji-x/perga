@@ -96,6 +96,7 @@
     display: flex;
     align-items: baseline;
     gap: var(--space-2);
+    inline-size: 100%;
     min-inline-size: 0;
   }
 
@@ -133,5 +134,204 @@
   /* Short and fixed, so it takes the menu's width rather than the model note's ceiling. */
   .settingNote {
     max-inline-size: none;
+  }
+
+  .compactPopover.compactPopover {
+    padding: var(--space-1);
+    border-radius: var(--radius-lg);
+  }
+
+  /* Unified two-column model picker + bottom effort slider inside Popover. */
+  .pickerPanel {
+    display: flex;
+    flex-direction: column;
+    inline-size: 100%;
+    padding: 0;
+    gap: var(--space-half);
+    box-sizing: border-box;
+  }
+
+  .pickerColumns {
+    display: grid;
+    grid-template-columns: minmax(5.25rem, 6rem) minmax(0, 1fr);
+    gap: var(--space-1);
+    block-size: 8rem;
+    min-block-size: 0;
+  }
+
+  .providerColumn {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-half);
+    padding-inline-end: var(--space-1);
+    border-inline-end: var(--rule-h) solid var(--surface-chip);
+    min-block-size: 0;
+    block-size: 100%;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .modelColumn {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-half);
+    min-inline-size: 0;
+    min-block-size: 0;
+    block-size: 100%;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .pickerRow {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-1);
+    inline-size: 100%;
+    box-sizing: border-box;
+    padding: var(--space-half) var(--space-1);
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text-2);
+    font: inherit;
+    font-size: var(--font-step-1-size);
+    text-align: start;
+    cursor: pointer;
+    min-inline-size: 0;
+  }
+
+  @media (hover: hover) {
+    .pickerRow:hover:not(:disabled) {
+      background: var(--surface-chip);
+      color: var(--text);
+    }
+  }
+
+  .pickerRow[data-nc-active='true'],
+  .pickerRow[aria-checked='true'] {
+    background: var(--surface-chip);
+    color: var(--text);
+    font-weight: var(--weight-medium);
+  }
+
+  .pickerRow:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .pickerRow:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+  }
+
+  .pickerRowLabel {
+    display: block;
+    flex: 1 1 0%;
+    min-inline-size: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .pickerCheck {
+    flex: none;
+    color: var(--accent);
+  }
+
+  .pickerEmpty {
+    padding: var(--space-1) var(--space-2);
+    color: var(--text-3);
+    font-size: var(--font-step-1-size);
+  }
+
+  .effortSection {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    padding: var(--space-half) var(--space-1) 0;
+  }
+
+  .effortHeader {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+    font-size: var(--font-step-1-size);
+    color: var(--text-2);
+  }
+
+  .effortValue {
+    color: var(--text);
+    font-weight: var(--weight-medium);
+  }
+
+  .radixSliderRoot {
+    position: relative;
+    display: flex;
+    align-items: center;
+    inline-size: 100%;
+    block-size: 2.25rem;
+    touch-action: none;
+    user-select: none;
+    cursor: pointer;
+  }
+
+  .radixSliderRoot[data-disabled] {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+
+  .radixSliderTrack {
+    position: relative;
+    flex-grow: 1;
+    block-size: 12px;
+    border-radius: var(--radius-pill);
+    background: var(--surface-chip);
+  }
+
+  .radixSliderRange {
+    position: absolute;
+    block-size: 100%;
+    border-radius: var(--radius-pill);
+    background: var(--accent);
+  }
+
+  .radixSliderTick {
+    position: absolute;
+    inset-block-start: 50%;
+    inline-size: 4px;
+    block-size: 4px;
+    border-radius: var(--radius-pill);
+    background: var(--text-3);
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+  }
+
+  .radixSliderTick[data-nc-filled='true'] {
+    background: var(--paper);
+    opacity: 0.75;
+  }
+
+  .radixSliderThumb {
+    display: block;
+    inline-size: 20px;
+    block-size: 20px;
+    border-radius: var(--radius-pill);
+    background: var(--paper);
+    border: 2px solid var(--accent);
+    box-shadow: var(--shadow-float);
+    transition: transform 120ms ease;
+  }
+
+  @media (hover: hover) {
+    .radixSliderRoot:not([data-disabled]) .radixSliderThumb:hover {
+      transform: scale(1.1);
+    }
+  }
+
+  .radixSliderThumb:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
   }
 }

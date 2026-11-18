@@ -65,9 +65,9 @@ function mount(claude: unknown, opencode = false, opencodeCatalog: unknown = NO_
       return new Promise<ApiTransportResponse>(() => undefined);
     }
     if (request.path === '/api/areas') return Promise.resolve(ok([AREA]));
-    if (request.path === '/api/models?provider=codex') return Promise.resolve(ok(LIVE_CATALOG));
-    if (request.path === '/api/models?provider=claude') return Promise.resolve(ok(claude));
-    if (request.path === '/api/models?provider=opencode') return Promise.resolve(ok(opencodeCatalog));
+    if (request.path === '/api/v1/bootstrap?provider=codex') return Promise.resolve(ok(LIVE_CATALOG));
+    if (request.path === '/api/v1/bootstrap?provider=claude') return Promise.resolve(ok(claude));
+    if (request.path === '/api/v1/bootstrap?provider=opencode') return Promise.resolve(ok(opencodeCatalog));
     if (request.path === '/api/agent-providers' || request.path === '/api/agent-providers/managed') {
       const answers = [...availability(claude === NO_CLAUDE ? 'not_configured' : 'ready'),
         { provider: 'opencode', status: opencode ? 'ready' : 'not_configured', reason: opencode ? null : 'Configure the agent', checked_at_ms: 1, authentication_method: null, authentication_notice: null }];
@@ -88,45 +88,37 @@ function mount(claude: unknown, opencode = false, opencodeCatalog: unknown = NO_
   return { creates };
 }
 
-/** Open the model menu by keyboard: astryx swallows a trigger click that lands right after its menu hid. */
+/** Open the model popover by clicking its trigger button. */
 async function openModelMenu(name: string) {
-  (await page.getByRole('button', { name }).findElement()).focus();
-  await userEvent.keyboard('{ArrowDown}');
+  await page.getByRole('button', { name }).click();
 }
 
 it.each([1280, 390])('a Claude pick sets provider and model, drops the Codex effort and offers its own (%ipx)', async (width) => {
   await page.viewport(width, 844);
   const { creates } = mount(CLAUDE_CATALOG);
   await openModelMenu('Model: Codex Default');
-  await page.getByRole('group', { name: 'Codex' }).getByRole('menuitem', { name: 'GPT-5' }).click();
-  if (width < 600) {
-    /* Phone: effort lives inside the model menu. */
-    await openModelMenu('Model: Codex GPT-5');
-  } else {
-    await page.getByRole('button', { name: 'Reasoning effort: low (the default)' }).click();
-  }
-  await page.getByRole('menuitem', { name: /high/ }).click();
+  await page.getByRole('group', { name: 'Models' }).getByRole('radio', { name: 'GPT-5' }).click();
+  const slider = document.querySelector<HTMLElement>('[role="slider"][aria-label="Reasoning effort"]')!;
+  slider.focus();
+  await userEvent.keyboard('{End}');
 
-  await openModelMenu('Model: Codex GPT-5');
-  await page.getByRole('group', { name: 'Claude' }).getByRole('menuitem', { name: 'Haiku' }).click();
+  await page.getByRole('group', { name: 'Providers' }).getByRole('radio', { name: 'Claude' }).click();
+  await page.getByRole('group', { name: 'Models' }).getByRole('radio', { name: 'Haiku' }).click();
+  await userEvent.keyboard('{Escape}');
   await expect.element(page.getByRole('button', { name: 'Model: Claude Haiku' })).toBeVisible();
   /* Haiku declares no effort level, so there is none to pick. */
-  await expect.element(page.getByRole('button', { name: /^Reasoning effort:/ })).not.toBeInTheDocument();
+  await expect.element(page.getByRole('slider', { name: 'Reasoning effort' })).not.toBeInTheDocument();
 
   await openModelMenu('Model: Claude Haiku');
-  await page.getByRole('group', { name: 'Claude' }).getByRole('menuitem', { name: 'Fable' }).click();
-  await expect.element(page.getByRole('button', { name: 'Model: Claude Fable' })).toBeVisible();
-  if (width < 600) {
-    await openModelMenu('Model: Claude Fable');
-  } else {
-    /* The Codex effort did not come along: Fable's own levels start at its default. */
-    await page.getByRole('button', { name: 'Reasoning effort: Default' }).click();
-  }
-  await expect.element(page.getByRole('menuitem', { name: 'xhigh' })).toBeVisible();
-  await page.getByRole('menuitem', { name: 'high', exact: true }).click();
+  await page.getByRole('group', { name: 'Models' }).getByRole('radio', { name: 'Fable' }).click();
+  await expect.element(page.getByRole('button', { name: /^Model: Claude Fable/ })).toBeVisible();
+  const fableSlider = document.querySelector<HTMLElement>('[role="slider"][aria-label="Reasoning effort"]')!;
+  fableSlider.focus();
+  await userEvent.keyboard('{ArrowRight}{ArrowRight}');
+  await userEvent.keyboard('{Escape}');
 
   /* The picker and Create share one row, with no horizontal scroll. */
-  const model = (await page.getByRole('button', { name: 'Model: Claude Fable' }).findElement()).getBoundingClientRect();
+  const model = (await page.getByRole('button', { name: /^Model: Claude Fable/ }).findElement()).getBoundingClientRect();
   const send = (await page.getByRole('button', { name: 'Create track' }).findElement()).getBoundingClientRect();
   expect(Math.abs(model.top + model.height / 2 - send.top - send.height / 2)).toBeLessThan(2);
   expect(model.right).toBeLessThanOrEqual(send.left);
@@ -145,16 +137,18 @@ it.each([1280, 390])('a Claude pick sets provider and model, drops the Codex eff
 it('offers only Codex on a server without Claude Planners', async () => {
   mount(NO_CLAUDE);
   await openModelMenu('Model: Default');
-  await expect.element(page.getByRole('menuitem', { name: 'GPT-5' })).toBeVisible();
-  await expect.element(page.getByRole('group', { name: 'Claude' })).not.toBeInTheDocument();
-  await expect.element(page.getByRole('menuitem', { name: 'Sonnet' })).not.toBeInTheDocument();
+  await expect.element(page.getByRole('radio', { name: 'GPT-5' })).toBeVisible();
+  await expect.element(page.getByRole('group', { name: 'Providers' }).getByRole('radio', { name: 'Claude' })).not.toBeInTheDocument();
+  await expect.element(page.getByRole('radio', { name: 'Sonnet' })).not.toBeInTheDocument();
 });
 
 it.each([1280, 390])('OpenCode can create a track with inherited agent settings (%ipx)', async (width) => {
   await page.viewport(width, 844);
   const { creates } = mount(NO_CLAUDE, true);
   await openModelMenu('Model: Codex Default');
-  await page.getByRole('group', { name: 'OpenCode (Beta)', exact: true }).getByRole('menuitem', { name: 'Default', exact: true }).click();
+  await page.getByRole('group', { name: 'Providers' }).getByRole('radio', { name: 'OpenCode', exact: true }).click();
+  await page.getByRole('group', { name: 'Models' }).getByRole('radio', { name: 'Default', exact: true }).click();
+  await userEvent.keyboard('{Escape}');
   await expect.element(page.getByRole('button', { name: 'Model: OpenCode Default' })).toBeVisible();
   await page.getByRole('combobox', { name: 'What this track should do' }).fill('Plan with OpenCode');
   await page.getByRole('button', { name: 'Create track' }).click();
@@ -176,7 +170,9 @@ it.each([1280, 390])('OpenCode models can be selected before creating a track (%
   };
   const { creates } = mount(NO_CLAUDE, true, catalog);
   await openModelMenu('Model: Codex Default');
-  await page.getByRole('group', { name: 'OpenCode (Beta)', exact: true }).getByRole('menuitem', { name: 'DeepSeek Flash' }).click();
+  await page.getByRole('group', { name: 'Providers' }).getByRole('radio', { name: 'OpenCode', exact: true }).click();
+  await page.getByRole('group', { name: 'Models' }).getByRole('radio', { name: 'DeepSeek Flash' }).click();
+  await userEvent.keyboard('{Escape}');
   await expect.element(page.getByRole('button', { name: 'Model: OpenCode DeepSeek Flash' })).toBeVisible();
   await page.getByRole('combobox', { name: 'What this track should do' }).fill('Plan with DeepSeek');
   await page.getByRole('button', { name: 'Create track' }).click();
