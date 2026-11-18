@@ -88,36 +88,7 @@ public sealed class EventHub : IKernelEventBus, IDisposable
                 return;
             }
 
-            long cursor = 0;
-            while (true)
-            {
-                var batch = await store.ListEventsSinceAsync(cursor, trackId: null, limit: 500, ct).ConfigureAwait(false);
-                if (batch.Count == 0)
-                {
-                    break;
-                }
-
-                var maxBatchId = cursor;
-                foreach (var evt in batch)
-                {
-                    if (evt.EventId is { } id && id > maxBatchId)
-                    {
-                        maxBatchId = id;
-                    }
-                }
-
-                if (maxBatchId <= cursor)
-                {
-                    break;
-                }
-
-                cursor = maxBatchId;
-                if (batch.Count < 500)
-                {
-                    break;
-                }
-            }
-
+            var cursor = await store.GetEventTipIdAsync(ct).ConfigureAwait(false);
             _storeSyncedTipId = cursor;
             _fallbackEventSeq = cursor;
             Volatile.Write(ref _storeTipInitialized, true);

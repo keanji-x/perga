@@ -1,3 +1,4 @@
+import type { TerminalPresentation } from './terminal-presentation.js';
 // Track: the unit of work the product is organised around — wire decode, open or closed,
 // and the pure predicates several surfaces must agree on.
 
@@ -693,7 +694,7 @@ export function terminalDtoToCardWire(dto: TerminalDto, sort = 100): CardWire {
       program: dto.program ?? null,
       status: dto.status,
       exit_code: dto.exitCode ?? null,
-      in_workbench: true,
+      terminal_presentation: { source: 'unrecorded', in_workbench: true } satisfies TerminalPresentation,
     },
     runtime: {
       worker_session_id: dto.id,

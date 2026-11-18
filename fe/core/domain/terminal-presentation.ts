@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import type { CardWire } from './track.js';
 
 const terminalPresentationSchema = z.object({
   source: z.enum(['manual', 'agent', 'task', 'system', 'plugin', 'unrecorded']),
@@ -8,8 +7,8 @@ const terminalPresentationSchema = z.object({
 const terminalPayloadSchema = z.object({ terminal_presentation: terminalPresentationSchema });
 export type TerminalPresentation = z.infer<typeof terminalPresentationSchema>;
 
-/** Live Terminal cards always carry owner-persisted metadata; historical event payloads stay opaque. */
-export function terminalPresentation(card: CardWire): TerminalPresentation {
+/** Workbench cards carry explicit placement. Terminals without recorded provenance use unrecorded. */
+export function terminalPresentation(card: Readonly<{ kind: string; payload: unknown }>): TerminalPresentation {
   if (card.kind !== 'terminal') throw new Error('Terminal presentation requires a terminal card');
   return terminalPayloadSchema.parse(card.payload).terminal_presentation;
 }

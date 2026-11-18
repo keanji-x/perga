@@ -4,6 +4,7 @@
 import type { QueryClient } from '@tanstack/react-query';
 import { useEffect, useRef } from 'react';
 
+import { refreshSnapshotQueries } from './query-refresh.ts';
 import type { InvalidationContext } from '../../../../core/events/invalidation-plan.ts';
 import { initialEventState, reduceEventFrame, type EventState } from '../../../../core/events/reducer.ts';
 import type { SyncCursorPort } from '../../systems/events/cursor-port.ts';
@@ -43,18 +44,39 @@ export function EventBridge({ client, stream, syncEventVersion, dbInstanceId, cu
     let state: EventState = initialEventState(syncEventVersion, latest.current.cursor.read());
     // configure() only freezes version/topics; nothing connects until start().
     const configured = stream.configure({ syncEventVersion, topics: ['*'] });
+    let disposed = false;
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    async function recoverSnapshot(tipId: number) {
+      const { client, cursor } = latest.current;
+      try {
+        await refreshSnapshotQueries(client, () => disposed);
+      } catch {
+        if (!disposed) retry = setTimeout(() => { void recoverSnapshot(tipId); }, 2000);
+        return;
+      }
+      if (disposed) return;
+      state = initialEventState(syncEventVersion, tipId);
+      cursor.write(tipId);
+      configured.start();
+    }
     const unsubscribe = stream.onFrame((frame) => {
       const current = latest.current;
       const reduction = reduceEventFrame(state, frame, current.context ?? trackLookupContext(current.client));
       state = reduction.state;
       for (const effect of reduction.effects) {
         if (effect.type === 'persist-cursor') current.cursor.write(effect.id);
+        else if (effect.type === 'refresh-snapshot') {
+          configured.stop();
+          void recoverSnapshot(effect.tipId);
+        }
         else if (effect.type === 'reconnect') { configured.stop(); configured.start(); }
         else applyEventEffects(current.client, [effect]);
       }
     });
     configured.start();
     return () => {
+      disposed = true;
+      clearTimeout(retry);
       unsubscribe();
       configured.stop();
     };

@@ -8,7 +8,8 @@ export type EventEffect =
   | Readonly<{ type: 'remove'; keys: readonly QueryKey[] }>
   | Readonly<{ type: 'write-through'; writes: readonly CacheWrite[] }>
   | Readonly<{ type: 'clear-cache' }>
-  | Readonly<{ type: 'reconnect' }>;
+  | Readonly<{ type: 'reconnect' }>
+  | Readonly<{ type: 'refresh-snapshot'; tipId: number }>;
 export type EventReduction = Readonly<{ state: EventState; effects: readonly EventEffect[] }>;
 
 export function initialEventState(syncEventVersion: number | null, cursor: number | null = null): EventState {
@@ -30,6 +31,9 @@ export function reduceEventFrame(
   context?: InvalidationContext,
 ): EventReduction {
   if (frame.type === 'snapshot-required') {
+    if (frame.tipId !== undefined) {
+      return { state, effects: [{ type: 'refresh-snapshot', tipId: frame.tipId }] };
+    }
     return {
       state: { ...state, cursor: null },
       effects: [{ type: 'persist-cursor', id: null }, { type: 'clear-cache' }, { type: 'reconnect' }],

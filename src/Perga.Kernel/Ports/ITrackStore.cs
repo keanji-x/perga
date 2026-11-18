@@ -26,6 +26,7 @@ public interface ITrackReadStore
     Task<MailDto?> FindReceivedMailAsync(string trackId, string mailId, CancellationToken ct);
     Task<IReadOnlyList<MailDto>> ListMailsAsync(string trackId, bool unreadOnly = false, CancellationToken ct = default);
     Task<IReadOnlyList<TerminalDto>> ListTerminalsAsync(string trackId, CancellationToken ct);
+    Task<long> GetEventTipIdAsync(CancellationToken ct);
     Task<IReadOnlyList<EventEnvelopeDto>> ListEventsSinceAsync(long sinceEventId, string? trackId = null, int limit = 500, CancellationToken ct = default);
     Task<string?> FindTrackIdBySessionAsync(string sessionId, CancellationToken ct);
 }

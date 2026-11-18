@@ -3,10 +3,45 @@ import { act, cleanup, fireEvent, screen, waitFor } from '@testing-library/react
 import { commands, page, userEvent } from 'vitest/browser';
 import { afterEach, beforeAll, expect, it, vi } from 'vitest';
 import { openTerminalCommand, setupWorkbench, terminalCard } from './terminal-workbench-fixture.tsx';
+import type { TerminalDto } from '../../../../core/api/perga-v1.ts';
 import { workbenchSockets } from './terminal-workbench-socket-fixture.ts';
 
 beforeAll(async () => { await import('../../systems/terminal/xterm-view.tsx'); });
 afterEach(async () => { cleanup(); document.getElementById('root')?.remove(); vi.unstubAllGlobals(); delete document.documentElement.dataset.theme; await commands.emulateReducedMotion(false); });
+
+it.each(['Tools', '/terminal'])('opens a Host terminal through %s and reloads running and exited inventory', async entry => {
+  await page.viewport(1440, 900);
+  const { sockets, Socket } = workbenchSockets();
+  vi.stubGlobal('WebSocket', Socket);
+  const hostTerminals: TerminalDto[] = [];
+  let fixture = setupWorkbench({ hostTerminals });
+  if (entry === 'Tools') {
+    await page.getByRole('button', { name: 'Tools', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'terminal', exact: true }).click();
+  } else {
+    await openTerminalCommand();
+  }
+  await waitFor(() => expect(sockets).toHaveLength(1));
+  act(() => sockets[0].open());
+  await expect.element(page.getByRole('textbox', { name: 'Terminal input' })).toBeVisible();
+  expect(fixture.posts()).toHaveLength(1);
+
+  const reload = () => {
+    cleanup();
+    document.getElementById('root')?.remove();
+    fixture = setupWorkbench({ hostTerminals });
+  };
+  reload();
+  const row = page.getByRole('button', { name: /^Host shell/ });
+  await expect.element(row).toBeVisible();
+  await row.click();
+  await page.getByRole('button', { name: 'Delete card Host shell', exact: true }).click();
+  await page.getByRole('dialog', { name: 'Delete this card?' }).getByRole('button', { name: 'Delete card', exact: true }).click();
+  await waitFor(() => expect(hostTerminals[0].status).toBe('exited'));
+  reload();
+  await expect.element(row).toBeVisible();
+  expect(fixture.posts()).toHaveLength(0);
+});
 
 it('opens below the conversation, retains real xterm through hide and side tabs, and preserves shell keys', async () => {
   await page.viewport(1512, 950);
@@ -32,12 +67,12 @@ it('opens below the conversation, retains real xterm through hide and side tabs,
   const terminal = document.querySelector('[data-nc-terminal-workbench]')!;
   expect(terminal.getBoundingClientRect().top).toBeGreaterThan(main.element().getBoundingClientRect().top);
   expect(textarea.closest('[data-nc-terminal-viewport]')!.getBoundingClientRect().height).toBeGreaterThan(80);
-  expect(sockets[0].sent.filter(frame => typeof frame === 'object' && 'Input' in frame)).toHaveLength(0);
+  expect(sockets[0].sent.filter(frame => frame[0] === 1)).toHaveLength(0);
   await userEvent.keyboard('echo test');
   await userEvent.keyboard('{Escape}{Control>}c{/Control}');
   expect(screen.getByRole('button', { name: 'Hide terminal' })).toBeTruthy();
-  expect(sockets[0].sent.some(frame => typeof frame === 'object' && 'Input' in frame)).toBe(true);
-  const inputBytes = sockets[0].sent.flatMap(frame => typeof frame === 'object' && 'Input' in frame ? frame.Input.data : []);
+  expect(sockets[0].sent.some(frame => frame[0] === 1)).toBe(true);
+  const inputBytes = sockets[0].sent.flatMap(frame => frame[0] === 1 ? [...frame.subarray(1)] : []);
   expect(inputBytes).toContain(27);
   expect(inputBytes).toContain(3);
   expect(fixture.requests.some(request => request.path.endsWith('/interrupt'))).toBe(false);
@@ -73,7 +108,7 @@ it('keeps exited output attached and reopens the same existing card without crea
   const fixture = setupWorkbench({ cards: [{ ...terminalCard('finished', { source: 'manual', in_workbench: true }), payload: { terminal_presentation: { source: 'manual', in_workbench: true },  terminal_id: 'pty-1' } }] });
   await page.getByRole('button', { name: /^finished/ }).click();
   await waitFor(() => expect(sockets).toHaveLength(1));
-  act(() => { sockets[0].open(); sockets[0].message({ TerminalExited: { code: 0, pty_seq: 2, render_rev: 2 } }); });
+  act(() => { sockets[0].open(); sockets[0].exit(); });
   await expect.element(page.getByText('Session exited.')).toBeVisible();
   const input = document.querySelector('[data-nc-terminal-input]');
   await page.getByRole('button', { name: 'Hide terminal' }).click();

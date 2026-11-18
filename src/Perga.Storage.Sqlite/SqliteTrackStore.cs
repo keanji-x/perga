@@ -1430,6 +1430,14 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
             ct);
     }
 
+    public async Task<long> GetEventTipIdAsync(CancellationToken ct)
+    {
+        EnsureInitialized();
+        await using var conn = await OpenReadConnectionAsync(ct).ConfigureAwait(false);
+        return await conn.ExecuteScalarAsync<long>(new CommandDefinition(
+            "SELECT COALESCE(MAX(id), 0) FROM events", cancellationToken: ct)).ConfigureAwait(false);
+    }
+
     public async Task<IReadOnlyList<EventEnvelopeDto>> ListEventsSinceAsync(
         long sinceEventId,
         string? trackId = null,

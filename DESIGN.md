@@ -1351,7 +1351,7 @@ CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at_ms);
 ### 4.2 WebSocket 协议
 
 1. **`WS /api/v1/events?since={lastEventId}&trackId={optional}`**
-   - 服务端先从 `EventHub` 订阅实时广播，再从 `events` 表重放 `id > since` 的持久化事件（超过 2,000 条发送 `{"kind":"_snapshot_required"}`，否则重放完毕发送 `{"kind":"_replay_complete","tipId":...}`）。
+   - 服务端先从 `EventHub` 订阅实时广播，再从 `events` 表重放 `id > since` 的持久化事件。日志已裁剪或待重放超过 2,000 条时，服务端发送 `{"kind":"_snapshot_required","tipId":T}`。客户端暂停连接、刷新活动查询，成功后从 T 重连。正常重放完毕后，服务端发送 `{"kind":"_replay_complete","tipId":...}`。
    - **持久事件**（`eventId != null`）：`track.updated`, `report.updated`, `task.updated`, `session.updated`, `turn.completed`, `ask.changed`, `mail.received`, `terminal.changed`。
    - **瞬态流式帧**（`eventId == null`，绝不写 SQLite）：`session.text_delta`, `session.thinking_delta`, `session.tool_progress`。
 2. **`WS /api/v1/terminals/{termId}/ws`**

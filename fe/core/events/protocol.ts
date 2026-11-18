@@ -11,7 +11,7 @@ export type EventFrame =
   | Readonly<{ type: 'event'; event: WireEvent; meta: EventMeta }>
   | Readonly<{ type: 'malformed-event'; id: number | null; eventVersion: number | null; error: ApiDecodeFailure }>
   | Readonly<{ type: 'replay-complete'; id: number | null }>
-  | Readonly<{ type: 'snapshot-required' }>;
+  | Readonly<{ type: 'snapshot-required'; tipId?: number }>;
 
 export type EventFrameDecodeResult =
   | Readonly<{ status: 'ready'; frame: EventFrame }>
@@ -51,6 +51,13 @@ export function decodeEventFrame(input: unknown): EventFrameDecodeResult {
     };
   }
   if (envelope.kind === '_snapshot_required' || envelope.ev === '_snapshot_required') {
+    if ('tipId' in envelope) {
+      const tipId = envelope.tipId;
+      if (typeof tipId !== 'number' || !Number.isSafeInteger(tipId) || tipId < 0) {
+        return { status: 'failed', error: { kind: 'decode', message: 'Invalid snapshot cursor', cause: tipId } };
+      }
+      return { status: 'ready', frame: { type: 'snapshot-required', tipId } };
+    }
     return { status: 'ready', frame: { type: 'snapshot-required' } };
   }
 

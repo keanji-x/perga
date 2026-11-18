@@ -8,8 +8,8 @@
 
 - `_id` 与 `eventVersion` 是 envelope metadata，不得塞进 `WireEvent`，因为 wire payload 仍由 `core/api` 的 schema 冻结。
 - future-version 帧不得推进 cursor；in-range 坏帧必须推进 cursor，因为前者要留给未来客户端重播，后者不能永久钉住重连窗口。
-- `_replay_complete` 宣告 replay 收敛；tip 回退时必须清 cursor/cache 并重连。`_snapshot_required` 同样清 cursor/cache 并重连，因为旧 cursor 已不可服务。
-- effect 只描述 `persist-cursor`、`invalidate`、`remove`、`write-through`、`clear-cache`、`reconnect`；端侧决定如何执行，确保 core 平台无关。
+- `_replay_complete` 宣告 replay 收敛；tip 回退时必须清 cursor/cache 并重连。`_snapshot_required` 带服务端 tipId 时暂停连接，刷新查询成功后才保存 tipId 并重连。旧版无 tipId 帧沿用清 cursor/cache 并重连的行为。
+- effect 只描述 `persist-cursor`、`invalidate`、`remove`、`write-through`、`clear-cache`、`reconnect`、`refresh-snapshot`；端侧决定如何执行，确保 core 平台无关。
 - invalidation policy 对 `WireEvent['ev']` 类型级穷尽；确实无 cache 行为的事件必须显式 `noop('reason')`，因为空对象无法区分“评估过”和“忘了”。
 - effect 顺序固定为 cursor 持久化、write-through、invalidate、remove，因为直写必须先于 refetch，而删除必须晚于失效。
 - 出站订阅帧总是包含 `since`；没有持久 cursor 的冷启动用 `0`，明确请求从日志起点重放（INV-APP-049）。

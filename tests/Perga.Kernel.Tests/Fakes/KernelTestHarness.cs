@@ -259,6 +259,14 @@ internal sealed class InMemoryTrackStore : ITrackStore
         }
     }
 
+    public Task<long> GetEventTipIdAsync(CancellationToken ct)
+    {
+        lock (_gate)
+        {
+            return Task.FromResult(_events.Max(e => e.EventId) ?? 0);
+        }
+    }
+
     public Task<IReadOnlyList<EventEnvelopeDto>> ListEventsSinceAsync(long sinceEventId, string? trackId = null, int limit = 500, CancellationToken ct = default)
     {
         lock (_gate)
