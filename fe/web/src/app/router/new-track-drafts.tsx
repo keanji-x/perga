@@ -14,7 +14,9 @@ import { TRACK_CREATE_TEXT } from '../../../../core/domain/track.ts';
 /** One create's wire body and the key it is sent under on every attempt. */
 export type TrackCreationRequest = Readonly<{ body: NewTrackBody; key: string }>;
 
-export type NewTrackDraftArea = Pick<Area, 'id' | 'name' | 'defaultCwd'>;
+export type NewTrackDraftArea = Pick<Area, 'id' | 'name' | 'defaultCwd'> & Readonly<{
+  defaultTemplateId?: string | null;
+}>;
 
 export type NewTrackSession = Readonly<{
   area: NewTrackDraftArea;
@@ -69,7 +71,7 @@ function createDraftStore(submittedStorage?: () => Storage, userId?: string) {
       if (drafts.has(area.id)) return;
       const request = readRequest(area.id);
       drafts.set(area.id, {
-        area: { id: area.id, name: area.name, defaultCwd: area.defaultCwd },
+        area: { id: area.id, name: area.name, defaultCwd: area.defaultCwd, defaultTemplateId: area.defaultTemplateId },
         form: request === null ? null : {
           message: request.body.first_message ?? '', cwd: request.body.cwd ?? '', isolation: request.body.isolation,
         },

@@ -2,8 +2,20 @@ using System.Text.Json;
 
 namespace Perga.Kernel.Internal;
 
-internal static class AskAnswerEvaluator
+public static class AskAnswerEvaluator
 {
+    private static readonly string[] ChineseNegativePrefixes =
+    [
+        "拒绝",
+        "不同意",
+        "不允许",
+        "不批准",
+        "取消",
+        "禁止",
+        "中止",
+        "阻止"
+    ];
+
     private static readonly HashSet<string> NegativeTokens = new(StringComparer.OrdinalIgnoreCase)
     {
         "deny",
@@ -16,7 +28,20 @@ internal static class AskAnswerEvaluator
         "canceled",
         "cancelled",
         "block",
-        "abort"
+        "abort",
+        "forbid",
+        "forbidden",
+        "disapprove",
+        "拒绝",
+        "不同意",
+        "取消",
+        "禁止",
+        "否",
+        "不",
+        "不允许",
+        "不批准",
+        "中止",
+        "阻止"
     };
 
     private static readonly HashSet<string> PositiveTokens = new(StringComparer.OrdinalIgnoreCase)
@@ -29,8 +54,20 @@ internal static class AskAnswerEvaluator
         "true",
         "ok",
         "confirm",
+        "confirmed",
         "proceed",
-        "accept"
+        "continue",
+        "accept",
+        "accepted",
+        "同意",
+        "允许",
+        "批准",
+        "继续",
+        "是",
+        "确认",
+        "通过",
+        "接受",
+        "是的"
     };
 
     public static bool IsApproved(JsonElement answer, IReadOnlyList<string> options)
@@ -40,83 +77,192 @@ internal static class AskAnswerEvaluator
             return true;
         }
 
-        if (answer.ValueKind == JsonValueKind.False || answer.ValueKind == JsonValueKind.Null || answer.ValueKind == JsonValueKind.Undefined)
+        if (answer.ValueKind is JsonValueKind.False or JsonValueKind.Null or JsonValueKind.Undefined)
         {
             return false;
         }
 
-        if (answer.ValueKind == JsonValueKind.Object)
+        if (answer.ValueKind == JsonValueKind.Number)
         {
-            if (JsonHelpers.TryGetPropertyIgnoreCase(answer, ["approved", "allow"], out var approvedProp))
+            if (answer.TryGetInt32(out var optIdx) && optIdx >= 0 && optIdx < options.Count)
             {
-                if (approvedProp.ValueKind == JsonValueKind.True)
-                {
-                    return true;
-                }
+                return IsOptionIndexApproved(optIdx, options);
+            }
 
-                if (approvedProp.ValueKind == JsonValueKind.False)
+            return false;
+        }
+
+        if (answer.ValueKind == JsonValueKind.Object)
+            return IsObjectApproved(answer, options);
+
+        if (answer.ValueKind == JsonValueKind.Array)
+        {
+            var sawAny = false;
+            foreach (var elem in answer.EnumerateArray())
+            {
+                sawAny = true;
+                if (!IsApproved(elem, options))
                 {
                     return false;
                 }
             }
 
-            if (JsonHelpers.TryGetPropertyIgnoreCase(answer, ["answers", "answer", "selected", "choice", "value"], out var nested))
-            {
-                return IsApproved(nested, options);
-            }
-        }
-
-        if (answer.ValueKind == JsonValueKind.Array)
-        {
-            foreach (var elem in answer.EnumerateArray())
-            {
-                return IsApproved(elem, options);
-            }
-
-            return false;
+            return sawAny;
         }
 
         if (answer.ValueKind == JsonValueKind.String)
         {
             var text = (answer.GetString() ?? string.Empty).Trim();
-            if (text.Length == 0)
-            {
-                return false;
-            }
+            return EvaluateText(text);
+        }
 
-            if (NegativeTokens.Contains(text))
-            {
-                return false;
-            }
+        return false;
+    }
 
-            if (PositiveTokens.Contains(text))
+    private static bool IsObjectApproved(JsonElement answer, IReadOnlyList<string> options)
+    {
+        int? index = null;
+        JsonElement? echo = null;
+        string? echoName = null;
+        foreach (var property in answer.EnumerateObject())
+        {
+            var name = property.Name.ToLowerInvariant();
+            switch (name)
+            {
+                case "approved" or "allow":
+                    return answer.EnumerateObject().Count() == 1 && property.Value.ValueKind == JsonValueKind.True;
+                case "option" or "optionindex" or "index":
+                    if (index is not null || !TryReadIndex(property.Value, out var parsed))
+                        return false;
+                    index = parsed;
+                    break;
+                case "value" or "text" or "label":
+                    if (echo is { } previous)
+                    {
+                        // Older browser clients send the same free-text answer in both fields.
+                        if (answer.EnumerateObject().Count() != 2 ||
+                            (echoName, name) is not (("text", "value") or ("value", "text")) ||
+                            previous.ValueKind != JsonValueKind.String ||
+                            property.Value.ValueKind != JsonValueKind.String ||
+                            previous.GetString() != property.Value.GetString())
+                            return false;
+                        break;
+                    }
+                    echo = property.Value;
+                    echoName = name;
+                    break;
+                case "answers" or "answer" or "selected" or "choice":
+                    return answer.EnumerateObject().Count() == 1 && IsApproved(property.Value, options);
+                default:
+                    return false;
+            }
+        }
+
+        if (index is not { } selected)
+            return echo is { } text && IsApproved(text, options);
+        if (!IsOptionIndexApproved(selected, options))
+            return false;
+
+        return echo is null || (echo.Value.ValueKind == JsonValueKind.String &&
+            string.Equals(echo.Value.GetString(), options[selected], StringComparison.Ordinal));
+    }
+
+    private static bool TryReadIndex(JsonElement value, out int index)
+    {
+        index = -1;
+        return value.ValueKind switch
+        {
+            JsonValueKind.Number => value.TryGetInt32(out index),
+            JsonValueKind.String => int.TryParse(value.GetString(), out index),
+            _ => false
+        };
+    }
+
+    private static bool IsOptionIndexApproved(int index, IReadOnlyList<string> options)
+    {
+        if (index < 0 || index >= options.Count)
+        {
+            return false;
+        }
+
+        var label = options[index].Trim();
+        var stripped = StripRecommendedPrefix(label);
+
+        if (MatchesNegative(stripped) || MatchesNegative(label))
+        {
+            return false;
+        }
+
+        if (PositiveTokens.Contains(stripped))
+        {
+            return true;
+        }
+
+        if (options.Count >= 2)
+        {
+            return index == 0;
+        }
+
+        return false;
+    }
+
+    private static bool EvaluateText(string text)
+    {
+        if (text.Length == 0)
+        {
+            return false;
+        }
+
+        var stripped = StripRecommendedPrefix(text);
+
+        return PositiveTokens.Contains(stripped);
+    }
+
+    private static string StripRecommendedPrefix(string input)
+    {
+        const string recPrefix = "(Recommended)";
+        if (input.StartsWith(recPrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            return input[recPrefix.Length..].Trim();
+        }
+
+        return input;
+    }
+
+    private static bool MatchesNegative(string text)
+    {
+        if (MatchesTokenOrPrefix(text, NegativeTokens))
+        {
+            return true;
+        }
+
+        foreach (var prefix in ChineseNegativePrefixes)
+        {
+            if (text.StartsWith(prefix, StringComparison.Ordinal))
             {
                 return true;
             }
+        }
 
-            foreach (var neg in NegativeTokens)
-            {
-                if (text.StartsWith(neg + " ", StringComparison.OrdinalIgnoreCase) ||
-                    text.Equals(neg, StringComparison.OrdinalIgnoreCase))
-                {
-                    return false;
-                }
-            }
+        return false;
+    }
 
-            if (options.Count >= 2)
-            {
-                if (string.Equals(text, options[0], StringComparison.OrdinalIgnoreCase))
-                {
-                    return true;
-                }
-
-                if (string.Equals(text, options[^1], StringComparison.OrdinalIgnoreCase))
-                {
-                    return false;
-                }
-            }
-
+    private static bool MatchesTokenOrPrefix(string text, HashSet<string> tokenSet)
+    {
+        if (tokenSet.Contains(text))
+        {
             return true;
+        }
+
+        foreach (var tok in tokenSet)
+        {
+            if (text.StartsWith(tok + " ", StringComparison.OrdinalIgnoreCase) ||
+                text.StartsWith(tok + ":", StringComparison.OrdinalIgnoreCase) ||
+                text.StartsWith(tok + "，", StringComparison.OrdinalIgnoreCase) ||
+                text.StartsWith(tok + "。", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
         }
 
         return false;

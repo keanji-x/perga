@@ -228,6 +228,12 @@ export function extractTemplateMentions(text: string): readonly string[] {
   return ids;
 }
 
+function hasEmptyInputSchema(schema: unknown): boolean {
+  if (schema === undefined) return true;
+  if (schema === null || typeof schema !== 'object' || Array.isArray(schema)) return false;
+  return Object.keys(schema).length === 0;
+}
+
 /** Return a template ID for `POST /api/tracks` only when the message names one known ready template without inputs. */
 export function selectedReadyTemplateId(
   text: string,
@@ -236,7 +242,7 @@ export function selectedReadyTemplateId(
   const templateIds = extractTemplateMentions(text);
   if (templateIds.length !== 1) return undefined;
   const template = templates.find(candidate => candidate.id === templateIds[0]);
-  return template?.availability.status === 'ready' && template.input_schema === undefined
+  return template?.availability.status === 'ready' && hasEmptyInputSchema(template.input_schema)
     ? template.id
     : undefined;
 }

@@ -220,7 +220,7 @@ describe('track list', () => {
       if (request.path === '/api/v1/areas') return ok([userArea, secondArea]);
       if (request.path === '/api/v1/areas/c1/tracks?includeClosed=true') return ok([old, recent]);
       if (request.path === '/api/v1/areas/c2/tracks?includeClosed=true') return ok([second]);
-      if (request.path === '/api/overlays?entity_kind=track') return ok([activityOverlay]);
+      if (request.path === '/api/v1/overlays?entity_kind=track') return ok([activityOverlay]);
       throw new Error(`unexpected request: ${request.path}`);
     });
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -287,7 +287,7 @@ describe('delete mutation wiring', () => {
     const transport: ApiTransportPort = {
       send: (request) => {
         if (request.method === 'DELETE') return Promise.resolve(ok(undefined));
-        if (request.path !== '/api/overlays?entity_kind=track') {
+        if (request.path !== '/api/v1/overlays?entity_kind=track') {
           return Promise.resolve(ok(request.path.includes('/tracks/') ? { ...baseTrackWire } : []));
         }
         const signal = request.signal as AbortSignal;

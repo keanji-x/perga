@@ -94,7 +94,11 @@ public static class PergaHostServiceCollectionExtensions
 
         services.TryAddSingleton<IReportDocEngine, ReportDocEngine>();
         services.TryAddSingleton<IPolicyVm, PolicyVm.PolicyVm>();
-        services.TryAddSingleton<IAgentRuntime, AgentRuntime>();
+        services.TryAddSingleton<IAgentRuntime>(sp => new AgentRuntime(new AgentRuntimeOptions
+        {
+            SandboxStateRootDirectory = Path.Combine(sp.GetRequiredService<ResolvedHostStoragePaths>().DataDir, "provider-state"),
+            CodexSandboxApiKey = sp.GetRequiredService<PergaHostOptions>().CodexSandboxApiKey,
+        }));
         services.TryAddSingleton<IVcsService, VcsService>();
         services.TryAddSingleton<IGitHubForgeService, GitHubForgeService>();
         services.TryAddSingleton<IWorkspaceDriverRegistry>(sp =>

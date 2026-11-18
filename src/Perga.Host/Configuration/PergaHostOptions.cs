@@ -17,6 +17,7 @@ public sealed class PergaHostOptions
 
     public string DefaultProvider { get; set; } = "codex";
     public string? DefaultModel { get; set; }
+    public string? CodexSandboxApiKey { get; set; }
     public string DefaultWorkspaceDriver { get; set; } = "direct";
     public bool DispatchWakesInBackground { get; set; } = true;
 
@@ -37,11 +38,13 @@ public sealed class PergaHostOptions
     public static PergaHostOptions BindFrom(IConfiguration configuration, string contentRootPath)
     {
         var opts = new PergaHostOptions();
-        configuration.GetSection(SectionName).Bind(opts);
+        var section = configuration.GetSection(SectionName);
+        section.Bind(opts);
 
         if (string.IsNullOrWhiteSpace(opts.DataDir))
         {
-            opts.DataDir = Environment.GetEnvironmentVariable("PERGA_DATA_DIR");
+            opts.DataDir = section["DataDirectory"]
+                           ?? Environment.GetEnvironmentVariable("PERGA_DATA_DIR");
         }
 
         if (string.IsNullOrWhiteSpace(opts.DbPath))
@@ -58,7 +61,8 @@ public sealed class PergaHostOptions
 
         if (string.IsNullOrWhiteSpace(opts.StaticWebRootDirectory))
         {
-            opts.StaticWebRootDirectory = Environment.GetEnvironmentVariable("PERGA_STATIC_WEB_DIR")
+            opts.StaticWebRootDirectory = section["FrontendDistDirectory"]
+                                          ?? Environment.GetEnvironmentVariable("PERGA_STATIC_WEB_DIR")
                                           ?? DiscoverDirectoryUpwards(contentRootPath, Path.Combine("fe", "web", "dist"))
                                           ?? DiscoverDirectoryUpwards(AppContext.BaseDirectory, Path.Combine("fe", "web", "dist"));
         }
@@ -72,6 +76,12 @@ public sealed class PergaHostOptions
         if (string.IsNullOrWhiteSpace(opts.TerminalBridgeEndpoint))
         {
             opts.TerminalBridgeEndpoint = Environment.GetEnvironmentVariable("PERGA_TERM_BRIDGE_URL");
+        }
+
+        if (string.IsNullOrWhiteSpace(opts.TerminalBridgeExecutablePath))
+        {
+            opts.TerminalBridgeExecutablePath = section["TerminalBridgeBinaryPath"]
+                                                ?? Environment.GetEnvironmentVariable("PERGA_TERM_BRIDGE_BIN");
         }
 
         if (string.IsNullOrWhiteSpace(opts.McpBaseUri))

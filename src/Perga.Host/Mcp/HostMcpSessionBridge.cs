@@ -154,6 +154,18 @@ public sealed class HostMcpSessionBridge : IMcpSessionBridge
             }
         }
 
+        var urlsEnv = Environment.GetEnvironmentVariable("ASPNETCORE_URLS");
+        if (!string.IsNullOrWhiteSpace(urlsEnv))
+        {
+            foreach (var candidate in urlsEnv.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                if (!candidate.EndsWith(":0", StringComparison.Ordinal))
+                {
+                    return NormalizeLoopbackAddress(candidate).TrimEnd('/');
+                }
+            }
+        }
+
         return "http://127.0.0.1:5000";
     }
 

@@ -140,7 +140,7 @@ export function managedProvidersOperation(recheck: boolean): ApiOperation<Manage
         const availability = providerStatusToAvailability(provider);
         if (availability === null) return [];
         return [{
-          accepts_unavailable_blank_track: true,
+          accepts_unavailable_blank_track: false,
           availability,
           capabilities: {
             managed_conversation: true,
@@ -148,7 +148,7 @@ export function managedProvidersOperation(recheck: boolean): ApiOperation<Manage
             images: false,
             manual_compact: true,
             history_replacement: false,
-            requires_ready_availability: false,
+            requires_ready_availability: true,
           },
         }];
       })),

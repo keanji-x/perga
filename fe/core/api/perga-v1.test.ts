@@ -1,12 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
-import { bootstrapOperation, whoamiOperation } from './auth.js';
+import { bootstrapOperation, DEPLOYMENT_OWNER_USER_ID, loginOperation, whoamiOperation } from './auth.js';
 import {
   bootstrapDtoSchema,
   decodePergaEventEnvelope,
   trackAggregateSnapshotDtoSchema,
 } from './perga-v1.js';
 import { decodeWireEvent } from './schemas.js';
+import { decodeEventFrame } from '../events/protocol.js';
+import { initialEventState, reduceEventFrame } from '../events/reducer.js';
 import {
   areaCreationCapabilityOperation,
   areaFoldersOperation,
@@ -23,14 +25,20 @@ import {
   interruptPlannerOperation,
   modelCatalogOperation,
   sendPlannerInputOperation,
+  setConversationArchiveOperation,
+  setPlannerModelOperation,
   trackConversationsOperation,
 } from '../domain/conversation.js';
 import { buildConversationTranscript, conversationItemsOperation, conversationRunOperation } from '../domain/conversation-display.js';
+import { matchSendOps, type SendOp } from '../domain/conversation-outbox.js';
 import {
+  listDirectoryOperation,
   listTrackWorkspaceDirectoryOperation,
   readTrackWorkspaceFileOperation,
   trackVcsDiffOperation,
+  trackWorkspaceRawFileUrl,
 } from '../domain/fs.js';
+import { selectedReadyTemplateId } from '../domain/mentions.js';
 import { plannerSwitchOperation } from '../domain/planner-switch.js';
 import {
   readTrackReport,
@@ -38,14 +46,23 @@ import {
   trackTaskVerdictsOperation,
   updateTrackReportBlockOperation,
 } from '../domain/report.js';
-import { taskAttemptsOperation } from '../domain/task-recovery.js';
+import {
+  acceptTaskOperation,
+  cancelTaskOperation,
+  pergaTaskAttemptsOperation,
+  rejectTaskOperation,
+  taskAttemptsOperation,
+} from '../domain/task-recovery.js';
 import { templateDetailOperation } from '../domain/template.js';
+import { compilePergaTemplateInputs, parsePergaInputsSchema } from '../domain/template-input.js';
 import {
   createTerminalCardOperation,
   createTrackOperation,
   deleteTerminalOperation,
   deleteTrackOperation,
   listTrackTerminalsOperation,
+  overlaysByKindOperation,
+  terminalDtoToCardWire,
   trackActivitiesFrom,
   trackDetailOperation,
   tracksInAreaOperation,
@@ -284,8 +301,9 @@ describe('Perga /api/v1 protocol contracts', () => {
       frozen_at: null,
       worktree: '/repo/.worktrees/trk_1',
     });
-    expect(detail.cards.map((c) => c.kind)).toEqual(['track-report', 'codex']);
-    expect(detail.cards[1]?.payload).toMatchObject({ planner_harness: true });
+    expect(detail.cards.map((c) => c.kind)).toEqual(['track-report', 'codex', 'file-viewer']);
+    expect(detail.cards[1]?.payload).toMatchObject({ planner_harness: true, planner_provider: 'codex', is_lead: true });
+    expect(detail.cards[2]?.id).toBe('files-trk_1');
 
     const acpSnapshot = {
       ...snapshotRaw,
@@ -423,10 +441,13 @@ describe('Perga /api/v1 protocol contracts', () => {
     const itemsOp = conversationItemsOperation('ses_lead', null);
     expect(itemsOp.path).toBe('/api/v1/sessions/ses_lead/items?afterId=0&limit=500&latest=true');
     const page = itemsOp.responseSchema.parse(pageDto);
-    const transcript = buildConversationTranscript(page.items, 'owner');
-    expect(transcript.some((e) => e.author === 'you' && e.text === 'Hello Perga')).toBe(true);
-    expect(transcript.some((e) => e.author === 'activity' && e.verb === 'Read report')).toBe(true);
-    expect(transcript.some((e) => e.author === 'agent' && e.text === 'Report inspected.')).toBe(true);
+    const transcript = buildConversationTranscript(page.items, 'local-owner');
+    expect(transcript.map((e) => (e.author === 'activity' ? `${e.author}:${e.verb}` : `${e.author}:${e.text}`))).toEqual([
+      'you:Hello Perga',
+      'activity:Read report',
+      'activity:Thought',
+      'agent:Report inspected.',
+    ]);
 
     const run = conversationRunOperation('ses_lead').responseSchema.parse(pageDto);
     expect(run.token_usage?.percent).toBe(65);
@@ -550,5 +571,268 @@ describe('Perga /api/v1 protocol contracts', () => {
         payload: { task_key: 'verify', kind: 'terminal', cmd: 'npm test' },
       },
     ]);
+  });
+
+  it('covers user-journey audit fixes across CHAT, CARD, and SHELL contracts', () => {
+    // SHELL-02: GET loginOperation never includes a request body
+    expect(loginOperation({ username: 'u', password: 'p' })).not.toHaveProperty('body');
+
+    // CHAT-03, CHAT-04 & CHAT-05: 10-minute timeout, SessionInputReceipt -> entry_id, and null-entryId outbox retirement
+    const sendOp = sendPlannerInputOperation('ses_lead', 'Ship Perga', [], 'idem-1', null);
+    expect(sendOp.timeoutMs).toBe(600_000);
+    expect(compactPlannerOperation('ses_lead').timeoutMs).toBe(600_000);
+    expect(sendOp.responseSchema.parse({
+      inputId: 'inp_77',
+      turnId: 'turn_9',
+      sessionId: 'ses_lead',
+      deliveryState: 'accepted',
+      turnStatus: 'queued',
+      statusUrl: '/api/v1/sessions/ses_lead/inputs/inp_77',
+      resolvedAtMs: null,
+    })).toEqual({ card_id: 'ses_lead', worker_session_id: 'ses_lead', entry_id: 'inp_77' });
+
+    const confirmedNullEntry: SendOp = {
+      key: 'idem-null',
+      phase: 'confirmed',
+      queueRevision: null,
+      fromComposer: true,
+      replaces: null,
+      echo: {
+        id: 'idem-null',
+        author: 'you',
+        text: 'Hello without userItemId',
+        atMs: 1000,
+        serverHighWaterBefore: 5,
+        queued: false,
+        entryId: null,
+      },
+    };
+    const retired = matchSendOps(
+      [{
+        id: 'human:6',
+        author: 'you',
+        human: { userId: DEPLOYMENT_OWNER_USER_ID, displayName: 'Local Operator', messageId: '6', revision: 1 },
+        text: 'Hello without userItemId',
+        atMs: 1005,
+        displayPosition: 6,
+      }],
+      [confirmedNullEntry],
+      [],
+      'ses_lead',
+    );
+    expect(retired.get('idem-null')).toBe('human:6');
+
+    // CHAT-06, CHAT-07 & CHAT-11: beforeId pagination, turn_outcome error projection, mcpToolCall content, permission_mode: null
+    const cursorOp = conversationItemsOperation('ses_lead', {
+      contract: 'conversation_v1',
+      card_id: 'ses_lead',
+      source: 'presentation',
+      position: 50,
+    });
+    expect(cursorOp.path).toContain('&beforeId=50');
+    const errorPage = conversationItemsOperation('ses_lead', null).responseSchema.parse({
+      items: [
+        { id: 10, sessionId: 'ses_lead', turnId: 't_err', kind: 'user', payload: { content: 'Run tool' }, createdAtMs: 100 },
+        { id: 11, sessionId: 'ses_lead', turnId: 't_err', kind: 'tool_call', payload: { callId: 'c_9', name: 'custom_lookup', args: { query: 'perga' } }, createdAtMs: 110 },
+        { id: 12, sessionId: 'ses_lead', turnId: 't_err', kind: 'tool_result', payload: { callId: 'c_9', output: { found: 3 }, isError: false }, createdAtMs: 120 },
+        { id: 13, sessionId: 'ses_lead', turnId: 't_err', kind: 'turn_outcome', payload: { status: 'failed', error: 'Model quota exceeded' }, createdAtMs: 130 },
+      ],
+      hasMoreBefore: true,
+      activeTurn: null,
+      unknownInput: null,
+      session: {
+        id: 'ses_lead', trackId: 'trk_1', isLead: true, boundTaskId: null, boundAttemptId: null,
+        title: 'Lead', provider: 'codex', model: 'gpt-5', nativeThreadId: 'thr_1', epoch: 1,
+        status: 'idle', contextUsageRatio: null, archivedAtMs: null, createdAtMs: 90, updatedAtMs: 130,
+      },
+    });
+    expect(errorPage.next_cursor?.position).toBe(10);
+    const errorTranscript = buildConversationTranscript(errorPage.items, DEPLOYMENT_OWNER_USER_ID);
+    expect(errorTranscript[0]).toMatchObject({ author: 'you', text: 'Run tool' });
+    expect(errorTranscript[1]).toMatchObject({ author: 'activity' });
+    if (errorTranscript[1]?.author === 'activity') {
+      expect(errorTranscript[1].content).toContain('"query": "perga"');
+      expect(errorTranscript[1].content).toContain('"found": 3');
+    }
+    expect(errorTranscript[2]).toMatchObject({
+      author: 'turn',
+      status: 'failed',
+      message: 'Model quota exceeded',
+      text: 'Model quota exceeded',
+    });
+
+    const run = conversationRunOperation('ses_lead').responseSchema.parse({
+      items: [],
+      activeTurn: null,
+      unknownInput: null,
+      session: {
+        id: 'ses_lead', trackId: 'trk_1', isLead: true, boundTaskId: null, boundAttemptId: null,
+        title: 'Lead', provider: 'codex', model: 'gpt-5', nativeThreadId: 'thr_1', epoch: 1,
+        status: 'idle', contextUsageRatio: null, archivedAtMs: null, createdAtMs: 90, updatedAtMs: 130,
+      },
+    });
+    expect(run.permission_mode).toBeNull();
+
+    const setModelOp = setPlannerModelOperation('ses_lead', { model: null, reasoning_effort: null });
+    expect(setModelOp).toMatchObject({
+      method: 'PATCH',
+      path: '/api/v1/sessions/ses_lead',
+      body: { model: null, clearModel: true, reasoning_effort: null },
+    });
+    const archiveOp = setConversationArchiveOperation('trk_1', 'ses_sub1', true);
+    expect(archiveOp).toMatchObject({
+      method: 'PATCH',
+      path: '/api/v1/sessions/ses_sub1',
+      body: { archived: true },
+    });
+    const cardScopedCatalog = modelCatalogOperation({ kind: 'card', cardId: 'ses_lead' }, { provider: 'claude' })
+      .responseSchema.parse(sampleBootstrap);
+    expect(cardScopedCatalog.source).toBe('unavailable');
+    expect(cardScopedCatalog.models).toEqual([]);
+
+    // CHAT-09: refresh the snapshot before committing its cursor.
+    const decodedSnap = decodeEventFrame({ kind: '_snapshot_required', tipId: 99 });
+    expect(decodedSnap).toEqual({ status: 'ready', frame: { type: 'snapshot-required', tipId: 99 } });
+    if (decodedSnap.status === 'ready') {
+      const reduced = reduceEventFrame(initialEventState(1, 5), decodedSnap.frame);
+      expect(reduced.state.cursor).toBe(5);
+      expect(reduced.effects).toEqual([{ type: 'refresh-snapshot', tipId: 99 }]);
+    }
+
+    // CARD-01, CARD-02, CARD-03, CARD-04, CARD-05 & SHELL-03
+    const termCard = terminalDtoToCardWire({
+      id: 'term_1',
+      trackId: 'trk_1',
+      attemptId: null,
+      title: 'Shell',
+      cwd: '/repo',
+      program: '/bin/bash',
+      status: 'running',
+      exitCode: null,
+      createdAtMs: 1000,
+      exitedAtMs: null,
+    });
+    expect(termCard.payload).toMatchObject({
+      terminal_presentation: { source: 'unrecorded', in_workbench: true },
+    });
+
+    const hostListOp = listDirectoryOperation('/srv', { perga: true });
+    expect(hostListOp.path).toBe('/api/v1/fs/listdir?path=%2Fsrv');
+    expect(hostListOp.responseSchema.parse({
+      path: '/srv',
+      parent: '/',
+      entries: [{ name: 'repo', isDir: true, isSymlink: false }],
+    })).toEqual({
+      path: '/srv',
+      parent: '/',
+      entries: [{ name: 'repo', is_dir: true, is_symlink: false }],
+    });
+    expect(trackWorkspaceRawFileUrl('trk_1', 'assets/logo.png'))
+      .toBe('/api/v1/tracks/trk_1/files/raw?path=assets%2Flogo.png');
+
+    const pergaFields = parsePergaInputsSchema({
+      baseBranch: { type: 'string', default: 'main', label: 'Base Branch' },
+      horizonMonths: { type: 'number', default: 12, label: 'Horizon' },
+      requirePrReview: { type: 'boolean', default: true, label: 'Require PR Review' },
+      riskLevel: { type: 'enum', values: ['low', 'medium', 'high'], default: 'medium', label: 'Risk Level' },
+    });
+    expect(pergaFields).toHaveLength(4);
+    expect(compilePergaTemplateInputs(pergaFields, { horizonMonths: '24', riskLevel: 'high' })).toEqual({
+      valid: true,
+      input: { baseBranch: 'main', horizonMonths: 24, requirePrReview: true, riskLevel: 'high' },
+      errors: {},
+    });
+    expect(selectedReadyTemplateId('Use @`template:blank`', [{
+      id: 'blank', title: 'Blank', description: null, availability: { status: 'ready' }, input_schema: {}, tasks: [],
+    }])).toBe('blank');
+
+    const pergaAttempts = pergaTaskAttemptsOperation('trk_1', 'build-fe').responseSchema.parse([{
+      attemptId: 'att_9',
+      taskId: 'tsk_1',
+      trackId: 'trk_1',
+      sessionId: 'ses_worker',
+      status: 'Failed',
+      workerResult: { summary: 'Partial progress' },
+      meta: {},
+      workspaceLease: null,
+      gateVerdict: {
+        passed: false,
+        steps: [{ name: 'test', cmd: 'npm test', exitCode: 1, passed: false, durationMs: 420, stdout: '1 failing', stderr: 'AssertionError', outputTail: '' }],
+      },
+      startedAtMs: 1000,
+      finishedAtMs: 1420,
+    }]);
+    expect(pergaAttempts.current?.status).toBe('failed');
+    expect(pergaAttempts.evidenceByAttemptId?.att_9?.gateSteps[0]?.output).toContain('AssertionError');
+    expect(pergaAttempts.evidenceByAttemptId?.att_9?.workerResult).toContain('Partial progress');
+    expect(cancelTaskOperation('trk_1', 'build-fe').path).toBe('/api/v1/tracks/trk_1/tasks/build-fe/cancel');
+    expect(acceptTaskOperation('trk_1', 'build-fe').path).toBe('/api/v1/tracks/trk_1/tasks/build-fe/accept');
+    expect(rejectTaskOperation('trk_1', 'build-fe').path).toBe('/api/v1/tracks/trk_1/tasks/build-fe/reject');
+
+    const agyReport = readTrackReportOperation('trk_1').responseSchema.parse({
+      docRev: 2,
+      summary: 'AGY task report',
+      renderedMarkdown: '',
+      blocks: [
+        {
+          id: 'b_agy',
+          kind: 'task',
+          markdown: '',
+          payload: {
+            taskKey: 'audit-agy',
+            kind: 'agent',
+            provider: 'acp:antigravity',
+            goalOrCmd: 'Run ACP verification',
+            dependsOn: ['prep'],
+            ready: true,
+          },
+        },
+        {
+          id: 'b_oc',
+          kind: 'task',
+          markdown: '',
+          payload: {
+            taskKey: 'audit-oc',
+            kind: 'acp:opencode',
+            goal_or_cmd: 'Inspect workspace',
+            ready: false,
+          },
+        },
+      ],
+      tasks: [],
+      diagnostics: [],
+    });
+    const parsedAgyReport = readTrackReport([{
+      id: 'report-trk_1',
+      track_id: 'trk_1',
+      kind: 'track-report',
+      title: 'Report',
+      sort: 0,
+      deletable: false,
+      created_at: 1,
+      updated_at: 1,
+      payload: { rev: agyReport.docRev, body: '', blocks: agyReport.blocks },
+    }]);
+    expect(parsedAgyReport?.blocks).toMatchObject([
+      { id: 'b_agy', kind: 'task', payload: { key: 'audit-agy', kind: 'antigravity', goal: 'Run ACP verification', depends_on: ['prep'], ready: true } },
+      { id: 'b_oc', kind: 'task', payload: { key: 'audit-oc', kind: 'opencode', goal: 'Inspect workspace', ready: false } },
+    ]);
+
+    const overlaysOp = overlaysByKindOperation('track');
+    expect(overlaysOp.path).toBe('/api/v1/overlays?entity_kind=track');
+    const overlays = overlaysOp.responseSchema.parse({
+      tracks: [{
+        trackId: 'trk_1',
+        areaId: 'area_1',
+        isWorking: true,
+        openAskCount: 1,
+        hasFailedTask: false,
+        unreadMailCount: 0,
+        updatedAtMs: 5000,
+      }],
+    });
+    const trackAct = trackActivitiesFrom(overlays).get('trk_1');
+    expect(trackAct?.working).toBe(true);
+    expect(trackAct?.attention).toBe('input');
   });
 });

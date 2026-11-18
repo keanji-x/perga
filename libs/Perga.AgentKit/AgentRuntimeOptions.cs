@@ -26,7 +26,17 @@ public sealed record AgentRuntimeOptions
 
     public OsSandboxOptions Sandbox { get; init; } = new();
 
+    public string? SandboxStateRootDirectory { get; init; }
+
+    public string? CodexSandboxApiKey { get; init; }
+
     public TimeSpan ProbeTimeout { get; init; } = TimeSpan.FromSeconds(5);
 
+    public TimeSpan ModelProbeTimeout { get; init; } = TimeSpan.FromSeconds(3);
+
+    public TimeSpan ProbeCacheTtl { get; init; } = TimeSpan.FromSeconds(60);
+
     public TimeSpan HandshakeTimeout { get; init; } = TimeSpan.FromSeconds(15);
+
+    public TimeProvider TimeProvider { get; init; } = TimeProvider.System;
 }

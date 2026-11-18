@@ -25,6 +25,7 @@ export type ConversationDraftActionInput = Readonly<{
   supportsInitialInput: boolean;
   sessionInputReceipts?: boolean;
   supportsAssistantProviders: boolean;
+  defaultProvider?: import('../../../../core/api/schemas.ts').AgentProvider;
   managedProviders: readonly ManagedProviderAvailability[] | undefined;
   recheckManagedProviders: () => Promise<readonly ManagedProviderAvailability[]>;
   openDraft: () => void;
@@ -36,7 +37,7 @@ export type ConversationDraftActionInput = Readonly<{
 /** A command assembly for this render's draft. Construction has no side effects;
  * dispatched attempts retain their original scope/key and settle through Registry. */
 export function createConversationDraftActions({ registry, draft, creating, source, sourceScopeId, transport,
-  supportsSideConversation, supportsDraftModel, supportsInitialInput, sessionInputReceipts, supportsAssistantProviders, managedProviders, recheckManagedProviders, openDraft, closeView, onGone, onAdopt,
+  supportsSideConversation, supportsDraftModel, supportsInitialInput, sessionInputReceipts, supportsAssistantProviders, defaultProvider, managedProviders, recheckManagedProviders, openDraft, closeView, onGone, onAdopt,
 }: ConversationDraftActionInput) {
   /* Every draft write goes through one of these three, each a whole-object update,
        and each a no-op when the draft it was computed from is no longer the one held. */
@@ -71,9 +72,15 @@ export function createConversationDraftActions({ registry, draft, creating, sour
     }
     /* The key is minted once, for the draft, not per send: a different key on the
            retry is a different derived card. */
+    const readyProvider = defaultProvider !== undefined
+      && (managedProviders === undefined || managedProviders.some((entry) => entry.availability.provider === defaultProvider && entry.availability.status === 'ready'))
+      ? defaultProvider
+      : managedProviders?.find((entry) => entry.availability.status === 'ready')?.availability.provider
+        ?? defaultProvider
+        ?? 'codex';
     registry.startDraft({
       scopeId: sourceScopeId,
-      provider: 'codex', model: FOLLOW_INSTALLATION_DEFAULT,
+      provider: readyProvider, model: FOLLOW_INSTALLATION_DEFAULT,
       key: mintIdempotencyKey(),
       text, autoSend: text !== null, submitted: null, creating: false, error: null, remedy: null,
     });
@@ -86,7 +93,7 @@ export function createConversationDraftActions({ registry, draft, creating, sour
   /* `from` is not decoration: this runs after an `await`, and the reducer records
        the row only if `from` is still held. */
   const adopt = (from: ConversationDraft, result: CreatedConversation) => {
-    if (from.submitted === null || (result.sessionInput === undefined && result.conversation.id !== source.derivedCardId(from.key))) {
+    if (from.submitted === null || (result.sessionInput === undefined && !result.conversation.id.startsWith('ses_') && result.conversation.id !== source.derivedCardId(from.key))) {
       throw new Error('The first-message result does not match this conversation.');
     }
     if (registry.acceptDraft(from, result, from.submitted)) onAdopt(from, result.conversation.id);

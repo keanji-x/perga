@@ -113,6 +113,8 @@ async function pick(trigger: string, group: 'Codex' | 'Claude', item: string | R
 
 function harness(options: {
   templates?: readonly import('../../../../core/domain/track.ts').TrackTemplate[];
+  heldTemplates?: Promise<void>;
+  pergaMode?: boolean;
   areaDefaults?: Readonly<{ default_template_id: string | null; default_cwd: string | null }>;
   otherAreaDefaults?: Readonly<{ default_template_id: string | null; default_cwd: string | null }>;
   trackCreate?: ApiTransportResponse;
@@ -150,7 +152,9 @@ function harness(options: {
   const transport: ApiTransportPort = {
     send(request: ApiRequest): Promise<ApiTransportResponse> {
       sent.push(request);
-      if (request.path === '/api/v1/templates') return Promise.resolve({ status: 200, statusText: 'OK', body: options.templates ?? [] });
+      if (request.path === '/api/v1/templates') {
+        return (options.heldTemplates ?? Promise.resolve()).then(() => ({ status: 200, statusText: 'OK', body: options.templates ?? [] }));
+      }
       if (request.path === '/api/plugins') return Promise.resolve({ status: 200, statusText: 'OK', body: [] });
       if (request.path.includes('/mentions?')) return Promise.resolve({ status: 200, statusText: 'OK', body: { tags: [], tracks: [], blocks: [] } });
       const posted = request.body as { area_id?: string } | undefined;
@@ -268,7 +272,7 @@ function harness(options: {
   window.history.pushState({}, '', `${APP_BASEPATH}${options.path ?? '/'}`);
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const router = createAppRouter({ prepareReport: prepareReportDocument,
-    transport, unauthorized, client, cards: bootTestCardRuntime(), onSignOut: vi.fn(),
+    transport, unauthorized, client, cards: bootTestCardRuntime(), onSignOut: vi.fn(), pergaMode: options.pergaMode,
   });
   /* `StrictMode`, because production runs it: its double-invoked effects are what
        catch a `useRef` latch written only in the cleanup arm. */
@@ -1432,4 +1436,28 @@ it('leaves a pasted template reference to the first message when no catalog was 
   expect(createdTrackBodies(sent)[0]).toHaveProperty('first_message', 'use @`template:deploy`');
   expect(createdTrackBodies(sent)[0]).not.toHaveProperty('template_id');
   expect(sent.some(request => request.path === '/api/v1/templates')).toBe(false);
+});
+
+it('renders Perga new-track route cleanly while template catalog is pending without update loops', async () => {
+  let resolveTemplates!: () => void;
+  const heldTemplates = new Promise<void>((resolve) => { resolveTemplates = resolve; });
+  harness({
+    pergaMode: true,
+    path: '/area/c1/new',
+    heldTemplates,
+    templates: [{
+      id: 'dev',
+      title: 'Development',
+      description: 'Feature workflow',
+      tasks: [],
+      input_schema: { baseBranch: { type: 'string', default: 'main', label: 'Base Branch' } },
+      availability: { status: 'ready' },
+    }],
+  });
+  const composer = await findComposer();
+  await userEvent.type(composer, 'Build feature cleanly');
+  act(() => { resolveTemplates(); });
+  const select = await screen.findByLabelText('Template');
+  await userEvent.selectOptions(select, 'dev');
+  expect(await screen.findByDisplayValue('main')).toBeTruthy();
 });

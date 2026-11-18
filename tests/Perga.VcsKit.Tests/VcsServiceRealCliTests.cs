@@ -272,6 +272,34 @@ public sealed class VcsServiceRealCliTests : IDisposable
         Assert.Equal(gitPush.HeadCommitId, remoteGitSha.Trim());
     }
 
+    [Fact]
+    public async Task JjColocated_DiffDetailedAsync_PopulatesPerFilePatchHeadWorkingStatusAndFilterPath()
+    {
+        var repoDir = await InitColocatedRepoAsync(Path.Combine(_tempRoot, "jj-detailed-diff"));
+        await File.WriteAllTextAsync(Path.Combine(repoDir, "hello.txt"), "modified via jj\n");
+        Directory.CreateDirectory(Path.Combine(repoDir, "nested"));
+        await File.WriteAllTextAsync(Path.Combine(repoDir, "nested", "added.txt"), "nested new\n");
+
+        var vcs = new VcsService();
+        var detailed = await vcs.DiffDetailedAsync(repoDir);
+        var byPath = detailed.Files.ToDictionary(f => f.Path, StringComparer.Ordinal);
+
+        Assert.Equal("modified", byPath["hello.txt"].Status);
+        Assert.Equal("initial\n", byPath["hello.txt"].HeadText);
+        Assert.Equal("modified via jj\n", byPath["hello.txt"].WorkingText);
+        Assert.Contains("-initial", byPath["hello.txt"].Patch, StringComparison.Ordinal);
+        Assert.Contains("+modified via jj", byPath["hello.txt"].Patch, StringComparison.Ordinal);
+        Assert.False(byPath["hello.txt"].IsBinary);
+
+        Assert.Equal("added", byPath["nested/added.txt"].Status);
+        Assert.Null(byPath["nested/added.txt"].HeadText);
+        Assert.Equal("nested new\n", byPath["nested/added.txt"].WorkingText);
+
+        var filtered = await vcs.DiffDetailedAsync(repoDir, filterPath: "nested/added.txt");
+        var single = Assert.Single(filtered.Files);
+        Assert.Equal("nested/added.txt", single.Path);
+    }
+
     private async Task<string> InitBareRemoteAsync(string bareDir)
     {
         Directory.CreateDirectory(bareDir);

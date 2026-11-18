@@ -354,8 +354,9 @@ internal static class TaskBlockSynchronizer
 
         var obj = rootObj.Value;
         var taskKey = ReadString(obj, ["task_key", "taskKey", "key", "id"]) ?? block.Id;
-        var kind = ReadString(obj, ["kind", "type"]) ?? "agent";
-        var provider = ReadString(obj, ["provider"]);
+        var rawKind = ReadString(obj, ["kind", "type"]) ?? "agent";
+        var rawProvider = ReadString(obj, ["provider"]);
+        var (kind, provider) = NormalizeKindAndProvider(rawKind, rawProvider);
         var accessStr = ReadString(obj, ["access", "access_mode", "accessMode"]);
         var access = ParseAccessMode(accessStr);
 
@@ -403,6 +404,61 @@ internal static class TaskBlockSynchronizer
             Context: context,
             Acceptance: acceptance,
             Gate: gate);
+    }
+
+    internal static string? NormalizeProviderId(string? rawProvider)
+    {
+        if (string.IsNullOrWhiteSpace(rawProvider))
+        {
+            return null;
+        }
+
+        var trimmed = rawProvider.Trim();
+        if (string.Equals(trimmed, "antigravity", StringComparison.OrdinalIgnoreCase))
+        {
+            return "acp:antigravity";
+        }
+
+        if (string.Equals(trimmed, "opencode", StringComparison.OrdinalIgnoreCase))
+        {
+            return "acp:opencode";
+        }
+
+        if (string.Equals(trimmed, "codex", StringComparison.OrdinalIgnoreCase))
+        {
+            return "codex";
+        }
+
+        if (string.Equals(trimmed, "claude", StringComparison.OrdinalIgnoreCase))
+        {
+            return "claude";
+        }
+
+        if (trimmed.StartsWith("acp:", StringComparison.OrdinalIgnoreCase))
+        {
+            return "acp:" + trimmed[4..].ToLowerInvariant();
+        }
+
+        return trimmed;
+    }
+
+    private static (string Kind, string? Provider) NormalizeKindAndProvider(string rawKind, string? rawProvider)
+    {
+        var trimmedKind = rawKind.Trim();
+        var normalizedProvider = NormalizeProviderId(rawProvider);
+
+        if (normalizedProvider is null &&
+            (string.Equals(trimmedKind, "codex", StringComparison.OrdinalIgnoreCase) ||
+             string.Equals(trimmedKind, "claude", StringComparison.OrdinalIgnoreCase) ||
+             string.Equals(trimmedKind, "antigravity", StringComparison.OrdinalIgnoreCase) ||
+             string.Equals(trimmedKind, "opencode", StringComparison.OrdinalIgnoreCase) ||
+             trimmedKind.StartsWith("acp:", StringComparison.OrdinalIgnoreCase)))
+        {
+            normalizedProvider = NormalizeProviderId(trimmedKind);
+            trimmedKind = "agent";
+        }
+
+        return (trimmedKind, normalizedProvider);
     }
 
     private static string StripFenceIfPresent(string text)

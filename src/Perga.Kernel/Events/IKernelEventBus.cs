@@ -7,7 +7,10 @@ namespace Perga.Kernel.Events;
 public static class KernelEventKinds
 {
     // Persistent events (EventId != null)
+    public const string AreaUpdated = "area.updated";
+    public const string AreaDeleted = "area.deleted";
     public const string TrackUpdated = "track.updated";
+    public const string TrackDeleted = "track.deleted";
     public const string ReportUpdated = "report.updated";
     public const string TaskUpdated = "task.updated";
     public const string SessionUpdated = "session.updated";
@@ -30,7 +33,10 @@ public static class KernelEventKinds
 
     private static readonly HashSet<string> PersistentKinds = new(StringComparer.Ordinal)
     {
+        AreaUpdated,
+        AreaDeleted,
         TrackUpdated,
+        TrackDeleted,
         ReportUpdated,
         TaskUpdated,
         SessionUpdated,

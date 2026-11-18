@@ -19,7 +19,9 @@ import {
   AboutPane, AppearancePane, NetworkPane, SettingsSurface,
   type ThemeMode as SettingsThemeMode,
 } from '../../features/settings/public.tsx';
-import { SETTINGS_SECTIONS, settingsSectionLabel, type SettingsSection } from '../../features/settings/navigation.tsx';
+import {
+  PERGA_SETTINGS_SECTIONS, SETTINGS_SECTIONS, settingsSectionLabel, type SettingsSection,
+} from '../../features/settings/navigation.tsx';
 import { Dialog } from '../../ui/dialog/public.tsx';
 import { useState } from '../../ui/state/public.ts';
 import { useCompactViewport } from '../../ui/viewport/public.ts';
@@ -32,24 +34,33 @@ import {
 import { managedProvidersQueryOptions } from '../providers/managed-providers.ts';
 import { agentProvidersQueryOptions, useAgentProvidersRecheck } from '../providers/agent-providers.ts';
 import { useCodexAuthenticationRetry } from '../providers/codex-authentication-retry.ts';
+import { useUiPreferences } from '../providers/ui-preferences.tsx';
 import { useCurrentPath, useGo, type NavTarget } from '../router/navigation.ts';
 import { useTheme } from '../theme/public.tsx';
 import { MobileAccessHost } from './mobile-access-host.tsx';
 
 /** Which pane the path asks for, or `null` when the reader is not in Settings. */
-export function settingsSectionForPath(path: string): SettingsSection | null {
+export function settingsSectionForPath(path: string, pergaMode = false): SettingsSection | null {
+  if (pergaMode) {
+    if (path === '/settings') return 'appearance';
+    const found = SETTINGS_SECTIONS.find((entry) => path === `/settings/${entry.id}`)?.id ?? null;
+    if (found === null) return null;
+    return PERGA_SETTINGS_SECTIONS.some((entry) => entry.id === found) ? found : 'appearance';
+  }
   if (path === '/settings') return 'network';
   return SETTINGS_SECTIONS.find((entry) => path === `/settings/${entry.id}`)?.id ?? null;
 }
 
 /** Desktop Network keeps the historical root; every mobile category has a URL. */
-function targetForSection(section: SettingsSection, compact: boolean): NavTarget {
-  return { name: section === 'network' && !compact ? 'settings' : `settings-${section}` };
+function targetForSection(section: SettingsSection, compact: boolean, pergaMode = false): NavTarget {
+  const defaultSection: SettingsSection = pergaMode ? 'appearance' : 'network';
+  return { name: section === defaultSection && !compact ? 'settings' : `settings-${section}` };
 }
 
 export type SettingsOverlayProps = Readonly<{
   transport: ApiTransportPort;
   unauthorized: UnauthorizedChannel;
+  pergaMode?: boolean;
 }>;
 
 /**
@@ -57,12 +68,12 @@ export type SettingsOverlayProps = Readonly<{
  * parent changes between the mobile page and the desktop dialog slot, so resizing
  * cannot discard plugin drafts. DOM ancestry is not React context here.
  */
-export function SettingsOverlay({ transport, unauthorized }: SettingsOverlayProps) {
+export function SettingsOverlay({ transport, unauthorized, pergaMode = false }: SettingsOverlayProps) {
   const go = useGo();
   const router = useRouter();
   const path = useCurrentPath();
   const href = useRouterState({ select: (state) => state.location.href });
-  const section = settingsSectionForPath(path);
+  const section = settingsSectionForPath(path, pergaMode);
   const compact = useCompactViewport();
   const mobileIndex = compact && path === '/settings';
   const [contentHost] = useState(() => document.createElement('div'));
@@ -136,25 +147,70 @@ export function SettingsOverlay({ transport, unauthorized }: SettingsOverlayProp
         else if (!contentHost.contains(event.relatedTarget)) focusedContentRef.current = null;
       }}>
     <SettingsSurface section={section}
+      sections={pergaMode ? PERGA_SETTINGS_SECTIONS : SETTINGS_SECTIONS}
       presentation={!compact ? 'desktop' : mobileIndex ? 'mobile-index' : 'mobile-detail'}
-      onSelectSection={(next) => go(targetForSection(next, compact))}>
-      <SectionPane section={section} transport={transport} unauthorized={unauthorized} />
+      onSelectSection={(next) => go(targetForSection(next, compact, pergaMode))}>
+      <SectionPane section={section} transport={transport} unauthorized={unauthorized} pergaMode={pergaMode} />
     </SettingsSurface></div>, contentHost)}
   </>;
 }
 
 /** One switch, so a new section cannot forget to be rendered. */
-function SectionPane({ section, transport, unauthorized }: SettingsOverlayProps & {
+function SectionPane({ section, transport, unauthorized, pergaMode = false }: SettingsOverlayProps & {
   section: SettingsSection;
 }) {
   switch (section) {
     case 'appearance': return <AppearancePaneHost />;
     case 'plugins': return <PluginsPaneHost transport={transport} unauthorized={unauthorized} />;
-    case 'planners': return <PlannersPaneHost transport={transport} unauthorized={unauthorized} />;
+    case 'planners': return pergaMode
+      ? <PergaPlannersPaneHost transport={transport} unauthorized={unauthorized} />
+      : <PlannersPaneHost transport={transport} unauthorized={unauthorized} />;
     case 'mail': return <MailPaneHost transport={transport} unauthorized={unauthorized} />;
     case 'about': return <AboutPane />;
     case 'network': return <NetworkPaneHost transport={transport} unauthorized={unauthorized} />;
   }
+}
+
+function PergaPlannersPaneHost({ transport, unauthorized }: SettingsOverlayProps) {
+  const preferences = useUiPreferences();
+  const [readRevision, setReadRevision] = useState(0);
+  const savedMinutes = preferences.turnDurationMinutes();
+  const providers = useQuery(managedProvidersQueryOptions(transport, unauthorized));
+  const availability = useQuery(agentProvidersQueryOptions(transport, unauthorized));
+  const missing = availability.data?.find((entry) => providers.data !== undefined
+    && !providers.data.some(({ availability: managed }) => managed.provider === entry.provider));
+  const joined = availability.data === undefined || providers.data === undefined || missing !== undefined
+    ? undefined : availability.data.map((entry) => ({
+      availability: entry,
+      accepts_unavailable_blank_track: providers.data.find(({ availability: managed }) => managed.provider === entry.provider)!.accepts_unavailable_blank_track,
+    }));
+  const loadError = availability.error ?? providers.error;
+  const recheck = useAgentProvidersRecheck(transport, unauthorized);
+  return (
+    <PlannersPane
+      turnDuration={{
+        loaded: true,
+        readRevision,
+        loadError: null,
+        onRetryLoad: () => { setReadRevision((n) => n + 1); },
+        value: savedMinutes === null ? undefined : String(savedMinutes),
+        onSave: (value) => {
+          const parsed = value === undefined ? null : Number(value);
+          preferences.setTurnDurationMinutes(parsed !== null && Number.isInteger(parsed) ? parsed : null);
+          setReadRevision((n) => n + 1);
+          return Promise.resolve();
+        },
+      }}
+      authenticationRecovery={null}
+      providers={joined}
+      loadError={loadError !== null ? readErrorText(loadError, 'Planners are unavailable.')
+        : missing === undefined ? null : `Planner capabilities are unavailable for ${missing.provider}.`}
+      onRetryLoad={() => { void availability.refetch(); void providers.refetch(); }}
+      onRecheck={() => { recheck.recheck(); void providers.refetch(); }}
+      rechecking={recheck.rechecking}
+      recheckError={recheck.error}
+    />
+  );
 }
 
 /** App owns managed query lifetime/recovery; the feature consumes required server facts.

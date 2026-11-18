@@ -83,6 +83,13 @@ export function createUiPreferences(storage?: UiPreferenceStorage) {
     setAreaTrackPinned(areaId: string, trackId: string, pinned: boolean): void {
       if (database !== null) write(`browser:area-pin:${database}:${areaId}:${trackId}`, pinned, true);
     },
+    terminalWorkbench(trackId: string, terminalId: string): boolean | null {
+      const value = read(`browser:terminal-workbench:${database ?? ''}:${trackId}:${terminalId}`);
+      return typeof value === 'boolean' ? value : null;
+    },
+    setTerminalWorkbench(trackId: string, terminalId: string, visible: boolean): void {
+      write(`browser:terminal-workbench:${database ?? ''}:${trackId}:${terminalId}`, visible, true);
+    },
     setRecoveryScope(scope: string): void {
       if (recoveryScope === scope) return;
       recoveryScope = scope; browserNamespace = browserNamespaceOf(scope); memory.clear(); notify();
@@ -140,6 +147,18 @@ export function createUiPreferences(storage?: UiPreferenceStorage) {
       return typeof value === 'string' ? value : null;
     },
     setPreviewViewport: (trackId: string, key: string, value: string) => write(`preview-viewport:${trackId}:${key}`, value, false),
+    turnDurationMinutes(): number | null {
+      const stored = read('browser:perga-turn-duration');
+      const value = typeof stored === 'string' ? Number(stored) : 0;
+      return Number.isInteger(value) && value >= 1 && value <= 240 ? value : null;
+    },
+    setTurnDurationMinutes: (minutes: number | null) =>
+      write('browser:perga-turn-duration', minutes === null ? null : String(minutes), true),
+    readReceiptsJson(): string | null {
+      const stored = read('browser:perga-read-receipts');
+      return typeof stored === 'string' ? stored : null;
+    },
+    setReadReceiptsJson: (json: string | null) => write('browser:perga-read-receipts', json, false),
   });
 }
 

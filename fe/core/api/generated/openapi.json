@@ -14427,7 +14427,23 @@
               }
             }
           }
-        }
+        },
+        "parameters": [
+          {
+            "name": "scope",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "refresh",
+            "in": "query",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ]
       }
     },
     "/api/v1/templates": {
@@ -14470,7 +14486,13 @@
           {
             "name": "Idempotency-Key",
             "in": "header",
-            "schema": { "type": "string", "minLength": 1, "maxLength": 256 }
+            "description": "Returns the same Area on retry, including after Host restart.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            }
           }
         ],
         "responses": {
@@ -14482,6 +14504,15 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "Invalid idempotency key."
+          },
+          "409": {
+            "description": "The key was already used with different request data."
+          },
+          "410": {
+            "description": "The Area originally created with this key was deleted."
           }
         }
       }
@@ -14552,7 +14583,13 @@
           {
             "name": "Idempotency-Key",
             "in": "header",
-            "schema": { "type": "string", "minLength": 1, "maxLength": 256 }
+            "description": "Returns the same Track on retry, including after Host restart.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            }
           }
         ],
         "responses": {
@@ -14564,6 +14601,15 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "Invalid idempotency key."
+          },
+          "409": {
+            "description": "The key was already used with different request data."
+          },
+          "410": {
+            "description": "The Track originally created with this key was deleted."
           }
         }
       }
@@ -14823,16 +14869,6 @@
           }
         },
         "responses": {
-          "201": {
-            "description": "Session created",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SessionCreationReceipt"
-                }
-              }
-            }
-          },
           "200": {
             "description": "Original session and first input",
             "content": {
@@ -14843,14 +14879,24 @@
               }
             }
           },
+          "201": {
+            "description": "Session created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionCreationReceipt"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing or invalid request key or body"
+          },
           "409": {
             "description": "Conflicting request key"
           },
           "410": {
             "description": "Created session was deleted"
-          },
-          "400": {
-            "description": "Missing or invalid request key or body"
           }
         }
       }
@@ -15287,6 +15333,225 @@
         "responses": {
           "204": {
             "description": "Deleted"
+          }
+        }
+      }
+    },
+    "/api/v1/fs/listdir": {
+      "get": {
+        "parameters": [
+          {
+            "name": "path",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostDirListDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/overlays": {
+      "get": {
+        "parameters": [
+          {
+            "name": "entity_kind",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OverlaysListDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tracks/{trackId}/files/raw": {
+      "parameters": [
+        {
+          "name": "trackId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "parameters": [
+          {
+            "name": "path",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Raw workspace file stream",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tracks/{trackId}/tasks/{taskKey}/cancel": {
+      "parameters": [
+        {
+          "name": "trackId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "taskKey",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tracks/{trackId}/tasks/{taskKey}/accept": {
+      "parameters": [
+        {
+          "name": "trackId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "taskKey",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tracks/{trackId}/tasks/{taskKey}/reject": {
+      "parameters": [
+        {
+          "name": "trackId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "taskKey",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionId}": {
+      "parameters": [
+        {
+          "name": "sessionId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "patch": {
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdatePergaSessionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentSessionDto"
+                }
+              }
+            }
           }
         }
       }
@@ -24318,6 +24583,21 @@
             "items": {
               "$ref": "#/components/schemas/AreaDto"
             }
+          },
+          "databaseId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "dbInstanceId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "authRequired": {
+            "type": "boolean"
           }
         }
       },
@@ -24839,6 +25119,9 @@
                 "type": "null"
               }
             ]
+          },
+          "hasMoreBefore": {
+            "type": "boolean"
           }
         }
       },
@@ -25039,6 +25322,9 @@
             "items": {
               "type": "object"
             }
+          },
+          "isBinary": {
+            "type": "boolean"
           }
         }
       },
@@ -25060,6 +25346,175 @@
             "type": "array",
             "items": {
               "type": "string"
+            }
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/VcsDiffFileDto"
+            }
+          }
+        }
+      },
+      "UpdatePergaSessionRequest": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "provider": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "clearModel": {
+            "type": "boolean"
+          },
+          "archived": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          }
+        }
+      },
+      "HostDirEntryDto": {
+        "type": "object",
+        "required": [
+          "name",
+          "isDir",
+          "isSymlink"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "isDir": {
+            "type": "boolean"
+          },
+          "isSymlink": {
+            "type": "boolean"
+          }
+        }
+      },
+      "HostDirListDto": {
+        "type": "object",
+        "required": [
+          "path",
+          "entries"
+        ],
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "parent": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "entries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/HostDirEntryDto"
+            }
+          }
+        }
+      },
+      "VcsDiffFileDto": {
+        "type": "object",
+        "required": [
+          "path",
+          "status"
+        ],
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "modified",
+              "added",
+              "deleted",
+              "untracked"
+            ]
+          },
+          "patch": {
+            "type": "string"
+          },
+          "headText": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "workingText": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "isBinary": {
+            "type": "boolean"
+          }
+        }
+      },
+      "TrackOverlayItemDto": {
+        "type": "object",
+        "required": [
+          "trackId",
+          "areaId",
+          "isWorking",
+          "openAskCount",
+          "hasFailedTask",
+          "unreadMailCount",
+          "updatedAtMs"
+        ],
+        "properties": {
+          "trackId": {
+            "type": "string"
+          },
+          "areaId": {
+            "type": "string"
+          },
+          "isWorking": {
+            "type": "boolean"
+          },
+          "openAskCount": {
+            "type": "integer"
+          },
+          "hasFailedTask": {
+            "type": "boolean"
+          },
+          "unreadMailCount": {
+            "type": "integer"
+          },
+          "updatedAtMs": {
+            "type": "integer"
+          }
+        }
+      },
+      "OverlaysListDto": {
+        "type": "object",
+        "required": [
+          "tracks"
+        ],
+        "properties": {
+          "tracks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TrackOverlayItemDto"
             }
           }
         }

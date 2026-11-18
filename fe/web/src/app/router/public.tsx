@@ -1,4 +1,5 @@
 import { ShareScopeProvider, useShareScope } from '../shell/public.tsx';
+import { terminalPresentation } from '../../../../core/domain/terminal-presentation.ts';
 import type { ShareScope } from '../../../../core/api/generated/wire.ts';
 import { TrackShareLinks } from '../providers/share-management.tsx';
 import { useShareManagement } from '../shell/public.tsx';
@@ -51,7 +52,7 @@ import {
   type AttachmentStore, usePlannerAttachments,
 } from '../../features/planner/attachments.tsx';
 import {
-  trackOverlayPayload, toTrack, trackActivityFrom, trackDisplayTitle,
+   plannerProviderOf, trackOverlayPayload, toTrack, trackActivityFrom, trackDisplayTitle,
   type Track, type TrackActivity, type TrackDetailWire,
   retryTrackWorkspaceOperation,
 } from '../../../../core/domain/track.ts';
@@ -61,7 +62,7 @@ import type {
   BoardHostItem, CardAddMenuEntry, CardHost, CardRegistry,
 } from '../../systems/cards/public.js';
 import {
-  cardAddMenuEntries, isAssistantHarnessPayload, isPlannerHarnessPayload, plannerCardIn, partitionTrackCards,
+  cardAddMenuEntries, createCardHost, isAssistantHarnessPayload, isPlannerHarnessPayload, plannerCardIn, partitionTrackCards,
 } from '../../systems/cards/public.js';
 import { mintIdempotencyKey, useKeyedIntent, type KeyedRequest } from '../providers/idempotency-key.ts';
 import footerStyles from './composer-footer.module.css';
@@ -109,7 +110,7 @@ import {
   type TranscriptEntry,
 } from '../../../../core/domain/conversation.ts';
 import { Dialog } from '../../ui/dialog/public.tsx';
-import { createDirectoryLister, createTrackWorkspaceFilesPort } from '../providers/directory.ts';
+import { createDirectoryLister, createTrackCardFilesPort, createTrackWorkspaceFilesPort } from '../providers/directory.ts';
 import { useMentionSearch } from '../providers/mentions.ts';
 import { DELETE_CARD_COPY } from '../../ui/confirm-dialog/copy.ts';
 import { OperationFeedback, DeleteConfirmDialog, useDeleteConfirm, useOperationFeedback } from '../../ui/operation-feedback/public.tsx';
@@ -125,13 +126,14 @@ import {
 } from '../providers/queries.ts';
 import { NewTrackRoute } from './new-track-route.tsx';
 import { DailyTodayRoute, type DailyCenterPresentation } from './daily-planner.tsx';
+import { PergaOverviewRoute } from './perga-overview.tsx';
 import { ConversationComposer, ConversationDock } from './conversation-composer.tsx';
 import mobileChatStyles from './mobile-chat.module.css';
 import { ConversationSurface, type EmbeddedConversationPresentation } from './mobile-conversation-surface.tsx';
 import { trackConversationRows } from '../conversations/planner-row.ts';
 import { NewTrackDraftProvider } from './new-track-drafts.tsx';
 import { RecipesRoute } from './recipes-route.tsx';
-import { createUiPreferences, UiPreferencesProvider, type UiPreferences } from '../providers/ui-preferences.tsx';
+import { createUiPreferences, UiPreferencesProvider, useUiPreferences, type UiPreferences } from '../providers/ui-preferences.tsx';
 import { ReadReceiptsProvider, useReadReceipt, useReadReceipts } from '../providers/read-receipts.tsx';
 import { TrackSelector } from '../shell/track-selector.tsx';
 import { AppShell, MobileConversationProvider, useMobileConversationOwner, useConversationDrawerResize, useOpenMobileSection, useMobileHeaderActionsHost, useMobileHeaderTitleHost } from '../shell/public.tsx';
@@ -165,6 +167,10 @@ type ConversationPanelSource = ConversationCreationSource & Readonly<{
     /** The Track this draft belongs to. */
     scopeId: string;
     rows: readonly Conversation[];
+    /** Default provider to seed new subagent drafts on this Track. */
+    defaultProvider?: AgentProvider;
+    /** Whether this surface runs against Perga v1 endpoints. */
+    pergaMode?: boolean;
     /** The kernel's per-card verdicts for the track these rows are on; required, because a caller that passes no overlay has a list on which nothing can ever be working. */
     cards: Readonly<Record<string, CardActivity>>;
     /** The Track these rows may be sent to. */
@@ -194,6 +200,7 @@ export type AppRouterDeps = Readonly<{
   unauthorized: UnauthorizedChannel;
   client: QueryClient;
   onSignOut: () => void;
+  pergaMode?: boolean;
   cards: CardRuntime;
   prepareReport: ReportPreparationPort;
   recentFiles?: RecentFileHistory;
@@ -204,12 +211,12 @@ export type AppRouterDeps = Readonly<{
 function renderNothing(): null { return null; }
 
 export function createRouteTree(deps: AppRouterDeps): AnyRoute {
-  const { transport, unauthorized, client, onSignOut, cards, prepareReport } = deps;
+  const { transport, unauthorized, client, onSignOut, pergaMode = false, cards, prepareReport } = deps;
   const recentFiles = deps.recentFiles ?? createRecentFileHistory();
   const preferences = deps.uiPreferences ?? createUiPreferences();
   const rootRoute = createRootRouteWithContext<DraftBackContext>()({ component: () => (
-    <ShareScopeProvider value={deps.shareScope == null || deps.shareLinkId === undefined ? null : { scope: deps.shareScope, shareLinkId: deps.shareLinkId }}><UiPreferencesProvider preferences={preferences}><ReadReceiptsProvider transport={transport} unauthorized={unauthorized}>
-      <TrackViewProvider><DraftBackLifecycle><MobileConversationProvider><ShellRoute submittedStorage={deps.submittedStorage} shareScope={deps.shareScope ?? null} transport={transport} unauthorized={unauthorized} onSignOut={onSignOut} /></MobileConversationProvider></DraftBackLifecycle></TrackViewProvider>
+    <ShareScopeProvider value={deps.shareScope == null || deps.shareLinkId === undefined ? null : { scope: deps.shareScope, shareLinkId: deps.shareLinkId }}><UiPreferencesProvider preferences={preferences}><ReadReceiptsProvider transport={transport} unauthorized={unauthorized} localOnly={pergaMode}>
+      <TrackViewProvider><DraftBackLifecycle><MobileConversationProvider><ShellRoute submittedStorage={deps.submittedStorage} shareScope={deps.shareScope ?? null} transport={transport} unauthorized={unauthorized} onSignOut={onSignOut} pergaMode={pergaMode} /></MobileConversationProvider></DraftBackLifecycle></TrackViewProvider>
     </ReadReceiptsProvider></UiPreferencesProvider></ShareScopeProvider>
   ) });
 
@@ -228,20 +235,23 @@ export function createRouteTree(deps: AppRouterDeps): AnyRoute {
     component: function DailyRoute() {
       const day = new URLSearchParams(useLocation({ select: (location) => location.searchStr })).get('day') ?? undefined;
       const go = useGo();
+      if (pergaMode) {
+        return <PergaOverviewRoute transport={transport} unauthorized={unauthorized} />;
+      }
       return <DailyTodayRoute transport={transport} unauthorized={unauthorized} selectedDate={day}
         onOpenTrack={(trackId) => go({ name: 'track', trackId })}
         renderTrack={(detail, evidence, panelContent, intro, supervisor, center) => <TrackRouteBody center={center} reportHeader={supervisor} reportEmpty={<TodayReportEmpty />} mobileReportIntro={intro} panelContent={panelContent} reportEvidence={evidence} key={detail.track.id} prepareReport={prepareReport} transport={transport} unauthorized={unauthorized}
           track={toTrack(detail.track, trackActivityFrom(detail.track.id, detail.overlays))}
           canReopenTrack={detail.can_reopen} canCloseTrack={detail.can_close}
           adminGrantedAt={detail.track.admin_granted_at} canAdminTrack={detail.can_admin}
-          cards={detail.cards} overlays={detail.overlays} cardRuntime={cards} recentFiles={recentFiles} />} />;
+          cards={detail.cards} overlays={detail.overlays} cardRuntime={cards} recentFiles={recentFiles} pergaMode={pergaMode} />} />;
     },
   });
 
   const newTrackRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: '/area/$areaId/new',
-    component: () => <NewTrackRoute transport={transport} unauthorized={unauthorized} />,
+    component: () => <NewTrackRoute transport={transport} unauthorized={unauthorized} pergaMode={pergaMode} />,
   });
 
   const trackRoute = createRoute({
@@ -254,6 +264,7 @@ export function createRouteTree(deps: AppRouterDeps): AnyRoute {
       unauthorized={unauthorized}
       cardRuntime={cards}
       recentFiles={recentFiles}
+      pergaMode={pergaMode}
     />,
   });
 
@@ -329,16 +340,24 @@ export function createAppRouter(deps: AppRouterDeps) {
   return router;
 }
 
-function ShellRoute({ transport, unauthorized, onSignOut, shareScope, submittedStorage }: { submittedStorage?: () => Storage; shareScope: ShareScope | null; transport: ApiTransportPort; unauthorized: UnauthorizedChannel; onSignOut: () => void }) {
+function ShellRoute({ transport, unauthorized, onSignOut, shareScope, submittedStorage, pergaMode = false }: { submittedStorage?: () => Storage; pergaMode?: boolean; shareScope: ShareScope | null; transport: ApiTransportPort; unauthorized: UnauthorizedChannel; onSignOut: () => void }) {
   const go = useGo();
+  const versionQuery = useQuery({
+    queryKey: ['server-version'],
+    queryFn: () => runOperation(transport, serverVersionOperation(), unauthorized),
+    enabled: pergaMode,
+    retry: false,
+  });
+  const singleOwner = pergaMode && versionQuery.data?.authRequired !== true;
   return (
     <ConversationProvider><NewTrackDraftProvider submittedStorage={submittedStorage}>
       <AppShell shareScope={shareScope}
         transport={transport}
         unauthorized={unauthorized}
         onOpenSettings={() => go({ name: 'settings' })}
-        onOpenPlugins={() => go({ name: 'settings-plugins' })}
-        onSignOut={onSignOut}
+        onOpenPlugins={pergaMode ? undefined : () => go({ name: 'settings-plugins' })}
+        onSignOut={singleOwner ? undefined : onSignOut}
+        pergaMode={pergaMode}
       />
     </NewTrackDraftProvider></ConversationProvider>
   );
@@ -503,7 +522,7 @@ function useConversationPane(
   /* `@` and the Planner's questions only in the Planner's own row; the track the drawer is on ranks its blocks first. */
   const plannerRow = source.planner !== null && openRowId === source.planner.cardId ? source.planner : null;
   const mentionTrigger = useMentionTrigger(useMentionSearch(transport, unauthorized,
-    plannerRow === null ? null : plannerRow.areaId, source.scopeId));
+    plannerRow === null ? null : plannerRow.areaId, source.scopeId, undefined, source.pergaMode ?? false));
   /* The open conversation's own composer: words and images live in the registry per conversation,
        so closing keeps them and switching shows the other conversation's own. */
   const composerId = scope?.cardId ?? null;
@@ -615,6 +634,7 @@ function useConversationPane(
   const { start, startWithMessage, withDraft, sendDraft, retryDraft, sendAsNewConversation, closeDrawer } = createConversationDraftActions({
     registry, draft, creating, source, sourceScopeId, transport, supportsDraftModel,
     sessionInputReceipts: draftCapabilities.data?.sessionInputReceipts === true,
+    defaultProvider: source.defaultProvider,
     supportsInitialInput: !draftCapabilities.isError && draftCapabilities.data?.conversationInitialInput === true,
     managedProviders: managed.answers,
     recheckManagedProviders: managed.recheck,
@@ -1064,12 +1084,13 @@ function useConversationPane(
   };
 }
 
-function TrackRoute({ transport, unauthorized, cardRuntime, recentFiles, prepareReport }: {
+function TrackRoute({ transport, unauthorized, cardRuntime, recentFiles, prepareReport, pergaMode = false }: {
   prepareReport: ReportPreparationPort;
   transport: ApiTransportPort;
   unauthorized: UnauthorizedChannel;
   cardRuntime: CardRuntime;
   recentFiles: RecentFileHistory;
+  pergaMode?: boolean;
 }) {
   const trackId = useRouteParam('/track/');
   const registry = useConversationCommands();
@@ -1139,6 +1160,7 @@ function TrackRoute({ transport, unauthorized, cardRuntime, recentFiles, prepare
       overlays={detail.data.overlays}
       cardRuntime={cardRuntime}
       recentFiles={recentFiles}
+      pergaMode={pergaMode}
     />
   );
 }
@@ -1163,7 +1185,7 @@ function trackNotifications(items: TrackActivity['attentionItems']): readonly Tr
 }
 
 function TrackRouteBody({
-  transport, unauthorized, track, canReopenTrack, canCloseTrack, adminGrantedAt, canAdminTrack, cards, overlays, cardRuntime, recentFiles, reportEvidence, reportHeader, reportEmpty, panelContent, mobileReportIntro, prepareReport, center, workspaceWaiting = false, workspaceNotice,
+  transport, unauthorized, track, canReopenTrack, canCloseTrack, adminGrantedAt, canAdminTrack, cards: sourceCards, overlays, cardRuntime, recentFiles, reportEvidence, reportHeader, reportEmpty, panelContent, mobileReportIntro, prepareReport, center, pergaMode = false, workspaceWaiting = false, workspaceNotice,
 }: {
   transport: ApiTransportPort;
   unauthorized: UnauthorizedChannel;
@@ -1185,12 +1207,29 @@ function TrackRouteBody({
   mobileReportIntro?: ReactNode;
   prepareReport: ReportPreparationPort;
   reportEmpty?: ReactNode;
+  pergaMode?: boolean;
 }) {
   const [centerHost, setCenterHost] = useState<HTMLDivElement | null>(null);
+  const isPergaTrack = pergaMode
+    || (sourceCards[0]?.kind === 'track-report' && (sourceCards[0].payload as { pergaSnapshot?: unknown } | null)?.pergaSnapshot === true);
+  const preferences = useUiPreferences();
+  let cards = sourceCards;
+  if (isPergaTrack) {
+    const withPlacement = sourceCards.map((card) => {
+      if (card.kind !== 'terminal') return card;
+      const visible = preferences.terminalWorkbench(track.id, card.id);
+      if (visible === null || visible === terminalPresentation(card).in_workbench) return card;
+      return { ...card, payload: {
+        ...(card.payload as object),
+        terminal_presentation: { ...terminalPresentation(card), in_workbench: visible },
+      } };
+    });
+    if (withPlacement.some((card, index) => card !== sourceCards[index])) cards = withPlacement;
+  }
   const shareAccess = useShareScope();
   const openShare = useShareManagement();
   const areasForShare = useQuery(areaListQueryOptions(transport, unauthorized));
-  const shareable = shareAccess === null && areasForShare.data?.some(area => area.id === track.areaId && area.kind === 'user') === true;
+  const shareable = !isPergaTrack && shareAccess === null && areasForShare.data?.some(area => area.id === track.areaId && area.kind === 'user') === true;
   const reportPresentation = useTrackReportPresentation(track.id, cards, prepareReport);
   const progressDisclosure = useTrackViewState(track.id, reportPresentation.presentable);
   // The same key and comparison point the rail uses: the overlay's completion
@@ -1244,6 +1283,14 @@ function TrackRouteBody({
    * explicitly (`go` clears what it is not given); crossing tracks drops it. */
   const routeFrom = useRouteFrom() ?? undefined;
   const cardRegistry = cardRuntime.registry;
+  const trackCardHost = useMemo(
+    () => isPergaTrack
+      ? createCardHost(cardRegistry, {
+          files: createTrackCardFilesPort(transport, unauthorized, track.id, track.agentCwd, shareAccess?.shareLinkId),
+        })
+      : cardRuntime.host,
+    [isPergaTrack, cardRegistry, transport, unauthorized, track.id, track.agentCwd, shareAccess?.shareLinkId, cardRuntime.host],
+  );
   // The same predicate the planner entry resolves by, imported rather than copied.
   const plannerCard = plannerCardIn(cards);
   const registry = useConversationCommands();
@@ -1333,6 +1380,8 @@ function TrackRouteBody({
     {
       scopeId: track.id,
       rows,
+      defaultProvider: plannerCard === undefined ? undefined : plannerProviderOf(plannerCard.payload),
+      pergaMode: isPergaTrack,
       /* The track's own overlay-derived verdicts (`toTrack(detail, detailActivity)`). */
       cards: track.cards,
       /* These rows are on a track the reader can be sent to, so Today may hold and
@@ -1366,7 +1415,7 @@ function TrackRouteBody({
         commands: plannerCommands,
       },
     },
-    { workspace: { waiting: workspaceWaiting, notice: workspaceNotice }, defaultRowId: center !== undefined && plannerCard !== undefined ? plannerCard.id : null, onPresent: center?.onOpenAssistant, presented: centerActive ? center?.presented : undefined, embedded: center === undefined ? undefined : { active: centerActive, host: centerHost, footerPrefix: center.footerPrefix, label: center.title }, onArchive: conversationMutations.archive, terminal: { workbench, render: () => <TerminalWorkbenchView workbench={workbench} host={cardRuntime.host}
+    { workspace: { waiting: workspaceWaiting, notice: workspaceNotice }, defaultRowId: center !== undefined && plannerCard !== undefined ? plannerCard.id : null, onPresent: center?.onOpenAssistant, presented: centerActive ? center?.presented : undefined, embedded: center === undefined ? undefined : { active: centerActive, host: centerHost, footerPrefix: center.footerPrefix, label: center.title }, onArchive: conversationMutations.archive, terminal: { workbench, render: () => <TerminalWorkbenchView workbench={workbench} host={trackCardHost}
       items={workbench.ordinaryHost ? [] : gridItems.filter(item => workbench.cardIds.has(item.card.id))} visible={!compactViewport && workbench.open}
       onRemove={(id) => cardDeletion.request(id, { kind: 'surface-center' })} /> }, showTrack: false, reportComposer: { ready: plannerCard !== undefined || conversationsQuery.isSuccess, returnLabel: routePanel === 'conversations' ? 'Conversations' : 'Report' } },
   );
@@ -1395,7 +1444,7 @@ function TrackRouteBody({
        report is what makes the kernel fetch the data. */
   const resolveSeries = useReportSeriesResolver(transport, track.id, reportBlocks, unauthorized);
   /* One polled read of the track's previews, only while the report has a `preview` block. */
-  const resolvePreview = useReportPreviewResolver(transport, track.id, reportBlocks, unauthorized);
+  const resolvePreview = useReportPreviewResolver(transport, track.id, reportBlocks, unauthorized, isPergaTrack);
   const previewViewports = useReportPreviewViewports(track.id);
   /* The cards this route can open, asked of the registry through the list the board
    * draws. A worker card whose kind no entry claims is `unknown` and its `?card=`
@@ -1437,10 +1486,15 @@ function TrackRouteBody({
    * which endpoint a kind takes — `atomic` kinds have an endpoint named after the
    * kind, `generic` ones go through `POST /api/tracks/:id/cards` with the entry's
    * `claim` kind. An unhandled strategy throws rather than creating nothing. */
-  const addMenuEntries = useMemo(() => cardAddMenuEntries(cardRegistry), [cardRegistry]);
+  const addMenuEntries = useMemo(() => {
+    const entries = cardAddMenuEntries(cardRegistry);
+    return isPergaTrack
+      ? entries.filter((entry) => entry.type === 'terminal' || entry.type === 'file-viewer')
+      : entries;
+  }, [cardRegistry, isPergaTrack]);
   const listDirectory = useMemo(
-    () => createDirectoryLister(transport, unauthorized),
-    [transport, unauthorized],
+    () => createDirectoryLister(transport, unauthorized, isPergaTrack),
+    [transport, unauthorized, isPergaTrack],
   );
   const reportFiles = useMemo(
     () => createTrackWorkspaceFilesPort(transport, unauthorized, track.id, shareAccess?.shareLinkId),
@@ -1521,8 +1575,14 @@ function TrackRouteBody({
     if (entry.fields.length === 0) submitNewCard(entry, {});
     else setCardDraft({ ...entry, origin });
   };
-  const backlinksQuery = useQuery(trackBacklinksQueryOptions(transport, track.id, unauthorized));
+  const backlinksQuery = useQuery(trackBacklinksQueryOptions(transport, track.id, unauthorized, { enabled: !isPergaTrack }));
   const backlinks = backlinksQuery.data;
+  const openableWorkerIds = useMemo(() => {
+    if (!isPergaTrack) return openableCards;
+    const next = new Set(openableCards);
+    for (const row of rows) next.add(row.id);
+    return next;
+  }, [isPergaTrack, openableCards, rows]);
 
   /* Every report arrival follows the current committed content boundary. */
   const arrivalAnchorId = useRouteHash();
@@ -1591,7 +1651,7 @@ function TrackRouteBody({
     <TrackStage>
     <TrackPage
       fillReading={centerActive}
-      shareLinks={shareAccess === null ? <TrackShareLinks trackId={track.id} areaId={track.areaId} shareable={shareable} transport={transport} unauthorized={unauthorized} /> : undefined}
+      shareLinks={!isPergaTrack && shareAccess === null ? <TrackShareLinks trackId={track.id} areaId={track.areaId} shareable={shareable} transport={transport} unauthorized={unauthorized} /> : undefined}
       onShareTrack={shareable && openShare !== null ? origin => openShare({ scope: { kind: 'track', id: track.id }, title: track.title, origin }) : undefined}
       progressDisclosure={progressDisclosure}
       panelContent={panelContent}
@@ -1624,6 +1684,10 @@ function TrackRouteBody({
       onOpenCard={(cardId) => { if (!compactViewport && workbench.cardIds.has(cardId)) { workbench.reveal(cardId); return; } go({ name: 'track', trackId: track.id, cardId, from: routeFrom }); }}
       onDeleteCard={cardDeletion.request}
       onSetWorkbench={(cardId, inWorkbench) => {
+        if (isPergaTrack) {
+          preferences.setTerminalWorkbench(track.id, cardId, inWorkbench);
+          return;
+        }
         void terminalPlacementFeedback.run(trackMutations.setTerminalWorkbench(track.id, cardId, inWorkbench),
           () => 'Could not move this terminal. Try again.');
       }}
@@ -1631,7 +1695,7 @@ function TrackRouteBody({
         <CardGridOverlay
           open={knownCard && (compactViewport || !workbench.cardIds.has(requestedCardId))}
           items={workbench.ordinaryHost ? gridItems : gridItems.filter(item => !workbench.cardIds.has(item.card.id))}
-          host={cardRuntime.host}
+          host={trackCardHost}
           activeCardId={requestedCardId}
           onRemoveCard={(id) => cardDeletion.request(id, { kind: 'surface-center' })}
           onClose={knownCard ? closeBoard : undefined}
@@ -1686,8 +1750,15 @@ function TrackRouteBody({
         renderTaskExecution={(task, expanded) => <TaskRecovery
           key={`${track.id}:${task.key}`} trackId={track.id} taskKey={task.key} expanded={expanded}
           transport={transport} unauthorized={unauthorized}
-          openableWorkerIds={openableCards}
-          openWorker={(cardId) => { go({ name: 'track', trackId: track.id, cardId, from: routeFrom }); }}
+          enableTaskActions={isPergaTrack}
+          openableWorkerIds={openableWorkerIds}
+          openWorker={(cardId) => {
+            if (isPergaTrack && rows.some((row) => row.id === cardId)) {
+              registry.requestOpen(cardId, { focusComposer: false });
+              return;
+            }
+            go({ name: 'track', trackId: track.id, cardId, from: routeFrom });
+          }}
         />}
         rail={<ReportOutline items={outline} />}
         backlinkCounts={backlinks === undefined ? undefined : backlinkCountsByBlock(backlinks.backlinks)}

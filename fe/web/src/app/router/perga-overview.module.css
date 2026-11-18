@@ -1,0 +1,142 @@
+@layer features {
+  .page {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-block-size: 0;
+    overflow: auto;
+    padding: var(--space-6) var(--space-5);
+    font-family: var(--font-sans);
+    color: var(--text);
+  }
+
+  .container {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-5);
+    inline-size: min(var(--measure-page), 100%);
+    margin-inline: auto;
+  }
+
+  .header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    padding-block-end: var(--space-4);
+    border-block-end: var(--space-px) solid var(--hairline);
+  }
+
+  .titleGroup {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+  }
+
+  .heading {
+    margin: 0;
+    font: var(--type-heading);
+    letter-spacing: var(--type-heading-tracking);
+    color: var(--text);
+  }
+
+  .subheading {
+    margin: 0;
+    font: var(--type-ui);
+    color: var(--text-2);
+  }
+
+  .headerActions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .section {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+
+  .sectionTitle {
+    margin: 0;
+    font: var(--type-label);
+    letter-spacing: var(--type-label-tracking);
+    text-transform: uppercase;
+    color: var(--text-2);
+  }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(var(--menu-w-min), 1fr));
+    gap: var(--space-3);
+  }
+
+  .card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    padding: var(--space-4);
+    border: var(--space-px) solid var(--hairline);
+    border-radius: var(--radius-md);
+    background: var(--surface-card);
+    color: var(--text);
+    text-align: start;
+  }
+
+  .trackButton {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-1);
+    padding: var(--space-3) var(--space-4);
+    border: var(--space-px) solid var(--hairline);
+    border-radius: var(--radius-md);
+    background: var(--surface-card);
+    color: var(--text);
+    text-align: start;
+    cursor: pointer;
+  }
+
+  .trackButton:hover {
+    border-color: var(--hairline-strong);
+    background: var(--paper);
+  }
+
+  .trackTitle {
+    font: var(--type-page-title);
+    color: var(--text);
+  }
+
+  .trackMeta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    font: var(--type-metadata);
+    color: var(--text-2);
+  }
+
+  .areaFooter {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+    margin-block-start: auto;
+    padding-block-start: var(--space-2);
+  }
+
+  .emptyCard {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-3);
+    padding: var(--space-5);
+    border: var(--space-px) solid var(--hairline);
+    border-radius: var(--radius-md);
+    background: var(--surface-card);
+    color: var(--text);
+  }
+}

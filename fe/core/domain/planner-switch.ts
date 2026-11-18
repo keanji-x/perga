@@ -23,7 +23,7 @@ export function plannerSwitchOperation(trackId: string, body: PlannerSwitchReque
         track_id: dto.id,
         planner_card_id: dto.leadSessionId ?? body.target_assistant_card_id,
         demoted_card_id: body.expected_planner_card_id,
-        planner_revision: body.expected_revision + 1,
+        planner_revision: Math.max(body.expected_revision, Math.floor(dto.updatedAtMs)),
       })),
       plannerSwitchResponseSchema,
     ]),

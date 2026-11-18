@@ -109,6 +109,9 @@ public sealed partial class TrackActor
             }
 
             mounted = await driver.EnsureMountedAsync(preparation.Spec!, ct).ConfigureAwait(false);
+            var canonicalCwd = WorkspaceFileReader.ResolveCanonicalPath(mounted.MergedCwd);
+            mounted = mounted with { MergedCwd = canonicalCwd };
+            preparation = preparation with { Spec = preparation.Spec! with { MergedCwd = canonicalCwd } };
             if (!string.IsNullOrWhiteSpace(preparation.Command))
             {
                 preparation = preparation with { Phase = WorkspacePreparationPhase.Initializing };

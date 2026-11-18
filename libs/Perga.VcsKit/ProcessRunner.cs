@@ -82,7 +82,7 @@ public sealed class ProcessRunner : IProcessRunner
             RedirectStandardInput = true,
             StandardOutputEncoding = System.Text.Encoding.UTF8,
             StandardErrorEncoding = System.Text.Encoding.UTF8,
-            StandardInputEncoding = System.Text.Encoding.UTF8,
+            StandardInputEncoding = new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
         };
 
         foreach (var arg in request.Arguments)

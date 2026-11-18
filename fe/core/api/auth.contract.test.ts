@@ -42,9 +42,9 @@ describe('core/api auth contract', () => {
 
   it.each([
     ['method', 'GET'],
-    ['path', '/api/v1/bootstrap?scope=login'],
-    ['body', { username: 'u', password: 'p' }],
-  ] as const)('freezes the login probe operation: %s', (field, expected) => {
+    ['path', '/api/v1/bootstrap?scope=whoami'],
+    ['body', undefined],
+  ] as const)('freezes the login probe operation without sending a GET body: %s', (field, expected) => {
     expect(loginOperation({ username: 'u', password: 'p' })[field]).toEqual(expected);
   });
 });

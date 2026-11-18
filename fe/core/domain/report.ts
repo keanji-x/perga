@@ -15,6 +15,7 @@ export { isCalendarDate } from './report-date.js';
 import type { CurrentTaskExecution } from './task-execution.js';
 import type { ApiFailure, ApiOperation } from '../api/types.js';
 import {
+  normalizeWireAgentProvider,
   reportReadResultDtoSchema,
   taskDtoSchema,
   type ReportBlockKind,
@@ -118,14 +119,25 @@ export const previewBlockPayloadSchema = z.strictObject({
 
 const taskGateStepSchema = z.strictObject({ name: z.string(), cmd: z.string() });
 
+const taskGateSchema = z.preprocess(
+  (raw) => {
+    if (typeof raw === 'object' && raw !== null && !Array.isArray(raw) && 'timeoutSecs' in raw && !('timeout_secs' in raw)) {
+      const { timeoutSecs, ...rest } = raw as Record<string, unknown>;
+      return { ...rest, timeout_secs: timeoutSecs };
+    }
+    return raw;
+  },
+  z.strictObject({
+    cwd: z.string().nullish(),
+    timeout_secs: z.number().int().nullish(),
+    steps: z.array(taskGateStepSchema),
+  }),
+);
+
 function liveTaskSharedShape() {
   return {
     acceptance: z.string().nullish(),
-    gate: z.strictObject({
-      cwd: z.string().nullish(),
-      timeout_secs: z.number().int().nullish(),
-      steps: z.array(taskGateStepSchema),
-    }).nullish(),
+    gate: taskGateSchema.nullish(),
     no_gate_reason: z.string().nullish(),
     depends_on: z.array(z.string()).nullish(),
     priority: z.number().int().nullish(),
@@ -142,7 +154,7 @@ function liveTaskSharedShape() {
 
 const agentTaskBlockPayloadSchema = z.strictObject({
   key: z.string(),
-  kind: z.enum(['codex', 'claude']),
+  kind: z.enum(['codex', 'claude', 'antigravity', 'opencode']),
   goal: z.string(),
   /** The kernel owns contract registration; the reader preserves its declared name. */
   result_contract: z.string().optional(),
@@ -264,12 +276,13 @@ function normalizePergaTaskPayload(raw: Record<string, unknown>, blockId: string
       ? raw.type
       : 'agent';
   const provider = typeof raw.provider === 'string' ? raw.provider : undefined;
-  const kind = rawKind === 'terminal'
+  const normalizedProvider = normalizeWireAgentProvider(rawKind === 'agent' ? provider : (provider ?? rawKind));
+  const kind = rawKind === 'terminal' || rawKind === 'command'
     ? 'terminal'
-    : rawKind === 'claude' || (rawKind === 'agent' && provider === 'claude')
-      ? 'claude'
-      : rawKind === 'compact'
-        ? 'compact'
+    : rawKind === 'compact'
+      ? 'compact'
+      : normalizedProvider === 'claude' || normalizedProvider === 'antigravity' || normalizedProvider === 'opencode'
+        ? normalizedProvider
         : 'codex';
   const access = raw.access ?? raw.access_mode ?? raw.accessMode;
   const goalOrCmd = typeof raw.command === 'string'
@@ -278,7 +291,16 @@ function normalizePergaTaskPayload(raw: Record<string, unknown>, blockId: string
       ? raw.cmd
       : typeof raw.goal === 'string'
         ? raw.goal
-        : '';
+        : typeof raw.goalOrCmd === 'string'
+          ? raw.goalOrCmd
+          : typeof raw.goal_or_cmd === 'string'
+            ? raw.goal_or_cmd
+            : '';
+  const dependsOn = Array.isArray(raw.depends_on)
+    ? raw.depends_on
+    : Array.isArray(raw.dependsOn)
+      ? raw.dependsOn
+      : undefined;
   const ready = typeof raw.ready === 'boolean' ? raw.ready : false;
   if (kind === 'terminal') {
     return {
@@ -288,7 +310,7 @@ function normalizePergaTaskPayload(raw: Record<string, unknown>, blockId: string
       ...(access === 'read_write' ? { access: 'read_write' } : {}),
       ...(typeof raw.acceptance === 'string' ? { acceptance: raw.acceptance } : {}),
       ...(raw.gate !== undefined ? { gate: raw.gate } : {}),
-      ...(Array.isArray(raw.depends_on) ? { depends_on: raw.depends_on } : {}),
+      ...(dependsOn !== undefined ? { depends_on: dependsOn } : {}),
       ...(raw.context !== undefined ? { context: raw.context } : {}),
       ready,
       declared_by: 'spec',
@@ -301,7 +323,7 @@ function normalizePergaTaskPayload(raw: Record<string, unknown>, blockId: string
     ...(access === 'read_only' || access === 'read_write' ? { access } : {}),
     ...(typeof raw.acceptance === 'string' ? { acceptance: raw.acceptance } : {}),
     ...(raw.gate !== undefined ? { gate: raw.gate } : {}),
-    ...(Array.isArray(raw.depends_on) ? { depends_on: raw.depends_on } : {}),
+    ...(dependsOn !== undefined ? { depends_on: dependsOn } : {}),
     ...(raw.context !== undefined ? { context: raw.context } : {}),
     ready,
     declared_by: 'spec',
@@ -664,7 +686,7 @@ export function updateTrackReportBlockOperation(
 }
 
 /** The execution kinds a live task declaration can name; a verdict does not carry one. */
-export type TaskWorkerKind = 'codex' | 'claude' | 'terminal' | 'compact';
+export type TaskWorkerKind = 'codex' | 'claude' | 'antigravity' | 'opencode' | 'terminal' | 'compact';
 
 /**
  * One row of the panel's task inventory. The declaration word, status and kind travel separately

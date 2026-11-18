@@ -18,6 +18,7 @@ export type ApiRequest = Readonly<{
   headers?: Readonly<Record<string, string>>;
   body?: unknown;
   signal?: ApiAbortSignal;
+  timeoutMs?: number;
 }>;
 
 export type ApiTransportResponse = Readonly<{
@@ -88,4 +89,5 @@ export type ApiOperation<T> = Readonly<{
   /** Request headers the operation itself needs, merged over the `content-type` the client adds for a body. */
   headers?: Readonly<Record<string, string>>;
   signal?: ApiAbortSignal;
+  timeoutMs?: number;
 }>;

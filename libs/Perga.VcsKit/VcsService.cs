@@ -43,7 +43,10 @@ public sealed class VcsService : IVcsService
         }
     }
 
-    public async Task<VcsBackendKind> DetectAsync(string path, CancellationToken ct)
+    public Task<VcsBackendKind> DetectAsync(string path, CancellationToken ct) =>
+        DetectAsync(path, ct, searchAncestors: true);
+
+    private async Task<VcsBackendKind> DetectAsync(string path, CancellationToken ct, bool searchAncestors)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         ct.ThrowIfCancellationRequested();
@@ -60,7 +63,7 @@ public sealed class VcsService : IVcsService
             return VcsBackendKind.PlainDirectory;
         }
 
-        var vcsRoot = FindNearestVcsRoot(startDir);
+        var vcsRoot = FindNearestVcsRoot(startDir, searchAncestors);
         if (vcsRoot is null)
         {
             return VcsBackendKind.PlainDirectory;
@@ -381,15 +384,28 @@ public sealed class VcsService : IVcsService
         }
     }
 
-    public async Task<DiffSummary> DiffAsync(
+    private const int MaxFileContentBytes = 256 * 1024;
+    private const int BinarySniffBytes = 8 * 1024;
+
+    public Task<DiffSummary> DiffAsync(
         string workspacePath,
         string? fromRev = null,
         string? toRev = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default) =>
+        DiffDetailedAsync(workspacePath, fromRev, toRev, filterPath: null, ct);
+
+    public async Task<DiffSummary> DiffDetailedAsync(
+        string workspacePath,
+        string? fromRev = null,
+        string? toRev = null,
+        string? filterPath = null,
+        CancellationToken ct = default,
+        bool searchAncestors = true)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(workspacePath);
         var fullWorkspacePath = Path.GetFullPath(workspacePath);
-        var kind = await DetectAsync(fullWorkspacePath, ct).ConfigureAwait(false);
+        var normalizedFilter = NormalizeOptionalRelativePath(fullWorkspacePath, filterPath);
+        var kind = await DetectAsync(fullWorkspacePath, ct, searchAncestors).ConfigureAwait(false);
 
         switch (kind)
         {
@@ -402,18 +418,62 @@ public sealed class VcsService : IVcsService
                 diffArgs.AddRange(revArgs);
                 var diffRes = await RunJjCheckedAsync(jjExe, fullWorkspacePath, diffArgs, ct).ConfigureAwait(false);
 
+                var summaryArgs = new List<string> { "diff", "--summary", "--ignore-working-copy" };
+                summaryArgs.AddRange(revArgs);
+                var summaryRes = await RunJjCheckedAsync(jjExe, fullWorkspacePath, summaryArgs, ct).ConfigureAwait(false);
+
                 var nameArgs = new List<string> { "diff", "--name-only", "--ignore-working-copy" };
                 nameArgs.AddRange(revArgs);
                 var nameRes = await RunJjCheckedAsync(jjExe, fullWorkspacePath, nameArgs, ct).ConfigureAwait(false);
 
                 var changedFiles = ParseNonEmptyLines(nameRes.StandardOutput);
-                var (truncatedText, truncated) = TruncateUtf8Deterministically(diffRes.StandardOutput, _options.MaxDiffBytes);
-                return new DiffSummary(truncatedText, truncated, changedFiles);
+                var statusByPath = ParseJjSummaryStatuses(summaryRes.StandardOutput);
+                var patchesByPath = SplitUnifiedGitPatches(diffRes.StandardOutput);
+
+                if (normalizedFilter is not null)
+                {
+                    changedFiles = changedFiles.Where(f => string.Equals(f, normalizedFilter, StringComparison.Ordinal)).ToArray();
+                }
+
+                var baseRev = !string.IsNullOrWhiteSpace(fromRev)
+                    ? fromRev!
+                    : !string.IsNullOrWhiteSpace(toRev)
+                        ? $"({toRev})-"
+                        : "@-";
+
+                var fileDtos = new List<VcsDiffFileDto>(changedFiles.Count);
+                foreach (var relPath in changedFiles)
+                {
+                    patchesByPath.TryGetValue(relPath, out var rawPatch);
+                    rawPatch ??= string.Empty;
+                    var status = statusByPath.TryGetValue(relPath, out var s)
+                        ? s
+                        : InferStatusFromPatch(rawPatch);
+                    var (patchText, _) = TruncateUtf8Deterministically(rawPatch, _options.MaxDiffBytes);
+
+                    var fileDto = await BuildJjDiffFileDtoAsync(
+                            jjExe,
+                            fullWorkspacePath,
+                            relPath,
+                            status,
+                            patchText,
+                            baseRev,
+                            toRev,
+                            ct)
+                        .ConfigureAwait(false);
+                    fileDtos.Add(fileDto);
+                }
+
+                var rawOverallDiff = normalizedFilter is not null
+                    ? string.Join('\n', fileDtos.Select(static f => f.Patch).Where(static p => p.Length > 0))
+                    : diffRes.StandardOutput;
+                var (truncatedText, truncated) = TruncateUtf8Deterministically(rawOverallDiff, _options.MaxDiffBytes);
+                return new DiffSummary(truncatedText, truncated, changedFiles, fileDtos);
             }
 
             case VcsBackendKind.GitWorktree:
             {
-                return await DiffGitAsync(fullWorkspacePath, fromRev, toRev, ct).ConfigureAwait(false);
+                return await DiffGitAsync(fullWorkspacePath, fromRev, toRev, normalizedFilter, ct).ConfigureAwait(false);
             }
 
             case VcsBackendKind.PlainDirectory:
@@ -425,7 +485,7 @@ public sealed class VcsService : IVcsService
                         "Revision range DiffAsync is not supported on PlainDirectory workspaces.");
                 }
 
-                return new DiffSummary(string.Empty, Truncated: false, ChangedFiles: []);
+                return new DiffSummary(string.Empty, Truncated: false, ChangedFiles: [], Files: []);
             }
         }
     }
@@ -726,6 +786,7 @@ public sealed class VcsService : IVcsService
         string workspacePath,
         string? fromRev,
         string? toRev,
+        string? normalizedFilter,
         CancellationToken ct)
     {
         if (fromRev is null && toRev is null)
@@ -733,22 +794,45 @@ public sealed class VcsService : IVcsService
             var hasHead = await GitRefExistsAsync(workspacePath, "HEAD", ct).ConfigureAwait(false);
             var sb = new StringBuilder();
             var changedSet = new SortedSet<string>(StringComparer.Ordinal);
+            var statusByPath = new Dictionary<string, string>(StringComparer.Ordinal);
+            var patchesByPath = new Dictionary<string, string>(StringComparer.Ordinal);
 
             if (hasHead)
             {
                 var trackedDiff = await RunGitCheckedAsync(workspacePath, ["--no-pager", "diff", "HEAD"], ct)
                     .ConfigureAwait(false);
                 sb.Append(trackedDiff.StandardOutput);
+                foreach (var kvp in SplitUnifiedGitPatches(trackedDiff.StandardOutput))
+                {
+                    patchesByPath[kvp.Key] = kvp.Value;
+                }
 
-                var trackedNames = await RunGitCheckedAsync(
+                var nameStatusRes = await RunGitCheckedAsync(
                         workspacePath,
-                        ["--no-pager", "diff", "--name-only", "HEAD"],
+                        ["--no-pager", "diff", "--name-status", "HEAD"],
                         ct)
                     .ConfigureAwait(false);
 
-                foreach (var file in ParseNonEmptyLines(trackedNames.StandardOutput))
+                foreach (var (file, status) in ParseGitNameStatus(nameStatusRes.StandardOutput))
                 {
                     changedSet.Add(file);
+                    statusByPath[file] = status;
+                }
+            }
+            else
+            {
+                // Unborn HEAD: staged files in index show up via `git diff --cached`
+                var cachedDiff = await RunGitAsync(workspacePath, ["--no-pager", "diff", "--cached"], ct)
+                    .ConfigureAwait(false);
+                if (cachedDiff.ExitCode == 0 && !string.IsNullOrEmpty(cachedDiff.StandardOutput))
+                {
+                    sb.Append(cachedDiff.StandardOutput);
+                    foreach (var kvp in SplitUnifiedGitPatches(cachedDiff.StandardOutput))
+                    {
+                        patchesByPath[kvp.Key] = kvp.Value;
+                        changedSet.Add(kvp.Key);
+                        statusByPath[kvp.Key] = "added";
+                    }
                 }
             }
 
@@ -761,6 +845,13 @@ public sealed class VcsService : IVcsService
             foreach (var relPath in ParseNonEmptyLines(untrackedRes.StandardOutput))
             {
                 changedSet.Add(relPath);
+                statusByPath.TryAdd(relPath, "untracked");
+
+                if (normalizedFilter is not null && !string.Equals(relPath, normalizedFilter, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
                 var untrackedDiff = await RunGitAsync(
                         workspacePath,
                         ["--no-pager", "diff", "--no-index", "--", "/dev/null", relPath],
@@ -771,11 +862,39 @@ public sealed class VcsService : IVcsService
                 if (untrackedDiff.ExitCode is 0 or 1 && !string.IsNullOrEmpty(untrackedDiff.StandardOutput))
                 {
                     sb.Append(untrackedDiff.StandardOutput);
+                    patchesByPath[relPath] = untrackedDiff.StandardOutput;
                 }
             }
 
-            var (truncatedText, truncated) = TruncateUtf8Deterministically(sb.ToString(), _options.MaxDiffBytes);
-            return new DiffSummary(truncatedText, truncated, [.. changedSet]);
+            IReadOnlyList<string> changedList = normalizedFilter is not null
+                ? changedSet.Where(f => string.Equals(f, normalizedFilter, StringComparison.Ordinal)).ToArray()
+                : [.. changedSet];
+
+            var fileDtos = new List<VcsDiffFileDto>(changedList.Count);
+            foreach (var relPath in changedList)
+            {
+                patchesByPath.TryGetValue(relPath, out var rawPatch);
+                rawPatch ??= string.Empty;
+                var status = statusByPath.TryGetValue(relPath, out var s) ? s : InferStatusFromPatch(rawPatch);
+                var (patchText, _) = TruncateUtf8Deterministically(rawPatch, _options.MaxDiffBytes);
+
+                var dto = await BuildGitDiffFileDtoAsync(
+                        workspacePath,
+                        relPath,
+                        status,
+                        patchText,
+                        baseRev: hasHead ? "HEAD" : null,
+                        targetRev: null,
+                        ct)
+                    .ConfigureAwait(false);
+                fileDtos.Add(dto);
+            }
+
+            var overallRaw = normalizedFilter is not null
+                ? string.Join('\n', fileDtos.Select(static f => f.Patch).Where(static p => p.Length > 0))
+                : sb.ToString();
+            var (truncatedText, truncated) = TruncateUtf8Deterministically(overallRaw, _options.MaxDiffBytes);
+            return new DiffSummary(truncatedText, truncated, changedList, fileDtos);
         }
 
         List<string> rangeArgs = (fromRev, toRev) switch
@@ -790,14 +909,579 @@ public sealed class VcsService : IVcsService
         gitDiffArgs.AddRange(rangeArgs);
         var diffOut = await RunGitCheckedAsync(workspacePath, gitDiffArgs, ct).ConfigureAwait(false);
 
-        var gitNameArgs = new List<string> { "--no-pager", "diff", "--name-only" };
-        gitNameArgs.AddRange(rangeArgs);
-        var nameOut = await RunGitCheckedAsync(workspacePath, gitNameArgs, ct).ConfigureAwait(false);
+        var gitStatusArgs = new List<string> { "--no-pager", "diff", "--name-status" };
+        gitStatusArgs.AddRange(rangeArgs);
+        var statusOut = await RunGitCheckedAsync(workspacePath, gitStatusArgs, ct).ConfigureAwait(false);
 
-        var files = ParseNonEmptyLines(nameOut.StandardOutput);
-        var (text, wasTruncated) = TruncateUtf8Deterministically(diffOut.StandardOutput, _options.MaxDiffBytes);
-        return new DiffSummary(text, wasTruncated, files);
+        var rangeStatuses = ParseGitNameStatus(statusOut.StandardOutput);
+        var rangePatches = SplitUnifiedGitPatches(diffOut.StandardOutput);
+        var files = rangeStatuses.Select(static x => x.Path).ToArray();
+        if (normalizedFilter is not null)
+        {
+            files = files.Where(f => string.Equals(f, normalizedFilter, StringComparison.Ordinal)).ToArray();
+        }
+
+        var statusLookup = rangeStatuses.ToDictionary(static x => x.Path, static x => x.Status, StringComparer.Ordinal);
+        var effectiveBaseRev = fromRev ?? (toRev is not null ? $"{toRev}^" : "HEAD");
+        var rangeFileDtos = new List<VcsDiffFileDto>(files.Length);
+        foreach (var relPath in files)
+        {
+            rangePatches.TryGetValue(relPath, out var rawPatch);
+            rawPatch ??= string.Empty;
+            var status = statusLookup.TryGetValue(relPath, out var s) ? s : InferStatusFromPatch(rawPatch);
+            var (patchText, _) = TruncateUtf8Deterministically(rawPatch, _options.MaxDiffBytes);
+            var dto = await BuildGitDiffFileDtoAsync(
+                    workspacePath,
+                    relPath,
+                    status,
+                    patchText,
+                    effectiveBaseRev,
+                    toRev,
+                    ct)
+                .ConfigureAwait(false);
+            rangeFileDtos.Add(dto);
+        }
+
+        var rawRangeDiff = normalizedFilter is not null
+            ? string.Join('\n', rangeFileDtos.Select(static f => f.Patch).Where(static p => p.Length > 0))
+            : diffOut.StandardOutput;
+        var (text, wasTruncated) = TruncateUtf8Deterministically(rawRangeDiff, _options.MaxDiffBytes);
+        return new DiffSummary(text, wasTruncated, files, rangeFileDtos);
     }
+
+    private async Task<VcsDiffFileDto> BuildJjDiffFileDtoAsync(
+        string jjExe,
+        string workspacePath,
+        string relPath,
+        string status,
+        string patch,
+        string baseRev,
+        string? toRev,
+        CancellationToken ct)
+    {
+        var patchBinary = IsPatchMarkedBinary(patch);
+        string? workingText = null;
+        var workingBinary = false;
+
+        if (!string.Equals(status, "deleted", StringComparison.Ordinal))
+        {
+            if (string.IsNullOrWhiteSpace(toRev))
+            {
+                (workingText, workingBinary) = await ReadWorkspaceFileSafeAsync(workspacePath, relPath, ct)
+                    .ConfigureAwait(false);
+            }
+            else
+            {
+                var escapedRel = EscapeJjFilesetPath(relPath);
+                var showTarget = await RunJjAsync(
+                        jjExe,
+                        workspacePath,
+                        ["file", "show", "-r", toRev, "--ignore-working-copy", $"file:\"{escapedRel}\""],
+                        ct)
+                    .ConfigureAwait(false);
+                if (showTarget.ExitCode == 0)
+                {
+                    if (ContainsNullChar(showTarget.StandardOutput))
+                    {
+                        workingBinary = true;
+                    }
+                    else
+                    {
+                        workingText = TruncateUtf8Deterministically(showTarget.StandardOutput, MaxFileContentBytes).Text;
+                    }
+                }
+            }
+        }
+
+        var isBinary = patchBinary || workingBinary;
+        if (isBinary)
+        {
+            return new VcsDiffFileDto(relPath, status, patch, HeadText: null, WorkingText: null, IsBinary: true);
+        }
+
+        string? headText = null;
+        if (!string.Equals(status, "added", StringComparison.Ordinal) &&
+            !string.Equals(status, "untracked", StringComparison.Ordinal))
+        {
+            var escapedRel = EscapeJjFilesetPath(relPath);
+            var showBase = await RunJjAsync(
+                    jjExe,
+                    workspacePath,
+                    ["file", "show", "-r", baseRev, "--ignore-working-copy", $"file:\"{escapedRel}\""],
+                    ct)
+                .ConfigureAwait(false);
+            if (showBase.ExitCode == 0)
+            {
+                if (ContainsNullChar(showBase.StandardOutput))
+                {
+                    return new VcsDiffFileDto(relPath, status, patch, HeadText: null, WorkingText: null, IsBinary: true);
+                }
+
+                headText = TruncateUtf8Deterministically(showBase.StandardOutput, MaxFileContentBytes).Text;
+            }
+        }
+
+        return new VcsDiffFileDto(relPath, status, patch, headText, workingText, IsBinary: false);
+    }
+
+    private async Task<VcsDiffFileDto> BuildGitDiffFileDtoAsync(
+        string workspacePath,
+        string relPath,
+        string status,
+        string patch,
+        string? baseRev,
+        string? targetRev,
+        CancellationToken ct)
+    {
+        var patchBinary = IsPatchMarkedBinary(patch);
+        string? workingText = null;
+        var workingBinary = false;
+
+        if (!string.Equals(status, "deleted", StringComparison.Ordinal))
+        {
+            if (string.IsNullOrWhiteSpace(targetRev))
+            {
+                (workingText, workingBinary) = await ReadWorkspaceFileSafeAsync(workspacePath, relPath, ct)
+                    .ConfigureAwait(false);
+            }
+            else
+            {
+                var showTarget = await RunGitAsync(workspacePath, ["--no-pager", "show", $"{targetRev}:{relPath}"], ct)
+                    .ConfigureAwait(false);
+                if (showTarget.ExitCode == 0)
+                {
+                    if (ContainsNullChar(showTarget.StandardOutput))
+                    {
+                        workingBinary = true;
+                    }
+                    else
+                    {
+                        workingText = TruncateUtf8Deterministically(showTarget.StandardOutput, MaxFileContentBytes).Text;
+                    }
+                }
+            }
+        }
+
+        var isBinary = patchBinary || workingBinary;
+        if (isBinary)
+        {
+            return new VcsDiffFileDto(relPath, status, patch, HeadText: null, WorkingText: null, IsBinary: true);
+        }
+
+        string? headText = null;
+        if (!string.IsNullOrWhiteSpace(baseRev) &&
+            !string.Equals(status, "added", StringComparison.Ordinal) &&
+            !string.Equals(status, "untracked", StringComparison.Ordinal))
+        {
+            var showBase = await RunGitAsync(workspacePath, ["--no-pager", "show", $"{baseRev}:{relPath}"], ct)
+                .ConfigureAwait(false);
+            if (showBase.ExitCode == 0)
+            {
+                if (ContainsNullChar(showBase.StandardOutput))
+                {
+                    return new VcsDiffFileDto(relPath, status, patch, HeadText: null, WorkingText: null, IsBinary: true);
+                }
+
+                headText = TruncateUtf8Deterministically(showBase.StandardOutput, MaxFileContentBytes).Text;
+            }
+        }
+
+        return new VcsDiffFileDto(relPath, status, patch, headText, workingText, IsBinary: false);
+    }
+
+    private static async Task<(string? Text, bool IsBinary)> ReadWorkspaceFileSafeAsync(
+        string fullWorkspacePath,
+        string relPath,
+        CancellationToken ct)
+    {
+        var rootFull = Path.GetFullPath(fullWorkspacePath);
+        var rootWithSep = rootFull.EndsWith(Path.DirectorySeparatorChar)
+            ? rootFull
+            : rootFull + Path.DirectorySeparatorChar;
+        var candidate = Path.GetFullPath(Path.Combine(rootFull, relPath.TrimStart('/', '\\')));
+        if (!candidate.StartsWith(rootWithSep, PathComparison) || !File.Exists(candidate))
+        {
+            return (null, false);
+        }
+
+        try
+        {
+            var canonical = WorkspaceFileReader.ResolveContainedPath(rootFull, candidate);
+            await using var fs = WorkspaceFileReader.Open(canonical);
+            var maxToRead = (int)Math.Min(fs.Length, MaxFileContentBytes);
+            var buffer = new byte[maxToRead];
+            var read = await fs.ReadAtLeastAsync(buffer, buffer.Length, throwOnEndOfStream: false, ct)
+                .ConfigureAwait(false);
+
+            var sniffLen = Math.Min(read, BinarySniffBytes);
+            if (buffer.AsSpan(0, sniffLen).IndexOf((byte)0) >= 0)
+            {
+                return (null, true);
+            }
+
+            // If truncated at MaxFileContentBytes, trim trailing incomplete UTF-8 continuation bytes safely.
+            var validLen = read;
+            if (fs.Length > read)
+            {
+                validLen = TrimTrailingIncompleteUtf8Bytes(buffer.AsSpan(0, read));
+            }
+
+            return (Encoding.UTF8.GetString(buffer, 0, validLen), false);
+        }
+        catch (IOException)
+        {
+            return (null, false);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return (null, false);
+        }
+    }
+
+    private static int TrimTrailingIncompleteUtf8Bytes(ReadOnlySpan<byte> bytes)
+    {
+        if (bytes.IsEmpty)
+        {
+            return 0;
+        }
+
+        var i = bytes.Length - 1;
+        var contCount = 0;
+        while (i >= 0 && contCount < 4 && (bytes[i] & 0b1100_0000) == 0b1000_0000)
+        {
+            i--;
+            contCount++;
+        }
+
+        if (i < 0)
+        {
+            return bytes.Length;
+        }
+
+        var lead = bytes[i];
+        var expectedSeqLen = lead switch
+        {
+            < 0b1000_0000 => 1,
+            >= 0b1111_0000 => 4,
+            >= 0b1110_0000 => 3,
+            >= 0b1100_0000 => 2,
+            _ => 1
+        };
+
+        var actualSeqLen = bytes.Length - i;
+        return actualSeqLen < expectedSeqLen ? i : bytes.Length;
+    }
+
+    private static string? NormalizeOptionalRelativePath(string fullWorkspacePath, string? rawPath)
+    {
+        if (string.IsNullOrWhiteSpace(rawPath))
+        {
+            return null;
+        }
+
+        var trimmed = rawPath.Trim();
+        var rootFull = Path.GetFullPath(fullWorkspacePath);
+        var rootWithSep = rootFull.EndsWith(Path.DirectorySeparatorChar)
+            ? rootFull
+            : rootFull + Path.DirectorySeparatorChar;
+
+        string candidateFull;
+        if (Path.IsPathRooted(trimmed))
+        {
+            var rootedFull = Path.GetFullPath(trimmed);
+            if (string.Equals(rootedFull, rootFull, PathComparison))
+            {
+                return null;
+            }
+
+            candidateFull = rootedFull.StartsWith(rootWithSep, PathComparison)
+                ? rootedFull
+                : Path.GetFullPath(Path.Combine(rootFull, trimmed.TrimStart('/', '\\')));
+        }
+        else
+        {
+            candidateFull = Path.GetFullPath(Path.Combine(rootFull, trimmed));
+        }
+
+        if (string.Equals(candidateFull, rootFull, PathComparison))
+        {
+            return null;
+        }
+
+        if (!candidateFull.StartsWith(rootWithSep, PathComparison))
+        {
+            throw new InvalidOperationException($"Path '{rawPath}' escapes workspace root.");
+        }
+
+        return Path.GetRelativePath(rootFull, candidateFull).Replace('\\', '/');
+    }
+
+    private static Dictionary<string, string> ParseJjSummaryStatuses(string summaryOutput)
+    {
+        var map = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var rawLine in ParseNonEmptyLines(summaryOutput))
+        {
+            if (rawLine.Length < 3 || rawLine[1] != ' ')
+            {
+                continue;
+            }
+
+            var code = rawLine[0];
+            var pathPart = rawLine[2..].Trim();
+            pathPart = ExpandBraceRenameTarget(pathPart);
+            var status = code switch
+            {
+                'A' => "added",
+                'D' => "deleted",
+                _ => "modified"
+            };
+            if (pathPart.Length > 0)
+            {
+                map[pathPart] = status;
+            }
+        }
+
+        return map;
+    }
+
+    private static List<(string Path, string Status)> ParseGitNameStatus(string nameStatusOutput)
+    {
+        var result = new List<(string Path, string Status)>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var rawLine in nameStatusOutput.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var line = rawLine.TrimEnd('\r');
+            var parts = line.Split('\t', StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length < 2)
+            {
+                continue;
+            }
+
+            var statusCode = parts[0].Trim();
+            var rawPath = parts[^1].Trim();
+            var unquoted = UnquoteGitPath(rawPath);
+            if (unquoted.Length == 0 || !seen.Add(unquoted))
+            {
+                continue;
+            }
+
+            var status = statusCode[0] switch
+            {
+                'A' => "added",
+                'D' => "deleted",
+                '?' => "untracked",
+                _ => "modified"
+            };
+            result.Add((unquoted, status));
+        }
+
+        return result;
+    }
+
+    private static Dictionary<string, string> SplitUnifiedGitPatches(string diffText)
+    {
+        var patches = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (string.IsNullOrEmpty(diffText))
+        {
+            return patches;
+        }
+
+        var lines = diffText.Split('\n');
+        var chunkBuilder = new StringBuilder();
+        string? currentPath = null;
+        string? fallbackHeaderPath = null;
+
+        void FlushChunk()
+        {
+            var resolved = currentPath ?? fallbackHeaderPath;
+            if (!string.IsNullOrEmpty(resolved) && chunkBuilder.Length > 0)
+            {
+                patches[resolved] = chunkBuilder.ToString();
+            }
+
+            chunkBuilder.Clear();
+            currentPath = null;
+            fallbackHeaderPath = null;
+        }
+
+        for (var i = 0; i < lines.Length; i++)
+        {
+            var rawLine = lines[i];
+            var trimmedCr = rawLine.TrimEnd('\r');
+            if (trimmedCr.StartsWith("diff --git ", StringComparison.Ordinal))
+            {
+                FlushChunk();
+                fallbackHeaderPath = ExtractPathFromDiffGitHeader(trimmedCr);
+            }
+
+            if (fallbackHeaderPath is not null || currentPath is not null)
+            {
+                if (trimmedCr.StartsWith("+++ ", StringComparison.Ordinal))
+                {
+                    var plusPath = ParseUnifiedFileHeaderPath(trimmedCr[4..]);
+                    if (plusPath is not null)
+                    {
+                        currentPath = plusPath;
+                    }
+                }
+                else if (currentPath is null && trimmedCr.StartsWith("--- ", StringComparison.Ordinal))
+                {
+                    var minusPath = ParseUnifiedFileHeaderPath(trimmedCr[4..]);
+                    if (minusPath is not null)
+                    {
+                        currentPath = minusPath;
+                    }
+                }
+
+                chunkBuilder.Append(rawLine);
+                if (i < lines.Length - 1)
+                {
+                    chunkBuilder.Append('\n');
+                }
+            }
+        }
+
+        FlushChunk();
+        return patches;
+    }
+
+    private static string? ExtractPathFromDiffGitHeader(string headerLine)
+    {
+        // Format: `diff --git a/foo.txt b/foo.txt` or `diff --git a/dev/null b/foo.txt`
+        var rest = headerLine["diff --git ".Length..].Trim();
+        var bMarkerIdx = rest.LastIndexOf(" b/", StringComparison.Ordinal);
+        if (bMarkerIdx >= 0)
+        {
+            return UnquoteGitPath(rest[(bMarkerIdx + 3)..]);
+        }
+
+        var bQuotedIdx = rest.LastIndexOf(" \"b/", StringComparison.Ordinal);
+        if (bQuotedIdx >= 0)
+        {
+            var unquoted = UnquoteGitPath(rest[(bQuotedIdx + 1)..]);
+            return unquoted.StartsWith("b/", StringComparison.Ordinal) ? unquoted[2..] : unquoted;
+        }
+
+        return null;
+    }
+
+    private static string? ParseUnifiedFileHeaderPath(string rawTarget)
+    {
+        var tabIdx = rawTarget.IndexOf('\t');
+        var clean = (tabIdx >= 0 ? rawTarget[..tabIdx] : rawTarget).Trim();
+        var unquoted = UnquoteGitPath(clean);
+        if (string.Equals(unquoted, "/dev/null", StringComparison.Ordinal) ||
+            string.Equals(unquoted, "dev/null", StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        if (unquoted.StartsWith("a/", StringComparison.Ordinal) ||
+            unquoted.StartsWith("b/", StringComparison.Ordinal))
+        {
+            return unquoted[2..];
+        }
+
+        return unquoted.TrimStart('/');
+    }
+
+    private static string UnquoteGitPath(string input)
+    {
+        if (input.Length < 2 || input[0] != '"' || input[^1] != '"')
+        {
+            return input;
+        }
+
+        var inner = input[1..^1];
+        var bytes = new List<byte>(inner.Length);
+        for (var i = 0; i < inner.Length; i++)
+        {
+            var c = inner[i];
+            if (c == '\\' && i + 1 < inner.Length)
+            {
+                var next = inner[i + 1];
+                if (next is >= '0' and <= '7' && i + 3 < inner.Length &&
+                    inner[i + 2] is >= '0' and <= '7' &&
+                    inner[i + 3] is >= '0' and <= '7')
+                {
+                    var oct = ((next - '0') << 6) | ((inner[i + 2] - '0') << 3) | (inner[i + 3] - '0');
+                    bytes.Add((byte)oct);
+                    i += 3;
+                    continue;
+                }
+
+                bytes.Add(next switch
+                {
+                    'n' => (byte)'\n',
+                    'r' => (byte)'\r',
+                    't' => (byte)'\t',
+                    '\\' => (byte)'\\',
+                    '"' => (byte)'"',
+                    _ => (byte)next
+                });
+                i++;
+                continue;
+            }
+
+            if (c < 128)
+            {
+                bytes.Add((byte)c);
+            }
+            else
+            {
+                bytes.AddRange(Encoding.UTF8.GetBytes([c]));
+            }
+        }
+
+        return Encoding.UTF8.GetString(bytes.ToArray());
+    }
+
+    private static string ExpandBraceRenameTarget(string jjSummaryPath)
+    {
+        // Handles `dir/{old.txt => new.txt}` or `{old => new}/file.txt`
+        var openIdx = jjSummaryPath.IndexOf('{');
+        var arrowIdx = jjSummaryPath.IndexOf("=>", StringComparison.Ordinal);
+        var closeIdx = jjSummaryPath.IndexOf('}');
+        if (openIdx >= 0 && arrowIdx > openIdx && closeIdx > arrowIdx)
+        {
+            var prefix = jjSummaryPath[..openIdx];
+            var targetPart = jjSummaryPath[(arrowIdx + 2)..closeIdx].Trim();
+            var suffix = jjSummaryPath[(closeIdx + 1)..];
+            return (prefix + targetPart + suffix).Replace("//", "/", StringComparison.Ordinal).Trim('/');
+        }
+
+        return jjSummaryPath;
+    }
+
+    private static string InferStatusFromPatch(string patch)
+    {
+        if (patch.Contains("\nnew file mode ", StringComparison.Ordinal) ||
+            patch.Contains("\n--- /dev/null", StringComparison.Ordinal))
+        {
+            return "added";
+        }
+
+        if (patch.Contains("\ndeleted file mode ", StringComparison.Ordinal) ||
+            patch.Contains("\n+++ /dev/null", StringComparison.Ordinal))
+        {
+            return "deleted";
+        }
+
+        return "modified";
+    }
+
+    private static bool IsPatchMarkedBinary(string patch) =>
+        patch.Contains("\nBinary files ", StringComparison.Ordinal) ||
+        patch.StartsWith("Binary files ", StringComparison.Ordinal) ||
+        patch.Contains("\nGIT binary patch", StringComparison.Ordinal);
+
+    private static bool ContainsNullChar(string text) =>
+        text.AsSpan(0, Math.Min(text.Length, BinarySniffBytes)).IndexOf('\0') >= 0;
+
+    private static string EscapeJjFilesetPath(string relPath) =>
+        relPath.Replace("\\", "\\\\", StringComparison.Ordinal)
+               .Replace("\"", "\\\"", StringComparison.Ordinal);
 
     private static List<string> BuildJjDiffRevisionArgs(string? fromRev, string? toRev) =>
         (fromRev, toRev) switch
@@ -1104,7 +1788,7 @@ public sealed class VcsService : IVcsService
         return result;
     }
 
-    private static (string RootPath, bool HasJj, bool HasGit)? FindNearestVcsRoot(string startDirectory)
+    private static (string RootPath, bool HasJj, bool HasGit)? FindNearestVcsRoot(string startDirectory, bool searchAncestors = true)
     {
         var current = NormalizeDirectoryPath(startDirectory);
         var tempRoot = NormalizeDirectoryPath(Path.GetTempPath());
@@ -1126,7 +1810,7 @@ public sealed class VcsService : IVcsService
                 }
             }
 
-            if (isFilesystemRoot)
+            if (isFilesystemRoot || !searchAncestors)
             {
                 break;
             }

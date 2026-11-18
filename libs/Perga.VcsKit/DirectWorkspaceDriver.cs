@@ -18,6 +18,8 @@ public sealed class DirectWorkspaceDriver : IWorkspaceDriver
         ct.ThrowIfCancellationRequested();
 
         var sourcePath = Path.GetFullPath(req.SourcePath);
+        if (req.NewEmptyWorkspace)
+            Directory.CreateDirectory(sourcePath);
         var lowerDirs = req.LowerCacheDirs?.ToArray() ?? [];
         var metadata = JsonSerializer.SerializeToElement(new
         {
@@ -34,7 +36,8 @@ public sealed class DirectWorkspaceDriver : IWorkspaceDriver
             UpperDir: null,
             WorkDir: null,
             MergedCwd: sourcePath,
-            Metadata: metadata);
+            Metadata: metadata,
+            ManagedEmptyWorkspace: req.NewEmptyWorkspace);
 
         return Task.FromResult(spec);
     }
@@ -48,7 +51,8 @@ public sealed class DirectWorkspaceDriver : IWorkspaceDriver
         var mounted = new MountedWorkspace(
             DriverId: DriverId,
             MergedCwd: Path.GetFullPath(spec.MergedCwd),
-            ProcessOverlayLayers: null);
+            ProcessOverlayLayers: null,
+            ManagedEmptyWorkspace: spec.ManagedEmptyWorkspace);
 
         return Task.FromResult(mounted);
     }
@@ -99,7 +103,8 @@ public sealed class DirectWorkspaceDriver : IWorkspaceDriver
         ArgumentNullException.ThrowIfNull(spec);
         ct.ThrowIfCancellationRequested();
 
-        // Direct passthrough never deletes LogicalRoot, MergedCwd, or shared LowerDirs.
+        if (spec.ManagedEmptyWorkspace && Directory.Exists(spec.LogicalRoot))
+            Directory.Delete(spec.LogicalRoot, recursive: true);
         return Task.CompletedTask;
     }
 }

@@ -26,13 +26,15 @@ public sealed partial class OsSandboxWrapper
     private static readonly string[] LinuxOptionalReadOnlyRoots =
     [
         "/sbin",
-        "/lib64"
+        "/lib64",
+        "/run/systemd/resolve"
     ];
 
     private static readonly string[] HomeReadOnlySubpaths =
     [
         ".dotnet",
         ".local",
+        ".local/share",
         ".cargo",
         ".rustup",
         ".nvm",
@@ -40,7 +42,10 @@ public sealed partial class OsSandboxWrapper
         ".codex",
         ".claude",
         ".claude.json",
-        ".config"
+        ".config",
+        ".gemini",
+        ".cache",
+        ".opencode"
     ];
 
     private readonly OsSandboxOptions _options;
@@ -80,7 +85,8 @@ public sealed partial class OsSandboxWrapper
         CommandInvocation inner,
         OsSandboxMode mode,
         IReadOnlyList<OverlayMountSpec>? overlayMounts = null,
-        IReadOnlyList<string>? auxiliaryReadOnlyFiles = null)
+        IReadOnlyList<string>? auxiliaryReadOnlyFiles = null,
+        string? writableStateDirectory = null)
     {
         ArgumentNullException.ThrowIfNull(inner);
         if (string.IsNullOrWhiteSpace(inner.FileName))
@@ -103,7 +109,7 @@ public sealed partial class OsSandboxWrapper
 
         if (IsLinuxTarget())
         {
-            return WrapLinuxBwrap(inner, normalizedCwd, mode, overlayMounts, auxiliaryReadOnlyFiles);
+            return WrapLinuxBwrap(inner, normalizedCwd, mode, overlayMounts, auxiliaryReadOnlyFiles, writableStateDirectory);
         }
 
         if (IsMacOsTarget())
@@ -137,7 +143,8 @@ public sealed partial class OsSandboxWrapper
         string normalizedCwd,
         OsSandboxMode mode,
         IReadOnlyList<OverlayMountSpec>? overlayMounts,
-        IReadOnlyList<string>? auxiliaryReadOnlyFiles)
+        IReadOnlyList<string>? auxiliaryReadOnlyFiles,
+        string? writableStateDirectory)
     {
         var args = new List<string>(64)
         {
@@ -166,17 +173,24 @@ public sealed partial class OsSandboxWrapper
         args.Add("/tmp");
 
         var homeDir = ResolveHomeDirectory(inner.Environment);
+        string? normalizedHome = null;
+        var mountedHomeRoDirs = new List<string>(HomeReadOnlySubpaths.Length);
         if (!string.IsNullOrWhiteSpace(homeDir))
         {
-            var normalizedHome = Path.GetFullPath(homeDir);
+            normalizedHome = Path.GetFullPath(homeDir);
             foreach (var subpath in HomeReadOnlySubpaths)
             {
-                var candidate = Path.Combine(normalizedHome, subpath);
+                var candidate = Path.GetFullPath(Path.Combine(normalizedHome, subpath));
+                mountedHomeRoDirs.Add(candidate);
                 args.Add("--ro-bind-try");
                 args.Add(candidate);
                 args.Add(candidate);
             }
+
+
         }
+
+        AppendExternalExecutableReadOnlyMounts(args, inner, normalizedCwd, normalizedHome, mountedHomeRoDirs);
 
         foreach (var extraRo in _options.ExtraReadOnlyPaths)
         {
@@ -194,6 +208,13 @@ public sealed partial class OsSandboxWrapper
         args.Add(mode == OsSandboxMode.WorkspaceWriteBwrap ? "--bind" : "--ro-bind");
         args.Add(normalizedCwd);
         args.Add(normalizedCwd);
+
+        if (writableStateDirectory is not null)
+        {
+            args.Add("--bind");
+            args.Add(writableStateDirectory);
+            args.Add(writableStateDirectory);
+        }
 
         if (auxiliaryReadOnlyFiles is not null)
         {
@@ -446,6 +467,163 @@ public sealed partial class OsSandboxWrapper
         {
             return null;
         }
+    }
+
+    private static void AppendExternalExecutableReadOnlyMounts(
+        List<string> args,
+        CommandInvocation inner,
+        string normalizedCwd,
+        string? normalizedHome,
+        IReadOnlyList<string> mountedHomeRoDirs)
+    {
+        var candidateDirs = new List<string>(4);
+
+        string? resolvedExe = null;
+        if (inner.FileName.Contains(Path.DirectorySeparatorChar, StringComparison.Ordinal) ||
+            inner.FileName.Contains(Path.AltDirectorySeparatorChar, StringComparison.Ordinal))
+        {
+            var fullExe = Path.GetFullPath(inner.FileName);
+            resolvedExe = fullExe;
+            var dir = Path.GetDirectoryName(fullExe);
+            if (!string.IsNullOrWhiteSpace(dir))
+            {
+                candidateDirs.Add(dir);
+            }
+        }
+        else
+        {
+            resolvedExe = AgentRuntime.FindExecutableOnPath(inner.FileName, inner.Environment);
+            if (!string.IsNullOrWhiteSpace(resolvedExe))
+            {
+                var dir = Path.GetDirectoryName(resolvedExe);
+                if (!string.IsNullOrWhiteSpace(dir))
+                {
+                    candidateDirs.Add(dir);
+                }
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(resolvedExe) && File.Exists(resolvedExe))
+        {
+            try
+            {
+                var linkTarget = File.ResolveLinkTarget(resolvedExe, returnFinalTarget: true);
+                if (linkTarget is not null)
+                {
+                    var realExe = Path.GetFullPath(linkTarget.FullName);
+                    var realDir = Path.GetDirectoryName(realExe);
+                    if (!string.IsNullOrWhiteSpace(realDir))
+                    {
+                        candidateDirs.Add(realDir);
+
+                        // If binary lives in <pkg>/bin/<exe> outside /usr,/bin,$HOME, mount <pkg> so ../lib works too.
+                        var dirName = Path.GetFileName(realDir.TrimEnd(Path.DirectorySeparatorChar));
+                        if (string.Equals(dirName, "bin", StringComparison.OrdinalIgnoreCase))
+                        {
+                            var parentPkg = Path.GetDirectoryName(realDir);
+                            if (!string.IsNullOrWhiteSpace(parentPkg))
+                            {
+                                candidateDirs.Add(parentPkg);
+                            }
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                // Ignore symlink resolution errors.
+            }
+        }
+
+        var added = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var rawDir in candidateDirs)
+        {
+            var dir = Path.GetFullPath(rawDir);
+            if (!ShouldMountExternalExecutableDir(dir, normalizedCwd, normalizedHome, mountedHomeRoDirs))
+            {
+                continue;
+            }
+
+            if (added.Add(dir))
+            {
+                args.Add("--ro-bind-try");
+                args.Add(dir);
+                args.Add(dir);
+            }
+        }
+    }
+
+    private static bool ShouldMountExternalExecutableDir(
+        string dir,
+        string normalizedCwd,
+        string? normalizedHome,
+        IReadOnlyList<string> mountedHomeRoDirs)
+    {
+        var trimmed = dir.TrimEnd(Path.DirectorySeparatorChar);
+        if (string.IsNullOrEmpty(trimmed) ||
+            string.Equals(trimmed, "/home", StringComparison.Ordinal) ||
+            string.Equals(trimmed, "/Users", StringComparison.Ordinal) ||
+            string.Equals(trimmed, "/proc", StringComparison.Ordinal) ||
+            string.Equals(trimmed, "/dev", StringComparison.Ordinal) ||
+            string.Equals(trimmed, "/tmp", StringComparison.Ordinal) ||
+            string.Equals(trimmed, "/opt", StringComparison.Ordinal) ||
+            string.Equals(trimmed, "/var", StringComparison.Ordinal) ||
+            string.Equals(trimmed, "/run", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        if (!string.IsNullOrWhiteSpace(normalizedHome))
+        {
+            var trimmedHome = normalizedHome.TrimEnd(Path.DirectorySeparatorChar);
+            if (string.Equals(trimmed, trimmedHome, StringComparison.Ordinal))
+            {
+                return false;
+            }
+        }
+
+        foreach (var coreRoot in LinuxCoreReadOnlyRoots)
+        {
+            if (IsSameOrSubpath(dir, coreRoot))
+            {
+                return false;
+            }
+        }
+
+        foreach (var optRoot in LinuxOptionalReadOnlyRoots)
+        {
+            if (IsSameOrSubpath(dir, optRoot))
+            {
+                return false;
+            }
+        }
+
+        if (IsSameOrSubpath(dir, normalizedCwd))
+        {
+            return false;
+        }
+
+        foreach (var homeRo in mountedHomeRoDirs)
+        {
+            if (IsSameOrSubpath(dir, homeRo))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool IsSameOrSubpath(string candidatePath, string basePath)
+    {
+        var normCandidate = Path.GetFullPath(candidatePath).TrimEnd(Path.DirectorySeparatorChar);
+        var normBase = Path.GetFullPath(basePath).TrimEnd(Path.DirectorySeparatorChar);
+        if (string.Equals(normCandidate, normBase, StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        return normCandidate.StartsWith(normBase + Path.DirectorySeparatorChar, StringComparison.Ordinal);
     }
 
     private static string EscapeSeatbeltString(string path) =>

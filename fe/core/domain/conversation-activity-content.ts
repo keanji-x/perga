@@ -25,15 +25,21 @@ export function activityContent(itemType: string, item: Record<string, unknown>)
   let text: string;
   if (itemType === 'reasoning') {
     text = [...textBlocks(item.summary), ...textBlocks(item.content)].join('\n\n');
-  } else if (itemType === 'dynamicToolCall') {
+  } else if (itemType === 'dynamicToolCall' || itemType === 'mcpToolCall') {
     const sections: string[] = [];
-    const input = printable(item.arguments);
+    const argsObj = record(item.arguments);
+    const hasArgs = argsObj !== null ? Object.keys(argsObj).length > 0 : item.arguments !== null && item.arguments !== undefined && item.arguments !== '';
+    const input = hasArgs ? printable(item.arguments) : null;
     if (input) sections.push(`Input\n${input}`);
     const result = record(item.result);
     const output = result === null ? printable(item.result) : [
-      ...textBlocks(result.content), printable(result.structuredContent),
+      ...textBlocks(result.content), printable(result.structuredContent ?? (Object.hasOwn(result, 'content') ? undefined : result)),
     ].filter(Boolean).join('\n\n');
     if (output) sections.push(`Output\n${output}`);
+    if (itemType === 'mcpToolCall' && item.error !== undefined && item.error !== null) {
+      const errorText = printable(item.error);
+      if (errorText) sections.push(`Error\n${errorText}`);
+    }
     text = sections.join('\n\n');
   } else {
     return {};

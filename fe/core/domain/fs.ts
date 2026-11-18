@@ -3,13 +3,14 @@
 
 import { z } from 'zod';
 
-import { diffSummaryDtoSchema, workspaceFileResultDtoSchema, type DiffSummaryDto } from '../api/schemas.js';
+import { diffSummaryDtoSchema, hostDirListDtoSchema, workspaceFileResultDtoSchema, type DiffSummaryDto } from '../api/schemas.js';
 import type { ApiOperation } from '../api/types.js';
 import type { FailureTable } from './failure-class.js';
 
 const directoryEntryWireSchema = z.object({
   name: z.string(),
   is_dir: z.boolean(),
+  is_symlink: z.boolean().optional(),
 });
 
 /** `parent` is `null` at the filesystem root and only there. */
@@ -21,13 +22,28 @@ export const directoryListingWireSchema = z.object({
 export type DirectoryListingWire = z.infer<typeof directoryListingWireSchema>;
 
 /** `path` omitted starts the walk at the server's `$HOME`; the query key is left off rather than sent empty. */
-export function listDirectoryOperation(path?: string): ApiOperation<DirectoryListingWire> {
+export function listDirectoryOperation(
+  path?: string,
+  options?: Readonly<{ perga?: boolean }>,
+): ApiOperation<DirectoryListingWire> {
+  const base = options?.perga === true ? '/api/v1/fs/listdir' : '/api/fs/listdir';
   return {
     method: 'GET',
     path: path === undefined || path === ''
-      ? '/api/fs/listdir'
-      : `/api/fs/listdir?path=${encodeURIComponent(path)}`,
-    responseSchema: directoryListingWireSchema,
+      ? base
+      : `${base}?path=${encodeURIComponent(path)}`,
+    responseSchema: z.union([
+      directoryListingWireSchema,
+      hostDirListDtoSchema.transform((dto): DirectoryListingWire => ({
+        path: dto.path,
+        parent: dto.parent,
+        entries: dto.entries.map((entry) => ({
+          name: entry.name,
+          is_dir: entry.isDir,
+          is_symlink: entry.isSymlink,
+        })),
+      })),
+    ]),
   };
 }
 
@@ -103,10 +119,12 @@ export function trackVcsDiffOperation(
   trackId: string,
   fromRev?: string,
   toRev?: string,
+  filePath?: string,
 ): ApiOperation<DiffSummaryDto> {
   const parts: string[] = [];
   if (fromRev !== undefined && fromRev !== '') parts.push(`fromRev=${encodeURIComponent(fromRev)}`);
   if (toRev !== undefined && toRev !== '') parts.push(`toRev=${encodeURIComponent(toRev)}`);
+  if (filePath !== undefined && filePath !== '') parts.push(`path=${encodeURIComponent(filePath)}`);
   const query = parts.join('&');
   return {
     method: 'GET',
@@ -116,8 +134,13 @@ export function trackVcsDiffOperation(
 }
 
 /** Raw image counterpart to {@link readTrackWorkspaceFileOperation}. */
-export function trackWorkspaceRawFileUrl(trackId: string, path: string): string {
-  return `/api/v1/tracks/${encodeURIComponent(trackId)}/files?path=${encodeURIComponent(path)}`;
+export function trackWorkspaceRawFileUrl(
+  trackId: string,
+  path: string,
+  options?: Readonly<{ raw?: boolean }>,
+): string {
+  const endpoint = options?.raw === true || trackId.startsWith('trk_') ? 'files/raw' : 'files';
+  return `/api/v1/tracks/${encodeURIComponent(trackId)}/${endpoint}?path=${encodeURIComponent(path)}`;
 }
 
 /** The only filesystem capabilities an agent-authored Report file may use. */

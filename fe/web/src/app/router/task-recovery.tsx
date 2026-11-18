@@ -2,36 +2,46 @@ import { useQueries, useQuery, useQueryClient, type UseQueryOptions } from '@tan
 import type { ReportTaskRow } from '../../../../core/domain/report.ts';
 import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
-import { taskAttemptsOperation, type TaskRecoveryView } from '../../../../core/domain/task-recovery.ts';
+import {
+  acceptTaskOperation,
+  cancelTaskOperation,
+  pergaTaskAttemptsOperation,
+  rejectTaskOperation,
+  type PergaTaskRecoveryView,
+} from '../../../../core/domain/task-recovery.ts';
 import { TaskRecoveryDetails } from '../../features/report/task/recovery.tsx';
 import { readErrorText } from '../../../../core/domain/read-failure.ts';
 import { queryKeys, runOperation } from '../providers/queries.ts';
 import { hasReadFailure } from '../providers/query-read-feedback.ts';
 import { currentTaskExecution } from '../../../../core/domain/task-execution.ts';
+import { useState } from '../../ui/state/public.ts';
 
 /** Explicit detail demand admits the first read. Previously admitted execution
  * remains refreshed by either visible inventory or detail, sharing one query. */
 function taskHistoryQueryOptions(
   transport: ApiTransportPort, unauthorized: UnauthorizedChannel,
   trackId: string, taskKey: string, expanded: boolean,
-): UseQueryOptions<TaskRecoveryView> {
+): UseQueryOptions<PergaTaskRecoveryView> {
   return {
     queryKey: taskHistoryKey(trackId, taskKey),
     enabled: query => expanded || query.state.data !== undefined,
     retry: false,
-    queryFn: ({ signal }) => runOperation(transport, { ...taskAttemptsOperation(trackId, taskKey), signal }, unauthorized),
+    queryFn: ({ signal }) => runOperation(transport, { ...pergaTaskAttemptsOperation(trackId, taskKey), signal }, unauthorized),
     refetchInterval: query => !query.state.error && query.state.data !== undefined
-      && !['done', 'canceled'].includes(query.state.data.current?.status ?? '') ? 3000 : false,
+      && !['done', 'canceled'].includes((query.state.data.current?.status ?? '').toLowerCase()) ? 3000 : false,
   };
 }
 
-export function TaskRecovery({ trackId, taskKey, expanded, transport, unauthorized, openWorker, openableWorkerIds }: {
+export function TaskRecovery({ trackId, taskKey, expanded, transport, unauthorized, openWorker, openableWorkerIds, enableTaskActions = false }: {
   trackId: string; taskKey: string; expanded: boolean;
   transport: ApiTransportPort; unauthorized: UnauthorizedChannel;
   openWorker: (cardId: string) => void; openableWorkerIds: ReadonlySet<string>;
+  enableTaskActions?: boolean;
 }) {
   const client = useQueryClient();
   const history = useQuery(taskHistoryQueryOptions(transport, unauthorized, trackId, taskKey, expanded));
+  const [actionPending, setActionPending] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
   const refresh = async () => {
     await Promise.all([
       history.refetch(),
@@ -39,10 +49,46 @@ export function TaskRecovery({ trackId, taskKey, expanded, transport, unauthoriz
       client.invalidateQueries({ queryKey: queryKeys.trackDetail(trackId) }),
     ]);
   };
-  return <TaskRecoveryDetails current={currentTaskExecution(history.data)} view={history.data} loading={history.isFetching}
+  const runTaskAction = (action: 'cancel' | 'accept' | 'reject') => {
+    if (actionPending) return;
+    setActionPending(true);
+    setActionError(null);
+    const op = action === 'cancel'
+      ? cancelTaskOperation(trackId, taskKey)
+      : action === 'accept'
+        ? acceptTaskOperation(trackId, taskKey)
+        : rejectTaskOperation(trackId, taskKey);
+    void runOperation(transport, op, unauthorized)
+      .then(() => refresh())
+      .catch((error: unknown) => {
+        setActionError(readErrorText(error, `Could not ${action} this task.`));
+      })
+      .finally(() => {
+        setActionPending(false);
+      });
+  };
+  const statusLower = (history.data?.current?.status ?? '').toLowerCase();
+  const canCancel = enableTaskActions && ['pending', 'dispatched', 'running', 'verifying'].includes(statusLower);
+  const canReview = enableTaskActions && ['done', 'failed'].includes(statusLower);
+  return <TaskRecoveryDetails
+    current={currentTaskExecution(history.data)}
+    view={history.data}
+    evidenceByAttemptId={history.data?.evidenceByAttemptId}
+    loading={history.isFetching}
     loadError={hasReadFailure(history) ? readErrorText(history.error, 'Could not refresh execution history.') : null}
     onRefresh={() => { void refresh(); }}
-    openWorker={openWorker} openableWorkerIds={openableWorkerIds} />;
+    openWorker={openWorker}
+    openableWorkerIds={openableWorkerIds}
+    taskActions={enableTaskActions ? {
+      pending: actionPending,
+      error: actionError,
+      canCancel,
+      canReview,
+      onCancel: () => runTaskAction('cancel'),
+      onAccept: () => runTaskAction('accept'),
+      onReject: () => runTaskAction('reject'),
+    } : undefined}
+  />;
 }
 
 function taskHistoryKey(trackId: string, key: string) {

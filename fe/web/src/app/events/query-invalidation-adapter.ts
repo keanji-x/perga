@@ -22,6 +22,7 @@ export type SessionLiveBuffer = Readonly<{
   thinking: string;
   tools: readonly SessionLiveToolState[];
   updatedAtMs: number;
+  completed?: boolean;
 }>;
 
 export function applySessionDeltaToBuffer(
@@ -128,7 +129,7 @@ export function applyEventEffects(client: QueryCachePort, effects: readonly Even
         if (write.mode === 'session-turn-completed') {
           const previous = client.getQueryData<SessionLiveBuffer>(write.key);
           if (previous !== undefined && previous.turnId === write.turnId) {
-            void client.removeQueries({ queryKey: write.key });
+            client.setQueryData(write.key, { ...previous, completed: true });
           }
           continue;
         }

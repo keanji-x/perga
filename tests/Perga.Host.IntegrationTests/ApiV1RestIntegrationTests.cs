@@ -218,7 +218,7 @@ public sealed class ApiV1RestIntegrationTests
         var attempts = await attemptsResp.Content.ReadFromJsonAsync<List<TaskAttemptDto>>(PergaJsonDefaults.ApiOptions);
         Assert.NotNull(attempts);
         Assert.Single(attempts!);
-        Assert.Equal("Done", attempts![0].Status);
+        Assert.Equal("done", attempts![0].Status);
     }
 
     [Fact]
@@ -424,8 +424,12 @@ public sealed class ApiV1RestIntegrationTests
     {
         var distDir = Path.Combine(Path.GetTempPath(), $"perga-spa-{Guid.NewGuid():N}");
         Directory.CreateDirectory(distDir);
+        Directory.CreateDirectory(Path.Combine(distDir, "assets"));
         await File.WriteAllTextAsync(Path.Combine(distDir, "index.html"), "<!doctype html><html><body>Perga SPA</body></html>");
         await File.WriteAllTextAsync(Path.Combine(distDir, "app.js"), "console.log('perga');");
+        await File.WriteAllTextAsync(Path.Combine(distDir, "assets", "bundle.js"), "console.log('bundle');");
+        await File.WriteAllTextAsync(Path.Combine(distDir, "assets", "bundle.css"), "body{margin:0;}");
+        await File.WriteAllTextAsync(Path.Combine(distDir, "manifest.webmanifest"), "{\"id\":\"/next/\"}");
 
         try
         {
@@ -499,6 +503,23 @@ public sealed class ApiV1RestIntegrationTests
             using var assetResp = await client.GetAsync("/app.js");
             Assert.Equal(HttpStatusCode.OK, assetResp.StatusCode);
             Assert.Contains("console.log('perga')", await assetResp.Content.ReadAsStringAsync());
+
+            using var nextJsResp = await client.GetAsync("/next/assets/bundle.js");
+            Assert.Equal(HttpStatusCode.OK, nextJsResp.StatusCode);
+            Assert.Contains("javascript", nextJsResp.Content.Headers.ContentType?.MediaType ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("console.log('bundle')", await nextJsResp.Content.ReadAsStringAsync());
+
+            using var rootJsResp = await client.GetAsync("/assets/bundle.js");
+            Assert.Equal(HttpStatusCode.OK, rootJsResp.StatusCode);
+            Assert.Contains("javascript", rootJsResp.Content.Headers.ContentType?.MediaType ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+
+            using var nextCssResp = await client.GetAsync("/next/assets/bundle.css");
+            Assert.Equal(HttpStatusCode.OK, nextCssResp.StatusCode);
+            Assert.Equal("text/css", nextCssResp.Content.Headers.ContentType?.MediaType);
+
+            using var manifestResp = await client.GetAsync("/next/manifest.webmanifest");
+            Assert.Equal(HttpStatusCode.OK, manifestResp.StatusCode);
+            Assert.Equal("application/manifest+json", manifestResp.Content.Headers.ContentType?.MediaType);
 
             using var spaRouteResp = await client.GetAsync($"/tracks/{trackId}");
             Assert.Equal(HttpStatusCode.OK, spaRouteResp.StatusCode);

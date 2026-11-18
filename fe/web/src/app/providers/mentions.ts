@@ -7,18 +7,53 @@ import { useMemo } from 'react';
 import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { mentionQueryOf, mentionSuggestionsOf, mentionsOperation, pluginMentionSuggestions, templateMentionSuggestions, type MentionSearch, type MentionSuggestion } from '../../../../core/domain/mentions.ts';
-import { trackTemplatesOperation, type TrackTemplate } from '../../../../core/domain/track.ts';
+import { tracksInAreaOperation, trackTemplatesOperation, type TrackTemplate } from '../../../../core/domain/track.ts';
 import { pluginsOperation } from '../../../../core/domain/plugins.ts';
 import { runOperation } from './queries.ts';
 
 /** `trackId` is the track the message is written in, or `null` before there is one. */
 export function mentionSearchOf(
   transport: ApiTransportPort, unauthorized: UnauthorizedChannel, areaId: string | null, trackId: string | null,
-  onTemplates?: (templates: readonly TrackTemplate[]) => void,
+  onTemplates?: (templates: readonly TrackTemplate[]) => void, pergaMode = false,
 ): MentionSearch {
   return async (typed, signal) => {
     const query = mentionQueryOf(typed);
     const sources: Promise<readonly MentionSuggestion[]>[] = [];
+    if (pergaMode) {
+      if (areaId !== null && (query.kind === null || query.kind === 'track')) {
+        const needle = query.text.trim().toLocaleLowerCase();
+        sources.push(
+          runOperation(transport, { ...tracksInAreaOperation(areaId), signal }, unauthorized)
+            .then((tracks) =>
+              tracks
+                .filter((t) => t.id !== trackId && `${t.title} ${t.id}`.toLocaleLowerCase().includes(needle))
+                .slice(0, 8)
+                .map((t): MentionSuggestion => {
+                  const label = t.title.trim() !== '' ? t.title : t.id;
+                  return {
+                    id: `track:${t.id}`,
+                    kind: 'track',
+                    label,
+                    detail: t.cwd ?? null,
+                    chip: label,
+                    insert: `@\`/~${encodeURIComponent(areaId)}/${encodeURIComponent(label)}/report.md\``,
+                  };
+                })),
+        );
+      }
+      if (query.kind === null || query.kind === 'template') {
+        sources.push(
+          runOperation(transport, { ...trackTemplatesOperation(), signal }, unauthorized)
+            .then((templates) => {
+              if (!signal.aborted) onTemplates?.(templates);
+              return templateMentionSuggestions(templates, typed);
+            }),
+        );
+      }
+      if (sources.length === 0) return [];
+      const results = await Promise.allSettled(sources);
+      return results.flatMap((result) => result.status === 'fulfilled' ? [...result.value] : []);
+    }
     if (areaId !== null && query.kind !== 'plugin' && query.kind !== 'template') sources.push(runOperation(transport,
       { ...mentionsOperation(areaId, query.text, trackId), signal }, unauthorized)
       .then(candidates => mentionSuggestionsOf(candidates, query)));
@@ -39,10 +74,10 @@ export function mentionSearchOf(
 /** Plugin documentation everywhere; Area report references only for that Area's Planner. */
 export function useMentionSearch(
   transport: ApiTransportPort, unauthorized: UnauthorizedChannel, areaId: string | null, trackId: string | null,
-  onTemplates?: (templates: readonly TrackTemplate[]) => void,
+  onTemplates?: (templates: readonly TrackTemplate[]) => void, pergaMode = false,
 ): MentionSearch {
   return useMemo(
-    () => mentionSearchOf(transport, unauthorized, areaId, trackId, onTemplates),
-    [transport, unauthorized, areaId, trackId, onTemplates],
+    () => mentionSearchOf(transport, unauthorized, areaId, trackId, onTemplates, pergaMode),
+    [transport, unauthorized, areaId, trackId, onTemplates, pergaMode],
   );
 }

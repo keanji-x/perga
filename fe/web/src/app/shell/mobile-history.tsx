@@ -63,7 +63,7 @@ export function MobileHistory({ owner, open, onOpenChange, conversations, loadin
   scopeLabel: string;
   accountLabel: string;
   accountInitial: string;
-  onSignOut: () => void;
+  onSignOut?: (() => void) | undefined;
   now: number;
 }>) {
   const [view, setView] = useState<HistoryView>('current');
@@ -171,9 +171,13 @@ export function MobileHistory({ owner, open, onOpenChange, conversations, loadin
         </>}
       </div>
       {!shareMode && <div className={styles.footer}>
-        <DropdownMenu placement="above" alignment="start" hasChevron={false}
-          button={{ label: accountLabel, variant: 'ghost', size: 'lg', className: styles.footerButton, icon: <span className={styles.avatar}>{accountInitial}</span> }}
-          items={[{ label: '退出登录', onClick: () => leave(onSignOut) }]} />
+        {onSignOut !== undefined ? (
+          <DropdownMenu placement="above" alignment="start" hasChevron={false}
+            button={{ label: accountLabel, variant: 'ghost', size: 'lg', className: styles.footerButton, icon: <span className={styles.avatar}>{accountInitial}</span> }}
+            items={[{ label: '退出登录', onClick: () => leave(onSignOut) }]} />
+        ) : (
+          <span className={styles.footerButton}><span className={styles.avatar}>{accountInitial}</span>{accountLabel}</span>
+        )}
         <Button className={styles.footerButton} label="设置" variant="ghost" size="lg" icon={<Icon icon="wrench" />}
           onClick={() => leave(onOpenSettings)} />
       </div>}

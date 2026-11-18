@@ -92,6 +92,9 @@ export type AreaDto = z.infer<typeof areaDtoSchema>;
 
 export const bootstrapDtoSchema = z.object({
   version: z.string(),
+  databaseId: z.string().nullish(),
+  dbInstanceId: z.string().nullish(),
+  authRequired: z.boolean().nullish(),
   providers: z.array(providerStatusDtoSchema).default([]),
   templates: z.array(compiledTemplateManifestDtoSchema).default([]),
   areas: z.array(areaDtoSchema).default([]),
@@ -103,8 +106,8 @@ export const trackDtoSchema = z.object({
   areaId: z.string(),
   parentTrackId: z.string().nullish(),
   parentAttemptId: z.string().nullish(),
-  title: z.string().default(''),
-  cwd: z.string().default(''),
+  title: z.string().nullish().transform((v) => v ?? ''),
+  cwd: z.string().nullish().transform((v) => v ?? ''),
   workspaceDriver: z.string().default('direct'),
   workspaceSpec: z.unknown().default({}),
   leadSessionId: z.string().nullish(),
@@ -135,9 +138,13 @@ export type GateSpecDto = z.infer<typeof gateSpecDtoSchema>;
 
 export const gateStepOutcomeDtoSchema = z.object({
   name: z.string(),
+  cmd: z.string().nullish(),
   exitCode: z.number(),
-  durationMs: z.number(),
-  outputTail: z.string().default(''),
+  passed: z.boolean().optional(),
+  durationMs: z.number().default(0),
+  stdout: z.string().nullish(),
+  stderr: z.string().nullish(),
+  outputTail: z.string().nullish().transform((v) => v ?? ''),
 });
 export type GateStepOutcomeDto = z.infer<typeof gateStepOutcomeDtoSchema>;
 
@@ -247,7 +254,7 @@ export const agentSessionDtoSchema = z.object({
   nativeThreadId: z.string().nullish(),
   epoch: z.number().int().default(1),
   status: z.string().default('idle'),
-  contextUsageRatio: z.number().default(0),
+  contextUsageRatio: z.number().nullish().transform((v) => v ?? 0),
   archivedAtMs: z.number().nullish(),
   createdAtMs: z.number(),
   updatedAtMs: z.number(),
@@ -261,6 +268,7 @@ export const sessionTurnDtoSchema = z.object({
   epoch: z.number().int().default(1),
   triggerKind: z.string().default('user'),
   input: z.unknown().nullish(),
+  userItemId: z.number().int().nullish(),
   status: z.string(),
   usage: z.unknown().nullish(),
   errorText: z.string().nullish(),
@@ -291,7 +299,7 @@ export const sessionItemDtoSchema = z.object({
   id: z.number().int(),
   sessionId: z.string(),
   turnId: z.string().nullish().transform((v) => v ?? ''),
-  kind: z.enum(['user', 'thinking', 'assistant_text', 'tool_call', 'tool_result']).or(z.string()),
+  kind: z.enum(['user', 'thinking', 'assistant_text', 'tool_call', 'tool_result', 'turn_outcome', 'turn_error']).or(z.string()),
   payload: z.unknown(),
   createdAtMs: z.number(),
 });
@@ -302,6 +310,7 @@ export const sessionItemsPageDtoSchema = z.object({
   activeTurn: sessionTurnDtoSchema.nullish(),
   unknownInput: sessionInputReceiptSchema.nullable(),
   session: agentSessionDtoSchema,
+  hasMoreBefore: z.boolean().optional(),
 });
 export type SessionItemsPageDto = z.infer<typeof sessionItemsPageDtoSchema>;
 
@@ -340,9 +349,9 @@ export const terminalDtoSchema = z.object({
   trackId: z.string(),
   attemptId: z.string().nullish(),
   idempotencyKey: z.string().nullish(),
-  title: z.string().default('Terminal'),
+  title: z.string().nullish().transform((v) => v ?? 'Terminal'),
   program: z.string().nullish(),
-  cwd: z.string().default(''),
+  cwd: z.string().nullish().transform((v) => v ?? ''),
   status: terminalStatusSchema.or(z.string()),
   exitCode: z.number().int().nullish(),
   createdAtMs: z.number(),
@@ -361,6 +370,26 @@ export const trackAggregateSnapshotDtoSchema = z.object({
 });
 export type TrackAggregateSnapshotDto = z.infer<typeof trackAggregateSnapshotDtoSchema>;
 
+export const hostDirEntryDtoSchema = z.object({
+  name: z.string(),
+  isDir: z.boolean().optional(),
+  is_dir: z.boolean().optional(),
+  isSymlink: z.boolean().optional(),
+  is_symlink: z.boolean().optional(),
+}).transform((raw) => ({
+  name: raw.name,
+  isDir: raw.isDir ?? raw.is_dir ?? false,
+  isSymlink: raw.isSymlink ?? raw.is_symlink ?? false,
+}));
+export type HostDirEntryDto = z.infer<typeof hostDirEntryDtoSchema>;
+
+export const hostDirListDtoSchema = z.object({
+  path: z.string(),
+  parent: z.string().nullable().default(null),
+  entries: z.array(hostDirEntryDtoSchema).default([]),
+});
+export type HostDirListDto = z.infer<typeof hostDirListDtoSchema>;
+
 export const workspaceFileEntryDtoSchema = z.object({
   name: z.string(),
   relativePath: z.string(),
@@ -372,21 +401,53 @@ export type WorkspaceFileEntryDto = z.infer<typeof workspaceFileEntryDtoSchema>;
 export const workspaceFileResultDtoSchema = z.object({
   relativePath: z.string(),
   isDirectory: z.boolean(),
+  isBinary: z.boolean().default(false),
   content: z.string().nullish(),
   truncated: z.boolean().default(false),
   entries: z.array(workspaceFileEntryDtoSchema).nullish(),
 });
 export type WorkspaceFileResultDto = z.infer<typeof workspaceFileResultDtoSchema>;
 
+export const vcsDiffFileDtoSchema = z.object({
+  path: z.string(),
+  oldPath: z.string().nullish(),
+  status: z.string().default('modified'),
+  patch: z.string().nullish(),
+  headText: z.string().nullish(),
+  workingText: z.string().nullish(),
+  isBinary: z.boolean().default(false),
+});
+export type VcsDiffFileDto = z.infer<typeof vcsDiffFileDtoSchema>;
+
 export const diffSummaryDtoSchema = z.object({
   diffText: z.string().default(''),
   truncated: z.boolean().default(false),
   changedFiles: z.array(z.string()).default([]),
+  files: z.array(vcsDiffFileDtoSchema).optional(),
 });
 export type DiffSummaryDto = z.infer<typeof diffSummaryDtoSchema>;
 
+export const trackOverlayItemDtoSchema = z.object({
+  trackId: z.string(),
+  areaId: z.string().nullish(),
+  isWorking: z.boolean().default(false),
+  openAskCount: z.number().int().default(0),
+  hasFailedTask: z.boolean().default(false),
+  unreadMailCount: z.number().int().default(0),
+  updatedAtMs: z.number().default(0),
+});
+export type TrackOverlayItemDto = z.infer<typeof trackOverlayItemDtoSchema>;
+
+export const overlaysListDtoSchema = z.object({
+  tracks: z.array(trackOverlayItemDtoSchema).default([]),
+});
+export type OverlaysListDto = z.infer<typeof overlaysListDtoSchema>;
+
 export const pergaPersistentEventKindSchema = z.enum([
+  'area.updated',
+  'area.deleted',
   'track.updated',
+  'track.deleted',
   'report.updated',
   'task.updated',
   'session.updated',
@@ -445,7 +506,10 @@ export type PergaStreamDelta =
   }>;
 
 export type PergaPersistentEvent =
+  | Readonly<{ kind: 'area.updated'; eventId: number; areaId: string | null; trackId: string | null; payload: AreaDto; createdAtMs: number }>
+  | Readonly<{ kind: 'area.deleted'; eventId: number; areaId: string | null; trackId: string | null; payload: Readonly<{ id: string }>; createdAtMs: number }>
   | Readonly<{ kind: 'track.updated'; eventId: number; areaId: string | null; trackId: string | null; payload: TrackDto; createdAtMs: number }>
+  | Readonly<{ kind: 'track.deleted'; eventId: number; areaId: string | null; trackId: string | null; payload: Readonly<{ id: string; areaId: string }>; createdAtMs: number }>
   | Readonly<{ kind: 'report.updated'; eventId: number; areaId: string | null; trackId: string | null; payload: Readonly<{ docRev?: number; summary?: string | null }>; createdAtMs: number }>
   | Readonly<{ kind: 'task.updated'; eventId: number; areaId: string | null; trackId: string | null; payload: Readonly<{ task?: TaskDto | null; attempt?: TaskAttemptDto | null; tasks?: readonly TaskDto[] | null }>; createdAtMs: number }>
   | Readonly<{ kind: 'session.updated'; eventId: number; areaId: string | null; trackId: string | null; payload: AgentSessionDto; createdAtMs: number }>
@@ -511,10 +575,28 @@ export function decodePergaEventEnvelope(input: unknown): PergaEventDecodeResult
   const resolvedArea = areaId ?? null;
   const resolvedTrack = trackId ?? null;
   switch (kind) {
+    case 'area.updated': {
+      const parsed = areaDtoSchema.safeParse(payload);
+      if (!parsed.success) return { status: 'failed', error: { kind: 'decode', message: 'Invalid area.updated payload', cause: parsed.error } };
+      return { status: 'ready', kind: 'persistent', event: { kind, eventId: resolvedId, areaId: resolvedArea ?? parsed.data.id, trackId: resolvedTrack, payload: parsed.data, createdAtMs } };
+    }
+    case 'area.deleted': {
+      const parsed = z.object({ id: z.string().optional(), areaId: z.string().optional() }).safeParse(payload ?? {});
+      const id = (parsed.success ? (parsed.data.id ?? parsed.data.areaId) : undefined) ?? resolvedArea;
+      if (!id) return { status: 'failed', error: { kind: 'decode', message: 'Invalid area.deleted payload', cause: payload } };
+      return { status: 'ready', kind: 'persistent', event: { kind, eventId: resolvedId, areaId: id, trackId: resolvedTrack, payload: { id }, createdAtMs } };
+    }
     case 'track.updated': {
       const parsed = trackDtoSchema.safeParse(payload);
       if (!parsed.success) return { status: 'failed', error: { kind: 'decode', message: 'Invalid track.updated payload', cause: parsed.error } };
       return { status: 'ready', kind: 'persistent', event: { kind, eventId: resolvedId, areaId: resolvedArea ?? parsed.data.areaId, trackId: resolvedTrack ?? parsed.data.id, payload: parsed.data, createdAtMs } };
+    }
+    case 'track.deleted': {
+      const parsed = z.object({ id: z.string().optional(), trackId: z.string().optional(), areaId: z.string().optional(), area_id: z.string().optional() }).safeParse(payload ?? {});
+      const id = (parsed.success ? (parsed.data.id ?? parsed.data.trackId) : undefined) ?? resolvedTrack;
+      const deletedAreaId = (parsed.success ? (parsed.data.areaId ?? parsed.data.area_id) : undefined) ?? resolvedArea ?? '';
+      if (!id) return { status: 'failed', error: { kind: 'decode', message: 'Invalid track.deleted payload', cause: payload } };
+      return { status: 'ready', kind: 'persistent', event: { kind, eventId: resolvedId, areaId: deletedAreaId || null, trackId: id, payload: { id, areaId: deletedAreaId }, createdAtMs } };
     }
     case 'report.updated': {
       const parsed = z.object({ docRev: z.number().optional(), summary: z.string().nullish() }).passthrough().safeParse(payload ?? {});

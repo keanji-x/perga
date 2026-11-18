@@ -49,7 +49,7 @@ const PROVIDERS: Readonly<Record<AgentProvider, Readonly<{
     switchNote: false,
   }),
   antigravity: Object.freeze({
-    label: 'Antigravity', unavailable: 'Antigravity cannot run on this server right now', hiddenUntilKnown: true,
+    label: 'Antigravity (agy)', unavailable: 'Antigravity (agy) cannot run on this server right now', hiddenUntilKnown: true,
     switchNote: false,
   }),
   grok: Object.freeze({

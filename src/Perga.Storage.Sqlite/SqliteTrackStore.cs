@@ -33,6 +33,7 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
     private readonly SemaphoreSlim _initLock = new(1, 1);
 
     private volatile IReadOnlyList<InterruptedAttemptLeaseDto> _bootInterruptedLeases = Array.Empty<InterruptedAttemptLeaseDto>();
+    private string _databaseId = string.Empty;
     private bool _initialized;
     private int _disposed;
 
@@ -79,6 +80,14 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
 
     public SqliteStorageOptions Options => _options;
     public SqliteJsonUpcaster Upcaster => _upcaster;
+    public string DatabaseId
+    {
+        get
+        {
+            EnsureInitialized();
+            return _databaseId;
+        }
+    }
 
     public static async Task<SqliteTrackStore> OpenAsync(
         string dbPath,
@@ -115,8 +124,11 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
             }
 
             Directory.CreateDirectory(_options.ResolveDataDir());
-            await _migrator.MigrateAsync(_options.GetFullDbPath(), ct).ConfigureAwait(false);
+            var fullDbPath = _options.GetFullDbPath();
+            var dbExistedBeforeInit = File.Exists(fullDbPath);
+            await _migrator.MigrateAsync(fullDbPath, ct).ConfigureAwait(false);
             await _writer.InitializeAsync(ct).ConfigureAwait(false);
+            _databaseId = ResolveOrCreateDatabaseId(fullDbPath, dbExistedBeforeInit);
             _initialized = true;
         }
         finally
@@ -1000,11 +1012,20 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                 cancellationToken: ct)).ConfigureAwait(false);
     }
 
-    public Task RecordTurnAndItemsAsync(
+    public async Task RecordTurnAndItemsAsync(
         SessionTurnDto turn,
         IReadOnlyList<SessionItemDto> newItems,
         AgentSessionDto? updatedSession,
         CancellationToken ct)
+    {
+        _ = await RecordTurnAndItemsWithIdsAsync(turn, newItems, updatedSession, ct).ConfigureAwait(false);
+    }
+
+    public Task<(SessionTurnDto Turn, IReadOnlyList<long> ItemIds)> RecordTurnAndItemsWithIdsAsync(
+        SessionTurnDto turn,
+        IReadOnlyList<SessionItemDto> newItems,
+        AgentSessionDto? updatedSession,
+        CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(turn);
         ArgumentNullException.ThrowIfNull(newItems);
@@ -1013,7 +1034,7 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
         var inputJson = SqliteJsonUpcaster.SerializeElement(turn.Input);
         var usageJson = SqliteJsonUpcaster.SerializeNullableElement(turn.Usage);
 
-        return _writer.EnqueueAsync(
+        return _writer.EnqueueAsync<(SessionTurnDto, IReadOnlyList<long>)>(
             async (conn, tx, innerCt) =>
             {
                 await conn.ExecuteAsync(
@@ -1060,6 +1081,8 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                     await UpsertSessionInternalAsync(conn, tx, updatedSession, innerCt).ConfigureAwait(false);
                 }
 
+                IReadOnlyList<long> insertedIds = [];
+                long? userItemId = turn.UserItemId;
                 if (newItems.Count > 0)
                 {
                     var trackId = updatedSession?.TrackId ?? await conn.ExecuteScalarAsync<string?>(
@@ -1069,26 +1092,75 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                             transaction: tx,
                             cancellationToken: innerCt)).ConfigureAwait(false);
 
-                    await InsertSessionItemsAsync(conn, tx, trackId, newItems, innerCt).ConfigureAwait(false);
+                    insertedIds = await InsertSessionItemsAsync(conn, tx, trackId, newItems, innerCt).ConfigureAwait(false);
+                    for (var i = 0; i < newItems.Count; i++)
+                    {
+                        if (userItemId is null && string.Equals(newItems[i].Kind, "user", StringComparison.Ordinal))
+                        {
+                            userItemId = insertedIds[i];
+                            break;
+                        }
+                    }
                 }
+
+                userItemId ??= await conn.ExecuteScalarAsync<long?>(
+                    new CommandDefinition(
+                        "SELECT id FROM session_items WHERE turn_id = @TurnId AND kind = 'user' ORDER BY id ASC LIMIT 1;",
+                        new { TurnId = turn.Id },
+                        transaction: tx,
+                        cancellationToken: innerCt)).ConfigureAwait(false);
+
+                var resolvedTurn = userItemId == turn.UserItemId ? turn : turn with { UserItemId = userItemId };
+                return (resolvedTurn, insertedIds);
             },
             ct);
     }
 
-    private async Task InsertSessionItemsAsync(
+    public Task<IReadOnlyList<long>> AppendSessionItemsAsync(
+        string sessionId,
+        IReadOnlyList<SessionItemDto> newItems,
+        CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(sessionId);
+        ArgumentNullException.ThrowIfNull(newItems);
+        EnsureInitialized();
+
+        if (newItems.Count == 0)
+        {
+            return Task.FromResult<IReadOnlyList<long>>([]);
+        }
+
+        return _writer.EnqueueAsync<IReadOnlyList<long>>(
+            async (conn, tx, innerCt) =>
+            {
+                var trackId = await conn.ExecuteScalarAsync<string?>(
+                    new CommandDefinition(
+                        "SELECT track_id FROM agent_sessions WHERE id = @SessionId;",
+                        new { SessionId = sessionId },
+                        transaction: tx,
+                        cancellationToken: innerCt)).ConfigureAwait(false);
+
+                return await InsertSessionItemsAsync(conn, tx, trackId, newItems, innerCt).ConfigureAwait(false);
+            },
+            ct);
+    }
+
+    private async Task<IReadOnlyList<long>> InsertSessionItemsAsync(
         SqliteConnection conn, SqliteTransaction tx, string? trackId, IReadOnlyList<SessionItemDto> items, CancellationToken ct)
     {
+        var ids = new List<long>(items.Count);
         foreach (var item in items)
         {
             var payloadJson = !string.IsNullOrWhiteSpace(trackId)
                 ? _coldBlobStore.StoreOrInline(trackId, item.Payload)
                 : SqliteJsonUpcaster.SerializeElement(item.Payload);
 
-            await conn.ExecuteAsync(
+            var insertedId = await conn.ExecuteScalarAsync<long>(
                 new CommandDefinition(
                     """
                     INSERT INTO session_items (session_id, turn_id, kind, payload_json, created_at_ms)
                     VALUES (@SessionId, @TurnId, @Kind, @PayloadJson, @CreatedAtMs);
+                    SELECT last_insert_rowid();
                     """,
                     new
                     {
@@ -1100,7 +1172,10 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                     },
                     transaction: tx,
                     cancellationToken: ct)).ConfigureAwait(false);
+            ids.Add(insertedId);
         }
+
+        return ids;
     }
 
     public async Task<IReadOnlyList<SessionTurnDto>> ListSessionTurnsAsync(
@@ -1405,6 +1480,30 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
             ct);
     }
 
+    public Task DeleteTerminalAsync(string trackId, string terminalId, EventEnvelopeDto? evt, CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(trackId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(terminalId);
+        EnsureInitialized();
+
+        return _writer.EnqueueAsync(
+            async (conn, tx, innerCt) =>
+            {
+                await conn.ExecuteAsync(
+                    new CommandDefinition(
+                        "DELETE FROM terminals WHERE id = @TerminalId AND track_id = @TrackId;",
+                        new { TerminalId = terminalId, TrackId = trackId },
+                        transaction: tx,
+                        cancellationToken: innerCt)).ConfigureAwait(false);
+
+                if (evt is not null)
+                {
+                    await InsertEventInternalAsync(conn, tx, evt, innerCt).ConfigureAwait(false);
+                }
+            },
+            ct);
+    }
+
     public async Task<IReadOnlyList<TerminalDto>> ListTerminalsAsync(string trackId, CancellationToken ct)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(trackId);
@@ -1508,6 +1607,56 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                 cancellationToken: ct)).ConfigureAwait(false);
 
         return rows.Select(MapEvent).ToList();
+    }
+
+    public async Task<IReadOnlyList<TrackOverlayDto>> ListTrackOverlaysAsync(
+        bool includeClosed = false,
+        CancellationToken ct = default)
+    {
+        EnsureInitialized();
+        await using var conn = await OpenReadConnectionAsync(ct).ConfigureAwait(false);
+        var rows = await conn.QueryAsync<TrackOverlayRow>(
+            new CommandDefinition(
+                """
+                SELECT tr.id AS TrackId,
+                       tr.area_id AS AreaId,
+                       CASE WHEN EXISTS (
+                           SELECT 1 FROM agent_sessions s
+                           WHERE s.track_id = tr.id AND LOWER(s.status) IN ('queued', 'running')
+                       ) OR EXISTS (
+                           SELECT 1 FROM tasks t
+                           WHERE t.track_id = tr.id AND LOWER(t.status) IN ('running', 'verifying')
+                       ) THEN 1 ELSE 0 END AS IsWorking,
+                       (SELECT COUNT(1) FROM asks a WHERE a.track_id = tr.id AND LOWER(a.status) = 'open') AS OpenAskCount,
+                       CASE WHEN EXISTS (
+                           SELECT 1 FROM tasks tf
+                           WHERE tf.track_id = tr.id AND LOWER(tf.status) = 'failed'
+                       ) THEN 1 ELSE 0 END AS HasFailedTask,
+                       (SELECT COUNT(1) FROM mails m WHERE m.to_track_id = tr.id AND m.read_at_ms IS NULL) AS UnreadMailCount,
+                       MAX(
+                           tr.updated_at_ms,
+                           COALESCE((SELECT MAX(s2.updated_at_ms) FROM agent_sessions s2 WHERE s2.track_id = tr.id), tr.updated_at_ms),
+                           COALESCE((SELECT MAX(t2.updated_at_ms) FROM tasks t2 WHERE t2.track_id = tr.id), tr.updated_at_ms),
+                           COALESCE((SELECT MAX(COALESCE(a2.answered_at_ms, a2.created_at_ms)) FROM asks a2 WHERE a2.track_id = tr.id), tr.updated_at_ms),
+                           COALESCE((SELECT MAX(m2.created_at_ms) FROM mails m2 WHERE m2.to_track_id = tr.id), tr.updated_at_ms)
+                       ) AS UpdatedAtMs
+                FROM tracks tr
+                WHERE (@IncludeClosed = 1 OR tr.closed_at_ms IS NULL)
+                ORDER BY tr.updated_at_ms DESC, tr.id ASC;
+                """,
+                new { IncludeClosed = includeClosed ? 1 : 0 },
+                cancellationToken: ct)).ConfigureAwait(false);
+
+        return rows
+            .Select(static r => new TrackOverlayDto(
+                TrackId: r.TrackId,
+                AreaId: r.AreaId,
+                IsWorking: r.IsWorking != 0,
+                OpenAskCount: (int)r.OpenAskCount,
+                HasFailedTask: r.HasFailedTask != 0,
+                UnreadMailCount: (int)r.UnreadMailCount,
+                UpdatedAtMs: r.UpdatedAtMs))
+            .ToList();
     }
 
     // -------------------------------------------------------------------------
@@ -2583,6 +2732,49 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
         public string TaskId { get; init; } = string.Empty;
         public string TrackId { get; init; } = string.Empty;
         public string WorkspaceLeaseJson { get; init; } = "{}";
+    }
+
+    private static string ResolveOrCreateDatabaseId(string fullDbPath, bool dbExistedBeforeInit)
+    {
+        var idFilePath = fullDbPath + ".id";
+        if (dbExistedBeforeInit && File.Exists(idFilePath))
+        {
+            try
+            {
+                var existing = File.ReadAllText(idFilePath, Encoding.UTF8).Trim();
+                if (!string.IsNullOrWhiteSpace(existing))
+                {
+                    return existing;
+                }
+            }
+            catch (IOException)
+            {
+                // Fall through to mint a new database ID.
+            }
+        }
+
+        var created = Guid.NewGuid().ToString("N");
+        try
+        {
+            File.WriteAllText(idFilePath, created, Encoding.UTF8);
+        }
+        catch (IOException)
+        {
+            // Best-effort persistence on read-only filesystems.
+        }
+
+        return created;
+    }
+
+    private sealed class TrackOverlayRow
+    {
+        public string TrackId { get; init; } = string.Empty;
+        public string AreaId { get; init; } = string.Empty;
+        public long IsWorking { get; init; }
+        public long OpenAskCount { get; init; }
+        public long HasFailedTask { get; init; }
+        public long UnreadMailCount { get; init; }
+        public long UpdatedAtMs { get; init; }
     }
 
     private sealed class RevisionBoundsRow

@@ -4,13 +4,14 @@ import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from 'r
 import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import type { HarnessLiveReplies, HarnessPhaseTag } from '../../../../core/api/generated/wire.ts';
 import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
-import type { ConversationTurn } from '../../../../core/domain/conversation.ts';
+import type { ConversationActivity, TranscriptEntry } from '../../../../core/domain/conversation.ts';
 import {
   LIVE_REPLY_POLL_MS, awaitsSettling, liveReplyTurns, reconcileLiveReplies, replyMayStream,
   type LiveReplyCopy, type LiveReplyObservation, type LiveReplyTranscriptRow,
 } from '../../../../core/domain/conversation-live.ts';
 import { cancelThenInvalidate } from '../events/query-refresh.ts';
 import type { SessionLiveBuffer } from '../events/query-invalidation-adapter.ts';
+import { useConnectionStatus } from '../providers/connection-status.tsx';
 import { harnessLiveQueryOptions, queryKeys } from '../providers/queries.ts';
 import { type History, type TranscriptReads } from './history.ts';
 import { useState } from '../../ui/state/public.ts';
@@ -42,8 +43,9 @@ export function useLiveReplies({ transport, unauthorized, cardId, enabled, phase
   transcriptReads: TranscriptReads;
   /** Every loaded transcript row. */
   items: readonly LiveReplyTranscriptRow[];
-}): readonly ConversationTurn[] {
+}): readonly TranscriptEntry[] {
   const client = useQueryClient();
+  const wsConnected = useConnectionStatus()?.connected === true;
   const streaming = enabled && replyMayStream(phase);
   const scope = useStreamReadScope(cardId, streaming, phase, runningTurnId, nextRead,canonical);
   const liveOptions = harnessLiveQueryOptions(transport, cardId, unauthorized,canonical);
@@ -52,7 +54,7 @@ export function useLiveReplies({ transport, unauthorized, cardId, enabled, phase
     // A delayed initial read cannot hold up or answer a later streaming visit.
     // Prefix invalidation still reaches the card; cached payload shape is unchanged.
     queryKey: [...liveOptions.queryKey, scope.read, scope.turnId],
-    enabled: streaming,
+    enabled: streaming && !wsConnected,
     refetchInterval: LIVE_REPLY_POLL_MS,
     gcTime: 0,
   });
@@ -118,11 +120,21 @@ export function useLiveReplies({ transport, unauthorized, cardId, enabled, phase
   );
 
   /* Drawn from the copies the current transcript does not retire, plus any WS delta stream in `sessionLive`. */
+  const wsPersistedInTranscript = useMemo(
+    () => wsLive !== undefined && items.some((item) => item.turn_id === wsLive.turnId && item.method === 'item/completed' && item.item_uuid?.startsWith('item-')),
+    [items, wsLive],
+  );
+  useEffect(() => {
+    if (wsLive?.completed === true && wsPersistedInTranscript) {
+      void client.removeQueries({ queryKey: sessionLiveKey });
+    }
+  }, [client, sessionLiveKey, wsLive?.completed, wsPersistedInTranscript]);
+
   const visible = useMemo(
     () => {
       let current = canonical || scope.turnId === null ? copies
         : reconcileLiveReplies(copies, { kind: 'active-turn', turnId: scope.turnId });
-      if (wsLive !== undefined && wsLive.turnId !== null && wsLive.text.trim() !== '') {
+      if (wsLive !== undefined && wsLive.turnId !== null && wsLive.text.trim() !== '' && !wsPersistedInTranscript) {
         current = reconcileLiveReplies(current, {
           kind: 'poll',
           reply: {
@@ -135,8 +147,48 @@ export function useLiveReplies({ transport, unauthorized, cardId, enabled, phase
       }
       return reconcileLiveReplies(current, { kind: 'transcript', items, readStart: transcriptStart });
     },
-    [copies, items, transcriptStart, scope.turnId, canonical, wsLive],
+    [copies, items, transcriptStart, scope.turnId, canonical, wsLive, wsPersistedInTranscript],
   );
+
+  const wsActivities = useMemo((): readonly ConversationActivity[] => {
+    if (wsLive === undefined || wsLive.turnId === null || wsLive.completed === true || wsPersistedInTranscript) return [];
+    const activities: ConversationActivity[] = [];
+    if (wsLive.thinking.trim() !== '' && !items.some((item) => item.turn_id === wsLive.turnId && item.item_uuid?.startsWith('thinking-'))) {
+      const doneThinking = wsLive.text.trim() !== '' || wsLive.tools.length > 0;
+      activities.push({
+        id: `live-thinking-${wsLive.turnId}`,
+        author: 'activity',
+        verb: doneThinking ? 'Thought' : 'Thinking',
+        target: null,
+        state: doneThinking ? 'done' : 'running',
+        durationMs: null,
+        detail: null,
+        content: wsLive.thinking,
+        tool: null,
+        atMs: wsLive.updatedAtMs,
+      });
+    }
+    for (const tool of wsLive.tools) {
+      if (items.some((item) => item.item_uuid === tool.callId)) continue;
+      const doneTool = tool.phase === 'completed';
+      const argsContent = tool.args !== null && tool.args !== undefined
+        ? `Input\n${typeof tool.args === 'string' ? tool.args : JSON.stringify(tool.args, null, 2)}`
+        : undefined;
+      activities.push({
+        id: `live-tool-${tool.callId}`,
+        author: 'activity',
+        verb: doneTool ? 'Called' : 'Calling',
+        target: tool.name,
+        state: tool.isError ? 'failed' : doneTool ? 'done' : 'running',
+        durationMs: null,
+        detail: null,
+        ...(argsContent === undefined ? {} : { content: argsContent }),
+        tool: tool.name,
+        atMs: wsLive.updatedAtMs,
+      });
+    }
+    return activities;
+  }, [items, wsLive, wsPersistedInTranscript]);
 
   /* Only a read started after this point stands for the phase, however late an earlier one lands.
      The transcript is re-read here so that one always starts; the cancel comes first because the
@@ -169,7 +221,7 @@ export function useLiveReplies({ transport, unauthorized, cardId, enabled, phase
     if (visible !== copies) apply({ kind: 'transcript', items, readStart: transcriptStart });
   }, [apply, copies, items, transcriptStart, visible]);
 
-  return useMemo(() => liveReplyTurns(visible), [visible]);
+  return useMemo(() => [...wsActivities, ...liveReplyTurns(visible)], [wsActivities, visible]);
 }
 
 

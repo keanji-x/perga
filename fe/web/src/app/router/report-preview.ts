@@ -31,16 +31,16 @@ export function previewResolutionOf(
 
 export function useReportPreviewResolver(
   transport: ApiTransportPort, trackId: string, blocks: readonly ReportBlock[] | null,
-  unauthorized: UnauthorizedChannel,
+  unauthorized: UnauthorizedChannel, disabled = false,
 ): PreviewResolver {
-  const hasPreview = useMemo(() => (blocks ?? []).some((block) => block.kind === 'preview'), [blocks]);
+  const hasPreview = useMemo(() => !disabled && (blocks ?? []).some((block) => block.kind === 'preview'), [blocks, disabled]);
   const { data, isError, error } = useQuery({
     ...trackPreviewsQueryOptions(transport, trackId, unauthorized),
     enabled: hasPreview,
   });
   return useCallback(
-    (key: string) => previewResolutionOf({ data, isError, error }, key),
-    [data, isError, error],
+    (key: string) => disabled ? { status: 'missing' } : previewResolutionOf({ data, isError, error }, key),
+    [data, disabled, isError, error],
   );
 }
 

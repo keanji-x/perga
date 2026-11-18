@@ -7,9 +7,11 @@ import { availabilityOf } from '../../../../core/domain/agent-providers.ts';
 import { folderConflictMessage } from '../../../../core/domain/area.ts';
 import { ApiError, classifyFailure, NotSentError, refusedText, writeFailureOf } from '../../../../core/domain/failure-class.ts';
 import { selectedReadyTemplateId } from '../../../../core/domain/mentions.ts';
-import type { TrackTemplate } from '../../../../core/domain/track.ts';
+import {
+  isBlankForKernel, TRACK_CREATE_FAILURES, TRACK_CREATE_TEXT, trackCreateWorkspaceError,
+  trackTemplatesOperation, type NewTrackBodyWithoutFirstMessage, type TrackTemplate,
+} from '../../../../core/domain/track.ts';
 import { readErrorText } from '../../../../core/domain/read-failure.ts';
-import { isBlankForKernel, TRACK_CREATE_FAILURES, TRACK_CREATE_TEXT, trackCreateWorkspaceError, type NewTrackBodyWithoutFirstMessage } from '../../../../core/domain/track.ts';
 import { ModelPill, PlannerRolePill } from '../../features/chat/thread/model-pill.tsx';
 import { useMentionTrigger } from '../../features/chat/thread/mention-trigger.tsx';
 import { NewTrackForm, type NewTrackDraft, type NewTrackFormState } from '../../features/area/new-track/public.tsx';
@@ -19,15 +21,17 @@ import { managedProvidersQueryOptions } from '../providers/managed-providers.ts'
 import { agentProvidersQueryOptions } from '../providers/agent-providers.ts';
 import { createDirectoryLister } from '../providers/directory.ts';
 import { useMentionSearch } from '../providers/mentions.ts';
-import { folderConflictOf, modelCatalogQueryOptions, useTrackMutations, useWorkspace, type Workspace } from '../providers/queries.ts';
+import { folderConflictOf, modelCatalogQueryOptions, queryKeys, runOperation, useTrackMutations, useWorkspace, type Workspace } from '../providers/queries.ts';
 import { readHostThemeRgb } from '../theme/host-rgb.ts';
 import { mintIdempotencyKey } from '../providers/idempotency-key.ts';
 import { useGo, useRouteParam } from './navigation.ts';
 import { useNewTrackSession, type NewTrackSession, type TrackCreationRequest } from './new-track-drafts.tsx';
 
-type RouteProps = { transport: ApiTransportPort; unauthorized: UnauthorizedChannel };
+type RouteProps = { transport: ApiTransportPort; unauthorized: UnauthorizedChannel; pergaMode?: boolean };
 
-export function NewTrackRoute({ transport, unauthorized }: RouteProps) {
+const NO_TEMPLATES: readonly TrackTemplate[] = Object.freeze([] as const);
+
+export function NewTrackRoute({ transport, unauthorized, pergaMode = false }: RouteProps) {
   const areaId = useRouteParam('/area/');
   const workspace = useWorkspace(transport, unauthorized);
   const area = workspace.areas.find((candidate) => candidate.id === areaId);
@@ -40,10 +44,10 @@ export function NewTrackRoute({ transport, unauthorized }: RouteProps) {
     return <ErrorBox message="This area could not be found." onRetry={() => go({ name: 'today' })} />;
   }
   return <NewTrackEditor key={session.area.id} transport={transport} unauthorized={unauthorized}
-    workspace={workspace} session={session} store={store} />;
+    pergaMode={pergaMode} workspace={workspace} session={session} store={store} />;
 }
 
-function NewTrackEditor({ transport, unauthorized, workspace, session, store }: RouteProps & {
+function NewTrackEditor({ transport, unauthorized, pergaMode = false, workspace, session, store }: RouteProps & {
   workspace: Workspace;
   session: NewTrackSession;
   store: ReturnType<typeof useNewTrackSession>['store'];
@@ -59,13 +63,33 @@ function NewTrackEditor({ transport, unauthorized, workspace, session, store }: 
   const antigravityCatalog = useQuery(modelCatalogQueryOptions(transport, { kind: 'provider', provider: 'antigravity' }, unauthorized));
   const availability = useQuery(agentProvidersQueryOptions(transport, unauthorized));
   const providers = useQuery(managedProvidersQueryOptions(transport, unauthorized));
+  const templatesQuery = useQuery({
+    queryKey: queryKeys.trackTemplates(),
+    queryFn: ({ signal }: { signal: AbortSignal }) =>
+      runOperation(transport, { ...trackTemplatesOperation(), signal }, unauthorized),
+    enabled: pergaMode,
+    retry: false,
+  });
   const trackMutations = useTrackMutations(transport, unauthorized);
   const go = useGo();
-  const listDirectory = createDirectoryLister(transport, unauthorized);
+  const listDirectory = createDirectoryLister(transport, unauthorized, pergaMode);
   /* The sentence is the new track's Planner's first message, and that Planner reads this Area's reports; there is no track yet to rank first. */
   const templatesRef = useRef<readonly TrackTemplate[]>([]);
+  useEffect(() => {
+    if (templatesQuery.data !== undefined) templatesRef.current = templatesQuery.data;
+  }, [templatesQuery.data]);
   const onTemplates = useCallback((templates: readonly TrackTemplate[]) => { templatesRef.current = templates; }, []);
-  const mentionTrigger = useMentionTrigger(useMentionSearch(transport, unauthorized, areaId, null, onTemplates));
+  const mentionTrigger = useMentionTrigger(useMentionSearch(transport, unauthorized, areaId, null, onTemplates, pergaMode));
+
+  /* In Perga mode, if the default `codex` provider is unavailable and another provider is ready, seed to the first ready provider. */
+  useEffect(() => {
+    if (!pergaMode || availability.data === undefined || session.request !== null || session.model.model !== null) return;
+    if (availabilityOf(availability.data, session.provider)?.status === 'ready') return;
+    const firstReady = availability.data.find((entry) => entry.status === 'ready');
+    if (firstReady !== undefined && firstReady.provider !== session.provider) {
+      store.update(areaId, { provider: firstReady.provider });
+    }
+  }, [pergaMode, availability.data, session.provider, session.request, session.model.model, areaId, store]);
   const available = workspace.areasError === null && !workspace.areasLoading
     && workspace.areas.some((area) => area.id === areaId);
   const liveRef = useRef(true);
@@ -89,9 +113,10 @@ function NewTrackEditor({ transport, unauthorized, workspace, session, store }: 
       || current.canRetryAsNewTrack) return;
     const hadUnconfirmedRequest = replacementKey === undefined && current.request !== null;
     const attemptKey = replacementKey ?? current.key;
-    const templateId = selectedReadyTemplateId(draft.message, templatesRef.current);
+    const templateId = draft.templateId ?? selectedReadyTemplateId(draft.message, templatesRef.current);
     const body = {
       ...(templateId === undefined ? {} : { template_id: templateId }),
+      ...(draft.templateInput === undefined ? {} : { template_input: draft.templateInput }),
       area_id: areaId,
       planner_provider: current.provider,
       theme: readHostThemeRgb(),
@@ -162,6 +187,8 @@ function NewTrackEditor({ transport, unauthorized, workspace, session, store }: 
   const configurationLocked = session.creating || session.request !== null || !available || createdTrackId !== null;
 
   return <NewTrackForm
+    templates={pergaMode ? (templatesQuery.data ?? NO_TEMPLATES) : undefined}
+    defaultTemplateId={pergaMode ? session.area.defaultTemplateId : undefined}
     readNotice={workspace.areasLoading ? <Banner status="info" title="Loading Area…"
       description="You can keep writing. Create track will be available when loading finishes." /> : undefined}
     mentionTrigger={mentionTrigger}

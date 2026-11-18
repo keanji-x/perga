@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.StaticFiles;
 using Microsoft.Extensions.FileProviders;
 using Perga.Host;
 using Perga.Host.Configuration;
@@ -26,16 +27,24 @@ if (!string.IsNullOrWhiteSpace(hostOptions.StaticWebRootDirectory) &&
 {
     var fullStaticDir = Path.GetFullPath(hostOptions.StaticWebRootDirectory);
     var fileProvider = new PhysicalFileProvider(fullStaticDir);
+    var contentTypeProvider = new FileExtensionContentTypeProvider();
+    contentTypeProvider.Mappings[".webmanifest"] = "application/manifest+json";
 
-    app.UseDefaultFiles(new DefaultFilesOptions
+    foreach (var requestPath in new[] { string.Empty, "/next" })
     {
-        FileProvider = fileProvider
-    });
+        app.UseDefaultFiles(new DefaultFilesOptions
+        {
+            FileProvider = fileProvider,
+            RequestPath = requestPath
+        });
 
-    app.UseStaticFiles(new StaticFileOptions
-    {
-        FileProvider = fileProvider
-    });
+        app.UseStaticFiles(new StaticFileOptions
+        {
+            FileProvider = fileProvider,
+            RequestPath = requestPath,
+            ContentTypeProvider = contentTypeProvider
+        });
+    }
 
     var candidateIndex = Path.Combine(fullStaticDir, "index.html");
     if (File.Exists(candidateIndex))

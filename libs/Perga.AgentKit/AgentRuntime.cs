@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
 using System.Text;
+using Perga.AgentKit.Internal;
 
 namespace Perga.AgentKit;
 
@@ -15,14 +16,23 @@ public sealed class AgentRuntime : IAgentRuntime
         "acp:opencode"
     ];
 
-    private static readonly string[] DefaultCodexModels = ["gpt-5.4", "gpt-5.3-codex"];
+    private static readonly string[] DefaultCodexModels = ["gpt-5.4", "gpt-5.3-codex", "o4-mini"];
     private static readonly string[] DefaultClaudeModels = ["claude-sonnet-4-6", "claude-opus-4-6"];
-    private static readonly string[] DefaultAntigravityModels = ["gemini-3.1-pro", "gemini-3-flash"];
+    private static readonly string[] DefaultAntigravityModels =
+    [
+        "gemini-4-carbon-medium",
+        "gemini-4-carbon-high",
+        "gemini-3.8-flash-high",
+        "claude-sonnet-5-5-medium"
+    ];
     private static readonly Encoding Utf8NoBom = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
 
     private readonly AgentRuntimeOptions _options;
     private readonly OsSandboxWrapper _sandboxWrapper;
     private readonly ConcurrentDictionary<IAgentSession, byte> _activeSessions = new();
+    private readonly SemaphoreSlim _probeLock = new(1, 1);
+    private IReadOnlyList<ProviderStatus>? _cachedProbeStatuses;
+    private DateTimeOffset _cachedProbeExpiresAt = DateTimeOffset.MinValue;
     private int _disposed;
 
     public AgentRuntime()
@@ -39,35 +49,101 @@ public sealed class AgentRuntime : IAgentRuntime
 
     public OsSandboxWrapper SandboxWrapper => _sandboxWrapper;
 
-    public async Task<IReadOnlyList<ProviderStatus>> ProbeProvidersAsync(CancellationToken ct)
+    public static string NormalizeProviderName(string provider)
+    {
+        if (string.IsNullOrWhiteSpace(provider))
+        {
+            return string.Empty;
+        }
+
+        var trimmed = provider.Trim();
+        if (string.Equals(trimmed, "antigravity", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(trimmed, "agy", StringComparison.OrdinalIgnoreCase))
+        {
+            return "acp:antigravity";
+        }
+
+        if (string.Equals(trimmed, "opencode", StringComparison.OrdinalIgnoreCase))
+        {
+            return "acp:opencode";
+        }
+
+        return trimmed;
+    }
+
+    public Task<IReadOnlyList<ProviderStatus>> ProbeProvidersAsync(CancellationToken ct) =>
+        ProbeProvidersAsync(forceRefresh: false, ct);
+
+    public async Task<IReadOnlyList<ProviderStatus>> ProbeProvidersAsync(
+        bool forceRefresh,
+        CancellationToken ct = default)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         ct.ThrowIfCancellationRequested();
 
-        var providerNames = new List<string>(CanonicalProviders.Length + _options.ProviderOverrides.Count);
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-        foreach (var canonical in CanonicalProviders)
+        var ttl = _options.ProbeCacheTtl;
+        if (!forceRefresh && ttl > TimeSpan.Zero)
         {
-            if (seen.Add(canonical))
+            var cached = Volatile.Read(ref _cachedProbeStatuses);
+            if (cached is not null && _options.TimeProvider.GetUtcNow() < _cachedProbeExpiresAt)
             {
-                providerNames.Add(canonical);
+                return cached;
             }
         }
 
-        foreach (var customKey in _options.ProviderOverrides.Keys)
+        await _probeLock.WaitAsync(ct).ConfigureAwait(false);
+        try
         {
-            if (!string.IsNullOrWhiteSpace(customKey) && seen.Add(customKey))
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+
+            if (!forceRefresh && ttl > TimeSpan.Zero && _cachedProbeStatuses is not null &&
+                _options.TimeProvider.GetUtcNow() < _cachedProbeExpiresAt)
             {
-                providerNames.Add(customKey);
+                return _cachedProbeStatuses;
             }
+
+            var providerNames = new List<string>(CanonicalProviders.Length + _options.ProviderOverrides.Count);
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var canonical in CanonicalProviders)
+            {
+                if (seen.Add(canonical))
+                {
+                    providerNames.Add(canonical);
+                }
+            }
+
+            foreach (var customKey in _options.ProviderOverrides.Keys)
+            {
+                if (string.IsNullOrWhiteSpace(customKey))
+                {
+                    continue;
+                }
+
+                var normalizedCustom = NormalizeProviderName(customKey);
+                if (seen.Add(normalizedCustom))
+                {
+                    providerNames.Add(normalizedCustom);
+                }
+            }
+
+            var probeTasks = providerNames
+                .Select(provider => ProbeSingleProviderAsync(provider, ct))
+                .ToArray();
+
+            var freshResults = await Task.WhenAll(probeTasks).ConfigureAwait(false);
+            if (ttl > TimeSpan.Zero)
+            {
+                _cachedProbeExpiresAt = _options.TimeProvider.GetUtcNow().Add(ttl);
+                Volatile.Write(ref _cachedProbeStatuses, freshResults);
+            }
+
+            return freshResults;
         }
-
-        var probeTasks = providerNames
-            .Select(provider => ProbeSingleProviderAsync(provider, ct))
-            .ToArray();
-
-        return await Task.WhenAll(probeTasks).ConfigureAwait(false);
+        finally
+        {
+            _probeLock.Release();
+        }
     }
 
     public async Task<IAgentSession> OpenSessionAsync(HarnessLaunchSpec spec, CancellationToken ct)
@@ -92,8 +168,8 @@ public sealed class AgentRuntime : IAgentRuntime
             throw new DirectoryNotFoundException($"Workspace Cwd directory does not exist: '{fullCwd}'.");
         }
 
-        var normalizedSpec = spec with { Cwd = fullCwd };
-        var provider = normalizedSpec.Provider.Trim();
+        var provider = NormalizeProviderName(spec.Provider);
+        var normalizedSpec = spec with { Provider = provider, Cwd = fullCwd };
 
         IAgentSession session;
         if (string.Equals(provider, "codex", StringComparison.OrdinalIgnoreCase))
@@ -107,21 +183,33 @@ public sealed class AgentRuntime : IAgentRuntime
 
             args.Add("app-server");
             var env = BuildProcessEnvironment(cmdOverride.Env);
-            var rawInvocation = new CommandInvocation(cmdOverride.FileName, args, fullCwd, env);
-            var wrapped = _sandboxWrapper.Wrap(rawInvocation, normalizedSpec.Sandbox, normalizedSpec.OverlayMounts);
+            var resolvedExe = FindExecutableOnPath(cmdOverride.FileName, env) ?? cmdOverride.FileName;
+            var stateDirectory = PrepareCodexSandboxState(normalizedSpec, env);
+            var sandboxApiKey = stateDirectory is null ? null : _options.CodexSandboxApiKey;
+            if (stateDirectory is not null)
+            {
+                args.Add("-c");
+                args.Add("cli_auth_credentials_store=\"file\"");
+            }
+            var rawInvocation = new CommandInvocation(resolvedExe, args, fullCwd, env);
+            var wrapped = _sandboxWrapper.Wrap(rawInvocation, normalizedSpec.Sandbox, normalizedSpec.OverlayMounts,
+                writableStateDirectory: stateDirectory);
             session = await CodexAgentSession.OpenAsync(
                 wrapped,
                 normalizedSpec,
                 _options.HandshakeTimeout,
                 UnregisterSession,
-                ct).ConfigureAwait(false);
+                ct,
+                sandboxApiKey).ConfigureAwait(false);
         }
         else if (string.Equals(provider, "claude", StringComparison.OrdinalIgnoreCase))
         {
             var cmdOverride = ResolveCommandSpec(provider, defaultExecutable: "claude");
             var env = BuildProcessEnvironment(cmdOverride.Env);
+            var resolvedExe = FindExecutableOnPath(cmdOverride.FileName, env) ?? cmdOverride.FileName;
+            var effectiveCmd = cmdOverride with { FileName = resolvedExe };
             session = await ClaudeAgentSession.OpenAsync(
-                cmdOverride,
+                effectiveCmd,
                 _sandboxWrapper,
                 normalizedSpec,
                 env,
@@ -143,7 +231,8 @@ public sealed class AgentRuntime : IAgentRuntime
             }
 
             var env = BuildProcessEnvironment(cmdOverride.Env);
-            var rawInvocation = new CommandInvocation(cmdOverride.FileName, args, fullCwd, env);
+            var resolvedExe = FindExecutableOnPath(cmdOverride.FileName, env) ?? cmdOverride.FileName;
+            var rawInvocation = new CommandInvocation(resolvedExe, args, fullCwd, env);
             var wrapped = _sandboxWrapper.Wrap(rawInvocation, normalizedSpec.Sandbox, normalizedSpec.OverlayMounts);
             session = await AcpAgentSession.OpenAsync(
                 wrapped,
@@ -213,21 +302,24 @@ public sealed class AgentRuntime : IAgentRuntime
             throw new ArgumentException($"ACP provider '{provider}' must specify a target after 'acp:'.", nameof(provider));
         }
 
-        if (_options.ProviderOverrides.TryGetValue(provider, out var configured))
+        var isKnownSubcommandTarget =
+            string.Equals(acpTarget, "antigravity", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(acpTarget, "opencode", StringComparison.OrdinalIgnoreCase);
+
+        if (_options.ProviderOverrides.TryGetValue(provider, out var configured) ||
+            _options.ProviderOverrides.TryGetValue(acpTarget, out configured))
         {
-            var isKnownSubcommandTarget =
-                string.Equals(acpTarget, "antigravity", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(acpTarget, "opencode", StringComparison.OrdinalIgnoreCase);
             return (configured, isKnownSubcommandTarget);
         }
 
         if (string.Equals(acpTarget, "antigravity", StringComparison.OrdinalIgnoreCase))
         {
-            var exe = FindExecutableOnPath("antigravity", null) is not null
-                ? "antigravity"
-                : FindExecutableOnPath("agy", null) is not null
-                    ? "agy"
-                    : "antigravity";
+            var probeEnv = BuildProcessEnvironment(null);
+            var exe = FindExecutableOnPath("agy", probeEnv) is not null
+                ? "agy"
+                : FindExecutableOnPath("antigravity", probeEnv) is not null
+                    ? "antigravity"
+                    : "agy";
             return (new ProviderCommandOverride(exe), AppendAcpSubcommand: true);
         }
 
@@ -244,6 +336,7 @@ public sealed class AgentRuntime : IAgentRuntime
         ct.ThrowIfCancellationRequested();
 
         ProviderCommandOverride cmdSpec;
+        var appendAcpSubcommand = false;
         try
         {
             if (string.Equals(provider, "codex", StringComparison.OrdinalIgnoreCase))
@@ -256,7 +349,7 @@ public sealed class AgentRuntime : IAgentRuntime
             }
             else if (provider.StartsWith("acp:", StringComparison.OrdinalIgnoreCase))
             {
-                (cmdSpec, _) = ResolveAcpCommandSpec(provider);
+                (cmdSpec, appendAcpSubcommand) = ResolveAcpCommandSpec(provider);
             }
             else
             {
@@ -360,7 +453,14 @@ public sealed class AgentRuntime : IAgentRuntime
             }
 
             var version = ExtractVersionString(stdout) ?? ExtractVersionString(stderr) ?? "unknown";
-            var models = cmdSpec.Models ?? GetDefaultModelsForProvider(provider);
+            var models = cmdSpec.Models ?? await ProbeModelsForProviderAsync(
+                provider,
+                resolvedExe,
+                cmdSpec.PrependArgs,
+                appendAcpSubcommand,
+                env,
+                ct).ConfigureAwait(false);
+
             return new ProviderStatus(
                 provider,
                 Available: true,
@@ -385,6 +485,205 @@ public sealed class AgentRuntime : IAgentRuntime
         }
     }
 
+    private async Task<IReadOnlyList<string>> ProbeModelsForProviderAsync(
+        string provider,
+        string resolvedExe,
+        IReadOnlyList<string>? prependArgs,
+        bool appendAcpSubcommand,
+        IReadOnlyDictionary<string, string> env,
+        CancellationToken ct)
+    {
+        var fallback = GetDefaultModelsForProvider(provider);
+        var budgetMs = Math.Min(
+            _options.ModelProbeTimeout.TotalMilliseconds,
+            _options.ProbeTimeout.TotalMilliseconds);
+        if (budgetMs <= 0)
+        {
+            return fallback;
+        }
+
+        var budget = TimeSpan.FromMilliseconds(budgetMs);
+
+        if (string.Equals(provider, "codex", StringComparison.OrdinalIgnoreCase))
+        {
+            var probed = await TryProbeCodexModelsAsync(resolvedExe, prependArgs, env, budget, ct)
+                .ConfigureAwait(false);
+            return probed is { Count: > 0 } ? probed : fallback;
+        }
+
+        if (string.Equals(provider, "acp:antigravity", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(provider, "acp:opencode", StringComparison.OrdinalIgnoreCase))
+        {
+            var probed = await TryProbeAcpModelsAsync(resolvedExe, prependArgs, appendAcpSubcommand, env, budget, ct)
+                .ConfigureAwait(false);
+            return probed is { Count: > 0 } ? probed : fallback;
+        }
+
+        return fallback;
+    }
+
+    private static async Task<IReadOnlyList<string>?> TryProbeCodexModelsAsync(
+        string resolvedExe,
+        IReadOnlyList<string>? prependArgs,
+        IReadOnlyDictionary<string, string> env,
+        TimeSpan budget,
+        CancellationToken ct)
+    {
+        var args = new List<string>();
+        if (prependArgs is not null)
+        {
+            args.AddRange(prependArgs);
+        }
+
+        args.Add("app-server");
+        var invocation = new CommandInvocation(resolvedExe, args, Path.GetTempPath(), env);
+
+        StdioSubprocess? process = null;
+        JsonRpcStdioConnection? rpc = null;
+        try
+        {
+            using var probeCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            probeCts.CancelAfter(budget);
+
+            process = StdioSubprocess.Start(invocation);
+            rpc = new JsonRpcStdioConnection(
+                process,
+                onNotification: static (_, _) => { },
+                onServerRequest: static (_, _, _) => { },
+                onDisconnected: static _ => { });
+
+            var initParams = new Dictionary<string, object?>
+            {
+                ["clientInfo"] = new Dictionary<string, object?>
+                {
+                    ["name"] = "perga-agentkit",
+                    ["version"] = "1.0.0"
+                },
+                ["capabilities"] = new Dictionary<string, object?>
+                {
+                    ["experimentalApi"] = true
+                }
+            };
+
+            await rpc.SendRequestAsync("initialize", initParams, probeCts.Token).ConfigureAwait(false);
+            await rpc.SendNotificationAsync("initialized", new Dictionary<string, object?>(), probeCts.Token).ConfigureAwait(false);
+            var listResult = await rpc.SendRequestAsync("model/list", new Dictionary<string, object?>(), probeCts.Token)
+                .ConfigureAwait(false);
+            return ModelListParsers.ParseCodexModels(listResult);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch
+        {
+            return null;
+        }
+        finally
+        {
+            if (rpc is not null)
+            {
+                await rpc.DisposeAsync().ConfigureAwait(false);
+            }
+            else if (process is not null)
+            {
+                await process.DisposeAsync().ConfigureAwait(false);
+            }
+        }
+    }
+
+    private static async Task<IReadOnlyList<string>?> TryProbeAcpModelsAsync(
+        string resolvedExe,
+        IReadOnlyList<string>? prependArgs,
+        bool appendAcpSubcommand,
+        IReadOnlyDictionary<string, string> env,
+        TimeSpan budget,
+        CancellationToken ct)
+    {
+        var args = new List<string>();
+        if (prependArgs is not null)
+        {
+            args.AddRange(prependArgs);
+        }
+
+        if (appendAcpSubcommand)
+        {
+            args.Add("acp");
+        }
+
+        var probeCwd = Path.GetFullPath(Path.GetTempPath());
+        var invocation = new CommandInvocation(resolvedExe, args, probeCwd, env);
+
+        StdioSubprocess? process = null;
+        JsonRpcStdioConnection? rpc = null;
+        try
+        {
+            using var probeCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            probeCts.CancelAfter(budget);
+
+            process = StdioSubprocess.Start(invocation);
+            rpc = new JsonRpcStdioConnection(
+                process,
+                onNotification: static (_, _) => { },
+                onServerRequest: static (_, _, _) => { },
+                onDisconnected: static _ => { });
+
+            var initParams = new Dictionary<string, object?>
+            {
+                ["protocolVersion"] = 1,
+                ["clientCapabilities"] = new Dictionary<string, object?>
+                {
+                    ["fs"] = new Dictionary<string, object?>
+                    {
+                        ["readTextFile"] = false,
+                        ["writeTextFile"] = false
+                    },
+                    ["terminal"] = false
+                },
+                ["clientInfo"] = new Dictionary<string, object?>
+                {
+                    ["name"] = "perga-agentkit",
+                    ["version"] = "1.0.0"
+                }
+            };
+
+            var initResult = await rpc.SendRequestAsync("initialize", initParams, probeCts.Token).ConfigureAwait(false);
+            var sessionParams = new Dictionary<string, object?>
+            {
+                ["cwd"] = probeCwd,
+                ["mcpServers"] = Array.Empty<object>()
+            };
+            var sessionResult = await rpc.SendRequestAsync("session/new", sessionParams, probeCts.Token).ConfigureAwait(false);
+
+            var sessionModels = ModelListParsers.ParseAcpModels(sessionResult);
+            if (sessionModels.Count > 0)
+            {
+                return sessionModels;
+            }
+
+            return ModelListParsers.ParseAcpModels(initResult);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch
+        {
+            return null;
+        }
+        finally
+        {
+            if (rpc is not null)
+            {
+                await rpc.DisposeAsync().ConfigureAwait(false);
+            }
+            else if (process is not null)
+            {
+                await process.DisposeAsync().ConfigureAwait(false);
+            }
+        }
+    }
+
     private static IReadOnlyList<string> GetDefaultModelsForProvider(string provider)
     {
         if (string.Equals(provider, "codex", StringComparison.OrdinalIgnoreCase))
@@ -405,7 +704,49 @@ public sealed class AgentRuntime : IAgentRuntime
         return [];
     }
 
-    private static Dictionary<string, string> BuildProcessEnvironment(IReadOnlyDictionary<string, string>? overrides)
+    private string? PrepareCodexSandboxState(HarnessLaunchSpec spec, Dictionary<string, string> env)
+    {
+        if (!OperatingSystem.IsLinux() || spec.Sandbox == OsSandboxMode.None ||
+            _options.SandboxStateRootDirectory is not { } root || spec.StateKey is not { } key)
+            return null;
+
+        var digest = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(key)));
+        var directory = Path.Combine(Path.GetFullPath(root), "codex", digest);
+        const UnixFileMode ownerOnly = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute;
+        Directory.CreateDirectory(directory, ownerOnly);
+        if (new DirectoryInfo(directory).LinkTarget is not null)
+            throw new IOException("The Codex state directory must not be a symbolic link.");
+
+        var configuredHome = env.GetValueOrDefault("CODEX_HOME");
+        var hostHome = _options.Sandbox.HomeDirectoryOverride ?? env.GetValueOrDefault("HOME");
+        var source = !string.IsNullOrWhiteSpace(configuredHome) ? configuredHome
+            : !string.IsNullOrWhiteSpace(hostHome) ? Path.Combine(hostHome, ".codex") : null;
+        // Authentication is configured separately so sessions never share rotating login credentials.
+        if (source is not null)
+            CopyCodexStateSeed(source, directory, "config.toml");
+
+        env["CODEX_HOME"] = directory;
+        return directory;
+    }
+
+    private static void CopyCodexStateSeed(string source, string directory, string name)
+    {
+        var input = Path.Combine(source, name);
+        var destination = Path.Combine(directory, name);
+        if (!File.Exists(input) || File.Exists(destination) || new FileInfo(destination).LinkTarget is not null)
+            return;
+
+        try
+        {
+            File.Copy(input, destination, overwrite: false);
+        }
+        catch (IOException) when (File.Exists(destination))
+        {
+            // Another launch seeded this state first.
+        }
+    }
+
+    private Dictionary<string, string> BuildProcessEnvironment(IReadOnlyDictionary<string, string>? overrides)
     {
         var env = new Dictionary<string, string>(
             OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
@@ -413,24 +754,138 @@ public sealed class AgentRuntime : IAgentRuntime
         var current = Environment.GetEnvironmentVariables();
         foreach (System.Collections.DictionaryEntry entry in current)
         {
-            if (entry.Key is string key && entry.Value is string value)
+            if (entry.Key is string key && entry.Value is string value &&
+                !key.Equals("Perga__CodexSandboxApiKey", StringComparison.OrdinalIgnoreCase) &&
+                !key.Equals("Perga:CodexSandboxApiKey", StringComparison.OrdinalIgnoreCase))
             {
                 env[key] = value;
             }
         }
 
+        var pathExplicitlyOverridden = false;
         if (overrides is not null)
         {
             foreach (var (key, value) in overrides)
             {
+                if (string.Equals(key, "PATH", StringComparison.OrdinalIgnoreCase))
+                {
+                    pathExplicitlyOverridden = true;
+                }
+
                 env[key] = value;
             }
+        }
+
+        var homeDir = _options.Sandbox.HomeDirectoryOverride;
+        if (string.IsNullOrWhiteSpace(homeDir))
+        {
+            env.TryGetValue("HOME", out homeDir);
+        }
+
+        if (string.IsNullOrWhiteSpace(homeDir))
+        {
+            homeDir = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        }
+
+        env.TryGetValue("PATH", out var rawPath);
+        var prioritizedPath = PrioritizeUserLocalBinInPath(
+            rawPath,
+            homeDir,
+            allowAppendWhenMissing: !pathExplicitlyOverridden);
+        if (!string.IsNullOrWhiteSpace(prioritizedPath))
+        {
+            env["PATH"] = prioritizedPath;
         }
 
         return env;
     }
 
-    private static string? FindExecutableOnPath(string executable, IReadOnlyDictionary<string, string>? env)
+    internal static string PrioritizeUserLocalBinInPath(
+        string? pathVar,
+        string? homeDir,
+        bool allowAppendWhenMissing = true)
+    {
+        var segments = string.IsNullOrWhiteSpace(pathVar)
+            ? new List<string>()
+            : pathVar.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries).ToList();
+
+        if (string.IsNullOrWhiteSpace(homeDir))
+        {
+            return string.Join(Path.PathSeparator, segments);
+        }
+
+        string userLocalBin;
+        try
+        {
+            userLocalBin = Path.GetFullPath(Path.Combine(homeDir, ".local", "bin"));
+        }
+        catch
+        {
+            return string.Join(Path.PathSeparator, segments);
+        }
+
+        var pathComparer = OperatingSystem.IsWindows()
+            ? StringComparer.OrdinalIgnoreCase
+            : StringComparer.Ordinal;
+
+        var firstLegacyIdx = -1;
+        var existingUserIdx = -1;
+
+        for (var i = 0; i < segments.Count; i++)
+        {
+            var seg = segments[i];
+            if (firstLegacyIdx < 0 && IsLegacyNeigeLocalBinSegment(seg))
+            {
+                firstLegacyIdx = i;
+            }
+
+            if (existingUserIdx < 0)
+            {
+                try
+                {
+                    var normSeg = Path.GetFullPath(seg).TrimEnd(Path.DirectorySeparatorChar);
+                    var normUser = userLocalBin.TrimEnd(Path.DirectorySeparatorChar);
+                    if (pathComparer.Equals(normSeg, normUser))
+                    {
+                        existingUserIdx = i;
+                    }
+                }
+                catch
+                {
+                    // Ignore malformed PATH entry.
+                }
+            }
+        }
+
+        if (firstLegacyIdx >= 0)
+        {
+            if (existingUserIdx > firstLegacyIdx)
+            {
+                var entry = segments[existingUserIdx];
+                segments.RemoveAt(existingUserIdx);
+                segments.Insert(firstLegacyIdx, entry);
+            }
+            else if (existingUserIdx < 0 && Directory.Exists(userLocalBin))
+            {
+                segments.Insert(firstLegacyIdx, userLocalBin);
+            }
+        }
+        else if (existingUserIdx < 0 && allowAppendWhenMissing && Directory.Exists(userLocalBin))
+        {
+            segments.Add(userLocalBin);
+        }
+
+        return string.Join(Path.PathSeparator, segments);
+    }
+
+    private static bool IsLegacyNeigeLocalBinSegment(string segment)
+    {
+        var normalized = segment.Replace('\\', '/');
+        return normalized.Contains("neige-calm", StringComparison.OrdinalIgnoreCase) &&
+               normalized.Contains(".local-bin", StringComparison.OrdinalIgnoreCase);
+    }
+
+    internal static string? FindExecutableOnPath(string executable, IReadOnlyDictionary<string, string>? env)
     {
         if (string.IsNullOrWhiteSpace(executable))
         {
@@ -445,18 +900,23 @@ public sealed class AgentRuntime : IAgentRuntime
         }
 
         string? pathVar = null;
+        string? homeDir = null;
         if (env is not null)
         {
             env.TryGetValue("PATH", out pathVar);
+            env.TryGetValue("HOME", out homeDir);
         }
 
         pathVar ??= Environment.GetEnvironmentVariable("PATH");
-        if (string.IsNullOrWhiteSpace(pathVar))
+        homeDir ??= Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+
+        var prioritized = PrioritizeUserLocalBinInPath(pathVar, homeDir, allowAppendWhenMissing: env is null);
+        if (string.IsNullOrWhiteSpace(prioritized))
         {
             return null;
         }
 
-        var segments = pathVar.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries);
+        var segments = prioritized.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries);
         foreach (var dir in segments)
         {
             try
