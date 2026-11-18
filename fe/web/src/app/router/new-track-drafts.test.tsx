@@ -4,13 +4,15 @@ import { expect, it } from 'vitest';
 import type { Area } from '../../../../core/domain/area.ts';
 import { CurrentUserScope } from '../auth/current-user.tsx';
 import { NewTrackDraftProvider, useNewTrackSession } from './new-track-drafts.tsx';
+import { createMemoryStorage } from './share-reuse-fixture.ts';
 
 it.each([undefined, 'Already submitted'])('restores the creation request after reload with first message %s', (firstMessage) => {
   const identity = { userId: 'create-replay-owner', displayName: 'Owner', role: 'owner', sessionId: 'one' } as const;
   const area: Area = { id: 'create-replay-area', name: 'Area', color: '#112233', defaultCwd: null,
     defaultTemplateId: null, kind: 'user', sort: 0, createdAt: 0, updatedAt: 0 };
+  const storage = createMemoryStorage();
   const wrapper = ({ children }: { children: ReactNode }) => <CurrentUserScope value={identity}>
-    <NewTrackDraftProvider submittedStorage={() => window.sessionStorage}>{children}</NewTrackDraftProvider>
+    <NewTrackDraftProvider submittedStorage={() => storage}>{children}</NewTrackDraftProvider>
   </CurrentUserScope>;
   const original = renderHook(() => useNewTrackSession(area.id, area), { wrapper });
   const key = original.result.current.session?.key;
