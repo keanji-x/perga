@@ -116,6 +116,7 @@ public sealed class WebSocketsIntegrationTests
 
         // Collect live frames until turn.completed arrives.
         var liveKinds = new List<(string Kind, bool HasEventId)>();
+        var sessionStatuses = new List<string>();
         while (true)
         {
             using var liveDoc = await PergaHostTestCluster.ReceiveTextJsonFrameAsync(ws, ct);
@@ -123,6 +124,9 @@ public sealed class WebSocketsIntegrationTests
             var kind = root.GetProperty("kind").GetString()!;
             var hasEventId = root.GetProperty("eventId").ValueKind == JsonValueKind.Number;
             liveKinds.Add((kind, hasEventId));
+            if (kind == KernelEventKinds.SessionUpdated &&
+                root.GetProperty("payload").GetProperty("id").GetString() == leadSessionId)
+                sessionStatuses.Add(root.GetProperty("payload").GetProperty("status").GetString()!);
 
             if (kind == KernelEventKinds.TurnCompleted)
             {
@@ -130,6 +134,7 @@ public sealed class WebSocketsIntegrationTests
             }
         }
 
+        Assert.Equal(new[] { "queued", "running" }, sessionStatuses.TakeLast(2));
         Assert.Contains(liveKinds, k => k.Kind == KernelEventKinds.SessionThinkingDelta && !k.HasEventId);
         Assert.Contains(liveKinds, k => k.Kind == KernelEventKinds.SessionToolProgress && !k.HasEventId);
         Assert.Contains(liveKinds, k => k.Kind == KernelEventKinds.SessionTextDelta && !k.HasEventId);

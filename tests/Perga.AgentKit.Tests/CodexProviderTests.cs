@@ -163,8 +163,7 @@ public sealed class CodexProviderTests : IDisposable
             }
         }
 
-        var intErr = Assert.Single(interruptEvents.OfType<UnifiedAgentEvent.TurnError>());
-        Assert.Equal("turn_interrupted", intErr.Code);
+        Assert.Single(interruptEvents.OfType<UnifiedAgentEvent.TurnInterrupted>());
 
         // TurnError surfaces structured error code, message, and retryability
         var errorEvents = await DrainTurnAsync(session, new TurnInput("TRIGGER_ERROR", "corr_err"));

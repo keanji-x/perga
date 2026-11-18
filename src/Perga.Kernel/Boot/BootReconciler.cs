@@ -30,6 +30,7 @@ public sealed class BootReconciler : IBootReconciler
 
     public async Task<BootReconcileResult> ReconcileAsync(CancellationToken ct = default)
     {
+        var queuedInputs = await _store.RecoverSessionInputsAsync(ct).ConfigureAwait(false);
         var affectedTrackIds = new HashSet<string>(StringComparer.Ordinal);
         var discardedLeases = 0;
 
@@ -110,6 +111,9 @@ public sealed class BootReconciler : IBootReconciler
                 ct: ct).ConfigureAwait(false);
             wokenCount++;
         }
+
+        foreach (var (trackId, input) in queuedInputs)
+            _actorRegistry.GetOrActivate(trackId).DispatchAcceptedInput(input);
 
         return new BootReconcileResult(orderedAffected, discardedLeases, wokenCount);
     }

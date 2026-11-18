@@ -276,14 +276,14 @@ public sealed class SqliteTrackStoreRoundTripAndCascadeTests
         Assert.Single(attemptsOnTask1);
         Assert.Equal("att_1", attemptsOnTask1[0].AttemptId);
 
-        // 3. RecordTurnAndItemsAsync with idempotency_key deduplication & cursor pagination
+        // 3. RecordTurnAndItemsAsync updates the same turn and paginates its items
         var turn1Running = new SessionTurnDto(
             Id: "turn_1",
             SessionId: "sess_a",
             TurnIndex: 1,
             Epoch: 1,
             TriggerKind: "user",
-            Input: StorageTestHarness.Json("""{"prompt":"Hello","idempotencyKey":"idem_msg_001"}"""),
+            Input: StorageTestHarness.Json("""{"prompt":"Hello"}"""),
             Status: "running",
             Usage: null,
             ErrorText: null,
@@ -312,20 +312,6 @@ public sealed class SqliteTrackStoreRoundTripAndCascadeTests
             updatedSession: leadA with { Status = "idle", ContextUsageRatio = 0.25, UpdatedAtMs = 4_200 },
             ct);
 
-        // Duplicate retry with a DIFFERENT turn.Id ("turn_dup") but SAME (session_id, idempotencyKey) MUST deduplicate cleanly!
-        var duplicateRetryTurn = turn1Running with
-        {
-            Id = "turn_dup",
-            TurnIndex = 2
-        };
-        var dedupResult = await store.RecordTurnAndItemsAsync(
-            duplicateRetryTurn,
-            idempotencyKey: "idem_msg_001",
-            newItems: [new SessionItemDto(0, "sess_a", "turn_dup", "user", StorageTestHarness.Json("""{"text":"DUP"}"""), 4_300)],
-            updatedSession: null,
-            ct: ct);
-
-        Assert.Equal("turn_1", dedupResult.Id);
         Assert.Single(await store.ListSessionTurnsAsync("sess_a", ct));
 
         var page1 = await store.ListSessionItemsAsync("sess_a", afterId: 0, limit: 2, ct: ct);

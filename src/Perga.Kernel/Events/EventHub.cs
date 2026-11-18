@@ -135,7 +135,8 @@ public sealed class EventHub : IKernelEventBus, IDisposable
     internal async Task PublishSyncedAfterStoreWriteAsync(
         ITrackReadStore store,
         EventEnvelopeDto fallbackTemplate,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool allowFallback = true)
     {
         await _storeSyncLock.WaitAsync(ct).ConfigureAwait(false);
         try
@@ -158,7 +159,7 @@ public sealed class EventHub : IKernelEventBus, IDisposable
                 }
             }
 
-            if (!publishedAny)
+            if (allowFallback && !publishedAny)
             {
                 PublishPersistent(fallbackTemplate);
             }

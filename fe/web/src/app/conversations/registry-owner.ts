@@ -134,7 +134,7 @@ export function createConversationOwner() {
     acceptDraft: (from, result, submitted) => {
       if (!slotHolds(state.drafts[from.scopeId], from)) return false;
       let next = state;
-      if (result.initialInput.kind === 'known') {
+      if (result.initialInput?.kind === 'known') {
         const { receipt } = result.initialInput;
         if (!receiptMatchesSubmission(receipt, submitted)) throw new Error('The first-message receipt does not match the submitted message.');
         const ops = state.outboxes[result.conversation.id] ?? NO_SENDS;

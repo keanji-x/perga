@@ -16,7 +16,7 @@ using Perga.VcsKit;
 
 namespace Perga.Kernel.Actors;
 
-public sealed class TrackActor : IAsyncDisposable
+public sealed partial class TrackActor : IAsyncDisposable
 {
     private readonly ITrackStore _store;
     private readonly IReportDocEngine _reportEngine;
@@ -49,6 +49,7 @@ public sealed class TrackActor : IAsyncDisposable
     private readonly Dictionary<string, TerminalDto> _terminals = new(StringComparer.Ordinal);
     private readonly Dictionary<string, int> _nextTurnIndexBySession = new(StringComparer.Ordinal);
     private readonly Dictionary<string, IAgentSession> _openAgentSessions = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Guid> _reservedWakeSessions = new(StringComparer.Ordinal);
     private readonly Dictionary<string, ActiveTurnState> _activeTurns = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Queue<(string TriggerKind, string Prompt)>> _pendingWakes = new(StringComparer.Ordinal);
     private readonly Dictionary<string, TaskCompletionSource<JsonElement>> _pendingAskWaiters = new(StringComparer.Ordinal);
@@ -619,44 +620,50 @@ public sealed class TrackActor : IAsyncDisposable
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
             await EnsureWorkspaceMountedCoreAsync(ct).ConfigureAwait(false);
 
-            var now = NowMs();
-            var session = new AgentSessionDto(
-                Id: $"ses_{Guid.NewGuid():N}",
-                TrackId: TrackId,
-                IsLead: false,
-                BoundTaskId: null,
-                BoundAttemptId: null,
-                Title: string.IsNullOrWhiteSpace(req.Title) ? "Subagent" : req.Title,
-                Provider: string.IsNullOrWhiteSpace(req.Provider) ? GetDefaultProviderCore() : req.Provider!,
-                Model: req.Model ?? GetDefaultModelCore(),
-                NativeThreadId: null,
-                Epoch: 1,
-                Status: "idle",
-                ContextUsageRatio: 0.0,
-                ArchivedAtMs: null,
-                CreatedAtMs: now,
-                UpdatedAtMs: now);
-
+            var session = NewSubagentSessionCore(req);
+            await PersistAndEmitSessionUpdatedCoreAsync(session, session.UpdatedAtMs, ct).ConfigureAwait(false);
             _sessions[session.Id] = session;
-            _nextTurnIndexBySession[session.Id] = 0;
-            await PersistAndEmitSessionUpdatedCoreAsync(session, now, ct).ConfigureAwait(false);
             return session;
         }, ct);
     }
 
-    public Task<SessionItemsPageDto> GetSessionItemsAsync(string sessionId, long afterId = 0, int limit = 100, CancellationToken ct = default)
+    private AgentSessionDto NewSubagentSessionCore(CreateSessionRequest req)
+    {
+        var now = NowMs();
+        return new AgentSessionDto(
+            Id: $"ses_{Guid.NewGuid():N}",
+            TrackId: TrackId,
+            IsLead: false,
+            BoundTaskId: null,
+            BoundAttemptId: null,
+            Title: string.IsNullOrWhiteSpace(req.Title) ? "Subagent" : req.Title,
+            Provider: string.IsNullOrWhiteSpace(req.Provider) ? GetDefaultProviderCore() : req.Provider!,
+            Model: req.Model ?? GetDefaultModelCore(),
+            NativeThreadId: null,
+            Epoch: 1,
+            Status: "idle",
+            ContextUsageRatio: 0.0,
+            ArchivedAtMs: null,
+            CreatedAtMs: now,
+            UpdatedAtMs: now);
+    }
+
+    public Task<SessionItemsPageDto> GetSessionItemsAsync(string sessionId, long afterId = 0, int limit = 100, CancellationToken ct = default, bool latest = false, long? beforeId = null)
     {
         return EnqueueAsync(async _ =>
         {
-            await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
+            await EnsureHydratedCoreAsync(ct, mountWorkspace: false).ConfigureAwait(false);
             var session = RequireSessionCore(sessionId);
-            var items = await _store.ListSessionItemsAsync(sessionId, afterId, limit, ct).ConfigureAwait(false);
+            var items = await _store.ListSessionItemsAsync(sessionId, afterId, limit, ct, latest, beforeId).ConfigureAwait(false);
             var activeTurn = _activeTurns.TryGetValue(sessionId, out var running) ? running.TurnDto : null;
-            return new SessionItemsPageDto(items, activeTurn, session);
+            var unknown = session.Status == "unknown"
+                ? await _store.SessionInputs.FindUnresolvedAsync(sessionId, ct).ConfigureAwait(false)
+                : null;
+            return new SessionItemsPageDto(items, activeTurn, session, unknown?.Receipt);
         }, ct);
     }
 
-    public async Task<SessionTurnDto> SendMessageAsync(string sessionId, SendMessageRequest req, CancellationToken ct = default)
+    public async Task<SessionTurnDto> SendMessageAsync(string sessionId, SendMessageRequest req, CancellationToken ct = default, bool requireActiveTurn = false)
     {
         if (string.IsNullOrWhiteSpace(req.IdempotencyKey))
         {
@@ -666,7 +673,7 @@ public sealed class TrackActor : IAsyncDisposable
         var dispatch = await EnqueueAsync<(Task<SessionTurnDto>? ExistingTask, ActiveTurnState? SteerTarget, TaskCompletionSource<SessionTurnDto>? OwnedTurnTcs)>(async _ =>
         {
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
-            RequireSessionCore(sessionId);
+            var session = RequireSessionCore(sessionId);
 
             var dedupKey = (sessionId, req.IdempotencyKey);
             if (_idempotencyTurns.TryGetValue(dedupKey, out var existing))
@@ -683,6 +690,9 @@ public sealed class TrackActor : IAsyncDisposable
 
                 return (null, active, null);
             }
+
+            if (requireActiveTurn || HoldsDurableSlot(session) || _compactingSessions.Contains(sessionId))
+                throw KernelException.Conflict($"Session '{sessionId}' cannot accept this send.");
 
             var turnTcs = new TaskCompletionSource<SessionTurnDto>(TaskCreationOptions.RunContinuationsAsynchronously);
             _idempotencyTurns[dedupKey] = turnTcs.Task;
@@ -739,13 +749,23 @@ public sealed class TrackActor : IAsyncDisposable
         return EnqueueAsync(async _ =>
         {
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
-            RequireSessionCore(sessionId);
+            var session = RequireSessionCore(sessionId);
 
             if (_activeTurns.TryGetValue(sessionId, out var active))
             {
                 active.Interrupted = true;
-                active.TurnCts.Cancel();
-                await active.AgentSession.CancelTurnAsync(ct).ConfigureAwait(false);
+                try
+                {
+                    await active.AgentSession.CancelTurnAsync(ct).ConfigureAwait(false);
+                }
+                finally
+                {
+                    active.TurnCts.Cancel();
+                }
+            }
+            else if (session.Status == "queued")
+            {
+                throw KernelException.Conflict("This message has been accepted and is waiting to start.");
             }
         }, ct);
     }
@@ -1439,10 +1459,12 @@ public sealed class TrackActor : IAsyncDisposable
         }
     }
 
-    private async Task EnsureHydratedCoreAsync(CancellationToken ct)
+    private async Task EnsureHydratedCoreAsync(CancellationToken ct, bool mountWorkspace = true)
     {
         if (_hydrated)
         {
+            if (mountWorkspace && _mountedWorkspace is null)
+                await EnsureWorkspaceMountedCoreAsync(ct).ConfigureAwait(false);
             return;
         }
 
@@ -1472,9 +1494,8 @@ public sealed class TrackActor : IAsyncDisposable
             var normalized = s.IsLead == isLead ? s : s with { IsLead = isLead };
             _sessions[normalized.Id] = normalized;
 
-            var existingItems = await _store.ListSessionItemsAsync(normalized.Id, afterId: 0, limit: 1000, ct)
+            _nextTurnIndexBySession[normalized.Id] = await _store.GetLastTurnIndexAsync(normalized.Id, ct)
                 .ConfigureAwait(false);
-            _nextTurnIndexBySession[normalized.Id] = ComputeMaxTurnIndex(existingItems);
         }
 
         _asks.Clear();
@@ -1490,8 +1511,8 @@ public sealed class TrackActor : IAsyncDisposable
             _terminals[term.Id] = term;
         }
 
-        // Hydration Mount Hook: ALWAYS ensure workspace is mounted before starting any session, terminal, or attempt.
-        await EnsureWorkspaceMountedCoreAsync(ct).ConfigureAwait(false);
+        if (mountWorkspace)
+            await EnsureWorkspaceMountedCoreAsync(ct).ConfigureAwait(false);
         _hydrated = true;
     }
 
@@ -2102,13 +2123,15 @@ public sealed class TrackActor : IAsyncDisposable
         string sessionId,
         string triggerKind,
         string prompt,
-        CancellationToken ct)
+        CancellationToken ct,
+        PersistedSessionInput? input = null, Guid? wakeReservation = null)
     {
         Interlocked.Increment(ref _inFlightExternalOps);
+        ActiveTurnState? pendingCleanup = null;
         try
         {
-            // Pre-turn auto-compaction check if session hydrated at >= 0.80
-            var needsPreCompact = await EnqueueAsync(async _ =>
+            // Durable turns already hold the session slot; compact after their durable outcome.
+            var needsPreCompact = input is null && wakeReservation is null && await EnqueueAsync(async _ =>
             {
                 await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
                 var s = RequireSessionCore(sessionId);
@@ -2120,43 +2143,27 @@ public sealed class TrackActor : IAsyncDisposable
                 await CompactSessionInternalAsync(sessionId, ct).ConfigureAwait(false);
             }
 
-            var turnSetup = await EnqueueAsync<(ActiveTurnState ActiveState, string EffectivePrompt)>(async _ =>
+            var turnSetup = await EnqueueAsync<(ActiveTurnState? ActiveState, string EffectivePrompt)>(async _ =>
             {
-                await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
+                await EnsureHydratedCoreAsync(ct, mountWorkspace: input is null).ConfigureAwait(false);
+                ct.ThrowIfCancellationRequested();
                 var session = RequireSessionCore(sessionId);
-                var agentSession = await GetOrOpenAgentSessionCoreAsync(session, overrideSystemPrompt: null, ct)
-                    .ConfigureAwait(false);
+                if (_activeTurns.ContainsKey(sessionId) || _compactingSessions.Contains(sessionId) ||
+                    (input is null && HoldsDurableSlot(session)) ||
+                    (_reservedWakeSessions.TryGetValue(sessionId, out var reservedWake) && reservedWake != wakeReservation))
+                    throw KernelException.Conflict($"Session '{sessionId}' already has an active or unresolved turn.");
 
                 var effectivePrompt = prompt;
-                if (_policy is not null)
-                {
-                    var turnCtx = new PolicyTurnContext(
-                        TrackId: TrackId,
-                        SessionId: session.Id,
-                        IsLead: session.IsLead,
-                        BoundAttemptId: session.BoundAttemptId,
-                        ContextUsageRatio: session.ContextUsageRatio,
-                        Inputs: _track.TemplateInputs);
-                    var eval = _policyVm.BuildTurnContext(_policy, turnCtx, _track.TemplateState);
-                    await UpdateTemplateStateIfChangedCoreAsync(eval.NextState, ct).ConfigureAwait(false);
-                    if (!string.IsNullOrWhiteSpace(eval.Output))
-                    {
-                        effectivePrompt = $"<policy_context>\n{eval.Output}\n</policy_context>\n\n{prompt}";
-                    }
-                }
-
                 var now = NowMs();
-                var turnIndex = NextTurnIndexCore(session.Id);
-                var turnId = $"trn_{turnIndex:D6}_{Guid.NewGuid():N}";
-                var inputJson = JsonHelpers.ToElement(new { prompt });
-
+                var turnIndex = input?.TurnIndex ?? NextTurnIndexCore(session.Id);
+                var turnId = input?.Receipt.TurnId ?? $"trn_{turnIndex:D6}_{Guid.NewGuid():N}";
                 var turnDto = new SessionTurnDto(
                     Id: turnId,
                     SessionId: session.Id,
                     TurnIndex: turnIndex,
-                    Epoch: session.Epoch,
+                    Epoch: input?.Epoch ?? session.Epoch,
                     TriggerKind: triggerKind,
-                    Input: inputJson,
+                    Input: input is null ? JsonHelpers.ToElement(new { prompt }) : JsonHelpers.ToElement(new { }),
                     Status: "running",
                     Usage: null,
                     ErrorText: null,
@@ -2164,16 +2171,69 @@ public sealed class TrackActor : IAsyncDisposable
                     CompletedAtMs: null);
 
                 var runningSession = session with { Status = "running", UpdatedAtMs = now };
-                _sessions[session.Id] = runningSession;
-                await PersistAndEmitSessionUpdatedCoreAsync(runningSession, now, ct).ConfigureAwait(false);
+                var runningEvent = SessionUpdatedEvent(runningSession);
+                if (input is not null)
+                {
+                    await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
+                    if (!await _store.SessionInputs.ClaimAsync(input, runningSession, runningEvent, ct).ConfigureAwait(false))
+                        return (null, effectivePrompt);
+                    session = session with { Provider = input.Provider, Model = input.Model };
+                }
 
+                IAgentSession agentSession;
+                try
+                {
+                    if (input is not null && (session.BoundTaskId is not null || session.BoundAttemptId is not null) &&
+                        (session.BoundAttemptId is not { } attemptId || !_activeAttempts.ContainsKey(attemptId)))
+                        throw KernelException.Conflict("The task attempt workspace is no longer available.");
+
+                    if (_policy is not null)
+                    {
+                        var turnCtx = new PolicyTurnContext(
+                            TrackId: TrackId,
+                            SessionId: session.Id,
+                            IsLead: session.IsLead,
+                            BoundAttemptId: session.BoundAttemptId,
+                            ContextUsageRatio: session.ContextUsageRatio,
+                            Inputs: _track.TemplateInputs);
+                        var eval = _policyVm.BuildTurnContext(_policy, turnCtx, _track.TemplateState);
+                        await UpdateTemplateStateIfChangedCoreAsync(eval.NextState, ct).ConfigureAwait(false);
+                        if (!string.IsNullOrWhiteSpace(eval.Output))
+                        {
+                            effectivePrompt = $"<policy_context>\n{eval.Output}\n</policy_context>\n\n{prompt}";
+                        }
+                    }
+
+                    agentSession = await GetOrOpenAgentSessionCoreAsync(session, overrideSystemPrompt: null, ct)
+                        .ConfigureAwait(false);
+                }
+                catch when (input is not null)
+                {
+                    var failed = turnDto with { Status = "failed", ErrorText = "Message could not be prepared for dispatch.", CompletedAtMs = NowMs() };
+                    var idle = runningSession with { Status = "idle", UpdatedAtMs = failed.CompletedAtMs.Value };
+                    await SettleDurableTurnCoreAsync(input, "rejected", failed, [], idle).ConfigureAwait(false);
+                    SchedulePendingWakeCore(sessionId);
+                    return (null, effectivePrompt);
+                }
+
+                _sessions[session.Id] = runningSession;
                 var turnCts = CancellationTokenSource.CreateLinkedTokenSource(ct, _actorShutdownCts.Token);
                 var activeState = new ActiveTurnState(session.Id, turnDto, agentSession, turnCts);
                 _activeTurns[session.Id] = activeState;
+                pendingCleanup = activeState;
+                if (wakeReservation is not null)
+                    _reservedWakeSessions.Remove(session.Id);
+                if (input is null)
+                    await PersistAndEmitSessionUpdatedCoreAsync(runningSession, now, ct).ConfigureAwait(false);
+                else
+                    await PublishInputEventAsync(runningEvent).ConfigureAwait(false);
                 return (activeState, effectivePrompt);
-            }, ct).ConfigureAwait(false);
+            }, _actorShutdownCts.Token).ConfigureAwait(false);
 
-            var activeTurn = turnSetup.ActiveState;
+            if (turnSetup.ActiveState is not { } activeTurn)
+                return new SessionTurnDto(input!.Receipt.TurnId, sessionId, input.TurnIndex, input.Epoch, triggerKind,
+                    JsonHelpers.ToElement(new { }), "queued", null, null, null, null);
+
             var items = new List<SessionItemDto>();
             var textAccum = new StringBuilder();
             var thinkingAccum = new StringBuilder();
@@ -2182,13 +2242,17 @@ public sealed class TrackActor : IAsyncDisposable
             string? errorText = null;
             var turnStatus = "completed";
 
-            items.Add(new SessionItemDto(
+            var delivered = false;
+            var conclusive = false;
+
+            if (input is null)
+                items.Add(new SessionItemDto(
                 Id: 0,
                 SessionId: sessionId,
                 TurnId: activeTurn.TurnDto.Id,
                 Kind: "user",
                 Payload: JsonHelpers.ToElement(new { v = 1, content = prompt, triggerKind }),
-                CreatedAtMs: activeTurn.TurnDto.StartedAtMs));
+                CreatedAtMs: activeTurn.TurnDto.StartedAtMs!.Value));
 
             try
             {
@@ -2197,6 +2261,16 @@ public sealed class TrackActor : IAsyncDisposable
                                    .ConfigureAwait(false))
                 {
                     var evtNow = NowMs();
+                    var confirmsDelivery = evt is UnifiedAgentEvent.TurnAccepted or UnifiedAgentEvent.TextDelta or
+                        UnifiedAgentEvent.ThinkingDelta or UnifiedAgentEvent.ToolCallStarted or
+                        UnifiedAgentEvent.ToolCallCompleted or UnifiedAgentEvent.ApprovalRequested or
+                        UnifiedAgentEvent.TurnCompleted or UnifiedAgentEvent.TurnInterrupted or UnifiedAgentEvent.TurnError { IsConclusive: true };
+                    if (input is not null && ((!delivered && confirmsDelivery) || evt is UnifiedAgentEvent.TurnAccepted))
+                    {
+                        await _store.SessionInputs.MarkDeliveredAsync(input, boundThreadId,
+                            (evt as UnifiedAgentEvent.TurnAccepted)?.NativeTurnId, CancellationToken.None).ConfigureAwait(false);
+                        delivered = true;
+                    }
                     switch (evt)
                     {
                         case UnifiedAgentEvent.ThreadBound tb:
@@ -2284,10 +2358,18 @@ public sealed class TrackActor : IAsyncDisposable
                             break;
 
                         case UnifiedAgentEvent.TurnCompleted tc:
+                            conclusive = true;
                             finalUsage = tc.Usage;
                             break;
 
+                        case UnifiedAgentEvent.TurnInterrupted:
+                            conclusive = true;
+                            turnStatus = "interrupted";
+                            errorText = "Provider confirmed the interruption.";
+                            break;
+
                         case UnifiedAgentEvent.TurnError te:
+                            conclusive = te.IsConclusive;
                             turnStatus = "failed";
                             errorText = $"{te.Code}: {te.Message}";
                             break;
@@ -2299,7 +2381,7 @@ public sealed class TrackActor : IAsyncDisposable
                 turnStatus = "interrupted";
                 errorText = "Turn interrupted.";
             }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            catch (OperationCanceledException) when (input is null && ct.IsCancellationRequested)
             {
                 turnStatus = "interrupted";
                 errorText = "Caller canceled turn.";
@@ -2310,9 +2392,11 @@ public sealed class TrackActor : IAsyncDisposable
                 turnStatus = "failed";
                 errorText = ex.Message;
             }
-            finally
+
+            if (input is not null && !conclusive)
             {
-                activeTurn.TurnCts.Dispose();
+                turnStatus = "unknown";
+                errorText ??= "Provider outcome could not be confirmed.";
             }
 
             var endNow = NowMs();
@@ -2338,9 +2422,8 @@ public sealed class TrackActor : IAsyncDisposable
                     CreatedAtMs: endNow));
             }
 
-            var finalizeOutcome = await EnqueueAsync<(SessionTurnDto CompletedTurn, bool ShouldAutoCompact, (string TriggerKind, string Prompt)? NextQueuedWake)>(async _ =>
+            var finalizeOutcome = await EnqueueAsync<(SessionTurnDto CompletedTurn, bool ShouldAutoCompact)>(async _ =>
             {
-                _activeTurns.Remove(sessionId);
                 var currentSession = RequireSessionCore(sessionId);
 
                 var nextRatio = currentSession.ContextUsageRatio;
@@ -2355,70 +2438,92 @@ public sealed class TrackActor : IAsyncDisposable
                 var updatedSession = currentSession with
                 {
                     NativeThreadId = boundThreadId ?? activeTurn.AgentSession.NativeThreadId ?? currentSession.NativeThreadId,
-                    Status = "idle",
+                    Status = turnStatus == "unknown" ? "unknown" : "idle",
                     ContextUsageRatio = nextRatio,
                     UpdatedAtMs = endNow
                 };
-                _sessions[sessionId] = updatedSession;
-
                 var completedTurn = activeTurn.TurnDto with
                 {
                     Status = turnStatus,
                     Usage = finalUsage is null ? null : JsonHelpers.ToElement(finalUsage),
                     ErrorText = errorText,
-                    CompletedAtMs = endNow
+                    CompletedAtMs = turnStatus == "unknown" ? null : endNow
                 };
 
-                await _eventHub.EnsureInitializedFromStoreAsync(_store, CancellationToken.None).ConfigureAwait(false);
-                await _store.RecordTurnAndItemsAsync(completedTurn, items, updatedSession, CancellationToken.None)
-                    .ConfigureAwait(false);
-
-                var turnEvt = new EventEnvelopeDto(
-                    EventId: null,
-                    AreaId: _track.AreaId,
-                    TrackId: TrackId,
-                    Kind: KernelEventKinds.TurnCompleted,
-                    Payload: JsonHelpers.ToElement(completedTurn),
-                    CreatedAtMs: endNow);
-                await _store.AppendEventAsync(turnEvt, CancellationToken.None).ConfigureAwait(false);
-                await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, turnEvt, CancellationToken.None).ConfigureAwait(false);
-
-                var sessEvt = new EventEnvelopeDto(
-                    EventId: null,
-                    AreaId: _track.AreaId,
-                    TrackId: TrackId,
-                    Kind: KernelEventKinds.SessionUpdated,
-                    Payload: JsonHelpers.ToElement(updatedSession),
-                    CreatedAtMs: endNow);
-                await _store.AppendEventAsync(sessEvt, CancellationToken.None).ConfigureAwait(false);
-                await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, sessEvt, CancellationToken.None).ConfigureAwait(false);
-
-                var autoCompact = string.Equals(turnStatus, "completed", StringComparison.Ordinal) &&
-                                  nextRatio >= _options.AutoCompactionThreshold;
-
-                (string TriggerKind, string Prompt)? nextWake = null;
-                if (_pendingWakes.TryGetValue(sessionId, out var q) && q.Count > 0)
+                if (input is not null)
                 {
-                    nextWake = q.Dequeue();
+                    await SettleDurableTurnCoreAsync(input, delivered ? "delivered" : "unknown",
+                        completedTurn, items, updatedSession).ConfigureAwait(false);
+                }
+                else
+                {
+                    var turnEvent = TurnCompletedEvent(completedTurn, endNow);
+                    await _eventHub.EnsureInitializedFromStoreAsync(_store, CancellationToken.None).ConfigureAwait(false);
+                    await _store.RecordTurnAndItemsAsync(completedTurn, items, updatedSession, CancellationToken.None)
+                        .ConfigureAwait(false);
+                    _sessions[sessionId] = updatedSession;
+                    await _store.AppendEventAsync(turnEvent, CancellationToken.None).ConfigureAwait(false);
+                    await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, turnEvent, CancellationToken.None).ConfigureAwait(false);
+                    var sessionEvent = SessionUpdatedEvent(updatedSession);
+                    await _store.AppendEventAsync(sessionEvent, CancellationToken.None).ConfigureAwait(false);
+                    await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, sessionEvent, CancellationToken.None).ConfigureAwait(false);
                 }
 
-                return (completedTurn, autoCompact, nextWake);
+                _activeTurns.Remove(sessionId);
+                var autoCompact = _sessions[sessionId].Status == "idle" && turnStatus == "completed" &&
+                                  nextRatio >= _options.AutoCompactionThreshold;
+
+                return (completedTurn, autoCompact);
             }, CancellationToken.None).ConfigureAwait(false);
 
             if (finalizeOutcome.ShouldAutoCompact)
             {
-                await CompactSessionInternalAsync(sessionId, CancellationToken.None).ConfigureAwait(false);
+                try
+                {
+                    await CompactSessionInternalAsync(sessionId, CancellationToken.None).ConfigureAwait(false);
+                }
+                catch (KernelException ex) when (ex.Code == KernelErrorCode.Conflict)
+                {
+                    // A new turn reserved the session before optional compaction.
+                }
             }
 
-            if (finalizeOutcome.NextQueuedWake is { } queued)
+            await EnqueueAsync(_ =>
             {
-                TrackBackgroundJob(() => ExecuteSessionTurnPipelineAsync(sessionId, queued.TriggerKind, queued.Prompt, _actorShutdownCts.Token));
-            }
+                SchedulePendingWakeCore(sessionId);
+                return Task.CompletedTask;
+            }, CancellationToken.None).ConfigureAwait(false);
 
             return finalizeOutcome.CompletedTurn;
         }
         finally
         {
+            if (pendingCleanup is { } active)
+            {
+                try
+                {
+                    if (!_actorShutdownCts.IsCancellationRequested)
+                        await EnqueueAsync(async _ =>
+                        {
+                            if (_activeTurns.TryGetValue(sessionId, out var current) && ReferenceEquals(current, active))
+                            {
+                                _activeTurns.Remove(sessionId);
+                                if (input is null)
+                                {
+                                    var idle = RequireSessionCore(sessionId) with { Status = "idle", UpdatedAtMs = NowMs() };
+                                    await PersistAndEmitSessionUpdatedCoreAsync(idle, idle.UpdatedAtMs, CancellationToken.None)
+                                        .ConfigureAwait(false);
+                                    _sessions[sessionId] = idle;
+                                    SchedulePendingWakeCore(sessionId);
+                                }
+                            }
+                        }, CancellationToken.None).ConfigureAwait(false);
+                }
+                finally
+                {
+                    active.TurnCts.Dispose();
+                }
+            }
             Interlocked.Decrement(ref _inFlightExternalOps);
         }
     }
@@ -2426,22 +2531,27 @@ public sealed class TrackActor : IAsyncDisposable
     private async Task<AgentSessionDto> CompactSessionInternalAsync(string sessionId, CancellationToken ct)
     {
         Interlocked.Increment(ref _inFlightExternalOps);
+        var reserved = false;
         try
         {
             var prep = await EnqueueAsync<(AgentSessionDto Session, IAgentSession OldAgentSession, int HandoverTurnIndex)>(async _ =>
             {
                 await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
                 var session = RequireSessionCore(sessionId);
-                if (_activeTurns.ContainsKey(sessionId))
+                if (_activeTurns.ContainsKey(sessionId) || HoldsDurableSlot(session) || _compactingSessions.Contains(sessionId) ||
+                    _reservedWakeSessions.ContainsKey(sessionId))
                 {
                     throw KernelException.Conflict($"Cannot compact session '{sessionId}' while a turn is actively running.");
                 }
 
                 var oldAgentSession = await GetOrOpenAgentSessionCoreAsync(session, overrideSystemPrompt: null, ct)
                     .ConfigureAwait(false);
+                ct.ThrowIfCancellationRequested();
+                _compactingSessions.Add(sessionId);
+                reserved = true;
                 var turnIdx = NextTurnIndexCore(sessionId);
                 return (session, oldAgentSession, turnIdx);
-            }, ct).ConfigureAwait(false);
+            }, CancellationToken.None).ConfigureAwait(false);
 
             // 1. Request structured handover summary turn on current IAgentSession (NEVER native CLI /compact!).
             const string handoverPrompt =
@@ -2525,6 +2635,13 @@ public sealed class TrackActor : IAsyncDisposable
         }
         finally
         {
+            if (reserved && !_actorShutdownCts.IsCancellationRequested)
+                await EnqueueAsync(_ =>
+                {
+                    _compactingSessions.Remove(sessionId);
+                    SchedulePendingWakeCore(sessionId);
+                    return Task.CompletedTask;
+                }, CancellationToken.None).ConfigureAwait(false);
             Interlocked.Decrement(ref _inFlightExternalOps);
         }
     }
@@ -2600,41 +2717,79 @@ public sealed class TrackActor : IAsyncDisposable
 
     private async Task DispatchLeadWakePromptIfNeededAsync(string triggerKind, string wakePrompt, CancellationToken ct)
     {
-        var check = await EnqueueAsync<(string? LeadSessionId, bool QueuedBecauseBusy)>(async _ =>
+        var check = await EnqueueAsync<(string? LeadSessionId, Guid? Reservation)>(async _ =>
         {
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
             if (_track.ClosedAtMs is not null || string.IsNullOrEmpty(_track.LeadSessionId))
             {
-                return (null, false);
+                return (null, null);
             }
 
             var leadId = _track.LeadSessionId!;
             if (!_sessions.ContainsKey(leadId))
             {
-                return (null, false);
+                return (null, null);
             }
 
-            if (_activeTurns.ContainsKey(leadId))
+            if (_activeTurns.ContainsKey(leadId) || HoldsDurableSlot(_sessions[leadId]) ||
+                _compactingSessions.Contains(leadId) || _reservedWakeSessions.ContainsKey(leadId))
             {
                 EnqueuePendingWakeCore(leadId, triggerKind, wakePrompt);
-                return (leadId, true);
+                return (leadId, null);
             }
 
-            return (leadId, false);
-        }, ct).ConfigureAwait(false);
+            ct.ThrowIfCancellationRequested();
+            var reservation = Guid.NewGuid();
+            _reservedWakeSessions.Add(leadId, reservation);
+            return (leadId, reservation);
+        }, CancellationToken.None).ConfigureAwait(false);
 
-        if (check.LeadSessionId is null || check.QueuedBecauseBusy)
+        if (check.LeadSessionId is null || check.Reservation is not { } reservation)
         {
             return;
         }
 
         if (_options.DispatchWakesInBackground)
         {
-            TrackBackgroundJob(() => ExecuteSessionTurnPipelineAsync(check.LeadSessionId, triggerKind, wakePrompt, _actorShutdownCts.Token));
+            TrackBackgroundJob(() => RunReservedWakeAsync(check.LeadSessionId, triggerKind, wakePrompt, reservation, _actorShutdownCts.Token));
         }
         else
         {
-            await ExecuteSessionTurnPipelineAsync(check.LeadSessionId, triggerKind, wakePrompt, ct).ConfigureAwait(false);
+            await RunReservedWakeAsync(check.LeadSessionId, triggerKind, wakePrompt, reservation, ct).ConfigureAwait(false);
+        }
+    }
+
+    private void SchedulePendingWakeCore(string sessionId)
+    {
+        if (_activeTurns.ContainsKey(sessionId) || _compactingSessions.Contains(sessionId) ||
+            _reservedWakeSessions.ContainsKey(sessionId) || !_sessions.TryGetValue(sessionId, out var session) ||
+            HoldsDurableSlot(session) ||
+            !_pendingWakes.TryGetValue(sessionId, out var queued) || !queued.TryDequeue(out var wake))
+            return;
+
+        var reservation = Guid.NewGuid();
+        _reservedWakeSessions.Add(sessionId, reservation);
+        TrackBackgroundJob(() => RunReservedWakeAsync(sessionId, wake.TriggerKind, wake.Prompt, reservation, _actorShutdownCts.Token));
+    }
+
+    private async Task RunReservedWakeAsync(string sessionId, string kind, string prompt, Guid reservation, CancellationToken ct)
+    {
+        try
+        {
+            await ExecuteSessionTurnPipelineAsync(sessionId, kind, prompt, ct, wakeReservation: reservation).ConfigureAwait(false);
+        }
+        finally
+        {
+            if (!_actorShutdownCts.IsCancellationRequested)
+                await EnqueueAsync(_ =>
+                {
+                    if (_reservedWakeSessions.TryGetValue(sessionId, out var current) && current == reservation)
+                    {
+                        _reservedWakeSessions.Remove(sessionId);
+                        SchedulePendingWakeCore(sessionId);
+                    }
+                    return Task.CompletedTask;
+                }, CancellationToken.None).ConfigureAwait(false);
         }
     }
 
@@ -3053,29 +3208,6 @@ public sealed class TrackActor : IAsyncDisposable
         return next;
     }
 
-    private static int ComputeMaxTurnIndex(IReadOnlyList<SessionItemDto> items)
-    {
-        var maxIdx = 0;
-        var distinctTurns = new HashSet<string>(StringComparer.Ordinal);
-
-        foreach (var item in items)
-        {
-            distinctTurns.Add(item.TurnId);
-            if (item.TurnId.StartsWith("trn_", StringComparison.Ordinal))
-            {
-                var rest = item.TurnId["trn_".Length..];
-                var underscore = rest.IndexOf('_');
-                var numSpan = underscore > 0 ? rest[..underscore] : rest;
-                if (int.TryParse(numSpan, out var parsed) && parsed > maxIdx)
-                {
-                    maxIdx = parsed;
-                }
-            }
-        }
-
-        return Math.Max(maxIdx, distinctTurns.Count);
-    }
-
     private string BuildDefaultSystemPromptCore(AgentSessionDto session)
     {
         var reportMd = _reportEngine.RenderMarkdown(_report, withMarkers: true);
@@ -3143,19 +3275,14 @@ public sealed class TrackActor : IAsyncDisposable
     private void TrackBackgroundJob(Func<Task> jobFactory)
     {
         var jobId = Guid.NewGuid();
-        var task = Task.Run(async () =>
-        {
-            try
-            {
-                await jobFactory().ConfigureAwait(false);
-            }
-            finally
-            {
-                _backgroundJobs.TryRemove(jobId, out _);
-                TouchActivity();
-            }
-        });
+        var task = Task.Run(jobFactory);
         _backgroundJobs[jobId] = task;
+        _ = task.ContinueWith(completed =>
+        {
+            _ = completed.Exception;
+            _backgroundJobs.TryRemove(jobId, out _);
+            TouchActivity();
+        }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
     }
 
     private long NowMs() => _timeProvider.GetUtcNow().ToUnixTimeMilliseconds();

@@ -296,17 +296,14 @@ public sealed class AcpAgentSession : IAgentSession
                     ? errObj.GetString() ?? "ACP turn error."
                     : TryGetString(errObj, "message") ?? errObj.GetRawText();
                 var retryable = TryGetBool(errObj, "isRetryable") ?? TryGetBool(errObj, "retryable") ?? false;
-                turnState.TryFinish(new UnifiedAgentEvent.TurnError(code, msg, retryable));
+                turnState.TryFinish(new UnifiedAgentEvent.TurnError(code, msg, retryable, IsConclusive: true));
                 return;
             }
 
             if (string.Equals(stopReason, "cancelled", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(stopReason, "canceled", StringComparison.OrdinalIgnoreCase))
             {
-                turnState.TryFinish(new UnifiedAgentEvent.TurnError(
-                    "turn_cancelled",
-                    "ACP session prompt was cancelled.",
-                    IsRetryable: false));
+                turnState.TryFinish(new UnifiedAgentEvent.TurnInterrupted());
                 return;
             }
 

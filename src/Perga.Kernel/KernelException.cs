@@ -3,6 +3,7 @@ namespace Perga.Kernel;
 public enum KernelErrorCode
 {
     NotFound,
+    Gone,
     InvalidArgument,
     Conflict,
     Forbidden,
@@ -24,6 +25,9 @@ public sealed class KernelException : Exception
 
     public static KernelException NotFound(string message) =>
         new(KernelErrorCode.NotFound, message);
+
+    public static KernelException Gone(string message) =>
+        new(KernelErrorCode.Gone, message);
 
     public static KernelException InvalidArgument(string message) =>
         new(KernelErrorCode.InvalidArgument, message);

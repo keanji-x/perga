@@ -740,12 +740,16 @@ public sealed class ClaudeAgentSession : IAgentSession
         var isError = TryGetBool(root, "is_error") ?? TryGetBool(root, "isError") ?? false;
         var subtype = TryGetString(root, "subtype");
 
-        if (isError ||
-            (subtype is not null &&
-             (subtype.StartsWith("error", StringComparison.OrdinalIgnoreCase) ||
-              string.Equals(subtype, "interrupted", StringComparison.OrdinalIgnoreCase) ||
-              string.Equals(subtype, "cancelled", StringComparison.OrdinalIgnoreCase) ||
-              string.Equals(subtype, "canceled", StringComparison.OrdinalIgnoreCase))))
+        if (subtype is not null &&
+            (string.Equals(subtype, "interrupted", StringComparison.OrdinalIgnoreCase) ||
+             string.Equals(subtype, "cancelled", StringComparison.OrdinalIgnoreCase) ||
+             string.Equals(subtype, "canceled", StringComparison.OrdinalIgnoreCase)))
+        {
+            turnState.TryFinish(new UnifiedAgentEvent.TurnInterrupted());
+            return;
+        }
+
+        if (isError || (subtype is not null && subtype.StartsWith("error", StringComparison.OrdinalIgnoreCase)))
         {
             var code = string.IsNullOrWhiteSpace(subtype) ? "claude_turn_error" : subtype;
             var msg = TryGetString(root, "error")
@@ -753,7 +757,7 @@ public sealed class ClaudeAgentSession : IAgentSession
                       ?? ExtractErrorsList(root)
                       ?? "Claude turn failed.";
             var retryable = TryGetBool(root, "is_retryable") ?? TryGetBool(root, "retryable") ?? false;
-            turnState.TryFinish(new UnifiedAgentEvent.TurnError(code, msg, retryable));
+            turnState.TryFinish(new UnifiedAgentEvent.TurnError(code, msg, retryable, IsConclusive: true));
             return;
         }
 

@@ -135,36 +135,75 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_track ON agent_sessions(track_id);
 
--- 8A. 会话轮次（含 Idempotency-Key 去重与 Epoch 归属索引）
+-- 8A. 会话轮次（队列、派发及执行结果）
 CREATE TABLE IF NOT EXISTS session_turns (
     id                  TEXT PRIMARY KEY,
     session_id          TEXT NOT NULL REFERENCES agent_sessions(id) ON DELETE CASCADE,
     turn_index          INTEGER NOT NULL,
     epoch               INTEGER NOT NULL DEFAULT 1,
-    idempotency_key     TEXT,
     trigger_kind        TEXT NOT NULL,        -- 'user' | 'wake' | 'system'
-    input_json          TEXT NOT NULL,
-    status              TEXT NOT NULL,        -- 'running' | 'completed' | 'failed' | 'interrupted'
+    input_json          TEXT,
+    status              TEXT NOT NULL,        -- 'queued' | 'running' | 'completed' | 'failed' | 'interrupted' | 'unknown'
     usage_json          TEXT,
     error_text          TEXT,
-    started_at_ms       INTEGER NOT NULL,
+    started_at_ms       INTEGER,
     completed_at_ms     INTEGER,
-    UNIQUE (session_id, idempotency_key)
+    accepted_at_ms      INTEGER,
+    provider            TEXT,
+    model               TEXT,
+    provider_turn_ref   TEXT,
+    UNIQUE (session_id, id)
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_turns_session_idx ON session_turns(session_id, turn_index);
 CREATE INDEX IF NOT EXISTS idx_turns_session_epoch ON session_turns(session_id, epoch);
 
--- 8B. 会话完整条目（流式 Delta 走内存 WS，仅完成块落盘；>64KB 大输出剥离外部冷存储）
+-- 8B. 已接收的会话输入及派发状态
+CREATE TABLE IF NOT EXISTS session_inputs (
+    id                  TEXT PRIMARY KEY,
+    session_id          TEXT NOT NULL,
+    turn_id             TEXT NOT NULL UNIQUE,
+    author_id           TEXT NOT NULL CHECK (length(author_id) > 0),
+    request_key         TEXT NOT NULL CHECK (length(request_key) BETWEEN 1 AND 256),
+    request_hash        TEXT NOT NULL,
+    content             TEXT NOT NULL,
+    accepted_at_ms      INTEGER NOT NULL,
+    delivery_state      TEXT NOT NULL CHECK (delivery_state IN ('accepted', 'dispatching', 'delivered', 'rejected', 'unknown')),
+    dispatch_started_at_ms INTEGER,
+    resolved_at_ms      INTEGER,
+    FOREIGN KEY (session_id, turn_id) REFERENCES session_turns(session_id, id) ON DELETE CASCADE,
+    UNIQUE (session_id, author_id, request_key),
+    UNIQUE (id, session_id, turn_id)
+);
+CREATE INDEX IF NOT EXISTS idx_inputs_delivery ON session_inputs(delivery_state, accepted_at_ms, id);
+
+-- 8C. 会话条目（流式 Delta 走内存 WS，>64KB 大输出剥离至外部冷存储）
 CREATE TABLE IF NOT EXISTS session_items (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id          TEXT NOT NULL REFERENCES agent_sessions(id) ON DELETE CASCADE,
-    turn_id             TEXT NOT NULL REFERENCES session_turns(id) ON DELETE CASCADE,
+    turn_id             TEXT NOT NULL,
     kind                TEXT NOT NULL,        -- 'user' | 'thinking' | 'assistant_text' | 'tool_call' | 'tool_result'
     payload_json        TEXT NOT NULL,
-    created_at_ms       INTEGER NOT NULL
+    created_at_ms       INTEGER NOT NULL,
+    accepted_input_id   TEXT UNIQUE,
+    FOREIGN KEY (session_id, turn_id) REFERENCES session_turns(session_id, id) ON DELETE CASCADE,
+    FOREIGN KEY (accepted_input_id, session_id, turn_id) REFERENCES session_inputs(id, session_id, turn_id),
+    CHECK (accepted_input_id IS NULL OR kind = 'user')
 );
 CREATE INDEX IF NOT EXISTS idx_items_session ON session_items(session_id, id);
 CREATE INDEX IF NOT EXISTS idx_items_turn ON session_items(turn_id);
+
+-- 8D. 创建回执（资源删除后保留，重试仍返回 Gone）
+CREATE TABLE IF NOT EXISTS creation_receipts (
+    author_id           TEXT NOT NULL,
+    operation           TEXT NOT NULL,
+    scope_id            TEXT NOT NULL,
+    request_key         TEXT NOT NULL CHECK (length(request_key) BETWEEN 1 AND 256),
+    request_hash        TEXT NOT NULL,
+    resource_id         TEXT NOT NULL,
+    first_input_id      TEXT,
+    created_at_ms       INTEGER NOT NULL,
+    PRIMARY KEY (author_id, operation, scope_id, request_key)
+);
 
 -- 9A. 用户审批问答
 CREATE TABLE IF NOT EXISTS asks (

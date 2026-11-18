@@ -67,8 +67,21 @@ public sealed record SessionTurnDto(
     string Status,
     JsonElement? Usage,
     string? ErrorText,
-    long StartedAtMs,
+    long? StartedAtMs,
     long? CompletedAtMs);
+
+public sealed record SessionInputReceipt(
+    string InputId,
+    string TurnId,
+    string SessionId,
+    string DeliveryState,
+    string TurnStatus,
+    long? ResolvedAtMs)
+{
+    public string StatusUrl => $"/api/v1/sessions/{SessionId}/inputs/{InputId}";
+}
+
+public sealed record SessionCreationReceipt(AgentSessionDto Session, SessionInputReceipt? FirstInput);
 
 public sealed record SessionItemDto(
     long Id,

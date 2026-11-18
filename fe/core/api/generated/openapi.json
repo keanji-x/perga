@@ -14771,15 +14771,57 @@
         }
       },
       "post": {
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreatePergaSessionRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "201": {
+            "description": "Session created",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AgentSessionDto"
+                  "$ref": "#/components/schemas/SessionCreationReceipt"
                 }
               }
             }
+          },
+          "200": {
+            "description": "Original session and first input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionCreationReceipt"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflicting request key"
+          },
+          "410": {
+            "description": "Created session was deleted"
+          },
+          "400": {
+            "description": "Missing or invalid request key or body"
           }
         }
       }
@@ -14806,7 +14848,37 @@
               }
             }
           }
-        }
+        },
+        "parameters": [
+          {
+            "name": "afterId",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "beforeId",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "latest",
+            "in": "query",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ]
       }
     },
     "/api/v1/sessions/{sessionId}/messages": {
@@ -14821,15 +14893,151 @@
         }
       ],
       "post": {
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SessionTurnDto"
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "content"
+                ],
+                "properties": {
+                  "content": {
+                    "type": "string"
+                  },
+                  "steerIfRunning": {
+                    "type": "boolean",
+                    "default": false
+                  }
                 }
               }
             }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Replayed input or live steering result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/SessionInputReceipt"
+                    },
+                    {
+                      "$ref": "#/components/schemas/SessionTurnDto"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Input committed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionInputReceipt"
+                }
+              }
+            },
+            "headers": {
+              "Location": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Session busy or conflicting request key"
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionId}/inputs/{inputId}": {
+      "parameters": [
+        {
+          "name": "sessionId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "inputId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Current receipt",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionInputReceipt"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Input missing"
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionId}/inputs/{inputId}/abandon": {
+      "parameters": [
+        {
+          "name": "sessionId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "inputId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Unknown outcome acknowledged",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionInputReceipt"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Input outcome is not unknown"
           }
         }
       }
@@ -24342,11 +24550,118 @@
             "type": "string"
           },
           "startedAtMs": {
-            "type": "integer"
+            "type": [
+              "integer",
+              "null"
+            ]
           },
           "completedAtMs": {
             "type": [
               "integer",
+              "null"
+            ]
+          }
+        }
+      },
+      "SessionInputReceipt": {
+        "type": "object",
+        "required": [
+          "inputId",
+          "turnId",
+          "sessionId",
+          "statusUrl",
+          "deliveryState",
+          "turnStatus",
+          "resolvedAtMs"
+        ],
+        "properties": {
+          "inputId": {
+            "type": "string"
+          },
+          "turnId": {
+            "type": "string"
+          },
+          "sessionId": {
+            "type": "string"
+          },
+          "statusUrl": {
+            "type": "string"
+          },
+          "deliveryState": {
+            "type": "string",
+            "enum": [
+              "accepted",
+              "dispatching",
+              "delivered",
+              "rejected",
+              "unknown"
+            ]
+          },
+          "turnStatus": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "running",
+              "completed",
+              "failed",
+              "interrupted",
+              "unknown"
+            ]
+          },
+          "resolvedAtMs": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        }
+      },
+      "SessionCreationReceipt": {
+        "type": "object",
+        "required": [
+          "session",
+          "firstInput"
+        ],
+        "properties": {
+          "session": {
+            "$ref": "#/components/schemas/AgentSessionDto"
+          },
+          "firstInput": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SessionInputReceipt"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "CreatePergaSessionRequest": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "provider": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "text": {
+            "type": [
+              "string",
               "null"
             ]
           }
@@ -24385,7 +24700,8 @@
         "type": "object",
         "required": [
           "items",
-          "session"
+          "session",
+          "unknownInput"
         ],
         "properties": {
           "items": {
@@ -24406,6 +24722,16 @@
           },
           "session": {
             "$ref": "#/components/schemas/AgentSessionDto"
+          },
+          "unknownInput": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SessionInputReceipt"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         }
       },

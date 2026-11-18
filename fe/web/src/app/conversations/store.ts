@@ -114,6 +114,7 @@ export function useConversationStore(
     ? readErrorText(initialObservation.error, 'The first message’s current status could not be checked.')
     : null;
   const phase = run.data?.phase ?? null;
+  const pergaInputProtocol = run.data?.unknown_session_input !== undefined;
   const recovery = run.data?.recovery ?? null;
   const stalled = recovery !== null;
   const canonical = run.data?.input_contract === 'canonical';
@@ -189,9 +190,11 @@ export function useConversationStore(
     transcriptKey: transcriptQuery.queryKey, transcriptReads, items,
   });
   const working = !executionHeld && !stalled && (phase === 'issuing_turn' || phase === 'compacting' || phase === 'turn_running');
+  const canStop = working && (!pergaInputProtocol || phase === 'turn_running');
   const stop = useConversationStop({
-    cardId, canStop: working && !stalled,
-    responseEnded: canonical ? run.error === null && run.data?.terminal_outcome != null : phase === 'idle' || phase === 'turn_completed',
+    cardId, canStop,
+    responseEnded: run.error === null && (canonical && !pergaInputProtocol
+      ? run.data?.terminal_outcome != null : phase === 'idle' || phase === 'turn_completed'),
     historyKnown: historyKnown,
     newestRowId: items.reduce((latest, row) => Math.max(latest, row.id), 0),
     completedRowId: items.reduce<number | null>((latest, row) => transcriptRowToTurnOutcome(row) === null
@@ -335,6 +338,7 @@ export function useConversationStore(
     turns: conversation === null ? NO_TURNS : presentation.transcript,
     pending: pendingConversationIds(conversation, working, !stalled && view.sending),
     working,
+    canStop,
     stalled,
     recovery,
     inputStalled,
@@ -342,7 +346,7 @@ export function useConversationStore(
     stopping,
     stopFeedback,
     sending: view.sending,
-    sendBlocked: view.blocked,
+    sendBlocked: view.blocked || run.data?.unknown_session_input != null || (pergaInputProtocol && working),
     initialInputChecking: view.checkingInitialInput && initialInputError === null,
     initialInputError,
     retryInitialInput: () => { void initialObservation.refetch().catch(() => undefined); void history.refetch().catch(() => undefined); },
@@ -410,6 +414,14 @@ export function useConversationStore(
     retryRun: () => { void run.refetch().catch(() => undefined); if (acceptedInitial !== undefined) void initialObservation.refetch().catch(() => undefined); },
     loadEarlier,
     blockedReason: run.data?.blocked_reason ?? null,
+    abandonUnknownInput: run.data?.unknown_session_input == null ? null : () => {
+      const input = run.data?.unknown_session_input;
+      if (input == null || input.sessionId !== cardId) return;
+      setActionError(null);
+      void mutations.abandonSessionInput(input.inputId).catch(() => {
+        if (shownCardId.current === cardId) setActionError({ cardId, message: 'Could not start a fresh provider session. Try again.' });
+      });
+    },
     terminalTimeout: run.data?.terminal_timeout ?? null,
     currentOutcome: run.error !== null || working ? null : currentConversationOutcome(run.data?.terminal_outcome ?? null),
     /* Before the first answer the conversation is following the default, which is

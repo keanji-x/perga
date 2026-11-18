@@ -40,17 +40,17 @@ function mount({ persistSent = false, running = false, message = text }: { persi
     params: JSON.stringify({ item: { type: 'userMessage', content: [{ text: body }] } }), created_at_ms: Date.now(),
   });
   const view = renderDailyFixture({ initial: '/track/daily?panel=conversations', extraPlanner: true, reply: request => {
-    if (request.path === '/api/version') return ok({ assistantProviders: true, conversationInitialInput: true, conversationCreateModel: true,
+    if (request.path === '/api/v1/bootstrap') return ok({ assistantProviders: true, conversationInitialInput: true, conversationCreateModel: true,
       webCompatVersion: WEB_COMPAT_VERSION, minWebCompatVersion: WEB_COMPAT_VERSION, syncEventVersion: 29, dbInstanceId: 'send-feedback' });
-    if (request.path.startsWith('/api/agent-providers/managed')) return ok([{
+    if (request.path.startsWith('/api/v1/bootstrap?scope=managed')) return ok([{
       availability: { provider: 'codex', status: 'ready', reason: null, checked_at_ms: 1, authentication_method: null, authentication_notice: null },
       accepts_unavailable_blank_track: true, capabilities: { managed_conversation: true, steer: true, images: true, manual_compact: true, history_replacement: true, requires_ready_availability: false },
     }]);
-    if (request.path === '/api/cards/second-planner/planner/run?contract=conversation_v1') return ok(historicalConversationRun({ card_id: 'second-planner', worker_session_id: 'runtime',
+    if (request.path === '/api/v1/sessions/second-planner/items?afterId=0&limit=1&view=run') return ok(historicalConversationRun({ card_id: 'second-planner', worker_session_id: 'runtime',
       phase: running ? 'turn_running' : 'idle', model: null, reasoning_effort: null, permission_mode: 'never', blocked_reason: null,
       manual_compact_supported: true, recovery: null, compact_outcome: null, context_usage_invalidated: false, running_turn: null }, 'idle', true));
     if (request.path.endsWith('/harness/live')) return ok({ turn_id: 'running-turn', items: [] });
-    if (request.path.includes('/second-planner/harness/items')) {
+    if (request.path.includes('/sessions/second-planner/items')) {
       if (storedText !== null) canonicalReads++;
       return ok(historicalConversationPage(conversationCardId(request.path), [{
       id: 1, worker_session_id: 'runtime', card_id: 'second-planner', track_id: 'daily', thread_id: 'thread',
@@ -58,21 +58,21 @@ function mount({ persistSent = false, running = false, message = text }: { persi
       params: JSON.stringify({ item: { text: 'Stored history remains still.' } }), created_at_ms: 1,
     }, ...(storedText === null ? [] : [userRow('second-planner', storedText, null, ORDINARY_ENTRY)])], null));
     }
-    if (created !== null && request.path === '/api/tracks/daily/conversations') return ok([created]);
+    if (created !== null && request.method === 'GET' && request.path === '/api/v1/tracks/daily/sessions') return ok([created]);
     if (created !== null && request.path.endsWith('/initial-input')) {
-      const post = view.requests.find(candidate => candidate.method === 'POST' && candidate.path.endsWith('/conversations')
+      const post = view.requests.find(candidate => candidate.method === 'POST' && candidate.path.endsWith('/sessions')
         && candidate.headers?.['Idempotency-Key'] === request.headers?.['Idempotency-Key']);
       if (post === undefined) throw new Error('No original creation request');
       return ok({ kind: 'projected', entryRev: 0, receipt: initialReceiptFor(post, 'first-entry', 0), runtimeId: 'runtime', itemId: 2, segmentIndex: 0 });
     }
-    if (created !== null && request.path.includes(`/${created.id}/harness/items`)) {
+    if (created !== null && request.path.includes(`/${created.id}/items`) && !request.path.includes('&view=')) {
       canonicalReads++;
       return ok(historicalConversationPage(conversationCardId(request.path), [userRow(created.id, message, 'accepted-initial-turn', { id: 'first-entry', rev: 0 })], null));
     }
-    if (request.method === 'POST' && (request.path.endsWith('/planner/input') || request.path.endsWith('/conversations'))) {
+    if (request.method === 'POST' && (request.path.endsWith('/messages') || request.path.endsWith('/sessions'))) {
       return responseAt(posts++).promise.then(result => {
         if (result !== undefined) return result;
-        if (request.path.endsWith('/conversations')) {
+        if (request.path.endsWith('/sessions')) {
           const key = request.headers?.['Idempotency-Key'];
           if (key === undefined) throw new Error('The create request must carry its key.');
           created = { id: trackConversationCardId('daily', key), trackId: 'daily', title: null, kind: 'track-assistant', provider: 'codex', state: null, updatedAt: 2, archivedAt: null, lastTurnCompletedAt: null };
@@ -273,4 +273,68 @@ it.each([1400, 390])('keeps the first message bubble and mentions consistent thr
     expect(getComputedStyle(outgoing()).opacity).toBe('1');
     expect(getComputedStyle(outgoing()).transform).toBe('none');
   } finally { cleanup(); view.answer(); view.client.clear(); }
+});
+
+it('replays a lost session-creation reply with the same key and adopts the server session', async () => {
+  await page.viewport(1400, 900);
+  const session = { id: 'ses_created_on_server', trackId: 'daily', provider: 'codex', title: 'Recovered conversation',
+    status: 'idle', createdAtMs: 2, updatedAtMs: 3 };
+  const firstInput = { inputId: 'inp_server_message', turnId: 'trn_server', sessionId: session.id,
+    deliveryState: 'delivered', turnStatus: 'completed', resolvedAtMs: null,
+    statusUrl: `/api/v1/sessions/${session.id}/inputs/inp_server_message` };
+  const followUp = 'A second message with a stored receipt.';
+  const laterInput = { ...firstInput, inputId: 'inp_follow_up', turnId: 'trn_follow_up',
+    statusUrl: `/api/v1/sessions/${session.id}/inputs/inp_follow_up` };
+  let followUpAccepted = false;
+  const attempts: Array<{ key: string | undefined; body: unknown }> = [];
+  const view = renderDailyFixture({ initial: '/track/daily?panel=conversations',
+    identity: { userId: 'local-owner', displayName: 'Owner', role: 'owner', sessionId: 'owner-session' },
+    reply: request => {
+    if (request.path === '/api/v1/bootstrap') return ok({ version: 'test', providers: [], areas: [], templates: [] });
+    if (request.path.startsWith('/api/v1/bootstrap?scope=managed')) return ok([{
+      availability: { provider: 'codex', status: 'ready', reason: null, checked_at_ms: 1, authentication_method: null, authentication_notice: null },
+      accepts_unavailable_blank_track: true, capabilities: { managed_conversation: true, steer: true, images: true,
+        manual_compact: true, history_replacement: false, requires_ready_availability: false },
+    }]);
+    if (request.path === '/api/v1/tracks/daily/sessions') {
+      if (request.method !== 'POST') return ok(attempts.length > 0 ? [session] : []);
+      attempts.push({ key: request.headers?.['Idempotency-Key'], body: request.body });
+      if (attempts.length === 1) return Promise.reject(new TypeError('Response dropped after commit'));
+      return ok({ session, firstInput });
+    }
+    if (request.path === `/api/v1/sessions/${session.id}/messages` && request.method === 'POST') {
+      followUpAccepted = true;
+      return { status: 202, statusText: 'Accepted', body: laterInput };
+    }
+    if (request.path.includes(`/sessions/${session.id}/items`)) return ok({ session, activeTurn: null, unknownInput: null, items: [
+      { id: 1, sessionId: session.id, turnId: firstInput.turnId, kind: 'user', createdAtMs: 2,
+        payload: { content: text, inputId: firstInput.inputId } },
+      { id: 2, sessionId: session.id, turnId: firstInput.turnId, kind: 'assistant_text', createdAtMs: 3,
+        payload: { text: 'The one stored answer.' } },
+      ...(followUpAccepted ? [{ id: 3, sessionId: session.id, turnId: laterInput.turnId, kind: 'user', createdAtMs: 4,
+        payload: { content: followUp, inputId: laterInput.inputId } }] : []),
+    ] });
+    return undefined;
+  } });
+  try {
+    fireEvent.click(await screen.findByRole('button', { name: 'New conversation' }));
+    await waitFor(() => expect(view.client.getQueryData(['server-version'])).toMatchObject({ sessionInputReceipts: true }));
+    await waitFor(() => expect(field().getAttribute('contenteditable')).toBe('true'));
+    await act(async () => { field().textContent = text; fireEvent.input(field()); await Promise.resolve(); });
+    fireEvent.keyDown(field(), { key: 'Enter' });
+    fireEvent.click(await screen.findByRole('button', { name: 'Try again' }));
+    await screen.findByText('The one stored answer.');
+    expect(attempts).toHaveLength(2);
+    expect(attempts[0].key).toBeTruthy();
+    expect(attempts[1]).toEqual(attempts[0]);
+    expect(attempts[0].body).toMatchObject({ text });
+    expect(view.requests.filter(request => request.method === 'POST' && request.path.endsWith('/messages'))).toHaveLength(0);
+    expect(screen.getAllByText(text, { exact: true })).toHaveLength(1);
+
+    await act(async () => { field().textContent = followUp; fireEvent.input(field()); await Promise.resolve(); });
+    fireEvent.keyDown(field(), { key: 'Enter' });
+    await waitFor(() => expect(followUpAccepted).toBe(true));
+    await waitFor(() => expect(screen.getAllByText(followUp, { exact: true })).toHaveLength(1));
+    await waitFor(() => expect(field().getAttribute('contenteditable')).toBe('true'));
+  } finally { cleanup(); view.client.clear(); }
 });

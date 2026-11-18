@@ -84,6 +84,7 @@ public static class HttpErrorHandling
     {
         var (statusCode, code) = kex.Code switch
         {
+            KernelErrorCode.Gone => (StatusCodes.Status410Gone, "gone"),
             KernelErrorCode.NotFound => (StatusCodes.Status404NotFound, "not_found"),
             KernelErrorCode.InvalidArgument => (StatusCodes.Status400BadRequest, "invalid_argument"),
             KernelErrorCode.Forbidden => (StatusCodes.Status403Forbidden, "forbidden"),

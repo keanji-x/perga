@@ -1160,36 +1160,75 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_track ON agent_sessions(track_id);
 
--- 8A. 会话轮次（含 Idempotency-Key 去重与 Epoch 归属索引）
+-- 8A. 会话轮次（队列、派发及执行结果）
 CREATE TABLE IF NOT EXISTS session_turns (
     id                  TEXT PRIMARY KEY,
     session_id          TEXT NOT NULL REFERENCES agent_sessions(id) ON DELETE CASCADE,
     turn_index          INTEGER NOT NULL,
     epoch               INTEGER NOT NULL DEFAULT 1,
-    idempotency_key     TEXT,
     trigger_kind        TEXT NOT NULL,        -- 'user' | 'wake' | 'system'
-    input_json          TEXT NOT NULL,
-    status              TEXT NOT NULL,        -- 'running' | 'completed' | 'failed' | 'interrupted'
+    input_json          TEXT,
+    status              TEXT NOT NULL,        -- 'queued' | 'running' | 'completed' | 'failed' | 'interrupted' | 'unknown'
     usage_json          TEXT,
     error_text          TEXT,
-    started_at_ms       INTEGER NOT NULL,
+    started_at_ms       INTEGER,
     completed_at_ms     INTEGER,
-    UNIQUE (session_id, idempotency_key)
+    accepted_at_ms      INTEGER,
+    provider            TEXT,
+    model               TEXT,
+    provider_turn_ref   TEXT,
+    UNIQUE (session_id, id)
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_turns_session_idx ON session_turns(session_id, turn_index);
 CREATE INDEX IF NOT EXISTS idx_turns_session_epoch ON session_turns(session_id, epoch);
 
--- 8B. 会话完整条目（流式 Delta 走内存 WS，仅完成块落盘；>64KB 大输出剥离外部冷存储）
+-- 8B. 已接收的会话输入及派发状态
+CREATE TABLE IF NOT EXISTS session_inputs (
+    id                  TEXT PRIMARY KEY,
+    session_id          TEXT NOT NULL,
+    turn_id             TEXT NOT NULL UNIQUE,
+    author_id           TEXT NOT NULL CHECK (length(author_id) > 0),
+    request_key         TEXT NOT NULL CHECK (length(request_key) BETWEEN 1 AND 256),
+    request_hash        TEXT NOT NULL,
+    content             TEXT NOT NULL,
+    accepted_at_ms      INTEGER NOT NULL,
+    delivery_state      TEXT NOT NULL CHECK (delivery_state IN ('accepted', 'dispatching', 'delivered', 'rejected', 'unknown')),
+    dispatch_started_at_ms INTEGER,
+    resolved_at_ms      INTEGER,
+    FOREIGN KEY (session_id, turn_id) REFERENCES session_turns(session_id, id) ON DELETE CASCADE,
+    UNIQUE (session_id, author_id, request_key),
+    UNIQUE (id, session_id, turn_id)
+);
+CREATE INDEX IF NOT EXISTS idx_inputs_delivery ON session_inputs(delivery_state, accepted_at_ms, id);
+
+-- 8C. 会话条目（流式 Delta 走内存 WS，>64KB 大输出剥离至外部冷存储）
 CREATE TABLE IF NOT EXISTS session_items (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id          TEXT NOT NULL REFERENCES agent_sessions(id) ON DELETE CASCADE,
-    turn_id             TEXT NOT NULL REFERENCES session_turns(id) ON DELETE CASCADE,
+    turn_id             TEXT NOT NULL,
     kind                TEXT NOT NULL,        -- 'user' | 'thinking' | 'assistant_text' | 'tool_call' | 'tool_result'
     payload_json        TEXT NOT NULL,
-    created_at_ms       INTEGER NOT NULL
+    created_at_ms       INTEGER NOT NULL,
+    accepted_input_id   TEXT UNIQUE,
+    FOREIGN KEY (session_id, turn_id) REFERENCES session_turns(session_id, id) ON DELETE CASCADE,
+    FOREIGN KEY (accepted_input_id, session_id, turn_id) REFERENCES session_inputs(id, session_id, turn_id),
+    CHECK (accepted_input_id IS NULL OR kind = 'user')
 );
 CREATE INDEX IF NOT EXISTS idx_items_session ON session_items(session_id, id);
 CREATE INDEX IF NOT EXISTS idx_items_turn ON session_items(turn_id);
+
+-- 8D. 创建回执（资源删除后保留，重试仍返回 Gone）
+CREATE TABLE IF NOT EXISTS creation_receipts (
+    author_id           TEXT NOT NULL,
+    operation           TEXT NOT NULL,
+    scope_id            TEXT NOT NULL,
+    request_key         TEXT NOT NULL CHECK (length(request_key) BETWEEN 1 AND 256),
+    request_hash        TEXT NOT NULL,
+    resource_id         TEXT NOT NULL,
+    first_input_id      TEXT,
+    created_at_ms       INTEGER NOT NULL,
+    PRIMARY KEY (author_id, operation, scope_id, request_key)
+);
 
 -- 9A. 用户审批问答
 CREATE TABLE IF NOT EXISTS asks (
@@ -1292,13 +1331,17 @@ CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at_ms);
 | 报告 | `PUT /api/v1/tracks/{trackId}/report/blocks/{blockId}` | 人类直接编辑报告块 `{ docRev, knownBlockRev, markdown?, payload? }`；更新后唤醒主理会话 (`LeadSessionId`) |
 | 任务 | `GET /api/v1/tracks/{trackId}/tasks/{taskKey}/attempts` | 返回该 Task 的历史 `TaskAttemptDto[]`（含 `meta` 与 Gate 日志） |
 | 会话 | `GET /api/v1/tracks/{trackId}/sessions` | 统一返回该 Track 下所有 `AgentSessionDto`（含 `Lead`、自由 `Subagent` 与契约 `Subagent`） |
-| 会话 | `POST /api/v1/tracks/{trackId}/sessions` | 新开自由协作 `Subagent` 会话 `{ title?, provider, model? }` → `201 AgentSessionDto` |
-| 会话 | `GET /api/v1/sessions/{sessionId}/items` | `?afterId=0&limit=100` 分页读取 `SessionItemDto[]` 与当前在途 Turn 状态 |
-| 会话 | `POST /api/v1/sessions/{sessionId}/messages` | 必填 Header `Idempotency-Key`；Body `{ content, steerIfRunning? }` → `200 SessionTurnDto` |
+| 会话 | `POST /api/v1/tracks/{trackId}/sessions` | 必填 `Idempotency-Key`。可传 `{ title?, provider?, model?, text? }`，其中 `text` 为首条消息。创建返回 `201 SessionCreationReceipt`，相同请求重放返回 `200` |
+| 会话 | `GET /api/v1/sessions/{sessionId}/items` | 按 `afterId` 正序分页。用 `latest=true` 或 `beforeId` 读最近一页。响应含会话、在途轮次和待处理的未知输入 |
+| 会话 | `POST /api/v1/sessions/{sessionId}/messages` | 必填 `Idempotency-Key`。普通发送提交后返回 `202 SessionInputReceipt`，相同请求重放返回 `200`。在途 steering 保留原响应 |
+| 会话 | `GET /api/v1/sessions/{sessionId}/inputs/{inputId}` | 读取当前派发状态和轮次结果 |
+| 会话 | `POST /api/v1/sessions/{sessionId}/inputs/{inputId}/abandon` | 确认未知结果并解除发送阻塞，后续消息使用新的 provider 线程 |
 | 会话 | `POST /api/v1/sessions/{sessionId}/interrupt` | 中断当前在途 Turn → `200` |
 | 会话 | `POST /api/v1/sessions/{sessionId}/compact` | 触发宿主自管 Epoch 换页压缩 → `200 AgentSessionDto` |
 | 决策/终端 | `POST /api/v1/tracks/{trackId}/asks/{askId}/answer` | 提交 `{ answers: [...] }` 回答并唤醒 `LeadSessionId` |
 | 决策/终端 | `GET / POST / DELETE /api/v1/tracks/{trackId}/terminals/{termId?}` | 列出/打开/关闭终端实例 |
+
+输入和创建回执表由 `0001_init.sql` 在空库中创建。输入回执协议以单一 Host 独占 SQLite 为前提。重启时会派发已接收且尚未登记派发的输入。派发结果不明时保留原回执，且同一请求键持续指向原输入。确认未知结果只解除会话阻塞，旧消息和旧轮次仍可见。当前 SQLite WAL 使用 `synchronous=NORMAL`，此协议验证进程重启恢复。
 
 *(说明：共 22 个逻辑 REST 操作路径，`GET/POST/DELETE terminals` 计为 1 组终端资源端点，加上 `bootstrap`/`templates` 共 24 条路由。)*
 

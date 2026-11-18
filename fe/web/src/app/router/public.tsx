@@ -609,6 +609,7 @@ function useConversationPane(
 
   const { start, startWithMessage, withDraft, sendDraft, retryDraft, sendAsNewConversation, closeDrawer } = createConversationDraftActions({
     registry, draft, creating, source, sourceScopeId, transport, supportsDraftModel,
+    sessionInputReceipts: draftCapabilities.data?.sessionInputReceipts === true,
     supportsInitialInput: !draftCapabilities.isError && draftCapabilities.data?.conversationInitialInput === true,
     managedProviders: managed.answers,
     recheckManagedProviders: managed.recheck,
@@ -726,7 +727,7 @@ function useConversationPane(
   const replacing = edit.replacing || edit.queuedSaving;
   const editingQueue = edit.queued !== null;
   const changeComposer = edit.onComposerChange;
-  const composerStop = !editingQueue && !composerView.compacting && (composerView.working || composerView.stopping) ? composerView.interrupt : undefined;
+  const composerStop = !editingQueue && !composerView.compacting && (store.canStop || composerView.stopping) ? composerView.interrupt : undefined;
   const plannerCommands = plannerRow?.commands;
   const switchPlanner = usePlannerSwitchControl(transport, unauthorized, scope);
   const plannerSwitchBinding = useMemo(() => scope?.kind === 'track-assistant' && plannerRow === null
@@ -929,6 +930,7 @@ function useConversationPane(
             {!store.stalled && !store.executionHeld && store.blockedReason !== null && (
               <ChatFooterNotice>
                 <ChatFooterError message={store.blockedReason} />
+                {store.abandonUnknownInput !== null && <ChatFooterRemedy onClick={store.abandonUnknownInput}>Start a fresh provider session</ChatFooterRemedy>}
               </ChatFooterNotice>
             )}
             {!store.stalled && !store.executionHeld && store.terminalTimeout !== null && (
