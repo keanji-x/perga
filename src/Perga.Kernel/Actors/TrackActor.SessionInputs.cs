@@ -1,0 +1,237 @@
+using System.Collections.Concurrent;
+using System.Security.Cryptography;
+using System.Text.Json;
+using Perga.Contracts;
+using Perga.Kernel.Events;
+using Perga.Kernel.Internal;
+using Perga.Kernel.Ports;
+
+namespace Perga.Kernel.Actors;
+
+public sealed partial class TrackActor
+{
+    private readonly ConcurrentDictionary<string, byte> _dispatchingInputs = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _compactingSessions = new(StringComparer.Ordinal);
+
+    public async Task<(SessionInputReceipt? Receipt, SessionTurnDto? SteeredTurn, bool Replay)> AcceptMessageAsync(
+        string sessionId, SendMessageRequest request, CancellationToken ct)
+    {
+        ValidateRequestKey(request.IdempotencyKey);
+        var hash = HashRequest(new { version = 1, request.Content, request.SteerIfRunning });
+        var result = await EnqueueAsync<(SessionInputReceipt? Receipt, bool Replay)>(async _ =>
+        {
+            var existing = await _store.SessionInputs.FindByKeyAsync(sessionId, request.IdempotencyKey, ct).ConfigureAwait(false);
+            if (existing is not null)
+            {
+                RequireMatchingHash(existing.RequestHash, hash);
+                return (await ReplayInputCoreAsync(existing, ct).ConfigureAwait(false), true);
+            }
+
+            await EnsureHydratedCoreAsync(ct, mountWorkspace: false).ConfigureAwait(false);
+            var session = RequireSessionCore(sessionId);
+            if (request.SteerIfRunning && (_activeTurns.ContainsKey(sessionId) ||
+                _idempotencyTurns.ContainsKey((sessionId, request.IdempotencyKey))))
+                return (null, false);
+            if (_idempotencyTurns.ContainsKey((sessionId, request.IdempotencyKey)))
+                throw KernelException.Conflict("This request key was already used by a live turn.");
+            if (_activeTurns.ContainsKey(sessionId) || _compactingSessions.Contains(sessionId) || _reservedWakeSessions.ContainsKey(sessionId) || HoldsDurableSlot(session))
+                throw KernelException.Conflict($"Session '{sessionId}' already has an active or unresolved turn.");
+
+            session = session with { Status = "queued", UpdatedAtMs = NowMs() };
+            var sessionEvent = SessionUpdatedEvent(session);
+            await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
+            var input = await _store.SessionInputs.AcceptAsync(session,
+                new(request.IdempotencyKey, hash, request.Content), sessionEvent, ct).ConfigureAwait(false);
+            RegisterAcceptedInput(session, input);
+            await PublishInputEventAsync(sessionEvent).ConfigureAwait(false);
+            return (input.Receipt, false);
+        }, ct).ConfigureAwait(false);
+
+        if (result.Receipt is not null)
+            return (result.Receipt, null, result.Replay);
+
+        var steered = await SendMessageAsync(sessionId, request, ct, requireActiveTurn: true).ConfigureAwait(false);
+        return (null, steered, false);
+    }
+
+    public Task<(SessionCreationReceipt Receipt, bool Replay)> CreateSessionWithReceiptAsync(
+        CreateSessionRequest request, string key, CancellationToken ct)
+    {
+        ValidateRequestKey(key);
+        if (request.Text is { } text && string.IsNullOrWhiteSpace(text))
+            throw KernelException.InvalidArgument("First message cannot be empty.");
+
+        var hash = HashRequest(new { version = 1, request.Title, request.Provider, request.Model, request.Text });
+        var intent = new SessionCreateIntent(TrackId, key, hash);
+        return EnqueueAsync<(SessionCreationReceipt, bool)>(async _ =>
+        {
+            var existing = await _store.SessionInputs.FindCreationAsync(intent, ct).ConfigureAwait(false);
+            if (existing is not null)
+            {
+                RequireMatchingHash(existing.RequestHash, hash);
+                var created = existing.Session ?? throw KernelException.Gone("The created session was deleted.");
+                var replayedInput = existing.FirstInput is { } originalInput
+                    ? await ReplayInputCoreAsync(originalInput, ct).ConfigureAwait(false)
+                    : null;
+                return (new(created, replayedInput), true);
+            }
+
+            await EnsureHydratedCoreAsync(ct, mountWorkspace: false).ConfigureAwait(false);
+            var session = NewSubagentSessionCore(request);
+            SessionInputRequest? first = null;
+            if (request.Text is { } content)
+            {
+                var firstHash = HashRequest(new { version = 1, Content = content, SteerIfRunning = false });
+                first = new(key, firstHash, content);
+                session = session with { Status = "queued" };
+            }
+
+            var sessionEvent = SessionUpdatedEvent(session);
+            await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
+            var input = await _store.SessionInputs.CreateAsync(intent, session, first, sessionEvent, ct).ConfigureAwait(false);
+            if (input is null)
+                _sessions[session.Id] = session;
+            else
+                RegisterAcceptedInput(session, input);
+            await PublishInputEventAsync(sessionEvent).ConfigureAwait(false);
+            return (new(session, input?.Receipt), false);
+        }, ct);
+    }
+
+    public Task<SessionInputReceipt> ResolveUnknownInputAsync(string sessionId, string inputId, CancellationToken ct) =>
+        EnqueueAsync(async _ =>
+        {
+            await EnsureHydratedCoreAsync(ct, mountWorkspace: false).ConfigureAwait(false);
+            var session = RequireSessionCore(sessionId);
+            var input = await _store.SessionInputs.FindByIdAsync(sessionId, inputId, ct).ConfigureAwait(false)
+                ?? throw KernelException.NotFound("Session input not found.");
+            if (input.Receipt.ResolvedAtMs is not null)
+                return input.Receipt;
+            if (input.Receipt.TurnStatus != "unknown" || session.Status != "unknown")
+                throw KernelException.Conflict("Only an unresolved unknown input can be abandoned.");
+
+            // The previous provider thread may still contain effects from the unknown turn.
+            var updated = session with
+            {
+                Status = "idle", Epoch = checked(session.Epoch + 1), NativeThreadId = null,
+                ContextUsageRatio = 0, UpdatedAtMs = NowMs()
+            };
+            _mcpBridge.RevokeSession(sessionId);
+            if (_openAgentSessions.Remove(sessionId, out var agent))
+                await agent.DisposeAsync().ConfigureAwait(false);
+            var sessionEvent = SessionUpdatedEvent(updated);
+            await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
+            await _store.SessionInputs.ResolveAsync(input, updated, sessionEvent, ct).ConfigureAwait(false);
+            _sessions[sessionId] = updated;
+            SchedulePendingWakeCore(sessionId);
+            await PublishInputEventAsync(sessionEvent).ConfigureAwait(false);
+            return input.Receipt with { ResolvedAtMs = updated.UpdatedAtMs };
+        }, ct);
+
+    private void RegisterAcceptedInput(AgentSessionDto session, PersistedSessionInput input)
+    {
+        _sessions[session.Id] = session;
+        _nextTurnIndexBySession[session.Id] = input.TurnIndex;
+        DispatchAcceptedInput(input);
+    }
+
+    internal void DispatchAcceptedInput(PersistedSessionInput input)
+    {
+        if (!_dispatchingInputs.TryAdd(input.Receipt.InputId, 0))
+            return;
+        TrackBackgroundJob(async () =>
+        {
+            try
+            {
+                await ExecuteSessionTurnPipelineAsync(input.Receipt.SessionId, "user", input.Content,
+                    _actorShutdownCts.Token, input).ConfigureAwait(false);
+            }
+            finally
+            {
+                _dispatchingInputs.TryRemove(input.Receipt.InputId, out _);
+            }
+        });
+    }
+
+    private async Task<SessionInputReceipt> ReplayInputCoreAsync(PersistedSessionInput input, CancellationToken ct)
+    {
+        if (input.Receipt.DeliveryState == "accepted")
+            DispatchAcceptedInput(input);
+        else if (input.Receipt.TurnStatus == "running" && !_dispatchingInputs.ContainsKey(input.Receipt.InputId))
+        {
+            await EnsureHydratedCoreAsync(ct, mountWorkspace: false).ConfigureAwait(false);
+            return await RecoverDispatchCoreAsync(input).ConfigureAwait(false);
+        }
+
+        return input.Receipt;
+    }
+
+    private async Task<SessionInputReceipt> RecoverDispatchCoreAsync(PersistedSessionInput input)
+    {
+        var now = NowMs();
+        var session = RequireSessionCore(input.Receipt.SessionId) with { Status = "unknown", UpdatedAtMs = now };
+        var turn = new SessionTurnDto(input.Receipt.TurnId, session.Id, input.TurnIndex, input.Epoch,
+            "user", JsonHelpers.ToElement(new { }), "unknown", null, "Dispatch outcome could not be saved.", null, null);
+        var delivery = input.Receipt.DeliveryState == "delivered" ? "delivered" : "unknown";
+        await SettleDurableTurnCoreAsync(input, delivery, turn, [], session).ConfigureAwait(false);
+        return input.Receipt with { DeliveryState = delivery, TurnStatus = "unknown" };
+    }
+
+    private static bool HoldsDurableSlot(AgentSessionDto session) => session.Status is "queued" or "running" or "unknown";
+
+    private EventEnvelopeDto SessionUpdatedEvent(AgentSessionDto session) =>
+        new(null, _track.AreaId, TrackId, KernelEventKinds.SessionUpdated,
+            JsonHelpers.ToElement(session), session.UpdatedAtMs);
+
+    private EventEnvelopeDto TurnCompletedEvent(SessionTurnDto turn, long now) =>
+        new(null, _track.AreaId, TrackId, KernelEventKinds.TurnCompleted, JsonHelpers.ToElement(turn), now);
+
+    private async Task SettleDurableTurnCoreAsync(
+        PersistedSessionInput input, string delivery, SessionTurnDto turn, IReadOnlyList<SessionItemDto> items,
+        AgentSessionDto session)
+    {
+        var turnEvent = TurnCompletedEvent(turn, session.UpdatedAtMs);
+        var sessionEvent = SessionUpdatedEvent(session);
+        await _eventHub.EnsureInitializedFromStoreAsync(_store, CancellationToken.None).ConfigureAwait(false);
+        try
+        {
+            await _store.SessionInputs.SettleAsync(input, delivery, turn, items, session,
+                [turnEvent, sessionEvent], CancellationToken.None).ConfigureAwait(false);
+        }
+        catch when (turn.Status != "unknown" || items.Count > 0)
+        {
+            var observed = await _store.SessionInputs.FindByIdAsync(session.Id, input.Receipt.InputId,
+                CancellationToken.None).ConfigureAwait(false);
+            if (observed is null)
+                throw;
+            if (observed.Receipt.TurnStatus == "running")
+            {
+                await RecoverDispatchCoreAsync(observed).ConfigureAwait(false);
+                return;
+            }
+            if (observed.Receipt.TurnStatus != turn.Status)
+                throw;
+        }
+        _sessions[session.Id] = session;
+        _activeTurns.Remove(session.Id);
+        await PublishInputEventAsync(turnEvent).ConfigureAwait(false);
+    }
+
+    private Task PublishInputEventAsync(EventEnvelopeDto evt) =>
+        _eventHub.PublishSyncedAfterStoreWriteAsync(_store, evt, CancellationToken.None, allowFallback: false);
+
+    private static string HashRequest<T>(T request) =>
+        Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(request)));
+
+    private static void ValidateRequestKey(string key)
+    {
+        if (string.IsNullOrWhiteSpace(key) || key.Length > 256)
+            throw KernelException.InvalidArgument("Idempotency-Key must contain 1 to 256 characters.");
+    }
+
+    private static void RequireMatchingHash(string expected, string actual)
+    {
+        if (!string.Equals(expected, actual, StringComparison.Ordinal))
+            throw KernelException.Conflict("This request key was already used with different input.");
+    }
+}

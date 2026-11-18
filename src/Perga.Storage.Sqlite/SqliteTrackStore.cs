@@ -13,7 +13,7 @@ namespace Perga.Storage.Sqlite;
 /// backed by <see cref="SqliteSingleWriter"/> micro-batching, lock-free <c>Mode=ReadOnly</c> snapshot readers,
 /// <c>&gt; 64 KB</c> Zstd cold blob offloading, and deterministic sliding-window GC.
 /// </summary>
-public sealed class SqliteTrackStore : ITrackStore, IAsyncDisposable
+public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
 {
     private const long DayMs = 86_400_000L;
     private const long EventRetentionWindowMs = 7L * DayMs;
@@ -982,70 +982,28 @@ public sealed class SqliteTrackStore : ITrackStore, IAsyncDisposable
         SessionTurnDto turn,
         IReadOnlyList<SessionItemDto> newItems,
         AgentSessionDto? updatedSession,
-        CancellationToken ct) =>
-        RecordTurnAndItemsAsync(turn, idempotencyKey: null, newItems, updatedSession, ct);
-
-    public Task<SessionTurnDto> RecordTurnAndItemsAsync(
-        SessionTurnDto turn,
-        string? idempotencyKey,
-        IReadOnlyList<SessionItemDto> newItems,
-        AgentSessionDto? updatedSession,
-        CancellationToken ct = default)
+        CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(turn);
         ArgumentNullException.ThrowIfNull(newItems);
         EnsureInitialized();
 
-        var effectiveIdempotencyKey = !string.IsNullOrWhiteSpace(idempotencyKey)
-            ? idempotencyKey
-            : SqliteJsonUpcaster.ExtractIdempotencyKeyFromInput(turn.Input);
-
         var inputJson = SqliteJsonUpcaster.SerializeElement(turn.Input);
         var usageJson = SqliteJsonUpcaster.SerializeNullableElement(turn.Usage);
 
-        return _writer.EnqueueAsync<SessionTurnDto>(
+        return _writer.EnqueueAsync(
             async (conn, tx, innerCt) =>
             {
-                if (!string.IsNullOrWhiteSpace(effectiveIdempotencyKey))
-                {
-                    var existingByKey = await conn.QuerySingleOrDefaultAsync<SessionTurnRow>(
-                        new CommandDefinition(
-                            """
-                            SELECT id AS Id,
-                                   session_id AS SessionId,
-                                   turn_index AS TurnIndex,
-                                   epoch AS Epoch,
-                                   idempotency_key AS IdempotencyKey,
-                                   trigger_kind AS TriggerKind,
-                                   input_json AS InputJson,
-                                   status AS Status,
-                                   usage_json AS UsageJson,
-                                   error_text AS ErrorText,
-                                   started_at_ms AS StartedAtMs,
-                                   completed_at_ms AS CompletedAtMs
-                            FROM session_turns
-                            WHERE session_id = @SessionId AND idempotency_key = @IdempotencyKey;
-                            """,
-                            new { turn.SessionId, IdempotencyKey = effectiveIdempotencyKey },
-                            transaction: tx,
-                            cancellationToken: innerCt)).ConfigureAwait(false);
-
-                    if (existingByKey is not null && !string.Equals(existingByKey.Id, turn.Id, StringComparison.Ordinal))
-                    {
-                        return MapTurn(existingByKey);
-                    }
-                }
-
                 await conn.ExecuteAsync(
                     new CommandDefinition(
                         """
                         INSERT INTO session_turns (
-                            id, session_id, turn_index, epoch, idempotency_key,
+                            id, session_id, turn_index, epoch,
                             trigger_kind, input_json, status, usage_json, error_text,
                             started_at_ms, completed_at_ms
                         )
                         VALUES (
-                            @Id, @SessionId, @TurnIndex, @Epoch, @IdempotencyKey,
+                            @Id, @SessionId, @TurnIndex, @Epoch,
                             @TriggerKind, @InputJson, @Status, @UsageJson, @ErrorText,
                             @StartedAtMs, @CompletedAtMs
                         )
@@ -1064,7 +1022,6 @@ public sealed class SqliteTrackStore : ITrackStore, IAsyncDisposable
                             turn.SessionId,
                             turn.TurnIndex,
                             turn.Epoch,
-                            IdempotencyKey = effectiveIdempotencyKey,
                             turn.TriggerKind,
                             InputJson = inputJson,
                             turn.Status,
@@ -1090,34 +1047,38 @@ public sealed class SqliteTrackStore : ITrackStore, IAsyncDisposable
                             transaction: tx,
                             cancellationToken: innerCt)).ConfigureAwait(false);
 
-                    foreach (var item in newItems)
-                    {
-                        var payloadJson = !string.IsNullOrWhiteSpace(trackId)
-                            ? _coldBlobStore.StoreOrInline(trackId, item.Payload)
-                            : SqliteJsonUpcaster.SerializeElement(item.Payload);
-
-                        await conn.ExecuteAsync(
-                            new CommandDefinition(
-                                """
-                                INSERT INTO session_items (session_id, turn_id, kind, payload_json, created_at_ms)
-                                VALUES (@SessionId, @TurnId, @Kind, @PayloadJson, @CreatedAtMs);
-                                """,
-                                new
-                                {
-                                    item.SessionId,
-                                    item.TurnId,
-                                    item.Kind,
-                                    PayloadJson = payloadJson,
-                                    item.CreatedAtMs
-                                },
-                                transaction: tx,
-                                cancellationToken: innerCt)).ConfigureAwait(false);
-                    }
+                    await InsertSessionItemsAsync(conn, tx, trackId, newItems, innerCt).ConfigureAwait(false);
                 }
-
-                return turn;
             },
             ct);
+    }
+
+    private async Task InsertSessionItemsAsync(
+        SqliteConnection conn, SqliteTransaction tx, string? trackId, IReadOnlyList<SessionItemDto> items, CancellationToken ct)
+    {
+        foreach (var item in items)
+        {
+            var payloadJson = !string.IsNullOrWhiteSpace(trackId)
+                ? _coldBlobStore.StoreOrInline(trackId, item.Payload)
+                : SqliteJsonUpcaster.SerializeElement(item.Payload);
+
+            await conn.ExecuteAsync(
+                new CommandDefinition(
+                    """
+                    INSERT INTO session_items (session_id, turn_id, kind, payload_json, created_at_ms)
+                    VALUES (@SessionId, @TurnId, @Kind, @PayloadJson, @CreatedAtMs);
+                    """,
+                    new
+                    {
+                        item.SessionId,
+                        item.TurnId,
+                        item.Kind,
+                        PayloadJson = payloadJson,
+                        item.CreatedAtMs
+                    },
+                    transaction: tx,
+                    cancellationToken: ct)).ConfigureAwait(false);
+        }
     }
 
     public async Task<IReadOnlyList<SessionTurnDto>> ListSessionTurnsAsync(
@@ -1135,7 +1096,6 @@ public sealed class SqliteTrackStore : ITrackStore, IAsyncDisposable
                        session_id AS SessionId,
                        turn_index AS TurnIndex,
                        epoch AS Epoch,
-                       idempotency_key AS IdempotencyKey,
                        trigger_kind AS TriggerKind,
                        input_json AS InputJson,
                        status AS Status,
@@ -1157,36 +1117,42 @@ public sealed class SqliteTrackStore : ITrackStore, IAsyncDisposable
         string sessionId,
         long afterId = 0,
         int limit = 100,
-        CancellationToken ct = default)
+        CancellationToken ct = default, bool latest = false, long? beforeId = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(sessionId);
         EnsureInitialized();
 
+        var reverse = latest || beforeId is not null;
         var clampedLimit = Math.Max(1, limit);
         await using var conn = await OpenReadConnectionAsync(ct).ConfigureAwait(false);
         var rows = await conn.QueryAsync<SessionItemRow>(
             new CommandDefinition(
-                """
-                SELECT id AS Id,
-                       session_id AS SessionId,
-                       turn_id AS TurnId,
-                       kind AS Kind,
-                       payload_json AS PayloadJson,
-                       created_at_ms AS CreatedAtMs
-                FROM session_items
-                WHERE session_id = @SessionId AND id > @AfterId
-                ORDER BY id ASC
+                $"""
+                SELECT item.id AS Id,
+                       item.session_id AS SessionId,
+                       item.turn_id AS TurnId,
+                       item.kind AS Kind,
+                       CASE WHEN input.id IS NULL THEN item.payload_json
+                            ELSE json_object('v', 1, 'content', input.content, 'triggerKind', 'user', 'inputId', input.id)
+                       END AS PayloadJson,
+                       item.created_at_ms AS CreatedAtMs
+                FROM session_items item
+                LEFT JOIN session_inputs input ON input.id = item.accepted_input_id
+                WHERE item.session_id = @SessionId
+                  AND item.id > @AfterId AND (@BeforeId IS NULL OR item.id < @BeforeId)
+                ORDER BY item.id {(reverse ? "DESC" : "ASC")}
                 LIMIT @Limit;
                 """,
                 new
                 {
                     SessionId = sessionId,
                     AfterId = afterId,
+                    BeforeId = beforeId,
                     Limit = clampedLimit
                 },
                 cancellationToken: ct)).ConfigureAwait(false);
 
-        return rows.Select(MapSessionItem).ToList();
+        return (reverse ? rows.Reverse() : rows).Select(MapSessionItem).ToList();
     }
 
     // -------------------------------------------------------------------------
@@ -2508,13 +2474,12 @@ public sealed class SqliteTrackStore : ITrackStore, IAsyncDisposable
         public string SessionId { get; init; } = string.Empty;
         public long TurnIndex { get; init; }
         public long Epoch { get; init; }
-        public string? IdempotencyKey { get; init; }
         public string TriggerKind { get; init; } = string.Empty;
         public string InputJson { get; init; } = "{}";
         public string Status { get; init; } = string.Empty;
         public string? UsageJson { get; init; }
         public string? ErrorText { get; init; }
-        public long StartedAtMs { get; init; }
+        public long? StartedAtMs { get; init; }
         public long? CompletedAtMs { get; init; }
     }
 

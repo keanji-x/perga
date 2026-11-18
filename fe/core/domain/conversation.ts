@@ -12,6 +12,8 @@ import {
   type AgentSessionDto,
 } from '../api/schemas.js';
 
+import { sessionCreationReceiptSchema, sessionInputReceiptSchema, type SessionInputReceipt } from '../api/perga-v1.js';
+
 import type {
   AgentProvider, ConversationInitialInputReceiptResult, HarnessInputPresentation, HarnessInputSegment, HarnessItem, HarnessPhaseTag,
   HarnessInterruptionReason, HarnessTimeoutEvidence,
@@ -72,9 +74,8 @@ export type Conversation = Readonly<{
 
 export type CreatedConversation = Readonly<{
   conversation: Conversation;
-  initialInput: ConversationInitialInputReceiptResult;
-  needsInitialMessageSend?: boolean;
-}>;
+}> & (Readonly<{ sessionInput: SessionInputReceipt; initialInput?: never }>
+  | Readonly<{ initialInput: ConversationInitialInputReceiptResult; sessionInput?: never }>);
 
 /** What a session is called when it has no name of its own. */
 export const CONVERSATION_KIND_LABEL: Readonly<Record<ConversationKind, string>> = Object.freeze({
@@ -436,13 +437,13 @@ export function plannerRunOperation(cardId: string): ApiOperation<PlannerRun> {
         return {
           card_id: cardId,
           worker_session_id: page.session.id,
-          phase: running ? 'turn_running' : 'idle',
+          phase: running ? 'turn_running' : page.session.status === 'queued' ? 'issuing_turn' : 'idle',
           pending: [],
           pending_overflow: 0,
           model: page.session.model ?? null,
           reasoning_effort: null,
           permission_mode: page.session.isLead ? 'ask' : null,
-          blocked_reason: null,
+          blocked_reason: page.session.status === 'unknown' ? 'The previous message has an unknown outcome.' : null,
           recovery: null,
           attachments_supported: false,
           manual_compact_supported: true,
@@ -457,7 +458,7 @@ export function plannerRunOperation(cardId: string): ApiOperation<PlannerRun> {
             }
             : null,
           running_turn: running && page.activeTurn !== null && page.activeTurn !== undefined
-            ? { turn_id: page.activeTurn.id, elapsed_ms: Math.max(0, Date.now() - page.activeTurn.startedAtMs) }
+            ? { turn_id: page.activeTurn.id, elapsed_ms: Math.max(0, Date.now() - (page.activeTurn.startedAtMs ?? Date.now())) }
             : null,
         };
       }),
@@ -683,11 +684,16 @@ export function sendPlannerInputOperation(
     },
     headers: { 'Idempotency-Key': idempotencyKey },
     responseSchema: z.union([
-      sessionTurnDtoSchema.transform((turn) => ({
-        card_id: turn.sessionId || cardId,
-        worker_session_id: turn.sessionId || cardId,
-        entry_id: null,
+      sessionInputReceiptSchema.refine(receipt => receipt.sessionId === cardId).transform((receipt) => ({
+        card_id: receipt.sessionId,
+        worker_session_id: receipt.sessionId,
+        entry_id: receipt.inputId,
       })),
+      ...(steerIfRunning ? [sessionTurnDtoSchema.transform((turn) => ({
+        card_id: turn.sessionId,
+        worker_session_id: turn.sessionId,
+        entry_id: null,
+      }))] : []),
       z.object({
         card_id: z.string(),
         worker_session_id: z.string(),
@@ -695,6 +701,11 @@ export function sendPlannerInputOperation(
       }),
     ]),
   };
+}
+
+export function abandonSessionInputOperation(sessionId: string, inputId: string): ApiOperation<SessionInputReceipt> {
+  return { method: 'POST', path: `/api/v1/sessions/${encodeURIComponent(sessionId)}/inputs/${encodeURIComponent(inputId)}/abandon`,
+    responseSchema: sessionInputReceiptSchema };
 }
 
 /** The image formats the upload endpoint accepts; the server's magic-number sniff is the judgement. */
@@ -945,7 +956,7 @@ export function setConversationArchiveOperation(trackId: string, cardId: string,
 
 export function agentSessionDtoToConversation(dto: AgentSessionDto): Conversation {
   const provider = normalizeWireAgentProvider(dto.provider) ?? 'codex';
-  const stateParsed = conversationStateSchema.safeParse(dto.status);
+  const stateParsed = conversationStateSchema.safeParse(dto.status === 'queued' ? 'turn_pending' : dto.status);
   return {
     id: dto.id,
     trackId: dto.trackId,
@@ -992,11 +1003,11 @@ export function createTrackConversationOperation(
       ...(selection.reasoning_effort === null ? {} : { reasoning_effort: selection.reasoning_effort }),
     },
     responseSchema: z.union([
-      agentSessionDtoSchema.transform((dto) => ({
-        conversation: agentSessionDtoToConversation(dto),
-        initialInput: { kind: 'legacy-unavailable' as const },
-        needsInitialMessageSend: true,
-      })),
+      sessionCreationReceiptSchema.refine(result => result.firstInput != null && result.session.trackId === trackId)
+        .transform((result) => ({
+          conversation: agentSessionDtoToConversation(result.session),
+          sessionInput: result.firstInput!,
+        })),
       trackConversationSummarySchema.and(z.object({ initialInput: initialInputReceiptResultSchema }))
         .transform((row) => ({ conversation: toTrackConversation(row), initialInput: row.initialInput })),
     ]),

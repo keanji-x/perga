@@ -61,7 +61,7 @@ import {
   type Track, type TrackDetailWire, type TrackPatchBody, type TrackRecipe,
 } from '../../../../core/domain/track.ts';
 import {
-  compactPlannerOperation, interruptPlannerOperation, sendPlannerInputOperation,
+  abandonSessionInputOperation, compactPlannerOperation, interruptPlannerOperation, sendPlannerInputOperation,
   createTrackConversationOperation, trackConversationsOperation, setConversationArchiveOperation,
   createSerialWriter, deletePlannerInputOperation, editPlannerInputOperation, steerPlannerInputOperation,
   modelCatalogOperation, plannerQueueWriteFailure, setPlannerModelOperation,
@@ -243,6 +243,9 @@ export function usePlannerMutations(transport: ApiTransportPort, cardId: string,
           refreshInputMetadata(admitted, error);
           throw error;
         }),
+    abandonSessionInput: (inputId: string) => Promise.resolve().then(() => admitTransport(transport))
+      .then(admitted => runOperation(admitted, abandonSessionInputOperation(cardId, inputId), unauthorized))
+      .then(result => refreshAfterInput(result, false)),
     /* Admitted at the press, as every chat write is: a stop that cannot leave the browser is not sent (#2068). */
     compact: () => Promise.resolve().then(() => admitTransport(transport))
       .then((admitted) => runOperation(admitted, compactPlannerOperation(cardId), unauthorized)).then(refreshAfter),
@@ -367,19 +370,11 @@ export function useTrackConversationMutations(
   const client = useQueryClient();
   const create = useRecoveryMutation(transport, {
     mutationFn: async ({ text, idempotencyKey, provider, selection, side }: { text: string; idempotencyKey: string; provider: AgentProvider; selection: ModelSelection; side?: SideConversation; answered: (result: CreatedConversation) => void }, transport: ApiTransportPort) => {
-      const created = await runOperation(
+      return runOperation(
         transport,
         createTrackConversationOperation(trackId, text, idempotencyKey, provider, selection, side),
         unauthorized,
       );
-      if (created.needsInitialMessageSend && text.trim() !== '') {
-        await runOperation(
-          transport,
-          sendPlannerInputOperation(created.conversation.id, text, [], `${idempotencyKey}:msg`, null),
-          unauthorized,
-        );
-      }
-      return created;
     },
     onSuccess: (result, { answered }) => {
       answered(result);
@@ -445,6 +440,7 @@ export function serverVersionOperation(): ApiOperation<ServerVersionInfo> {
         assistantProviders: true,
         conversationCreateModel: true,
         conversationInitialInput: true,
+        sessionInputReceipts: true,
         conversationSide: false,
         webCompatVersion: WEB_COMPAT_VERSION,
         minWebCompatVersion: WEB_COMPAT_VERSION,

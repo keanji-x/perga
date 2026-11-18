@@ -121,8 +121,7 @@ public sealed class AcpProviderTests : IDisposable
             }
         }
 
-        var cancelErr = Assert.Single(cancelEvents.OfType<UnifiedAgentEvent.TurnError>());
-        Assert.Equal("turn_cancelled", cancelErr.Code);
+        Assert.Single(cancelEvents.OfType<UnifiedAgentEvent.TurnInterrupted>());
 
         // JSON-RPC error surfaces TurnError with IsRetryable = true on 429
         var rpcErrEvents = await DrainTurnAsync(session, new TurnInput("TRIGGER_RPC_ERROR", "err_1"));

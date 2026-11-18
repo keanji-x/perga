@@ -9,8 +9,7 @@ public sealed class SqliteMigratorTests
     [Fact]
     public void EmbeddedInitMigration_MatchesDesignMdSection3ByteForByte()
     {
-        var migrations = SqliteMigrator.LoadEmbeddedMigrations();
-        var init = Assert.Single(migrations);
+        var init = Assert.Single(SqliteMigrator.LoadEmbeddedMigrations());
         Assert.Equal(1, init.Version);
         Assert.Equal("0001_init.sql", init.Name);
         Assert.Equal(64, init.ChecksumSha256.Length);
@@ -77,6 +76,8 @@ public sealed class SqliteMigratorTests
                 "agent_sessions",
                 "session_turns",
                 "session_items",
+                "session_inputs",
+                "creation_receipts",
                 "asks",
                 "mails",
                 "terminals",
@@ -104,6 +105,7 @@ public sealed class SqliteMigratorTests
                 "idx_turns_session_epoch",
                 "idx_items_session",
                 "idx_items_turn",
+                "idx_inputs_delivery",
                 "idx_asks_track",
                 "idx_mails_to_track",
                 "idx_terminals_track",

@@ -258,6 +258,9 @@ describe('track conversations', () => {
 
   it('sends a planner message under the key its retries reuse', () => {
     const operation = sendPlannerInputOperation('card 1', 'hello', ['image.png'], 'key-a', null);
+    expect(operation.responseSchema.safeParse({
+      id: 'trn_old', sessionId: 'card 1', status: 'completed', startedAtMs: 1,
+    }).success).toBe(false);
     expect(operation.method).toBe('POST');
     expect(operation.path).toBe('/api/v1/sessions/card%201/messages');
     expect(operation.body).toStrictEqual({ content: 'hello', steerIfRunning: false, text: 'hello', attachments: ['image.png'] });

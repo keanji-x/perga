@@ -359,6 +359,8 @@ public sealed class CodexAgentSession : IAgentSession
             var result = await _rpc.SendRequestAsync("turn/start", turnParams, ct).ConfigureAwait(false);
             var turnId = ExtractTurnId(result);
             turnState.TrySetTurnId(turnId);
+            if (turnId is not null)
+                turnState.Events.Writer.TryWrite(new UnifiedAgentEvent.TurnAccepted(turnId));
 
             if (result.ValueKind == JsonValueKind.Object &&
                 result.TryGetProperty("turn", out var turnObj) &&
@@ -377,7 +379,7 @@ public sealed class CodexAgentSession : IAgentSession
                     if (string.Equals(status, "failed", StringComparison.OrdinalIgnoreCase))
                     {
                         var (code, msg, retryable) = ExtractCodexError(turnObj);
-                        turnState.TryFinish(new UnifiedAgentEvent.TurnError(code, msg, retryable));
+                        turnState.TryFinish(new UnifiedAgentEvent.TurnError(code, msg, retryable, IsConclusive: true));
                     }
                 }
             }
@@ -559,16 +561,13 @@ public sealed class CodexAgentSession : IAgentSession
                     (hasTurnObj && turnObj.TryGetProperty("error", out var turnErr) && turnErr.ValueKind == JsonValueKind.Object))
                 {
                     var (code, msg, retryable) = ExtractCodexError(hasTurnObj ? turnObj : parameters);
-                    turnState.TryFinish(new UnifiedAgentEvent.TurnError(code, msg, retryable));
+                    turnState.TryFinish(new UnifiedAgentEvent.TurnError(code, msg, retryable, IsConclusive: true));
                 }
                 else if (string.Equals(status, "interrupted", StringComparison.OrdinalIgnoreCase) ||
                          string.Equals(status, "cancelled", StringComparison.OrdinalIgnoreCase) ||
                          string.Equals(status, "canceled", StringComparison.OrdinalIgnoreCase))
                 {
-                    turnState.TryFinish(new UnifiedAgentEvent.TurnError(
-                        "turn_interrupted",
-                        "Codex turn was interrupted.",
-                        IsRetryable: false));
+                    turnState.TryFinish(new UnifiedAgentEvent.TurnInterrupted());
                 }
                 else
                 {

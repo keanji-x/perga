@@ -13,6 +13,7 @@ export type ConversationStore = Readonly<{
   turns: readonly TranscriptEntry[];
   pending: ReadonlySet<string>;
   working: boolean;
+  canStop: boolean;
   stalled: boolean;
   recovery: RunRecovery | null;
   /** Canonical content acceptance remains separate from a held execution. */
@@ -96,6 +97,7 @@ export type ConversationStore = Readonly<{
   loadEarlier: () => boolean;
   /** Why the queue is not draining, when the reader has to act; a standing condition of the conversation, unlike `actionError`. */
   blockedReason: string | null;
+  abandonUnknownInput: (() => void) | null;
   terminalTimeout: HarnessTimeoutEvidence | null;
   currentOutcome: import('../../../../core/domain/conversation-display.ts').CurrentConversationOutcome | null;
   /** What this conversation's turns run with. */

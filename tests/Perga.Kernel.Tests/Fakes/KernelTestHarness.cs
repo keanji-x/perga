@@ -220,7 +220,7 @@ internal sealed class InMemoryTrackStore : ITrackStore
         }
     }
 
-    public Task<IReadOnlyList<SessionItemDto>> ListSessionItemsAsync(string sessionId, long afterId = 0, int limit = 100, CancellationToken ct = default)
+    public Task<IReadOnlyList<SessionItemDto>> ListSessionItemsAsync(string sessionId, long afterId = 0, int limit = 100, CancellationToken ct = default, bool latest = false, long? beforeId = null)
     {
         lock (_gate)
         {
@@ -230,7 +230,9 @@ internal sealed class InMemoryTrackStore : ITrackStore
             }
 
             return Task.FromResult<IReadOnlyList<SessionItemDto>>(
-                list.Where(i => i.Id > afterId).OrderBy(i => i.Id).Take(limit).ToArray());
+                (latest || beforeId is not null
+                    ? list.Where(i => i.Id > afterId && (beforeId is null || i.Id < beforeId)).OrderByDescending(i => i.Id).Take(limit).Reverse()
+                    : list.Where(i => i.Id > afterId).OrderBy(i => i.Id).Take(limit)).ToArray());
         }
     }
 
@@ -440,6 +442,19 @@ internal sealed class InMemoryTrackStore : ITrackStore
 
             return Task.CompletedTask;
         }
+    }
+
+    public ISessionInputStore SessionInputs => throw new NotSupportedException();
+
+    public Task<IReadOnlyList<(string TrackId, PersistedSessionInput Input)>> RecoverSessionInputsAsync(CancellationToken ct) =>
+        Task.FromResult<IReadOnlyList<(string, PersistedSessionInput)>>([]);
+
+    public Task<int> GetLastTurnIndexAsync(string sessionId, CancellationToken ct)
+    {
+        lock (_gate)
+            return Task.FromResult(_turnsBySession.TryGetValue(sessionId, out var turns) && turns.Count > 0
+                ? turns.Max(turn => turn.TurnIndex)
+                : 0);
     }
 
     public Task RecordTurnAndItemsAsync(

@@ -259,16 +259,33 @@ export const sessionTurnDtoSchema = z.object({
   sessionId: z.string(),
   turnIndex: z.number().int().default(0),
   epoch: z.number().int().default(1),
-  idempotencyKey: z.string().nullish(),
   triggerKind: z.string().default('user'),
   input: z.unknown().nullish(),
   status: z.string(),
   usage: z.unknown().nullish(),
   errorText: z.string().nullish(),
-  startedAtMs: z.number(),
+  startedAtMs: z.number().nullable(),
   completedAtMs: z.number().nullish(),
 });
 export type SessionTurnDto = z.infer<typeof sessionTurnDtoSchema>;
+
+export const sessionInputReceiptSchema = z.object({
+  inputId: z.string(),
+  turnId: z.string(),
+  sessionId: z.string(),
+  deliveryState: z.enum(['accepted', 'dispatching', 'delivered', 'rejected', 'unknown']),
+  turnStatus: z.enum(['queued', 'running', 'completed', 'failed', 'interrupted', 'unknown']),
+  statusUrl: z.string(),
+  resolvedAtMs: z.number().nullish(),
+});
+export type SessionInputReceipt = z.infer<typeof sessionInputReceiptSchema>;
+
+export const sessionCreationReceiptSchema = z.object({
+  session: agentSessionDtoSchema,
+  firstInput: sessionInputReceiptSchema.nullish(),
+}).refine(result => result.firstInput == null || result.firstInput.sessionId === result.session.id);
+
+export type SessionCreationReceipt = z.infer<typeof sessionCreationReceiptSchema>;
 
 export const sessionItemDtoSchema = z.object({
   id: z.number().int(),
@@ -283,6 +300,7 @@ export type SessionItemDto = z.infer<typeof sessionItemDtoSchema>;
 export const sessionItemsPageDtoSchema = z.object({
   items: z.array(sessionItemDtoSchema).nullish().transform((v) => v ?? []),
   activeTurn: sessionTurnDtoSchema.nullish(),
+  unknownInput: sessionInputReceiptSchema.nullable(),
   session: agentSessionDtoSchema,
 });
 export type SessionItemsPageDto = z.infer<typeof sessionItemsPageDtoSchema>;

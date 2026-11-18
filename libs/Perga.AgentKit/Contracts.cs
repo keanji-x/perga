@@ -49,14 +49,16 @@ public sealed record TokenUsage(
 
 public abstract record UnifiedAgentEvent
 {
+    public sealed record TurnAccepted(string? NativeTurnId) : UnifiedAgentEvent;
     public sealed record ThreadBound(string NativeThreadId) : UnifiedAgentEvent;
     public sealed record TextDelta(string Delta) : UnifiedAgentEvent;
     public sealed record ThinkingDelta(string Delta) : UnifiedAgentEvent;
     public sealed record ToolCallStarted(string CallId, string Name, JsonElement Args) : UnifiedAgentEvent;
     public sealed record ToolCallCompleted(string CallId, string Output, bool IsError) : UnifiedAgentEvent;
     public sealed record ApprovalRequested(string RequestId, string ToolName, JsonElement Args) : UnifiedAgentEvent;
+    public sealed record TurnInterrupted : UnifiedAgentEvent;
     public sealed record TurnCompleted(TokenUsage? Usage) : UnifiedAgentEvent;
-    public sealed record TurnError(string Code, string Message, bool IsRetryable) : UnifiedAgentEvent;
+    public sealed record TurnError(string Code, string Message, bool IsRetryable, bool IsConclusive = false) : UnifiedAgentEvent;
 }
 
 public sealed record ProviderStatus(

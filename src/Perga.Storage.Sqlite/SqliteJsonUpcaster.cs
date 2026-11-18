@@ -268,34 +268,6 @@ public sealed class SqliteJsonUpcaster
         _ => TerminalStatus.Running
     };
 
-    public static string? ExtractIdempotencyKeyFromInput(JsonElement input)
-    {
-        if (input.ValueKind != JsonValueKind.Object)
-        {
-            return null;
-        }
-
-        if (input.TryGetProperty("idempotencyKey", out var prop) && prop.ValueKind == JsonValueKind.String)
-        {
-            var key = prop.GetString();
-            if (!string.IsNullOrWhiteSpace(key))
-            {
-                return key;
-            }
-        }
-
-        if (input.TryGetProperty("idempotency_key", out var snakeProp) && snakeProp.ValueKind == JsonValueKind.String)
-        {
-            var key = snakeProp.GetString();
-            if (!string.IsNullOrWhiteSpace(key))
-            {
-                return key;
-            }
-        }
-
-        return null;
-    }
-
     public static string TruncateUtf8Safe(string text, int maxUtf8Bytes)
     {
         if (string.IsNullOrEmpty(text) || maxUtf8Bytes <= 0)

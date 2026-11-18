@@ -84,7 +84,8 @@ public sealed record HumanBlockUpdateRequest(
 public sealed record CreateSessionRequest(
     string? Title = null,
     string? Provider = null,
-    string? Model = null);
+    string? Model = null,
+    string? Text = null);
 
 public sealed record SendMessageRequest(
     string Content,
@@ -94,7 +95,8 @@ public sealed record SendMessageRequest(
 public sealed record SessionItemsPageDto(
     IReadOnlyList<SessionItemDto> Items,
     SessionTurnDto? ActiveTurn,
-    AgentSessionDto Session);
+    AgentSessionDto Session,
+    SessionInputReceipt? UnknownInput);
 
 public sealed record OpenTerminalRequest(
     string? Title = null,

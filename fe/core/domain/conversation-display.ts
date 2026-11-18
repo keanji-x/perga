@@ -1,6 +1,8 @@
 /** One typed read contract over the existing transcript resource. Display identities are not native turns. */
 import { z } from 'zod';
+import { DEPLOYMENT_OWNER_USER_ID } from '../api/auth.js';
 import type { ApiOperation } from '../api/types.js';
+import { sessionInputReceiptSchema } from '../api/perga-v1.js';
 import {
   agentProviderSchema,
   conversationCursorSchema,
@@ -127,9 +129,9 @@ export function sessionItemsPageDtoToConversationPage(
         cursor: itemCursor,
         source: {
           kind: 'human',
-          message_id: `msg-${item.id}`,
+          message_id: typeof payloadObj.inputId === 'string' ? payloadObj.inputId : `msg-${item.id}`,
           revision: 1,
-          author: { user_id: 'owner', display_name: 'Owner' },
+          author: { user_id: typeof payloadObj.inputId === 'string' ? DEPLOYMENT_OWNER_USER_ID : 'owner', display_name: 'Owner' },
           text: content,
           attachments: [],
           created_at_ms: item.createdAtMs,
@@ -245,10 +247,10 @@ export function sessionItemsPageDtoToConversationPage(
 }
 
 export function conversationItemsOperation(card: string, cursor: ConversationCursor | null): ApiOperation<ConversationPage> {
-  const cursorSuffix = cursor === null ? '' : `&cursor=${encodeURIComponent(JSON.stringify(cursor))}`;
+  const cursorSuffix = cursor === null ? '' : `&cursor=${encodeURIComponent(JSON.stringify(cursor))}&beforeId=${cursor.position}`;
   return {
     method: 'GET',
-    path: `/api/v1/sessions/${encodeURIComponent(card)}/items?afterId=0&limit=500${cursorSuffix}`,
+    path: `/api/v1/sessions/${encodeURIComponent(card)}/items?afterId=0&limit=500&latest=true${cursorSuffix}`,
     responseSchema: z.union([
       sessionItemsPageDtoSchema.transform((page) => sessionItemsPageDtoToConversationPage(card, page, cursor)),
       conversationPageSchema.refine(page => page.items.every(item => item.cursor.card_id === card
@@ -327,6 +329,7 @@ export function currentConversationOutcome(fact:ConversationTerminalOutcome | nu
 }
 
 export const conversationRunMetadataSchema = z.object({
+  unknown_session_input: sessionInputReceiptSchema.nullish(),
   input_contract:z.enum(['canonical','historical']),
   runtime_state:workerSessionStateSchema.nullable(),
   history_replacement_supported:z.boolean(),
@@ -378,13 +381,13 @@ export function conversationRunOperation(card: string): ApiOperation<PlannerRun 
         return {
           card_id: card,
           worker_session_id: page.session.id,
-          phase: running ? 'turn_running' : 'idle',
+          phase: running ? 'turn_running' : page.session.status === 'queued' ? 'issuing_turn' : 'idle',
           pending: [],
           pending_overflow: 0,
           model: page.session.model ?? null,
           reasoning_effort: null,
           permission_mode: page.session.isLead ? 'ask' : null,
-          blocked_reason: null,
+          blocked_reason: page.session.status === 'unknown' ? 'The previous message has an unknown outcome.' : null,
           recovery: null,
           attachments_supported: false,
           manual_compact_supported: true,
@@ -399,8 +402,9 @@ export function conversationRunOperation(card: string): ApiOperation<PlannerRun 
             }
             : null,
           running_turn: running && page.activeTurn !== null && page.activeTurn !== undefined
-            ? { turn_id: page.activeTurn.id, elapsed_ms: Math.max(0, Date.now() - page.activeTurn.startedAtMs) }
+            ? { turn_id: page.activeTurn.id, elapsed_ms: Math.max(0, Date.now() - (page.activeTurn.startedAtMs ?? Date.now())) }
             : null,
+          unknown_session_input: page.unknownInput,
           input_contract: 'canonical',
           runtime_state: running ? 'running' : 'idle',
           history_replacement_supported: false,

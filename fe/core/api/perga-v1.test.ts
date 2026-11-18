@@ -391,6 +391,7 @@ describe('Perga /api/v1 protocol contracts', () => {
         { id: 5, sessionId: 'ses_lead', turnId: 'turn_1', kind: 'assistant_text', payload: { v: 1, text: 'Report inspected.' }, createdAtMs: 1300 },
       ],
       activeTurn: null,
+      unknownInput: null,
       session: {
         id: 'ses_lead',
         trackId: 'trk_1',
@@ -411,7 +412,7 @@ describe('Perga /api/v1 protocol contracts', () => {
     };
 
     const itemsOp = conversationItemsOperation('ses_lead', null);
-    expect(itemsOp.path).toBe('/api/v1/sessions/ses_lead/items?afterId=0&limit=500');
+    expect(itemsOp.path).toBe('/api/v1/sessions/ses_lead/items?afterId=0&limit=500&latest=true');
     const page = itemsOp.responseSchema.parse(pageDto);
     const transcript = buildConversationTranscript(page.items, 'owner');
     expect(transcript.some((e) => e.author === 'you' && e.text === 'Hello Perga')).toBe(true);

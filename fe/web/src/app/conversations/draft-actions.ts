@@ -23,6 +23,7 @@ export type ConversationDraftActionInput = Readonly<{
   supportsSideConversation: boolean;
   supportsDraftModel: boolean;
   supportsInitialInput: boolean;
+  sessionInputReceipts?: boolean;
   supportsAssistantProviders: boolean;
   managedProviders: readonly ManagedProviderAvailability[] | undefined;
   recheckManagedProviders: () => Promise<readonly ManagedProviderAvailability[]>;
@@ -35,7 +36,7 @@ export type ConversationDraftActionInput = Readonly<{
 /** A command assembly for this render's draft. Construction has no side effects;
  * dispatched attempts retain their original scope/key and settle through Registry. */
 export function createConversationDraftActions({ registry, draft, creating, source, sourceScopeId, transport,
-  supportsSideConversation, supportsDraftModel, supportsInitialInput, supportsAssistantProviders, managedProviders, recheckManagedProviders, openDraft, closeView, onGone, onAdopt,
+  supportsSideConversation, supportsDraftModel, supportsInitialInput, sessionInputReceipts, supportsAssistantProviders, managedProviders, recheckManagedProviders, openDraft, closeView, onGone, onAdopt,
 }: ConversationDraftActionInput) {
   /* Every draft write goes through one of these three, each a whole-object update,
        and each a no-op when the draft it was computed from is no longer the one held. */
@@ -85,7 +86,7 @@ export function createConversationDraftActions({ registry, draft, creating, sour
   /* `from` is not decoration: this runs after an `await`, and the reducer records
        the row only if `from` is still held. */
   const adopt = (from: ConversationDraft, result: CreatedConversation) => {
-    if (from.submitted === null || result.conversation.id !== source.derivedCardId(from.key)) {
+    if (from.submitted === null || (result.sessionInput === undefined && result.conversation.id !== source.derivedCardId(from.key))) {
       throw new Error('The first-message result does not match this conversation.');
     }
     if (registry.acceptDraft(from, result, from.submitted)) onAdopt(from, result.conversation.id);
@@ -179,7 +180,7 @@ export function createConversationDraftActions({ registry, draft, creating, sour
       try {
         // A frozen retry may already have landed while the drawer was closed.
         // Reconcile first, retaining the original key when its row is absent.
-        if (recheck === null && attempt.submitted !== null) {
+        if (!sessionInputReceipts && recheck === null && attempt.submitted !== null) {
           const landing = await adoptIfItLanded(refresh, derivedCardId, attempt, current);
           if (landing === 'landed') return;
           if (landing === 'unknown') {
@@ -190,7 +191,9 @@ export function createConversationDraftActions({ registry, draft, creating, sour
         // Refresh display metadata, but a frozen dispatched request keeps its original
         // admission: neither probe failure nor new capabilities can prevent reconciliation/replay.
         if (attempt.submitted !== null) void recheckManagedProviders().catch(() => undefined);
-        if (recheck !== null) {
+        if (sessionInputReceipts && recheck === 'new-conversation') {
+          attempt = rekeyDraft(attempt, mintIdempotencyKey());
+        } else if (recheck !== null && !sessionInputReceipts) {
           const landing = await adoptIfItLanded(refresh, derivedCardId, attempt, current);
           if (landing === 'landed') return;
           if (landing === 'unknown') {
@@ -237,6 +240,10 @@ export function createConversationDraftActions({ registry, draft, creating, sour
         error: `This message is too long — the limit is ${CONVERSATION_TEXT_MAX} characters.`,
         remedy: null,
       });
+      return false;
+    }
+    if (sessionInputReceipts && draft.submitted !== null && draft.submitted.text !== text) {
+      amendDraft(draft, { text, error: 'The previous submission is unconfirmed. Try again to recover it first.', remedy: 'retry' });
       return false;
     }
     if (refuseOfflineDraft(draft, text, answers)) return false;
@@ -290,7 +297,7 @@ export function createConversationDraftActions({ registry, draft, creating, sour
         /* Ambiguous (a 503 included: on this endpoint it is raised after the card is
                  minted), so the look for this key's card is not skipped. */
         amendDraft(attempt, { error: message });
-        if (await adoptIfItLanded(refresh, derivedCardId, attempt, current) !== 'landed') {
+        if (sessionInputReceipts || await adoptIfItLanded(refresh, derivedCardId, attempt, current) !== 'landed') {
           amendDraft(attempt, { remedy: 'retry' });
         }
         return attempt;

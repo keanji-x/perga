@@ -70,7 +70,13 @@ public interface IPergaKernel : IAsyncDisposable
     // Sessions, Messages & Epoch Compaction
     Task<IReadOnlyList<AgentSessionDto>> ListSessionsAsync(string trackId, CancellationToken ct = default);
     Task<AgentSessionDto> CreateSubagentSessionAsync(string trackId, CreateSessionRequest req, CancellationToken ct = default);
-    Task<SessionItemsPageDto> GetSessionItemsAsync(string sessionId, long afterId = 0, int limit = 100, CancellationToken ct = default);
+    Task<(SessionCreationReceipt Receipt, bool Replay)> CreateSessionWithReceiptAsync(
+        string trackId, CreateSessionRequest req, string key, CancellationToken ct);
+    Task<(SessionInputReceipt? Receipt, SessionTurnDto? SteeredTurn, bool Replay)> AcceptMessageAsync(
+        string sessionId, SendMessageRequest req, CancellationToken ct);
+    Task<SessionInputReceipt> GetSessionInputAsync(string sessionId, string inputId, CancellationToken ct);
+    Task<SessionInputReceipt> ResolveUnknownInputAsync(string sessionId, string inputId, CancellationToken ct);
+    Task<SessionItemsPageDto> GetSessionItemsAsync(string sessionId, long afterId = 0, int limit = 100, CancellationToken ct = default, bool latest = false, long? beforeId = null);
     Task<SessionTurnDto> SendMessageAsync(string sessionId, SendMessageRequest req, CancellationToken ct = default);
     Task InterruptSessionAsync(string sessionId, CancellationToken ct = default);
     Task<AgentSessionDto> CompactSessionAsync(string sessionId, CancellationToken ct = default);
@@ -652,14 +658,37 @@ public sealed class PergaKernelService : IPergaKernel
         CancellationToken ct = default) =>
         Actors.GetOrActivate(trackId).CreateSubagentSessionAsync(req, ct);
 
+    public Task<(SessionCreationReceipt Receipt, bool Replay)> CreateSessionWithReceiptAsync(
+        string trackId, CreateSessionRequest req, string key, CancellationToken ct) =>
+        Actors.GetOrActivate(trackId).CreateSessionWithReceiptAsync(req, key, ct);
+
+    public async Task<(SessionInputReceipt? Receipt, SessionTurnDto? SteeredTurn, bool Replay)> AcceptMessageAsync(
+        string sessionId, SendMessageRequest req, CancellationToken ct)
+    {
+        var trackId = await ResolveTrackIdForSessionAsync(sessionId, ct).ConfigureAwait(false);
+        return await Actors.GetOrActivate(trackId).AcceptMessageAsync(sessionId, req, ct).ConfigureAwait(false);
+    }
+
+    public async Task<SessionInputReceipt> GetSessionInputAsync(string sessionId, string inputId, CancellationToken ct)
+    {
+        var input = await _store.SessionInputs.FindByIdAsync(sessionId, inputId, ct).ConfigureAwait(false);
+        return input?.Receipt ?? throw KernelException.NotFound("Session input not found.");
+    }
+
+    public async Task<SessionInputReceipt> ResolveUnknownInputAsync(string sessionId, string inputId, CancellationToken ct)
+    {
+        var trackId = await ResolveTrackIdForSessionAsync(sessionId, ct).ConfigureAwait(false);
+        return await Actors.GetOrActivate(trackId).ResolveUnknownInputAsync(sessionId, inputId, ct).ConfigureAwait(false);
+    }
+
     public async Task<SessionItemsPageDto> GetSessionItemsAsync(
         string sessionId,
         long afterId = 0,
         int limit = 100,
-        CancellationToken ct = default)
+        CancellationToken ct = default, bool latest = false, long? beforeId = null)
     {
         var trackId = await ResolveTrackIdForSessionAsync(sessionId, ct).ConfigureAwait(false);
-        return await Actors.GetOrActivate(trackId).GetSessionItemsAsync(sessionId, afterId, limit, ct)
+        return await Actors.GetOrActivate(trackId).GetSessionItemsAsync(sessionId, afterId, limit, ct, latest, beforeId)
             .ConfigureAwait(false);
     }
 
