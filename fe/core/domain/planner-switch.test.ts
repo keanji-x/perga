@@ -3,7 +3,11 @@ import { plannerSwitchOperation, plannerSwitchResponseSchema, plannerSwitchFailu
 
 it('declares one CAS operation and requires the receipt revision', () => {
   const body = { target_assistant_card_id: 'a', expected_planner_card_id: 'p', expected_revision: 7 };
-  expect(plannerSwitchOperation('a/b', body)).toMatchObject({ method: 'POST', path: '/api/tracks/a%2Fb/planner/switch', body });
+  expect(plannerSwitchOperation('a/b', body)).toMatchObject({
+    method: 'PATCH',
+    path: '/api/v1/tracks/a%2Fb',
+    body: { leadSessionId: 'a' },
+  });
   expect(plannerSwitchResponseSchema.safeParse({ track_id: 't', planner_card_id: 'a', demoted_card_id: 'p' }).success).toBe(false);
   expect(plannerSwitchResponseSchema.safeParse({ track_id: 't', planner_card_id: 'a', demoted_card_id: 'p', planner_revision: 8 }).success).toBe(true);
 });

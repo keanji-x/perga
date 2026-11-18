@@ -14,10 +14,9 @@ import { supervisorDetails, supervisorReport } from '../../../../core/domain/sup
 import { SupervisorWaitChart } from '../../features/today/supervisor-wait.tsx';
 import { ReportDocument } from '../../features/report/document/public.tsx';
 import { useCurrentUser } from '../auth/current-user.tsx';
-import { useGo } from './navigation.ts';
-import { TodayCalendarTasks } from './calendar.tsx';
 import { ReportDetails } from '../../features/report/document/details.tsx';
 import { ReportChangeDetails, ReportEditDetails } from '../../features/report/changes/public.tsx';
+import { ApiError } from '../../../../core/domain/failure-class.ts';
 import { readErrorText } from '../../../../core/domain/read-failure.ts';
 import { ErrorBox } from '../../ui/error-box/public.tsx';
 import { useState } from '../../ui/state/public.ts';
@@ -54,8 +53,20 @@ export function DailyTodayRoute({ transport, unauthorized, selectedDate, onOpenT
   }, [view]);
   const user = useCurrentUser();
   const showSupervisor = user?.userId === DEPLOYMENT_OWNER_USER_ID;
-  const daily = useQuery({ queryKey: ['daily-planner', selectedDate ?? 'today'],
-    queryFn: () => runOperation(transport, dailyTrackOperation(selectedDate), unauthorized), refetchInterval: 30_000 });
+  const daily = useQuery({
+    queryKey: ['daily-planner', selectedDate ?? 'today'],
+    queryFn: async () => {
+      try {
+        return await runOperation(transport, dailyTrackOperation(selectedDate), unauthorized);
+      } catch (error) {
+        if (error instanceof ApiError && error.failure.kind === 'http' && error.failure.status === 404) {
+          return null;
+        }
+        throw error;
+      }
+    },
+    refetchInterval: 30_000,
+  });
   const trackId = daily.data?.track_id;
   const detail = useQuery({ ...trackDetailQueryOptions(transport, trackId ?? '', unauthorized), enabled: trackId !== undefined });
   const supervisor = selectedDate === undefined && <DailySupervisor transport={transport} unauthorized={unauthorized} />;
@@ -69,7 +80,7 @@ export function DailyTodayRoute({ transport, unauthorized, selectedDate, onOpenT
   return renderTrack({ ...detail.data, track: { ...detail.data.track, title: date } },
     <DailyReportChanges key={date} isToday={selectedDate === undefined} date={shiftDailyDate(date, -1)}
       transport={transport} unauthorized={unauthorized} onOpenTrack={onOpenTrack} />,
-    <DailyCalendar key={date} date={date} transport={transport} unauthorized={unauthorized} onOpenTrack={onOpenTrack} />,
+    null,
     <header className={styles.reportIntro}><h2>{selectedDate === undefined ? '今天的重点' : '当天的重点'}</h2><p>让工作更轻松，也更有条理。</p></header>,
     supervisor,
     selectedDate === undefined ? {
@@ -133,16 +144,6 @@ function DailySupervisor({ transport, unauthorized }: Readonly<{ transport: ApiT
         <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>
     </ReportDetails>
   </section>;
-}
-
-function DailyCalendar({ date, transport, unauthorized, onOpenTrack }: Readonly<{
-  date: string; transport: ApiTransportPort; unauthorized: UnauthorizedChannel; onOpenTrack(id: string): void;
-}>) {
-  const [selected, setSelected] = useState(date);
-  const go = useGo();
-  return <TodayCalendarTasks date={selected} onDateChange={setSelected} transport={transport}
-    unauthorized={unauthorized} onSettings={() => go({ name: 'settings-plugins' })}
-    onOpenTrack={onOpenTrack} />;
 }
 
 function DailyReportChanges({ date, isToday, transport, unauthorized, onOpenTrack, standalone = false }: Readonly<{

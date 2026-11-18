@@ -18,7 +18,7 @@ it('uses the real Planner and opens cited reports from the daily homepage withou
   expect(within(sidebar).queryByText('system')).toBeNull();
   await userEvent.click(await screen.findByRole('button', { name: '讨论这项工作' }));
   await screen.findByRole('complementary', { name: 'Daily Planner conversation' });
-  expect(requests.some((request) => request.path.includes('/planner/run?contract=conversation_v1'))).toBe(true);
+  expect(requests.some((request) => request.path.includes('view=run'))).toBe(true);
   expect(requests.every((request) => request.method === 'GET')).toBe(true);
   await userEvent.keyboard('{Escape}');
   await userEvent.click(await screen.findByRole('button', { name: 'Project evidence' }));
@@ -63,7 +63,6 @@ it.each(['/today/legacy', '/today/legacy?day=2026-10-04'])('redirects %s to the 
   if (initial.includes('?')) await screen.findByText('Prioritize the release.', { exact: false }, { timeout: 5_000 });
   else await screen.findByRole('region', { name: 'Today Assistant' });
   expect(router.state.location.pathname).toBe('/');
-  await screen.findByRole('region', { name: 'Calendar tasks' });
   expect(requests.some((request) => request.path.includes('/today/launchpad'))).toBe(false);
   if (initial.includes('?')) expect(router.state.location.search).toEqual({ day: '2026-10-04' });
 });
@@ -79,12 +78,11 @@ it('opens Today Assistant in the center and returns from report changes with its
   expect(screen.queryByRole('region', { name: 'Today Assistant' })).toBeNull();
   await userEvent.click(screen.getByRole('button', { name: 'Back to Today Assistant' }));
   expect(within(screen.getByRole('region', { name: 'Today Assistant' })).getByRole('combobox', { name: 'Message' }).textContent).toContain('Keep this daily draft');
-  expect(screen.getByRole('region', { name: 'Calendar tasks' })).toBeTruthy();
 });
 
 
 it('sends from Today through the existing Planner endpoint and shows a refused send', async () => {
-  const { requests } = renderDailyFixture({ reply: request => request.path.endsWith('/planner/input')
+  const { requests } = renderDailyFixture({ reply: request => request.path.endsWith('/messages')
     ? { status: 403, statusText: 'Forbidden', body: { error: 'forbidden' } } : undefined });
   const assistant = await screen.findByRole('region', { name: 'Today Assistant' });
   const field = await within(assistant).findByRole('combobox', { name: 'Message' });
@@ -99,16 +97,16 @@ it('sends from Today through the existing Planner endpoint and shows a refused s
   await waitFor(() => expect(send.getAttribute('aria-disabled')).not.toBe('true'));
   await waitFor(() => expect(send.hasAttribute('disabled')).toBe(false));
   await userEvent.click(send);
-  await waitFor(() => expect(requests.filter(request => request.path.endsWith('/planner/input'))).toHaveLength(1));
+  await waitFor(() => expect(requests.filter(request => request.path.endsWith('/messages'))).toHaveLength(1));
   await within(assistant).findByText(/^Not sent\./);
-  const input = requests.filter(request => request.path.endsWith('/planner/input'));
+  const input = requests.filter(request => request.path.endsWith('/messages'));
   expect(input).toHaveLength(1);
-  expect(input[0].path).toBe('/api/cards/daily-planner/planner/input');
+  expect(input[0].path).toBe('/api/v1/sessions/daily-planner/messages');
   expect(input[0].method).toBe('POST');
 });
 
 it('shows the existing history retry in Today when conversation history cannot load', async () => {
-  renderDailyFixture({ reply: request => request.path.includes('/harness/items')
+  renderDailyFixture({ reply: request => (request.path.includes('/items') && !request.path.includes('view='))
     ? { status: 500, statusText: 'Error', body: { error: 'unavailable' } } : undefined });
   const assistant = await screen.findByRole('region', { name: 'Today Assistant' });
   await within(assistant).findByRole('button', { name: 'Reload history' });

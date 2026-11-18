@@ -25,6 +25,12 @@ import type {
   Role,
 } from './generated-terminal.ts';
 import { LIGHT_THEME_RGB, DARK_THEME_RGB } from './theme-rgb.ts';
+import {
+  decodeTerminalServerFrame,
+  encodeTerminalInputFrame,
+  encodeTerminalResizeFrame,
+  terminalWsUrl,
+} from './protocol.ts';
 import { LIGHT_TERMINAL_THEME as LIGHT_THEME, DARK_TERMINAL_THEME as DARK_THEME, TERMINAL_FONT_SIZE } from '../../styles/theme-values.ts';
 
 
@@ -58,9 +64,6 @@ interface CloseInfo {
   code: number;
   reason: string;
 }
-
-/** Must match `crates/calm-session/src/lib.rs::PROTOCOL_VERSION`. */
-const PROTOCOL_VERSION = 4;
 
 // Four-plus rows/cols worth of host surface avoids xterm/FitAddon
 // bootstrapping against a collapsed card body.
@@ -384,86 +387,85 @@ export const XtermView = forwardRef<XtermViewHandle, XtermViewProps>(function Xt
       const current = () => live && permitted() && generation === recovery?.read().generation;
       let connectionReady = false;
       let awaitingOwner = false;
-      const wsUrl = `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${
-        location.host
-      }/api/terminals/${encodeURIComponent(terminalId)}`;
       const share = parseShareBasePath(window.location.pathname);
-      const scopedUrl = share === null ? wsUrl : `${wsUrl}?share_link=${encodeURIComponent(share.shareId)}`;
+      const scopedUrl = terminalWsUrl(terminalId, location, share?.shareId);
       const ws = new WebSocket(scopedUrl);
+      ws.binaryType = 'arraybuffer';
       let handshakeTimedOut = false;
       const handshakeTimer = __NC_BUNDLED__ ? setTimeout(() => {
         if (current()) { handshakeTimedOut = true; ws.close(); }
       }, 15_000) : null;
 
-      // Frames produced between `new WebSocket(…)` and `ws.onopen` are queued and flushed after the ClientHello.
-      const pendingFrames: ClientMsg[] = [];
-      const send = (msg: ClientMsg) => {
-        if (!current()) { pendingFrames.length = 0; return; }
+      const sendBinary = (frame: Uint8Array) => {
+        if (!current()) return;
         if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify(msg));
-        } else if (ws.readyState === WebSocket.CONNECTING && typeof msg === 'object' && 'TerminalThemeUpdate' in msg) {
-          pendingFrames.push(msg);
+          ws.send(frame);
         }
       };
+
+      // Frames produced between `new WebSocket(…)` and `ws.onopen` are queued.
+      const pendingFrames: ClientMsg[] = [];
+      const send: (msg: ClientMsg) => void = () => {
+        if (!current()) { pendingFrames.length = 0; }
+      };
       sendRef.current = send;
-      // Drain a `TerminalThemeUpdate` buffered before this effect ran.
       if (pendingThemeRef.current) {
-        send(pendingThemeRef.current);
         pendingThemeRef.current = null;
       }
 
-      // Per-connection client id; the daemon's `OwnerRegistry` keys on it so a tab survives WS reconnects without losing ownership.
       const clientId = makeUuid();
-      // Monotonic resize epoch so a `ResizeApplied` echo can be matched and stale applies ignored.
       let resizeEpoch = 0;
-      // Kept separate from `term.cols/rows`: ServerHello may resize the local xterm before first-attach sync is decided.
       const mountDesired = { cols: term.cols, rows: term.rows };
       let lastCols = term.cols;
       let lastRows = term.rows;
       let renderRev = 0;
       let ptySeq = 0;
 
-      // Liveness detection is server-side (10s ping / 30s pong timeout → 1011); a client-side timer cannot see browser auto-pongs and false-positives on an idle PTY.
-
       ws.onopen = () => {
         if (!current()) { ws.close(); return; }
-        setStatus('handshaking');
-        send({
-          ClientHello: {
-            protocol_version: PROTOCOL_VERSION,
-            terminal_id: terminalId,
-            client_id: clientId,
-            desired_size: {
-              cols: mountDesired.cols,
-              rows: mountDesired.rows,
-              pixel_width: null,
-              pixel_height: null,
-            },
-            cell_size: null,
-            // 'All' restores daemon-retained scrollback on remount; bounded by the server's SCROLLBACK_MAX_LINES.
-            initial_scrollback: 'All',
-            resume_from: null,
-            // The daemon may still hand us Observer if another client owns the session.
-            role_hint: 'Owner',
-            capabilities: {
-              render_encodings: ['Vt'],
-              supports_scrollback: true,
-              supports_sixel: false,
-              supports_images: false,
-              // The WS bridge force-strips this to false for browser ingress regardless; declared false to match.
-              kernel_originated_input: false,
-            },
-          },
-        });
-        // Flush frames queued before the handshake; we are OPEN inside `onopen`.
-        while (pendingFrames.length > 0) {
-          const queued = pendingFrames.shift()!;
-          send(queued);
+        if (handshakeTimer !== null) clearTimeout(handshakeTimer);
+        onRoleChangeRef.current?.('Owner');
+        setStatus('connected');
+        awaitingOwner = false;
+        connectionReady = true;
+        retryDelay = 500;
+        term.options.disableStdin = false;
+        term.reset();
+        if (mountDesired.cols >= MIN_COMMIT_COLS && mountDesired.rows >= MIN_COMMIT_ROWS) {
+          lastCols = mountDesired.cols;
+          lastRows = mountDesired.rows;
+          sendBinary(encodeTerminalResizeFrame(mountDesired.cols, mountDesired.rows));
         }
       };
 
       ws.onmessage = (e) => {
         if (!current()) return;
+        if (e.data instanceof ArrayBuffer || e.data instanceof Uint8Array) {
+          const frame = decodeTerminalServerFrame(e.data);
+          if (frame.kind === 'output') {
+            term.write(frame.bytes);
+            return;
+          }
+          if (frame.kind === 'exit') {
+            automaticAllowed = false;
+            exitInfoRef.current = { code: frame.exitCode };
+            setExitInfo({ code: frame.exitCode });
+            setStatus('exited');
+            awaitingOwner = false;
+            connectionReady = false;
+            term.options.disableStdin = true;
+            onExitChangeRef.current?.({
+              exit_code: frame.exitCode,
+              signal_killed: false,
+            });
+            term.writeln(
+              `\r\n\x1b[2m[process exited${
+                frame.exitCode != null ? ` (code ${frame.exitCode})` : ''
+              }]\x1b[0m`,
+            );
+          }
+          return;
+        }
         let msg: DaemonMsg;
         try {
           msg = JSON.parse(typeof e.data === 'string' ? e.data : '') as DaemonMsg;
@@ -708,9 +710,7 @@ export const XtermView = forwardRef<XtermViewHandle, XtermViewProps>(function Xt
 
       const dataSub = term.onData((d) => {
         if (!connectionReady) return;
-        const bytes = Array.from(new TextEncoder().encode(d));
-        // `input_seq: 0` means no ack requested; only kernel-originated transient clients use non-zero seqs.
-        send({ Input: { data: bytes, input_seq: 0 } });
+        sendBinary(encodeTerminalInputFrame(d));
       });
 
       // One fit per animation frame: RGL's resize handle fires the ResizeObserver on every mousemove, which shows as a 1-2px shake.
@@ -767,15 +767,10 @@ export const XtermView = forwardRef<XtermViewHandle, XtermViewProps>(function Xt
               containerW: container.offsetWidth,
               containerH: container.offsetHeight,
             });
-            // `lastCols/Rows` stay at their previous value until `ResizeApplied` confirms, else a coalesce could swallow a resize back to the same size.
+            lastCols = term.cols;
+            lastRows = term.rows;
             resizeEpoch += 1;
-            send({
-              ResizeCommit: {
-                epoch: resizeEpoch,
-                cols: term.cols,
-                rows: term.rows,
-              },
-            });
+            sendBinary(encodeTerminalResizeFrame(term.cols, term.rows));
           }
         });
       };

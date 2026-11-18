@@ -38,18 +38,18 @@ function setup({ createFails = false, deferCreate = false, answers = [] as reado
   const transport: ApiTransportPort = {
     send(request) {
       requests.push(request);
-      if (request.path === '/api/areas') return Promise.resolve(ok([AREA]));
-      if (request.path === '/api/areas/c1/tracks') return Promise.resolve(ok([TRACK]));
-      if (request.path === '/api/tracks/w1') {
+      if (request.path === '/api/v1/areas') return Promise.resolve(ok([AREA]));
+      if (request.path === '/api/v1/areas/c1/tracks?includeClosed=true') return Promise.resolve(ok([TRACK]));
+      if (request.path === '/api/v1/tracks/w1') {
         return Promise.resolve(ok({ track: TRACK, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true, cards: [...cards], overlays: [] }));
       }
-      if (request.path === '/api/tracks/w1/report') return Promise.resolve(ok({ taskDiagnostics: [] }));
+      if (request.path === '/api/v1/tracks/w1/report') return Promise.resolve(ok({ taskDiagnostics: [] }));
       if (request.path.startsWith('/api/fs/listdir')) {
         return Promise.resolve(ok({
           path: '/repo', parent: '/', entries: [{ name: 'notes.md', is_dir: false }],
         }));
       }
-      if (request.method === 'POST' && request.path.startsWith('/api/tracks/w1/')) {
+      if (request.method === 'POST' && (request.path.startsWith('/api/tracks/w1/') || request.path.startsWith('/api/v1/tracks/w1/'))) {
         const answer = answers[requests.filter((sent) => sent.method === 'POST').length - 1] ?? 'created';
         /* Answered before anything was made. */
         if (answer !== 'created' && answer !== 'lost') return Promise.resolve(answer);
@@ -261,7 +261,7 @@ describe('a keyed card create', () => {
     await waitFor(() => { expect(screen.queryByRole('alert')).toBeNull(); });
     const [first, second] = posts();
     expect(posts()).toHaveLength(2);
-    expect(first?.path).toBe('/api/tracks/w1/terminal-cards');
+    expect(first?.path).toBe('/api/v1/tracks/w1/terminals');
     expect(keyOf(first)).toMatch(/^[0-9a-f-]{36}$/);
     expect(keyOf(second)).toBe(keyOf(first));
     expect(second?.body).toEqual(first?.body);

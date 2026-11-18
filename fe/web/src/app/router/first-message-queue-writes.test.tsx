@@ -281,7 +281,7 @@ it('retains an ordinary folded POST through older same-entry history before its 
     await readHeldRun(fixture, cardId);
     await waitFor(() => expect(fixture.outbox().every(op => op.phase === 'initial-accepted')).toBe(true));
     expect(copies(combined)).toHaveLength(1);
-    expect(fixture.requests.filter(request => request.method === 'POST' && request.path.endsWith('/planner/input'))).toHaveLength(1);
+    expect(fixture.requests.filter(request => request.method === 'POST' && request.path.endsWith('/messages'))).toHaveLength(1);
   } finally { cleanup(); fixture.client.clear(); }
 });
 
@@ -290,14 +290,14 @@ it('waits for a finitely released version before one real first-message submissi
   const versionReply = new Promise<void>(resolve => { releaseVersion = resolve; });
   const fixture = renderFirstMessageFixture({ versionReply });
   const creates = () => fixture.requests.filter(request => request.method === 'POST'
-    && request.path === '/api/tracks/daily/conversations');
+    && request.path === '/api/v1/tracks/daily/sessions');
   let submission: Promise<{ error: unknown }> | null = null;
   let sends = 0;
   try {
     fireEvent.click(await screen.findByRole('button', { name: 'New conversation' }));
     const field = await screen.findByRole('combobox', { name: 'Message' });
     await waitFor(() => expect(field.getAttribute('contenteditable')).toBe('true'));
-    await waitFor(() => expect(fixture.requests.some(request => request.path === '/api/version')).toBe(true));
+    await waitFor(() => expect(fixture.requests.some(request => request.path === '/api/v1/bootstrap')).toBe(true));
     act(() => { field.textContent = FIRST_MESSAGE; fireEvent.input(field); });
     // Start setup without awaiting it: the driver owns release independently of project/POST.
     submission = fixture.submitFirstMessage(() => {

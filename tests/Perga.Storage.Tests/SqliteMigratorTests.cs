@@ -1,0 +1,312 @@
+using Dapper;
+using Microsoft.Data.Sqlite;
+using Perga.Storage.Sqlite;
+
+namespace Perga.Storage.Tests;
+
+public sealed class SqliteMigratorTests
+{
+    [Fact]
+    public void EmbeddedInitMigration_MatchesDesignMdSection3ByteForByte()
+    {
+        var migrations = SqliteMigrator.LoadEmbeddedMigrations();
+        var init = Assert.Single(migrations);
+        Assert.Equal(1, init.Version);
+        Assert.Equal("0001_init.sql", init.Name);
+        Assert.Equal(64, init.ChecksumSha256.Length);
+
+        var designMdPath = FindRepoFile("DESIGN.md");
+        var designMdText = File.ReadAllText(designMdPath).Replace("\r\n", "\n", StringComparison.Ordinal);
+
+        const string sqlStartMarker = "```sql\n-- 必须在首次建表前设置";
+        var startIdx = designMdText.IndexOf(sqlStartMarker, StringComparison.Ordinal);
+        Assert.True(startIdx >= 0, "Could not locate Section 3 SQL DDL block in DESIGN.md.");
+
+        var bodyStart = startIdx + "```sql\n".Length;
+        var bodyEnd = designMdText.IndexOf("\n```", bodyStart, StringComparison.Ordinal);
+        Assert.True(bodyEnd > bodyStart, "Could not locate closing fence of Section 3 SQL DDL block in DESIGN.md.");
+
+        var expectedSql = designMdText[bodyStart..(bodyEnd + 1)];
+        Assert.Equal(expectedSql.TrimEnd('\n'), init.Sql.TrimEnd('\n'));
+    }
+
+    [Fact]
+    public async Task MigrateAsync_OnFreshDatabase_SetsIncrementalAutoVacuumWalAndCreatesAllFrozenTablesAndIndexes()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), $"perga-migrator-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var dbPath = Path.Combine(tempDir, "fresh.db");
+            var migrator = new SqliteMigrator();
+            await migrator.MigrateAsync(dbPath);
+
+            // Idempotent re-run on already-initialized v1 database must not create a spurious backup.
+            await migrator.MigrateAsync(dbPath);
+            Assert.False(File.Exists($"{dbPath}.bak-v1"));
+
+            await using var conn = new SqliteConnection(new SqliteConnectionStringBuilder
+            {
+                DataSource = dbPath,
+                Mode = SqliteOpenMode.ReadOnly,
+                Pooling = false
+            }.ToString());
+            await conn.OpenAsync();
+
+            var autoVacuum = await conn.ExecuteScalarAsync<long>("PRAGMA auto_vacuum;");
+            var journalMode = await conn.ExecuteScalarAsync<string>("PRAGMA journal_mode;");
+            Assert.Equal(2L, autoVacuum); // 2 == INCREMENTAL
+            Assert.Equal("wal", journalMode, ignoreCase: true);
+
+            var tables = (await conn.QueryAsync<string>(
+                """
+                SELECT name FROM sqlite_master
+                WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
+                ORDER BY name ASC;
+                """)).ToHashSet(StringComparer.Ordinal);
+
+            string[] expectedTables =
+            [
+                "schema_migrations",
+                "areas",
+                "tracks",
+                "reports",
+                "report_revisions",
+                "tasks",
+                "task_attempts",
+                "agent_sessions",
+                "session_turns",
+                "session_items",
+                "asks",
+                "mails",
+                "terminals",
+                "events"
+            ];
+
+            Assert.Equal(expectedTables.OrderBy(static x => x), tables.OrderBy(static x => x));
+
+            var indexes = (await conn.QueryAsync<string>(
+                """
+                SELECT name FROM sqlite_master
+                WHERE type = 'index' AND name LIKE 'idx_%'
+                ORDER BY name ASC;
+                """)).ToHashSet(StringComparer.Ordinal);
+
+            string[] expectedIndexes =
+            [
+                "idx_tracks_area",
+                "idx_tracks_parent",
+                "idx_tasks_track_status",
+                "idx_attempts_task",
+                "idx_attempts_track",
+                "idx_sessions_track",
+                "idx_turns_session_idx",
+                "idx_turns_session_epoch",
+                "idx_items_session",
+                "idx_items_turn",
+                "idx_asks_track",
+                "idx_mails_to_track",
+                "idx_terminals_track",
+                "idx_events_track_id",
+                "idx_events_created"
+            ];
+
+            Assert.Equal(expectedIndexes.OrderBy(static x => x), indexes.OrderBy(static x => x));
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task MigrateAsync_WhenAppliedChecksumIsTampered_ThrowsSqliteMigrationTamperedException()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), $"perga-tamper-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var dbPath = Path.Combine(tempDir, "tamper.db");
+            var migrator = new SqliteMigrator();
+            await migrator.MigrateAsync(dbPath);
+
+            await using (var conn = new SqliteConnection(new SqliteConnectionStringBuilder
+            {
+                DataSource = dbPath,
+                Mode = SqliteOpenMode.ReadWrite,
+                Pooling = false
+            }.ToString()))
+            {
+                await conn.OpenAsync();
+                await conn.ExecuteAsync(
+                    "UPDATE schema_migrations SET checksum_sha256 = '0000000000000000000000000000000000000000000000000000000000000000' WHERE version = 1;");
+            }
+
+            var ex = await Assert.ThrowsAsync<SqliteMigrationTamperedException>(() => migrator.MigrateAsync(dbPath));
+            Assert.Equal(1, ex.Version);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task MigrateAsync_PendingV2Upgrade_CreatesOnlineBakV1BeforeApplyingAndRollsBackOnFailure()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), $"perga-upgrade-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var dbPath = Path.Combine(tempDir, "upgrade.db");
+            var v1 = SqliteMigrator.LoadEmbeddedMigrations()[0];
+
+            var v1Migrator = new SqliteMigrator([v1]);
+            await v1Migrator.MigrateAsync(dbPath);
+
+            await using (var store = await SqliteTrackStore.OpenAsync(dbPath))
+            {
+                await store.UpsertAreaAsync(StorageTestHarness.CreateArea("area_v1", "V1 Data"), CancellationToken.None);
+            }
+
+            // 1. Failing v2 migration must create .bak-v1 BEFORE running v2 AND roll back live DB to v1.
+            var failingV2 = SqliteMigration.Create(
+                2,
+                "0002_broken.sql",
+                """
+                ALTER TABLE areas ADD COLUMN notes TEXT DEFAULT '';
+                INSERT INTO nonexistent_table_xyz VALUES (1);
+                """);
+            var failingMigrator = new SqliteMigrator([v1, failingV2]);
+            await Assert.ThrowsAnyAsync<SqliteException>(() => failingMigrator.MigrateAsync(dbPath));
+
+            var backupPath = $"{dbPath}.bak-v1";
+            Assert.True(File.Exists(backupPath), "Online backup .bak-v1 must exist even when v2 fails.");
+
+            await using (var liveConn = new SqliteConnection(new SqliteConnectionStringBuilder
+            {
+                DataSource = dbPath,
+                Mode = SqliteOpenMode.ReadOnly,
+                Pooling = false
+            }.ToString()))
+            {
+                await liveConn.OpenAsync();
+                var liveVersion = await liveConn.ExecuteScalarAsync<long>("SELECT MAX(version) FROM schema_migrations;");
+                Assert.Equal(1L, liveVersion);
+            }
+
+            // 2. Valid v2 migration creates fresh .bak-v1 and advances live DB to v2 while .bak-v1 preserves v1 snapshot.
+            var validV2 = SqliteMigration.Create(
+                2,
+                "0002_add_area_notes.sql",
+                "ALTER TABLE areas ADD COLUMN notes TEXT NOT NULL DEFAULT 'migrated-v2';");
+            var v2Migrator = new SqliteMigrator([v1, validV2]);
+            await v2Migrator.MigrateAsync(dbPath);
+
+            Assert.True(File.Exists(backupPath));
+
+            await using (var backupConn = new SqliteConnection(new SqliteConnectionStringBuilder
+            {
+                DataSource = backupPath,
+                Mode = SqliteOpenMode.ReadOnly,
+                Pooling = false
+            }.ToString()))
+            {
+                await backupConn.OpenAsync();
+                var backupMaxVer = await backupConn.ExecuteScalarAsync<long>("SELECT MAX(version) FROM schema_migrations;");
+                var backupAreaName = await backupConn.ExecuteScalarAsync<string>("SELECT name FROM areas WHERE id = 'area_v1';");
+                Assert.Equal(1L, backupMaxVer);
+                Assert.Equal("V1 Data", backupAreaName);
+            }
+
+            await using (var upgradedConn = new SqliteConnection(new SqliteConnectionStringBuilder
+            {
+                DataSource = dbPath,
+                Mode = SqliteOpenMode.ReadOnly,
+                Pooling = false
+            }.ToString()))
+            {
+                await upgradedConn.OpenAsync();
+                var upgradedMaxVer = await upgradedConn.ExecuteScalarAsync<long>("SELECT MAX(version) FROM schema_migrations;");
+                var notesDefault = await upgradedConn.ExecuteScalarAsync<string>("SELECT notes FROM areas WHERE id = 'area_v1';");
+                Assert.Equal(2L, upgradedMaxVer);
+                Assert.Equal("migrated-v2", notesDefault);
+            }
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task MigrateAsync_PreExistingEmptySqliteFileAndTableRebuildForeignKeyCheck_EnforcesInvariants()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), $"perga-fkcheck-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var dbPath = Path.Combine(tempDir, "preexisting.db");
+
+            // Touch an empty 1-page SQLite database with default auto_vacuum = NONE (0) before MigrateAsync runs
+            await using (var touchConn = new SqliteConnection(new SqliteConnectionStringBuilder
+            {
+                DataSource = dbPath,
+                Mode = SqliteOpenMode.ReadWriteCreate,
+                Pooling = false
+            }.ToString()))
+            {
+                await touchConn.OpenAsync();
+                await touchConn.ExecuteAsync("CREATE TABLE temp_touch (x INT); DROP TABLE temp_touch;");
+            }
+
+            var v1 = SqliteMigrator.LoadEmbeddedMigrations()[0];
+            await new SqliteMigrator([v1]).MigrateAsync(dbPath);
+
+            await using (var checkConn = new SqliteConnection(new SqliteConnectionStringBuilder
+            {
+                DataSource = dbPath,
+                Mode = SqliteOpenMode.ReadOnly,
+                Pooling = false
+            }.ToString()))
+            {
+                await checkConn.OpenAsync();
+                Assert.Equal(2L, await checkConn.ExecuteScalarAsync<long>("PRAGMA auto_vacuum;"));
+            }
+
+            // Migration using PRAGMA foreign_keys = OFF that leaves an orphan FK row must fail PRAGMA foreign_key_check and roll back!
+            var badFkV2 = SqliteMigration.Create(
+                2,
+                "0002_orphan_fk.sql",
+                """
+                PRAGMA foreign_keys = OFF;
+                INSERT INTO tracks (id, area_id, title, cwd, created_at_ms, updated_at_ms)
+                VALUES ('trk_orphan', 'area_missing', 'Orphan', '/tmp', 1, 1);
+                """);
+
+            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                new SqliteMigrator([v1, badFkV2]).MigrateAsync(dbPath));
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
+
+    private static string FindRepoFile(string relativePath)
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null)
+        {
+            var candidate = Path.Combine(dir.FullName, relativePath);
+            if (File.Exists(candidate))
+            {
+                return candidate;
+            }
+
+            dir = dir.Parent;
+        }
+
+        throw new FileNotFoundException($"Could not find '{relativePath}' walking upward from '{AppContext.BaseDirectory}'.");
+    }
+}

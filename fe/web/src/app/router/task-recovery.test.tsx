@@ -54,13 +54,13 @@ function setup(mode: 'awaiting' | 'dispatched' | 'event-advance' | 'dependency' 
   const transport: ApiTransportPort = { send(request) {
     return Promise.resolve().then(() => {
     requests.push(request);
-    if (request.path === '/api/areas') return ok([area]);
-    if (request.path === '/api/areas/c1/tracks') return ok([track]);
-    if (request.path === '/api/tracks/w1') return ok({ track, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true, cards: [card, worker, { ...worker, id: 'new-worker', title: 'Current worker' }], overlays: [] });
-    if (request.path === '/api/tracks/w1/report' && initiallyEmpty) return ok({ taskDiagnostics: [
+    if (request.path === '/api/v1/areas') return ok([area]);
+    if (request.path === '/api/v1/areas/c1/tracks?includeClosed=true') return ok([track]);
+    if (request.path === '/api/v1/tracks/w1') return ok({ track, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true, cards: [card, worker, { ...worker, id: 'new-worker', title: 'Current worker' }], overlays: [] });
+    if (request.path === '/api/v1/tracks/w1/report' && initiallyEmpty) return ok({ taskDiagnostics: [
       { blockId: 'b-task', key: taskKey, schedulable: false, status: null, statusDetail: null, workerCardId: null, diagnostics: [] },
     ] });
-    if (request.path === '/api/tracks/w1/report') return ok({ taskDiagnostics: [
+    if (request.path === '/api/v1/tracks/w1/report') return ok({ taskDiagnostics: [
       { blockId: 'b-task', key: taskKey, schedulable: true,
         pendingReason: mode === 'dependency' ? { kind: 'dependencyBlocked', message: blocker, dependencies: ['b'] } : null,
         status: blocker !== null ? (mode === 'dependency' ? 'pending' : current.status === 'awaiting_projection' ? null : current.status) : mode === 'event-advance' ? current.status : mode === 'awaiting' ? null : 'failed', statusDetail: blocker !== null || mode === 'event-advance' ? current.status_detail : 'gate-red', workerCardId: blocker !== null ? null : mode === 'event-advance' ? current.worker_card_id : 'old-worker', diagnostics: [] },

@@ -6,6 +6,7 @@
 
 import { z } from 'zod';
 
+import { sessionItemsPageDtoSchema } from '../api/schemas.js';
 import type { ConversationLiveReplies, HarnessLiveReplies, HarnessPhaseTag } from '../api/generated/wire.js';
 import type { ApiOperation } from '../api/types.js';
 import type { ConversationTurn } from './conversation.js';
@@ -26,17 +27,32 @@ const harnessLiveRepliesSchema: z.ZodType<HarnessLiveReplies> = z.object({
 export function harnessLiveOperation(cardId: string): ApiOperation<HarnessLiveReplies> {
   return {
     method: 'GET',
-    path: `/api/cards/${encodeURIComponent(cardId)}/harness/live`,
-    responseSchema: harnessLiveRepliesSchema,
+    path: `/api/v1/sessions/${encodeURIComponent(cardId)}/items?afterId=0&limit=1&view=live-legacy`,
+    responseSchema: z.union([
+      sessionItemsPageDtoSchema.transform((): HarnessLiveReplies => ({ turn_id: null, items: [] })),
+      harnessLiveRepliesSchema,
+    ]),
   };
 }
 
-const conversationLiveSchema:z.ZodType<ConversationLiveReplies>=z.object({
-  contract:z.literal('conversation_v1'),turn:z.object({thread_id:z.string().min(1),turn_id:z.string().min(1),
-    items:z.array(z.object({item_id:z.string(),text:z.string()}))}).strict().nullable(),
+const conversationLiveSchema: z.ZodType<ConversationLiveReplies> = z.object({
+  contract: z.literal('conversation_v1'),
+  turn: z.object({
+    thread_id: z.string().min(1),
+    turn_id: z.string().min(1),
+    items: z.array(z.object({ item_id: z.string(), text: z.string() })),
+  }).strict().nullable(),
 }).strict();
-export function conversationLiveOperation(cardId:string):ApiOperation<ConversationLiveReplies> {
-  return {method:'GET',path:`/api/cards/${encodeURIComponent(cardId)}/harness/live?contract=conversation_v1`,responseSchema:conversationLiveSchema};
+
+export function conversationLiveOperation(cardId: string): ApiOperation<ConversationLiveReplies> {
+  return {
+    method: 'GET',
+    path: `/api/v1/sessions/${encodeURIComponent(cardId)}/items?afterId=0&limit=1&view=live`,
+    responseSchema: z.union([
+      sessionItemsPageDtoSchema.transform((): ConversationLiveReplies => ({ contract: 'conversation_v1', turn: null })),
+      conversationLiveSchema,
+    ]),
+  };
 }
 
 /** A transcript row, as far as retiring a copy reads it. */

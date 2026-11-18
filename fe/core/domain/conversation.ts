@@ -1,7 +1,16 @@
 import { z } from 'zod';
 import { activityContent } from './conversation-activity-content.js';
 import { runRecoverySchema, type RunRecovery } from './conversation-restart.js';
-import { agentProviderSchema } from '../api/schemas.js';
+import {
+  agentProviderSchema,
+  agentSessionDtoSchema,
+  bootstrapDtoSchema,
+  normalizeWireAgentProvider,
+  sessionItemsPageDtoSchema,
+  sessionTurnDtoSchema,
+  toWireAgentProvider,
+  type AgentSessionDto,
+} from '../api/schemas.js';
 
 import type {
   AgentProvider, ConversationInitialInputReceiptResult, HarnessInputPresentation, HarnessInputSegment, HarnessItem, HarnessPhaseTag,
@@ -61,7 +70,11 @@ export type Conversation = Readonly<{
   turns?: number;
 }>;
 
-export type CreatedConversation = Readonly<{ conversation: Conversation; initialInput: ConversationInitialInputReceiptResult }>;
+export type CreatedConversation = Readonly<{
+  conversation: Conversation;
+  initialInput: ConversationInitialInputReceiptResult;
+  needsInitialMessageSend?: boolean;
+}>;
 
 /** What a session is called when it has no name of its own. */
 export const CONVERSATION_KIND_LABEL: Readonly<Record<ConversationKind, string>> = Object.freeze({
@@ -340,36 +353,116 @@ export function harnessItemsOperation(cardId: string, afterId = 0, direction: 'a
 ApiOperation<HarnessItem[]> {
   return {
     method: 'GET',
-    path: `/api/cards/${encodeURIComponent(cardId)}/harness/items?after_id=${afterId}&limit=${HARNESS_ITEMS_PAGE_LIMIT}&direction=${direction}`,
-    responseSchema: z.array(harnessItemSchema),
+    path: `/api/v1/sessions/${encodeURIComponent(cardId)}/items?afterId=${afterId}&limit=${HARNESS_ITEMS_PAGE_LIMIT}&direction=${direction}`,
+    responseSchema: z.union([
+      sessionItemsPageDtoSchema.transform((page) => {
+        const threadId = page.session.nativeThreadId || `epoch-${page.session.epoch}`;
+        return page.items.flatMap((item): HarnessItem[] => {
+          const payloadObj = typeof item.payload === 'object' && item.payload !== null
+            ? (item.payload as Record<string, unknown>)
+            : {};
+          if (item.kind === 'user') {
+            const content = typeof payloadObj.content === 'string' ? payloadObj.content : '';
+            return [{
+              id: item.id,
+              worker_session_id: item.sessionId,
+              card_id: cardId,
+              track_id: page.session.trackId,
+              thread_id: threadId,
+              turn_id: item.turnId || null,
+              item_uuid: `item-${item.id}`,
+              item_type: 'userMessage',
+              method: 'item/completed',
+              params: JSON.stringify({ completedAtMs: item.createdAtMs, item: { type: 'userMessage', content: [{ text: content }] } }),
+              created_at_ms: item.createdAtMs,
+              turn_error_text: null,
+            }];
+          }
+          if (item.kind === 'assistant_text') {
+            const text = typeof payloadObj.text === 'string' ? payloadObj.text : '';
+            return [{
+              id: item.id,
+              worker_session_id: item.sessionId,
+              card_id: cardId,
+              track_id: page.session.trackId,
+              thread_id: threadId,
+              turn_id: item.turnId || null,
+              item_uuid: `item-${item.id}`,
+              item_type: 'agentMessage',
+              method: 'item/completed',
+              params: JSON.stringify({ completedAtMs: item.createdAtMs, item: { type: 'agentMessage', text } }),
+              created_at_ms: item.createdAtMs,
+              turn_error_text: null,
+            }];
+          }
+          return [];
+        });
+      }),
+      z.array(harnessItemSchema),
+    ]),
   };
 }
 
+export const legacyPlannerRunSchema = z.object({
+  card_id: z.string(), worker_session_id: z.string().nullable().optional(), phase: harnessPhaseSchema.nullable().optional(),
+  /* Defaulted rather than required: a dormant card and older servers answer without them. */
+  pending: z.array(pendingQueueEntrySchema).optional().default([]),
+  pending_overflow: z.number().optional().default(0),
+  /* `.nullable()` and NOT `.optional()`: the server always sends these, so accepting absence
+     would hide the day one stopped being sent. */
+  model: z.string().nullable(), reasoning_effort: z.string().nullable(),
+  permission_mode: plannerPermissionModeSchema.nullable(),
+  blocked_reason: z.string().nullable(),
+  recovery: runRecoverySchema.nullable(),
+  /* Absent on older servers, and false is the safe read. */
+  attachments_supported: z.boolean().optional().default(false),
+  manual_compact_supported: z.boolean(),
+  compact_outcome: z.object({ operation_id: z.string(), thread_id: z.string(), turn_id: z.string().nullable(),
+    status: z.enum(['started', 'completed', 'interrupted', 'failed', 'unconfirmed', 'refused']),
+  }).nullable(),
+  context_usage_invalidated: z.boolean(),
+  /* Absent on older servers and whenever the harness has never reported a usage frame; `null` draws no meter. */
+  token_usage: plannerRunTokenUsageSchema.nullable().optional().default(null),
+  running_turn: plannerRunningTurnSchema.nullable(),
+});
+
 export function plannerRunOperation(cardId: string): ApiOperation<PlannerRun> {
   return {
-    method: 'GET', path: `/api/cards/${encodeURIComponent(cardId)}/planner/run`,
-    responseSchema: z.object({
-      card_id: z.string(), worker_session_id: z.string().nullable().optional(), phase: harnessPhaseSchema.nullable().optional(),
-      /* Defaulted rather than required: a dormant card and older servers answer without them. */
-      pending: z.array(pendingQueueEntrySchema).optional().default([]),
-      pending_overflow: z.number().optional().default(0),
-      /* `.nullable()` and NOT `.optional()`: the server always sends these, so accepting absence
-         would hide the day one stopped being sent. */
-      model: z.string().nullable(), reasoning_effort: z.string().nullable(),
-      permission_mode: plannerPermissionModeSchema.nullable(),
-      blocked_reason: z.string().nullable(),
-      recovery: runRecoverySchema.nullable(),
-      /* Absent on older servers, and false is the safe read. */
-      attachments_supported: z.boolean().optional().default(false),
-      manual_compact_supported: z.boolean(),
-      compact_outcome: z.object({ operation_id: z.string(), thread_id: z.string(), turn_id: z.string().nullable(),
-        status: z.enum(['started', 'completed', 'interrupted', 'failed', 'unconfirmed', 'refused']),
-      }).nullable(),
-      context_usage_invalidated: z.boolean(),
-      /* Absent on older servers and whenever the harness has never reported a usage frame; `null` draws no meter. */
-      token_usage: plannerRunTokenUsageSchema.nullable().optional().default(null),
-      running_turn: plannerRunningTurnSchema.nullable(),
-    }),
+    method: 'GET', path: `/api/v1/sessions/${encodeURIComponent(cardId)}/items?afterId=0&limit=1&view=planner-run`,
+    responseSchema: z.union([
+      sessionItemsPageDtoSchema.transform((page): PlannerRun => {
+        const running = page.activeTurn !== null && page.activeTurn !== undefined && page.activeTurn.status === 'running';
+        const ratio = Math.max(0, Math.min(1, page.session.contextUsageRatio));
+        return {
+          card_id: cardId,
+          worker_session_id: page.session.id,
+          phase: running ? 'turn_running' : 'idle',
+          pending: [],
+          pending_overflow: 0,
+          model: page.session.model ?? null,
+          reasoning_effort: null,
+          permission_mode: page.session.isLead ? 'ask' : null,
+          blocked_reason: null,
+          recovery: null,
+          attachments_supported: false,
+          manual_compact_supported: true,
+          compact_outcome: null,
+          context_usage_invalidated: false,
+          token_usage: ratio > 0
+            ? {
+              used_tokens: Math.round(ratio * 200_000),
+              context_window: 200_000,
+              percent: Math.round(ratio * 100),
+              at_ms: page.session.updatedAtMs,
+            }
+            : null,
+          running_turn: running && page.activeTurn !== null && page.activeTurn !== undefined
+            ? { turn_id: page.activeTurn.id, elapsed_ms: Math.max(0, Date.now() - page.activeTurn.startedAtMs) }
+            : null,
+        };
+      }),
+      legacyPlannerRunSchema,
+    ]),
   };
 }
 
@@ -431,14 +524,42 @@ export type ModelCatalogScope =
   | Readonly<{ kind: 'card'; cardId: string }>
   | Readonly<{ kind: 'provider'; provider: AgentProvider }>;
 
-/** Config layers are per-directory, so without `card_id` the server answers `default_source: 'unknown'`. */
+/** Derives model catalog from `/api/v1/bootstrap` provider statuses; also accepts legacy `ModelCatalog` fixtures. */
 export function modelCatalogOperation(scope: ModelCatalogScope): ApiOperation<ModelCatalog> {
   return {
     method: 'GET',
     path: scope.kind === 'card'
-      ? `/api/models?card_id=${encodeURIComponent(scope.cardId)}`
-      : `/api/models?provider=${scope.provider}`,
-    responseSchema: modelCatalogSchema,
+      ? `/api/v1/bootstrap?card_id=${encodeURIComponent(scope.cardId)}`
+      : `/api/v1/bootstrap?provider=${scope.provider}`,
+    responseSchema: z.union([
+      bootstrapDtoSchema.transform((bootstrap): ModelCatalog => {
+        const providerModels = scope.kind === 'provider'
+          ? bootstrap.providers.find((p) => normalizeWireAgentProvider(p.provider) === scope.provider)?.models ?? []
+          : bootstrap.providers.flatMap((p) => p.models);
+        const unique = [...new Set(providerModels)];
+        return {
+          models: unique.map((model, index) => ({
+            id: model,
+            model,
+            resolved_model: null,
+            display_name: model,
+            description: '',
+            is_default: index === 0,
+            supported_reasoning_efforts: [],
+            default_reasoning_effort: null,
+          })),
+          default: {
+            model: unique[0] ?? null,
+            reasoning_effort: null,
+            supported_reasoning_efforts: null,
+          },
+          default_source: 'unknown',
+          source: 'live',
+          fetched_at_ms: Date.now(),
+        };
+      }),
+      modelCatalogSchema,
+    ]),
   };
 }
 
@@ -543,23 +664,36 @@ export type SentPlannerInput = Readonly<{
  * or answers 409 `planner_turn_not_replaceable` and changes nothing; `null` for an ordinary send.
  */
 export function sendPlannerInputOperation(
-  cardId: string, text: string, attachments: readonly string[], idempotencyKey: string, replacesTurn: string | null,
+  cardId: string,
+  text: string,
+  attachments: readonly string[],
+  idempotencyKey: string,
+  replacesTurn: string | null,
+  steerIfRunning = false,
 ): ApiOperation<SentPlannerInput> {
   return {
-    method: 'POST', path: `/api/cards/${encodeURIComponent(cardId)}/planner/input`,
-    /* Each field is omitted when empty: both are `#[serde(default)]` on the server, and an empty
-       array or a null would change the bytes of every ordinary text-only send. */
+    method: 'POST',
+    path: `/api/v1/sessions/${encodeURIComponent(cardId)}/messages`,
     body: {
+      content: text,
+      steerIfRunning,
       text,
       ...(attachments.length === 0 ? {} : { attachments }),
       ...(replacesTurn === null ? {} : { replaces_turn: replacesTurn }),
     },
     headers: { 'Idempotency-Key': idempotencyKey },
-    responseSchema: z.object({
-      card_id: z.string(),
-      worker_session_id: z.string(),
-      entry_id: z.string().nullable().optional().transform((value) => value ?? null),
-    }),
+    responseSchema: z.union([
+      sessionTurnDtoSchema.transform((turn) => ({
+        card_id: turn.sessionId || cardId,
+        worker_session_id: turn.sessionId || cardId,
+        entry_id: null,
+      })),
+      z.object({
+        card_id: z.string(),
+        worker_session_id: z.string(),
+        entry_id: z.string().nullable().optional().transform((value) => value ?? null),
+      }),
+    ]),
   };
 }
 
@@ -736,15 +870,24 @@ export const COMPACT_TEXT = Object.freeze({ refused: 'Context was not compacted.
 
 export function compactPlannerOperation(cardId: string): ApiOperation<{ started: boolean }> {
   return {
-    method: 'POST', path: `/api/cards/${encodeURIComponent(cardId)}/planner/compact`,
-    responseSchema: z.object({ card_id: z.string(), worker_session_id: z.string(), started: z.literal(true) }),
+    method: 'POST',
+    path: `/api/v1/sessions/${encodeURIComponent(cardId)}/compact`,
+    responseSchema: z.union([
+      agentSessionDtoSchema.transform(() => ({ started: true as const })),
+      z.object({ started: z.literal(true) }),
+    ]),
   };
 }
 
 export function interruptPlannerOperation(cardId: string): ApiOperation<{ stopped: boolean }> {
   return {
-    method: 'POST', path: `/api/cards/${encodeURIComponent(cardId)}/planner/interrupt`,
-    responseSchema: z.object({ card_id: z.string(), worker_session_id: z.string(), stopped: z.boolean() }),
+    method: 'POST',
+    path: `/api/v1/sessions/${encodeURIComponent(cardId)}/interrupt`,
+    responseSchema: z.union([
+      z.object({ ok: z.boolean() }).transform(({ ok }) => ({ stopped: ok })),
+      z.undefined().transform(() => ({ stopped: true })),
+      z.object({ stopped: z.boolean() }),
+    ]),
   };
 }
 
@@ -800,11 +943,31 @@ export function setConversationArchiveOperation(trackId: string, cardId: string,
   };
 }
 
+export function agentSessionDtoToConversation(dto: AgentSessionDto): Conversation {
+  const provider = normalizeWireAgentProvider(dto.provider) ?? 'codex';
+  const stateParsed = conversationStateSchema.safeParse(dto.status);
+  return {
+    id: dto.id,
+    trackId: dto.trackId,
+    archivedAt: dto.archivedAtMs ?? null,
+    title: dto.title ?? (dto.boundTaskId ? `Task: ${dto.boundTaskId}` : null),
+    kind: dto.isLead ? 'shared-spec' : 'track-assistant',
+    provider,
+    state: stateParsed.success ? stateParsed.data : 'idle',
+    updatedAt: dto.updatedAtMs,
+    lastTurnCompletedAt: dto.updatedAtMs,
+  };
+}
+
 export function trackConversationsOperation(trackId: string): ApiOperation<Conversation[]> {
   return {
     method: 'GET',
-    path: `/api/tracks/${encodeURIComponent(trackId)}/conversations`,
-    responseSchema: z.array(trackConversationSummarySchema).transform((rows) => rows.map(toTrackConversation)),
+    path: `/api/v1/tracks/${encodeURIComponent(trackId)}/sessions`,
+    responseSchema: z.union([
+      z.array(agentSessionDtoSchema).transform((sessions) =>
+        sessions.filter((session) => !session.isLead).map(agentSessionDtoToConversation)),
+      z.array(trackConversationSummarySchema).transform((rows) => rows.map(toTrackConversation)),
+    ]),
   };
 }
 
@@ -815,17 +978,28 @@ export function trackConversationsOperation(trackId: string): ApiOperation<Conve
 export function createTrackConversationOperation(
   trackId: string, text: string, idempotencyKey: string, provider: AgentProvider, selection: ModelSelection, side?: SideConversation,
 ): ApiOperation<CreatedConversation> {
+  const derivedTitle = conversationNameFrom(text);
   return {
     method: 'POST',
-    path: `/api/tracks/${encodeURIComponent(trackId)}/conversations`,
+    path: `/api/v1/tracks/${encodeURIComponent(trackId)}/sessions`,
     headers: { 'Idempotency-Key': idempotencyKey },
-    body: { text, provider,
+    body: {
+      ...(derivedTitle === null ? {} : { title: derivedTitle }),
+      text,
+      provider: toWireAgentProvider(provider),
       ...(side === undefined ? {} : { side }),
       ...(selection.model === null ? {} : { model: selection.model }),
       ...(selection.reasoning_effort === null ? {} : { reasoning_effort: selection.reasoning_effort }),
     },
-    responseSchema: trackConversationSummarySchema.and(z.object({ initialInput: initialInputReceiptResultSchema }))
-      .transform((row) => ({ conversation: toTrackConversation(row), initialInput: row.initialInput })),
+    responseSchema: z.union([
+      agentSessionDtoSchema.transform((dto) => ({
+        conversation: agentSessionDtoToConversation(dto),
+        initialInput: { kind: 'legacy-unavailable' as const },
+        needsInitialMessageSend: true,
+      })),
+      trackConversationSummarySchema.and(z.object({ initialInput: initialInputReceiptResultSchema }))
+        .transform((row) => ({ conversation: toTrackConversation(row), initialInput: row.initialInput })),
+    ]),
   };
 }
 

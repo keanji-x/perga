@@ -4,7 +4,7 @@ import { readTrackReport, TRACK_REPORT_CARD_KIND } from '../../core/domain/repor
 import type { CardWire } from '../../core/domain/track.js';
 
 /** The one `html` path rule, shared with the kernel (`crates/calm-types/src/report_blocks/html_tests.rs`). */
-const fixture = JSON.parse(readFileSync(new URL('../../../test-data/report-html-path-v1.json', import.meta.url), 'utf8')) as {
+const fixture = JSON.parse(readFileSync(new URL('../../core/domain/fixtures/report-html-path-v1.json', import.meta.url), 'utf8')) as {
   accept: string[];
   refuse: string[];
 };

@@ -3,6 +3,20 @@
 import { z } from 'zod';
 
 import type { ApiDecodeFailure } from './types.js';
+import {
+  agentSessionDtoSchema,
+  askDtoSchema,
+  decodePergaEventEnvelope,
+  mailDtoSchema,
+  sessionTextDeltaPayloadSchema,
+  sessionThinkingDeltaPayloadSchema,
+  sessionToolProgressPayloadSchema,
+  sessionTurnDtoSchema,
+  taskAttemptDtoSchema,
+  taskDtoSchema,
+  terminalDtoSchema,
+  type PergaStreamDelta,
+} from './perga-v1.js';
 
 /** `model::AreaKind`. Defaults to `'user'` so legacy wire payloads parse. */
 export const areaKindSchema = z.enum(['user', 'system']).default('user');
@@ -90,6 +104,19 @@ export type WorkerSessionKind = z.infer<typeof runtimeKindSchema>;
 
 export const agentProviderSchema = z.enum(['codex', 'claude', 'opencode', 'grok', 'antigravity']);
 export type AgentProvider = z.infer<typeof agentProviderSchema>;
+
+/** Normalizes Perga wire provider IDs (`"acp:antigravity"`, `"acp:opencode"`) into canonical frontend `AgentProvider` values. */
+export function normalizeWireAgentProvider(raw: unknown): AgentProvider | null {
+  const candidate = typeof raw === 'string' && raw.startsWith('acp:') ? raw.slice(4) : raw;
+  const parsed = agentProviderSchema.safeParse(candidate);
+  return parsed.success ? parsed.data : null;
+}
+
+/** Maps canonical frontend `AgentProvider` values to Perga wire provider IDs (`"acp:antigravity"`, `"acp:opencode"`). */
+export function toWireAgentProvider(provider: AgentProvider): string {
+  if (provider === 'antigravity' || provider === 'opencode') return `acp:${provider}`;
+  return provider;
+}
 
 export const workerSessionStateSchema = z.enum([
   'starting',
@@ -1004,7 +1031,87 @@ export const eventScopeSchema = z.discriminatedUnion('kind', [
 
 export type EventScope = z.infer<typeof eventScopeSchema>;
 
-/** Keep this 1:1 with `event::Event` in calm-server. */
+export const pergaReportUpdatedSchema = z.object({
+  ev: z.literal('report.updated'),
+  data: z.object({
+    track_id: z.string().nullable().default(null),
+    docRev: z.number().optional(),
+    summary: z.string().nullish(),
+  }),
+});
+
+export const pergaTaskUpdatedSchema = z.object({
+  ev: z.literal('task.updated'),
+  data: z.object({
+    track_id: z.string().nullable().default(null),
+    task: taskDtoSchema.nullish(),
+    attempt: taskAttemptDtoSchema.nullish(),
+    tasks: z.array(taskDtoSchema).nullish(),
+  }),
+});
+
+export const pergaSessionUpdatedSchema = z.object({
+  ev: z.literal('session.updated'),
+  data: z.object({
+    track_id: z.string(),
+    session: agentSessionDtoSchema,
+  }),
+});
+
+export const pergaTurnCompletedSchema = z.object({
+  ev: z.literal('turn.completed'),
+  data: z.object({
+    track_id: z.string().nullable().default(null),
+    turn: sessionTurnDtoSchema,
+  }),
+});
+
+export const pergaAskChangedSchema = z.object({
+  ev: z.literal('ask.changed'),
+  data: z.object({
+    track_id: z.string(),
+    ask: askDtoSchema,
+  }),
+});
+
+export const pergaMailReceivedSchema = z.object({
+  ev: z.literal('mail.received'),
+  data: z.object({
+    track_id: z.string(),
+    mail: mailDtoSchema,
+  }),
+});
+
+export const pergaTerminalChangedSchema = z.object({
+  ev: z.literal('terminal.changed'),
+  data: z.object({
+    track_id: z.string(),
+    terminal: terminalDtoSchema,
+  }),
+});
+
+export const pergaSessionTextDeltaSchema = z.object({
+  ev: z.literal('session.text_delta'),
+  data: sessionTextDeltaPayloadSchema.extend({
+    createdAtMs: z.number().default(0),
+  }),
+});
+
+export const pergaSessionThinkingDeltaSchema = z.object({
+  ev: z.literal('session.thinking_delta'),
+  data: sessionThinkingDeltaPayloadSchema.extend({
+    createdAtMs: z.number().default(0),
+  }),
+});
+
+export const pergaSessionToolProgressSchema = z.object({
+  ev: z.literal('session.tool_progress'),
+  data: sessionToolProgressPayloadSchema.extend({
+    createdAtMs: z.number().default(0),
+  }),
+});
+
+/** Keep this 1:1 with Perga `/api/v1/events` and historical event kinds. */
 export const wireEventSchema = z.discriminatedUnion('ev', [
   areaUpdatedSchema,
   areaDeletedSchema,
@@ -1066,6 +1173,16 @@ export const wireEventSchema = z.discriminatedUnion('ev', [
   worktreeRemovedSchema,
   taskGateResultSchema,
   taskRegateRequestedSchema,
+  pergaReportUpdatedSchema,
+  pergaTaskUpdatedSchema,
+  pergaSessionUpdatedSchema,
+  pergaTurnCompletedSchema,
+  pergaAskChangedSchema,
+  pergaMailReceivedSchema,
+  pergaTerminalChangedSchema,
+  pergaSessionTextDeltaSchema,
+  pergaSessionThinkingDeltaSchema,
+  pergaSessionToolProgressSchema,
 ]);
 
 export type Area = z.infer<typeof areaSchema>;
@@ -1143,6 +1260,111 @@ export type WireEventDecodeResult =
 
 /** Unknown or malformed frames are returned as data so callers can log and skip dispatch. */
 export function decodeWireEvent(input: unknown): WireEventDecodeResult {
+  if (typeof input === 'object' && input !== null && 'kind' in input && !('ev' in input)) {
+    const perga = decodePergaEventEnvelope(input);
+    if (perga.status === 'failed') return perga;
+    if (perga.kind === 'delta') {
+      const delta: PergaStreamDelta = perga.delta;
+      if (delta.kind === 'session.text_delta') {
+        return { status: 'ready', value: { ev: 'session.text_delta', data: { sessionId: delta.sessionId, turnId: delta.turnId, delta: delta.delta, createdAtMs: delta.createdAtMs } } };
+      }
+      if (delta.kind === 'session.thinking_delta') {
+        return { status: 'ready', value: { ev: 'session.thinking_delta', data: { sessionId: delta.sessionId, turnId: delta.turnId, delta: delta.delta, createdAtMs: delta.createdAtMs } } };
+      }
+      return {
+        status: 'ready',
+        value: {
+          ev: 'session.tool_progress',
+          data: {
+            sessionId: delta.sessionId,
+            turnId: delta.turnId,
+            phase: delta.phase,
+            callId: delta.callId,
+            name: delta.name,
+            args: delta.args,
+            isError: delta.isError,
+            createdAtMs: delta.createdAtMs,
+          },
+        },
+      };
+    }
+    const evt = perga.event;
+    switch (evt.kind) {
+      case 'track.updated': {
+        const t = evt.payload;
+        const spec = typeof t.workspaceSpec === 'object' && t.workspaceSpec !== null
+          ? (t.workspaceSpec as Record<string, unknown>)
+          : {};
+        const worktreePath = typeof spec.mergedCwd === 'string' && spec.mergedCwd !== ''
+          ? spec.mergedCwd
+          : typeof spec.worktreePath === 'string' && spec.worktreePath !== ''
+            ? spec.worktreePath
+            : typeof spec.workspacePath === 'string' && spec.workspacePath !== ''
+              ? spec.workspacePath
+              : undefined;
+        const logicalRoot = typeof spec.logicalRoot === 'string' && spec.logicalRoot !== ''
+          ? spec.logicalRoot
+          : t.cwd;
+        const isWorktree = t.workspaceDriver === 'vcs-workspace'
+          || t.workspaceDriver === 'vcs'
+          || t.workspaceDriver === 'git-worktree'
+          || t.workspaceDriver === 'jj'
+          || t.workspaceDriver === 'worktree';
+        const isAttachedNone = (t.workspaceDriver === 'direct' || t.workspaceDriver === 'none') && t.cwd !== '';
+        return {
+          status: 'ready',
+          value: {
+            ev: 'track.updated',
+            data: {
+              id: t.id,
+              area_id: t.areaId,
+              title: t.title,
+              sort: t.sortOrder,
+              pinned_at: t.pinnedAtMs ?? null,
+              closed_at: t.closedAtMs ?? null,
+              admin_granted_at: null,
+              cwd: t.cwd,
+              template_id: t.templateId ?? null,
+              plugin_scope: null,
+              purpose: null,
+              template_input: t.templateInputs ?? null,
+              recipe_id: null,
+              recipe_revision: null,
+              creator_track_id: t.parentTrackId ?? null,
+              creator_key: t.parentAttemptId ?? null,
+              workspace: isWorktree
+                ? {
+                  isolation: 'worktree',
+                  kind: 'attached',
+                  path: logicalRoot,
+                  frozen_at: null,
+                  ...(worktreePath !== undefined ? { worktree: worktreePath } : {}),
+                }
+                : isAttachedNone
+                  ? { isolation: 'none', kind: 'attached', path: t.cwd, frozen_at: null }
+                  : { isolation: 'managed', kind: 'managed', path: t.cwd, frozen_at: null },
+              created_at: t.createdAtMs,
+              updated_at: t.updatedAtMs,
+            },
+          },
+        };
+      }
+      case 'report.updated':
+        return { status: 'ready', value: { ev: 'report.updated', data: { track_id: evt.trackId, docRev: evt.payload.docRev, summary: evt.payload.summary } } };
+      case 'task.updated':
+        return { status: 'ready', value: { ev: 'task.updated', data: { track_id: evt.trackId, task: evt.payload.task, attempt: evt.payload.attempt, tasks: evt.payload.tasks ? [...evt.payload.tasks] : undefined } } };
+      case 'session.updated':
+        return { status: 'ready', value: { ev: 'session.updated', data: { track_id: evt.trackId ?? evt.payload.trackId, session: evt.payload } } };
+      case 'turn.completed':
+        return { status: 'ready', value: { ev: 'turn.completed', data: { track_id: evt.trackId, turn: evt.payload } } };
+      case 'ask.changed':
+        return { status: 'ready', value: { ev: 'ask.changed', data: { track_id: evt.trackId ?? evt.payload.trackId, ask: evt.payload } } };
+      case 'mail.received':
+        return { status: 'ready', value: { ev: 'mail.received', data: { track_id: evt.trackId ?? evt.payload.toTrackId, mail: evt.payload } } };
+      case 'terminal.changed':
+        return { status: 'ready', value: { ev: 'terminal.changed', data: { track_id: evt.trackId ?? evt.payload.trackId, terminal: evt.payload } } };
+    }
+  }
   const parsed = wireEventSchema.safeParse(input);
   if (!parsed.success) {
     return {
@@ -1152,3 +1374,5 @@ export function decodeWireEvent(input: unknown): WireEventDecodeResult {
   }
   return { status: 'ready', value: parsed.data };
 }
+
+export * from './perga-v1.js';

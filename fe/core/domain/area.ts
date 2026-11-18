@@ -2,12 +2,31 @@
 
 import { z } from 'zod';
 
-import { areaSchema } from '../api/schemas.js';
+import { areaDtoSchema, areaSchema, type AreaDto } from '../api/schemas.js';
 import type { ApiOperation } from '../api/types.js';
 import type { FailureTable, WriteClass, WriteText } from './failure-class.js';
 
 export type AreaKind = z.infer<typeof areaSchema>['kind'];
 export type AreaWire = z.infer<typeof areaSchema>;
+
+export function areaDtoToWire(dto: AreaDto): AreaWire {
+  return {
+    id: dto.id,
+    name: dto.name,
+    color: dto.color,
+    sort: dto.sortOrder,
+    kind: 'user',
+    default_template_id: null,
+    default_cwd: dto.defaultCwd ?? null,
+    created_at: dto.createdAtMs,
+    updated_at: dto.updatedAtMs,
+  };
+}
+
+export const areaWireOrDtoSchema: z.ZodType<AreaWire> = z.union([
+  areaDtoSchema.transform(areaDtoToWire),
+  areaSchema,
+]);
 
 export type Area = Readonly<{
   id: string;
@@ -44,7 +63,7 @@ export function newestArea(current: Area, incoming: Area): Area {
 }
 
 export function areaListOperation(): ApiOperation<AreaWire[]> {
-  return { method: 'GET', path: '/api/areas', responseSchema: z.array(areaSchema) };
+  return { method: 'GET', path: '/api/v1/areas', responseSchema: z.array(areaWireOrDtoSchema) };
 }
 
 /** The system area must never reach a user-visible surface; this is the client-side half of the server filter. */
@@ -77,12 +96,16 @@ export type AreaPatchBody = Readonly<{
   default_cwd?: string | null;
 }>;
 
-/** Old servers omit this capability and must never receive a keyed create. */
+/** Perga `/api/v1/bootstrap` always supports keyed Area creation; legacy responses check `areaCreateIdempotency`. */
 export function areaCreationCapabilityOperation(): ApiOperation<'supported' | 'unsupported'> {
   return {
-    method: 'GET', path: '/api/version',
-    responseSchema: z.object({ areaCreateIdempotency: z.unknown().optional() })
-      .transform((value) => value.areaCreateIdempotency === true ? 'supported' as const : 'unsupported' as const),
+    method: 'GET', path: '/api/v1/bootstrap',
+    responseSchema: z.object({
+      version: z.string().optional(),
+      areaCreateIdempotency: z.unknown().optional(),
+    }).transform((value) => (typeof value.version === 'string' || value.areaCreateIdempotency === true)
+      ? 'supported' as const
+      : 'unsupported' as const),
   };
 }
 
@@ -114,14 +137,43 @@ export const AREA_CREATE_TEXT: WriteText = Object.freeze({
 
 /** One key identifies one exact creation intent, including every retry. */
 export function createAreaOperation(body: NewAreaBody, idempotencyKey: string): ApiOperation<AreaWire> {
-  return { method: 'POST', path: '/api/areas', body, headers: { 'Idempotency-Key': idempotencyKey }, responseSchema: areaSchema };
+  const wireBody = {
+    name: body.name,
+    color: body.color,
+    ...(body.sort !== undefined ? { sortOrder: body.sort } : {}),
+    ...(body.default_cwd !== undefined ? { defaultCwd: body.default_cwd } : {}),
+    ...(body.default_template_id !== undefined ? { default_template_id: body.default_template_id } : {}),
+  };
+  return {
+    method: 'POST',
+    path: '/api/v1/areas',
+    body: wireBody,
+    headers: { 'Idempotency-Key': idempotencyKey },
+    responseSchema: areaWireOrDtoSchema,
+  };
 }
 
 export function updateAreaOperation(areaId: string, body: AreaPatchBody): ApiOperation<AreaWire> {
-  return { method: 'PATCH', path: `/api/areas/${encodeURIComponent(areaId)}`, body, responseSchema: areaSchema };
+  const wireBody = {
+    ...(body.name !== undefined ? { name: body.name } : {}),
+    ...(body.color !== undefined ? { color: body.color } : {}),
+    ...(body.sort !== undefined ? { sortOrder: body.sort } : {}),
+    ...(body.default_cwd === null
+      ? { defaultCwd: null, clearDefaultCwd: true }
+      : body.default_cwd !== undefined
+        ? { defaultCwd: body.default_cwd }
+        : {}),
+    ...(body.default_template_id !== undefined ? { default_template_id: body.default_template_id } : {}),
+  };
+  return {
+    method: 'PATCH',
+    path: `/api/v1/areas/${encodeURIComponent(areaId)}`,
+    body: wireBody,
+    responseSchema: areaWireOrDtoSchema,
+  };
 }
 
-/** What a failed `PATCH /api/areas/{id}` says: it sets values, so 400, 404, 413 and 422 store nothing; anything else may have. */
+/** What a failed `PATCH /api/v1/areas/{id}` says: it sets values, so 400, 404, 413 and 422 store nothing; anything else may have. */
 export const AREA_PATCH_FAILURES: FailureTable<WriteClass> = Object.freeze({
   rules: Object.freeze([Object.freeze({ status: Object.freeze([400, 404, 413, 422]), is: 'refused' as const })]),
   unauthorized: 'refused',
@@ -131,7 +183,7 @@ export const AREA_PATCH_FAILURES: FailureTable<WriteClass> = Object.freeze({
 export const AREA_PATCH_TEXT: WriteText = Object.freeze({ refused: 'The area was not updated.', unknown: 'The area update is unconfirmed.' });
 
 export function deleteAreaOperation(areaId: string): ApiOperation<undefined> {
-  return { method: 'DELETE', path: `/api/areas/${encodeURIComponent(areaId)}`, responseSchema: z.undefined() };
+  return { method: 'DELETE', path: `/api/v1/areas/${encodeURIComponent(areaId)}`, responseSchema: z.undefined() };
 }
 
 /** `id` is an autoincrement integer, not a uuid, because the row never enters the sync engine's event log. */
@@ -162,8 +214,19 @@ export function toAreaFolder(wire: AreaFolderWire): AreaFolder {
 export function areaFoldersOperation(areaId: string): ApiOperation<AreaFolderWire[]> {
   return {
     method: 'GET',
-    path: `/api/areas/${encodeURIComponent(areaId)}/folders`,
-    responseSchema: z.array(areaFolderWireSchema),
+    path: `/api/v1/areas?folders=${encodeURIComponent(areaId)}`,
+    responseSchema: z.union([
+      z.array(areaDtoSchema).transform((areas) => {
+        const area = areas.find((candidate) => candidate.id === areaId);
+        return (area?.folders ?? []).map((path, index) => ({
+          id: index + 1,
+          area_id: areaId,
+          path,
+          created_at: area?.createdAtMs ?? 0,
+        }));
+      }),
+      z.array(areaFolderWireSchema),
+    ]),
   };
 }
 

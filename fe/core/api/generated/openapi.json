@@ -1666,452 +1666,6 @@
         ]
       }
     },
-    "/api/calendar/tasks": {
-      "get": {
-        "tags": [
-          "calendar"
-        ],
-        "operationId": "list",
-        "parameters": [
-          {
-            "name": "from",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "until",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "timezone",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/CalendarListedEntry"
-                  }
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "`bad_request`: the window is not valid dates and an IANA timezone spanning 1 to 366 days",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "`unauthorized`: no valid session cookie.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "`forbidden`: the caller is not `X-Calm-Actor: user`; AI calls use the calendar tools",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "`service_unavailable`: the Calendar plugin is not running",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          }
-        }
-      },
-      "post": {
-        "tags": [
-          "calendar"
-        ],
-        "operationId": "create_calendar_task",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CalendarCreate"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Created, or the entry an earlier create under the same `idempotency_key` made",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CalendarEntry"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "`bad_request`: a time or timezone is not valid, or `idempotency_key` is not 1 to 200 bytes",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "`unauthorized`: no valid session cookie.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "`forbidden`: the caller is not `X-Calm-Actor: user`; AI calls use the calendar tools",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "`conflict`: the `idempotency_key` was already used for a different task",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "413": {
-            "description": "`payload_too_large`: the body is over the request size limit.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "415": {
-            "description": "`unsupported_media_type`: the request does not say `Content-Type: application/json`.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "`invalid_body`: the JSON is not the body's shape (a field missing or of the wrong type).",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "`service_unavailable`: the Calendar plugin is not running",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/calendar/tasks/{id}": {
-      "get": {
-        "tags": [
-          "calendar"
-        ],
-        "summary": "One task by id, a cancelled one included (the list leaves those out): how a client reads back an update or cancel\nwhose answer was lost.",
-        "operationId": "read",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "The task, cancelled or not",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CalendarEntry"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "`bad_request`: a path or query parameter does not parse.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "`unauthorized`: no valid session cookie.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "`forbidden`: the caller is not `X-Calm-Actor: user`; AI calls use the calendar tools",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "`not_found`: no calendar task with this id",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "`service_unavailable`: the Calendar plugin is not running",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          }
-        }
-      },
-      "post": {
-        "tags": [
-          "calendar"
-        ],
-        "operationId": "update",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CalendarUpdate"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CalendarEntry"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "`bad_request`: a time or timezone is not valid",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "`unauthorized`: no valid session cookie.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "`forbidden`: the caller is not `X-Calm-Actor: user`; AI calls use the calendar tools",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "`not_found`: no calendar task with this id",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "`conflict`: the task changed since `expected_version`; reload before editing",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "413": {
-            "description": "`payload_too_large`: the body is over the request size limit.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "415": {
-            "description": "`unsupported_media_type`: the request does not say `Content-Type: application/json`.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "`invalid_body`: the JSON is not the body's shape (a field missing or of the wrong type).",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "`service_unavailable`: the Calendar plugin is not running",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/cards/{card_id}/terminal": {
       "get": {
         "tags": [
@@ -14860,6 +14414,570 @@
           {}
         ]
       }
+    },
+    "/api/v1/bootstrap": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BootstrapDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/templates": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/CompiledTemplateManifestDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/areas": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AreaDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AreaDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/areas/{areaId}": {
+      "parameters": [
+        {
+          "name": "areaId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "patch": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AreaDto"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          }
+        }
+      }
+    },
+    "/api/v1/areas/{areaId}/tracks": {
+      "parameters": [
+        {
+          "name": "areaId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/TrackDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tracks": {
+      "post": {
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrackAggregateSnapshotDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tracks/{trackId}": {
+      "parameters": [
+        {
+          "name": "trackId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrackAggregateSnapshotDto"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrackDto"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          }
+        }
+      }
+    },
+    "/api/v1/tracks/{trackId}/files": {
+      "parameters": [
+        {
+          "name": "trackId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceFileResultDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tracks/{trackId}/vcs-diff": {
+      "parameters": [
+        {
+          "name": "trackId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiffSummaryDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tracks/{trackId}/report": {
+      "parameters": [
+        {
+          "name": "trackId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportReadResultDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tracks/{trackId}/report/blocks/{blockId}": {
+      "parameters": [
+        {
+          "name": "trackId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "blockId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "put": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportReadResultDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tracks/{trackId}/tasks/{taskKey}/attempts": {
+      "parameters": [
+        {
+          "name": "trackId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "taskKey",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/TaskAttemptDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tracks/{trackId}/sessions": {
+      "parameters": [
+        {
+          "name": "trackId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AgentSessionDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentSessionDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionId}/items": {
+      "parameters": [
+        {
+          "name": "sessionId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionItemsPageDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionId}/messages": {
+      "parameters": [
+        {
+          "name": "sessionId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionTurnDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionId}/interrupt": {
+      "parameters": [
+        {
+          "name": "sessionId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "responses": {
+          "200": {
+            "description": "Interrupted"
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionId}/compact": {
+      "parameters": [
+        {
+          "name": "sessionId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentSessionDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tracks/{trackId}/asks/{askId}/answer": {
+      "parameters": [
+        {
+          "name": "trackId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "askId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AskDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tracks/{trackId}/terminals": {
+      "parameters": [
+        {
+          "name": "trackId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/TerminalDto"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TerminalDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tracks/{trackId}/terminals/{termId}": {
+      "parameters": [
+        {
+          "name": "trackId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "termId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "delete": {
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -15315,249 +15433,6 @@
             ]
           }
         }
-      },
-      "CalendarCreate": {
-        "type": "object",
-        "required": [
-          "idempotency_key",
-          "task"
-        ],
-        "properties": {
-          "idempotency_key": {
-            "type": "string"
-          },
-          "task": {
-            "$ref": "#/components/schemas/CalendarDraft"
-          }
-        },
-        "additionalProperties": false
-      },
-      "CalendarDraft": {
-        "type": "object",
-        "required": [
-          "title",
-          "description",
-          "schedule"
-        ],
-        "properties": {
-          "description": {
-            "type": "string"
-          },
-          "schedule": {
-            "$ref": "#/components/schemas/CalendarSchedule"
-          },
-          "title": {
-            "type": "string"
-          }
-        },
-        "additionalProperties": false
-      },
-      "CalendarEntry": {
-        "type": "object",
-        "required": [
-          "id",
-          "task",
-          "version",
-          "cancelled",
-          "created_by",
-          "created_at",
-          "updated_at"
-        ],
-        "properties": {
-          "cancelled": {
-            "type": "boolean"
-          },
-          "created_at": {
-            "type": "integer",
-            "format": "int64"
-          },
-          "created_by": {
-            "type": "string"
-          },
-          "id": {
-            "type": "string"
-          },
-          "source_track_id": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "task": {
-            "$ref": "#/components/schemas/CalendarDraft"
-          },
-          "updated_at": {
-            "type": "integer",
-            "format": "int64"
-          },
-          "version": {
-            "type": "integer",
-            "format": "int64"
-          }
-        }
-      },
-      "CalendarListedEntry": {
-        "allOf": [
-          {
-            "$ref": "#/components/schemas/CalendarEntry"
-          },
-          {
-            "type": "object",
-            "required": [
-              "occurrences"
-            ],
-            "properties": {
-              "occurrences": {
-                "type": "array",
-                "items": {
-                  "$ref": "#/components/schemas/CalendarOccurrence"
-                }
-              }
-            }
-          }
-        ],
-        "description": "A listed entry with its timed occurrences inside the requested window, in start order; an\nall-day entry has none."
-      },
-      "CalendarOccurrence": {
-        "type": "object",
-        "description": "One timed occurrence as RFC3339 instants.",
-        "required": [
-          "start",
-          "end"
-        ],
-        "properties": {
-          "end": {
-            "type": "string"
-          },
-          "start": {
-            "type": "string"
-          }
-        }
-      },
-      "CalendarSchedule": {
-        "oneOf": [
-          {
-            "type": "object",
-            "required": [
-              "date",
-              "kind"
-            ],
-            "properties": {
-              "date": {
-                "type": "string"
-              },
-              "kind": {
-                "type": "string",
-                "enum": [
-                  "all_day"
-                ]
-              }
-            }
-          },
-          {
-            "type": "object",
-            "required": [
-              "start",
-              "end",
-              "timezone",
-              "kind"
-            ],
-            "properties": {
-              "end": {
-                "type": "string"
-              },
-              "kind": {
-                "type": "string",
-                "enum": [
-                  "timed"
-                ]
-              },
-              "start": {
-                "type": "string"
-              },
-              "timezone": {
-                "type": "string"
-              }
-            }
-          },
-          {
-            "type": "object",
-            "description": "Local `start..end` (\"HH:MM\", same day) on each listed weekday from `from` through `until`\n(inclusive; open-ended when absent). A wall time that a DST change skips drops that\noccurrence; a repeated wall time takes its earlier instant.",
-            "required": [
-              "weekdays",
-              "start",
-              "end",
-              "timezone",
-              "from",
-              "kind"
-            ],
-            "properties": {
-              "end": {
-                "type": "string"
-              },
-              "from": {
-                "type": "string"
-              },
-              "kind": {
-                "type": "string",
-                "enum": [
-                  "weekly"
-                ]
-              },
-              "start": {
-                "type": "string"
-              },
-              "timezone": {
-                "type": "string"
-              },
-              "until": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "weekdays": {
-                "type": "array",
-                "items": {
-                  "$ref": "#/components/schemas/CalendarWeekday"
-                }
-              }
-            }
-          }
-        ]
-      },
-      "CalendarUpdate": {
-        "type": "object",
-        "required": [
-          "expected_version",
-          "task",
-          "cancelled"
-        ],
-        "properties": {
-          "cancelled": {
-            "type": "boolean"
-          },
-          "expected_version": {
-            "type": "integer",
-            "format": "int64"
-          },
-          "task": {
-            "$ref": "#/components/schemas/CalendarDraft"
-          }
-        },
-        "additionalProperties": false
-      },
-      "CalendarWeekday": {
-        "type": "string",
-        "enum": [
-          "mon",
-          "tue",
-          "wed",
-          "thu",
-          "fri",
-          "sat",
-          "sun"
-        ]
       },
       "Card": {
         "type": "object",
@@ -23545,7 +23420,7 @@
       },
       "TracksWindowQuery": {
         "type": "object",
-        "description": "Calendar window query parameters for `GET /api/tracks`; `since` / `until` are\ninclusive at both endpoints.",
+        "description": "Window query parameters for `GET /api/tracks`; `since` / `until` are\ninclusive at both endpoints.",
         "properties": {
           "area_id": {
             "type": [
@@ -23969,6 +23844,787 @@
             "type": "integer",
             "format": "int64",
             "minimum": 0
+          }
+        }
+      },
+      "ProviderStatusDto": {
+        "type": "object",
+        "required": [
+          "provider",
+          "available"
+        ],
+        "properties": {
+          "provider": {
+            "type": "string"
+          },
+          "available": {
+            "type": "boolean"
+          },
+          "version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "CompiledTemplateManifestDto": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "description",
+          "version",
+          "inputsSchema",
+          "recommendedPlugins",
+          "editableBy"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "inputsSchema": {
+            "type": "object"
+          },
+          "recommendedPlugins": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "editableBy": {
+            "type": "object"
+          },
+          "cron": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "afterWorkerDoneCmd": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "onCloseCmd": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "AreaDto": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "color",
+          "folders",
+          "sortOrder",
+          "createdAtMs",
+          "updatedAtMs"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "color": {
+            "type": "string"
+          },
+          "defaultCwd": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "folders": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "sortOrder": {
+            "type": "number"
+          },
+          "createdAtMs": {
+            "type": "integer"
+          },
+          "updatedAtMs": {
+            "type": "integer"
+          }
+        }
+      },
+      "BootstrapDto": {
+        "type": "object",
+        "required": [
+          "version",
+          "providers",
+          "templates",
+          "areas"
+        ],
+        "properties": {
+          "version": {
+            "type": "string"
+          },
+          "providers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProviderStatusDto"
+            }
+          },
+          "templates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CompiledTemplateManifestDto"
+            }
+          },
+          "areas": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AreaDto"
+            }
+          }
+        }
+      },
+      "TrackDto": {
+        "type": "object",
+        "required": [
+          "id",
+          "areaId",
+          "title",
+          "cwd",
+          "workspaceDriver",
+          "createdAtMs",
+          "updatedAtMs"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "areaId": {
+            "type": "string"
+          },
+          "parentTrackId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "parentAttemptId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "cwd": {
+            "type": "string"
+          },
+          "workspaceDriver": {
+            "type": "string"
+          },
+          "workspaceSpec": {
+            "type": "object"
+          },
+          "leadSessionId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "templateId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "templateInputs": {
+            "type": "object"
+          },
+          "templateState": {
+            "type": "object"
+          },
+          "enabledPlugins": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "closedAtMs": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "pinnedAtMs": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "sortOrder": {
+            "type": "number"
+          },
+          "createdAtMs": {
+            "type": "integer"
+          },
+          "updatedAtMs": {
+            "type": "integer"
+          }
+        }
+      },
+      "ReportDocumentDto": {
+        "type": "object",
+        "required": [
+          "docRev",
+          "summary",
+          "leadingComment",
+          "blocks"
+        ],
+        "properties": {
+          "docRev": {
+            "type": "integer"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "leadingComment": {
+            "type": "string"
+          },
+          "blocks": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          }
+        }
+      },
+      "TaskDto": {
+        "type": "object",
+        "required": [
+          "id",
+          "trackId",
+          "blockId",
+          "taskKey",
+          "generation",
+          "kind",
+          "accessMode",
+          "ready",
+          "dependsOn",
+          "goalOrCmd",
+          "status",
+          "semanticVerdict",
+          "createdAtMs",
+          "updatedAtMs"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "trackId": {
+            "type": "string"
+          },
+          "blockId": {
+            "type": "string"
+          },
+          "taskKey": {
+            "type": "string"
+          },
+          "generation": {
+            "type": "integer"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "provider": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "accessMode": {
+            "type": "string"
+          },
+          "ready": {
+            "type": "boolean"
+          },
+          "dependsOn": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "goalOrCmd": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "semanticVerdict": {
+            "type": "string"
+          },
+          "createdAtMs": {
+            "type": "integer"
+          },
+          "updatedAtMs": {
+            "type": "integer"
+          }
+        }
+      },
+      "TaskAttemptDto": {
+        "type": "object",
+        "required": [
+          "attemptId",
+          "taskId",
+          "trackId",
+          "status",
+          "startedAtMs"
+        ],
+        "properties": {
+          "attemptId": {
+            "type": "string"
+          },
+          "taskId": {
+            "type": "string"
+          },
+          "trackId": {
+            "type": "string"
+          },
+          "sessionId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string"
+          },
+          "startedAtMs": {
+            "type": "integer"
+          },
+          "finishedAtMs": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        }
+      },
+      "AgentSessionDto": {
+        "type": "object",
+        "required": [
+          "id",
+          "trackId",
+          "isLead",
+          "provider",
+          "epoch",
+          "status",
+          "contextUsageRatio",
+          "createdAtMs",
+          "updatedAtMs"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "trackId": {
+            "type": "string"
+          },
+          "isLead": {
+            "type": "boolean"
+          },
+          "boundTaskId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "boundAttemptId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "provider": {
+            "type": "string"
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "nativeThreadId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "epoch": {
+            "type": "integer"
+          },
+          "status": {
+            "type": "string"
+          },
+          "contextUsageRatio": {
+            "type": "number"
+          },
+          "archivedAtMs": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "createdAtMs": {
+            "type": "integer"
+          },
+          "updatedAtMs": {
+            "type": "integer"
+          }
+        }
+      },
+      "SessionTurnDto": {
+        "type": "object",
+        "required": [
+          "id",
+          "sessionId",
+          "turnIndex",
+          "epoch",
+          "triggerKind",
+          "status",
+          "startedAtMs"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "sessionId": {
+            "type": "string"
+          },
+          "turnIndex": {
+            "type": "integer"
+          },
+          "epoch": {
+            "type": "integer"
+          },
+          "triggerKind": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "startedAtMs": {
+            "type": "integer"
+          },
+          "completedAtMs": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        }
+      },
+      "SessionItemDto": {
+        "type": "object",
+        "required": [
+          "id",
+          "sessionId",
+          "turnId",
+          "kind",
+          "payload",
+          "createdAtMs"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer"
+          },
+          "sessionId": {
+            "type": "string"
+          },
+          "turnId": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "payload": {},
+          "createdAtMs": {
+            "type": "integer"
+          }
+        }
+      },
+      "SessionItemsPageDto": {
+        "type": "object",
+        "required": [
+          "items",
+          "session"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SessionItemDto"
+            }
+          },
+          "activeTurn": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SessionTurnDto"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "session": {
+            "$ref": "#/components/schemas/AgentSessionDto"
+          }
+        }
+      },
+      "AskDto": {
+        "type": "object",
+        "required": [
+          "id",
+          "trackId",
+          "status",
+          "questions",
+          "createdAtMs"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "trackId": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "questions": {},
+          "answer": {},
+          "createdAtMs": {
+            "type": "integer"
+          },
+          "answeredAtMs": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        }
+      },
+      "TerminalDto": {
+        "type": "object",
+        "required": [
+          "id",
+          "trackId",
+          "title",
+          "cwd",
+          "status",
+          "createdAtMs"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "trackId": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "cwd": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "exitCode": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "createdAtMs": {
+            "type": "integer"
+          },
+          "exitedAtMs": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        }
+      },
+      "TrackAggregateSnapshotDto": {
+        "type": "object",
+        "required": [
+          "track",
+          "report",
+          "tasks",
+          "sessions",
+          "openAsks"
+        ],
+        "properties": {
+          "track": {
+            "$ref": "#/components/schemas/TrackDto"
+          },
+          "report": {
+            "$ref": "#/components/schemas/ReportDocumentDto"
+          },
+          "tasks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TaskDto"
+            }
+          },
+          "sessions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AgentSessionDto"
+            }
+          },
+          "openAsks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AskDto"
+            }
+          },
+          "templateSnapshotSource": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "ReportReadResultDto": {
+        "type": "object",
+        "required": [
+          "docRev",
+          "summary",
+          "renderedMarkdown",
+          "blocks",
+          "tasks",
+          "diagnostics"
+        ],
+        "properties": {
+          "docRev": {
+            "type": "integer"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "renderedMarkdown": {
+            "type": "string"
+          },
+          "blocks": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "tasks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TaskDto"
+            }
+          },
+          "anchor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "diagnostics": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          }
+        }
+      },
+      "WorkspaceFileResultDto": {
+        "type": "object",
+        "required": [
+          "relativePath",
+          "isDirectory",
+          "truncated"
+        ],
+        "properties": {
+          "relativePath": {
+            "type": "string"
+          },
+          "isDirectory": {
+            "type": "boolean"
+          },
+          "content": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "truncated": {
+            "type": "boolean"
+          },
+          "entries": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "object"
+            }
+          }
+        }
+      },
+      "DiffSummaryDto": {
+        "type": "object",
+        "required": [
+          "diffText",
+          "truncated",
+          "changedFiles"
+        ],
+        "properties": {
+          "diffText": {
+            "type": "string"
+          },
+          "truncated": {
+            "type": "boolean"
+          },
+          "changedFiles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         }
       }

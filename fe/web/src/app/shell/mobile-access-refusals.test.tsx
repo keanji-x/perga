@@ -27,7 +27,7 @@ function mount(write: (request: ApiRequest) => Promise<ApiTransportResponse>) {
   const signedOut = vi.fn();
   unauthorized.subscribe(signedOut);
   const send = vi.fn((request: ApiRequest) => {
-    if (request.path === '/api/auth/whoami') return Promise.resolve(ok(identity));
+    if (request.path === '/api/v1/bootstrap?scope=whoami') return Promise.resolve(ok(identity));
     if (request.method === 'GET') return Promise.resolve(ok(stale));
     return write(request);
   });

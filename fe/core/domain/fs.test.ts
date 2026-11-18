@@ -68,9 +68,9 @@ describe('Track-scoped workspace file operations', () => {
   it('keeps the Track identity in the path and sends only a relative file query', () => {
     expect(readTrackWorkspaceFileOperation('track/1', 'docs/a b.md')).toMatchObject({
       method: 'GET',
-      path: '/api/tracks/track%2F1/workspace/readfile?path=docs%2Fa%20b.md',
+      path: '/api/v1/tracks/track%2F1/files?path=docs%2Fa%20b.md',
     });
     expect(trackWorkspaceRawFileUrl('track/1', 'img/a&b.png'))
-      .toBe('/api/tracks/track%2F1/workspace/readfile-raw?path=img%2Fa%26b.png');
+      .toBe('/api/v1/tracks/track%2F1/files?path=img%2Fa%26b.png');
   });
 });

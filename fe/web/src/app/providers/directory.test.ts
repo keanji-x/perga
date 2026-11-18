@@ -123,10 +123,10 @@ describe('createTrackWorkspaceFilesPort', () => {
     await files.readFile('docs/a.md');
     expect(sent[0]).toMatchObject({
       method: 'GET',
-      path: '/api/tracks/track%2F1/workspace/readfile?path=docs%2Fa.md',
+      path: '/api/v1/tracks/track%2F1/files?path=docs%2Fa.md',
       credentials: 'include',
     });
     expect(files.rawUrl('img/a.png'))
-      .toBe('/api/tracks/track%2F1/workspace/readfile-raw?path=img%2Fa.png');
+      .toBe('/api/v1/tracks/track%2F1/files?path=img%2Fa.png');
   });
 });

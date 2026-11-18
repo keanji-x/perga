@@ -82,7 +82,7 @@ it('keeps a loaded Area usable while another read is pending and then fails', as
   client.setQueryData(queryKeys.overlaysByKind('track'), []);
   let fail!: () => void;
   const pending = new Promise<never>((_, reject) => { fail = () => reject(new Error('Area b unavailable')); });
-  const transport: ApiTransportPort = { send: request => request.path.endsWith('/b/tracks') ? pending : Promise.resolve({
+  const transport: ApiTransportPort = { send: request => request.path.includes('/b/tracks') ? pending : Promise.resolve({
     status: 200, statusText: 'OK', body: [{ workspace: { isolation: 'none' as const, kind: 'attached' as const, path: '/tmp', frozen_at: null }, id: 'one', area_id: 'a', title: 'One', sort: 0, cwd: '/tmp',
       pinned_at: null, closed_at: null, created_at: 1, updated_at: 1 }],
   }) };

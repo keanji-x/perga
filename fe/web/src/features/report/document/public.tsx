@@ -24,7 +24,6 @@ import { prepareReportDocument, type PreparedReport, type PreparedReportBlock } 
 import { ReportDetails } from './details.tsx';
 import { REPORT_ANCHOR_REQUEST, revealReportAnchor, type ReportAnchorRequest } from '../anchor/public.ts';
 import { ReportAppBlock } from '../app/public.tsx';
-import { ReportWindowBlock } from '../window/public.tsx';
 import { ReportHtmlBlock } from '../html/public.tsx';
 import { ReportCandlesBlock } from '../candles/public.tsx';
 import { ReportPreviewBlock, type PreviewViewportStore } from '../preview/public.tsx';
@@ -77,12 +76,14 @@ export type ReportDocumentProps = Readonly<{
   resolvePreview?: (key: string) => PreviewResolution;
   /** Where preview blocks remember the reader's device choice, by block key (the app scopes it per track). Absent ⇒ not remembered. */
   previewViewports?: PreviewViewportStore;
+  /** Optional human CAS editor for prose blocks (`PUT /api/v1/tracks/{trackId}/report/blocks/{blockId}`). */
+  onSaveProseBlock?: (blockId: string, markdown: string) => Promise<void>;
 }>;
 
 /** Agent-authored destinations become admitted preview controls. Navigation stays behind typed callbacks or explicit external activation. */
 export function ReportDocument({
   report, preparation, empty, outlineEmpty, rail, byline, backlinkCounts, onOpenLink, onOpenFileLink, onOpenSourceLink, fileRoot, fileBasePath, linkPreview,
-  resolveOverlay, resolveSeries, resolvePreview, previewViewports,
+  resolveOverlay, resolveSeries, resolvePreview, previewViewports, onSaveProseBlock,
   arrivalAnchorId, taskVerdicts, taskRows, renderTaskExecution,
 }: ReportDocumentProps) {
   const compactViewport = useCompactViewport();
@@ -139,6 +140,7 @@ export function ReportDocument({
                   resolveSeries={resolveSeries}
                   resolvePreview={resolvePreview}
                   previewViewports={previewViewports}
+                  onSaveProseBlock={report?.docRev !== undefined ? onSaveProseBlock : undefined}
                 />
               ))}
               {processBlocks.length > 0 && (
@@ -224,7 +226,7 @@ function ReportReference({ blocks, backlinkCounts, tasks, verdicts, renderTaskEx
 /** One block, plus the sidenote that belongs to it. */
 function BlockSlot({
   slot, backlinks, onOpenLink, onOpenFileLink, onOpenSourceLink, fileRoot, fileBasePath, linkPreview, referenceRepository, resolveOverlay, resolveSeries,
-  resolvePreview, previewViewports,
+  resolvePreview, previewViewports, onSaveProseBlock,
 }: {
   referenceRepository: ReferenceRepository | null;
   slot: PreparedReportBlock;
@@ -239,21 +241,75 @@ function BlockSlot({
   resolveSeries?: ReportDocumentProps['resolveSeries'];
   resolvePreview?: ReportDocumentProps['resolvePreview'];
   previewViewports?: PreviewViewportStore;
+  onSaveProseBlock?: ReportDocumentProps['onSaveProseBlock'];
 }) {
   const { block, prose } = slot;
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const canEditProse = block.kind === 'prose' && onSaveProseBlock !== undefined;
   return (
     <div className={styles.row}>
       <div className={styles.block} id={block.id} data-nc-report-reading="" data-nc-link-reading="">
-        {prose !== null
-          ? <PreparedProseBlock
-              prepared={prose}
-              referenceRepository={referenceRepository} onOpenLink={onOpenLink}
-              onOpenFileLink={onOpenFileLink}
-              onOpenSourceLink={onOpenSourceLink}
-              fileRoot={fileRoot}
-              fileBasePath={fileBasePath}
-              linkPreview={linkPreview}
+        {canEditProse && editing ? (
+          <div data-nc-prose-editor="">
+            <textarea
+              aria-label={`Markdown for block ${block.id}`}
+              value={draft}
+              rows={6}
+              disabled={saving}
+              onChange={(event) => { setDraft(event.target.value); }}
             />
+            {saveError !== null && <p role="alert">{saveError}</p>}
+            <div>
+              <button
+                type="button"
+                disabled={saving}
+                onClick={() => {
+                  setSaving(true);
+                  setSaveError(null);
+                  void onSaveProseBlock(block.id, draft).then(
+                    () => { setSaving(false); setEditing(false); },
+                    (error: unknown) => {
+                      setSaving(false);
+                      setSaveError(error instanceof Error ? error.message : 'Could not save block.');
+                    },
+                  );
+                }}
+              >
+                Save block
+              </button>
+              <button
+                type="button"
+                disabled={saving}
+                onClick={() => { setEditing(false); setSaveError(null); }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        ) : prose !== null
+          ? <>
+              <PreparedProseBlock
+                prepared={prose}
+                referenceRepository={referenceRepository} onOpenLink={onOpenLink}
+                onOpenFileLink={onOpenFileLink}
+                onOpenSourceLink={onOpenSourceLink}
+                fileRoot={fileRoot}
+                fileBasePath={fileBasePath}
+                linkPreview={linkPreview}
+              />
+              {canEditProse && (
+                <button
+                  type="button"
+                  aria-label={`Edit block ${block.id}`}
+                  onClick={() => { setDraft(block.payload.markdown); setSaveError(null); setEditing(true); }}
+                >
+                  Edit
+                </button>
+              )}
+            </>
           : <BlockBody block={block} referenceRepository={referenceRepository} onOpenLink={onOpenLink}
               onOpenFileLink={onOpenFileLink} fileRoot={fileRoot} fileBasePath={fileBasePath}
               onOpenSourceLink={onOpenSourceLink} linkPreview={linkPreview}
@@ -302,7 +358,6 @@ function BlockBody({
     case 'app': return <ReportAppBlock payload={block.payload} />;
     case 'preview': return <ReportPreviewBlock payload={block.payload} resolve={resolvePreview}
       viewports={previewViewports} />;
-    case 'window': return <ReportWindowBlock payload={block.payload} />;
     /* The page is read through the same Track file port as prose links and images. */
     case 'html': return <ReportHtmlBlock payload={block.payload} files={linkPreview?.files}
       onOpen={onOpenFileLink === undefined ? undefined : (path) => { onOpenFileLink({ path }); }} />;

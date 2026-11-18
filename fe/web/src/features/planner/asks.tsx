@@ -6,6 +6,7 @@ import { HStack } from '@astryxdesign/core/HStack';
 import { Icon as AstryxIcon } from '@astryxdesign/core/Icon';
 import { TextInput } from '@astryxdesign/core/TextInput';
 
+import type { AskId } from '../../../../core/domain/activity.ts';
 import {
   answerAskFailureText, askAnswers, askDraftsFor, clampAskAnswer, takesOptionsOnly, type AskDraft, type OpenAsk,
 } from '../../../../core/domain/ask.ts';
@@ -15,28 +16,29 @@ import { Icon } from '../../ui/icon/public.tsx';
 import { useState } from '../../ui/state/public.ts';
 import styles from './asks.module.css';
 
-export type AnswerAsk = (askId: number, answers: readonly AskAnswer[]) => Promise<void>;
+export type AnswerAsk = (askId: AskId, answers: readonly AskAnswer[]) => Promise<void>;
 export type PlannerAskDrawerProps = Readonly<{ asks: readonly OpenAsk[]; onAnswer: AnswerAsk }>;
 type DraftState = Readonly<{ drafts: readonly AskDraft[]; page: number }>;
 
 /** The vendor owns the surface and disclosure; this feature owns question order and answers. */
 export function PlannerAskDrawer({ asks, onAnswer }: PlannerAskDrawerProps) {
-  const [settled, setSettled] = useState<ReadonlySet<number>>(() => new Set());
-  const [states, setStates] = useState<Readonly<Record<number, DraftState>>>({});
-  const [selected, setSelected] = useState<number | null>(null);
+  const [settled, setSettled] = useState<ReadonlySet<string>>(() => new Set());
+  const [states, setStates] = useState<Readonly<Record<string, DraftState>>>({});
+  const [selected, setSelected] = useState<AskId | null>(null);
   const [queueOpen, setQueueOpen] = useState(false);
   const [busy, setBusy] = useState(false);
-  const open = asks.filter(ask => !settled.has(ask.askId));
+  const open = asks.filter(ask => !settled.has(String(ask.askId)));
   const current = open.find(ask => ask.askId === selected) ?? open[0];
   if (current === undefined) return null;
+  const currentKey = String(current.askId);
   return <ChatComposerDrawer count={current.questions.length} label="Questions" className={styles.drawer}>
     <div className={styles.asks} data-nc-asks="">
-      <AskForm key={current.askId} ask={current} onAnswer={onAnswer}
-        state={states[current.askId] ?? { drafts: askDraftsFor(current.questions, current.delivery), page: 0 }}
-        onChange={state => setStates(previous => ({ ...previous, [current.askId]: state }))}
+      <AskForm key={currentKey} ask={current} onAnswer={onAnswer}
+        state={states[currentKey] ?? { drafts: askDraftsFor(current.questions, current.delivery), page: 0 }}
+        onChange={state => setStates(previous => ({ ...previous, [currentKey]: state }))}
         onBusy={setBusy}
         onSettled={() => {
-          setSettled(previous => new Set(previous).add(current.askId));
+          setSettled(previous => new Set(previous).add(currentKey));
           setSelected(null);
           setQueueOpen(false);
         }} />
@@ -45,7 +47,7 @@ export function PlannerAskDrawer({ asks, onAnswer }: PlannerAskDrawerProps) {
           variant="secondary" size="sm" className={styles.queueToggle} isDisabled={busy}
           aria-expanded={queueOpen} onClick={() => setQueueOpen(value => !value)} />
         {queueOpen && <div className={styles.queueList} role="group" aria-label="Other Planner asks">
-          {open.filter(ask => ask.askId !== current.askId).map(ask => <Button key={ask.askId}
+          {open.filter(ask => ask.askId !== current.askId).map(ask => <Button key={String(ask.askId)}
             label={ask.questions[0].title} variant="secondary" size="sm" className={styles.queueItem}
             isDisabled={busy} onClick={() => { setSelected(ask.askId); setQueueOpen(false); }} />)}
         </div>}

@@ -2,7 +2,7 @@ import type { ApiRequest, ApiTransportPort, ApiTransportResponse } from '../../.
 import { RecoveryAccess, type RecoveryPermit } from '../../../../core/domain/recovery/access.ts';
 
 function authRequest(request: ApiRequest): boolean {
-  return (request.method === 'GET' && (request.path === '/api/auth/whoami' || request.path === '/api/version')) ||
+  return (request.method === 'GET' && ((request.path === '/api/v1/bootstrap' || request.path === '/api/v1/bootstrap?scope=whoami' || request.path === '/api/v1/bootstrap?scope=login') || request.path === '/api/auth/whoami' || request.path === '/api/version')) ||
     (request.method === 'POST' && (request.path === '/api/auth/login' || request.path === '/api/auth/logout'));
 }
 

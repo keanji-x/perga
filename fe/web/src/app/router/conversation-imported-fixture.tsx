@@ -34,7 +34,7 @@ export function importedFixture() {
   const items=importedItems();
   const body={contract:'conversation_v1',source:'presentation',items,next_cursor:null};
   const view=renderDailyFixture({identity:{userId:'jian',displayName:'Jian',role:'owner',sessionId:'jian'},initial:'/track/daily?panel=conversations',reply:request=>{
-    if(request.path.includes('/harness/items?contract=conversation_v1'))return {status:200,statusText:'OK',body};
+    if(request.path.includes('/items?') && !request.path.includes('&view='))return {status:200,statusText:'OK',body};
     return undefined;
   }});
   return {...view,body};

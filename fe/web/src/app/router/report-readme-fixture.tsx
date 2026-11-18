@@ -7,12 +7,34 @@ import { createMemoryHistory, RouterProvider } from '@tanstack/react-router';
 import { render } from '@testing-library/react';
 import type { ApiRequest, ApiTransportPort, ApiTransportResponse } from '../../../../core/api/types.ts';
 import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
-import readme from '../../../../../docs/README.md?raw';
-import rootReadme from '../../../../../README.md?raw';
 import { ThemeProvider } from '../theme/public.tsx';
 import { createAppRouter } from './public.tsx';
 import { bootTestCardRuntime } from './test-card-runtime.ts';
 import { withReadReceipts } from '../providers/read-receipts-fixture.tsx';
+
+const readme = `# Documentation
+
+Read the [English README](../README.md) for the high-level overview.
+
+## Use and operate Neige Calm
+
+| Guide | Summary |
+| --- | --- |
+| [Using Neige Calm](./using-neige-calm.md) | Day-to-day workspace workflow |
+
+## Develop and understand the system
+
+| Reference | Summary |
+| --- | --- |
+| Architecture | Core boundaries and verification |
+`;
+
+const rootReadme = `# Neige Calm
+
+## Why Neige Calm?
+
+Durable tracks, structured reports, and live agent sessions in one workspace.
+`;
 
 export const README_TRACK_ID = 'aadd6ed448d349228d672b1546b6a48c';
 export const README_TRACK_URL = `/next/track/${README_TRACK_ID}`;
@@ -33,25 +55,25 @@ export function renderReadmeFixture(initial: string, detailReady: Promise<void> 
   const transport: ApiTransportPort = { async send(request) {
     requests.push(request);
     if (request.method !== 'GET') throw new Error(`Unexpected write: ${request.method} ${request.path}`);
-    if (request.path === '/api/areas') return ok([{ id: 'project', name: 'Project', color: '#6574cd', sort: 1, kind: 'user', created_at: 1, updated_at: 1 }]);
-    if (request.path === '/api/areas/project/tracks') return ok([track]);
-    if (request.path === `/api/tracks/${track.id}`) {
+    if (request.path === '/api/v1/areas') return ok([{ id: 'project', name: 'Project', color: '#6574cd', sort: 1, kind: 'user', created_at: 1, updated_at: 1 }]);
+    if (request.path === '/api/v1/areas/project/tracks?includeClosed=true') return ok([track]);
+    if (request.path === `/api/v1/tracks/${track.id}`) {
       await detailReady;
       return ok({ track, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true, cards: [card, report], overlays: [] });
     }
-    if (request.path === `/api/tracks/${track.id}/report`) return ok({ taskDiagnostics: [] });
-    if (request.path === `/api/tracks/${track.id}/workspace/readfile?path=docs%2FREADME.md`) {
+    if (request.path === `/api/v1/tracks/${track.id}/report`) return ok({ taskDiagnostics: [] });
+    if (request.path === `/api/v1/tracks/${track.id}/files?path=docs%2FREADME.md`) {
       if (fileReadFailed) return { status: 500, statusText: 'Internal Server Error',
         body: { code: 'internal', message: 'secure workspace reads require Linux openat2 support' } };
       return ok({ path: '/repo/docs/README.md', size: new TextEncoder().encode(readme).length, text: readme, truncated: false });
     }
-    if (request.path === `/api/tracks/${track.id}/workspace/readfile?path=README.md`) {
+    if (request.path === `/api/v1/tracks/${track.id}/files?path=README.md`) {
       return ok({ path: '/repo/README.md', size: new TextEncoder().encode(rootReadme).length, text: rootReadme, truncated: false });
     }
-    if (request.path.includes('/readfile')) throw new Error(`Unexpected file read: ${request.path}`);
-    if (request.path.includes('/planner/run?contract=conversation_v1')) return ok(historicalConversationRun({ card_id: card.id, worker_session_id: 'runtime', phase: 'idle',
+    if (request.path.includes('/files?path=')) throw new Error(`Unexpected file read: ${request.path}`);
+    if (request.path.includes('&view=run')) return ok(historicalConversationRun({ card_id: card.id, worker_session_id: 'runtime', phase: 'idle',
       model: null, reasoning_effort: null, permission_mode: 'never', blocked_reason: null, pending_queue: [], manual_compact_supported: true, recovery: null, compact_outcome: null, context_usage_invalidated: false, running_turn: null, final_reply: null }, 'idle', true));
-    if (request.path.includes('/harness/items')) return ok(historicalConversationPage(conversationCardId(request.path), [{ id: 1, worker_session_id: 'runtime', card_id: card.id, track_id: track.id,
+    if (request.path.includes('/items?') && !request.path.includes('&view=')) return ok(historicalConversationPage(conversationCardId(request.path), [{ id: 1, worker_session_id: 'runtime', card_id: card.id, track_id: track.id,
       thread_id: 'thread', turn_id: null, turn_error_text: null, item_uuid: null, item_type: 'agentMessage', method: 'item/completed',
       params: JSON.stringify({ item: { text: 'Conversation remains available while reading documentation.' } }), created_at_ms: 1 }], null));
     if (request.path === '/api/settings') return ok({});

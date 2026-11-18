@@ -25,20 +25,20 @@ export function renderPlannerSwitchFixture(options: Readonly<{
     reply: async request => {
       const custom = await options.reply?.(request);
       if (custom !== undefined) return custom;
-      if (request.path === '/api/tracks/daily/planner/switch') {
+      if (request.method === 'PATCH' && request.path === '/api/v1/tracks/daily' && typeof request.body === 'object' && request.body !== null && 'leadSessionId' in request.body) {
         const commit = () => { switched = true; };
         if (options.switch) return options.switch(request, commit);
         commit(); return receipt();
       }
-      if (request.path === '/api/tracks/daily') return ok({ track, planner_revision: switched ? 8 : 7,
+      if (request.path === '/api/v1/tracks/daily') return ok({ track, planner_revision: switched ? 8 : 7,
         can_close: false, can_reopen: false, can_admin: false, cards: cards(), overlays: [] });
-      if (request.path === '/api/tracks/daily/conversations') return ok(list());
-      if (request.path.includes('/planner/run?contract=conversation_v1')) return ok(historicalConversationRun({
+      if (request.path === '/api/v1/tracks/daily/sessions') return ok(list());
+      if (request.path.includes('&view=run')) return ok(historicalConversationRun({
         card_id: conversationCardId(request.path), worker_session_id: 'runtime', phase: 'idle', pending: [], pending_overflow: 0,
         model: null, reasoning_effort: null, permission_mode: 'never', blocked_reason: null, manual_compact_supported: true,
         recovery: null, compact_outcome: null, context_usage_invalidated: false, running_turn: null,
       }, 'idle', true));
-      if (request.path.includes('/harness/items')) return ok(historicalConversationPage(conversationCardId(request.path), [{
+      if (request.path.includes('/items?') && !request.path.includes('&view=')) return ok(historicalConversationPage(conversationCardId(request.path), [{
         id: 1, worker_session_id: 'runtime', card_id: conversationCardId(request.path), track_id: 'daily', thread_id: 'thread',
         turn_id: 'turn', turn_error_text: null, item_uuid: null, item_type: 'agentMessage', method: 'item/completed',
         params: JSON.stringify({ item: { text: 'Ready for switching' } }), created_at_ms: 1,

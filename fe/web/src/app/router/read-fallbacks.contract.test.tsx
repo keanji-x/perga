@@ -61,8 +61,8 @@ describe('degraded workspace reads stay usable', () => {
     vi.spyOn(window, 'matchMedia').mockImplementation((query) => ({ ...media, matches: query.includes('width'), media: query }));
     let broken = true;
     renderRoute('/', (request) => {
-      if (request.path === '/api/areas') return broken && resource === 'areas' ? fail('Area storage unavailable') : ok(areas);
-      if (request.path === '/api/areas/c1/tracks') return broken && resource === 'tracks' ? fail('Tracks temporarily unavailable') : ok([track]);
+      if (request.path === '/api/v1/areas') return broken && resource === 'areas' ? fail('Area storage unavailable') : ok(areas);
+      if (request.path === '/api/v1/areas/c1/tracks?includeClosed=true') return broken && resource === 'tracks' ? fail('Tracks temporarily unavailable') : ok([track]);
       return ok([]);
     });
     // Track failures keep a known current Area; Area failures open navigation
@@ -87,7 +87,7 @@ describe('degraded workspace reads stay usable', () => {
   it.each(['unavailable', 'malformed'] as const)('keeps navigation and retries an %s Areas startup read', async (failure) => {
     let broken = true;
     renderRoute('/', (request) => {
-      if (request.path === '/api/areas') return broken
+      if (request.path === '/api/v1/areas') return broken
         ? failure === 'unavailable' ? fail('Area storage temporarily unavailable') : ok({})
         : ok(areas);
       return ok([]);
@@ -110,7 +110,7 @@ describe('degraded workspace reads stay usable', () => {
   /* A refusal is the server's answer to this read: its reason follows the fixed sentence in the indicator. */
   it('says a refused Areas read with its reason behind the indicator', async () => {
     renderRoute('/', (request) => {
-      if (request.path === '/api/areas') return { status: 403, statusText: 'Forbidden', body: { error: 'owner login required', code: 'forbidden' } };
+      if (request.path === '/api/v1/areas') return { status: 403, statusText: 'Forbidden', body: { error: 'owner login required', code: 'forbidden' } };
       return ok([]);
     });
     const rail = await screen.findByRole('navigation', { name: 'Workspace' });
@@ -121,7 +121,7 @@ describe('degraded workspace reads stay usable', () => {
   it('keeps cached Areas while a refresh fails and recovers locally', async () => {
     let broken = false;
     const { client } = renderRoute('/', (request) => {
-      if (request.path === '/api/areas') return broken ? fail('Area refresh unavailable') : ok(areas);
+      if (request.path === '/api/v1/areas') return broken ? fail('Area refresh unavailable') : ok(areas);
       return ok([]);
     });
     const rail = await screen.findByRole('navigation', { name: 'Workspace' });
@@ -144,7 +144,7 @@ describe('degraded workspace reads stay usable', () => {
   it('lets an offline Area draft be cancelled without creating it on reconnect', async () => {
     const creates: ApiRequest[] = [];
     const { client } = renderRoute('/', (request) => {
-      if (request.path === '/api/areas') {
+      if (request.path === '/api/v1/areas') {
         if (request.method === 'POST') { creates.push(request); return ok(areas[0]); }
         return ok(areas);
       }
@@ -166,8 +166,8 @@ describe('degraded workspace reads stay usable', () => {
   it('keeps an offline Area draft editable and creates it once after an explicit online retry', async () => {
     const creates: ApiRequest[] = [];
     const { client } = renderRoute('/', (request) => {
-      if (request.path === '/api/version') return ok({ areaCreateIdempotency: true });
-      if (request.path === '/api/areas') {
+      if (request.path === '/api/v1/bootstrap') return ok({ areaCreateIdempotency: true });
+      if (request.path === '/api/v1/areas') {
         if (request.method === 'POST') { creates.push(request); return ok(areas[0]); }
         return ok(areas);
       }
@@ -193,14 +193,14 @@ describe('degraded workspace reads stay usable', () => {
   it('finishes an offline conversation submission without waiting for delivery reconciliation', async () => {
     const creates: ApiRequest[] = [];
     const { client } = renderRoute('/track/w1', (request) => {
-      if (request.path === '/api/version') return ok({ webCompatVersion: WEB_COMPAT_VERSION, minWebCompatVersion: WEB_COMPAT_VERSION, syncEventVersion: 29, dbInstanceId: 'test', assistantProviders: true, conversationInitialInput: true });
-      if (request.path.startsWith('/api/agent-providers/managed')) return ok([{
+      if (request.path === '/api/v1/bootstrap') return ok({ webCompatVersion: WEB_COMPAT_VERSION, minWebCompatVersion: WEB_COMPAT_VERSION, syncEventVersion: 29, dbInstanceId: 'test', assistantProviders: true, conversationInitialInput: true });
+      if (request.path.startsWith('/api/v1/bootstrap?scope=managed')) return ok([{
         availability: { provider: 'codex', status: 'ready', reason: null, checked_at_ms: 1, authentication_method: null, authentication_notice: null },
         accepts_unavailable_blank_track: true, capabilities: { managed_conversation: true, steer: true, images: true, manual_compact: true, history_replacement: true, requires_ready_availability: false },
       }]);
-      if (request.path === '/api/areas') return ok(areas.slice(0, 1));
-      if (request.path === '/api/areas/c1/tracks') return ok([track]);
-      if (request.path === '/api/tracks/w1') return ok({ track, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true, cards: [], overlays: [] });
+      if (request.path === '/api/v1/areas') return ok(areas.slice(0, 1));
+      if (request.path === '/api/v1/areas/c1/tracks?includeClosed=true') return ok([track]);
+      if (request.path === '/api/v1/tracks/w1') return ok({ track, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true, cards: [], overlays: [] });
       if (request.method === 'POST') creates.push(request);
       return ok([]);
     });
@@ -229,14 +229,14 @@ describe('degraded workspace reads stay usable', () => {
     const creates: ApiRequest[] = [];
     let revealLanding = false;
     const { client } = renderRoute('/track/w1', (request) => {
-      if (request.path === '/api/version') return ok({ webCompatVersion: WEB_COMPAT_VERSION, minWebCompatVersion: WEB_COMPAT_VERSION, syncEventVersion: 29, dbInstanceId: 'test', assistantProviders: true, conversationInitialInput: true });
-      if (request.path.startsWith('/api/agent-providers/managed')) return ok([{
+      if (request.path === '/api/v1/bootstrap') return ok({ webCompatVersion: WEB_COMPAT_VERSION, minWebCompatVersion: WEB_COMPAT_VERSION, syncEventVersion: 29, dbInstanceId: 'test', assistantProviders: true, conversationInitialInput: true });
+      if (request.path.startsWith('/api/v1/bootstrap?scope=managed')) return ok([{
         availability: { provider: 'codex', status: 'ready', reason: null, checked_at_ms: 1, authentication_method: null, authentication_notice: null },
         accepts_unavailable_blank_track: true, capabilities: { managed_conversation: true, steer: true, images: true, manual_compact: true, history_replacement: true, requires_ready_availability: false },
       }]);
-      if (request.path === '/api/areas') return ok(areas.slice(0, 1));
-      if (request.path === '/api/areas/c1/tracks') return ok([track]);
-      if (request.path === '/api/tracks/w1') return ok({ track, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true, cards: [], overlays: [] });
+      if (request.path === '/api/v1/areas') return ok(areas.slice(0, 1));
+      if (request.path === '/api/v1/areas/c1/tracks?includeClosed=true') return ok([track]);
+      if (request.path === '/api/v1/tracks/w1') return ok({ track, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true, cards: [], overlays: [] });
       if (request.method === 'POST') {
         creates.push(request);
         return fail('Acknowledgement lost');
@@ -246,7 +246,7 @@ describe('degraded workspace reads stay usable', () => {
         if (original === undefined) throw new Error('No dispatched original create.');
         return ok({ kind: 'unavailable', reason: 'runtime-unavailable', receipt: initialReceiptFor(original, 'entry-0001', 0) });
       }
-      if (request.path === '/api/tracks/w1/conversations' && revealLanding) {
+      if (request.path === '/api/v1/tracks/w1/sessions' && revealLanding) {
         return ok([{
           id: trackConversationCardId('w1', creates[0].headers!['Idempotency-Key']),
           trackId: 'w1', title: 'Original uncertain intent', kind: 'track-assistant', provider: 'codex', state: null, updatedAt: 1,
@@ -257,7 +257,7 @@ describe('degraded workspace reads stay usable', () => {
          drained its sentence into a turn: the landed card's transcript serves
          it (#1625 P2). This is where the reader's words come from once the
          card is adopted — the client mints nothing for them. */
-      if (request.path.includes('/harness/items') && revealLanding) {
+      if (request.path.includes('/items') && !request.path.includes('view=') && revealLanding) {
         return ok(historicalConversationPage(conversationCardId(request.path), [{
           id: 1, worker_session_id: 'r', track_id: 'w1', thread_id: 't',
           card_id: trackConversationCardId('w1', creates[0].headers!['Idempotency-Key']),
@@ -307,14 +307,14 @@ describe('degraded workspace reads stay usable', () => {
   it('keeps a create undispatched when connectivity drops between the click and its mutation', async () => {
     const creates: ApiRequest[] = [];
     const { client } = renderRoute('/track/w1', (request) => {
-      if (request.path === '/api/version') return ok({ webCompatVersion: WEB_COMPAT_VERSION, minWebCompatVersion: WEB_COMPAT_VERSION, syncEventVersion: 29, dbInstanceId: 'test', assistantProviders: true, conversationInitialInput: true });
-      if (request.path.startsWith('/api/agent-providers/managed')) return ok([{
+      if (request.path === '/api/v1/bootstrap') return ok({ webCompatVersion: WEB_COMPAT_VERSION, minWebCompatVersion: WEB_COMPAT_VERSION, syncEventVersion: 29, dbInstanceId: 'test', assistantProviders: true, conversationInitialInput: true });
+      if (request.path.startsWith('/api/v1/bootstrap?scope=managed')) return ok([{
         availability: { provider: 'codex', status: 'ready', reason: null, checked_at_ms: 1, authentication_method: null, authentication_notice: null },
         accepts_unavailable_blank_track: true, capabilities: { managed_conversation: true, steer: true, images: true, manual_compact: true, history_replacement: true, requires_ready_availability: false },
       }]);
-      if (request.path === '/api/areas') return ok(areas.slice(0, 1));
-      if (request.path === '/api/areas/c1/tracks') return ok([track]);
-      if (request.path === '/api/tracks/w1') return ok({ track, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true, cards: [], overlays: [] });
+      if (request.path === '/api/v1/areas') return ok(areas.slice(0, 1));
+      if (request.path === '/api/v1/areas/c1/tracks?includeClosed=true') return ok([track]);
+      if (request.path === '/api/v1/tracks/w1') return ok({ track, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true, cards: [], overlays: [] });
       if (request.method === 'POST') creates.push(request);
       return ok([]);
     });
@@ -341,10 +341,10 @@ describe('degraded workspace reads stay usable', () => {
     let resolveDetail: (response: ApiTransportResponse) => void = () => undefined;
     const detail = new Promise<ApiTransportResponse>((resolve) => { resolveDetail = resolve; });
     renderRoute('/track/w1', (request) => {
-      if (request.path === '/api/areas') return ok(areas.slice(0, 1));
-      if (request.path === '/api/areas/c1/tracks') return ok([track]);
+      if (request.path === '/api/v1/areas') return ok(areas.slice(0, 1));
+      if (request.path === '/api/v1/areas/c1/tracks?includeClosed=true') return ok([track]);
       if (request.path.startsWith('/api/overlays?')) return fail('overlays down');
-      if (request.path === '/api/tracks/w1') return detail;
+      if (request.path === '/api/v1/tracks/w1') return detail;
       return ok([]);
     });
     await within(await screen.findByRole('navigation', { name: 'Workspace' })).findByText('Reliable');
@@ -363,8 +363,8 @@ describe('degraded workspace reads stay usable', () => {
 
   it('uses a successful neutral detail read instead of stale workspace activity', async () => {
     renderRoute('/track/w1', (request) => {
-      if (request.path === '/api/areas') return ok(areas.slice(0, 1));
-      if (request.path === '/api/areas/c1/tracks') return ok([track]);
+      if (request.path === '/api/v1/areas') return ok(areas.slice(0, 1));
+      if (request.path === '/api/v1/areas/c1/tracks?includeClosed=true') return ok([track]);
       if (request.path.startsWith('/api/overlays?')) return ok([{
         id: 'workspace-activity', plugin_id: 'kernel', entity_kind: 'track', entity_id: 'w1', kind: 'activity', updated_at: 1,
         payload: { schemaVersion: 4, working: false, attention: 'input', activity_at_ms: 1,
@@ -372,7 +372,7 @@ describe('degraded workspace reads stay usable', () => {
             questions: [{ title: 'Which region?', options: [] }], delivery: 'wake' }],
           cards: [{ card_id: plannerCard.id, state: 'input' }] },
       }]);
-      if (request.path === '/api/tracks/w1') return ok({
+      if (request.path === '/api/v1/tracks/w1') return ok({
         track, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true, cards: [], overlays: [],
       });
       return ok([]);

@@ -1,12 +1,8 @@
-// #2131 S5: the recipe and calendar write tables, the one reading of a failed write, and a CAS writer's read-back of a
+// #2131 S5: the recipe write tables, the one reading of a failed write, and a CAS writer's read-back of a
 // stale answer to a retry whose previous outcome was unknown.
 import { describe, expect, it, vi } from 'vitest';
 
 import type { ApiFailure } from '../api/types.js';
-import {
-  CALENDAR_WRITE_FAILURES, CALENDAR_WRITE_TEXT, calendarReadOperation, calendarUpdateLanded, calendarWriteFailureText,
-  type CalendarEntry, type CalendarUpdate,
-} from './calendar.js';
 import { ApiError, casAttempts, classifyFailure, NotSentError, readWriteFailure, type FailureTable } from './failure-class.js';
 import { RECIPE_CREATE_FAILURES, RECIPE_SAVE_FAILURES, RECIPE_SAVE_TEXT, recipeSaveLanded, type TrackRecipe } from './track.js';
 
@@ -36,22 +32,6 @@ const cases: ReadonlyArray<readonly [string, FailureTable<string>, ReadonlyArray
     [http(500, 'db_error'), 'unknown'], [http(503), 'unknown'],
     [transport, 'unknown'], [decode, 'unknown'], [null, 'unknown'],
   ]],
-  ['POST /calendar/tasks', CALENDAR_WRITE_FAILURES.create, [
-    /* A key bound to other content: final for that key. */
-    [http(409, 'conflict'), 'refused'],
-    [http(400, 'bad_request'), 'refused'], [http(403, 'forbidden'), 'refused'], [http(413), 'refused'], [http(422), 'refused'],
-    [http(503, 'service_unavailable'), 'refused'], [unauthorized, 'refused'],
-    [http(500, 'internal'), 'unknown'], [http(502), 'unknown'],
-    [transport, 'unknown'], [decode, 'unknown'], [null, 'unknown'],
-  ]],
-  ['POST /calendar/tasks/{id}', CALENDAR_WRITE_FAILURES.update, [
-    /* The `expected_version` CAS lost. */
-    [http(409, 'conflict'), 'stale'],
-    [http(400, 'bad_request'), 'refused'], [http(403, 'forbidden'), 'refused'], [http(404, 'not_found'), 'refused'],
-    [http(413), 'refused'], [http(422), 'refused'], [http(503, 'service_unavailable'), 'refused'], [unauthorized, 'refused'],
-    [http(500, 'internal'), 'unknown'], [http(502), 'unknown'],
-    [transport, 'unknown'], [decode, 'unknown'], [null, 'unknown'],
-  ]],
 ];
 
 describe.each(cases)('classifying a failed %s', (_route, table, expected) => {
@@ -73,19 +53,6 @@ describe('readWriteFailure', () => {
   });
 });
 
-describe('calendarWriteFailureText', () => {
-  const update: CalendarUpdate = { id: 'one', expected_version: 3, task: { title: 'A', description: '', schedule: { kind: 'all_day', date: '2026-10-02' } }, cancelled: false };
-
-  it('says each op’s own fixed sentence and the stale sentence, and never the runner’s offline words', () => {
-    const lost = new ApiError(transport);
-    expect(calendarWriteFailureText({ task: update.task })(lost)).toBe(CALENDAR_WRITE_TEXT.create.unknown);
-    expect(calendarWriteFailureText(update)(lost)).toBe(CALENDAR_WRITE_TEXT.update.unknown);
-    expect(calendarWriteFailureText({ ...update, cancelled: true })(lost)).toBe(CALENDAR_WRITE_TEXT.cancel.unknown);
-    expect(calendarWriteFailureText(update)(new ApiError(http(409, 'conflict', 'changed')))).toBe(CALENDAR_WRITE_TEXT.stale);
-    expect(calendarWriteFailureText({ task: update.task })(new NotSentError())).toBe(CALENDAR_WRITE_TEXT.create.refused);
-  });
-});
-
 describe('casAttempts', () => {
   const stale = () => Promise.reject(new ApiError(http(409, 'conflict')));
   const lost = () => Promise.reject(new ApiError(transport));
@@ -102,7 +69,7 @@ describe('casAttempts', () => {
   it('keeps the stale answer when what is stored is not this attempt', async () => {
     const attempts = casAttempts(RECIPE_SAVE_FAILURES);
     await expect(attempts(attempt, lost, () => Promise.resolve(null))).rejects.toBeInstanceOf(ApiError);
-    const error = await attempts(attempt, stale, () => Promise.resolve(null)).catch((reason: unknown) => reason);
+    const error = await attempts(attempt, stale, () => Promise.reject(new ApiError(http(409, 'conflict'))).then(() => null, () => null)).catch((reason: unknown) => reason);
     expect(readWriteFailure(error, RECIPE_SAVE_FAILURES, RECIPE_SAVE_TEXT).is).toBe('stale');
   });
 
@@ -120,7 +87,6 @@ describe('casAttempts', () => {
   it.each([
     { write: 'a recipe save', status: 401, table: RECIPE_SAVE_FAILURES, refusal: unauthorized },
     { write: 'a recipe save', status: 400, table: RECIPE_SAVE_FAILURES, refusal: http(400) },
-    { write: 'a calendar update', status: 503, table: CALENDAR_WRITE_FAILURES.update, refusal: http(503, 'service_unavailable') },
   ])(
     'still reads back $write after a $status refusal of the same attempt that followed an unknown one', async ({ table, refusal }) => {
       const attempts = casAttempts(table);
@@ -163,32 +129,5 @@ describe('what a read-back holds', () => {
     expect(recipeSaveLanded(recipe, { title: 'Ship', body: 'Saved.' })).toEqual({ stored: recipe });
     expect(recipeSaveLanded(recipe, { title: 'Ship', body: 'Other.' })).toBeNull();
     expect(recipeSaveLanded(recipe, { title: 'Shipped', body: 'Saved.' })).toBeNull();
-  });
-
-  const timed = { kind: 'timed' as const, start: '2026-10-02T14:00:00+08:00', end: '2026-10-02T15:00:00+08:00', timezone: 'Asia/Shanghai' };
-  const write: CalendarUpdate = { id: 'one', expected_version: 3, task: { title: 'A', description: 'd', schedule: timed }, cancelled: false };
-  const stored = (task: CalendarUpdate['task'], cancelled = false): CalendarEntry => ({
-    id: 'one', task, version: 4, cancelled, source_track_id: null, created_by: 'user', created_at: 1, updated_at: 2,
-  });
-
-  it('finds a calendar edit when the stored task is the one sent, whatever its key order', () => {
-    const reordered = { schedule: { timezone: timed.timezone, end: timed.end, start: timed.start, kind: timed.kind }, description: 'd', title: 'A' };
-    expect(calendarUpdateLanded(stored(reordered), write)).toEqual({ stored: undefined });
-    expect(calendarUpdateLanded(stored({ ...write.task, title: 'B' }), write)).toBeNull();
-    /* Cancelled since: not the edit this attempt sent. */
-    expect(calendarUpdateLanded(stored(write.task, true), write)).toBeNull();
-  });
-
-  /* #2175-15: read by id, a cancelled task included, so a cancel is confirmed by its own flag, not by the task's absence
-     from a list window, which a task moved elsewhere also gives. */
-  it('finds a calendar cancel only when the stored task is cancelled and holds the task it sent', () => {
-    expect(calendarUpdateLanded(stored(write.task, true), { ...write, cancelled: true })).toEqual({ stored: undefined });
-    expect(calendarUpdateLanded(stored(write.task), { ...write, cancelled: true })).toBeNull();
-    const moved = { ...write.task, schedule: { ...timed, start: '2027-10-02T14:00:00+08:00', end: '2027-10-02T15:00:00+08:00' } };
-    expect(calendarUpdateLanded(stored(moved), { ...write, cancelled: true })).toBeNull();
-  });
-
-  it('reads the task back by its id', () => {
-    expect(calendarReadOperation('a/b')).toMatchObject({ method: 'GET', path: '/api/calendar/tasks/a%2Fb' });
   });
 });

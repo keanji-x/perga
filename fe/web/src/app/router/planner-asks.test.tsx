@@ -42,21 +42,21 @@ function setup({ reopen = false, refusal = false } = {}) {
     async send(request) {
       requests.push(request);
       await Promise.resolve();
-      if (request.path === '/api/areas') return ok([AREA]);
-      if (request.path === '/api/areas/c1/tracks') return ok([currentTrack]);
+      if (request.path === '/api/v1/areas') return ok([AREA]);
+      if (request.path === '/api/v1/areas/c1/tracks?includeClosed=true') return ok([currentTrack]);
       /* The overlay still lists the ask after the answer: the projector's `overlay.set` has not landed yet. */
-      if (request.path === '/api/tracks/w1') return ok({
+      if (request.path === '/api/v1/tracks/w1') return ok({
         track: currentTrack, planner_revision: 0, can_reopen: currentTrack.closed_at !== null, can_admin: false, can_close: currentTrack.closed_at === null, cards: [PLANNER], overlays: [activity([currentAsk])],
       });
-      if (request.path === '/api/tracks/w1/conversations') return ok([ASSISTANT]);
-      if (request.path === '/api/tracks/w1/asks/41/answer') {
+      if (request.path === '/api/v1/tracks/w1/sessions') return ok([ASSISTANT]);
+      if (request.path === '/api/v1/tracks/w1/asks/41/answer') {
         if (refusal) return { status: 400, statusText: 'Bad Request', body: { code: 'bad_request', error: 'The closure changed.' } };
         if (reopen && (request.body as { answers: { option: number }[] }).answers[0].option === 0) currentTrack = { ...currentTrack, closed_at: null };
         return ok(undefined, 204);
       }
-      if (request.path.includes('/harness/items')) return ok(historicalConversationPage(conversationCardId(request.path), [], null));
-      if (request.path.includes('/planner/run?contract=conversation_v1')) return ok(historicalConversationRun({
-        card_id: request.path.split('/')[3], worker_session_id: 'runtime', phase: 'idle', model: null,
+      if (request.path.includes('/items') && !request.path.includes('view=')) return ok(historicalConversationPage(conversationCardId(request.path), [], null));
+      if (request.path.includes('view=run')) return ok(historicalConversationRun({
+        card_id: conversationCardId(request.path), worker_session_id: 'runtime', phase: 'idle', model: null,
         reasoning_effort: null, permission_mode: 'never', blocked_reason: null, manual_compact_supported: true, recovery: null, compact_outcome: null, context_usage_invalidated: false, running_turn: null,
       }, 'idle', true));
       if (request.path === '/api/settings') return ok({});
@@ -97,7 +97,7 @@ it('answers the open ask from the Planner composer and hides it before the overl
   await waitFor(() => expect(requests.filter((request) => request.path.endsWith('/answer'))).toHaveLength(1));
   const answer = requests.find((request) => request.path.endsWith('/answer'));
   expect(answer?.method).toBe('POST');
-  expect(answer?.path).toBe('/api/tracks/w1/asks/41/answer');
+  expect(answer?.path).toBe('/api/v1/tracks/w1/asks/41/answer');
   expect(answer?.body).toEqual({ answers: [{ option: 1 }, { text: 'Tag it 2.0' }] });
   await waitFor(() => expect(within(drawer).queryByRole('group', { name: 'The Planner asks' })).toBeNull());
   /* The composer itself stays. */
@@ -121,7 +121,7 @@ it('reopens by clicking the canonical choice in the existing Planner drawer and 
   fireEvent.click(within(ask).getByRole('button', { name: 'Reopen and continue' }));
   await waitFor(() => expect(requests.find(request => request.path.endsWith('/answer'))?.body).toEqual({ answers: [{ option: 0 }] }));
   await waitFor(() => expect(screen.queryAllByRole('status', { name: 'Track closed' })).toHaveLength(0));
-  expect(requests.filter(request => request.path === '/api/tracks/w1' && request.method === 'GET').length).toBeGreaterThan(1);
+  expect(requests.filter(request => request.path === '/api/v1/tracks/w1' && request.method === 'GET').length).toBeGreaterThan(1);
 });
 
 it('keeps the canonical choices after a stale lifecycle refusal instead of locally settling the ask', async () => {

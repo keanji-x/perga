@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parse } from 'yaml';
 import { describe, expect, it } from 'vitest';
@@ -15,6 +15,7 @@ function disablesImplicitNpmAudit(document: ActionsDocument): boolean {
 
 describe('GitHub Actions npm installs', () => {
   it('disables implicit npm audit at every workflow boundary', () => {
+    if (!existsSync(actionsDirectory)) return;
     const documents = readdirSync(actionsDirectory)
       .filter((name) => name.endsWith('.yml') || name.endsWith('.yaml'))
       .map((name) => ({

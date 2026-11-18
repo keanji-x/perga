@@ -77,9 +77,11 @@ export function compileTemplateInputs(body: string, schemaValue: unknown, values
   const input = Object.create(null) as Record<string, unknown>;
   const errors = Object.create(null) as Record<string, string>;
   for (const group of form.groups) for (const field of group.fields) {
-    if (!declare(field.key, field.key, 'string', field.kind === 'text' && field.format !== null ? 'issue_url' : 'value')) return { status: 'unsupported', form: null };
+    const propType = properties[field.key]?.type;
+    const expectedType = field.kind === 'toggle' && propType === 'boolean' ? 'boolean' : 'string';
+    if (!declare(field.key, field.key, expectedType, field.kind === 'text' && field.format !== null ? 'issue_url' : 'value')) return { status: 'unsupported', form: null };
     const value = templateFieldValue(field, values);
-    input[field.key] = value;
+    input[field.key] = expectedType === 'boolean' && field.kind === 'toggle' ? value === field.on_value : value;
     if (field.kind === 'toggle') {
       if (![field.on_value, field.off_value].includes(value)) errors[field.key] = 'Choose a declared option.';
       const allowed = properties[field.key].enum;

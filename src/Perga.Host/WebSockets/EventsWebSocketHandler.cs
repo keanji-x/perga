@@ -1,0 +1,224 @@
+using System.Buffers;
+using System.Net.WebSockets;
+using System.Text.Json;
+using Microsoft.AspNetCore.Http;
+using Perga.Contracts;
+using Perga.Host.Http;
+using Perga.Host.Serialization;
+using Perga.Kernel;
+using Perga.Kernel.Ports;
+
+namespace Perga.Host.WebSockets;
+
+public static class EventsWebSocketHandler
+{
+    public const int MaxReplayEvents = 2_000;
+
+    public static async Task HandleAsync(
+        HttpContext context,
+        IPergaKernel kernel,
+        ITrackReadStore readStore)
+    {
+        if (!context.WebSockets.IsWebSocketRequest)
+        {
+            var err = HttpErrorHandling.BadRequest("websocket_required", "Expected a WebSocket upgrade request.");
+            await err.ExecuteAsync(context).ConfigureAwait(false);
+            return;
+        }
+
+        long since = 0;
+        if (context.Request.Query.TryGetValue("since", out var sinceValues) &&
+            !string.IsNullOrWhiteSpace(sinceValues.ToString()))
+        {
+            if (!long.TryParse(sinceValues.ToString().Trim(), out since) || since < 0)
+            {
+                var err = HttpErrorHandling.BadRequest("invalid_argument", "Query parameter 'since' must be a non-negative integer.");
+                await err.ExecuteAsync(context).ConfigureAwait(false);
+                return;
+            }
+        }
+
+        string? trackId = null;
+        if (context.Request.Query.TryGetValue("trackId", out var trackValues) &&
+            !string.IsNullOrWhiteSpace(trackValues.ToString()))
+        {
+            trackId = trackValues.ToString().Trim();
+        }
+
+        using var webSocket = await context.WebSockets.AcceptWebSocketAsync().ConfigureAwait(false);
+        using var sessionCts = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted);
+        var ct = sessionCts.Token;
+
+        // 1. Subscribe to live EventBus FIRST so zero events can slip into a race window during replay!
+        await using var subscription = kernel.EventBus.Subscribe(trackId);
+
+        var receiveTask = PumpClientControlFramesAsync(webSocket, sessionCts);
+        try
+        {
+            // 2. Check pruning boundary against global event ledger + query missed persisted events.
+            var earliestGlobal = await readStore.ListEventsSinceAsync(0, trackId: null, limit: 1, ct).ConfigureAwait(false);
+            var earliestRetainedId = earliestGlobal.Count > 0 ? earliestGlobal[0].EventId : null;
+
+            var wasPrunedBeforeSince =
+                (earliestRetainedId is null && since > 0) ||
+                (earliestRetainedId is > 1 && since < earliestRetainedId.Value);
+
+            IReadOnlyList<EventEnvelopeDto> missed = [];
+            if (!wasPrunedBeforeSince)
+            {
+                missed = await readStore.ListEventsSinceAsync(since, trackId, limit: MaxReplayEvents + 1, ct)
+                    .ConfigureAwait(false);
+            }
+
+            long maxDeliveredPersistentId = since;
+
+            if (wasPrunedBeforeSince || missed.Count > MaxReplayEvents)
+            {
+                // Determine current store tip so subsequent live frames do not duplicate pre-snapshot history.
+                maxDeliveredPersistentId = await ResolveCurrentStoreTipIdAsync(readStore, since, ct).ConfigureAwait(false);
+                await SendJsonFrameAsync(webSocket, new { kind = "_snapshot_required" }, ct).ConfigureAwait(false);
+            }
+            else
+            {
+                foreach (var persisted in missed)
+                {
+                    if (persisted.EventId is { } id && id > maxDeliveredPersistentId)
+                    {
+                        maxDeliveredPersistentId = id;
+                    }
+
+                    var normalized = PergaJsonDefaults.NormalizeEventEnvelope(persisted);
+                    await SendJsonFrameAsync(webSocket, normalized, ct).ConfigureAwait(false);
+                }
+
+                await SendJsonFrameAsync(
+                    webSocket,
+                    new { kind = "_replay_complete", tipId = maxDeliveredPersistentId },
+                    ct).ConfigureAwait(false);
+            }
+
+            // 3. Stream live persistent (deduplicated against maxDeliveredPersistentId) & transient frames!
+            await foreach (var live in subscription.ReadAllAsync(ct).ConfigureAwait(false))
+            {
+                if (webSocket.State != WebSocketState.Open)
+                {
+                    break;
+                }
+
+                if (live.EventId is { } liveId)
+                {
+                    if (liveId <= maxDeliveredPersistentId)
+                    {
+                        continue;
+                    }
+
+                    maxDeliveredPersistentId = liveId;
+                }
+
+                var normalized = PergaJsonDefaults.NormalizeEventEnvelope(live);
+                await SendJsonFrameAsync(webSocket, normalized, ct).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Normal disconnect or shutdown.
+        }
+        catch (WebSocketException)
+        {
+            // Peer reset connection.
+        }
+        finally
+        {
+            sessionCts.Cancel();
+            try
+            {
+                await receiveTask.ConfigureAwait(false);
+            }
+            catch
+            {
+                // Ignore receive pump termination errors.
+            }
+
+            if (webSocket.State is WebSocketState.Open or WebSocketState.CloseReceived)
+            {
+                try
+                {
+                    using var closeCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+                    await webSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "closing", closeCts.Token)
+                        .ConfigureAwait(false);
+                }
+                catch
+                {
+                    // Ignore close handshake errors.
+                }
+            }
+        }
+    }
+
+    private static async Task<long> ResolveCurrentStoreTipIdAsync(
+        ITrackReadStore readStore,
+        long minCursor,
+        CancellationToken ct)
+    {
+        var cursor = Math.Max(0, minCursor);
+        while (true)
+        {
+            var page = await readStore.ListEventsSinceAsync(cursor, trackId: null, limit: 1_000, ct).ConfigureAwait(false);
+            if (page.Count == 0)
+            {
+                return cursor;
+            }
+
+            var maxInPage = cursor;
+            foreach (var evt in page)
+            {
+                if (evt.EventId is { } id && id > maxInPage)
+                {
+                    maxInPage = id;
+                }
+            }
+
+            if (maxInPage <= cursor)
+            {
+                return cursor;
+            }
+
+            cursor = maxInPage;
+            if (page.Count < 1_000)
+            {
+                return cursor;
+            }
+        }
+    }
+
+    private static async Task PumpClientControlFramesAsync(WebSocket webSocket, CancellationTokenSource sessionCts)
+    {
+        var buffer = ArrayPool<byte>.Shared.Rent(4 * 1024);
+        try
+        {
+            while (webSocket.State == WebSocketState.Open && !sessionCts.IsCancellationRequested)
+            {
+                var result = await webSocket.ReceiveAsync(buffer.AsMemory(), sessionCts.Token).ConfigureAwait(false);
+                if (result.MessageType == WebSocketMessageType.Close)
+                {
+                    sessionCts.Cancel();
+                    break;
+                }
+            }
+        }
+        catch
+        {
+            sessionCts.Cancel();
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
+        }
+    }
+
+    private static ValueTask SendJsonFrameAsync<T>(WebSocket webSocket, T payload, CancellationToken ct)
+    {
+        var utf8 = JsonSerializer.SerializeToUtf8Bytes(payload, PergaJsonDefaults.ApiOptions);
+        return webSocket.SendAsync(utf8.AsMemory(), WebSocketMessageType.Text, endOfMessage: true, ct);
+    }
+}

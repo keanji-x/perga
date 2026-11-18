@@ -38,19 +38,19 @@ function setup({ adminGrantedAt, canAdmin, patch }: Kernel) {
     pinned_at: null, closed_at: null, admin_granted_at: adminGrantedAt, created_at: 1, updated_at: 2 };
   const transport: ApiTransportPort = { async send(request) {
     requests.push(request);
-    if (request.method === 'PATCH' && request.path === '/api/tracks/w1') {
+    if (request.method === 'PATCH' && request.path === '/api/v1/tracks/w1') {
       if (patch !== undefined) return patch();
       const { admin } = request.body as { admin: boolean };
       track = { ...track, admin_granted_at: admin ? 99 : null, updated_at: track.updated_at + 1 };
       return ok(track);
     }
-    if (request.path === '/api/areas') return ok([AREA]);
-    if (request.path === '/api/areas/c1/tracks') return ok([track]);
-    if (request.path === '/api/tracks/w1') {
+    if (request.path === '/api/v1/areas') return ok([AREA]);
+    if (request.path === '/api/v1/areas/c1/tracks?includeClosed=true') return ok([track]);
+    if (request.path === '/api/v1/tracks/w1') {
       return ok({ track, planner_revision: 0, can_reopen: false, can_close: true, can_admin: canAdmin, cards: [PLANNER], overlays: [] });
     }
-    if (request.path.includes('/planner/run?contract=conversation_v1')) return ok(historicalConversationRun(PLANNER_RUN, 'idle', true));
-    if (request.path.includes('/harness/items?contract=conversation_v1')) return ok(historicalConversationPage(conversationCardId(request.path), [], null));
+    if (request.path.includes('view=run')) return ok(historicalConversationRun(PLANNER_RUN, 'idle', true));
+    if (request.path.includes('/items') && !request.path.includes('view=')) return ok(historicalConversationPage(conversationCardId(request.path), [], null));
     if (request.path === '/api/settings') return ok({});
     return ok([]);
   } };
@@ -58,7 +58,7 @@ function setup({ adminGrantedAt, canAdmin, patch }: Kernel) {
   const router = createAppRouter({ prepareReport: prepareReportDocument, transport, client, cards: bootTestCardRuntime(),
     unauthorized: createUnauthorizedChannel({ enqueue: (task) => task() }), onSignOut: vi.fn() });
   render(<QueryClientProvider client={client}><ThemeProvider><RouterProvider router={router} /></ThemeProvider></QueryClientProvider>);
-  return { patches: () => requests.filter((request) => request.method === 'PATCH' && request.path === '/api/tracks/w1') };
+  return { patches: () => requests.filter((request) => request.method === 'PATCH' && request.path === '/api/v1/tracks/w1') };
 }
 
 async function openPlanner(): Promise<void> {

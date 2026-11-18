@@ -7,13 +7,20 @@ import { objectiveBlockPayloadSchema, type ObjectiveBlockPayload } from './repor
 import { max2048CodePoints, inlineTableBlockPayloadSchema } from './report-table.js';
 import { isCalendarDate } from './report-date.js';
 import { nativeViewPayloadSchema, type NativeViewPayload } from './report-view.js';
-import { sameOriginPath, windowStreamSrc } from './report-src.js';
+import { sameOriginPath } from './report-src.js';
 import { htmlBlockPayloadSchema, type HtmlBlockPayload } from './report-html.js';
 export { inlineTableBlockPayloadSchema } from './report-table.js';
 export { isCalendarDate } from './report-date.js';
 
 import type { CurrentTaskExecution } from './task-execution.js';
 import type { ApiFailure, ApiOperation } from '../api/types.js';
+import {
+  reportReadResultDtoSchema,
+  taskDtoSchema,
+  type ReportBlockKind,
+  type ReportReadResultDto,
+  type TaskDto,
+} from '../api/schemas.js';
 import {
   extractOutline, markdownExcerpt, parse, REPORT_MAX_DEPTH, reportHeadingIdPolicy,
 } from '../markdown/public.js';
@@ -106,13 +113,6 @@ export const previewBlockPayloadSchema = z.strictObject({
   key: z.string().regex(PREVIEW_KEY_PATTERN),
   title: max2048CodePoints(z.string()).nullish(),
   path: sameOriginPath().nullish(),
-  height: z.number().min(120).max(2000).nullish(),
-});
-
-/** `window` (#2530): a live window that speaks window-stream protocol v1 at `src`; it names no plugin. */
-export const windowBlockPayloadSchema = z.strictObject({
-  src: windowStreamSrc(),
-  title: max2048CodePoints(z.string()).nullish(),
   height: z.number().min(120).max(2000).nullish(),
 });
 
@@ -222,7 +222,6 @@ export function isLiveTablePayload(payload: TableBlockPayload): payload is LiveT
 export type AppBlockPayload = z.infer<typeof appBlockPayloadSchema>;
 export type TaskBlockPayload = z.infer<typeof taskBlockPayloadSchema>;
 export type PreviewBlockPayload = z.infer<typeof previewBlockPayloadSchema>;
-export type WindowBlockPayload = z.infer<typeof windowBlockPayloadSchema>;
 
 /**
  * A block, discriminated by `kind`, with `unsupported` as the closed default. `rev` is carried
@@ -239,7 +238,6 @@ export type ReportBlock =
   | Readonly<{ id: string; kind: 'app'; payload: AppBlockPayload }>
   | Readonly<{ id: string; kind: 'task'; payload: TaskBlockPayload }>
   | Readonly<{ id: string; kind: 'preview'; payload: PreviewBlockPayload }>
-  | Readonly<{ id: string; kind: 'window'; payload: WindowBlockPayload }>
   | Readonly<{ id: string; kind: 'html'; payload: HtmlBlockPayload }>
   | Readonly<{ id: string; kind: 'unsupported'; declaredKind: string }>;
 
@@ -248,8 +246,98 @@ const blockWireSchema = z.object({
   kind: z.string(),
   /* The kernel always writes one; optional on the read because only `chart.series` consumes it. */
   rev: z.number().int().nonnegative().optional(),
+  markdown: z.string().nullish(),
   payload: z.unknown(),
 });
+
+function normalizePergaTaskPayload(raw: Record<string, unknown>, blockId: string): Record<string, unknown> {
+  const key = typeof raw.key === 'string'
+    ? raw.key
+    : typeof raw.task_key === 'string'
+      ? raw.task_key
+      : typeof raw.taskKey === 'string'
+        ? raw.taskKey
+        : blockId;
+  const rawKind = typeof raw.kind === 'string'
+    ? raw.kind
+    : typeof raw.type === 'string'
+      ? raw.type
+      : 'agent';
+  const provider = typeof raw.provider === 'string' ? raw.provider : undefined;
+  const kind = rawKind === 'terminal'
+    ? 'terminal'
+    : rawKind === 'claude' || (rawKind === 'agent' && provider === 'claude')
+      ? 'claude'
+      : rawKind === 'compact'
+        ? 'compact'
+        : 'codex';
+  const access = raw.access ?? raw.access_mode ?? raw.accessMode;
+  const goalOrCmd = typeof raw.command === 'string'
+    ? raw.command
+    : typeof raw.cmd === 'string'
+      ? raw.cmd
+      : typeof raw.goal === 'string'
+        ? raw.goal
+        : '';
+  const ready = typeof raw.ready === 'boolean' ? raw.ready : false;
+  if (kind === 'terminal') {
+    return {
+      key,
+      kind: 'terminal',
+      command: goalOrCmd,
+      ...(access === 'read_write' ? { access: 'read_write' } : {}),
+      ...(typeof raw.acceptance === 'string' ? { acceptance: raw.acceptance } : {}),
+      ...(raw.gate !== undefined ? { gate: raw.gate } : {}),
+      ...(Array.isArray(raw.depends_on) ? { depends_on: raw.depends_on } : {}),
+      ...(raw.context !== undefined ? { context: raw.context } : {}),
+      ready,
+      declared_by: 'spec',
+    };
+  }
+  return {
+    key,
+    kind,
+    goal: goalOrCmd,
+    ...(access === 'read_only' || access === 'read_write' ? { access } : {}),
+    ...(typeof raw.acceptance === 'string' ? { acceptance: raw.acceptance } : {}),
+    ...(raw.gate !== undefined ? { gate: raw.gate } : {}),
+    ...(Array.isArray(raw.depends_on) ? { depends_on: raw.depends_on } : {}),
+    ...(raw.context !== undefined ? { context: raw.context } : {}),
+    ready,
+    declared_by: 'spec',
+  };
+}
+
+function resolveWirePayload(wire: z.infer<typeof blockWireSchema>): unknown {
+  let payload = wire.payload;
+  if ((payload === null || payload === undefined) && typeof wire.markdown === 'string') {
+    if (wire.kind === 'prose') {
+      payload = { markdown: wire.markdown };
+    } else if (wire.kind === 'html') {
+      const trimmed = wire.markdown.trim();
+      if (trimmed.startsWith('{')) {
+        try { payload = JSON.parse(trimmed); } catch { payload = { html: wire.markdown }; }
+      } else {
+        payload = { html: wire.markdown };
+      }
+    } else {
+      const trimmed = wire.markdown.trim();
+      if (trimmed.startsWith('{')) {
+        try { payload = JSON.parse(trimmed); } catch { /* fall through */ }
+      }
+    }
+  }
+  if (
+    wire.markdown !== undefined
+    && wire.kind === 'task'
+    && typeof payload === 'object'
+    && payload !== null
+    && !('declared_by' in payload)
+  ) {
+    payload = normalizePergaTaskPayload(payload as Record<string, unknown>, wire.id);
+  }
+  return payload;
+}
 
 /** As a function rather than a frozen object: a module-level map of schemas would be module runtime state. */
 function payloadSchemaFor(kind: string): z.ZodType | null {
@@ -263,7 +351,6 @@ function payloadSchemaFor(kind: string): z.ZodType | null {
     case 'app': return appBlockPayloadSchema;
     case 'task': return taskBlockPayloadSchema;
     case 'preview': return previewBlockPayloadSchema;
-    case 'window': return windowBlockPayloadSchema;
     case 'html': return htmlBlockPayloadSchema;
     default: return null;
   }
@@ -273,7 +360,7 @@ function payloadSchemaFor(kind: string): z.ZodType | null {
 function toReportBlock(wire: z.infer<typeof blockWireSchema>): ReportBlock {
   const schema = payloadSchemaFor(wire.kind);
   if (schema === null) return { id: wire.id, kind: 'unsupported', declaredKind: wire.kind };
-  const parsed = schema.safeParse(wire.payload);
+  const parsed = schema.safeParse(resolveWirePayload(wire));
   if (!parsed.success) return { id: wire.id, kind: 'unsupported', declaredKind: wire.kind };
   if (wire.kind === 'chart.series') {
     // A series block without a revision cannot ask for its data, so it degrades like an unreadable payload.
@@ -284,14 +371,18 @@ function toReportBlock(wire: z.infer<typeof blockWireSchema>): ReportBlock {
   return { id: wire.id, kind: wire.kind, payload: parsed.data } as ReportBlock;
 }
 
-/** A deliberately narrow read: `schemaVersion` and `docRev` stay unparsed so a newer payload stays readable. */
+/** A deliberately narrow read: `schemaVersion` stays unparsed so a newer payload stays readable. */
 export const trackReportPayloadSchema = z.object({
+  pergaSnapshot: z.boolean().optional(),
+  docRev: z.number().int().nonnegative().optional(),
   summary: z.string().default(''),
   body: z.string().default(''),
   blocks: z.unknown().nullish(),
 });
 
 export type TrackReport = Readonly<{
+  docRev?: number;
+  blockRevs?: Readonly<Record<string, number>>;
   summary: string;
   /** Markdown source — the flat projection, and the only content a v1 row has. */
   body: string;
@@ -320,16 +411,30 @@ export function readTrackReportPayload(payload: unknown): TrackReport | null {
   if (!parsed.success) return null;
   const summary = parsed.data.summary.trim();
   const body = parsed.data.body.trim();
+  const blockRevs: Record<string, number> = {};
   // One malformed block must cost only that block.
   const blocks = Array.isArray(parsed.data.blocks)
     ? parsed.data.blocks.flatMap((candidate) => {
       const wire = blockWireSchema.safeParse(candidate);
-      return wire.success ? [toReportBlock(wire.data)] : [];
+      if (!wire.success) return [];
+      if (wire.data.rev !== undefined) blockRevs[wire.data.id] = wire.data.rev;
+      return [toReportBlock(wire.data)];
     })
     : null;
-  // An empty blocks array is the same emptiness as a blank body.
-  if (summary === '' && body === '' && (blocks === null || blocks.length === 0)) return null;
-  return { summary, body, blocks };
+  const isPerga = parsed.data.pergaSnapshot === true;
+  const allBlankProse = blocks !== null
+    && blocks.length > 0
+    && blocks.every((block) => block.kind === 'prose' && block.payload.markdown.trim() === '');
+  // An empty blocks array (or untouched blank Perga seed prose) is the same emptiness as a blank body.
+  if (summary === '' && body === '' && (blocks === null || blocks.length === 0 || (isPerga && allBlankProse))) {
+    return null;
+  }
+  return {
+    ...(isPerga && parsed.data.docRev !== undefined ? { docRev: parsed.data.docRev, blockRevs } : {}),
+    summary,
+    body,
+    blocks,
+  };
 }
 
 /* Outline: the shape is decided by the blocks, not by the headings. */
@@ -468,13 +573,35 @@ export const taskVerdictSchema = z.object({
 
 export type TaskVerdict = z.infer<typeof taskVerdictSchema>;
 
-/** Only `taskDiagnostics` is read; the rest of the response duplicates the report card this page already holds. */
-const trackReportReadSchema = z.object({ taskDiagnostics: z.array(z.unknown()).default([]) })
+export function taskDtoToVerdict(task: TaskDto): TaskVerdict {
+  return {
+    blockId: task.blockId,
+    key: task.taskKey,
+    schedulable: task.ready && task.status !== 'canceled',
+    status: task.status === 'draft' ? null : task.status,
+    statusDetail: task.statusDetail ?? task.semanticNote ?? null,
+    workerCardId: null,
+    pendingReason: null,
+  };
+}
+
+const legacyTrackReportReadSchema = z.object({ taskDiagnostics: z.array(z.unknown()).default([]) })
   .transform((response) => response.taskDiagnostics.flatMap((candidate) => {
     // One malformed verdict costs only that row's runtime word.
     const parsed = taskVerdictSchema.safeParse(candidate);
     return parsed.success ? [parsed.data] : [];
   }));
+
+const trackReportReadSchema = z.union([
+  z.object({
+    tasks: z.array(z.unknown()),
+    taskDiagnostics: z.undefined().optional(),
+  }).passthrough().transform((response) => response.tasks.flatMap((candidate) => {
+    const parsed = taskDtoSchema.safeParse(candidate);
+    return parsed.success ? [taskDtoToVerdict(parsed.data)] : [];
+  })),
+  legacyTrackReportReadSchema,
+]);
 
 /**
  * The `tasks` statuses inside the eventless window: `scheduler::mark_running` flips
@@ -496,12 +623,43 @@ export function hasLiveTaskRun(rows: readonly ReportTaskRow[] | undefined): bool
   return rows.some((row) => row.status !== null && live.has(row.status));
 }
 
-/** The track's task verdicts; the route also answers with the report, which this discards. */
+/** The track's task verdicts via `GET /api/v1/tracks/{trackId}/report`. */
 export function trackTaskVerdictsOperation(trackId: string): ApiOperation<TaskVerdict[]> {
   return {
     method: 'GET',
-    path: `/api/tracks/${encodeURIComponent(trackId)}/report`,
+    path: `/api/v1/tracks/${encodeURIComponent(trackId)}/report`,
     responseSchema: trackReportReadSchema,
+  };
+}
+
+export function readTrackReportOperation(trackId: string): ApiOperation<ReportReadResultDto> {
+  return {
+    method: 'GET',
+    path: `/api/v1/tracks/${encodeURIComponent(trackId)}/report`,
+    responseSchema: reportReadResultDtoSchema,
+  };
+}
+
+export type HumanReportBlockUpdateBody = Readonly<{
+  docRev: number;
+  knownBlockRev: number;
+  kind?: ReportBlockKind;
+  markdown?: string | null;
+  payload?: unknown;
+  summary?: string | null;
+  commitMessage?: string | null;
+}>;
+
+export function updateTrackReportBlockOperation(
+  trackId: string,
+  blockId: string,
+  body: HumanReportBlockUpdateBody,
+): ApiOperation<ReportReadResultDto> {
+  return {
+    method: 'PUT',
+    path: `/api/v1/tracks/${encodeURIComponent(trackId)}/report/blocks/${encodeURIComponent(blockId)}`,
+    body,
+    responseSchema: reportReadResultDtoSchema,
   };
 }
 

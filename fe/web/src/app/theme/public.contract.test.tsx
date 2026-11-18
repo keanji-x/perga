@@ -54,14 +54,12 @@ describe('app/theme contracts', () => {
     expect(parseThemeMode('sepia')).toBeNull();
   });
 
-  it('matches the Rust dark default; Rust has no independent light default', () => {
-    const rust = readFileSync(resolve(import.meta.dirname, '../../../../../crates/calm-truth/src/model.rs'), 'utf8');
-    const block = /pub fn default_dark\(\) -> Self \{(?<body>[\s\S]*?)\n {4}\}/u.exec(rust)?.groups?.body;
-    const tuple = (name: 'fg' | 'bg') => {
-      const values = new RegExp(`${name}: \\((\\d+), (\\d+), (\\d+)\\)`, 'u').exec(block ?? '');
-      return values?.slice(1).map(Number);
+  it('matches theme.config.json hostRgb defaults', () => {
+    const config = JSON.parse(readFileSync(resolve(import.meta.dirname, '../../styles/theme.config.json'), 'utf8')) as {
+      hostRgb: { dark: { fg: number[]; bg: number[] }; light: { fg: number[]; bg: number[] } };
     };
-    expect(DARK_THEME_RGB).toEqual({ fg: tuple('fg'), bg: tuple('bg') });
+    expect(DARK_THEME_RGB).toEqual(config.hostRgb.dark);
+    expect(LIGHT_THEME_RGB).toEqual(config.hostRgb.light);
     expect(LIGHT_THEME_RGB).toEqual({ fg: [42, 47, 58], bg: [252, 254, 255] });
   });
 

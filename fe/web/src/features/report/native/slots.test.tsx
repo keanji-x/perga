@@ -9,7 +9,7 @@ import { trackOverlayPayload, type OverlayWire } from '../../../../../core/domai
 import { NativeReportView } from './public.tsx';
 
 afterEach(cleanup);
-const fixture = JSON.parse(readFileSync(resolve(process.cwd(), '../test-data/native-view-v1.json'), 'utf8')) as {
+const fixture = JSON.parse(readFileSync(resolve(process.cwd(), 'core/domain/fixtures/native-view-v1.json'), 'utf8')) as {
   valid: { rows: { cells: Record<string, unknown>[] }[] }; valid_slots: unknown;
 };
 const template = nativeViewPayloadSchema.parse(fixture.valid_slots);

@@ -82,10 +82,6 @@ it.each([[390, 'dormant', '/track/daily?panel=conversations'], [1280, 'dormant',
     await expect.element(page.getByText('Earlier reply that stays.', { exact: true })).toBeVisible();
     await expect.element(field).toHaveAttribute('contenteditable', 'true');
     if (state === 'dormant' || state === 'unknown') await expect.element(field).toHaveTextContent('Keep this draft.');
-    if (initial === '/') {
-      const calendar = document.querySelector('[aria-label="Calendar tasks"]')!;
-      expect(getComputedStyle(calendar).visibility).toBe('visible');
-    }
     await page.screenshot({ path: `./__screenshots__/conversation-restart-${state}-started-${width}.png` });
     const posts = (suffix: string) => fixture.requests.filter((request) => request.method === 'POST' && request.path.endsWith(suffix));
     expect(posts('/planner/restart')).toHaveLength(1);
@@ -96,7 +92,6 @@ it.each([[390, 'dormant', '/track/daily?panel=conversations'], [1280, 'dormant',
       await userEvent.keyboard('{Enter}');
       await expect.poll(() => posts('/planner/input').length).toBe(2);
       await expect.element(field).toHaveTextContent('');
-      await expect.element(page.getByRole('region', { name: 'Calendar tasks' })).toBeVisible();
     }
   });
 

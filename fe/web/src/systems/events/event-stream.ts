@@ -8,6 +8,7 @@ export type ConnectionStateHandler = (state: ConnectionState) => void;
 export type EventStreamConfiguration = Readonly<{
   syncEventVersion: number | null;
   topics: readonly Topic[];
+  trackId?: string | null;
 }>;
 
 export interface EventStreamSink {
@@ -35,6 +36,7 @@ export interface ConfiguredEventStream {
 
 function sameConfiguration(left: EventStreamConfiguration, right: EventStreamConfiguration): boolean {
   return left.syncEventVersion === right.syncEventVersion &&
+    (left.trackId ?? null) === (right.trackId ?? null) &&
     left.topics.length === right.topics.length &&
     left.topics.every((topic, index) => topic === right.topics[index]);
 }
@@ -86,6 +88,7 @@ export class EventStream implements UnconfiguredEventStream {
     const frozen = Object.freeze({
       syncEventVersion: options.syncEventVersion,
       topics: Object.freeze([...options.topics]),
+      ...(options.trackId === undefined ? {} : { trackId: options.trackId }),
     });
     if (this.configuration !== null) {
       if (!sameConfiguration(this.configuration, frozen)) {

@@ -40,7 +40,7 @@ it('keeps preparation labels distinct from running and drops undeclared private 
 
 it('escapes invalid route segments without claiming that the server admits them', () => {
   // This only exercises transport encoding. The server rejects this task key.
-  expect(taskAttemptsOperation('track/1', 'b + c').path).toBe('/api/tracks/track%2F1/tasks/b%20%2B%20c/attempts');
+  expect(taskAttemptsOperation('track/1', 'b + c').path).toBe('/api/v1/tracks/track%2F1/tasks/b%20%2B%20c/attempts');
 });
 
 it('matches the generated history contracts, including required nullable evidence', () => {

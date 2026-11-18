@@ -2,7 +2,7 @@ import { cleanup, render } from '@testing-library/react';
 import { page } from 'vitest/browser';
 import { afterEach, expect, it } from 'vitest';
 import '../../../styles/entry.css';
-import source from '../../../../../../test-data/native-view-v1.json?raw';
+import source from '../../../../../core/domain/fixtures/native-view-v1.json?raw';
 import { nativeViewPayloadSchema } from '../../../../../core/domain/report-view.ts';
 import { trackOverlayPayload, type OverlayWire } from '../../../../../core/domain/track.ts';
 import { NativeReportView } from './public.tsx';

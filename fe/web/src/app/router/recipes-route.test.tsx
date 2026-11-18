@@ -97,7 +97,7 @@ function harness(options: Options = {}) {
         if (options.recipeList !== undefined) return Promise.resolve(options.recipeList(call));
         return Promise.resolve({ status: 200, statusText: 'OK', body: options.recipes ?? [RECIPE] });
       }
-      const body = request.path === '/api/areas' ? [AREA] : [];
+      const body = request.path === '/api/v1/areas' ? [AREA] : [];
       return Promise.resolve({ status: 200, statusText: 'OK', body });
     },
   };

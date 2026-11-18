@@ -2,7 +2,7 @@ import { cleanup, render } from '@testing-library/react';
 import { page, userEvent } from 'vitest/browser';
 import { afterEach, expect, it } from 'vitest';
 import '../../../styles/entry.css';
-import source from '../../../../../../test-data/native-view-v1.json?raw';
+import source from '../../../../../core/domain/fixtures/native-view-v1.json?raw';
 import demoSource from '../../../../../../plugins/paper-trading/examples/native-demo.json?raw';
 import manifestSource from '../../../../../../plugins/paper-trading/manifest.json?raw';
 import { nativeViewPayloadSchema } from '../../../../../core/domain/report-view.ts';

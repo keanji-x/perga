@@ -37,13 +37,15 @@ type ActivityItemBase = Readonly<{
   atMs: number;
 }>;
 
+export type AskId = string | number;
+
 /**
  * One thing addressed to the user and not yet handled, as the kernel listed it (`items[]`). Only an
  * ask carries its id (the answer route's `ask_id`), its questions and its delivery.
  */
 export type ActivityItem =
   | (ActivityItemBase & Readonly<{
-    source: 'ask'; askId: number; questions: readonly AskQuestion[]; delivery: AskDelivery;
+    source: 'ask'; askId: AskId; questions: readonly AskQuestion[]; delivery: AskDelivery;
     action?: import('../api/generated/wire.js').AskAction;
   }>)
   | (ActivityItemBase & Readonly<{ source: 'planner_down' | 'planner_turn_timeout' }>);

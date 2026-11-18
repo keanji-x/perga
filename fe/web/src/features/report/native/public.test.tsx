@@ -9,7 +9,7 @@ import { NativeReportView } from './public.tsx';
 import { DistributionChart, linePaths, nearestSample, TimeSeriesChart } from '../../../ui/data-visualization/public.tsx';
 
 afterEach(cleanup);
-const fixture = JSON.parse(readFileSync(resolve(process.cwd(), '../test-data/native-view-v1.json'), 'utf8')) as { valid: unknown };
+const fixture = JSON.parse(readFileSync(resolve(process.cwd(), 'core/domain/fixtures/native-view-v1.json'), 'utf8')) as { valid: unknown };
 const payload = nativeViewPayloadSchema.parse(fixture.valid);
 
 function disclosureLabel(view: typeof payload) {

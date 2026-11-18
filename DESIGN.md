@@ -1,6 +1,6 @@
-# Neige.Next 详细架构设计与冻结接口规范（DESIGN.md）
+# Perga 详细架构设计与冻结接口规范（DESIGN.md）
 
-> **文档性质**：本规范为 **Neige.Next（C# .NET 9 微内核 + 零耦合独立库 + 提纯 Rust 终端守护 + 原生 Jujutsu `jj`）** 的唯一权威设计基线与冻结契约。后续 Stage 0 脚手架搭建与 Stage 1 / Stage 2 Swarm 并行实现必须严格遵守本文档第 2–4 节定义的命名空间、接口签名、SQL DDL 与线协议，未经架构协调者批准不得擅自变更跨模块公开契约。
+> **文档性质**：本规范为 **Perga（C# .NET 9 微内核 + 零耦合独立库 + 提纯 Rust 终端守护 + 原生 Jujutsu `jj`）** 的唯一权威设计基线与冻结契约。后续 Stage 0 脚手架搭建与 Stage 1 / Stage 2 Swarm 并行实现必须严格遵守本文档第 2–4 节定义的命名空间、接口签名、SQL DDL 与线协议，未经架构协调者批准不得擅自变更跨模块公开契约。
 
 ---
 
@@ -8,32 +8,32 @@
 
 ### 1.1 仓库与 Solution 目录布局
 
-实现仓库（`perga`）位于 `/home/kenji/neige-workspaces/78d0fc64f6394212b88223f52273e9dd/0356c8755af142cab9f7919f5e82ce20`：
+实现仓库（`perga`）根目录下目录布局如下：
 
 ```text
-Neige.Next.sln                            # （待 Stage 0 生成）
+Perga.sln                                 # 统一注册全部 17 个 .csproj 工程
 ├── DESIGN.md                             # 本架构与冻结接口规范
 ├── README.md / LICENSE / rust-toolchain.toml
-├── Directory.Build.props                 # 统一 net9.0 / Nullable=enable / ImplicitUsings=enable / TreatWarningsAsErrors=true
+├── Directory.Build.props                 # 统一 net9.0 / Nullable=enable / ImplicitUsings=enable / TreatWarningsAsErrors=true / LangVersion=13
 ├── fe/                                   # 已迁移的前端（React + TypeScript + Astryx Design）
 ├── docs/                                 # 架构拓扑图与前期 Rust 审计蓝图（已迁移）
 ├── plugins/                              # 保留的独立领域插件（market / barra / invest / paper-trading / research-archive）
 ├── libs/                                 # 零业务耦合独立底座库（严禁引用任何 src/* 或彼此环路引用）
-│   ├── Neige.ReportDoc/
-│   │   └── Neige.ReportDoc.csproj        # 依赖: ZstdSharp.Port
-│   ├── Neige.PolicyVm/
-│   │   └── Neige.PolicyVm.csproj         # 依赖: Jint
-│   ├── Neige.AgentKit/
-│   │   └── Neige.AgentKit.csproj         # 无重型三方依赖（System.Text.Json + Process/Pipes + OS Sandbox Wrapper）
-│   ├── Neige.VcsKit/
-│   │   └── Neige.VcsKit.csproj           # 无重型三方依赖（原生调用 jj / git / gh CLI）
-│   └── Neige.TermClient/
-│       └── Neige.TermClient.csproj       # 轻量 UDS/TCP JSON-RPC + WebSocket 客户端对接 neige-term-bridge
+│   ├── Perga.ReportDoc/
+│   │   └── Perga.ReportDoc.csproj        # 依赖: ZstdSharp.Port
+│   ├── Perga.PolicyVm/
+│   │   └── Perga.PolicyVm.csproj         # 依赖: Jint
+│   ├── Perga.AgentKit/
+│   │   └── Perga.AgentKit.csproj         # 无重型三方依赖（System.Text.Json + Process/Pipes + OS Sandbox Wrapper）
+│   ├── Perga.VcsKit/
+│   │   └── Perga.VcsKit.csproj           # 无重型三方依赖（原生调用 jj / git / gh CLI）
+│   └── Perga.TermClient/
+│       └── Perga.TermClient.csproj       # 轻量 UDS/TCP JSON-RPC + WebSocket 客户端对接 perga-term-bridge
 │
 ├── tools/
-│   ├── rust-terminal/                    # 已迁移的 Rust 终端种子（calm-terminal-view / calm-terminal-runtime / terminal_interaction_ref）
-│   └── neige-term-bridge/                # 独立纯 Rust 跨平台终端守护（#![forbid(unsafe_code)]）
-│       ├── Cargo.toml                    # 提纯组装自 tools/rust-terminal/（rmux-core / rmux-server / rmux-sdk / portable-pty）
+│   ├── rust-terminal/                    # 已迁移的只读 Rust 终端种子（calm-terminal-view / calm-terminal-runtime / terminal_interaction_ref）
+│   └── perga-term-bridge/                # 独立纯 Rust 跨平台终端守护（#![forbid(unsafe_code)]）
+│       ├── Cargo.toml                    # 提纯组装自只读种子 tools/rust-terminal/（rmux-core / rmux-server / rmux-sdk / portable-pty）
 │       └── src/
 │           ├── main.rs                   # CLI 参数（--listen-uds / --listen-tcp）与双监听启动
 │           ├── view.rs                   # 提纯自 calm-terminal-view/src/lib.rs
@@ -44,32 +44,33 @@ Neige.Next.sln                            # （待 Stage 0 生成）
 │           ├── rpc.rs                    # JSON-RPC 2.0 分发（term.ensure / observe / action / resize / kill）
 │           └── ws.rs                     # 二进制 WS 流（0x01 raw PTY bytes, 0x02 JSON control）+ 64KB 环形缓冲回放
 │
-├── src/                                  # Neige 应用层（仅组合上述独立库）
-│   ├── Neige.Contracts/
-│   │   └── Neige.Contracts.csproj        # 纯跨进程/跨层共享 DTO、Enum、REST/WS 协议模型（零业务或 IO 依赖）
-│   ├── Neige.Kernel/
-│   │   └── Neige.Kernel.csproj           # 引用 Contracts + 5 个 libs/*；定义 ITrackStore / ITrackReadStore（零 SQLite/Web 引用！）
-│   ├── Neige.Storage.Sqlite/
-│   │   └── Neige.Storage.Sqlite.csproj   # 依赖反转引用 Neige.Kernel；依赖 Microsoft.Data.Sqlite + Dapper
-│   └── Neige.Host/
-│       └── Neige.Host.csproj             # ASP.NET Core 组合根；引用 src/* + ModelContextProtocol.AspNetCore + Cronos
+├── src/                                  # Perga 应用层（仅组合上述独立库）
+│   ├── Perga.Contracts/
+│   │   └── Perga.Contracts.csproj        # 纯跨进程/跨层共享 DTO、Enum、REST/WS 协议模型（零业务或 IO 依赖）
+│   ├── Perga.Kernel/
+│   │   └── Perga.Kernel.csproj           # 引用 Contracts + 5 个 libs/*；定义 ITrackStore / ITrackReadStore（零 SQLite/Web 引用！）
+│   ├── Perga.Storage.Sqlite/
+│   │   └── Perga.Storage.Sqlite.csproj   # 依赖反转引用 Perga.Kernel + Perga.Contracts；依赖 Microsoft.Data.Sqlite + Dapper + ZstdSharp.Port
+│   └── Perga.Host/
+│       └── Perga.Host.csproj             # ASP.NET Core 组合根（Microsoft.NET.Sdk.Web）；引用 src/* + 5 个 libs/* + Cronos；在 Perga.Host/Mcp/ 下以 System.Text.Json 直接实现标准 MCP JSON-RPC 2.0 Streamable HTTP + SSE
 │
-├── templates/                            # 内置动态可编程模板与 TS 类型检查声明（Jint 直接跑 .neige.js）
-│   ├── tsconfig.json                     # { allowJs: true, checkJs: true, noEmit: true } (编辑期/CI 强类型校验)
-│   ├── neige-template.d.ts
-│   ├── dev.neige.js
-│   ├── long-term-goal.neige.js
-│   └── investment-research.neige.js
+├── templates/                            # 内置动态可编程模板与 TS 类型检查声明（Jint 直接跑 .perga.js）
+│   ├── tsconfig.json                     # { allowJs: true, checkJs: true, noEmit: true, strict: true } (编辑期/CI 强类型校验)
+│   ├── perga-template.d.ts               # PergaTemplateDefinition 与全局辅助函数类型声明
+│   ├── dev.perga.js
+│   ├── long-term-goal.perga.js
+│   └── investment-research.perga.js
 │
 ├── scripts/hooks/                        # 供模板可选调用的标准生命周期脚本示例
-└── tests/
-    ├── Neige.ReportDoc.Tests/
-    ├── Neige.PolicyVm.Tests/
-    ├── Neige.AgentKit.Tests/
-    ├── Neige.VcsKit.Tests/
-    ├── Neige.Storage.Tests/
-    ├── Neige.Kernel.Tests/
-    └── Neige.Host.IntegrationTests/
+└── tests/                                # 8 个测试工程（连同 libs/ 5 个 + src/ 4 个共 17 个 .csproj）
+    ├── Perga.ReportDoc.Tests/
+    ├── Perga.PolicyVm.Tests/
+    ├── Perga.AgentKit.Tests/
+    ├── Perga.VcsKit.Tests/
+    ├── Perga.TermClient.Tests/
+    ├── Perga.Storage.Tests/
+    ├── Perga.Kernel.Tests/
+    └── Perga.Host.IntegrationTests/
 ```
 
 ### 1.2 全局编译期约束（`Directory.Build.props`）
@@ -90,17 +91,17 @@ Neige.Next.sln                            # （待 Stage 0 生成）
 
 ### 1.3 严格单向依赖矩阵
 
-| 模块 | 允许引用的工程 | 严禁引用的对象（违者架构验收拦截） |
+| 模块 | 允许引用的工程与 NuGet | 严禁引用的对象（违者架构验收拦截） |
 | :--- | :--- | :--- |
-| `Neige.Contracts` | 无（仅 BCL） | 任何项目、任何 NuGet IO/Web/DB 库 |
-| `libs/Neige.ReportDoc` | 无（仅 `ZstdSharp.Port`） | `src/*`、其他 `libs/*`、`Microsoft.Data.Sqlite` |
-| `libs/Neige.PolicyVm` | 无（仅 `Jint`） | `src/*`、其他 `libs/*`、任何文件/网络 IO |
-| `libs/Neige.AgentKit` | 无（仅 BCL） | `src/*`、其他 `libs/*`、SQLite、ASP.NET Core |
-| `libs/Neige.VcsKit` | 无（仅 BCL） | `src/*`、其他 `libs/*` |
-| `libs/Neige.TermClient` | 无（仅 BCL） | `src/*`、其他 `libs/*` |
-| `Neige.Kernel` | `Neige.Contracts` + 5 个 `libs/*` | `Microsoft.Data.Sqlite`、`Dapper`、`AspNetCore`、`Neige.Storage.Sqlite`、`Neige.Host` |
-| `Neige.Storage.Sqlite` | `Neige.Kernel` + `Neige.Contracts` | `Neige.Host`、`AspNetCore` |
-| `Neige.Host` | `Neige.Kernel`、`Neige.Storage.Sqlite`、`Neige.Contracts`、`libs/*` | 无（组合根） |
+| `Perga.Contracts` | 无（仅 BCL） | 任何项目、任何 NuGet IO/Web/DB 库 |
+| `libs/Perga.ReportDoc` | 无工程引用（仅 `ZstdSharp.Port`） | `src/*`、其他 `libs/*`、`Microsoft.Data.Sqlite` |
+| `libs/Perga.PolicyVm` | 无工程引用（仅 `Jint`） | `src/*`、其他 `libs/*`、任何文件/网络 IO |
+| `libs/Perga.AgentKit` | 无（仅 BCL） | `src/*`、其他 `libs/*`、SQLite、ASP.NET Core |
+| `libs/Perga.VcsKit` | 无（仅 BCL） | `src/*`、其他 `libs/*` |
+| `libs/Perga.TermClient` | 无（仅 BCL） | `src/*`、其他 `libs/*` |
+| `Perga.Kernel` | `Perga.Contracts` + 5 个 `libs/*` | `Microsoft.Data.Sqlite`、`Dapper`、`AspNetCore`、`Perga.Storage.Sqlite`、`Perga.Host` |
+| `Perga.Storage.Sqlite` | `Perga.Kernel` + `Perga.Contracts`（NuGet：`Microsoft.Data.Sqlite`、`Dapper`、`ZstdSharp.Port`） | `Perga.Host`、`AspNetCore` |
+| `Perga.Host` | `Perga.Kernel`、`Perga.Storage.Sqlite`、`Perga.Contracts`、5 个 `libs/*`（`Microsoft.NET.Sdk.Web` + `Cronos`） | 无（组合根；标准 MCP JSON-RPC 2.0 Streamable HTTP + SSE 在 `Perga.Host/Mcp/` 中使用 `System.Text.Json` 直接实现，不依赖预览版 MCP Web 库） |
 
 ---
 
@@ -108,12 +109,12 @@ Neige.Next.sln                            # （待 Stage 0 生成）
 
 以下所有命名空间、类型名、属性签名与方法签名即为 Stage 0 落盘编译的冻结契约。
 
-### 2.1 `namespace Neige.Contracts`（共享 Wire 模型）
+### 2.1 `namespace Perga.Contracts`（共享 Wire 模型）
 
 ```csharp
 using System.Text.Json;
 
-namespace Neige.Contracts;
+namespace Perga.Contracts;
 
 public enum AccessMode { ReadOnly, ReadWrite }
 public enum TaskRunStatus { Draft, Pending, Running, Verifying, Done, Failed, Canceled }
@@ -286,17 +287,17 @@ public sealed record DbMaintenanceStatsDto(
 
 ---
 
-### 2.2 `namespace Neige.ReportDoc`（纯内存块文档与 Zstd 快照库）
+### 2.2 `namespace Perga.ReportDoc`（纯内存块文档与 Zstd 快照库）
 
-- **职责**：解析带 `<!-- neige:b_xxxx -->` 块锚点的 Markdown 报告与 `neige-block` 围栏（`task` / `html` / `table` / `view`）；执行基于 `ReadAnchor` 的并发乐观锁防盲写校验；提供 `ReplaceSection` / `UpsertBlock` / `DeleteBlock` / `MoveBlock` 原子编辑；提供 Zstd 历史快照压缩/解压。
+- **职责**：解析带 `<!-- perga:b_xxxx -->` 块锚点的 Markdown 报告与 `perga-block` 围栏（`task` / `html` / `table` / `view`）；执行基于 `ReadAnchor` 的并发乐观锁防盲写校验；提供 `ReplaceSection` / `UpsertBlock` / `DeleteBlock` / `MoveBlock` 原子编辑；提供 Zstd 历史快照压缩/解压。
 - **不变量**：
-  - Block 在 `# `（H1）与 ` ```neige-block <kind>` 边界切分，维护稳定 6 字符 ID（如 `b_a1b2`）。
+  - Block 在 `# `（H1）与 ` ```perga-block <kind>` 边界切分，维护稳定 6 字符 ID（如 `b_a1b2`）。
   - 修改或删除已存在块/章节时，`callerAnchor` 必须满足 `WholeDocumentRead == true` 或在 `KnownBlockRevs` 中包含目标块且版本匹配当前块 `Rev`；否则抛出 `ReportConflictException` 附带冲突详情。
 
 ```csharp
 using System.Text.Json;
 
-namespace Neige.ReportDoc;
+namespace Perga.ReportDoc;
 
 public enum ReportBlockKind
 {
@@ -380,10 +381,10 @@ public interface IReportDocEngine
 
 ---
 
-### 2.3 `namespace Neige.PolicyVm` 与 `.neige.js` SDK（零手写解析 · 受限策略虚拟机）
+### 2.3 `namespace Perga.PolicyVm` 与 `.perga.js` SDK（零手写解析 · 受限策略虚拟机）
 
-- **职责（彻底消灭手写类型擦除解析器）**：`Neige.PolicyVm` **不做任何手写正则或字符串类型擦除**，直接接收标准 **ECMAScript Module (`.neige.js`)**，由 **Jint 4.x 内置 Acornima JS/ESM 引擎**原生编译执行 5 个生命周期钩子，堆栈行号 1:1 精确对齐。
-- **编辑期/CI 强类型保障**：所有 `.neige.js` 头部声明 `// @ts-check` 与 `/// <reference path="./neige-template.d.ts" />`（配合 `templates/tsconfig.json` 的 `allowJs + checkJs + noEmit`），编辑器与 CI 通过 `tsc --noEmit` 直接享受与 `.ts` 同等的完整泛型推断与只读类型检查；若未来外部作者确需用 `.ts` 编写策略，应在打包发布前由离线构建链（如 Node 22 原生 `module.stripTypeScriptTypes` 或 `esbuild`）输出标准 `.neige.js` 再交由内核加载。
+- **职责（彻底消灭手写类型擦除解析器）**：`Perga.PolicyVm` **不做任何手写正则或字符串类型擦除**，直接接收标准 **ECMAScript Module (`.perga.js`)**，由 **Jint 4.x 内置 Acornima JS/ESM 引擎**原生编译执行 5 个生命周期钩子，堆栈行号 1:1 精确对齐。
+- **编辑期/CI 强类型保障**：所有 `.perga.js` 头部声明 `// @ts-check` 与 `/// <reference path="./perga-template.d.ts" />`（配合 `templates/tsconfig.json` 的 `allowJs + checkJs + noEmit + strict`），编辑器与 CI 通过 `tsc --noEmit` 直接享受与 `.ts` 同等的完整泛型推断与只读类型检查；若未来外部作者确需用 `.ts` 编写策略，应在打包发布前由离线构建链（如 Node 22 原生 `module.stripTypeScriptTypes` 或 `esbuild`）输出标准 `.perga.js` 再交由内核加载。
 - **沙箱安全硬约束**：
   - `Options`: `.Strict()`, `.LimitMemory(16 * 1024 * 1024)`, `.MaxStatements(10_000)`, `.TimeoutInterval(TimeSpan.FromMilliseconds(50))`, `.LimitRecursion(64)`。
   - **禁止暴露**任何 CLR 类型反射、文件系统、`HttpClient`、进程或环境变量读取能力；`globalThis` 与模板全局变量仅注入纯 JSON 辅助函数 `defineTemplate` / `Allow` / `Deny` / `AskHuman`（模块无需依赖外部 `node_modules` 解析即可直接 `export default defineTemplate(...)`）。
@@ -391,7 +392,7 @@ public interface IReportDocEngine
 ```csharp
 using System.Text.Json;
 
-namespace Neige.PolicyVm;
+namespace Perga.PolicyVm;
 
 public abstract record GuardDecision
 {
@@ -459,7 +460,7 @@ public sealed record PolicyToolCallContext(
     string SessionId,
     bool IsLead,
     string? BoundAttemptId,
-    string McpServer,      // "neige" | "vcs" | "<pluginId>"
+    string McpServer,      // "perga" | "vcs" | "<pluginId>"
     string ToolName,
     JsonElement Arguments,
     JsonElement Inputs);
@@ -486,7 +487,7 @@ public interface IPolicyVm
 }
 ```
 
-#### `templates/neige-template.d.ts`（冻结脚本契约 · `@ts-check` + Jint 原生直跑）
+#### `templates/perga-template.d.ts`（冻结脚本契约 · `@ts-check` + Jint 原生直跑）
 
 ```ts
 export type GuardDecision =
@@ -506,7 +507,7 @@ export interface TemplateContext<TState = Record<string, any>, TInputs = Record<
   state: TState;
 }
 
-export interface NeigeTemplateDefinition<TState = Record<string, any>, TInputs = Record<string, any>> {
+export interface PergaTemplateDefinition<TState = Record<string, any>, TInputs = Record<string, any>> {
   id: string;
   title: string;
   description?: string;
@@ -570,24 +571,24 @@ declare global {
   function Deny(reason: string): GuardDecision;
   function AskHuman(title: string, options?: string[]): GuardDecision;
   function defineTemplate<TState = Record<string, any>, TInputs = Record<string, any>>(
-    def: NeigeTemplateDefinition<TState, TInputs>
-  ): NeigeTemplateDefinition<TState, TInputs>;
+    def: PergaTemplateDefinition<TState, TInputs>
+  ): PergaTemplateDefinition<TState, TInputs>;
 }
 ```
 
 ---
 
-### 2.4 `namespace Neige.AgentKit`（三条铁律解毒多 Harness 兼容库）
+### 2.4 `namespace Perga.AgentKit`（三条铁律解毒多 Harness 兼容库）
 
-**三条工程铁律（写死在 `Neige.AgentKit` 实现中）**：
-1. **严禁调用任何 CLI 原生 `/compact` 命令或私有 compaction RPC**：上下文压缩由 `Neige.Kernel` 通过 Epoch 换页完成。
+**三条工程铁律（写死在 `Perga.AgentKit` 实现中）**：
+1. **严禁调用任何 CLI 原生 `/compact` 命令或私有 compaction RPC**：上下文压缩由 `Perga.Kernel` 通过 Epoch 换页完成。
 2. **严禁拼接 CLI 私有路径/权限 DSL 字符串**（如 Claude `Edit(//path/**)` 或 Codex `shell_environment_policy`）：统一外置给 `OsSandboxWrapper`（Linux 使用 `/usr/bin/bwrap`，macOS 使用 `sandbox-exec`）隔离工作目录边界，保留 CLI 自身完整性。一期在当前宿主机 `bwrap 0.8.0` 下直接绑定传入的 `Cwd`（即解析后的 `AttemptWorkspaceLease.EffectiveCwd`），同时通过 `OverlayMounts` 字段预留升级到 `bwrap >= 0.9` 时按进程直注 `--overlay-src / --overlay` 层的能力。
 3. **锁死最小 4 原语表面**：Antigravity / OpenCode 原生走 ACP JSON-RPC 2.0（`initialize` -> `session/new` / `session/load` -> `session/prompt` -> `session/cancel` -> `session/request_permission`）；Claude 走 `--print --verbose --input-format stream-json --output-format stream-json --mcp-config <tempJson>`（或 `claude-agent-acp`）；Codex 走 `codex app-server` JSON-RPC 2.0（`thread/start` / `thread/resume` / `turn/start` / `turn/steer` / `turn/interrupt`）。
 
 ```csharp
 using System.Text.Json;
 
-namespace Neige.AgentKit;
+namespace Perga.AgentKit;
 
 public enum OsSandboxMode
 {
@@ -673,7 +674,7 @@ public interface IAgentRuntime : IAsyncDisposable
 
 ---
 
-### 2.5 `namespace Neige.VcsKit`（原生 Jujutsu `jj` + `git`/`gh` + 可插拔 `IWorkspaceDriver` 挂载扩展缝）
+### 2.5 `namespace Perga.VcsKit`（原生 Jujutsu `jj` + `git`/`gh` + 可插拔 `IWorkspaceDriver` 挂载扩展缝）
 
 - **存储隔离与版本语义彻底解耦**：
   - `IWorkspaceDriver` 负责**物理工作区制备、挂载恢复、Per-Attempt Copy-on-Write 租约与安全卸载**（决定进程看到什么目录树及能否并行写）；
@@ -690,7 +691,7 @@ public interface IAgentRuntime : IAsyncDisposable
 ```csharp
 using System.Text.Json;
 
-namespace Neige.VcsKit;
+namespace Perga.VcsKit;
 
 // -------- 1. 工作区存储/挂载与 CoW 租约抽象（预留 OverlayFS，一期仅实现 direct / vcs-workspace） --------
 
@@ -831,15 +832,15 @@ public interface IGitHubForgeService
 
 ---
 
-### 2.6 `tools/neige-term-bridge` (Rust) 与 `namespace Neige.TermClient` (C#)
+### 2.6 `tools/perga-term-bridge` (Rust) 与 `namespace Perga.TermClient` (C#)
 
-#### 提纯自已迁移 Rust 终端种子（`tools/rust-terminal/`）的精确模块来源
-从本仓库已迁移的 `tools/rust-terminal/` 中抽取并剥离业务依赖：
+#### 提纯自已迁移只读 Rust 终端种子（`tools/rust-terminal/`）的精确模块来源
+从本仓库已迁移的只读目录 `tools/rust-terminal/` 中抽取并剥离业务依赖：
 1. **`tools/rust-terminal/calm-terminal-view/src/lib.rs`**：原样保留 `TerminalView`、`Frame`、`Cursor`、`Cell`、`InputSurface`（含 `bracketed_paste()` 感知 `MODE_BRACKETPASTE`）、`key_bytes()`（感知 `MODE_KCURSOR`）及 `take_replies()` 防重复应答机制，基于 `rmux-core = "=0.10.0"` 与 `rmux-proto = "=0.10.0"`。
 2. **`tools/rust-terminal/calm-terminal-runtime/src/lib.rs`**：保留 `rmux-server` / `rmux-sdk` 会话生命周期管理（确保主进程重启不杀终端）；将 `isolated_command` 中写死报错的 Linux `unshare` 改造为“Linux 下按开关可选，macOS 走普通子进程”，并抽取 `PtyBackend` trait 以便 Windows 使用 `portable-pty` ConPTY 向同一个 `TerminalView` 喂字节。
 3. **`tools/rust-terminal/terminal_interaction_ref/`**：提取 `screen_diff.rs`（`CursorSnapshot`、`ScreenDiff`、`row_hashes`）、`actions.rs`（`ACTION_BYTES_MAX = 16384`、`SEQUENCE_KEYS`、`Encoded::{Bytes, Submit}`）、`wait_plan.rs`（`WaitFor::{Elapsed, Change, Signal, Text}`、`WAIT_MS_MAX = 20_000`、`SETTLE_MS_DEFAULT = 150`），彻底剔除 `RouteRepo`、`CardRole` 与 `fixtures` 钩子。
 
-#### Rust `neige-term-bridge` 对外协议（JSON-RPC 2.0 + 二进制 WS）
+#### Rust `perga-term-bridge` 对外协议（JSON-RPC 2.0 + 二进制 WS）
 监听 `--listen-uds <path>` 或 `--listen-tcp 127.0.0.1:<port>`：
 - **`term.ensure`**：
   - 请求：`{ "terminal_id": "t_1", "program": "/bin/bash", "args": [], "cwd": "/repo", "env": {}, "cols": 120, "rows": 40 }`
@@ -854,17 +855,17 @@ public interface IGitHubForgeService
   - 请求：`{ "terminal_id": "t_1", "cols": 140, "rows": 45 }` -> `{ "ok": true }`
 - **`term.kill`**：
   - 请求：`{ "terminal_id": "t_1", "grace_ms": 2000 }` -> `{ "exited": true, "exit_code": 0 }`
-- **WebSocket `/ws/{terminal_id}`**（供 `Neige.Host` 透传给前端 `xterm.js`）：
+- **WebSocket `/ws/{terminal_id}`**（供 `Perga.Host` 透传给前端 `xterm.js`）：
   - 连接建立时立刻推送最近 **64KB** 环形缓冲历史字节帧；
   - 双向二进制帧：`0x01 + <raw_pty_bytes>`（终端原始输入输出）；
   - 控制帧：`0x02 + <utf8_json>`（客户端发 `{"type":"resize","cols":120,"rows":40}`，服务端推 `{"type":"exit","exit_code":0}`）。
 
-#### C# 契约 `namespace Neige.TermClient`
+#### C# 契约 `namespace Perga.TermClient`
 
 ```csharp
 using System.Text.Json;
 
-namespace Neige.TermClient;
+namespace Perga.TermClient;
 
 public enum TermWaitMode { None, Elapsed, Change, Text }
 public enum TermActionKind { Text, Keys, Paste, Submit }
@@ -927,7 +928,7 @@ public interface ITerminalBridgeClient : IAsyncDisposable
 
 ---
 
-### 2.7 `namespace Neige.Kernel`（微内核编排、`TrackActor`、Epoch 换页与 `ITrackStore`）
+### 2.7 `namespace Perga.Kernel`（微内核编排、`TrackActor`、Epoch 换页与 `ITrackStore`）
 
 #### 核心机制设计
 1. **`TrackActor` 单写者模型与按需挂载激活**：
@@ -937,7 +938,7 @@ public interface ITerminalBridgeClient : IAsyncDisposable
 2. **`LeadSessionId` 主理路由与二元会话模型（`Lead` + `Subagent`）**：
    - 废除传统 `Planner` / `Assistant` / `Worker` 三重角色包袱，全 Track 统一为同一 `AgentSession`（仅由两个正交属性刻画）：
      - **`Lead`（主理代表：`Track.LeadSessionId == session.Id` / `IsLead == true`）**：默认代表指针，接收外部 `Mail` 到达唤醒、后台 `Task` 完结/失败唤醒、UI 上提交的 `Ask` 回答与外部 `Report` 修改唤醒；可通过 `SetLeadSessionAsync` 随时切换主理会话。
-     - **`Subagent`（协作者：`IsLead == false`）**：分为 **自由协作（`BoundAttemptId == null`）** 与 **契约协作（`BoundAttemptId != null`，由 `TaskGraphScheduler` 按 Task 派发）**；两者在前端共享同一会话流式查看与实时 Steer 纠偏能力，均可读写 `ReportDoc`（乐观锁防盲写）与调用 `neige_terminal_open/read`；唯一硬边界由内核在 `/mcp/kernel` 统一看守——绑定了在途 `BoundAttemptId` 的 `Subagent` 拥有 `neige_task_done / fail`，并被禁止改动 `task` 块或调用 `neige_task_accept/reject/cancel` 自我判过。
+     - **`Subagent`（协作者：`IsLead == false`）**：分为 **自由协作（`BoundAttemptId == null`）** 与 **契约协作（`BoundAttemptId != null`，由 `TaskGraphScheduler` 按 Task 派发）**；两者在前端共享同一会话流式查看与实时 Steer 纠偏能力，均可读写 `ReportDoc`（乐观锁防盲写）与调用 `perga_terminal_open/read`；唯一硬边界由内核在 `/mcp/kernel` 统一看守——绑定了在途 `BoundAttemptId` 的 `Subagent` 拥有 `perga_task_done / fail`，并被禁止改动 `task` 块或调用 `perga_task_accept/reject/cancel` 自我判过。
 3. **宿主自管 Epoch 换页压缩（Host-Owned Epoch Handover Compaction）**：
    - 当 `ContextUsageRatio >= 0.80` 或用户触发 `CompactSessionAsync`：
      1. 向当前底层 `IAgentSession` 发送一条普通对话 Turn，要求输出结构化交接摘要（当前进展、关键路径、已验证结论、下一步）；
@@ -946,7 +947,7 @@ public interface ITerminalBridgeClient : IAsyncDisposable
      4. 用「最新 Report 全文 + 交接摘要」作为系统种子打开全新底层 `IAgentSession` 并绑定新 `NativeThreadId`（前端 `SessionId` 与历史消息流水保持连贯不断）。
 4. **`TaskGraphScheduler` 租约感知调度与 `afterWorkerDoneCmd`**：
    - `ComputeSchedulable(tasks, bool allowParallelWriteLeases = false)`：筛选 `ready == true`、所有 `depends_on` 任务处于 `Done`、非 `Draft`/`Running`/`Verifying`/`Done`/`Failed`/`Canceled` 的任务；当 `driver.SupportsParallelIsolatedWriteLeases == false`（一期默认）时，存在在途 `ReadWrite` 任务则返回空，存在在途 `ReadOnly` 任务仅放行 `ReadOnly`，无在途则按优先级与创建时间放行 `ReadOnly` 集合或单个最高优 `ReadWrite`；未来若挂载了支持独立 per-attempt CoW `upperdir` 的 `OverlayFS` 驱动（`SupportsParallelIsolatedWriteLeases == true`），调度器无需改动即可并发放行多个相互隔离的投机写 Attempt。
-   - **Attempt 租约与统一钩子槽 `afterWorkerDoneCmd`**：派发 Attempt 前先向 `IWorkspaceDriver.AcquireAttemptLeaseAsync` 申请 `AttemptWorkspaceLease`（并将快照持久化至 `task_attempts.workspace_lease_json`）；契约 `Subagent` 会话、`afterWorkerDoneCmd` 与 `GateSpec` 门禁均在 `lease.EffectiveCwd`（以及透传映射到 `HarnessLaunchSpec.OverlayMounts` 的层配置）内执行。`neige_task_done` 后若 `CompiledTemplateManifest.AfterWorkerDoneCmd` 非空，在 `lease.EffectiveCwd` 下运行该命令并解析 `stdout` **最后一行非空合法 JSON** 并入 `task_attempts.meta_json` 后传给 `PolicyVm.OnTaskSettled`；最终门禁通过调 `SettleAttemptLeaseAsync(lease, AttemptLeaseDisposition.Promote)`，门禁失败/取消/Fail 调 `SettleAttemptLeaseAsync(lease, AttemptLeaseDisposition.Discard)`（秒级 O(1) 抛弃脏层）。
+   - **Attempt 租约与统一钩子槽 `afterWorkerDoneCmd`**：派发 Attempt 前先向 `IWorkspaceDriver.AcquireAttemptLeaseAsync` 申请 `AttemptWorkspaceLease`（并将快照持久化至 `task_attempts.workspace_lease_json`）；契约 `Subagent` 会话、`afterWorkerDoneCmd` 与 `GateSpec` 门禁均在 `lease.EffectiveCwd`（以及透传映射到 `HarnessLaunchSpec.OverlayMounts` 的层配置）内执行。`perga_task_done` 后若 `CompiledTemplateManifest.AfterWorkerDoneCmd` 非空，在 `lease.EffectiveCwd` 下运行该命令并解析 `stdout` **最后一行非空合法 JSON** 并入 `task_attempts.meta_json` 后传给 `PolicyVm.OnTaskSettled`；最终门禁通过调 `SettleAttemptLeaseAsync(lease, AttemptLeaseDisposition.Promote)`，门禁失败/取消/Fail 调 `SettleAttemptLeaseAsync(lease, AttemptLeaseDisposition.Discard)`（秒级 O(1) 抛弃脏层）。
 5. **启动收口 `BootReconciler`**：
    - 启动监听前扫描数据库 `status IN ('Running', 'Verifying')` 的 `task_attempts` 与 `session_turns`：统一标记为 `interrupted`；对仍持有非空 `workspace_lease_json` 的中断 Attempt 调用 `SettleAttemptLeaseAsync(lease, Discard)` 清理残留临时挂载与 CoW 层；释放内存占坑后向受影响的开放 Track 投递 `SystemWake` 通知 `LeadSessionId` 恢复决策。
 
@@ -954,10 +955,10 @@ public interface ITerminalBridgeClient : IAsyncDisposable
 
 ```csharp
 using System.Text.Json;
-using Neige.Contracts;
-using Neige.ReportDoc;
+using Perga.Contracts;
+using Perga.ReportDoc;
 
-namespace Neige.Kernel.Ports;
+namespace Perga.Kernel.Ports;
 
 public sealed record TrackAggregateSnapshot(
     TrackDto Track,
@@ -1253,7 +1254,7 @@ CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at_ms);
   3. **默认只增不毁与外键级联索引强制**：普通版本升级优先采用纯增列（`ADD COLUMN ... DEFAULT`）或新增索引；若必须重建表，必须遵循 `PRAGMA foreign_keys = OFF` -> 事务重建 -> `PRAGMA foreign_key_check`；**每张引用父表带 `ON DELETE CASCADE` 的子表均已强制配备子表外键索引**，防止删除 Track/Turn 时触发全表扫描锁死写协程。
 
 ### 3.2 防无序膨胀与确定性垃圾回收（`SqliteMaintenance`）
-`Neige.Host` 的后台定时维护服务（默认每 `6 小时` 或空闲时，亦可手动触发）调用 `ITrackStore.RunMaintenancePassAsync(nowMs, ct)`，按以下 5 条确定性规则控制数据库物理体积与 B-Tree 碎片：
+`Perga.Host` 的后台定时维护服务（默认每 `6 小时` 或空闲时，亦可手动触发）调用 `ITrackStore.RunMaintenancePassAsync(nowMs, ct)`，按以下 5 条确定性规则控制数据库物理体积与 B-Tree 碎片：
 
 1. **64 KB 大对象外部冷剥离（拒绝多 MB 日志写进 SQLite B-Tree）**：
    - `RecordTurnAndItemsAsync` 与 `UpsertTaskAndAttemptAsync` 在写入前检测：`session_items.payload_json`（如超大 `tool_result`）或 `task_attempts.gate_verdict_json` 超过 **64 KB** 时，自动将其 Zstd 压缩写入 `{dataDir}/blobs/{trackId}/{sha256}.zst`，库内只保留 `{ "v": 1, "blobRef": "blobs/...", "bytes": ..., "preview": "前 2KB..." }`；删除 Track 时 O(1) 同步删除目录 `{dataDir}/blobs/{trackId}`。
@@ -1275,7 +1276,7 @@ CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at_ms);
 | 分组 | 方法与路径 | 请求 / 响应契约概要 |
 | :--- | :--- | :--- |
 | 系统 | `GET /api/v1/bootstrap` | 一次返回 `{ version, providers: ProviderStatus[], templates: CompiledTemplateManifest[], areas: AreaDto[] }` |
-| 系统 | `GET /api/v1/templates` | 返回所有可用 `.neige.js` 模板及其 `inputs` JSON Schema |
+| 系统 | `GET /api/v1/templates` | 返回所有可用 `.perga.js` 模板及其 `inputs` JSON Schema |
 | Area | `GET /api/v1/areas` | 返回 `AreaDto[]` |
 | Area | `POST /api/v1/areas` | `{ name, color?, defaultCwd?, folders? }` → `201 AreaDto` |
 | Area | `PATCH /api/v1/areas/{areaId}` | 部分更新名称/颜色/目录绑定 → `200 AreaDto` |
@@ -1308,17 +1309,17 @@ CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at_ms);
    - **持久事件**（`eventId != null`）：`track.updated`, `report.updated`, `task.updated`, `session.updated`, `turn.completed`, `ask.changed`, `mail.received`, `terminal.changed`。
    - **瞬态流式帧**（`eventId == null`，绝不写 SQLite）：`session.text_delta`, `session.thinking_delta`, `session.tool_progress`。
 2. **`WS /api/v1/terminals/{termId}/ws`**
-   - 透传对接 `neige-term-bridge` 的 `/ws/{termId}` 二进制帧（`0x01` 终端字节 / `0x02` 控制 JSON）。
+   - 透传对接 `perga-term-bridge` 的 `/ws/{termId}` 二进制帧（`0x01` 终端字节 / `0x02` 控制 JSON）。
 
 ### 4.3 多源 MCP 路由体系（内核 + 内置 JJ Forge + 静态外挂插件）
 
-会话启动前由 `Neige.Host` 为每个 `AgentSession` 生成唯一短期内存 Token `ng_<guid>` 映射 `(TrackId, SessionId, IsLead, BoundAttemptId?)` 并通过 `HarnessLaunchSpec.McpServers` 注入多路 URL：
+会话启动前由 `Perga.Host` 为每个 `AgentSession` 生成唯一短期内存 Token `pg_<guid>` 映射 `(TrackId, SessionId, IsLead, BoundAttemptId?)` 并通过 `HarnessLaunchSpec.McpServers` 注入多路 URL：
 
-1. **`/mcp/kernel`（服务名 `"neige"`，官方 `ModelContextProtocol.AspNetCore`）**：
-   - **全会话共享原语**（`Lead` 与所有 `Subagent` 平权共享）：`neige_report_read`, `neige_report_commit`（若 `BoundAttemptId != null` 则内核硬拦截修改 `task` 块，正文块遵循模板 `editableBy`）, `neige_task_ls`, `neige_user_ask`, `neige_mail_ls`, `neige_mail_cat`, `neige_track_status`, `neige_terminal_open`, `neige_terminal_read`, `neige_terminal_input`。
-   - **治理解锁原语**（仅 `BoundAttemptId == null` 的 `Lead` 与自由 `Subagent`）：`neige_task_cancel`, `neige_task_accept`, `neige_task_reject`, `neige_mail_send`, `neige_track_rename`, `neige_track_close`。
-   - **契约交卷原语**（仅 `BoundAttemptId != null` 的契约 `Subagent`）：`neige_task_done`, `neige_task_fail`。
-2. **`/mcp/vcs`（服务名 `"vcs"`，基于 `libs/Neige.VcsKit`）**：
+1. **`/mcp/kernel`（服务名 `"perga"`，在 `Perga.Host/Mcp/` 中使用 `System.Text.Json` 直接实现标准 MCP JSON-RPC 2.0 Streamable HTTP + SSE）**：
+   - **全会话共享原语**（`Lead` 与所有 `Subagent` 平权共享）：`perga_report_read`, `perga_report_commit`（若 `BoundAttemptId != null` 则内核硬拦截修改 `task` 块，正文块遵循模板 `editableBy`）, `perga_task_ls`, `perga_user_ask`, `perga_mail_ls`, `perga_mail_cat`, `perga_track_status`, `perga_terminal_open`, `perga_terminal_read`, `perga_terminal_input`。
+   - **治理解锁原语**（仅 `BoundAttemptId == null` 的 `Lead` 与自由 `Subagent`）：`perga_task_cancel`, `perga_task_accept`, `perga_task_reject`, `perga_mail_send`, `perga_track_rename`, `perga_track_close`。
+   - **契约交卷原语**（仅 `BoundAttemptId != null` 的契约 `Subagent`）：`perga_task_done`, `perga_task_fail`。
+2. **`/mcp/vcs`（服务名 `"vcs"`，基于 `libs/Perga.VcsKit`）**：
    - 暴露：`vcs_status`, `vcs_diff`, `vcs_restore_op` (JJ 时光机), `vcs_rebase_upstream`, `vcs_publish_pr`, `vcs_pr_checks`, `vcs_ci_evidence`, `vcs_pr_merge`, `vcs_issue_view`。
 3. **`/mcp/p/{pluginId}`（静态配置文件 `mcp-plugins.json` 挂载外部标准 MCP）**：
    - 支持配置 `"transport": "http" | "stdio"`，例如直接挂载智堡 Wisburg MCP 或原仓库 `market` 二进制。
@@ -1341,15 +1342,15 @@ CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at_ms);
 
 1. **Stage 0（Scaffold · 单作者奠基）**：
    - 安装 `dotnet` 9 SDK 与 `jj` 到用户目录并验证版本。
-   - 在 `/home/kenji/neige-workspaces/78d0fc64f6394212b88223f52273e9dd/0356c8755af142cab9f7919f5e82ce20` 落地 `Directory.Build.props`、`Neige.Next.sln`、全部 15 个 `.csproj`（及 `tools/neige-term-bridge/Cargo.toml`）、**以及第 2 节中全部冻结接口文件**，提交到 `main` 并确认 `dotnet build` 编译全绿。
+   - 在仓库根目录落地 `Directory.Build.props`、`Perga.sln`、全部 **17 个 `.csproj`**（含 `tests/Perga.TermClient.Tests/`，以及 `tools/perga-term-bridge/Cargo.toml`）、**`templates/{tsconfig.json, perga-template.d.ts}` 以及第 2 节中全部冻结接口文件**，提交到 `main` 并确认 `dotnet test Perga.sln`、`cargo check` 与 `tsc --noEmit` 校验全绿。
 2. **Stage 1（6 路 `workspace: "share"` 并行开发 + 2 名只读 Verifier）**：
-   - `w-doc-vm`：实现 `libs/Neige.ReportDoc` + `libs/Neige.PolicyVm`（Jint 原生直跑 ESM，零手写解析）+ `templates/{tsconfig.json, *.neige.js}`（通过 `tsc --noEmit` 强类型检查）与单测。
-   - `w-agentkit`：实现 `libs/Neige.AgentKit`（Codex / Claude stream-json / ACP + `bwrap` Wrapper）与 Mock CLI 协议测试。
-   - `w-vcskit`：实现 `libs/Neige.VcsKit`（`jj --colocate` 一等支持 + `git` 兜底 + `gh` CLI + `IWorkspaceDriverRegistry` 与一期 `DirectWorkspaceDriver` / `VcsWorkspaceDriver`）与真实临时 `jj`/`git` 仓库及租约单测。
-   - `w-term-rust`：基于本仓库 `tools/rust-terminal/` 提纯组装 `tools/neige-term-bridge` + 实现 `libs/Neige.TermClient` 与 PTY 读写集成测试。
-   - `w-sqlite`：实现 `src/Neige.Storage.Sqlite`（10 表群 DDL + `SqliteMigrator` 迁移备份 + `SqliteSingleWriter` 微批写入 + `ITrackStore` + >64KB 冷 Blob 剥离与 `RunMaintenancePassAsync` 确定性 GC）与高并发无 `SQLITE_BUSY`、外键级联索引、升级及防膨胀压测。
-   - `w-kernel`：实现 `src/Neige.Kernel`（`TrackActor`、`LeadSessionId` 主理与 `Subagent` 二元路由、Epoch 换页压缩、`TaskGraphScheduler`、`TemplateHost`、`BootReconciler`）与纯内存模拟测试。
+   - `w-doc-vm`：实现 `libs/Perga.ReportDoc` + `libs/Perga.PolicyVm`（Jint 原生直跑 ESM，零手写解析）+ `templates/{tsconfig.json, *.perga.js}`（通过 `tsc --noEmit` 强类型检查）与单测。
+   - `w-agentkit`：实现 `libs/Perga.AgentKit`（Codex / Claude stream-json / ACP + `bwrap` Wrapper）与 Mock CLI 协议测试。
+   - `w-vcskit`：实现 `libs/Perga.VcsKit`（`jj --colocate` 一等支持 + `git` 兜底 + `gh` CLI + `IWorkspaceDriverRegistry` 与一期 `DirectWorkspaceDriver` / `VcsWorkspaceDriver`）与真实临时 `jj`/`git` 仓库及租约单测。
+   - `w-term-rust`：基于本仓库只读种子 `tools/rust-terminal/` 提纯组装 `tools/perga-term-bridge` + 实现 `libs/Perga.TermClient` 与 PTY 读写集成测试。
+   - `w-sqlite`：实现 `src/Perga.Storage.Sqlite`（10 表群 DDL + `SqliteMigrator` 迁移备份 + `SqliteSingleWriter` 微批写入 + `ITrackStore` + >64KB 冷 Blob 剥离与 `RunMaintenancePassAsync` 确定性 GC）与高并发无 `SQLITE_BUSY`、外键级联索引、升级及防膨胀压测。
+   - `w-kernel`：实现 `src/Perga.Kernel`（`TrackActor`、`LeadSessionId` 主理与 `Subagent` 二元路由、Epoch 换页压缩、`TaskGraphScheduler`、`TemplateHost`、`BootReconciler`）与纯内存模拟测试。
    - 协调者按序审查并合入 `main`（或派 `v-libs` / `v-core` 验证每个分支 `dotnet test` / `cargo test` 全绿后再合并）。
-3. **Stage 2（组合根 `Neige.Host` + 前端 `fe/` 协同瘦身切换）**：
-   - `w-host`：实现 `src/Neige.Host`（REST / WS / `/mcp/kernel` / `/mcp/vcs` / `/mcp/p/{id}` 拦截器 / `Cronos` 调度 + 定期 `RunMaintenancePassAsync` / E2E 集成测试）。
+3. **Stage 2（组合根 `Perga.Host` + 前端 `fe/` 协同瘦身切换）**：
+   - `w-host`：实现 `src/Perga.Host`（REST / WS / `/mcp/kernel` / `/mcp/vcs` / `/mcp/p/{id}` 拦截器 / `Cronos` 调度 + 定期 `RunMaintenancePassAsync` / E2E 集成测试）。
    - `w-fe`：在独立前端分支将 `fe/core/{api,events}` 对接到 `/api/v1`，裁剪冗余旧恢复/桌面/日历模块并通过 `npm run build` + Playwright 验证。

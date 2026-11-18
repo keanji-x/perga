@@ -19,11 +19,11 @@ export function renderCommandFixture(options: Readonly<{
       pending = [{ ...pending[0], text: (request.body as { text: string }).text, rev: 3 }];
       return ok({ ...pending[0], card_id: 'daily-planner' });
     }
-    if (request.method === 'POST' && request.path.endsWith('/planner/input')) {
+    if (request.method === 'POST' && request.path.endsWith('/messages')) {
       replaced = true;
       return ok({ card_id: 'daily-planner', worker_session_id: 'runtime' });
     }
-    if (request.method === 'PATCH' && request.path === '/api/tracks/daily') {
+    if (request.method === 'PATCH' && request.path === '/api/v1/tracks/daily') {
       if (options.patch !== undefined) return options.patch(request);
       if (!options.staleDetail) {
         const body = request.body as { closed?: boolean };
@@ -32,11 +32,16 @@ export function renderCommandFixture(options: Readonly<{
       }
       return ok(track);
     }
-    if (request.path === '/api/tracks/daily') return ok({ track,
+    if (request.path === '/api/v1/tracks/daily') return ok({ track,
       planner_revision: 0, can_reopen: options.canReopen ?? closed, can_close: options.canClose ?? !closed, can_admin: true,
       cards: [{ id: 'daily-planner', track_id: 'daily', kind: 'codex', title: 'Daily Planner conversation', sort: 1,
         payload: { planner_harness: true }, deletable: false, created_at: 1, updated_at: 2 }], overlays: [] });
-    if (request.path.includes('/harness/items') && options.edit === 'sent') {
+    if (request.path.includes('&view=run')) return ok(historicalConversationRun({
+      card_id: conversationCardId(request.path), worker_session_id: 'runtime', phase: options.running ? 'turn_running' : 'idle',
+      pending, pending_overflow: 0, model: null, reasoning_effort: null, permission_mode: conversationCardId(request.path) === 'daily-planner' ? 'never' : null, blocked_reason: null, manual_compact_supported: true,
+      recovery: null, compact_outcome: null, context_usage_invalidated: false, running_turn: null,
+    }, 'idle', true));
+    if (request.path.includes('/items?') && !request.path.includes('&view=') && options.edit === 'sent') {
       const row = { worker_session_id: 'runtime', card_id: conversationCardId(request.path), track_id: 'daily', thread_id: 'thread',
         turn_id: 'turn', turn_error_text: null, item_uuid: null, created_at_ms: 1 };
       return ok(historicalConversationPage(conversationCardId(request.path), replaced ? [] : [
@@ -47,18 +52,13 @@ export function renderCommandFixture(options: Readonly<{
         { ...row, id: 3, item_type: null, method: 'turn/completed', params: JSON.stringify({ id: 'turn', status: 'completed', error: null }) },
       ], null));
     }
-    if (request.path.includes('/harness/items')) return ok(historicalConversationPage(conversationCardId(request.path), [{
+    if (request.path.includes('/items?') && !request.path.includes('&view=')) return ok(historicalConversationPage(conversationCardId(request.path), [{
       id: 1, worker_session_id: 'runtime', card_id: conversationCardId(request.path), track_id: 'daily', thread_id: 'thread',
       turn_id: 'turn', turn_error_text: null, item_uuid: null, item_type: 'agentMessage', method: 'item/completed',
       params: JSON.stringify({ item: { text: 'Ready for commands' } }), created_at_ms: 1,
     }], null));
-    if (request.path.includes('/planner/run?contract=conversation_v1')) return ok(historicalConversationRun({
-      card_id: request.path.split('/')[3], worker_session_id: 'runtime', phase: options.running ? 'turn_running' : 'idle',
-      pending, pending_overflow: 0, model: null, reasoning_effort: null, permission_mode: conversationCardId(request.path) === 'daily-planner' ? 'never' : null, blocked_reason: null, manual_compact_supported: true,
-      recovery: null, compact_outcome: null, context_usage_invalidated: false, running_turn: null,
-    }, 'idle', true));
-    if (request.path.endsWith('/planner/interrupt')) return ok({ card_id: 'daily-planner', worker_session_id: 'runtime', stopped: true });
-    if (request.path.endsWith('/planner/input')) return ok({ card_id: 'daily-planner', worker_session_id: 'runtime' });
+    if (request.path.endsWith('/interrupt')) return ok({ card_id: 'daily-planner', worker_session_id: 'runtime', stopped: true });
+    if (request.path.endsWith('/messages')) return ok({ card_id: 'daily-planner', worker_session_id: 'runtime' });
     return undefined;
   } });
 }

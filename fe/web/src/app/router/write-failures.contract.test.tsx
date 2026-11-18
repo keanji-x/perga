@@ -40,14 +40,14 @@ function renderApp(path: string, write: (request: ApiRequest, world: World) => P
     reads.push(request.path);
     const track = { ...openTrack, closed_at: world.closed ? 2 : null };
     if (request.path.startsWith('/api/today/daily')) return Promise.resolve(ok(null));
-    if (request.path === '/api/areas') return Promise.resolve(ok([area]));
-    if (request.path === '/api/areas/c1/tracks') return Promise.resolve(ok(world.gone ? [] : [track]));
-    if (request.path === '/api/tracks/w1' && world.stale) return new Promise<ApiTransportResponse>(() => undefined);
-    if (request.path === '/api/tracks/w1') return Promise.resolve(world.gone ? notFound : ok({
+    if (request.path === '/api/v1/areas') return Promise.resolve(ok([area]));
+    if (request.path === '/api/v1/areas/c1/tracks?includeClosed=true') return Promise.resolve(ok(world.gone ? [] : [track]));
+    if (request.path === '/api/v1/tracks/w1' && world.stale) return new Promise<ApiTransportResponse>(() => undefined);
+    if (request.path === '/api/v1/tracks/w1') return Promise.resolve(world.gone ? notFound : ok({
       track, planner_revision: 0, can_reopen: world.closed, can_admin: false, can_close: !world.closed, cards: [card], overlays: [],
     }));
     if (request.path === '/api/settings') return Promise.resolve(ok({}));
-    if (request.path === '/api/version') return Promise.resolve(ok({ areaCreateIdempotency: true }));
+    if (request.path === '/api/v1/bootstrap') return Promise.resolve(ok({ areaCreateIdempotency: true }));
     return Promise.resolve(ok([]));
   } };
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -134,11 +134,11 @@ describe('a lost answer shows the write’s fixed state, never transport text', 
 it('reads the track again after a patch whose answer was lost: it may have been stored', async () => {
   const { reads } = renderApp('/track/w1', lost);
   await screen.findByRole('button', { name: 'Track actions for Reliable' });
-  await waitFor(() => expect(reads).toContain('/api/tracks/w1'));
-  const before = reads.filter((path) => path === '/api/tracks/w1').length;
+  await waitFor(() => expect(reads).toContain('/api/v1/tracks/w1'));
+  const before = reads.filter((path) => path === '/api/v1/tracks/w1').length;
   await trackMenu('Close');
   await screen.findByText('Closing the track is unconfirmed.');
-  await waitFor(() => expect(reads.filter((path) => path === '/api/tracks/w1').length).toBeGreaterThan(before));
+  await waitFor(() => expect(reads.filter((path) => path === '/api/v1/tracks/w1').length).toBeGreaterThan(before));
 });
 
 describe('a DELETE retried after a lost answer and answered 404 is done', () => {
@@ -157,7 +157,7 @@ describe('a DELETE retried after a lost answer and answered 404 is done', () => 
     await userEvent.click(within(dialog).getByRole('button', { name: 'Delete track' }));
     await waitFor(() => expect(within(screen.getByRole('navigation', { name: 'Workspace' })).queryByText('Reliable')).toBeNull());
     expect(screen.queryAllByRole('alert').map((alert) => alert.textContent)).toEqual([]);
-    expect(writes.map((request) => `${request.method} ${request.path}`)).toEqual(['DELETE /api/tracks/w1', 'DELETE /api/tracks/w1']);
+    expect(writes.map((request) => `${request.method} ${request.path}`)).toEqual(['DELETE /api/v1/tracks/w1', 'DELETE /api/v1/tracks/w1']);
   });
 
   /* #2131 S2: the board draws the cached detail, so a done delete drops the card there rather than waiting for a read. */
@@ -181,7 +181,7 @@ describe('a DELETE retried after a lost answer and answered 404 is done', () => 
     await userEvent.click(within(dialog).getByRole('button', { name: 'Delete card' }));
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Actions for Build log' })).toBeNull());
     expect(screen.queryAllByRole('alert').map((alert) => alert.textContent)).toEqual([]);
-    expect(writes.map((request) => `${request.method} ${request.path}`)).toEqual(['DELETE /api/cards/k1', 'DELETE /api/cards/k1']);
+    expect(writes.map((request) => `${request.method} ${request.path}`)).toEqual(['DELETE /api/v1/tracks/w1/terminals/k1', 'DELETE /api/v1/tracks/w1/terminals/k1']);
   });
 
   it('leaves the deleted track’s own page as a delete that held', async () => {

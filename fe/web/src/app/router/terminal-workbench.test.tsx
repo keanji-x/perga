@@ -144,7 +144,7 @@ it('creates within the resolved daily Track rather than a global or guessed scop
   const fixture = setupWorkbench({ daily: true });
   await openTerminalCommand();
   await screen.findByText('No terminal session available.');
-  expect(fixture.posts()[0]?.path).toBe('/api/tracks/workbench/terminal-cards');
+  expect(fixture.posts()[0]?.path).toBe('/api/v1/tracks/workbench/terminals');
 });
 
 it('leaves a different Track view and its focus untouched when creation completes after navigation', async () => {
@@ -167,7 +167,7 @@ it('leaves a different Track view and its focus untouched when creation complete
   const current = await screen.findByRole('combobox', { name: 'Message' });
   current.textContent = '/terminal'; fireEvent.input(current); fireEvent.keyDown(current, { key: 'Enter', code: 'Enter' });
   await screen.findByText('No terminal session available.');
-  expect(fixture.posts().map(post => post.path)).toEqual(['/api/tracks/workbench/terminal-cards', '/api/tracks/other/terminal-cards']);
+  expect(fixture.posts().map(post => post.path)).toEqual(['/api/v1/tracks/workbench/terminals', '/api/v1/tracks/other/terminals']);
 });
 
 it('routes an ordinary card URL into the same dock and keeps it out of the board', async () => {
@@ -202,7 +202,7 @@ it('deletes only after confirmation, removes the inventory row and selects an ex
   const dialog = screen.getByRole('dialog', { name: 'Delete this card?' });
   await userEvent.click((await import('@testing-library/react')).within(dialog).getByRole('button', { name: 'Delete card' }));
   await waitFor(() => expect(within(screen.getByRole('region', { name: 'Workbench' })).queryByRole('button', { name: /^second/ })).toBeNull());
-  expect(fixture.requests.filter(request => request.method === 'DELETE').map(request => request.path)).toEqual(['/api/cards/second']);
+  expect(fixture.requests.filter(request => request.method === 'DELETE').map(request => request.path)).toEqual(['/api/v1/tracks/workbench/terminals/second']);
   expect(document.querySelector('[data-nc-card-dock]:not([hidden])')?.getAttribute('data-nc-card-id')).toBe('first');
   expect(fixture.posts()).toHaveLength(0);
 });

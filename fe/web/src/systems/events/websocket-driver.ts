@@ -20,8 +20,29 @@ function isUnauthorized(error: unknown): boolean {
   return typeof failure === 'object' && failure !== null && 'kind' in failure && failure.kind === 'unauthorized';
 }
 
-export function wsUrl(location: Pick<Location, 'protocol' | 'host'> = window.location): string {
-  return `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/api/events`;
+export function wsUrl(
+  location: Pick<Location, 'protocol' | 'host'> = window.location,
+  options?: Readonly<{ since?: number | null; trackId?: string | null }>,
+): string {
+  const base = `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/api/v1/events`;
+  if (options === undefined) return base;
+  const params = new URLSearchParams();
+  if (options.since !== undefined && options.since !== null) params.set('since', String(options.since));
+  if (options.trackId !== undefined && options.trackId !== null && options.trackId !== '') {
+    params.set('trackId', options.trackId);
+  }
+  const query = params.toString();
+  return query === '' ? base : `${base}?${query}`;
+}
+
+function buildPergaEventsConnectUrl(baseUrl: string, since: number | null, trackId?: string | null): string {
+  if (!baseUrl.includes('/api/v1/events')) return baseUrl;
+  const parsed = new URL(baseUrl);
+  if (!parsed.searchParams.has('since')) parsed.searchParams.set('since', String(since ?? 0));
+  if (trackId !== undefined && trackId !== null && trackId !== '' && !parsed.searchParams.has('trackId')) {
+    parsed.searchParams.set('trackId', trackId);
+  }
+  return parsed.toString();
 }
 
 export class WebSocketDriver implements EventStreamDriver {
@@ -89,8 +110,12 @@ export class WebSocketDriver implements EventStreamDriver {
     const configuration = this.configuration;
     const sink = this.sink;
     if (configuration === null || sink === null) return;
+    const isPergaV1 = this.url.includes('/api/v1/events');
+    const targetUrl = isPergaV1
+      ? buildPergaEventsConnectUrl(this.url, this.cursor.read(), configuration.trackId)
+      : this.url;
     let socket: SocketPort;
-    try { socket = this.socketFactory(this.url); }
+    try { socket = this.socketFactory(targetUrl); }
     catch { this.scheduleRetry(epoch); return; }
     if (this.closed || epoch !== this.epoch) { socket.close(); return; }
     this.socket = socket;
@@ -102,7 +127,9 @@ export class WebSocketDriver implements EventStreamDriver {
       if (this.closed || epoch !== this.epoch) { socket.close(); return; }
       opened = true;
       if (!__NC_BUNDLED__) this.retryDelay = 500;
-      socket.send(JSON.stringify(eventSubscriptionFrame(configuration.topics, this.cursor.read())));
+      if (!isPergaV1) {
+        socket.send(JSON.stringify(eventSubscriptionFrame(configuration.topics, this.cursor.read())));
+      }
     };
     socket.onmessage = (event) => {
       if (this.closed || epoch !== this.epoch) return;

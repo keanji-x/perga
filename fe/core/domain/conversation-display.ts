@@ -1,10 +1,16 @@
 /** One typed read contract over the existing transcript resource. Display identities are not native turns. */
 import { z } from 'zod';
 import type { ApiOperation } from '../api/types.js';
-import { agentProviderSchema, conversationCursorSchema, workerSessionStateSchema } from '../api/schemas.js';
+import {
+  agentProviderSchema,
+  conversationCursorSchema,
+  sessionItemsPageDtoSchema,
+  workerSessionStateSchema,
+  type SessionItemsPageDto,
+} from '../api/schemas.js';
 import type { ConversationTerminalOutcome, ConversationCursor, ConversationDisplayItem, ConversationPage, ConversationPendingInput, ConversationActiveInput, ConversationSubmissionDelivery, HarnessItem as TranscriptRow } from '../api/generated/wire.js';
 import { plannerPermissionModeSchema } from './planner-permission-mode.js';
-import { SYSTEM_PRESENTATION_LABELS, systemInputPresentationSchema, buildTranscript, retireFollowedThoughts, harnessTimeoutEvidenceSchema, harnessItemSchema as transcriptRowSchema, HARNESS_ITEMS_PAGE_LIMIT as TRANSCRIPT_PAGE_LIMIT, plannerRunOperation, type PlannerRun, type TranscriptEntry } from './conversation.js';
+import { SYSTEM_PRESENTATION_LABELS, systemInputPresentationSchema, buildTranscript, retireFollowedThoughts, harnessTimeoutEvidenceSchema, harnessItemSchema as transcriptRowSchema, HARNESS_ITEMS_PAGE_LIMIT as TRANSCRIPT_PAGE_LIMIT, legacyPlannerRunSchema, type PlannerRun, type TranscriptEntry } from './conversation.js';
 
 /** Native acknowledgement can arrive at END. Defer intervention for the exact
  * tracked execution without changing its delivery fact; other held inputs remain visible. */
@@ -69,20 +75,196 @@ export const conversationPageSchema: z.ZodType<ConversationPage> = z.object({
   ]) }).strict()), next_cursor: conversationCursorSchema.nullable(),
 }).strict();
 
+export function sessionItemsPageDtoToConversationPage(
+  card: string,
+  page: SessionItemsPageDto,
+  cursor: ConversationCursor | null,
+): ConversationPage {
+  const threadId = page.session.nativeThreadId || `epoch-${page.session.epoch}`;
+  const resultsByCallId = new Map<string, { output: unknown; isError: boolean; createdAtMs: number }>();
+  for (const item of page.items) {
+    if (item.kind !== 'tool_result') continue;
+    const payloadObj = typeof item.payload === 'object' && item.payload !== null
+      ? (item.payload as Record<string, unknown>)
+      : {};
+    if (typeof payloadObj.callId === 'string') {
+      resultsByCallId.set(payloadObj.callId, {
+        output: payloadObj.output ?? null,
+        isError: payloadObj.isError === true,
+        createdAtMs: item.createdAtMs,
+      });
+    }
+  }
+
+  const windowItems = cursor === null
+    ? page.items
+    : page.items.filter((item) => item.id < cursor.position);
+  const sliced = windowItems.slice(-TRANSCRIPT_PAGE_LIMIT);
+  const hasOlder = windowItems.length > sliced.length;
+
+  const displayItems: ConversationDisplayItem[] = [...sliced].reverse().flatMap((item): ConversationDisplayItem[] => {
+    const itemCursor: ConversationCursor = { contract: 'conversation_v1', card_id: card, source: 'presentation', position: item.id };
+    const payloadObj = typeof item.payload === 'object' && item.payload !== null
+      ? (item.payload as Record<string, unknown>)
+      : {};
+
+    if (item.kind === 'user') {
+      const content = typeof payloadObj.content === 'string' ? payloadObj.content : '';
+      const triggerKind = typeof payloadObj.triggerKind === 'string' ? payloadObj.triggerKind : 'user';
+      if (triggerKind === 'wake' || triggerKind === 'scheduler') {
+        return [{
+          cursor: itemCursor,
+          source: {
+            kind: 'system',
+            observation_id: String(item.id),
+            presentation: 'system',
+            text: content,
+            created_at_ms: item.createdAtMs,
+          },
+        }];
+      }
+      return [{
+        cursor: itemCursor,
+        source: {
+          kind: 'human',
+          message_id: `msg-${item.id}`,
+          revision: 1,
+          author: { user_id: 'owner', display_name: 'Owner' },
+          text: content,
+          attachments: [],
+          created_at_ms: item.createdAtMs,
+        },
+      }];
+    }
+
+    if (item.kind === 'assistant_text') {
+      const text = typeof payloadObj.text === 'string' ? payloadObj.text : '';
+      return [{
+        cursor: itemCursor,
+        source: {
+          kind: 'native',
+          item: {
+            id: item.id,
+            worker_session_id: item.sessionId,
+            card_id: card,
+            track_id: page.session.trackId,
+            thread_id: threadId,
+            turn_id: item.turnId || null,
+            item_uuid: `item-${item.id}`,
+            item_type: 'agentMessage',
+            method: 'item/completed',
+            params: JSON.stringify({
+              completedAtMs: item.createdAtMs,
+              item: { id: `item-${item.id}`, type: 'agentMessage', text },
+            }),
+            created_at_ms: item.createdAtMs,
+            turn_error_text: null,
+          },
+        },
+      }];
+    }
+
+    if (item.kind === 'thinking') {
+      const text = typeof payloadObj.text === 'string' ? payloadObj.text : '';
+      return [{
+        cursor: itemCursor,
+        source: {
+          kind: 'native',
+          item: {
+            id: item.id,
+            worker_session_id: item.sessionId,
+            card_id: card,
+            track_id: page.session.trackId,
+            thread_id: threadId,
+            turn_id: item.turnId || null,
+            item_uuid: `thinking-${item.id}`,
+            item_type: 'reasoning',
+            method: 'item/completed',
+            params: JSON.stringify({
+              completedAtMs: item.createdAtMs,
+              item: { type: 'reasoning', summary: [{ text }] },
+            }),
+            created_at_ms: item.createdAtMs,
+            turn_error_text: null,
+          },
+        },
+      }];
+    }
+
+    if (item.kind === 'tool_call') {
+      const callId = typeof payloadObj.callId === 'string' ? payloadObj.callId : `call-${item.id}`;
+      const toolName = typeof payloadObj.name === 'string' ? payloadObj.name : 'tool';
+      const args = payloadObj.args ?? {};
+      const completed = resultsByCallId.get(callId);
+      return [{
+        cursor: itemCursor,
+        source: {
+          kind: 'native',
+          item: {
+            id: item.id,
+            worker_session_id: item.sessionId,
+            card_id: card,
+            track_id: page.session.trackId,
+            thread_id: threadId,
+            turn_id: item.turnId || null,
+            item_uuid: callId,
+            item_type: 'mcpToolCall',
+            method: completed !== undefined ? 'item/completed' : 'item/started',
+            params: JSON.stringify({
+              ...(completed !== undefined ? { completedAtMs: completed.createdAtMs } : {}),
+              item: {
+                type: 'mcpToolCall',
+                tool: toolName,
+                arguments: args,
+                ...(completed !== undefined
+                  ? completed.isError
+                    ? { status: 'failed', error: completed.output }
+                    : { status: 'completed', result: completed.output }
+                  : {}),
+              },
+            }),
+            created_at_ms: item.createdAtMs,
+            turn_error_text: null,
+          },
+        },
+      }];
+    }
+
+    return [];
+  });
+
+  const oldestPosition = sliced[0]?.id;
+  return {
+    contract: 'conversation_v1',
+    source: 'presentation',
+    items: displayItems,
+    next_cursor: hasOlder && oldestPosition !== undefined
+      ? { contract: 'conversation_v1', card_id: card, source: 'presentation', position: oldestPosition }
+      : null,
+  };
+}
+
 export function conversationItemsOperation(card: string, cursor: ConversationCursor | null): ApiOperation<ConversationPage> {
-  return { method:'GET', path:`/api/cards/${encodeURIComponent(card)}/harness/items?contract=conversation_v1&direction=desc&limit=${TRANSCRIPT_PAGE_LIMIT}${cursor === null ? '' : `&cursor=${encodeURIComponent(JSON.stringify(cursor))}`}`,
-    responseSchema:conversationPageSchema.refine(page => page.items.every(item => item.cursor.card_id === card
-      && item.cursor.source === page.source
-      && (item.source.kind !== 'imported_item' || (item.source.provenance.card_id === card
-        && item.source.item.card_id === card && item.source.provenance.original_row_id === item.source.item.id
-        && item.cursor.position > item.source.provenance.import_boundary_sequence))
-      && (item.source.kind !== 'removed' || item.source.identity.kind !== 'imported'
-        || (item.source.identity.provenance.card_id === card
-          && item.cursor.position > item.source.identity.provenance.import_boundary_sequence))
-      && (page.source === 'historical_raw'
-        ? item.source.kind === 'historical_raw' : item.source.kind !== 'historical_raw'))
-      && (page.next_cursor === null || (page.next_cursor.card_id === card && page.next_cursor.source === page.source)),
-      'Conversation cursor/source scope mismatch') };
+  const cursorSuffix = cursor === null ? '' : `&cursor=${encodeURIComponent(JSON.stringify(cursor))}`;
+  return {
+    method: 'GET',
+    path: `/api/v1/sessions/${encodeURIComponent(card)}/items?afterId=0&limit=500${cursorSuffix}`,
+    responseSchema: z.union([
+      sessionItemsPageDtoSchema.transform((page) => sessionItemsPageDtoToConversationPage(card, page, cursor)),
+      conversationPageSchema.refine(page => page.items.every(item => item.cursor.card_id === card
+        && item.cursor.source === page.source
+        && (item.source.kind !== 'imported_item' || (item.source.provenance.card_id === card
+          && item.source.item.card_id === card && item.source.provenance.original_row_id === item.source.item.id
+          && item.cursor.position > item.source.provenance.import_boundary_sequence))
+        && (item.source.kind !== 'removed' || item.source.identity.kind !== 'imported'
+          || (item.source.identity.provenance.card_id === card
+            && item.cursor.position > item.source.identity.provenance.import_boundary_sequence))
+        && (page.source === 'historical_raw'
+          ? item.source.kind === 'historical_raw' : item.source.kind !== 'historical_raw'))
+        && (page.next_cursor === null || (page.next_cursor.card_id === card && page.next_cursor.source === page.source)),
+        'Conversation cursor/source scope mismatch'),
+    ]),
+  };
 }
 
 /** Only real Native/raw observations may retire a streamed native item. */
@@ -186,11 +368,54 @@ export function orderedPendingInputs(inputs: readonly ConversationPendingInput[]
 }
 
 export function conversationRunOperation(card: string): ApiOperation<PlannerRun & z.infer<typeof conversationRunMetadataSchema>> {
-  const original = plannerRunOperation(card);
-  return { ...original, path:`${original.path}?contract=conversation_v1`,
-    responseSchema:original.responseSchema.and(conversationRunMetadataSchema).refine(run => run.terminal_outcome === null
-      || (run.input_contract === 'canonical' && run.card_id === card && run.terminal_outcome.card_id === card
-        && run.terminal_outcome.worker_session_id === run.worker_session_id
-        && (run.native_turn_id === null || run.native_turn_id === run.terminal_outcome.turn_id)),
-    'Current terminal outcome scope mismatch') };
+  return {
+    method: 'GET',
+    path: `/api/v1/sessions/${encodeURIComponent(card)}/items?afterId=0&limit=1&view=run`,
+    responseSchema: z.union([
+      sessionItemsPageDtoSchema.transform((page): PlannerRun & z.infer<typeof conversationRunMetadataSchema> => {
+        const running = page.activeTurn !== null && page.activeTurn !== undefined && page.activeTurn.status === 'running';
+        const ratio = Math.max(0, Math.min(1, page.session.contextUsageRatio));
+        return {
+          card_id: card,
+          worker_session_id: page.session.id,
+          phase: running ? 'turn_running' : 'idle',
+          pending: [],
+          pending_overflow: 0,
+          model: page.session.model ?? null,
+          reasoning_effort: null,
+          permission_mode: page.session.isLead ? 'ask' : null,
+          blocked_reason: null,
+          recovery: null,
+          attachments_supported: false,
+          manual_compact_supported: true,
+          compact_outcome: null,
+          context_usage_invalidated: false,
+          token_usage: ratio > 0
+            ? {
+              used_tokens: Math.round(ratio * 200_000),
+              context_window: 200_000,
+              percent: Math.round(ratio * 100),
+              at_ms: page.session.updatedAtMs,
+            }
+            : null,
+          running_turn: running && page.activeTurn !== null && page.activeTurn !== undefined
+            ? { turn_id: page.activeTurn.id, elapsed_ms: Math.max(0, Date.now() - page.activeTurn.startedAtMs) }
+            : null,
+          input_contract: 'canonical',
+          runtime_state: running ? 'running' : 'idle',
+          history_replacement_supported: false,
+          terminal_timeout: null,
+          terminal_outcome: null,
+          pending_inputs: [],
+          active_input: null,
+          native_turn_id: running && page.activeTurn !== null && page.activeTurn !== undefined ? page.activeTurn.id : null,
+        };
+      }),
+      legacyPlannerRunSchema.and(conversationRunMetadataSchema).refine(run => run.terminal_outcome === null
+        || (run.input_contract === 'canonical' && run.card_id === card && run.terminal_outcome.card_id === card
+          && run.terminal_outcome.worker_session_id === run.worker_session_id
+          && (run.native_turn_id === null || run.native_turn_id === run.terminal_outcome.turn_id)),
+        'Current terminal outcome scope mismatch'),
+    ]),
+  };
 }

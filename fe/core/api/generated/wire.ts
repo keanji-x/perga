@@ -378,7 +378,7 @@ status_detail?: string,
 /**
  * #1727 S4: what the verdict was checked against (D3); absent on pre-slice-4 producers.
  */
-target?: VerifyTarget, } } | { "ev": "task.regate_requested", "data": { attempt_id: string, key: string, previous_gate_attempt: number, reserved_gate_attempt: number, agent_message: string, } } | { "ev": "harness.presentation.changed", "data": { card_id: CardId, track_id: TrackId, cursor: ConversationCursor, } };
+target?: VerifyTarget, } } | { "ev": "task.regate_requested", "data": { attempt_id: string, key: string, previous_gate_attempt: number, reserved_gate_attempt: number, agent_message: string, } } | { "ev": "harness.presentation.changed", "data": { card_id: CardId, track_id: TrackId, cursor: ConversationCursor, } } | { "ev": "report.updated", "data": { track_id: string | null, docRev?: number, summary?: string | null, } } | { "ev": "task.updated", "data": { track_id: string | null, task?: TaskDto | null, attempt?: TaskAttemptDto | null, tasks?: Array<TaskDto> | null, } } | { "ev": "session.updated", "data": { track_id: string, session: AgentSessionDto, } } | { "ev": "turn.completed", "data": { track_id: string | null, turn: SessionTurnDto, } } | { "ev": "ask.changed", "data": { track_id: string, ask: AskDto, } } | { "ev": "mail.received", "data": { track_id: string, mail: MailDto, } } | { "ev": "terminal.changed", "data": { track_id: string, terminal: TerminalDto, } } | { "ev": "session.text_delta", "data": { sessionId: string, turnId: string, delta: string, createdAtMs: number, } } | { "ev": "session.thinking_delta", "data": { sessionId: string, turnId: string, delta: string, createdAtMs: number, } } | { "ev": "session.tool_progress", "data": { sessionId: string, turnId: string, phase: string, callId: string, name?: string | null, args?: unknown, isError?: boolean | null, createdAtMs: number, } };
 
 /**
  * Where an event lives in the area → track → card hierarchy.
@@ -1219,3 +1219,24 @@ export type WorkerSessionState = "starting" | "running" | "idle" | "turn_pending
 export type WorkspaceIsolation = "managed" | "worktree" | "none";
 
 export type WriteObservationBucket = { started_at_ms: number, transactions: number, failures: number, retries: number, mean_wait_ms: number, };
+
+// Perga /api/v1 canonical wire types
+export type ProviderStatusDto = import('../perga-v1.js').ProviderStatusDto;
+export type CompiledTemplateManifestDto = import('../perga-v1.js').CompiledTemplateManifestDto;
+export type AreaDto = import('../perga-v1.js').AreaDto;
+export type BootstrapDto = import('../perga-v1.js').BootstrapDto;
+export type TrackDto = import('../perga-v1.js').TrackDto;
+export type ReportDocumentDto = import('../perga-v1.js').ReportDocumentDto;
+export type TaskDto = import('../perga-v1.js').TaskDto;
+export type TaskAttemptDto = import('../perga-v1.js').TaskAttemptDto;
+export type AgentSessionDto = import('../perga-v1.js').AgentSessionDto;
+export type SessionTurnDto = import('../perga-v1.js').SessionTurnDto;
+export type SessionItemDto = import('../perga-v1.js').SessionItemDto;
+export type SessionItemsPageDto = import('../perga-v1.js').SessionItemsPageDto;
+export type AskDto = import('../perga-v1.js').AskDto;
+export type MailDto = import('../perga-v1.js').MailDto;
+export type TerminalDto = import('../perga-v1.js').TerminalDto;
+export type TrackAggregateSnapshotDto = import('../perga-v1.js').TrackAggregateSnapshotDto;
+export type ReportReadResultDto = import('../perga-v1.js').ReportReadResultDto;
+export type WorkspaceFileResultDto = import('../perga-v1.js').WorkspaceFileResultDto;
+export type DiffSummaryDto = import('../perga-v1.js').DiffSummaryDto;

@@ -147,13 +147,9 @@
 - { path: fe/web/src/ui/trigger-menu-keys, type: directory, owner: ui/trigger-menu-keys, readonly: false, basis: "#1881 one Enter/Tab rule for composers carrying an Astryx trigger menu" }
 - { path: fe/web/src/systems/recovery, type: directory, owner: systems/recovery, readonly: false, basis: "#1712 browser recovery lifecycle, cancellation, and transport capabilities" }
 
-- { path: fe/web/src/features/calendar, type: directory, owner: features/calendar, readonly: false, basis: "#1913 Calendar commitments" }
-
 - { path: fe/web/src/ui/hover-preview, type: directory, owner: ui/hover-preview, readonly: false, basis: "#2237 transient pinnable preview lifecycle with injected content and no domain policy" }
 
 - { path: fe/web/src/systems/github-links, type: directory, owner: systems/github-links, readonly: false, basis: "Desktop GitHub citation lifecycle; docs/design/github-link-preview.md" }
-
-- { path: fe/web/src/systems/window-stream, type: directory, owner: systems/window-stream, readonly: false, basis: "#2530 window-stream protocol v1 viewer lifecycle: socket, frame decode, input, reconnect" }
 
 - { path: fe/web/src/ui/code, type: directory, owner: ui/code, readonly: false, basis: "#2474 domain-free language metadata and read-only code presentation" }
 - { path: fe/tools/benchmark-code.mjs, type: file, owner: tooling/preview, readonly: false, basis: "#2474 standalone production reader performance comparison" }

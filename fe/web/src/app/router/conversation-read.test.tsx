@@ -37,8 +37,8 @@ it.each([true, false])('does not claim Running after a failed run read (initial 
   expect(field.textContent).toBe('Keep this draft.');
   const after = fixture.requests.slice(before);
   expect(after.every(request => request.method === 'GET')).toBe(true);
-  expect(after.filter(request => !request.path.endsWith('/harness/live')).map(request => request.path))
-    .toEqual(['/api/cards/daily-planner/planner/run?contract=conversation_v1']);
+  expect(after.filter(request => !request.path.includes('view=live')).map(request => request.path))
+    .toEqual(['/api/v1/sessions/daily-planner/items?afterId=0&limit=1&view=run']);
 });
 
 it('retries history independently and retains the last readable transcript', async () => {
@@ -53,7 +53,7 @@ it('retries history independently and retains the last readable transcript', asy
   fixture.failHistory(false);
   fireEvent.click(within(alert).getByRole('button', { name: 'Reload history' }));
   await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
-  expect(fixture.requests.slice(before).every(request => request.method === 'GET' && request.path.includes('/harness/items'))).toBe(true);
+  expect(fixture.requests.slice(before).every(request => request.method === 'GET' && request.path.includes('/items') && !request.path.includes('view='))).toBe(true);
   expect(fixture.requests.length).toBeGreaterThan(before);
 });
 

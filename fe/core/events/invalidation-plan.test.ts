@@ -10,6 +10,7 @@ const CONVERSATION_LIST_KINDS = [
   'worker_session.started', 'worker_session.status_changed', 'worker_session.superseded',
   'harness.phase.changed', 'harness.user_message.enqueued', 'harness.queue.changed',
   'harness.presentation.changed',
+  'session.updated', 'turn.completed', 'mail.received',
 ] as const;
 
 function event(value: unknown): WireEvent {
