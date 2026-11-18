@@ -11,6 +11,9 @@ on:
 permissions:
   contents: read
 
+env:
+  NPM_CONFIG_AUDIT: 'false'
+
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -102,7 +105,11 @@ jobs:
           OWNERSHIP_BASE_SHA: ${{ github.event.pull_request.base.sha || github.sha }}
           OWNERSHIP_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: npm run lint
-      - run: npm test
+      - name: Test frontend
+        env:
+          # The default eight workers oversubscribe hosted runners.
+          VITEST_MAX_WORKERS: '2'
+        run: npm test -- --testTimeout=15000
       - run: npm run build
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
