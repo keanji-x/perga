@@ -734,10 +734,11 @@ export function snapshotToTrackDetailWire(snapshot: TrackAggregateSnapshotDto): 
     cards.push({
       id: lead.id,
       track_id: snapshot.track.id,
-      kind: 'shared-spec',
+      kind: 'codex',
       title: lead.title ?? null,
       sort: 1,
       payload: {
+        planner_harness: true,
         planner_provider: normalizeWireAgentProvider(lead.provider) ?? lead.provider,
         is_lead: lead.isLead,
         epoch: lead.epoch,
@@ -821,6 +822,7 @@ export function createTrackOperation(body: NewTrackBody, idempotencyKey: string)
     ...(body.template_id !== undefined ? { templateId: body.template_id } : {}),
     ...(body.template_input !== undefined ? { templateInputs: body.template_input } : {}),
     ...(body.first_message !== undefined ? { firstMessage: body.first_message } : {}),
+    ...(body.reasoning_effort !== undefined ? { reasoningEffort: body.reasoning_effort } : {}),
   };
   return {
     method: 'POST',

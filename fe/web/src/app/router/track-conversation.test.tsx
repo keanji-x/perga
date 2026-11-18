@@ -1771,7 +1771,7 @@ describe('track conversations', () => {
     });
 
     it('model select: says the change is unconfirmed', async () => {
-      setup((request) => request.path.endsWith('/planner/model') ? timedOut() : undefined);
+      setup((request) => request.path.endsWith('/model') ? timedOut() : undefined);
       await openAssistant();
       fireEvent.click(within(drawerElement()).getByRole('button', { name: /^Model:/ }));
       fireEvent.click(await screen.findByRole('menuitem', { name: /^Default/ }));
@@ -1818,7 +1818,7 @@ describe('track conversations', () => {
         fireEvent.click(within(drawerElement()).getByRole('button', { name: /^Model:/ }));
         fireEvent.click(await screen.findByRole('menuitem', { name: /^Default/ }));
         expect((await screen.findByRole('alert')).textContent).toBe('The model was not changed.');
-        expect(requests.filter((request) => request.path.endsWith('/planner/model'))).toEqual([]);
+        expect(requests.filter((request) => request.path.endsWith('/model'))).toEqual([]);
       });
 
       it('Stop: says the response was not stopped', async () => {
@@ -3706,7 +3706,7 @@ describe('registry write-through', () => {
     const transport: ApiTransportPort = {
       async send(request) {
         if (request.path.endsWith('/messages')) { await answered; return inputAccepted(); }
-        if (request.path.endsWith('/planner/model')) return failure(500, 'internal', 'model store unavailable');
+        if (request.path.endsWith('/model')) return failure(500, 'internal', 'model store unavailable');
         if (request.path.includes('view=run')) return ok({ ...runIdle().body as object, card_id: pathCardId(request.path) });
         return ok([]);
       },
@@ -3745,7 +3745,7 @@ describe('registry write-through', () => {
     const refused = new Promise<void>((done) => { refuse = done; });
     const transport: ApiTransportPort = {
       async send(request) {
-        if (request.path.endsWith('/planner/model')) { await refused; return failure(400, 'bad_request', 'Claude is not ready'); }
+        if (request.path.endsWith('/model')) { await refused; return failure(400, 'bad_request', 'Claude is not ready'); }
         if (request.path.includes('view=run')) return ok({ ...runIdle().body as object, card_id: pathCardId(request.path) });
         return ok([]);
       },
@@ -4062,23 +4062,20 @@ it.each([false, true])('selects a model before the first conversation message an
     if (request.path === '/api/v1/bootstrap') return ok({ webCompatVersion: WEB_COMPAT_VERSION, minWebCompatVersion: WEB_COMPAT_VERSION,
       syncEventVersion: 20, dbInstanceId: 'test', assistantProviders: true, conversationInitialInput: true, conversationCreateModel: true });
     if (request.path === '/api/v1/bootstrap?provider=codex') return ok({
-      models: [{ id: 'preset-fast', model: 'gpt-5', resolved_model: null, display_name: 'GPT-5', description: '', is_default: false,
-        supported_reasoning_efforts: [{ reasoning_effort: 'low', description: 'Faster' }, { reasoning_effort: 'high', description: 'Thinks longer' }], default_reasoning_effort: 'high' }],
-      default: { model: 'gpt-5', reasoning_effort: 'high', supported_reasoning_efforts: null }, default_source: 'config_read', source: 'live', fetched_at_ms: 1,
+      version: 'test', providers: [{ provider: 'codex', available: true, models: ['gpt-5'] }],
     });
     if (request.method === 'POST' && request.path === CONVERSATIONS) return created(derivedRow('w1', request), request);
     return undefined;
   }, undefined, bundled ? access : undefined);
   await openDraft();
   fireEvent.click(await screen.findByRole('button', { name: /^Model:/ }));
-  fireEvent.click(await screen.findByRole('menuitem', { name: /^GPT-5/ }));
-  fireEvent.click(screen.getByRole('button', { name: /^Reasoning effort:/ }));
-  fireEvent.click(await screen.findByRole('menuitem', { name: /^high/ }));
+  fireEvent.click(await screen.findByRole('menuitem', { name: 'gpt-5' }));
+  expect(screen.queryByRole('button', { name: /^Reasoning effort:/ })).toBeNull();
   expect(creates(requests, CONVERSATIONS)).toHaveLength(0);
   await write('Use this model from the start');
   await waitFor(() => expect(creates(requests, CONVERSATIONS)).toHaveLength(1));
-  expect(creates(requests, CONVERSATIONS)[0].body).toMatchObject({ text: 'Use this model from the start', provider: 'codex', model: 'gpt-5', reasoning_effort: 'high' });
-  expect(requests.filter(request => request.method === 'PUT' && request.path.endsWith('/planner/model'))).toEqual([]);
+  expect(creates(requests, CONVERSATIONS)[0].body).toMatchObject({ text: 'Use this model from the start', provider: 'codex', model: 'gpt-5' });
+  expect(requests.filter(request => request.method === 'PUT' && request.path.endsWith('/model'))).toEqual([]);
 });
 
 it('keeps first-message selection disabled on an older server that would ignore it', async () => {
@@ -4138,9 +4135,7 @@ it('keeps the first-message model fixed when a menu opened before sending is sel
     if (request.path === '/api/v1/bootstrap') return ok({ webCompatVersion: WEB_COMPAT_VERSION, minWebCompatVersion: WEB_COMPAT_VERSION,
       syncEventVersion: 20, dbInstanceId: 'test', assistantProviders: true, conversationInitialInput: true, conversationCreateModel: true });
     if (request.path === '/api/v1/bootstrap?provider=codex') return ok({
-      models: [{ id: 'preset', model: 'chosen-model', resolved_model: null, display_name: 'Chosen model', description: '', is_default: false,
-        supported_reasoning_efforts: [], default_reasoning_effort: 'low' }],
-      default: { model: 'default-model', reasoning_effort: null, supported_reasoning_efforts: null }, default_source: 'config_read', source: 'live', fetched_at_ms: 1,
+      version: 'test', providers: [{ provider: 'codex', available: true, models: ['chosen-model'] }],
     });
     if (request.method === 'POST' && request.path === CONVERSATIONS) return pending;
     return undefined;
@@ -4149,13 +4144,13 @@ it('keeps the first-message model fixed when a menu opened before sending is sel
   const modelPicker = await screen.findByRole('button', { name: /^Model:/ });
   await waitFor(() => expect(modelPicker.hasAttribute('disabled') || modelPicker.getAttribute('aria-disabled') === 'true').toBe(false));
   fireEvent.click(modelPicker);
-  fireEvent.click(await screen.findByRole('menuitem', { name: 'Chosen model' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Model: codex Chosen model' }));
+  fireEvent.click(await screen.findByRole('menuitem', { name: 'chosen-model' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Model: Codex chosen-model' }));
   await write('Keep my choice');
   await waitFor(() => expect(creates(requests, CONVERSATIONS)).toHaveLength(1));
   try {
     fireEvent.click(screen.getByRole('menuitem', { name: /^Default/, hidden: true }));
-    expect(screen.getByRole('button', { name: /^Model:/ }).getAttribute('aria-label')).toBe('Model: codex Chosen model');
+    expect(screen.getByRole('button', { name: /^Model:/ }).getAttribute('aria-label')).toBe('Model: Codex chosen-model');
   } finally {
     await act(async () => { settle(failure(500, 'internal', 'Try again')); await pending; });
   }

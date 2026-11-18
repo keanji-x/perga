@@ -55,7 +55,8 @@ public sealed record AgentSessionDto(
     double ContextUsageRatio,
     long? ArchivedAtMs,
     long CreatedAtMs,
-    long UpdatedAtMs);
+    long UpdatedAtMs,
+    string? ReasoningEffort = null);
 
 public sealed record SessionTurnDto(
     string Id,

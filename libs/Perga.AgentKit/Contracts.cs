@@ -35,7 +35,8 @@ public sealed record HarnessLaunchSpec(
     string? SystemPrompt,
     IReadOnlyDictionary<string, McpServerConfig> McpServers,
     OsSandboxMode Sandbox = OsSandboxMode.None,
-    IReadOnlyList<OverlayMountSpec>? OverlayMounts = null);
+    IReadOnlyList<OverlayMountSpec>? OverlayMounts = null,
+    string? ReasoningEffort = null);
 
 public sealed record TurnInput(
     string Prompt,
@@ -61,12 +62,25 @@ public abstract record UnifiedAgentEvent
     public sealed record TurnError(string Code, string Message, bool IsRetryable, bool IsConclusive = false) : UnifiedAgentEvent;
 }
 
+public sealed record ProviderModelEffort(
+    string ReasoningEffort,
+    string Description);
+
+public sealed record ProviderModelInfo(
+    string Model,
+    string DisplayName,
+    string Description,
+    bool IsDefault,
+    string? DefaultReasoningEffort,
+    IReadOnlyList<ProviderModelEffort> SupportedReasoningEfforts);
+
 public sealed record ProviderStatus(
     string Provider,
     bool Available,
     string? Version,
     string? Reason,
-    IReadOnlyList<string> Models);
+    IReadOnlyList<string> Models,
+    IReadOnlyList<ProviderModelInfo>? ModelCatalog = null);
 
 public interface IAgentSession : IAsyncDisposable
 {
@@ -76,6 +90,7 @@ public interface IAgentSession : IAsyncDisposable
     IAsyncEnumerable<UnifiedAgentEvent> StreamTurnAsync(TurnInput input, CancellationToken ct);
     Task CancelTurnAsync(CancellationToken ct);
     Task RespondApprovalAsync(string requestId, bool approved, string? reason = null, CancellationToken ct = default);
+    Task<bool> TrySetModelAsync(string? model, string? reasoningEffort = null, CancellationToken ct = default);
     Task<bool> TrySteerAsync(string message, CancellationToken ct = default);
 }
 

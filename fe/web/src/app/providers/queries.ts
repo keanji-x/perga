@@ -310,7 +310,7 @@ export function usePlannerMutations(transport: ApiTransportPort, cardId: string,
     setModel: (selection: ModelSelection): Promise<ModelSelectionResult> =>
       setModelWrite(selection)
         .then((result) => {
-          void client.invalidateQueries({ queryKey: queryKeys.modelCatalog({ kind: 'card', cardId }) })
+          void client.invalidateQueries({ queryKey: queryKeys.modelCatalogForCard(cardId) })
             .catch(() => undefined);
           return refreshAfter(result);
         }),

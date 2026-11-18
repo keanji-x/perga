@@ -186,7 +186,7 @@ function policies(): PolicyMap {
    * outcome row: the kernel writes it before the snapshot commit and emits no `harness.item.added`. */
   'harness.phase.changed': plan((event) => result([
     eventKeys.initialInput(event.data.track_id, event.data.card_id), eventKeys.plannerRun(event.data.card_id), eventKeys.transcript(event.data.card_id),
-    ...(event.data.new_phase === 'turn_completed' ? [eventKeys.modelCatalog({ kind: 'card', cardId: event.data.card_id })] : []),
+    ...(event.data.new_phase === 'turn_completed' ? [eventKeys.modelCatalogForCard(event.data.card_id)] : []),
     ...conversationInputMetadata(event.data.track_id),
   ])),
   'harness.transcript.cleared': plan((event) => result([

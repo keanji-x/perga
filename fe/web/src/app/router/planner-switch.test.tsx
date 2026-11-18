@@ -302,12 +302,12 @@ it('uses the listed Assistant provider through model, capabilities and side', as
   const input = await screen.findByRole('combobox', { name: 'Message' });
   await screen.findByText('Saved reply');
   await userEvent.click(screen.getByRole('button', { name: /^Model:/ }));
-  await screen.findByRole('menuitem', { name: 'Selected model' });
+  await screen.findByRole('menuitem', { name: 'selected' });
   expect(fixture.requests.filter(request => request.path.startsWith('/api/v1/bootstrap?card_id=')).map(request => request.path)).toContain('/api/v1/bootstrap?card_id=dormant');
   expect(screen.queryByRole('group', { name: 'Codex' })).toBeNull();
-  await userEvent.click(screen.getByRole('menuitem', { name: 'Selected model' }));
-  await waitFor(() => expect(fixture.requests.some(request => request.path === '/api/cards/dormant/planner/model')).toBe(true));
-  expect(screen.getByRole('button', { name: 'Attach an image' }).getAttribute('aria-disabled')).toBe('true');
+  await userEvent.click(screen.getByRole('menuitem', { name: 'selected' }));
+  await waitFor(() => expect(fixture.requests.some(request => request.path === '/api/v1/sessions/dormant/model')).toBe(true));
+  expect(screen.getByRole('button', { name: 'Attach an image' }).getAttribute('aria-disabled')).toBeNull();
   expect(screen.queryByRole('button', { name: /Compact/ })).toBeNull();
   await submit(input, '/side Keep this backend');
   await waitFor(() => expect(fixture.requests.find(request => request.method === 'POST' && request.path.endsWith('/sessions'))?.body)

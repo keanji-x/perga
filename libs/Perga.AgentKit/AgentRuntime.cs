@@ -2,6 +2,8 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
 using System.Text;
+using System.Text.Json;
+using Perga.AgentKit.Internal;
 
 namespace Perga.AgentKit;
 
@@ -17,12 +19,16 @@ public sealed class AgentRuntime : IAgentRuntime
 
     private static readonly string[] DefaultCodexModels = ["gpt-5.4", "gpt-5.3-codex"];
     private static readonly string[] DefaultClaudeModels = ["claude-sonnet-4-6", "claude-opus-4-6"];
-    private static readonly string[] DefaultAntigravityModels = ["gemini-3.1-pro", "gemini-3-flash"];
     private static readonly Encoding Utf8NoBom = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
+
+    private static readonly TimeSpan ProbeCacheTtl = TimeSpan.FromSeconds(60);
 
     private readonly AgentRuntimeOptions _options;
     private readonly OsSandboxWrapper _sandboxWrapper;
     private readonly ConcurrentDictionary<IAgentSession, byte> _activeSessions = new();
+    private readonly SemaphoreSlim _probeLock = new(1, 1);
+    private IReadOnlyList<ProviderStatus>? _cachedProbeStatuses;
+    private long _cachedProbeAtMs;
     private int _disposed;
 
     public AgentRuntime()
@@ -44,30 +50,55 @@ public sealed class AgentRuntime : IAgentRuntime
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         ct.ThrowIfCancellationRequested();
 
-        var providerNames = new List<string>(CanonicalProviders.Length + _options.ProviderOverrides.Count);
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-        foreach (var canonical in CanonicalProviders)
+        var nowMs = Environment.TickCount64;
+        var cached = Volatile.Read(ref _cachedProbeStatuses);
+        if (cached is not null && nowMs - Interlocked.Read(ref _cachedProbeAtMs) < (long)ProbeCacheTtl.TotalMilliseconds)
         {
-            if (seen.Add(canonical))
-            {
-                providerNames.Add(canonical);
-            }
+            return cached;
         }
 
-        foreach (var customKey in _options.ProviderOverrides.Keys)
+        await _probeLock.WaitAsync(ct).ConfigureAwait(false);
+        try
         {
-            if (!string.IsNullOrWhiteSpace(customKey) && seen.Add(customKey))
+            nowMs = Environment.TickCount64;
+            cached = Volatile.Read(ref _cachedProbeStatuses);
+            if (cached is not null && nowMs - Interlocked.Read(ref _cachedProbeAtMs) < (long)ProbeCacheTtl.TotalMilliseconds)
             {
-                providerNames.Add(customKey);
+                return cached;
             }
+
+            var providerNames = new List<string>(CanonicalProviders.Length + _options.ProviderOverrides.Count);
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var canonical in CanonicalProviders)
+            {
+                if (seen.Add(canonical))
+                {
+                    providerNames.Add(canonical);
+                }
+            }
+
+            foreach (var customKey in _options.ProviderOverrides.Keys)
+            {
+                if (!string.IsNullOrWhiteSpace(customKey) && seen.Add(customKey))
+                {
+                    providerNames.Add(customKey);
+                }
+            }
+
+            var probeTasks = providerNames
+                .Select(provider => ProbeSingleProviderAsync(provider, ct))
+                .ToArray();
+
+            var results = await Task.WhenAll(probeTasks).ConfigureAwait(false);
+            Volatile.Write(ref _cachedProbeStatuses, results);
+            Interlocked.Exchange(ref _cachedProbeAtMs, Environment.TickCount64);
+            return results;
         }
-
-        var probeTasks = providerNames
-            .Select(provider => ProbeSingleProviderAsync(provider, ct))
-            .ToArray();
-
-        return await Task.WhenAll(probeTasks).ConfigureAwait(false);
+        finally
+        {
+            _probeLock.Release();
+        }
     }
 
     public async Task<IAgentSession> OpenSessionAsync(HarnessLaunchSpec spec, CancellationToken ct)
@@ -107,7 +138,8 @@ public sealed class AgentRuntime : IAgentRuntime
 
             args.Add("app-server");
             var env = BuildProcessEnvironment(cmdOverride.Env);
-            var rawInvocation = new CommandInvocation(cmdOverride.FileName, args, fullCwd, env);
+            var exePath = FindExecutableOnPath(cmdOverride.FileName, env) ?? cmdOverride.FileName;
+            var rawInvocation = new CommandInvocation(exePath, args, fullCwd, env);
             var wrapped = _sandboxWrapper.Wrap(rawInvocation, normalizedSpec.Sandbox, normalizedSpec.OverlayMounts);
             session = await CodexAgentSession.OpenAsync(
                 wrapped,
@@ -120,8 +152,9 @@ public sealed class AgentRuntime : IAgentRuntime
         {
             var cmdOverride = ResolveCommandSpec(provider, defaultExecutable: "claude");
             var env = BuildProcessEnvironment(cmdOverride.Env);
+            var exePath = FindExecutableOnPath(cmdOverride.FileName, env) ?? cmdOverride.FileName;
             session = await ClaudeAgentSession.OpenAsync(
-                cmdOverride,
+                cmdOverride with { FileName = exePath },
                 _sandboxWrapper,
                 normalizedSpec,
                 env,
@@ -143,7 +176,8 @@ public sealed class AgentRuntime : IAgentRuntime
             }
 
             var env = BuildProcessEnvironment(cmdOverride.Env);
-            var rawInvocation = new CommandInvocation(cmdOverride.FileName, args, fullCwd, env);
+            var exePath = FindExecutableOnPath(cmdOverride.FileName, env) ?? cmdOverride.FileName;
+            var rawInvocation = new CommandInvocation(exePath, args, fullCwd, env);
             var wrapped = _sandboxWrapper.Wrap(rawInvocation, normalizedSpec.Sandbox, normalizedSpec.OverlayMounts);
             session = await AcpAgentSession.OpenAsync(
                 wrapped,
@@ -360,13 +394,34 @@ public sealed class AgentRuntime : IAgentRuntime
             }
 
             var version = ExtractVersionString(stdout) ?? ExtractVersionString(stderr) ?? "unknown";
-            var models = cmdSpec.Models ?? GetDefaultModelsForProvider(provider);
+            IReadOnlyList<string> models;
+            IReadOnlyList<ProviderModelInfo> catalog;
+            if (cmdSpec.Models is not null)
+            {
+                models = cmdSpec.Models;
+                catalog = BuildSimpleModelCatalog(models);
+            }
+            else if (provider.StartsWith("acp:", StringComparison.OrdinalIgnoreCase))
+            {
+                (models, catalog) = await ProbeAcpModelsAsync(provider, ct).ConfigureAwait(false);
+            }
+            else if (string.Equals(provider, "codex", StringComparison.OrdinalIgnoreCase))
+            {
+                (models, catalog) = await ProbeCodexModelsAsync(ct).ConfigureAwait(false);
+            }
+            else
+            {
+                models = GetDefaultModelsForProvider(provider);
+                catalog = BuildSimpleModelCatalog(models);
+            }
+
             return new ProviderStatus(
                 provider,
                 Available: true,
                 Version: version,
                 Reason: null,
-                Models: models);
+                Models: models,
+                ModelCatalog: catalog);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -385,6 +440,236 @@ public sealed class AgentRuntime : IAgentRuntime
         }
     }
 
+    private TimeSpan GetModelProbeTimeout() =>
+        _options.ProbeTimeout < TimeSpan.FromSeconds(2) ? _options.ProbeTimeout : _options.HandshakeTimeout;
+
+    private async Task<(IReadOnlyList<string> Models, IReadOnlyList<ProviderModelInfo> Catalog)> ProbeAcpModelsAsync(
+        string provider,
+        CancellationToken ct)
+    {
+        using var probeCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        probeCts.CancelAfter(GetModelProbeTimeout());
+        try
+        {
+            await using var session = await OpenSessionAsync(new HarnessLaunchSpec(
+                provider, null, Path.GetTempPath(), null, null,
+                new Dictionary<string, McpServerConfig>()), probeCts.Token).ConfigureAwait(false);
+            var acp = (AcpAgentSession)session;
+            var catalog = acp.AvailableModelCatalog;
+            var models = catalog.Count > 0 ? catalog.Select(m => m.Model).ToArray() : acp.AvailableModels;
+            if (models.Count > 0)
+            {
+                return (models, catalog);
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch
+        {
+            // Fall through to provider-specific fallback or empty list.
+        }
+
+        if (string.Equals(provider, "acp:opencode", StringComparison.OrdinalIgnoreCase))
+        {
+            var cliModels = await ProbeOpenCodeCliModelsAsync(ct).ConfigureAwait(false);
+            if (cliModels.Count > 0)
+            {
+                return (cliModels, BuildSimpleModelCatalog(cliModels));
+            }
+        }
+
+        return ([], []);
+    }
+
+    private async Task<IReadOnlyList<string>> ProbeOpenCodeCliModelsAsync(CancellationToken ct)
+    {
+        using var probeCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        probeCts.CancelAfter(GetModelProbeTimeout());
+        try
+        {
+            var (cmdOverride, _) = ResolveAcpCommandSpec("acp:opencode");
+            var env = BuildProcessEnvironment(cmdOverride.Env);
+            var exePath = FindExecutableOnPath(cmdOverride.FileName, env);
+            if (exePath is null)
+            {
+                return [];
+            }
+
+            var psi = new ProcessStartInfo
+            {
+                FileName = exePath,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+            psi.ArgumentList.Add("models");
+            foreach (var (k, v) in env)
+            {
+                psi.Environment[k] = v;
+            }
+
+            using var process = Process.Start(psi);
+            if (process is null)
+            {
+                return [];
+            }
+
+            var stdoutTask = process.StandardOutput.ReadToEndAsync(probeCts.Token);
+            var stderrTask = process.StandardError.ReadToEndAsync(probeCts.Token);
+            string stdout;
+            try
+            {
+                await process.WaitForExitAsync(probeCts.Token).ConfigureAwait(false);
+                stdout = await SafeAwaitOutputAsync(stdoutTask).ConfigureAwait(false);
+                await SafeAwaitOutputAsync(stderrTask).ConfigureAwait(false);
+                probeCts.Token.ThrowIfCancellationRequested();
+                if (process.ExitCode != 0)
+                {
+                    TryKillProcessTree(process);
+                    return [];
+                }
+            }
+            catch
+            {
+                TryKillProcessTree(process);
+                throw;
+            }
+            finally
+            {
+                await SafeAwaitOutputAsync(stdoutTask).ConfigureAwait(false);
+                await SafeAwaitOutputAsync(stderrTask).ConfigureAwait(false);
+            }
+
+            return stdout
+                .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Where(static line => line.Contains('/', StringComparison.Ordinal) && !line.Contains(' ', StringComparison.Ordinal))
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            return [];
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch
+        {
+            return [];
+        }
+    }
+
+    private async Task<(IReadOnlyList<string> Models, IReadOnlyList<ProviderModelInfo> Catalog)> ProbeCodexModelsAsync(
+        CancellationToken ct)
+    {
+        using var probeCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        probeCts.CancelAfter(GetModelProbeTimeout());
+        try
+        {
+            var cmdOverride = ResolveCommandSpec("codex", defaultExecutable: "codex");
+            var args = new List<string>();
+            if (cmdOverride.PrependArgs is not null)
+            {
+                args.AddRange(cmdOverride.PrependArgs);
+            }
+
+            args.Add("app-server");
+            var env = BuildProcessEnvironment(cmdOverride.Env);
+            var invocation = new CommandInvocation(cmdOverride.FileName, args, Path.GetTempPath(), env);
+            var process = StdioSubprocess.Start(invocation);
+            await using var rpc = new JsonRpcStdioConnection(
+                process,
+                onNotification: static (_, _) => { },
+                onServerRequest: static (_, _, _) => Task.FromResult<object?>(new { }),
+                onDisconnected: static _ => { });
+
+            await rpc.SendRequestAsync("initialize", new
+            {
+                clientInfo = new { name = "perga-probe", version = "1.0.0" }
+            }, probeCts.Token).ConfigureAwait(false);
+
+            var response = await rpc.SendRequestAsync("model/list", new { }, probeCts.Token).ConfigureAwait(false);
+            if (response.ValueKind == JsonValueKind.Object &&
+                response.TryGetProperty("data", out var data) &&
+                data.ValueKind == JsonValueKind.Array)
+            {
+                var catalog = new List<ProviderModelInfo>();
+                foreach (var item in data.EnumerateArray())
+                {
+                    if (item.ValueKind != JsonValueKind.Object)
+                    {
+                        continue;
+                    }
+
+                    if (item.TryGetProperty("hidden", out var hiddenProp) &&
+                        hiddenProp.ValueKind == JsonValueKind.True)
+                    {
+                        continue;
+                    }
+
+                    var model = TryGetJsonString(item, "model") ?? TryGetJsonString(item, "id");
+                    if (string.IsNullOrWhiteSpace(model))
+                    {
+                        continue;
+                    }
+
+                    var displayName = TryGetJsonString(item, "displayName") ?? model;
+                    var description = TryGetJsonString(item, "description") ?? string.Empty;
+                    var isDefault = item.TryGetProperty("isDefault", out var defProp) && defProp.ValueKind == JsonValueKind.True;
+                    var defaultEffort = TryGetJsonString(item, "defaultReasoningEffort");
+                    var efforts = new List<ProviderModelEffort>();
+                    if (item.TryGetProperty("supportedReasoningEfforts", out var effArr) &&
+                        effArr.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (var eff in effArr.EnumerateArray())
+                        {
+                            var effName = TryGetJsonString(eff, "reasoningEffort");
+                            if (!string.IsNullOrWhiteSpace(effName))
+                            {
+                                efforts.Add(new ProviderModelEffort(effName, TryGetJsonString(eff, "description") ?? string.Empty));
+                            }
+                        }
+                    }
+
+                    catalog.Add(new ProviderModelInfo(
+                        Model: model,
+                        DisplayName: displayName,
+                        Description: description,
+                        IsDefault: isDefault,
+                        DefaultReasoningEffort: defaultEffort,
+                        SupportedReasoningEfforts: efforts));
+                }
+
+                if (catalog.Count > 0)
+                {
+                    return (catalog.Select(m => m.Model).ToArray(), catalog);
+                }
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch
+        {
+            // Fall back to static defaults when codex app-server probe fails (e.g. mock CLI).
+        }
+
+        return (DefaultCodexModels, BuildSimpleModelCatalog(DefaultCodexModels));
+    }
+
+    private static IReadOnlyList<ProviderModelInfo> BuildSimpleModelCatalog(IReadOnlyList<string> models) =>
+        models.Select((m, i) => new ProviderModelInfo(m, m, string.Empty, i == 0, null, [])).ToArray();
+
+    private static string? TryGetJsonString(JsonElement obj, string property) =>
+        obj.TryGetProperty(property, out var val) && val.ValueKind == JsonValueKind.String
+            ? val.GetString()
+            : null;
+
     private static IReadOnlyList<string> GetDefaultModelsForProvider(string provider)
     {
         if (string.Equals(provider, "codex", StringComparison.OrdinalIgnoreCase))
@@ -395,11 +680,6 @@ public sealed class AgentRuntime : IAgentRuntime
         if (string.Equals(provider, "claude", StringComparison.OrdinalIgnoreCase))
         {
             return DefaultClaudeModels;
-        }
-
-        if (string.Equals(provider, "acp:antigravity", StringComparison.OrdinalIgnoreCase))
-        {
-            return DefaultAntigravityModels;
         }
 
         return [];
@@ -451,12 +731,20 @@ public sealed class AgentRuntime : IAgentRuntime
         }
 
         pathVar ??= Environment.GetEnvironmentVariable("PATH");
-        if (string.IsNullOrWhiteSpace(pathVar))
+        var segments = new List<string>(
+            (pathVar ?? string.Empty).Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries));
+
+        var homeDir = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        if (!string.IsNullOrWhiteSpace(homeDir))
+        {
+            segments.Add(Path.Combine(homeDir, ".local", "bin"));
+            segments.Add(Path.Combine(homeDir, ".opencode", "bin"));
+        }
+
+        if (segments.Count == 0)
         {
             return null;
         }
-
-        var segments = pathVar.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries);
         foreach (var dir in segments)
         {
             try

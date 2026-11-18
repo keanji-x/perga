@@ -3,7 +3,7 @@ import {
   trackLists, tracksInArea, trackDetail, trackBacklinksPrefix,
   trackBacklinks, trackReport, trackReportPrefix, overlaysByKind,
   plugins, pluginDataPrefix, trackTemplates,
-  transcriptPrefix, transcript as harnessItems, plannerRun, modelCatalog,
+  transcriptPrefix, transcript as harnessItems, plannerRun, modelCatalog, modelCatalogForCard,
   modelCatalogPrefix, trackConversations, trackConversationsPrefix,
   sessionLive, trackTerminals, taskAttemptsPrefix,
 } from '../../../../core/events/query-keys.ts';
@@ -64,6 +64,7 @@ export const queryKeys = Object.freeze({
    * provider about to be created on. Turn completion refreshes the owning card scope.
    */
   modelCatalog,
+  modelCatalogForCard,
   /** Every scope's catalog: a Recheck (#1822) re-fetches the Claude CLI's list behind the Claude ones. */
   modelCatalogPrefix,
   /** `GET /api/agent-providers` (#1817). No event reaches it: the server's own 30 s cache is its freshness. */

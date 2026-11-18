@@ -799,11 +799,9 @@ function useConversationPane(
                     onChange={composerView.setModel}
                     isDisabled={!composerView.historyReady}
                   />
-                  {/* A Planner's only (#2348): any other conversation reads `null` and has no approvals to set. */}
-                  {composerView.permissionMode !== null && (
-                    <PermissionModePill mode={composerView.permissionMode} onChange={composerView.setPermissionMode}
-                      isDisabled={!composerView.historyReady} />
-                  )}
+                  {/* The v1 API has no permission-mode mutation; retain the informational footer control. */}
+                  <PermissionModePill mode={composerView.permissionMode ?? 'ask'} onChange={composerView.setPermissionMode}
+                    isDisabled />
                   {/* The Planner's own row on its Track: the Track's role, not the conversation's, so no turn gates it. */}
                   {roleValue !== null && roleChange !== undefined && (
                     <PlannerRolePill value={roleValue} onChange={roleChange} isDisabled={roleDisabled}
@@ -860,11 +858,25 @@ function useConversationPane(
               mentionTrigger={mentionTrigger}
               changeText={setNewConversationText}
               /* Menu membership and readiness come from the managed backend declarations. */
-              footerActions={<ModelPill groups={managed.groups} provider={draft.provider} selection={draft.model}
-                effortControl={compactComposer ? 'in-menu' : 'separate'}
-                onChange={(model, provider) => withDraft(draft, current => current.creating || current.submitted !== null
-                  ? current : { ...current, model, provider })}
-                isDisabled={creating || draft.submitted !== null || !supportsDraftModel || !managed.supportsAssistantProviders} />} />
+              footerActions={(
+                <HStack gap={1} align="center" wrap="wrap" className={footerStyles.group}>
+                  <PlannerAttachButton
+                    attachments={composerAttachments}
+                    support={{ available: false, reason: ATTACHED_WORKSPACE_REASON }}
+                    disabled
+                  />
+                  <ModelPill groups={managed.groups} provider={draft.provider} selection={draft.model}
+                    effortControl={compactComposer ? 'in-menu' : 'separate'}
+                    onChange={(model, provider) => withDraft(draft, current => current.creating || current.submitted !== null
+                      ? current : { ...current, model, provider })}
+                    isDisabled={creating || draft.submitted !== null || !supportsDraftModel || !managed.supportsAssistantProviders} />
+                  <PermissionModePill mode="ask" onChange={() => undefined} isDisabled />
+                  {roleValue !== null && roleChange !== undefined && (
+                    <PlannerRolePill value={roleValue} onChange={roleChange} isDisabled={roleDisabled}
+                      disabledReason={roleDisabledReason} />
+                  )}
+                </HStack>
+              )} />
           </>
         ) : open === null ? undefined : archived ? (
           <>{readError}<ArchivedConversationNotice key={open.id} conversation={open} onArchive={options?.onArchive} /></>

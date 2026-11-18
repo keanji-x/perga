@@ -41,7 +41,8 @@ public sealed record CreateTrackRequest(
     string? ParentAttemptId = null,
     IReadOnlyList<string>? EnabledPlugins = null,
     string? BaseRevision = null,
-    double? SortOrder = null);
+    double? SortOrder = null,
+    string? ReasoningEffort = null);
 
 public sealed record PatchTrackRequest(
     string? Title = null,
@@ -85,7 +86,10 @@ public sealed record CreateSessionRequest(
     string? Title = null,
     string? Provider = null,
     string? Model = null,
-    string? Text = null);
+    string? Text = null,
+    string? ReasoningEffort = null);
+
+public sealed record UpdateSessionModelRequest(string? Model, string? ReasoningEffort = null);
 
 public sealed record SendMessageRequest(
     string Content,

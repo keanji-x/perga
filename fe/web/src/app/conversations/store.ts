@@ -19,7 +19,6 @@ import { readErrorText } from '../../../../core/domain/read-failure.ts';
 import type { ConversationStopFeedback } from '../../../../core/domain/conversation-stop.ts';
 import { anchorRunningTurn, type RunningTurnAnchor } from '../../../../core/domain/conversation-meta.ts';
 import { conversationHistoryQueryOptions, modelCatalogQueryOptions, plannerRunQueryOptions, usePlannerMutations } from '../providers/queries.ts';
-import { managedProvidersQueryOptions } from '../providers/managed-providers.ts';
 import { useState } from '../../ui/state/public.ts';
 import { useConversationCommands, useConversationSendOps, useConversationQueueWriteOut, useConversationRememberedTurns, useRememberedConversations } from './public.tsx';
 import { NO_TURNS } from './registry-owner.ts';
@@ -56,7 +55,6 @@ export function useConversationStore(
   const cardTitle = scope?.cardTitle;
   const scopeUpdatedAt = scope?.updatedAt;
   const scopeKind = scope?.kind ?? 'shared-spec';
-  const capabilities = useQuery({ ...managedProvidersQueryOptions(transport, unauthorized), enabled: scope?.kind === 'track-assistant' });
   const scopeState = scope?.state ?? null;
   const serverRows = routeIntent.rows;
   const rememberOn = routeIntent.rememberOn;
@@ -81,7 +79,7 @@ export function useConversationStore(
   /* The catalog rides alongside the run query: the trigger has to render the chosen
        model's name, and `planner-run` gives only its slug. */
   const modelCatalog = useQuery({
-    ...modelCatalogQueryOptions(transport, { kind: 'card', cardId }, unauthorized), enabled: scope !== null,
+    ...modelCatalogQueryOptions(transport, { kind: 'card', cardId, provider: provider ?? 'codex' }, unauthorized), enabled: scope !== null,
   });
   const historyReplacementSupported = run.data?.history_replacement_supported === true;
   const displayItems = history.loadedRows;
@@ -380,8 +378,7 @@ export function useConversationStore(
     discardFailedSend: outbox.discardFailedSend,
     dismissFailedSend: outbox.dismissFailedSend,
     send: outbox.send,
-    attachmentsSupported: (run.data?.attachments_supported ?? false) && (scopeKind !== 'track-assistant' || (!capabilities.isError
-      && capabilities.data?.find(answer => answer.availability.provider === provider)?.capabilities.images === true)),
+    attachmentsSupported: run.data?.attachments_supported ?? false,
     historyReplacementSupported,
     manualCompactSupported: run.data?.manual_compact_supported === true,
     contextUsage: run.data?.context_usage_invalidated === true ? null : run.data?.token_usage ?? null,
@@ -434,15 +431,6 @@ export function useConversationStore(
       /* Dropped when it settles while another conversation is shown: kept, it would show for one commit on the way back (#2068). */
       const fail = (message: string) => { if (shownCardId.current === setFor) setActionError({ cardId: setFor, message }); };
       void mutations.setModel(selection)
-        .then((result) => {
-          /* Both flags are reported: the write succeeded, but the value stored is not
-                       quite the value asked for. */
-          if (result.effort_adjusted) {
-            fail(`That reasoning effort is not available on this model; it now uses ${result.reasoning_effort ?? 'the default'}.`);
-          } else if (result.unknown_model) {
-            fail('codex does not list that model for this account. It is saved; turns may fail.');
-          }
-        })
         .catch((error: unknown) => {
           fail(refusalText(writeFailureOf(error), PLANNER_MODEL_FAILURES, MODEL_CHANGE_TEXT.refused) ?? MODEL_CHANGE_TEXT.unknown);
         });

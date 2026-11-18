@@ -24,6 +24,7 @@ export const transcriptPrefix = () => ['harness-items'] as const;
 export const transcript = (cardId: string) => ['harness-items', cardId] as const;
 export const plannerRun = (cardId: string) => ['planner-run', cardId] as const;
 export const modelCatalog = (scope: ModelCatalogScope) => ['model-catalog', scope] as const;
+export const modelCatalogForCard = (cardId: string) => ['model-catalog', { kind: 'card', cardId }] as const;
 export const modelCatalogPrefix = () => ['model-catalog'] as const;
 export const trackConversations = (trackId: string) => ['track-conversations', trackId] as const;
 export const trackConversationsPrefix = () => ['track-conversations'] as const;

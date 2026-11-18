@@ -31,12 +31,29 @@ export type AskStatus = z.infer<typeof askStatusSchema>;
 export const terminalStatusSchema = z.enum(['running', 'exited']);
 export type TerminalStatus = z.infer<typeof terminalStatusSchema>;
 
+export const providerModelEffortDtoSchema = z.object({
+  reasoningEffort: z.string(),
+  description: z.string().nullish().transform((v) => v ?? ''),
+});
+export type ProviderModelEffortDto = z.infer<typeof providerModelEffortDtoSchema>;
+
+export const providerModelInfoDtoSchema = z.object({
+  model: z.string(),
+  displayName: z.string(),
+  description: z.string().nullish().transform((v) => v ?? ''),
+  isDefault: z.boolean().default(false),
+  defaultReasoningEffort: z.string().nullish().transform((v) => v ?? null),
+  supportedReasoningEfforts: z.array(providerModelEffortDtoSchema).nullish().transform((v) => v ?? []),
+});
+export type ProviderModelInfoDto = z.infer<typeof providerModelInfoDtoSchema>;
+
 export const providerStatusDtoSchema = z.object({
   provider: z.string(),
   available: z.boolean(),
   version: z.string().nullish(),
   reason: z.string().nullish(),
   models: z.array(z.string()).nullish().transform((v) => v ?? []),
+  modelCatalog: z.array(providerModelInfoDtoSchema).nullish().transform((v) => v ?? []),
 });
 export type ProviderStatusDto = z.infer<typeof providerStatusDtoSchema>;
 
@@ -235,6 +252,12 @@ export const reportReadResultDtoSchema = z.object({
 });
 export type ReportReadResultDto = z.infer<typeof reportReadResultDtoSchema>;
 
+export const updateSessionModelRequestSchema = z.object({
+  model: z.string().nullable().optional(),
+  reasoningEffort: z.string().nullable().optional(),
+});
+export type UpdateSessionModelRequest = z.infer<typeof updateSessionModelRequestSchema>;
+
 export const agentSessionDtoSchema = z.object({
   id: z.string(),
   trackId: z.string(),
@@ -244,6 +267,7 @@ export const agentSessionDtoSchema = z.object({
   title: z.string().nullish(),
   provider: z.string(),
   model: z.string().nullish(),
+  reasoningEffort: z.string().nullish(),
   nativeThreadId: z.string().nullish(),
   epoch: z.number().int().default(1),
   status: z.string().default('idle'),
