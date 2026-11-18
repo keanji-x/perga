@@ -1226,7 +1226,7 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
         return row is null ? null : MapAsk(row);
     }
 
-    public Task UpsertMailAsync(MailDto mail, EventEnvelopeDto evt, CancellationToken ct)
+    public Task UpsertMailAsync(MailDto mail, EventEnvelopeDto evt, CancellationToken ct, bool requestWake = true)
     {
         ArgumentNullException.ThrowIfNull(mail);
         ArgumentNullException.ThrowIfNull(evt);
@@ -1238,8 +1238,8 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                 await conn.ExecuteAsync(
                     new CommandDefinition(
                         """
-                        INSERT INTO mails (id, from_track_id, to_track_id, summary, body, read_at_ms, created_at_ms)
-                        VALUES (@Id, @FromTrackId, @ToTrackId, @Summary, @Body, @ReadAtMs, @CreatedAtMs)
+                        INSERT INTO mails (id, from_track_id, to_track_id, summary, body, read_at_ms, created_at_ms, reply_to_mail_id, wake_pending)
+                        VALUES (@Id, @FromTrackId, @ToTrackId, @Summary, @Body, @ReadAtMs, @CreatedAtMs, @ReplyToMailId, @RequestWake)
                         ON CONFLICT(id) DO UPDATE SET
                             summary = excluded.summary,
                             body = excluded.body,
@@ -1248,6 +1248,8 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                         new
                         {
                             mail.Id,
+                            RequestWake = requestWake,
+                            mail.ReplyToMailId,
                             mail.FromTrackId,
                             mail.ToTrackId,
                             mail.Summary,
@@ -1281,44 +1283,47 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
             ct);
     }
 
-    public async Task<IReadOnlyList<MailDto>> ListMailsAsync(
-        string trackId,
-        bool unreadOnly = false,
-        CancellationToken ct = default)
+    public Task AcknowledgeMailWakeAsync(string mailId, CancellationToken ct) =>
+        _writer.EnqueueAsync(async (conn, tx, token) =>
+        {
+            await conn.ExecuteAsync(new CommandDefinition(
+                "UPDATE mails SET wake_pending = 0 WHERE id = @mailId;",
+                new { mailId }, tx, cancellationToken: token)).ConfigureAwait(false);
+        }, ct);
+
+    private const string MailSelect = """
+        SELECT id AS Id, from_track_id AS FromTrackId, to_track_id AS ToTrackId,
+               summary AS Summary, body AS Body, read_at_ms AS ReadAtMs,
+               created_at_ms AS CreatedAtMs, reply_to_mail_id AS ReplyToMailId
+        FROM mails
+        """;
+
+    public async Task<MailDto?> FindReceivedMailAsync(string trackId, string mailId, CancellationToken ct)
+    {
+        EnsureInitialized();
+        await using var conn = await OpenReadConnectionAsync(ct).ConfigureAwait(false);
+        var row = await conn.QuerySingleOrDefaultAsync<MailRow>(new CommandDefinition(
+            MailSelect + " WHERE id = @mailId AND to_track_id = @trackId;",
+            new { trackId, mailId }, cancellationToken: ct)).ConfigureAwait(false);
+        return row is null ? null : MapMail(row);
+    }
+
+    public Task<IReadOnlyList<MailDto>> ListPendingMailWakesAsync(CancellationToken ct) =>
+        QueryMailsAsync(" WHERE wake_pending = 1 ORDER BY created_at_ms, id;", null, ct);
+
+    public Task<IReadOnlyList<MailDto>> ListMailsAsync(string trackId, bool unreadOnly = false, CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(trackId);
+        var filter = unreadOnly ? " AND read_at_ms IS NULL" : "";
+        return QueryMailsAsync(" WHERE to_track_id = @trackId" + filter + " ORDER BY created_at_ms DESC, id;", new { trackId }, ct);
+    }
+
+    private async Task<IReadOnlyList<MailDto>> QueryMailsAsync(string clause, object? parameters, CancellationToken ct)
+    {
         EnsureInitialized();
-
         await using var conn = await OpenReadConnectionAsync(ct).ConfigureAwait(false);
-        var sql = unreadOnly
-            ? """
-              SELECT id AS Id,
-                     from_track_id AS FromTrackId,
-                     to_track_id AS ToTrackId,
-                     summary AS Summary,
-                     body AS Body,
-                     read_at_ms AS ReadAtMs,
-                     created_at_ms AS CreatedAtMs
-              FROM mails
-              WHERE to_track_id = @TrackId AND read_at_ms IS NULL
-              ORDER BY created_at_ms DESC, id ASC;
-              """
-            : """
-              SELECT id AS Id,
-                     from_track_id AS FromTrackId,
-                     to_track_id AS ToTrackId,
-                     summary AS Summary,
-                     body AS Body,
-                     read_at_ms AS ReadAtMs,
-                     created_at_ms AS CreatedAtMs
-              FROM mails
-              WHERE to_track_id = @TrackId
-              ORDER BY created_at_ms DESC, id ASC;
-              """;
-
-        var rows = await conn.QueryAsync<MailRow>(
-            new CommandDefinition(sql, new { TrackId = trackId }, cancellationToken: ct)).ConfigureAwait(false);
-
+        var rows = await conn.QueryAsync<MailRow>(new CommandDefinition(MailSelect + clause,
+            parameters, cancellationToken: ct)).ConfigureAwait(false);
         return rows.Select(MapMail).ToList();
     }
 
@@ -2319,7 +2324,8 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
             Summary: r.Summary,
             Body: r.Body,
             ReadAtMs: r.ReadAtMs,
-            CreatedAtMs: r.CreatedAtMs);
+            CreatedAtMs: r.CreatedAtMs,
+            ReplyToMailId: r.ReplyToMailId);
 
     private static TerminalDto MapTerminal(TerminalRow r) =>
         new(
@@ -2506,6 +2512,7 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
 
     private sealed class MailRow
     {
+        public string? ReplyToMailId { get; init; }
         public string Id { get; init; } = string.Empty;
         public string FromTrackId { get; init; } = string.Empty;
         public string ToTrackId { get; init; } = string.Empty;

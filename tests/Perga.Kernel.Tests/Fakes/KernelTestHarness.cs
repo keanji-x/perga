@@ -518,7 +518,29 @@ internal sealed class InMemoryTrackStore : ITrackStore
         }
     }
 
-    public Task UpsertMailAsync(MailDto mail, EventEnvelopeDto evt, CancellationToken ct)
+    private readonly HashSet<string> _pendingMailWakes = [];
+
+    public Task AcknowledgeMailWakeAsync(string mailId, CancellationToken ct)
+    {
+        lock (_gate)
+            _pendingMailWakes.Remove(mailId);
+        return Task.CompletedTask;
+    }
+
+    public Task<IReadOnlyList<MailDto>> ListPendingMailWakesAsync(CancellationToken ct)
+    {
+        lock (_gate)
+            return Task.FromResult<IReadOnlyList<MailDto>>(_mailsByToTrack.Values.SelectMany(list => list)
+                .Where(mail => _pendingMailWakes.Contains(mail.Id)).ToList());
+    }
+
+    public Task<MailDto?> FindReceivedMailAsync(string trackId, string mailId, CancellationToken ct)
+    {
+        lock (_gate)
+            return Task.FromResult(_mailsByToTrack.GetValueOrDefault(trackId)?.Find(mail => mail.Id == mailId));
+    }
+
+    public Task UpsertMailAsync(MailDto mail, EventEnvelopeDto evt, CancellationToken ct, bool requestWake = true)
     {
         lock (_gate)
         {
@@ -536,6 +558,8 @@ internal sealed class InMemoryTrackStore : ITrackStore
             else
             {
                 list.Add(mail);
+                if (requestWake)
+                    _pendingMailWakes.Add(mail.Id);
             }
 
             AppendEventLocked(evt);

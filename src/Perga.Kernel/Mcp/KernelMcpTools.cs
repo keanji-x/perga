@@ -119,8 +119,8 @@ public static class KernelMcpCatalog
                 Schema("""{"type":"object","required":["taskKey"],"properties":{"taskKey":{"type":"string"},"note":{"type":"string"}}}""")),
             new(KernelMcpToolNames.TaskReject, "Reject a task with review feedback and optionally re-queue (governance only).",
                 Schema("""{"type":"object","required":["taskKey","note"],"properties":{"taskKey":{"type":"string"},"note":{"type":"string"},"reQueue":{"type":"boolean"}}}""")),
-            new(KernelMcpToolNames.MailSend, "Send cross-track mail and wake the target track's Lead session (governance only).",
-                Schema("""{"type":"object","required":["toTrackId","summary","body"],"properties":{"toTrackId":{"type":"string"},"summary":{"type":"string"},"body":{"type":"string"}}}""")),
+            new(KernelMcpToolNames.MailSend, "Wake the recipient Lead by specifying exactly one of toTrackId or replyToMailId (a message in your inbox). Governance only.",
+                Schema("""{"type":"object","required":["summary","body"],"properties":{"replyToMailId":{"type":"string"},"toTrackId":{"type":"string"},"summary":{"type":"string"},"body":{"type":"string"}}}""")),
             new(KernelMcpToolNames.TrackRename, "Rename the current track (governance only).",
                 Schema("""{"type":"object","required":["title"],"properties":{"title":{"type":"string"}}}""")),
             new(KernelMcpToolNames.TrackClose, "Close the current track and cancel active attempts (governance only).",
@@ -266,10 +266,11 @@ public static class KernelMcpDispatcher
 
             case KernelMcpToolNames.MailSend:
             {
-                var toTrackId = RequireStringArg(args, ["toTrackId", "to_track_id"]);
+                var toTrackId = MailAddressArg(args, ["toTrackId", "to_track_id"]);
+                var replyToMailId = MailAddressArg(args, ["replyToMailId", "reply_to_mail_id"]);
                 var summary = RequireStringArg(args, ["summary"]);
                 var body = RequireStringArg(args, ["body"]);
-                var res = await kernel.SendMailAsync(caller.TrackId, caller.SessionId, toTrackId, summary, body, ct)
+                var res = await kernel.SendMailAsync(caller.TrackId, caller.SessionId, toTrackId, summary, body, ct, replyToMailId)
                     .ConfigureAwait(false);
                 return JsonHelpers.ToElement(res);
             }
@@ -432,6 +433,15 @@ public static class KernelMcpDispatcher
             : 150;
 
         return new TermObserveRequest(termId, scrollOffset, waitFor, waitMs, settleMs);
+    }
+
+    private static string? MailAddressArg(JsonElement args, ReadOnlySpan<string> keys)
+    {
+        if (!JsonHelpers.TryGetPropertyIgnoreCase(args, keys, out var address))
+            return null;
+        if (address.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(address.GetString()))
+            throw KernelException.InvalidArgument($"'{keys[0]}' must be a non-empty mail address.");
+        return address.GetString();
     }
 
     private static string RequireStringArg(JsonElement obj, ReadOnlySpan<string> keys)

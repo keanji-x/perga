@@ -325,6 +325,7 @@ export type AskDto = z.infer<typeof askDtoSchema>;
 
 export const mailDtoSchema = z.object({
   id: z.string(),
+  replyToMailId: z.string().nullish(),
   fromTrackId: z.string(),
   toTrackId: z.string(),
   summary: z.string(),

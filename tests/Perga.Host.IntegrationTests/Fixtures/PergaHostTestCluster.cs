@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Net.Http.Headers;
+using System.Net.Http.Json;
 using System.Net.WebSockets;
 using System.Runtime.CompilerServices;
 using System.Text;
@@ -10,6 +11,7 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Perga.AgentKit;
+using Perga.Contracts;
 using Perga.Host.Configuration;
 using Perga.Host.Serialization;
 using Perga.VcsKit;
@@ -309,6 +311,20 @@ public sealed class PergaHostTestCluster : IAsyncDisposable
     public WebApplicationFactory<Program> Factory { get; }
     public HttpClient Client { get; }
     public IServiceProvider Services => Factory.Services;
+
+    public async Task<(string TrackId, string SessionId)> CreateTrackAsync()
+    {
+        using var areaResponse = await Client.PostAsJsonAsync("/api/v1/areas",
+            new { name = "Test area", defaultCwd = DataDir });
+        areaResponse.EnsureSuccessStatusCode();
+        var area = (await areaResponse.Content.ReadFromJsonAsync<AreaDto>(PergaJsonDefaults.ApiOptions))!;
+        using var trackResponse = await Client.PostAsJsonAsync("/api/v1/tracks",
+            new { areaId = area.Id, cwd = DataDir });
+        trackResponse.EnsureSuccessStatusCode();
+        using var snapshot = JsonDocument.Parse(await trackResponse.Content.ReadAsStringAsync());
+        var track = snapshot.RootElement.GetProperty("track");
+        return (track.GetProperty("id").GetString()!, track.GetProperty("leadSessionId").GetString()!);
+    }
 
     public async Task<WebSocket> ConnectEventsWebSocketAsync(string query = "", CancellationToken ct = default)
     {

@@ -30,6 +30,8 @@ public sealed class BootReconciler : IBootReconciler
 
     public async Task<BootReconcileResult> ReconcileAsync(CancellationToken ct = default)
     {
+        // Snapshot before any recovered session can send new mail through live delivery.
+        var pendingMail = await _store.ListPendingMailWakesAsync(ct).ConfigureAwait(false);
         var queuedInputs = await _store.RecoverSessionInputsAsync(ct).ConfigureAwait(false);
         var affectedTrackIds = new HashSet<string>(StringComparer.Ordinal);
         var discardedLeases = 0;
@@ -114,6 +116,9 @@ public sealed class BootReconciler : IBootReconciler
 
         foreach (var (trackId, input) in queuedInputs)
             _actorRegistry.GetOrActivate(trackId).DispatchAcceptedInput(input);
+
+        foreach (var mail in pendingMail)
+            await _actorRegistry.GetOrActivate(mail.ToTrackId).WakeForMailAsync(mail, ct, recovering: true).ConfigureAwait(false);
 
         return new BootReconcileResult(orderedAffected, discardedLeases, wokenCount);
     }

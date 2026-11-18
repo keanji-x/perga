@@ -107,6 +107,7 @@ public sealed class SqliteMigratorTests
                 "idx_items_turn",
                 "idx_inputs_delivery",
                 "idx_asks_track",
+                "idx_mails_pending_wake",
                 "idx_mails_to_track",
                 "idx_terminals_track",
                 "idx_events_track_id",
