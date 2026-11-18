@@ -14,8 +14,8 @@ pub mod ws;
 
 use crate::runtime::SessionManager;
 use anyhow::{Context, Result, bail};
-use axum::Router;
 use axum::Json;
+use axum::Router;
 use axum::routing::{get, post};
 use serde_json::{Value, json};
 use std::net::SocketAddr;
@@ -111,14 +111,18 @@ fn prepare_uds_listener(path: &Path) -> Result<tokio::net::UnixListener> {
     if let Some(parent) = path.parent()
         && !parent.as_os_str().is_empty()
     {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("failed to create UDS parent directory {}", parent.display()))?;
+        std::fs::create_dir_all(parent).with_context(|| {
+            format!("failed to create UDS parent directory {}", parent.display())
+        })?;
     }
     if let Ok(meta) = std::fs::symlink_metadata(path) {
         if meta.file_type().is_socket() {
             // Probe if an active listener already owns it; only unlink stale sockets.
             if std::os::unix::net::UnixStream::connect(path).is_ok() {
-                bail!("UDS endpoint {} is already in use by an active process", path.display());
+                bail!(
+                    "UDS endpoint {} is already in use by an active process",
+                    path.display()
+                );
             }
             let _ = std::fs::remove_file(path);
         } else {

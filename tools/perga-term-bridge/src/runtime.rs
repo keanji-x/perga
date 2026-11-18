@@ -371,10 +371,7 @@ pub struct KillOutcome {
 impl ManagedTerminal {
     fn start(terminal_id: String, cols: u16, rows: u16, spawned: SpawnedPty) -> Result<Arc<Self>> {
         let view = TerminalView::new(cols, rows, [220, 220, 220], [15, 20, 24])?;
-        let pid = spawned
-            .pid
-            .and_then(|p| i32::try_from(p).ok())
-            .unwrap_or(0);
+        let pid = spawned.pid.and_then(|p| i32::try_from(p).ok()).unwrap_or(0);
         let (revisions_tx, _) = watch::channel(0u64);
         let (events_tx, _) = watch::channel(0u64);
         let (broadcast_tx, _) = broadcast::channel(1024);
@@ -431,7 +428,8 @@ impl ManagedTerminal {
                     .ok()
                     .and_then(Result::ok);
                 // Allow any trailing buffered PTY output to drain into TerminalView & ring buffer before marking exit.
-                let _ = tokio::time::timeout(Duration::from_millis(80), reader_done.notified()).await;
+                let _ =
+                    tokio::time::timeout(Duration::from_millis(80), reader_done.notified()).await;
                 session_ref.record_exit(code);
             });
         }
@@ -478,15 +476,14 @@ impl ManagedTerminal {
         };
         if newly_exited {
             self.events_tx.send_modify(|v| *v = v.saturating_add(1));
-            let _ = self.broadcast_tx.send(SessionBroadcast::Exited { exit_code });
+            let _ = self
+                .broadcast_tx
+                .send(SessionBroadcast::Exited { exit_code });
         }
     }
 
     pub fn is_exited(&self) -> bool {
-        self.state
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .exited
+        self.state.lock().unwrap_or_else(|e| e.into_inner()).exited
     }
 
     pub fn attach_ws(&self) -> WsSubscription {
@@ -776,7 +773,10 @@ impl SessionManager {
             });
         }
 
-        ensure!(!spec.terminal_id.trim().is_empty(), "terminal_id is required");
+        ensure!(
+            !spec.terminal_id.trim().is_empty(),
+            "terminal_id is required"
+        );
         ensure!(
             !spec.program.trim().is_empty() && !spec.program.contains('\0'),
             "program must be a non-empty string without NUL bytes"
@@ -796,7 +796,10 @@ impl SessionManager {
         );
         for (key, value) in &spec.env {
             ensure!(
-                !key.is_empty() && !key.contains('=') && !key.contains('\0') && !value.contains('\0'),
+                !key.is_empty()
+                    && !key.contains('=')
+                    && !key.contains('\0')
+                    && !value.contains('\0'),
                 "invalid environment variable assignment for {key:?}"
             );
         }
