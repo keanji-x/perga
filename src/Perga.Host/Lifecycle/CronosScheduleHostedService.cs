@@ -173,17 +173,17 @@ public sealed class CronosScheduleHostedService : BackgroundService
         string? templateId,
         CancellationToken ct)
     {
-        if (!string.IsNullOrWhiteSpace(templateId) &&
-            _kernel.Templates.TryGetPolicy(templateId) is { } catalogPolicy)
-        {
-            return catalogPolicy.Manifest.Schedules;
-        }
-
         var snap = await _readStore.LoadTrackAggregateAsync(trackId, ct).ConfigureAwait(false);
         if (!string.IsNullOrWhiteSpace(snap?.TemplateSnapshotSource))
         {
             var compiled = _kernel.Templates.GetOrCompileSnapshot(snap.TemplateSnapshotSource!);
             return compiled.Manifest.Schedules;
+        }
+
+        if (!string.IsNullOrWhiteSpace(templateId) &&
+            _kernel.Templates.TryGetPolicy(templateId) is { } catalogPolicy)
+        {
+            return catalogPolicy.Manifest.Schedules;
         }
 
         return [];

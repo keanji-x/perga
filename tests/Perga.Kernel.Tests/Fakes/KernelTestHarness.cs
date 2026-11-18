@@ -63,6 +63,8 @@ internal sealed class InMemoryTrackStore : ITrackStore
     private long _nextItemId = 1;
     private long _nextEventId = 1;
 
+    public bool FailTemplateUpdate { get; set; }
+
     public int MarkInterruptedCalls { get; private set; }
 
     public IReadOnlyList<EventEnvelopeDto> PersistedEvents
@@ -333,6 +335,16 @@ internal sealed class InMemoryTrackStore : ITrackStore
             }
 
             return Task.CompletedTask;
+        }
+    }
+
+    public Task UpdateTrackTemplateAndEmitAsync(TrackDto track, string templateSnapshot, EventEnvelopeDto evt, CancellationToken ct)
+    {
+        lock (_gate)
+        {
+            if (FailTemplateUpdate) throw new IOException("template persistence failure");
+            _templateSnapshots[track.Id] = templateSnapshot;
+            return UpdateTrackAndEmitAsync(track, evt, ct);
         }
     }
 
@@ -1422,7 +1434,7 @@ internal sealed class KernelTestContext : IAsyncDisposable
     public EventHub EventHub { get; } = new();
     public PergaKernelService Kernel { get; }
 
-    public KernelTestContext(KernelOptions? options = null)
+    public KernelTestContext(KernelOptions? options = null, IPolicyVm? policyVm = null)
     {
         DriverRegistry = new FakeWorkspaceDriverRegistry(DirectDriver, CowOverlayDriver);
         var effectiveOptions = options ?? new KernelOptions
@@ -1433,7 +1445,7 @@ internal sealed class KernelTestContext : IAsyncDisposable
         Kernel = new PergaKernelService(
             Store,
             ReportEngine,
-            PolicyVm,
+            policyVm ?? PolicyVm,
             AgentRuntime,
             DriverRegistry,
             VcsService,

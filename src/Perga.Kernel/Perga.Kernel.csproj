@@ -1,5 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <ItemGroup>
+    <EmbeddedResource Include="../../templates/perga-template.d.ts" LogicalName="Perga.TemplateContract" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\Perga.Contracts\Perga.Contracts.csproj" />
     <ProjectReference Include="..\..\libs\Perga.ReportDoc\Perga.ReportDoc.csproj" />
     <ProjectReference Include="..\..\libs\Perga.PolicyVm\Perga.PolicyVm.csproj" />

@@ -28,6 +28,8 @@ public interface IPergaKernel : IAsyncDisposable
     // System & Bootstrap
     Task<BootstrapDto> GetBootstrapAsync(CancellationToken ct = default);
     IReadOnlyList<CompiledTemplateManifest> ListTemplates();
+    JsonElement InspectTemplate(string? templateId);
+    Task<TrackDto> SetTrackTemplateAsync(string trackId, string callerSessionId, string? templateId, string? source, string expectedPolicyGeneration, JsonElement? inputs = null, CancellationToken ct = default);
     Task<BootReconcileResult> ReconcileOnBootAsync(CancellationToken ct = default);
     Task<DbMaintenanceStatsDto> RunMaintenancePassAsync(CancellationToken ct = default);
 
@@ -100,7 +102,7 @@ public interface IPergaKernel : IAsyncDisposable
     Uri GetTerminalWebSocketRelayUri(string terminalId);
 
     // MCP Policy Guard, Tool Dispatch & Schedules
-    Task GuardMcpToolCallAsync(string trackId, string sessionId, string mcpServer, string toolName, JsonElement arguments, CancellationToken ct = default);
+    Task<string> GuardMcpToolCallAsync(string trackId, string sessionId, string mcpServer, string toolName, JsonElement arguments, CancellationToken ct = default);
     Task<JsonElement> InvokeKernelMcpToolAsync(McpSessionPrincipal caller, string toolName, JsonElement arguments, CancellationToken ct = default);
     Task TriggerScheduleWakeAsync(string trackId, string scheduleId, CancellationToken ct = default);
 
@@ -190,6 +192,31 @@ public sealed class PergaKernelService : IPergaKernel
     }
 
     public IReadOnlyList<CompiledTemplateManifest> ListTemplates() => Templates.ListManifests();
+
+    public JsonElement InspectTemplate(string? templateId)
+    {
+        if (templateId is null or "__contract__")
+        {
+            var path = _options.TemplatesDirectory is { } directory
+                ? Path.Combine(directory, "perga-template.d.ts") : null;
+            string contract;
+            if (path is not null && File.Exists(path))
+                contract = File.ReadAllText(path);
+            else
+            {
+                using var stream = typeof(PergaKernelService).Assembly.GetManifestResourceStream("Perga.TemplateContract")!;
+                using var reader = new StreamReader(stream);
+                contract = reader.ReadToEnd();
+            }
+            return JsonHelpers.ToElement(new { contract });
+        }
+        var policy = Templates.GetRequiredPolicy(templateId);
+        return JsonHelpers.ToElement(new { policy.Manifest, policy.JsSource });
+    }
+
+    public Task<TrackDto> SetTrackTemplateAsync(string trackId, string callerSessionId, string? templateId,
+        string? source, string expectedPolicyGeneration, JsonElement? inputs = null, CancellationToken ct = default) =>
+        Actors.GetOrActivate(trackId).SetTemplateBySessionAsync(callerSessionId, templateId, source, expectedPolicyGeneration, inputs, ct);
 
     public Task<BootReconcileResult> ReconcileOnBootAsync(CancellationToken ct = default) =>
         BootReconciler.ReconcileAsync(ct);
@@ -807,7 +834,7 @@ public sealed class PergaKernelService : IPergaKernel
 
     // ------------------- MCP Policy Guard, Tool Dispatch & Schedules -------------------
 
-    public Task GuardMcpToolCallAsync(
+    public Task<string> GuardMcpToolCallAsync(
         string trackId,
         string sessionId,
         string mcpServer,
