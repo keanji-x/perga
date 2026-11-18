@@ -173,6 +173,83 @@ public sealed class CodexProviderTests : IDisposable
         Assert.True(turnError.IsRetryable);
     }
 
+    [Fact]
+    public async Task Codex_StaleDefaultConfigModel_AutomaticallyQueriesModelListAndRetriesWithSupportedModel()
+    {
+        await using var runtime = new AgentRuntime(new AgentRuntimeOptions
+        {
+            ProviderOverrides = new Dictionary<string, ProviderCommandOverride>
+            {
+                ["codex"] = new(
+                    _fixture.MockCodexPath,
+                    Env: new Dictionary<string, string>
+                    {
+                        ["MOCK_CODEX_STALE_DEFAULT_MODEL"] = "gpt-6.1-sol",
+                        // Even when gpt-6.1-sol appears first in model/list, parser skips the rejected model!
+                        ["MOCK_CODEX_MODELS_JSON"] =
+                            """{"data":[{"id":"gpt-6.1-sol","model":"gpt-6.1-sol"},{"id":"gpt-6.2-sol","model":"gpt-6.2-sol","isDefault":true}]}"""
+                    })
+            }
+        });
+
+        var spec = new HarnessLaunchSpec(
+            Provider: "codex",
+            Model: null,
+            Cwd: _fixture.WorkspaceDir,
+            ResumeNativeThreadId: null,
+            SystemPrompt: null,
+            McpServers: new Dictionary<string, McpServerConfig>());
+
+        await using var session = await runtime.OpenSessionAsync(spec, CancellationToken.None);
+
+        // Turn 1: initial turn/start with null model hits gpt-6.1-sol model_not_found, queries model/list, and succeeds with gpt-6.2-sol!
+        var turn1Events = await DrainTurnAsync(session, new TurnInput("hello-fallback-1", "corr_fb_1"));
+        Assert.Empty(turn1Events.OfType<UnifiedAgentEvent.TurnError>());
+        Assert.Single(turn1Events.OfType<UnifiedAgentEvent.TurnCompleted>());
+        var text1 = string.Concat(turn1Events.OfType<UnifiedAgentEvent.TextDelta>().Select(t => t.Delta));
+        Assert.Contains("model=gpt-6.2-sol]:hello-fallback-1", text1, StringComparison.Ordinal);
+
+        // Turn 2: reuses cached fallback model directly without failing first
+        var turn2Events = await DrainTurnAsync(session, new TurnInput("hello-fallback-2", "corr_fb_2"));
+        Assert.Empty(turn2Events.OfType<UnifiedAgentEvent.TurnError>());
+        Assert.Single(turn2Events.OfType<UnifiedAgentEvent.TurnCompleted>());
+        var text2 = string.Concat(turn2Events.OfType<UnifiedAgentEvent.TextDelta>().Select(t => t.Delta));
+        Assert.Contains("model=gpt-6.2-sol]:hello-fallback-2", text2, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Codex_NestedHttp400ModelNotFoundError_UnwrapsCrispTurnErrorWhenUnrecoverable()
+    {
+        await using var runtime = new AgentRuntime(new AgentRuntimeOptions
+        {
+            ProviderOverrides = new Dictionary<string, ProviderCommandOverride>
+            {
+                ["codex"] = new(
+                    _fixture.MockCodexPath,
+                    Env: new Dictionary<string, string>
+                    {
+                        ["MOCK_CODEX_REJECT_ALL_MODELS"] = "1"
+                    })
+            }
+        });
+
+        var spec = new HarnessLaunchSpec(
+            Provider: "codex",
+            Model: null,
+            Cwd: _fixture.WorkspaceDir,
+            ResumeNativeThreadId: null,
+            SystemPrompt: null,
+            McpServers: new Dictionary<string, McpServerConfig>());
+
+        await using var session = await runtime.OpenSessionAsync(spec, CancellationToken.None);
+        var events = await DrainTurnAsync(session, new TurnInput("hello-unrecoverable", "corr_fb_err"));
+        var err = Assert.Single(events.OfType<UnifiedAgentEvent.TurnError>());
+        Assert.Equal("model_not_found", err.Code);
+        Assert.Contains("is not supported when using Codex with a ChatGPT account", err.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("{\"type\":\"error\"", err.Message, StringComparison.Ordinal);
+        Assert.False(err.IsRetryable);
+    }
+
     private static async Task<List<UnifiedAgentEvent>> DrainTurnAsync(IAgentSession session, TurnInput input)
     {
         var list = new List<UnifiedAgentEvent>();

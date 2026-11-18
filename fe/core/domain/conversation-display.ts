@@ -102,9 +102,9 @@ export function sessionItemsPageDtoToConversationPage(
     ? page.items
     : page.items.filter((item) => item.id < cursor.position);
   const sliced = windowItems.slice(-TRANSCRIPT_PAGE_LIMIT);
-  const hasOlder = windowItems.length > sliced.length;
+  const hasOlder = page.hasMoreBefore === true || windowItems.length > sliced.length;
 
-  const displayItems: ConversationDisplayItem[] = [...sliced].reverse().flatMap((item): ConversationDisplayItem[] => {
+  const displayItems: ConversationDisplayItem[] = sliced.flatMap((item): ConversationDisplayItem[] => {
     const itemCursor: ConversationCursor = { contract: 'conversation_v1', card_id: card, source: 'presentation', position: item.id };
     const payloadObj = typeof item.payload === 'object' && item.payload !== null
       ? (item.payload as Record<string, unknown>)
@@ -131,7 +131,7 @@ export function sessionItemsPageDtoToConversationPage(
           kind: 'human',
           message_id: typeof payloadObj.inputId === 'string' ? payloadObj.inputId : `msg-${item.id}`,
           revision: 1,
-          author: { user_id: typeof payloadObj.inputId === 'string' ? DEPLOYMENT_OWNER_USER_ID : 'owner', display_name: 'Owner' },
+          author: { user_id: DEPLOYMENT_OWNER_USER_ID, display_name: 'Owner' },
           text: content,
           ...(typeof payloadObj.deliveryError === 'string' ? { delivery_error: payloadObj.deliveryError } : {}),
           attachments: [],
@@ -233,8 +233,82 @@ export function sessionItemsPageDtoToConversationPage(
       }];
     }
 
+    if (item.kind === 'turn_outcome' || item.kind === 'turn_error' || item.kind === 'error') {
+      const status = typeof payloadObj.status === 'string' ? payloadObj.status : 'failed';
+      const errorText = typeof payloadObj.error === 'string'
+        ? payloadObj.error
+        : typeof payloadObj.errorText === 'string'
+          ? payloadObj.errorText
+          : typeof payloadObj.message === 'string'
+            ? payloadObj.message
+            : null;
+      const turnId = item.turnId || `turn-${item.id}`;
+      return [{
+        cursor: itemCursor,
+        source: {
+          kind: 'native',
+          item: {
+            id: item.id,
+            worker_session_id: item.sessionId,
+            card_id: card,
+            track_id: page.session.trackId,
+            thread_id: threadId,
+            turn_id: turnId,
+            item_uuid: `outcome-${item.id}`,
+            item_type: 'turn/completed',
+            method: 'turn/completed',
+            params: JSON.stringify({
+              id: turnId,
+              status,
+              ...(errorText !== null ? { error: { message: errorText } } : {}),
+            }),
+            created_at_ms: item.createdAtMs,
+            turn_error_text: errorText,
+          },
+        },
+      }];
+    }
+
     return [];
   });
+
+  if (
+    cursor === null
+    && page.activeTurn !== null
+    && page.activeTurn !== undefined
+    && (page.activeTurn.status === 'failed' || page.activeTurn.status === 'interrupted')
+    && !sliced.some((item) =>
+      (item.kind === 'turn_outcome' || item.kind === 'turn_error' || item.kind === 'error')
+      && item.turnId === page.activeTurn!.id)
+  ) {
+    const activeTurn = page.activeTurn;
+    const syntheticId = (sliced.at(-1)?.id ?? 0) + 1;
+    const errorText = activeTurn.errorText ?? null;
+    displayItems.push({
+      cursor: { contract: 'conversation_v1', card_id: card, source: 'presentation', position: syntheticId },
+      source: {
+        kind: 'native',
+        item: {
+          id: syntheticId,
+          worker_session_id: page.session.id,
+          card_id: card,
+          track_id: page.session.trackId,
+          thread_id: threadId,
+          turn_id: activeTurn.id,
+          item_uuid: `outcome-turn-${activeTurn.id}`,
+          item_type: 'turn/completed',
+          method: 'turn/completed',
+          params: JSON.stringify({
+            id: activeTurn.id,
+            status: activeTurn.status,
+            ...(errorText !== null ? { error: { message: errorText } } : {}),
+          }),
+          created_at_ms: activeTurn.completedAtMs ?? activeTurn.startedAtMs ?? Date.now(),
+          turn_error_text: errorText,
+        },
+      },
+    });
+  }
 
   const oldestPosition = sliced[0]?.id;
   return {
@@ -388,7 +462,7 @@ export function conversationRunOperation(card: string): ApiOperation<PlannerRun 
           pending_overflow: 0,
           model: page.session.model ?? null,
           reasoning_effort: null,
-          permission_mode: page.session.isLead ? 'ask' : null,
+          permission_mode: null,
           blocked_reason: page.session.status === 'unknown' ? 'The previous message has an unknown outcome.' : null,
           recovery: null,
           attachments_supported: false,

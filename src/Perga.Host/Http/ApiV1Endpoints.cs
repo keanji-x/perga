@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
+using Microsoft.AspNetCore.StaticFiles;
 using Perga.Host.Serialization;
 using Perga.Host.WebSockets;
 using Perga.Kernel;
@@ -16,17 +17,41 @@ public sealed record SendMessageHttpBody(
 
 public sealed record SteerMessageHttpBody(string TurnId, string Content);
 
+public sealed record CancelTaskHttpBody(
+    string? Reason = null);
+
+public sealed record AcceptTaskHttpBody(
+    string? Note = null);
+
+public sealed record RejectTaskHttpBody(
+    string? Note = null,
+    bool? ReQueue = null);
+
 public static class ApiV1Endpoints
 {
+    private static readonly FileExtensionContentTypeProvider RawMimeProvider = CreateMimeProvider();
+
     public static IEndpointRouteBuilder MapPergaApiV1(this IEndpointRouteBuilder endpoints)
     {
         var v1 = endpoints.MapGroup("/api/v1");
 
         // ------------------- System -------------------
-        v1.MapGet("/bootstrap", async (IPergaKernel kernel, CancellationToken ct) =>
+        v1.MapGet("/bootstrap", async (string? scope, bool? refresh, IPergaKernel kernel, CancellationToken ct) =>
         {
-            var dto = await kernel.GetBootstrapAsync(ct).ConfigureAwait(false);
+            var dto = await kernel.GetBootstrapAsync(scope, refresh ?? false, ct).ConfigureAwait(false);
             return Results.Json(dto, PergaJsonDefaults.ApiOptions);
+        });
+
+        v1.MapGet("/overlays", async (bool? includeClosed, IPergaKernel kernel, CancellationToken ct) =>
+        {
+            var overlays = await kernel.GetOverlaysAsync(includeClosed ?? false, ct).ConfigureAwait(false);
+            return Results.Json(overlays, PergaJsonDefaults.ApiOptions);
+        });
+
+        v1.MapGet("/fs/listdir", (string? path, IPergaKernel kernel) =>
+        {
+            var listing = kernel.ListHostDirectory(path);
+            return Results.Json(listing, PergaJsonDefaults.ApiOptions);
         });
 
         v1.MapGet("/templates", (IPergaKernel kernel) =>
@@ -114,9 +139,26 @@ public static class ApiV1Endpoints
             return Results.Json(result, PergaJsonDefaults.ApiOptions);
         });
 
-        v1.MapGet("/tracks/{trackId}/vcs-diff", async (string trackId, string? fromRev, string? toRev, IPergaKernel kernel, CancellationToken ct) =>
+        v1.MapGet("/tracks/{trackId}/files/raw", async (string trackId, string? path, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
         {
-            var diff = await kernel.GetTrackVcsDiffAsync(trackId, fromRev, toRev, ct).ConfigureAwait(false);
+            var (fullFilePath, stream) = await kernel.OpenWorkspaceRawFileAsync(trackId, path, ct).ConfigureAwait(false);
+            if (!RawMimeProvider.TryGetContentType(fullFilePath, out var contentType) || string.IsNullOrWhiteSpace(contentType))
+            {
+                contentType = "application/octet-stream";
+            }
+
+            ctx.Response.Headers["X-Content-Type-Options"] = "nosniff";
+            if (RequiresSandboxCsp(fullFilePath, contentType))
+            {
+                ctx.Response.Headers["Content-Security-Policy"] = "sandbox";
+            }
+
+            return Results.File(stream, contentType, enableRangeProcessing: true);
+        });
+
+        v1.MapGet("/tracks/{trackId}/vcs-diff", async (string trackId, string? path, string? fromRev, string? toRev, IPergaKernel kernel, CancellationToken ct) =>
+        {
+            var diff = await kernel.GetTrackVcsDiffAsync(trackId, fromRev, toRev, path, ct).ConfigureAwait(false);
             return Results.Json(diff, PergaJsonDefaults.ApiOptions);
         });
 
@@ -140,6 +182,28 @@ public static class ApiV1Endpoints
             return Results.Json(attempts, PergaJsonDefaults.ApiOptions);
         });
 
+        v1.MapPost("/tracks/{trackId}/tasks/{taskKey}/cancel", async (string trackId, string taskKey, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
+        {
+            var body = await ReadOptionalJsonBodyAsync(ctx, () => new CancelTaskHttpBody(), ct).ConfigureAwait(false);
+            var task = await kernel.CancelTaskAsync(trackId, callerSessionId: null, taskKey, body.Reason, ct).ConfigureAwait(false);
+            return Results.Json(task, PergaJsonDefaults.ApiOptions);
+        });
+
+        v1.MapPost("/tracks/{trackId}/tasks/{taskKey}/accept", async (string trackId, string taskKey, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
+        {
+            var body = await ReadOptionalJsonBodyAsync(ctx, () => new AcceptTaskHttpBody(), ct).ConfigureAwait(false);
+            var task = await kernel.AcceptTaskAsync(trackId, callerSessionId: null, taskKey, body.Note, ct).ConfigureAwait(false);
+            return Results.Json(task, PergaJsonDefaults.ApiOptions);
+        });
+
+        v1.MapPost("/tracks/{trackId}/tasks/{taskKey}/reject", async (string trackId, string taskKey, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
+        {
+            var body = await ReadOptionalJsonBodyAsync(ctx, () => new RejectTaskHttpBody(), ct).ConfigureAwait(false);
+            var note = string.IsNullOrWhiteSpace(body.Note) ? "Rejected by user." : body.Note!;
+            var task = await kernel.RejectTaskAsync(trackId, callerSessionId: null, taskKey, note, body.ReQueue ?? false, ct).ConfigureAwait(false);
+            return Results.Json(task, PergaJsonDefaults.ApiOptions);
+        });
+
         // ------------------- Sessions -------------------
         v1.MapGet("/tracks/{trackId}/sessions", async (string trackId, IPergaKernel kernel, CancellationToken ct) =>
         {
@@ -151,15 +215,29 @@ public static class ApiV1Endpoints
         {
             if (!ctx.Request.Headers.TryGetValue("Idempotency-Key", out var key) ||
                 string.IsNullOrWhiteSpace(key.ToString()))
+            {
                 return HttpErrorHandling.BadRequest("missing_idempotency_key", "Idempotency-Key HTTP header is required.");
+            }
+
             if (key.Count != 1)
+            {
                 return HttpErrorHandling.BadRequest("invalid_argument", "Exactly one Idempotency-Key is allowed.");
+            }
 
             var req = await ReadOptionalJsonBodyAsync(ctx, () => new CreateSessionRequest(), ct).ConfigureAwait(false);
             var (receipt, replay) = await kernel.CreateSessionWithReceiptAsync(trackId, req, key.ToString().Trim(), ct)
                 .ConfigureAwait(false);
-            return Results.Json(receipt, PergaJsonDefaults.ApiOptions,
+            return Results.Json(
+                receipt,
+                PergaJsonDefaults.ApiOptions,
                 statusCode: replay ? StatusCodes.Status200OK : StatusCodes.Status201Created);
+        });
+
+        v1.MapPatch("/sessions/{sessionId}", async (string sessionId, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
+        {
+            var req = await ReadPatchSessionRequestAsync(ctx, ct).ConfigureAwait(false);
+            var patched = await kernel.PatchSessionAsync(sessionId, req, ct).ConfigureAwait(false);
+            return Results.Json(patched, PergaJsonDefaults.ApiOptions);
         });
 
         v1.MapGet("/sessions/{sessionId}/items", async (string sessionId, long? afterId, int? limit, bool? latest, long? beforeId, IPergaKernel kernel, CancellationToken ct) =>
@@ -168,7 +246,9 @@ public static class ApiV1Endpoints
                 sessionId,
                 afterId ?? 0,
                 limit ?? 100,
-                ct, latest ?? false, beforeId).ConfigureAwait(false);
+                ct,
+                latest ?? false,
+                beforeId).ConfigureAwait(false);
             return Results.Json(page, PergaJsonDefaults.ApiOptions);
         });
 
@@ -183,7 +263,9 @@ public static class ApiV1Endpoints
             }
 
             if (idemValues.Count != 1)
+            {
                 return HttpErrorHandling.BadRequest("invalid_argument", "Exactly one Idempotency-Key is allowed.");
+            }
 
             var idempotencyKey = idemValues.ToString().Trim();
             var body = await ReadRequiredJsonBodyAsync<SendMessageHttpBody>(ctx, ct).ConfigureAwait(false);
@@ -193,13 +275,19 @@ public static class ApiV1Endpoints
             }
 
             var (receipt, steered, replay) = await kernel.AcceptMessageAsync(
-                sessionId, new SendMessageRequest(body.Content, idempotencyKey, body.SteerIfRunning ?? false), ct)
+                    sessionId,
+                    new SendMessageRequest(body.Content, idempotencyKey, body.SteerIfRunning ?? false),
+                    ct)
                 .ConfigureAwait(false);
             if (receipt is null)
+            {
                 return Results.Json(steered, PergaJsonDefaults.ApiOptions);
+            }
 
             ctx.Response.Headers.Location = receipt.StatusUrl;
-            return Results.Json(receipt, PergaJsonDefaults.ApiOptions,
+            return Results.Json(
+                receipt,
+                PergaJsonDefaults.ApiOptions,
                 statusCode: replay ? StatusCodes.Status200OK : StatusCodes.Status202Accepted);
         });
 
@@ -346,5 +434,62 @@ public static class ApiV1Endpoints
         var parsed = await JsonSerializer.DeserializeAsync<T>(ms, PergaJsonDefaults.ApiOptions, ct)
             .ConfigureAwait(false);
         return parsed ?? factory();
+    }
+
+    private static async Task<PatchSessionRequest> ReadPatchSessionRequestAsync(HttpContext ctx, CancellationToken ct)
+    {
+        using var doc = await JsonDocument.ParseAsync(ctx.Request.Body, cancellationToken: ct).ConfigureAwait(false);
+        var root = doc.RootElement;
+        if (root.ValueKind != JsonValueKind.Object)
+        {
+            throw KernelException.InvalidArgument("PATCH /sessions/{sessionId} body must be a JSON object.");
+        }
+
+        var parsed = root.Deserialize<PatchSessionRequest>(PergaJsonDefaults.ApiOptions) ?? new PatchSessionRequest();
+        foreach (var prop in root.EnumerateObject())
+        {
+            if (string.Equals(prop.Name, "model", StringComparison.OrdinalIgnoreCase))
+            {
+                if (prop.Value.ValueKind == JsonValueKind.Null ||
+                    (prop.Value.ValueKind == JsonValueKind.String && string.IsNullOrWhiteSpace(prop.Value.GetString())))
+                {
+                    parsed = parsed with { Model = null, ClearModel = true };
+                }
+
+                break;
+            }
+        }
+
+        return parsed;
+    }
+
+    private static FileExtensionContentTypeProvider CreateMimeProvider()
+    {
+        var provider = new FileExtensionContentTypeProvider();
+        provider.Mappings[".svg"] = "image/svg+xml";
+        provider.Mappings[".webp"] = "image/webp";
+        provider.Mappings[".avif"] = "image/avif";
+        provider.Mappings[".md"] = "text/markdown; charset=utf-8";
+        provider.Mappings[".ts"] = "text/plain; charset=utf-8";
+        provider.Mappings[".tsx"] = "text/plain; charset=utf-8";
+        provider.Mappings[".jsx"] = "text/plain; charset=utf-8";
+        return provider;
+    }
+
+    private static bool RequiresSandboxCsp(string filePath, string contentType)
+    {
+        if (contentType.Contains("html", StringComparison.OrdinalIgnoreCase) ||
+            contentType.Contains("svg", StringComparison.OrdinalIgnoreCase) ||
+            contentType.Contains("xml", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        var ext = Path.GetExtension(filePath);
+        return ext.Equals(".html", StringComparison.OrdinalIgnoreCase) ||
+               ext.Equals(".htm", StringComparison.OrdinalIgnoreCase) ||
+               ext.Equals(".xhtml", StringComparison.OrdinalIgnoreCase) ||
+               ext.Equals(".svg", StringComparison.OrdinalIgnoreCase) ||
+               ext.Equals(".xml", StringComparison.OrdinalIgnoreCase);
     }
 }

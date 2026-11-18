@@ -47,19 +47,23 @@ public sealed class AcpAgentSession : IAgentSession
     }
 
     private readonly JsonRpcStdioConnection _rpc;
+    private readonly IReadOnlyDictionary<string, string> _environment;
     private readonly Action<IAgentSession>? _onDispose;
     private readonly SemaphoreSlim _turnLock = new(1, 1);
     private readonly ConcurrentDictionary<string, PendingAcpPermission> _pendingPermissions = new(StringComparer.Ordinal);
     private TurnStreamState? _currentTurn;
     private string? _nativeThreadId;
     private string? _lastEmittedThreadId;
+    private string? _pendingSystemPrompt;
     private int _disposed;
 
     private AcpAgentSession(
         StdioSubprocess process,
+        IReadOnlyDictionary<string, string> environment,
         string? initialSessionId,
         Action<IAgentSession>? onDispose)
     {
+        _environment = environment;
         _nativeThreadId = initialSessionId;
         _onDispose = onDispose;
         _rpc = new JsonRpcStdioConnection(
@@ -81,7 +85,7 @@ public sealed class AcpAgentSession : IAgentSession
         CancellationToken ct)
     {
         var process = StdioSubprocess.Start(wrappedCommand);
-        var session = new AcpAgentSession(process, spec.ResumeNativeThreadId, onDispose);
+        var session = new AcpAgentSession(process, wrappedCommand.Environment, spec.ResumeNativeThreadId, onDispose);
         try
         {
             using var handshakeCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -217,26 +221,19 @@ public sealed class AcpAgentSession : IAgentSession
             }
         };
 
-        await _rpc.SendRequestAsync("initialize", initParams, ct).ConfigureAwait(false);
+        var initResult = await _rpc.SendRequestAsync("initialize", initParams, ct).ConfigureAwait(false);
+        var supportsHttpMcp = AcpStdioHttpMcpBridge.SupportsHttpMcp(initResult);
+        var nodePath = supportsHttpMcp ? null : AcpStdioHttpMcpBridge.ResolveNodeExecutable(_environment);
 
         var sessionParams = new Dictionary<string, object?>
         {
             ["cwd"] = Path.GetFullPath(spec.Cwd),
-            ["mcpServers"] = McpConfigSerializer.BuildAcpMcpServersList(spec.McpServers)
+            ["mcpServers"] = McpConfigSerializer.BuildAcpMcpServersList(spec.McpServers, supportsHttpMcp, nodePath)
         };
 
-        if (!string.IsNullOrWhiteSpace(spec.Model))
-        {
-            sessionParams["model"] = spec.Model;
-        }
-
-        if (!string.IsNullOrWhiteSpace(spec.SystemPrompt))
-        {
-            sessionParams["systemPrompt"] = spec.SystemPrompt;
-        }
-
+        var isResume = !string.IsNullOrWhiteSpace(spec.ResumeNativeThreadId);
         string method;
-        if (!string.IsNullOrWhiteSpace(spec.ResumeNativeThreadId))
+        if (isResume)
         {
             method = "session/load";
             sessionParams["sessionId"] = spec.ResumeNativeThreadId;
@@ -244,6 +241,10 @@ public sealed class AcpAgentSession : IAgentSession
         else
         {
             method = "session/new";
+            if (!string.IsNullOrWhiteSpace(spec.SystemPrompt))
+            {
+                Volatile.Write(ref _pendingSystemPrompt, spec.SystemPrompt);
+            }
         }
 
         var response = await _rpc.SendRequestAsync(method, sessionParams, ct).ConfigureAwait(false);
@@ -256,6 +257,37 @@ public sealed class AcpAgentSession : IAgentSession
         }
 
         Volatile.Write(ref _nativeThreadId, resolvedSessionId);
+
+        if (!string.IsNullOrWhiteSpace(spec.Model))
+        {
+            var trimmedModel = spec.Model.Trim();
+            try
+            {
+                var setModelParams = new Dictionary<string, object?>
+                {
+                    ["sessionId"] = resolvedSessionId,
+                    ["modelId"] = trimmedModel
+                };
+                await _rpc.SendRequestAsync("session/set_model", setModelParams, ct).ConfigureAwait(false);
+            }
+            catch (JsonRpcRemoteException rpcEx) when (rpcEx.Code == -32601)
+            {
+                var setConfigParams = new Dictionary<string, object?>
+                {
+                    ["sessionId"] = resolvedSessionId,
+                    ["configId"] = "model",
+                    ["value"] = trimmedModel
+                };
+                try
+                {
+                    await _rpc.SendRequestAsync("session/set_config_option", setConfigParams, ct).ConfigureAwait(false);
+                }
+                catch (JsonRpcRemoteException fallbackEx) when (fallbackEx.Code == -32601)
+                {
+                    // Minimal ACP implementation supports neither session/set_model nor session/set_config_option.
+                }
+            }
+        }
     }
 
     private async Task RunSessionPromptRpcAsync(
@@ -264,6 +296,11 @@ public sealed class AcpAgentSession : IAgentSession
         TurnStreamState turnState,
         CancellationToken ct)
     {
+        var pendingSystem = Interlocked.Exchange(ref _pendingSystemPrompt, null);
+        var effectivePrompt = string.IsNullOrWhiteSpace(pendingSystem)
+            ? input.Prompt
+            : $"<system_instructions>\n{pendingSystem}\n</system_instructions>\n\n{input.Prompt}";
+
         var promptParams = new Dictionary<string, object?>
         {
             ["sessionId"] = sessionId,
@@ -273,7 +310,7 @@ public sealed class AcpAgentSession : IAgentSession
                 new Dictionary<string, object?>
                 {
                     ["type"] = "text",
-                    ["text"] = input.Prompt
+                    ["text"] = effectivePrompt
                 }
             }
         };

@@ -111,11 +111,15 @@ public sealed class AttemptExecutionAndGateTests
 
         // Verify attempt.Meta merged JSON & PolicyVm.OnTaskSettled received merged AttemptMeta
         var settledAttempt = Assert.Single(await ctx.Kernel.ListTaskAttemptsAsync(trackId, "step-1-write"));
-        Assert.Equal("Done", settledAttempt.Status);
+        Assert.Equal("done", settledAttempt.Status);
         Assert.Equal("kkmpptxz", settledAttempt.Meta.GetProperty("changeId").GetString());
         Assert.Equal(3, settledAttempt.Meta.GetProperty("changedFiles").GetInt32());
         Assert.NotNull(settledAttempt.GateVerdict);
         Assert.True(settledAttempt.GateVerdict!.Value.GetProperty("passed").GetBoolean());
+        var firstGateStep = settledAttempt.GateVerdict.Value.GetProperty("steps")[0];
+        Assert.True(firstGateStep.GetProperty("passed").GetBoolean());
+        Assert.Contains("All tests passed!", firstGateStep.GetProperty("stdout").GetString());
+        Assert.Contains("All tests passed!", firstGateStep.GetProperty("outputTail").GetString());
 
         Assert.True(ctx.PolicyVm.RecordedSettledContexts.TryDequeue(out var settledCtx));
         Assert.Equal("done", settledCtx!.AttemptStatus);

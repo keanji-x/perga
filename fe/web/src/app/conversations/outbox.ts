@@ -5,7 +5,7 @@ import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import type { PlannerAttachment } from '../../../../core/api/generated/wire.ts';
 import {
   conversationNameFrom, isConversationMessage,
-  type ConversationMessage, type ConversationTurn, type PlannerInputMutation, type PendingQueueEntry, type SentPlannerInput, type TranscriptEntry,
+  type ConversationMessage, type PlannerInputMutation, type PendingQueueEntry, type SentPlannerInput, type TranscriptEntry,
 } from '../../../../core/domain/conversation.ts';
 import { KeyedSendFailure, retryUnknownSend } from '../../../../core/domain/conversation-delivery.ts';
 import {
@@ -85,7 +85,7 @@ export function useConversationOutbox({
     answered: () => void) => Promise<SentPlannerInput>;
   serverEntries: readonly TranscriptEntry[];
   serverTurns: readonly ConversationMessage[];
-  liveReplies: readonly ConversationTurn[];
+  liveReplies: readonly TranscriptEntry[];
   queuedEntries: readonly PendingQueueEntry[];
   stalled: boolean;
   landed: LandedReads;

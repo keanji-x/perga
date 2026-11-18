@@ -44,7 +44,8 @@ public sealed class OsSandboxWrapperTests : IDisposable
         var wrapped = wrapper.Wrap(
             inner,
             OsSandboxMode.WorkspaceWriteBwrap,
-            auxiliaryReadOnlyFiles: ["/tmp/perga-aux-mcp.json"]);
+            auxiliaryReadOnlyFiles: ["/tmp/perga-aux-mcp.json"],
+            writableStateDirectory: "/tmp/perga-codex-state");
 
         Assert.Equal("/usr/bin/bwrap", wrapped.FileName);
         var args = wrapped.Arguments;
@@ -54,12 +55,22 @@ public sealed class OsSandboxWrapperTests : IDisposable
         AssertContainsPair(args, "--ro-bind", "/bin", "/bin");
         AssertContainsPair(args, "--ro-bind", "/lib", "/lib");
         AssertContainsPair(args, "--ro-bind-try", "/lib64", "/lib64");
+        AssertContainsPair(args, "--ro-bind-try", "/run/systemd/resolve", "/run/systemd/resolve");
         AssertContainsPair(args, "--ro-bind", "/etc", "/etc");
+        Assert.Equal(-1, IndexOfSingle(args, "--unshare-net"));
+        Assert.Equal(-1, IndexOfSingle(args, "--unshare-all"));
         AssertContainsFlagValue(args, "--proc", "/proc");
         AssertContainsFlagValue(args, "--dev", "/dev");
         AssertContainsFlagValue(args, "--tmpfs", "/tmp");
         AssertContainsPair(args, "--ro-bind-try", "/home/tester/.dotnet", "/home/tester/.dotnet");
         AssertContainsPair(args, "--ro-bind-try", "/home/tester/.local", "/home/tester/.local");
+        AssertContainsPair(args, "--ro-bind-try", "/home/tester/.local/share", "/home/tester/.local/share");
+        AssertContainsPair(args, "--ro-bind-try", "/home/tester/.gemini", "/home/tester/.gemini");
+        AssertContainsPair(args, "--ro-bind-try", "/home/tester/.cache", "/home/tester/.cache");
+        AssertContainsPair(args, "--ro-bind-try", "/home/tester/.opencode", "/home/tester/.opencode");
+
+        AssertDoesNotMountHostStateWritable(args);
+        AssertContainsPair(args, "--bind", "/tmp/perga-codex-state", "/tmp/perga-codex-state");
 
         var tmpfsIdx = IndexOfSequence(args, "--tmpfs", "/tmp");
         var cwdBindIdx = IndexOfSequence(args, "--bind", _fixture.WorkspaceDir, _fixture.WorkspaceDir);
@@ -79,15 +90,62 @@ public sealed class OsSandboxWrapperTests : IDisposable
         var wrapper = new OsSandboxWrapper(new OsSandboxOptions
         {
             PlatformOverride = OSPlatform.Linux,
-            HomeDirectoryOverride = "/home/tester",
+            HomeDirectoryOverride = _fixture.RootDir,
             BwrapVersionOverride = new Version(0, 8, 0)
         });
 
         var inner = new CommandInvocation("claude", ["--print"], _fixture.WorkspaceDir, new Dictionary<string, string>());
-        var wrapped = wrapper.Wrap(inner, OsSandboxMode.ReadOnlyBwrap);
+        var wrapped = wrapper.Wrap(inner, OsSandboxMode.ReadOnlyBwrap, writableStateDirectory: "/tmp/perga-codex-private-state");
 
         Assert.True(IndexOfSequence(wrapped.Arguments, "--ro-bind", _fixture.WorkspaceDir, _fixture.WorkspaceDir) >= 0);
+        AssertDoesNotMountHostStateWritable(wrapped.Arguments);
+        AssertContainsPair(wrapped.Arguments, "--bind", "/tmp/perga-codex-private-state", "/tmp/perga-codex-private-state");
+        Assert.False(Directory.Exists(Path.Combine(_fixture.RootDir, ".claude")));
         Assert.Equal(-1, IndexOfSequence(wrapped.Arguments, "--bind", _fixture.WorkspaceDir, _fixture.WorkspaceDir));
+    }
+
+    private static void AssertDoesNotMountHostStateWritable(IReadOnlyList<string> args)
+    {
+        Assert.DoesNotContain("--bind-try", args);
+        Assert.DoesNotContain(args.Zip(args.Skip(1)), pair => pair.First == "--bind" && pair.Second.StartsWith("/home/", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Wrap_LinuxExternalExecutableAndSymlink_MountsExternalDirsReadOnlyWithoutBreakingCwd()
+    {
+        var extBinDir = Path.Combine(_fixture.RootDir, "ext-bin");
+        var extTargetPkg = Path.Combine(_fixture.RootDir, "ext-pkg-1.0");
+        var extTargetBinDir = Path.Combine(extTargetPkg, "bin");
+        Directory.CreateDirectory(extBinDir);
+        Directory.CreateDirectory(extTargetBinDir);
+
+        var realBin = Path.Combine(extTargetBinDir, "custom-agent-real");
+        File.WriteAllText(realBin, "#!/bin/sh\nexit 0\n");
+        var symlinkBin = Path.Combine(extBinDir, "custom-agent");
+        File.CreateSymbolicLink(symlinkBin, realBin);
+
+        var wrapper = new OsSandboxWrapper(new OsSandboxOptions
+        {
+            PlatformOverride = OSPlatform.Linux,
+            HomeDirectoryOverride = "/home/tester",
+            BwrapVersionOverride = new Version(0, 8, 0)
+        });
+
+        var inner = new CommandInvocation(
+            "custom-agent",
+            ["acp"],
+            _fixture.WorkspaceDir,
+            new Dictionary<string, string>
+            {
+                ["HOME"] = "/home/tester",
+                ["PATH"] = $"{extBinDir}:/usr/bin"
+            });
+
+        var wrapped = wrapper.Wrap(inner, OsSandboxMode.ReadOnlyBwrap);
+        AssertContainsPair(wrapped.Arguments, "--ro-bind-try", extBinDir, extBinDir);
+        AssertContainsPair(wrapped.Arguments, "--ro-bind-try", extTargetBinDir, extTargetBinDir);
+        AssertContainsPair(wrapped.Arguments, "--ro-bind-try", extTargetPkg, extTargetPkg);
+        AssertContainsPair(wrapped.Arguments, "--ro-bind", _fixture.WorkspaceDir, _fixture.WorkspaceDir);
     }
 
     [Fact]
@@ -197,20 +255,31 @@ public sealed class OsSandboxWrapperTests : IDisposable
     [Fact]
     public async Task SandboxExecution_EndToEndThroughAgentRuntimeAndLiveHostBwrapWhenPermitted()
     {
+        var hostHome = Path.Combine(_fixture.RootDir, "host-home");
+        var hostCodex = Path.Combine(hostHome, ".codex");
+        Directory.CreateDirectory(hostCodex);
+        await File.WriteAllTextAsync(Path.Combine(hostCodex, "config.toml"), "# fixture config");
+        await File.WriteAllTextAsync(Path.Combine(hostCodex, "auth.json"), "{}");
+        var stateRoot = Path.Combine(_fixture.RootDir, "provider-state");
         await using var runtime = new AgentRuntime(new AgentRuntimeOptions
         {
+            SandboxStateRootDirectory = stateRoot,
+            CodexSandboxApiKey = "mock-only",
             ProviderOverrides = new Dictionary<string, ProviderCommandOverride>
             {
                 ["codex"] = new(
                     _fixture.MockCodexPath,
                     Env: new Dictionary<string, string>
                     {
-                        ["PERGA_TEST_BWRAP_CAPTURE"] = _fixture.BwrapCapturedArgsPath
+                        ["PERGA_TEST_BWRAP_CAPTURE"] = _fixture.BwrapCapturedArgsPath,
+                        ["PERGA_TEST_CODEX_REQUIRE_PRIVATE_STATE"] = OperatingSystem.IsLinux() ? "1" : "0",
+                        ["CODEX_HOME"] = hostCodex,
                     })
             },
             Sandbox = new OsSandboxOptions
             {
                 PlatformOverride = OSPlatform.Linux,
+                HomeDirectoryOverride = hostHome,
                 BwrapExecutablePath = _fixture.MockBwrapPath,
                 BwrapVersionOverride = new Version(0, 8, 0)
             }
@@ -223,7 +292,8 @@ public sealed class OsSandboxWrapperTests : IDisposable
             ResumeNativeThreadId: null,
             SystemPrompt: null,
             McpServers: MockCliFixture.CreateSampleMcpServers(),
-            Sandbox: OsSandboxMode.ReadOnlyBwrap);
+            Sandbox: OsSandboxMode.ReadOnlyBwrap,
+            StateKey: "mock-codex-session");
 
         await using var session = await runtime.OpenSessionAsync(spec, CancellationToken.None);
         var events = new List<UnifiedAgentEvent>();
@@ -236,6 +306,18 @@ public sealed class OsSandboxWrapperTests : IDisposable
         Assert.True(File.Exists(_fixture.BwrapCapturedArgsPath));
         var capturedArgs = JsonSerializer.Deserialize<string[]>(await File.ReadAllTextAsync(_fixture.BwrapCapturedArgsPath))!;
         Assert.True(IndexOfSequence(capturedArgs, "--ro-bind", _fixture.WorkspaceDir, _fixture.WorkspaceDir) >= 0);
+
+        if (OperatingSystem.IsLinux())
+        {
+            var privateState = Assert.Single(Directory.GetFiles(stateRoot, "mock-state", SearchOption.AllDirectories));
+            var privateHome = Path.GetDirectoryName(privateState)!;
+            AssertContainsPair(capturedArgs, "--bind", privateHome, privateHome);
+            Assert.Equal("# fixture config", await File.ReadAllTextAsync(Path.Combine(privateHome, "config.toml")));
+            Assert.False(File.Exists(Path.Combine(hostCodex, "mock-state")));
+            Assert.False(File.Exists(Path.Combine(privateHome, "auth.json")));
+            Assert.True(File.Exists(Path.Combine(privateHome, "mock-api-login")));
+            Assert.Equal(-1, IndexOfSequence(capturedArgs, "--bind", hostCodex, hostCodex));
+        }
 
         // Additionally run real /usr/bin/bwrap isolation check if unprivileged user namespaces are permitted in current host context.
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux) && CanExecuteHostBwrap())

@@ -281,6 +281,33 @@ internal sealed class InMemoryTrackStore : ITrackStore
         }
     }
 
+    public string DatabaseId { get; } = Guid.NewGuid().ToString("N");
+
+    public Task<IReadOnlyList<TrackOverlayDto>> ListTrackOverlaysAsync(bool includeClosed = false, CancellationToken ct = default)
+    {
+        lock (_gate)
+        {
+            var tracks = _tracks.Values
+                .Where(t => includeClosed || t.ClosedAtMs is null)
+                .OrderByDescending(t => t.UpdatedAtMs)
+                .ThenBy(t => t.Id, StringComparer.Ordinal)
+                .ToArray();
+
+            var list = new List<TrackOverlayDto>(tracks.Length);
+            foreach (var tr in tracks)
+            {
+                var isWorking = _sessions.Values.Any(s => s.TrackId == tr.Id && s.Status is "queued" or "running")
+                                || (_tasksByTrack.TryGetValue(tr.Id, out var tl) && tl.Any(t => t.Status is TaskRunStatus.Running or TaskRunStatus.Verifying));
+                var openAsks = _asks.Values.Count(a => a.TrackId == tr.Id && a.Status == AskStatus.Open);
+                var hasFailed = _tasksByTrack.TryGetValue(tr.Id, out var tfl) && tfl.Any(t => t.Status == TaskRunStatus.Failed);
+                var unreadMails = _mailsByToTrack.TryGetValue(tr.Id, out var ml) ? ml.Count(m => m.ReadAtMs is null) : 0;
+                list.Add(new TrackOverlayDto(tr.Id, tr.AreaId, isWorking, openAsks, hasFailed, unreadMails, tr.UpdatedAtMs));
+            }
+
+            return Task.FromResult<IReadOnlyList<TrackOverlayDto>>(list);
+        }
+    }
+
     public Task<string?> FindTrackIdBySessionAsync(string sessionId, CancellationToken ct)
     {
         lock (_gate)
@@ -327,7 +354,7 @@ internal sealed class InMemoryTrackStore : ITrackStore
         }
     }
 
-    public Task<string> CreateAreaAsync(AreaDto area, ResourceCreationKey? key, CancellationToken ct)
+    public Task<string> CreateAreaAsync(AreaDto area, ResourceCreationKey? key, CancellationToken ct, EventEnvelopeDto? evt = null)
     {
         lock (_gate)
         {
@@ -335,6 +362,8 @@ internal sealed class InMemoryTrackStore : ITrackStore
                 return Task.FromResult(replay);
             _areas.Add(area.Id, area);
             SaveReceipt(key, area.Id);
+            if (evt is not null)
+                AppendEventLocked(evt);
             return Task.FromResult(area.Id);
         }
     }
@@ -546,11 +575,20 @@ internal sealed class InMemoryTrackStore : ITrackStore
                 : 0);
     }
 
-    public Task RecordTurnAndItemsAsync(
+    public async Task RecordTurnAndItemsAsync(
         SessionTurnDto turn,
         IReadOnlyList<SessionItemDto> newItems,
         AgentSessionDto? updatedSession,
         CancellationToken ct)
+    {
+        _ = await RecordTurnAndItemsWithIdsAsync(turn, newItems, updatedSession, ct);
+    }
+
+    public Task<(SessionTurnDto Turn, IReadOnlyList<long> ItemIds)> RecordTurnAndItemsWithIdsAsync(
+        SessionTurnDto turn,
+        IReadOnlyList<SessionItemDto> newItems,
+        AgentSessionDto? updatedSession,
+        CancellationToken ct = default)
     {
         lock (_gate)
         {
@@ -560,32 +598,42 @@ internal sealed class InMemoryTrackStore : ITrackStore
                 _turnsBySession[turn.SessionId] = turns;
             }
 
-            var tIdx = turns.FindIndex(t => t.Id == turn.Id);
-            if (tIdx >= 0)
-            {
-                turns[tIdx] = turn;
-            }
-            else
-            {
-                // Enforce UNIQUE(session_id, turn_index) invariant just like SQLite!
-                if (turns.Any(t => t.TurnIndex == turn.TurnIndex))
-                {
-                    throw new InvalidOperationException(
-                        $"Duplicate (session_id={turn.SessionId}, turn_index={turn.TurnIndex}) violated!");
-                }
-
-                turns.Add(turn);
-            }
-
             if (!_itemsBySession.TryGetValue(turn.SessionId, out var items))
             {
                 items = [];
                 _itemsBySession[turn.SessionId] = items;
             }
 
+            var ids = new List<long>(newItems.Count);
+            long? userItemId = turn.UserItemId;
             foreach (var item in newItems)
             {
-                items.Add(item with { Id = _nextItemId++ });
+                var assignedId = _nextItemId++;
+                items.Add(item with { Id = assignedId });
+                ids.Add(assignedId);
+                if (userItemId is null && item.Kind == "user")
+                {
+                    userItemId = assignedId;
+                }
+            }
+
+            userItemId ??= items.FirstOrDefault(i => i.TurnId == turn.Id && i.Kind == "user")?.Id;
+            var storedTurn = userItemId == turn.UserItemId ? turn : turn with { UserItemId = userItemId };
+
+            var tIdx = turns.FindIndex(t => t.Id == storedTurn.Id);
+            if (tIdx >= 0)
+            {
+                turns[tIdx] = storedTurn;
+            }
+            else
+            {
+                if (turns.Any(t => t.TurnIndex == storedTurn.TurnIndex))
+                {
+                    throw new InvalidOperationException(
+                        $"Duplicate (session_id={storedTurn.SessionId}, turn_index={storedTurn.TurnIndex}) violated!");
+                }
+
+                turns.Add(storedTurn);
             }
 
             if (updatedSession is not null)
@@ -593,7 +641,32 @@ internal sealed class InMemoryTrackStore : ITrackStore
                 _sessions[updatedSession.Id] = updatedSession;
             }
 
-            return Task.CompletedTask;
+            return Task.FromResult<(SessionTurnDto, IReadOnlyList<long>)>((storedTurn, ids));
+        }
+    }
+
+    public Task<IReadOnlyList<long>> AppendSessionItemsAsync(
+        string sessionId,
+        IReadOnlyList<SessionItemDto> newItems,
+        CancellationToken ct = default)
+    {
+        lock (_gate)
+        {
+            if (!_itemsBySession.TryGetValue(sessionId, out var items))
+            {
+                items = [];
+                _itemsBySession[sessionId] = items;
+            }
+
+            var ids = new List<long>(newItems.Count);
+            foreach (var item in newItems)
+            {
+                var id = _nextItemId++;
+                items.Add(item with { Id = id });
+                ids.Add(id);
+            }
+
+            return Task.FromResult<IReadOnlyList<long>>(ids);
         }
     }
 
@@ -661,6 +734,24 @@ internal sealed class InMemoryTrackStore : ITrackStore
         lock (_gate)
         {
             _terminals[terminal.Id] = terminal;
+            if (evt is not null)
+            {
+                AppendEventLocked(evt);
+            }
+
+            return Task.CompletedTask;
+        }
+    }
+
+    public Task DeleteTerminalAsync(string trackId, string terminalId, EventEnvelopeDto? evt, CancellationToken ct)
+    {
+        lock (_gate)
+        {
+            if (_terminals.TryGetValue(terminalId, out var existing) && existing.TrackId == trackId)
+            {
+                _terminals.Remove(terminalId);
+            }
+
             if (evt is not null)
             {
                 AppendEventLocked(evt);

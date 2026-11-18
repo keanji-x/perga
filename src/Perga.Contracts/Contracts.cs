@@ -68,7 +68,8 @@ public sealed record SessionTurnDto(
     JsonElement? Usage,
     string? ErrorText,
     long? StartedAtMs,
-    long? CompletedAtMs);
+    long? CompletedAtMs,
+    long? UserItemId = null);
 
 public sealed record SessionInputReceipt(
     string InputId,
@@ -183,3 +184,12 @@ public sealed record DbMaintenanceStatsDto(
     int ThinnedRevisions,
     int CompactedItems,
     int ReclaimedPages);
+
+public sealed record TrackOverlayDto(
+    string TrackId,
+    string AreaId,
+    bool IsWorking,
+    int OpenAskCount,
+    bool HasFailedTask,
+    int UnreadMailCount,
+    long UpdatedAtMs);

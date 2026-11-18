@@ -82,7 +82,7 @@ export function useConversationStore(
   /* The catalog rides alongside the run query: the trigger has to render the chosen
        model's name, and `planner-run` gives only its slug. */
   const modelCatalog = useQuery({
-    ...modelCatalogQueryOptions(transport, { kind: 'card', cardId }, unauthorized), enabled: scope !== null,
+    ...modelCatalogQueryOptions(transport, { kind: 'card', cardId }, unauthorized, provider === undefined ? undefined : { provider }), enabled: scope !== null,
   });
   const historyReplacementSupported = run.data?.history_replacement_supported === true;
   const displayItems = history.loadedRows;

@@ -1,6 +1,7 @@
 using System.Net.Http.Json;
 using System.Net.WebSockets;
 using System.Runtime.CompilerServices;
+using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
@@ -16,6 +17,69 @@ namespace Perga.Host.IntegrationTests;
 
 public sealed class WebSocketsIntegrationTests
 {
+    [Fact]
+    public async Task EventsWebSocket_DeliversEventCommittedBetweenReplayReadAndLiveStream()
+    {
+        await using var cluster = new PergaHostTestCluster(configureExtraServices: services =>
+            services.AddSingleton<ITrackReadStore>(sp =>
+            {
+                var proxy = DispatchProxy.Create<ITrackReadStore, ReplayGateStore>();
+                ((ReplayGateStore)(object)proxy).Initialize(sp.GetRequiredService<ITrackStore>(), sp.GetRequiredService<IPergaKernel>());
+                return proxy;
+            }));
+        var (trackId, _) = await cluster.CreateTrackAsync();
+        var store = cluster.Services.GetRequiredService<ITrackStore>();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var ct = cts.Token;
+        var cursor = await store.GetEventTipIdAsync(ct);
+
+        using var socket = await cluster.ConnectEventsWebSocketAsync($"?since={cursor}&trackId={trackId}", ct);
+        using var ready = await PergaHostTestCluster.ReceiveTextJsonFrameAsync(socket, ct);
+        Assert.Equal("_replay_complete", ready.RootElement.GetProperty("kind").GetString());
+        Assert.Equal(cursor, ready.RootElement.GetProperty("tipId").GetInt64());
+
+        using var eventFrame = await PergaHostTestCluster.ReceiveTextJsonFrameAsync(socket, ct);
+        Assert.Equal(cursor + 1, eventFrame.RootElement.GetProperty("eventId").GetInt64());
+        Assert.Equal(KernelEventKinds.TrackUpdated, eventFrame.RootElement.GetProperty("kind").GetString());
+    }
+
+    public class ReplayGateStore : DispatchProxy
+    {
+        private ITrackStore _inner = null!;
+        private IPergaKernel _kernel = null!;
+        private bool _published;
+
+        public void Initialize(ITrackStore inner, IPergaKernel kernel)
+        {
+            _inner = inner;
+            _kernel = kernel;
+        }
+
+        protected override object? Invoke(MethodInfo? method, object?[]? args)
+        {
+            if (method?.Name == nameof(ITrackReadStore.ListEventsSinceAsync) &&
+                args is [long since, string trackId, int limit, CancellationToken ct] && !_published)
+            {
+                _published = true;
+                return ReadAndPublishAsync(since, trackId, limit, ct);
+            }
+
+            return method!.Invoke(_inner, args);
+        }
+
+        private async Task<IReadOnlyList<EventEnvelopeDto>> ReadAndPublishAsync(
+            long since, string trackId, int limit, CancellationToken ct)
+        {
+            var replay = await _inner.ListEventsSinceAsync(since, trackId, limit, ct);
+            var track = await _inner.GetTrackAsync(trackId, ct);
+            var next = new EventEnvelopeDto(since + 1, track!.AreaId, trackId, KernelEventKinds.TrackUpdated,
+                JsonSerializer.SerializeToElement(track, PergaJsonDefaults.ApiOptions), track.UpdatedAtMs);
+            await _inner.AppendEventAsync(next, ct);
+            _kernel.EventBus.PublishPersistent(next);
+            return replay;
+        }
+    }
+
     [Fact]
     public async Task EventsWebSocket_ReplaysPersistedEvents_EmitsReplayComplete_And_StreamsTransientDeltas()
     {

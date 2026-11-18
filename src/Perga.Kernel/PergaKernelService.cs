@@ -27,6 +27,9 @@ public interface IPergaKernel : IAsyncDisposable
 
     // System & Bootstrap
     Task<BootstrapDto> GetBootstrapAsync(CancellationToken ct = default);
+    Task<BootstrapDto> GetBootstrapAsync(string? scope, bool refresh = false, CancellationToken ct = default);
+    Task<TrackOverlaysResponseDto> GetOverlaysAsync(bool includeClosed = false, CancellationToken ct = default);
+    HostListDirResultDto ListHostDirectory(string? path = null);
     IReadOnlyList<CompiledTemplateManifest> ListTemplates();
     Task<BootReconcileResult> ReconcileOnBootAsync(CancellationToken ct = default);
     Task<DbMaintenanceStatsDto> RunMaintenancePassAsync(CancellationToken ct = default);
@@ -51,7 +54,9 @@ public interface IPergaKernel : IAsyncDisposable
 
     // Workspace Files & VCS Diff
     Task<WorkspaceFileResultDto> BrowseOrReadWorkspaceFileAsync(string trackId, string? relativePath = null, int maxBytes = 256 * 1024, CancellationToken ct = default);
+    Task<(string Path, Stream Content)> OpenWorkspaceRawFileAsync(string trackId, string? relativePath, CancellationToken ct = default);
     Task<DiffSummary> GetTrackVcsDiffAsync(string trackId, string? fromRev = null, string? toRev = null, CancellationToken ct = default);
+    Task<DiffSummary> GetTrackVcsDiffAsync(string trackId, string? fromRev, string? toRev, string? path, CancellationToken ct = default);
 
     // Report & Revisions
     Task<ReportReadResult> ReadReportAsync(string trackId, string? callerSessionId = null, CancellationToken ct = default);
@@ -62,9 +67,9 @@ public interface IPergaKernel : IAsyncDisposable
     // Tasks, Governance & Completion
     Task<IReadOnlyList<TaskDto>> ListTasksAsync(string trackId, CancellationToken ct = default);
     Task<IReadOnlyList<TaskAttemptDto>> ListTaskAttemptsAsync(string trackId, string taskKeyOrId, CancellationToken ct = default);
-    Task<TaskDto> CancelTaskAsync(string trackId, string callerSessionId, string taskKeyOrId, string? reason = null, CancellationToken ct = default);
-    Task<TaskDto> AcceptTaskAsync(string trackId, string callerSessionId, string taskKeyOrId, string? note = null, CancellationToken ct = default);
-    Task<TaskDto> RejectTaskAsync(string trackId, string callerSessionId, string taskKeyOrId, string note, bool reQueue = false, CancellationToken ct = default);
+    Task<TaskDto> CancelTaskAsync(string trackId, string? callerSessionId, string taskKeyOrId, string? reason = null, CancellationToken ct = default);
+    Task<TaskDto> AcceptTaskAsync(string trackId, string? callerSessionId, string taskKeyOrId, string? note = null, CancellationToken ct = default);
+    Task<TaskDto> RejectTaskAsync(string trackId, string? callerSessionId, string taskKeyOrId, string note, bool reQueue = false, CancellationToken ct = default);
     Task<TaskDto> CompleteAttemptDoneAsync(string trackId, string callerSessionId, JsonElement? workerResult = null, CancellationToken ct = default);
     Task<TaskDto> CompleteAttemptFailAsync(string trackId, string callerSessionId, string reason, JsonElement? workerResult = null, CancellationToken ct = default);
 
@@ -73,6 +78,7 @@ public interface IPergaKernel : IAsyncDisposable
     Task<AgentSessionDto> CreateSubagentSessionAsync(string trackId, CreateSessionRequest req, CancellationToken ct = default);
     Task<(SessionCreationReceipt Receipt, bool Replay)> CreateSessionWithReceiptAsync(
         string trackId, CreateSessionRequest req, string key, CancellationToken ct);
+    Task<AgentSessionDto> PatchSessionAsync(string sessionId, PatchSessionRequest req, CancellationToken ct = default);
     Task<(SessionInputReceipt? Receipt, SessionTurnDto? SteeredTurn, bool Replay)> AcceptMessageAsync(
         string sessionId, SendMessageRequest req, CancellationToken ct);
     Task<SessionInputReceipt> GetSessionInputAsync(string sessionId, string inputId, CancellationToken ct);
@@ -113,6 +119,10 @@ public interface IPergaKernel : IAsyncDisposable
 
 public sealed class PergaKernelService : IPergaKernel
 {
+    private const long ProviderProbeCacheTtlMs = 60_000L;
+    private const int BinarySniffBytes = 8 * 1024;
+    private static readonly string ProcessDbInstanceId = Guid.NewGuid().ToString("N");
+
     private readonly ITrackStore _store;
     private readonly IReportDocEngine _reportEngine;
     private readonly IPolicyVm _policyVm;
@@ -124,6 +134,11 @@ public sealed class PergaKernelService : IPergaKernel
     private readonly EventHub _eventHub;
     private readonly KernelOptions _options;
     private readonly TimeProvider _timeProvider;
+    private readonly string _fallbackDatabaseId = Guid.NewGuid().ToString("N");
+    private readonly SemaphoreSlim _providerProbeLock = new(1, 1);
+
+    private IReadOnlyList<ProviderStatus>? _cachedProviders;
+    private long _cachedProvidersAtMs;
     private bool _disposed;
 
     public PergaKernelService(
@@ -179,17 +194,254 @@ public sealed class PergaKernelService : IPergaKernel
 
     // ------------------- System & Bootstrap -------------------
 
-    public async Task<BootstrapDto> GetBootstrapAsync(CancellationToken ct = default)
+    public Task<BootstrapDto> GetBootstrapAsync(CancellationToken ct = default) =>
+        GetBootstrapAsync(scope: null, refresh: false, ct);
+
+    public async Task<BootstrapDto> GetBootstrapAsync(
+        string? scope,
+        bool refresh = false,
+        CancellationToken ct = default)
     {
-        var providersTask = _agentRuntime.ProbeProvidersAsync(ct);
+        var isWhoAmIScope = string.Equals(scope?.Trim(), "whoami", StringComparison.OrdinalIgnoreCase);
         var areasTask = _store.ListAreasAsync(ct);
-        await Task.WhenAll(providersTask, areasTask).ConfigureAwait(false);
+
+        IReadOnlyList<ProviderStatus> providers;
+        if (isWhoAmIScope)
+        {
+            providers = [];
+            await areasTask.ConfigureAwait(false);
+        }
+        else
+        {
+            var providersTask = GetCachedOrProbeProvidersAsync(refresh, ct);
+            await Task.WhenAll(providersTask, areasTask).ConfigureAwait(false);
+            providers = await providersTask.ConfigureAwait(false);
+        }
+
+        var databaseId = !string.IsNullOrWhiteSpace(_store.DatabaseId)
+            ? _store.DatabaseId
+            : _fallbackDatabaseId;
 
         return new BootstrapDto(
             Version: _options.Version,
-            Providers: await providersTask.ConfigureAwait(false),
+            Providers: providers,
             Templates: Templates.ListManifests(),
-            Areas: await areasTask.ConfigureAwait(false));
+            Areas: await areasTask.ConfigureAwait(false),
+            DatabaseId: databaseId,
+            DbInstanceId: ProcessDbInstanceId,
+            AuthRequired: false);
+    }
+
+    public async Task<TrackOverlaysResponseDto> GetOverlaysAsync(
+        bool includeClosed = false,
+        CancellationToken ct = default)
+    {
+        var stored = await _store.ListTrackOverlaysAsync(includeClosed, ct).ConfigureAwait(false);
+        var merged = new List<TrackOverlayDto>(stored.Count);
+        foreach (var item in stored)
+        {
+            if (Actors.TryGetActive(item.TrackId, out var actor) && actor is not null)
+            {
+                var isWorking = item.IsWorking || actor.IsSessionOrTaskRunning;
+                var updatedAtMs = Math.Max(item.UpdatedAtMs, actor.LastActivityAtMs);
+                merged.Add(item with { IsWorking = isWorking, UpdatedAtMs = updatedAtMs });
+            }
+            else
+            {
+                merged.Add(item);
+            }
+        }
+
+        return new TrackOverlaysResponseDto(merged);
+    }
+
+    public HostListDirResultDto ListHostDirectory(string? path = null)
+    {
+        var homeDir = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        if (string.IsNullOrWhiteSpace(homeDir))
+        {
+            homeDir = Environment.GetEnvironmentVariable("HOME") ?? Path.DirectorySeparatorChar.ToString();
+        }
+
+        string rawTarget;
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            rawTarget = homeDir;
+        }
+        else
+        {
+            var trimmed = path.Trim();
+            if (string.Equals(trimmed, "~", StringComparison.Ordinal))
+            {
+                rawTarget = homeDir;
+            }
+            else if (trimmed.StartsWith("~/", StringComparison.Ordinal) ||
+                     trimmed.StartsWith("~\\", StringComparison.Ordinal))
+            {
+                rawTarget = Path.Combine(homeDir, trimmed[2..]);
+            }
+            else
+            {
+                rawTarget = trimmed;
+            }
+        }
+
+        string fullPath;
+        try
+        {
+            fullPath = Path.GetFullPath(rawTarget);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            throw KernelException.InvalidArgument($"Invalid directory path '{rawTarget}': {ex.Message}");
+        }
+
+        if (File.Exists(fullPath) && !Directory.Exists(fullPath))
+        {
+            throw KernelException.InvalidArgument($"Path '{fullPath}' is a file, not a directory.");
+        }
+
+        if (!Directory.Exists(fullPath))
+        {
+            throw KernelException.NotFound($"Directory '{fullPath}' not found.");
+        }
+
+        // 1. Verify the target directory itself is readable (throws 403 on chmod 000 target dir,
+        // without stat'ing child entries yet).
+        try
+        {
+            using var openCheck = Directory
+                .EnumerateFileSystemEntries(fullPath, "*", new EnumerationOptions
+                {
+                    IgnoreInaccessible = false,
+                    ReturnSpecialDirectories = false
+                })
+                .GetEnumerator();
+            _ = openCheck;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            throw KernelException.Forbidden($"Access denied reading directory '{fullPath}'.");
+        }
+
+        // 2. Enumerate child paths as strings (AttributesToSkip = 0 avoids stat inside MoveNext()),
+        //    then inspect each child inside a per-entry try/catch so FUSE mounts (/tmp/.mount_*) or
+        //    root-owned dirs (/tmp/systemd-private-*, /root) never fail the parent listing.
+        var entries = new List<HostDirEntryDto>();
+        var enumOptions = new EnumerationOptions
+        {
+            IgnoreInaccessible = true,
+            ReturnSpecialDirectories = false,
+            AttributesToSkip = 0
+        };
+        foreach (var childFullPath in Directory.EnumerateFileSystemEntries(fullPath, "*", enumOptions))
+        {
+            try
+            {
+                var name = Path.GetFileName(childFullPath);
+                if (string.IsNullOrEmpty(name))
+                {
+                    continue;
+                }
+
+                var attrs = File.GetAttributes(childFullPath);
+                var isSymlink = (attrs & FileAttributes.ReparsePoint) != 0;
+                bool isDir;
+                if (isSymlink)
+                {
+                    try
+                    {
+                        isDir = Directory.Exists(childFullPath);
+                    }
+                    catch
+                    {
+                        isDir = (attrs & FileAttributes.Directory) != 0;
+                    }
+                }
+                else
+                {
+                    isDir = (attrs & FileAttributes.Directory) != 0;
+                }
+
+                entries.Add(new HostDirEntryDto(name, isDir, isSymlink));
+            }
+            catch (UnauthorizedAccessException)
+            {
+                // Skip inaccessible child entry (e.g. FUSE mount or root-only dir) without failing parent listing.
+            }
+            catch (IOException)
+            {
+                // Skip transiently vanishing or special child entry.
+            }
+        }
+
+        entries.Sort(static (a, b) =>
+        {
+            if (a.IsDir != b.IsDir)
+            {
+                return a.IsDir ? -1 : 1;
+            }
+
+            var cmp = StringComparer.OrdinalIgnoreCase.Compare(a.Name, b.Name);
+            return cmp != 0 ? cmp : StringComparer.Ordinal.Compare(a.Name, b.Name);
+        });
+
+        var parent = Directory.GetParent(fullPath)?.FullName;
+        return new HostListDirResultDto(fullPath, parent, entries);
+    }
+
+    private async Task<IReadOnlyList<ProviderStatus>> GetCachedOrProbeProvidersAsync(
+        bool forceRefresh,
+        CancellationToken ct)
+    {
+        var nowMs = NowMs();
+        if (!forceRefresh &&
+            _cachedProviders is { } cached &&
+            (nowMs - Volatile.Read(ref _cachedProvidersAtMs)) < ProviderProbeCacheTtlMs)
+        {
+            return cached;
+        }
+
+        await _providerProbeLock.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            nowMs = NowMs();
+            if (!forceRefresh &&
+                _cachedProviders is { } cachedInside &&
+                (nowMs - _cachedProvidersAtMs) < ProviderProbeCacheTtlMs)
+            {
+                return cachedInside;
+            }
+
+            IReadOnlyList<ProviderStatus> probed;
+            if (forceRefresh)
+            {
+                var forceOverload = _agentRuntime
+                    .GetType()
+                    .GetMethod("ProbeProvidersAsync", [typeof(bool), typeof(CancellationToken)]);
+                if (forceOverload is not null &&
+                    forceOverload.Invoke(_agentRuntime, [true, ct]) is Task<IReadOnlyList<ProviderStatus>> forceTask)
+                {
+                    probed = await forceTask.ConfigureAwait(false);
+                }
+                else
+                {
+                    probed = await _agentRuntime.ProbeProvidersAsync(ct).ConfigureAwait(false);
+                }
+            }
+            else
+            {
+                probed = await _agentRuntime.ProbeProvidersAsync(ct).ConfigureAwait(false);
+            }
+
+            _cachedProviders = probed;
+            Volatile.Write(ref _cachedProvidersAtMs, NowMs());
+            return probed;
+        }
+        finally
+        {
+            _providerProbeLock.Release();
+        }
     }
 
     public IReadOnlyList<CompiledTemplateManifest> ListTemplates() => Templates.ListManifests();
@@ -230,7 +482,11 @@ public sealed class PergaKernelService : IPergaKernel
             CreatedAtMs: now,
             UpdatedAtMs: now);
 
-        var id = await _store.CreateAreaAsync(area, key, ct).ConfigureAwait(false);
+        var evt = new EventEnvelopeDto(null, area.Id, null, KernelEventKinds.AreaUpdated, JsonHelpers.ToElement(area), now);
+        await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
+        var id = await _store.CreateAreaAsync(area, key, ct, evt).ConfigureAwait(false);
+        if (id == area.Id)
+            await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, evt, CancellationToken.None, allowFallback: false).ConfigureAwait(false);
         return await ReadCreatedAreaAsync(id, ct).ConfigureAwait(false);
     }
 
@@ -264,7 +520,18 @@ public sealed class PergaKernelService : IPergaKernel
             UpdatedAtMs = now
         };
 
-        return await _store.UpsertAreaAsync(updated, ct).ConfigureAwait(false);
+        await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
+        var persisted = await _store.UpsertAreaAsync(updated, ct).ConfigureAwait(false);
+        var evt = new EventEnvelopeDto(
+            EventId: null,
+            AreaId: persisted.Id,
+            TrackId: null,
+            Kind: KernelEventKinds.AreaUpdated,
+            Payload: JsonHelpers.ToElement(persisted),
+            CreatedAtMs: now);
+        await _store.AppendEventAsync(evt, ct).ConfigureAwait(false);
+        await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, evt, ct, allowFallback: false).ConfigureAwait(false);
+        return persisted;
     }
 
     public async Task DeleteAreaAsync(string areaId, CancellationToken ct = default)
@@ -272,14 +539,19 @@ public sealed class PergaKernelService : IPergaKernel
         _ = await _store.GetAreaAsync(areaId, ct).ConfigureAwait(false)
             ?? throw KernelException.NotFound($"Area '{areaId}' not found.");
 
-        // Cleanly tear down child tracks so workspaces, processes, and actors do not leak.
+        // Cleanly tear down child tracks so workspaces, processes, terminals, sessions, and actors do not leak.
         var childTracks = await _store.ListTracksAsync(areaId, includeClosed: true, ct).ConfigureAwait(false);
         foreach (var track in childTracks)
         {
             await DeleteTrackAsync(track.Id, ct).ConfigureAwait(false);
         }
 
+        await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
         await _store.DeleteAreaAsync(areaId, ct, requireEmpty: true).ConfigureAwait(false);
+        var evt = new EventEnvelopeDto(null, areaId, null, KernelEventKinds.AreaDeleted,
+            JsonHelpers.ToElement(new { id = areaId }), NowMs());
+        await _store.AppendEventAsync(evt, CancellationToken.None).ConfigureAwait(false);
+        await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, evt, CancellationToken.None, allowFallback: false).ConfigureAwait(false);
     }
 
     // ------------------- Tracks -------------------
@@ -315,19 +587,21 @@ public sealed class PergaKernelService : IPergaKernel
                 ? policy!.Manifest.WorkspaceDriver!
                 : _options.DefaultWorkspaceDriver;
 
-        var sourcePath = !string.IsNullOrWhiteSpace(req.Cwd)
-            ? req.Cwd!
-            : !string.IsNullOrWhiteSpace(area.DefaultCwd)
-                ? area.DefaultCwd!
-                : Directory.GetCurrentDirectory();
-
-        var targetRootDir = Path.Combine(_options.WorkspacesRootDirectory, trackId);
+        var blankWorkspace = string.IsNullOrWhiteSpace(req.Cwd) && string.IsNullOrWhiteSpace(area.DefaultCwd);
+        var sourcePath = blankWorkspace
+            ? Path.Combine(_options.WorkspacesRootDirectory, trackId)
+            : string.IsNullOrWhiteSpace(req.Cwd) ? area.DefaultCwd! : req.Cwd!;
+        var targetRootDir = Path.Combine(_options.WorkspacesRootDirectory, blankWorkspace ? "_worktrees" : trackId);
         var lowerCacheDirs = policy?.Manifest.WorkspaceLowerCacheDirs ?? [];
+        var createCommand = policy?.Manifest.WorkspaceCreateCmd;
+        if (blankWorkspace && (driverId == VcsWorkspaceDriver.Id || policy?.Manifest.WorkspaceDriver == VcsWorkspaceDriver.Id))
+            createCommand = string.IsNullOrWhiteSpace(createCommand) ? "git init -q" : $"git init -q && (\n{createCommand}\n)";
 
         _workspaceDrivers.GetRequired(driverId);
         var preparation = new WorkspacePreparation(
-            new WorkspaceProvisionRequest(trackId, Path.GetFullPath(sourcePath), Path.GetFullPath(targetRootDir), lowerCacheDirs, req.BaseRevision),
-            policy?.Manifest.WorkspaceCreateCmd);
+            new WorkspaceProvisionRequest(trackId, Path.GetFullPath(sourcePath), Path.GetFullPath(targetRootDir),
+                lowerCacheDirs, req.BaseRevision, NewEmptyWorkspace: blankWorkspace),
+            createCommand);
 
         var templateInputs = JsonHelpers.EnsureClonedObject(req.TemplateInputs);
         var templateState = JsonHelpers.EmptyObject;
@@ -381,7 +655,8 @@ public sealed class PergaKernelService : IPergaKernel
             BoundTaskId: null,
             BoundAttemptId: null,
             Title: "Lead",
-            Provider: string.IsNullOrWhiteSpace(req.Provider) ? _options.DefaultProvider : req.Provider!,
+            Provider: string.IsNullOrWhiteSpace(req.Provider) ? _options.DefaultProvider
+                : TaskBlockSynchronizer.NormalizeProviderId(req.Provider) ?? req.Provider.Trim(),
             Model: req.Model ?? _options.DefaultModel,
             NativeThreadId: null,
             Epoch: 1,
@@ -464,41 +739,39 @@ public sealed class PergaKernelService : IPergaKernel
         CancellationToken ct = default)
     {
         var mounted = await Actors.GetOrActivate(trackId).EnsureMountedAsync(ct).ConfigureAwait(false);
-        var rootFull = Path.GetFullPath(mounted.MergedCwd);
-        var sanitizedRel = string.IsNullOrWhiteSpace(relativePath) ? string.Empty : relativePath.TrimStart('/', '\\');
-        var candidateFull = Path.GetFullPath(Path.Combine(rootFull, sanitizedRel));
-
-        var rootWithSep = rootFull.EndsWith(Path.DirectorySeparatorChar)
-            ? rootFull
-            : rootFull + Path.DirectorySeparatorChar;
-
-        if (!string.Equals(candidateFull, rootFull, StringComparison.Ordinal) &&
-            !candidateFull.StartsWith(rootWithSep, StringComparison.Ordinal))
-        {
-            throw KernelException.Forbidden("Path escapes workspace root.");
-        }
+        var (rootFull, candidateFull, sanitizedRel) = ResolveContainedWorkspacePathOrThrow(mounted.MergedCwd, relativePath);
 
         if (Directory.Exists(candidateFull))
         {
+            var containedDirectory = EnsureRealPathContainedInWorkspace(rootFull, candidateFull);
+            using var openedDirectory = UseWorkspaceFileReader(() => WorkspaceFileReader.OpenDirectory(containedDirectory));
+            var directoryPath = openedDirectory is null ? containedDirectory
+                : $"/proc/self/fd/{openedDirectory.DangerousGetHandle()}";
             var entries = new List<WorkspaceFileEntryDto>();
-            foreach (var dir in Directory.GetDirectories(candidateFull).OrderBy(d => d, StringComparer.Ordinal))
+            foreach (var dir in Directory.GetDirectories(directoryPath).OrderBy(d => d, StringComparer.Ordinal))
             {
                 var name = Path.GetFileName(dir);
-                var rel = Path.GetRelativePath(rootFull, dir).Replace('\\', '/');
+                var rel = Path.GetRelativePath(rootFull, Path.Combine(candidateFull, name)).Replace('\\', '/');
                 entries.Add(new WorkspaceFileEntryDto(name, rel, IsDirectory: true, SizeBytes: 0));
             }
 
-            foreach (var file in Directory.GetFiles(candidateFull).OrderBy(f => f, StringComparer.Ordinal))
+            foreach (var file in Directory.GetFiles(directoryPath).OrderBy(f => f, StringComparer.Ordinal))
             {
                 var info = new FileInfo(file);
-                var rel = Path.GetRelativePath(rootFull, file).Replace('\\', '/');
+                var rel = Path.GetRelativePath(rootFull, Path.Combine(candidateFull, info.Name)).Replace('\\', '/');
                 entries.Add(new WorkspaceFileEntryDto(info.Name, rel, IsDirectory: false, SizeBytes: info.Length));
             }
 
             var relDir = string.Equals(candidateFull, rootFull, StringComparison.Ordinal)
                 ? string.Empty
                 : Path.GetRelativePath(rootFull, candidateFull).Replace('\\', '/');
-            return new WorkspaceFileResultDto(relDir, IsDirectory: true, Content: null, Truncated: false, Entries: entries);
+            return new WorkspaceFileResultDto(
+                relDir,
+                IsDirectory: true,
+                Content: null,
+                Truncated: false,
+                Entries: entries,
+                IsBinary: false);
         }
 
         if (!File.Exists(candidateFull))
@@ -506,25 +779,188 @@ public sealed class PergaKernelService : IPergaKernel
             throw KernelException.NotFound($"Workspace path '{sanitizedRel}' not found.");
         }
 
-        await using var fs = new FileStream(candidateFull, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        var canonicalPath = EnsureRealPathContainedInWorkspace(rootFull, candidateFull);
+        await using var fs = UseWorkspaceFileReader(() => WorkspaceFileReader.Open(canonicalPath));
         var limit = Math.Max(1, maxBytes);
         var buffer = new byte[Math.Min(fs.Length, limit)];
         var read = await fs.ReadAtLeastAsync(buffer, buffer.Length, throwOnEndOfStream: false, ct).ConfigureAwait(false);
-        var truncated = fs.Length > read;
-        var text = Encoding.UTF8.GetString(buffer, 0, read);
         var relFile = Path.GetRelativePath(rootFull, candidateFull).Replace('\\', '/');
 
-        return new WorkspaceFileResultDto(relFile, IsDirectory: false, Content: text, Truncated: truncated, Entries: null);
+        var sniffLen = Math.Min(read, BinarySniffBytes);
+        if (buffer.AsSpan(0, sniffLen).IndexOf((byte)0) >= 0)
+        {
+            return new WorkspaceFileResultDto(
+                relFile,
+                IsDirectory: false,
+                Content: null,
+                Truncated: false,
+                Entries: null,
+                IsBinary: true);
+        }
+
+        var truncated = fs.Length > read;
+        var validLen = truncated ? TrimTrailingIncompleteUtf8(buffer.AsSpan(0, read)) : read;
+        var text = Encoding.UTF8.GetString(buffer, 0, validLen);
+
+        return new WorkspaceFileResultDto(
+            relFile,
+            IsDirectory: false,
+            Content: text,
+            Truncated: truncated,
+            Entries: null,
+            IsBinary: false);
     }
 
-    public async Task<DiffSummary> GetTrackVcsDiffAsync(
+    public async Task<(string Path, Stream Content)> OpenWorkspaceRawFileAsync(
+        string trackId,
+        string? relativePath,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(relativePath))
+        {
+            throw KernelException.InvalidArgument("Query parameter 'path' is required.");
+        }
+
+        var mounted = await Actors.GetOrActivate(trackId).EnsureMountedAsync(ct).ConfigureAwait(false);
+        var (rootFull, candidateFull, sanitizedRel) = ResolveContainedWorkspacePathOrThrow(mounted.MergedCwd, relativePath);
+
+        if (Directory.Exists(candidateFull))
+        {
+            throw KernelException.NotFound($"Workspace path '{sanitizedRel}' is a directory, not a file.");
+        }
+
+        if (!File.Exists(candidateFull))
+        {
+            throw KernelException.NotFound($"Workspace file '{sanitizedRel}' not found.");
+        }
+
+        var canonicalPath = EnsureRealPathContainedInWorkspace(rootFull, candidateFull);
+        return (canonicalPath, UseWorkspaceFileReader(() => WorkspaceFileReader.Open(canonicalPath)));
+    }
+
+    private static (string RootFull, string CandidateFull, string SanitizedRel) ResolveContainedWorkspacePathOrThrow(
+        string workspaceRoot,
+        string? rawPath)
+    {
+        var rootFull = Path.GetFullPath(workspaceRoot);
+        var rootWithSep = rootFull.EndsWith(Path.DirectorySeparatorChar)
+            ? rootFull
+            : rootFull + Path.DirectorySeparatorChar;
+
+        if (string.IsNullOrWhiteSpace(rawPath))
+        {
+            return (rootFull, rootFull, string.Empty);
+        }
+
+        var trimmed = rawPath.Trim();
+        string candidateFull;
+        if (Path.IsPathRooted(trimmed))
+        {
+            var rootedFull = Path.GetFullPath(trimmed);
+            if (string.Equals(rootedFull, rootFull, StringComparison.Ordinal) ||
+                rootedFull.StartsWith(rootWithSep, StringComparison.Ordinal))
+            {
+                candidateFull = rootedFull;
+            }
+            else
+            {
+                candidateFull = Path.GetFullPath(Path.Combine(rootFull, trimmed.TrimStart('/', '\\')));
+            }
+        }
+        else
+        {
+            candidateFull = Path.GetFullPath(Path.Combine(rootFull, trimmed));
+        }
+
+        if (!string.Equals(candidateFull, rootFull, StringComparison.Ordinal) &&
+            !candidateFull.StartsWith(rootWithSep, StringComparison.Ordinal))
+        {
+            throw KernelException.Forbidden("Path escapes workspace root.");
+        }
+
+        var sanitizedRel = string.Equals(candidateFull, rootFull, StringComparison.Ordinal)
+            ? string.Empty
+            : Path.GetRelativePath(rootFull, candidateFull).Replace('\\', '/');
+        return (rootFull, candidateFull, sanitizedRel);
+    }
+
+    private static string EnsureRealPathContainedInWorkspace(string rootFull, string candidateFull) =>
+        UseWorkspaceFileReader(() => WorkspaceFileReader.ResolveContainedPath(rootFull, candidateFull));
+
+    private static T UseWorkspaceFileReader<T>(Func<T> read)
+    {
+        try
+        {
+            return read();
+        }
+        catch (FileNotFoundException ex)
+        {
+            throw KernelException.NotFound(ex.Message);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            throw KernelException.Forbidden(ex.Message);
+        }
+    }
+
+    private static int TrimTrailingIncompleteUtf8(ReadOnlySpan<byte> bytes)
+    {
+        if (bytes.IsEmpty)
+        {
+            return 0;
+        }
+
+        var i = bytes.Length - 1;
+        var cont = 0;
+        while (i >= 0 && cont < 4 && (bytes[i] & 0b1100_0000) == 0b1000_0000)
+        {
+            i--;
+            cont++;
+        }
+
+        if (i < 0)
+        {
+            return bytes.Length;
+        }
+
+        var lead = bytes[i];
+        var expected = lead switch
+        {
+            < 0b1000_0000 => 1,
+            >= 0b1111_0000 => 4,
+            >= 0b1110_0000 => 3,
+            >= 0b1100_0000 => 2,
+            _ => 1
+        };
+
+        return (bytes.Length - i) < expected ? i : bytes.Length;
+    }
+
+    public Task<DiffSummary> GetTrackVcsDiffAsync(
         string trackId,
         string? fromRev = null,
         string? toRev = null,
+        CancellationToken ct = default) =>
+        GetTrackVcsDiffAsync(trackId, fromRev, toRev, path: null, ct);
+
+    public async Task<DiffSummary> GetTrackVcsDiffAsync(
+        string trackId,
+        string? fromRev,
+        string? toRev,
+        string? path,
         CancellationToken ct = default)
     {
         var mounted = await Actors.GetOrActivate(trackId).EnsureMountedAsync(ct).ConfigureAwait(false);
-        return await _vcsService.DiffAsync(mounted.MergedCwd, fromRev, toRev, ct).ConfigureAwait(false);
+        string? normalizedRelPath = null;
+        if (!string.IsNullOrWhiteSpace(path))
+        {
+            var (_, _, sanitizedRel) = ResolveContainedWorkspacePathOrThrow(mounted.MergedCwd, path);
+            normalizedRelPath = string.IsNullOrEmpty(sanitizedRel) ? null : sanitizedRel;
+        }
+
+        return await _vcsService
+            .DiffDetailedAsync(mounted.MergedCwd, fromRev, toRev, normalizedRelPath, ct, searchAncestors: !mounted.ManagedEmptyWorkspace)
+            .ConfigureAwait(false);
     }
 
     // ------------------- Report & Revisions -------------------
@@ -568,7 +1004,7 @@ public sealed class PergaKernelService : IPergaKernel
 
     public Task<TaskDto> CancelTaskAsync(
         string trackId,
-        string callerSessionId,
+        string? callerSessionId,
         string taskKeyOrId,
         string? reason = null,
         CancellationToken ct = default) =>
@@ -576,7 +1012,7 @@ public sealed class PergaKernelService : IPergaKernel
 
     public Task<TaskDto> AcceptTaskAsync(
         string trackId,
-        string callerSessionId,
+        string? callerSessionId,
         string taskKeyOrId,
         string? note = null,
         CancellationToken ct = default) =>
@@ -584,7 +1020,7 @@ public sealed class PergaKernelService : IPergaKernel
 
     public Task<TaskDto> RejectTaskAsync(
         string trackId,
-        string callerSessionId,
+        string? callerSessionId,
         string taskKeyOrId,
         string note,
         bool reQueue = false,
@@ -618,11 +1054,25 @@ public sealed class PergaKernelService : IPergaKernel
         Actors.GetOrActivate(trackId).CreateSubagentSessionAsync(req, ct);
 
     public Task<(SessionCreationReceipt Receipt, bool Replay)> CreateSessionWithReceiptAsync(
-        string trackId, CreateSessionRequest req, string key, CancellationToken ct) =>
+        string trackId,
+        CreateSessionRequest req,
+        string key,
+        CancellationToken ct) =>
         Actors.GetOrActivate(trackId).CreateSessionWithReceiptAsync(req, key, ct);
 
+    public async Task<AgentSessionDto> PatchSessionAsync(
+        string sessionId,
+        PatchSessionRequest req,
+        CancellationToken ct = default)
+    {
+        var trackId = await ResolveTrackIdForSessionAsync(sessionId, ct).ConfigureAwait(false);
+        return await Actors.GetOrActivate(trackId).PatchSessionAsync(sessionId, req, ct).ConfigureAwait(false);
+    }
+
     public async Task<(SessionInputReceipt? Receipt, SessionTurnDto? SteeredTurn, bool Replay)> AcceptMessageAsync(
-        string sessionId, SendMessageRequest req, CancellationToken ct)
+        string sessionId,
+        SendMessageRequest req,
+        CancellationToken ct)
     {
         var trackId = await ResolveTrackIdForSessionAsync(sessionId, ct).ConfigureAwait(false);
         return await Actors.GetOrActivate(trackId).AcceptMessageAsync(sessionId, req, ct).ConfigureAwait(false);
@@ -644,10 +1094,13 @@ public sealed class PergaKernelService : IPergaKernel
         string sessionId,
         long afterId = 0,
         int limit = 100,
-        CancellationToken ct = default, bool latest = false, long? beforeId = null)
+        CancellationToken ct = default,
+        bool latest = false,
+        long? beforeId = null)
     {
         var trackId = await ResolveTrackIdForSessionAsync(sessionId, ct).ConfigureAwait(false);
-        return await Actors.GetOrActivate(trackId).GetSessionItemsAsync(sessionId, afterId, limit, ct, latest, beforeId)
+        return await Actors.GetOrActivate(trackId)
+            .GetSessionItemsAsync(sessionId, afterId, limit, ct, latest, beforeId)
             .ConfigureAwait(false);
     }
 
@@ -817,5 +1270,6 @@ public sealed class PergaKernelService : IPergaKernel
         _disposed = true;
         await Actors.DisposeAsync().ConfigureAwait(false);
         _eventHub.Dispose();
+        _providerProbeLock.Dispose();
     }
 }

@@ -48,6 +48,7 @@ export async function performApiRequest<T>(
       path: operation.path,
       credentials: 'include',
       ...(operation.signal === undefined ? {} : { signal: operation.signal }),
+      ...(operation.timeoutMs === undefined ? {} : { timeoutMs: operation.timeoutMs }),
       ...(Object.keys(headers).length === 0 ? {} : { headers }),
       ...(operation.body === undefined ? {} : { body: operation.body }),
     });

@@ -21,7 +21,8 @@ public sealed record WorkspaceProvisionRequest(
     string SourcePath,
     string TargetRootDir,
     IReadOnlyList<string> LowerCacheDirs,
-    string? BaseRevision = null);
+    string? BaseRevision = null,
+    bool NewEmptyWorkspace = false);
 
 public sealed record WorkspaceSpec(
     string DriverId,
@@ -30,12 +31,14 @@ public sealed record WorkspaceSpec(
     string? UpperDir,
     string? WorkDir,
     string MergedCwd,
-    JsonElement Metadata);
+    JsonElement Metadata,
+    bool ManagedEmptyWorkspace = false);
 
 public sealed record MountedWorkspace(
     string DriverId,
     string MergedCwd,
-    IReadOnlyList<WorkspaceOverlayLayer>? ProcessOverlayLayers = null);
+    IReadOnlyList<WorkspaceOverlayLayer>? ProcessOverlayLayers = null,
+    bool ManagedEmptyWorkspace = false);
 
 public sealed record AttemptWorkspaceLease(
     string DriverId,
@@ -94,10 +97,22 @@ public sealed record RevisionSnapshot(
     bool HasConflicts,
     IReadOnlyList<string> ChangedFiles);
 
+public sealed record VcsDiffFileDto(
+    string Path,
+    string Status,
+    string Patch,
+    string? HeadText,
+    string? WorkingText,
+    bool IsBinary);
+
 public sealed record DiffSummary(
     string DiffText,
     bool Truncated,
-    IReadOnlyList<string> ChangedFiles);
+    IReadOnlyList<string> ChangedFiles,
+    IReadOnlyList<VcsDiffFileDto>? Files = null)
+{
+    public IReadOnlyList<VcsDiffFileDto> Files { get; init; } = Files ?? [];
+}
 
 public sealed record PushResult(
     string BookmarkOrBranch,
@@ -113,6 +128,8 @@ public interface IVcsService
     Task RestoreOperationAsync(string workspacePath, string opId, CancellationToken ct = default);
     Task<RevisionSnapshot> RebaseOntoUpstreamAsync(string workspacePath, string upstreamBranch = "main", CancellationToken ct = default);
     Task<DiffSummary> DiffAsync(string workspacePath, string? fromRev = null, string? toRev = null, CancellationToken ct = default);
+    Task<DiffSummary> DiffDetailedAsync(string workspacePath, string? fromRev = null, string? toRev = null, string? filterPath = null, CancellationToken ct = default, bool searchAncestors = true) =>
+        DiffAsync(workspacePath, fromRev, toRev, ct);
     Task<PushResult> PushBookmarkAsync(string workspacePath, string bookmarkOrBranch, string? targetRev = null, CancellationToken ct = default);
 }
 

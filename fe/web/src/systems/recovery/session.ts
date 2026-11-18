@@ -6,7 +6,7 @@ import type { SessionIdentity } from '../../../../core/api/auth.ts';
 import { RecoveryAccess, recoveryDelay } from '../../../../core/domain/recovery/access.ts';
 import { logoutMarkerKey, recoveryContextKey, decodeRecoveryContext, recoveryPage, type RecoveryContext, type RecoveryScroll } from '../../../../core/domain/recovery/context.ts';
 
-export type RecoveryVersion = Readonly<{ webCompatVersion: number; minWebCompatVersion: number; syncEventVersion: number; dbInstanceId: string; databaseId?: string }>;
+export type RecoveryVersion = Readonly<{ authRequired?: boolean; webCompatVersion: number; minWebCompatVersion: number; syncEventVersion: number; dbInstanceId: string; databaseId?: string }>;
 export type RecoveryStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
 export type RecoverySessionPorts = Readonly<{
   access: RecoveryAccess; storage: RecoveryStorage; origin: string; compatibleVersion: number;
@@ -48,7 +48,11 @@ export class RecoverySession {
       if (raw !== null) {
         const record = JSON.parse(raw) as { schemaVersion?: unknown; fingerprint?: unknown };
         if (record.schemaVersion !== 1 || typeof record.fingerprint !== 'string' || !/^[a-f0-9]{64}$/.test(record.fingerprint)) throw new Error('Invalid logout marker');
-        this.marker = record.fingerprint;
+        if (record.fingerprint === fingerprint('perga-v1')) {
+          ports.storage.removeItem(logoutMarkerKey());
+        } else {
+          this.marker = record.fingerprint;
+        }
       }
     } catch { this.storageFault = true; }
     if (this.blocked()) this.access.change('login', this.storageFault ? '无法读取退出状态，请检查设备存储。' : this.scanOnly ? '正在完成本次扫码配对。' : '已在本机退出。配对后请明确验证本次会话。');

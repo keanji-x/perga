@@ -95,6 +95,8 @@ describe('accepted first-message continuity', () => {
     const operation = initialInputObservationOperation('track with space', 'card', 'original-key');
     expect(operation.headers).toEqual({ 'Idempotency-Key': 'original-key' });
     expect(operation.path).toBe('/api/tracks/track%20with%20space/conversations/card/initial-input');
+    expect(initialInputObservationOperation('trk_1', 'ses_1', 'original-key').path)
+      .toBe('/api/v1/tracks/trk_1/sessions');
     for (const invalid of [
       { kind: 'projected', runtimeId: 'runtime', itemId: 70, segmentIndex: 2 },
       { kind: 'queued', receipt: { ...receipt, version: 'future' }, runtimeId: 'runtime', entryId: receipt.entryId, rev: 0, text: 'first words', textSha256: receipt.textSha256 },

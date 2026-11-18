@@ -57,9 +57,13 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
     private readonly ConcurrentQueue<RecordedTurnExecution> _executedTurns = new();
     private Func<HarnessLaunchSpec, TurnInput, CancellationToken, IAsyncEnumerable<UnifiedAgentEvent>>? _turnHandler;
     private Func<string, Task<bool>>? _steerHandler;
+    private int _probeCount;
+    private int _forceRefreshProbeCount;
 
     public IReadOnlyCollection<RecordedSessionOpen> OpenedSessions => _openedSessions.ToArray();
     public IReadOnlyCollection<RecordedTurnExecution> ExecutedTurns => _executedTurns.ToArray();
+    public int ProbeCount => Volatile.Read(ref _probeCount);
+    public int ForceRefreshProbeCount => Volatile.Read(ref _forceRefreshProbeCount);
 
     public void SetTurnHandler(
         Func<HarnessLaunchSpec, TurnInput, CancellationToken, IAsyncEnumerable<UnifiedAgentEvent>> handler)
@@ -75,6 +79,7 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
     public Task<IReadOnlyList<ProviderStatus>> ProbeProvidersAsync(CancellationToken ct)
     {
         _ = ct;
+        Interlocked.Increment(ref _probeCount);
         IReadOnlyList<ProviderStatus> providers =
         [
             new("codex", Available: true, Version: "0.10.0-mock", Reason: null, Models: ["gpt-5.4"]),
@@ -82,6 +87,16 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
             new("acp:antigravity", Available: true, Version: "2.0.0-mock", Reason: null, Models: ["gemini-3.1-pro"])
         ];
         return Task.FromResult(providers);
+    }
+
+    public Task<IReadOnlyList<ProviderStatus>> ProbeProvidersAsync(bool forceRefresh, CancellationToken ct = default)
+    {
+        if (forceRefresh)
+        {
+            Interlocked.Increment(ref _forceRefreshProbeCount);
+        }
+
+        return ProbeProvidersAsync(ct);
     }
 
     public Task<IAgentSession> OpenSessionAsync(HarnessLaunchSpec spec, CancellationToken ct)

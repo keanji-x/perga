@@ -16,7 +16,7 @@ public sealed partial class SqliteTrackStore
         return await FindCreationInternalAsync(conn, null, key, ct).ConfigureAwait(false);
     }
 
-    public Task<string> CreateAreaAsync(AreaDto area, ResourceCreationKey? key, CancellationToken ct)
+    public Task<string> CreateAreaAsync(AreaDto area, ResourceCreationKey? key, CancellationToken ct, EventEnvelopeDto? evt = null)
     {
         EnsureInitialized();
         return _writer.EnqueueAsync(async (conn, tx, innerCt) =>
@@ -26,6 +26,8 @@ public sealed partial class SqliteTrackStore
                 return replay;
             await UpsertAreaInternalAsync(conn, tx, area, innerCt).ConfigureAwait(false);
             await InsertResourceReceiptAsync(conn, tx, key, area.Id, area.CreatedAtMs, null, innerCt).ConfigureAwait(false);
+            if (evt is not null)
+                await InsertEventInternalAsync(conn, tx, evt, innerCt).ConfigureAwait(false);
             return area.Id;
         }, ct);
     }

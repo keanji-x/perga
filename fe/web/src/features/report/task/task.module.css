@@ -178,4 +178,16 @@
   }
 
   .attempts > li { margin-block: var(--space-2); }
+
+  .logOutput {
+    margin-block: var(--space-1);
+    padding: var(--space-2);
+    border-radius: var(--radius-sm);
+    background: var(--surface-code);
+    color: var(--text);
+    font: var(--type-code);
+    letter-spacing: var(--type-code-tracking);
+    white-space: pre-wrap;
+    overflow-x: auto;
+  }
 }

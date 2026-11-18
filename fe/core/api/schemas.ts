@@ -1290,6 +1290,30 @@ export function decodeWireEvent(input: unknown): WireEventDecodeResult {
     }
     const evt = perga.event;
     switch (evt.kind) {
+      case 'area.updated': {
+        const a = evt.payload;
+        return {
+          status: 'ready',
+          value: {
+            ev: 'area.updated',
+            data: {
+              id: a.id,
+              name: a.name,
+              color: a.color,
+              sort: a.sortOrder,
+              kind: 'user',
+              default_template_id: null,
+              default_cwd: a.defaultCwd ?? null,
+              created_at: a.createdAtMs,
+              updated_at: a.updatedAtMs,
+            },
+          },
+        };
+      }
+      case 'area.deleted':
+        return { status: 'ready', value: { ev: 'area.deleted', data: { id: evt.payload.id } } };
+      case 'track.deleted':
+        return { status: 'ready', value: { ev: 'track.deleted', data: { id: evt.payload.id, area_id: evt.payload.areaId } } };
       case 'track.updated': {
         const t = evt.payload;
         const spec = typeof t.workspaceSpec === 'object' && t.workspaceSpec !== null

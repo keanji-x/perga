@@ -11,23 +11,79 @@ public sealed class CodexAgentSession : IAgentSession
 {
     private sealed record PendingApproval(JsonElement RawId, string Method);
 
-    private sealed class TurnStreamState(string correlationId)
+    private static readonly string[] FallbackDefaultModels = ["gpt-5.4", "gpt-5.3-codex", "o4-mini"];
+
+    private sealed class TurnStreamState
     {
-        public string CorrelationId { get; } = correlationId;
+        private readonly HashSet<string> _ignoredTurnIds = new(StringComparer.Ordinal);
+        private int _hasEmittedProgress;
+        private int _fallbackClaimed;
+        private int _finished;
+
+        public TurnStreamState(string threadId, TurnInput input, CancellationToken turnToken)
+        {
+            ThreadId = threadId;
+            Input = input;
+            TurnToken = turnToken;
+        }
+
+        public string ThreadId { get; }
+        public TurnInput Input { get; }
+        public string CorrelationId => Input.CorrelationId;
+        public CancellationToken TurnToken { get; }
+
         public Channel<UnifiedAgentEvent> Events { get; } = Channel.CreateUnbounded<UnifiedAgentEvent>(
             new UnboundedChannelOptions { SingleReader = true, SingleWriter = false });
 
-        public TaskCompletionSource<string> TurnIdReady { get; } =
+        public TaskCompletionSource<string> TurnIdReady { get; private set; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public string? TurnId;
         public TokenUsage? LatestUsage;
         public volatile bool CancelRequested;
-        private int _finished;
+
+        public bool HasEmittedProgress => Volatile.Read(ref _hasEmittedProgress) != 0;
+
+        public void MarkProgressEmitted() => Volatile.Write(ref _hasEmittedProgress, 1);
+
+        public bool TryClaimModelFallback() => Interlocked.CompareExchange(ref _fallbackClaimed, 1, 0) == 0;
+
+        public void IgnoreTurnAndResetForRetry(string? failedTurnId)
+        {
+            lock (_ignoredTurnIds)
+            {
+                if (!string.IsNullOrWhiteSpace(failedTurnId))
+                {
+                    _ignoredTurnIds.Add(failedTurnId);
+                }
+
+                var current = Volatile.Read(ref TurnId);
+                if (!string.IsNullOrWhiteSpace(current))
+                {
+                    _ignoredTurnIds.Add(current);
+                }
+
+                Volatile.Write(ref TurnId, null);
+                TurnIdReady = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+            }
+        }
+
+        public bool IsTurnIgnored(string? turnId)
+        {
+            if (string.IsNullOrWhiteSpace(turnId))
+            {
+                return false;
+            }
+
+            lock (_ignoredTurnIds)
+            {
+                return _ignoredTurnIds.Contains(turnId);
+            }
+        }
 
         public bool TrySetTurnId(string? turnId)
         {
-            if (string.IsNullOrWhiteSpace(turnId))
+            if (string.IsNullOrWhiteSpace(turnId) || IsTurnIgnored(turnId))
             {
                 return false;
             }
@@ -59,6 +115,7 @@ public sealed class CodexAgentSession : IAgentSession
     }
 
     private readonly JsonRpcStdioConnection _rpc;
+    private readonly string? _configuredModel;
     private readonly Action<IAgentSession>? _onDispose;
     private readonly SemaphoreSlim _turnLock = new(1, 1);
     private readonly ConcurrentDictionary<string, PendingApproval> _pendingApprovals = new(StringComparer.Ordinal);
@@ -66,14 +123,17 @@ public sealed class CodexAgentSession : IAgentSession
     private TurnStreamState? _currentTurn;
     private string? _nativeThreadId;
     private string? _lastEmittedThreadId;
+    private string? _fallbackModel;
     private int _disposed;
 
     private CodexAgentSession(
         StdioSubprocess process,
         string? initialThreadId,
+        string? configuredModel,
         Action<IAgentSession>? onDispose)
     {
         _nativeThreadId = initialThreadId;
+        _configuredModel = string.IsNullOrWhiteSpace(configuredModel) ? null : configuredModel.Trim();
         _onDispose = onDispose;
         _rpc = new JsonRpcStdioConnection(
             process,
@@ -91,15 +151,16 @@ public sealed class CodexAgentSession : IAgentSession
         HarnessLaunchSpec spec,
         TimeSpan handshakeTimeout,
         Action<IAgentSession>? onDispose,
-        CancellationToken ct)
+        CancellationToken ct,
+        string? sandboxApiKey = null)
     {
         var process = StdioSubprocess.Start(wrappedCommand);
-        var session = new CodexAgentSession(process, spec.ResumeNativeThreadId, onDispose);
+        var session = new CodexAgentSession(process, spec.ResumeNativeThreadId, spec.Model, onDispose);
         try
         {
             using var handshakeCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             handshakeCts.CancelAfter(handshakeTimeout);
-            await session.InitializeAndBindThreadAsync(spec, handshakeCts.Token).ConfigureAwait(false);
+            await session.InitializeAndBindThreadAsync(spec, sandboxApiKey, handshakeCts.Token).ConfigureAwait(false);
             return session;
         }
         catch
@@ -116,13 +177,13 @@ public sealed class CodexAgentSession : IAgentSession
         ArgumentNullException.ThrowIfNull(input);
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
 
+        var threadId = NativeThreadId ?? throw new InvalidOperationException("Codex session has no bound NativeThreadId.");
         await _turnLock.WaitAsync(ct).ConfigureAwait(false);
-        var turnState = new TurnStreamState(input.CorrelationId);
+        var turnState = new TurnStreamState(threadId, input, ct);
         Volatile.Write(ref _currentTurn, turnState);
 
         try
         {
-            var threadId = NativeThreadId ?? throw new InvalidOperationException("Codex session has no bound NativeThreadId.");
             if (!string.Equals(_lastEmittedThreadId, threadId, StringComparison.Ordinal))
             {
                 _lastEmittedThreadId = threadId;
@@ -285,7 +346,7 @@ public sealed class CodexAgentSession : IAgentSession
         _turnLock.Dispose();
     }
 
-    private async Task InitializeAndBindThreadAsync(HarnessLaunchSpec spec, CancellationToken ct)
+    private async Task InitializeAndBindThreadAsync(HarnessLaunchSpec spec, string? sandboxApiKey, CancellationToken ct)
     {
         var initParams = new Dictionary<string, object?>
         {
@@ -302,6 +363,22 @@ public sealed class CodexAgentSession : IAgentSession
 
         await _rpc.SendRequestAsync("initialize", initParams, ct).ConfigureAwait(false);
         await _rpc.SendNotificationAsync("initialized", new Dictionary<string, object?>(), ct).ConfigureAwait(false);
+
+        if (!string.IsNullOrWhiteSpace(sandboxApiKey))
+        {
+            try
+            {
+                await _rpc.SendRequestAsync("account/login/start", new Dictionary<string, object?>
+                {
+                    ["type"] = "apiKey",
+                    ["apiKey"] = sandboxApiKey
+                }, ct).ConfigureAwait(false);
+            }
+            catch (JsonRpcRemoteException)
+            {
+                throw new InvalidOperationException("Codex rejected the sandbox API key.");
+            }
+        }
 
         var mcpMap = McpConfigSerializer.BuildCodexMcpServersMap(spec.McpServers);
         var threadParams = new Dictionary<string, object?>
@@ -346,10 +423,23 @@ public sealed class CodexAgentSession : IAgentSession
         Volatile.Write(ref _nativeThreadId, resolvedThreadId);
     }
 
-    private async Task StartTurnRpcAsync(
+    private Task StartTurnRpcAsync(
         string threadId,
         TurnInput input,
         TurnStreamState turnState,
+        CancellationToken ct)
+    {
+        var cachedFallback = Volatile.Read(ref _fallbackModel);
+        var allowFallback = _configuredModel is null && cachedFallback is null;
+        return ExecuteTurnStartAsync(threadId, input, cachedFallback, turnState, allowFallback, ct);
+    }
+
+    private async Task ExecuteTurnStartAsync(
+        string threadId,
+        TurnInput input,
+        string? modelOverride,
+        TurnStreamState turnState,
+        bool allowFallback,
         CancellationToken ct)
     {
         var turnParams = new Dictionary<string, object?>
@@ -365,6 +455,11 @@ public sealed class CodexAgentSession : IAgentSession
                 }
             }
         };
+
+        if (!string.IsNullOrWhiteSpace(modelOverride))
+        {
+            turnParams["model"] = modelOverride;
+        }
 
         try
         {
@@ -391,6 +486,16 @@ public sealed class CodexAgentSession : IAgentSession
                     if (string.Equals(status, "failed", StringComparison.OrdinalIgnoreCase))
                     {
                         var (code, msg, retryable) = ExtractCodexError(turnObj);
+                        if (allowFallback &&
+                            CanTriggerModelFallback(turnState, code, msg) &&
+                            turnState.TryClaimModelFallback())
+                        {
+                            turnState.IgnoreTurnAndResetForRetry(turnId);
+                            await RetryTurnWithFallbackModelAsync(threadId, input, turnState, code, msg, retryable, isConclusive: true, ct)
+                                .ConfigureAwait(false);
+                            return;
+                        }
+
                         turnState.TryFinish(new UnifiedAgentEvent.TurnError(code, msg, retryable, IsConclusive: true));
                     }
                 }
@@ -402,16 +507,107 @@ public sealed class CodexAgentSession : IAgentSession
         }
         catch (JsonRpcRemoteException rpcEx)
         {
-            var retryable = rpcEx.Code is -32001 or 429 or >= 500;
-            turnState.TryFinish(new UnifiedAgentEvent.TurnError(
-                $"rpc_{rpcEx.Code.ToString(CultureInfo.InvariantCulture)}",
-                rpcEx.Message,
-                retryable));
+            var (code, msg, retryable) = ExtractCodexRpcExceptionError(rpcEx);
+            if (allowFallback &&
+                CanTriggerModelFallback(turnState, code, msg) &&
+                turnState.TryClaimModelFallback())
+            {
+                turnState.IgnoreTurnAndResetForRetry(failedTurnId: null);
+                await RetryTurnWithFallbackModelAsync(threadId, input, turnState, code, msg, retryable, isConclusive: false, ct)
+                    .ConfigureAwait(false);
+                return;
+            }
+
+            turnState.TryFinish(new UnifiedAgentEvent.TurnError(code, msg, retryable));
         }
         catch (Exception ex)
         {
             turnState.TryFinish(new UnifiedAgentEvent.TurnError("codex_transport_error", ex.Message, false));
         }
+    }
+
+    private async Task RetryTurnWithFallbackModelAsync(
+        string threadId,
+        TurnInput input,
+        TurnStreamState turnState,
+        string originalCode,
+        string originalMessage,
+        bool originalRetryable,
+        bool isConclusive,
+        CancellationToken ct)
+    {
+        var rejectedModel = ModelListParsers.ExtractRejectedModelName(originalMessage);
+        JsonElement? modelListResult = null;
+        try
+        {
+            using var probeCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            probeCts.CancelAfter(TimeSpan.FromSeconds(3));
+            modelListResult = await _rpc
+                .SendRequestAsync("model/list", new Dictionary<string, object?>(), probeCts.Token)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            turnState.CompleteQuietly();
+            return;
+        }
+        catch
+        {
+            // Fall back to static default model list if model/list fails or times out.
+        }
+
+        var fallbackModel = ModelListParsers.SelectCodexFallbackModel(
+            modelListResult,
+            rejectedModel,
+            FallbackDefaultModels);
+
+        if (string.IsNullOrWhiteSpace(fallbackModel))
+        {
+            turnState.TryFinish(new UnifiedAgentEvent.TurnError(originalCode, originalMessage, originalRetryable, IsConclusive: isConclusive));
+            return;
+        }
+
+        Volatile.Write(ref _fallbackModel, fallbackModel);
+        await ExecuteTurnStartAsync(
+                threadId,
+                input,
+                fallbackModel,
+                turnState,
+                allowFallback: false,
+                ct)
+            .ConfigureAwait(false);
+    }
+
+    private bool CanTriggerModelFallback(TurnStreamState turnState, string code, string message) =>
+        _configuredModel is null &&
+        Volatile.Read(ref _fallbackModel) is null &&
+        !turnState.CancelRequested &&
+        !turnState.HasEmittedProgress &&
+        IsUnsupportedOrMissingModelError(code, message);
+
+    private static bool IsUnsupportedOrMissingModelError(string code, string message)
+    {
+        if (string.Equals(code, "model_not_found", StringComparison.OrdinalIgnoreCase) ||
+            code.Contains("model_not_found", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            return false;
+        }
+
+        if (message.Contains("model_not_found", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("is not supported when using Codex", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return message.Contains("model", StringComparison.OrdinalIgnoreCase) &&
+               (message.Contains("not supported", StringComparison.OrdinalIgnoreCase) ||
+                message.Contains("does not exist", StringComparison.OrdinalIgnoreCase) ||
+                message.Contains("not found", StringComparison.OrdinalIgnoreCase));
     }
 
     private void OnNotification(string method, JsonElement parameters)
@@ -439,12 +635,17 @@ public sealed class CodexAgentSession : IAgentSession
             return;
         }
 
+        var notifTurnId = ExtractTurnId(parameters);
+        if (turnState.IsTurnIgnored(notifTurnId))
+        {
+            return;
+        }
+
         switch (method)
         {
             case "turn/started":
             {
-                var turnId = ExtractTurnId(parameters);
-                turnState.TrySetTurnId(turnId);
+                turnState.TrySetTurnId(notifTurnId);
                 break;
             }
 
@@ -456,6 +657,7 @@ public sealed class CodexAgentSession : IAgentSession
                 var delta = TryGetString(parameters, "delta") ?? TryGetString(parameters, "text");
                 if (!string.IsNullOrEmpty(delta))
                 {
+                    turnState.MarkProgressEmitted();
                     turnState.Events.Writer.TryWrite(new UnifiedAgentEvent.TextDelta(delta));
                 }
 
@@ -470,6 +672,7 @@ public sealed class CodexAgentSession : IAgentSession
                 var delta = TryGetString(parameters, "delta") ?? TryGetString(parameters, "text");
                 if (!string.IsNullOrEmpty(delta))
                 {
+                    turnState.MarkProgressEmitted();
                     turnState.Events.Writer.TryWrite(new UnifiedAgentEvent.ThinkingDelta(delta));
                 }
 
@@ -487,6 +690,7 @@ public sealed class CodexAgentSession : IAgentSession
                         _startedToolCallIds.Add(startedEvt.CallId);
                     }
 
+                    turnState.MarkProgressEmitted();
                     turnState.Events.Writer.TryWrite(startedEvt);
                 }
 
@@ -507,6 +711,7 @@ public sealed class CodexAgentSession : IAgentSession
                     _startedToolCallIds.Add(callId);
                 }
 
+                turnState.MarkProgressEmitted();
                 turnState.Events.Writer.TryWrite(new UnifiedAgentEvent.ToolCallStarted(callId, name, args));
                 break;
             }
@@ -517,6 +722,7 @@ public sealed class CodexAgentSession : IAgentSession
                     item.ValueKind == JsonValueKind.Object &&
                     TryExtractCodexToolItemCompleted(item, out var completedEvt))
                 {
+                    turnState.MarkProgressEmitted();
                     turnState.Events.Writer.TryWrite(completedEvt);
                 }
 
@@ -530,6 +736,7 @@ public sealed class CodexAgentSession : IAgentSession
                 var output = ExtractOutputText(parameters);
                 var isError = TryGetBool(parameters, "isError") == true ||
                               string.Equals(TryGetString(parameters, "status"), "failed", StringComparison.OrdinalIgnoreCase);
+                turnState.MarkProgressEmitted();
                 turnState.Events.Writer.TryWrite(new UnifiedAgentEvent.ToolCallCompleted(callId, output, isError));
                 break;
             }
@@ -551,6 +758,22 @@ public sealed class CodexAgentSession : IAgentSession
             case "turn/failed":
             {
                 var (code, msg, retryable) = ExtractCodexError(parameters);
+                if (CanTriggerModelFallback(turnState, code, msg) &&
+                    turnState.TryClaimModelFallback())
+                {
+                    turnState.IgnoreTurnAndResetForRetry(notifTurnId);
+                    _ = RetryTurnWithFallbackModelAsync(
+                        turnState.ThreadId,
+                        turnState.Input,
+                        turnState,
+                        code,
+                        msg,
+                        retryable,
+                        isConclusive: false,
+                        turnState.TurnToken);
+                    break;
+                }
+
                 turnState.TryFinish(new UnifiedAgentEvent.TurnError(code, msg, retryable));
                 break;
             }
@@ -573,6 +796,22 @@ public sealed class CodexAgentSession : IAgentSession
                     (hasTurnObj && turnObj.TryGetProperty("error", out var turnErr) && turnErr.ValueKind == JsonValueKind.Object))
                 {
                     var (code, msg, retryable) = ExtractCodexError(hasTurnObj ? turnObj : parameters);
+                    if (CanTriggerModelFallback(turnState, code, msg) &&
+                        turnState.TryClaimModelFallback())
+                    {
+                        turnState.IgnoreTurnAndResetForRetry(notifTurnId);
+                        _ = RetryTurnWithFallbackModelAsync(
+                            turnState.ThreadId,
+                            turnState.Input,
+                            turnState,
+                            code,
+                            msg,
+                            retryable,
+                            isConclusive: true,
+                            turnState.TurnToken);
+                        break;
+                    }
+
                     turnState.TryFinish(new UnifiedAgentEvent.TurnError(code, msg, retryable, IsConclusive: true));
                 }
                 else if (string.Equals(status, "interrupted", StringComparison.OrdinalIgnoreCase) ||
@@ -609,6 +848,7 @@ public sealed class CodexAgentSession : IAgentSession
                        ?? TryGetElement(parameters, "args")
                        ?? parameters.Clone();
 
+            turnState?.MarkProgressEmitted();
             turnState?.Events.Writer.TryWrite(new UnifiedAgentEvent.ApprovalRequested(requestId, toolName, args));
             return;
         }
@@ -847,6 +1087,29 @@ public sealed class CodexAgentSession : IAgentSession
         return new TokenUsage(input ?? 0L, output ?? 0L, cached, window);
     }
 
+    private static (string Code, string Message, bool Retryable) ExtractCodexRpcExceptionError(JsonRpcRemoteException rpcEx)
+    {
+        var defaultCode = $"rpc_{rpcEx.Code.ToString(CultureInfo.InvariantCulture)}";
+        var defaultRetryable = rpcEx.Code is -32001 or 429 or >= 500;
+
+        if (rpcEx.ErrorData is { ValueKind: JsonValueKind.Object } dataObj)
+        {
+            var dataCode = TryGetString(dataObj, "code") ?? TryGetString(dataObj, "type");
+            var dataMsg = TryGetString(dataObj, "message");
+            if (!string.IsNullOrWhiteSpace(dataCode) || !string.IsNullOrWhiteSpace(dataMsg))
+            {
+                var (unwrappedCode, unwrappedMsg, unwrappedRetry) = UnwrapEmbeddedJsonError(
+                    dataCode ?? defaultCode,
+                    dataMsg ?? rpcEx.Message,
+                    TryGetBool(dataObj, "isRetryable") ?? TryGetBool(dataObj, "retryable"));
+                return (unwrappedCode, unwrappedMsg, unwrappedRetry ?? defaultRetryable);
+            }
+        }
+
+        var (code, msg, nestedRetry) = UnwrapEmbeddedJsonError(defaultCode, rpcEx.Message, explicitRetryable: null);
+        return (code, msg, nestedRetry ?? defaultRetryable);
+    }
+
     private static (string Code, string Message, bool Retryable) ExtractCodexError(JsonElement container)
     {
         if (container.ValueKind == JsonValueKind.Object &&
@@ -854,27 +1117,98 @@ public sealed class CodexAgentSession : IAgentSession
         {
             if (errObj.ValueKind == JsonValueKind.Object)
             {
-                var code = TryGetString(errObj, "code")
-                           ?? TryGetString(errObj, "type")
-                           ?? "codex_turn_error";
-                var msg = TryGetString(errObj, "message") ?? errObj.GetRawText();
-                var retry = TryGetBool(errObj, "isRetryable")
-                            ?? TryGetBool(errObj, "retryable")
-                            ?? TryGetBool(container, "willRetry")
-                            ?? false;
-                return (code, msg, retry);
+                var rawCode = TryGetString(errObj, "code") ?? TryGetString(errObj, "type");
+                var rawMsg = TryGetString(errObj, "message") ?? errObj.GetRawText();
+                var explicitRetry = TryGetBool(errObj, "isRetryable")
+                                    ?? TryGetBool(errObj, "retryable")
+                                    ?? TryGetBool(container, "willRetry");
+                var (code, msg, nestedRetry) = UnwrapEmbeddedJsonError(
+                    rawCode ?? "codex_turn_error",
+                    rawMsg,
+                    explicitRetry);
+                return (code, msg, nestedRetry ?? false);
             }
 
             if (errObj.ValueKind == JsonValueKind.String)
             {
-                return ("codex_turn_error", errObj.GetString() ?? "Turn error", false);
+                var rawStr = errObj.GetString() ?? "Turn error";
+                var (code, msg, nestedRetry) = UnwrapEmbeddedJsonError("codex_turn_error", rawStr, TryGetBool(container, "willRetry"));
+                return (code, msg, nestedRetry ?? false);
             }
         }
 
         var topCode = TryGetString(container, "code") ?? "codex_turn_error";
         var topMsg = TryGetString(container, "message") ?? "Codex turn failed.";
-        var topRetry = TryGetBool(container, "isRetryable") ?? TryGetBool(container, "willRetry") ?? false;
-        return (topCode, topMsg, topRetry);
+        var topExplicitRetry = TryGetBool(container, "isRetryable") ?? TryGetBool(container, "willRetry");
+        var (finalCode, finalMsg, finalRetry) = UnwrapEmbeddedJsonError(topCode, topMsg, topExplicitRetry);
+        return (finalCode, finalMsg, finalRetry ?? false);
+    }
+
+    private static (string Code, string Message, bool? Retryable) UnwrapEmbeddedJsonError(
+        string fallbackCode,
+        string rawMessage,
+        bool? explicitRetryable)
+    {
+        if (string.IsNullOrWhiteSpace(rawMessage))
+        {
+            return (fallbackCode, rawMessage, explicitRetryable);
+        }
+
+        var trimmed = rawMessage.Trim();
+        var braceIdx = trimmed.IndexOf('{');
+        if (braceIdx < 0)
+        {
+            return (fallbackCode, rawMessage, explicitRetryable);
+        }
+
+        var jsonCandidate = braceIdx == 0 ? trimmed : trimmed[braceIdx..];
+        try
+        {
+            using var doc = JsonDocument.Parse(jsonCandidate);
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object)
+            {
+                return (fallbackCode, rawMessage, explicitRetryable);
+            }
+
+            var status = TryGetInt(root, "status");
+            if (root.TryGetProperty("error", out var innerErr) && innerErr.ValueKind == JsonValueKind.Object)
+            {
+                var innerCode = TryGetString(innerErr, "code")
+                                ?? TryGetString(innerErr, "type")
+                                ?? TryGetString(root, "code");
+                var innerMsg = TryGetString(innerErr, "message") ?? TryGetString(root, "message");
+                var innerRetry = explicitRetryable
+                                 ?? TryGetBool(innerErr, "isRetryable")
+                                 ?? TryGetBool(innerErr, "retryable")
+                                 ?? (status is { } s ? s == 429 || s >= 500 : null);
+                var chosenCode = !string.IsNullOrWhiteSpace(innerCode) &&
+                                 (string.Equals(fallbackCode, "codex_turn_error", StringComparison.Ordinal) ||
+                                  fallbackCode.StartsWith("rpc_", StringComparison.Ordinal))
+                    ? innerCode!
+                    : fallbackCode;
+                return (chosenCode, string.IsNullOrWhiteSpace(innerMsg) ? rawMessage : innerMsg!, innerRetry);
+            }
+
+            var rootCode = TryGetString(root, "code") ?? TryGetString(root, "type");
+            var rootMsg = TryGetString(root, "message");
+            if (!string.IsNullOrWhiteSpace(rootCode) || !string.IsNullOrWhiteSpace(rootMsg))
+            {
+                var chosenCode = !string.IsNullOrWhiteSpace(rootCode) &&
+                                 (string.Equals(fallbackCode, "codex_turn_error", StringComparison.Ordinal) ||
+                                  fallbackCode.StartsWith("rpc_", StringComparison.Ordinal))
+                    ? rootCode!
+                    : fallbackCode;
+                var rootRetry = explicitRetryable ?? (status is { } s ? s == 429 || s >= 500 : null);
+                return (chosenCode, string.IsNullOrWhiteSpace(rootMsg) ? rawMessage : rootMsg!, rootRetry);
+            }
+        }
+        catch (JsonException)
+        {
+            // Message is plain text with braces; preserve as-is.
+        }
+
+        return (fallbackCode, rawMessage, explicitRetryable);
     }
 
     private static string ExtractOutputText(JsonElement item)

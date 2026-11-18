@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { agentSessionDtoSchema } from '../api/schemas.js';
 import type { ConversationInitialInputReceipt, ConversationInitialInputReceiptResult, ConversationInitialInputObservation } from '../api/generated/wire.js';
 import type { ApiOperation } from '../api/types.js';
 import { sha256Hex } from './sha256.js';
@@ -25,9 +26,35 @@ const initialInputObservationSchema: z.ZodType<ConversationInitialInputObservati
       ['legacy-operation', 'creation-incomplete', 'integrity'].includes(value.reason) ? value.receipt === null : value.receipt !== null),
 ]);
 
-export function initialInputObservationOperation(trackId: string, cardId: string, key: string): ApiOperation<ConversationInitialInputObservation> {
-  return { method: 'GET', path: `/api/tracks/${encodeURIComponent(trackId)}/conversations/${encodeURIComponent(cardId)}/initial-input`,
-    headers: { 'Idempotency-Key': key }, responseSchema: initialInputObservationSchema };
+export function initialInputObservationOperation(
+  trackId: string,
+  cardId: string,
+  key: string,
+  options?: Readonly<{ perga?: boolean }>,
+): ApiOperation<ConversationInitialInputObservation> {
+  const usePerga = options?.perga === true || cardId.startsWith('ses_') || trackId.startsWith('trk_');
+  if (!usePerga) {
+    return {
+      method: 'GET',
+      path: `/api/tracks/${encodeURIComponent(trackId)}/conversations/${encodeURIComponent(cardId)}/initial-input`,
+      headers: { 'Idempotency-Key': key },
+      responseSchema: initialInputObservationSchema,
+    };
+  }
+  return {
+    method: 'GET',
+    path: `/api/v1/tracks/${encodeURIComponent(trackId)}/sessions`,
+    headers: { 'Idempotency-Key': key },
+    responseSchema: z.union([
+      z.array(agentSessionDtoSchema).transform((sessions): ConversationInitialInputObservation => {
+        const matched = sessions.find((session) => session.id === cardId);
+        return matched !== undefined
+          ? { kind: 'unavailable', receipt: null, reason: 'legacy-operation' }
+          : { kind: 'unavailable', receipt: null, reason: 'creation-incomplete' };
+      }),
+      initialInputObservationSchema,
+    ]),
+  };
 }
 
 /** Validate the original body and every observation's immutable receipt at the consumer boundary. */

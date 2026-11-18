@@ -115,3 +115,123 @@ export function compileTemplateInputs(body: string, schemaValue: unknown, values
   }
   return { status: Object.keys(errors).length === 0 ? 'ready' : 'incomplete', form, input, errors };
 }
+
+export type PergaInputFieldSpec =
+  | Readonly<{ key: string; label: string; type: 'string'; optional: boolean; defaultValue: string | undefined }>
+  | Readonly<{ key: string; label: string; type: 'number'; optional: boolean; defaultValue: number | undefined }>
+  | Readonly<{ key: string; label: string; type: 'boolean'; optional: boolean; defaultValue: boolean }>
+  | Readonly<{ key: string; label: string; type: 'enum'; optional: boolean; values: readonly string[]; defaultValue: string | undefined }>;
+
+export type PergaTemplateRawValues = Readonly<Record<string, string | boolean>>;
+
+export function parsePergaInputsSchema(schemaValue: unknown): readonly PergaInputFieldSpec[] {
+  if (schemaValue === null || schemaValue === undefined || typeof schemaValue !== 'object' || Array.isArray(schemaValue)) {
+    return [];
+  }
+  const record = schemaValue as Record<string, unknown>;
+  // Distinguish legacy JSON Schema `{ type: 'object', properties: ... }` from Perga's flat field map.
+  if (typeof record.type === 'string') return [];
+  const specs: PergaInputFieldSpec[] = [];
+  for (const [key, raw] of Object.entries(record)) {
+    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) continue;
+    const def = raw as Record<string, unknown>;
+    const type = def.type;
+    const label = typeof def.label === 'string' && def.label.trim() !== '' ? def.label : key;
+    const optional = def.optional === true;
+    if (type === 'string') {
+      specs.push({
+        key,
+        label,
+        type: 'string',
+        optional,
+        defaultValue: typeof def.default === 'string' ? def.default : undefined,
+      });
+    } else if (type === 'number') {
+      specs.push({
+        key,
+        label,
+        type: 'number',
+        optional,
+        defaultValue: typeof def.default === 'number' && Number.isFinite(def.default) ? def.default : undefined,
+      });
+    } else if (type === 'boolean') {
+      specs.push({
+        key,
+        label,
+        type: 'boolean',
+        optional,
+        defaultValue: def.default === true,
+      });
+    } else if (type === 'enum' && Array.isArray(def.values)) {
+      const values = def.values.filter((v): v is string => typeof v === 'string');
+      if (values.length > 0) {
+        specs.push({
+          key,
+          label,
+          type: 'enum',
+          optional,
+          values,
+          defaultValue: typeof def.default === 'string' && values.includes(def.default) ? def.default : undefined,
+        });
+      }
+    }
+  }
+  return specs;
+}
+
+export function compilePergaTemplateInputs(
+  fields: readonly PergaInputFieldSpec[],
+  rawValues: PergaTemplateRawValues,
+): Readonly<{
+  valid: boolean;
+  input: Readonly<Record<string, unknown>>;
+  errors: Readonly<Record<string, string>>;
+}> {
+  const input: Record<string, unknown> = {};
+  const errors: Record<string, string> = {};
+  for (const field of fields) {
+    const hasOverride = Object.hasOwn(rawValues, field.key);
+    if (field.type === 'boolean') {
+      const raw = hasOverride ? rawValues[field.key] : field.defaultValue;
+      input[field.key] = raw === true || raw === 'true';
+      continue;
+    }
+    if (field.type === 'number') {
+      const text = hasOverride
+        ? String(rawValues[field.key] ?? '').trim()
+        : (field.defaultValue !== undefined ? String(field.defaultValue) : '');
+      if (text === '') {
+        if (!field.optional) errors[field.key] = `${field.label} is required.`;
+      } else {
+        const parsed = Number(text);
+        if (!Number.isFinite(parsed)) errors[field.key] = `${field.label} must be a number.`;
+        else input[field.key] = parsed;
+      }
+      continue;
+    }
+    if (field.type === 'enum') {
+      const text = hasOverride
+        ? String(rawValues[field.key] ?? '')
+        : (field.defaultValue ?? (field.optional ? '' : (field.values[0] ?? '')));
+      if (text === '') {
+        if (!field.optional) errors[field.key] = `${field.label} is required.`;
+      } else if (!field.values.includes(text)) {
+        errors[field.key] = `Choose a valid option for ${field.label}.`;
+      } else {
+        input[field.key] = text;
+      }
+      continue;
+    }
+    const text = hasOverride
+      ? String(rawValues[field.key] ?? '')
+      : (field.defaultValue ?? '');
+    if (text.trim() === '') {
+      if (field.optional) continue;
+      if (field.defaultValue === '') input[field.key] = '';
+      else errors[field.key] = `${field.label} is required.`;
+    } else {
+      input[field.key] = text;
+    }
+  }
+  return { valid: Object.keys(errors).length === 0, input, errors };
+}

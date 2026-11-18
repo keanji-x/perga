@@ -52,11 +52,14 @@ describe('the listdir operation', () => {
   it('omits the query entirely with no path, so the server default ($HOME) applies', () => {
     expect(listDirectoryOperation()).toMatchObject({ method: 'GET', path: '/api/fs/listdir' });
     expect(listDirectoryOperation('')).toMatchObject({ path: '/api/fs/listdir' });
+    expect(listDirectoryOperation(undefined, { perga: true })).toMatchObject({ method: 'GET', path: '/api/v1/fs/listdir' });
   });
 
   it('sends an encoded absolute path', () => {
     expect(listDirectoryOperation('/home/a b/c&d').path)
       .toBe('/api/fs/listdir?path=%2Fhome%2Fa%20b%2Fc%26d');
+    expect(listDirectoryOperation('/home/a b/c&d', { perga: true }).path)
+      .toBe('/api/v1/fs/listdir?path=%2Fhome%2Fa%20b%2Fc%26d');
   });
 
   it('carries no body, so the client sends no content-type on this read', () => {
@@ -72,5 +75,7 @@ describe('Track-scoped workspace file operations', () => {
     });
     expect(trackWorkspaceRawFileUrl('track/1', 'img/a&b.png'))
       .toBe('/api/v1/tracks/track%2F1/files?path=img%2Fa%26b.png');
+    expect(trackWorkspaceRawFileUrl('trk_1', 'img/a&b.png'))
+      .toBe('/api/v1/tracks/trk_1/files/raw?path=img%2Fa%26b.png');
   });
 });

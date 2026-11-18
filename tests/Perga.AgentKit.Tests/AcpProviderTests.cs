@@ -1,3 +1,8 @@
+using System.Net;
+using System.Net.Sockets;
+using System.Text;
+using System.Text.Json;
+
 namespace Perga.AgentKit.Tests;
 
 public sealed class AcpProviderTests : IDisposable
@@ -6,25 +11,29 @@ public sealed class AcpProviderTests : IDisposable
 
     public void Dispose() => _fixture.Dispose();
 
-    private AgentRuntime CreateRuntime() =>
+    private AgentRuntime CreateRuntime(IReadOnlyDictionary<string, string>? acpEnv = null) =>
         new(new AgentRuntimeOptions
         {
             ProviderOverrides = new Dictionary<string, ProviderCommandOverride>
             {
-                ["acp:antigravity"] = new(_fixture.MockAcpPath),
-                ["acp:opencode"] = new(_fixture.MockAcpPath)
+                ["acp:antigravity"] = new(_fixture.MockAcpPath, Env: acpEnv),
+                ["acp:opencode"] = new(_fixture.MockAcpPath, Env: acpEnv)
             }
         });
 
     [Theory]
     [InlineData("acp:antigravity", true)]
     [InlineData("acp:opencode", true)]
-    public async Task AcpBuiltInSurfaces_SessionNewAndLoad_McpAndUpdates(string provider, bool expectsAcpSubcommand)
+    [InlineData("antigravity", true)]
+    [InlineData("opencode", true)]
+    public async Task AcpBuiltInAndNormalizedSurfaces_SessionNewAndLoad_SetModel_SystemPromptAndUpdates(
+        string provider,
+        bool expectsAcpSubcommand)
     {
         await using var runtime = CreateRuntime();
         var spec = new HarnessLaunchSpec(
             Provider: provider,
-            Model: "gemini-3.1-pro",
+            Model: "gemini-4-carbon-medium",
             Cwd: _fixture.WorkspaceDir,
             ResumeNativeThreadId: null,
             SystemPrompt: "ACP system prompt",
@@ -47,7 +56,10 @@ public sealed class AcpProviderTests : IDisposable
         Assert.False(toolCompleted.IsError);
 
         var text = string.Concat(events.OfType<UnifiedAgentEvent.TextDelta>().Select(t => t.Delta));
-        Assert.Contains($"acp[session/new|acp_sess_001|sub={expectsAcpSubcommand}|mcp=local-tools,perga]:hello-acp", text, StringComparison.Ordinal);
+        var expectedPrefix =
+            $"acp[session/new|acp_sess_001|sub={expectsAcpSubcommand}|model=gemini-4-carbon-medium|via=session/set_model|mcp=local-tools,perga]:" +
+            "<system_instructions>\nACP system prompt\n</system_instructions>\n\nhello-acp";
+        Assert.Contains(expectedPrefix, text, StringComparison.Ordinal);
 
         var done = Assert.Single(events.OfType<UnifiedAgentEvent.TurnCompleted>());
         Assert.NotNull(done.Usage);
@@ -56,19 +68,206 @@ public sealed class AcpProviderTests : IDisposable
         Assert.Equal(40, done.Usage.CachedInputTokens);
         Assert.Equal(1048576, done.Usage.ContextWindowTokens);
 
-        // Resume via session/load
+        // Turn 2 on same session does NOT duplicate <system_instructions>
+        var turn2Events = await DrainTurnAsync(session, new TurnInput("second-acp-turn", "acp_corr_1b"));
+        var turn2Text = string.Concat(turn2Events.OfType<UnifiedAgentEvent.TextDelta>().Select(t => t.Delta));
+        Assert.DoesNotContain("<system_instructions>", turn2Text, StringComparison.Ordinal);
+        Assert.EndsWith(":second-acp-turn", turn2Text, StringComparison.Ordinal);
+
+        // Resume via session/load does NOT prepend <system_instructions>
         var resumeSpec = spec with { ResumeNativeThreadId = "acp_loaded_88" };
         await using var loadedSession = await runtime.OpenSessionAsync(resumeSpec, CancellationToken.None);
         Assert.Equal("acp_loaded_88", loadedSession.NativeThreadId);
         var loadedEvents = await DrainTurnAsync(loadedSession, new TurnInput("resumed-prompt", "acp_corr_2"));
         var loadedText = string.Concat(loadedEvents.OfType<UnifiedAgentEvent.TextDelta>().Select(t => t.Delta));
         Assert.Contains("acp[session/load|acp_loaded_88", loadedText, StringComparison.Ordinal);
+        Assert.DoesNotContain("<system_instructions>", loadedText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AcpSetModel_FallsBackToSetConfigOptionWhenSetModelReturnsMethodNotFound()
+    {
+        await using var runtime = CreateRuntime(new Dictionary<string, string>
+        {
+            ["MOCK_ACP_NO_SET_MODEL"] = "1"
+        });
+
+        var spec = new HarnessLaunchSpec(
+            Provider: "acp:antigravity",
+            Model: "claude-sonnet-5-5-medium",
+            Cwd: _fixture.WorkspaceDir,
+            ResumeNativeThreadId: null,
+            SystemPrompt: null,
+            McpServers: new Dictionary<string, McpServerConfig>());
+
+        await using var session = await runtime.OpenSessionAsync(spec, CancellationToken.None);
+        var events = await DrainTurnAsync(session, new TurnInput("check-fallback-model", "corr_cfg"));
+        var text = string.Concat(events.OfType<UnifiedAgentEvent.TextDelta>().Select(t => t.Delta));
+        Assert.Contains("model=claude-sonnet-5-5-medium|via=session/set_config_option", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AcpWithoutHttpMcpCapability_BridgesHttpMcpToLocalEndpointViaStdioBypassingHttpProxy()
+    {
+        // Spin up a real local Streamable HTTP MCP server on 127.0.0.1:0
+        await using var mcpServer = new LocalStreamableHttpMcpTestServer("Bearer pg_live_bridge_token");
+
+        var acpDriverWithMcpExec = _fixture.WriteExecutable(
+            "acp_stdio_mcp_consumer.py",
+            """
+            #!/usr/bin/env python3
+            import json, os, subprocess, sys
+
+            def send(obj):
+                sys.stdout.write(json.dumps(obj) + "\n")
+                sys.stdout.flush()
+
+            mcp_servers = []
+            for raw in sys.stdin:
+                line = raw.strip()
+                if not line:
+                    continue
+                msg = json.loads(line)
+                method = msg.get("method")
+                req_id = msg.get("id")
+                params = msg.get("params") or {}
+
+                if method == "initialize":
+                    http_cap = os.environ.get("TEST_ACP_HTTP_CAP") == "1"
+                    mcp_caps = {"http": True} if http_cap else {}
+                    send({
+                        "jsonrpc": "2.0",
+                        "id": req_id,
+                        "result": {
+                            "protocolVersion": 1,
+                            "agentCapabilities": {"loadSession": True, "mcpCapabilities": mcp_caps}
+                        }
+                    })
+                elif method == "session/new":
+                    mcp_servers = params.get("mcpServers") or []
+                    send({"jsonrpc": "2.0", "id": req_id, "result": {"sessionId": "acp_bridge_sess"}})
+                elif method in ("session/set_model", "session/set_config_option"):
+                    send({"jsonrpc": "2.0", "id": req_id, "result": {}})
+                elif method == "session/prompt":
+                    srv = next(s for s in mcp_servers if s.get("name") == "perga")
+                    if srv.get("type") == "http":
+                        send({
+                            "jsonrpc": "2.0",
+                            "method": "session/update",
+                            "params": {
+                                "sessionId": "acp_bridge_sess",
+                                "update": {"sessionUpdate": "agent_message_chunk", "content": f"direct-http:{srv.get('url')}"}
+                            }
+                        })
+                        send({"jsonrpc": "2.0", "id": req_id, "result": {"stopReason": "end_turn"}})
+                        continue
+
+                    child_env = dict(os.environ)
+                    for pair in srv.get("env") or []:
+                        child_env[pair["name"]] = pair["value"]
+
+                    proc = subprocess.Popen(
+                        [srv["command"]] + list(srv.get("args") or []),
+                        stdin=subprocess.PIPE,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        env=child_env,
+                        text=True
+                    )
+                    try:
+                        # 1. MCP initialize (JSON response + Mcp-Session-Id)
+                        proc.stdin.write(json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-03-26"}}) + "\n")
+                        proc.stdin.flush()
+                        init_resp = json.loads(proc.stdout.readline())
+
+                        # 2. MCP notifications/initialized (202 Accepted empty body -> no stdout line)
+                        proc.stdin.write(json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}) + "\n")
+                        proc.stdin.flush()
+
+                        # 3. MCP tools/list (JSON response)
+                        proc.stdin.write(json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}) + "\n")
+                        proc.stdin.flush()
+                        list_resp = json.loads(proc.stdout.readline())
+                        tool_name = list_resp["result"]["tools"][0]["name"]
+
+                        # 4. MCP tools/call (SSE text/event-stream data: response!)
+                        proc.stdin.write(json.dumps({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": tool_name, "arguments": {"whole": True}}}) + "\n")
+                        proc.stdin.flush()
+                        call_resp = json.loads(proc.stdout.readline())
+                        tool_text = call_resp["result"]["content"][0]["text"]
+                    finally:
+                        proc.stdin.close()
+                        proc.wait(timeout=5)
+
+                    summary = f"bridged-ok|srv={init_resp['result']['serverInfo']['name']}|tool={tool_name}|out={tool_text}|hasType={'type' in srv}"
+                    send({
+                        "jsonrpc": "2.0",
+                        "method": "session/update",
+                        "params": {
+                            "sessionId": "acp_bridge_sess",
+                            "update": {"sessionUpdate": "agent_message_chunk", "content": summary}
+                        }
+                    })
+                    send({"jsonrpc": "2.0", "id": req_id, "result": {"stopReason": "end_turn"}})
+            """);
+
+        // Deliberately inject a dead http_proxy (simulating agy's http_proxy=http://127.0.0.1:2080)
+        // to prove NO_PROXY=127.0.0.1,localhost + direct Node HTTP connects directly to local Perga MCP!
+        await using var bridgedRuntime = new AgentRuntime(new AgentRuntimeOptions
+        {
+            ProviderOverrides = new Dictionary<string, ProviderCommandOverride>
+            {
+                ["acp:antigravity"] = new(
+                    acpDriverWithMcpExec,
+                    Env: new Dictionary<string, string>
+                    {
+                        ["http_proxy"] = "http://127.0.0.1:1",
+                        ["HTTP_PROXY"] = "http://127.0.0.1:1"
+                    }),
+                ["acp:opencode"] = new(
+                    acpDriverWithMcpExec,
+                    Env: new Dictionary<string, string>
+                    {
+                        ["TEST_ACP_HTTP_CAP"] = "1"
+                    })
+            }
+        });
+
+        var mcpServers = new Dictionary<string, McpServerConfig>
+        {
+            ["perga"] = new McpServerConfig.HttpMcpServer(
+                mcpServer.EndpointUrl,
+                new Dictionary<string, string>
+                {
+                    ["Authorization"] = "Bearer pg_live_bridge_token"
+                })
+        };
+
+        // Case 1: mcpCapabilities: {} -> automatic stdio-to-HTTP bridge
+        await using var bridgedSession = await bridgedRuntime.OpenSessionAsync(
+            new HarnessLaunchSpec("acp:antigravity", null, _fixture.WorkspaceDir, null, null, mcpServers),
+            CancellationToken.None);
+
+        var bridgedEvents = await DrainTurnAsync(bridgedSession, new TurnInput("run-mcp", "corr_mcp_1"));
+        var bridgedText = string.Concat(bridgedEvents.OfType<UnifiedAgentEvent.TextDelta>().Select(t => t.Delta));
+        Assert.Equal("bridged-ok|srv=perga-kernel-test|tool=perga_report_read|out=sse-report-body-ok|hasType=False", bridgedText);
+        Assert.True(mcpServer.SawInitialize);
+        Assert.True(mcpServer.SawInitializedNotification);
+        Assert.True(mcpServer.SawSessionHeaderOnSubsequentCalls);
+
+        // Case 2: mcpCapabilities: { http: true } -> direct HTTP entry preserved
+        await using var directHttpSession = await bridgedRuntime.OpenSessionAsync(
+            new HarnessLaunchSpec("acp:opencode", null, _fixture.WorkspaceDir, null, null, mcpServers),
+            CancellationToken.None);
+
+        var directEvents = await DrainTurnAsync(directHttpSession, new TurnInput("run-direct", "corr_mcp_2"));
+        var directText = string.Concat(directEvents.OfType<UnifiedAgentEvent.TextDelta>().Select(t => t.Delta));
+        Assert.Equal($"direct-http:{mcpServer.EndpointUrl}", directText);
     }
 
     [Fact]
     public async Task AcpGenericExecutableSurface_PermissionRequestCancelAndRpcError()
     {
-        // Generic "acp:<cmd>" works out-of-the-box without requiring ProviderOverrides!
         await using var runtime = new AgentRuntime();
         var spec = new HarnessLaunchSpec(
             Provider: $"acp:{_fixture.MockAcpPath}",
@@ -139,5 +338,208 @@ public sealed class AcpProviderTests : IDisposable
         }
 
         return list;
+    }
+
+    private sealed class LocalStreamableHttpMcpTestServer : IAsyncDisposable
+    {
+        private readonly TcpListener _listener;
+        private readonly string _expectedAuth;
+        private readonly CancellationTokenSource _cts = new();
+        private readonly Task _acceptLoop;
+
+        public LocalStreamableHttpMcpTestServer(string expectedAuth)
+        {
+            _expectedAuth = expectedAuth;
+            _listener = new TcpListener(IPAddress.Loopback, 0);
+            _listener.Start();
+            var port = ((IPEndPoint)_listener.LocalEndpoint).Port;
+            EndpointUrl = $"http://127.0.0.1:{port}/mcp/kernel";
+            _acceptLoop = Task.Run(AcceptLoopAsync);
+        }
+
+        public string EndpointUrl { get; }
+        public volatile bool SawInitialize;
+        public volatile bool SawInitializedNotification;
+        public volatile bool SawSessionHeaderOnSubsequentCalls;
+
+        public async ValueTask DisposeAsync()
+        {
+            await _cts.CancelAsync();
+            _listener.Stop();
+            try
+            {
+                await _acceptLoop;
+            }
+            catch
+            {
+                // Ignore accept shutdown.
+            }
+
+            _cts.Dispose();
+        }
+
+        private async Task AcceptLoopAsync()
+        {
+            while (!_cts.IsCancellationRequested)
+            {
+                TcpClient client;
+                try
+                {
+                    client = await _listener.AcceptTcpClientAsync(_cts.Token);
+                }
+                catch
+                {
+                    break;
+                }
+
+                _ = Task.Run(() => HandleClientAsync(client));
+            }
+        }
+
+        private async Task HandleClientAsync(TcpClient client)
+        {
+            using (client)
+            await using (var stream = client.GetStream())
+            {
+                var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                var headerBytes = new List<byte>();
+                var buf = new byte[1];
+                while (true)
+                {
+                    var n = await stream.ReadAsync(buf.AsMemory(0, 1), _cts.Token);
+                    if (n == 0)
+                    {
+                        return;
+                    }
+
+                    headerBytes.Add(buf[0]);
+                    var c = headerBytes.Count;
+                    if (c >= 4 &&
+                        headerBytes[c - 4] == '\r' &&
+                        headerBytes[c - 3] == '\n' &&
+                        headerBytes[c - 2] == '\r' &&
+                        headerBytes[c - 1] == '\n')
+                    {
+                        break;
+                    }
+                }
+
+                var headerText = Encoding.ASCII.GetString(headerBytes.ToArray());
+                var headerLines = headerText.Split("\r\n", StringSplitOptions.RemoveEmptyEntries);
+                for (var i = 1; i < headerLines.Length; i++)
+                {
+                    var colon = headerLines[i].IndexOf(':');
+                    if (colon > 0)
+                    {
+                        headers[headerLines[i][..colon].Trim()] = headerLines[i][(colon + 1)..].Trim();
+                    }
+                }
+
+                var contentLen = headers.TryGetValue("Content-Length", out var clStr) && int.TryParse(clStr, out var parsedLen)
+                    ? parsedLen
+                    : 0;
+                var bodyBytes = new byte[contentLen];
+                var readTotal = 0;
+                while (readTotal < contentLen)
+                {
+                    var r = await stream.ReadAsync(bodyBytes.AsMemory(readTotal, contentLen - readTotal), _cts.Token);
+                    if (r == 0)
+                    {
+                        break;
+                    }
+
+                    readTotal += r;
+                }
+
+                if (!headers.TryGetValue("Authorization", out var auth) ||
+                    !string.Equals(auth, _expectedAuth, StringComparison.Ordinal))
+                {
+                    await WriteHttpResponseAsync(stream, "401 Unauthorized", "application/json", "{\"error\":\"unauthorized\"}", extraHeader: null);
+                    return;
+                }
+
+                using var doc = JsonDocument.Parse(bodyBytes);
+                var root = doc.RootElement;
+                var method = root.TryGetProperty("method", out var mProp) ? mProp.GetString() : null;
+                var hasId = root.TryGetProperty("id", out var idProp);
+
+                if (!hasId)
+                {
+                    if (method == "notifications/initialized")
+                    {
+                        SawInitializedNotification = true;
+                        if (headers.TryGetValue("Mcp-Session-Id", out var sid) && sid == "mcp_sess_bridge_1")
+                        {
+                            SawSessionHeaderOnSubsequentCalls = true;
+                        }
+                    }
+
+                    await WriteHttpResponseAsync(stream, "202 Accepted", "text/plain", string.Empty, extraHeader: null);
+                    return;
+                }
+
+                var idRaw = idProp.GetRawText();
+                if (method == "initialize")
+                {
+                    SawInitialize = true;
+                    var body = $"{{\"jsonrpc\":\"2.0\",\"id\":{idRaw},\"result\":{{\"protocolVersion\":\"2025-03-26\",\"serverInfo\":{{\"name\":\"perga-kernel-test\",\"version\":\"1.0.0\"}}}}}}";
+                    await WriteHttpResponseAsync(
+                        stream,
+                        "200 OK",
+                        "application/json",
+                        body,
+                        extraHeader: "Mcp-Session-Id: mcp_sess_bridge_1");
+                    return;
+                }
+
+                if (headers.TryGetValue("Mcp-Session-Id", out var callSid) && callSid == "mcp_sess_bridge_1")
+                {
+                    SawSessionHeaderOnSubsequentCalls = true;
+                }
+
+                if (method == "tools/list")
+                {
+                    var body = $"{{\"jsonrpc\":\"2.0\",\"id\":{idRaw},\"result\":{{\"tools\":[{{\"name\":\"perga_report_read\"}}]}}}}";
+                    await WriteHttpResponseAsync(stream, "200 OK", "application/json", body, extraHeader: null);
+                    return;
+                }
+
+                if (method == "tools/call")
+                {
+                    var rpcJson = $"{{\"jsonrpc\":\"2.0\",\"id\":{idRaw},\"result\":{{\"content\":[{{\"type\":\"text\",\"text\":\"sse-report-body-ok\"}}]}}}}";
+                    var sseBody = $": keepalive\n\nevent: message\ndata: {rpcJson}\n\n";
+                    await WriteHttpResponseAsync(stream, "200 OK", "text/event-stream", sseBody, extraHeader: null);
+                }
+            }
+        }
+
+        private static async Task WriteHttpResponseAsync(
+            NetworkStream stream,
+            string status,
+            string contentType,
+            string body,
+            string? extraHeader)
+        {
+            var bodyBytes = Encoding.UTF8.GetBytes(body);
+            var sb = new StringBuilder();
+            sb.Append("HTTP/1.1 ").Append(status).Append("\r\n");
+            sb.Append("Content-Type: ").Append(contentType).Append("\r\n");
+            sb.Append("Content-Length: ").Append(bodyBytes.Length).Append("\r\n");
+            sb.Append("Connection: close\r\n");
+            if (!string.IsNullOrWhiteSpace(extraHeader))
+            {
+                sb.Append(extraHeader).Append("\r\n");
+            }
+
+            sb.Append("\r\n");
+            var headBytes = Encoding.ASCII.GetBytes(sb.ToString());
+            await stream.WriteAsync(headBytes);
+            if (bodyBytes.Length > 0)
+            {
+                await stream.WriteAsync(bodyBytes);
+            }
+
+            await stream.FlushAsync();
+        }
     }
 }

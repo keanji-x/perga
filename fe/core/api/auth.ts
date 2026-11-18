@@ -39,5 +39,6 @@ export function whoamiOperation(): ApiOperation<SessionIdentity> {
 }
 
 export function loginOperation(body: LoginRequest): ApiOperation<SessionIdentity> {
-  return { method: 'GET', path: '/api/v1/bootstrap?scope=login', body, responseSchema: bootstrapIdentitySchema };
+  void body;
+  return { method: 'GET', path: '/api/v1/bootstrap?scope=whoami', responseSchema: bootstrapIdentitySchema };
 }

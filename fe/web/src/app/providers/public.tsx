@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import { useEffect, type ReactNode } from 'react';
 import { DATABASE_ID_KEY, DB_INSTANCE_ID_KEY } from '../../../../core/keys/storage.ts';
+import { logoutMarkerKey } from '../../../../core/domain/recovery/context.ts';
 import { readErrorText } from '../../../../core/domain/read-failure.ts';
 import type { SyncCursorPort } from '../../systems/events/cursor-port.ts';
 import { Dialog } from '../../ui/dialog/public.tsx';
@@ -22,7 +23,7 @@ import { LiveConnectionProvider } from './connection-status.tsx';
 // Track template selection and workspace isolation upgrades require compatible clients.
 export const WEB_COMPAT_VERSION = 72;
 /** `databaseId` is optional in the type so an older kernel still parses before the curtain decides; absent means a `null` database scope, under which no per-database choice applies. */
-export type ServerVersionInfo = Readonly<{ assistantProviders?: boolean; conversationCreateModel?: boolean; conversationInitialInput?: boolean; sessionInputReceipts?: true; conversationSide?: boolean; webCompatVersion: number; minWebCompatVersion: number; syncEventVersion: number; dbInstanceId: string; databaseId?: string }>;
+export type ServerVersionInfo = Readonly<{ pergaV1?: boolean; authRequired?: boolean; assistantProviders?: boolean; conversationCreateModel?: boolean; conversationInitialInput?: boolean; sessionInputReceipts?: true; conversationSide?: boolean; webCompatVersion: number; minWebCompatVersion: number; syncEventVersion: number; dbInstanceId: string; databaseId?: string }>;
 export interface ProviderRuntime {
   fetchVersion(): Promise<ServerVersionInfo>;
   reload(): void;
@@ -77,6 +78,12 @@ export function ServerCompatGate({ children: routeContent, runtime, client, rend
     if (databaseId === undefined) return;
     if (safeRead(runtime, DATABASE_ID_KEY) !== databaseId) safeWrite(runtime, DATABASE_ID_KEY, databaseId);
   }, [databaseId, runtime]);
+
+  const authRequired = query.data?.authRequired;
+  useEffect(() => {
+    if (authRequired !== false) return;
+    try { runtime.storage.removeItem(logoutMarkerKey()); } catch { /* no-op */ }
+  }, [authRequired, runtime]);
 
   const id = query.data?.dbInstanceId;
   const verdict = id === undefined ? 'pending'

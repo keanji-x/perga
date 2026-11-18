@@ -443,7 +443,7 @@ export function plannerRunOperation(cardId: string): ApiOperation<PlannerRun> {
           pending_overflow: 0,
           model: page.session.model ?? null,
           reasoning_effort: null,
-          permission_mode: page.session.isLead ? 'ask' : null,
+          permission_mode: null,
           blocked_reason: page.session.status === 'unknown' ? 'The previous message has an unknown outcome.' : null,
           recovery: null,
           attachments_supported: false,
@@ -527,16 +527,24 @@ export type ModelCatalogScope =
   | Readonly<{ kind: 'provider'; provider: AgentProvider }>;
 
 /** Derives model catalog from `/api/v1/bootstrap` provider statuses; also accepts legacy `ModelCatalog` fixtures. */
-export function modelCatalogOperation(scope: ModelCatalogScope): ApiOperation<ModelCatalog> {
+export function modelCatalogOperation(
+  scope: ModelCatalogScope,
+  options?: Readonly<{ provider?: AgentProvider; refresh?: boolean }>,
+): ApiOperation<ModelCatalog> {
+  const targetProvider = scope.kind === 'provider' ? scope.provider : options?.provider;
+  const refreshSuffix = options?.refresh === true ? '&refresh=true' : '';
   return {
     method: 'GET',
     path: scope.kind === 'card'
-      ? `/api/v1/bootstrap?card_id=${encodeURIComponent(scope.cardId)}`
-      : `/api/v1/bootstrap?provider=${scope.provider}`,
+      ? `/api/v1/bootstrap?card_id=${encodeURIComponent(scope.cardId)}${refreshSuffix}`
+      : `/api/v1/bootstrap?provider=${scope.provider}${refreshSuffix}`,
     responseSchema: z.union([
       bootstrapDtoSchema.transform((bootstrap): ModelCatalog => {
-        const providerModels = scope.kind === 'provider'
-          ? bootstrap.providers.find((p) => normalizeWireAgentProvider(p.provider) === scope.provider)?.models ?? []
+        const providerEntry = targetProvider === undefined
+          ? undefined
+          : bootstrap.providers.find((p) => normalizeWireAgentProvider(p.provider) === targetProvider);
+        const providerModels = targetProvider !== undefined
+          ? (providerEntry?.models ?? [])
           : bootstrap.providers.flatMap((p) => p.models);
         const unique = [...new Set(providerModels)];
         return {
@@ -556,7 +564,7 @@ export function modelCatalogOperation(scope: ModelCatalogScope): ApiOperation<Mo
             supported_reasoning_efforts: null,
           },
           default_source: 'unknown',
-          source: 'live',
+          source: providerEntry?.available === false ? 'unavailable' : 'live',
           fetched_at_ms: Date.now(),
         };
       }),
@@ -622,19 +630,46 @@ export function createSerialWriter<TArgs, TResult>(
 }
 
 export function setPlannerModelOperation(
-  cardId: string, selection: ModelSelection,
+  cardId: string, selection: ModelSelection, options?: Readonly<{ perga?: boolean }>,
 ): ApiOperation<ModelSelectionResult> {
+  const usePerga = options?.perga === true || cardId.startsWith('ses_');
+  if (!usePerga) {
+    return {
+      method: 'PUT',
+      path: `/api/cards/${encodeURIComponent(cardId)}/planner/model`,
+      body: selection,
+      responseSchema: z.object({
+        card_id: z.string(),
+        model: z.string().nullable(),
+        reasoning_effort: z.string().nullable(),
+        effort_adjusted: z.boolean(),
+        unknown_model: z.boolean(),
+      }),
+    };
+  }
   return {
-    method: 'PUT',
-    path: `/api/cards/${encodeURIComponent(cardId)}/planner/model`,
-    body: { model: selection.model, reasoning_effort: selection.reasoning_effort },
-    responseSchema: z.object({
-      card_id: z.string(),
-      model: z.string().nullable(),
-      reasoning_effort: z.string().nullable(),
-      effort_adjusted: z.boolean(),
-      unknown_model: z.boolean(),
-    }),
+    method: 'PATCH',
+    path: `/api/v1/sessions/${encodeURIComponent(cardId)}`,
+    body: {
+      model: selection.model,
+      ...(selection.model === null ? { clearModel: true } : {}),
+      reasoning_effort: selection.reasoning_effort,
+    },
+    responseSchema: z.union([
+      agentSessionDtoSchema.transform((dto): ModelSelectionResult => ({
+        model: dto.model ?? null,
+        reasoning_effort: selection.reasoning_effort,
+        effort_adjusted: false,
+        unknown_model: false,
+      })),
+      z.object({
+        card_id: z.string(),
+        model: z.string().nullable(),
+        reasoning_effort: z.string().nullable(),
+        effort_adjusted: z.boolean(),
+        unknown_model: z.boolean(),
+      }),
+    ]),
   };
 }
 
@@ -687,6 +722,7 @@ export function sendPlannerInputOperation(
   return {
     method: 'POST',
     path: `/api/v1/sessions/${encodeURIComponent(cardId)}/messages`,
+    timeoutMs: 10 * 60_000,
     body: {
       content: text,
       steerIfRunning,
@@ -895,6 +931,7 @@ export function compactPlannerOperation(cardId: string): ApiOperation<{ started:
   return {
     method: 'POST',
     path: `/api/v1/sessions/${encodeURIComponent(cardId)}/compact`,
+    timeoutMs: 10 * 60_000,
     responseSchema: z.union([
       agentSessionDtoSchema.transform(() => ({ started: true as const })),
       z.object({ started: z.literal(true) }),
@@ -958,11 +995,23 @@ export function toTrackConversation(row: TrackConversationSummary): Conversation
 }
 
 /** Idempotent assignment: a retry cannot toggle a conversation back. */
-export function setConversationArchiveOperation(trackId: string, cardId: string, archived: boolean): ApiOperation<undefined> {
+export function setConversationArchiveOperation(
+  trackId: string, cardId: string, archived: boolean, options?: Readonly<{ perga?: boolean }>,
+): ApiOperation<undefined> {
+  const usePerga = options?.perga === true || cardId.startsWith('ses_');
+  if (!usePerga) {
+    return {
+      method: 'PATCH',
+      path: `/api/tracks/${encodeURIComponent(trackId)}/conversations/${encodeURIComponent(cardId)}/archive`,
+      body: { archived },
+      responseSchema: z.undefined(),
+    };
+  }
   return {
     method: 'PATCH',
-    path: `/api/tracks/${encodeURIComponent(trackId)}/conversations/${encodeURIComponent(cardId)}/archive`,
-    body: { archived }, responseSchema: z.undefined(),
+    path: `/api/v1/sessions/${encodeURIComponent(cardId)}`,
+    body: { archived },
+    responseSchema: z.union([agentSessionDtoSchema.transform(() => undefined), z.undefined()]),
   };
 }
 
@@ -1690,7 +1739,7 @@ export function retireFollowedThoughts(entries: readonly TranscriptEntry[]): rea
 /** Append entries the server has not stored yet (optimistic user echoes, live replies), retiring the thought they now follow. */
 export function mergeTranscript(
   serverEntries: readonly TranscriptEntry[],
-  echoes: readonly ConversationTurn[],
+  echoes: readonly TranscriptEntry[],
 ): readonly TranscriptEntry[] {
   return echoes.length === 0 ? serverEntries : retireFollowedThoughts([...serverEntries, ...echoes]);
 }

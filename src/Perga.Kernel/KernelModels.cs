@@ -10,7 +10,10 @@ public sealed record BootstrapDto(
     string Version,
     IReadOnlyList<ProviderStatus> Providers,
     IReadOnlyList<CompiledTemplateManifest> Templates,
-    IReadOnlyList<AreaDto> Areas);
+    IReadOnlyList<AreaDto> Areas,
+    string DatabaseId = "",
+    string DbInstanceId = "",
+    bool AuthRequired = false);
 
 public sealed record CreateAreaRequest(
     string Name,
@@ -85,7 +88,15 @@ public sealed record CreateSessionRequest(
     string? Title = null,
     string? Provider = null,
     string? Model = null,
-    string? Text = null);
+    string? Text = null,
+    string? IdempotencyKey = null);
+
+public sealed record PatchSessionRequest(
+    string? Title = null,
+    string? Provider = null,
+    string? Model = null,
+    bool ClearModel = false,
+    bool? Archived = null);
 
 public sealed record SteeringResult(string InputId, string Delivery);
 
@@ -98,7 +109,8 @@ public sealed record SessionItemsPageDto(
     IReadOnlyList<SessionItemDto> Items,
     SessionTurnDto? ActiveTurn,
     AgentSessionDto Session,
-    SessionInputReceipt? UnknownInput);
+    SessionInputReceipt? UnknownInput = null,
+    bool HasMoreBefore = false);
 
 public sealed record OpenTerminalRequest(
     string? Title = null,
@@ -121,7 +133,21 @@ public sealed record WorkspaceFileResultDto(
     bool IsDirectory,
     string? Content,
     bool Truncated,
-    IReadOnlyList<WorkspaceFileEntryDto>? Entries);
+    IReadOnlyList<WorkspaceFileEntryDto>? Entries,
+    bool IsBinary = false);
+
+public sealed record HostDirEntryDto(
+    string Name,
+    bool IsDir,
+    bool IsSymlink);
+
+public sealed record HostListDirResultDto(
+    string Path,
+    string? Parent,
+    IReadOnlyList<HostDirEntryDto> Entries);
+
+public sealed record TrackOverlaysResponseDto(
+    IReadOnlyList<TrackOverlayDto> Tracks);
 
 public sealed record TrackStatusDto(
     TrackDto Track,

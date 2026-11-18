@@ -83,7 +83,9 @@ internal static class McpConfigSerializer
     }
 
     public static List<Dictionary<string, object?>> BuildAcpMcpServersList(
-        IReadOnlyDictionary<string, McpServerConfig>? servers)
+        IReadOnlyDictionary<string, McpServerConfig>? servers,
+        bool supportsHttpMcp = true,
+        string? nodeExecutablePath = null)
     {
         var list = new List<Dictionary<string, object?>>();
         if (servers is null)
@@ -95,7 +97,7 @@ internal static class McpConfigSerializer
         {
             switch (server)
             {
-                case McpServerConfig.HttpMcpServer http:
+                case McpServerConfig.HttpMcpServer http when supportsHttpMcp:
                 {
                     var headers = new List<Dictionary<string, string>>(http.Headers.Count);
                     foreach (var kvp in http.Headers)
@@ -117,6 +119,30 @@ internal static class McpConfigSerializer
                     break;
                 }
 
+                case McpServerConfig.HttpMcpServer http:
+                {
+                    var headersJson = JsonSerializer.Serialize(http.Headers);
+                    var resolvedNode = string.IsNullOrWhiteSpace(nodeExecutablePath)
+                        ? "node"
+                        : nodeExecutablePath;
+                    var env = new List<Dictionary<string, string>>(4)
+                    {
+                        new() { ["name"] = "PERGA_MCP_URL", ["value"] = http.Url },
+                        new() { ["name"] = "PERGA_MCP_HEADERS", ["value"] = headersJson },
+                        new() { ["name"] = "NO_PROXY", ["value"] = "127.0.0.1,localhost" },
+                        new() { ["name"] = "no_proxy", ["value"] = "127.0.0.1,localhost" }
+                    };
+
+                    list.Add(new Dictionary<string, object?>
+                    {
+                        ["name"] = name,
+                        ["command"] = resolvedNode,
+                        ["args"] = new[] { "-e", AcpStdioHttpMcpBridge.BridgeScript },
+                        ["env"] = env
+                    });
+                    break;
+                }
+
                 case McpServerConfig.StdioMcpServer stdio:
                 {
                     var env = new List<Dictionary<string, string>>(stdio.Env.Count);
@@ -132,7 +158,6 @@ internal static class McpConfigSerializer
                     list.Add(new Dictionary<string, object?>
                     {
                         ["name"] = name,
-                        ["type"] = "stdio",
                         ["command"] = stdio.Command,
                         ["args"] = stdio.Args,
                         ["env"] = env

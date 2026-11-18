@@ -12,6 +12,7 @@ import {
   compiledTemplateManifestDtoSchema,
   normalizeWireAgentProvider,
   overlaySchema,
+  overlaysListDtoSchema,
   terminalDtoSchema,
   toWireAgentProvider,
   trackAggregateSnapshotDtoSchema,
@@ -447,7 +448,9 @@ export function trackTemplatesOperation(): ApiOperation<TrackTemplate[]> {
         title: manifest.title,
         description: manifest.description,
         availability: { status: 'ready' as const },
-        ...(manifest.inputsSchema !== null && manifest.inputsSchema !== undefined
+        ...(manifest.inputsSchema !== null
+          && manifest.inputsSchema !== undefined
+          && (typeof manifest.inputsSchema !== 'object' || Array.isArray(manifest.inputsSchema) || Object.keys(manifest.inputsSchema).length > 0)
           ? { input_schema: manifest.inputsSchema }
           : {}),
         tasks: [],
@@ -682,7 +685,7 @@ function askDtoToActivityItem(ask: AskDto): z.infer<typeof activityItemWireSchem
   };
 }
 
-export function terminalDtoToCardWire(dto: TerminalDto, sort = 100): CardWire {
+export function terminalDtoToCardWire(dto: TerminalDto, sort = 100, inWorkbench = true): CardWire {
   return {
     id: dto.id,
     track_id: dto.trackId,
@@ -695,7 +698,7 @@ export function terminalDtoToCardWire(dto: TerminalDto, sort = 100): CardWire {
       program: dto.program ?? null,
       status: dto.status,
       exit_code: dto.exitCode ?? null,
-      terminal_presentation: { source: 'unrecorded', in_workbench: true } satisfies TerminalPresentation,
+      terminal_presentation: { source: 'unrecorded', in_workbench: inWorkbench } satisfies TerminalPresentation,
     },
     runtime: {
       worker_session_id: dto.id,
@@ -733,6 +736,8 @@ export function snapshotToTrackDetailWire(snapshot: TrackAggregateSnapshotDto): 
   const lead = snapshot.sessions.find((session) => session.isLead || session.id === snapshot.track.leadSessionId)
     ?? snapshot.sessions[0];
   if (lead !== undefined) {
+    const leadProvider = normalizeWireAgentProvider(lead.provider) ?? 'codex';
+    const leadStatus = lead.status === 'running' ? 'running' : lead.status === 'failed' ? 'failed' : 'idle';
     cards.push({
       id: lead.id,
       track_id: snapshot.track.id,
@@ -741,13 +746,66 @@ export function snapshotToTrackDetailWire(snapshot: TrackAggregateSnapshotDto): 
       sort: 1,
       payload: {
         planner_harness: true,
-        planner_provider: normalizeWireAgentProvider(lead.provider) ?? lead.provider,
-        is_lead: lead.isLead,
+        planner_provider: leadProvider,
+        model: lead.model ?? null,
+        is_lead: true,
         epoch: lead.epoch,
+      },
+      runtime: {
+        worker_session_id: lead.id,
+        kind: leadProvider === 'claude' ? 'claude' : 'codex',
+        status: leadStatus,
+        provider: leadProvider,
+        session_id: lead.id,
+        updated_at_ms: lead.updatedAtMs,
       },
       deletable: false,
       created_at: lead.createdAtMs,
       updated_at: lead.updatedAtMs,
+    });
+  }
+
+  for (const [index, session] of snapshot.sessions.entries()) {
+    if (session.id === lead?.id) continue;
+    const provider = normalizeWireAgentProvider(session.provider) ?? 'codex';
+    const status = session.status === 'running' ? 'running' : session.status === 'failed' ? 'failed' : 'idle';
+    cards.push({
+      id: session.id,
+      track_id: snapshot.track.id,
+      kind: 'codex',
+      title: session.title ?? null,
+      sort: 2 + index,
+      payload: {
+        harness_profile: 'assistant',
+        model: session.model ?? null,
+        epoch: session.epoch,
+      },
+      runtime: {
+        worker_session_id: session.id,
+        kind: provider === 'claude' ? 'claude' : 'codex',
+        status,
+        provider,
+        session_id: session.id,
+        updated_at_ms: session.updatedAtMs,
+      },
+      deletable: false,
+      created_at: session.createdAtMs,
+      updated_at: session.updatedAtMs,
+    });
+  }
+
+  if (snapshot.workspacePreparation == null) {
+    const workspacePath = (track.workspace.worktree ?? track.workspace.path) || '.';
+    cards.push({
+      id: `files-${snapshot.track.id}`,
+      track_id: snapshot.track.id,
+      kind: 'file-viewer',
+      title: 'Files',
+      sort: 50,
+      payload: { path: workspacePath },
+      deletable: false,
+      created_at: snapshot.track.createdAtMs,
+      updated_at: snapshot.track.updatedAtMs,
     });
   }
 
@@ -781,7 +839,7 @@ export function snapshotToTrackDetailWire(snapshot: TrackAggregateSnapshotDto): 
   }];
 
   return {
-    planner_revision: snapshot.report.docRev,
+    planner_revision: Math.max(snapshot.report.docRev, Math.floor(snapshot.track.updatedAtMs)),
     track,
     can_reopen: snapshot.track.closedAtMs !== null && snapshot.track.closedAtMs !== undefined,
     can_close: snapshot.track.closedAtMs === null || snapshot.track.closedAtMs === undefined,
@@ -1095,8 +1153,39 @@ export function deleteCardOperation(cardId: string): ApiOperation<undefined> {
 export function overlaysByKindOperation(entityKind: 'track' | 'card'): ApiOperation<OverlayWire[]> {
   return {
     method: 'GET',
-    path: `/api/overlays?entity_kind=${entityKind}`,
-    responseSchema: z.array(overlaySchema),
+    path: `/api/v1/overlays?entity_kind=${entityKind}`,
+    responseSchema: z.union([
+      overlaysListDtoSchema.transform((dto): OverlayWire[] => {
+        if (entityKind !== 'track') return [];
+        return dto.tracks.map((item): OverlayWire => ({
+          id: `activity-${item.trackId}`,
+          plugin_id: KERNEL_OVERLAY_PLUGIN_ID,
+          entity_kind: 'track',
+          entity_id: item.trackId,
+          kind: 'activity',
+          payload: {
+            schemaVersion: 4,
+            working: item.isWorking,
+            attention: item.openAskCount > 0 ? 'input' : item.hasFailedTask ? 'failed' : 'none',
+            activity_at_ms: item.updatedAtMs,
+            items: item.openAskCount > 0
+              ? Array.from({ length: item.openAskCount }, (_, index) => ({
+                source: 'ask' as const,
+                key: `ask:${item.trackId}:${index}`,
+                text: 'Question waiting for your answer',
+                at_ms: item.updatedAtMs,
+                ask_id: `${item.trackId}:${index}`,
+                questions: [],
+                delivery: 'wake' as const,
+              }))
+              : [],
+            cards: [],
+          },
+          updated_at: item.updatedAtMs,
+        }));
+      }),
+      z.array(overlaySchema),
+    ]),
   };
 }
 

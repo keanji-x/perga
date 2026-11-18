@@ -37,6 +37,20 @@ describe('browser display preferences', () => {
     expect(closed.conversation('b')).toBe('chat-b');
   });
 
+  it('keeps a terminal layout choice across app instances and scopes it to the database', () => {
+    const storage = memoryStorage();
+    const first = createUiPreferences(storage);
+    first.setDatabaseScope('database-1');
+    first.setTerminalWorkbench('track', 'terminal', false);
+
+    const restored = createUiPreferences(storage);
+    restored.setDatabaseScope('database-1');
+    expect(restored.terminalWorkbench('track', 'terminal')).toBe(false);
+    expect(restored.terminalWorkbench('track', 'other-terminal')).toBeNull();
+    restored.setDatabaseScope('database-2');
+    expect(restored.terminalWorkbench('track', 'terminal')).toBeNull();
+  });
+
   it.each(['{broken', '[]', '{}', '123', '""'])('ignores malformed or unrecognized storage %s', (value) => {
     const preferences = createUiPreferences({ getItem: () => value, setItem: () => {} });
     expect(preferences.conversation('track')).toBeNull();

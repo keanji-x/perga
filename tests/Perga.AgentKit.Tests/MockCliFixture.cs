@@ -99,6 +99,10 @@ if "app-server" not in sys.argv:
     sys.stderr.flush()
     sys.exit(2)
 
+if os.getenv("PERGA_TEST_CODEX_REQUIRE_PRIVATE_STATE") == "1":
+    with open(os.path.join(os.environ["CODEX_HOME"], "mock-state"), "w") as output:
+        output.write("started")
+
 write_lock = threading.Lock()
 state = {
     "thread_id": None,
@@ -121,12 +125,72 @@ def send(obj):
         sys.stdout.write(json.dumps(obj) + "\n")
         sys.stdout.flush()
 
-def run_turn(turn_id, prompt, correlation_id):
+def run_turn(turn_id, prompt, correlation_id, turn_model=None):
+    effective_model = turn_model if turn_model is not None else state["model"]
     send({
         "jsonrpc": "2.0",
         "method": "turn/started",
         "params": {"threadId": state["thread_id"], "turn": {"id": turn_id, "status": "inProgress"}}
     })
+
+    stale_default = os.environ.get("MOCK_CODEX_STALE_DEFAULT_MODEL")
+    if stale_default and not effective_model:
+        nested_err = json.dumps({
+            "type": "error",
+            "status": 400,
+            "error": {
+                "type": "invalid_request_error",
+                "message": f"The '{stale_default}' model is not supported when using Codex with a ChatGPT account.",
+                "code": "model_not_found"
+            }
+        })
+        send({
+            "jsonrpc": "2.0",
+            "method": "error",
+            "params": {
+                "threadId": state["thread_id"],
+                "turnId": turn_id,
+                "willRetry": False,
+                "error": {"message": nested_err}
+            }
+        })
+        send({
+            "jsonrpc": "2.0",
+            "method": "turn/completed",
+            "params": {
+                "threadId": state["thread_id"],
+                "turn": {
+                    "id": turn_id,
+                    "status": "failed",
+                    "error": {"message": nested_err}
+                }
+            }
+        })
+        return
+
+    if os.environ.get("MOCK_CODEX_REJECT_ALL_MODELS") == "1":
+        nested_err = json.dumps({
+            "type": "error",
+            "status": 400,
+            "error": {
+                "type": "invalid_request_error",
+                "message": f"The '{effective_model or 'gpt-6.1-sol'}' model is not supported when using Codex with a ChatGPT account.",
+                "code": "model_not_found"
+            }
+        })
+        send({
+            "jsonrpc": "2.0",
+            "method": "turn/completed",
+            "params": {
+                "threadId": state["thread_id"],
+                "turn": {
+                    "id": turn_id,
+                    "status": "failed",
+                    "error": {"message": nested_err}
+                }
+            }
+        })
+        return
 
     if "TRIGGER_ERROR" in prompt:
         send({
@@ -265,7 +329,7 @@ def run_turn(turn_id, prompt, correlation_id):
         }
     })
     mcp_names = ",".join(sorted(state["mcp_servers"].keys()))
-    summary = f"codex[{state['thread_method']}|{state['thread_id']}|mcp={mcp_names}|model={state['model']}]:{prompt}"
+    summary = f"codex[{state['thread_method']}|{state['thread_id']}|mcp={mcp_names}|model={effective_model}]:{prompt}"
     send({
         "jsonrpc": "2.0",
         "method": "item/agentMessage/delta",
@@ -308,6 +372,26 @@ for raw_line in sys.stdin:
         send({"jsonrpc": "2.0", "id": msg_id, "result": {"userAgent": "codex-mock/0.99.0"}})
     elif method == "initialized":
         pass
+    elif method == "account/login/start" and params.get("type") == "apiKey":
+        with open(os.path.join(os.environ["CODEX_HOME"], "mock-api-login"), "w") as output:
+            output.write("configured")
+        send({"jsonrpc": "2.0", "id": msg_id, "result": {"type": "apiKey"}})
+    elif method == "model/list":
+        custom_models = os.environ.get("MOCK_CODEX_MODELS_JSON")
+        if custom_models:
+            send({"jsonrpc": "2.0", "id": msg_id, "result": json.loads(custom_models)})
+        else:
+            send({
+                "jsonrpc": "2.0",
+                "id": msg_id,
+                "result": {
+                    "data": [
+                        {"id": "gpt-6.2-sol", "model": "gpt-6.2-sol", "isDefault": True},
+                        {"id": "gpt-5.4", "model": "gpt-5.4", "isDefault": False},
+                        {"id": "gpt-6.1-sol", "model": "gpt-6.1-sol", "isDefault": False}
+                    ]
+                }
+            })
     elif method in ("thread/start", "thread/resume"):
         state["thread_method"] = method
         state["model"] = params.get("model")
@@ -329,8 +413,9 @@ for raw_line in sys.stdin:
         inputs = params.get("input") or []
         prompt_text = inputs[0].get("text", "") if inputs else ""
         corr_id = params.get("correlationId", "")
+        turn_model = params.get("model")
         send({"jsonrpc": "2.0", "id": msg_id, "result": {"turn": {"id": turn_id, "status": "inProgress"}}})
-        t = threading.Thread(target=run_turn, args=(turn_id, prompt_text, corr_id), daemon=True)
+        t = threading.Thread(target=run_turn, args=(turn_id, prompt_text, corr_id, turn_model), daemon=True)
         t.start()
     elif method == "turn/steer":
         inputs = params.get("input") or []
@@ -340,6 +425,8 @@ for raw_line in sys.stdin:
     elif method == "turn/interrupt":
         state["interrupt_event"].set()
         send({"jsonrpc": "2.0", "id": msg_id, "result": {}})
+    elif msg_id is not None:
+        send({"jsonrpc": "2.0", "id": msg_id, "error": {"code": -32601, "message": f"Method not found: {method}"}})
 """;
 
     private const string ClaudeMockPythonScript = """
@@ -562,6 +649,7 @@ while True:
     private const string AcpMockPythonScript = """
 #!/usr/bin/env python3
 import json
+import os
 import sys
 import threading
 
@@ -576,6 +664,7 @@ state = {
     "session_method": None,
     "mcp_servers": [],
     "model": None,
+    "model_set_method": None,
     "system_prompt": None,
     "subcommand_acp": "acp" in sys.argv[1:],
     "cancel_event": threading.Event(),
@@ -706,7 +795,7 @@ def handle_prompt(req_id, params):
         }
     })
     mcp_names = ",".join(sorted(s.get("name", "") for s in state["mcp_servers"]))
-    summary = f"acp[{state['session_method']}|{state['session_id']}|sub={state['subcommand_acp']}|mcp={mcp_names}]:{prompt_text}"
+    summary = f"acp[{state['session_method']}|{state['session_id']}|sub={state['subcommand_acp']}|model={state['model']}|via={state['model_set_method']}|mcp={mcp_names}]:{prompt_text}"
     send({
         "jsonrpc": "2.0",
         "method": "session/update",
@@ -742,10 +831,14 @@ for raw_line in sys.stdin:
 
     params = msg.get("params") or {}
     if method == "initialize":
+        mcp_caps = {"http": True} if os.environ.get("MOCK_ACP_HTTP_MCP") == "1" else {}
         send({
             "jsonrpc": "2.0",
             "id": msg_id,
-            "result": {"protocolVersion": 1, "agentCapabilities": {"loadSession": True}}
+            "result": {
+                "protocolVersion": 1,
+                "agentCapabilities": {"loadSession": True, "mcpCapabilities": mcp_caps}
+            }
         })
     elif method in ("session/new", "session/load"):
         state["session_method"] = method
@@ -757,13 +850,61 @@ for raw_line in sys.stdin:
             send({"jsonrpc": "2.0", "id": msg_id, "result": {}})
         else:
             state["session_id"] = "acp_sess_001"
-            send({"jsonrpc": "2.0", "id": msg_id, "result": {"sessionId": state["session_id"]}})
+            if os.environ.get("MOCK_ACP_CONFIG_OPTIONS_MODELS") == "1":
+                send({
+                    "jsonrpc": "2.0",
+                    "id": msg_id,
+                    "result": {
+                        "sessionId": state["session_id"],
+                        "configOptions": [
+                            {
+                                "id": "model",
+                                "category": "model",
+                                "currentValue": "opencode-sonnet-4-6",
+                                "options": [
+                                    {"value": "opencode-sonnet-4-6", "name": "Sonnet 4.6"},
+                                    {"group": "More", "options": [{"value": "opencode-gpt-5.4", "name": "GPT 5.4"}]}
+                                ]
+                            }
+                        ]
+                    }
+                })
+            else:
+                send({
+                    "jsonrpc": "2.0",
+                    "id": msg_id,
+                    "result": {
+                        "sessionId": state["session_id"],
+                        "models": {
+                            "currentModelId": "gemini-4-carbon-medium",
+                            "availableModels": [
+                                {"modelId": "gemini-4-carbon-medium", "name": "Gemini 4 Carbon Medium"},
+                                {"modelId": "gemini-4-carbon-high", "name": "Gemini 4 Carbon High"},
+                                {"modelId": "claude-sonnet-5-5-medium", "name": "Claude Sonnet 5.5 Medium"}
+                            ]
+                        }
+                    }
+                })
+    elif method == "session/set_model":
+        if os.environ.get("MOCK_ACP_NO_SET_MODEL") == "1":
+            send({"jsonrpc": "2.0", "id": msg_id, "error": {"code": -32601, "message": "Method not found"}})
+        else:
+            state["model"] = params.get("modelId")
+            state["model_set_method"] = "session/set_model"
+            send({"jsonrpc": "2.0", "id": msg_id, "result": {}})
+    elif method == "session/set_config_option":
+        if params.get("configId") == "model":
+            state["model"] = params.get("value")
+            state["model_set_method"] = "session/set_config_option"
+        send({"jsonrpc": "2.0", "id": msg_id, "result": {}})
     elif method == "session/prompt":
         state["cancel_event"].clear()
         t = threading.Thread(target=handle_prompt, args=(msg_id, params), daemon=True)
         t.start()
     elif method == "session/cancel":
         state["cancel_event"].set()
+    elif msg_id is not None:
+        send({"jsonrpc": "2.0", "id": msg_id, "error": {"code": -32601, "message": f"Method not found: {method}"}})
 """;
 
     private const string BwrapPassthroughPythonScript = """

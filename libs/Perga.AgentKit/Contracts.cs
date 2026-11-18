@@ -35,7 +35,8 @@ public sealed record HarnessLaunchSpec(
     string? SystemPrompt,
     IReadOnlyDictionary<string, McpServerConfig> McpServers,
     OsSandboxMode Sandbox = OsSandboxMode.None,
-    IReadOnlyList<OverlayMountSpec>? OverlayMounts = null);
+    IReadOnlyList<OverlayMountSpec>? OverlayMounts = null,
+    string? StateKey = null);
 
 public sealed record TurnInput(
     string Prompt,

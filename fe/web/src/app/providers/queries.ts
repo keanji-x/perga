@@ -145,11 +145,16 @@ export function plannerRunQueryOptions(transport: ApiTransportPort, cardId: stri
 }
 
 /** No `staleTime` of its own: codex keeps a 300 s disk cache behind this. */
-export function modelCatalogQueryOptions(transport: ApiTransportPort, scope: ModelCatalogScope, unauthorized: UnauthorizedChannel) {
+export function modelCatalogQueryOptions(
+  transport: ApiTransportPort,
+  scope: ModelCatalogScope,
+  unauthorized: UnauthorizedChannel,
+  options?: Readonly<{ provider?: AgentProvider; refresh?: boolean }>,
+) {
   return {
     queryKey: queryKeys.modelCatalog(scope),
     queryFn: ({ signal }: { signal: AbortSignal }) =>
-      runOperation(transport, { ...modelCatalogOperation(scope), signal }, unauthorized),
+      runOperation(transport, { ...modelCatalogOperation(scope, options), signal }, unauthorized),
   };
 }
 
@@ -423,9 +428,12 @@ export function useTrackConversationMutations(
 }
 
 const serverVersionSchema = z.object({
+  pergaV1: z.boolean().optional(),
+  authRequired: z.boolean().optional(),
   assistantProviders: z.boolean().optional(),
   conversationCreateModel: z.boolean().optional(),
   conversationInitialInput: z.boolean().optional(),
+  sessionInputReceipts: z.literal(true).optional(),
   conversationSide: z.boolean().optional(),
   webCompatVersion: z.number(),
   minWebCompatVersion: z.number(),
@@ -440,6 +448,8 @@ export function serverVersionOperation(): ApiOperation<ServerVersionInfo> {
     path: '/api/v1/bootstrap',
     responseSchema: z.union([
       bootstrapDtoSchema.transform((bootstrap): ServerVersionInfo => ({
+        pergaV1: true,
+        authRequired: bootstrap.authRequired ?? false,
         assistantProviders: true,
         conversationCreateModel: true,
         conversationInitialInput: true,
@@ -448,7 +458,8 @@ export function serverVersionOperation(): ApiOperation<ServerVersionInfo> {
         webCompatVersion: WEB_COMPAT_VERSION,
         minWebCompatVersion: WEB_COMPAT_VERSION,
         syncEventVersion: 1,
-        dbInstanceId: `perga-${bootstrap.version}`,
+        dbInstanceId: bootstrap.dbInstanceId ?? `perga-${bootstrap.version}`,
+        ...(bootstrap.databaseId !== null && bootstrap.databaseId !== undefined ? { databaseId: bootstrap.databaseId } : {}),
       })),
       serverVersionSchema,
     ]),
@@ -506,15 +517,18 @@ export function tracksInAreaQueryOptions(transport: ApiTransportPort, areaId: st
   };
 }
 
+function isPergaDetail(detail: TrackDetailWire | undefined): boolean {
+  const reportCard = detail?.cards[0];
+  return reportCard?.kind === 'track-report'
+    && (reportCard.payload as { pergaSnapshot?: unknown } | null)?.pergaSnapshot === true;
+}
+
 export function trackDetailQueryOptions(transport: ApiTransportPort, trackId: string, unauthorized: UnauthorizedChannel) {
   return {
     queryKey: queryKeys.trackDetail(trackId),
     queryFn: async ({ signal }: { signal: AbortSignal }): Promise<TrackDetailWire> => {
       const detail = await runOperation(transport, { ...trackDetailOperation(trackId), signal }, unauthorized);
-      const reportCard = detail.cards[0];
-      const isPergaSnapshot = reportCard?.kind === 'track-report'
-        && (reportCard.payload as { pergaSnapshot?: unknown } | null)?.pergaSnapshot === true;
-      if (!isPergaSnapshot) return detail;
+      if (!isPergaDetail(detail)) return detail;
       try {
         const terminals = await runOperation(transport, { ...listTrackTerminalsOperation(trackId), signal }, unauthorized);
         if (terminals.length === 0) return detail;
@@ -529,11 +543,17 @@ export function trackDetailQueryOptions(transport: ApiTransportPort, trackId: st
 }
 
 /** Who cites this track. Its own cache entry: backlinks are written by OTHER tracks, so they go stale on edits this track never sees. */
-export function trackBacklinksQueryOptions(transport: ApiTransportPort, trackId: string, unauthorized: UnauthorizedChannel) {
+export function trackBacklinksQueryOptions(
+  transport: ApiTransportPort,
+  trackId: string,
+  unauthorized: UnauthorizedChannel,
+  options?: Readonly<{ enabled?: boolean }>,
+) {
   return {
     queryKey: queryKeys.trackBacklinks(trackId),
     queryFn: ({ signal }: { signal: AbortSignal }): Promise<TrackBacklinks> =>
       runOperation(transport, { ...trackBacklinksOperation(trackId), signal }, unauthorized),
+    ...(options?.enabled !== undefined ? { enabled: options.enabled } : {}),
   };
 }
 
@@ -541,12 +561,18 @@ export function trackBacklinksQueryOptions(transport: ApiTransportPort, trackId:
 export const TRACK_PREVIEWS_POLL_MS = 5000;
 
 /** The track's registered previews, each with a just-probed `live` bit. Polled: nothing announces a registration or a dev server coming up. */
-export function trackPreviewsQueryOptions(transport: ApiTransportPort, trackId: string, unauthorized: UnauthorizedChannel) {
+export function trackPreviewsQueryOptions(
+  transport: ApiTransportPort,
+  trackId: string,
+  unauthorized: UnauthorizedChannel,
+  options?: Readonly<{ enabled?: boolean }>,
+) {
   return {
     queryKey: queryKeys.trackPreviews(trackId),
     queryFn: ({ signal }: { signal: AbortSignal }): Promise<TrackPreviews> =>
       runOperation(transport, { ...trackPreviewsOperation(trackId), signal }, unauthorized),
     refetchInterval: TRACK_PREVIEWS_POLL_MS,
+    ...(options?.enabled !== undefined ? { enabled: options.enabled } : {}),
   };
 }
 
@@ -954,9 +980,36 @@ export function useTrackMutations(transport: ApiTransportPort, unauthorized: Una
     onSuccess: addCardToDetail,
   });
   const createCard = useRecoveryMutation(transport, {
-    mutationFn: ({ trackId, body, key }: { trackId: string; body: NewCardBody; key: string }, transport: ApiTransportPort) =>
-      runOperation(transport, createCardOperation(trackId, body, key), unauthorized),
-    onSuccess: addCardToDetail,
+    mutationFn: async ({ trackId, body, key }: { trackId: string; body: NewCardBody; key: string }, transport: ApiTransportPort) => {
+      const cached = client.getQueryData<TrackDetailWire>(queryKeys.trackDetail(trackId));
+      if (isPergaDetail(cached) && body.kind === 'file-viewer') {
+        const now = Math.floor(Date.now() / 1000);
+        return {
+          id: `file-local-${key}`,
+          track_id: trackId,
+          kind: 'file-viewer',
+          title: body.title ?? 'Files',
+          sort: 900,
+          payload: body.payload ?? {},
+          deletable: true,
+          created_at: now,
+          updated_at: now,
+        } satisfies CardWire;
+      }
+      return runOperation(transport, createCardOperation(trackId, body, key), unauthorized);
+    },
+    onSuccess: (card) => {
+      const cached = client.getQueryData<TrackDetailWire>(queryKeys.trackDetail(card.track_id));
+      if (card.id.startsWith('file-local-') && isPergaDetail(cached)) {
+        client.setQueryData(queryKeys.trackDetail(card.track_id), (previous: TrackDetailWire | undefined) => {
+          if (previous === undefined) return previous;
+          if (previous.cards.some((existing) => existing.id === card.id)) return previous;
+          return { ...previous, cards: [...previous.cards, card] };
+        });
+        return;
+      }
+      addCardToDetail(card);
+    },
   });
   /* Delete drops the row from the cached detail before the refetch lands: leaving it on screen would keep
    * a PTY attached to a card the kernel has torn down. A delete answered done (404, `DELETE_FAILURES`) is gone the same
@@ -969,12 +1022,18 @@ export function useTrackMutations(transport: ApiTransportPort, unauthorized: Una
     });
   };
   const removeCard = useRecoveryMutation(transport, {
-    mutationFn: ({ trackId, cardId, signal }: { trackId: string; cardId: string; signal?: AbortSignal }, transport: ApiTransportPort) =>
-      runOperation(transport, { ...deleteTerminalOperation(trackId, cardId), signal }, unauthorized),
+    mutationFn: async ({ trackId, cardId, signal }: { trackId: string; cardId: string; signal?: AbortSignal }, transport: ApiTransportPort) => {
+      if (cardId.startsWith('file-local-')) {
+        return undefined;
+      }
+      return runOperation(transport, { ...deleteTerminalOperation(trackId, cardId), signal }, unauthorized);
+    },
     onSuccess: dropCard,
     onError: (error, variables) => { if (deleteDone(error)) dropCard(undefined, variables); },
-    onSettled: (_result, _error, { trackId }) => {
-      void client.invalidateQueries({ queryKey: queryKeys.trackDetail(trackId) });
+    onSettled: (_result, _error, { trackId, cardId }) => {
+      if (!cardId.startsWith('file-local-')) {
+        void client.invalidateQueries({ queryKey: queryKeys.trackDetail(trackId) });
+      }
       void cancelThenInvalidate(client, queryKeys.overlaysByKind('track'));
     },
   });

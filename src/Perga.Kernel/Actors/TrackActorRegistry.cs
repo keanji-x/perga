@@ -71,6 +71,9 @@ public sealed class TrackActorRegistry : IAsyncDisposable
 
     public bool IsTrackActiveInMemory(string trackId) => _actors.ContainsKey(trackId);
 
+    public bool TryGetActive(string trackId, out TrackActor? actor) =>
+        _actors.TryGetValue(trackId, out actor);
+
     public TrackActor GetOrActivate(string trackId)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);

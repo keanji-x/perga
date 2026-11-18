@@ -13,7 +13,14 @@ export const SETTINGS_SECTIONS = Object.freeze([
   Object.freeze({ id: 'about', label: 'About', icon: 'info' }),
 ] as const);
 
-export type SettingsSection = typeof SETTINGS_SECTIONS[number]['id'];
+export const PERGA_SETTINGS_SECTIONS = Object.freeze([
+  Object.freeze({ id: 'appearance', label: 'Appearance', icon: 'viewColumns' }),
+  Object.freeze({ id: 'planners', label: 'Planners', icon: 'checkDouble' }),
+  Object.freeze({ id: 'about', label: 'About', icon: 'info' }),
+] as const);
+
+export type SettingsSectionEntry = typeof SETTINGS_SECTIONS[number];
+export type SettingsSection = SettingsSectionEntry['id'];
 export type SettingsPresentation = 'desktop' | 'mobile-index' | 'mobile-detail';
 
 export function settingsSectionLabel(section: SettingsSection): string {
@@ -21,13 +28,14 @@ export function settingsSectionLabel(section: SettingsSection): string {
   return SETTINGS_SECTIONS.find((entry) => entry.id === section)!.label;
 }
 
-export function SettingsIndex({ onSelectSection }: Readonly<{
+export function SettingsIndex({ onSelectSection, sections = SETTINGS_SECTIONS }: Readonly<{
   onSelectSection: (section: SettingsSection) => void;
+  sections?: readonly SettingsSectionEntry[];
 }>) {
   return <nav aria-label="Settings categories">
     <MobileListGroup label="Settings">
       <List hasDividers={false} density="balanced" className={styles.categoryList}>
-        {SETTINGS_SECTIONS.map((entry) => <ListItem key={entry.id} label={entry.label}
+        {sections.map((entry) => <ListItem key={entry.id} label={entry.label}
           className={styles.categoryRow}
           startContent={<AstryxIcon icon={entry.icon} size="md" color="secondary" />}
           endContent={<AstryxIcon icon="chevronRight" size="sm" color="secondary" />}

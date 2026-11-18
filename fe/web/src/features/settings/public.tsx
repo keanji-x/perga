@@ -18,23 +18,24 @@ import { ErrorBox } from '../../ui/error-box/public.tsx';
 import { Icon } from '../../ui/icon/public.tsx';
 import { useState } from '../../ui/state/public.ts';
 import { SETTINGS_SECTIONS, SettingsIndex,
-  type SettingsSection, type SettingsPresentation } from './navigation.tsx';
+  type SettingsSection, type SettingsSectionEntry, type SettingsPresentation } from './navigation.tsx';
 import styles from './settings.module.css';
 
 export type SettingsSurfaceProps = Readonly<{
   presentation: SettingsPresentation;
   section: SettingsSection;
+  sections?: readonly SettingsSectionEntry[];
   onSelectSection: (section: SettingsSection) => void;
   children: ReactNode;
 }>;
 
 /** The two-column frame every Settings route renders inside. `aria-current="page"` is stamped on top of `isSelected`: the current route is a fact a screen reader has to be told. */
-export function SettingsSurface({ presentation, section, onSelectSection, children }: SettingsSurfaceProps) {
+export function SettingsSurface({ presentation, section, sections = SETTINGS_SECTIONS, onSelectSection, children }: SettingsSurfaceProps) {
   return (
     <div className={`${styles.surface} ${presentation === 'desktop' ? '' : styles.mobileSurface} ${presentation === 'mobile-detail' ? styles.mobileDetail : ''}`}>
-      {presentation === 'mobile-index' && <SettingsIndex onSelectSection={onSelectSection} />}
+      {presentation === 'mobile-index' && <SettingsIndex sections={sections} onSelectSection={onSelectSection} />}
       {presentation === 'desktop' && <AstryxSideNav aria-label="Settings sections" className={styles.sectionNav}>
-        {SETTINGS_SECTIONS.map((entry) => (
+        {sections.map((entry) => (
           <AstryxSideNavItem key={entry.id} label={entry.label} icon={entry.icon}
             isSelected={entry.id === section} aria-current={entry.id === section ? 'page' : undefined}
             onClick={() => onSelectSection(entry.id)} />

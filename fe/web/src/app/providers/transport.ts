@@ -24,7 +24,8 @@ export function createFetchTransport({ shareLinkId }: Readonly<{ shareLinkId?: s
       const relayAbort = () => controller.abort();
       request.signal?.addEventListener('abort', relayAbort, { once: true });
       if (request.signal?.aborted) relayAbort();
-      const timeout = setTimeout(() => controller.abort(new DOMException('Request timed out.', 'TimeoutError')), REQUEST_TIMEOUT_MS);
+      const timeoutMs = request.timeoutMs ?? REQUEST_TIMEOUT_MS;
+      const timeout = setTimeout(() => controller.abort(new DOMException('Request timed out.', 'TimeoutError')), timeoutMs);
       try {
         const response = await fetch(request.path, {
           method: request.method,
@@ -34,7 +35,7 @@ export function createFetchTransport({ shareLinkId }: Readonly<{ shareLinkId?: s
           }),
           /* A `Uint8Array` body is the bytes themselves: `JSON.stringify` of a typed array is `{"0":137,…}`,
            * which no type would catch. `content-type` comes from the operation's own headers. */
-          ...(request.body === undefined ? {} : {
+          ...(request.body === undefined || request.method === 'GET' ? {} : {
             body: request.body instanceof Uint8Array
               ? (request.body as unknown as BodyInit)
               : JSON.stringify(request.body),

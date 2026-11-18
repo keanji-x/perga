@@ -283,24 +283,46 @@ export function matchSendOps(
 ): ReadonlyMap<string, string> {
   const rows = serverTurns.filter((turn): turn is ConversationTurn => isUserConversationTurn(turn));
   const matched = new Map<string, string>();
+  const claimedIds = new Set<string>(spent);
   for (const op of ops) {
     if (op.phase === 'initial-accepted') {
       const row = initialInputSource(op, rows);
-      if (row !== undefined && (row.human !== undefined || row.inputSource?.cardId === cardId)) matched.set(op.key, row.id);
+      if (row !== undefined && (row.human !== undefined || row.inputSource?.cardId === cardId)) {
+        matched.set(op.key, row.id);
+        claimedIds.add(row.id);
+      }
       continue;
     }
-    if (op.echo.entryId === null) continue;
+    if (op.echo.entryId === null) {
+      if (op.phase === 'confirmed') {
+        const fallbackRow = rows.find((turn) =>
+          !claimedIds.has(turn.id)
+          && turn.author === 'you'
+          && turn.human !== undefined
+          && (op.echo.authorUserId === undefined || op.echo.authorUserId === turn.human.userId)
+          && (turn.displayPosition ?? 0) > op.echo.serverHighWaterBefore
+          && turn.text === op.echo.text);
+        if (fallbackRow !== undefined) {
+          matched.set(op.key, fallbackRow.id);
+          claimedIds.add(fallbackRow.id);
+        }
+      }
+      continue;
+    }
     const row = rows.find(turn => {
-      if (turn.human !== undefined) return !spent.includes(turn.id) && op.echo.entryId === turn.human.messageId
+      if (turn.human !== undefined) return !claimedIds.has(turn.id) && op.echo.entryId === turn.human.messageId
         && op.echo.authorUserId === turn.human.userId
         && (op.phase !== 'confirmed' || op.queueRevision === null || turn.human.revision >= op.queueRevision);
       const source = turn.inputSource;
       if (turn.queueEntryId !== op.echo.entryId || source?.cardId !== cardId || source.entryRev === null
         || !afterSend(turn, op)) return false;
       if (op.phase === 'confirmed' && op.queueRevision !== null) return source.entryRev >= op.queueRevision;
-      return !spent.includes(turn.id) && inputBodyMatchesEcho(turn, op.echo);
+      return !claimedIds.has(turn.id) && inputBodyMatchesEcho(turn, op.echo);
     });
-    if (row !== undefined) matched.set(op.key, row.id);
+    if (row !== undefined) {
+      matched.set(op.key, row.id);
+      claimedIds.add(row.id);
+    }
   }
   return matched;
 }
@@ -433,13 +455,13 @@ export type OutboxFacts = Omit<OutboxView, 'transcript'> & Readonly<{
 
 /** Keep the delivery projection stable while adding display-only live replies.
  * Current creation input is placed by its source role; ordinary echoes retain the existing tail. */
-export function withOutboxLiveReplies(facts: OutboxFacts, liveReplies: readonly ConversationTurn[]): OutboxView {
+export function withOutboxLiveReplies(facts: OutboxFacts, liveReplies: readonly TranscriptEntry[]): OutboxView {
   const { entries, echoes, initialInputs, ...state } = facts;
   return { ...state, transcript: mergeTranscript(placeInitialInputs(mergeTranscript(entries, liveReplies), initialInputs), echoes) };
 }
 
 /** The complete projection for consumers that need facts and live display together. */
-export function outboxView(input: Parameters<typeof outboxFacts>[0] & Readonly<{ liveReplies: readonly ConversationTurn[] }>): OutboxView {
+export function outboxView(input: Parameters<typeof outboxFacts>[0] & Readonly<{ liveReplies: readonly TranscriptEntry[] }>): OutboxView {
   return withOutboxLiveReplies(outboxFacts(input), input.liveReplies);
 }
 

@@ -51,9 +51,11 @@ export type SidebarProps = Readonly<{
   onDeleteTrack: (trackId: string, signal: AbortSignal) => void | Promise<void>;
   onOpenSettings: () => void;
   /** Settings › Plugins, reachable without walking through Settings first. */
-  onOpenPlugins: () => void;
-  /** The shell never signs out itself; the owner of the session does. */
-  onSignOut: () => void;
+  onOpenPlugins?: (() => void) | undefined;
+  /** The shell never signs out itself; the owner of the session does. `undefined` in single-owner mode. */
+  onSignOut?: (() => void) | undefined;
+  /** Hides the unimplemented Recipes row on Perga v1 servers. */
+  hideRecipes?: boolean;
   /** Owned by the shell: collapsing changes the shell grid, not just the rail. */
   collapsed: boolean;
   onToggleCollapsed: () => void;
@@ -80,7 +82,7 @@ export function initialsOf(label: string): string {
 export function Sidebar({
   shareScope = null, areas, tracksByArea, tracks, trackGroups: memberships, currentPath, onGo,
   onShareTrack, onShareArea, onRequestCreateArea, onRequestEditArea, onDeleteArea, onNewTrack, onSetPinned, onDeleteTrack,
-  onOpenSettings, onOpenPlugins, onSignOut, collapsed, onToggleCollapsed,
+  onOpenSettings, onOpenPlugins, onSignOut, hideRecipes = false, collapsed, onToggleCollapsed,
   userLabel = 'You', nowMs, readError = null, activityError = null,
   readLoading = false, onRetryRead = () => undefined,
 }: SidebarProps) {
@@ -355,20 +357,22 @@ export function Sidebar({
                 <ListText tone={primaryNavPresentation.tone} emphasis={todayActive ? 'selected' : 'medium'} className={styles.areaName} title="Today">Today</ListText>
               </button>
             </div>
-            <div className={`${styles.areaRowWrap} ${primaryNavPresentation.className}`}>
-              <button
-                type="button"
-                data-nc-role="row"
-                className={`${styles.areaRow} ${styles.primaryNavRow} ${recipesActive ? styles.primaryNavActive : ''} ${rowLayout('content')}`}
-                aria-current={recipesActive ? 'page' : undefined}
-                onClick={() => onGo({ name: 'recipes' })}
-              >
-                <span className={`${styles.primaryNavIcon} ${rowLayout('leading')}`} aria-hidden="true">
-                  <Icon name="tasks" size="md" />
-                </span>
-                <ListText tone={primaryNavPresentation.tone} emphasis={recipesActive ? 'selected' : 'medium'} className={styles.areaName} title="Recipes">Recipes</ListText>
-              </button>
-            </div>
+            {!hideRecipes && (
+              <div className={`${styles.areaRowWrap} ${primaryNavPresentation.className}`}>
+                <button
+                  type="button"
+                  data-nc-role="row"
+                  className={`${styles.areaRow} ${styles.primaryNavRow} ${recipesActive ? styles.primaryNavActive : ''} ${rowLayout('content')}`}
+                  aria-current={recipesActive ? 'page' : undefined}
+                  onClick={() => onGo({ name: 'recipes' })}
+                >
+                  <span className={`${styles.primaryNavIcon} ${rowLayout('leading')}`} aria-hidden="true">
+                    <Icon name="tasks" size="md" />
+                  </span>
+                  <ListText tone={primaryNavPresentation.tone} emphasis={recipesActive ? 'selected' : 'medium'} className={styles.areaName} title="Recipes">Recipes</ListText>
+                </button>
+              </div>
+            )}
           </div>
           <div className={styles.sidebarSections}>
           {shownShortcuts.length > 0 && <div className={styles.shortcuts} data-nc-sidebar-scrollport="">
@@ -443,8 +447,8 @@ export function Sidebar({
             <Menu
               items={[
                 { label: 'Settings', onSelect: onOpenSettings },
-                { label: 'Plugins', onSelect: onOpenPlugins },
-                { label: 'Sign out', onSelect: onSignOut },
+                ...(onOpenPlugins === undefined ? [] : [{ label: 'Plugins', onSelect: onOpenPlugins }]),
+                ...(onSignOut === undefined ? [] : [{ label: 'Sign out', onSelect: onSignOut }]),
               ]}
               wrapClassName={styles.menuWrap}
               menuClassName={styles.menu}

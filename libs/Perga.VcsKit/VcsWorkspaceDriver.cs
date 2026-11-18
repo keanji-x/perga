@@ -45,9 +45,18 @@ public sealed class VcsWorkspaceDriver : IWorkspaceDriver
         var lowerDirs = req.LowerCacheDirs?.ToArray() ?? [];
         EnsureNotProtectedLowerDir(sourcePath, targetDir, lowerDirs);
 
-        var isolated = await _vcsService
-            .CreateWorkspaceAsync(sourcePath, workspaceName, targetDir, req.BaseRevision, ct)
-            .ConfigureAwait(false);
+        IsolatedWorkspace isolated;
+        if (req.NewEmptyWorkspace)
+        {
+            ct.ThrowIfCancellationRequested();
+            Directory.CreateDirectory(targetDir);
+            isolated = new(VcsBackendKind.PlainDirectory, sourcePath, workspaceName, targetDir, null);
+        }
+        else
+        {
+            isolated = await _vcsService.CreateWorkspaceAsync(sourcePath, workspaceName, targetDir, req.BaseRevision, ct)
+                .ConfigureAwait(false);
+        }
 
         var metadata = JsonSerializer.SerializeToElement(isolated, MetadataJsonOptions);
 
@@ -58,7 +67,8 @@ public sealed class VcsWorkspaceDriver : IWorkspaceDriver
             UpperDir: null,
             WorkDir: null,
             MergedCwd: isolated.WorkspacePath,
-            Metadata: metadata);
+            Metadata: metadata,
+            ManagedEmptyWorkspace: req.NewEmptyWorkspace);
     }
 
     public Task<MountedWorkspace> EnsureMountedAsync(WorkspaceSpec spec, CancellationToken ct = default)
@@ -70,7 +80,8 @@ public sealed class VcsWorkspaceDriver : IWorkspaceDriver
         var mounted = new MountedWorkspace(
             DriverId: DriverId,
             MergedCwd: Path.GetFullPath(spec.MergedCwd),
-            ProcessOverlayLayers: null);
+            ProcessOverlayLayers: null,
+            ManagedEmptyWorkspace: spec.ManagedEmptyWorkspace);
 
         return Task.FromResult(mounted);
     }

@@ -46,10 +46,11 @@ import { bootCards } from '../cards.ts';
 import { BundledConnectionNotice, BundledLoginPage } from './bundled-connection.tsx';
 
 export function ProductionApp({ transport, unauthorized, client, runtime, cursorStore, router, renderEventBridge,
-  renderLogin, renderError, recovery, shareLinkId }: Readonly<{
+  renderLogin, renderError, recovery, shareLinkId, pergaMode = false }: Readonly<{
   transport: ApiTransportPort; unauthorized: UnauthorizedChannel; client: QueryClient; runtime: ProviderRuntime;
   cursorStore: Parameters<typeof AppProviders>[0]['cursorStore']; router: AnyRouter | ((scope: ShareScope) => AnyRouter);
   shareLinkId?: string;
+  pergaMode?: boolean;
   renderEventBridge?: Parameters<typeof AppProviders>[0]['renderEventBridge'];
   recovery?: RecoverySession;
   renderLogin: (retry: () => void) => ReactNode; renderError: (retry: () => void) => ReactNode;
@@ -57,7 +58,8 @@ export function ProductionApp({ transport, unauthorized, client, runtime, cursor
   const previewPort = useMemo<GitHubPreviewPort>(() => ({
     read: (target, signal) => runOperation(transport, githubPreviewOperation(target, signal), unauthorized),
   }), [transport, unauthorized]);
-  const content = <GitHubPreviewProvider port={previewPort}><AuthenticatedRouter router={router} shareLinkId={shareLinkId} unauthorized={unauthorized} /></GitHubPreviewProvider>;
+  const authRouter = <AuthenticatedRouter router={router} shareLinkId={shareLinkId} unauthorized={unauthorized} />;
+  const content = pergaMode ? authRouter : <GitHubPreviewProvider port={previewPort}>{authRouter}</GitHubPreviewProvider>;
   if (__NC_BUNDLED__) return <StrictMode><DepthFeedback /><RecoveryGate transport={transport} unauthorized={unauthorized} client={client}
     runtime={runtime} cursorStore={cursorStore} renderLogin={() => renderLogin(() => {})} renderEventBridge={renderEventBridge} recovery={recovery}>
     {content}
@@ -133,6 +135,7 @@ export function mountProductionApp(root: HTMLElement, browserInput: Readonly<{
   }, { input: takeScanInput(window, window.location.origin, Date.now()), pairing: createScanPairingPort(base) }) : undefined;
   const buildRouter = (shareScope: ShareScope | null = null) => createAppRouter({
     basepath: shareRoute?.basepath, shareScope, shareLinkId,
+    pergaMode: true,
     submittedStorage: browser.submittedStorage,
     prepareReport,
     transport,
@@ -151,7 +154,7 @@ export function mountProductionApp(root: HTMLElement, browserInput: Readonly<{
   });
   const mounted = createRoot(root);
   mounted.render(<ProductionApp transport={transport} unauthorized={unauthorized} client={client}
-    runtime={runtime} cursorStore={cursorStore} router={shareLinkId === undefined ? buildRouter() : buildRouter} recovery={recovery} shareLinkId={shareLinkId}
+    runtime={runtime} cursorStore={cursorStore} router={shareLinkId === undefined ? buildRouter() : buildRouter} recovery={recovery} shareLinkId={shareLinkId} pergaMode
     renderLogin={(retry) => shareLinkId !== undefined
       ? <ShareUnlockGate initialToken={initialShareToken} shareLinkId={shareLinkId} transport={unlockTransport} retry={retry} />
       : __NC_BUNDLED__

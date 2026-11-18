@@ -11,6 +11,12 @@
 - `docs/`：架构拓扑图（`csharp-architecture.html`）、源码审计预研报告（`csharp-rewrite-prestudy.md`）与架构蓝图（`csharp-rewrite-blueprint.md`）。
 - `libs/`、`src/`、`templates/`、`tests/`：将按 `DESIGN.md` 第 5 节的 Stage 0 / Stage 1 / Stage 2 路线落地 `.NET 11` 微内核与底座库。
 
+## Linux 沙箱中的 Codex
+
+沙箱任务把 Codex 状态存放在 Perga 数据目录的独立会话目录。通过 Host 的
+`Perga__CodexSandboxApiKey` 配置这类任务使用的 OpenAI API 密钥。普通 Codex CLI 的
+ChatGPT 登录由原 CLI 管理。
+
 ## 许可证
 
 遵循 [LICENSE](LICENSE)（Apache License 2.0）。

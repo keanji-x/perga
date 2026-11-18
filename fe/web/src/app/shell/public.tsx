@@ -111,14 +111,18 @@ export function useShareScope() { return useContext(ShareScopeContext); }
 const ShareContext = createContext<((selection: ShareSelection) => void) | null>(null);
 export function useShareManagement() { return useContext(ShareContext); }
 
+const CreateAreaContext = createContext<((origin: DialogOrigin) => void) | null>(null);
+export function useRequestCreateArea() { return useContext(CreateAreaContext); }
+
 export type AppShellProps = Readonly<{
   shareScope?: ShareScope | null;
   transport: ApiTransportPort;
   unauthorized: UnauthorizedChannel;
   onOpenSettings: () => void;
   /** Settings › Plugins, from the rail's account menu. */
-  onOpenPlugins: () => void;
-  onSignOut: () => void;
+  onOpenPlugins?: (() => void) | undefined;
+  onSignOut?: (() => void) | undefined;
+  pergaMode?: boolean;
   /** Pinned by tests so `pinned_at` assertions are stable. */
   nowMs?: number;
   userLabel?: string;
@@ -161,7 +165,7 @@ export function useOpenMobileSection(): OpenMobileSection {
 }
 
 export function AppShell({
-  transport, unauthorized, onOpenSettings, onOpenPlugins, onSignOut, nowMs, userLabel, shareScope = null,
+  transport, unauthorized, onOpenSettings, onOpenPlugins, onSignOut, pergaMode = false, nowMs, userLabel, shareScope = null,
 }: AppShellProps) {
   const router = useRouter();
   const { openShare, shareDialog } = useShareManagementDialog(transport, unauthorized);
@@ -176,7 +180,7 @@ export function AppShell({
   const prepareNewTrack = usePrepareNewTrack();
   const trackMutations = useTrackMutations(transport, unauthorized);
   const pinFeedback = useOperationFeedback();
-  const listDirectory = createDirectoryLister(transport, unauthorized);
+  const listDirectory = createDirectoryLister(transport, unauthorized, pergaMode);
   /* The create form is locked while a request is held, so every press resends the held key and body (#2131). */
   const areaIntent = useKeyedIntent<null, NewAreaBody>(() => true);
   const areaCreateRequest = areaIntent.held;
@@ -185,7 +189,7 @@ export function AppShell({
   const [areaEditorError, setAreaEditorError] = useState<string | null>(null);
   const areaEditorNameRef = useRef<HTMLInputElement | null>(null);
   const currentPath = useCurrentPath();
-  const settingsOpen = settingsSectionForPath(currentPath) !== null;
+  const settingsOpen = settingsSectionForPath(currentPath, pergaMode) !== null;
   const routeCardId = useRouteCardId();
   const routeFilePath = useRouteFilePath();
   const mobileOverlayRoute = typeof routeCardId === 'string' || typeof routeFilePath === 'string';
@@ -465,7 +469,8 @@ export function AppShell({
         onSelect={(row) => conversationScope?.onOpen(row)}
         onOpenSettings={onOpenSettings}
         scopeLabel={conversationScope === null ? '当前 Track' : `当前 Track · ${trackDisplayTitle(conversationScope.track.title)}`}
-        accountLabel={userLabel ?? '账号'} accountInitial={userLabel?.slice(0, 1) ?? '我'} onSignOut={onSignOut} />}
+        accountLabel={userLabel ?? '账号'} accountInitial={userLabel?.slice(0, 1) ?? '我'}
+        onSignOut={onSignOut === undefined ? undefined : () => { closeMobileSection(); onSignOut(); }} />}
       {shareScope?.kind !== 'track' && <div ref={mobileNavigationFrameRef} className={styles.navigationFrame}>
       <div
         ref={mobileNavigationRef}
@@ -546,8 +551,8 @@ export function AppShell({
             activityError={workspaceActivityErrorText(workspace)}
             onRetryRead={retryRead}
             onGo={navigateFromRail}
-            onShareTrack={(track, origin) => openShare({ scope: { kind: 'track', id: track.id }, title: track.title, origin })}
-            onShareArea={(area, origin) => openShare({ scope: { kind: 'area', id: area.id }, title: area.name, origin })}
+            onShareTrack={pergaMode ? undefined : (track, origin) => openShare({ scope: { kind: 'track', id: track.id }, title: track.title, origin })}
+            onShareArea={pergaMode ? undefined : (area, origin) => openShare({ scope: { kind: 'area', id: area.id }, title: area.name, origin })}
             onRequestCreateArea={requestCreateArea}
             onRequestEditArea={requestEditArea}
             onDeleteArea={(areaId, signal) => areaMutations.remove(areaId, signal)}
@@ -563,8 +568,9 @@ export function AppShell({
               await trackMutations.remove(trackId, areaId, signal);
             }}
             onOpenSettings={() => { closeMobileSection(); onOpenSettings(); }}
-            onOpenPlugins={() => { closeMobileSection(); onOpenPlugins(); }}
-            onSignOut={() => { closeMobileSection(); onSignOut(); }}
+            onOpenPlugins={pergaMode || onOpenPlugins === undefined ? undefined : () => { closeMobileSection(); onOpenPlugins(); }}
+            onSignOut={onSignOut === undefined ? undefined : () => { closeMobileSection(); onSignOut(); }}
+            hideRecipes={pergaMode}
             userLabel={userLabel}
           />}
           </div>
@@ -579,16 +585,18 @@ export function AppShell({
         <div key={currentPath} className={styles.stage} hidden={narrowRail && settingsOpen}>
           {shareScope === null && <ProviderAuthenticationNotice transport={transport} unauthorized={unauthorized}
             onOpenPlanners={() => { closeMobileSection(); go({ name: 'settings-planners' }); }} />}
-          <MobileSectionContext.Provider value={openMobileSection}>
-            <MobileHeaderActionsContext.Provider value={narrowRail ? mobileHeaderActionsHost : null}>
-              <MobileHeaderTitleContext.Provider value={narrowRail ? mobileHeaderTitleHost : null}>
-                <DrawerResizeProvider value={drawerWidth.resize}><Outlet /></DrawerResizeProvider>
-              </MobileHeaderTitleContext.Provider>
-            </MobileHeaderActionsContext.Provider>
-          </MobileSectionContext.Provider>
+          <CreateAreaContext.Provider value={requestCreateArea}>
+            <MobileSectionContext.Provider value={openMobileSection}>
+              <MobileHeaderActionsContext.Provider value={narrowRail ? mobileHeaderActionsHost : null}>
+                <MobileHeaderTitleContext.Provider value={narrowRail ? mobileHeaderTitleHost : null}>
+                  <DrawerResizeProvider value={drawerWidth.resize}><Outlet /></DrawerResizeProvider>
+                </MobileHeaderTitleContext.Provider>
+              </MobileHeaderActionsContext.Provider>
+            </MobileSectionContext.Provider>
+          </CreateAreaContext.Provider>
         </div>
         {/* Above the keyed route stage so settings panes survive tab changes and resizing. */}
-        {shareScope === null && <SettingsOverlay transport={transport} unauthorized={unauthorized} />}
+        {shareScope === null && <SettingsOverlay transport={transport} unauthorized={unauthorized} pergaMode={pergaMode} />}
       </main>
       <Dialog purpose="form" origin={areaEditorTarget?.origin ?? { kind: 'surface-center' }}
         open={areaEditorTarget !== null}
