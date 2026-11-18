@@ -30,6 +30,7 @@ public sealed class AcpProviderTests : IDisposable
     [InlineData("vendor/model-low,vendor/model-high", null, "vendor/model-low")]
     [InlineData("vendor/model-low,vendor/model-high", "high", "vendor/model-high")]
     [InlineData("vendor/model,vendor/model-high", null, "vendor/model")]
+    [InlineData("vendor/model,vendor/model-high", "high", "vendor/model-high")]
     [InlineData("vendor/model-medium,vendor/model-high", null, "vendor/model-medium")]
     public async Task AdvertisedGroupDefaultAndEffortUseExactIdsOnOpenAndSwitch(string ids, string? effort, string expected)
     {

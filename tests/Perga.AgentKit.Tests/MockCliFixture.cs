@@ -907,6 +907,8 @@ for raw_line in sys.stdin:
             elif os.environ.get("MOCK_ACP_WORKER_OPTIONS") == "1":
                 state["model"] = "large"
                 send({"jsonrpc": "2.0", "id": msg_id, "result": {"configOptions": worker_config_options()}})
+            elif "MOCK_ACP_MODELS" in os.environ:
+                send({"jsonrpc": "2.0", "id": msg_id, "result": json.loads(os.environ["MOCK_ACP_MODELS"])})
             else:
                 send({"jsonrpc": "2.0", "id": msg_id, "result": {}})
         else:

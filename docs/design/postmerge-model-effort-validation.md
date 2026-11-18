@@ -76,3 +76,60 @@ is `OWNERSHIP_BASE_SHA=f06637ebcaac620fd2e204171f4686061afdd04f npm run lint`
 from `fe`; its output is `/tmp/model-fe-lint-baseline.log`, and its actual result
 is included in the worker report. This uses the verified baseline tree and does
 not suppress ownership checks or change source files.
+
+## PR #41 raw ACP ID collision follow-up
+
+Attempt: `dd4c5b7ab6a549559cf9d64f3c3197c8:fix-pr41-raw-acp-id-collision`.
+The starting tree is c8db9b7, identical to reviewed PR head 105981ec77bc66fee7369ed20eb8624f454271d6.
+This focused behavior correction remains subject to Planner's independent review
+of the PR delta; prior review and CI do not authorize the new commit.
+
+The outcome is that an advertised raw ID keeps its meaning even when another
+model group's derived name matches it. The shared ACP catalog builder reserves
+advertised IDs before publishing group aliases. A colliding group publishes its
+original variants with their own names/descriptions, no grouped effort controls,
+and a default marker on the exact current variant. Without a current ID, the
+existing first-group default selection rule still applies. Ordinary same-group
+bare ID plus effort retains its previous semantics. Catalog discovery and session
+selection continue to use the same builder; wire contracts and migrations do not
+change. Default model plus explicit effort and paused approvals remain outside
+this correction.
+
+Before production edits, the independent review test was copied from
+`/tmp/pr41-independent-review/tests/Perga.AgentKit.Tests/IndependentSelectionReviewTests.cs`.
+Only its two collision cases were imported; the known unrelated default-effort
+failure was excluded. The review fixture's two-line load response addition was
+also reused so resumed sessions advertise the same controlled catalog as new
+sessions.
+
+- Red: `dotnet test tests/Perga.AgentKit.Tests/Perga.AgentKit.Tests.csproj
+  --filter FullyQualifiedName~ExplicitAdvertisedRawIdMustSurviveGroupCollision -m:1`:
+  2 failed, 0 passed. Both initial `session/new`/`session/load` bindings and their
+  subsequent switches sent `vendor/model-high-low` instead of `vendor/model-high`.
+  Evidence: `/tmp/pr41-collision-red.log`.
+- Red catalog regression: the same project with filter
+  `FullyQualifiedName~CollidingCatalogExposesSelectableRawVariants`: 4 failed,
+  0 passed, expecting three selectable rows but receiving two. Evidence:
+  `/tmp/pr41-catalog-red.log`.
+- Green: the same project with filter
+  `FullyQualifiedName~IndependentSelectionReviewTests|FullyQualifiedName~AdvertisedGroupDefaultAndEffort`:
+  14 passed, 0 failed. Strict controlled ACP validates every selected wire ID.
+  Coverage includes new/load, switching each catalog row with unspecified and
+  explicit effort, both publication orders, exact current and absent-current
+  defaults, original display metadata, high-only, missing medium, uppercase
+  suffixes, and bare ID plus explicit high. Evidence:
+  `/tmp/pr41-collision-green.log`.
+- Frontend focused API/domain/model-pill suite (same command as above): 287 passed
+  across four files, `/tmp/pr41-fe-unit.log`.
+- Real Chromium provider selection suite (same command as above): 15 passed,
+  `/tmp/pr41-fe-browser.log`.
+- `cd fe && npm run build`: passed, with the existing bundle-size advisory;
+  `/tmp/pr41-fe-build.log`.
+
+Full .NET validation uses this attempt's declared `dotnet-full` gate:
+`dotnet test Perga.sln -m:1`. The runner retains the authoritative gate log and the
+worker result reports its verdict. No manual commit, push or PR edit is made.
+Frontend lint is also executed with `cd fe && npm run lint`; its output is
+`/tmp/pr41-fe-lint.log`. The worker result records the actual verdict and any
+explicit ownership-baseline retry separately, rather than treating old PR CI as
+validation of this change.

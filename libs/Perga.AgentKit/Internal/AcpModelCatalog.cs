@@ -76,14 +76,14 @@ internal sealed class AcpModelCatalog(
             : SplitEffortSuffix(currentModelId);
 
         var order = new List<string>();
-        var groups = new Dictionary<string, (string? DisplayName, string? Description, Dictionary<string, string> Variants, string? BareId)>(StringComparer.Ordinal);
+        var groups = new Dictionary<string, (string? DisplayName, string? Description, Dictionary<string, string> Variants, string? BareId, List<AcpRawModel> RawModels)>(StringComparer.Ordinal);
 
         foreach (var raw in rawModels)
         {
             var (baseId, effort) = SplitEffortSuffix(raw.ModelId);
             if (!groups.TryGetValue(baseId, out var entry))
             {
-                entry = (null, null, new(StringComparer.OrdinalIgnoreCase), null);
+                entry = (null, null, new(StringComparer.OrdinalIgnoreCase), null, []);
                 order.Add(baseId);
             }
 
@@ -107,9 +107,11 @@ internal sealed class AcpModelCatalog(
                 entry.BareId ??= raw.ModelId;
             }
 
+            entry.RawModels.Add(raw);
             groups[baseId] = entry;
         }
 
+        var advertisedIds = rawModels.Select(raw => raw.ModelId).ToHashSet(StringComparer.Ordinal);
         var catalog = new List<ProviderModelInfo>(order.Count);
         var selections = new Dictionary<string, Selection>(StringComparer.Ordinal);
         for (var i = 0; i < order.Count; i++)
@@ -123,7 +125,29 @@ internal sealed class AcpModelCatalog(
             var defaultEffort = entry.BareId is not null ? null : sortedEfforts.Any(e => e.ReasoningEffort == "medium")
                 ? "medium"
                 : sortedEfforts.FirstOrDefault()?.ReasoningEffort;
-            selections.Add(baseId, new(entry.BareId ?? entry.Variants[defaultEffort!], entry.Variants));
+            var defaultId = entry.BareId ?? entry.Variants[defaultEffort!];
+            // A derived name may already be a wire ID belonging to another group.
+            // Publish this group's raw variants instead, so every row stays selectable
+            // without allowing an alias to change the meaning of an advertised ID.
+            if (entry.BareId is null && advertisedIds.Contains(baseId))
+            {
+                foreach (var raw in entry.RawModels)
+                {
+                    var rawIsDefault = !string.IsNullOrWhiteSpace(currentModelId)
+                        ? string.Equals(raw.ModelId, currentModelId, StringComparison.Ordinal)
+                        : i == 0 && string.Equals(raw.ModelId, defaultId, StringComparison.Ordinal);
+                    catalog.Add(new ProviderModelInfo(
+                        Model: raw.ModelId,
+                        DisplayName: string.IsNullOrWhiteSpace(raw.Name) ? raw.ModelId : raw.Name.Trim(),
+                        Description: raw.Description ?? string.Empty,
+                        IsDefault: rawIsDefault,
+                        DefaultReasoningEffort: null,
+                        SupportedReasoningEfforts: []));
+                }
+                continue;
+            }
+
+            selections.Add(baseId, new(defaultId, entry.Variants));
             var isDefault = !string.IsNullOrWhiteSpace(currentBase)
                 ? string.Equals(baseId, currentBase, StringComparison.Ordinal)
                 : i == 0;
