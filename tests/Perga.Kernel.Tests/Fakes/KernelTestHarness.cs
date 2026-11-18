@@ -457,6 +457,12 @@ internal sealed class InMemoryTrackStore : ITrackStore
     public Task<IReadOnlyList<(string TrackId, PersistedSessionInput Input)>> RecoverSessionInputsAsync(CancellationToken ct) =>
         Task.FromResult<IReadOnlyList<(string, PersistedSessionInput)>>([]);
 
+    public Task<bool> HasSessionTurnAsync(string sessionId, string turnId, CancellationToken ct)
+    {
+        lock (_gate)
+            return Task.FromResult(_turnsBySession.TryGetValue(sessionId, out var turns) && turns.Any(turn => turn.Id == turnId));
+    }
+
     public Task<int> GetLastTurnIndexAsync(string sessionId, CancellationToken ct)
     {
         lock (_gate)
@@ -1155,15 +1161,13 @@ internal sealed class ScriptableFakeAgentSession : IAgentSession
         return Task.CompletedTask;
     }
 
-    public Task<bool> TrySteerAsync(string message, CancellationToken ct = default)
+    public Task<SteerDelivery> SteerAsync(string turnCorrelationId, string message, CancellationToken ct)
     {
         if (!SupportsNativeSteer)
-        {
-            return Task.FromResult(false);
-        }
+            return Task.FromResult(SteerDelivery.Declined);
 
         SteeredMessages.Enqueue(message);
-        return Task.FromResult(true);
+        return Task.FromResult(SteerDelivery.Accepted);
     }
 
     public ValueTask DisposeAsync()

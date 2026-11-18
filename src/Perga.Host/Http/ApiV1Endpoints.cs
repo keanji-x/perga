@@ -14,6 +14,8 @@ public sealed record SendMessageHttpBody(
     string Content,
     bool? SteerIfRunning = null);
 
+public sealed record SteerMessageHttpBody(string TurnId, string Content);
+
 public static class ApiV1Endpoints
 {
     public static IEndpointRouteBuilder MapPergaApiV1(this IEndpointRouteBuilder endpoints)
@@ -193,6 +195,17 @@ public static class ApiV1Endpoints
             ctx.Response.Headers.Location = receipt.StatusUrl;
             return Results.Json(receipt, PergaJsonDefaults.ApiOptions,
                 statusCode: replay ? StatusCodes.Status200OK : StatusCodes.Status202Accepted);
+        });
+
+        v1.MapPost("/sessions/{sessionId}/messages/steer", async (
+            string sessionId, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
+        {
+            var body = await ReadRequiredJsonBodyAsync<SteerMessageHttpBody>(ctx, ct).ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(body.Content) || string.IsNullOrWhiteSpace(body.TurnId))
+                return HttpErrorHandling.BadRequest("invalid_argument", "A target turn and message are required.");
+
+            var result = await kernel.SteerMessageAsync(sessionId, body.TurnId, body.Content, ct).ConfigureAwait(false);
+            return Results.Json(result, PergaJsonDefaults.ApiOptions);
         });
 
         v1.MapGet("/sessions/{sessionId}/inputs/{inputId}", async (

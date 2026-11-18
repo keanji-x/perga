@@ -22,6 +22,7 @@ type MessageEntryProps = Readonly<{
   human: ConversationTurn['human'];
   imported: boolean;
   text: string;
+  deliveryError?: string | undefined;
   attachments: ConversationTurn['attachments'];
   opens: boolean;
   gapLabel: string | null;
@@ -32,7 +33,7 @@ type MessageEntryProps = Readonly<{
   renderLink?: ReplyLinkRenderer;
 }>;
 
-export const MessageEntry = memo(function MessageEntry({ id, entryKey, author, human, imported, text, attachments,
+export const MessageEntry = memo(function MessageEntry({ id, entryKey, author, human, imported, text, deliveryError, attachments,
   opens, gapLabel, queued, edited, replacement, imageFiles, renderLink, mobile, atMs, timestampFormatter,
 }: MessageEntryProps) {
   const t = useTranslator();
@@ -88,6 +89,7 @@ export const MessageEntry = memo(function MessageEntry({ id, entryKey, author, h
               Queued · sends when this turn ends
             </p>
           )}
+          {deliveryError !== undefined && <p className={styles.queuedNote} role="status">{deliveryError}</p>}
           {replacement && <p className={styles.queuedNote}>Replaces the marked message above</p>}
         </>
       ) : (

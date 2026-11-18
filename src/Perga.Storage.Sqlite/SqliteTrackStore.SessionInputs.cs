@@ -24,6 +24,15 @@ public sealed partial class SqliteTrackStore : ISessionInputStore
 
     public ISessionInputStore SessionInputs => this;
 
+    public async Task<bool> HasSessionTurnAsync(string sessionId, string turnId, CancellationToken ct)
+    {
+        EnsureInitialized();
+        await using var conn = await OpenReadConnectionAsync(ct).ConfigureAwait(false);
+        return await conn.ExecuteScalarAsync<bool>(new CommandDefinition(
+            "SELECT EXISTS(SELECT 1 FROM session_turns WHERE session_id = @SessionId AND id = @TurnId);",
+            new { SessionId = sessionId, TurnId = turnId }, cancellationToken: ct)).ConfigureAwait(false);
+    }
+
     public async Task<int> GetLastTurnIndexAsync(string sessionId, CancellationToken ct)
     {
         EnsureInitialized();

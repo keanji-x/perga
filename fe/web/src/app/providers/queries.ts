@@ -61,7 +61,7 @@ import {
   type Track, type TrackDetailWire, type TrackPatchBody, type TrackRecipe,
 } from '../../../../core/domain/track.ts';
 import {
-  abandonSessionInputOperation, compactPlannerOperation, interruptPlannerOperation, sendPlannerInputOperation,
+  abandonSessionInputOperation, compactPlannerOperation, interruptPlannerOperation, sendPlannerInputOperation, steerSessionMessageOperation,
   createTrackConversationOperation, trackConversationsOperation, setConversationArchiveOperation,
   createSerialWriter, deletePlannerInputOperation, editPlannerInputOperation, steerPlannerInputOperation,
   modelCatalogOperation, plannerQueueWriteFailure, setPlannerModelOperation,
@@ -243,6 +243,9 @@ export function usePlannerMutations(transport: ApiTransportPort, cardId: string,
           refreshInputMetadata(admitted, error);
           throw error;
         }),
+    steerSessionMessage: (turnId: string, text: string, admitted: ApiTransportPort) =>
+      runOperation(admitted, steerSessionMessageOperation(cardId, turnId, text), unauthorized)
+        .then(result => refreshAfterInput(result, false)),
     abandonSessionInput: (inputId: string) => Promise.resolve().then(() => admitTransport(transport))
       .then(admitted => runOperation(admitted, abandonSessionInputOperation(cardId, inputId), unauthorized))
       .then(result => refreshAfterInput(result, false)),

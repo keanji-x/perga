@@ -179,11 +179,8 @@ public sealed class AcpAgentSession : IAgentSession
         await _rpc.SendResultResponseAsync(pending.RawId, resultPayload, ct).ConfigureAwait(false);
     }
 
-    public Task<bool> TrySteerAsync(string message, CancellationToken ct = default)
-    {
-        ArgumentNullException.ThrowIfNull(message);
-        return Task.FromResult(false);
-    }
+    public Task<SteerDelivery> SteerAsync(string turnCorrelationId, string message, CancellationToken ct) =>
+        Task.FromResult(SteerDelivery.Declined);
 
     public async ValueTask DisposeAsync()
     {

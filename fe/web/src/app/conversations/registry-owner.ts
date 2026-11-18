@@ -1,4 +1,4 @@
-import type { TranscriptEntry, Conversation } from '../../../../core/domain/conversation.ts';
+import type { TranscriptEntry, Conversation, SteeringMessage } from '../../../../core/domain/conversation.ts';
 import { isOptimisticConversationTurn, TOO_MANY_IMAGES } from '../../../../core/domain/conversation.ts';
 import { receiptMatchesSubmission } from '../../../../core/domain/conversation-initial-input.ts';
 import { beginSendOp, withConfirmedSends, type ConversationOutboxOp } from '../../../../core/domain/conversation-outbox.ts';
@@ -10,6 +10,7 @@ import { moveDraft, slotHolds, type ConversationRegistry, type ConversationEdit,
 export const NO_SENDS: readonly ConversationOutboxOp[] = Object.freeze([]);
 export const NO_ROWS: readonly string[] = Object.freeze([]);
 export const NO_TURNS: readonly TranscriptEntry[] = Object.freeze([]);
+export const NO_STEERING_MESSAGES: readonly SteeringMessage[] = Object.freeze([]);
 const NO_CONVERSATIONS: readonly Conversation[] = Object.freeze([]);
 
 type ById<T> = Readonly<Record<string, T>>;
@@ -28,6 +29,7 @@ export type ConversationSnapshot = Readonly<{
   queueWrites: ById<number>;
   restarts: ById<true>;
   resolutions: ById<InputResolutionIntent>;
+  steeringMessages: ById<readonly SteeringMessage[]>;
 }>;
 
 function put<T>(map: ById<T>, id: string, value: T | undefined): ById<T> {
@@ -77,7 +79,7 @@ function withoutEdit(state: ConversationSnapshot, id: string): ConversationSnaps
 export function createConversationOwner() {
   let state: ConversationSnapshot = {
     entries: {}, conversations: NO_CONVERSATIONS, drafts: {}, openRequest: null, outboxes: {}, spentRows: {},
-    composers: {}, newComposers: {}, uploads: {}, edits: {}, notices: {}, queueWrites: {}, restarts: {}, resolutions: {},
+    composers: {}, newComposers: {}, uploads: {}, edits: {}, notices: {}, queueWrites: {}, restarts: {}, resolutions: {}, steeringMessages: {},
   };
   let read = 0;
   const listeners = new Set<() => void>();
@@ -184,6 +186,11 @@ export function createConversationOwner() {
       const rows = retired.flatMap(({ row }) => row === null ? [] : [row]);
       if (kept.length > 0 && rows.length > 0) next = { ...next, spentRows: put(next.spentRows, id, [...next.spentRows[id] ?? [], ...rows]) };
       commit(next);
+    },
+    editSteeringMessages: (id, update) => {
+      const before = state.steeringMessages[id] ?? NO_STEERING_MESSAGES;
+      const after = update(before);
+      if (before !== after) commit({ ...state, steeringMessages: put(state.steeringMessages, id, after.length === 0 ? undefined : after) });
     },
     nextRead: () => ++read,
     composerOf: id => state.composers[id] ?? EMPTY_COMPOSER,

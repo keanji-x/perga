@@ -284,6 +284,82 @@ public sealed class DurableSessionInputTests
         Assert.Equal(text, item.GetProperty("payload").GetProperty("content").GetString());
     }
 
+    [Fact]
+    public async Task SilentSteeringDoesNotResendAndAnEndedTargetQueuesForTheNextTurn()
+    {
+        await using var host = new PergaHostTestCluster();
+        var (trackId, sessionId) = await host.CreateTrackAsync();
+        var kernel = host.Services.GetRequiredService<IPergaKernel>();
+        var turnStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var endTurn = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var steerStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var neverAnswers = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        host.AgentRuntime.SetTurnHandler(Stream);
+        host.AgentRuntime.SetSteerHandler(text =>
+        {
+            if (text != "silent supplement") return Task.FromResult(true);
+            steerStarted.TrySetResult();
+            return neverAnswers.Task;
+        });
+
+        async IAsyncEnumerable<UnifiedAgentEvent> Stream(
+            HarnessLaunchSpec spec, TurnInput input, [EnumeratorCancellation] CancellationToken ct)
+        {
+            yield return new UnifiedAgentEvent.TextDelta("working");
+            if (input.Prompt == "initial")
+            {
+                turnStarted.TrySetResult();
+                await endTurn.Task.WaitAsync(ct);
+            }
+            yield return new UnifiedAgentEvent.TurnCompleted(null);
+        }
+
+        var messages = $"/api/v1/sessions/{sessionId}/messages";
+        using var accepted = await SendAsync(host.Client, messages, "initial-key", new { content = "initial" });
+        Assert.Equal(HttpStatusCode.Accepted, accepted.StatusCode);
+        var initial = (await accepted.Content.ReadFromJsonAsync<SessionInputReceipt>(PergaJsonDefaults.ApiOptions))!;
+        await turnStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Task<SteeringResult> SteerAsync(string content) => PostSteerAsync(initial.TurnId, content);
+        async Task<SteeringResult> PostSteerAsync(string turnId, string content)
+        {
+            using var response = await host.Client.PostAsJsonAsync(messages + "/steer", new { turnId, content });
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            return (await response.Content.ReadFromJsonAsync<SteeringResult>(PergaJsonDefaults.ApiOptions))!;
+        }
+
+        try
+        {
+            var first = SteerAsync("silent supplement");
+            await steerStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var second = SteerAsync("another supplement");
+            Assert.Equal("unconfirmed", (await first.WaitAsync(TimeSpan.FromSeconds(10))).Delivery);
+            Assert.Equal("accepted", (await second.WaitAsync(TimeSpan.FromSeconds(10))).Delivery);
+
+            endTurn.TrySetResult();
+            await kernel.WaitForTrackIdleAsync(trackId);
+            Assert.Single(host.AgentRuntime.ExecutedTurns);
+
+            using var invalid = await host.Client.PostAsJsonAsync(messages + "/steer",
+                new { turnId = "invented-turn", content = "must not run" });
+            Assert.Equal(HttpStatusCode.NotFound, invalid.StatusCode);
+
+            var fallback = await SteerAsync("queued after completion");
+            Assert.Equal("queued", fallback.Delivery);
+            await kernel.WaitForTrackIdleAsync(trackId);
+            Assert.Equal(new[] { "initial", "queued after completion" },
+                host.AgentRuntime.ExecutedTurns.Select(execution => execution.Input.Prompt));
+            var items = await kernel.GetSessionItemsAsync(sessionId);
+            Assert.Contains(items.Items, item => item.Kind == "user"
+                && item.Payload.TryGetProperty("inputId", out var id) && id.GetString() == fallback.InputId);
+        }
+        finally
+        {
+            neverAnswers.TrySetResult(true);
+            endTurn.TrySetResult();
+        }
+    }
+
     private static async Task<HttpResponseMessage> SendAsync(HttpClient client, string path, string key, object body)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, path) { Content = JsonContent.Create(body) };

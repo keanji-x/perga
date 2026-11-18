@@ -130,7 +130,7 @@ public sealed class CodexProviderTests : IDisposable
         await using var session = await runtime.OpenSessionAsync(spec, CancellationToken.None);
 
         // Steer when idle returns false
-        Assert.False(await session.TrySteerAsync("idle-steer"));
+        Assert.Equal(SteerDelivery.Declined, await session.SteerAsync("corr_steer", "idle-steer", CancellationToken.None));
 
         // Steer mid-turn succeeds and injects steering message
         var steerEvents = new List<UnifiedAgentEvent>();
@@ -141,8 +141,8 @@ public sealed class CodexProviderTests : IDisposable
             if (!steeredSent && evt is UnifiedAgentEvent.TextDelta { Delta: "initial-plan;" })
             {
                 steeredSent = true;
-                var ok = await session.TrySteerAsync("focus-on-tests", CancellationToken.None);
-                Assert.True(ok);
+                var delivery = await session.SteerAsync("corr_steer", "focus-on-tests", CancellationToken.None);
+                Assert.Equal(SteerDelivery.Accepted, delivery);
             }
         }
 

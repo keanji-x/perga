@@ -52,6 +52,7 @@ public interface ITrackStore : ITrackReadStore
         CancellationToken ct);
 
     Task UpsertTaskAndAttemptAsync(TaskDto task, TaskAttemptDto? attempt, JsonElement? nextTemplateState, EventEnvelopeDto? evt, CancellationToken ct);
+    Task<bool> HasSessionTurnAsync(string sessionId, string turnId, CancellationToken ct);
     Task<int> GetLastTurnIndexAsync(string sessionId, CancellationToken ct);
     ISessionInputStore SessionInputs { get; }
     Task<IReadOnlyList<(string TrackId, PersistedSessionInput Input)>> RecoverSessionInputsAsync(CancellationToken ct);

@@ -167,12 +167,10 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
             return Task.CompletedTask;
         }
 
-        public Task<bool> TrySteerAsync(string message, CancellationToken ct = default)
+        public async Task<SteerDelivery> SteerAsync(string turnCorrelationId, string message, CancellationToken ct)
         {
-            _ = ct;
-            return _owner._steerHandler is not null
-                ? _owner._steerHandler(message)
-                : Task.FromResult(true);
+            var accepted = _owner._steerHandler is null || await _owner._steerHandler(message).WaitAsync(ct);
+            return accepted ? SteerDelivery.Accepted : SteerDelivery.Declined;
         }
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;

@@ -336,7 +336,7 @@ for raw_line in sys.stdin:
         inputs = params.get("input") or []
         state["steer_text"] = inputs[0].get("text", "") if inputs else ""
         state["steer_event"].set()
-        send({"jsonrpc": "2.0", "id": msg_id, "result": {"turnId": state["active_turn_id"], "accepted": True}})
+        send({"jsonrpc": "2.0", "id": msg_id, "result": {"turnId": state["active_turn_id"]}})
     elif method == "turn/interrupt":
         state["interrupt_event"].set()
         send({"jsonrpc": "2.0", "id": msg_id, "result": {}})
