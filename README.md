@@ -4,7 +4,7 @@
 
 ## 持续集成与发布
 
-提交到 `main`、向 `main` 提交 PR，或在 GitHub Actions 手动运行 **CI and release**，都会执行 .NET 测试、Rust 终端桥检查，以及前端 lint、测试和构建。完整 Chromium 测试单独运行，目前主分支已有失败用例，因此这项检查仅报告结果。其余检查通过后，Actions 会验证打包后的服务能启动、终端桥可用、Web 页面和静态资源可访问，并上传 `perga-linux-x64` 构建产物。
+提交到 `main`、向 `main` 提交 PR，或在 GitHub Actions 手动运行 **CI and release**，都会执行 .NET 测试、Rust 终端桥检查，以及前端 lint、测试和构建。Chromium 测试单独运行。由于主分支已有失败用例，该作业在首个失败或达到时限时结束并报告结果。其余检查通过后，Actions 会验证打包后的服务能启动、终端桥可用、Web 页面和静态资源可访问，并上传 `perga-linux-x64` 构建产物。
 
 推送 `vX.Y.Z` 格式的标签（例如 `v0.1.0`）会执行同一流程，并将验证通过的 Linux x64 压缩包及 SHA-256 校验文件发布到 GitHub Releases。
 

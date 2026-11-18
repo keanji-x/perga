@@ -30,7 +30,7 @@ jobs:
     env:
       JJ_USER: Perga CI
       JJ_EMAIL: perga-ci@example.invalid
-      PERGA_TERM_BRIDGE_BIN: ${{ github.workspace }}/tools/perga-term-bridge/target/release/perga-term-bridge
+      BRIDGE_TARGET: x86_64-unknown-linux-musl
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -50,15 +50,21 @@ jobs:
           tar -xzf "$archive" -C "$HOME/.local/bin" ./jj
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - name: Install repository Rust toolchain
-        run: rustup toolchain install --no-self-update
+        run: |
+          rustup toolchain install --no-self-update
+          rustup target add "$BRIDGE_TARGET"
       - name: Check terminal bridge formatting
         working-directory: tools/perga-term-bridge
         run: cargo fmt --check
       - name: Test and build terminal bridge
         working-directory: tools/perga-term-bridge
         run: |
-          cargo test --locked --release
-          cargo build --locked --release --bin perga-term-bridge
+          # Test the static bridge that is shipped to other Linux distributions.
+          cargo test --locked --release --target "$BRIDGE_TARGET"
+          cargo build --locked --release --target "$BRIDGE_TARGET" --bin perga-term-bridge
+          bridge="$PWD/target/$BRIDGE_TARGET/release/perga-term-bridge"
+          readelf -lW "$bridge" | awk '$1 == "INTERP" { print "Terminal bridge has a dynamic interpreter"; exit 1 }'
+          echo "PERGA_TERM_BRIDGE_BIN=$bridge" >> "$GITHUB_ENV"
       - name: Build .NET solution
         run: dotnet build Perga.sln --configuration Release
       - name: Test .NET solution
@@ -120,10 +126,8 @@ jobs:
 
   browser:
     name: Browser tests (report only)
-    # The existing full browser suite has failures on main.
-    continue-on-error: true
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: fe
@@ -138,7 +142,14 @@ jobs:
           cache-dependency-path: fe/package-lock.json
       - run: npm ci
       - run: npx playwright install --with-deps chromium
-      - run: npm run test:browser
+      - name: Run advisory Chromium tests
+        id: chromium
+        continue-on-error: true
+        # The test deadline must expire before GitHub cancels the entire job.
+        run: timeout --kill-after=15s 15m npm run test:browser -- --bail=1
+      - name: Report Chromium test result
+        if: steps.chromium.outcome == 'failure'
+        run: echo '::warning::The report-only Chromium tests failed or timed out. See the test log.'
 
   package:
     name: Package Linux x64
