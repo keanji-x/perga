@@ -581,7 +581,8 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                        questions_json AS QuestionsJson,
                        answer_json AS AnswerJson,
                        created_at_ms AS CreatedAtMs,
-                       answered_at_ms AS AnsweredAtMs
+                       answered_at_ms AS AnsweredAtMs,
+                       delivery AS Delivery, session_id AS SessionId, turn_id AS TurnId
                 FROM asks
                 WHERE track_id = @TrackId AND LOWER(status) = 'open'
                 ORDER BY created_at_ms ASC, id ASC;
@@ -1311,8 +1312,8 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                 await conn.ExecuteAsync(
                     new CommandDefinition(
                         """
-                        INSERT INTO asks (id, track_id, status, questions_json, answer_json, created_at_ms, answered_at_ms)
-                        VALUES (@Id, @TrackId, @Status, @QuestionsJson, @AnswerJson, @CreatedAtMs, @AnsweredAtMs)
+                        INSERT INTO asks (id, track_id, status, questions_json, answer_json, created_at_ms, answered_at_ms, delivery, session_id, turn_id)
+                        VALUES (@Id, @TrackId, @Status, @QuestionsJson, @AnswerJson, @CreatedAtMs, @AnsweredAtMs, @Delivery, @SessionId, @TurnId)
                         ON CONFLICT(id) DO UPDATE SET
                             status = excluded.status,
                             questions_json = excluded.questions_json,
@@ -1327,7 +1328,10 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                             QuestionsJson = questionsJson,
                             AnswerJson = answerJson,
                             ask.CreatedAtMs,
-                            ask.AnsweredAtMs
+                            ask.AnsweredAtMs,
+                            Delivery = ask.Delivery.ToString().ToLowerInvariant(),
+                            ask.SessionId,
+                            ask.TurnId
                         },
                         transaction: tx,
                         cancellationToken: innerCt)).ConfigureAwait(false);
@@ -1352,7 +1356,8 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                        questions_json AS QuestionsJson,
                        answer_json AS AnswerJson,
                        created_at_ms AS CreatedAtMs,
-                       answered_at_ms AS AnsweredAtMs
+                       answered_at_ms AS AnsweredAtMs,
+                       delivery AS Delivery, session_id AS SessionId, turn_id AS TurnId
                 FROM asks
                 WHERE id = @AskId;
                 """,
@@ -2176,7 +2181,10 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
             Questions: SqliteJsonUpcaster.DeserializeAskQuestions(r.QuestionsJson),
             Answer: SqliteJsonUpcaster.ParseNullableElement(r.AnswerJson),
             CreatedAtMs: r.CreatedAtMs,
-            AnsweredAtMs: r.AnsweredAtMs);
+            AnsweredAtMs: r.AnsweredAtMs,
+            Delivery: r.Delivery switch { "hold" => AskDelivery.Hold, "wake" => AskDelivery.Wake, _ => throw new InvalidOperationException("Invalid ask delivery.") },
+            SessionId: r.SessionId,
+            TurnId: r.TurnId);
 
     private static MailDto MapMail(MailRow r) =>
         new(
@@ -2367,6 +2375,9 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
 
     private sealed class AskRow
     {
+        public string Delivery { get; init; } = string.Empty;
+        public string? SessionId { get; init; }
+        public string? TurnId { get; init; }
         public string Id { get; init; } = string.Empty;
         public string TrackId { get; init; } = string.Empty;
         public string Status { get; init; } = "open";

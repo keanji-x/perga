@@ -60,6 +60,7 @@ function setup({ theme = 'light', mode = 'never', asks = [], putMode, answer }: 
       ] }] };
     const askDtos = asks.map(ask => ({ id: String(ask.ask_id), trackId: TRACK.id, status: 'open',
       questions: ask.questions.map(question => ({ question: question.title, options: question.options, isMultiSelect: false })),
+      delivery: ask.delivery, sessionId: PLANNER.id, turnId: ask.delivery === 'hold' ? 'turn-1' : null,
       answer: null, createdAtMs: ask.at_ms, answeredAtMs: null }));
     if (request.path.startsWith('/api/v1/bootstrap')) body = bootstrap;
     if (request.path === '/api/v1/areas') body = [{ id: 'area', name: 'Work', color: '#123456', createdAtMs: 1, updatedAtMs: 1 }];

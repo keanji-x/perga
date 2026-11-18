@@ -313,6 +313,10 @@ public sealed class McpPluginsPolicyGuardAndLifecycleIntegrationTests
                     var askPayload = wsEvt.RootElement.GetProperty("payload");
                     if (askPayload.GetProperty("status").GetString() == "open")
                     {
+                        Assert.Equal("hold", askPayload.GetProperty("delivery").GetString());
+                        Assert.Equal(snap.RootElement.GetProperty("track").GetProperty("leadSessionId").GetString(),
+                            askPayload.GetProperty("sessionId").GetString());
+                        Assert.False(askPayload.TryGetProperty("turnId", out _));
                         askIdApprove = askPayload.GetProperty("id").GetString();
                     }
                 }

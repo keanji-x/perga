@@ -412,6 +412,9 @@ export const askQuestionDtoSchema = z.object({
 export type AskQuestionDto = z.infer<typeof askQuestionDtoSchema>;
 
 export const askDtoSchema = z.object({
+  delivery: z.enum(['wake', 'hold']),
+  sessionId: z.string().nullish(),
+  turnId: z.string().nullish(),
   id: z.string(),
   trackId: z.string(),
   status: askStatusSchema.or(z.string()),
