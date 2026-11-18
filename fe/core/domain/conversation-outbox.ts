@@ -21,7 +21,7 @@ export type ReplacedTurn = Readonly<{ turnId: string; outcomeId: string }>;
  */
 export type SendOpPhase = Readonly<
   | { phase: 'sending'; unknown: boolean }
-  | { phase: 'confirmed'; queueRevision: number | null }
+  | { phase: 'confirmed'; queueRevision: number | null; queueAcceptedAfterRead?: number }
   | { phase: 'replayed'; afterRead: number }
   | { phase: 'failed'; delivery: Exclude<SendFailureKind, 'refused' | 'dormant'>; message: string }
 >;
@@ -333,7 +333,8 @@ export function matchSendOps(
  * hidden until a read no longer shows it. A failed one leaves the turn as the server has it.
  */
 function drawsEcho(op: SendOp): boolean {
-  return op.replaces === null || op.phase !== 'sending';
+  if (op.echo.waitForIdentity === true && (op.phase === 'sending' || (op.phase === 'failed' && op.delivery === 'unknown'))) return false;
+  return op.phase !== 'sending' || op.replaces === null;
 }
 
 /** `entries` without every turn an answered replace removed; unchanged once no read shows them. */
@@ -420,7 +421,11 @@ function retiredOps(ops: readonly SendOp[], matched: ReadonlyMap<string, string>
   return ops.flatMap((op) => {
     /* Never by a confirmed op's own 200: only a read that shows its message. */
     const row = matched.get(op.key);
-    if (op.phase === 'confirmed') return row === undefined ? [] : [{ key: op.key, row }];
+    if (op.phase === 'confirmed') {
+      if (row !== undefined) return [{ key: op.key, row }];
+      // A volatile send is represented by the full run queue after a post-ACK read has landed.
+      return op.queueAcceptedAfterRead !== undefined && landed.run > op.queueAcceptedAfterRead ? [{ key: op.key, row: null }] : [];
+    }
     /* Whatever the reads show: queued, drained, or nothing because it was disposed of meanwhile. */
     if (op.phase === 'replayed') return landed.transcript > op.afterRead && landed.run > op.afterRead ? [{ key: op.key, row: row ?? null }] : [];
     /* A failed op waits for its reader; a match only hides it (a stale read can show an older equal row). */
@@ -634,7 +639,7 @@ export function presentPendingMessages(entries: readonly TranscriptEntry[], queu
     return echo === undefined ? true : echo.queued;
   });
   const waitingIds = new Set(waiting.map(entry => entry.entry_id));
-  const waitingEchoes = [...echoes, ...(failed === null ? [] : [failed.echo])]
+  const waitingEchoes = [...echoes, ...(failed === null || !drawsEcho(failed) ? [] : [failed.echo])]
     .filter(echo => echo.queued && (echo.entryId === null || placements.get(echo.entryId)?.kind !== 'inline'));
   const hidden = new Set(waitingEchoes.map(echo => echo.id));
   const transcript = withPendingMessages(entries.filter(entry => !hidden.has(entry.id)),

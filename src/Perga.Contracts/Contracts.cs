@@ -79,6 +79,7 @@ public sealed record SessionInputReceipt(
     string TurnStatus,
     long? ResolvedAtMs)
 {
+    public string MessageId => InputId;
     public string StatusUrl => $"/api/v1/sessions/{SessionId}/inputs/{InputId}";
 }
 
@@ -90,7 +91,16 @@ public sealed record SessionItemDto(
     string TurnId,
     string Kind,
     JsonElement Payload,
-    long CreatedAtMs);
+    long CreatedAtMs)
+{
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? TurnStatus { get; init; }
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? InputDelivery { get; init; }
+
+    public string? MessageStatus { get; init; }
+}
 
 public sealed record GateStepDto(string Name, string Cmd);
 

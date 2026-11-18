@@ -79,11 +79,13 @@ public interface IPergaKernel : IAsyncDisposable
     Task<(SessionCreationReceipt Receipt, bool Replay)> CreateSessionWithReceiptAsync(
         string trackId, CreateSessionRequest req, string key, CancellationToken ct);
     Task<AgentSessionDto> PatchSessionAsync(string sessionId, PatchSessionRequest req, CancellationToken ct = default);
-    Task<(SessionInputReceipt? Receipt, SessionTurnDto? SteeredTurn, bool Replay)> AcceptMessageAsync(
+    Task<MessageAcceptance> AcceptMessageAsync(
         string sessionId, SendMessageRequest req, CancellationToken ct);
     Task<SessionInputReceipt> GetSessionInputAsync(string sessionId, string inputId, CancellationToken ct);
     Task<SessionInputReceipt> ResolveUnknownInputAsync(string sessionId, string inputId, CancellationToken ct);
     Task<SessionItemsPageDto> GetSessionItemsAsync(string sessionId, long afterId = 0, int limit = 100, CancellationToken ct = default, bool latest = false, long? beforeId = null);
+    Task<SteeringResult> SteerQueuedMessageAsync(string sessionId, string inputId, string turnId, CancellationToken ct);
+    Task RemoveQueuedMessageAsync(string sessionId, string inputId, CancellationToken ct);
     Task<SteeringResult> SteerMessageAsync(string sessionId, string turnId, string content, CancellationToken ct);
 
     Task<SessionTurnDto> SendMessageAsync(string sessionId, SendMessageRequest req, CancellationToken ct = default);
@@ -1069,10 +1071,8 @@ public sealed class PergaKernelService : IPergaKernel
         return await Actors.GetOrActivate(trackId).PatchSessionAsync(sessionId, req, ct).ConfigureAwait(false);
     }
 
-    public async Task<(SessionInputReceipt? Receipt, SessionTurnDto? SteeredTurn, bool Replay)> AcceptMessageAsync(
-        string sessionId,
-        SendMessageRequest req,
-        CancellationToken ct)
+    public async Task<MessageAcceptance> AcceptMessageAsync(
+        string sessionId, SendMessageRequest req, CancellationToken ct)
     {
         var trackId = await ResolveTrackIdForSessionAsync(sessionId, ct).ConfigureAwait(false);
         return await Actors.GetOrActivate(trackId).AcceptMessageAsync(sessionId, req, ct).ConfigureAwait(false);
@@ -1102,6 +1102,18 @@ public sealed class PergaKernelService : IPergaKernel
         return await Actors.GetOrActivate(trackId)
             .GetSessionItemsAsync(sessionId, afterId, limit, ct, latest, beforeId)
             .ConfigureAwait(false);
+    }
+
+    public async Task<SteeringResult> SteerQueuedMessageAsync(string sessionId, string inputId, string turnId, CancellationToken ct)
+    {
+        var trackId = await ResolveTrackIdForSessionAsync(sessionId, ct).ConfigureAwait(false);
+        return await Actors.GetOrActivate(trackId).SteerQueuedMessageAsync(sessionId, inputId, turnId, ct).ConfigureAwait(false);
+    }
+
+    public async Task RemoveQueuedMessageAsync(string sessionId, string inputId, CancellationToken ct)
+    {
+        var trackId = await ResolveTrackIdForSessionAsync(sessionId, ct).ConfigureAwait(false);
+        await Actors.GetOrActivate(trackId).RemoveQueuedMessageAsync(sessionId, inputId, ct).ConfigureAwait(false);
     }
 
     public async Task<SteeringResult> SteerMessageAsync(string sessionId, string turnId, string content, CancellationToken ct)

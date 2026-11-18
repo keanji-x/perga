@@ -7,7 +7,7 @@ import {
   conversationNameFrom, isConversationMessage,
   type ConversationMessage, type PlannerInputMutation, type PendingQueueEntry, type SentPlannerInput, type TranscriptEntry,
 } from '../../../../core/domain/conversation.ts';
-import { KeyedSendFailure, retryUnknownSend } from '../../../../core/domain/conversation-delivery.ts';
+import { KeyedSendFailure, retryUnknownSend, SEND_RETRIES } from '../../../../core/domain/conversation-delivery.ts';
 import {
   queueDisplayAccounting, acknowledgeQueueMutation, initialInputNeedsObservation, withInitialInputSources, outboxFactsWithRemovedInputs, synchronizeQueuedSends, withOutboxLiveReplies, settleSendOp, wasUnknown, withConfirmedSends, withoutQueuedEntry, type LandedReads, type ReplacedTurn, type SendOp, type ConversationOutboxOp, type ObservedInitialInput, type ReportedInput, type QueueDisplayAccounting,
 } from '../../../../core/domain/conversation-outbox.ts';
@@ -74,7 +74,7 @@ function rememberSent(
  */
 export function useConversationOutbox({
   cardId, transport, send, serverEntries, serverTurns, liveReplies, queuedEntries, stalled, landed,
-  queuesInput, highWater, pressed, initialInput, reportedInput, removedMessages, viewerId,
+  queuesInput, queueIfBusy, highWater, pressed, initialInput, reportedInput, removedMessages, viewerId,
 }: {
   removedMessages: ReadonlySet<string>;
   viewerId: string | null;
@@ -82,7 +82,7 @@ export function useConversationOutbox({
   transport: ApiTransportPort;
   /** `POST …/planner/input` for this card; `answered` runs when its 200 is in hand, before its refresh reads start. */
   send: (text: string, attachments: readonly string[], key: string, replacesTurn: string | null, admitted: ApiTransportPort,
-    answered: () => void) => Promise<SentPlannerInput>;
+    answered: () => void, queueIfBusy: boolean) => Promise<SentPlannerInput>;
   serverEntries: readonly TranscriptEntry[];
   serverTurns: readonly ConversationMessage[];
   liveReplies: readonly TranscriptEntry[];
@@ -91,6 +91,7 @@ export function useConversationOutbox({
   landed: LandedReads;
   /** Whether the kernel queues a message posted now (`kernelQueuesInput`), read at the press. */
   queuesInput: boolean;
+  queueIfBusy: boolean;
   /** The newest persisted item id read so far. */
   highWater: number;
   /** A send of the conversation shown went out. */
@@ -171,17 +172,19 @@ export function useConversationOutbox({
         const admitted = attempt === 0 ? admittedAtPress : admitRetry();
         return admitted === null ? Promise.reject(new NotSentError())
           : send(echo.text, attachments.map((attachment) => attachment.id), key, replaces?.turnId ?? null, admitted,
-            () => { answeredRead = nextRead(); });
+            () => { answeredRead = nextRead(); }, queueIfBusy);
       },
       (error) => (error instanceof ApiError ? error.failure : null),
       (retry) => new Promise<void>((resolve) => { setTimeout(resolve, recoveryDelay(retry, Math.random())); }),
-      op.unknown,
+      op.unknown, queueIfBusy ? 0 : SEND_RETRIES,
     ).then(({ sent, everUnknown }) => {
       if (fromComposer) releaseComposerImages(sentTo, attachments);
       /* Not claimed: the answer may replay an entry deleted, rewound or reset since, which no read would ever
          show. The echo stays until reads started after this answer land, and they alone then show the message. */
-      if (everUnknown) { settle({ key, echo:{ ...echo,entryId:sent.entry_id }, fromComposer, replaces, phase: 'replayed', afterRead: answeredRead }); return; }
-      const confirmed = settle({ key, echo: { ...echo, entryId: sent.entry_id }, fromComposer, replaces, phase: 'confirmed', queueRevision: null });
+      const accepted = { ...echo, entryId: sent.entry_id, queued: sent.queued ?? echo.queued };
+      if (everUnknown) { settle({ key, echo: accepted, fromComposer, replaces, phase: 'replayed', afterRead: answeredRead }); return; }
+      const confirmed = settle({ key, echo: accepted, fromComposer, replaces, phase: 'confirmed', queueRevision: null,
+        ...(sent.queued === true ? { queueAcceptedAfterRead: answeredRead } : {}) });
       /* The answer can outlive the drawer: the row is written straight through for the conversation it was sent
          to, through `updateExisting` because a background refresh may already have put newer data there. */
       updateExisting(sentTo, (entry) => rememberSent(entry, confirmed, registry.spentRowsOf(sentTo), echo.text, echo.atMs));
@@ -247,6 +250,7 @@ export function useConversationOutbox({
           queued: queuesInput,
           /* Not knowable yet: a 200 with no unknown attempt before it names it. */
           entryId: null,
+          ...(queueIfBusy ? { waitForIdentity: true } : {}),
         },
       } as const;
       if (!beginSend(cardId, op)) return null;

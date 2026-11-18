@@ -713,8 +713,8 @@ function useConversationPane(
   const composerAttachments = useMemo(() => ({ items: attachmentItems, ids: attachmentIds, busy: attachmentBusy,
     error: attachmentError, atCapacity, attach, remove: removeAttachment }),
   [attachmentItems, attachmentIds, attachmentBusy, attachmentError, atCapacity, attach, removeAttachment]);
-  const canSteer = store.steerQueuedEntry !== undefined && !steerCapabilities.isError
-    && steerCapabilities.data?.find(answer => answer.availability.provider === scopeProvider)?.capabilities.steer === true;
+  const canSteer = store.steerQueuedEntry !== undefined && (store.nativeQueue || (!steerCapabilities.isError
+    && steerCapabilities.data?.find(answer => answer.availability.provider === scopeProvider)?.capabilities.steer === true));
   const refocusQueuedComposer = useCommittedCallback(existingId, () => { if (existingId !== null) focusComposer(existingId); });
   const [pendingPresentation, setPendingPresentation] = useState<Readonly<{ conversationId: string | null; visible: boolean }> | null>(null);
   const pendingPresenceChanged = useCallback((visible: boolean) => {
@@ -725,10 +725,10 @@ function useConversationPane(
   const pendingMessages = useMemo(() => <PendingQueue key={existingId}
     entries={store.pendingQueue} pendingInputCount={unlistedPendingInputCount(store.pendingInputs,store.pendingQueue)} sending={store.pendingSends} overflow={store.pendingQueueOverflow} queueDisplayAccounting={store.queueDisplayAccounting}
     busy={!threadPresented || store.sending || store.queueWriteOut} onDelete={deleteQueuedEntry} onEdit={editQueuedEntry}
-    canEdit={edit.canEditQueued} editingEntryId={edit.queued?.entry.entry_id ?? null}
+    canEdit={edit.canEditQueued && !store.nativeQueue} editingEntryId={edit.queued?.entry.entry_id ?? null}
     savedEntry={edit.savedQueuedEntry} onFocusComposer={refocusQueuedComposer} onPresenceChange={pendingPresenceChanged} onSteer={canSteer ? steerQueuedEntry : undefined} />,
   [existingId, threadPresented, store.pendingQueue, store.pendingInputs, store.pendingSends, store.pendingQueueOverflow, store.queueDisplayAccounting, store.sending, store.queueWriteOut,
-    deleteQueuedEntry, editQueuedEntry, edit.canEditQueued, edit.queued?.entry.entry_id, edit.savedQueuedEntry, refocusQueuedComposer, pendingPresenceChanged, canSteer, steerQueuedEntry]);
+    deleteQueuedEntry, editQueuedEntry, edit.canEditQueued, store.nativeQueue, edit.queued?.entry.entry_id, edit.savedQueuedEntry, refocusQueuedComposer, pendingPresenceChanged, canSteer, steerQueuedEntry]);
   const hasSideConversation = options?.onSide !== undefined;
   const composerView = useMemo(() => ({
     compact: compact,
@@ -743,12 +743,12 @@ function useConversationPane(
     permissionMode: store.permissionMode,
     sendBlocked: store.sendBlocked,
     sending: store.sending,
-    canSendSupplement: store.canSendSupplement,
+    canQueueWhileRunning: store.canQueueWhileRunning,
     setModel: setModel,
     setPermissionMode: setPermissionMode,
     stopping: store.stopping,
     working: store.working
-  }), [compact, store.compacting, store.manualCompactSupported, store.attachmentsSupported, store.contextUsage, store.historyReady, interrupt, store.model, store.modelCatalog, store.permissionMode, store.sendBlocked, store.sending, store.canSendSupplement, setModel, setPermissionMode, store.stopping, store.working]);
+  }), [compact, store.compacting, store.manualCompactSupported, store.attachmentsSupported, store.contextUsage, store.historyReady, interrupt, store.model, store.modelCatalog, store.permissionMode, store.sendBlocked, store.sending, store.canQueueWhileRunning, setModel, setPermissionMode, store.stopping, store.working]);
   const { bar: editingBar } = edit;
   const replacing = edit.replacing || edit.queuedSaving;
   const editingQueue = edit.queued !== null;
@@ -785,7 +785,7 @@ function useConversationPane(
               /* The images stay with the composer until the store reports them delivered; the press waits out its Edit. */
               commands={paneCommands}
               onSend={sendText}
-              canSendSupplement={composerView.canSendSupplement}
+              canQueueWhileRunning={composerView.canQueueWhileRunning}
               allowEmptyText={!editingQueue && composerAttachments.items.length > 0}
               onFiles={editingQueue || !composerView.attachmentsSupported || composerAttachments.busy || composerAttachments.atCapacity ? undefined : (files) => {
                 for (const file of files) void composerAttachments.attach(file);
@@ -997,7 +997,7 @@ function useConversationPane(
             {!threadPresented && outgoingPreview !== undefined && <OutgoingMessage speaker={outgoingPreview.author} text={outgoingPreview.text} mobile={compactViewport} />}
             {!threadPresented && hasPendingMessages && pendingMessages}
             {threadPresented && (
-              <ChatThread hasPendingInputs={store.pendingInputs.length > 0} historyPrefetch={historyPrefetch} readingView={threadReadingView} key={open.id} pendingMessages={pendingMessages} steeringMessages={store.steeringMessages} activeInput={store.activeInput} keepInput={keepInput} retryInput={retryInput}
+              <ChatThread hasPendingInputs={store.pendingInputs.length > 0} historyPrefetch={historyPrefetch} readingView={threadReadingView} key={open.id} pendingMessages={pendingMessages} activeInput={store.activeInput} keepInput={keepInput} retryInput={retryInput}
                 hasPendingMessages={hasPendingMessages || (pendingPresentation?.conversationId === existingId && pendingPresentation.visible)}
                 conversation={open}
                 imageFiles={imageFiles}

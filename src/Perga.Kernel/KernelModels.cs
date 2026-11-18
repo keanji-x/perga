@@ -103,14 +103,25 @@ public sealed record SteeringResult(string InputId, string Delivery);
 public sealed record SendMessageRequest(
     string Content,
     string IdempotencyKey,
-    bool SteerIfRunning = false);
+    bool SteerIfRunning = false,
+    bool QueueIfBusy = false);
+
+public sealed record QueuedMessageReceipt(string SessionId, string InputId, bool Queued = true)
+{
+    public string MessageId => InputId;
+}
+public sealed record QueuedSessionMessageDto(string Id, string Text, long QueuedAtMs, string State);
+public sealed record MessageAcceptance(SessionInputReceipt? Receipt, SessionTurnDto? SteeredTurn, bool Replay, QueuedMessageReceipt? QueueReceipt = null);
 
 public sealed record SessionItemsPageDto(
     IReadOnlyList<SessionItemDto> Items,
     SessionTurnDto? ActiveTurn,
     AgentSessionDto Session,
-    SessionInputReceipt? UnknownInput = null,
-    bool HasMoreBefore = false);
+    SessionInputReceipt? UnknownInput,
+    bool HasMoreBefore,
+    IReadOnlyList<QueuedSessionMessageDto> QueuedMessages,
+    bool CanSteer,
+    IReadOnlyList<string> QueueHandoffIds);
 
 public sealed record OpenTerminalRequest(
     string? Title = null,

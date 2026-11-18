@@ -341,6 +341,33 @@ public sealed class ApiV1RestIntegrationTests
         using var busyResp = await client.SendAsync(busyReq);
         Assert.Equal(HttpStatusCode.Conflict, busyResp.StatusCode);
 
+        using var queueReq = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/sessions/{subSession.Id}/messages")
+        {
+            Content = JsonContent.Create(new { content = "Queue while running", queueIfBusy = true })
+        };
+        queueReq.Headers.Add("Idempotency-Key", "idem-queue");
+        using var queueResp = await client.SendAsync(queueReq);
+        Assert.Equal(HttpStatusCode.Accepted, queueResp.StatusCode);
+        Assert.DoesNotContain("Queue while running", steeredPrompts);
+        var queued = (await queueResp.Content.ReadFromJsonAsync<QueuedMessageReceipt>(PergaJsonDefaults.ApiOptions))!;
+        Assert.True(queued.Queued);
+        var pending = await client.GetFromJsonAsync<SessionItemsPageDto>($"/api/v1/sessions/{subSession.Id}/items", PergaJsonDefaults.ApiOptions);
+        Assert.Contains(pending!.QueuedMessages, message => message.Id == queued.InputId && message.State == "waiting");
+        Assert.True(pending.CanSteer);
+
+        using var sendNow = await client.PostAsJsonAsync(
+            $"/api/v1/sessions/{subSession.Id}/messages/queue/{queued.InputId}/steer",
+            new { turnId = inFlight.TurnId });
+        Assert.Equal(HttpStatusCode.OK, sendNow.StatusCode);
+        var sentNow = (await sendNow.Content.ReadFromJsonAsync<SteeringResult>(PergaJsonDefaults.ApiOptions))!;
+        Assert.Equal("accepted", sentNow.Delivery);
+        Assert.Single(steeredPrompts, text => text == "Queue while running");
+        var afterSteer = await client.GetFromJsonAsync<SessionItemsPageDto>($"/api/v1/sessions/{subSession.Id}/items", PergaJsonDefaults.ApiOptions);
+        Assert.DoesNotContain(afterSteer!.QueuedMessages, message => message.Id == queued.InputId);
+        Assert.Equal("processing", Assert.Single(afterSteer.Items, item => item.Kind == "user" &&
+            item.Payload.TryGetProperty("inputId", out var id) && id.GetString() == queued.MessageId).MessageStatus);
+
+
         // Concurrent WITH steerIfRunning: true -> 200 steers active turn!
         using var steerReq = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/sessions/{subSession.Id}/messages")
         {

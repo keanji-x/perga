@@ -1232,9 +1232,12 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                        CASE WHEN input.id IS NULL THEN item.payload_json
                             ELSE json_object('v', 1, 'content', input.content, 'triggerKind', 'user', 'inputId', input.id)
                        END AS PayloadJson,
-                       item.created_at_ms AS CreatedAtMs
+                       item.created_at_ms AS CreatedAtMs,
+                       turn.status AS TurnStatus,
+                       input.delivery_state AS InputDelivery
                 FROM session_items item
                 LEFT JOIN session_inputs input ON input.id = item.accepted_input_id
+                LEFT JOIN session_turns turn ON turn.session_id = item.session_id AND turn.id = item.turn_id
                 WHERE item.session_id = @SessionId
                   AND item.id > @AfterId AND (@BeforeId IS NULL OR item.id < @BeforeId)
                 ORDER BY item.id {(reverse ? "DESC" : "ASC")}
@@ -2483,7 +2486,7 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
             TurnId: r.TurnId,
             Kind: r.Kind,
             Payload: _coldBlobStore.Hydrate(r.PayloadJson, "session_items.payload_json"),
-            CreatedAtMs: r.CreatedAtMs);
+            CreatedAtMs: r.CreatedAtMs) { TurnStatus = r.TurnStatus, InputDelivery = r.InputDelivery };
 
     private static AskDto MapAsk(AskRow r) =>
         new(
@@ -2676,6 +2679,8 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
         public string Kind { get; init; } = string.Empty;
         public string PayloadJson { get; init; } = "{}";
         public long CreatedAtMs { get; init; }
+        public string? TurnStatus { get; init; }
+        public string? InputDelivery { get; init; }
     }
 
     private sealed class AskRow

@@ -12,29 +12,47 @@ public sealed partial class TrackActor
     private readonly ConcurrentDictionary<string, byte> _dispatchingInputs = new(StringComparer.Ordinal);
     private readonly HashSet<string> _compactingSessions = new(StringComparer.Ordinal);
 
-    public async Task<(SessionInputReceipt? Receipt, SessionTurnDto? SteeredTurn, bool Replay)> AcceptMessageAsync(
+    public async Task<MessageAcceptance> AcceptMessageAsync(
         string sessionId, SendMessageRequest request, CancellationToken ct)
     {
         ValidateRequestKey(request.IdempotencyKey);
         var hash = RequestIdentity.Hash(new { version = 1, request.Content, request.SteerIfRunning });
-        var result = await EnqueueAsync<(SessionInputReceipt? Receipt, bool Replay)>(async _ =>
+        var result = await EnqueueAsync<MessageAcceptance>(async _ =>
         {
             var existing = await _store.SessionInputs.FindByKeyAsync(sessionId, request.IdempotencyKey, ct).ConfigureAwait(false);
             if (existing is not null)
             {
                 RequireMatchingHash(existing.RequestHash, hash);
-                return (await ReplayInputCoreAsync(existing, ct).ConfigureAwait(false), true);
+                return new(await ReplayInputCoreAsync(existing, ct).ConfigureAwait(false), null, true);
             }
 
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
             var session = RequireSessionCore(sessionId);
+            if (_queuedMessageRequests.TryGetValue((sessionId, request.IdempotencyKey), out var prior))
+            {
+                RequireMatchingHash(prior.Hash, hash);
+                if (!request.QueueIfBusy || request.SteerIfRunning)
+                    throw KernelException.Conflict("This request key was already used to queue a message.");
+                return new(null, null, true, new(sessionId, prior.Id));
+            }
+
             if (request.SteerIfRunning && (_activeTurns.ContainsKey(sessionId) ||
                 _idempotencyTurns.ContainsKey((sessionId, request.IdempotencyKey))))
-                return (null, false);
+                return new(null, null, false);
             if (_idempotencyTurns.ContainsKey((sessionId, request.IdempotencyKey)))
                 throw KernelException.Conflict("This request key was already used by a live turn.");
-            if (_activeTurns.ContainsKey(sessionId) || _compactingSessions.Contains(sessionId) || _reservedWakeSessions.ContainsKey(sessionId) || HoldsDurableSlot(session))
-                throw KernelException.Conflict($"Session '{sessionId}' already has an active or unresolved turn.");
+            if (_activeTurns.ContainsKey(sessionId) || _compactingSessions.Contains(sessionId) || _reservedWakeSessions.ContainsKey(sessionId) || HoldsDurableSlot(session) || HasPendingUserMessagesCore(sessionId))
+            {
+                if (!request.QueueIfBusy || session.Status == "unknown")
+                    throw KernelException.Conflict($"Session '{sessionId}' already has an active or unresolved turn.");
+
+                RequireWorkspaceReadyCore();
+                RequireDispatchWorkspace(session);
+                var message = AddQueuedMessageCore(sessionId, request, hash);
+                SchedulePendingWakeCore(sessionId);
+                NotifyQueueChangedCore(sessionId);
+                return new(null, null, false, new(sessionId, message.Id));
+            }
 
             session = session with { Status = "queued", UpdatedAtMs = NowMs() };
             var sessionEvent = SessionUpdatedEvent(session);
@@ -43,14 +61,14 @@ public sealed partial class TrackActor
                 new(request.IdempotencyKey, hash, request.Content), sessionEvent, ct).ConfigureAwait(false);
             RegisterAcceptedInput(session, input);
             await PublishInputEventAsync(sessionEvent).ConfigureAwait(false);
-            return (input.Receipt, false);
+            return new(input.Receipt, null, false);
         }, ct).ConfigureAwait(false);
 
-        if (result.Receipt is not null)
-            return (result.Receipt, null, result.Replay);
+        if (result.Receipt is not null || result.QueueReceipt is not null)
+            return result;
 
         var steered = await SendMessageAsync(sessionId, request, ct, requireActiveTurn: true).ConfigureAwait(false);
-        return (null, steered, false);
+        return new(null, steered, false);
     }
 
     public Task<(SessionCreationReceipt Receipt, bool Replay)> CreateSessionWithReceiptAsync(

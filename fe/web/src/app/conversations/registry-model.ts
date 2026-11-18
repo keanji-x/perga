@@ -1,5 +1,5 @@
 import type { KeepConversationInputRequest, AgentProvider } from '../../../../core/api/generated/wire.ts';
-import type { SideConversation, PendingQueueEntry, PlannerQueueEditOutcome, ModelSelection, Conversation, CreatedConversation, TranscriptEntry, SteeringMessage } from '../../../../core/domain/conversation.ts';
+import type { SideConversation, PendingQueueEntry, PlannerQueueEditOutcome, ModelSelection, Conversation, CreatedConversation, TranscriptEntry } from '../../../../core/domain/conversation.ts';
 import type { SubmittedConversationInput } from '../../../../core/domain/conversation-initial-input.ts';
 import type { RetiredSend, SendOp, ConversationOutboxOp } from '../../../../core/domain/conversation-outbox.ts';
 import type { ComposerContent } from '../../../../core/domain/conversation-composer.ts';
@@ -128,7 +128,6 @@ export type RememberedConversation = Readonly<{
 export type InputResolutionIntent = Readonly<{ decision: 'keep' | 'retry'; key: string; args: Readonly<KeepConversationInputRequest>; status: 'sending' | 'unknown' }>;
 
 export type ConversationRegistry = Readonly<{
-  editSteeringMessages: (card: string, update: (messages: readonly SteeringMessage[]) => readonly SteeringMessage[]) => void;
   beginResolution: (card: string, decision: 'keep' | 'retry', args: KeepConversationInputRequest, key: string) => InputResolutionIntent | null;
   finishResolution: (card: string, key: string, status: 'unknown' | 'done') => void;
   turnsOf: (conversationId: string) => readonly TranscriptEntry[];

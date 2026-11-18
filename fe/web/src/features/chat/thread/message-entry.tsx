@@ -2,7 +2,7 @@ import mobileStyles from './mobile-composer.module.css';
 import { memo, useMemo } from 'react';
 import { useTranslator } from '@astryxdesign/core/i18n';
 import { useLightbox } from '@astryxdesign/core/Lightbox';
-import type { ConversationTurn } from '../../../../../core/domain/conversation.ts';
+import { messageStatusLabel, type ConversationTurn } from '../../../../../core/domain/conversation.ts';
 import { useState } from '../../../ui/state/public.ts';
 import { OutgoingMessage } from './outgoing-message.tsx';
 import { Reply, type ReplyImageFiles, type ReplyLinkRenderer } from './reply.tsx';
@@ -23,6 +23,7 @@ type MessageEntryProps = Readonly<{
   imported: boolean;
   text: string;
   deliveryError?: string | undefined;
+  messageStatus?: ConversationTurn['messageStatus'];
   attachments: ConversationTurn['attachments'];
   opens: boolean;
   gapLabel: string | null;
@@ -33,7 +34,7 @@ type MessageEntryProps = Readonly<{
   renderLink?: ReplyLinkRenderer;
 }>;
 
-export const MessageEntry = memo(function MessageEntry({ id, entryKey, author, human, imported, text, deliveryError, attachments,
+export const MessageEntry = memo(function MessageEntry({ id, entryKey, author, human, imported, text, deliveryError, messageStatus, attachments,
   opens, gapLabel, queued, edited, replacement, imageFiles, renderLink, mobile, atMs, timestampFormatter,
 }: MessageEntryProps) {
   const t = useTranslator();
@@ -89,7 +90,9 @@ export const MessageEntry = memo(function MessageEntry({ id, entryKey, author, h
               Queued · sends when this turn ends
             </p>
           )}
-          {deliveryError !== undefined && <p className={styles.queuedNote} role="status">{deliveryError}</p>}
+          {(deliveryError !== undefined || messageStatus !== undefined) && <p className={styles.queuedNote} role="status">
+            {deliveryError ?? (messageStatus === undefined ? null : messageStatusLabel(messageStatus))}
+          </p>}
           {replacement && <p className={styles.queuedNote}>Replaces the marked message above</p>}
         </>
       ) : (

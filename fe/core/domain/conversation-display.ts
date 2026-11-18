@@ -12,7 +12,7 @@ import {
 } from '../api/schemas.js';
 import type { ConversationTerminalOutcome, ConversationCursor, ConversationDisplayItem, ConversationPage, ConversationPendingInput, ConversationActiveInput, ConversationSubmissionDelivery, HarnessItem as TranscriptRow } from '../api/generated/wire.js';
 import { plannerPermissionModeSchema } from './planner-permission-mode.js';
-import { SYSTEM_PRESENTATION_LABELS, systemInputPresentationSchema, buildTranscript, retireFollowedThoughts, harnessTimeoutEvidenceSchema, harnessItemSchema as transcriptRowSchema, HARNESS_ITEMS_PAGE_LIMIT as TRANSCRIPT_PAGE_LIMIT, legacyPlannerRunSchema, type PlannerRun, type TranscriptEntry } from './conversation.js';
+import { messageStatusSchema, SYSTEM_PRESENTATION_LABELS, systemInputPresentationSchema, buildTranscript, retireFollowedThoughts, harnessTimeoutEvidenceSchema, harnessItemSchema as transcriptRowSchema, HARNESS_ITEMS_PAGE_LIMIT as TRANSCRIPT_PAGE_LIMIT, legacyPlannerRunSchema, type PlannerRun, type TranscriptEntry } from './conversation.js';
 
 /** Native acknowledgement can arrive at END. Defer intervention for the exact
  * tracked execution without changing its delivery fact; other held inputs remain visible. */
@@ -67,7 +67,7 @@ export const conversationPageSchema: z.ZodType<ConversationPage> = z.object({
   items: z.array(z.object({ cursor: conversationCursorSchema, source: z.discriminatedUnion('kind', [
     z.object({ kind: z.literal('human'), message_id: z.string(), revision: z.number().int().positive(),
       author: z.object({ user_id: z.string(), display_name: z.string() }).strict(), text: z.string(),
-      attachments: z.array(attachment), created_at_ms: z.number(), delivery_error: z.string().optional() }).strict(),
+      attachments: z.array(attachment), created_at_ms: z.number(), delivery_error: z.string().optional(), message_status: messageStatusSchema.optional(), supplemental: z.boolean().optional() }).strict(),
     z.object({ kind: z.literal('system'), observation_id: z.string(), presentation: systemInputPresentationSchema,
       text: z.string(), created_at_ms: z.number() }).strict(),
     z.object({ kind: z.literal('native'), item: transcriptRowSchema }).strict(),
@@ -133,6 +133,8 @@ export function sessionItemsPageDtoToConversationPage(
           revision: 1,
           author: { user_id: DEPLOYMENT_OWNER_USER_ID, display_name: 'Owner' },
           text: content,
+          ...(payloadObj.steered === true ? { supplemental: true } : {}),
+          ...(item.messageStatus == null ? {} : { message_status: item.messageStatus }),
           ...(typeof payloadObj.deliveryError === 'string' ? { delivery_error: payloadObj.deliveryError } : {}),
           attachments: [],
           created_at_ms: item.createdAtMs,
@@ -369,6 +371,8 @@ export function buildConversationTranscript(items: readonly ConversationDisplayI
       id:`human:${source.message_id}`, author:source.author.user_id === viewerId ? 'you' : 'human',
       human:{ userId:source.author.user_id, displayName:source.author.display_name, messageId:source.message_id, revision:source.revision },
       text:source.text, attachments:source.attachments, atMs:source.created_at_ms, displayPosition:cursor.position,
+      ...(source.supplemental === true ? { supplemental: true } : {}),
+      ...(source.message_status === undefined ? {} : { messageStatus: source.message_status }),
       ...(source.delivery_error === undefined ? {} : { deliveryError: source.delivery_error }),
     }];
     if (source.kind === 'imported_item') return buildTranscript([source.item]).map((entry,index) => {
@@ -437,6 +441,8 @@ export const conversationRunMetadataSchema = z.object({
     }).strict().nullable(),
   }).strict()) }).strict().nullable(),
   native_turn_id:z.string().nullable(),
+  can_steer_queued:z.boolean().optional(),
+  queue_handoff_ids:z.array(z.string()).optional(),
 }).refine(run=>run.input_contract !== 'canonical' || run.runtime_state !== null,
   'Canonical runs require their actual current runtime state').refine(run=>run.input_contract !== 'historical' || run.terminal_outcome === null,
   'Historical runs do not carry a current canonical terminal outcome');
@@ -458,8 +464,12 @@ export function conversationRunOperation(card: string): ApiOperation<PlannerRun 
           card_id: card,
           worker_session_id: page.session.id,
           phase: running ? 'turn_running' : page.session.status === 'queued' ? 'issuing_turn' : 'idle',
-          pending: [],
+          pending: page.queuedMessages?.map(message => ({
+            entry_id: message.id, text: message.text, rev: 1, queued_at_ms: message.queuedAtMs, state: message.state,
+          })) ?? [],
           pending_overflow: 0,
+          ...(page.queueHandoffIds === undefined ? {} : { queue_handoff_ids: page.queueHandoffIds }),
+          ...(page.canSteer === undefined ? {} : { can_steer_queued: page.canSteer }),
           model: page.session.model ?? null,
           reasoning_effort: null,
           permission_mode: null,

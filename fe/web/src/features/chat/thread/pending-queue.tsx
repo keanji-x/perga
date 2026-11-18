@@ -46,8 +46,7 @@ function noticeText(outcome: PlannerQueueWriteOutcome): string | null {
       + 'been removed somewhere else, and the server does not say which.';
   }
   if (outcome.kind === 'not_running') {
-    return 'The turn ended before this message could be handed to it, so nothing '
-      + 'happened. It stays queued and will go with the next turn.';
+    return 'This message is still queued for a follow-up turn.';
   }
   if (outcome.kind === 'unanswered') {
     return 'Codex did not answer in time, so it is not known whether this message '
@@ -157,13 +156,17 @@ export function PendingQueue({ entries, pendingInputCount, queueDisplayAccountin
                       <MessageActions label="Queued message actions" actions={[
                         { id: 'edit', kind: 'edit', label: 'Edit queued message', tooltip: 'Edit this message in the composer.', disabled: blocked || !canEdit || !alive,
                           run: () => { onEdit(current); } },
-                        { id: 'undo', kind: 'undo', label: 'Delete this message', tooltip: 'Remove this queued message.', disabled: blocked || isEditing,
+                        { id: 'undo', kind: 'undo', label: 'Delete this message', tooltip: 'Remove this queued message.', disabled: blocked || isEditing || current.state === 'steering' || current.state === 'sending' || current.state === 'processing',
                           run: () => { void run(current, () => onDelete(current)); } },
-                        ...(onSteer === undefined ? [] : [{ id: 'steer', kind: 'return' as const, label: 'Say it now', tooltip: 'Send to the current response.', disabled: blocked || isEditing,
+                        ...(onSteer === undefined || (current.state !== undefined && current.state !== 'waiting') ? [] : [{ id: 'steer', kind: 'return' as const, label: 'Say it now', tooltip: 'Send to the current response.', disabled: blocked || isEditing,
                           run: () => { void run(current, () => onSteer(current)); } }]),
                       ]} />
                     </div>
                   </div>
+                  {current.state === 'waiting' && <p className={styles.notice} role="status">Queued</p>}
+                  {(current.state === 'steering' || current.state === 'sending') && <p className={styles.notice} role="status">Sending…</p>}
+                  {current.state === 'processing' && <p className={styles.notice} role="status">Processing</p>}
+                  {current.state === 'unconfirmed' && <p className={styles.notice} role="status">Delivery not confirmed. This message is paused.</p>}
                   {failed !== null && <QueueWriteNotice outcome={failed} />}
                 </div>
               </div></div></SizeMotion>

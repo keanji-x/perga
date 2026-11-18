@@ -145,6 +145,8 @@ export type ConversationTurn = NativeTurnContext & Readonly<{
   /** Exact input provenance, including a known acceptance receipt; only inputSource names raw stored source. */
   queueEntryId?: string | null;
   deliveryError?: string;
+  messageStatus?: MessageStatus;
+  supplemental?: boolean;
   /** Canonical structured-input source; rendered ids remain the renderer's separate identity. */
   inputSource?: Readonly<{ cardId: string; threadId: string; itemId: number; segmentIndex: number; turnId: string | null; entryRev: number | null }>;
 }>;
@@ -167,6 +169,7 @@ export type OptimisticConversationTurn = ConversationTurn & Readonly<{
    * then or when there is none to name; `null` means this side keeps drawing the message.
    */
   entryId: string | null;
+  waitForIdentity?: boolean;
 }>;
 
 /** A kernel observation delivered through Codex's user-message transport; nobody in the conversation authored it. */
@@ -256,11 +259,26 @@ export function kernelQueuesInput(phase: HarnessPhaseTag | null): boolean {
  * One addressable message waiting in the harness pending queue. `rev` is the compare-and-swap
  * token; entries written before ids existed cannot appear here and are counted by `pending_overflow`.
  */
+export const messageStatusSchema = z.enum(['queued', 'sending', 'processing', 'completed', 'failed', 'unconfirmed']);
+export type MessageStatus = z.infer<typeof messageStatusSchema>;
+
+export function messageStatusLabel(status: MessageStatus): string {
+  switch (status) {
+    case 'queued': return 'Queued';
+    case 'sending': return 'Sending…';
+    case 'processing': return 'Processing';
+    case 'completed': return 'Completed';
+    case 'failed': return 'Failed';
+    case 'unconfirmed': return 'Delivery not confirmed';
+  }
+}
+
 export type PendingQueueEntry = Readonly<{
   entry_id: string;
   text: string;
   rev: number;
   queued_at_ms: number;
+  state?: 'waiting' | 'steering' | 'sending' | 'processing' | 'unconfirmed';
 }>;
 
 const pendingQueueEntrySchema: z.ZodType<PendingQueueEntry> = z.object({
@@ -687,14 +705,20 @@ export const PLANNER_MODEL_FAILURES: FailureTable<WriteFailure> = Object.freeze(
 export const MODEL_CHANGE_TEXT = Object.freeze({ refused: 'The model was not changed.', unknown: 'The model change is unconfirmed.' });
 
 /** What a `POST /planner/input` answers, including where the text landed. */
-export type SteeringMessage = Readonly<{ id: string; text: string; status: string; queuedInputId?: string }>;
-
-export function steerSessionMessageOperation(sessionId: string, turnId: string, content: string) {
+export function steerQueuedSessionMessageOperation(sessionId: string, inputId: string, turnId: string) {
   return {
     method: 'POST',
-    path: `/api/v1/sessions/${encodeURIComponent(sessionId)}/messages/steer`,
-    body: { turnId, content },
-    responseSchema: z.object({ inputId: z.string().min(1), delivery: z.enum(['accepted', 'queued', 'unconfirmed']) }),
+    path: `/api/v1/sessions/${encodeURIComponent(sessionId)}/messages/queue/${encodeURIComponent(inputId)}/steer`,
+    body: { turnId },
+    responseSchema: z.object({ inputId: z.literal(inputId), delivery: z.enum(['accepted', 'queued', 'unconfirmed']) }),
+  } satisfies ApiOperation<unknown>;
+}
+
+export function removeQueuedSessionMessageOperation(sessionId: string, inputId: string) {
+  return {
+    method: 'DELETE',
+    path: `/api/v1/sessions/${encodeURIComponent(sessionId)}/messages/queue/${encodeURIComponent(inputId)}`,
+    responseSchema: z.undefined(),
   } satisfies ApiOperation<unknown>;
 }
 
@@ -703,6 +727,7 @@ export type SentPlannerInput = Readonly<{
   worker_session_id: string;
   /** The queue entry the text is now sitting in, or `null` when it folded into an entry that has no id. */
   entry_id: string | null;
+  queued?: boolean | undefined;
 }>;
 
 /**
@@ -718,6 +743,7 @@ export function sendPlannerInputOperation(
   idempotencyKey: string,
   replacesTurn: string | null,
   steerIfRunning = false,
+  queueIfBusy = false,
 ): ApiOperation<SentPlannerInput> {
   return {
     method: 'POST',
@@ -726,16 +752,21 @@ export function sendPlannerInputOperation(
     body: {
       content: text,
       steerIfRunning,
+      ...(queueIfBusy ? { queueIfBusy } : {}),
       text,
       ...(attachments.length === 0 ? {} : { attachments }),
       ...(replacesTurn === null ? {} : { replaces_turn: replacesTurn }),
     },
     headers: { 'Idempotency-Key': idempotencyKey },
     responseSchema: z.union([
+      z.object({ sessionId: z.literal(cardId), inputId: z.string().min(1), messageId: z.string().min(1).optional(), queued: z.literal(true) }).transform(receipt => ({
+        card_id: cardId, worker_session_id: cardId, entry_id: receipt.messageId ?? receipt.inputId, queued: true,
+      })),
       sessionInputReceiptSchema.refine(receipt => receipt.sessionId === cardId).transform((receipt) => ({
         card_id: receipt.sessionId,
         worker_session_id: receipt.sessionId,
-        entry_id: receipt.inputId,
+        entry_id: receipt.messageId ?? receipt.inputId,
+        ...(queueIfBusy ? { queued: false } : {}),
       })),
       ...(steerIfRunning ? [sessionTurnDtoSchema.transform((turn) => ({
         card_id: turn.sessionId,
@@ -1818,7 +1849,7 @@ export function isUserConversationTurn(entry:TranscriptEntry|undefined):entry is
 export function opensExchange(turns: readonly TranscriptEntry[], index: number): boolean {
   const turn = turns[index];
   if (turn === undefined) return false;
-  return isUserConversationTurn(turn) && !isUserConversationTurn(turns[index-1]);
+  return isUserConversationTurn(turn) && turn.supplemental !== true && !isUserConversationTurn(turns[index-1]);
 }
 
 /** The gap after which a transcript is worth stamping with a time; the time is a separator, not a label. */

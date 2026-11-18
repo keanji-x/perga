@@ -360,6 +360,134 @@ public sealed class DurableSessionInputTests
         }
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task PendingMessagesDrainInOrderAndUnconfirmedSteeringDoesNotRunAgain(bool supportsSteering)
+    {
+        await using var host = new PergaHostTestCluster();
+        var (trackId, sessionId) = await host.CreateTrackAsync();
+        var kernel = host.Services.GetRequiredService<IPergaKernel>();
+        var turnStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var endTurn = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var followUpSending = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var allowProviderOutput = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var followUpStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var endFollowUp = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var steerStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var neverAnswers = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        host.AgentRuntime.SupportsSteering = supportsSteering;
+        host.AgentRuntime.SetTurnHandler(Stream);
+        host.AgentRuntime.SetSteerHandler(text =>
+        {
+            Assert.Equal("first queued", text);
+            steerStarted.TrySetResult();
+            return neverAnswers.Task;
+        });
+
+        async IAsyncEnumerable<UnifiedAgentEvent> Stream(
+            HarnessLaunchSpec spec, TurnInput input, [EnumeratorCancellation] CancellationToken ct)
+        {
+            if (input.Prompt == "second queued")
+            {
+                followUpSending.TrySetResult();
+                await allowProviderOutput.Task.WaitAsync(ct);
+            }
+            yield return new UnifiedAgentEvent.TextDelta("working");
+            if (input.Prompt == "initial")
+            {
+                turnStarted.TrySetResult();
+                await endTurn.Task.WaitAsync(ct);
+            }
+            if (input.Prompt == "second queued")
+            {
+                followUpStarted.TrySetResult();
+                await endFollowUp.Task.WaitAsync(ct);
+            }
+            yield return new UnifiedAgentEvent.TurnCompleted(null);
+        }
+
+        var messages = $"/api/v1/sessions/{sessionId}/messages";
+        async Task<SessionItemsPageDto> ReadPageAsync() =>
+            (await host.Client.GetFromJsonAsync<SessionItemsPageDto>($"/api/v1/sessions/{sessionId}/items",
+                PergaJsonDefaults.ApiOptions))!;
+        using var accepted = await SendAsync(host.Client, messages, "initial", new { content = "initial" });
+        var initial = (await accepted.Content.ReadFromJsonAsync<SessionInputReceipt>(PergaJsonDefaults.ApiOptions))!;
+        Assert.Equal(HttpStatusCode.Accepted, accepted.StatusCode);
+        Assert.Equal(initial.InputId, initial.MessageId);
+        await turnStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var processingInitial = await ReadPageAsync();
+        Assert.Contains(processingInitial.Items, item => item.Kind == "user" && item.MessageStatus == "processing");
+
+        async Task<QueuedMessageReceipt> QueueAsync(string text, HttpStatusCode expected)
+        {
+            using var response = await SendAsync(host.Client, messages, text, new { content = text, queueIfBusy = true });
+            Assert.Equal(expected, response.StatusCode);
+            Assert.Null(response.Headers.Location);
+            return (await response.Content.ReadFromJsonAsync<QueuedMessageReceipt>(PergaJsonDefaults.ApiOptions))!;
+        }
+
+        try
+        {
+            var first = await QueueAsync("first queued", HttpStatusCode.Accepted);
+            var second = await QueueAsync("second queued", HttpStatusCode.Accepted);
+            Assert.Equal(first, await QueueAsync("first queued", HttpStatusCode.OK));
+            using var stored = await host.Client.GetAsync($"/api/v1/sessions/{sessionId}/inputs/{first.InputId}");
+            Assert.Equal(HttpStatusCode.NotFound, stored.StatusCode);
+            var page = await ReadPageAsync();
+            Assert.Equal(new[] { first.InputId, second.InputId }, page.QueuedMessages.Select(message => message.Id));
+            Assert.Equal(supportsSteering, page.CanSteer);
+            Assert.False(steerStarted.Task.IsCompleted);
+
+            var attempt = host.Client.PostAsJsonAsync(
+                $"{messages}/queue/{first.InputId}/steer", new { turnId = initial.TurnId });
+            if (supportsSteering)
+                await steerStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            else
+                await attempt.WaitAsync(TimeSpan.FromSeconds(5));
+
+            endTurn.TrySetResult();
+            using var result = await attempt.WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.Equal(HttpStatusCode.OK, result.StatusCode);
+            var delivered = (await result.Content.ReadFromJsonAsync<SteeringResult>(PergaJsonDefaults.ApiOptions))!;
+            Assert.Equal(supportsSteering ? "unconfirmed" : "queued", delivered.Delivery);
+            await followUpSending.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var beforeProvider = await ReadPageAsync();
+            Assert.Contains(beforeProvider.QueuedMessages, message => message.Id == second.MessageId && message.State == "sending");
+            Assert.Equal("sending", Assert.Single(beforeProvider.Items, item => item.Kind == "user" &&
+                item.Payload.TryGetProperty("inputId", out var id) && id.GetString() == second.MessageId).MessageStatus);
+            allowProviderOutput.TrySetResult();
+            await followUpStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var duringFollowUp = await ReadPageAsync();
+            Assert.Contains(duringFollowUp.QueuedMessages, message => message.Id == second.MessageId && message.State == "processing");
+            Assert.Equal("processing", Assert.Single(duringFollowUp.Items, item => item.Kind == "user" &&
+                item.Payload.TryGetProperty("inputId", out var id) && id.GetString() == second.MessageId).MessageStatus);
+            endFollowUp.TrySetResult();
+            await kernel.WaitForTrackIdleAsync(trackId);
+
+            Assert.Equal(supportsSteering ? new[] { "initial", "second queued" } : new[] { "initial", "first queued", "second queued" },
+                host.AgentRuntime.ExecutedTurns.Select(execution => execution.Input.Prompt));
+            var final = await ReadPageAsync();
+            Assert.Equal("completed", Assert.Single(final.Items, item => item.Kind == "user" &&
+                item.Payload.TryGetProperty("inputId", out var id) && id.GetString() == second.MessageId).MessageStatus);
+            if (supportsSteering)
+            {
+                Assert.Equal("unconfirmed", Assert.Single(final.QueuedMessages).State);
+                using var removed = await host.Client.DeleteAsync($"{messages}/queue/{first.InputId}");
+                Assert.Equal(HttpStatusCode.NoContent, removed.StatusCode);
+                final = await ReadPageAsync();
+            }
+            Assert.Empty(final.QueuedMessages);
+        }
+        finally
+        {
+            neverAnswers.TrySetResult(true);
+            allowProviderOutput.TrySetResult();
+            endTurn.TrySetResult();
+            endFollowUp.TrySetResult();
+        }
+    }
+
     private static async Task<HttpResponseMessage> SendAsync(HttpClient client, string path, string key, object body)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, path) { Content = JsonContent.Create(body) };

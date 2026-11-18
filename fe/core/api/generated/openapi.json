@@ -14957,16 +14957,6 @@
       }
     },
     "/api/v1/sessions/{sessionId}/messages": {
-      "parameters": [
-        {
-          "name": "sessionId",
-          "in": "path",
-          "required": true,
-          "schema": {
-            "type": "string"
-          }
-        }
-      ],
       "post": {
         "parameters": [
           {
@@ -14996,6 +14986,11 @@
                   "steerIfRunning": {
                     "type": "boolean",
                     "default": false
+                  },
+                  "queueIfBusy": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Allow volatile FIFO admission while the session is busy."
                   }
                 }
               }
@@ -15014,6 +15009,9 @@
                     },
                     {
                       "$ref": "#/components/schemas/SessionTurnDto"
+                    },
+                    {
+                      "$ref": "#/components/schemas/QueuedMessageReceipt"
                     }
                   ]
                 }
@@ -15021,11 +15019,18 @@
             }
           },
           "202": {
-            "description": "Input committed",
+            "description": "Input committed or admitted to the in-memory queue",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SessionInputReceipt"
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/SessionInputReceipt"
+                    },
+                    {
+                      "$ref": "#/components/schemas/QueuedMessageReceipt"
+                    }
+                  ]
                 }
               }
             },
@@ -15033,7 +15038,8 @@
               "Location": {
                 "schema": {
                   "type": "string"
-                }
+                },
+                "description": "Present for durable input receipts."
               }
             }
           },
@@ -15114,6 +15120,119 @@
           },
           "409": {
             "description": "An unresolved turn holds the session"
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionId}/messages/queue/{inputId}": {
+      "delete": {
+        "summary": "Remove a waiting or unconfirmed message",
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "inputId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Removed"
+          },
+          "404": {
+            "description": "Session or message not found"
+          },
+          "409": {
+            "description": "Steering attempt in progress"
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionId}/messages/queue/{inputId}/steer": {
+      "post": {
+        "summary": "Attempt to deliver an existing queued message to the observed running turn",
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "inputId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "turnId"
+                ],
+                "properties": {
+                  "turnId": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Steering delivery outcome",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "inputId",
+                    "delivery"
+                  ],
+                  "properties": {
+                    "inputId": {
+                      "type": "string"
+                    },
+                    "delivery": {
+                      "type": "string",
+                      "enum": [
+                        "accepted",
+                        "queued",
+                        "unconfirmed"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing target turn"
+          },
+          "404": {
+            "description": "Session or waiting message not found"
+          },
+          "409": {
+            "description": "Message or session cannot be steered"
           }
         }
       }
@@ -16701,6 +16820,13 @@
               },
               "delivery_error": {
                 "type": "string"
+              },
+              "supplemental": {
+                "type": "boolean"
+              },
+              "message_status": {
+                "type": "string",
+                "enum": ["queued", "sending", "processing", "completed", "failed", "unconfirmed"]
               },
               "kind": {
                 "type": "string",
@@ -24962,6 +25088,10 @@
           "resolvedAtMs"
         ],
         "properties": {
+          "messageId": {
+            "type": "string",
+            "description": "Stable identity shared with the submitted user message."
+          },
           "inputId": {
             "type": "string"
           },
@@ -25077,9 +25207,67 @@
           "kind": {
             "type": "string"
           },
+          "messageStatus": {
+            "enum": ["queued", "sending", "processing", "completed", "failed", "unconfirmed", null]
+          },
           "payload": {},
           "createdAtMs": {
             "type": "integer"
+          }
+        }
+      },
+      "QueuedMessageReceipt": {
+        "type": "object",
+        "required": [
+          "sessionId",
+          "inputId",
+          "queued"
+        ],
+        "properties": {
+          "sessionId": {
+            "type": "string"
+          },
+          "messageId": {
+            "type": "string",
+            "description": "Stable identity shared with the submitted user message."
+          },
+          "inputId": {
+            "type": "string"
+          },
+          "queued": {
+            "enum": [
+              true
+            ]
+          }
+        }
+      },
+      "QueuedSessionMessageDto": {
+        "type": "object",
+        "required": [
+          "id",
+          "text",
+          "queuedAtMs",
+          "state"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "queuedAtMs": {
+            "type": "integer"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "waiting",
+              "steering",
+              "sending",
+              "processing",
+              "unconfirmed"
+            ]
           }
         }
       },
@@ -25122,6 +25310,23 @@
           },
           "hasMoreBefore": {
             "type": "boolean"
+          },
+          "queuedMessages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QueuedSessionMessageDto"
+            }
+          },
+          "queueHandoffIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Recent queue identities whose user rows were committed to history."
+          },
+          "canSteer": {
+            "type": "boolean",
+            "description": "Whether the current active turn supports steering."
           }
         }
       },

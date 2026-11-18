@@ -75,6 +75,16 @@ describe('the outbox view', () => {
     expect(listed.blocked).toBe(false);
   });
 
+  it('hands off an acknowledged in-memory queue entry to the first fresh queue read', () => {
+    const accepted = op('a', { phase: 'confirmed', queueRevision: null, queueAcceptedAfterRead: 7 },
+      { entryId: 'e1', queued: true });
+    const stale = view([accepted], [], { landed: { transcript: 8, run: 7 } });
+    expect(stale.retire).toEqual([]);
+    expect(stale.blocked).toBe(false);
+    const refreshed = view([accepted], [], { landed: { transcript: 8, run: 9 } });
+    expect(refreshed.retire).toEqual([{ key: 'a', row: null }]);
+  });
+
   it('keeps a replayed send, claiming nothing, until a transcript and a run read started after its answer land', () => {
     const replayed = op('a', { phase: 'replayed', afterRead: 7 }, { entryId: null });
     expect(texts(view([replayed]).transcript)).toEqual(['same']);
@@ -280,6 +290,17 @@ describe('waiting input presentation', () => {
     const shown = presentPendingMessages([streaming], [{ ...queue, rev: 6 }], [], placements, null, false, []);
     expect(shown.transcript).toEqual([streaming]); expect(shown.queue).toMatchObject([{ entry_id: queue.entry_id, rev: 6 }]);
   });
+  it('keeps a server queue row as the only body when its browser receipt was lost', () => {
+    const sent = op('failed', { phase: 'failed', delivery: 'unknown', message: 'lost' },
+      { text: queue.text, queued: true });
+    if (sent.phase !== 'failed') throw new Error('fixture must be failed');
+    const failed = { ...sent, echo: { ...sent.echo, waitForIdentity: true } };
+    const shown = presentPendingMessages([streaming], [queue], [], new Map(), failed, false, [failed]);
+    expect(shown.transcript).toEqual([streaming]);
+    expect(shown.queue).toEqual([queue]);
+    expect(shown.sending).toEqual([]);
+  });
+
   it('keeps a failed waiting send outside the streaming transcript with explicit failure feedback', () => {
     const failed = op('failed', { phase: 'failed', delivery: 'unknown', message: 'lost' }, { queued: true });
     if (failed.phase !== 'failed') throw new Error('fixture must be failed');
