@@ -1780,15 +1780,8 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                         SET status = 'interrupted',
                             finished_at_ms = COALESCE(finished_at_ms, @NowMs)
                         WHERE LOWER(status) IN ('running', 'verifying');
-                        UPDATE session_messages AS m SET delivery = 'interrupted'
-                        WHERE source = 'worker' AND delivery = 'queued' AND NOT EXISTS (
-                            SELECT 1 FROM task_attempts a
-                            JOIN agent_sessions s ON s.id = m.session_id AND s.bound_attempt_id = a.attempt_id
-                            JOIN tasks t ON t.id = a.task_id AND t.latest_attempt_id = a.attempt_id
-                            JOIN tracks tr ON tr.id = a.track_id AND tr.closed_at_ms IS NULL
-                            WHERE a.attempt_id = m.attempt_id AND a.session_id = m.session_id
-                              AND a.status = 'running' AND a.workspace_lease_json IS NOT NULL
-                        );
+                        UPDATE session_messages SET delivery = 'interrupted'
+                        WHERE source = 'worker' AND delivery = 'queued';
                         """,
                         new { NowMs = nowMs },
                         transaction: tx,
