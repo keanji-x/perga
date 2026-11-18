@@ -124,6 +124,18 @@ public sealed class BootReconciler : IBootReconciler
         foreach (var mail in pendingMail)
             await _actorRegistry.GetOrActivate(mail.ToTrackId).WakeForMailAsync(mail, ct, recovering: true).ConfigureAwait(false);
 
+        foreach (var trackId in await _store.ListPendingWorkerDispatchTracksAsync(ct).ConfigureAwait(false))
+        {
+            try
+            {
+                await _actorRegistry.GetOrActivate(trackId).TriggerSchedulerAsync(ct).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (!ct.IsCancellationRequested)
+            {
+                System.Diagnostics.Trace.TraceWarning("Could not recover Worker dispatch for Track {0}: {1}", trackId, ex.Message);
+            }
+        }
+
         return new BootReconcileResult(orderedAffected, discardedLeases, wokenCount);
     }
 

@@ -20,6 +20,8 @@ public sealed record ScheduleSpec(
     string Timezone,
     string? StaticWakePrompt = null);
 
+public sealed record WorkerDispatchDefaults(string? Section, string? Access, string? GateInput);
+
 public sealed record CompiledTemplateManifest(
     string Id,
     string Title,
@@ -35,7 +37,8 @@ public sealed record CompiledTemplateManifest(
     string? WorkspaceCloseCmd,
     string? AfterWorkerDoneCmd,
     IReadOnlyList<ScheduleSpec> Schedules,
-    string InitialReportMarkdown);
+    string InitialReportMarkdown,
+    WorkerDispatchDefaults? WorkerDispatch = null);
 
 public sealed record CompiledPolicy(
     string TemplateId,

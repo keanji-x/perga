@@ -26,7 +26,7 @@ type HeldCopies = Readonly<{ cardId: string; read: number; copies: readonly Live
  * layer's recovery gating applies as it does to every read. The copies are held per card, so a
  * switch never shows one card's text in another.
  */
-export function useLiveReplies({ transport, unauthorized, cardId, enabled, phase, runningTurnId, nextRead, transcriptKey, transcriptReads, items, canonical }: {
+export function useLiveReplies({ transport, unauthorized, cardId, enabled, phase, runningTurnId, nextRead, transcriptKey, transcriptReads, items, canonical, worker }: {
   canonical:boolean;
   transport: ApiTransportPort;
   unauthorized: UnauthorizedChannel;
@@ -43,6 +43,7 @@ export function useLiveReplies({ transport, unauthorized, cardId, enabled, phase
   transcriptReads: TranscriptReads;
   /** Every loaded transcript row. */
   items: readonly LiveReplyTranscriptRow[];
+  worker?: import('../../../../core/api/perga-v1.ts').WorkerActivity | null;
 }): readonly TranscriptEntry[] {
   const client = useQueryClient();
   const wsConnected = useConnectionStatus()?.connected === true;
@@ -134,20 +135,25 @@ export function useLiveReplies({ transport, unauthorized, cardId, enabled, phase
     () => {
       let current = canonical || scope.turnId === null ? copies
         : reconcileLiveReplies(copies, { kind: 'active-turn', turnId: scope.turnId });
-      if (wsLive !== undefined && wsLive.turnId !== null && wsLive.text.trim() !== '' && !wsPersistedInTranscript) {
+      const recent = worker?.events.filter(event => event.kind === 'session.text_delta') ?? [];
+      const snapshot = worker?.textTruncated === true ? `…\n${worker.text}` : worker?.text ?? '';
+      const tail = wsLive?.turnId === scope.turnId ? wsLive?.parts?.filter(part => part.sequence > (worker?.sequence ?? 0)) : undefined;
+      const liveText = worker == null || scope.turnId === null ? wsLive?.text ?? '' : snapshot + (tail?.map(part => part.delta).join('') ?? '');
+      const liveTurn = worker == null ? wsLive?.turnId : scope.turnId;
+      if (liveTurn != null && liveText.trim() !== '' && !wsPersistedInTranscript) {
         current = reconcileLiveReplies(current, {
           kind: 'poll',
           reply: {
-            turn_id: wsLive.turnId,
-            items: [{ item_id: `ws-${wsLive.turnId}`, text: wsLive.text }],
+            turn_id: liveTurn,
+            items: [{ item_id: `ws-${liveTurn}`, text: liveText }],
           },
-          atMs: wsLive.updatedAtMs,
+          atMs: Math.max(wsLive?.updatedAtMs ?? 0, recent.at(-1)?.createdAtMs ?? 0),
           activeTurnId: null,
         });
       }
       return reconcileLiveReplies(current, { kind: 'transcript', items, readStart: transcriptStart });
     },
-    [copies, items, transcriptStart, scope.turnId, canonical, wsLive, wsPersistedInTranscript],
+    [copies, items, transcriptStart, scope.turnId, canonical, wsLive, wsPersistedInTranscript, worker],
   );
 
   const wsActivities = useMemo((): readonly ConversationActivity[] => {

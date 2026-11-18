@@ -73,6 +73,7 @@ public sealed class ClaudeAgentSession : IAgentSession
     public string? NativeThreadId => Volatile.Read(ref _nativeThreadId);
 
     public bool SupportsNativeSteer => false;
+    public bool ShutdownConfirmed => _process.ShutdownConfirmed;
 
     public string McpConfigFilePath => _mcpConfigFilePath;
 

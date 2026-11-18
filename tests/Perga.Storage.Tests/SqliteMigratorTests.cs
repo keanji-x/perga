@@ -82,7 +82,9 @@ public sealed class SqliteMigratorTests
                 "asks",
                 "mails",
                 "terminals",
-                "events"
+                "events",
+                "worker_messages",
+                "worker_settings"
             ];
 
             Assert.Equal(expectedTables.OrderBy(static x => x), tables.OrderBy(static x => x));
@@ -112,7 +114,8 @@ public sealed class SqliteMigratorTests
                 "idx_mails_to_track",
                 "idx_terminals_track",
                 "idx_events_track_id",
-                "idx_events_created"
+                "idx_events_created",
+                "idx_worker_messages_queue"
             ];
 
             Assert.Equal(expectedIndexes.OrderBy(static x => x), indexes.OrderBy(static x => x));

@@ -330,6 +330,7 @@ function policies(): PolicyMap {
       sessionId: event.data.sessionId,
       turnId: event.data.turnId,
       delta: event.data.delta,
+      sequence: event.data.sequence,
       createdAtMs: event.data.createdAtMs,
     },
   }])),

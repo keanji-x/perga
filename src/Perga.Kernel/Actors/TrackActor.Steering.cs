@@ -29,6 +29,8 @@ public sealed partial class TrackActor
                 admissionToken.ThrowIfCancellationRequested();
                 await EnsureHydratedCoreAsync(admissionToken).ConfigureAwait(false);
                 var session = RequireSessionCore(sessionId);
+                if (session.BoundAttemptId is not null)
+                    throw KernelException.InvalidArgument("Worker messages require an attempt target.");
                 RequireDispatchWorkspace(session);
                 if (session.Status == "unknown")
                     throw KernelException.Conflict("Resolve the current turn before sending another message.");

@@ -705,7 +705,8 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
         IReadOnlyList<TaskDto> syncedTasks,
         JsonElement nextTemplateState,
         EventEnvelopeDto evt,
-        CancellationToken ct)
+        CancellationToken ct,
+        WorkerDispatchIntent? dispatch = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(trackId);
         ArgumentNullException.ThrowIfNull(report);
@@ -815,6 +816,15 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                         cancellationToken: innerCt)).ConfigureAwait(false);
 
                 await InsertEventInternalAsync(conn, tx, evt, innerCt).ConfigureAwait(false);
+                if (dispatch is not null)
+                {
+                    var dispatched = syncedTasks.Single(task => task.TaskKey == dispatch.TaskKey);
+                    await conn.ExecuteAsync(new CommandDefinition("""
+                        INSERT INTO creation_receipts (author_id, operation, scope_id, request_key, request_hash, resource_id, created_at_ms)
+                        VALUES (@AuthorId, 'worker-dispatch', @TrackId, @RequestKey, @RequestHash, @TaskId, @Now);
+                        """, new { dispatch.AuthorId, dispatch.TrackId, dispatch.RequestKey, dispatch.RequestHash, TaskId = dispatched.Id, Now = nowMs },
+                        tx, cancellationToken: innerCt)).ConfigureAwait(false);
+                }
             },
             ct);
     }
@@ -850,7 +860,9 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
         TaskAttemptDto? attempt,
         JsonElement? nextTemplateState,
         EventEnvelopeDto? evt,
-        CancellationToken ct)
+        CancellationToken ct,
+        AgentSessionDto? session = null,
+        EventEnvelopeDto? sessionEvent = null)
     {
         ArgumentNullException.ThrowIfNull(task);
         EnsureInitialized();
@@ -867,6 +879,10 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
             async (conn, tx, innerCt) =>
             {
                 await UpsertTaskInternalAsync(conn, tx, task, innerCt).ConfigureAwait(false);
+                if (session is not null)
+                    await UpsertSessionInternalAsync(conn, tx, session, innerCt).ConfigureAwait(false);
+                if (sessionEvent is not null)
+                    await InsertEventInternalAsync(conn, tx, sessionEvent, innerCt).ConfigureAwait(false);
 
                 if (attempt is not null)
                 {
@@ -908,6 +924,12 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                             },
                             transaction: tx,
                             cancellationToken: innerCt)).ConfigureAwait(false);
+
+                    if (attempt.FinishedAtMs is not null)
+                        await conn.ExecuteAsync(new CommandDefinition("""
+                            UPDATE worker_messages SET delivery = 'interrupted'
+                            WHERE attempt_id = @AttemptId AND delivery = 'queued';
+                            """, new { attempt.AttemptId }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
                 }
 
                 if (nextTemplateStateJson is not null)
@@ -1765,6 +1787,13 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                 await conn.ExecuteAsync(
                     new CommandDefinition(
                         """
+                        UPDATE tasks AS t
+                        SET status = CASE WHEN LOWER(a.status) = 'running' AND a.workspace_lease_json IS NULL AND a.session_id IS NULL THEN 'pending' ELSE 'failed' END,
+                            status_detail = CASE WHEN LOWER(a.status) = 'running' AND a.workspace_lease_json IS NULL AND a.session_id IS NULL THEN NULL ELSE 'The host stopped during this attempt.' END,
+                            updated_at_ms = @NowMs
+                        FROM task_attempts a
+                        WHERE a.attempt_id = t.latest_attempt_id AND a.task_id = t.id
+                          AND t.status IN ('running', 'verifying') AND LOWER(a.status) IN ('running', 'verifying', 'interrupted');
                         UPDATE task_attempts
                         SET status = 'interrupted',
                             finished_at_ms = COALESCE(finished_at_ms, @NowMs)

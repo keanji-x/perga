@@ -6,6 +6,7 @@ using Perga.AgentKit;
 using Perga.Contracts;
 using Perga.Kernel.Events;
 using Perga.Kernel.Internal;
+using Perga.Kernel.Mcp;
 using Perga.Kernel.Ports;
 using Perga.Kernel.Tasks;
 using Perga.Kernel.Templates;
@@ -110,9 +111,11 @@ public sealed partial class TrackActor : IAsyncDisposable
     public long LastActivityAtMs => Volatile.Read(ref _lastActivityAtMs);
 
     private int _queuedMailWakes;
+    private int _activeAttemptCount;
 
     public bool HasActiveWork =>
         Volatile.Read(ref _queuedMailWakes) > 0 ||
+        Volatile.Read(ref _activeAttemptCount) > 0 ||
         Volatile.Read(ref _queuedMailboxOps) > 0 ||
         Volatile.Read(ref _inFlightExternalOps) > 0 ||
         !_backgroundJobs.IsEmpty;
@@ -345,6 +348,7 @@ public sealed partial class TrackActor : IAsyncDisposable
 
             if (_deletingTrack)
                 throw KernelException.Conflict("This Track is already being deleted.");
+            RequireAttemptsOutsideVerification(_activeAttempts.Values);
             ct.ThrowIfCancellationRequested();
             _deletingTrack = true;
             reserve();
@@ -526,7 +530,8 @@ public sealed partial class TrackActor : IAsyncDisposable
         EditActorKind? actorKind,
         string? callerSessionId,
         Func<ReportDocument, ReportCommitRequest> buildOps,
-        CancellationToken ct)
+        CancellationToken ct,
+        WorkerDispatchIntent? dispatch = null)
     {
         Interlocked.Increment(ref _inFlightExternalOps);
         try
@@ -534,6 +539,9 @@ public sealed partial class TrackActor : IAsyncDisposable
             var phase1 = await EnqueueAsync<(ReportReadResult? Completed, PendingAskSuspension? Ask, ReportCommitRequest EffectiveRequest)>(async _ =>
             {
                 await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
+
+                if (dispatch is not null && await TryReplayWorkerDispatchCoreAsync(dispatch, callerSessionId, ct).ConfigureAwait(false) is { } replay)
+                    return (replay, null, null!);
 
                 var (editorRole, boundAttemptId) = ResolveEditorIdentityCore(actorKind, callerSessionId);
                 var effectiveReq = buildOps(_report);
@@ -574,7 +582,7 @@ public sealed partial class TrackActor : IAsyncDisposable
                     preview,
                     callerSessionId,
                     effectiveReq.CommitMessage ?? $"Report commit ({editorRole})",
-                    ct).ConfigureAwait(false);
+                    ct, dispatch).ConfigureAwait(false);
                 return (result, null, effectiveReq);
             }, ct).ConfigureAwait(false);
 
@@ -597,6 +605,8 @@ public sealed partial class TrackActor : IAsyncDisposable
 
             return await EnqueueAsync(async _ =>
             {
+                if (dispatch is not null && await TryReplayWorkerDispatchCoreAsync(dispatch, callerSessionId, ct).ConfigureAwait(false) is { } replay)
+                    return replay;
                 var (editorRole, boundAttemptId) = ResolveEditorIdentityCore(actorKind, callerSessionId);
                 TaskBlockSynchronizer.ValidatePreCommitBoundAttemptFence(boundAttemptId, _report, phase1.EffectiveRequest.Ops);
                 var verifiedCommit = _reportEngine.ApplyCommit(
@@ -614,7 +624,7 @@ public sealed partial class TrackActor : IAsyncDisposable
                     verifiedCommit,
                     callerSessionId,
                     phase1.EffectiveRequest.CommitMessage ?? $"Report commit ({editorRole}, human-approved)",
-                    ct).ConfigureAwait(false);
+                    ct, dispatch).ConfigureAwait(false);
             }, ct).ConfigureAwait(false);
         }
         finally
@@ -708,6 +718,9 @@ public sealed partial class TrackActor : IAsyncDisposable
                 nextModel = existing.Model;
             }
 
+            if (existing.BoundAttemptId is not null && (req.Provider is not null || req.Model is not null || req.ClearModel))
+                throw KernelException.InvalidArgument("Worker configuration uses the attempt settings endpoint.");
+
             var providerChanged = !string.Equals(nextProvider, existing.Provider, StringComparison.Ordinal);
             var modelChanged = !string.Equals(nextModel, existing.Model, StringComparison.Ordinal);
 
@@ -750,12 +763,16 @@ public sealed partial class TrackActor : IAsyncDisposable
         }, ct);
     }
 
-    public Task<SessionItemsPageDto> GetSessionItemsAsync(string sessionId, long afterId = 0, int limit = 100, CancellationToken ct = default, bool latest = false, long? beforeId = null)
+    public Task<SessionItemsPageDto> GetSessionItemsAsync(string sessionId, long afterId = 0, int limit = 100, CancellationToken ct = default,
+        bool latest = false, long? beforeId = null, string? callerSessionId = null, string? activityTurnId = null, long? afterSequence = null)
     {
         return EnqueueAsync(async _ =>
         {
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
+            RequireWorkerOperatorCore(callerSessionId);
             var session = RequireSessionCore(sessionId);
+            if (callerSessionId is not null && session.BoundAttemptId is null)
+                throw KernelException.Forbidden("This tool reads Worker sessions on the current Track.");
             var (items, hasMoreBefore) = await _store
                 .ListSessionItemsPageAsync(sessionId, afterId, limit, ct, latest, beforeId)
                 .ConfigureAwait(false);
@@ -763,9 +780,10 @@ public sealed partial class TrackActor : IAsyncDisposable
             var unknown = session.Status == "unknown"
                 ? await _store.SessionInputs.FindUnresolvedAsync(sessionId, ct).ConfigureAwait(false)
                 : null;
+            var worker = await ReadWorkerActivityCoreAsync(session, running, activityTurnId, afterSequence, ct).ConfigureAwait(false);
             return new SessionItemsPageDto(items.Select(item => WithMessageStatus(item, running)).ToArray(),
                 activeTurn, session, unknown?.Receipt, hasMoreBefore,
-                ReadQueuedMessagesCore(sessionId), running?.CanSteerQueuedMessages == true, ReadQueueHandoffsCore(sessionId));
+                ReadQueuedMessagesCore(sessionId), running?.CanSteerQueuedMessages == true, ReadQueueHandoffsCore(sessionId), worker);
         }, ct);
     }
 
@@ -854,15 +872,9 @@ public sealed partial class TrackActor : IAsyncDisposable
 
             if (_activeTurns.TryGetValue(sessionId, out var active))
             {
-                active.Interrupted = true;
-                try
-                {
-                    await active.AgentSession.CancelTurnAsync(ct).ConfigureAwait(false);
-                }
-                finally
-                {
-                    active.TurnCts.Cancel();
-                }
+                if (session.BoundAttemptId is not null)
+                    throw KernelException.InvalidArgument("Worker interruption requires attemptId and turnId.");
+                await InterruptActiveTurnCoreAsync(active, ct).ConfigureAwait(false);
             }
             else if (session.Status == "queued")
             {
@@ -1006,6 +1018,8 @@ public sealed partial class TrackActor : IAsyncDisposable
             }
 
             var task = RequireTaskCore(taskKeyOrId);
+            if (task.LatestAttemptId is { } latestAttempt && _activeAttempts.ContainsKey(latestAttempt))
+                throw KernelException.Conflict("Wait for the current attempt to finish before rejecting or requeuing the task.");
             var effectiveNote = string.IsNullOrWhiteSpace(note) ? "Rejected by user." : note.Trim();
 
             var now = NowMs();
@@ -1033,7 +1047,7 @@ public sealed partial class TrackActor : IAsyncDisposable
     public async Task<TaskDto> CompleteAttemptDoneAsync(
         string callerSessionId,
         JsonElement? workerResult = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default, WorkerCompletionOrigin? origin = null)
     {
         var attemptId = await EnqueueAsync(async _ =>
         {
@@ -1042,14 +1056,14 @@ public sealed partial class TrackActor : IAsyncDisposable
             return caller.BoundAttemptId!;
         }, ct).ConfigureAwait(false);
 
-        return await CompleteAttemptDoneByAttemptIdAsync(attemptId, workerResult, ct).ConfigureAwait(false);
+        return await CompleteAttemptDoneByAttemptIdAsync(attemptId, workerResult, ct, origin).ConfigureAwait(false);
     }
 
     public async Task<TaskDto> CompleteAttemptFailAsync(
         string callerSessionId,
         string reason,
         JsonElement? workerResult = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default, WorkerCompletionOrigin? origin = null)
     {
         var attemptId = await EnqueueAsync(async _ =>
         {
@@ -1058,7 +1072,7 @@ public sealed partial class TrackActor : IAsyncDisposable
             return caller.BoundAttemptId!;
         }, ct).ConfigureAwait(false);
 
-        return await CompleteAttemptFailByAttemptIdAsync(attemptId, reason, workerResult, ct).ConfigureAwait(false);
+        return await CompleteAttemptFailByAttemptIdAsync(attemptId, reason, workerResult, ct, origin).ConfigureAwait(false);
     }
 
     // ------------------- Asks, Mail, Terminals, GuardToolCall & Schedules -------------------
@@ -1500,6 +1514,9 @@ public sealed partial class TrackActor : IAsyncDisposable
                         $"MCP plugin '{mcpServer}' is not enabled on track '{TrackId}'.");
                 }
 
+                if (mcpServer == "perga" && KernelMcpCatalog.IsWorkerOperatorOnly(toolName))
+                    RequireWorkerOperatorCore(caller.Id);
+
                 if (_policy is null)
                 {
                     return null;
@@ -1728,7 +1745,8 @@ public sealed partial class TrackActor : IAsyncDisposable
         ReportCommitResult commitResult,
         string? authorSessionId,
         string commitMessage,
-        CancellationToken ct)
+        CancellationToken ct,
+        WorkerDispatchIntent? dispatch = null)
     {
         var now = NowMs();
         var requireGate = _policy?.Manifest.RequireGateForReadWrite ?? false;
@@ -1739,14 +1757,19 @@ public sealed partial class TrackActor : IAsyncDisposable
             requireGate,
             now);
 
+        RequireAttemptsOutsideVerification(_activeAttempts.Values.Where(attempt =>
+            syncOutcome.SupersededOrRemovedActiveTaskIds.Contains(attempt.TaskId)));
         foreach (var supersededTaskId in syncOutcome.SupersededOrRemovedActiveTaskIds)
         {
             var active = _activeAttempts.Values.FirstOrDefault(a =>
                 string.Equals(a.TaskId, supersededTaskId, StringComparison.Ordinal));
             if (active is not null)
             {
-                await CancelAndDiscardActiveAttemptCoreAsync(active, "Task contract superseded or removed in report.", now, ct)
-                    .ConfigureAwait(false);
+                const string reason = "Task contract superseded or removed in report.";
+                var canceled = await CancelAndDiscardActiveAttemptCoreAsync(active, reason, now, ct).ConfigureAwait(false);
+                var superseded = RequireTaskCore(active.TaskId) with { Status = TaskRunStatus.Canceled, StatusDetail = reason, UpdatedAtMs = now };
+                await PersistAndEmitTaskUpdatedCoreAsync(superseded, canceled, null, now, ct).ConfigureAwait(false);
+                ReplaceTaskInMemoryCore(superseded);
             }
         }
 
@@ -1775,12 +1798,13 @@ public sealed partial class TrackActor : IAsyncDisposable
             syncOutcome.SyncedTasks,
             _track.TemplateState,
             reportEvt,
-            ct).ConfigureAwait(false);
-        await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, reportEvt, ct).ConfigureAwait(false);
+            ct, dispatch).ConfigureAwait(false);
 
         _report = commitResult.NextDocument;
         _tasks.Clear();
         _tasks.AddRange(syncOutcome.SyncedTasks);
+        var committedCt = _actorShutdownCts.Token;
+        await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, reportEvt, committedCt).ConfigureAwait(false);
 
         var taskEvt = new EventEnvelopeDto(
             EventId: null,
@@ -1789,10 +1813,10 @@ public sealed partial class TrackActor : IAsyncDisposable
             Kind: KernelEventKinds.TaskUpdated,
             Payload: JsonHelpers.ToElement(new { tasks = _tasks }),
             CreatedAtMs: now);
-        await _store.AppendEventAsync(taskEvt, ct).ConfigureAwait(false);
-        await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, taskEvt, ct).ConfigureAwait(false);
+        await _store.AppendEventAsync(taskEvt, committedCt).ConfigureAwait(false);
+        await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, taskEvt, committedCt).ConfigureAwait(false);
 
-        await ScheduleEligibleTasksCoreAsync(ct).ConfigureAwait(false);
+        await ScheduleEligibleTasksCoreAsync(committedCt).ConfigureAwait(false);
 
         var rendered = _reportEngine.RenderMarkdown(_report, withMarkers: true);
         var knownRevs = _report.Blocks.ToDictionary(b => b.Id, b => b.Rev, StringComparer.Ordinal);
@@ -1824,15 +1848,20 @@ public sealed partial class TrackActor : IAsyncDisposable
 
         var mounted = await EnsureWorkspaceMountedCoreAsync(ct).ConfigureAwait(false);
         var driver = _workspaceDrivers.GetRequired(_track.WorkspaceDriver);
-        var schedulable = TaskGraphScheduler.ComputeSchedulable(_tasks, driver.SupportsParallelIsolatedWriteLeases);
-
-        foreach (var task in schedulable)
+        bool preparationFailed;
+        do
         {
-            await StartTaskAttemptCoreAsync(task, driver, mounted, ct).ConfigureAwait(false);
-        }
+            preparationFailed = false;
+            var schedulable = TaskGraphScheduler.ComputeSchedulable(_tasks, driver.SupportsParallelIsolatedWriteLeases);
+            foreach (var task in schedulable)
+            {
+                if (!await StartTaskAttemptCoreAsync(task, driver, mounted, ct).ConfigureAwait(false))
+                    preparationFailed = true;
+            }
+        } while (preparationFailed);
     }
 
-    private async Task StartTaskAttemptCoreAsync(
+    private async Task<bool> StartTaskAttemptCoreAsync(
         TaskDto task,
         IWorkspaceDriver driver,
         MountedWorkspace mounted,
@@ -1840,88 +1869,82 @@ public sealed partial class TrackActor : IAsyncDisposable
     {
         var now = NowMs();
         var attemptId = $"att_{Guid.NewGuid():N}";
-        var lease = await driver.AcquireAttemptLeaseAsync(
-            mounted,
-            attemptId,
-            readWrite: task.Access == AccessMode.ReadWrite,
-            ct).ConfigureAwait(false);
-        var leaseJson = JsonHelpers.ToElement(lease);
-        var attemptCts = CancellationTokenSource.CreateLinkedTokenSource(_actorShutdownCts.Token);
-
         var isCommandTask = string.Equals(task.Kind, "command", StringComparison.OrdinalIgnoreCase) ||
                             string.Equals(task.Kind, "cmd", StringComparison.OrdinalIgnoreCase) ||
                             string.Equals(task.Kind, "shell", StringComparison.OrdinalIgnoreCase) ||
                             string.Equals(task.Kind, "terminal", StringComparison.OrdinalIgnoreCase);
+        var subagent = isCommandTask ? null : new AgentSessionDto(
+            Id: $"ses_{Guid.NewGuid():N}",
+            TrackId: TrackId,
+            IsLead: false,
+            BoundTaskId: task.Id,
+            BoundAttemptId: attemptId,
+            Title: $"Task: {task.TaskKey}",
+            Provider: string.IsNullOrWhiteSpace(task.Provider) ? GetDefaultProviderCore() : task.Provider!,
+            Model: ResolveTaskWorkerModelCore(task),
+            NativeThreadId: null,
+            Epoch: 1,
+            Status: "idle",
+            ContextUsageRatio: 0.0,
+            ArchivedAtMs: null,
+            CreatedAtMs: now,
+            UpdatedAtMs: now);
 
-        string? subagentSessionId = null;
-        if (!isCommandTask)
+        var runningTask = task with { Status = TaskRunStatus.Running, StatusDetail = "Allocating workspace.",
+            LatestAttemptId = attemptId, UpdatedAtMs = now };
+        var reservation = new TaskAttemptDto(attemptId, task.Id, TrackId, null, "running", null,
+            JsonHelpers.EmptyObject, null, null, now, null);
+
+        await _store.UpsertTaskAndAttemptAsync(runningTask, reservation, null, null, ct).ConfigureAwait(false);
+        ReplaceTaskInMemoryCore(runningTask);
+        AttemptWorkspaceLease? lease = null;
+        TaskAttemptDto attempt;
+        var sessionEvent = subagent is null ? null : SessionUpdatedEvent(subagent);
+        try
         {
-            subagentSessionId = $"ses_{Guid.NewGuid():N}";
-            var subagent = new AgentSessionDto(
-                Id: subagentSessionId,
-                TrackId: TrackId,
-                IsLead: false,
-                BoundTaskId: task.Id,
-                BoundAttemptId: attemptId,
-                Title: $"Task: {task.TaskKey}",
-                Provider: string.IsNullOrWhiteSpace(task.Provider) ? GetDefaultProviderCore() : task.Provider!,
-                Model: GetDefaultModelCore(),
-                NativeThreadId: null,
-                Epoch: 1,
-                Status: "idle",
-                ContextUsageRatio: 0.0,
-                ArchivedAtMs: null,
-                CreatedAtMs: now,
-                UpdatedAtMs: now);
+            lease = await driver.AcquireAttemptLeaseAsync(mounted, attemptId, task.Access == AccessMode.ReadWrite, ct)
+                .ConfigureAwait(false);
+            attempt = reservation with { SessionId = subagent?.Id, WorkspaceLease = JsonHelpers.ToElement(lease) };
+            runningTask = runningTask with { StatusDetail = null };
+            var taskEvent = new EventEnvelopeDto(null, _track.AreaId, TrackId, KernelEventKinds.TaskUpdated,
+                JsonHelpers.ToElement(new { task = runningTask, attempt }), now);
+            await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
+            await _store.UpsertTaskAndAttemptAsync(runningTask, attempt, null, taskEvent, ct, subagent, sessionEvent).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            if (lease is not null)
+                await driver.SettleAttemptLeaseAsync(lease, AttemptLeaseDisposition.Discard, CancellationToken.None).ConfigureAwait(false);
+            var failed = runningTask with { Status = TaskRunStatus.Failed, StatusDetail = ex.Message, UpdatedAtMs = NowMs() };
+            await PersistAndEmitTaskUpdatedCoreAsync(failed, reservation with { Status = "failed", FinishedAtMs = failed.UpdatedAtMs },
+                null, failed.UpdatedAtMs, CancellationToken.None).ConfigureAwait(false);
+            ReplaceTaskInMemoryCore(failed);
+            return false;
+        }
 
+        ReplaceTaskInMemoryCore(runningTask);
+        if (subagent is not null)
+        {
             _sessions[subagent.Id] = subagent;
             _nextTurnIndexBySession[subagent.Id] = 0;
-            await PersistAndEmitSessionUpdatedCoreAsync(subagent, now, ct).ConfigureAwait(false);
         }
 
-        var runningTask = task with
-        {
-            Status = TaskRunStatus.Running,
-            StatusDetail = null,
-            LatestAttemptId = attemptId,
-            UpdatedAtMs = now
-        };
-        ReplaceTaskInMemoryCore(runningTask);
-
-        var attemptDto = new TaskAttemptDto(
-            AttemptId: attemptId,
-            TaskId: task.Id,
-            TrackId: TrackId,
-            SessionId: subagentSessionId,
-            Status: "running",
-            WorkerResult: null,
-            Meta: JsonHelpers.EmptyObject,
-            WorkspaceLease: leaseJson,
-            GateVerdict: null,
-            StartedAtMs: now,
-            FinishedAtMs: null);
-
-        _activeAttempts[attemptId] = new ActiveAttemptState(
-            attemptId,
-            task.Id,
-            subagentSessionId,
-            driver,
-            lease,
-            attemptDto,
-            attemptCts);
-
-        await PersistAndEmitTaskUpdatedCoreAsync(runningTask, attemptDto, nextTemplateState: null, now, ct)
-            .ConfigureAwait(false);
-
-        if (isCommandTask)
-        {
-            _ = TrackBackgroundJob(() => RunCommandTaskAttemptInBackgroundAsync(attemptId, runningTask, lease, attemptCts.Token));
-        }
+        var attemptCts = CancellationTokenSource.CreateLinkedTokenSource(_actorShutdownCts.Token);
+        _activeAttempts[attemptId] = new ActiveAttemptState(attemptId, task.Id, subagent?.Id, driver, lease, attempt, attemptCts);
+        Volatile.Write(ref _activeAttemptCount, _activeAttempts.Count);
+        var attemptToken = attemptCts.Token;
+        if (subagent is null)
+            _ = TrackBackgroundJob(() => RunCommandTaskAttemptInBackgroundAsync(attemptId, runningTask, lease, attemptToken));
         else
         {
             var prompt = BuildContractSubagentPrompt(runningTask);
-            _ = TrackBackgroundJob(() => RunSubagentTaskAttemptInBackgroundAsync(attemptId, subagentSessionId!, prompt, attemptCts.Token));
+            _ = TrackBackgroundJob(() => RunSubagentTaskAttemptInBackgroundAsync(attemptId, subagent.Id, prompt, attemptToken));
         }
+
+        var evt = sessionEvent ?? new EventEnvelopeDto(null, _track.AreaId, TrackId, KernelEventKinds.TaskUpdated,
+            JsonHelpers.ToElement(new { task = runningTask, attempt }), now);
+        await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, evt, CancellationToken.None).ConfigureAwait(false);
+        return true;
     }
 
     private async Task RunCommandTaskAttemptInBackgroundAsync(
@@ -2018,19 +2041,22 @@ public sealed partial class TrackActor : IAsyncDisposable
     private async Task<TaskDto> CompleteAttemptDoneByAttemptIdAsync(
         string attemptId,
         JsonElement? workerResult,
-        CancellationToken ct)
+        CancellationToken ct, WorkerCompletionOrigin? origin = null)
     {
         Interlocked.Increment(ref _inFlightExternalOps);
         try
         {
+            var verificationToken = _actorShutdownCts.Token;
             var prep = await EnqueueAsync<(TaskDto Task, ActiveAttemptState Active, string? AfterWorkerDoneCmd)>(async _ =>
             {
-                await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
+                await EnsureHydratedCoreAsync(verificationToken).ConfigureAwait(false);
+                ct.ThrowIfCancellationRequested();
                 if (!_activeAttempts.TryGetValue(attemptId, out var active))
                 {
                     throw KernelException.Conflict($"Attempt '{attemptId}' is not active on track '{TrackId}'.");
                 }
 
+                CheckWorkerCompletionCore(active, origin);
                 var task = RequireTaskCore(active.TaskId);
                 var now = NowMs();
                 var clonedWorkerResult = workerResult?.Clone();
@@ -2045,92 +2071,104 @@ public sealed partial class TrackActor : IAsyncDisposable
                 };
                 active.AttemptDto = verifyingAttempt;
 
-                await PersistAndEmitTaskUpdatedCoreAsync(verifyingTask, verifyingAttempt, nextTemplateState: null, now, ct)
+                await PersistAndEmitTaskUpdatedCoreAsync(verifyingTask, verifyingAttempt, nextTemplateState: null, now, verificationToken)
                     .ConfigureAwait(false);
 
                 return (verifyingTask, active, _policy?.Manifest.AfterWorkerDoneCmd);
-            }, ct).ConfigureAwait(false);
+            }, verificationToken).ConfigureAwait(false);
 
-            // 1. Run AfterWorkerDoneCmd (if non-empty) in lease.EffectiveCwd and merge last valid JSON stdout line into attempt.Meta.
             var mergedMeta = prep.Active.AttemptDto.Meta;
-            if (!string.IsNullOrWhiteSpace(prep.AfterWorkerDoneCmd))
-            {
-                var hookResult = await _commandRunner.RunAsync(
-                    new ShellCommandRequest(
-                        prep.AfterWorkerDoneCmd!,
-                        prep.Active.Lease.EffectiveCwd,
-                        TimeSpan.FromSeconds(_options.DefaultHookTimeoutSecs)),
-                    ct).ConfigureAwait(false);
-
-                mergedMeta = JsonHelpers.MergeLastValidJsonLine(mergedMeta, hookResult.Stdout);
-            }
-
-            // 2. Run GateSpecDto steps in lease.EffectiveCwd.
             var gatePassed = true;
             string? failedStepReason = null;
             JsonElement? gateVerdict = null;
 
-            if (prep.Task.Gate is { Steps.Count: > 0 } gateSpec)
+            try
             {
-                var stepRecords = new List<object>(gateSpec.Steps.Count);
-                var stepTimeout = TimeSpan.FromSeconds(Math.Max(1, gateSpec.TimeoutSecs));
-
-                foreach (var step in gateSpec.Steps)
+                // 1. Run AfterWorkerDoneCmd (if non-empty) in lease.EffectiveCwd and merge last valid JSON stdout line into attempt.Meta.
+                if (!string.IsNullOrWhiteSpace(prep.AfterWorkerDoneCmd))
                 {
-                    var res = await _commandRunner.RunAsync(
-                        new ShellCommandRequest(step.Cmd, prep.Active.Lease.EffectiveCwd, stepTimeout),
-                        ct).ConfigureAwait(false);
+                    var hookResult = await _commandRunner.RunAsync(
+                        new ShellCommandRequest(
+                            prep.AfterWorkerDoneCmd!,
+                            prep.Active.Lease.EffectiveCwd,
+                            TimeSpan.FromSeconds(_options.DefaultHookTimeoutSecs)),
+                        verificationToken).ConfigureAwait(false);
 
-                    var stepPassed = res.ExitCode == 0 && !res.TimedOut;
-                    var combinedOut = string.IsNullOrEmpty(res.Stderr)
-                        ? res.Stdout
-                        : string.IsNullOrEmpty(res.Stdout)
-                            ? res.Stderr
-                            : $"{res.Stdout}\n{res.Stderr}";
-                    var outputTail = combinedOut.Length <= 4096
-                        ? combinedOut
-                        : combinedOut[^4096..];
-
-                    stepRecords.Add(new
-                    {
-                        name = step.Name,
-                        cmd = step.Cmd,
-                        passed = stepPassed,
-                        exitCode = res.ExitCode,
-                        stdout = res.Stdout,
-                        stderr = res.Stderr,
-                        outputTail,
-                        timedOut = res.TimedOut,
-                        durationMs = res.DurationMs
-                    });
-
-                    if (!stepPassed)
-                    {
-                        gatePassed = false;
-                        failedStepReason = res.TimedOut
-                            ? $"Gate step '{step.Name}' timed out."
-                            : $"Gate step '{step.Name}' exited with code {res.ExitCode}.";
-                        break;
-                    }
+                    mergedMeta = JsonHelpers.MergeLastValidJsonLine(mergedMeta, hookResult.Stdout);
                 }
 
-                gateVerdict = JsonHelpers.ToElement(new
+                // 2. Run GateSpecDto steps in lease.EffectiveCwd.
+
+                if (prep.Task.Gate is { Steps.Count: > 0 } gateSpec)
                 {
-                    v = 1,
-                    passed = gatePassed,
-                    failedReason = failedStepReason,
-                    steps = stepRecords
-                });
+                    var stepRecords = new List<object>(gateSpec.Steps.Count);
+                    var stepTimeout = TimeSpan.FromSeconds(Math.Max(1, gateSpec.TimeoutSecs));
+
+                    foreach (var step in gateSpec.Steps)
+                    {
+                        var res = await _commandRunner.RunAsync(
+                            new ShellCommandRequest(step.Cmd, prep.Active.Lease.EffectiveCwd, stepTimeout),
+                            verificationToken).ConfigureAwait(false);
+
+                        var stepPassed = res.ExitCode == 0 && !res.TimedOut;
+                        var combinedOut = string.IsNullOrEmpty(res.Stderr)
+                            ? res.Stdout
+                            : string.IsNullOrEmpty(res.Stdout)
+                                ? res.Stderr
+                                : $"{res.Stdout}\n{res.Stderr}";
+                        var outputTail = combinedOut.Length <= 4096
+                            ? combinedOut
+                            : combinedOut[^4096..];
+
+                        stepRecords.Add(new
+                        {
+                            name = step.Name,
+                            cmd = step.Cmd,
+                            passed = stepPassed,
+                            exitCode = res.ExitCode,
+                            stdout = res.Stdout,
+                            stderr = res.Stderr,
+                            outputTail,
+                            timedOut = res.TimedOut,
+                            durationMs = res.DurationMs
+                        });
+
+                        if (!stepPassed)
+                        {
+                            gatePassed = false;
+                            failedStepReason = res.TimedOut
+                                ? $"Gate step '{step.Name}' timed out."
+                                : $"Gate step '{step.Name}' exited with code {res.ExitCode}.";
+                            break;
+                        }
+                    }
+
+                    gateVerdict = JsonHelpers.ToElement(new
+                    {
+                        v = 1,
+                        passed = gatePassed,
+                        failedReason = failedStepReason,
+                        steps = stepRecords
+                    });
+                }
+            }
+            catch (Exception ex) when (!verificationToken.IsCancellationRequested)
+            {
+                gatePassed = false;
+                failedStepReason = $"Verification could not finish: {ex.Message}";
+                gateVerdict = JsonHelpers.ToElement(new { v = 1, passed = false, failedReason = failedStepReason });
             }
 
-            // 3. Settle workspace lease: Promote on pass, Discard on fail!
             var disposition = gatePassed ? AttemptLeaseDisposition.Promote : AttemptLeaseDisposition.Discard;
-            await prep.Active.Driver.SettleAttemptLeaseAsync(prep.Active.Lease, disposition, ct).ConfigureAwait(false);
 
-            // 4. Finalize inside actor: OnTaskSettled, persist TaskDto & TaskAttemptDto, schedule unlocked dependents, wake Lead!
             var (finalTask, wakePrompt) = await EnqueueAsync<(TaskDto FinalTask, string WakePrompt)>(async _ =>
             {
+                if (!_activeAttempts.TryGetValue(attemptId, out var current) || !ReferenceEquals(current, prep.Active) ||
+                    !string.Equals(current.AttemptDto.Status, "verifying", StringComparison.OrdinalIgnoreCase))
+                    throw KernelException.Conflict("The attempt ended while its gate was running.");
+                await current.Driver.SettleAttemptLeaseAsync(current.Lease, disposition, verificationToken).ConfigureAwait(false);
                 _activeAttempts.Remove(attemptId);
+                Volatile.Write(ref _activeAttemptCount, _activeAttempts.Count);
                 var currentTask = RequireTaskCore(prep.Task.Id);
                 var now = NowMs();
 
@@ -2171,10 +2209,10 @@ public sealed partial class TrackActor : IAsyncDisposable
                     FinishedAtMs = now
                 };
 
-                await PersistAndEmitTaskUpdatedCoreAsync(settledTask, settledAttempt, nextTemplateState, now, ct)
+                await PersistAndEmitTaskUpdatedCoreAsync(settledTask, settledAttempt, nextTemplateState, now, verificationToken)
                     .ConfigureAwait(false);
 
-                await ScheduleEligibleTasksCoreAsync(ct).ConfigureAwait(false);
+                await ScheduleEligibleTasksCoreAsync(verificationToken).ConfigureAwait(false);
 
                 var summarySb = new StringBuilder();
                 summarySb.Append($"Task '{settledTask.TaskKey}' (attempt '{attemptId}') settled as {settledTask.Status}.");
@@ -2189,9 +2227,9 @@ public sealed partial class TrackActor : IAsyncDisposable
                 }
 
                 return (settledTask, summarySb.ToString());
-            }, ct).ConfigureAwait(false);
+            }, verificationToken).ConfigureAwait(false);
 
-            await WakeLeadAsync("wake", wakePrompt, ct).ConfigureAwait(false);
+            await WakeLeadAsync("wake", wakePrompt, verificationToken).ConfigureAwait(false);
             return finalTask;
         }
         finally
@@ -2204,7 +2242,7 @@ public sealed partial class TrackActor : IAsyncDisposable
         string attemptId,
         string reason,
         JsonElement? workerResult,
-        CancellationToken ct)
+        CancellationToken ct, WorkerCompletionOrigin? origin = null)
     {
         Interlocked.Increment(ref _inFlightExternalOps);
         try
@@ -2217,15 +2255,18 @@ public sealed partial class TrackActor : IAsyncDisposable
                     throw KernelException.Conflict($"Attempt '{attemptId}' is not active on track '{TrackId}'.");
                 }
 
+                CheckWorkerCompletionCore(state, origin);
+                state.Settling = true;
                 return state;
             }, ct).ConfigureAwait(false);
 
-            await active.Driver.SettleAttemptLeaseAsync(active.Lease, AttemptLeaseDisposition.Discard, ct)
-                .ConfigureAwait(false);
-
             var (failedTask, wakePrompt) = await EnqueueAsync<(TaskDto FailedTask, string WakePrompt)>(async _ =>
             {
+                if (!_activeAttempts.TryGetValue(attemptId, out var current) || !ReferenceEquals(current, active))
+                    throw KernelException.Conflict("The attempt already ended.");
+                await active.Driver.SettleAttemptLeaseAsync(active.Lease, AttemptLeaseDisposition.Discard, ct).ConfigureAwait(false);
                 _activeAttempts.Remove(attemptId);
+                Volatile.Write(ref _activeAttemptCount, _activeAttempts.Count);
                 var currentTask = RequireTaskCore(active.TaskId);
                 var now = NowMs();
                 var clonedWorkerResult = workerResult?.Clone();
@@ -2291,7 +2332,7 @@ public sealed partial class TrackActor : IAsyncDisposable
         string prompt,
         CancellationToken ct,
         PersistedSessionInput? input = null, Guid? wakeReservation = null, string? mailId = null,
-        string? wakeInputId = null, QueuedMessage? queuedMessage = null)
+        string? wakeInputId = null, QueuedMessage? queuedMessage = null, WorkerMessage? workerInput = null)
     {
         if (input is null)
             await WaitForWorkspacePreparationAsync(ct).ConfigureAwait(false);
@@ -2305,7 +2346,7 @@ public sealed partial class TrackActor : IAsyncDisposable
             {
                 await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
                 var s = RequireSessionCore(sessionId);
-                return s.ContextUsageRatio >= _options.AutoCompactionThreshold;
+                return s.BoundAttemptId is null && s.ContextUsageRatio >= _options.AutoCompactionThreshold;
             }, ct).ConfigureAwait(false);
 
             if (needsPreCompact)
@@ -2324,6 +2365,8 @@ public sealed partial class TrackActor : IAsyncDisposable
                     throw KernelException.Conflict($"Session '{sessionId}' already has an active or unresolved turn.");
 
                 var effectivePrompt = prompt;
+                var workerSettings = session.BoundAttemptId is null ? null
+                    : await ReadWorkerSettingsCoreAsync(session, ct).ConfigureAwait(false);
                 var now = NowMs();
                 var turnIndex = input?.TurnIndex ?? NextTurnIndexCore(session.Id);
                 var turnId = input?.Receipt.TurnId ?? $"trn_{turnIndex:D6}_{Guid.NewGuid():N}";
@@ -2333,7 +2376,7 @@ public sealed partial class TrackActor : IAsyncDisposable
                     TurnIndex: turnIndex,
                     Epoch: input?.Epoch ?? session.Epoch,
                     TriggerKind: triggerKind,
-                    Input: input is null ? JsonHelpers.ToElement(new { prompt }) : JsonHelpers.ToElement(new { }),
+                    Input: input is null ? JsonHelpers.ToElement(new { prompt, workerSettings }) : JsonHelpers.ToElement(new { }),
                     Status: "running",
                     Usage: null,
                     ErrorText: null,
@@ -2355,6 +2398,8 @@ public sealed partial class TrackActor : IAsyncDisposable
                 IAgentSession agentSession;
                 try
                 {
+                    if (session.BoundAttemptId is { } workerAttemptId && RequireCurrentWorkerCore(sessionId, workerAttemptId).Attempt.Paused)
+                        throw KernelException.Conflict("The Worker is paused.");
                     if (input is not null || wakeInputId is not null)
                         RequireDispatchWorkspace(session);
 
@@ -2407,7 +2452,7 @@ public sealed partial class TrackActor : IAsyncDisposable
 
                 _sessions[session.Id] = runningSession;
                 var turnCts = CancellationTokenSource.CreateLinkedTokenSource(ct, _actorShutdownCts.Token);
-                var activeState = new ActiveTurnState(session.Id, turnDto, agentSession, turnCts, input is not null || recordUserAtStart);
+                var activeState = new ActiveTurnState(session.Id, turnDto, agentSession, turnCts, input is not null || recordUserAtStart) { Settings = workerSettings };
                 _activeTurns[session.Id] = activeState;
                 pendingCleanup = activeState;
                 if (wakeReservation is not null)
@@ -2470,7 +2515,8 @@ public sealed partial class TrackActor : IAsyncDisposable
             try
             {
                 await foreach (var evt in activeTurn.AgentSession
-                                   .StreamTurnAsync(new TurnInput(turnSetup.EffectivePrompt, activeTurn.TurnDto.Id), activeTurn.TurnCts.Token)
+                                   .StreamTurnAsync(new TurnInput(turnSetup.EffectivePrompt, activeTurn.TurnDto.Id,
+                                       activeTurn.Settings?.Model, activeTurn.Settings?.ReasoningEffort), activeTurn.TurnCts.Token)
                                    .ConfigureAwait(false))
                 {
                     var evtNow = NowMs();
@@ -2487,6 +2533,12 @@ public sealed partial class TrackActor : IAsyncDisposable
                     {
                         await _store.SessionInputs.MarkDeliveredAsync(input, boundThreadId,
                             (evt as UnifiedAgentEvent.TurnAccepted)?.NativeTurnId, CancellationToken.None).ConfigureAwait(false);
+                        delivered = true;
+                    }
+                    if (workerInput is not null && !delivered && confirmsDelivery)
+                    {
+                        await _store.WorkerMessages.UpdateAsync(workerInput with { ResultTurnId = activeTurn.TurnDto.Id, Delivery = "delivered" },
+                            CancellationToken.None).ConfigureAwait(false);
                         delivered = true;
                     }
                     if (confirmsDelivery && !activeTurn.ProviderAccepted)
@@ -2510,9 +2562,7 @@ public sealed partial class TrackActor : IAsyncDisposable
                         case UnifiedAgentEvent.TextDelta td:
                             await FlushThinkingChunkAsync(evtNow).ConfigureAwait(false);
                             textAccum.Append(td.Delta);
-                            _eventHub.PublishTransient(
-                                _track.AreaId,
-                                TrackId,
+                            PublishTurnActivity(activeTurn,
                                 KernelEventKinds.SessionTextDelta,
                                 JsonHelpers.ToElement(new { sessionId, turnId = activeTurn.TurnDto.Id, delta = td.Delta }),
                                 evtNow);
@@ -2520,9 +2570,7 @@ public sealed partial class TrackActor : IAsyncDisposable
 
                         case UnifiedAgentEvent.ThinkingDelta thd:
                             thinkingAccum.Append(thd.Delta);
-                            _eventHub.PublishTransient(
-                                _track.AreaId,
-                                TrackId,
+                            PublishTurnActivity(activeTurn,
                                 KernelEventKinds.SessionThinkingDelta,
                                 JsonHelpers.ToElement(new { sessionId, turnId = activeTurn.TurnDto.Id, delta = thd.Delta }),
                                 evtNow);
@@ -2530,9 +2578,7 @@ public sealed partial class TrackActor : IAsyncDisposable
 
                         case UnifiedAgentEvent.ToolCallStarted tcs:
                             await FlushThinkingChunkAsync(evtNow).ConfigureAwait(false);
-                            _eventHub.PublishTransient(
-                                _track.AreaId,
-                                TrackId,
+                            PublishTurnActivity(activeTurn,
                                 KernelEventKinds.SessionToolProgress,
                                 JsonHelpers.ToElement(new { sessionId, turnId = activeTurn.TurnDto.Id, phase = "started", callId = tcs.CallId, name = tcs.Name, args = tcs.Args }),
                                 evtNow);
@@ -2547,11 +2593,9 @@ public sealed partial class TrackActor : IAsyncDisposable
 
                         case UnifiedAgentEvent.ToolCallCompleted tcc:
                             await FlushThinkingChunkAsync(evtNow).ConfigureAwait(false);
-                            _eventHub.PublishTransient(
-                                _track.AreaId,
-                                TrackId,
+                            PublishTurnActivity(activeTurn,
                                 KernelEventKinds.SessionToolProgress,
-                                JsonHelpers.ToElement(new { sessionId, turnId = activeTurn.TurnDto.Id, phase = "completed", callId = tcc.CallId, isError = tcc.IsError }),
+                                JsonHelpers.ToElement(new { sessionId, turnId = activeTurn.TurnDto.Id, phase = "completed", callId = tcc.CallId, isError = tcc.IsError, output = activeTurn.Settings is null ? null : tcc.Output }),
                                 evtNow);
                             await RecordActivityAsync(new SessionItemDto(
                                 Id: 0,
@@ -2563,6 +2607,12 @@ public sealed partial class TrackActor : IAsyncDisposable
                             break;
 
                         case UnifiedAgentEvent.ApprovalRequested approval:
+                            if (activeTurn.Settings?.ApprovalMode == "deny")
+                            {
+                                await activeTurn.AgentSession.RespondApprovalAsync(approval.RequestId, false,
+                                    "The Worker approval mode denies this request.", activeTurn.TurnCts.Token).ConfigureAwait(false);
+                                break;
+                            }
                             var options = new[] { "Approve", "Deny" };
                             var suspension = await EnqueueAsync(async _ =>
                             {
@@ -2626,6 +2676,12 @@ public sealed partial class TrackActor : IAsyncDisposable
                 errorText = ex.Message;
             }
 
+            if (activeTurn.Interrupted && turnStatus == "completed")
+            {
+                turnStatus = "interrupted";
+                errorText = "Turn interrupted.";
+            }
+
             if (mailId is { } pendingMailId && activeTurn.Interrupted)
                 await _store.AcknowledgeMailWakeAsync(pendingMailId, CancellationToken.None).ConfigureAwait(false);
 
@@ -2637,6 +2693,9 @@ public sealed partial class TrackActor : IAsyncDisposable
 
             if (wakeInputId is not null && !recordUserAtStart && turnStatus == "failed")
                 items[0] = CreateWakeUserItem(activeTurn.TurnDto, prompt, wakeInputId, "The follow-up turn failed.");
+            if (workerInput is not null && !delivered)
+                await _store.WorkerMessages.UpdateAsync(workerInput with { ResultTurnId = activeTurn.TurnDto.Id,
+                    Delivery = turnStatus == "interrupted" ? "interrupted" : "unknown" }, CancellationToken.None).ConfigureAwait(false);
 
             var endNow = NowMs();
             if (thinkingAccum.Length > 0)
@@ -2680,6 +2739,13 @@ public sealed partial class TrackActor : IAsyncDisposable
             var finalizeOutcome = await EnqueueAsync<(SessionTurnDto CompletedTurn, bool ShouldAutoCompact)>(async _ =>
             {
                 var currentSession = RequireSessionCore(sessionId);
+                if (currentSession.BoundAttemptId is { } boundAttemptId && activeTurn.Interrupted &&
+                    _activeAttempts.TryGetValue(boundAttemptId, out var pausedAttempt) && pausedAttempt.Paused)
+                {
+                    turnStatus = "interrupted";
+                    errorText = "Turn interrupted.";
+                    await CloseInterruptedWorkerCoreAsync(activeTurn, pausedAttempt).ConfigureAwait(false);
+                }
 
                 var nextRatio = currentSession.ContextUsageRatio;
                 if (finalUsage is { ContextWindowTokens: > 0 } usage)
@@ -2716,7 +2782,7 @@ public sealed partial class TrackActor : IAsyncDisposable
                 }
 
                 _activeTurns.Remove(sessionId);
-                var autoCompact = _sessions[sessionId].Status == "idle" && turnStatus == "completed" &&
+                var autoCompact = _sessions[sessionId].BoundAttemptId is null && _sessions[sessionId].Status == "idle" && turnStatus == "completed" &&
                                   nextRatio >= _options.AutoCompactionThreshold;
 
                 return (completedTurn, autoCompact);
@@ -2734,10 +2800,11 @@ public sealed partial class TrackActor : IAsyncDisposable
                 }
             }
 
-            await EnqueueAsync(_ =>
+            await EnqueueAsync(async _ =>
             {
+                if (turnStatus == "completed")
+                    await ScheduleWorkerMessageCoreAsync(sessionId).ConfigureAwait(false);
                 SchedulePendingWakeCore(sessionId);
-                return Task.CompletedTask;
             }, CancellationToken.None).ConfigureAwait(false);
 
             return finalizeOutcome.CompletedTurn;
@@ -2814,6 +2881,8 @@ public sealed partial class TrackActor : IAsyncDisposable
             {
                 await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
                 var session = RequireSessionCore(sessionId);
+                if (session.BoundAttemptId is not null)
+                    throw KernelException.Conflict("Worker sessions do not support a manual handover turn.");
                 if (_activeTurns.ContainsKey(sessionId) || HoldsDurableSlot(session) || _compactingSessions.Contains(sessionId) ||
                     _reservedWakeSessions.ContainsKey(sessionId))
                 {
@@ -2942,6 +3011,8 @@ public sealed partial class TrackActor : IAsyncDisposable
         string? overrideSystemPrompt,
         CancellationToken ct)
     {
+        if (session.BoundAttemptId is { } attemptId && !_activeAttempts.ContainsKey(attemptId))
+            throw KernelException.Conflict("The task attempt workspace is no longer available.");
         var mounted = await EnsureWorkspaceMountedCoreAsync(ct).ConfigureAwait(false);
         var effectiveCwd = mounted.MergedCwd;
         var overlayMounts = MapOverlayLayers(mounted.ProcessOverlayLayers);
@@ -3191,13 +3262,21 @@ public sealed partial class TrackActor : IAsyncDisposable
         return new PendingAskSuspension(ask, options, tcs.Task, ShouldWakeLead: false, LeadWakePrompt: null);
     }
 
+    private static void RequireAttemptsOutsideVerification(IEnumerable<ActiveAttemptState> attempts)
+    {
+        if (attempts.Any(attempt => string.Equals(attempt.AttemptDto.Status, "verifying", StringComparison.OrdinalIgnoreCase)))
+            throw KernelException.Conflict("Wait for the current verification to finish.");
+    }
+
     private async Task<TaskAttemptDto> CancelAndDiscardActiveAttemptCoreAsync(
         ActiveAttemptState active,
         string reason,
         long now,
         CancellationToken ct)
     {
+        RequireAttemptsOutsideVerification([active]);
         _activeAttempts.Remove(active.AttemptId);
+        Volatile.Write(ref _activeAttemptCount, _activeAttempts.Count);
         active.Cts.Cancel();
 
         if (active.SessionId is not null && _activeTurns.TryGetValue(active.SessionId, out var runningTurn))
@@ -3229,6 +3308,7 @@ public sealed partial class TrackActor : IAsyncDisposable
 
     private async Task CancelAllInFlightAttemptsCoreAsync(string reason, CancellationToken ct)
     {
+        RequireAttemptsOutsideVerification(_activeAttempts.Values);
         var now = NowMs();
         foreach (var active in _activeAttempts.Values.ToArray())
         {
@@ -3653,6 +3733,8 @@ public sealed partial class TrackActor : IAsyncDisposable
         public IAgentSession AgentSession { get; } = agentSession;
         public CancellationTokenSource TurnCts { get; } = turnCts;
         public HashSet<string> OwnedAskIds { get; } = new(StringComparer.Ordinal);
+        public TurnActivity Activity { get; } = new();
+        public WorkerSettings? Settings { get; init; }
         public bool Interrupted { get; set; }
         public bool ProviderAccepted { get; set; }
     }
@@ -3673,6 +3755,11 @@ public sealed partial class TrackActor : IAsyncDisposable
         public AttemptWorkspaceLease Lease { get; } = lease;
         public TaskAttemptDto AttemptDto { get; set; } = attemptDto;
         public CancellationTokenSource Cts { get; } = cts;
+        public bool HasQueuedMessages { get; set; }
+        public bool Paused { get; set; }
+        public bool InterruptionUnconfirmed { get; set; }
+        public bool Settling { get; set; }
+        public string? LastError { get; set; }
     }
 
     private sealed record PendingAskSuspension(

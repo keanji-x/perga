@@ -198,9 +198,9 @@ public sealed class McpKernelAndVcsIntegrationTests
         var leadToken = hostBridge.GetTokenForSession(trackALeadId)!;
         var peerLeadToken = hostBridge.GetTokenForSession(trackBLeadId)!;
 
-        // 1. Lead (BoundAttemptId == null) tools/list -> 16 tools (10 shared + 6 governance, NO task_done/fail)
+        // 1. Lead gets the shared, governance and Worker control tools.
         var leadTools = await ListToolNamesAsync(cluster, "/mcp/kernel", leadToken, ct);
-        Assert.Equal(16, leadTools.Count);
+        Assert.Equal(21, leadTools.Count);
         Assert.Contains(KernelMcpToolNames.TaskAccept, leadTools);
         Assert.Contains(KernelMcpToolNames.TrackClose, leadTools);
         Assert.DoesNotContain(KernelMcpToolNames.TaskDone, leadTools);

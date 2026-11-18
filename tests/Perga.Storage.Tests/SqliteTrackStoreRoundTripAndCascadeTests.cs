@@ -379,6 +379,14 @@ public sealed class SqliteTrackStoreRoundTripAndCascadeTests
             null, 5_000, null);
         await store.UpsertTaskAndAttemptAsync(taskOpen2, attemptOpen2, null, null, ct);
 
+        var legacyTask = taskOpen2 with { Id = "t_legacy", TaskKey = "legacy", Status = TaskRunStatus.Running, LatestAttemptId = "att_legacy" };
+        var legacyAttempt = attemptOpen2 with { AttemptId = "att_legacy", TaskId = legacyTask.Id, Status = "interrupted" };
+        await store.UpsertTaskAndAttemptAsync(legacyTask, legacyAttempt, null, null, ct);
+
+        var pendingTask = taskOpen2 with { Id = "t_reserved", TaskKey = "reserved", Status = TaskRunStatus.Running, LatestAttemptId = "att_reserved" };
+        var reservation = attemptOpen2 with { AttemptId = "att_reserved", TaskId = pendingTask.Id, Status = "running", WorkspaceLease = null };
+        await store.UpsertTaskAndAttemptAsync(pendingTask, reservation, null, null, ct);
+
         // In-flight Running turn on openTrack1 and closedTrack
         await store.RecordTurnAndItemsAsync(
             new SessionTurnDto("turn_open1", "sess_open_1", 1, 1, "user", StorageTestHarness.Json("{}"), "Running", null, null, 5_100, null),
@@ -402,6 +410,10 @@ public sealed class SqliteTrackStoreRoundTripAndCascadeTests
         // Leases remain accessible via cached snapshot even after MarkInFlightInterruptedOnBootAsync updated status -> 'interrupted'
         var leasesAfterMark = await store.GetInterruptedAttemptLeasesOnBootAsync(ct);
         Assert.Single(leasesAfterMark);
+
+        var recoveredTrack = (await store.LoadTrackAggregateAsync(openTrack2.Id, ct))!;
+        Assert.Equal(TaskRunStatus.Failed, Assert.Single(recoveredTrack.Tasks, task => task.Id == legacyTask.Id).Status);
+        Assert.Equal(TaskRunStatus.Pending, Assert.Single(recoveredTrack.Tasks, task => task.Id == pendingTask.Id).Status);
 
         var updatedAttempts = await store.ListAttemptsForTaskAsync("t_open2", ct);
         Assert.Equal("interrupted", updatedAttempts[0].Status);

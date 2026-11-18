@@ -8,6 +8,9 @@ import type { UploadAttachment } from '../../features/planner/attachments.tsx';
 import type { RestartStrip } from './restart.ts';
 
 export type ConversationStore = Readonly<{
+  worker?: import('../../../../core/api/perga-v1.ts').WorkerActivity | null;
+  updateWorkerSettings?: (settings: import('../../../../core/api/perga-v1.ts').WorkerSettings & { attemptId: string }) => Promise<unknown>;
+  workerStatus?: string | null;
   conversations: readonly Conversation[];
   /** This selected scope's messages and actions, in canonical display order. */
   turns: readonly TranscriptEntry[];

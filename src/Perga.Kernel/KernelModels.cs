@@ -127,7 +127,40 @@ public sealed record SessionItemsPageDto(
     bool HasMoreBefore,
     IReadOnlyList<QueuedSessionMessageDto> QueuedMessages,
     bool CanSteer,
-    IReadOnlyList<string> QueueHandoffIds);
+    IReadOnlyList<string> QueueHandoffIds,
+        WorkerActivityDto? Worker = null);
+
+public sealed record WorkerActivityEvent(long Sequence, string Kind, JsonElement Payload, long CreatedAtMs);
+
+public sealed record WorkerActivityDto(
+    TaskDto Task, string AttemptId, string Phase, bool NativeSteer,
+    IReadOnlyList<AskDto> OpenAsks, long Sequence, bool Reset,
+    IReadOnlyList<WorkerActivityEvent> Events, IReadOnlyList<WorkerMessageActivity> Messages,
+    string Text, bool TextTruncated, WorkerSettings NextSettings, WorkerSettings? ActiveSettings,
+    bool CanChangeModel, IReadOnlyList<string> ReasoningEfforts, string? LastError);
+
+public sealed record WorkerSettings(long Version, string? Model, string? ReasoningEffort, string ApprovalMode);
+
+public sealed record UpdateWorkerSettingsRequest(
+    [property: System.Text.Json.Serialization.JsonRequired] string AttemptId,
+    [property: System.Text.Json.Serialization.JsonRequired] long Version,
+    [property: System.Text.Json.Serialization.JsonRequired] string? Model,
+    [property: System.Text.Json.Serialization.JsonRequired] string? ReasoningEffort,
+    [property: System.Text.Json.Serialization.JsonRequired] string ApprovalMode);
+
+public sealed record WorkerMessageActivity(string Id, string Author, string Content, string? TurnId, string Delivery, long CreatedAtMs);
+
+public sealed record WorkerMessageRequest(
+    string AttemptId, string Content, string RequestKey, string? TurnId = null, bool AllowQueue = false);
+
+public sealed record WorkerCompletionOrigin(string Token, string TurnId);
+
+public sealed record WorkerMessageReceipt(string? TurnId, string Delivery, string InputId);
+
+public sealed record DispatchWorkerRequest(string Goal, string? Access = null, string? Acceptance = null,
+    IReadOnlyList<string>? DependsOn = null, string? Gate = null, string? Provider = null, string? Model = null);
+
+public sealed record WorkerDispatchReceipt(TaskDto Task, string? SessionId, string RequestKey);
 
 public sealed record OpenTerminalRequest(
     string? Title = null,

@@ -41,6 +41,7 @@ export interface PergaTemplateDefinition<TState = Record<string, any>, TInputs =
     }) => GuardDecision;
   };
   tasks?: {
+    dispatch?: { section?: string; access?: "read_only" | "read_write"; gateInput?: string };
     requireGateForReadWrite?: boolean;
     afterWorkerDoneCmd?: string;
     onSettled?: (ctx: TemplateContext<TState, TInputs>, event: {

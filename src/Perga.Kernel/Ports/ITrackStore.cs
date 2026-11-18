@@ -36,6 +36,9 @@ public sealed record TrackCreation(TrackDto Track, ReportDocument Report, string
     AgentSessionDto Lead, IReadOnlyList<TaskDto> Tasks, SessionInputRequest? FirstInput,
     WorkspacePreparation? Preparation, IReadOnlyList<EventEnvelopeDto> Events);
 
+public sealed record WorkerDispatchIntent(string TrackId, string AuthorId, string RequestKey, string RequestHash, string TaskKey);
+public sealed record StoredWorkerDispatch(string RequestHash, string TaskId);
+
 public interface ITrackReadStore
 {
     string DatabaseId => string.Empty;
@@ -101,12 +104,21 @@ public interface ITrackStore : ITrackReadStore
         IReadOnlyList<TaskDto> syncedTasks,
         JsonElement nextTemplateState,
         EventEnvelopeDto evt,
-        CancellationToken ct);
+        CancellationToken ct,
+        WorkerDispatchIntent? dispatch = null);
 
-    Task UpsertTaskAndAttemptAsync(TaskDto task, TaskAttemptDto? attempt, JsonElement? nextTemplateState, EventEnvelopeDto? evt, CancellationToken ct);
+    Task<StoredWorkerDispatch?> FindWorkerDispatchAsync(WorkerDispatchIntent dispatch, CancellationToken ct) =>
+        Task.FromResult<StoredWorkerDispatch?>(null);
+    Task<IReadOnlyList<string>> ListPendingWorkerDispatchTracksAsync(CancellationToken ct) =>
+        Task.FromResult<IReadOnlyList<string>>([]);
+
+    Task UpsertTaskAndAttemptAsync(TaskDto task, TaskAttemptDto? attempt, JsonElement? nextTemplateState, EventEnvelopeDto? evt, CancellationToken ct,
+        AgentSessionDto? session = null, EventEnvelopeDto? sessionEvent = null);
     Task<bool> HasSessionTurnAsync(string sessionId, string turnId, CancellationToken ct);
     Task<int> GetLastTurnIndexAsync(string sessionId, CancellationToken ct);
     ISessionInputStore SessionInputs { get; }
+    IWorkerMessageStore WorkerMessages => throw new NotSupportedException();
+    IWorkerSettingsStore? WorkerSettings => null;
     Task<IReadOnlyList<(string TrackId, PersistedSessionInput Input)>> RecoverSessionInputsAsync(CancellationToken ct);
     Task UpsertSessionAsync(AgentSessionDto session, EventEnvelopeDto? evt, CancellationToken ct);
     Task RecordTurnAndItemsAsync(SessionTurnDto turn, IReadOnlyList<SessionItemDto> newItems, AgentSessionDto? updatedSession, CancellationToken ct);

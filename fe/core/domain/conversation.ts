@@ -970,15 +970,29 @@ export function compactPlannerOperation(cardId: string): ApiOperation<{ started:
   };
 }
 
-export function interruptPlannerOperation(cardId: string): ApiOperation<{ stopped: boolean }> {
+export function interruptPlannerOperation(cardId: string, worker?: { attemptId: string; turnId: string }): ApiOperation<{ stopped: boolean }> {
   return {
     method: 'POST',
     path: `/api/v1/sessions/${encodeURIComponent(cardId)}/interrupt`,
+    ...(worker === undefined ? {} : { body: worker }),
     responseSchema: z.union([
       z.object({ ok: z.boolean() }).transform(({ ok }) => ({ stopped: ok })),
       z.undefined().transform(() => ({ stopped: true })),
       z.object({ stopped: z.boolean() }),
     ]),
+  };
+}
+
+export function sendWorkerMessageOperation(cardId: string, key: string, body: {
+  attemptId: string; turnId?: string; content: string; allowQueue: boolean;
+}) {
+  return {
+    method: 'POST' as const,
+    path: `/api/v1/sessions/${encodeURIComponent(cardId)}/messages`,
+    headers: { 'Idempotency-Key': key },
+    body,
+    responseSchema: z.object({ turnId: z.string().nullish(), inputId: z.string(),
+      delivery: z.enum(['queued', 'dispatching', 'delivered', 'rejected', 'unknown', 'interrupted']) }),
   };
 }
 

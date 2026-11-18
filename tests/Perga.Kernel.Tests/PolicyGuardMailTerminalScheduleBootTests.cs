@@ -164,8 +164,9 @@ public sealed class PolicyGuardMailTerminalScheduleBootTests
         Assert.Equal(reportBefore.DocRev + 1, afterHuman.DocRev);
         Assert.Equal(turnsBeforeHumanEdit + 1, ctx.Store.GetTurnsForSession(leadId).Count);
 
-        // 4. Verify all 18 MCP tools are registered and filtered properly by BoundAttemptId
-        Assert.Equal(18, KernelMcpToolNames.All.Count);
+        // 4. Verify the catalog exposes Worker controls only to Lead.
+        Assert.Equal(23, KernelMcpToolNames.All.Count);
+        Assert.Contains(KernelMcpCatalog.GetToolsForSession(boundAttemptId: null, isLead: true), tool => tool.Name == KernelMcpToolNames.SessionSend);
         Assert.Equal(16, KernelMcpCatalog.GetToolsForSession(boundAttemptId: null).Count);     // 10 shared + 6 governance
         Assert.Equal(12, KernelMcpCatalog.GetToolsForSession(boundAttemptId: "att_1").Count); // 10 shared + 2 completion
 

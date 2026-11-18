@@ -48,6 +48,7 @@ public interface IPergaKernel : IAsyncDisposable
     Task RetryWorkspaceAsync(string trackId, CancellationToken ct = default);
     Task<TrackAggregateSnapshot> GetTrackAggregateAsync(string trackId, CancellationToken ct = default);
     Task<TrackStatusDto> GetTrackStatusAsync(string trackId, CancellationToken ct = default);
+    Task<string?> GetTrackLeadSessionIdAsync(string trackId, CancellationToken ct);
     Task<TrackDto> PatchTrackAsync(string trackId, PatchTrackRequest req, CancellationToken ct = default);
     Task<TrackDto> RenameTrackAsync(string trackId, string callerSessionId, string newTitle, CancellationToken ct = default);
     Task<TrackDto> CloseTrackAsync(string trackId, string callerSessionId, CancellationToken ct = default);
@@ -67,12 +68,13 @@ public interface IPergaKernel : IAsyncDisposable
 
     // Tasks, Governance & Completion
     Task<IReadOnlyList<TaskDto>> ListTasksAsync(string trackId, CancellationToken ct = default);
+    Task<WorkerDispatchReceipt> DispatchWorkerAsync(string trackId, DispatchWorkerRequest request, string? requestKey, McpSessionPrincipal? caller, CancellationToken ct);
     Task<IReadOnlyList<TaskAttemptDto>> ListTaskAttemptsAsync(string trackId, string taskKeyOrId, CancellationToken ct = default);
     Task<TaskDto> CancelTaskAsync(string trackId, string? callerSessionId, string taskKeyOrId, string? reason = null, CancellationToken ct = default);
     Task<TaskDto> AcceptTaskAsync(string trackId, string? callerSessionId, string taskKeyOrId, string? note = null, CancellationToken ct = default);
     Task<TaskDto> RejectTaskAsync(string trackId, string? callerSessionId, string taskKeyOrId, string note, bool reQueue = false, CancellationToken ct = default);
-    Task<TaskDto> CompleteAttemptDoneAsync(string trackId, string callerSessionId, JsonElement? workerResult = null, CancellationToken ct = default);
-    Task<TaskDto> CompleteAttemptFailAsync(string trackId, string callerSessionId, string reason, JsonElement? workerResult = null, CancellationToken ct = default);
+    Task<TaskDto> CompleteAttemptDoneAsync(string trackId, string callerSessionId, JsonElement? workerResult = null, CancellationToken ct = default, WorkerCompletionOrigin? origin = null);
+    Task<TaskDto> CompleteAttemptFailAsync(string trackId, string callerSessionId, string reason, JsonElement? workerResult = null, CancellationToken ct = default, WorkerCompletionOrigin? origin = null);
 
     // Sessions, Messages & Epoch Compaction
     Task<IReadOnlyList<AgentSessionDto>> ListSessionsAsync(string trackId, CancellationToken ct = default);
@@ -84,7 +86,12 @@ public interface IPergaKernel : IAsyncDisposable
         string sessionId, SendMessageRequest req, CancellationToken ct);
     Task<SessionInputReceipt> GetSessionInputAsync(string sessionId, string inputId, CancellationToken ct);
     Task<SessionInputReceipt> ResolveUnknownInputAsync(string sessionId, string inputId, CancellationToken ct);
-    Task<SessionItemsPageDto> GetSessionItemsAsync(string sessionId, long afterId = 0, int limit = 100, CancellationToken ct = default, bool latest = false, long? beforeId = null);
+    Task<SessionItemsPageDto> GetSessionItemsAsync(string sessionId, long afterId = 0, int limit = 100,
+        CancellationToken ct = default, bool latest = false, long? beforeId = null, McpSessionPrincipal? caller = null,
+        string? activityTurnId = null, long? afterSequence = null, int waitMs = 0);
+    Task<WorkerMessageReceipt> SendWorkerMessageAsync(string sessionId, WorkerMessageRequest request, McpSessionPrincipal? caller, CancellationToken ct);
+    Task InterruptWorkerAsync(string sessionId, string attemptId, string turnId, McpSessionPrincipal? caller, CancellationToken ct);
+    Task<WorkerSettings> UpdateWorkerSettingsAsync(string sessionId, UpdateWorkerSettingsRequest request, McpSessionPrincipal? caller, CancellationToken ct);
     Task<SteeringResult> SteerQueuedMessageAsync(string sessionId, string inputId, string turnId, CancellationToken ct);
     Task RemoveQueuedMessageAsync(string sessionId, string inputId, CancellationToken ct);
     Task<SteeringResult> SteerMessageAsync(string sessionId, string turnId, string content, CancellationToken ct);
@@ -1003,6 +1010,10 @@ public sealed partial class PergaKernelService : IPergaKernel
     public Task<IReadOnlyList<TaskDto>> ListTasksAsync(string trackId, CancellationToken ct = default) =>
         Actors.GetOrActivate(trackId).ListTasksAsync(ct);
 
+    public Task<WorkerDispatchReceipt> DispatchWorkerAsync(string trackId, DispatchWorkerRequest request, string? requestKey,
+        McpSessionPrincipal? caller, CancellationToken ct) =>
+        Actors.GetOrActivate(caller?.TrackId ?? trackId).DispatchWorkerAsync(request, requestKey, caller?.SessionId, ct);
+
     public Task<IReadOnlyList<TaskAttemptDto>> ListTaskAttemptsAsync(
         string trackId,
         string taskKeyOrId,
@@ -1038,16 +1049,16 @@ public sealed partial class PergaKernelService : IPergaKernel
         string trackId,
         string callerSessionId,
         JsonElement? workerResult = null,
-        CancellationToken ct = default) =>
-        Actors.GetOrActivate(trackId).CompleteAttemptDoneAsync(callerSessionId, workerResult, ct);
+        CancellationToken ct = default, WorkerCompletionOrigin? origin = null) =>
+        Actors.GetOrActivate(trackId).CompleteAttemptDoneAsync(callerSessionId, workerResult, ct, origin);
 
     public Task<TaskDto> CompleteAttemptFailAsync(
         string trackId,
         string callerSessionId,
         string reason,
         JsonElement? workerResult = null,
-        CancellationToken ct = default) =>
-        Actors.GetOrActivate(trackId).CompleteAttemptFailAsync(callerSessionId, reason, workerResult, ct);
+        CancellationToken ct = default, WorkerCompletionOrigin? origin = null) =>
+        Actors.GetOrActivate(trackId).CompleteAttemptFailAsync(callerSessionId, reason, workerResult, ct, origin);
 
     // ------------------- Sessions, Messages & Epoch Compaction -------------------
 
@@ -1099,14 +1110,59 @@ public sealed partial class PergaKernelService : IPergaKernel
         string sessionId,
         long afterId = 0,
         int limit = 100,
-        CancellationToken ct = default,
-        bool latest = false,
-        long? beforeId = null)
+        CancellationToken ct = default, bool latest = false, long? beforeId = null, McpSessionPrincipal? caller = null,
+        string? activityTurnId = null, long? afterSequence = null, int waitMs = 0)
     {
-        var trackId = await ResolveTrackIdForSessionAsync(sessionId, ct).ConfigureAwait(false);
-        return await Actors.GetOrActivate(trackId)
-            .GetSessionItemsAsync(sessionId, afterId, limit, ct, latest, beforeId)
-            .ConfigureAwait(false);
+        var trackId = caller?.TrackId ?? await ResolveTrackIdForSessionAsync(sessionId, ct).ConfigureAwait(false);
+        var actor = Actors.GetOrActivate(trackId);
+        Task<SessionItemsPageDto> ReadAsync() => actor.GetSessionItemsAsync(sessionId, afterId, limit, ct, latest, beforeId,
+            caller?.SessionId, activityTurnId, afterSequence);
+        if (waitMs <= 0 || afterSequence is null || activityTurnId is null)
+            return await ReadAsync().ConfigureAwait(false);
+
+        await using var events = EventBus.Subscribe(trackId);
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeout.CancelAfter(Math.Min(waitMs, 10_000));
+        var page = await ReadAsync().ConfigureAwait(false);
+        while (page is { Worker: { Reset: false } worker } && page.ActiveTurn?.Id == activityTurnId && worker.Sequence <= afterSequence)
+        {
+            EventEnvelopeDto update;
+            try
+            {
+                update = await events.Reader.ReadAsync(timeout.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                return await ReadAsync().ConfigureAwait(false);
+            }
+
+            if (update.Kind is KernelEventKinds.AskChanged or KernelEventKinds.SessionUpdated or KernelEventKinds.TurnCompleted ||
+                JsonHelpers.TryGetPropertyIgnoreCase(update.Payload, ["sessionId"], out var target) && target.ValueKind == JsonValueKind.String && target.GetString() == sessionId)
+                page = await ReadAsync().ConfigureAwait(false);
+        }
+        return page;
+    }
+
+    public async Task<string?> GetTrackLeadSessionIdAsync(string trackId, CancellationToken ct) =>
+        (await _store.GetTrackAsync(trackId, ct).ConfigureAwait(false))?.LeadSessionId;
+
+    public async Task<WorkerMessageReceipt> SendWorkerMessageAsync(
+        string sessionId, WorkerMessageRequest request, McpSessionPrincipal? caller, CancellationToken ct)
+    {
+        var trackId = caller?.TrackId ?? await ResolveTrackIdForSessionAsync(sessionId, ct).ConfigureAwait(false);
+        return await Actors.GetOrActivate(trackId).SendWorkerMessageAsync(sessionId, request, caller?.SessionId, ct).ConfigureAwait(false);
+    }
+
+    public async Task InterruptWorkerAsync(string sessionId, string attemptId, string turnId, McpSessionPrincipal? caller, CancellationToken ct)
+    {
+        var trackId = caller?.TrackId ?? await ResolveTrackIdForSessionAsync(sessionId, ct).ConfigureAwait(false);
+        await Actors.GetOrActivate(trackId).InterruptWorkerAsync(sessionId, attemptId, turnId, caller?.SessionId, ct).ConfigureAwait(false);
+    }
+
+    public async Task<WorkerSettings> UpdateWorkerSettingsAsync(string sessionId, UpdateWorkerSettingsRequest request, McpSessionPrincipal? caller, CancellationToken ct)
+    {
+        var trackId = caller?.TrackId ?? await ResolveTrackIdForSessionAsync(sessionId, ct).ConfigureAwait(false);
+        return await Actors.GetOrActivate(trackId).UpdateWorkerSettingsAsync(sessionId, request, caller?.SessionId, ct).ConfigureAwait(false);
     }
 
     public async Task<SteeringResult> SteerQueuedMessageAsync(string sessionId, string inputId, string turnId, CancellationToken ct)

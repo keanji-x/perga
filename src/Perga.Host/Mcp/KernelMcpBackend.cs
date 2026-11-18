@@ -16,13 +16,13 @@ public sealed class KernelMcpBackend : IMcpToolBackend
 
     public string ServerName => "perga";
 
-    public Task<IReadOnlyList<McpToolWireDescriptor>> ListToolsAsync(McpSessionPrincipal caller, CancellationToken ct)
+    public async Task<IReadOnlyList<McpToolWireDescriptor>> ListToolsAsync(McpSessionPrincipal caller, CancellationToken ct)
     {
-        _ = ct;
-        var tools = KernelMcpCatalog.GetToolsForSession(caller.BoundAttemptId)
+        var isLead = caller.BoundAttemptId is null &&
+            await _kernel.GetTrackLeadSessionIdAsync(caller.TrackId, ct).ConfigureAwait(false) == caller.SessionId;
+        return KernelMcpCatalog.GetToolsForSession(caller.BoundAttemptId, isLead)
             .Select(static t => new McpToolWireDescriptor(t.Name, t.Description, t.InputSchema))
             .ToArray();
-        return Task.FromResult<IReadOnlyList<McpToolWireDescriptor>>(tools);
     }
 
     public async Task<McpCallToolResult> CallToolAsync(

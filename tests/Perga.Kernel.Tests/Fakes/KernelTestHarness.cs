@@ -466,7 +466,8 @@ internal sealed class InMemoryTrackStore : ITrackStore
         IReadOnlyList<TaskDto> syncedTasks,
         JsonElement nextTemplateState,
         EventEnvelopeDto evt,
-        CancellationToken ct)
+        CancellationToken ct,
+        WorkerDispatchIntent? dispatch = null)
     {
         lock (_gate)
         {
@@ -489,10 +490,16 @@ internal sealed class InMemoryTrackStore : ITrackStore
         TaskAttemptDto? attempt,
         JsonElement? nextTemplateState,
         EventEnvelopeDto? evt,
-        CancellationToken ct)
+        CancellationToken ct,
+        AgentSessionDto? session = null,
+        EventEnvelopeDto? sessionEvent = null)
     {
         lock (_gate)
         {
+            if (session is not null)
+                _sessions[session.Id] = session;
+            if (sessionEvent is not null)
+                AppendEventLocked(sessionEvent);
             if (!_tasksByTrack.TryGetValue(task.TrackId, out var list))
             {
                 list = [];

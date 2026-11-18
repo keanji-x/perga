@@ -166,6 +166,8 @@ internal sealed class StdioSubprocess : IAsyncDisposable
         }
     }
 
+    internal bool ShutdownConfirmed { get; private set; }
+
     public async ValueTask DisposeAsync()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
@@ -227,6 +229,14 @@ internal sealed class StdioSubprocess : IAsyncDisposable
             // Best-effort drain.
         }
 
+        try
+        {
+            ShutdownConfirmed = _process.HasExited;
+        }
+        catch (InvalidOperationException)
+        {
+            ShutdownConfirmed = false;
+        }
         _process.Dispose();
         _stdinLock.Dispose();
         _disposeCts.Dispose();

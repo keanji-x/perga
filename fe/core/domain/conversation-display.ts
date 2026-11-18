@@ -2,7 +2,7 @@
 import { z } from 'zod';
 import { DEPLOYMENT_OWNER_USER_ID } from '../api/auth.js';
 import type { ApiOperation } from '../api/types.js';
-import { sessionInputReceiptSchema } from '../api/perga-v1.js';
+import { sessionInputReceiptSchema, workerActivitySchema } from '../api/perga-v1.js';
 import {
   agentProviderSchema,
   conversationCursorSchema,
@@ -409,6 +409,7 @@ export function currentConversationOutcome(fact:ConversationTerminalOutcome | nu
 }
 
 export const conversationRunMetadataSchema = z.object({
+  worker: workerActivitySchema.nullish(),
   unknown_session_input: sessionInputReceiptSchema.nullish(),
   input_contract:z.enum(['canonical','historical']),
   runtime_state:workerSessionStateSchema.nullable(),
@@ -463,7 +464,8 @@ export function conversationRunOperation(card: string): ApiOperation<PlannerRun 
         return {
           card_id: card,
           worker_session_id: page.session.id,
-          phase: running ? 'turn_running' : page.session.status === 'queued' ? 'issuing_turn' : 'idle',
+          phase: page.worker?.phase === 'interrupting' ? 'issuing_interrupt' : running ? 'turn_running' : page.session.status === 'queued' ? 'issuing_turn' : 'idle',
+          worker: page.worker,
           pending: page.queuedMessages?.map(message => ({
             entry_id: message.id, text: message.text, rev: 1, queued_at_ms: message.queuedAtMs, state: message.state,
           })) ?? [],
@@ -476,7 +478,7 @@ export function conversationRunOperation(card: string): ApiOperation<PlannerRun 
           blocked_reason: page.session.status === 'unknown' ? 'The previous message has an unknown outcome.' : null,
           recovery: null,
           attachments_supported: false,
-          manual_compact_supported: true,
+          manual_compact_supported: page.worker == null,
           compact_outcome: null,
           context_usage_invalidated: false,
           token_usage: ratio > 0

@@ -183,6 +183,11 @@ export const taskDtoSchema = z.object({
 }));
 export type TaskDto = z.infer<typeof taskDtoSchema>;
 
+export const workerDispatchReceiptSchema = z.object({
+  task: taskDtoSchema, sessionId: z.string().nullish(), requestKey: z.string(),
+});
+export type WorkerDispatchReceipt = z.infer<typeof workerDispatchReceiptSchema>;
+
 export const taskAttemptDtoSchema = z.object({
   attemptId: z.string(),
   taskId: z.string(),
@@ -307,6 +312,33 @@ export const sessionItemDtoSchema = z.object({
 });
 export type SessionItemDto = z.infer<typeof sessionItemDtoSchema>;
 
+export const workerSettingsSchema = z.object({
+  version: z.number().int(), model: z.string().nullish(), reasoningEffort: z.string().nullish(),
+  approvalMode: z.enum(['ask', 'deny']),
+});
+export type WorkerSettings = z.infer<typeof workerSettingsSchema>;
+
+export const workerActivitySchema = z.object({
+  task: taskDtoSchema,
+  attemptId: z.string(),
+  phase: z.string(),
+  nativeSteer: z.boolean(),
+  openAsks: z.array(z.lazy(() => askDtoSchema)),
+  sequence: z.number(),
+  reset: z.boolean(),
+  text: z.string(),
+  textTruncated: z.boolean(),
+  nextSettings: workerSettingsSchema,
+  activeSettings: workerSettingsSchema.nullish(),
+  canChangeModel: z.boolean(),
+  reasoningEfforts: z.array(z.string()),
+  lastError: z.string().nullish(),
+  events: z.array(z.object({ sequence: z.number(), kind: z.string(), payload: z.unknown(), createdAtMs: z.number() })),
+  messages: z.array(z.object({ id: z.string(), author: z.string(), content: z.string(),
+    turnId: z.string().nullish(), delivery: z.string(), createdAtMs: z.number() })),
+});
+export type WorkerActivity = z.infer<typeof workerActivitySchema>;
+
 export const sessionItemsPageDtoSchema = z.object({
   items: z.array(sessionItemDtoSchema).nullish().transform((v) => v ?? []),
   activeTurn: sessionTurnDtoSchema.nullish(),
@@ -317,6 +349,7 @@ export const sessionItemsPageDtoSchema = z.object({
   queueHandoffIds: z.array(z.string()).optional(),
   session: agentSessionDtoSchema,
   hasMoreBefore: z.boolean().optional(),
+  worker: workerActivitySchema.nullish(),
 });
 export type SessionItemsPageDto = z.infer<typeof sessionItemsPageDtoSchema>;
 
@@ -481,6 +514,7 @@ export const sessionTextDeltaPayloadSchema = z.object({
   sessionId: z.string(),
   turnId: z.string(),
   delta: z.string(),
+  sequence: z.number().int().positive().optional(),
 });
 export type SessionTextDeltaPayload = z.infer<typeof sessionTextDeltaPayloadSchema>;
 
@@ -503,7 +537,7 @@ export const sessionToolProgressPayloadSchema = z.object({
 export type SessionToolProgressPayload = z.infer<typeof sessionToolProgressPayloadSchema>;
 
 export type PergaStreamDelta =
-  | Readonly<{ kind: 'session.text_delta'; sessionId: string; turnId: string; delta: string; createdAtMs: number }>
+  | Readonly<{ kind: 'session.text_delta'; sessionId: string; turnId: string; delta: string; sequence?: number; createdAtMs: number }>
   | Readonly<{ kind: 'session.thinking_delta'; sessionId: string; turnId: string; delta: string; createdAtMs: number }>
   | Readonly<{
     kind: 'session.tool_progress';

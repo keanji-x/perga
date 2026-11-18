@@ -108,6 +108,7 @@ const devTemplate = {
     }
   },
   tasks: {
+    dispatch: { section: "Tasks", access: "read_write", gateInput: "testCmd" },
     requireGateForReadWrite: true,
     afterWorkerDoneCmd:
       "jj log -r @ --no-graph -T '{\"changeId\":\"' ++ change_id.short() ++ '\",\"commitId\":\"' ++ commit_id.short() ++ '\"}' 2>/dev/null || echo '{}'",
