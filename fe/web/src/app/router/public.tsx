@@ -799,11 +799,9 @@ function useConversationPane(
                     onChange={composerView.setModel}
                     isDisabled={!composerView.historyReady}
                   />
-                  {/* A Planner's only (#2348): any other conversation reads `null` and has no approvals to set. */}
-                  {composerView.permissionMode !== null && (
-                    <PermissionModePill mode={composerView.permissionMode} onChange={composerView.setPermissionMode}
-                      isDisabled={!composerView.historyReady} />
-                  )}
+                  {/* The v1 API has no permission-mode mutation; retain the informational footer control. */}
+                  <PermissionModePill mode={composerView.permissionMode ?? 'ask'} onChange={composerView.setPermissionMode}
+                    isDisabled />
                   {/* The Planner's own row on its Track: the Track's role, not the conversation's, so no turn gates it. */}
                   {roleValue !== null && roleChange !== undefined && (
                     <PlannerRolePill value={roleValue} onChange={roleChange} isDisabled={roleDisabled}

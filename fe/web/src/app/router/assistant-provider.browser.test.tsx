@@ -60,7 +60,9 @@ it('keeps a dormant backend after fresh-session recovery and takes actions from 
   await expect.element(page.getByRole('group', { name: 'Codex', exact: true })).not.toBeInTheDocument();
   await page.getByRole('menuitem', { name: 'selected', exact: true }).click();
   await expect.poll(() => fixture.requests.filter(request => request.method === 'PUT' && request.path === '/api/v1/sessions/dormant/model').length).toBe(1);
-  expect(fixture.requests.find(request => request.method === 'PUT')?.body).toEqual({ model: 'selected' });
+  expect(fixture.requests.find(request => request.method === 'PUT')?.body).toEqual({ model: 'selected', reasoningEffort: null });
+  await expect.element(page.getByRole('button', { name: /^Approvals:/ })).toBeDisabled();
+  expect(fixture.requests.some(request => request.path.endsWith('/permission-mode'))).toBe(false);
   const field = page.getByRole('combobox', { name: 'Message' });
   await field.fill('Resume the declared backend');
   await userEvent.keyboard('{Enter}');
@@ -119,22 +121,21 @@ it('renders, selects and sends a managed identifier independently of legacy UI l
   await model.click();
   await expect.element(page.getByRole('group', { name: 'OpenCode (Beta)', exact: true })).toBeVisible();
   await page.getByRole('menuitem', { name: 'selected', exact: true }).click();
-  await expect.element(model).toHaveAccessibleName('Model: opencode selected');
+  await expect.element(model).toHaveAccessibleName('Model: OpenCode selected');
   await page.getByRole('combobox', { name: 'Message' }).fill('Owner registered backend');
   await userEvent.keyboard('{Enter}');
   await expect.poll(() => fixture.requests.filter(request => request.method === 'POST' && request.path.endsWith('/sessions')).length).toBe(1);
   expect(fixture.requests.find(request => request.method === 'POST' && request.path.endsWith('/sessions'))?.body).toMatchObject({ provider: 'acp:opencode', model: 'selected' });
 });
 
-it.each([false, true])('combines images=%s with a run that supports attachments', async images => {
+it.each([false, true])('uses run attachment support with declared provider images=%s', async images => {
   const fixture = renderAssistantProviderFixture({ answers: [{ ...CLAUDE, capabilities: { ...CLAUDE.capabilities, images } }],
     existingProvider: 'claude', runAttachmentsSupported: true });
   await page.getByRole('button', { name: 'Conversation Saved Assistant' }).click();
   await expect.element(page.getByText('Saved reply', { exact: true })).toBeVisible();
   await expect.poll(() => fixture.requests.some(request => request.path.includes('&view=run'))).toBe(true);
   const attach = page.getByRole('button', { name: 'Attach an image' });
-  if (images) await expect.element(attach).toBeEnabled();
-  else await expect.element(attach).toBeDisabled();
+  await expect.element(attach).toBeEnabled();
   expect(fixture.requests.filter(request => request.method === 'POST' && request.path.endsWith('/planner/attachments'))).toEqual([]);
 });
 

@@ -473,7 +473,7 @@ public sealed class AgentRuntime : IAgentRuntime
 
         if (string.Equals(provider, "acp:opencode", StringComparison.OrdinalIgnoreCase))
         {
-            var cliModels = await ProbeOpenCodeCliModelsAsync(probeCts.Token).ConfigureAwait(false);
+            var cliModels = await ProbeOpenCodeCliModelsAsync(ct).ConfigureAwait(false);
             if (cliModels.Count > 0)
             {
                 return (cliModels, BuildSimpleModelCatalog(cliModels));
@@ -485,6 +485,8 @@ public sealed class AgentRuntime : IAgentRuntime
 
     private async Task<IReadOnlyList<string>> ProbeOpenCodeCliModelsAsync(CancellationToken ct)
     {
+        using var probeCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        probeCts.CancelAfter(GetModelProbeTimeout());
         try
         {
             var (cmdOverride, _) = ResolveAcpCommandSpec("acp:opencode");
@@ -515,21 +517,43 @@ public sealed class AgentRuntime : IAgentRuntime
                 return [];
             }
 
-            var stdoutTask = process.StandardOutput.ReadToEndAsync(ct);
-            await process.WaitForExitAsync(ct).ConfigureAwait(false);
-            if (process.ExitCode != 0)
+            var stdoutTask = process.StandardOutput.ReadToEndAsync(probeCts.Token);
+            var stderrTask = process.StandardError.ReadToEndAsync(probeCts.Token);
+            string stdout;
+            try
             {
-                return [];
+                await process.WaitForExitAsync(probeCts.Token).ConfigureAwait(false);
+                stdout = await SafeAwaitOutputAsync(stdoutTask).ConfigureAwait(false);
+                await SafeAwaitOutputAsync(stderrTask).ConfigureAwait(false);
+                probeCts.Token.ThrowIfCancellationRequested();
+                if (process.ExitCode != 0)
+                {
+                    TryKillProcessTree(process);
+                    return [];
+                }
+            }
+            catch
+            {
+                TryKillProcessTree(process);
+                throw;
+            }
+            finally
+            {
+                await SafeAwaitOutputAsync(stdoutTask).ConfigureAwait(false);
+                await SafeAwaitOutputAsync(stderrTask).ConfigureAwait(false);
             }
 
-            var stdout = await stdoutTask.ConfigureAwait(false);
             return stdout
                 .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                 .Where(static line => line.Contains('/', StringComparison.Ordinal) && !line.Contains(' ', StringComparison.Ordinal))
                 .Distinct(StringComparer.Ordinal)
                 .ToArray();
         }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            return [];
+        }
+        catch (OperationCanceledException)
         {
             throw;
         }

@@ -77,6 +77,44 @@ public sealed class ProbeProvidersTests : IDisposable
         Assert.Empty(status.Models);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task OpenCodeFallbackHasItsOwnTimeoutAndDrainsStderr(bool modelsTimeout)
+    {
+        var path = _fixture.WriteExecutable("opencode-fallback.py", """
+            #!/usr/bin/env python3
+            import os, sys, time
+            if '--version' in sys.argv:
+                print('opencode mock')
+            elif 'models' in sys.argv:
+                if os.environ['MODELS_TIMEOUT'] == 'true':
+                    time.sleep(30)
+                else:
+                    sys.stderr.write('x' * 262144)
+                    sys.stderr.flush()
+                    print('provider/model')
+            else:
+                time.sleep(30)
+            """);
+        await using var runtime = new AgentRuntime(new AgentRuntimeOptions
+        {
+            ProbeTimeout = TimeSpan.FromMilliseconds(500),
+            ProviderOverrides = new Dictionary<string, ProviderCommandOverride>
+            {
+                ["acp:opencode"] = new(path, Env: new Dictionary<string, string>
+                {
+                    ["MODELS_TIMEOUT"] = modelsTimeout ? "true" : "false"
+                })
+            }
+        });
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var status = Assert.Single(await runtime.ProbeProvidersAsync(deadline.Token), s => s.Provider == "acp:opencode");
+        Assert.True(status.Available);
+        Assert.Null(status.Reason);
+        Assert.Equal(modelsTimeout ? Array.Empty<string>() : ["provider/model"], status.Models);
+    }
+
     [Fact]
     public async Task ProbeProvidersAsync_ReportsAvailableMissingFailingAndTimeoutCleanly()
     {

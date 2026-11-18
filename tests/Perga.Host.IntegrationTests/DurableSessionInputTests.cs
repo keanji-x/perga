@@ -119,6 +119,21 @@ public sealed class DurableSessionInputTests
         }
     }
 
+    [Fact]
+    public async Task CreateReceiptRejectsChangedReasoningEffort()
+    {
+        await using var host = new PergaHostTestCluster();
+        var (trackId, _) = await host.CreateTrackAsync();
+        var path = $"/api/v1/tracks/{trackId}/sessions";
+        var request = new { title = "Assistant", provider = "codex", model = "chosen", reasoningEffort = "low" };
+        using var created = await SendAsync(host.Client, path, "effort-key", request);
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        using var replay = await SendAsync(host.Client, path, "effort-key", request);
+        Assert.Equal(HttpStatusCode.OK, replay.StatusCode);
+        using var mismatch = await SendAsync(host.Client, path, "effort-key", request with { reasoningEffort = "high" });
+        Assert.Equal(HttpStatusCode.Conflict, mismatch.StatusCode);
+    }
+
     [Theory]
     [InlineData("accepted")]
     [InlineData("dispatching")]

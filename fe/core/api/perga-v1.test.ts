@@ -142,6 +142,46 @@ describe('Perga /api/v1 protocol contracts', () => {
     expect(detail.body).toContain('# Plan');
   });
 
+  it('preserves rich provider model metadata and selects the advertised default', () => {
+    const modelCatalog = [
+      { model: 'first', displayName: 'First model', description: 'First description', isDefault: false,
+        defaultReasoningEffort: null, supportedReasoningEfforts: [] },
+      { model: 'preferred', displayName: 'Preferred model', description: 'Provider description', isDefault: true,
+        defaultReasoningEffort: 'high', supportedReasoningEfforts: [
+          { reasoningEffort: 'low', description: 'Fast' },
+          { reasoningEffort: 'high', description: 'Thorough' },
+        ] },
+    ];
+    const bootstrap = { ...sampleBootstrap, providers: [
+      { provider: 'codex', available: true, models: ['legacy-only'], modelCatalog },
+      { provider: 'acp:opencode', available: true, models: ['other-provider'] },
+    ] };
+    expect(bootstrapDtoSchema.parse(bootstrap).providers[0].modelCatalog).toEqual(modelCatalog);
+    for (const scope of [
+      { kind: 'provider' as const, provider: 'codex' as const },
+      { kind: 'card' as const, cardId: 'session/a', provider: 'codex' as const },
+    ]) {
+      const operation = modelCatalogOperation(scope);
+      const catalog = operation.responseSchema.parse(bootstrap);
+      expect(catalog.models).toEqual(modelCatalog.map(entry => ({
+        id: entry.model, model: entry.model, resolved_model: null,
+        display_name: entry.displayName, description: entry.description, is_default: entry.isDefault,
+        default_reasoning_effort: entry.defaultReasoningEffort,
+        supported_reasoning_efforts: entry.supportedReasoningEfforts.map(effort => ({
+          reasoning_effort: effort.reasoningEffort, description: effort.description,
+        })),
+      })));
+      expect(catalog).toMatchObject({ source: 'live', default_source: 'config_read', default: {
+        model: 'preferred', reasoning_effort: 'high', supported_reasoning_efforts: [
+          { reasoning_effort: 'low', description: 'Fast' },
+          { reasoning_effort: 'high', description: 'Thorough' },
+        ],
+      } });
+      expect(operation.responseSchema.parse({ ...bootstrap, providers: [{ ...bootstrap.providers[0], available: false }] }))
+        .toMatchObject({ source: 'unavailable', models: catalog.models, default: catalog.default });
+    }
+  });
+
   it('scopes a card catalog to its provider and reports provider availability', () => {
     const scope = { kind: 'card' as const, cardId: 'session/a', provider: 'antigravity' as const };
     const operation = modelCatalogOperation(scope);

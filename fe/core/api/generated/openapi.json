@@ -24118,6 +24118,21 @@
               "string",
               "null"
             ]
+          },
+          "models": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "modelCatalog": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/ProviderModelInfoDto"
+            }
           }
         }
       },
@@ -24555,6 +24570,12 @@
           },
           "updatedAtMs": {
             "type": "integer"
+          },
+          "reasoningEffort": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
@@ -25001,6 +25022,63 @@
               "string",
               "null"
             ]
+          },
+          "reasoningEffort": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "ProviderModelEffortDto": {
+        "type": "object",
+        "required": [
+          "reasoningEffort",
+          "description"
+        ],
+        "properties": {
+          "reasoningEffort": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          }
+        }
+      },
+      "ProviderModelInfoDto": {
+        "type": "object",
+        "required": [
+          "model",
+          "displayName",
+          "description",
+          "isDefault",
+          "supportedReasoningEfforts"
+        ],
+        "properties": {
+          "model": {
+            "type": "string"
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "isDefault": {
+            "type": "boolean"
+          },
+          "defaultReasoningEffort": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "supportedReasoningEfforts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProviderModelEffortDto"
+            }
           }
         }
       }
