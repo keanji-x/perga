@@ -2,7 +2,7 @@ using System.Text.Json;
 
 namespace Perga.PolicyVm;
 
-public abstract record GuardDecision
+public closed record GuardDecision
 {
     public sealed record Allow : GuardDecision;
     public sealed record Deny(string Reason) : GuardDecision;
