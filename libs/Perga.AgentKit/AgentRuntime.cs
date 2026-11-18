@@ -17,7 +17,6 @@ public sealed class AgentRuntime : IAgentRuntime
 
     private static readonly string[] DefaultCodexModels = ["gpt-5.4", "gpt-5.3-codex"];
     private static readonly string[] DefaultClaudeModels = ["claude-sonnet-4-6", "claude-opus-4-6"];
-    private static readonly string[] DefaultAntigravityModels = ["gemini-3.1-pro", "gemini-3-flash"];
     private static readonly Encoding Utf8NoBom = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
 
     private readonly AgentRuntimeOptions _options;
@@ -360,7 +359,9 @@ public sealed class AgentRuntime : IAgentRuntime
             }
 
             var version = ExtractVersionString(stdout) ?? ExtractVersionString(stderr) ?? "unknown";
-            var models = cmdSpec.Models ?? GetDefaultModelsForProvider(provider);
+            var models = cmdSpec.Models ?? (provider.StartsWith("acp:", StringComparison.OrdinalIgnoreCase)
+                ? await ProbeAcpModelsAsync(provider, ct).ConfigureAwait(false)
+                : GetDefaultModelsForProvider(provider));
             return new ProviderStatus(
                 provider,
                 Available: true,
@@ -385,6 +386,28 @@ public sealed class AgentRuntime : IAgentRuntime
         }
     }
 
+    private async Task<IReadOnlyList<string>> ProbeAcpModelsAsync(string provider, CancellationToken ct)
+    {
+        using var probeCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        probeCts.CancelAfter(_options.ProbeTimeout);
+        try
+        {
+            await using var session = await OpenSessionAsync(new HarnessLaunchSpec(
+                provider, null, Path.GetTempPath(), null, null,
+                new Dictionary<string, McpServerConfig>()), probeCts.Token).ConfigureAwait(false);
+            return ((AcpAgentSession)session).AvailableModels;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch
+        {
+            // Model discovery is optional: a successful version probe still means available.
+            return [];
+        }
+    }
+
     private static IReadOnlyList<string> GetDefaultModelsForProvider(string provider)
     {
         if (string.Equals(provider, "codex", StringComparison.OrdinalIgnoreCase))
@@ -395,11 +418,6 @@ public sealed class AgentRuntime : IAgentRuntime
         if (string.Equals(provider, "claude", StringComparison.OrdinalIgnoreCase))
         {
             return DefaultClaudeModels;
-        }
-
-        if (string.Equals(provider, "acp:antigravity", StringComparison.OrdinalIgnoreCase))
-        {
-            return DefaultAntigravityModels;
         }
 
         return [];

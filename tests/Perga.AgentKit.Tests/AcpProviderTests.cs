@@ -1,3 +1,5 @@
+using System.Text.Json;
+
 namespace Perga.AgentKit.Tests;
 
 public sealed class AcpProviderTests : IDisposable
@@ -15,6 +17,58 @@ public sealed class AcpProviderTests : IDisposable
                 ["acp:opencode"] = new(_fixture.MockAcpPath)
             }
         });
+
+    [Fact]
+    public async Task ModelSelectionPropagatesErrorsOtherThanMethodNotFound()
+    {
+        await using var runtime = new AgentRuntime(new AgentRuntimeOptions
+        {
+            ProviderOverrides = new Dictionary<string, ProviderCommandOverride>
+            {
+                ["acp:custom"] = new(_fixture.MockAcpPath, Env: new Dictionary<string, string>
+                {
+                    ["MOCK_ACP_MODEL_ERROR"] = "-32602"
+                })
+            }
+        });
+        var error = await Assert.ThrowsAnyAsync<Exception>(() => runtime.OpenSessionAsync(new HarnessLaunchSpec(
+            "acp:custom", "invalid-model", _fixture.WorkspaceDir, null, null,
+            new Dictionary<string, McpServerConfig>()), CancellationToken.None));
+        Assert.Contains("model switch failed", error.Message);
+    }
+
+    [Theory]
+    [InlineData(null, 0)]
+    [InlineData("loaded-session", 0)]
+    [InlineData(null, -32601)]
+    [InlineData("loaded-session", -32601)]
+    public async Task ModelSelectionFollowsSessionBinding(string? resumeId, int error)
+    {
+        var log = Path.Combine(_fixture.RootDir, "rpc.jsonl");
+        await using var runtime = new AgentRuntime(new AgentRuntimeOptions
+        {
+            ProviderOverrides = new Dictionary<string, ProviderCommandOverride>
+            {
+                ["acp:custom"] = new(_fixture.MockAcpPath, Env: new Dictionary<string, string>
+                {
+                    ["MOCK_ACP_LOG"] = log,
+                    ["MOCK_ACP_MODEL_ERROR"] = error.ToString()
+                })
+            }
+        });
+        await using var session = await runtime.OpenSessionAsync(new HarnessLaunchSpec(
+            "acp:custom", "selected-model", _fixture.WorkspaceDir, resumeId, null,
+            new Dictionary<string, McpServerConfig>()), CancellationToken.None);
+        Assert.Equal(error == 0, await session.TrySetModelAsync("another-model"));
+        Assert.False(await session.TrySetModelAsync(null));
+        var calls = File.ReadAllLines(log).Select(line => JsonSerializer.Deserialize<JsonElement>(line)).ToArray();
+        Assert.Equal(new[] { "initialize", resumeId is null ? "session/new" : "session/load", "session/set_model", "session/set_model" },
+            calls.Select(call => call.GetProperty("method").GetString()));
+        Assert.False(calls[1].GetProperty("params").TryGetProperty("model", out _));
+        var selection = calls[2].GetProperty("params");
+        Assert.Equal(session.NativeThreadId, selection.GetProperty("sessionId").GetString());
+        Assert.Equal("selected-model", selection.GetProperty("modelId").GetString());
+    }
 
     [Theory]
     [InlineData("acp:antigravity", true)]

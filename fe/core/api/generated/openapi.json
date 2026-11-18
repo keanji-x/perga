@@ -15186,6 +15186,45 @@
           }
         }
       }
+    },
+    "/api/v1/sessions/{sessionId}/model": {
+      "parameters": [
+        {
+          "name": "sessionId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "put": {
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateSessionModelRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Persisted session model; active turns reconcile before their next turn.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentSessionDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Session not found"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -24951,6 +24990,17 @@
             "items": {
               "type": "string"
             }
+          }
+        }
+      },
+      "UpdateSessionModelRequest": {
+        "type": "object",
+        "properties": {
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       }

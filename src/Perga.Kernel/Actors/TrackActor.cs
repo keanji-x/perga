@@ -49,6 +49,7 @@ public sealed partial class TrackActor : IAsyncDisposable
     private readonly Dictionary<string, TerminalDto> _terminals = new(StringComparer.Ordinal);
     private readonly Dictionary<string, int> _nextTurnIndexBySession = new(StringComparer.Ordinal);
     private readonly Dictionary<string, IAgentSession> _openAgentSessions = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string?> _boundAgentModels = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Guid> _reservedWakeSessions = new(StringComparer.Ordinal);
     private readonly Dictionary<string, ActiveTurnState> _activeTurns = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Queue<(string TriggerKind, string Prompt, string? MailId)>> _pendingWakes = new(StringComparer.Ordinal);
@@ -378,6 +379,7 @@ public sealed partial class TrackActor : IAsyncDisposable
             foreach (var kvp in _openAgentSessions.ToArray())
             {
                 _openAgentSessions.Remove(kvp.Key);
+                _boundAgentModels.Remove(kvp.Key);
                 await kvp.Value.DisposeAsync().ConfigureAwait(false);
             }
 
@@ -735,6 +737,29 @@ public sealed partial class TrackActor : IAsyncDisposable
             }, CancellationToken.None).ConfigureAwait(false);
             throw;
         }
+    }
+
+    public Task<AgentSessionDto> UpdateSessionModelAsync(
+        string sessionId, UpdateSessionModelRequest req, CancellationToken ct = default)
+    {
+        return EnqueueAsync(async _ =>
+        {
+            await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
+            var session = RequireSessionCore(sessionId);
+            var model = string.IsNullOrWhiteSpace(req.Model) ? null : req.Model.Trim();
+            var updated = session with { Model = model, UpdatedAtMs = NowMs() };
+            await PersistAndEmitSessionUpdatedCoreAsync(updated, updated.UpdatedAtMs, ct).ConfigureAwait(false);
+            _sessions[sessionId] = updated;
+
+            // Never change the provider underneath an active turn. Its next reuse reconciles.
+            if (!_activeTurns.ContainsKey(sessionId) && !_compactingSessions.Contains(sessionId) &&
+                _openAgentSessions.ContainsKey(sessionId))
+            {
+                await GetOrOpenAgentSessionCoreAsync(updated, overrideSystemPrompt: null, ct).ConfigureAwait(false);
+            }
+
+            return updated;
+        }, ct);
     }
 
     public Task InterruptSessionAsync(string sessionId, CancellationToken ct = default)
@@ -2586,6 +2611,7 @@ public sealed partial class TrackActor : IAsyncDisposable
             return await EnqueueAsync(async _ =>
             {
                 _openAgentSessions.Remove(sessionId);
+                _boundAgentModels.Remove(sessionId);
                 var current = RequireSessionCore(sessionId);
                 var now = NowMs();
 
@@ -2628,6 +2654,7 @@ public sealed partial class TrackActor : IAsyncDisposable
                 // Seed fresh IAgentSession with ResumeNativeThreadId == null and SystemPrompt = Report + Handover Summary.
                 var freshAgentSession = await OpenFreshAgentSessionCoreAsync(compacted, seedPrompt, ct).ConfigureAwait(false);
                 _openAgentSessions[sessionId] = freshAgentSession;
+                _boundAgentModels[sessionId] = compacted.Model;
 
                 return compacted;
             }, ct).ConfigureAwait(false);
@@ -2652,11 +2679,25 @@ public sealed partial class TrackActor : IAsyncDisposable
     {
         if (_openAgentSessions.TryGetValue(session.Id, out var existing))
         {
-            return existing;
+            if (string.Equals(_boundAgentModels[session.Id], session.Model, StringComparison.Ordinal))
+            {
+                return existing;
+            }
+
+            if (await existing.TrySetModelAsync(session.Model, ct).ConfigureAwait(false))
+            {
+                _boundAgentModels[session.Id] = session.Model;
+                return existing;
+            }
+
+            _openAgentSessions.Remove(session.Id);
+            _boundAgentModels.Remove(session.Id);
+            await existing.DisposeAsync().ConfigureAwait(false);
         }
 
         var opened = await OpenFreshAgentSessionCoreAsync(session, overrideSystemPrompt, ct).ConfigureAwait(false);
         _openAgentSessions[session.Id] = opened;
+        _boundAgentModels[session.Id] = session.Model;
         return opened;
     }
 
@@ -3330,6 +3371,7 @@ public sealed partial class TrackActor : IAsyncDisposable
         foreach (var kvp in _openAgentSessions.ToArray())
         {
             _openAgentSessions.Remove(kvp.Key);
+            _boundAgentModels.Remove(kvp.Key);
             try
             {
                 await kvp.Value.DisposeAsync().ConfigureAwait(false);

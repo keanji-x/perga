@@ -562,6 +562,7 @@ while True:
     private const string AcpMockPythonScript = """
 #!/usr/bin/env python3
 import json
+import os
 import sys
 import threading
 
@@ -741,6 +742,9 @@ for raw_line in sys.stdin:
         continue
 
     params = msg.get("params") or {}
+    if os.environ.get("MOCK_ACP_LOG"):
+        with open(os.environ["MOCK_ACP_LOG"], "a") as log:
+            log.write(json.dumps(msg) + "\n")
     if method == "initialize":
         send({
             "jsonrpc": "2.0",
@@ -757,7 +761,16 @@ for raw_line in sys.stdin:
             send({"jsonrpc": "2.0", "id": msg_id, "result": {}})
         else:
             state["session_id"] = "acp_sess_001"
-            send({"jsonrpc": "2.0", "id": msg_id, "result": {"sessionId": state["session_id"]}})
+            send({"jsonrpc": "2.0", "id": msg_id, "result": {"sessionId": state["session_id"], **json.loads(os.environ.get("MOCK_ACP_MODELS", '{"models":{"availableModels":[{"modelId":"mock-model-a"},{"modelId":"mock-model-b"}]}}'))}})
+    elif method == "session/set_model":
+        code = int(os.environ.get("MOCK_ACP_MODEL_ERROR", "0"))
+        if code:
+            send({"jsonrpc": "2.0", "id": msg_id, "error": {"code": code, "message": "model switch failed"}})
+        elif params.get("sessionId") != state["session_id"]:
+            send({"jsonrpc": "2.0", "id": msg_id, "error": {"code": -32602, "message": "wrong session"}})
+        else:
+            state["model"] = params["modelId"]
+            send({"jsonrpc": "2.0", "id": msg_id, "result": {}})
     elif method == "session/prompt":
         state["cancel_event"].clear()
         t = threading.Thread(target=handle_prompt, args=(msg_id, params), daemon=True)

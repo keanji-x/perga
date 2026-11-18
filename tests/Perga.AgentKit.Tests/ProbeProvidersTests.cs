@@ -6,6 +6,77 @@ public sealed class ProbeProvidersTests : IDisposable
 
     public void Dispose() => _fixture.Dispose();
 
+    [Theory]
+    [InlineData("acp:antigravity")]
+    [InlineData("acp:opencode")]
+    [InlineData("acp:custom")]
+    public async Task AcpDiscoveryReturnsAdvertisedModels(string provider)
+    {
+        await using var runtime = new AgentRuntime(new AgentRuntimeOptions
+        {
+            ProviderOverrides = new Dictionary<string, ProviderCommandOverride>
+            {
+                [provider] = new(_fixture.MockAcpPath)
+            }
+        });
+        var status = Assert.Single(await runtime.ProbeProvidersAsync(CancellationToken.None), s => s.Provider == provider);
+        Assert.True(status.Available);
+        Assert.Equal(["mock-model-a", "mock-model-b"], status.Models);
+    }
+
+    [Theory]
+    [InlineData("{\"configOptions\":[{\"category\":\"model\",\"id\":\"choice\",\"options\":[{\"value\":\"model-1\"},{\"group\":\"Other\",\"options\":[{\"value\":\"model-2\"}]}]}]}", false)]
+    [InlineData("{}", true)]
+    public async Task AcpDiscoveryReadsConfigOptionsAndHonorsOverrides(string advertised, bool explicitOverride)
+    {
+        await using var runtime = new AgentRuntime(new AgentRuntimeOptions
+        {
+            ProviderOverrides = new Dictionary<string, ProviderCommandOverride>
+            {
+                ["acp:custom"] = new(_fixture.MockAcpPath,
+                    Env: new Dictionary<string, string> { ["MOCK_ACP_MODELS"] = advertised },
+                    Models: explicitOverride ? ["override"] : null)
+            }
+        });
+        var status = Assert.Single(await runtime.ProbeProvidersAsync(CancellationToken.None), s => s.Provider == "acp:custom");
+        Assert.True(status.Available);
+        Assert.Equal(explicitOverride ? ["override"] : new[] { "model-1", "model-2" }, status.Models);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ExplicitModelsIncludingEmptyBypassAcpProbe(bool empty)
+    {
+        var log = Path.Combine(_fixture.RootDir, "discovery.jsonl");
+        string[] models = empty ? [] : ["override"];
+        await using var runtime = new AgentRuntime(new AgentRuntimeOptions
+        {
+            ProviderOverrides = new Dictionary<string, ProviderCommandOverride>
+            {
+                ["acp:custom"] = new(_fixture.MockAcpPath,
+                    Env: new Dictionary<string, string> { ["MOCK_ACP_LOG"] = log }, Models: models)
+            }
+        });
+        var status = Assert.Single(await runtime.ProbeProvidersAsync(CancellationToken.None), s => s.Provider == "acp:custom");
+        Assert.Equal(models, status.Models);
+        Assert.False(File.Exists(log));
+    }
+
+    [Fact]
+    public async Task FailedAcpHandshakeKeepsProviderAvailableWithoutInventingModels()
+    {
+        var path = _fixture.WriteExecutable("version-only.py", "#!/usr/bin/env python3\nprint('version-only')\n");
+        await using var runtime = new AgentRuntime(new AgentRuntimeOptions
+        {
+            ProbeTimeout = TimeSpan.FromMilliseconds(300),
+            ProviderOverrides = new Dictionary<string, ProviderCommandOverride> { ["acp:antigravity"] = new(path) }
+        });
+        var status = Assert.Single(await runtime.ProbeProvidersAsync(CancellationToken.None), s => s.Provider == "acp:antigravity");
+        Assert.True(status.Available);
+        Assert.Empty(status.Models);
+    }
+
     [Fact]
     public async Task ProbeProvidersAsync_ReportsAvailableMissingFailingAndTimeoutCleanly()
     {

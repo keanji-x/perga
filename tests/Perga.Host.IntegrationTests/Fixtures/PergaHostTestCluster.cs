@@ -167,6 +167,8 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
             return Task.CompletedTask;
         }
 
+        public Task<bool> TrySetModelAsync(string? model, CancellationToken ct = default) => Task.FromResult(false);
+
         public Task<bool> TrySteerAsync(string message, CancellationToken ct = default)
         {
             _ = ct;

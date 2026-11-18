@@ -8,6 +8,105 @@ namespace Perga.Kernel.Tests;
 
 public sealed class SessionStreamingAndCompactionTests
 {
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ModelUpdatePersistsEmitsAndReconcilesCachedSession(bool supportsSwitch)
+    {
+        await using var ctx = new KernelTestContext();
+        var (_, snap) = await ctx.CreateDefaultTrackAsync();
+        var id = snap.Track.LeadSessionId!;
+        await ctx.Kernel.SendMessageAsync(id, new SendMessageRequest("first", "first"));
+        var original = Assert.Single(ctx.AgentRuntime.OpenedSessions);
+        original.SupportsModelSwitch = supportsSwitch;
+
+        var updated = await ctx.Kernel.UpdateSessionModelAsync(id, new UpdateSessionModelRequest("new-model"));
+        Assert.Equal("new-model", updated.Model);
+        Assert.Equal("new-model", (await ctx.Kernel.ListSessionsAsync(snap.Track.Id)).Single(s => s.Id == id).Model);
+        Assert.Contains(ctx.Store.PersistedEvents, e => e.Kind == Perga.Kernel.Events.KernelEventKinds.SessionUpdated &&
+            e.Payload.GetProperty("id").GetString() == id && e.Payload.TryGetProperty("model", out var model) && model.GetString() == "new-model");
+        Assert.Equal(new[] { "new-model" }, original.ModelSwitches);
+        Assert.Equal(!supportsSwitch, original.Disposed);
+        var opened = ctx.AgentRuntime.OpenedSessions.ToArray();
+        Assert.Equal(supportsSwitch ? 1 : 2, opened.Length);
+        if (!supportsSwitch)
+        {
+            Assert.Equal("new-model", opened[1].LaunchSpec.Model);
+            Assert.Equal(original.NativeThreadId, opened[1].LaunchSpec.ResumeNativeThreadId);
+        }
+        await ctx.Kernel.SendMessageAsync(id, new SendMessageRequest("next", "next"));
+        Assert.Equal(opened.Length, ctx.AgentRuntime.OpenedSessions.Count);
+        await ctx.Kernel.UpdateSessionModelAsync(id, new UpdateSessionModelRequest("new-model"));
+        Assert.Single(original.ModelSwitches);
+    }
+
+    [Fact]
+    public async Task FailedReopenKeepsDesiredModelAndNextTurnRetries()
+    {
+        await using var ctx = new KernelTestContext();
+        var (_, snap) = await ctx.CreateDefaultTrackAsync();
+        var id = snap.Track.LeadSessionId!;
+        await ctx.Kernel.SendMessageAsync(id, new SendMessageRequest("first", "first"));
+        var original = Assert.Single(ctx.AgentRuntime.OpenedSessions);
+        ctx.AgentRuntime.OnBeforeOpenSession = _ => throw new InvalidOperationException("provider unavailable");
+        await Assert.ThrowsAsync<InvalidOperationException>(() => ctx.Kernel.UpdateSessionModelAsync(id, new UpdateSessionModelRequest("retry-model")));
+        Assert.True(original.Disposed);
+        Assert.Equal("retry-model", (await ctx.Kernel.ListSessionsAsync(snap.Track.Id)).Single(s => s.Id == id).Model);
+        ctx.AgentRuntime.OnBeforeOpenSession = null;
+        await ctx.Kernel.SendMessageAsync(id, new SendMessageRequest("retry", "retry"));
+        Assert.Equal("retry-model", ctx.AgentRuntime.OpenedSessions.Last().LaunchSpec.Model);
+        Assert.Equal(2, ctx.AgentRuntime.OpenedSessions.Count);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ModelUpdateDuringTurnOrCompactionDefersSwitch(bool compacting)
+    {
+        await using var ctx = new KernelTestContext();
+        var (_, snap) = await ctx.CreateDefaultTrackAsync();
+        var id = snap.Track.LeadSessionId!;
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        ctx.AgentRuntime.TurnScript = Stream;
+        async IAsyncEnumerable<UnifiedAgentEvent> Stream(ScriptableFakeAgentSession session, TurnInput input,
+            [EnumeratorCancellation] CancellationToken ct)
+        {
+            entered.TrySetResult();
+            await release.Task.WaitAsync(ct);
+            yield return new UnifiedAgentEvent.TurnCompleted(null);
+        }
+        Task turn = compacting ? ctx.Kernel.CompactSessionAsync(id) :
+            ctx.Kernel.SendMessageAsync(id, new SendMessageRequest("first", "first"));
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var original = Assert.Single(ctx.AgentRuntime.OpenedSessions);
+        original.SupportsModelSwitch = true;
+        try
+        {
+            await ctx.Kernel.UpdateSessionModelAsync(id, new UpdateSessionModelRequest("later-model"));
+            Assert.Empty(original.ModelSwitches);
+            Assert.False(original.Disposed);
+        }
+        finally
+        {
+            release.TrySetResult();
+        }
+        await turn;
+        await ctx.Kernel.SendMessageAsync(id, new SendMessageRequest("next", "next"));
+        if (compacting)
+        {
+            Assert.Empty(original.ModelSwitches);
+            Assert.True(original.Disposed);
+            Assert.Equal("later-model", ctx.AgentRuntime.OpenedSessions.Last().LaunchSpec.Model);
+            Assert.Equal(2, ctx.AgentRuntime.OpenedSessions.Count);
+        }
+        else
+        {
+            Assert.Equal(new[] { "later-model" }, original.ModelSwitches);
+            Assert.Single(ctx.AgentRuntime.OpenedSessions);
+        }
+    }
+
     [Fact]
     public async Task EpochHandoverCompaction_ManualAndAutoAt80Percent_SummarizesDisposesBumpsEpochAndSeedsFreshSession()
     {

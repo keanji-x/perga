@@ -73,6 +73,32 @@ public sealed class AcpAgentSession : IAgentSession
 
     public bool SupportsNativeSteer => false;
 
+    internal IReadOnlyList<string> AvailableModels { get; private set; } = [];
+
+    public async Task<bool> TrySetModelAsync(string? model, CancellationToken ct = default)
+    {
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        // ACP requires a model ID. Resetting to the provider default needs a fresh session.
+        if (string.IsNullOrWhiteSpace(model))
+        {
+            return false;
+        }
+
+        try
+        {
+            await _rpc.SendRequestAsync("session/set_model", new
+            {
+                sessionId = NativeThreadId,
+                modelId = model
+            }, ct).ConfigureAwait(false);
+            return true;
+        }
+        catch (JsonRpcRemoteException ex) when (ex.Code == -32601)
+        {
+            return false;
+        }
+    }
+
     internal static async Task<AcpAgentSession> OpenAsync(
         CommandInvocation wrappedCommand,
         HarnessLaunchSpec spec,
@@ -228,11 +254,6 @@ public sealed class AcpAgentSession : IAgentSession
             ["mcpServers"] = McpConfigSerializer.BuildAcpMcpServersList(spec.McpServers)
         };
 
-        if (!string.IsNullOrWhiteSpace(spec.Model))
-        {
-            sessionParams["model"] = spec.Model;
-        }
-
         if (!string.IsNullOrWhiteSpace(spec.SystemPrompt))
         {
             sessionParams["systemPrompt"] = spec.SystemPrompt;
@@ -259,6 +280,69 @@ public sealed class AcpAgentSession : IAgentSession
         }
 
         Volatile.Write(ref _nativeThreadId, resolvedSessionId);
+        AvailableModels = ExtractAvailableModels(response);
+        if (!string.IsNullOrWhiteSpace(spec.Model))
+        {
+            await TrySetModelAsync(spec.Model, ct).ConfigureAwait(false);
+        }
+    }
+
+    private static IReadOnlyList<string> ExtractAvailableModels(JsonElement response)
+    {
+        var ids = new HashSet<string>(StringComparer.Ordinal);
+        var result = new List<string>();
+        void Add(string? id)
+        {
+            if (!string.IsNullOrWhiteSpace(id) && ids.Add(id))
+            {
+                result.Add(id);
+            }
+        }
+
+        if (response.ValueKind != JsonValueKind.Object)
+        {
+            return result;
+        }
+
+        if (response.TryGetProperty("models", out var models) && models.ValueKind == JsonValueKind.Object &&
+            models.TryGetProperty("availableModels", out var available) && available.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var model in available.EnumerateArray())
+            {
+                Add(TryGetString(model, "modelId"));
+            }
+        }
+
+        if (response.TryGetProperty("configOptions", out var config) && config.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var option in config.EnumerateArray())
+            {
+                if (option.ValueKind != JsonValueKind.Object ||
+                    !(TryGetString(option, "category") == "model" || TryGetString(option, "id") == "model") ||
+                    !option.TryGetProperty("options", out var values) || values.ValueKind != JsonValueKind.Array)
+                {
+                    continue;
+                }
+
+                foreach (var value in values.EnumerateArray())
+                {
+                    if (value.ValueKind == JsonValueKind.Object && value.TryGetProperty("options", out var group) &&
+                        group.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (var item in group.EnumerateArray())
+                        {
+                            Add(TryGetString(item, "value"));
+                        }
+                    }
+                    else
+                    {
+                        Add(TryGetString(value, "value"));
+                    }
+                }
+            }
+        }
+
+        return result;
     }
 
     private async Task RunSessionPromptRpcAsync(

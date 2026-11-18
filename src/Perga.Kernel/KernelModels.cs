@@ -87,6 +87,8 @@ public sealed record CreateSessionRequest(
     string? Model = null,
     string? Text = null);
 
+public sealed record UpdateSessionModelRequest(string? Model);
+
 public sealed record SendMessageRequest(
     string Content,
     string IdempotencyKey,

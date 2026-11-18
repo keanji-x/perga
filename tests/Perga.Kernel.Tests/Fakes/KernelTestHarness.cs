@@ -1147,6 +1147,14 @@ internal sealed class ScriptableFakeAgentSession : IAgentSession
         return Task.CompletedTask;
     }
 
+    public bool SupportsModelSwitch { get; set; }
+    public ConcurrentQueue<string?> ModelSwitches { get; } = new();
+    public Task<bool> TrySetModelAsync(string? model, CancellationToken ct = default)
+    {
+        ModelSwitches.Enqueue(model);
+        return Task.FromResult(SupportsModelSwitch);
+    }
+
     public Task<bool> TrySteerAsync(string message, CancellationToken ct = default)
     {
         if (!SupportsNativeSteer)

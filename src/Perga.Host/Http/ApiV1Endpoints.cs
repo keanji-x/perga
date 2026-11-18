@@ -209,6 +209,13 @@ public static class ApiV1Endpoints
             return Results.Json(receipt, PergaJsonDefaults.ApiOptions);
         });
 
+        v1.MapPut("/sessions/{sessionId}/model", async (
+            string sessionId, UpdateSessionModelRequest req, IPergaKernel kernel, CancellationToken ct) =>
+        {
+            var session = await kernel.UpdateSessionModelAsync(sessionId, req, ct).ConfigureAwait(false);
+            return Results.Ok(session);
+        });
+
         v1.MapPost("/sessions/{sessionId}/interrupt", async (string sessionId, IPergaKernel kernel, CancellationToken ct) =>
         {
             await kernel.InterruptSessionAsync(sessionId, ct).ConfigureAwait(false);

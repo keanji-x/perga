@@ -235,6 +235,11 @@ export const reportReadResultDtoSchema = z.object({
 });
 export type ReportReadResultDto = z.infer<typeof reportReadResultDtoSchema>;
 
+export const updateSessionModelRequestSchema = z.object({
+  model: z.string().nullable().optional(),
+});
+export type UpdateSessionModelRequest = z.infer<typeof updateSessionModelRequestSchema>;
+
 export const agentSessionDtoSchema = z.object({
   id: z.string(),
   trackId: z.string(),

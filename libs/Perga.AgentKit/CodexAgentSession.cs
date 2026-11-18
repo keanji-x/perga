@@ -201,6 +201,8 @@ public sealed class CodexAgentSession : IAgentSession
         await _rpc.SendResultResponseAsync(pending.RawId, payload, ct).ConfigureAwait(false);
     }
 
+    public Task<bool> TrySetModelAsync(string? model, CancellationToken ct = default) => Task.FromResult(false);
+
     public async Task<bool> TrySteerAsync(string message, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(message);

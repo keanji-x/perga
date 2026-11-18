@@ -76,6 +76,7 @@ public interface IAgentSession : IAsyncDisposable
     IAsyncEnumerable<UnifiedAgentEvent> StreamTurnAsync(TurnInput input, CancellationToken ct);
     Task CancelTurnAsync(CancellationToken ct);
     Task RespondApprovalAsync(string requestId, bool approved, string? reason = null, CancellationToken ct = default);
+    Task<bool> TrySetModelAsync(string? model, CancellationToken ct = default);
     Task<bool> TrySteerAsync(string message, CancellationToken ct = default);
 }
 

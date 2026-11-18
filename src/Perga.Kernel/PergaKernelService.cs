@@ -78,6 +78,7 @@ public interface IPergaKernel : IAsyncDisposable
     Task<SessionInputReceipt> ResolveUnknownInputAsync(string sessionId, string inputId, CancellationToken ct);
     Task<SessionItemsPageDto> GetSessionItemsAsync(string sessionId, long afterId = 0, int limit = 100, CancellationToken ct = default, bool latest = false, long? beforeId = null);
     Task<SessionTurnDto> SendMessageAsync(string sessionId, SendMessageRequest req, CancellationToken ct = default);
+    Task<AgentSessionDto> UpdateSessionModelAsync(string sessionId, UpdateSessionModelRequest req, CancellationToken ct = default);
     Task InterruptSessionAsync(string sessionId, CancellationToken ct = default);
     Task<AgentSessionDto> CompactSessionAsync(string sessionId, CancellationToken ct = default);
 
@@ -699,6 +700,13 @@ public sealed class PergaKernelService : IPergaKernel
     {
         var trackId = await ResolveTrackIdForSessionAsync(sessionId, ct).ConfigureAwait(false);
         return await Actors.GetOrActivate(trackId).SendMessageAsync(sessionId, req, ct).ConfigureAwait(false);
+    }
+
+    public async Task<AgentSessionDto> UpdateSessionModelAsync(
+        string sessionId, UpdateSessionModelRequest req, CancellationToken ct = default)
+    {
+        var trackId = await ResolveTrackIdForSessionAsync(sessionId, ct).ConfigureAwait(false);
+        return await Actors.GetOrActivate(trackId).UpdateSessionModelAsync(sessionId, req, ct).ConfigureAwait(false);
     }
 
     public async Task InterruptSessionAsync(string sessionId, CancellationToken ct = default)
