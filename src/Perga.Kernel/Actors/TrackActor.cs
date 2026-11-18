@@ -537,19 +537,9 @@ public sealed partial class TrackActor : IAsyncDisposable
                     var eval = _policyVm.GuardReportCommit(_policy, ctx, _track.TemplateState);
                     await UpdateTemplateStateIfChangedCoreAsync(eval.NextState, ct).ConfigureAwait(false);
 
-                    switch (eval.Output)
-                    {
-                        case GuardDecision.Deny deny:
-                            throw KernelException.PolicyDenied(deny.Reason);
-
-                        case GuardDecision.AskHuman askHuman:
-                            var suspension = await CreateAskSuspensionCoreAsync(
-                                askHuman.Title,
-                                askHuman.Options,
-                                callerSessionId,
-                                ct).ConfigureAwait(false);
-                            return (null, suspension, effectiveReq);
-                    }
+                    var suspension = await ApplyGuardDecisionCoreAsync(eval.Output, callerSessionId, ct).ConfigureAwait(false);
+                    if (suspension is not null)
+                        return (null, suspension, effectiveReq);
                 }
 
                 var result = await FinalizeReportCommitCoreAsync(
@@ -1362,24 +1352,7 @@ public sealed partial class TrackActor : IAsyncDisposable
                 var eval = _policyVm.GuardToolCall(_policy, ctx, _track.TemplateState);
                 await UpdateTemplateStateIfChangedCoreAsync(eval.NextState, ct).ConfigureAwait(false);
 
-                switch (eval.Output)
-                {
-                    case GuardDecision.Allow:
-                        return null;
-
-                    case GuardDecision.Deny deny:
-                        throw KernelException.PolicyDenied(deny.Reason);
-
-                    case GuardDecision.AskHuman askHuman:
-                        return await CreateAskSuspensionCoreAsync(
-                            askHuman.Title,
-                            askHuman.Options,
-                            caller.Id,
-                            ct).ConfigureAwait(false);
-
-                    default:
-                        return null;
-                }
+                return await ApplyGuardDecisionCoreAsync(eval.Output, caller.Id, ct).ConfigureAwait(false);
             }, ct).ConfigureAwait(false);
 
             if (askSuspension is null)
@@ -2863,6 +2836,16 @@ public sealed partial class TrackActor : IAsyncDisposable
         _mcpBridge.UpdateLeadStatus(TrackId, newLeadSessionId);
         await PersistAndEmitSessionUpdatedCoreAsync(promoted, now, ct).ConfigureAwait(false);
     }
+
+    private async Task<PendingAskSuspension?> ApplyGuardDecisionCoreAsync(
+        GuardDecision decision, string? callerSessionId, CancellationToken ct) =>
+        decision switch
+        {
+            GuardDecision.Allow => null,
+            GuardDecision.Deny deny => throw KernelException.PolicyDenied(deny.Reason),
+            GuardDecision.AskHuman ask => await CreateAskSuspensionCoreAsync(
+                ask.Title, ask.Options, callerSessionId, ct).ConfigureAwait(false)
+        };
 
     private async Task<PendingAskSuspension> CreateAskSuspensionCoreAsync(
         string title,
