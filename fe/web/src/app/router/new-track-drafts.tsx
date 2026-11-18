@@ -7,6 +7,9 @@ import type { NewTrackFormState } from '../../features/area/new-track/public.tsx
 import type { PlannerRole } from '../../features/chat/thread/model-pill.tsx';
 import { useState } from '../../ui/state/public.ts';
 import { mintIdempotencyKey } from '../providers/idempotency-key.ts';
+import { createStorageKey } from '../../../../core/keys/storage.ts';
+import { useCurrentUser } from '../auth/current-user.tsx';
+import { TRACK_CREATE_TEXT } from '../../../../core/domain/track.ts';
 
 /** One create's wire body and the key it is sent under on every attempt. */
 export type TrackCreationRequest = Readonly<{ body: NewTrackBody; key: string }>;
@@ -33,7 +36,29 @@ export type NewTrackSession = Readonly<{
   }> | null;
 }>;
 
-function createDraftStore() {
+function createDraftStore(submittedStorage?: () => Storage, userId?: string) {
+  const keyOf = (areaId: string) => createStorageKey('track-create-v1', encodeURIComponent(userId ?? ''), encodeURIComponent(areaId));
+  const readRequest = (areaId: string): TrackCreationRequest | null => {
+    if (submittedStorage === undefined || !userId) return null;
+    try {
+      const value: unknown = JSON.parse(submittedStorage().getItem(keyOf(areaId)) ?? 'null');
+      if (typeof value !== 'object' || value === null) return null;
+      const request = value as Partial<TrackCreationRequest>;
+      return typeof request.key === 'string' && request.body?.area_id === areaId
+        && (request.body.first_message === undefined || typeof request.body.first_message === 'string')
+        ? { key: request.key, body: request.body } : null;
+    } catch {
+      return null;
+    }
+  };
+  const remember = (areaId: string, request: TrackCreationRequest | null) => {
+    if (submittedStorage === undefined || !userId) return;
+    try {
+      const storage = submittedStorage();
+      if (request === null) storage.removeItem(keyOf(areaId));
+      else storage.setItem(keyOf(areaId), JSON.stringify(request));
+    } catch { /* Keep the in-memory draft when browser storage is unavailable. */ }
+  };
   const drafts = new Map<string, NewTrackSession>();
   const listeners = new Set<() => void>();
   const notify = () => { for (const listener of listeners) listener(); };
@@ -42,25 +67,39 @@ function createDraftStore() {
     get: (areaId: string) => drafts.get(areaId) ?? null,
     ensure: (area: Area) => {
       if (drafts.has(area.id)) return;
-      drafts.set(area.id, { area: { id: area.id, name: area.name, defaultCwd: area.defaultCwd }, form: null, provider: 'codex', model: FOLLOW_INSTALLATION_DEFAULT, role: 'member', key: mintIdempotencyKey(), creating: false,
-        request: null, createdTrackId: null, error: null, canRetryAsNewTrack: false, folderConflict: null });
+      const request = readRequest(area.id);
+      drafts.set(area.id, {
+        area: { id: area.id, name: area.name, defaultCwd: area.defaultCwd },
+        form: request === null ? null : {
+          message: request.body.first_message ?? '', cwd: request.body.cwd ?? '', isolation: request.body.isolation,
+        },
+        provider: request?.body.planner_provider ?? 'codex',
+        model: request === null ? FOLLOW_INSTALLATION_DEFAULT : {
+          model: request.body.model ?? null, reasoning_effort: request.body.reasoning_effort ?? null,
+        },
+        role: request?.body.admin ? 'admin' : 'member',
+        key: request?.key ?? mintIdempotencyKey(), creating: false, request, createdTrackId: null,
+        error: request === null ? null : TRACK_CREATE_TEXT.unknown, canRetryAsNewTrack: false, folderConflict: null,
+      });
       notify();
     },
     update: (areaId: string, patch: Partial<NewTrackSession>) => {
       const current = drafts.get(areaId);
       if (current === undefined) return;
       drafts.set(areaId, { ...current, ...patch });
+      if (patch.request !== undefined) remember(areaId, patch.request);
       notify();
     },
-    forget: (areaId: string) => { drafts.delete(areaId); notify(); },
+    forget: (areaId: string) => { drafts.delete(areaId); remember(areaId, null); notify(); },
   };
 }
 
 const DraftContext = createContext<ReturnType<typeof createDraftStore> | null>(null);
 
 /** One tab's unfinished intentions; route navigation never clears them. */
-export function NewTrackDraftProvider({ children }: { children: ReactNode }) {
-  const [store] = useState(createDraftStore);
+export function NewTrackDraftProvider({ children, submittedStorage }: { children: ReactNode; submittedStorage?: () => Storage }) {
+  const userId = useCurrentUser()?.userId;
+  const [store] = useState(() => createDraftStore(submittedStorage, userId));
   return <DraftContext.Provider value={store}>{children}</DraftContext.Provider>;
 }
 

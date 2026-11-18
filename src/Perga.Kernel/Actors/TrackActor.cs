@@ -116,37 +116,6 @@ public sealed partial class TrackActor : IAsyncDisposable
         Volatile.Read(ref _inFlightExternalOps) > 0 ||
         !_backgroundJobs.IsEmpty;
 
-    internal void SeedHydratedState(
-        TrackDto track,
-        ReportDocument report,
-        IReadOnlyList<TaskDto> tasks,
-        IReadOnlyList<AgentSessionDto> sessions,
-        CompiledPolicy? policy,
-        string? templateSnapshotSource,
-        MountedWorkspace mountedWorkspace)
-    {
-        _track = track;
-        _report = report;
-        _policy = policy;
-        _templateSnapshotSource = templateSnapshotSource;
-        _mountedWorkspace = mountedWorkspace;
-
-        _tasks.Clear();
-        _tasks.AddRange(tasks);
-
-        _sessions.Clear();
-        foreach (var s in sessions)
-        {
-            var isLead = string.Equals(s.Id, track.LeadSessionId, StringComparison.Ordinal);
-            var normalized = s.IsLead == isLead ? s : s with { IsLead = isLead };
-            _sessions[normalized.Id] = normalized;
-            _nextTurnIndexBySession[normalized.Id] = 0;
-        }
-
-        _hydrated = true;
-        TouchActivity();
-    }
-
     public async Task<T> EnqueueAsync<T>(Func<TrackActor, Task<T>> work, CancellationToken ct = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
@@ -198,17 +167,16 @@ public sealed partial class TrackActor : IAsyncDisposable
         return EnqueueAsync(async _ =>
         {
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
+            await RefreshForeignWorkspacePreparationCoreAsync(ct).ConfigureAwait(false);
+            StartWorkspacePreparationCore(retry: false);
             return BuildSnapshotCore();
         }, ct);
     }
 
-    public Task<MountedWorkspace> EnsureMountedAsync(CancellationToken ct = default)
+    public async Task<MountedWorkspace> EnsureMountedAsync(CancellationToken ct = default)
     {
-        return EnqueueAsync(async _ =>
-        {
-            await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
-            return await EnsureWorkspaceMountedCoreAsync(ct).ConfigureAwait(false);
-        }, ct);
+        await WaitForWorkspacePreparationAsync(ct).ConfigureAwait(false);
+        return await EnqueueAsync(_ => EnsureWorkspaceMountedCoreAsync(ct), ct).ConfigureAwait(false);
     }
 
     public Task<TrackStatusDto> GetStatusAsync(CancellationToken ct = default)
@@ -291,9 +259,17 @@ public sealed partial class TrackActor : IAsyncDisposable
 
             if (changed)
             {
+                var reopening = _track.ClosedAtMs is not null && nextTrack.ClosedAtMs is null;
+                ct.ThrowIfCancellationRequested();
                 nextTrack = nextTrack with { UpdatedAtMs = now };
                 _track = nextTrack;
-                await EmitTrackUpdatedCoreAsync(now, ct).ConfigureAwait(false);
+                await EmitTrackUpdatedCoreAsync(now, reopening ? _actorShutdownCts.Token : ct).ConfigureAwait(false);
+            }
+
+            if (req.Closed is false)
+            {
+                StartWorkspacePreparationCore(retry: false);
+                await ResumeWorkspaceWorkCoreAsync(_actorShutdownCts.Token).ConfigureAwait(false);
             }
 
             return _track;
@@ -333,9 +309,41 @@ public sealed partial class TrackActor : IAsyncDisposable
 
     public async Task TeardownAndDeleteTrackAsync(CancellationToken ct = default)
     {
-        (WorkspaceSpec Spec, IWorkspaceDriver Driver, string? CloseCmd, string Cwd) teardownInfo = await EnqueueAsync(async _ =>
+        var reserved = false;
+        try
+        {
+            await DeleteTrackCoreAsync(() => reserved = true, ct).ConfigureAwait(false);
+        }
+        catch
+        {
+            if (reserved)
+                await EnqueueAsync(_ =>
+                {
+                    _deletingTrack = false;
+                    return Task.CompletedTask;
+                }, CancellationToken.None).ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    private async Task DeleteTrackCoreAsync(Action reserve, CancellationToken ct)
+    {
+        (WorkspaceSpec? Spec, IWorkspaceDriver Driver, string? CloseCmd, string Cwd) teardownInfo = await EnqueueAsync(async _ =>
         {
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
+
+            await RefreshForeignWorkspacePreparationCoreAsync(ct).ConfigureAwait(false);
+            if (_workspacePreparationJob is { IsCompleted: false } ||
+                _workspacePreparation is { Phase: WorkspacePreparationPhase.Provisioning or WorkspacePreparationPhase.Mounting or WorkspacePreparationPhase.Initializing })
+                throw KernelException.Conflict("Wait for workspace setup to finish before deleting this Track.");
+            if (_workspacePreparation is { Phase: WorkspacePreparationPhase.Unknown, Spec: null })
+                throw KernelException.PreconditionFailed("Confirm the previous workspace allocation before deleting this Track.");
+
+            if (_deletingTrack)
+                throw KernelException.Conflict("This Track is already being deleted.");
+            ct.ThrowIfCancellationRequested();
+            _deletingTrack = true;
+            reserve();
 
             // 1. Cancel active turns
             foreach (var turn in _activeTurns.Values.ToArray())
@@ -384,11 +392,11 @@ public sealed partial class TrackActor : IAsyncDisposable
             _mcpBridge.RevokeTrack(TrackId);
 
             var driver = _workspaceDrivers.GetRequired(_track.WorkspaceDriver);
-            var spec = ExtractWorkspaceSpec(_track);
-            var closeCmd = _policy?.Manifest.WorkspaceCloseCmd;
+            var spec = WorkspaceReady ? ExtractWorkspaceSpec(_track) : _workspacePreparation?.Spec;
+            var closeCmd = WorkspaceReady ? _policy?.Manifest.WorkspaceCloseCmd : null;
             var cwd = _mountedWorkspace?.MergedCwd ?? _track.Cwd;
             return (spec, driver, closeCmd, cwd);
-        }, ct).ConfigureAwait(false);
+        }, CancellationToken.None).ConfigureAwait(false);
 
         // Run WorkspaceCloseCmd before tearing down workspace
         if (!string.IsNullOrWhiteSpace(teardownInfo.CloseCmd))
@@ -408,7 +416,8 @@ public sealed partial class TrackActor : IAsyncDisposable
             }
         }
 
-        await teardownInfo.Driver.TeardownTrackAsync(teardownInfo.Spec, ct).ConfigureAwait(false);
+        if (teardownInfo.Spec is not null)
+            await teardownInfo.Driver.TeardownTrackAsync(teardownInfo.Spec, ct).ConfigureAwait(false);
         await _store.DeleteTrackAsync(TrackId, ct).ConfigureAwait(false);
     }
 
@@ -611,8 +620,6 @@ public sealed partial class TrackActor : IAsyncDisposable
         return EnqueueAsync(async _ =>
         {
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
-            await EnsureWorkspaceMountedCoreAsync(ct).ConfigureAwait(false);
-
             var session = NewSubagentSessionCore(req);
             await PersistAndEmitSessionUpdatedCoreAsync(session, session.UpdatedAtMs, ct).ConfigureAwait(false);
             _sessions[session.Id] = session;
@@ -645,7 +652,7 @@ public sealed partial class TrackActor : IAsyncDisposable
     {
         return EnqueueAsync(async _ =>
         {
-            await EnsureHydratedCoreAsync(ct, mountWorkspace: false).ConfigureAwait(false);
+            await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
             var session = RequireSessionCore(sessionId);
             var items = await _store.ListSessionItemsAsync(sessionId, afterId, limit, ct, latest, beforeId).ConfigureAwait(false);
             var activeTurn = _activeTurns.TryGetValue(sessionId, out var running) ? running.TurnDto : null;
@@ -1064,7 +1071,7 @@ public sealed partial class TrackActor : IAsyncDisposable
     {
         var shouldWake = await EnqueueAsync(async _ =>
         {
-            await EnsureHydratedCoreAsync(ct, mountWorkspace: false).ConfigureAwait(false);
+            await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
             var evt = new EventEnvelopeDto(
                 EventId: null,
                 AreaId: _track.AreaId,
@@ -1138,9 +1145,10 @@ public sealed partial class TrackActor : IAsyncDisposable
         }, ct);
     }
 
-    public Task<TerminalDto> OpenTerminalAsync(string? callerSessionId, OpenTerminalRequest req, CancellationToken ct = default)
+    public async Task<TerminalDto> OpenTerminalAsync(string? callerSessionId, OpenTerminalRequest req, CancellationToken ct = default)
     {
-        return EnqueueAsync(async _ =>
+        await WaitForWorkspacePreparationAsync(ct).ConfigureAwait(false);
+        return await EnqueueAsync(async _ =>
         {
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
             var mounted = await EnsureWorkspaceMountedCoreAsync(ct).ConfigureAwait(false);
@@ -1207,7 +1215,7 @@ public sealed partial class TrackActor : IAsyncDisposable
             _terminals[terminal.Id] = terminal;
             await PersistAndEmitTerminalChangedCoreAsync(terminal, now, ct).ConfigureAwait(false);
             return terminal;
-        }, ct);
+        }, ct).ConfigureAwait(false);
     }
 
     public async Task<TermObserveResult> ObserveTerminalAsync(TermObserveRequest req, CancellationToken ct = default)
@@ -1442,14 +1450,10 @@ public sealed partial class TrackActor : IAsyncDisposable
         }
     }
 
-    private async Task EnsureHydratedCoreAsync(CancellationToken ct, bool mountWorkspace = true)
+    private async Task EnsureHydratedCoreAsync(CancellationToken ct)
     {
         if (_hydrated)
-        {
-            if (mountWorkspace && _mountedWorkspace is null)
-                await EnsureWorkspaceMountedCoreAsync(ct).ConfigureAwait(false);
             return;
-        }
 
         var snapshot = await _store.LoadTrackAggregateAsync(TrackId, ct).ConfigureAwait(false)
                        ?? throw KernelException.NotFound($"Track '{TrackId}' not found.");
@@ -1494,13 +1498,13 @@ public sealed partial class TrackActor : IAsyncDisposable
             _terminals[term.Id] = term;
         }
 
-        if (mountWorkspace)
-            await EnsureWorkspaceMountedCoreAsync(ct).ConfigureAwait(false);
+        _workspacePreparation = await _store.GetWorkspacePreparationAsync(TrackId, ct).ConfigureAwait(false);
         _hydrated = true;
     }
 
     private async Task<MountedWorkspace> EnsureWorkspaceMountedCoreAsync(CancellationToken ct)
     {
+        RequireWorkspaceReadyCore();
         if (_mountedWorkspace is not null)
         {
             return _mountedWorkspace;
@@ -1647,7 +1651,7 @@ public sealed partial class TrackActor : IAsyncDisposable
 
     private async Task ScheduleEligibleTasksCoreAsync(CancellationToken ct)
     {
-        if (_track.ClosedAtMs is not null)
+        if (_deletingTrack || _track.ClosedAtMs is not null || !WorkspaceReady)
         {
             return;
         }
@@ -1744,12 +1748,12 @@ public sealed partial class TrackActor : IAsyncDisposable
 
         if (isCommandTask)
         {
-            TrackBackgroundJob(() => RunCommandTaskAttemptInBackgroundAsync(attemptId, runningTask, lease, attemptCts.Token));
+            _ = TrackBackgroundJob(() => RunCommandTaskAttemptInBackgroundAsync(attemptId, runningTask, lease, attemptCts.Token));
         }
         else
         {
             var prompt = BuildContractSubagentPrompt(runningTask);
-            TrackBackgroundJob(() => RunSubagentTaskAttemptInBackgroundAsync(attemptId, subagentSessionId!, prompt, attemptCts.Token));
+            _ = TrackBackgroundJob(() => RunSubagentTaskAttemptInBackgroundAsync(attemptId, subagentSessionId!, prompt, attemptCts.Token));
         }
     }
 
@@ -2109,6 +2113,8 @@ public sealed partial class TrackActor : IAsyncDisposable
         CancellationToken ct,
         PersistedSessionInput? input = null, Guid? wakeReservation = null, string? mailId = null, string? wakeInputId = null)
     {
+        if (input is null)
+            await WaitForWorkspacePreparationAsync(ct).ConfigureAwait(false);
         Interlocked.Increment(ref _inFlightExternalOps);
         ActiveTurnState? pendingCleanup = null;
         try
@@ -2128,7 +2134,7 @@ public sealed partial class TrackActor : IAsyncDisposable
 
             var turnSetup = await EnqueueAsync<(ActiveTurnState? ActiveState, string EffectivePrompt, SessionTurnDto? FailedWake)>(async _ =>
             {
-                await EnsureHydratedCoreAsync(ct, mountWorkspace: input is null && wakeInputId is null).ConfigureAwait(false);
+                await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
                 ct.ThrowIfCancellationRequested();
                 var session = RequireSessionCore(sessionId);
                 if (_activeTurns.ContainsKey(sessionId) || _compactingSessions.Contains(sessionId) ||
@@ -2157,6 +2163,8 @@ public sealed partial class TrackActor : IAsyncDisposable
                 var runningEvent = SessionUpdatedEvent(runningSession);
                 if (input is not null)
                 {
+                    if (_track.ClosedAtMs is not null)
+                        return (null, effectivePrompt, null);
                     await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
                     if (!await _store.SessionInputs.ClaimAsync(input, runningSession, runningEvent, ct).ConfigureAwait(false))
                         return (null, effectivePrompt, null);
@@ -2736,7 +2744,7 @@ public sealed partial class TrackActor : IAsyncDisposable
     {
         var check = await EnqueueAsync<(string? LeadSessionId, Guid? Reservation)>(async _ =>
         {
-            await EnsureHydratedCoreAsync(ct, mountWorkspace: false).ConfigureAwait(false);
+            await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
             if (_track.ClosedAtMs is not null || string.IsNullOrEmpty(_track.LeadSessionId))
             {
                 if (mailId is not null)
@@ -2750,7 +2758,7 @@ public sealed partial class TrackActor : IAsyncDisposable
                 return (null, null);
             }
 
-            if (_activeTurns.ContainsKey(leadId) || HoldsDurableSlot(_sessions[leadId]) ||
+            if (!WorkspaceReady || _activeTurns.ContainsKey(leadId) || HoldsDurableSlot(_sessions[leadId]) ||
                 _compactingSessions.Contains(leadId) || _reservedWakeSessions.ContainsKey(leadId))
             {
                 EnqueuePendingWakeCore(leadId, triggerKind, wakePrompt, mailId);
@@ -2770,7 +2778,7 @@ public sealed partial class TrackActor : IAsyncDisposable
 
         if (recovering || _options.DispatchWakesInBackground)
         {
-            TrackBackgroundJob(() => RunReservedWakeAsync(check.LeadSessionId, triggerKind, wakePrompt, reservation, _actorShutdownCts.Token, mailId));
+            _ = TrackBackgroundJob(() => RunReservedWakeAsync(check.LeadSessionId, triggerKind, wakePrompt, reservation, _actorShutdownCts.Token, mailId));
         }
         else
         {
@@ -2780,7 +2788,7 @@ public sealed partial class TrackActor : IAsyncDisposable
 
     private void SchedulePendingWakeCore(string sessionId)
     {
-        if (_activeTurns.ContainsKey(sessionId) || _compactingSessions.Contains(sessionId) ||
+        if (!WorkspaceReady || _track.ClosedAtMs is not null || _activeTurns.ContainsKey(sessionId) || _compactingSessions.Contains(sessionId) ||
             _reservedWakeSessions.ContainsKey(sessionId) || !_sessions.TryGetValue(sessionId, out var session) ||
             HoldsDurableSlot(session) ||
             !_pendingWakes.TryGetValue(sessionId, out var queued) || !queued.TryDequeue(out var wake))
@@ -3204,7 +3212,8 @@ public sealed partial class TrackActor : IAsyncDisposable
             Tasks: _tasks.ToArray(),
             Sessions: OrderedSessionsCore(),
             OpenAsks: _asks.Values.Where(a => a.Status == AskStatus.Open).OrderBy(a => a.CreatedAtMs).ToArray(),
-            TemplateSnapshotSource: _templateSnapshotSource);
+            TemplateSnapshotSource: _templateSnapshotSource,
+            WorkspacePreparation: WorkspacePreparationStatus);
     }
 
     private IReadOnlyList<AgentSessionDto> OrderedSessionsCore()
@@ -3307,7 +3316,7 @@ public sealed partial class TrackActor : IAsyncDisposable
     private static string FormatAccessModeForPolicy(AccessMode mode) =>
         mode == AccessMode.ReadOnly ? "read_only" : "read_write";
 
-    private void TrackBackgroundJob(Func<Task> jobFactory)
+    private Task TrackBackgroundJob(Func<Task> jobFactory)
     {
         var jobId = Guid.NewGuid();
         var task = Task.Run(jobFactory);
@@ -3318,6 +3327,7 @@ public sealed partial class TrackActor : IAsyncDisposable
             _backgroundJobs.TryRemove(jobId, out _);
             TouchActivity();
         }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+        return task;
     }
 
     private long NowMs() => _timeProvider.GetUtcNow().ToUnixTimeMilliseconds();

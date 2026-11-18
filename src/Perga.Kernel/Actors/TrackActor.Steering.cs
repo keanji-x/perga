@@ -17,10 +17,10 @@ public sealed partial class TrackActor
         var admissionToken = deadline.Token;
         try
         {
-            var attempt = await EnqueueAsync(async _ =>
+            var attempt = await EnqueueAsync(async actor =>
             {
                 admissionToken.ThrowIfCancellationRequested();
-                await EnsureHydratedCoreAsync(admissionToken, mountWorkspace: false).ConfigureAwait(false);
+                await EnsureHydratedCoreAsync(admissionToken).ConfigureAwait(false);
                 var session = RequireSessionCore(sessionId);
                 RequireDispatchWorkspace(session);
                 if (session.Status == "unknown")
@@ -34,7 +34,7 @@ public sealed partial class TrackActor
                 _steering.TryGetValue(sessionId, out var previous);
                 var next = RunSteeringAsync(previous.Attempt, sessionId, turnId, content, inputId, startedAt);
                 _steering[sessionId] = (inputId, next);
-                TrackBackgroundJob(() => next);
+                _ = TrackBackgroundJob(() => next);
                 return next;
             }, admissionToken).ConfigureAwait(false);
 

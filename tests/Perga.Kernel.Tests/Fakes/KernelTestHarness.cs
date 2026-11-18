@@ -298,7 +298,7 @@ internal sealed class InMemoryTrackStore : ITrackStore
         }
     }
 
-    public Task DeleteAreaAsync(string areaId, CancellationToken ct)
+    public Task DeleteAreaAsync(string areaId, CancellationToken ct, bool requireEmpty = false)
     {
         lock (_gate)
         {
@@ -312,20 +312,95 @@ internal sealed class InMemoryTrackStore : ITrackStore
         }
     }
 
-    public Task CreateTrackAsync(
-        TrackDto track,
-        ReportDocument initialReport,
-        string? templateSnapshot,
-        AgentSessionDto initialLeadSession,
-        CancellationToken ct)
+    private readonly Dictionary<(string Operation, string Scope, string Key), (string Id, string Hash)> _creationReceipts = [];
+    private readonly Dictionary<string, WorkspacePreparation> _workspacePreparations = [];
+
+    public Task<string?> FindCreationAsync(ResourceCreationKey key, CancellationToken ct)
     {
         lock (_gate)
         {
-            _tracks[track.Id] = track;
-            _reports[track.Id] = initialReport;
+            if (!_creationReceipts.TryGetValue((key.Operation, key.ScopeId, key.Key), out var receipt))
+                return Task.FromResult<string?>(null);
+            if (receipt.Hash != key.Hash)
+                throw KernelException.Conflict("This request key was already used with different input.");
+            return Task.FromResult<string?>(receipt.Id);
+        }
+    }
+
+    public Task<string> CreateAreaAsync(AreaDto area, ResourceCreationKey? key, CancellationToken ct)
+    {
+        lock (_gate)
+        {
+            if (key is not null && FindCreationAsync(key, ct).Result is { } replay)
+                return Task.FromResult(replay);
+            _areas.Add(area.Id, area);
+            SaveReceipt(key, area.Id);
+            return Task.FromResult(area.Id);
+        }
+    }
+
+    public Task<string> CreateTrackAsync(TrackCreation creation, ResourceCreationKey? key, CancellationToken ct)
+    {
+        var (track, report, templateSnapshot, lead, tasks, firstInput, preparation, events) = creation;
+        lock (_gate)
+        {
+            if (key is not null && FindCreationAsync(key, ct).Result is { } replay)
+                return Task.FromResult(replay);
+            if (firstInput is not null)
+                throw new NotSupportedException("Durable first inputs are tested with SQLite.");
+            _tracks.Add(track.Id, track);
+            _reports[track.Id] = report;
+            _revisions[(track.Id, report.DocRev)] = new InMemoryReportDocEngine().CompressZstd(report.Blocks);
             _templateSnapshots[track.Id] = templateSnapshot;
-            _tasksByTrack[track.Id] = [];
-            _sessions[initialLeadSession.Id] = initialLeadSession;
+            _tasksByTrack[track.Id] = tasks.ToList();
+            _sessions[lead.Id] = lead;
+            if (preparation is not null)
+                _workspacePreparations.Add(track.Id, preparation);
+            foreach (var evt in events)
+                AppendEventLocked(evt);
+            SaveReceipt(key, track.Id);
+            return Task.FromResult(track.Id);
+        }
+    }
+
+    private void SaveReceipt(ResourceCreationKey? key, string id)
+    {
+        if (key is not null)
+            _creationReceipts.Add((key.Operation, key.ScopeId, key.Key), (id, key.Hash));
+    }
+
+    public Task<WorkspacePreparation?> GetWorkspacePreparationAsync(string trackId, CancellationToken ct)
+    {
+        lock (_gate)
+            return Task.FromResult(_workspacePreparations.GetValueOrDefault(trackId));
+    }
+
+    public Task<IReadOnlyList<PersistedSessionInput>> ListAcceptedTrackInputsAsync(string trackId, CancellationToken ct) =>
+        Task.FromResult<IReadOnlyList<PersistedSessionInput>>([]);
+
+    public Task<IReadOnlyList<string>> RecoverWorkspacePreparationsAsync(CancellationToken ct) =>
+        Task.FromResult<IReadOnlyList<string>>([]);
+
+    public Task<bool> TryClaimWorkspacePreparationAsync(string trackId, WorkspacePreparationPhase expected, WorkspacePreparation claimed, CancellationToken ct)
+    {
+        lock (_gate)
+        {
+            if (!_workspacePreparations.TryGetValue(trackId, out var preparation) || preparation.Phase != expected)
+                return Task.FromResult(false);
+            _workspacePreparations[trackId] = claimed;
+            return Task.FromResult(true);
+        }
+    }
+
+    public Task SaveWorkspacePreparationAsync(string trackId, WorkspacePreparation preparation, TrackDto? readyTrack, EventEnvelopeDto? evt, CancellationToken ct)
+    {
+        lock (_gate)
+        {
+            _workspacePreparations[trackId] = preparation;
+            if (readyTrack is not null)
+                _tracks[trackId] = readyTrack;
+            if (evt is not null)
+                AppendEventLocked(evt);
             return Task.CompletedTask;
         }
     }
@@ -1468,7 +1543,8 @@ internal sealed class KernelTestContext : IAsyncDisposable
             Cwd: cwd,
             WorkspaceDriver: workspaceDriver,
             TemplateId: templateId));
-        return (area, snap);
+        await Kernel.Actors.GetOrActivate(snap.Track.Id).EnsureMountedAsync();
+        return (area, await Kernel.GetTrackAggregateAsync(snap.Track.Id));
     }
 
     public ValueTask DisposeAsync() => Kernel.DisposeAsync();

@@ -59,6 +59,16 @@ public sealed partial class SqliteTrackStore : ISessionInputStore
               AND t.status = 'unknown' ORDER BY t.turn_index DESC LIMIT 1
             """, new { SessionId = sessionId, Author = OwnerAuthor }, ct);
 
+    public async Task<IReadOnlyList<PersistedSessionInput>> ListAcceptedTrackInputsAsync(string trackId, CancellationToken ct)
+    {
+        EnsureInitialized();
+        await using var conn = await OpenReadConnectionAsync(ct).ConfigureAwait(false);
+        var rows = await conn.QueryAsync<InputRow>(new CommandDefinition(
+            InputSelect + "\nWHERE s.track_id = @TrackId AND i.delivery_state = 'accepted' AND t.status = 'queued';",
+            new { TrackId = trackId }, cancellationToken: ct)).ConfigureAwait(false);
+        return rows.Select(row => row.ToInput()).ToArray();
+    }
+
     private async Task<PersistedSessionInput?> FindInputAsync(string filter, object parameters, CancellationToken ct)
     {
         EnsureInitialized();

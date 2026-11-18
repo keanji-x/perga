@@ -32,6 +32,7 @@ public sealed class BootReconciler : IBootReconciler
     {
         // Snapshot before any recovered session can send new mail through live delivery.
         var pendingMail = await _store.ListPendingMailWakesAsync(ct).ConfigureAwait(false);
+        var preparingTracks = await _store.RecoverWorkspacePreparationsAsync(ct).ConfigureAwait(false);
         var queuedInputs = await _store.RecoverSessionInputsAsync(ct).ConfigureAwait(false);
         var affectedTrackIds = new HashSet<string>(StringComparer.Ordinal);
         var discardedLeases = 0;
@@ -113,6 +114,9 @@ public sealed class BootReconciler : IBootReconciler
                 ct: ct).ConfigureAwait(false);
             wokenCount++;
         }
+
+        foreach (var trackId in preparingTracks)
+            await _actorRegistry.GetOrActivate(trackId).WarmWorkspaceAsync(ct).ConfigureAwait(false);
 
         foreach (var (trackId, input) in queuedInputs)
             _actorRegistry.GetOrActivate(trackId).DispatchAcceptedInput(input);

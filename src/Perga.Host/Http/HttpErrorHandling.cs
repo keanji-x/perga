@@ -84,6 +84,9 @@ public static class HttpErrorHandling
     {
         var (statusCode, code) = kex.Code switch
         {
+            KernelErrorCode.IdempotencyKeyInvalid => (StatusCodes.Status400BadRequest, "idempotency_key_invalid"),
+            KernelErrorCode.IdempotencyKeyReused => (StatusCodes.Status409Conflict, "idempotency_key_reused"),
+            KernelErrorCode.IdempotencyKeyExhausted => (StatusCodes.Status410Gone, "idempotency_key_exhausted"),
             KernelErrorCode.Gone => (StatusCodes.Status410Gone, "gone"),
             KernelErrorCode.NotFound => (StatusCodes.Status404NotFound, "not_found"),
             KernelErrorCode.InvalidArgument => (StatusCodes.Status400BadRequest, "invalid_argument"),

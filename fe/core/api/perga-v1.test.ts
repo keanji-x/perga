@@ -284,7 +284,8 @@ describe('Perga /api/v1 protocol contracts', () => {
       frozen_at: null,
       worktree: '/repo/.worktrees/trk_1',
     });
-    expect(detail.cards.map((c) => c.kind)).toEqual(['track-report', 'shared-spec']);
+    expect(detail.cards.map((c) => c.kind)).toEqual(['track-report', 'codex']);
+    expect(detail.cards[1]?.payload).toMatchObject({ planner_harness: true });
 
     const acpSnapshot = {
       ...snapshotRaw,

@@ -45,7 +45,7 @@ public static class ApiV1Endpoints
         v1.MapPost("/areas", async (HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
         {
             var req = await ReadRequiredJsonBodyAsync<CreateAreaRequest>(ctx, ct).ConfigureAwait(false);
-            var created = await kernel.CreateAreaAsync(req, ct).ConfigureAwait(false);
+            var created = await kernel.CreateAreaAsync(req, ct, OptionalCreationKey(ctx)).ConfigureAwait(false);
             return Results.Json(created, PergaJsonDefaults.ApiOptions, statusCode: StatusCodes.Status201Created);
         });
 
@@ -74,7 +74,7 @@ public static class ApiV1Endpoints
         v1.MapPost("/tracks", async (HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
         {
             var req = await ReadRequiredJsonBodyAsync<CreateTrackRequest>(ctx, ct).ConfigureAwait(false);
-            var snapshot = await kernel.CreateTrackAsync(req, ct).ConfigureAwait(false);
+            var snapshot = await kernel.CreateTrackAsync(req, ct, OptionalCreationKey(ctx)).ConfigureAwait(false);
             return Results.Json(snapshot, PergaJsonDefaults.ApiOptions, statusCode: StatusCodes.Status201Created);
         });
 
@@ -82,6 +82,12 @@ public static class ApiV1Endpoints
         {
             var snapshot = await kernel.GetTrackAggregateAsync(trackId, ct).ConfigureAwait(false);
             return Results.Json(snapshot, PergaJsonDefaults.ApiOptions);
+        });
+
+        v1.MapPost("/tracks/{trackId}/workspace/retry", async (string trackId, IPergaKernel kernel, CancellationToken ct) =>
+        {
+            await kernel.RetryWorkspaceAsync(trackId, ct).ConfigureAwait(false);
+            return Results.Accepted();
         });
 
         v1.MapPatch("/tracks/{trackId}", async (string trackId, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
@@ -283,6 +289,15 @@ public static class ApiV1Endpoints
             TerminalWebSocketRelayHandler.HandleAsync(ctx, termId, terminalClient));
 
         return endpoints;
+    }
+
+    private static string? OptionalCreationKey(HttpContext ctx)
+    {
+        if (!ctx.Request.Headers.TryGetValue("Idempotency-Key", out var values))
+            return null;
+        if (values.Count != 1)
+            throw KernelException.InvalidArgument("Exactly one Idempotency-Key is allowed.");
+        return values[0] ?? string.Empty;
     }
 
     private static async Task<T> ReadRequiredJsonBodyAsync<T>(HttpContext ctx, CancellationToken ct)

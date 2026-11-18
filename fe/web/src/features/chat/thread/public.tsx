@@ -374,7 +374,8 @@ const FOLLOW_BOTTOM_SLACK_PX = 64;
 export type ComposerFocusHandle = Readonly<{ ownsFocus: () => boolean }>;
 
 export function ChatComposer({
-  onSend, onStop, commands = [], disabled = false, sendWaiting = false, canSendSupplement = false, editing, focusOnMount = false, focusRequest = 0,
+  onSend, onStop, commands = [], disabled = false, sendDisabled = false, sendWaiting = false, canSendSupplement = false,
+  editing, focusOnMount = false, focusRequest = 0,
   draft: controlledDraft, commandScope, footerActions, sendAdornment,
   drawer, headerActions, allowEmptyText = false, mentionTrigger, onFiles, layout = 'standard', focusHandle,
 }: {
@@ -389,6 +390,7 @@ export function ChatComposer({
   /** Feedback belongs to this conversation generation; changing it does not remount or refocus the field. */
   commandScope?: string;
   disabled?: boolean;
+  sendDisabled?: boolean;
   /** A local send waits for its answer. Show a busy Send while preserving an existing Stop. */
   sendWaiting?: boolean;
   canSendSupplement?: boolean;
@@ -520,7 +522,7 @@ export function ChatComposer({
     const value = draft;
     const text = value.trim();
     /* `allowEmptyText` is the caller saying the message carries an image. */
-    if ((text === '' && !allowEmptyText) || disabled || editing?.canSubmit === false) return;
+    if ((text === '' && !allowEmptyText) || disabled || sendDisabled || editing?.canSubmit === false) return;
     if (editing === undefined && dispatchComposerCommand(commands, text, (command, argument) => runCommand(command, argument, value))) return;
     const taken = onSend(text);
     setDraft('');
@@ -540,10 +542,10 @@ export function ChatComposer({
       type="button"
       className={styles.queueSend}
       data-nc-send-attachment=""
-      disabled={disabled}
+      disabled={disabled || sendDisabled}
       onClick={() => { submit(); }}
     >Send image</button>
-  ) : canSendSupplement && stopShown && draft.trim() !== '' && !sendWaiting && editing === undefined ? (
+  ) : canSendSupplement && stopShown && !sendDisabled && draft.trim() !== '' && !sendWaiting && editing === undefined ? (
     <button type="button" className={styles.queueSend} disabled={disabled} onClick={submit}>Send supplement</button>
   ) : undefined;
 
@@ -581,7 +583,7 @@ export function ChatComposer({
           return;
         }
         if (route === 'menu' || event.key !== 'Enter' || event.shiftKey) return;
-        if (disabled || editing?.canSubmit === false) {
+        if (disabled || sendDisabled || editing?.canSubmit === false) {
           event.preventDefault();
           event.stopPropagation();
           return;
@@ -647,7 +649,9 @@ export function ChatComposer({
           /* Send's availability is Astryx's own (`canSend`). Astryx renders `aria-disabled` only with a `tooltip`, which `ChatSendButton` does not take, so this is a native `disabled` that drops focus to `<body>` — the focus effect above moves it back into the field first. */
           /* Keep the native Send/Stop control mounted. Its public icon slot gives
              immediate decorative feedback; the local status names Sending. */
-          sendButton={editing === undefined ? <ChatSendButton sendIcon={
+          sendButton={sendDisabled
+            ? <Button label="Send" variant="primary" isIconOnly icon={sendIcon} className={styles.sendOwn} isDisabled />
+            : editing === undefined ? <ChatSendButton sendIcon={
             <span className={styles.sendGlyph} data-nc-waiting={sendWaiting && !stopShown} aria-hidden="true">
               <span className={styles.sendArrow}>{layout === 'mobile' ? <Icon name="arrow-up" /> : sendIcon}</span>
               <span className={styles.sendWait}><LoadingIndicator active={sendWaiting && !stopShown} /></span>

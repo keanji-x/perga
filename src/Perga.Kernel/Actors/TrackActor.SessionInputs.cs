@@ -1,5 +1,4 @@
 using System.Collections.Concurrent;
-using System.Security.Cryptography;
 using System.Text.Json;
 using Perga.Contracts;
 using Perga.Kernel.Events;
@@ -17,7 +16,7 @@ public sealed partial class TrackActor
         string sessionId, SendMessageRequest request, CancellationToken ct)
     {
         ValidateRequestKey(request.IdempotencyKey);
-        var hash = HashRequest(new { version = 1, request.Content, request.SteerIfRunning });
+        var hash = RequestIdentity.Hash(new { version = 1, request.Content, request.SteerIfRunning });
         var result = await EnqueueAsync<(SessionInputReceipt? Receipt, bool Replay)>(async _ =>
         {
             var existing = await _store.SessionInputs.FindByKeyAsync(sessionId, request.IdempotencyKey, ct).ConfigureAwait(false);
@@ -27,7 +26,7 @@ public sealed partial class TrackActor
                 return (await ReplayInputCoreAsync(existing, ct).ConfigureAwait(false), true);
             }
 
-            await EnsureHydratedCoreAsync(ct, mountWorkspace: false).ConfigureAwait(false);
+            await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
             var session = RequireSessionCore(sessionId);
             if (request.SteerIfRunning && (_activeTurns.ContainsKey(sessionId) ||
                 _idempotencyTurns.ContainsKey((sessionId, request.IdempotencyKey))))
@@ -61,7 +60,7 @@ public sealed partial class TrackActor
         if (request.Text is { } text && string.IsNullOrWhiteSpace(text))
             throw KernelException.InvalidArgument("First message cannot be empty.");
 
-        var hash = HashRequest(new { version = 1, request.Title, request.Provider, request.Model, request.Text });
+        var hash = RequestIdentity.Hash(new { version = 1, request.Title, request.Provider, request.Model, request.Text });
         var intent = new SessionCreateIntent(TrackId, key, hash);
         return EnqueueAsync<(SessionCreationReceipt, bool)>(async _ =>
         {
@@ -76,12 +75,12 @@ public sealed partial class TrackActor
                 return (new(created, replayedInput), true);
             }
 
-            await EnsureHydratedCoreAsync(ct, mountWorkspace: false).ConfigureAwait(false);
+            await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
             var session = NewSubagentSessionCore(request);
             SessionInputRequest? first = null;
             if (request.Text is { } content)
             {
-                var firstHash = HashRequest(new { version = 1, Content = content, SteerIfRunning = false });
+                var firstHash = RequestIdentity.Hash(new { version = 1, Content = content, SteerIfRunning = false });
                 first = new(key, firstHash, content);
                 session = session with { Status = "queued" };
             }
@@ -101,7 +100,7 @@ public sealed partial class TrackActor
     public Task<SessionInputReceipt> ResolveUnknownInputAsync(string sessionId, string inputId, CancellationToken ct) =>
         EnqueueAsync(async _ =>
         {
-            await EnsureHydratedCoreAsync(ct, mountWorkspace: false).ConfigureAwait(false);
+            await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
             var session = RequireSessionCore(sessionId);
             var input = await _store.SessionInputs.FindByIdAsync(sessionId, inputId, ct).ConfigureAwait(false)
                 ?? throw KernelException.NotFound("Session input not found.");
@@ -137,10 +136,11 @@ public sealed partial class TrackActor
 
     internal void DispatchAcceptedInput(PersistedSessionInput input)
     {
-        if (!_dispatchingInputs.TryAdd(input.Receipt.InputId, 0))
-            return;
         TrackBackgroundJob(async () =>
         {
+            await WaitForWorkspacePreparationAsync(_actorShutdownCts.Token).ConfigureAwait(false);
+            if (!_dispatchingInputs.TryAdd(input.Receipt.InputId, 0))
+                return;
             try
             {
                 await ExecuteSessionTurnPipelineAsync(input.Receipt.SessionId, "user", input.Content,
@@ -159,7 +159,7 @@ public sealed partial class TrackActor
             DispatchAcceptedInput(input);
         else if (input.Receipt.TurnStatus == "running" && !_dispatchingInputs.ContainsKey(input.Receipt.InputId))
         {
-            await EnsureHydratedCoreAsync(ct, mountWorkspace: false).ConfigureAwait(false);
+            await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
             return await RecoverDispatchCoreAsync(input).ConfigureAwait(false);
         }
 
@@ -219,9 +219,6 @@ public sealed partial class TrackActor
 
     private Task PublishInputEventAsync(EventEnvelopeDto evt) =>
         _eventHub.PublishSyncedAfterStoreWriteAsync(_store, evt, CancellationToken.None, allowFallback: false);
-
-    private static string HashRequest<T>(T request) =>
-        Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(request)));
 
     private static void ValidateRequestKey(string key)
     {
