@@ -6,7 +6,7 @@ import { Icon as AstryxIcon } from '@astryxdesign/core/Icon';
 import { Text } from '@astryxdesign/core/Text';
 import { VisuallyHidden } from '@astryxdesign/core/VisuallyHidden';
 
-import type { NewTrackBody } from '../../../../../core/domain/track.ts';
+import type { NewTrackBody, TrackWorkspaceOptions } from '../../../../../core/domain/track.ts';
 import { Icon } from '../../../ui/icon/public.tsx';
 import { useState } from '../../../ui/state/public.ts';
 import { FolderClearButton, folderLabelParts } from '../default-pills/public.tsx';
@@ -32,6 +32,9 @@ export type RepoPillProps = Readonly<{
   value: string;
   isolation: RepoIsolationMode;
   clearLabel: string;
+  workspaceOptions?: TrackWorkspaceOptions | null;
+  workspaceOptionId?: string;
+  onWorkspaceOptionChange?: (id: string) => void;
   isDisabled?: boolean;
   onIsolationChange: (mode: RepoIsolationMode) => void;
   onBrowse: () => void;
@@ -43,6 +46,9 @@ export function RepoPill({
   value,
   isolation,
   clearLabel,
+  workspaceOptions,
+  workspaceOptionId,
+  onWorkspaceOptionChange,
   isDisabled = false,
   onIsolationChange,
   onBrowse,
@@ -54,7 +60,8 @@ export function RepoPill({
     value,
     controlLabel: 'Repo',
     showLabel: true,
-    modeSuffix: isolation === 'none' ? '源文件夹' : undefined,
+    modeSuffix: workspaceOptions?.options.find((option) => option.id === workspaceOptionId)?.label
+      ?? (workspaceOptions === undefined && isolation === 'none' ? '源文件夹' : undefined),
   });
 
   return (
@@ -82,7 +89,21 @@ export function RepoPill({
       >
         <div role="group" aria-label="工作模式">
           <div className={styles.groupHeading} aria-hidden="true">工作模式</div>
-          {REPO_MODES.map((option) => {
+          {workspaceOptions === null && <DropdownMenuItem label="Workspace options unavailable" isDisabled />}
+          {workspaceOptions && workspaceOptionId === undefined &&
+            <DropdownMenuItem label="Choose an available workspace option" isDisabled />}
+          {workspaceOptions?.options.map((option) => (
+            <DropdownMenuItem key={option.id} label={option.label} description={option.description}
+              onClick={() => onWorkspaceOptionChange?.(option.id)}
+              endContent={option.id === workspaceOptionId ? (
+                <>
+                  <AstryxIcon icon="check" size="sm" color="accent" />
+                  <VisuallyHidden>Selected</VisuallyHidden>
+                </>
+              ) : undefined}
+            />
+          ))}
+          {workspaceOptions === undefined && REPO_MODES.map((option) => {
             const managedOnly = value === '';
             const selected = managedOnly ? option.value === 'worktree' : isolation === option.value;
             const disabled = managedOnly && option.value === 'none';

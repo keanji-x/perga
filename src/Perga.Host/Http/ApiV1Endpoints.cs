@@ -88,6 +88,12 @@ public static class ApiV1Endpoints
         });
 
         // ------------------- Tracks -------------------
+        v1.MapGet("/areas/{areaId}/workspace-options", async (string areaId, string? cwd, string? templateId, IPergaKernel kernel, CancellationToken ct) =>
+        {
+            var options = await kernel.GetTrackWorkspaceOptionsAsync(areaId, cwd, templateId, ct).ConfigureAwait(false);
+            return Results.Json(options, PergaJsonDefaults.ApiOptions);
+        });
+
         v1.MapGet("/areas/{areaId}/tracks", async (string areaId, bool? includeClosed, IPergaKernel kernel, CancellationToken ct) =>
         {
             _ = await kernel.GetAreaAsync(areaId, ct).ConfigureAwait(false)

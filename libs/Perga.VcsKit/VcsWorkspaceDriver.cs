@@ -54,7 +54,7 @@ public sealed class VcsWorkspaceDriver : IWorkspaceDriver
         }
         else
         {
-            isolated = await _vcsService.CreateWorkspaceAsync(sourcePath, workspaceName, targetDir, req.BaseRevision, ct)
+            isolated = await _vcsService.CreateWorkspaceAsync(sourcePath, workspaceName, targetDir, req.BaseRevision, ct, req.VcsBackend)
                 .ConfigureAwait(false);
         }
 

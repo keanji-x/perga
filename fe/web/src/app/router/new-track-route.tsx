@@ -9,7 +9,7 @@ import { ApiError, classifyFailure, NotSentError, refusedText, writeFailureOf } 
 import { selectedReadyTemplateId } from '../../../../core/domain/mentions.ts';
 import {
   isBlankForKernel, TRACK_CREATE_FAILURES, TRACK_CREATE_TEXT, trackCreateWorkspaceError,
-  trackTemplatesOperation, type NewTrackBodyWithoutFirstMessage, type TrackTemplate,
+  trackTemplatesOperation, trackWorkspaceOptionsOperation, type NewTrackBodyWithoutFirstMessage, type TrackTemplate,
 } from '../../../../core/domain/track.ts';
 import { readErrorText } from '../../../../core/domain/read-failure.ts';
 import { ModelPill, PlannerRolePill } from '../../features/chat/thread/model-pill.tsx';
@@ -70,6 +70,15 @@ function NewTrackEditor({ transport, unauthorized, pergaMode = false, workspace,
     enabled: pergaMode,
     retry: false,
   });
+  const optionCwd = session.form?.cwd ?? session.area.defaultCwd ?? '';
+  const optionTemplateId = session.form?.activeTemplateId;
+  const workspaceOptionsQuery = useQuery({
+    queryKey: ['track-workspace-options', areaId, optionCwd, optionTemplateId],
+    queryFn: ({ signal }: { signal: AbortSignal }) =>
+      runOperation(transport, { ...trackWorkspaceOptionsOperation(areaId, optionCwd, optionTemplateId), signal }, unauthorized),
+    enabled: pergaMode && templatesQuery.isSuccess && session.form !== null && session.request === null,
+    retry: false,
+  });
   const trackMutations = useTrackMutations(transport, unauthorized);
   const go = useGo();
   const listDirectory = createDirectoryLister(transport, unauthorized, pergaMode);
@@ -113,7 +122,7 @@ function NewTrackEditor({ transport, unauthorized, pergaMode = false, workspace,
       || current.canRetryAsNewTrack) return;
     const hadUnconfirmedRequest = replacementKey === undefined && current.request !== null;
     const attemptKey = replacementKey ?? current.key;
-    const templateId = draft.templateId ?? selectedReadyTemplateId(draft.message, templatesRef.current);
+    const templateId = pergaMode ? draft.templateId : draft.templateId ?? selectedReadyTemplateId(draft.message, templatesRef.current);
     const body = {
       ...(templateId === undefined ? {} : { template_id: templateId }),
       ...(draft.templateInput === undefined ? {} : { template_input: draft.templateInput }),
@@ -123,7 +132,8 @@ function NewTrackEditor({ transport, unauthorized, pergaMode = false, workspace,
       ...(current.model.model === null ? {} : { model: current.model.model }),
       ...(current.model.reasoning_effort === null ? {} : { reasoning_effort: current.model.reasoning_effort }),
       ...(draft.cwd === undefined ? {} : { cwd: draft.cwd, attach_folder: true,
-        isolation: draft.isolation ?? 'worktree' }),
+        ...(pergaMode ? {} : { isolation: draft.isolation ?? 'worktree' }) }),
+      ...(draft.workspaceOptionId === undefined ? {} : { cwd: draft.cwd ?? '', workspace_option_id: draft.workspaceOptionId }),
       ...(current.role === 'admin' ? { admin: true } : {}),
       ...(authorization === undefined ? {} : { allow_cross_area_cwd: authorization }),
     } satisfies NewTrackBodyWithoutFirstMessage;
@@ -187,10 +197,21 @@ function NewTrackEditor({ transport, unauthorized, pergaMode = false, workspace,
   const configurationLocked = session.creating || session.request !== null || !available || createdTrackId !== null;
 
   return <NewTrackForm
+    workspaceOptions={pergaMode
+      ? { cwd: optionCwd, templateId: optionTemplateId,
+          result: templatesQuery.isSuccess && !workspaceOptionsQuery.isError ? workspaceOptionsQuery.data ?? null : null }
+      : undefined}
     templates={pergaMode ? (templatesQuery.data ?? NO_TEMPLATES) : undefined}
     defaultTemplateId={pergaMode ? session.area.defaultTemplateId : undefined}
     readNotice={workspace.areasLoading ? <Banner status="info" title="Loading Area…"
-      description="You can keep writing. Create track will be available when loading finishes." /> : undefined}
+      description="You can keep writing. Create track will be available when loading finishes." />
+      : pergaMode && templatesQuery.isError && session.request === null
+        ? <ErrorBox message={readErrorText(templatesQuery.error, 'Templates could not be loaded.')}
+          onRetry={() => { void templatesQuery.refetch(); }} />
+      : pergaMode && workspaceOptionsQuery.isError && session.request === null
+        ? <ErrorBox message={readErrorText(workspaceOptionsQuery.error, 'Workspace options could not be loaded.')}
+          onRetry={() => { void workspaceOptionsQuery.refetch(); }} />
+        : undefined}
     mentionTrigger={mentionTrigger}
     modelControls={<>
       <ModelPill

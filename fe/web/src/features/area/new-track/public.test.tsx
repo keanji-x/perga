@@ -78,6 +78,21 @@ describe('NewTrackForm asks only what the track starts from', () => {
     expect(submitButton().disabled).toBe(false);
   });
 
+  it('allows a locked request to replay while fresh workspace or template input is unavailable', async () => {
+    const { onSubmit } = renderForm({
+      locked: true,
+      initialDraft: { cwd: '/repo', message: 'Keep the original request', templateId: 'dev', workspaceOptionId: 'git' },
+      workspaceOptions: { cwd: '/repo', templateId: 'dev', result: null },
+      templates: [{
+        id: 'dev', title: 'Dev', description: '', tasks: [],
+        input_schema: { ticket: { type: 'string', label: 'Ticket' } },
+        availability: { status: 'ready' },
+      }],
+    });
+    await userEvent.click(submitButton());
+    expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ message: 'Keep the original request' }));
+  });
+
   /* The kernel enqueues and hashes the sentence untrimmed, so surrounding whitespace
    * is content; this form trims only to decide whether it may submit. */
   it('calls onSubmit with the sentence exactly as typed, whitespace and all', async () => {

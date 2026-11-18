@@ -132,6 +132,10 @@ public sealed partial class TrackActor
         {
             throw;
         }
+        catch (WorkspaceBackendUnavailableException) when (preparation.Phase == WorkspacePreparationPhase.Provisioning)
+        {
+            preparation = preparation with { Phase = WorkspacePreparationPhase.Failed };
+        }
         catch
         {
             preparation = preparation with

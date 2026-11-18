@@ -74,6 +74,11 @@ function createDraftStore(submittedStorage?: () => Storage, userId?: string) {
         area: { id: area.id, name: area.name, defaultCwd: area.defaultCwd, defaultTemplateId: area.defaultTemplateId },
         form: request === null ? null : {
           message: request.body.first_message ?? '', cwd: request.body.cwd ?? '', isolation: request.body.isolation,
+          workspaceOptionId: request.body.workspace_option_id,
+          templateId: request.body.template_id ?? null,
+          templateInputs: Object.fromEntries(Object.entries(request.body.template_input ?? {}).flatMap(([key, value]) =>
+            typeof value === 'number' ? [[key, String(value)]]
+              : typeof value === 'string' || typeof value === 'boolean' ? [[key, value]] : [])),
         },
         provider: request?.body.planner_provider ?? 'codex',
         model: request === null ? FOLLOW_INSTALLATION_DEFAULT : {

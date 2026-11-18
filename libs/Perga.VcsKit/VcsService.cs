@@ -91,12 +91,36 @@ public sealed class VcsService : IVcsService
         return VcsBackendKind.PlainDirectory;
     }
 
+    public IReadOnlyList<VcsBackendKind> ListWorkspaceBackends(string path)
+    {
+        if (!Directory.Exists(path))
+            return [];
+
+        var root = FindNearestVcsRoot(Path.GetFullPath(path));
+        if (root is null)
+            return [VcsBackendKind.PlainDirectory];
+
+        var candidates = new List<VcsBackendKind>(2);
+        if (root.Value.HasJj && ResolveJjExecutable() is not null)
+            candidates.Add(VcsBackendKind.JjColocated);
+        var git = _options.GitExecutablePath;
+        if (OperatingSystem.IsWindows() && !Path.HasExtension(git))
+            git += ".exe";
+        var gitAvailable = !_usesDefaultRunner || (Path.IsPathRooted(git)
+            ? File.Exists(git)
+            : SearchExecutableOnPath(git) is not null);
+        if (root.Value.HasGit && gitAvailable)
+            candidates.Add(VcsBackendKind.GitWorktree);
+        return candidates;
+    }
+
     public async Task<IsolatedWorkspace> CreateWorkspaceAsync(
         string repoPath,
         string workspaceName,
         string targetDir,
         string? baseRev = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        VcsBackendKind? backend = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(repoPath);
         ArgumentException.ThrowIfNullOrWhiteSpace(workspaceName);
@@ -104,6 +128,9 @@ public sealed class VcsService : IVcsService
 
         var fullRepoPath = Path.GetFullPath(repoPath);
         var fullTargetDir = Path.GetFullPath(targetDir);
+        ct.ThrowIfCancellationRequested();
+        if (backend is { } requested && !ListWorkspaceBackends(fullRepoPath).Contains(requested))
+            throw new WorkspaceBackendUnavailableException(requested);
 
         if (PathsEqual(fullRepoPath, fullTargetDir))
         {
@@ -117,7 +144,7 @@ public sealed class VcsService : IVcsService
             Directory.CreateDirectory(parentDir);
         }
 
-        var kind = await DetectAsync(fullRepoPath, ct).ConfigureAwait(false);
+        var kind = backend ?? await DetectAsync(fullRepoPath, ct).ConfigureAwait(false);
         var rootRepoPath = FindNearestVcsRoot(fullRepoPath)?.RootPath ?? fullRepoPath;
 
         if (PathsEqual(rootRepoPath, fullTargetDir))
