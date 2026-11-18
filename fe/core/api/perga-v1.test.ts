@@ -340,6 +340,7 @@ describe('Perga /api/v1 protocol contracts', () => {
       openAsks: [
         {
           id: 'ask_abc123',
+          delivery: 'wake', sessionId: null, turnId: null,
           trackId: 'trk_1',
           status: 'open',
           questions: [{ question: 'Approve deployment?', options: ['Approve', 'Deny'], isMultiSelect: false }],
@@ -384,7 +385,19 @@ describe('Perga /api/v1 protocol contracts', () => {
     expect(activity?.working).toBe(true);
     expect(activity?.attention).toBe('input');
     const asks = openAsksOf(activity?.attentionItems ?? []);
-    expect(asks[0]).toMatchObject({ askId: 'ask_abc123' });
+    expect(asks[0]).toMatchObject({ askId: 'ask_abc123', delivery: 'wake' });
+    const holdAsk = { ...snapshotRaw.openAsks[0], delivery: 'hold', sessionId: 'lead_1', turnId: 'turn_1' };
+    const heldDetail = detailOp.responseSchema.parse({ ...snapshotRaw, openAsks: [holdAsk] });
+    const heldActivity = trackActivitiesFrom(heldDetail.overlays).get('trk_1');
+    expect(openAsksOf(heldActivity?.attentionItems ?? [])[0]).toMatchObject({ askId: 'ask_abc123', delivery: 'hold' });
+    const holdEvent = { eventId: 44, kind: 'ask.changed', areaId: 'area_1', trackId: 'trk_1', payload: holdAsk, createdAtMs: 2300 };
+    expect(decodeWireEvent(holdEvent)).toMatchObject({ status: 'ready', value: {
+      ev: 'ask.changed', data: { ask: holdAsk },
+    } });
+    // Missing public identity is a contract error, never a reason to infer from text.
+    const { delivery: omittedDelivery, ...anonymousLegacyAsk } = holdAsk;
+    expect(omittedDelivery).toBe('hold');
+    expect(decodeWireEvent({ ...holdEvent, payload: anonymousLegacyAsk }).status).toBe('failed');
 
     const answerOp = answerAskOperation('trk_1', 'ask_abc123', [{ option: 0 }], asks[0]?.questions);
     expect(answerOp).toMatchObject({

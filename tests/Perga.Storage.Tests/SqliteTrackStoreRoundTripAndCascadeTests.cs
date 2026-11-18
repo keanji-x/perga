@@ -104,7 +104,7 @@ public sealed class SqliteTrackStoreRoundTripAndCascadeTests
             Questions: [new AskQuestionDto("Approve deploy?", ["Yes", "No"], IsMultiSelect: false)],
             Answer: null,
             CreatedAtMs: 2_200,
-            AnsweredAtMs: null);
+            AnsweredAtMs: null, Delivery: AskDelivery.Hold, SessionId: "sess_sub_free", TurnId: "turn-approval");
         var answeredAsk = new AskDto(
             Id: "ask_done",
             TrackId: "trk_parent",
@@ -112,7 +112,7 @@ public sealed class SqliteTrackStoreRoundTripAndCascadeTests
             Questions: [new AskQuestionDto("Pick env", ["staging", "prod"], IsMultiSelect: true)],
             Answer: StorageTestHarness.Json("""{"selected":["staging"]}"""),
             CreatedAtMs: 2_250,
-            AnsweredAtMs: 2_300);
+            AnsweredAtMs: 2_300, Delivery: AskDelivery.Wake);
         await store.UpsertAskAsync(openAsk, StorageTestHarness.CreateEvent("ask.changed", "trk_parent", "area_a", createdAtMs: 2_200), ct);
         await store.UpsertAskAsync(answeredAsk, StorageTestHarness.CreateEvent("ask.changed", "trk_parent", "area_a", createdAtMs: 2_300), ct);
 
@@ -518,7 +518,7 @@ public sealed class SqliteTrackStoreRoundTripAndCascadeTests
                 ct);
 
             await store.UpsertAskAsync(
-                new AskDto($"ask_{suffix}", trackId, AskStatus.Open, [new AskQuestionDto("Q?", ["A"])], null, 1_000, null),
+                new AskDto($"ask_{suffix}", trackId, AskStatus.Open, [new AskQuestionDto("Q?", ["A"])], null, 1_000, null, AskDelivery.Wake),
                 StorageTestHarness.CreateEvent("ask.changed", trackId),
                 ct);
             await store.UpsertMailAsync(

@@ -670,7 +670,7 @@ function askDtoToActivityItem(ask: AskDto): z.infer<typeof activityItemWireSchem
     at_ms: ask.createdAtMs,
     ask_id: ask.id,
     questions: [...questions],
-    delivery: 'wake',
+    delivery: ask.delivery,
   };
 }
 

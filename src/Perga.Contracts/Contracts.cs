@@ -6,6 +6,7 @@ public enum AccessMode { ReadOnly, ReadWrite }
 public enum TaskRunStatus { Draft, Pending, Running, Verifying, Done, Failed, Canceled }
 public enum TaskTriggerSource { Manual, Scheduler, Wake }
 public enum SemanticVerdict { None, Accepted, Rejected }
+public enum AskDelivery { Wake, Hold }
 public enum AskStatus { Open, Answered, Withdrawn }
 public enum TerminalStatus { Running, Exited }
 public enum EditActorKind { Human, Lead, Subagent, System }
@@ -158,7 +159,10 @@ public sealed record AskDto(
     IReadOnlyList<AskQuestionDto> Questions,
     JsonElement? Answer,
     long CreatedAtMs,
-    long? AnsweredAtMs);
+    long? AnsweredAtMs,
+    AskDelivery Delivery,
+    string? SessionId = null,
+    string? TurnId = null);
 
 public sealed record MailDto(
     string Id,

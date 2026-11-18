@@ -1338,6 +1338,15 @@ public sealed partial class TrackActor : IAsyncDisposable
                 throw KernelException.Conflict($"Ask '{askId}' is already '{existingAsk.Status}'.");
             }
 
+            if (existingAsk.Delivery == AskDelivery.Hold &&
+                (_track.ClosedAtMs is not null ||
+                 !_pendingAskWaiters.TryGetValue(askId, out var liveWaiter) || liveWaiter.Task.IsCompleted ||
+                 existingAsk.SessionId is null ||
+                 (existingAsk.TurnId is not null &&
+                  (!_activeTurns.TryGetValue(existingAsk.SessionId, out var owner) || owner.TurnDto.Id != existingAsk.TurnId ||
+                   owner.Interrupted || owner.TurnCts.IsCancellationRequested))))
+                throw KernelException.Conflict("This approval request is no longer pending. Check the current turn before trying again.");
+
             var now = NowMs();
             var clonedAnswer = answer.Clone();
             var answered = existingAsk with
@@ -1346,7 +1355,6 @@ public sealed partial class TrackActor : IAsyncDisposable
                 Answer = clonedAnswer,
                 AnsweredAtMs = now
             };
-            _asks[askId] = answered;
 
             var evt = new EventEnvelopeDto(
                 EventId: null,
@@ -1359,6 +1367,7 @@ public sealed partial class TrackActor : IAsyncDisposable
             await _store.UpsertAskAsync(answered, evt, ct).ConfigureAwait(false);
             await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, evt, ct).ConfigureAwait(false);
 
+            _asks[askId] = answered;
             _pendingAskWaiters.Remove(askId, out var waiter);
 
             // Determine whether Lead is ALREADY actively streaming the exact turn that owns this ask.
@@ -1370,7 +1379,7 @@ public sealed partial class TrackActor : IAsyncDisposable
                 leadOwnsActiveAsk = true;
             }
 
-            var shouldWakeLead = !leadOwnsActiveAsk && _track.ClosedAtMs is null && !string.IsNullOrEmpty(_track.LeadSessionId);
+            var shouldWakeLead = existingAsk.Delivery == AskDelivery.Wake && !leadOwnsActiveAsk && _track.ClosedAtMs is null && !string.IsNullOrEmpty(_track.LeadSessionId);
             return (answered, waiter, shouldWakeLead);
         }, ct).ConfigureAwait(false);
 
@@ -3492,13 +3501,14 @@ public sealed partial class TrackActor : IAsyncDisposable
     {
         var effectiveOptions = options.Count > 0 ? options : ["Approve", "Deny"];
         var questions = new[] { new AskQuestionDto(title, effectiveOptions, IsMultiSelect: false) };
-        return await CreateAskSuspensionFromQuestionsCoreAsync(questions, callerSessionId, ct).ConfigureAwait(false);
+        return await CreateAskSuspensionFromQuestionsCoreAsync(questions, callerSessionId, ct, AskDelivery.Hold).ConfigureAwait(false);
     }
 
     private async Task<PendingAskSuspension> CreateAskSuspensionFromQuestionsCoreAsync(
         IReadOnlyList<AskQuestionDto> questions,
         string? callerSessionId,
-        CancellationToken ct)
+        CancellationToken ct,
+        AskDelivery delivery = AskDelivery.Wake)
     {
         var now = NowMs();
         var ask = new AskDto(
@@ -3508,12 +3518,14 @@ public sealed partial class TrackActor : IAsyncDisposable
             Questions: questions,
             Answer: null,
             CreatedAtMs: now,
-            AnsweredAtMs: null);
+            AnsweredAtMs: null,
+            Delivery: delivery,
+            SessionId: callerSessionId,
+            TurnId: callerSessionId is not null && _activeTurns.TryGetValue(callerSessionId, out var owner) ? owner.TurnDto.Id : null);
 
-        _asks[ask.Id] = ask;
+        if (delivery == AskDelivery.Hold && callerSessionId is null)
+            throw KernelException.Forbidden("An approval requires a session.");
         var tcs = new TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously);
-        _pendingAskWaiters[ask.Id] = tcs;
-
         var evt = new EventEnvelopeDto(
             EventId: null,
             AreaId: _track.AreaId,
@@ -3524,6 +3536,12 @@ public sealed partial class TrackActor : IAsyncDisposable
         await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
         await _store.UpsertAskAsync(ask, evt, ct).ConfigureAwait(false);
         await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, evt, ct).ConfigureAwait(false);
+
+        _asks[ask.Id] = ask;
+        _pendingAskWaiters[ask.Id] = tcs;
+        // Request cancellation expires approval authority even if the ask stays visible.
+        if (ct.CanBeCanceled)
+            _ = ct.Register(() => tcs.TrySetCanceled(ct));
 
         var options = questions[0].Options.Count > 0 ? questions[0].Options : ["Approve", "Deny"];
         var callerIsLead = callerSessionId is not null &&

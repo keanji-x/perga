@@ -63,6 +63,8 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
     private int _probeCount;
     private int _forceRefreshProbeCount;
 
+    public ConcurrentQueue<(string RequestId, bool Approved)> ApprovalResponses { get; } = new();
+
     public bool SupportsSteering { get; set; } = true;
 
     public IReadOnlyCollection<RecordedSessionOpen> OpenedSessions => _openedSessions.ToArray();
@@ -193,8 +195,7 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
 
         public Task RespondApprovalAsync(string requestId, bool approved, string? reason = null, CancellationToken ct = default)
         {
-            _ = requestId;
-            _ = approved;
+            _owner.ApprovalResponses.Enqueue((requestId, approved));
             _ = reason;
             _ = ct;
             return Task.CompletedTask;
