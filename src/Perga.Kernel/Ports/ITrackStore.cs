@@ -30,7 +30,8 @@ public enum WorkspacePreparationPhase
 }
 
 public sealed record WorkspacePreparation(WorkspaceProvisionRequest Request, string? Command,
-    WorkspacePreparationPhase Phase = WorkspacePreparationPhase.Pending, WorkspaceSpec? Spec = null);
+    WorkspacePreparationPhase Phase = WorkspacePreparationPhase.Pending, WorkspaceSpec? Spec = null,
+    bool RepeatableProvision = false);
 
 public sealed record TrackCreation(TrackDto Track, ReportDocument Report, string? TemplateSnapshot,
     AgentSessionDto Lead, IReadOnlyList<TaskDto> Tasks, SessionInputRequest? FirstInput,

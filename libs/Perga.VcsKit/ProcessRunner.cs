@@ -8,7 +8,8 @@ public sealed record ProcessRunRequest(
     IReadOnlyList<string> Arguments,
     string WorkingDirectory,
     IReadOnlyDictionary<string, string?>? Environment = null,
-    string? StandardInput = null);
+    string? StandardInput = null,
+    bool InheritEnvironment = true);
 
 public sealed record ProcessRunResult(
     int ExitCode,
@@ -89,6 +90,9 @@ public sealed class ProcessRunner : IProcessRunner
         {
             startInfo.ArgumentList.Add(arg);
         }
+
+        if (!request.InheritEnvironment)
+            startInfo.Environment.Clear();
 
         // Non-interactive defaults so git / jj / gh never block on terminal prompts or pagers.
         startInfo.Environment["GIT_TERMINAL_PROMPT"] = "0";

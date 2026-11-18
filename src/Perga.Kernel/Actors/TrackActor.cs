@@ -320,7 +320,7 @@ public sealed partial class TrackActor : IAsyncDisposable
         var reserved = false;
         try
         {
-            await DeleteTrackCoreAsync(() => reserved = true, ct).ConfigureAwait(false);
+            await DeleteTrackCoreAsync(reserve: () => reserved = true, committed: () => reserved = false, ct).ConfigureAwait(false);
         }
         catch
         {
@@ -334,7 +334,7 @@ public sealed partial class TrackActor : IAsyncDisposable
         }
     }
 
-    private async Task DeleteTrackCoreAsync(Action reserve, CancellationToken ct)
+    private async Task DeleteTrackCoreAsync(Action reserve, Action committed, CancellationToken ct)
     {
         (WorkspaceSpec? Spec, IWorkspaceDriver Driver, string? CloseCmd, string Cwd, string AreaId) teardownInfo = await EnqueueAsync(async _ =>
         {
@@ -387,14 +387,13 @@ public sealed partial class TrackActor : IAsyncDisposable
                 try
                 {
                     await _terminalClient.KillAsync(term.Id, graceMs: 1000, ct).ConfigureAwait(false);
+                    _terminals.Remove(term.Id);
                 }
                 catch
                 {
-                    // Best-effort terminal cleanup.
+                    // Keep failed kills available for a retry if teardown cannot unmount.
                 }
             }
-
-            _terminals.Clear();
 
             // 5. Dispose open agent sessions & revoke MCP tokens
             foreach (var kvp in _openAgentSessions.ToArray())
@@ -409,6 +408,7 @@ public sealed partial class TrackActor : IAsyncDisposable
             var spec = WorkspaceReady ? ExtractWorkspaceSpec(_track) : _workspacePreparation?.Spec;
             var closeCmd = WorkspaceReady ? _policy?.Manifest.WorkspaceCloseCmd : null;
             var cwd = _mountedWorkspace?.MergedCwd ?? _track.Cwd;
+            _mountedWorkspace = null;
             return (spec, driver, closeCmd, cwd, _track.AreaId);
         }, CancellationToken.None).ConfigureAwait(false);
 
@@ -417,10 +417,13 @@ public sealed partial class TrackActor : IAsyncDisposable
         {
             try
             {
+                var cwd = teardownInfo.Spec is null
+                    ? teardownInfo.Cwd
+                    : (await teardownInfo.Driver.EnsureMountedAsync(teardownInfo.Spec, ct).ConfigureAwait(false)).MergedCwd;
                 await _commandRunner.RunAsync(
                     new ShellCommandRequest(
                         teardownInfo.CloseCmd,
-                        teardownInfo.Cwd,
+                        cwd,
                         TimeSpan.FromSeconds(_options.DefaultHookTimeoutSecs)),
                     ct).ConfigureAwait(false);
             }
@@ -431,9 +434,31 @@ public sealed partial class TrackActor : IAsyncDisposable
         }
 
         if (teardownInfo.Spec is not null)
-            await teardownInfo.Driver.TeardownTrackAsync(teardownInfo.Spec, ct).ConfigureAwait(false);
+        {
+            try
+            {
+                await teardownInfo.Driver.TeardownTrackAsync(teardownInfo.Spec, ct).ConfigureAwait(false);
+            }
+            catch (WorkspaceUnavailableException ex)
+            {
+                throw KernelException.PreconditionFailed(ex.Message);
+            }
+        }
         await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
         await _store.DeleteTrackAsync(TrackId, ct).ConfigureAwait(false);
+        committed();
+
+        if (teardownInfo.Spec is not null)
+        {
+            try
+            {
+                await teardownInfo.Driver.CleanupDeletedTrackAsync(teardownInfo.Spec).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Trace.TraceWarning("Could not clean up the deleted workspace for Track {0}: {1}", TrackId, ex.Message);
+            }
+        }
 
         var delNow = NowMs();
         var delEvt = new EventEnvelopeDto(
@@ -1709,15 +1734,20 @@ public sealed partial class TrackActor : IAsyncDisposable
     private async Task<MountedWorkspace> EnsureWorkspaceMountedCoreAsync(CancellationToken ct)
     {
         RequireWorkspaceReadyCore();
-        if (_mountedWorkspace is not null)
+        var driver = _workspaceDrivers.GetRequired(_track.WorkspaceDriver);
+        if (_mountedWorkspace is not null && !driver.VerifyMountOnAccess)
+            return _mountedWorkspace;
+
+        var spec = ExtractWorkspaceSpec(_track);
+        try
         {
+            _mountedWorkspace = await driver.EnsureMountedAsync(spec, ct).ConfigureAwait(false);
             return _mountedWorkspace;
         }
-
-        var driver = _workspaceDrivers.GetRequired(_track.WorkspaceDriver);
-        var spec = ExtractWorkspaceSpec(_track);
-        _mountedWorkspace = await driver.EnsureMountedAsync(spec, ct).ConfigureAwait(false);
-        return _mountedWorkspace;
+        catch (WorkspaceUnavailableException ex)
+        {
+            throw KernelException.PreconditionFailed(ex.Message);
+        }
     }
 
     internal static WorkspaceSpec ExtractWorkspaceSpec(TrackDto track)

@@ -598,7 +598,8 @@ public sealed partial class PergaKernelService : IPergaKernel
         {
             if (!string.IsNullOrWhiteSpace(req.WorkspaceDriver))
                 throw KernelException.InvalidArgument("Choose a workspace option or specify a workspace driver.");
-            choice = WorkspaceChoices(source, policy?.Manifest.WorkspaceDriver).FirstOrDefault(candidate => candidate.Option.Id == optionId)
+            var choices = await WorkspaceChoicesAsync(source, policy?.Manifest.WorkspaceDriver, ct).ConfigureAwait(false);
+            choice = choices.FirstOrDefault(candidate => candidate.Option.Id == optionId)
                 ?? throw KernelException.InvalidArgument("The selected workspace option is unavailable for this folder. Choose an available workspace option.");
         }
         var driverId = choice?.DriverId ?? PreferredWorkspaceDriver(req.WorkspaceDriver, policy?.Manifest.WorkspaceDriver);
@@ -612,11 +613,13 @@ public sealed partial class PergaKernelService : IPergaKernel
         if (blankWorkspace && (driverId == VcsWorkspaceDriver.Id || policy?.Manifest.WorkspaceDriver == VcsWorkspaceDriver.Id))
             createCommand = string.IsNullOrWhiteSpace(createCommand) ? "git init -q" : $"git init -q && (\n{createCommand}\n)";
 
-        _workspaceDrivers.GetRequired(driverId);
+        var workspaceDriver = _workspaceDrivers.GetRequired(driverId);
+        if (choice is null && !await workspaceDriver.IsAvailableAsync(source, ct).ConfigureAwait(false))
+            throw KernelException.PreconditionFailed($"Workspace driver '{driverId}' is unavailable for this source on this Host.");
         var preparation = new WorkspacePreparation(
             new WorkspaceProvisionRequest(trackId, Path.GetFullPath(sourcePath), Path.GetFullPath(targetRootDir),
                 lowerCacheDirs, req.BaseRevision, NewEmptyWorkspace: blankWorkspace, VcsBackend: choice?.Backend),
-            createCommand);
+            createCommand, RepeatableProvision: workspaceDriver.ProvisionIsRepeatable);
 
         var templateInputs = JsonHelpers.EnsureClonedObject(req.TemplateInputs);
         var templateState = JsonHelpers.EmptyObject;

@@ -7,6 +7,7 @@ using Perga.Host.Configuration;
 using Perga.Host.Lifecycle;
 using Perga.Host.Mcp;
 using Perga.Host.Terminals;
+using Perga.Host.Workspaces;
 using Perga.Kernel;
 using Perga.Kernel.Ports;
 using Perga.PolicyVm;
@@ -99,10 +100,27 @@ public static class PergaHostServiceCollectionExtensions
             SandboxStateRootDirectory = Path.Combine(sp.GetRequiredService<ResolvedHostStoragePaths>().DataDir, "provider-state"),
             CodexSandboxApiKey = sp.GetRequiredService<PergaHostOptions>().CodexSandboxApiKey,
         }));
-        services.TryAddSingleton<IVcsService, VcsService>();
+        services.TryAddSingleton<VcsService>();
+        services.TryAddSingleton<IVcsService>(sp => sp.GetRequiredService<VcsService>());
         services.TryAddSingleton<IGitHubForgeService, GitHubForgeService>();
+        services.TryAddSingleton<IOverlayMounts>(sp =>
+        {
+            var paths = sp.GetRequiredService<ResolvedHostStoragePaths>();
+            return new OverlayMountClient(sp.GetRequiredService<PergaHostOptions>(), paths.WorkspacesRootDir, paths.IsEphemeral);
+        });
         services.TryAddSingleton<IWorkspaceDriverRegistry>(sp =>
-            WorkspaceDriverRegistry.CreateDefault(sp.GetRequiredService<IVcsService>()));
+        {
+            var paths = sp.GetRequiredService<ResolvedHostStoragePaths>();
+            var options = sp.GetRequiredService<PergaHostOptions>();
+            return new WorkspaceDriverRegistry(
+            [
+                new DirectWorkspaceDriver(),
+                new VcsWorkspaceDriver(sp.GetRequiredService<IVcsService>()),
+                new OverlayWorkspaceDriver(sp.GetRequiredService<VcsService>(), sp.GetRequiredService<IOverlayMounts>(),
+                    new OverlayWorkspaceOptions(paths.WorkspacesRootDir,
+                        options.OverlayWorkspaceWarmCommand, options.OverlayWorkspaceCacheVersion)),
+            ]);
+        });
 
         services.TryAddSingleton<ITerminalBridgeClient>(sp =>
             new ManagedTerminalBridgeClient(sp.GetRequiredService<PergaHostOptions>()));

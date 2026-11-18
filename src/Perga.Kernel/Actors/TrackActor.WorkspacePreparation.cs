@@ -140,7 +140,8 @@ public sealed partial class TrackActor
         {
             preparation = preparation with
             {
-                Phase = preparation.Phase == WorkspacePreparationPhase.Mounting
+                Phase = preparation.Phase == WorkspacePreparationPhase.Mounting ||
+                        (preparation.Phase == WorkspacePreparationPhase.Provisioning && preparation.RepeatableProvision)
                     ? WorkspacePreparationPhase.Failed : WorkspacePreparationPhase.Unknown
             };
         }

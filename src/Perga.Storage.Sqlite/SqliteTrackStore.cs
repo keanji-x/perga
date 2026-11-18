@@ -680,7 +680,14 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
             },
             ct).ConfigureAwait(false);
 
-        _coldBlobStore.DeleteTrackBlobsDirectory(trackId);
+        try
+        {
+            _coldBlobStore.DeleteTrackBlobsDirectory(trackId);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            System.Diagnostics.Trace.TraceWarning("Could not clean up blobs for deleted Track {0}: {1}", trackId, ex.Message);
+        }
     }
 
     // -------------------------------------------------------------------------
