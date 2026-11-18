@@ -11,7 +11,7 @@ public sealed class ImplicitTemplateToolsTests
 {
     private const string Source = """
         export default defineTemplate({ id: "authored", title: "Authored",
-          defaultPlugins: ["search", "search"],
+          plugins: ["search", "new-plugin", "search"],
           initialState: inputs => ({ marker: inputs.marker }),
           guardToolCall: () => Deny("authored policy active") });
         """;
@@ -67,6 +67,8 @@ public sealed class ImplicitTemplateToolsTests
         var (_, snap) = await ctx.CreateDefaultTrackAsync();
         await ctx.Kernel.PatchTrackAsync(snap.Track.Id, new PatchTrackRequest(EnabledPlugins: ["existing", "search"]));
         var caller = Caller(snap);
+        var registration = ctx.Kernel.McpSessionBridge.RegisterSession(snap.Track.Id,
+            caller.SessionId, true, null, null, ["existing", "search"]);
         var result = await Call(ctx, caller, KernelMcpToolNames.TrackSet, byId
             ? new { templateId = "authored", inputs = new { marker = "initialized" } }
             : (object)new { source = Source, inputs = new { marker = "initialized" } });
@@ -75,7 +77,9 @@ public sealed class ImplicitTemplateToolsTests
         Assert.Equal(Source, persisted.TemplateSnapshotSource);
         Assert.Equal("initialized", persisted.Track.TemplateInputs.GetProperty("marker").GetString());
         Assert.Equal("initialized", persisted.Track.TemplateState.GetProperty("marker").GetString());
-        Assert.Equal(["existing", "search"], persisted.Track.EnabledPlugins);
+        Assert.Equal(["existing", "search", "new-plugin"], persisted.Track.EnabledPlugins);
+        Assert.Equal(persisted.Track.EnabledPlugins,
+            ctx.Kernel.McpSessionBridge.ResolveToken(registration.Principal.Token)!.EnabledPlugins);
         Assert.Contains(ctx.Store.PersistedEvents, e => e.Kind == "track.updated" &&
             e.Payload.TryGetProperty("templateId", out var id) && id.GetString() == "authored");
         ctx.Time.Advance(TimeSpan.FromHours(1));
@@ -84,6 +88,96 @@ public sealed class ImplicitTemplateToolsTests
         Assert.Equal(Source, reloaded.TemplateSnapshotSource);
         var denied = await Assert.ThrowsAsync<KernelException>(() => Call(ctx, caller, KernelMcpToolNames.TemplateLs, new { }));
         Assert.Equal(KernelErrorCode.PolicyDenied, denied.Code);
+    }
+
+    [Fact]
+    public async Task AskHumanApproval_AfterPolicySwap_RejectsStaleTrackSet()
+    {
+        await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
+        var (_, snap) = await ctx.CreateDefaultTrackAsync();
+        var caller = Caller(snap);
+        const string asking = """
+            export default defineTemplate({ id:'asking', title:'Asking',
+              initialState: () => ({ requests: 0 }),
+              guardToolCall: (ctx, call) => {
+                ctx.state.requests++;
+                return call.arguments.inputs?.suspend
+                  ? AskHuman('Approve replacement?', ['Approve', 'Reject']) : Allow();
+              } });
+            """;
+        const string replacement = """
+            export default defineTemplate({ id:'replacement', title:'Replacement',
+              guardToolCall: () => Deny('Replacement policy blocks calls') });
+            """;
+        await Call(ctx, caller, KernelMcpToolNames.TrackSet, new { source = asking });
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var suspended = KernelMcpDispatcher.ExecuteGuardedAsync(ctx.Kernel, caller,
+            KernelMcpToolNames.TrackSet, TestJson.FromObject(new { source = Source, inputs = new { suspend = true } }), timeout.Token);
+        AskDto? ask = null;
+        while (ask is null)
+        {
+            ask = (await ctx.Kernel.GetTrackAggregateAsync(snap.Track.Id, timeout.Token)).OpenAsks.FirstOrDefault();
+            if (ask is null) await Task.Delay(10, timeout.Token);
+        }
+        Assert.False(suspended.IsCompleted);
+        Assert.Equal(1, (await ctx.Store.LoadTrackAggregateAsync(snap.Track.Id, default))!
+            .Track.TemplateState.GetProperty("requests").GetInt32());
+        await Call(ctx, caller, KernelMcpToolNames.TrackSet, new { source = replacement });
+        var events = ctx.Store.PersistedEvents.Count(e => e.Kind == "track.updated");
+        await ctx.Kernel.AnswerAskAsync(snap.Track.Id, ask.Id,
+            TestJson.FromObject(new { answers = new[] { "Approve" } }), timeout.Token);
+        var ex = await Assert.ThrowsAsync<KernelException>(() => suspended);
+        Assert.Equal(KernelErrorCode.PolicyDenied, ex.Code);
+        var persisted = (await ctx.Store.LoadTrackAggregateAsync(snap.Track.Id, default))!;
+        Assert.Equal("replacement", persisted.Track.TemplateId);
+        Assert.Equal(replacement, persisted.TemplateSnapshotSource);
+        Assert.Equal(events, ctx.Store.PersistedEvents.Count(e => e.Kind == "track.updated"));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ConcurrentTrackSet_RejectsEarlierAuthorization_EvenWhenReapplyingSamePolicy(bool alreadyTemplated)
+    {
+        await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
+        var (_, snap) = await ctx.CreateDefaultTrackAsync();
+        const string allowing = """
+            export default defineTemplate({ id:'allowing', title:'Allowing', guardToolCall: () => Allow() });
+            """;
+        var caller = Caller(snap);
+        if (alreadyTemplated)
+            await Call(ctx, caller, KernelMcpToolNames.TrackSet, new { source = allowing });
+        var args = TestJson.FromObject(new { source = allowing });
+        var epochs = await Task.WhenAll(
+            ctx.Kernel.GuardMcpToolCallAsync(snap.Track.Id, caller.SessionId, "perga", KernelMcpToolNames.TrackSet, args),
+            ctx.Kernel.GuardMcpToolCallAsync(snap.Track.Id, caller.SessionId, "perga", KernelMcpToolNames.TrackSet, args));
+        Assert.Equal(epochs[0], epochs[1]);
+        await ctx.Kernel.SetTrackTemplateAsync(snap.Track.Id, caller.SessionId, null, allowing, epochs[0]);
+        var before = await ctx.Kernel.GetTrackAggregateAsync(snap.Track.Id);
+        var events = ctx.Store.PersistedEvents.Count;
+        var ex = await Assert.ThrowsAsync<KernelException>(() => ctx.Kernel.SetTrackTemplateAsync(
+            snap.Track.Id, caller.SessionId, null, allowing, epochs[1]));
+        Assert.Equal(KernelErrorCode.PolicyDenied, ex.Code);
+        Assert.Equal(before.Track, (await ctx.Kernel.GetTrackAggregateAsync(snap.Track.Id)).Track);
+        Assert.Equal(events, ctx.Store.PersistedEvents.Count);
+    }
+
+    [Fact]
+    public async Task DeniedTrackSet_PersistsGuardState()
+    {
+        await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
+        var (_, snap) = await ctx.CreateDefaultTrackAsync();
+        await Call(ctx, Caller(snap), KernelMcpToolNames.TrackSet, new { source = """
+            export default defineTemplate({ id:'denying', title:'Denying',
+              initialState: () => ({ denied: 0 }),
+              guardToolCall: ctx => { ctx.state.denied++; return Deny('blocked'); } });
+            """ });
+        var ex = await Assert.ThrowsAsync<KernelException>(() => Call(ctx, Caller(snap),
+            KernelMcpToolNames.TrackSet, new { source = Source }));
+        Assert.Equal(KernelErrorCode.PolicyDenied, ex.Code);
+        var persisted = (await ctx.Store.LoadTrackAggregateAsync(snap.Track.Id, default))!;
+        Assert.Equal(1, persisted.Track.TemplateState.GetProperty("denied").GetInt32());
+        Assert.Equal("denying", persisted.Track.TemplateId);
     }
 
     [Theory]

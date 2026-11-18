@@ -42,6 +42,7 @@ public sealed partial class TrackActor : IAsyncDisposable
     private TrackDto _track = null!;
     private ReportDocument _report = null!;
     private CompiledPolicy? _policy;
+    private long _policyEpoch;
     private string? _templateSnapshotSource;
     private MountedWorkspace? _mountedWorkspace;
     private readonly List<TaskDto> _tasks = [];
@@ -129,6 +130,7 @@ public sealed partial class TrackActor : IAsyncDisposable
         _track = track;
         _report = report;
         _policy = policy;
+        _policyEpoch++;
         _templateSnapshotSource = templateSnapshotSource;
         _mountedWorkspace = mountedWorkspace;
 
@@ -316,12 +318,14 @@ public sealed partial class TrackActor : IAsyncDisposable
     }
 
     public Task<TrackDto> SetTemplateBySessionAsync(string callerSessionId, string? templateId,
-        string? source, JsonElement? inputs, CancellationToken ct = default)
+        string? source, long expectedPolicyEpoch, JsonElement? inputs, CancellationToken ct = default)
     {
         return EnqueueAsync(async _ =>
         {
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
             RequireGovernanceSessionCore(callerSessionId, KernelMcpToolNames.TrackSet);
+            if (_policyEpoch != expectedPolicyEpoch)
+                throw KernelException.PolicyDenied("Active policy changed after template application was authorized.");
             if (_track.ClosedAtMs is not null)
                 throw KernelException.Conflict("Cannot set a template on a closed track.");
             if ((templateId is null) == (source is null) ||
@@ -362,8 +366,12 @@ public sealed partial class TrackActor : IAsyncDisposable
             await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
             await _store.UpdateTrackTemplateAndEmitAsync(nextTrack, policy.JsSource, evt, ct).ConfigureAwait(false);
             _policy = policy;
+            _policyEpoch++;
             _templateSnapshotSource = policy.JsSource;
+            var pluginsChanged = !_track.EnabledPlugins.SequenceEqual(nextTrack.EnabledPlugins, StringComparer.Ordinal);
             _track = nextTrack;
+            if (pluginsChanged)
+                _mcpBridge.UpdateTrackPlugins(TrackId, nextTrack.EnabledPlugins);
             await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, evt, ct).ConfigureAwait(false);
             return _track;
         }, ct);
@@ -1366,7 +1374,7 @@ public sealed partial class TrackActor : IAsyncDisposable
         }, ct).ConfigureAwait(false);
     }
 
-    public async Task GuardMcpToolCallAsync(
+    public async Task<long> GuardMcpToolCallAsync(
         string sessionId,
         string mcpServer,
         string toolName,
@@ -1376,6 +1384,7 @@ public sealed partial class TrackActor : IAsyncDisposable
         Interlocked.Increment(ref _inFlightExternalOps);
         try
         {
+            long authorizedPolicyEpoch = 0;
             var askSuspension = await EnqueueAsync<PendingAskSuspension?>(async _ =>
             {
                 await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
@@ -1392,6 +1401,8 @@ public sealed partial class TrackActor : IAsyncDisposable
                         $"MCP plugin '{mcpServer}' is not enabled on track '{TrackId}'.");
                 }
 
+                // Capture before evaluation, including across an AskHuman suspension.
+                authorizedPolicyEpoch = _policyEpoch;
                 if (_policy is null)
                 {
                     return null;
@@ -1408,10 +1419,10 @@ public sealed partial class TrackActor : IAsyncDisposable
                     Inputs: _track.TemplateInputs);
 
                 var eval = _policyVm.GuardToolCall(_policy, ctx, _track.TemplateState);
-                // Template application replaces state atomically after compile/init and persistence.
-                // A rejected replacement must also leave the current guard state unchanged.
+                // An allowed replacement initializes its own state atomically. Denied or
+                // suspended attempts still retain the current policy's guard state updates.
                 if (!string.Equals(mcpServer, "perga", StringComparison.OrdinalIgnoreCase) ||
-                    toolName != KernelMcpToolNames.TrackSet)
+                    toolName != KernelMcpToolNames.TrackSet || eval.Output is not GuardDecision.Allow)
                     await UpdateTemplateStateIfChangedCoreAsync(eval.NextState, ct).ConfigureAwait(false);
 
                 return await ApplyGuardDecisionCoreAsync(eval.Output, caller.Id, ct).ConfigureAwait(false);
@@ -1419,7 +1430,7 @@ public sealed partial class TrackActor : IAsyncDisposable
 
             if (askSuspension is null)
             {
-                return;
+                return authorizedPolicyEpoch;
             }
 
             if (askSuspension.ShouldWakeLead)
@@ -1433,6 +1444,7 @@ public sealed partial class TrackActor : IAsyncDisposable
                 throw KernelException.PolicyDenied(
                     $"MCP tool '{mcpServer}:{toolName}' denied by human on ask '{askSuspension.Ask.Id}'.");
             }
+            return authorizedPolicyEpoch;
         }
         finally
         {
@@ -1536,6 +1548,8 @@ public sealed partial class TrackActor : IAsyncDisposable
         {
             _policy = _templateCatalog.TryGetPolicy(_track.TemplateId!);
         }
+
+        _policyEpoch++;
 
         _tasks.Clear();
         _tasks.AddRange(snapshot.Tasks);
