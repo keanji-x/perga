@@ -572,7 +572,13 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
             TemplateSnapshotSource: trackRow.TemplateSnapshot);
     }
 
-    public Task UpdateTrackAndEmitAsync(TrackDto track, EventEnvelopeDto? evt, CancellationToken ct)
+    public Task UpdateTrackAndEmitAsync(TrackDto track, EventEnvelopeDto? evt, CancellationToken ct) =>
+        UpdateTrackCoreAsync(track, null, evt, ct);
+
+    public Task UpdateTrackTemplateAndEmitAsync(TrackDto track, string templateSnapshot, EventEnvelopeDto evt, CancellationToken ct) =>
+        UpdateTrackCoreAsync(track, templateSnapshot, evt, ct);
+
+    private Task UpdateTrackCoreAsync(TrackDto track, string? templateSnapshot, EventEnvelopeDto? evt, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(track);
         EnsureInitialized();
@@ -597,6 +603,7 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                             workspace_driver = @WorkspaceDriver,
                             workspace_spec_json = @WorkspaceSpecJson,
                             lead_session_id = @LeadSessionId,
+                            template_snapshot = CASE WHEN @TemplateSnapshot IS NULL THEN template_snapshot ELSE @TemplateSnapshot END,
                             template_id = @TemplateId,
                             template_inputs_json = @TemplateInputsJson,
                             template_state_json = @TemplateStateJson,
@@ -619,6 +626,7 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                             WorkspaceSpecJson = workspaceSpecJson,
                             track.LeadSessionId,
                             track.TemplateId,
+                            TemplateSnapshot = templateSnapshot,
                             TemplateInputsJson = templateInputsJson,
                             TemplateStateJson = templateStateJson,
                             EnabledPluginsJson = enabledPluginsJson,

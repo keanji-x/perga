@@ -6,6 +6,7 @@ using Perga.AgentKit;
 using Perga.Contracts;
 using Perga.Kernel.Events;
 using Perga.Kernel.Internal;
+using Perga.Kernel.Mcp;
 using Perga.Kernel.Ports;
 using Perga.Kernel.Tasks;
 using Perga.Kernel.Templates;
@@ -310,6 +311,60 @@ public sealed partial class TrackActor : IAsyncDisposable
             var now = NowMs();
             _track = _track with { Title = newTitle, UpdatedAtMs = now };
             await EmitTrackUpdatedCoreAsync(now, ct).ConfigureAwait(false);
+            return _track;
+        }, ct);
+    }
+
+    public Task<TrackDto> SetTemplateBySessionAsync(string callerSessionId, string? templateId,
+        string? source, JsonElement? inputs, CancellationToken ct = default)
+    {
+        return EnqueueAsync(async _ =>
+        {
+            await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
+            RequireGovernanceSessionCore(callerSessionId, KernelMcpToolNames.TrackSet);
+            if (_track.ClosedAtMs is not null)
+                throw KernelException.Conflict("Cannot set a template on a closed track.");
+            if ((templateId is null) == (source is null) ||
+                templateId is not null && string.IsNullOrWhiteSpace(templateId) ||
+                source is not null && string.IsNullOrWhiteSpace(source))
+                throw KernelException.InvalidArgument("Specify exactly one non-empty 'templateId' or 'source'.");
+            if (inputs is { ValueKind: not JsonValueKind.Object })
+                throw KernelException.InvalidArgument("'inputs' must be an object.");
+
+            var nextInputs = JsonHelpers.EnsureClonedObject(inputs);
+            CompiledPolicy policy;
+            JsonElement state;
+            try
+            {
+                policy = templateId is not null
+                    ? _templateCatalog.GetRequiredPolicy(templateId)
+                    : _templateCatalog.GetOrCompileSnapshot(source!);
+                var init = _policyVm.InitState(policy, nextInputs);
+                state = (init.Output.ValueKind != JsonValueKind.Undefined ? init.Output : init.NextState).Clone();
+            }
+            catch (KernelException) { throw; }
+            catch (Exception ex)
+            {
+                throw KernelException.InvalidArgument($"Template compilation or initialization failed: {ex.Message}");
+            }
+
+            var now = NowMs();
+            var nextTrack = _track with
+            {
+                TemplateId = policy.TemplateId,
+                TemplateInputs = nextInputs,
+                TemplateState = state,
+                EnabledPlugins = _track.EnabledPlugins.Concat(policy.Manifest.DefaultPlugins).Distinct(StringComparer.Ordinal).ToArray(),
+                UpdatedAtMs = now
+            };
+            var evt = new EventEnvelopeDto(null, nextTrack.AreaId, TrackId, KernelEventKinds.TrackUpdated,
+                JsonHelpers.ToElement(nextTrack), now);
+            await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
+            await _store.UpdateTrackTemplateAndEmitAsync(nextTrack, policy.JsSource, evt, ct).ConfigureAwait(false);
+            _policy = policy;
+            _templateSnapshotSource = policy.JsSource;
+            _track = nextTrack;
+            await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, evt, ct).ConfigureAwait(false);
             return _track;
         }, ct);
     }
@@ -1325,6 +1380,9 @@ public sealed partial class TrackActor : IAsyncDisposable
             {
                 await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
                 var caller = RequireSessionCore(sessionId);
+                if (string.Equals(mcpServer, "perga", StringComparison.OrdinalIgnoreCase) &&
+                    KernelMcpCatalog.IsGovernanceOnly(toolName))
+                    RequireGovernanceSessionCore(sessionId, toolName);
 
                 if (!string.Equals(mcpServer, "perga", StringComparison.OrdinalIgnoreCase) &&
                     !string.Equals(mcpServer, "vcs", StringComparison.OrdinalIgnoreCase) &&
@@ -1350,7 +1408,11 @@ public sealed partial class TrackActor : IAsyncDisposable
                     Inputs: _track.TemplateInputs);
 
                 var eval = _policyVm.GuardToolCall(_policy, ctx, _track.TemplateState);
-                await UpdateTemplateStateIfChangedCoreAsync(eval.NextState, ct).ConfigureAwait(false);
+                // Template application replaces state atomically after compile/init and persistence.
+                // A rejected replacement must also leave the current guard state unchanged.
+                if (!string.Equals(mcpServer, "perga", StringComparison.OrdinalIgnoreCase) ||
+                    toolName != KernelMcpToolNames.TrackSet)
+                    await UpdateTemplateStateIfChangedCoreAsync(eval.NextState, ct).ConfigureAwait(false);
 
                 return await ApplyGuardDecisionCoreAsync(eval.Output, caller.Id, ct).ConfigureAwait(false);
             }, ct).ConfigureAwait(false);
@@ -3232,7 +3294,10 @@ public sealed partial class TrackActor : IAsyncDisposable
                 ? $"Contract Subagent (BoundAttemptId={session.BoundAttemptId})"
                 : "Collaborative Subagent (Unbound)";
 
-        return $"You are operating in Perga Track '{_track.Title}' ({TrackId}) as {role}.\n\n## Current Report\n{reportMd}";
+        var templateNote = session.IsLead && _policy is null
+            ? "\n\nTemplates are optional and implicit. If useful, discover them with perga_template_ls, inspect a template or the authoring contract with perga_template_cat, and apply one with perga_track_set using templateId or custom .perga.js source (plus optional inputs)."
+            : string.Empty;
+        return $"You are operating in Perga Track '{_track.Title}' ({TrackId}) as {role}.{templateNote}\n\n## Current Report\n{reportMd}";
     }
 
     private string BuildEpochSeedSystemPrompt(

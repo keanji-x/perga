@@ -37,6 +37,7 @@ public interface ITrackStore : ITrackReadStore
 
     Task CreateTrackAsync(TrackDto track, ReportDocument initialReport, string? templateSnapshot, AgentSessionDto initialLeadSession, CancellationToken ct);
     Task UpdateTrackAndEmitAsync(TrackDto track, EventEnvelopeDto? evt, CancellationToken ct);
+    Task UpdateTrackTemplateAndEmitAsync(TrackDto track, string templateSnapshot, EventEnvelopeDto evt, CancellationToken ct);
     Task DeleteTrackAsync(string trackId, CancellationToken ct);
 
     Task SaveReportAndTasksAsync(
