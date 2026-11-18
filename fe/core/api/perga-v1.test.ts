@@ -159,7 +159,7 @@ describe('Perga /api/v1 protocol contracts', () => {
     const operation = setPlannerModelOperation('session/a', { model: 'chosen', reasoning_effort: null });
     expect(operation.method).toBe('PUT');
     expect(operation.path).toBe('/api/v1/sessions/session%2Fa/model');
-    expect(operation.body).toEqual({ model: 'chosen' });
+    expect(operation.body).toEqual({ model: 'chosen', reasoningEffort: null });
     expect(operation.responseSchema.parse({
       id: 'session/a', trackId: 'track', provider: 'codex', model: 'chosen', createdAtMs: 1, updatedAtMs: 2,
     })).toMatchObject({ id: 'session/a', model: 'chosen' });
@@ -308,7 +308,7 @@ describe('Perga /api/v1 protocol contracts', () => {
       frozen_at: null,
       worktree: '/repo/.worktrees/trk_1',
     });
-    expect(detail.cards.map((c) => c.kind)).toEqual(['track-report', 'shared-spec']);
+    expect(detail.cards.map((c) => c.kind)).toEqual(['track-report', 'codex']);
 
     const acpSnapshot = {
       ...snapshotRaw,

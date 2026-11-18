@@ -19,7 +19,6 @@ import { readErrorText } from '../../../../core/domain/read-failure.ts';
 import type { ConversationStopFeedback } from '../../../../core/domain/conversation-stop.ts';
 import { anchorRunningTurn, type RunningTurnAnchor } from '../../../../core/domain/conversation-meta.ts';
 import { conversationHistoryQueryOptions, modelCatalogQueryOptions, plannerRunQueryOptions, usePlannerMutations } from '../providers/queries.ts';
-import { managedProvidersQueryOptions } from '../providers/managed-providers.ts';
 import { useState } from '../../ui/state/public.ts';
 import { useConversationCommands, useConversationSendOps, useConversationQueueWriteOut, useConversationRememberedTurns, useRememberedConversations } from './public.tsx';
 import { NO_TURNS } from './registry-owner.ts';
@@ -56,7 +55,6 @@ export function useConversationStore(
   const cardTitle = scope?.cardTitle;
   const scopeUpdatedAt = scope?.updatedAt;
   const scopeKind = scope?.kind ?? 'shared-spec';
-  const capabilities = useQuery({ ...managedProvidersQueryOptions(transport, unauthorized), enabled: scope?.kind === 'track-assistant' });
   const scopeState = scope?.state ?? null;
   const serverRows = routeIntent.rows;
   const rememberOn = routeIntent.rememberOn;
@@ -380,8 +378,7 @@ export function useConversationStore(
     discardFailedSend: outbox.discardFailedSend,
     dismissFailedSend: outbox.dismissFailedSend,
     send: outbox.send,
-    attachmentsSupported: (run.data?.attachments_supported ?? false) && (scopeKind !== 'track-assistant' || (!capabilities.isError
-      && capabilities.data?.find(answer => answer.availability.provider === provider)?.capabilities.images === true)),
+    attachmentsSupported: run.data?.attachments_supported ?? false,
     historyReplacementSupported,
     manualCompactSupported: run.data?.manual_compact_supported === true,
     contextUsage: run.data?.context_usage_invalidated === true ? null : run.data?.token_usage ?? null,

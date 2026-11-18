@@ -49,7 +49,7 @@ public sealed partial class TrackActor : IAsyncDisposable
     private readonly Dictionary<string, TerminalDto> _terminals = new(StringComparer.Ordinal);
     private readonly Dictionary<string, int> _nextTurnIndexBySession = new(StringComparer.Ordinal);
     private readonly Dictionary<string, IAgentSession> _openAgentSessions = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, string?> _boundAgentModels = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, (string? Model, string? ReasoningEffort)> _boundAgentModels = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Guid> _reservedWakeSessions = new(StringComparer.Ordinal);
     private readonly Dictionary<string, ActiveTurnState> _activeTurns = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Queue<(string TriggerKind, string Prompt, string? MailId)>> _pendingWakes = new(StringComparer.Ordinal);
@@ -625,6 +625,7 @@ public sealed partial class TrackActor : IAsyncDisposable
     private AgentSessionDto NewSubagentSessionCore(CreateSessionRequest req)
     {
         var now = NowMs();
+        var provider = string.IsNullOrWhiteSpace(req.Provider) ? GetDefaultProviderCore() : req.Provider!;
         return new AgentSessionDto(
             Id: $"ses_{Guid.NewGuid():N}",
             TrackId: TrackId,
@@ -632,15 +633,16 @@ public sealed partial class TrackActor : IAsyncDisposable
             BoundTaskId: null,
             BoundAttemptId: null,
             Title: string.IsNullOrWhiteSpace(req.Title) ? "Subagent" : req.Title,
-            Provider: string.IsNullOrWhiteSpace(req.Provider) ? GetDefaultProviderCore() : req.Provider!,
-            Model: req.Model ?? GetDefaultModelCore(),
+            Provider: provider,
+            Model: req.Model ?? GetDefaultModelCore(provider),
             NativeThreadId: null,
             Epoch: 1,
             Status: "idle",
             ContextUsageRatio: 0.0,
             ArchivedAtMs: null,
             CreatedAtMs: now,
-            UpdatedAtMs: now);
+            UpdatedAtMs: now,
+            ReasoningEffort: string.IsNullOrWhiteSpace(req.ReasoningEffort) ? null : req.ReasoningEffort.Trim());
     }
 
     public Task<SessionItemsPageDto> GetSessionItemsAsync(string sessionId, long afterId = 0, int limit = 100, CancellationToken ct = default, bool latest = false, long? beforeId = null)
@@ -747,15 +749,18 @@ public sealed partial class TrackActor : IAsyncDisposable
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
             var session = RequireSessionCore(sessionId);
             var model = string.IsNullOrWhiteSpace(req.Model) ? null : req.Model.Trim();
-            var updated = session with { Model = model, UpdatedAtMs = NowMs() };
+            var reasoningEffort = model is null || string.IsNullOrWhiteSpace(req.ReasoningEffort)
+                ? null
+                : req.ReasoningEffort.Trim();
+            var updated = session with { Model = model, ReasoningEffort = reasoningEffort, UpdatedAtMs = NowMs() };
             await PersistAndEmitSessionUpdatedCoreAsync(updated, updated.UpdatedAtMs, ct).ConfigureAwait(false);
-            _sessions[sessionId] = updated;
 
             // Never change the provider underneath an active turn. Its next reuse reconciles.
             if (!_activeTurns.ContainsKey(sessionId) && !_compactingSessions.Contains(sessionId) &&
                 _openAgentSessions.ContainsKey(sessionId))
             {
-                await GetOrOpenAgentSessionCoreAsync(updated, overrideSystemPrompt: null, ct).ConfigureAwait(false);
+                using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, _actorShutdownCts.Token);
+                await GetOrOpenAgentSessionCoreAsync(updated, overrideSystemPrompt: null, linkedCts.Token).ConfigureAwait(false);
             }
 
             return updated;
@@ -1719,6 +1724,7 @@ public sealed partial class TrackActor : IAsyncDisposable
         if (!isCommandTask)
         {
             subagentSessionId = $"ses_{Guid.NewGuid():N}";
+            var workerProvider = string.IsNullOrWhiteSpace(task.Provider) ? GetDefaultProviderCore() : task.Provider!;
             var subagent = new AgentSessionDto(
                 Id: subagentSessionId,
                 TrackId: TrackId,
@@ -1726,8 +1732,8 @@ public sealed partial class TrackActor : IAsyncDisposable
                 BoundTaskId: task.Id,
                 BoundAttemptId: attemptId,
                 Title: $"Task: {task.TaskKey}",
-                Provider: string.IsNullOrWhiteSpace(task.Provider) ? GetDefaultProviderCore() : task.Provider!,
-                Model: GetDefaultModelCore(),
+                Provider: workerProvider,
+                Model: GetDefaultModelCore(workerProvider),
                 NativeThreadId: null,
                 Epoch: 1,
                 Status: "idle",
@@ -2654,7 +2660,7 @@ public sealed partial class TrackActor : IAsyncDisposable
                 // Seed fresh IAgentSession with ResumeNativeThreadId == null and SystemPrompt = Report + Handover Summary.
                 var freshAgentSession = await OpenFreshAgentSessionCoreAsync(compacted, seedPrompt, ct).ConfigureAwait(false);
                 _openAgentSessions[sessionId] = freshAgentSession;
-                _boundAgentModels[sessionId] = compacted.Model;
+                _boundAgentModels[sessionId] = (compacted.Model, compacted.ReasoningEffort);
 
                 return compacted;
             }, ct).ConfigureAwait(false);
@@ -2679,14 +2685,29 @@ public sealed partial class TrackActor : IAsyncDisposable
     {
         if (_openAgentSessions.TryGetValue(session.Id, out var existing))
         {
-            if (string.Equals(_boundAgentModels[session.Id], session.Model, StringComparison.Ordinal))
+            if (_boundAgentModels.TryGetValue(session.Id, out var bound) &&
+                string.Equals(bound.Model, session.Model, StringComparison.Ordinal) &&
+                string.Equals(bound.ReasoningEffort, session.ReasoningEffort, StringComparison.Ordinal))
             {
                 return existing;
             }
 
-            if (await existing.TrySetModelAsync(session.Model, ct).ConfigureAwait(false))
+            var switched = false;
+            try
             {
-                _boundAgentModels[session.Id] = session.Model;
+                switched = await existing.TrySetModelAsync(session.Model, session.ReasoningEffort, ct).ConfigureAwait(false);
+            }
+            catch
+            {
+                _openAgentSessions.Remove(session.Id);
+                _boundAgentModels.Remove(session.Id);
+                await existing.DisposeAsync().ConfigureAwait(false);
+                throw;
+            }
+
+            if (switched)
+            {
+                _boundAgentModels[session.Id] = (session.Model, session.ReasoningEffort);
                 return existing;
             }
 
@@ -2697,7 +2718,7 @@ public sealed partial class TrackActor : IAsyncDisposable
 
         var opened = await OpenFreshAgentSessionCoreAsync(session, overrideSystemPrompt, ct).ConfigureAwait(false);
         _openAgentSessions[session.Id] = opened;
-        _boundAgentModels[session.Id] = session.Model;
+        _boundAgentModels[session.Id] = (session.Model, session.ReasoningEffort);
         return opened;
     }
 
@@ -2750,7 +2771,8 @@ public sealed partial class TrackActor : IAsyncDisposable
             SystemPrompt: systemPrompt,
             McpServers: mcpReg.McpServers,
             Sandbox: sandboxMode,
-            OverlayMounts: overlayMounts);
+            OverlayMounts: overlayMounts,
+            ReasoningEffort: session.ReasoningEffort);
 
         return await _agentRuntime.OpenSessionAsync(launchSpec, ct).ConfigureAwait(false);
     }
@@ -3181,6 +3203,7 @@ public sealed partial class TrackActor : IAsyncDisposable
             CreatedAtMs: now);
         await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
         await _store.UpsertSessionAsync(session, evt, ct).ConfigureAwait(false);
+        _sessions[session.Id] = session;
         await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, evt, ct).ConfigureAwait(false);
     }
 
@@ -3246,14 +3269,18 @@ public sealed partial class TrackActor : IAsyncDisposable
         return _options.DefaultProvider;
     }
 
-    private string? GetDefaultModelCore()
+    private string? GetDefaultModelCore(string provider)
     {
-        if (_track.LeadSessionId is { } leadId && _sessions.TryGetValue(leadId, out var lead))
+        if (_track.LeadSessionId is { } leadId &&
+            _sessions.TryGetValue(leadId, out var lead) &&
+            string.Equals(lead.Provider, provider, StringComparison.OrdinalIgnoreCase))
         {
             return lead.Model;
         }
 
-        return _options.DefaultModel;
+        return string.Equals(_options.DefaultProvider, provider, StringComparison.OrdinalIgnoreCase)
+            ? _options.DefaultModel
+            : null;
     }
 
     private int NextTurnIndexCore(string sessionId)

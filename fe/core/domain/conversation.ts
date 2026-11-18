@@ -441,8 +441,8 @@ export function plannerRunOperation(cardId: string): ApiOperation<PlannerRun> {
           pending: [],
           pending_overflow: 0,
           model: page.session.model ?? null,
-          reasoning_effort: null,
-          permission_mode: page.session.isLead ? 'ask' : null,
+          reasoning_effort: page.session.reasoningEffort ?? null,
+          permission_mode: 'ask',
           blocked_reason: page.session.status === 'unknown' ? 'The previous message has an unknown outcome.' : null,
           recovery: null,
           attachments_supported: false,
@@ -533,6 +533,34 @@ export function modelCatalogOperation(scope: ModelCatalogScope): ApiOperation<Mo
       : `/api/v1/bootstrap?provider=${scope.provider}`,
     responseSchema: bootstrapDtoSchema.transform((bootstrap): ModelCatalog => {
       const providerStatus = bootstrap.providers.find((p) => normalizeWireAgentProvider(p.provider) === scope.provider);
+      const richCatalog = providerStatus?.modelCatalog ?? [];
+      if (richCatalog.length > 0) {
+        const models = richCatalog.map((entry) => ({
+          id: entry.model,
+          model: entry.model,
+          resolved_model: null,
+          display_name: entry.displayName,
+          description: entry.description,
+          is_default: entry.isDefault,
+          supported_reasoning_efforts: entry.supportedReasoningEfforts.map((effort) => ({
+            reasoning_effort: effort.reasoningEffort,
+            description: effort.description,
+          })),
+          default_reasoning_effort: entry.defaultReasoningEffort,
+        }));
+        const defaultEntry = models.find((entry) => entry.is_default) ?? models[0] ?? null;
+        return {
+          models,
+          default: {
+            model: defaultEntry?.model ?? null,
+            reasoning_effort: defaultEntry?.default_reasoning_effort ?? null,
+            supported_reasoning_efforts: defaultEntry?.supported_reasoning_efforts ?? null,
+          },
+          default_source: defaultEntry ? 'config_read' : 'unknown',
+          source: providerStatus?.available ? 'live' : 'unavailable',
+          fetched_at_ms: Date.now(),
+        };
+      }
       const providerModels = providerStatus?.models ?? [];
       const unique = [...new Set(providerModels)];
       return {
@@ -616,7 +644,7 @@ export function setPlannerModelOperation(
   return {
     method: 'PUT',
     path: `/api/v1/sessions/${encodeURIComponent(cardId)}/model`,
-    body: { model: selection.model },
+    body: { model: selection.model, reasoningEffort: selection.reasoning_effort },
     responseSchema: agentSessionDtoSchema,
   };
 }
@@ -984,7 +1012,7 @@ export function createTrackConversationOperation(
       provider: toWireAgentProvider(provider),
       ...(side === undefined ? {} : { side }),
       ...(selection.model === null ? {} : { model: selection.model }),
-      ...(selection.reasoning_effort === null ? {} : { reasoning_effort: selection.reasoning_effort }),
+      ...(selection.reasoning_effort === null ? {} : { reasoningEffort: selection.reasoning_effort }),
     },
     responseSchema: z.union([
       sessionCreationReceiptSchema.refine(result => result.firstInput != null && result.session.trackId === trackId)

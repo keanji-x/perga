@@ -71,8 +71,8 @@ function legacyPresentation(provider: string) {
 }
 
 /** Managed display needs no provider-specific UI registration. */
-function providerLabel<Provider extends string>(group: ModelGroup<Provider> | undefined, provider: Provider): string {
-  return group?.selectionProblem !== undefined ? provider : (legacyPresentation(provider)?.label ?? provider);
+function providerLabel<Provider extends string>(_group: ModelGroup<Provider> | undefined, provider: Provider): string {
+  return legacyPresentation(provider)?.label ?? provider;
 }
 
 type CatalogEntry = ModelCatalog['models'][number];

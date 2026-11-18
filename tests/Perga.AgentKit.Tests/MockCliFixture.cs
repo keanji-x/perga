@@ -762,14 +762,14 @@ for raw_line in sys.stdin:
         else:
             state["session_id"] = "acp_sess_001"
             send({"jsonrpc": "2.0", "id": msg_id, "result": {"sessionId": state["session_id"], **json.loads(os.environ.get("MOCK_ACP_MODELS", '{"models":{"availableModels":[{"modelId":"mock-model-a"},{"modelId":"mock-model-b"}]}}'))}})
-    elif method == "session/set_model":
+    elif method == "session/set_model" or method == "session/set_config_option":
         code = int(os.environ.get("MOCK_ACP_MODEL_ERROR", "0"))
         if code:
             send({"jsonrpc": "2.0", "id": msg_id, "error": {"code": code, "message": "model switch failed"}})
         elif params.get("sessionId") != state["session_id"]:
             send({"jsonrpc": "2.0", "id": msg_id, "error": {"code": -32602, "message": "wrong session"}})
         else:
-            state["model"] = params["modelId"]
+            state["model"] = params.get("modelId") if method == "session/set_model" else params.get("value")
             send({"jsonrpc": "2.0", "id": msg_id, "result": {}})
     elif method == "session/prompt":
         state["cancel_event"].clear()

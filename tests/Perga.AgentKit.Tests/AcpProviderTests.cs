@@ -62,7 +62,10 @@ public sealed class AcpProviderTests : IDisposable
         Assert.Equal(error == 0, await session.TrySetModelAsync("another-model"));
         Assert.False(await session.TrySetModelAsync(null));
         var calls = File.ReadAllLines(log).Select(line => JsonSerializer.Deserialize<JsonElement>(line)).ToArray();
-        Assert.Equal(new[] { "initialize", resumeId is null ? "session/new" : "session/load", "session/set_model", "session/set_model" },
+        var expectedMethods = error == -32601
+            ? new[] { "initialize", resumeId is null ? "session/new" : "session/load", "session/set_model", "session/set_config_option", "session/set_model", "session/set_config_option" }
+            : new[] { "initialize", resumeId is null ? "session/new" : "session/load", "session/set_model", "session/set_model" };
+        Assert.Equal(expectedMethods,
             calls.Select(call => call.GetProperty("method").GetString()));
         Assert.False(calls[1].GetProperty("params").TryGetProperty("model", out _));
         var selection = calls[2].GetProperty("params");

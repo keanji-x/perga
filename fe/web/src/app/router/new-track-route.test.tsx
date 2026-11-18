@@ -456,7 +456,7 @@ describe('New track model selection', () => {
     await userEvent.click(within(menu).getByRole('menuitem', { name: /^haiku/ }));
     await waitFor(() => expect(sent.filter((request) => request.method === 'PUT'
       && request.path === '/api/v1/sessions/card-planner/model').map((request) => request.body))
-      .toEqual([{ model: 'haiku' }]));
+      .toEqual([{ model: 'haiku', reasoningEffort: null }]));
     expect(sent.some((request) => request.path === '/api/v1/bootstrap?card_id=card-planner')).toBe(true);
   });
 

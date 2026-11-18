@@ -379,7 +379,8 @@ public sealed class PergaKernelService : IPergaKernel
             ContextUsageRatio: 0.0,
             ArchivedAtMs: null,
             CreatedAtMs: now,
-            UpdatedAtMs: now);
+            UpdatedAtMs: now,
+            ReasoningEffort: string.IsNullOrWhiteSpace(req.ReasoningEffort) ? null : req.ReasoningEffort.Trim());
 
         await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
         await _store.CreateTrackAsync(track, initialReport, policy?.JsSource, leadSession, ct).ConfigureAwait(false);

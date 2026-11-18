@@ -307,7 +307,7 @@ it('uses the listed Assistant provider through model, capabilities and side', as
   expect(screen.queryByRole('group', { name: 'Codex' })).toBeNull();
   await userEvent.click(screen.getByRole('menuitem', { name: 'selected' }));
   await waitFor(() => expect(fixture.requests.some(request => request.path === '/api/v1/sessions/dormant/model')).toBe(true));
-  expect(screen.getByRole('button', { name: 'Attach an image' }).getAttribute('aria-disabled')).toBe('true');
+  expect(screen.getByRole('button', { name: 'Attach an image' }).getAttribute('aria-disabled')).toBeNull();
   expect(screen.queryByRole('button', { name: /Compact/ })).toBeNull();
   await submit(input, '/side Keep this backend');
   await waitFor(() => expect(fixture.requests.find(request => request.method === 'POST' && request.path.endsWith('/sessions'))?.body)

@@ -291,7 +291,7 @@ describe('planner conversation regressions', () => {
       expect(writes).toHaveLength(1);
       expect(writes[0]?.method).toBe('PUT');
       /* The v1 endpoint accepts only the model selection. */
-      expect(writes[0]?.body).toEqual({ model: null });
+      expect(writes[0]?.body).toEqual({ model: null, reasoningEffort: null });
     });
   });
 

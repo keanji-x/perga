@@ -46,8 +46,13 @@ public sealed class AcpAgentSession : IAgentSession
         }
     }
 
+    private static readonly string[] KnownEffortSuffixes = ["low", "medium", "high", "xhigh", "max", "ultra"];
+
+    internal sealed record AcpRawModel(string ModelId, string? Name, string? Description);
+
     private readonly JsonRpcStdioConnection _rpc;
     private readonly Action<IAgentSession>? _onDispose;
+    private readonly TimeSpan _handshakeTimeout;
     private readonly SemaphoreSlim _turnLock = new(1, 1);
     private readonly ConcurrentDictionary<string, PendingAcpPermission> _pendingPermissions = new(StringComparer.Ordinal);
     private TurnStreamState? _currentTurn;
@@ -58,9 +63,11 @@ public sealed class AcpAgentSession : IAgentSession
     private AcpAgentSession(
         StdioSubprocess process,
         string? initialSessionId,
+        TimeSpan handshakeTimeout,
         Action<IAgentSession>? onDispose)
     {
         _nativeThreadId = initialSessionId;
+        _handshakeTimeout = handshakeTimeout > TimeSpan.Zero ? handshakeTimeout : TimeSpan.FromSeconds(15);
         _onDispose = onDispose;
         _rpc = new JsonRpcStdioConnection(
             process,
@@ -74,8 +81,9 @@ public sealed class AcpAgentSession : IAgentSession
     public bool SupportsNativeSteer => false;
 
     internal IReadOnlyList<string> AvailableModels { get; private set; } = [];
+    internal IReadOnlyList<ProviderModelInfo> AvailableModelCatalog { get; private set; } = [];
 
-    public async Task<bool> TrySetModelAsync(string? model, CancellationToken ct = default)
+    public async Task<bool> TrySetModelAsync(string? model, string? reasoningEffort = null, CancellationToken ct = default)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         // ACP requires a model ID. Resetting to the provider default needs a fresh session.
@@ -84,19 +92,61 @@ public sealed class AcpAgentSession : IAgentSession
             return false;
         }
 
+        var resolvedModelId = ResolveAcpModelId(model.Trim(), reasoningEffort);
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeoutCts.CancelAfter(_handshakeTimeout);
+
         try
         {
             await _rpc.SendRequestAsync("session/set_model", new
             {
                 sessionId = NativeThreadId,
-                modelId = model
-            }, ct).ConfigureAwait(false);
+                modelId = resolvedModelId
+            }, timeoutCts.Token).ConfigureAwait(false);
             return true;
         }
         catch (JsonRpcRemoteException ex) when (ex.Code == -32601)
         {
-            return false;
+            try
+            {
+                await _rpc.SendRequestAsync("session/set_config_option", new
+                {
+                    sessionId = NativeThreadId,
+                    configId = "model",
+                    value = resolvedModelId
+                }, timeoutCts.Token).ConfigureAwait(false);
+                return true;
+            }
+            catch (JsonRpcRemoteException configEx) when (configEx.Code == -32601)
+            {
+                return false;
+            }
         }
+    }
+
+    private string ResolveAcpModelId(string model, string? reasoningEffort)
+    {
+        if (!string.IsNullOrWhiteSpace(reasoningEffort))
+        {
+            var candidate = $"{model}-{reasoningEffort.Trim()}";
+            if (AvailableModels.Contains(candidate, StringComparer.Ordinal))
+            {
+                return candidate;
+            }
+        }
+
+        if (AvailableModels.Contains(model, StringComparer.Ordinal))
+        {
+            return model;
+        }
+
+        var mediumCandidate = $"{model}-medium";
+        if (AvailableModels.Contains(mediumCandidate, StringComparer.Ordinal))
+        {
+            return mediumCandidate;
+        }
+
+        return model;
     }
 
     internal static async Task<AcpAgentSession> OpenAsync(
@@ -107,7 +157,7 @@ public sealed class AcpAgentSession : IAgentSession
         CancellationToken ct)
     {
         var process = StdioSubprocess.Start(wrappedCommand);
-        var session = new AcpAgentSession(process, spec.ResumeNativeThreadId, onDispose);
+        var session = new AcpAgentSession(process, spec.ResumeNativeThreadId, handshakeTimeout, onDispose);
         try
         {
             using var handshakeCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -280,36 +330,42 @@ public sealed class AcpAgentSession : IAgentSession
         }
 
         Volatile.Write(ref _nativeThreadId, resolvedSessionId);
-        AvailableModels = ExtractAvailableModels(response);
+        var (rawModels, currentModelId) = ExtractAvailableModels(response);
+        AvailableModels = rawModels.Select(m => m.ModelId).ToArray();
+        AvailableModelCatalog = BuildAcpModelCatalog(rawModels, currentModelId);
         if (!string.IsNullOrWhiteSpace(spec.Model))
         {
-            await TrySetModelAsync(spec.Model, ct).ConfigureAwait(false);
+            await TrySetModelAsync(spec.Model, spec.ReasoningEffort, ct).ConfigureAwait(false);
         }
     }
 
-    private static IReadOnlyList<string> ExtractAvailableModels(JsonElement response)
+    private static (IReadOnlyList<AcpRawModel> Models, string? CurrentModelId) ExtractAvailableModels(JsonElement response)
     {
         var ids = new HashSet<string>(StringComparer.Ordinal);
-        var result = new List<string>();
-        void Add(string? id)
+        var result = new List<AcpRawModel>();
+        string? currentModelId = null;
+        void Add(string? id, string? name, string? description)
         {
             if (!string.IsNullOrWhiteSpace(id) && ids.Add(id))
             {
-                result.Add(id);
+                result.Add(new AcpRawModel(id, name, description));
             }
         }
 
         if (response.ValueKind != JsonValueKind.Object)
         {
-            return result;
+            return (result, currentModelId);
         }
 
-        if (response.TryGetProperty("models", out var models) && models.ValueKind == JsonValueKind.Object &&
-            models.TryGetProperty("availableModels", out var available) && available.ValueKind == JsonValueKind.Array)
+        if (response.TryGetProperty("models", out var models) && models.ValueKind == JsonValueKind.Object)
         {
-            foreach (var model in available.EnumerateArray())
+            currentModelId ??= TryGetString(models, "currentModelId");
+            if (models.TryGetProperty("availableModels", out var available) && available.ValueKind == JsonValueKind.Array)
             {
-                Add(TryGetString(model, "modelId"));
+                foreach (var model in available.EnumerateArray())
+                {
+                    Add(TryGetString(model, "modelId"), TryGetString(model, "name"), TryGetString(model, "description"));
+                }
             }
         }
 
@@ -324,6 +380,7 @@ public sealed class AcpAgentSession : IAgentSession
                     continue;
                 }
 
+                currentModelId ??= TryGetString(option, "currentValue");
                 foreach (var value in values.EnumerateArray())
                 {
                     if (value.ValueKind == JsonValueKind.Object && value.TryGetProperty("options", out var group) &&
@@ -331,18 +388,140 @@ public sealed class AcpAgentSession : IAgentSession
                     {
                         foreach (var item in group.EnumerateArray())
                         {
-                            Add(TryGetString(item, "value"));
+                            Add(TryGetString(item, "value"), TryGetString(item, "name"), TryGetString(item, "description"));
                         }
                     }
                     else
                     {
-                        Add(TryGetString(value, "value"));
+                        Add(TryGetString(value, "value"), TryGetString(value, "name"), TryGetString(value, "description"));
                     }
                 }
             }
         }
 
-        return result;
+        return (result, currentModelId);
+    }
+
+    internal static IReadOnlyList<ProviderModelInfo> BuildAcpModelCatalog(
+        IReadOnlyList<AcpRawModel> rawModels,
+        string? currentModelId)
+    {
+        if (rawModels.Count == 0)
+        {
+            return [];
+        }
+
+        static (string BaseId, string? Effort) SplitEffortSuffix(string modelId)
+        {
+            foreach (var suffix in KnownEffortSuffixes)
+            {
+                var dashSuffix = "-" + suffix;
+                if (modelId.EndsWith(dashSuffix, StringComparison.OrdinalIgnoreCase) &&
+                    modelId.Length > dashSuffix.Length)
+                {
+                    return (modelId[..^dashSuffix.Length], suffix);
+                }
+            }
+
+            return (modelId, null);
+        }
+
+        static string StripEffortFromDisplayName(string? name, string? effort)
+        {
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                return string.Empty;
+            }
+
+            var trimmed = name.Trim();
+            if (effort is null)
+            {
+                return trimmed;
+            }
+
+            var parenSuffix = $" ({effort})";
+            if (trimmed.EndsWith(parenSuffix, StringComparison.OrdinalIgnoreCase))
+            {
+                return trimmed[..^parenSuffix.Length].TrimEnd();
+            }
+
+            var dashSuffix = $"-{effort}";
+            if (trimmed.EndsWith(dashSuffix, StringComparison.OrdinalIgnoreCase))
+            {
+                return trimmed[..^dashSuffix.Length].TrimEnd();
+            }
+
+            return trimmed;
+        }
+
+        var (currentBase, _) = string.IsNullOrWhiteSpace(currentModelId)
+            ? (string.Empty, null)
+            : SplitEffortSuffix(currentModelId);
+
+        var order = new List<string>();
+        var groups = new Dictionary<string, (string? DisplayName, string? Description, List<string> Efforts, bool HasBare)>(StringComparer.Ordinal);
+
+        foreach (var raw in rawModels)
+        {
+            var (baseId, effort) = SplitEffortSuffix(raw.ModelId);
+            if (!groups.TryGetValue(baseId, out var entry))
+            {
+                entry = (null, null, [], false);
+                order.Add(baseId);
+            }
+
+            var cleanName = StripEffortFromDisplayName(raw.Name, effort);
+            if (string.IsNullOrWhiteSpace(entry.DisplayName) && !string.IsNullOrWhiteSpace(cleanName))
+            {
+                entry.DisplayName = cleanName;
+            }
+
+            if (string.IsNullOrWhiteSpace(entry.Description) && !string.IsNullOrWhiteSpace(raw.Description))
+            {
+                entry.Description = raw.Description;
+            }
+
+            if (effort is not null)
+            {
+                if (!entry.Efforts.Contains(effort, StringComparer.OrdinalIgnoreCase))
+                {
+                    entry.Efforts.Add(effort.ToLowerInvariant());
+                }
+            }
+            else
+            {
+                entry.HasBare = true;
+            }
+
+            groups[baseId] = entry;
+        }
+
+        var catalog = new List<ProviderModelInfo>(order.Count);
+        for (var i = 0; i < order.Count; i++)
+        {
+            var baseId = order[i];
+            var entry = groups[baseId];
+            var sortedEfforts = KnownEffortSuffixes
+                .Where(e => entry.Efforts.Contains(e, StringComparer.OrdinalIgnoreCase))
+                .Select(e => new ProviderModelEffort(e, e))
+                .ToArray();
+            var defaultEffort = sortedEfforts.Any(e => e.ReasoningEffort == "medium")
+                ? "medium"
+                : sortedEfforts.FirstOrDefault()?.ReasoningEffort;
+            var isDefault = !string.IsNullOrWhiteSpace(currentBase)
+                ? string.Equals(baseId, currentBase, StringComparison.Ordinal)
+                : i == 0;
+
+            catalog.Add(new ProviderModelInfo(
+                Model: baseId,
+                DisplayName: string.IsNullOrWhiteSpace(entry.DisplayName) ? baseId : entry.DisplayName!,
+                Description: entry.Description ?? string.Empty,
+                IsDefault: isDefault,
+                DefaultReasoningEffort: defaultEffort,
+                SupportedReasoningEfforts: sortedEfforts));
+        }
+
+        return catalog;
     }
 
     private async Task RunSessionPromptRpcAsync(

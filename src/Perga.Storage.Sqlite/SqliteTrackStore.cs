@@ -530,6 +530,7 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                        title AS Title,
                        provider AS Provider,
                        model AS Model,
+                       reasoning_effort AS ReasoningEffort,
                        native_thread_id AS NativeThreadId,
                        epoch AS Epoch,
                        status AS Status,
@@ -2098,12 +2099,12 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                 """
                 INSERT INTO agent_sessions (
                     id, track_id, bound_task_id, bound_attempt_id, title,
-                    provider, model, native_thread_id, epoch, status,
+                    provider, model, reasoning_effort, native_thread_id, epoch, status,
                     context_usage_ratio, archived_at_ms, created_at_ms, updated_at_ms
                 )
                 VALUES (
                     @Id, @TrackId, @BoundTaskId, @BoundAttemptId, @Title,
-                    @Provider, @Model, @NativeThreadId, @Epoch, @Status,
+                    @Provider, @Model, @ReasoningEffort, @NativeThreadId, @Epoch, @Status,
                     @ContextUsageRatio, @ArchivedAtMs, @CreatedAtMs, @UpdatedAtMs
                 )
                 ON CONFLICT(id) DO UPDATE SET
@@ -2112,6 +2113,7 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                     title = excluded.title,
                     provider = excluded.provider,
                     model = excluded.model,
+                    reasoning_effort = excluded.reasoning_effort,
                     native_thread_id = excluded.native_thread_id,
                     epoch = excluded.epoch,
                     status = excluded.status,
@@ -2128,6 +2130,7 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                     session.Title,
                     session.Provider,
                     session.Model,
+                    session.ReasoningEffort,
                     session.NativeThreadId,
                     session.Epoch,
                     session.Status,
@@ -2281,7 +2284,8 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
             ContextUsageRatio: r.ContextUsageRatio,
             ArchivedAtMs: r.ArchivedAtMs,
             CreatedAtMs: r.CreatedAtMs,
-            UpdatedAtMs: r.UpdatedAtMs);
+            UpdatedAtMs: r.UpdatedAtMs,
+            ReasoningEffort: r.ReasoningEffort);
 
     private static SessionTurnDto MapTurn(SessionTurnRow r) =>
         new(
@@ -2465,6 +2469,7 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
         public string? Title { get; init; }
         public string Provider { get; init; } = string.Empty;
         public string? Model { get; init; }
+        public string? ReasoningEffort { get; init; }
         public string? NativeThreadId { get; init; }
         public long Epoch { get; init; }
         public string Status { get; init; } = "idle";
