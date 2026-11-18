@@ -1325,7 +1325,7 @@ public sealed partial class TrackActor : IAsyncDisposable
 
     public async Task<AskDto> AnswerAskAsync(string askId, JsonElement answer, CancellationToken ct = default)
     {
-        var outcome = await EnqueueAsync<(AskDto AnsweredAsk, TaskCompletionSource<JsonElement>? Waiter, bool ShouldWakeLead)>(async _ =>
+        var outcome = await EnqueueAsync<(AskDto AnsweredAsk, bool ShouldWakeLead)>(async _ =>
         {
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
             if (!_asks.TryGetValue(askId, out var existingAsk))
@@ -1365,10 +1365,21 @@ public sealed partial class TrackActor : IAsyncDisposable
                 CreatedAtMs: now);
             await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
             await _store.UpsertAskAsync(answered, evt, ct).ConfigureAwait(false);
-            await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, evt, ct).ConfigureAwait(false);
 
+            // The transaction accepted this answer. Neither request cancellation nor
+            // event catch-up failure may reopen it or strand its original waiter.
             _asks[askId] = answered;
             _pendingAskWaiters.Remove(askId, out var waiter);
+            try
+            {
+                await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, evt, CancellationToken.None).ConfigureAwait(false);
+            }
+            finally
+            {
+                // Complete inside the actor: EnqueueAsync's caller can stop waiting
+                // on cancellation before this committed operation returns.
+                waiter?.TrySetResult(clonedAnswer);
+            }
 
             // Determine whether Lead is ALREADY actively streaming the exact turn that owns this ask.
             var leadOwnsActiveAsk = false;
@@ -1380,10 +1391,8 @@ public sealed partial class TrackActor : IAsyncDisposable
             }
 
             var shouldWakeLead = existingAsk.Delivery == AskDelivery.Wake && !leadOwnsActiveAsk && _track.ClosedAtMs is null && !string.IsNullOrEmpty(_track.LeadSessionId);
-            return (answered, waiter, shouldWakeLead);
+            return (answered, shouldWakeLead);
         }, ct).ConfigureAwait(false);
-
-        outcome.Waiter?.TrySetResult(outcome.AnsweredAsk.Answer!.Value);
 
         if (outcome.ShouldWakeLead)
         {

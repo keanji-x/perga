@@ -86,3 +86,49 @@ ask.changed events lacked delivery. Migration 0010 now adds their previously
 published wake meaning in the same transaction, without session/turn backfill,
 new event IDs, or a runtime/API fallback. Receipt failure also rolls back this
 payload normalization. Current hold events retain their authoritative identity.
+
+## Committed answer recovery (PR #42 L2 follow-up)
+
+The successful SQLite ask/event transaction is the acceptance boundary. Before
+it returns, failures leave the actor and original waiter unchanged. After it
+returns, adopt Answered and remove the waiter inside the serialized actor turn,
+then attempt the existing event synchronization without the HTTP cancellation
+token. Complete the removed waiter in a finally block inside that same actor
+operation. EnqueueAsync's caller may already have stopped waiting on cancellation;
+completion therefore cannot depend on its outer continuation. Keep synchronous
+event catch-up before waiter completion on the normal path; if reading fails,
+the unchanged event cursor lets the next synchronization replay the durable
+answer before subsequent turn events. Propagate the synchronization error while
+keeping the committed decision final. No schema, migration or public contract
+changes are needed. Hold ownership checks and ordinary wake dispatch remain in
+their existing paths. Review tier remains L2, with independent reviews arranged
+by the Planner.
+
+Controlled follow-up evidence (2026-11-19): the unchanged Track tree matches
+PR head 23b64e8 (tree 4d404ebd61a32e567c2557feef1485db01f9533f).
+Reused the authority review's real Host/Kernel/SQLite store proxy approach in
+`AnswerPublicationTests`, injecting a single event-read IOException, cancellation
+immediately after commit, and cancellation while synchronous catch-up is blocked.
+All three tests first failed because the actor snapshot still exposed Open
+(`/tmp/pr42-fix-red.log`). The final tests additionally require the original
+provider waiter to consume false exactly once, opposite HTTP retry to return 409,
+one durable answered event, unchanged false answer, and broadcast using that
+SQLite event ID before turn.completed. The new three plus the existing seven
+paused-approval cases pass 10/10 (`/tmp/pr42-fix-green.log`), including the real
+SQLite trigger rollback/retry case. An intermediate compile caught an xUnit
+assertion-style analyzer error; it was corrected before the passing run.
+
+Mutation verification in `/tmp/pr42-answer-mutation-7izfcla5` removed only the
+committed waiter completion. Predicted: all three new cases fail on missing
+provider response. Actual: 3/3 fail at that assertion (`/tmp/pr42-fix-mutation.log`).
+Restoring the production file passes 3/3
+(`/tmp/pr42-fix-mutation-restored.log`). No mutation remains in the working tree.
+
+The frontend subtree has no changes and retains the exact PR head tree
+3204e76f9de9adfd40e190179edec53d28f8d788. The independent migration/contract review
+recorded API 9/9, Chromium 20/20 and tsc success on that tree; no fresh full
+frontend lint/build/unit pass is claimed here. This follow-up's formal task gate
+runs the complete .NET solution and the approval Chromium file on its candidate
+commit; consult its gate log and worker result for the final verdict. There is
+no migration or operational rollout change, public DTO change, or real provider
+execution in this follow-up.
