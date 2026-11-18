@@ -138,8 +138,9 @@ it.each([1280, 390])('a Claude pick sets provider and model, drops the Codex eff
   await page.getByRole('button', { name: 'Create track' }).click();
   await expect.poll(() => creates.length).toBe(1);
   expect(creates[0]?.body).toMatchObject({
-    planner_provider: 'claude', model: 'claude-fable-5-1[1m]', reasoning_effort: 'high', first_message: 'Plan with Claude',
+    planner_provider: 'claude', model: 'claude-fable-5-1[1m]', reasoning_effort: 'high',
   });
+  expect(creates[0]?.body).not.toHaveProperty('first_message');
 });
 
 it('offers only Codex on a server without Claude Planners', async () => {
@@ -159,7 +160,8 @@ it.each([1280, 390])('OpenCode can create a track with inherited agent settings 
   await page.getByRole('combobox', { name: 'What this track should do' }).fill('Plan with OpenCode');
   await page.getByRole('button', { name: 'Create track' }).click();
   await expect.poll(() => creates.length).toBe(1);
-  expect(creates[0]?.body).toMatchObject({ planner_provider: 'opencode', first_message: 'Plan with OpenCode' });
+  expect(creates[0]?.body).toMatchObject({ planner_provider: 'opencode' });
+  expect(creates[0]?.body).not.toHaveProperty('first_message');
   expect(creates[0]?.body).not.toHaveProperty('model');
   expect(creates[0]?.body).not.toHaveProperty('reasoning_effort');
   expect(document.documentElement.scrollWidth).toBe(width);
@@ -181,7 +183,8 @@ it.each([1280, 390])('OpenCode models can be selected before creating a track (%
   await page.getByRole('combobox', { name: 'What this track should do' }).fill('Plan with DeepSeek');
   await page.getByRole('button', { name: 'Create track' }).click();
   await expect.poll(() => creates.length).toBe(1);
-  expect(creates[0]?.body).toMatchObject({ planner_provider: 'opencode', model: 'deepseek/deepseek-flash', first_message: 'Plan with DeepSeek' });
+  expect(creates[0]?.body).toMatchObject({ planner_provider: 'opencode', model: 'deepseek/deepseek-flash' });
+  expect(creates[0]?.body).not.toHaveProperty('first_message');
   expect(creates[0]?.body).not.toHaveProperty('reasoning_effort');
   expect(document.documentElement.scrollWidth).toBe(width);
 });

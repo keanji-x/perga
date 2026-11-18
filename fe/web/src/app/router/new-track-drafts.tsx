@@ -11,8 +11,8 @@ import { createStorageKey } from '../../../../core/keys/storage.ts';
 import { useCurrentUser } from '../auth/current-user.tsx';
 import { TRACK_CREATE_TEXT } from '../../../../core/domain/track.ts';
 
-/** One create's wire body and the key it is sent under on every attempt. */
-export type TrackCreationRequest = Readonly<{ body: NewTrackBody; key: string }>;
+/** One create's wire body, its key, and any initial message held for post-create send. */
+export type TrackCreationRequest = Readonly<{ body: NewTrackBody; key: string; message?: string }>;
 
 export type NewTrackDraftArea = Pick<Area, 'id' | 'name' | 'defaultCwd'> & Readonly<{
   defaultTemplateId?: string | null;
@@ -47,8 +47,8 @@ function createDraftStore(submittedStorage?: () => Storage, userId?: string) {
       if (typeof value !== 'object' || value === null) return null;
       const request = value as Partial<TrackCreationRequest>;
       return typeof request.key === 'string' && request.body?.area_id === areaId
-        && (request.body.first_message === undefined || typeof request.body.first_message === 'string')
-        ? { key: request.key, body: request.body } : null;
+        && (request.message === undefined || typeof request.message === 'string')
+        ? { key: request.key, body: request.body, ...(request.message === undefined ? {} : { message: request.message }) } : null;
     } catch {
       return null;
     }
@@ -73,7 +73,7 @@ function createDraftStore(submittedStorage?: () => Storage, userId?: string) {
       drafts.set(area.id, {
         area: { id: area.id, name: area.name, defaultCwd: area.defaultCwd, defaultTemplateId: area.defaultTemplateId },
         form: request === null ? null : {
-          message: request.body.first_message ?? '', cwd: request.body.cwd ?? '', isolation: request.body.isolation,
+          message: request.message ?? '', cwd: request.body.cwd ?? '', isolation: request.body.isolation,
           workspaceOptionId: request.body.workspace_option_id,
           templateId: request.body.template_id ?? null,
           templateInputs: Object.fromEntries(Object.entries(request.body.template_input ?? {}).flatMap(([key, value]) =>

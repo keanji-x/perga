@@ -1,3 +1,4 @@
+import { createStorageKey } from '../../../../core/keys/storage.ts';
 import type { TranscriptEntry, Conversation } from '../../../../core/domain/conversation.ts';
 import { isOptimisticConversationTurn, TOO_MANY_IMAGES } from '../../../../core/domain/conversation.ts';
 import { receiptMatchesSubmission } from '../../../../core/domain/conversation-initial-input.ts';
@@ -13,11 +14,14 @@ export const NO_TURNS: readonly TranscriptEntry[] = Object.freeze([]);
 const NO_CONVERSATIONS: readonly Conversation[] = Object.freeze([]);
 
 type ById<T> = Readonly<Record<string, T>>;
+type PendingTrackInitialSend = Readonly<{ text: string; key: string }>;
+
 export type ConversationSnapshot = Readonly<{
   entries: ById<RememberedConversation>;
   conversations: readonly Conversation[];
   drafts: DraftSlots;
   openRequest: ConversationOpenRequest | null;
+  pendingTrackInitialSends: ById<PendingTrackInitialSend>;
   outboxes: ById<readonly ConversationOutboxOp[]>;
   workerSends: ById<WorkerSendIntent>;
   spentRows: ById<readonly string[]>;
@@ -74,10 +78,39 @@ function withoutEdit(state: ConversationSnapshot, id: string): ConversationSnaps
   return { ...state, edits: put(state.edits, id, undefined), notices: put(state.notices, id, undefined) };
 }
 
+function isPendingTrackInitialSend(value: unknown): value is PendingTrackInitialSend {
+  return typeof value === 'object' && value !== null
+    && typeof (value as { text?: unknown }).text === 'string'
+    && typeof (value as { key?: unknown }).key === 'string';
+}
+
+function readPendingTrackInitialSends(key: string, submittedStorage?: () => Storage): ById<PendingTrackInitialSend> {
+  if (submittedStorage === undefined) return {};
+  try {
+    const raw = submittedStorage().getItem(key);
+    if (raw === null) return {};
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== 'object' || parsed === null) return {};
+    return Object.fromEntries(Object.entries(parsed).filter((entry): entry is [string, PendingTrackInitialSend] => isPendingTrackInitialSend(entry[1])));
+  } catch {
+    return {};
+  }
+}
+
+function writePendingTrackInitialSends(key: string, map: ById<PendingTrackInitialSend>, submittedStorage?: () => Storage): void {
+  if (submittedStorage === undefined) return;
+  try {
+    const storage = submittedStorage();
+    if (Object.keys(map).length === 0) storage.removeItem(key);
+    else storage.setItem(key, JSON.stringify(map));
+  } catch { /* Ignore storage quota/availability failures. */ }
+}
+
 /** The only local conversation authority. Commands finish before any observer is notified. */
-export function createConversationOwner() {
+export function createConversationOwner(submittedStorage?: () => Storage) {
+  const pendingInitialSendsKey = createStorageKey('pending-track-initial-sends-v1');
   let state: ConversationSnapshot = {
-    entries: {}, conversations: NO_CONVERSATIONS, drafts: {}, openRequest: null, outboxes: {}, workerSends: {}, spentRows: {},
+    entries: {}, conversations: NO_CONVERSATIONS, drafts: {}, openRequest: null, pendingTrackInitialSends: readPendingTrackInitialSends(pendingInitialSendsKey, submittedStorage), outboxes: {}, workerSends: {}, spentRows: {},
     composers: {}, newComposers: {}, uploads: {}, edits: {}, notices: {}, queueWrites: {}, restarts: {}, resolutions: {},
   };
   let read = 0;
@@ -126,6 +159,17 @@ export function createConversationOwner() {
     },
     requestOpen: (id, options) => { commit({ ...state, openRequest: { id, focusComposer: options?.focusComposer ?? false } }); },
     clearOpenRequest: () => { if (state.openRequest !== null) commit({ ...state, openRequest: null }); },
+    queueTrackInitialSend: (trackId, text, key) => {
+      const pendingTrackInitialSends = put(state.pendingTrackInitialSends, trackId, { text, key });
+      writePendingTrackInitialSends(pendingInitialSendsKey, pendingTrackInitialSends, submittedStorage);
+      commit({ ...state, pendingTrackInitialSends });
+    },
+    consumeTrackInitialSend: (trackId) => {
+      if (state.pendingTrackInitialSends[trackId] === undefined) return;
+      const pendingTrackInitialSends = put(state.pendingTrackInitialSends, trackId, undefined);
+      writePendingTrackInitialSends(pendingInitialSendsKey, pendingTrackInitialSends, submittedStorage);
+      commit({ ...state, pendingTrackInitialSends });
+    },
     draftOf: scope => { const slot = state.drafts[scope]; return slot?.kind === 'held' ? slot.draft : null; },
     startDraft: draft => { commit({ ...state, drafts: moveDraft(state.drafts, { kind: 'start', draft }) }); },
     editDraft: (from, next) => {

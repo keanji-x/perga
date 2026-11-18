@@ -693,9 +693,6 @@ public sealed partial class PergaKernelService : IPergaKernel
             CreatedAtMs: now,
             UpdatedAtMs: now);
 
-        var firstInput = string.IsNullOrWhiteSpace(req.FirstMessage) ? null
-            : new SessionInputRequest($"init:{trackId}",
-                RequestIdentity.Hash(new { version = 1, Content = req.FirstMessage, SteerIfRunning = false }), req.FirstMessage);
         var leadProvider = string.IsNullOrWhiteSpace(req.Provider) ? _options.DefaultProvider
             : TaskBlockSynchronizer.NormalizeProviderId(req.Provider) ?? req.Provider.Trim();
         string? leadPermissionMode;
@@ -712,7 +709,6 @@ public sealed partial class PergaKernelService : IPergaKernel
         {
             leadPermissionMode = ProviderPermissionModes.GetDefaultMode(leadProvider);
         }
-
         var leadSession = new AgentSessionDto(
             Id: leadSessionId,
             TrackId: trackId,
@@ -724,7 +720,7 @@ public sealed partial class PergaKernelService : IPergaKernel
             Model: req.Model ?? _options.DefaultModel,
             NativeThreadId: null,
             Epoch: 1,
-            Status: firstInput is null ? "idle" : "queued",
+            Status: "idle",
             ContextUsageRatio: 0.0,
             ArchivedAtMs: null,
             CreatedAtMs: now,
@@ -743,7 +739,7 @@ public sealed partial class PergaKernelService : IPergaKernel
 
         await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
         var id = await _store.CreateTrackAsync(
-            new(track, initialReport, policy?.JsSource, leadSession, initialTasks, firstInput, preparation, events),
+            new(track, initialReport, policy?.JsSource, leadSession, initialTasks, null, preparation, events),
             key, ct).ConfigureAwait(false);
         var snapshot = await ReadCreatedTrackAsync(id, CancellationToken.None).ConfigureAwait(false);
         if (id == track.Id)

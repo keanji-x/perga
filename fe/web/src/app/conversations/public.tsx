@@ -9,8 +9,8 @@ export type { ConversationDraft, ConversationDraftId, ConversationEdit, QueuedCo
 
 const ConversationContext = createContext<ReturnType<typeof createConversationOwner> | null>(null);
 
-export function ConversationProvider({ children }: { children: ReactNode }) {
-  const [owner] = useState(createConversationOwner);
+export function ConversationProvider({ children, submittedStorage }: { children: ReactNode; submittedStorage?: () => Storage }) {
+  const [owner] = useState(() => createConversationOwner(submittedStorage));
   return <ConversationContext.Provider value={owner}>{children}</ConversationContext.Provider>;
 }
 
@@ -77,6 +77,10 @@ export function useRememberedConversations() {
 
 export function useConversationOpenRequest() {
   return useSnapshot(useCallback((state: ConversationSnapshot) => state.openRequest, []));
+}
+
+export function usePendingTrackInitialSend(trackId: string | null) {
+  return useSnapshot(useCallback((state: ConversationSnapshot) => trackId === null ? undefined : state.pendingTrackInitialSends[trackId], [trackId]), trackId !== null);
 }
 
 export function useConversationEditState(cardId: string | null) {

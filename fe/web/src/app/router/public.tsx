@@ -140,7 +140,7 @@ import { ReadReceiptsProvider, useReadReceipt, useReadReceipts } from '../provid
 import { TrackSelector } from '../shell/track-selector.tsx';
 import { AppShell, MobileConversationProvider, useMobileConversationOwner, useConversationDrawerResize, useOpenMobileSection, useMobileHeaderActionsHost, useMobileHeaderTitleHost } from '../shell/public.tsx';
 import {
-  ConversationProvider, useConversationCommands, useConversationAttachments, useConversationComposerEmpty, useConversationDraft, useConversationOpenRequest, useConversationUpload, type ConversationDraftId,
+  ConversationProvider, useConversationCommands, useConversationAttachments, useConversationComposerEmpty, useConversationDraft, useConversationOpenRequest, usePendingTrackInitialSend, useConversationUpload, type ConversationDraftId,
 } from '../conversations/public.tsx';
 import {
   renderedMobilePanel,
@@ -352,7 +352,7 @@ function ShellRoute({ transport, unauthorized, onSignOut, shareScope, submittedS
   });
   const singleOwner = pergaMode && versionQuery.data?.authRequired !== true;
   return (
-    <ConversationProvider><NewTrackDraftProvider submittedStorage={submittedStorage}>
+    <ConversationProvider submittedStorage={submittedStorage}><NewTrackDraftProvider submittedStorage={submittedStorage}>
       <AppShell shareScope={shareScope}
         transport={transport}
         unauthorized={unauthorized}
@@ -659,6 +659,30 @@ function useConversationPane(
   const draftOpen = options?.enabled !== false && openTarget?.kind === 'draft' && draft !== null;
 
   useConversationDraftAutoSend({ draftOpen, draft, creating: creating || managed.loading || draftCapabilities.isLoading, registry, sendDraft });
+  const pendingTrackInitialSend = usePendingTrackInitialSend(
+    options?.slotId === undefined && source.planner != null && open?.id === source.planner.cardId
+      ? source.scopeId : null,
+  );
+  const dispatchedInitialSendRef = useRef<string | null>(null);
+  const pendingInitialFocusRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (pendingTrackInitialSend === undefined || open === null || open.id !== source.planner?.cardId) return;
+    if (dispatchedInitialSendRef.current === source.scopeId) return;
+    const sent = store.send(open.id, pendingTrackInitialSend.text, [], false, null, pendingTrackInitialSend.key);
+    if (sent === null) return;
+    dispatchedInitialSendRef.current = source.scopeId;
+    pendingInitialFocusRef.current = open.id;
+    void sent.then(() => {
+      registry.consumeTrackInitialSend(source.scopeId);
+    });
+  }, [pendingTrackInitialSend, open, source.planner?.cardId, source.scopeId, store, registry]);
+  useEffect(() => {
+    if (open === null || pendingInitialFocusRef.current !== open.id) return;
+    if (!store.sendBlocked && store.historyReady) {
+      pendingInitialFocusRef.current = null;
+      focusComposer(open.id);
+    }
+  }, [open, store.sendBlocked, store.historyReady, focusComposer]);
 
   const existingId = open?.id ?? null;
   const retrySend = useCommittedCallback(existingId, () => {

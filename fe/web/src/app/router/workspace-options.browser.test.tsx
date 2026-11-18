@@ -60,7 +60,8 @@ it('renders Host workspace choices and requires a new choice when the selected m
   await create.click();
 
   const request = fixture.requests.find((item) => item.path === '/api/v1/tracks' && item.method === 'POST');
-  expect(request?.body).toMatchObject({ cwd: '/repo/other', workspaceOptionId: 'direct', firstMessage: 'Keep the draft' });
+  expect(request?.body).toMatchObject({ cwd: '/repo/other', workspaceOptionId: 'direct' });
+  expect(request?.body).not.toHaveProperty('firstMessage');
   expect(request?.body).not.toHaveProperty('workspaceDriver');
   expect(request?.body).not.toHaveProperty('templateId');
   expect(fixture.requests.some(item => item.path === '/api/v1/templates')).toBe(false);

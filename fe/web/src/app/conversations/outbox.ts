@@ -227,7 +227,7 @@ export function useConversationOutbox({
      * `replaces`: the turn an Edit's Send replaces, in the same request (#2043); beginning the op ends that Edit.
      */
     send: (conversationId: string, text: string, attachments: readonly PlannerAttachment[], fromComposer: boolean,
-      replaces: ReplacedTurn | null): Promise<void> | null => {
+      replaces: ReplacedTurn | null, idempotencyKey?: string): Promise<void> | null => {
       if (conversationId !== cardId || stalled || view.failed !== null) return null;
       /* Admitted at the press. Where the transport carries a recovery admission (the bundled build), a press that
          cannot leave the browser is refused here and sends nothing: the composer keeps its words, and the global
@@ -236,7 +236,7 @@ export function useConversationOutbox({
       let admitted: ApiTransportPort;
       try { admitted = admitTransport(transport); } catch { return null; }
       const op = {
-        key: mintIdempotencyKey(), fromComposer, replaces, phase: 'sending', unknown: false,
+        key: idempotencyKey ?? mintIdempotencyKey(), fromComposer, replaces, phase: 'sending', unknown: false,
         echo: {
           id: `echo-${mintIdempotencyKey()}`, author: 'you', text, atMs: Date.now(),
           /* The echo carries the images: an image-only message has no text to match on, so the ids are the second criterion. */

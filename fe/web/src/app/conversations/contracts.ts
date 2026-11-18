@@ -85,7 +85,7 @@ export type ConversationStore = Readonly<{
    * `replaces`: the turn an Edit's Send replaces in the same request, or `null` for a new message.
    */
   send: (conversationId: string, text: string, attachments: readonly PlannerAttachment[], fromComposer: boolean,
-    replaces: ReplacedTurn | null) => Promise<void> | null;
+    replaces: ReplacedTurn | null, idempotencyKey?: string) => Promise<void> | null;
   /** Whether this card's track can take image attachments at all. */
   attachmentsSupported: boolean;
   historyReplacementSupported: boolean;

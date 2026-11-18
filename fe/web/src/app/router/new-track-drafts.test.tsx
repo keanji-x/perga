@@ -20,9 +20,9 @@ it.each([undefined, 'Already submitted'])('restores the creation request after r
   if (key === undefined) throw new Error('Draft did not initialize');
   const request = {
     key,
+    ...(firstMessage === undefined ? {} : { message: firstMessage }),
     body: {
       area_id: area.id, planner_provider: 'claude', cwd: '/repo',
-      ...(firstMessage === undefined ? {} : { first_message: firstMessage }),
       theme: { fg: [0, 0, 0], bg: [255, 255, 255] },
     } as const,
   };
