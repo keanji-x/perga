@@ -22,13 +22,11 @@ it.each([1280, 390])('selects a dynamically registered backend through the keybo
   if (width < 600) await page.getByLabelText('对话选项').click();
   const model = page.getByRole('button', { name: /^Model:/ });
   await model.click();
-  await expect.element(page.getByRole('menuitem', { name: 'Selected model' })).toBeVisible();
-  expect(fixture.requests.some(request => request.path === '/api/models?provider=claude')).toBe(true);
-  expect(fixture.requests.some(request => request.path === '/api/models?provider=codex')).toBe(false);
-  await page.getByRole('menuitem', { name: 'Selected model' }).click();
-  if (width < 600) await model.click();
-  else await page.getByRole('button', { name: /^Reasoning effort:/ }).click();
-  await page.getByRole('menuitem', { name: /^high/ }).click();
+  await expect.element(page.getByRole('menuitem', { name: 'selected', exact: true })).toBeVisible();
+  expect(fixture.requests.some(request => request.path === '/api/v1/bootstrap?provider=claude')).toBe(true);
+  expect(fixture.requests.some(request => request.path === '/api/v1/bootstrap?provider=codex')).toBe(false);
+  await page.getByRole('menuitem', { name: 'selected', exact: true }).click();
+  await expect.element(page.getByRole('button', { name: /^Reasoning effort:/ })).not.toBeInTheDocument();
   await model.click();
   await userEvent.keyboard('{Escape}');
   await expect.element(model).toHaveFocus();
@@ -37,9 +35,9 @@ it.each([1280, 390])('selects a dynamically registered backend through the keybo
   await userEvent.keyboard('{Enter}');
   await expect.element(page.getByRole('button', { name: 'Try again', exact: true })).toBeVisible();
   await expect.element(model).toBeDisabled();
-  const posts = () => fixture.requests.filter(request => request.method === 'POST' && request.path.endsWith('/conversations'));
+  const posts = () => fixture.requests.filter(request => request.method === 'POST' && request.path.endsWith('/sessions'));
   expect(posts()).toHaveLength(1);
-  expect(posts()[0].body).toMatchObject({ provider: 'claude', model: 'selected', reasoning_effort: 'high', text: 'Frozen first message' });
+  expect(posts()[0].body).toMatchObject({ provider: 'claude', model: 'selected', text: 'Frozen first message' });
   fixture.client.setQueryData(['managed-providers'], [{ ...CLAUDE, availability: { ...CLAUDE.availability, status: 'unavailable', reason: 'Now unavailable' } }]);
   if (width < 600) await page.getByLabelText('对话选项').click();
   await page.getByRole('button', { name: 'Try again', exact: true }).click();
@@ -58,11 +56,11 @@ it('keeps a dormant backend after fresh-session recovery and takes actions from 
   await expect.element(page.getByText('Saved reply', { exact: true })).toBeVisible();
   const model = page.getByRole('button', { name: /^Model:/ });
   await model.click();
-  await expect.element(page.getByRole('menuitem', { name: 'Selected model' })).toBeVisible();
+  await expect.element(page.getByRole('menuitem', { name: 'selected', exact: true })).toBeVisible();
   await expect.element(page.getByRole('group', { name: 'Codex', exact: true })).not.toBeInTheDocument();
-  await page.getByRole('menuitem', { name: 'Selected model' }).click();
-  await expect.poll(() => fixture.requests.filter(request => request.method === 'PUT' && request.path === '/api/cards/dormant/planner/model').length).toBe(1);
-  expect(fixture.requests.find(request => request.method === 'PUT')?.body).toEqual({ model: 'selected', reasoning_effort: null });
+  await page.getByRole('menuitem', { name: 'selected', exact: true }).click();
+  await expect.poll(() => fixture.requests.filter(request => request.method === 'PUT' && request.path === '/api/v1/sessions/dormant/model').length).toBe(1);
+  expect(fixture.requests.find(request => request.method === 'PUT')?.body).toEqual({ model: 'selected' });
   const field = page.getByRole('combobox', { name: 'Message' });
   await field.fill('Resume the declared backend');
   await userEvent.keyboard('{Enter}');
@@ -71,7 +69,7 @@ it('keeps a dormant backend after fresh-session recovery and takes actions from 
   await expect.element(page.getByText('Saved reply', { exact: true })).toBeVisible();
   await expect.element(field).toHaveTextContent('Resume the declared backend');
   await field.click(); await userEvent.keyboard('{Enter}');
-  await expect.poll(() => fixture.requests.filter(request => request.path.endsWith('/planner/input')).length).toBe(2);
+  await expect.poll(() => fixture.requests.filter(request => request.path.endsWith('/messages')).length).toBe(2);
   expect(fixture.client.getQueryData<{ provider: string }[]>(['track-conversations', 'provider-track'])?.[0].provider).toBe('claude');
   await expect.element(page.getByRole('button', { name: /Compact/ })).not.toBeInTheDocument();
   await expect.element(page.getByRole('button', { name: 'Attach an image' })).toBeDisabled();
@@ -93,7 +91,7 @@ it.each(['unsupported', 'unavailable', 'missing-version', 'old-version'] as cons
   const field = page.getByRole('combobox', { name: 'Message' });
   await field.fill('Must not fall back'); await userEvent.keyboard('{Enter}');
   await expect.element(page.getByText(condition === 'missing-version' || condition === 'old-version' ? /does not support Assistant provider/ : /Managed provider capabilities are unavailable/)).toBeVisible();
-  expect(fixture.requests.filter(request => request.method === 'POST' && request.path.endsWith('/conversations'))).toEqual([]);
+  expect(fixture.requests.filter(request => request.method === 'POST' && request.path.endsWith('/sessions'))).toEqual([]);
 });
 
 
@@ -108,8 +106,8 @@ it('creates the declared Codex default despite auth/read and catalog unavailabil
   await page.getByRole('menuitem', { name: /^Default/ }).click();
   const field = page.getByRole('combobox', { name: 'Message' });
   await field.fill('Follow the backend default'); await userEvent.keyboard('{Enter}');
-  await expect.poll(() => fixture.requests.filter(request => request.method === 'POST' && request.path.endsWith('/conversations')).length).toBe(1);
-  expect(fixture.requests.find(request => request.method === 'POST' && request.path.endsWith('/conversations'))?.body).toMatchObject({ provider: 'codex', text: 'Follow the backend default' });
+  await expect.poll(() => fixture.requests.filter(request => request.method === 'POST' && request.path.endsWith('/sessions')).length).toBe(1);
+  expect(fixture.requests.find(request => request.method === 'POST' && request.path.endsWith('/sessions'))?.body).toMatchObject({ provider: 'codex', text: 'Follow the backend default' });
 });
 
 
@@ -120,12 +118,12 @@ it('renders, selects and sends a managed identifier independently of legacy UI l
   const model = page.getByRole('button', { name: /^Model:/ });
   await model.click();
   await expect.element(page.getByRole('group', { name: 'OpenCode (Beta)', exact: true })).toBeVisible();
-  await page.getByRole('menuitem', { name: 'Selected model' }).click();
-  await expect.element(model).toHaveAccessibleName('Model: opencode Selected model');
+  await page.getByRole('menuitem', { name: 'selected', exact: true }).click();
+  await expect.element(model).toHaveAccessibleName('Model: opencode selected');
   await page.getByRole('combobox', { name: 'Message' }).fill('Owner registered backend');
   await userEvent.keyboard('{Enter}');
-  await expect.poll(() => fixture.requests.filter(request => request.method === 'POST' && request.path.endsWith('/conversations')).length).toBe(1);
-  expect(fixture.requests.find(request => request.method === 'POST' && request.path.endsWith('/conversations'))?.body).toMatchObject({ provider: 'opencode', model: 'selected' });
+  await expect.poll(() => fixture.requests.filter(request => request.method === 'POST' && request.path.endsWith('/sessions')).length).toBe(1);
+  expect(fixture.requests.find(request => request.method === 'POST' && request.path.endsWith('/sessions'))?.body).toMatchObject({ provider: 'acp:opencode', model: 'selected' });
 });
 
 it.each([false, true])('combines images=%s with a run that supports attachments', async images => {
@@ -133,7 +131,7 @@ it.each([false, true])('combines images=%s with a run that supports attachments'
     existingProvider: 'claude', runAttachmentsSupported: true });
   await page.getByRole('button', { name: 'Conversation Saved Assistant' }).click();
   await expect.element(page.getByText('Saved reply', { exact: true })).toBeVisible();
-  await expect.poll(() => fixture.requests.some(request => request.path.includes('/planner/run?contract=conversation_v1'))).toBe(true);
+  await expect.poll(() => fixture.requests.some(request => request.path.includes('&view=run'))).toBe(true);
   const attach = page.getByRole('button', { name: 'Attach an image' });
   if (images) await expect.element(attach).toBeEnabled();
   else await expect.element(attach).toBeDisabled();
@@ -146,7 +144,7 @@ it('adopts a landed frozen request before stale or missing metadata can refuse i
   const fixture = renderAssistantProviderFixture(options);
   await page.getByRole('button', { name: 'New conversation', exact: true }).click();
   await page.getByRole('button', { name: /^Model:/ }).click();
-  await page.getByRole('menuitem', { name: 'Selected model' }).click();
+  await page.getByRole('menuitem', { name: 'selected', exact: true }).click();
   await page.getByRole('combobox', { name: 'Message' }).fill('Already committed');
   await userEvent.keyboard('{Enter}');
   await expect.element(page.getByRole('button', { name: 'Try again', exact: true })).toBeVisible();
@@ -154,7 +152,7 @@ it('adopts a landed frozen request before stale or missing metadata can refuse i
   options.answers = []; options.hideLanded = false;
   await page.getByRole('button', { name: 'Try again', exact: true }).click();
   await expect.element(page.getByRole('complementary', { name: 'Created Assistant' })).toBeVisible();
-  expect(fixture.requests.filter(request => request.method === 'POST' && request.path.endsWith('/conversations'))).toHaveLength(1);
+  expect(fixture.requests.filter(request => request.method === 'POST' && request.path.endsWith('/sessions'))).toHaveLength(1);
 });
 
 
@@ -165,12 +163,12 @@ it('refreshes owner metadata before retrying a draft that never dispatched', asy
   await page.getByRole('combobox', { name: 'Message' }).fill('Retry after registration');
   await userEvent.keyboard('{Enter}');
   await expect.element(page.getByRole('button', { name: 'Try again', exact: true })).toBeVisible();
-  expect(fixture.requests.filter(request => request.method === 'POST' && request.path.endsWith('/conversations'))).toHaveLength(0);
+  expect(fixture.requests.filter(request => request.method === 'POST' && request.path.endsWith('/sessions'))).toHaveLength(0);
   options.answers = [{ ...CLAUDE, availability: { ...CLAUDE.availability, provider: 'codex' },
     capabilities: { ...CLAUDE.capabilities, requires_ready_availability: false } }];
   await page.getByRole('button', { name: 'Try again', exact: true }).click();
-  await expect.poll(() => fixture.requests.filter(request => request.method === 'POST' && request.path.endsWith('/conversations')).length).toBe(1);
-  expect(fixture.requests.some(request => request.path === '/api/agent-providers/managed?refresh=true')).toBe(true);
+  await expect.poll(() => fixture.requests.filter(request => request.method === 'POST' && request.path.endsWith('/sessions')).length).toBe(1);
+  expect(fixture.requests.some(request => request.path === '/api/v1/bootstrap?scope=managed&refresh=true')).toBe(true);
 });
 
 it.each([1400, 390])('manually archives and restores a conversation without exposing its composer (%ipx)', async width => {

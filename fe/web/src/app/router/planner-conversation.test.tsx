@@ -116,9 +116,7 @@ it('refreshes a mounted agent catalog when its first turn settles', async () => 
   const { client } = setup((request) => {
     if (request.path === '/api/v1/tracks/w1') return ok({ track: TRACK, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true, cards: [{ ...CARD, payload: { planner_harness: true, planner_provider: 'opencode' } }], overlays: [] });
     if ((request.path.startsWith('/api/v1/bootstrap?card_id=') || request.path.startsWith('/api/v1/bootstrap?provider='))) return ok({
-      models: configured ? [{ id: 'declared', model: 'declared', resolved_model: null, display_name: 'Declared model', description: '', is_default: true, supported_reasoning_efforts: [], default_reasoning_effort: null }] : [],
-      default: { model: configured ? 'declared' : null, reasoning_effort: null, supported_reasoning_efforts: null },
-      default_source: configured ? 'acp_session' : 'unknown', source: configured ? 'live' : 'unavailable', fetched_at_ms: configured ? 1 : null,
+      version: 'test', providers: [{ provider: 'acp:opencode', available: configured, models: configured ? ['declared'] : [] }],
     });
     return undefined;
   });
@@ -128,7 +126,7 @@ it('refreshes a mounted agent catalog when its first turn settles', async () => 
   const event = wireEventSchema.parse({ ev: 'harness.phase.changed', data: { worker_session_id: 'runtime', card_id: CARD.id, track_id: TRACK.id, old_phase: 'turn_running', new_phase: 'turn_completed' } });
   act(() => applyEventEffects(client, [{ type: 'invalidate', keys: invalidationPlanFor(event).invalidate }]));
   await waitFor(() => expect(within(drawerElement()).getByRole('button', { name: /^Model:/ }).hasAttribute('disabled')).toBe(false));
-  expect(client.getQueryData(queryKeys.modelCatalog({ kind: 'card', cardId: CARD.id }))).toMatchObject({ source: 'live' });
+  expect(client.getQueryData(queryKeys.modelCatalog({ kind: 'card', cardId: CARD.id, provider: 'opencode' }))).toMatchObject({ source: 'live' });
 });
 
 /** The open drawer, as a root for what is and is not inside it. */
@@ -277,10 +275,9 @@ describe('planner conversation regressions', () => {
 
   it('sends the chosen model to the server when the picker is used', async () => {
     const { requests } = setupWithTurns((request) => request.method === 'PUT'
-        && request.path.endsWith('/planner/model')
+        && request.path.endsWith('/model')
       ? ok({
-        card_id: CARD.id, model: 'gpt-5', reasoning_effort: null,
-        effort_adjusted: false, unknown_model: false,
+        id: CARD.id, trackId: TRACK.id, provider: 'codex', model: 'gpt-5', createdAtMs: 1, updatedAtMs: 2,
       })
       : undefined);
     await openConversationWithTurns();
@@ -290,11 +287,11 @@ describe('planner conversation regressions', () => {
     fireEvent.click(await screen.findByRole('menuitem', { name: /^Default/ }));
 
     await waitFor(() => {
-      const writes = requests.filter((request) => request.path.endsWith('/planner/model'));
+      const writes = requests.filter((request) => request.path.endsWith('/model'));
       expect(writes).toHaveLength(1);
       expect(writes[0]?.method).toBe('PUT');
-      /* Both keys, always: the server answers 422 for a body missing one. */
-      expect(writes[0]?.body).toEqual({ model: null, reasoning_effort: null });
+      /* The v1 endpoint accepts only the model selection. */
+      expect(writes[0]?.body).toEqual({ model: null });
     });
   });
 

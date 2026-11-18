@@ -22,6 +22,7 @@ import {
   createTrackConversationOperation,
   interruptPlannerOperation,
   modelCatalogOperation,
+  setPlannerModelOperation,
   sendPlannerInputOperation,
   trackConversationsOperation,
 } from '../domain/conversation.js';
@@ -139,6 +140,29 @@ describe('Perga /api/v1 protocol contracts', () => {
 
     const detail = templateDetailOperation('feature-dev').responseSchema.parse(sampleBootstrap.templates);
     expect(detail.body).toContain('# Plan');
+  });
+
+  it('scopes a card catalog to its provider and reports provider availability', () => {
+    const scope = { kind: 'card' as const, cardId: 'session/a', provider: 'antigravity' as const };
+    const operation = modelCatalogOperation(scope);
+    expect(operation.responseSchema.parse(sampleBootstrap)).toMatchObject({
+      source: 'live', models: [{ model: 'gemini-3.1-pro' }, { model: 'gemini-3-flash' }],
+    });
+    expect(modelCatalogOperation({ ...scope, provider: 'claude' }).responseSchema.parse(sampleBootstrap).source).toBe('unavailable');
+    expect(modelCatalogOperation({ ...scope, provider: 'grok' }).responseSchema.parse(sampleBootstrap).source).toBe('unavailable');
+    expect(operation.responseSchema.parse({ version: 'test', providers: [{ provider: 'acp:antigravity', available: true, models: [] }] }))
+      .toMatchObject({ source: 'live', models: [] });
+    expect(operation.responseSchema.safeParse({ models: [], source: 'live' }).success).toBe(false);
+  });
+
+  it('updates a session model with the v1 request and session response', () => {
+    const operation = setPlannerModelOperation('session/a', { model: 'chosen', reasoning_effort: null });
+    expect(operation.method).toBe('PUT');
+    expect(operation.path).toBe('/api/v1/sessions/session%2Fa/model');
+    expect(operation.body).toEqual({ model: 'chosen' });
+    expect(operation.responseSchema.parse({
+      id: 'session/a', trackId: 'track', provider: 'codex', model: 'chosen', createdAtMs: 1, updatedAtMs: 2,
+    })).toMatchObject({ id: 'session/a', model: 'chosen' });
   });
 
   it('maps Area CRUD operations to /api/v1/areas with camelCase bodies and clearDefaultCwd', () => {

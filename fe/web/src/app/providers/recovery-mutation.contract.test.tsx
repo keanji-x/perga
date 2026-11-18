@@ -48,7 +48,7 @@ it('queued production model selections retain their original permit across recov
   const first = result.current.setModel({ model: 'first', reasoning_effort: null }).catch(error => error as unknown);
   const second = result.current.setModel({ model: 'second', reasoning_effort: null }).catch(error => error as unknown);
   expect(send).toHaveBeenCalledOnce(); access.invalidate('recovering'); access.change('connected');
-  finish({ status: 200, statusText: 'OK', body: { card_id: 'card-a', model: 'first', reasoning_effort: null, effort_adjusted: false, unknown_model: false } });
+  finish({ status: 200, statusText: 'OK', body: { id: 'card-a', trackId: 'track-a', provider: 'codex', model: 'first', createdAtMs: 1, updatedAtMs: 2 } });
   await first; await second; expect(send).toHaveBeenCalledOnce();
 });
 
