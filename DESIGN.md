@@ -1249,10 +1249,13 @@ CREATE TABLE IF NOT EXISTS mails (
     to_track_id         TEXT NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
     summary             TEXT NOT NULL,
     body                TEXT NOT NULL,
+    reply_to_mail_id    TEXT,
+    wake_pending        INTEGER NOT NULL DEFAULT 0 CHECK (wake_pending IN (0, 1)),
     read_at_ms          INTEGER,
     created_at_ms       INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_mails_to_track ON mails(to_track_id, created_at_ms DESC);
+CREATE INDEX IF NOT EXISTS idx_mails_pending_wake ON mails(created_at_ms, id) WHERE wake_pending = 1;
 
 -- 10A. 终端元数据
 CREATE TABLE IF NOT EXISTS terminals (

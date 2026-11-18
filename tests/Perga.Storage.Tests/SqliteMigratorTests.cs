@@ -9,7 +9,7 @@ public sealed class SqliteMigratorTests
     [Fact]
     public void EmbeddedInitMigration_MatchesDesignMdSection3ByteForByte()
     {
-        var init = Assert.Single(SqliteMigrator.LoadEmbeddedMigrations(), migration => migration.Version == 1);
+        var init = Assert.Single(SqliteMigrator.LoadEmbeddedMigrations());
         Assert.Equal(1, init.Version);
         Assert.Equal("0001_init.sql", init.Name);
         Assert.Equal(64, init.ChecksumSha256.Length);
@@ -167,9 +167,8 @@ public sealed class SqliteMigratorTests
             var v1Migrator = new SqliteMigrator([v1]);
             await v1Migrator.MigrateAsync(dbPath);
 
-            await using (var store = new SqliteTrackStore(new SqliteStorageOptions { DbPath = dbPath }, migrator: v1Migrator))
+            await using (var store = await SqliteTrackStore.OpenAsync(dbPath))
             {
-                await store.InitializeAsync();
                 await store.UpsertAreaAsync(StorageTestHarness.CreateArea("area_v1", "V1 Data"), CancellationToken.None);
             }
 
@@ -294,35 +293,6 @@ public sealed class SqliteMigratorTests
         finally
         {
             Directory.Delete(tempDir, recursive: true);
-        }
-    }
-
-    [Fact]
-    public async Task MailMigrationPreservesExistingUnreadMailWithoutSchedulingIt()
-    {
-        var directory = Directory.CreateTempSubdirectory("perga-mail-upgrade-");
-        try
-        {
-            var dbPath = Path.Combine(directory.FullName, "upgrade.db");
-            await new SqliteMigrator([SqliteMigrator.LoadEmbeddedMigrations()[0]]).MigrateAsync(dbPath);
-            await using (var db = new SqliteConnection($"Data Source={dbPath};Pooling=False"))
-            {
-                await db.ExecuteAsync("""
-                    INSERT INTO areas(id, name, created_at_ms, updated_at_ms) VALUES ('a', 'Area', 1, 1);
-                    INSERT INTO tracks(id, area_id, cwd, created_at_ms, updated_at_ms) VALUES ('t', 'a', '/tmp', 1, 1);
-                    INSERT INTO mails(id, from_track_id, to_track_id, summary, body, created_at_ms)
-                    VALUES ('old-mail', 'sender', 't', 'original', 'original body', 1);
-                    """);
-            }
-            await using var upgraded = await SqliteTrackStore.OpenAsync(dbPath);
-            var mail = Assert.Single(await upgraded.ListMailsAsync("t", unreadOnly: true));
-            Assert.Equal("original body", mail.Body);
-            Assert.Null(mail.ReplyToMailId);
-            Assert.Empty(await upgraded.ListPendingMailWakesAsync(CancellationToken.None));
-        }
-        finally
-        {
-            directory.Delete(recursive: true);
         }
     }
 
