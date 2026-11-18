@@ -921,7 +921,7 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
 
                     if (attempt.FinishedAtMs is not null)
                         await conn.ExecuteAsync(new CommandDefinition("""
-                            UPDATE worker_messages SET delivery = 'interrupted'
+                            UPDATE session_messages SET delivery = 'interrupted'
                             WHERE attempt_id = @AttemptId AND delivery = 'queued';
                             """, new { attempt.AttemptId }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
                 }
@@ -1041,7 +1041,7 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
         SessionTurnDto turn,
         IReadOnlyList<SessionItemDto> newItems,
         AgentSessionDto? updatedSession,
-        CancellationToken ct = default)
+        CancellationToken ct = default, SessionMessage? dispatchMessage = null)
     {
         ArgumentNullException.ThrowIfNull(turn);
         ArgumentNullException.ThrowIfNull(newItems);
@@ -1092,6 +1092,15 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                         transaction: tx,
                         cancellationToken: innerCt)).ConfigureAwait(false);
 
+                long? messageOrdinal = null;
+                if (dispatchMessage is not null)
+                {
+                    if (!await TransitionMessageAsync(conn, tx, dispatchMessage with { TurnId = turn.Id, Delivery = "dispatching" },
+                        "dispatching", innerCt).ConfigureAwait(false))
+                        throw new InvalidOperationException("The claimed message no longer belongs to this dispatch.");
+                    messageOrdinal = await ReadMessageOrdinalAsync(conn, tx, dispatchMessage, innerCt).ConfigureAwait(false);
+                }
+
                 if (updatedSession is not null)
                 {
                     await UpsertSessionInternalAsync(conn, tx, updatedSession, innerCt).ConfigureAwait(false);
@@ -1108,7 +1117,7 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                             transaction: tx,
                             cancellationToken: innerCt)).ConfigureAwait(false);
 
-                    insertedIds = await InsertSessionItemsAsync(conn, tx, trackId, newItems, innerCt).ConfigureAwait(false);
+                    insertedIds = await InsertSessionItemsAsync(conn, tx, trackId, newItems, innerCt, messageOrdinal).ConfigureAwait(false);
                     for (var i = 0; i < newItems.Count; i++)
                     {
                         if (userItemId is null && string.Equals(newItems[i].Kind, "user", StringComparison.Ordinal))
@@ -1162,7 +1171,7 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
     }
 
     private async Task<IReadOnlyList<long>> InsertSessionItemsAsync(
-        SqliteConnection conn, SqliteTransaction tx, string? trackId, IReadOnlyList<SessionItemDto> items, CancellationToken ct)
+        SqliteConnection conn, SqliteTransaction tx, string? trackId, IReadOnlyList<SessionItemDto> items, CancellationToken ct, long? messageOrdinal = null)
     {
         var ids = new List<long>(items.Count);
         foreach (var item in items)
@@ -1174,8 +1183,8 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
             var insertedId = await conn.ExecuteScalarAsync<long>(
                 new CommandDefinition(
                     """
-                    INSERT INTO session_items (session_id, turn_id, kind, payload_json, created_at_ms)
-                    VALUES (@SessionId, @TurnId, @Kind, @PayloadJson, @CreatedAtMs);
+                    INSERT INTO session_items (session_id, turn_id, kind, payload_json, created_at_ms, message_ordinal)
+                    VALUES (@SessionId, @TurnId, @Kind, @PayloadJson, @CreatedAtMs, @MessageOrdinal);
                     SELECT last_insert_rowid();
                     """,
                     new
@@ -1184,7 +1193,8 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                         item.TurnId,
                         item.Kind,
                         PayloadJson = payloadJson,
-                        item.CreatedAtMs
+                        item.CreatedAtMs,
+                        MessageOrdinal = item.Kind == "user" ? messageOrdinal : null
                     },
                     transaction: tx,
                     cancellationToken: ct)).ConfigureAwait(false);
@@ -1245,14 +1255,14 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                        item.session_id AS SessionId,
                        item.turn_id AS TurnId,
                        item.kind AS Kind,
-                       CASE WHEN input.id IS NULL THEN item.payload_json
+                       CASE WHEN input.id IS NULL OR input.source = 'worker' OR input.turn_id IS NULL THEN item.payload_json
                             ELSE json_object('v', 1, 'content', input.content, 'triggerKind', 'user', 'inputId', input.id)
                        END AS PayloadJson,
                        item.created_at_ms AS CreatedAtMs,
                        turn.status AS TurnStatus,
-                       input.delivery_state AS InputDelivery
+                       CASE WHEN input.delivery = 'queued' THEN 'accepted' ELSE input.delivery END AS InputDelivery
                 FROM session_items item
-                LEFT JOIN session_inputs input ON input.id = item.accepted_input_id
+                LEFT JOIN session_messages input ON input.ordinal = item.message_ordinal
                 LEFT JOIN session_turns turn ON turn.session_id = item.session_id AND turn.id = item.turn_id
                 WHERE item.session_id = @SessionId
                   AND item.id > @AfterId AND (@BeforeId IS NULL OR item.id < @BeforeId)
@@ -1760,10 +1770,25 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                         FROM task_attempts a
                         WHERE a.attempt_id = t.latest_attempt_id AND a.task_id = t.id
                           AND t.status IN ('running', 'verifying') AND LOWER(a.status) IN ('running', 'verifying', 'interrupted');
+                        UPDATE agent_sessions AS s
+                        SET archived_at_ms = COALESCE(archived_at_ms, @NowMs), updated_at_ms = @NowMs
+                        WHERE EXISTS (
+                            SELECT 1 FROM task_attempts a WHERE a.attempt_id = s.bound_attempt_id AND a.session_id = s.id
+                                AND LOWER(a.status) IN ('running', 'verifying')
+                        );
                         UPDATE task_attempts
                         SET status = 'interrupted',
                             finished_at_ms = COALESCE(finished_at_ms, @NowMs)
                         WHERE LOWER(status) IN ('running', 'verifying');
+                        UPDATE session_messages AS m SET delivery = 'interrupted'
+                        WHERE source = 'worker' AND delivery = 'queued' AND NOT EXISTS (
+                            SELECT 1 FROM task_attempts a
+                            JOIN agent_sessions s ON s.id = m.session_id AND s.bound_attempt_id = a.attempt_id
+                            JOIN tasks t ON t.id = a.task_id AND t.latest_attempt_id = a.attempt_id
+                            JOIN tracks tr ON tr.id = a.track_id AND tr.closed_at_ms IS NULL
+                            WHERE a.attempt_id = m.attempt_id AND a.session_id = m.session_id
+                              AND a.status = 'running' AND a.workspace_lease_json IS NOT NULL
+                        );
                         """,
                         new { NowMs = nowMs },
                         transaction: tx,

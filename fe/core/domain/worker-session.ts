@@ -28,7 +28,7 @@ export type WorkerMessageBody = Readonly<{ attemptId: string; content: string } 
 )>;
 
 const workerMessageReceiptSchema = z.object({ turnId: z.string().nullish(), inputId: z.string(),
-  delivery: z.enum(['queued', 'dispatching', 'delivered', 'rejected', 'unknown', 'interrupted']) });
+  delivery: z.enum(['queued', 'dispatching', 'delivered', 'rejected', 'unknown', 'interrupted', 'withdrawn']), messageId: z.string().optional() });
 
 export function sendWorkerMessageOperation(cardId: string, key: string, body: WorkerMessageBody): ApiOperation<z.infer<typeof workerMessageReceiptSchema>> {
   return { method: 'POST', path: `/api/v1/sessions/${encodeURIComponent(cardId)}/messages`,

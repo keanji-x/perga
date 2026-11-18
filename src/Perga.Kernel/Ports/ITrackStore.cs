@@ -121,9 +121,11 @@ public interface ITrackStore : ITrackReadStore
     Task UpsertTaskAndAttemptAsync(TaskDto task, TaskAttemptDto? attempt, JsonElement? nextTemplateState, EventEnvelopeDto? evt, CancellationToken ct,
         AgentSessionDto? session = null, EventEnvelopeDto? sessionEvent = null);
     Task<bool> HasSessionTurnAsync(string sessionId, string turnId, CancellationToken ct);
+    Task<IReadOnlyList<SessionTurnDto>> ListSessionTurnsAsync(string sessionId, CancellationToken ct) =>
+        Task.FromResult<IReadOnlyList<SessionTurnDto>>([]);
     Task<int> GetLastTurnIndexAsync(string sessionId, CancellationToken ct);
     ISessionInputStore SessionInputs { get; }
-    IWorkerMessageStore WorkerMessages => throw new NotSupportedException();
+    ISessionMessageStore? SessionMessages => null;
     IWorkerSettingsStore? WorkerSettings => null;
     Task<IReadOnlyList<(string TrackId, PersistedSessionInput Input)>> RecoverSessionInputsAsync(CancellationToken ct);
     Task UpsertSessionAsync(AgentSessionDto session, EventEnvelopeDto? evt, CancellationToken ct);
@@ -134,7 +136,7 @@ public interface ITrackStore : ITrackReadStore
         SessionTurnDto turn,
         IReadOnlyList<SessionItemDto> newItems,
         AgentSessionDto? updatedSession,
-        CancellationToken ct = default);
+        CancellationToken ct = default, SessionMessage? dispatchMessage = null);
     Task<IReadOnlyList<long>> AppendSessionItemsAsync(
         string sessionId,
         IReadOnlyList<SessionItemDto> newItems,

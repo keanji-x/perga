@@ -143,6 +143,7 @@ export function PendingQueue({ entries, pendingInputCount, queueDisplayAccountin
             const isEditing = editingEntryId === entry.entry_id;
             const alive = ids.has(entry.entry_id);
             const failed = refusal?.entryId === entry.entry_id ? refusal.outcome : null;
+            const canWithdraw = entry.state === undefined || entry.state === 'waiting';
             const current = failed?.kind === 'stale' ? { ...entry, text: failed.text, rev: failed.rev } : entry;
             return <CollapsePresence key={entry.entry_id} present={alive || isEditing} onExited={() => {
               setSnapshot(previous => ({ ...previous, rows: previous.rows.filter(row => row.entry_id !== entry.entry_id) }));
@@ -154,9 +155,9 @@ export function PendingQueue({ entries, pendingInputCount, queueDisplayAccountin
                     <div data-nc-pending-entry-text=""><OutgoingMessage speaker="unknown" text={current.text} mobile={mobile} edited={isEditing} /></div>
                     <div className={styles.actions}>
                       <MessageActions label="Queued message actions" actions={[
-                        { id: 'edit', kind: 'edit', label: 'Edit queued message', tooltip: 'Edit this message in the composer.', disabled: blocked || !canEdit || !alive,
+                        { id: 'edit', kind: 'edit', label: 'Edit queued message', tooltip: 'Edit this message in the composer.', disabled: blocked || !canEdit || !alive || !canWithdraw,
                           run: () => { onEdit(current); } },
-                        { id: 'undo', kind: 'undo', label: 'Delete this message', tooltip: 'Remove this queued message.', disabled: blocked || isEditing || current.state === 'steering' || current.state === 'sending' || current.state === 'processing',
+                        { id: 'undo', kind: 'undo', label: 'Delete this message', tooltip: 'Remove this queued message.', disabled: blocked || isEditing || !canWithdraw,
                           run: () => { void run(current, () => onDelete(current)); } },
                         ...(onSteer === undefined || (current.state !== undefined && current.state !== 'waiting') ? [] : [{ id: 'steer', kind: 'return' as const, label: 'Say it now', tooltip: 'Send to the current response.', disabled: blocked || isEditing,
                           run: () => { void run(current, () => onSteer(current)); } }]),

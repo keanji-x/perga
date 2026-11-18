@@ -1,0 +1,288 @@
+using System.Net;
+using System.Net.Http.Json;
+using System.Runtime.CompilerServices;
+using System.Security.Cryptography;
+using System.Text.Json;
+using Dapper;
+using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.DependencyInjection;
+using Perga.AgentKit;
+using Perga.Contracts;
+using Perga.Host.IntegrationTests.Fixtures;
+using Perga.Host.Serialization;
+using Perga.Kernel;
+using Perga.Kernel.Ports;
+using Perga.Storage.Sqlite;
+
+namespace Perga.Host.IntegrationTests;
+
+public sealed class SharedSessionMessageTests
+{
+    [Fact]
+    public async Task VersionFiveUpgradePreservesTranscriptAndBothReceiptNamespaces()
+    {
+        var directory = Directory.CreateTempSubdirectory("perga-message-upgrade-");
+        try
+        {
+            var database = Path.Combine(directory.FullName, "perga.db");
+            await new SqliteMigrator(SqliteMigrator.LoadEmbeddedMigrations().Take(5).ToArray()).MigrateAsync(database);
+            const string normalText = "Historical ordinary input";
+            const string workerText = "Historical Worker message";
+            var normalHash = Hash(new { version = 1, Content = normalText, SteerIfRunning = false });
+            var workerHash = Hash(new { version = 1, AttemptId = "attempt", TurnId = (string?)null, Content = workerText, AllowQueue = false });
+            await using (var db = OpenDatabase(directory.FullName))
+            {
+                await db.OpenAsync();
+                await db.ExecuteAsync("""
+                    INSERT INTO areas (id, name, created_at_ms, updated_at_ms) VALUES ('area', 'Migration', 1, 1);
+                    INSERT INTO tracks (id, area_id, cwd, lead_session_id, created_at_ms, updated_at_ms)
+                        VALUES ('track', 'area', @Cwd, 'normal', 1, 1);
+                    INSERT INTO reports (track_id, updated_at_ms) VALUES ('track', 1);
+                    INSERT INTO tasks (id, track_id, block_id, task_key, kind, goal_or_cmd, status, latest_attempt_id, created_at_ms, updated_at_ms)
+                        VALUES ('task', 'track', 'block', 'migration', 'agent', 'Old goal', 'done', 'attempt', 1, 1);
+                    INSERT INTO task_attempts (attempt_id, task_id, track_id, session_id, status, started_at_ms, finished_at_ms)
+                        VALUES ('attempt', 'task', 'track', 'worker', 'completed', 1, 2);
+                    INSERT INTO agent_sessions (id, track_id, bound_task_id, bound_attempt_id, provider, created_at_ms, updated_at_ms)
+                        VALUES ('normal', 'track', NULL, NULL, 'codex', 1, 2), ('worker', 'track', 'task', 'attempt', 'codex', 1, 2);
+                    INSERT INTO session_turns (id, session_id, turn_index, trigger_kind, status)
+                        VALUES ('normal-turn', 'normal', 1, 'user', 'completed'), ('worker-turn', 'worker', 1, 'user', 'completed');
+                    INSERT INTO session_inputs (id, session_id, turn_id, author_id, request_key, request_hash, content, accepted_at_ms, delivery_state)
+                        VALUES ('normal-input', 'normal', 'normal-turn', 'owner:installation', 'normal-key', @NormalHash, @NormalText, 1, 'delivered'),
+                               ('collision', 'worker', 'worker-turn', 'owner:installation', 'worker-key', 'older-input-hash', 'Older input for Worker', 1, 'delivered');
+                    INSERT INTO session_items (id, session_id, turn_id, kind, payload_json, created_at_ms, accepted_input_id)
+                        VALUES (21, 'normal', 'normal-turn', 'user', '{}', 2, 'normal-input'),
+                               (22, 'worker', 'worker-turn', 'user', '{}', 2, 'collision');
+                    INSERT INTO worker_messages (id, session_id, attempt_id, author_id, request_key, request_hash, result_turn_id, content, delivery, created_at_ms)
+                        VALUES ('collision', 'worker', 'attempt', 'owner:installation', 'worker-key', @WorkerHash, 'worker-turn', @WorkerText, 'delivered', 2);
+                    """, new { Cwd = directory.FullName, NormalHash = normalHash, NormalText = normalText, WorkerHash = workerHash, WorkerText = workerText });
+            }
+
+            await using var host = new PergaHostTestCluster(directory.FullName);
+            var kernel = host.Services.GetRequiredService<IPergaKernel>();
+            using var normal = await SendAsync(host.Client, "normal", "normal-key", new { content = normalText });
+            Assert.Equal(HttpStatusCode.OK, normal.StatusCode);
+            var input = (await normal.Content.ReadFromJsonAsync<SessionInputReceipt>(PergaJsonDefaults.ApiOptions))!;
+            Assert.Equal(("normal-input", "normal-turn", "delivered"), (input.InputId, input.TurnId, input.DeliveryState));
+            var item = Assert.Single((await kernel.GetSessionItemsAsync("normal")).Items);
+            Assert.Equal(21, item.Id);
+            Assert.Equal(normalText, item.Payload.GetProperty("content").GetString());
+
+            using var worker = await SendAsync(host.Client, "worker", "worker-key", new { attemptId = "attempt", content = workerText });
+            Assert.Equal(HttpStatusCode.OK, worker.StatusCode);
+            var receipt = (await worker.Content.ReadFromJsonAsync<WorkerMessageReceipt>(PergaJsonDefaults.ApiOptions))!;
+            Assert.Equal(("collision", "worker-turn", "delivered"), (receipt.InputId, receipt.TurnId, receipt.Delivery));
+            Assert.Equal("collision", (await kernel.GetSessionInputAsync("worker", "collision", default)).InputId);
+            var workerItem = Assert.Single((await kernel.GetSessionItemsAsync("worker")).Items);
+            Assert.Equal(22, workerItem.Id);
+            Assert.Equal("Older input for Worker", workerItem.Payload.GetProperty("content").GetString());
+            Assert.Empty(host.AgentRuntime.ExecutedTurns);
+            Assert.True(File.Exists(database + ".bak-v5"));
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task RestartRunsWaitingOrdinaryMessagesInOrderAndKeepsUncertainAndWithdrawnReceipts()
+    {
+        var directory = Directory.CreateTempSubdirectory("perga-shared-queue-");
+        try
+        {
+            string sessionId;
+            string trackId;
+            await using (var host = new PergaHostTestCluster(directory.FullName))
+            {
+                (trackId, sessionId) = await host.CreateTrackAsync();
+                var store = host.Services.GetRequiredService<ITrackStore>().SessionMessages!;
+                await InsertQueueAsync(store, sessionId, null, "declared-uncertain", "dispatching");
+                await InsertQueueAsync(store, sessionId, null, "withdraw-me", "queued");
+                using var withdrawn = await host.Client.DeleteAsync($"/api/v1/sessions/{sessionId}/messages/queue/withdraw-me");
+                Assert.Equal(HttpStatusCode.NoContent, withdrawn.StatusCode);
+                await InsertQueueAsync(store, sessionId, null, "first-waiting", "queued");
+                await InsertQueueAsync(store, sessionId, null, "second-waiting", "queued");
+            }
+
+            await using var reopened = new PergaHostTestCluster(directory.FullName);
+            var kernel = reopened.Services.GetRequiredService<IPergaKernel>();
+            await kernel.WaitForTrackIdleAsync(trackId);
+            Assert.Equal(["first-waiting", "second-waiting"], reopened.AgentRuntime.ExecutedTurns.Select(execution => execution.Input.Prompt));
+            foreach (var (key, expected) in new[] { ("declared-uncertain", "unknown"), ("withdraw-me", "withdrawn"),
+                         ("first-waiting", "delivered"), ("second-waiting", "delivered") })
+            {
+                using var replay = await SendAsync(reopened.Client, sessionId, key, new { content = key, queueIfBusy = true });
+                Assert.Equal(HttpStatusCode.OK, replay.StatusCode);
+                var receipt = (await replay.Content.ReadFromJsonAsync<QueuedMessageReceipt>(PergaJsonDefaults.ApiOptions))!;
+                Assert.Equal((key, expected), (receipt.MessageId, receipt.Delivery));
+            }
+            var page = await kernel.GetSessionItemsAsync(sessionId);
+            Assert.Equal("declared-uncertain", Assert.Single(page.QueuedMessages).Id);
+            Assert.Single(page.Items, item => item.Kind == "user" && item.Payload.GetProperty("inputId").GetString() == "first-waiting");
+            Assert.Single(page.Items, item => item.Kind == "user" && item.Payload.GetProperty("inputId").GetString() == "second-waiting");
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task RestartArchivesOldWorkerWithoutResendingAndExplicitDispatchUsesNewAttempt()
+    {
+        var directory = Directory.CreateTempSubdirectory("perga-worker-archive-");
+        try
+        {
+            string trackId;
+            AgentSessionDto worker;
+            await using (var host = new PergaHostTestCluster(directory.FullName))
+            {
+                (trackId, _) = await host.CreateTrackAsync();
+                var kernel = host.Services.GetRequiredService<IPergaKernel>();
+                var dispatch = await kernel.DispatchWorkerAsync(trackId, new("Old Worker goal"), "old-worker", null, default);
+                await kernel.WaitForTrackIdleAsync(trackId);
+                worker = Assert.Single(await kernel.ListSessionsAsync(trackId), session => session.BoundTaskId == dispatch.Task.Id);
+                var store = host.Services.GetRequiredService<ITrackStore>().SessionMessages!;
+                await InsertQueueAsync(store, worker.Id, worker.BoundAttemptId, "worker-waiting", "queued");
+                await InsertQueueAsync(store, worker.Id, worker.BoundAttemptId, "worker-uncertain", "dispatching");
+                await InsertQueueAsync(store, worker.Id, worker.BoundAttemptId, "worker-confirmed", "delivered");
+            }
+
+            // Reproduce an abrupt host exit before the active attempt's settlement transaction.
+            await using (var db = OpenDatabase(directory.FullName))
+            {
+                await db.OpenAsync();
+                await db.ExecuteAsync("""
+                    UPDATE task_attempts SET status = 'running', finished_at_ms = NULL, workspace_lease_json = NULL
+                    WHERE attempt_id = @BoundAttemptId;
+                    UPDATE tasks SET status = 'running' WHERE id = @BoundTaskId;
+                    UPDATE agent_sessions SET status = 'running', archived_at_ms = NULL WHERE id = @Id;
+                    """, worker);
+            }
+
+            await using var reopened = new PergaHostTestCluster(directory.FullName);
+            var activeKernel = reopened.Services.GetRequiredService<IPergaKernel>();
+            await activeKernel.WaitForTrackIdleAsync(trackId);
+            var old = (await activeKernel.GetSessionItemsAsync(worker.Id)).Session;
+            Assert.NotNull(old.ArchivedAtMs);
+            Assert.Equal(worker.BoundAttemptId, old.BoundAttemptId);
+
+            foreach (var (key, expected) in new[] { ("worker-waiting", "interrupted"), ("worker-uncertain", "unknown"), ("worker-confirmed", "delivered") })
+            {
+                var replay = await activeKernel.SendWorkerMessageAsync(worker.Id,
+                    new(worker.BoundAttemptId!, key, key, Mode: WorkerMessageMode.Queue), null, default);
+                Assert.Equal((key, expected), (replay.MessageId, replay.Delivery));
+            }
+            Assert.DoesNotContain(reopened.AgentRuntime.ExecutedTurns, execution => execution.Input.Prompt.StartsWith("worker-", StringComparison.Ordinal));
+
+            var next = await activeKernel.DispatchWorkerAsync(trackId, new("New Worker goal"), "fresh-worker", null, default);
+            await activeKernel.WaitForTrackIdleAsync(trackId);
+            var replacement = Assert.Single(await activeKernel.ListSessionsAsync(trackId), session => session.BoundTaskId == next.Task.Id);
+            Assert.NotEqual(old.Id, replacement.Id);
+            Assert.NotEqual(old.BoundAttemptId, replacement.BoundAttemptId);
+            Assert.Empty((await activeKernel.GetSessionItemsAsync(replacement.Id)).Worker!.Messages);
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ADeclinedQueuedSteerReplaysAgainstItsOriginalTurnAndCanBeSentToANewTurn()
+    {
+        await using var host = new PergaHostTestCluster();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        var ct = timeout.Token;
+        var (trackId, sessionId) = await host.CreateTrackAsync();
+        var kernel = host.Services.GetRequiredService<IPergaKernel>();
+        var first = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var second = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var endFirst = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var endSecond = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var steers = 0;
+        host.AgentRuntime.SetSteerHandler(_ => Task.FromResult(Interlocked.Increment(ref steers) == 2));
+        host.AgentRuntime.SetTurnHandler(Stream);
+
+        try
+        {
+            using var admitted = await SendAsync(host.Client, sessionId, "first", new { content = "first" });
+            Assert.Equal(HttpStatusCode.Accepted, admitted.StatusCode);
+            var firstTurn = await first.Task.WaitAsync(ct);
+            using var follower = await SendAsync(host.Client, sessionId, "second", new { content = "second", queueIfBusy = true });
+            Assert.Equal(HttpStatusCode.Accepted, follower.StatusCode);
+            using var pending = await SendAsync(host.Client, sessionId, "content", new { content = "content", queueIfBusy = true });
+            var message = (await pending.Content.ReadFromJsonAsync<QueuedMessageReceipt>(PergaJsonDefaults.ApiOptions, ct))!;
+
+            var path = $"/api/v1/sessions/{sessionId}/messages/queue/{message.InputId}/steer";
+            async Task<SteeringResult> SteerAsync(string turnId)
+            {
+                using var response = await host.Client.PostAsJsonAsync(path, new { turnId }, ct);
+                Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+                return (await response.Content.ReadFromJsonAsync<SteeringResult>(PergaJsonDefaults.ApiOptions, ct))!;
+            }
+
+            Assert.Equal("queued", (await SteerAsync(firstTurn)).Delivery);
+            Assert.Equal("queued", (await SteerAsync(firstTurn)).Delivery);
+            Assert.Equal(1, steers);
+            endFirst.TrySetResult();
+            var secondTurn = await second.Task.WaitAsync(ct);
+            Assert.Equal("accepted", (await SteerAsync(secondTurn)).Delivery);
+            Assert.Equal("queued", (await SteerAsync(firstTurn)).Delivery);
+            Assert.Equal("accepted", (await SteerAsync(secondTurn)).Delivery);
+            Assert.Equal(2, steers);
+
+            var page = await kernel.GetSessionItemsAsync(sessionId, ct: ct);
+            Assert.DoesNotContain(page.QueuedMessages, entry => entry.Id == message.InputId);
+            var item = Assert.Single(page.Items, entry => entry.Kind == "user" && entry.Payload.GetProperty("inputId").GetString() == message.InputId);
+            Assert.Equal(secondTurn, item.TurnId);
+            Assert.Equal("delivered", item.InputDelivery);
+            Assert.True(item.Payload.GetProperty("steered").GetBoolean());
+        }
+        finally
+        {
+            endFirst.TrySetResult();
+            endSecond.TrySetResult();
+        }
+
+        await kernel.WaitForTrackIdleAsync(trackId, ct);
+        Assert.Equal(["first", "second"], host.AgentRuntime.ExecutedTurns.Select(execution => execution.Input.Prompt));
+
+        async IAsyncEnumerable<UnifiedAgentEvent> Stream(HarnessLaunchSpec _, TurnInput input,
+            [EnumeratorCancellation] CancellationToken token)
+        {
+            yield return new UnifiedAgentEvent.TextDelta("Running");
+            if (input.Prompt == "first")
+            {
+                first.TrySetResult(input.CorrelationId);
+                await endFirst.Task.WaitAsync(token);
+            }
+            else if (input.Prompt == "second")
+            {
+                second.TrySetResult(input.CorrelationId);
+                await endSecond.Task.WaitAsync(token);
+            }
+            yield return new UnifiedAgentEvent.TurnCompleted(null);
+        }
+    }
+
+    private static Task InsertQueueAsync(ISessionMessageStore store, string sessionId, string? attemptId, string key, string delivery)
+    {
+        var hash = attemptId is null ? Hash(new { version = 1, Content = key, SteerIfRunning = false })
+            : Hash(new { version = 2, AttemptId = attemptId, TurnId = (string?)null, Content = key, Mode = (WorkerMessageMode?)WorkerMessageMode.Queue });
+        return store.InsertAsync(new(key, sessionId, attemptId, "owner:installation", key, hash, null, null, key, delivery, 1,
+            attemptId is null ? "queue" : "worker"), default);
+    }
+
+    private static SqliteConnection OpenDatabase(string directory) =>
+        new($"Data Source={Path.Combine(directory, "perga.db")};Pooling=False;Foreign Keys=True");
+
+    private static string Hash<T>(T request) => Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(request)));
+
+    private static async Task<HttpResponseMessage> SendAsync(HttpClient client, string sessionId, string key, object body)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/sessions/{sessionId}/messages") { Content = JsonContent.Create(body) };
+        request.Headers.Add("Idempotency-Key", key);
+        return await client.SendAsync(request);
+    }
+}

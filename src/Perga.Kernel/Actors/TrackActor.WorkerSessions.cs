@@ -37,12 +37,12 @@ public sealed partial class TrackActor
             ? (0L, activityTurnId is not null, Array.Empty<WorkerActivityEvent>(), string.Empty, false)
             : active.Activity.Read(afterSequence, activityTurnId == active.TurnDto.Id);
 
-        var messages = await _store.WorkerMessages.RecentAsync(session.Id, ct).ConfigureAwait(false);
+        var messages = await Messages.RecentWorkerAsync(session.Id, ct).ConfigureAwait(false);
         var settings = await ReadWorkerSettingsCoreAsync(session, ct).ConfigureAwait(false);
         var configuration = GetWorkerProviderConfigurationCore(session.Id, attempt);
         return new WorkerActivityDto(task, attemptId, phase, active?.AgentSession.SupportsNativeSteer == true,
             asks, sequence, reset, events, messages.Select(message => new WorkerMessageActivity(message.Id, message.AuthorId,
-                message.Content, message.ResultTurnId ?? message.TargetTurnId, message.Delivery, message.CreatedAtMs)).ToArray(), text, truncated,
+                message.Content, message.DeliveredTurnId ?? message.TurnId ?? message.TargetTurnId, message.Delivery, message.CreatedAtMs)).ToArray(), text, truncated,
             settings, active?.ProviderAccepted == true ? active.Settings : null, configuration?.Models.Count > 0,
             configuration?.GetReasoningEfforts(settings.Model) ?? [], attempt?.LastError, configuration,
             _options.WorkerApprovalAuthorizationConfigured);
@@ -83,7 +83,7 @@ public sealed partial class TrackActor
             var next = new WorkerSettings(checked(current.Version + 1), model, request.ReasoningEffort, request.ApprovalMode);
             var evt = SessionUpdatedEvent(session);
             await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
-            var author = restoringApproval ? "owner:verified" : callerSessionId ?? "owner:installation";
+            var author = restoringApproval ? "owner:verified" : callerSessionId ?? InstallationAuthor;
             await _store.WorkerSettings!.WriteAsync(sessionId, next, author, evt, ct).ConfigureAwait(false);
             await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, evt, ct).ConfigureAwait(false);
             return next;
@@ -145,17 +145,20 @@ public sealed partial class TrackActor
         var hash = request.Mode is null
             ? RequestIdentity.Hash(new { version = 1, request.AttemptId, request.TurnId, request.Content, request.AllowQueue })
             : RequestIdentity.Hash(new { version = 2, request.AttemptId, request.TurnId, request.Content, request.Mode });
-        var author = callerSessionId ?? "owner:installation";
+        var author = callerSessionId ?? InstallationAuthor;
 
         var delivery = await EnqueueAsync(async actor =>
         {
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
             RequireWorkerOperatorCore(callerSessionId);
             RequireSessionCore(sessionId);
-            var replay = await _store.WorkerMessages.FindAsync(sessionId, author, request.RequestKey, ct).ConfigureAwait(false);
+            var replay = await Messages.FindAsync(sessionId, worker: true, author, request.RequestKey, ct).ConfigureAwait(false);
             if (replay is not null)
             {
                 RequireMatchingHash(replay.RequestHash, hash);
+                if (replay.Delivery == "dispatching" && _steering.TryGetValue(sessionId, out var inFlight) &&
+                    inFlight.InputId == replay.Id && inFlight.Attempt is Task<WorkerMessageReceipt> sent)
+                    return sent;
                 return Task.FromResult(ToWorkerMessageReceipt(replay));
             }
 
@@ -174,63 +177,69 @@ public sealed partial class TrackActor
             if (active is not null && !native && !explicitQueue && !request.AllowQueue)
                 throw KernelException.Conflict("This provider requires explicit permission to queue the message for the next turn.");
 
-            var message = new WorkerMessage($"inp_{Guid.NewGuid():N}", sessionId, attempt.AttemptId, author,
-                request.RequestKey, hash, request.TurnId, native ? request.TurnId : null, request.Content,
-                native ? "dispatching" : "queued", NowMs());
-            await _store.WorkerMessages.InsertAsync(message, ct).ConfigureAwait(false);
+            var message = new SessionMessage($"inp_{Guid.NewGuid():N}", sessionId, attempt.AttemptId, author,
+                request.RequestKey, hash, request.TurnId, null, request.Content,
+                native ? "dispatching" : "queued", NowMs(), "worker");
+            await Messages.InsertAsync(message, ct).ConfigureAwait(false);
 
             if (!native)
             {
-                attempt.HasQueuedMessages = true;
                 if (active is null && !explicitQueue)
                     attempt.Paused = false;
-                if (active is null && !attempt.Paused)
-                    await ScheduleWorkerMessageCoreAsync(sessionId).ConfigureAwait(false);
+                NotifyQueueChangedCore(sessionId);
+                await SchedulePendingWakeCoreAsync(sessionId).ConfigureAwait(false);
                 return Task.FromResult(ToWorkerMessageReceipt(message));
             }
 
-            var result = new TaskCompletionSource<WorkerMessageReceipt>(TaskCreationOptions.RunContinuationsAsynchronously);
-            var turnCancellation = active!.TurnCts.Token;
-            _ = TrackBackgroundJob(async () =>
-            {
-                try
-                {
-                    using var timeout = CancellationTokenSource.CreateLinkedTokenSource(turnCancellation);
-                    timeout.CancelAfter(TimeSpan.FromSeconds(10));
-                    var outcome = "unknown";
-                    try
-                    {
-                        outcome = turnCancellation.IsCancellationRequested ? "interrupted"
-                            : (await active.AgentSession.SteerAsync(active.TurnDto.Id, message.Content, timeout.Token).ConfigureAwait(false)) switch
-                            {
-                                SteerDelivery.Accepted => "delivered",
-                                SteerDelivery.Declined => "rejected",
-                                _ => "unknown"
-                            };
-                    }
-                    catch (Exception)
-                    {
-                        // The provider may have consumed the message before losing the response.
-                    }
-
-                    var settled = message with { Delivery = outcome };
-                    await _store.WorkerMessages.UpdateAsync(settled, CancellationToken.None).ConfigureAwait(false);
-                    if (outcome == "delivered")
-                    {
-                        var item = JsonHelpers.ToElement(new { content = message.Content, author = message.AuthorId, inputId = message.Id });
-                        active.Activity.Append("steer", item, NowMs());
-                    }
-                    result.TrySetResult(ToWorkerMessageReceipt(settled));
-                }
-                catch (Exception ex)
-                {
-                    result.TrySetException(ex);
-                }
-            });
-            return result.Task;
+            _steering.TryGetValue(sessionId, out var previous);
+            var send = RunWorkerSteerAsync(message, active!, previous.Attempt, _timeProvider.GetTimestamp());
+            _steering[sessionId] = (message.Id, send);
+            _ = TrackBackgroundJob(() => send);
+            return send;
         }, ct).ConfigureAwait(false);
 
         return await delivery.WaitAsync(ct).ConfigureAwait(false);
+    }
+
+    private async Task<WorkerMessageReceipt> RunWorkerSteerAsync(SessionMessage message, ActiveTurnState active, Task? previous, long startedAt)
+    {
+        var ct = _actorShutdownCts.Token;
+        if (previous is not null)
+            await previous.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+
+        var outcome = "unknown";
+        try
+        {
+            var delivery = await AttemptSteeringAsync(message, active.TurnDto.Id, startedAt, ct).ConfigureAwait(false);
+            outcome = delivery switch
+            {
+                SteerDelivery.Accepted => "delivered",
+                SteerDelivery.Declined => "rejected",
+                null => active.Interrupted ? "interrupted" : "rejected",
+                _ => "unknown",
+            };
+        }
+        catch (Exception) when (!ct.IsCancellationRequested)
+        {
+            // The provider may have consumed the message before losing the response.
+        }
+        return await EnqueueAsync(async _ =>
+        {
+            try
+            {
+                var saved = await SettleSteerCoreAsync(message, outcome, ct).ConfigureAwait(false);
+                if (saved.Delivery == "delivered")
+                    active.Activity.Append("steer",
+                        JsonHelpers.ToElement(new { content = message.Content, author = message.AuthorId, inputId = message.Id }), NowMs());
+                return ToWorkerMessageReceipt(saved);
+            }
+            finally
+            {
+                if (_steering.TryGetValue(message.SessionId, out var latest) && latest.InputId == message.Id)
+                    _steering.Remove(message.SessionId);
+                await SchedulePendingWakeCoreAsync(message.SessionId).ConfigureAwait(false);
+            }
+        }, ct).ConfigureAwait(false);
     }
 
     public Task InterruptWorkerAsync(string sessionId, string attemptId, string turnId, string? callerSessionId, CancellationToken ct) =>
@@ -311,22 +320,12 @@ public sealed partial class TrackActor
             throw KernelException.Conflict("The Worker turn no longer accepts completion.");
     }
 
-    private async Task ScheduleWorkerMessageCoreAsync(string sessionId)
+    private async Task ScheduleWorkerMessageCoreAsync(SessionMessage next, ActiveAttemptState attempt)
     {
-        if (!_sessions.TryGetValue(sessionId, out var session) || session.BoundAttemptId is not { } attemptId ||
-            !_activeAttempts.TryGetValue(attemptId, out var attempt) || !attempt.HasQueuedMessages || attempt.Paused ||
-            !string.Equals(attempt.AttemptDto.Status, "running", StringComparison.OrdinalIgnoreCase) || attempt.Settling || _activeTurns.ContainsKey(sessionId) ||
-            _compactingSessions.Contains(sessionId) || _reservedWakeSessions.ContainsKey(sessionId) || HoldsDurableSlot(session))
+        var sessionId = next.SessionId;
+        if (!await Messages.TransitionAsync(next with { Delivery = "dispatching" }, "queued",
+                CancellationToken.None).ConfigureAwait(false))
             return;
-
-        var next = await _store.WorkerMessages.NextAsync(sessionId, CancellationToken.None).ConfigureAwait(false);
-        if (next is null)
-        {
-            attempt.HasQueuedMessages = false;
-            return;
-        }
-
-        await _store.WorkerMessages.UpdateAsync(next with { Delivery = "dispatching" }, CancellationToken.None).ConfigureAwait(false);
         var reservation = Guid.NewGuid();
         _reservedWakeSessions.Add(sessionId, reservation);
         _ = TrackBackgroundJob(async () =>
@@ -343,16 +342,16 @@ public sealed partial class TrackActor
             }
             catch (OperationCanceledException) when (attempt.Cts.IsCancellationRequested || _actorShutdownCts.IsCancellationRequested)
             {
-                await _store.WorkerMessages.UpdateAsync(next with { Delivery = "interrupted" }, CancellationToken.None).ConfigureAwait(false);
+                await Messages.TransitionAsync(next with { Delivery = "interrupted" }, "dispatching", CancellationToken.None).ConfigureAwait(false);
             }
             catch (KernelException ex) when (ex.Code == KernelErrorCode.Conflict)
             {
-                await _store.WorkerMessages.UpdateAsync(next with { Delivery = "interrupted" }, CancellationToken.None).ConfigureAwait(false);
+                await Messages.TransitionAsync(next with { Delivery = "interrupted" }, "dispatching", CancellationToken.None).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
                 error = ex.Message;
-                await _store.WorkerMessages.UpdateAsync(next with { Delivery = "unknown" }, CancellationToken.None).ConfigureAwait(false);
+                await Messages.TransitionAsync(next with { Delivery = "unknown" }, "dispatching", CancellationToken.None).ConfigureAwait(false);
             }
             finally
             {
@@ -363,14 +362,14 @@ public sealed partial class TrackActor
                             _reservedWakeSessions.Remove(sessionId);
                         attempt.LastError = error;
                         if (shouldContinue)
-                            await ScheduleWorkerMessageCoreAsync(sessionId).ConfigureAwait(false);
+                            await SchedulePendingWakeCoreAsync(sessionId).ConfigureAwait(false);
                     }, CancellationToken.None).ConfigureAwait(false);
             }
         });
     }
 
-    private static WorkerMessageReceipt ToWorkerMessageReceipt(WorkerMessage message) =>
-        new(message.ResultTurnId ?? message.TargetTurnId, message.Delivery, message.Id);
+    private static WorkerMessageReceipt ToWorkerMessageReceipt(SessionMessage message) =>
+        new(message.DeliveredTurnId ?? message.TurnId ?? message.TargetTurnId, message.Delivery, message.Id);
 
     private void PublishTurnActivity(ActiveTurnState active, string kind, JsonElement payload, long now)
     {

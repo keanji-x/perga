@@ -30,31 +30,42 @@ public sealed partial class TrackActor
             var session = RequireSessionCore(sessionId);
             if (session.BoundAttemptId is not null)
                 throw KernelException.InvalidArgument("Worker messages require attemptId and the active turnId when steering.");
-            if (_queuedMessageRequests.TryGetValue((sessionId, request.IdempotencyKey), out var prior))
+            var prior = await Messages.FindAsync(sessionId, worker: false, InstallationAuthor, request.IdempotencyKey, ct)
+                .ConfigureAwait(false);
+            if (prior is not null)
             {
-                RequireMatchingHash(prior.Hash, hash);
-                if (!request.QueueIfBusy || request.SteerIfRunning)
-                    throw KernelException.Conflict("This request key was already used to queue a message.");
-                return new(null, null, true, new(sessionId, prior.Id));
+                RequireMatchingHash(prior.RequestHash, hash);
+                if (prior.Kind == "queue" && request.QueueIfBusy && !request.SteerIfRunning)
+                    return new(null, null, true, new(sessionId, prior.Id, Delivery: prior.Delivery));
+                if (prior.Kind == "steer" && prior.TargetTurnId is { } targetId)
+                {
+                    var turn = _activeTurns.TryGetValue(sessionId, out var current) && current.TurnDto.Id == targetId
+                        ? current.TurnDto : (await _store.ListSessionTurnsAsync(sessionId, ct).ConfigureAwait(false))
+                            .SingleOrDefault(turn => turn.Id == targetId);
+                    return new(null, turn ?? throw KernelException.Conflict("The target turn is no longer available."), true);
+                }
+                throw KernelException.Conflict("This request key was already used by another message operation.");
             }
 
             RequireSessionDispatchAvailableCore(sessionId);
-            if (request.SteerIfRunning && (_activeTurns.ContainsKey(sessionId) ||
-                _idempotencyTurns.ContainsKey((sessionId, request.IdempotencyKey))))
-                return new(null, null, false);
+            if (request.SteerIfRunning && _activeTurns.TryGetValue(sessionId, out var active))
+                return new(null, active.TurnDto, false);
             if (_idempotencyTurns.ContainsKey((sessionId, request.IdempotencyKey)))
                 throw KernelException.Conflict("This request key was already used by a live turn.");
-            if (_activeTurns.ContainsKey(sessionId) || _compactingSessions.Contains(sessionId) || _reservedWakeSessions.ContainsKey(sessionId) || HoldsDurableSlot(session) || HasPendingUserMessagesCore(sessionId))
+            if (_activeTurns.ContainsKey(sessionId) || _compactingSessions.Contains(sessionId) || _reservedWakeSessions.ContainsKey(sessionId) || HoldsDurableSlot(session) ||
+                _steering.ContainsKey(sessionId) || await Messages.NextAsync(sessionId, null, ct).ConfigureAwait(false) is not null)
             {
                 if (!request.QueueIfBusy || session.Status == "unknown")
                     throw KernelException.Conflict($"Session '{sessionId}' already has an active or unresolved turn.");
 
                 RequireWorkspaceReadyCore();
                 RequireDispatchWorkspace(session);
-                var message = AddQueuedMessageCore(sessionId, request, hash);
-                SchedulePendingWakeCore(sessionId);
+                var message = new SessionMessage($"inp_{Guid.NewGuid():N}", sessionId, null, InstallationAuthor,
+                    request.IdempotencyKey, hash, null, null, request.Content, "queued", NowMs(), "queue");
+                await Messages.InsertAsync(message, ct).ConfigureAwait(false);
+                await SchedulePendingWakeCoreAsync(sessionId).ConfigureAwait(false);
                 NotifyQueueChangedCore(sessionId);
-                return new(null, null, false, new(sessionId, message.Id));
+                return new(null, null, false, new(sessionId, message.Id, Delivery: message.Delivery));
             }
 
             session = session with { Status = "queued", UpdatedAtMs = NowMs() };
@@ -67,11 +78,9 @@ public sealed partial class TrackActor
             return new(input.Receipt, null, false);
         }, ct).ConfigureAwait(false);
 
-        if (result.Receipt is not null || result.QueueReceipt is not null)
-            return result;
-
-        var steered = await SendMessageAsync(sessionId, request, ct, requireActiveTurn: true).ConfigureAwait(false);
-        return new(null, steered, false);
+        if (!result.Replay && result.SteeredTurn is { } turn)
+            await AcceptSteeringAsync(sessionId, turn.Id, request.Content, request.IdempotencyKey, ct, hash).ConfigureAwait(false);
+        return result;
     }
 
     public Task<(SessionCreationReceipt Receipt, bool Replay)> CreateSessionWithReceiptAsync(
@@ -152,7 +161,7 @@ public sealed partial class TrackActor
 
             _sessions[sessionId] = updated;
             ReleaseSessionResumeCore(sessionId);
-            SchedulePendingWakeCore(sessionId);
+            await SchedulePendingWakeCoreAsync(sessionId).ConfigureAwait(false);
             NotifyQueueChangedCore(sessionId);
             return input.Receipt with { ResolvedAtMs = updated.UpdatedAtMs };
         }, ct);

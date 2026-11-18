@@ -15164,6 +15164,16 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Replay the original steering request with its content and target turn.",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            }
           }
         ],
         "requestBody": {
@@ -15208,7 +15218,8 @@
                       "enum": [
                         "accepted",
                         "queued",
-                        "unconfirmed"
+                        "unconfirmed",
+                        "rejected"
                       ]
                     }
                   }
@@ -15230,7 +15241,7 @@
     },
     "/api/v1/sessions/{sessionId}/messages/queue/{inputId}": {
       "delete": {
-        "summary": "Remove a waiting or unconfirmed message",
+        "summary": "Withdraw a waiting message from a conversation or Worker queue",
         "parameters": [
           {
             "name": "sessionId",
@@ -15251,13 +15262,13 @@
         ],
         "responses": {
           "204": {
-            "description": "Removed"
+            "description": "Withdrawn or already withdrawn"
           },
           "404": {
             "description": "Session or message not found"
           },
           "409": {
-            "description": "Steering attempt in progress"
+            "description": "Message has been claimed or is no longer waiting"
           }
         }
       }
@@ -15321,7 +15332,8 @@
                       "enum": [
                         "accepted",
                         "queued",
-                        "unconfirmed"
+                        "unconfirmed",
+                        "rejected"
                       ]
                     }
                   }
@@ -25605,6 +25617,19 @@
             "enum": [
               true
             ]
+          },
+          "delivery": {
+            "type": "string",
+            "description": "Current persisted delivery. The queued flag identifies the original submission response.",
+            "enum": [
+              "queued",
+              "dispatching",
+              "delivered",
+              "rejected",
+              "unknown",
+              "interrupted",
+              "withdrawn"
+            ]
           }
         }
       },
@@ -26345,8 +26370,13 @@
               "delivered",
               "rejected",
               "unknown",
-              "interrupted"
+              "interrupted",
+              "withdrawn"
             ]
+          },
+          "messageId": {
+            "type": "string",
+            "description": "Stable identity shared with the pending message and its transcript item."
           },
           "inputId": {
             "type": "string"

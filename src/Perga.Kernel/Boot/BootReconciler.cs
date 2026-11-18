@@ -93,6 +93,10 @@ public sealed class BootReconciler : IBootReconciler
         foreach (var (trackId, input) in queuedInputs)
             _actorRegistry.GetOrActivate(trackId).DispatchAcceptedInput(input);
 
+        if (_store.SessionMessages is { } messages)
+            foreach (var (trackId, sessionId) in await messages.ListRecoverableQueuesAsync(ct).ConfigureAwait(false))
+                await _actorRegistry.GetOrActivate(trackId).RecoverQueuedMessagesAsync(sessionId, ct).ConfigureAwait(false);
+
         foreach (var mail in pendingMail)
             await _actorRegistry.GetOrActivate(mail.ToTrackId).WakeForMailAsync(mail, ct, recovering: true).ConfigureAwait(false);
 

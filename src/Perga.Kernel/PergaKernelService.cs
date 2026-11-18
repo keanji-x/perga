@@ -94,9 +94,10 @@ public interface IPergaKernel : IAsyncDisposable
     Task InterruptWorkerAsync(string sessionId, string attemptId, string turnId, McpSessionPrincipal? caller, CancellationToken ct);
     Task<WorkerSettings> UpdateWorkerSettingsAsync(string sessionId, UpdateWorkerSettingsRequest request, McpSessionPrincipal? caller,
         CancellationToken ct, bool verifiedApprovalOwner = false);
-    Task<SteeringResult> SteerQueuedMessageAsync(string sessionId, string inputId, string turnId, CancellationToken ct);
-    Task RemoveQueuedMessageAsync(string sessionId, string inputId, CancellationToken ct);
-    Task<SteeringResult> SteerMessageAsync(string sessionId, string turnId, string content, CancellationToken ct);
+    Task<SteeringResult> SteerQueuedMessageAsync(string sessionId, string inputId, string turnId, CancellationToken ct,
+        McpSessionPrincipal? caller = null, string? attemptId = null);
+    Task RemoveQueuedMessageAsync(string sessionId, string inputId, CancellationToken ct, McpSessionPrincipal? caller = null, string? attemptId = null);
+    Task<SteeringResult> SteerMessageAsync(string sessionId, string turnId, string content, CancellationToken ct, string? requestKey = null);
 
     Task<SessionTurnDto> SendMessageAsync(string sessionId, SendMessageRequest req, CancellationToken ct = default);
     Task InterruptSessionAsync(string sessionId, CancellationToken ct = default);
@@ -1177,22 +1178,24 @@ public sealed partial class PergaKernelService : IPergaKernel
         return await Actors.GetOrActivate(trackId).UpdateWorkerSettingsAsync(sessionId, request, caller?.SessionId, ct, verifiedApprovalOwner).ConfigureAwait(false);
     }
 
-    public async Task<SteeringResult> SteerQueuedMessageAsync(string sessionId, string inputId, string turnId, CancellationToken ct)
+    public async Task<SteeringResult> SteerQueuedMessageAsync(string sessionId, string inputId, string turnId, CancellationToken ct,
+        McpSessionPrincipal? caller = null, string? attemptId = null)
     {
-        var trackId = await ResolveTrackIdForSessionAsync(sessionId, ct).ConfigureAwait(false);
-        return await Actors.GetOrActivate(trackId).SteerQueuedMessageAsync(sessionId, inputId, turnId, ct).ConfigureAwait(false);
+        var trackId = caller?.TrackId ?? await ResolveTrackIdForSessionAsync(sessionId, ct).ConfigureAwait(false);
+        return await Actors.GetOrActivate(trackId).SteerQueuedMessageAsync(sessionId, inputId, turnId, ct, caller?.SessionId, attemptId).ConfigureAwait(false);
     }
 
-    public async Task RemoveQueuedMessageAsync(string sessionId, string inputId, CancellationToken ct)
+    public async Task RemoveQueuedMessageAsync(string sessionId, string inputId, CancellationToken ct,
+        McpSessionPrincipal? caller = null, string? attemptId = null)
     {
-        var trackId = await ResolveTrackIdForSessionAsync(sessionId, ct).ConfigureAwait(false);
-        await Actors.GetOrActivate(trackId).RemoveQueuedMessageAsync(sessionId, inputId, ct).ConfigureAwait(false);
+        var trackId = caller?.TrackId ?? await ResolveTrackIdForSessionAsync(sessionId, ct).ConfigureAwait(false);
+        await Actors.GetOrActivate(trackId).RemoveQueuedMessageAsync(sessionId, inputId, ct, caller?.SessionId, attemptId).ConfigureAwait(false);
     }
 
-    public async Task<SteeringResult> SteerMessageAsync(string sessionId, string turnId, string content, CancellationToken ct)
+    public async Task<SteeringResult> SteerMessageAsync(string sessionId, string turnId, string content, CancellationToken ct, string? requestKey = null)
     {
         var trackId = await ResolveTrackIdForSessionAsync(sessionId, ct).ConfigureAwait(false);
-        return await Actors.GetOrActivate(trackId).SteerMessageAsync(sessionId, turnId, content, ct).ConfigureAwait(false);
+        return await Actors.GetOrActivate(trackId).SteerMessageAsync(sessionId, turnId, content, ct, requestKey).ConfigureAwait(false);
     }
 
     public async Task<SessionTurnDto> SendMessageAsync(

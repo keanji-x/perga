@@ -142,12 +142,13 @@ public sealed class DurableSessionInputTests
                     """
                     INSERT INTO session_turns (id, session_id, turn_index, trigger_kind, status, accepted_at_ms, provider)
                     VALUES ('fixture-turn', @SessionId, 1, 'user', @TurnStatus, 1, 'codex');
-                    INSERT INTO session_inputs (id, session_id, turn_id, author_id, request_key, request_hash, content, accepted_at_ms, delivery_state)
-                    VALUES ('fixture-input', @SessionId, 'fixture-turn', 'owner:installation', 'fixture-key', 'fixture-hash', 'Recover me', 1, @State);
-                    INSERT INTO session_items (session_id, turn_id, kind, payload_json, created_at_ms, accepted_input_id)
-                    VALUES (@SessionId, 'fixture-turn', 'user', '{}', 1, 'fixture-input');
+                    INSERT INTO session_messages (id, session_id, source, kind, turn_id, author_id, request_key, request_hash, content, created_at_ms, delivery, delivered_turn_id)
+                    VALUES ('fixture-input', @SessionId, 'session', 'input', 'fixture-turn', 'owner:installation', 'fixture-key',
+                            'fixture-hash', 'Recover me', 1, @State, CASE WHEN @State = 'delivered' THEN 'fixture-turn' END);
+                    INSERT INTO session_items (session_id, turn_id, kind, payload_json, created_at_ms, message_ordinal)
+                    VALUES (@SessionId, 'fixture-turn', 'user', '{}', 1, last_insert_rowid());
                     UPDATE agent_sessions SET status = @TurnStatus, native_thread_id = 'old-thread' WHERE id = @SessionId;
-                    """, new { SessionId = sessionId, TurnStatus = turnStatus, State = state });
+                    """, new { SessionId = sessionId, TurnStatus = turnStatus, State = state == "accepted" ? "queued" : state });
             }
 
             await using var reopened = new PergaHostTestCluster(directory.FullName);
@@ -228,12 +229,13 @@ public sealed class DurableSessionInputTests
 
             await using var check = new SqliteConnection($"Data Source={dbPath};Pooling=False;Foreign Keys=True");
             await check.OpenAsync();
-            var itemId = await check.ExecuteScalarAsync<long>("SELECT id FROM session_items WHERE accepted_input_id = @InputId;",
+            var itemId = await check.ExecuteScalarAsync<long>("SELECT i.id FROM session_items i JOIN session_messages m ON m.ordinal = i.message_ordinal WHERE m.id = @InputId;",
                 new { receipt.InputId });
             Assert.Equal(1002, itemId);
             await Assert.ThrowsAsync<SqliteException>(() => check.ExecuteAsync(
                 """
-                UPDATE session_items SET turn_id = 'trn_000002_fixture' WHERE accepted_input_id = @InputId;
+                UPDATE session_items SET turn_id = 'trn_000002_fixture'
+                WHERE message_ordinal = (SELECT ordinal FROM session_messages WHERE id = @InputId);
                 """, new { receipt.InputId }));
         }
         finally
@@ -285,7 +287,7 @@ public sealed class DurableSessionInputTests
     }
 
     [Fact]
-    public async Task SilentSteeringDoesNotResendAndAnEndedTargetQueuesForTheNextTurn()
+    public async Task SilentSteeringDoesNotResendAndAnEndedTargetIsRejected()
     {
         await using var host = new PergaHostTestCluster();
         var (trackId, sessionId) = await host.CreateTrackAsync();
@@ -344,14 +346,11 @@ public sealed class DurableSessionInputTests
                 new { turnId = "invented-turn", content = "must not run" });
             Assert.Equal(HttpStatusCode.NotFound, invalid.StatusCode);
 
-            var fallback = await SteerAsync("queued after completion");
-            Assert.Equal("queued", fallback.Delivery);
+            using var stale = await host.Client.PostAsJsonAsync(messages + "/steer",
+                new { turnId = initial.TurnId, content = "Do not retarget" });
+            Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode);
             await kernel.WaitForTrackIdleAsync(trackId);
-            Assert.Equal(new[] { "initial", "queued after completion" },
-                host.AgentRuntime.ExecutedTurns.Select(execution => execution.Input.Prompt));
-            var items = await kernel.GetSessionItemsAsync(sessionId);
-            Assert.Contains(items.Items, item => item.Kind == "user"
-                && item.Payload.TryGetProperty("inputId", out var id) && id.GetString() == fallback.InputId);
+            Assert.Single(host.AgentRuntime.ExecutedTurns);
         }
         finally
         {
@@ -453,13 +452,16 @@ public sealed class DurableSessionInputTests
             Assert.Equal(supportsSteering ? "unconfirmed" : "queued", delivered.Delivery);
             await followUpSending.Task.WaitAsync(TimeSpan.FromSeconds(5));
             var beforeProvider = await ReadPageAsync();
-            Assert.Contains(beforeProvider.QueuedMessages, message => message.Id == second.MessageId && message.State == "sending");
+            Assert.DoesNotContain(beforeProvider.QueuedMessages, message => message.Id == second.MessageId);
+            Assert.Contains(second.MessageId, beforeProvider.QueueHandoffIds);
+            using var tooLate = await host.Client.DeleteAsync($"{messages}/queue/{second.InputId}");
+            Assert.Equal(HttpStatusCode.Conflict, tooLate.StatusCode);
             Assert.Equal("sending", Assert.Single(beforeProvider.Items, item => item.Kind == "user" &&
                 item.Payload.TryGetProperty("inputId", out var id) && id.GetString() == second.MessageId).MessageStatus);
             allowProviderOutput.TrySetResult();
             await followUpStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
             var duringFollowUp = await ReadPageAsync();
-            Assert.Contains(duringFollowUp.QueuedMessages, message => message.Id == second.MessageId && message.State == "processing");
+            Assert.DoesNotContain(duringFollowUp.QueuedMessages, message => message.Id == second.MessageId);
             Assert.Equal("processing", Assert.Single(duringFollowUp.Items, item => item.Kind == "user" &&
                 item.Payload.TryGetProperty("inputId", out var id) && id.GetString() == second.MessageId).MessageStatus);
             endFollowUp.TrySetResult();
@@ -474,10 +476,11 @@ public sealed class DurableSessionInputTests
             {
                 Assert.Equal("unconfirmed", Assert.Single(final.QueuedMessages).State);
                 using var removed = await host.Client.DeleteAsync($"{messages}/queue/{first.InputId}");
-                Assert.Equal(HttpStatusCode.NoContent, removed.StatusCode);
-                final = await ReadPageAsync();
+                Assert.Equal(HttpStatusCode.Conflict, removed.StatusCode);
+                Assert.Equal("unconfirmed", Assert.Single((await ReadPageAsync()).QueuedMessages).State);
             }
-            Assert.Empty(final.QueuedMessages);
+            else
+                Assert.Empty(final.QueuedMessages);
         }
         finally
         {

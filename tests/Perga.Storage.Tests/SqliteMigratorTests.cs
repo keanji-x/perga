@@ -85,7 +85,9 @@ public sealed class SqliteMigratorTests
                 "terminals",
                 "events",
                 "worker_messages",
-                "worker_settings"
+                "worker_settings",
+                "session_messages",
+                "session_message_steers"
             ];
 
             Assert.Equal(expectedTables.OrderBy(static x => x), tables.OrderBy(static x => x));
@@ -118,7 +120,12 @@ public sealed class SqliteMigratorTests
                 "idx_events_created",
                 "idx_session_items_blob_ref",
                 "idx_attempts_gate_blob_ref",
-                "idx_worker_messages_queue"
+                "idx_worker_messages_queue",
+                "idx_session_messages_queue",
+                "idx_session_messages_boot",
+                "idx_session_messages_attempt",
+                "idx_session_messages_input_turn",
+                "idx_items_message_ordinal"
             ];
 
             Assert.Equal(expectedIndexes.OrderBy(static x => x), indexes.OrderBy(static x => x));
