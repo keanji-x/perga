@@ -1,8 +1,5 @@
 using System.Text.Json;
-using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
-using Perga.Contracts;
-using Perga.Kernel.Events;
 
 namespace Perga.Host.Serialization;
 
@@ -46,71 +43,6 @@ public static class PergaJsonDefaults
         };
         options.Converters.Add(new FlexibleSnakeCaseEnumConverterFactory());
         return options;
-    }
-
-    /// <summary>
-    /// Ensures nested <c>EventEnvelopeDto.Payload</c> enum values (such as <c>TaskDto.access</c>)
-    /// are emitted strictly in <c>snake_case</c> over <c>WS /api/v1/events</c> to match REST 1:1.
-    /// </summary>
-    public static EventEnvelopeDto NormalizeEventEnvelope(EventEnvelopeDto envelope)
-    {
-        if (!string.Equals(envelope.Kind, KernelEventKinds.TaskUpdated, StringComparison.Ordinal) ||
-            envelope.Payload.ValueKind != JsonValueKind.Object)
-        {
-            return envelope;
-        }
-
-        var node = JsonNode.Parse(envelope.Payload.GetRawText());
-        if (node is not JsonObject rootObj)
-        {
-            return envelope;
-        }
-
-        var mutated = false;
-        if (rootObj["task"] is JsonObject singleTask)
-        {
-            mutated |= NormalizeTaskNodeEnums(singleTask);
-        }
-
-        if (rootObj["tasks"] is JsonArray tasksArray)
-        {
-            foreach (var item in tasksArray)
-            {
-                if (item is JsonObject taskObj)
-                {
-                    mutated |= NormalizeTaskNodeEnums(taskObj);
-                }
-            }
-        }
-
-        if (!mutated)
-        {
-            return envelope;
-        }
-
-        using var doc = JsonDocument.Parse(rootObj.ToJsonString());
-        return envelope with { Payload = doc.RootElement.Clone() };
-    }
-
-    private static bool NormalizeTaskNodeEnums(JsonObject taskObj)
-    {
-        if (taskObj["access"] is JsonValue accessVal && accessVal.TryGetValue<string>(out var rawAccess))
-        {
-            var normalized = rawAccess switch
-            {
-                "readOnly" or "ReadOnly" or "READ_ONLY" => "read_only",
-                "readWrite" or "ReadWrite" or "READ_WRITE" => "read_write",
-                _ => rawAccess
-            };
-
-            if (!string.Equals(rawAccess, normalized, StringComparison.Ordinal))
-            {
-                taskObj["access"] = normalized;
-                return true;
-            }
-        }
-
-        return false;
     }
 }
 

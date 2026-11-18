@@ -1,5 +1,4 @@
 using System.Text.Json;
-using Perga.Contracts;
 using Perga.Kernel.Actors;
 using Perga.Kernel.Internal;
 using Perga.Kernel.Ports;
@@ -37,51 +36,24 @@ public sealed class BootReconciler : IBootReconciler
         var affectedTrackIds = new HashSet<string>(StringComparer.Ordinal);
         var discardedLeases = 0;
 
-        // 1. Scan surviving in-flight task attempts before DB marks them interrupted so we can discard surviving workspace leases.
-        var allTracks = await _store.ListTracksAsync(areaId: null, includeClosed: true, ct).ConfigureAwait(false);
-        foreach (var track in allTracks)
+        // Recover leases before marking the owning attempts interrupted.
+        var leases = await _store.ListInFlightAttemptLeasesAsync(ct).ConfigureAwait(false);
+        foreach (var trackLeases in leases.GroupBy(lease => lease.TrackId))
         {
-            var aggregate = await _store.LoadTrackAggregateAsync(track.Id, ct).ConfigureAwait(false);
-            if (aggregate is null)
+            var track = await _store.GetTrackAsync(trackLeases.Key, ct).ConfigureAwait(false);
+            if (track is null)
             {
                 continue;
             }
 
-            foreach (var session in aggregate.Sessions)
+            foreach (var entry in trackLeases)
             {
-                if (string.Equals(session.Status, "running", StringComparison.OrdinalIgnoreCase))
+                if (entry.WorkspaceLease.ValueKind == JsonValueKind.Object &&
+                    TryParseAttemptLease(entry.WorkspaceLease, track.WorkspaceDriver, entry.AttemptId, track.Cwd) is { } lease)
                 {
-                    affectedTrackIds.Add(track.Id);
-                }
-            }
-
-            foreach (var task in aggregate.Tasks)
-            {
-                if (task.Status is TaskRunStatus.Running or TaskRunStatus.Verifying)
-                {
-                    affectedTrackIds.Add(track.Id);
-                }
-
-                var attempts = await _store.ListAttemptsForTaskAsync(task.Id, ct).ConfigureAwait(false);
-                foreach (var attempt in attempts)
-                {
-                    if (!IsInFlightAttemptStatus(attempt.Status))
-                    {
-                        continue;
-                    }
-
-                    affectedTrackIds.Add(track.Id);
-                    if (attempt.WorkspaceLease is { ValueKind: JsonValueKind.Object } leaseElem)
-                    {
-                        var lease = TryParseAttemptLease(leaseElem, track.WorkspaceDriver, attempt.AttemptId, track.Cwd);
-                        if (lease is not null)
-                        {
-                            var driver = _workspaceDrivers.GetRequired(lease.DriverId);
-                            await driver.SettleAttemptLeaseAsync(lease, AttemptLeaseDisposition.Discard, ct)
-                                .ConfigureAwait(false);
-                            discardedLeases++;
-                        }
-                    }
+                    var driver = _workspaceDrivers.GetRequired(lease.DriverId);
+                    await driver.SettleAttemptLeaseAsync(lease, AttemptLeaseDisposition.Discard, ct).ConfigureAwait(false);
+                    discardedLeases++;
                 }
             }
         }
@@ -137,12 +109,6 @@ public sealed class BootReconciler : IBootReconciler
         }
 
         return new BootReconcileResult(orderedAffected, discardedLeases, wokenCount);
-    }
-
-    private static bool IsInFlightAttemptStatus(string? status)
-    {
-        return string.Equals(status, "Running", StringComparison.OrdinalIgnoreCase) ||
-               string.Equals(status, "Verifying", StringComparison.OrdinalIgnoreCase);
     }
 
     private static AttemptWorkspaceLease? TryParseAttemptLease(

@@ -1295,19 +1295,17 @@ CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at_ms);
   2. **热关系列最小化 + JSON `"v": 1` 读取期 Upcaster**：仅对用于外键、索引或调度的字段建模为物理列；易演进的扩展属性（`workspace_spec_json`、`template_state_json`、`meta_json`、`gate_verdict_json`、`payload_json`）在应用层统一携带 `"v": 1` 并通过 C# 读取期 Upcaster 兼容旧版缺省字段，**日常新增可选字段 0 `ALTER TABLE` 成本**。
   3. **默认只增不毁与外键级联索引强制**：普通版本升级优先采用纯增列（`ADD COLUMN ... DEFAULT`）或新增索引；若必须重建表，必须遵循 `PRAGMA foreign_keys = OFF` -> 事务重建 -> `PRAGMA foreign_key_check`；**每张引用父表带 `ON DELETE CASCADE` 的子表均已强制配备子表外键索引**，防止删除 Track/Turn 时触发全表扫描锁死写协程。
 
-### 3.2 防无序膨胀与确定性垃圾回收（`SqliteMaintenance`）
-`Perga.Host` 的后台定时维护服务（默认每 `6 小时` 或空闲时，亦可手动触发）调用 `ITrackStore.RunMaintenancePassAsync(nowMs, ct)`，按以下 5 条确定性规则控制数据库物理体积与 B-Tree 碎片：
+### 3.2 存储保留与回收
 
-1. **64 KB 大对象外部冷剥离（拒绝多 MB 日志写进 SQLite B-Tree）**：
-   - `RecordTurnAndItemsAsync` 与 `UpsertTaskAndAttemptAsync` 在写入前检测：`session_items.payload_json`（如超大 `tool_result`）或 `task_attempts.gate_verdict_json` 超过 **64 KB** 时，自动将其 Zstd 压缩写入 `{dataDir}/blobs/{trackId}/{sha256}.zst`，库内只保留 `{ "v": 1, "blobRef": "blobs/...", "bytes": ..., "preview": "前 2KB..." }`；删除 Track 时 O(1) 同步删除目录 `{dataDir}/blobs/{trackId}`。
-2. **`events` 滑窗环形裁剪**：
-   - 保留窗口上限：**最近 `7 天` 且最多 `50,000` 条**；超出部分按每批 `1,000` 行渐进 `DELETE`（不长事务堵读写）；更早断线的 WS 客户端由 `/api/v1/events` 契约直接返回 `_snapshot_required` 刷新首屏即可。
-3. **`report_revisions` 里程碑抽稀**：
-   - 活跃 Track 默认完整保留**最近 `100` 个修订版**；更早历史（`doc_rev <= latest - 100`）或已关闭超过 `14 天` 的 Track，自动抽稀为仅保留 `doc_rev % 10 == 0` 的里程碑版本 + 初始版本与最新版本。
-4. **已换页旧 Epoch 与终态契约 `Subagent` 条目瘦身**：
-   - 对已经历过宿主换页的会话（`session_turns.epoch < agent_sessions.epoch - 1`）以及已完结超过 `14 天` 的契约协作会话（`bound_attempt_id IS NOT NULL`）：自动删除历史 `kind = 'thinking'` 过程块，并将超 `4 KB` 的 `tool_result` 替换为精简墓碑（保留完整 `user`、`assistant_text` 与工具调用索引），同时清理对应的冷 Blob 引用。
-5. **物理文件真实缩容（`INCREMENTAL auto_vacuum`）**：
-   - 每次 GC 批次结束后，仅当空闲页达阈值时执行 `PRAGMA incremental_vacuum(500);`（将释放页面真实截断归还给操作系统）并执行 `PRAGMA wal_checkpoint(TRUNCATE);`，确保 `.db` 与 `.db-wal` 长期运行也不会无限单调膨胀。
+Host 沿用默认每 6 小时的 SQLite 维护服务。维护通过单写通道提交小批次，每批提交后让其他写入继续。所有保留判断使用现有状态与时间。
+
+- 任务事件通知客户端重读详情。命令任务和验证步骤每路最多捕获末尾 4,096 个 UTF-16 码元，旧验证日志保留结果、步骤和退出信息。Task、Attempt、Worker 消息及幂等回执保留原有身份。
+- 事件保留窗口同时受 7 天、50,000 行和 32 MiB 的事件 payload 预算约束。裁剪从事件序号最早端开始，断线客户端使用已有的快照恢复流程。
+- Report 保留当前正文与初版。活跃 Track 保留最近 100 版，关闭满 14 天后保留最近 10 版。复用当前历史快照格式。
+- 已完成 turn 的思考和大型工具输出在 14 天后缩减。旧 Epoch 仍可提前缩减。用户输入、回复正文和未决 turn 继续可用。
+- 冷 Blob 的结果引用随关系数据保存。文件回收在写通道中复查最终引用，孤儿可在后续维护中回收。维护使用增量 vacuum 与 WAL checkpoint 归还磁盘页。
+
+关闭 Track 提供报告历史的保留信号。Workspace 和会话运行资源仍遵循各自的生命周期。用真实存储和 Host 验证活跃 Worker、关闭和重开、历史回执，以及部分维护后重新执行。
 
 ---
 

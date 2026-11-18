@@ -1827,13 +1827,7 @@ public sealed partial class TrackActor : IAsyncDisposable
         var committedCt = _actorShutdownCts.Token;
         await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, reportEvt, committedCt).ConfigureAwait(false);
 
-        var taskEvt = new EventEnvelopeDto(
-            EventId: null,
-            AreaId: _track.AreaId,
-            TrackId: TrackId,
-            Kind: KernelEventKinds.TaskUpdated,
-            Payload: JsonHelpers.ToElement(new { tasks = _tasks }),
-            CreatedAtMs: now);
+        var taskEvt = CreateTaskUpdatedEventCore(now);
         await _store.AppendEventAsync(taskEvt, committedCt).ConfigureAwait(false);
         await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, taskEvt, committedCt).ConfigureAwait(false);
 
@@ -1927,8 +1921,7 @@ public sealed partial class TrackActor : IAsyncDisposable
                 .ConfigureAwait(false);
             attempt = reservation with { SessionId = subagent?.Id, WorkspaceLease = JsonHelpers.ToElement(lease) };
             runningTask = runningTask with { StatusDetail = null };
-            var taskEvent = new EventEnvelopeDto(null, _track.AreaId, TrackId, KernelEventKinds.TaskUpdated,
-                JsonHelpers.ToElement(new { task = runningTask, attempt }), now);
+            var taskEvent = CreateTaskUpdatedEventCore(now);
             await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
             await _store.UpsertTaskAndAttemptAsync(runningTask, attempt, null, taskEvent, ct, subagent, sessionEvent).ConfigureAwait(false);
         }
@@ -1962,11 +1955,12 @@ public sealed partial class TrackActor : IAsyncDisposable
             _ = TrackBackgroundJob(() => RunSubagentTaskAttemptInBackgroundAsync(attemptId, subagent.Id, prompt, attemptToken));
         }
 
-        var evt = sessionEvent ?? new EventEnvelopeDto(null, _track.AreaId, TrackId, KernelEventKinds.TaskUpdated,
-            JsonHelpers.ToElement(new { task = runningTask, attempt }), now);
+        var evt = sessionEvent ?? CreateTaskUpdatedEventCore(now);
         await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, evt, CancellationToken.None).ConfigureAwait(false);
         return true;
     }
+
+    private const int TaskOutputTailChars = 4096;
 
     private async Task RunCommandTaskAttemptInBackgroundAsync(
         string attemptId,
@@ -1978,7 +1972,8 @@ public sealed partial class TrackActor : IAsyncDisposable
         {
             var timeoutSecs = task.Gate?.TimeoutSecs ?? _options.DefaultHookTimeoutSecs;
             var cmdRes = await _commandRunner.RunAsync(
-                new ShellCommandRequest(task.GoalOrCmd, lease.EffectiveCwd, TimeSpan.FromSeconds(Math.Max(1, timeoutSecs))),
+                new ShellCommandRequest(task.GoalOrCmd, lease.EffectiveCwd, TimeSpan.FromSeconds(Math.Max(1, timeoutSecs)),
+                    OutputTailChars: TaskOutputTailChars),
                 ct).ConfigureAwait(false);
 
             var payload = JsonHelpers.ToElement(new
@@ -1986,6 +1981,8 @@ public sealed partial class TrackActor : IAsyncDisposable
                 exitCode = cmdRes.ExitCode,
                 stdout = cmdRes.Stdout,
                 stderr = cmdRes.Stderr,
+                stdoutTruncated = cmdRes.StdoutTruncated,
+                stderrTruncated = cmdRes.StderrTruncated,
                 timedOut = cmdRes.TimedOut,
                 durationMs = cmdRes.DurationMs
             });
@@ -2128,7 +2125,7 @@ public sealed partial class TrackActor : IAsyncDisposable
                     foreach (var step in gateSpec.Steps)
                     {
                         var res = await _commandRunner.RunAsync(
-                            new ShellCommandRequest(step.Cmd, prep.Active.Lease.EffectiveCwd, stepTimeout),
+                            new ShellCommandRequest(step.Cmd, prep.Active.Lease.EffectiveCwd, stepTimeout, OutputTailChars: TaskOutputTailChars),
                             verificationToken).ConfigureAwait(false);
 
                         var stepPassed = res.ExitCode == 0 && !res.TimedOut;
@@ -2149,6 +2146,8 @@ public sealed partial class TrackActor : IAsyncDisposable
                             exitCode = res.ExitCode,
                             stdout = res.Stdout,
                             stderr = res.Stderr,
+                            stdoutTruncated = res.StdoutTruncated,
+                            stderrTruncated = res.StderrTruncated,
                             outputTail,
                             timedOut = res.TimedOut,
                             durationMs = res.DurationMs
@@ -3557,6 +3556,9 @@ public sealed partial class TrackActor : IAsyncDisposable
         await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, evt, ct).ConfigureAwait(false);
     }
 
+    private EventEnvelopeDto CreateTaskUpdatedEventCore(long now) =>
+        new(null, _track.AreaId, TrackId, KernelEventKinds.TaskUpdated, JsonHelpers.EmptyObject, now);
+
     private async Task PersistAndEmitTaskUpdatedCoreAsync(
         TaskDto task,
         TaskAttemptDto? attempt,
@@ -3564,13 +3566,7 @@ public sealed partial class TrackActor : IAsyncDisposable
         long now,
         CancellationToken ct)
     {
-        var evt = new EventEnvelopeDto(
-            EventId: null,
-            AreaId: _track.AreaId,
-            TrackId: TrackId,
-            Kind: KernelEventKinds.TaskUpdated,
-            Payload: JsonHelpers.ToElement(new { task, attempt }),
-            CreatedAtMs: now);
+        var evt = CreateTaskUpdatedEventCore(now);
         await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
         await _store.UpsertTaskAndAttemptAsync(task, attempt, nextTemplateState, evt, ct).ConfigureAwait(false);
         await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, evt, ct).ConfigureAwait(false);

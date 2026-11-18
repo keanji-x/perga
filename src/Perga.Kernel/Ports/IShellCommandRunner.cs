@@ -8,14 +8,17 @@ public sealed record ShellCommandRequest(
     string Command,
     string WorkingDirectory,
     TimeSpan Timeout,
-    IReadOnlyDictionary<string, string>? Environment = null);
+    IReadOnlyDictionary<string, string>? Environment = null,
+    int? OutputTailChars = null);
 
 public sealed record ShellCommandResult(
     int ExitCode,
     string Stdout,
     string Stderr,
     bool TimedOut,
-    long DurationMs);
+    long DurationMs,
+    bool StdoutTruncated = false,
+    bool StderrTruncated = false);
 
 public interface IShellCommandRunner
 {
@@ -29,74 +32,74 @@ public sealed class ProcessShellCommandRunner : IShellCommandRunner
         var sw = Stopwatch.StartNew();
         var psi = CreateStartInfo(request);
 
+        var tailChars = request.OutputTailChars ?? int.MaxValue;
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(tailChars);
         using var process = new Process { StartInfo = psi };
-        var stdout = new StringBuilder();
-        var stderr = new StringBuilder();
-
-        process.OutputDataReceived += (_, e) =>
-        {
-            if (e.Data is not null)
-            {
-                lock (stdout)
-                {
-                    stdout.AppendLine(e.Data);
-                }
-            }
-        };
-
-        process.ErrorDataReceived += (_, e) =>
-        {
-            if (e.Data is not null)
-            {
-                lock (stderr)
-                {
-                    stderr.AppendLine(e.Data);
-                }
-            }
-        };
-
         if (!process.Start())
         {
             throw new InvalidOperationException($"Failed to start shell command: {request.Command}");
         }
 
-        process.BeginOutputReadLine();
-        process.BeginErrorReadLine();
-
         using var timeoutCts = new CancellationTokenSource(request.Timeout);
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token);
-
+        var stdout = new StringBuilder();
+        var stderr = new StringBuilder();
+        var captureStdout = CaptureAsync(process.StandardOutput, stdout, tailChars, linkedCts.Token);
+        var captureStderr = CaptureAsync(process.StandardError, stderr, tailChars, linkedCts.Token);
+        var exit = process.WaitForExitAsync(linkedCts.Token);
+        var completion = Task.WhenAll(exit, captureStdout, captureStderr);
         var timedOut = false;
         try
         {
-            await process.WaitForExitAsync(linkedCts.Token).ConfigureAwait(false);
+            await completion.WaitAsync(linkedCts.Token).ConfigureAwait(false);
+            linkedCts.Token.ThrowIfCancellationRequested();
         }
-        catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested && !ct.IsCancellationRequested)
+        catch (OperationCanceledException) when (linkedCts.IsCancellationRequested)
         {
+            TryKillProcessTree(process);
+            await Task.WhenAll(captureStdout, captureStderr).ConfigureAwait(false);
+            ct.ThrowIfCancellationRequested();
             timedOut = true;
-            TryKillProcessTree(process);
-        }
-        catch (OperationCanceledException)
-        {
-            TryKillProcessTree(process);
-            throw;
-        }
-
-        sw.Stop();
-        string outStr;
-        string errStr;
-        lock (stdout)
-        {
-            outStr = stdout.ToString();
-        }
-
-        lock (stderr)
-        {
-            errStr = stderr.ToString();
         }
 
         var exitCode = timedOut ? -1 : process.ExitCode;
-        return new ShellCommandResult(exitCode, outStr, errStr, timedOut, sw.ElapsedMilliseconds);
+        return new ShellCommandResult(exitCode, stdout.ToString(), stderr.ToString(), timedOut, sw.ElapsedMilliseconds,
+            captureStdout.Result, captureStderr.Result);
+    }
+
+    private static async Task<bool> CaptureAsync(StreamReader reader, StringBuilder output, int limit, CancellationToken ct)
+    {
+        var buffer = new char[4096];
+        var truncated = false;
+        try
+        {
+            while (true)
+            {
+                var count = await reader.ReadAsync(buffer.AsMemory(), ct).ConfigureAwait(false);
+                if (count == 0)
+                {
+                    return truncated;
+                }
+
+                output.Append(buffer, 0, count);
+                if (output.Length > limit)
+                {
+                    output.Remove(0, output.Length - limit);
+                    if (char.IsLowSurrogate(output[0]))
+                    {
+                        output.Remove(0, 1);
+                    }
+
+                    truncated = true;
+                }
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // Preserve the captured tail for timeout diagnostics.
+        }
+
+        return truncated;
     }
 
     private static ProcessStartInfo CreateStartInfo(ShellCommandRequest request)

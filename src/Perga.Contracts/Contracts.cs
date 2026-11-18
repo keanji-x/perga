@@ -193,7 +193,11 @@ public sealed record DbMaintenanceStatsDto(
     int PrunedEvents,
     int ThinnedRevisions,
     int CompactedItems,
-    int ReclaimedPages);
+    int ReclaimedPages)
+{
+    public int CompactedAttempts { get; init; }
+    public int ReclaimedBlobs { get; init; }
+}
 
 public sealed record TrackOverlayDto(
     string TrackId,

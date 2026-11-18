@@ -59,7 +59,26 @@ public sealed class SqliteMaintenanceGcTests
     }
 
     [Fact]
-    public async Task Rule2_MilestoneThinReportRevisions_PreservesInitialLatestMilestonesAndActive100Window()
+    public async Task EventRetention_CapsPayloadBytesAndKeepsAContiguousReplaySuffix()
+    {
+        await using var harness = await StorageTestHarness.CreateAsync();
+        const long nowMs = 100L * DayMs;
+        using var rawConn = harness.OpenRawInspectConnection();
+
+        await rawConn.ExecuteAsync(
+            """
+            WITH RECURSIVE numbers(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM numbers WHERE n < 34)
+            INSERT INTO events (kind, payload_json, created_at_ms)
+            SELECT 'test', '{"text":"' || hex(zeroblob(524288)) || '"}', @Now FROM numbers;
+            """, new { Now = nowMs });
+
+        var stats = await harness.Store.RunMaintenancePassAsync(nowMs, CancellationToken.None);
+        Assert.Equal(3, stats.PrunedEvents);
+        Assert.Equal(Enumerable.Range(4, 31), await rawConn.QueryAsync<int>("SELECT id FROM events ORDER BY id"));
+    }
+
+    [Fact]
+    public async Task ReportRetention_PreservesInitialAndUsesShorterWindowForSettledClosedTracks()
     {
         await using var harness = await StorageTestHarness.CreateAsync();
         var store = harness.Store;
@@ -68,12 +87,11 @@ public sealed class SqliteMaintenanceGcTests
 
         await store.UpsertAreaAsync(StorageTestHarness.CreateArea("area_1"), ct);
 
-        // 1. Active track: revisions 1..155 -> latest = 155, window > 55 kept in full (56..155 = 100 revs),
-        //    plus <= 55 keeps initial (1) and % 10 == 0 (10, 20, 30, 40, 50) => 6 old kept, 49 thinned!
+        // Active tracks keep initial and latest 100 revisions.
         var (activeTrack, activeInit, activeLead) = StorageTestHarness.CreateSeedTrack("trk_active", "area_1", "sess_active", nowMs: nowMs);
         await store.CreateTrackAsync(activeTrack, activeInit, null, activeLead, ct);
 
-        // 2. Settled closed track (closed 15 days ago): revisions 1..34 -> keeps initial (1), milestones (10, 20, 30), latest (34) => 5 kept, 29 thinned!
+        // Settled closed tracks keep initial and latest 10 revisions.
         var (closedOldTrack, closedInit, closedLead) = StorageTestHarness.CreateSeedTrack(
             "trk_closed_old", "area_1", "sess_closed_old", nowMs: nowMs - 20L * DayMs, closedAtMs: nowMs - 15L * DayMs);
         await store.CreateTrackAsync(closedOldTrack, closedInit, null, closedLead, ct);
@@ -115,24 +133,17 @@ public sealed class SqliteMaintenanceGcTests
         }
 
         var stats = await store.RunMaintenancePassAsync(nowMs, ct);
-        Assert.Equal(49 + 29, stats.ThinnedRevisions);
+        Assert.Equal(54 + 23, stats.ThinnedRevisions);
 
         using (var verifyConn = harness.OpenRawInspectConnection())
         {
             var activeRevs = (await verifyConn.QueryAsync<int>(
                 "SELECT doc_rev FROM report_revisions WHERE track_id = 'trk_active' ORDER BY doc_rev ASC;")).ToList();
-            Assert.Equal(106, activeRevs.Count);
-            Assert.Contains(1, activeRevs);
-            Assert.Contains(10, activeRevs);
-            Assert.Contains(50, activeRevs);
-            Assert.DoesNotContain(2, activeRevs);
-            Assert.DoesNotContain(55, activeRevs);
-            Assert.Contains(56, activeRevs);
-            Assert.Contains(155, activeRevs);
+            Assert.Equal([1, .. Enumerable.Range(56, 100)], activeRevs);
 
             var closedOldRevs = (await verifyConn.QueryAsync<int>(
                 "SELECT doc_rev FROM report_revisions WHERE track_id = 'trk_closed_old' ORDER BY doc_rev ASC;")).ToArray();
-            Assert.Equal([1, 10, 20, 30, 34], closedOldRevs);
+            Assert.Equal([1, .. Enumerable.Range(25, 10)], closedOldRevs);
 
             var closedRecentCount = await verifyConn.ExecuteScalarAsync<long>(
                 "SELECT COUNT(1) FROM report_revisions WHERE track_id = 'trk_closed_recent';");
@@ -141,7 +152,7 @@ public sealed class SqliteMaintenanceGcTests
     }
 
     [Fact]
-    public async Task Rule3AndRule4_SlimOldEpochAndSettledSubagents_DeletesThinkingCompactsLargeToolResultsCleansColdBlobsAndReclaimsPages()
+    public async Task SessionRetention_CompactsOldTurnsEvenDuringActiveWorkAndReclaimsPages()
     {
         await using var harness = await StorageTestHarness.CreateAsync();
         var store = harness.Store;
@@ -155,7 +166,7 @@ public sealed class SqliteMaintenanceGcTests
 
         var mediumToolJson = StorageTestHarness.Json($$"""{"stdout":"{{new string('M', 8_000)}}"}"""); // ~8 KB inline (> 4 KB)
         var smallToolJson = StorageTestHarness.Json("""{"stdout":"short"}""");                           // < 4 KB inline
-        var coldBlobToolJson = StorageTestHarness.Json($$"""{"stdout":"{{new string('C', 90_000)}}"}"""); // > 64 KB cold .zst blob
+        var coldBlobToolJson = StorageTestHarness.Json($$"""{"callId":"tool-1","isError":true,"output":"{{new string('C', 90_000)}}"}"""); // > 64 KB cold .zst blob
 
         // A. Lead session at Epoch 3:
         //    - Turn in Epoch 1 (1 < 3 - 1) -> MUST be slimmed (1 thinking deleted + 1 inline >4KB tool_result + 1 >64KB cold-blob tool_result = 3 compacted items; user/assistant_text/tool_call/small tool_result preserved!)
@@ -189,7 +200,10 @@ public sealed class SqliteMaintenanceGcTests
             true, [], "Work", null, null, null, TaskRunStatus.Done, null, SemanticVerdict.None, null, "att_old_settled", nowMs - 16L * DayMs, nowMs - 15L * DayMs);
         var attemptOld = new TaskAttemptDto(
             "att_old_settled", "t_sub", "trk_gc", "sess_sub_old", "done",
-            null, StorageTestHarness.Json("{}"), null, null, nowMs - 16L * DayMs, nowMs - 15L * DayMs);
+            StorageTestHarness.Json("""{"stdout":"Worker business result","stdoutTruncated":false}"""),
+            StorageTestHarness.Json("{}"), null, StorageTestHarness.Json($$"""
+                {"passed":true,"steps":[{"name":"check","exitCode":0,"stdout":"{{new string('F', 80_000)}}","stderr":""}]}
+                """), nowMs - 16L * DayMs, nowMs - 15L * DayMs);
         await store.UpsertTaskAndAttemptAsync(taskSub, attemptOld, null, null, ct);
 
         var subOld = new AgentSessionDto(
@@ -205,16 +219,22 @@ public sealed class SqliteMaintenanceGcTests
             updatedSession: null,
             ct);
 
-        // C. Free subagent (bound_attempt_id == null, finished 15 days ago, Epoch 1) -> MUST NOT be slimmed!
+        // C. An unbound session with a newer or still running turn may discard diagnostics from its old completed turn.
         var subFree = new AgentSessionDto(
             "sess_sub_free", "trk_gc", false, null, null, "Free Helper",
-            "codex", null, null, Epoch: 1, "idle", 0.2, null, nowMs - 16L * DayMs, nowMs - 15L * DayMs);
+            "codex", null, null, Epoch: 1, "running", 0.2, null, nowMs - 16L * DayMs, nowMs - 15L * DayMs);
         await store.UpsertSessionAsync(subFree, null, ct);
         await store.RecordTurnAndItemsAsync(
             new SessionTurnDto("turn_sub_free", "sess_sub_free", 1, Epoch: 1, "user", StorageTestHarness.Json("{}"), "completed", null, null, nowMs - 16L * DayMs, nowMs - 15L * DayMs),
             [
                 new SessionItemDto(0, "sess_sub_free", "turn_sub_free", "thinking", StorageTestHarness.Json("""{"text":"keep free sub"}"""), nowMs - 15L * DayMs)
             ],
+            updatedSession: null,
+            ct);
+
+        await store.RecordTurnAndItemsAsync(
+            new SessionTurnDto("turn_sub_active", "sess_sub_free", 2, Epoch: 1, "user", StorageTestHarness.Json("{}"), "running", null, null, nowMs - 15L * DayMs, null),
+            [new SessionItemDto(0, "sess_sub_free", "turn_sub_active", "thinking", StorageTestHarness.Json("""{"text":"keep active turn"}"""), nowMs - 15L * DayMs)],
             updatedSession: null,
             ct);
 
@@ -239,13 +259,19 @@ public sealed class SqliteMaintenanceGcTests
         }
 
         var trackBlobDir = Path.Combine(harness.DataDir, "blobs", "trk_gc");
-        Assert.Single(Directory.GetFiles(trackBlobDir, "*.zst"));
+        Assert.Equal(2, Directory.GetFiles(trackBlobDir, "*.zst").Length);
         var dbSizeBeforeGc = new FileInfo(harness.DbPath).Length;
 
         var stats = await store.RunMaintenancePassAsync(nowMs, ct);
 
         Assert.Equal(120, stats.PrunedEvents);
-        Assert.Equal(5, stats.CompactedItems); // 3 from turn_ep1 + 2 from turn_sub_old
+        Assert.Equal(6, stats.CompactedItems);
+        Assert.Equal(1, stats.CompactedAttempts);
+        var compactedAttempt = Assert.Single(await store.ListAttemptsForTaskAsync("t_sub", ct));
+        Assert.Equal("Worker business result", compactedAttempt.WorkerResult!.Value.GetProperty("stdout").GetString());
+        var step = compactedAttempt.GateVerdict!.Value.GetProperty("steps")[0];
+        Assert.False(step.TryGetProperty("stdout", out _));
+        Assert.Equal(0, step.GetProperty("exitCode").GetInt32());
         Assert.True(stats.ReclaimedPages > 0, $"Expected positive ReclaimedPages from incremental_vacuum, got {stats.ReclaimedPages}.");
 
         // Verify unreferenced .zst cold blob was deleted!
@@ -274,12 +300,14 @@ public sealed class SqliteMaintenanceGcTests
         Assert.True(ep1ToolResults[1].Payload.GetProperty("compacted").GetBoolean());
         Assert.True(ep1ToolResults[2].Payload.GetProperty("compacted").GetBoolean());
         Assert.True(ep1ToolResults[2].Payload.GetProperty("bytes").GetInt64() > 65_536);
+        Assert.Equal("tool-1", ep1ToolResults[2].Payload.GetProperty("callId").GetString());
+        Assert.True(ep1ToolResults[2].Payload.GetProperty("isError").GetBoolean());
 
         var ep2Items = leadItems.Where(static x => x.TurnId == "turn_ep2").ToList();
         Assert.Equal(2, ep2Items.Count); // Both thinking & >4KB tool_result untouched in epoch == current - 1!
 
         var freeSubItems = await store.ListSessionItemsAsync("sess_sub_free", 0, 10, ct);
-        Assert.Single(freeSubItems); // Free subagent thinking untouched!
+        Assert.Equal("turn_sub_active", Assert.Single(freeSubItems).TurnId);
 
         // Second maintenance pass must be 100% idempotent (0 CompactedItems)
         var secondPassStats = await store.RunMaintenancePassAsync(nowMs, ct);
@@ -315,8 +343,16 @@ public sealed class SqliteMaintenanceGcTests
             updatedSession: null,
             ct);
 
+        var blobDir = Path.Combine(harness.DataDir, "blobs", "trk_shared_blob");
+        var referenced = Assert.Single(Directory.GetFiles(blobDir, "*.zst"));
+        var orphan = Path.Combine(blobDir, new string('a', 64) + ".zst");
+        File.Copy(referenced, orphan);
+
         var stats = await store.RunMaintenancePassAsync(nowMs, ct);
         Assert.Equal(1, stats.CompactedItems);
+        Assert.Equal(1, stats.ReclaimedBlobs);
+        Assert.True(File.Exists(referenced));
+        Assert.False(File.Exists(orphan));
 
         // Epoch 3 item must still hydrate its full 80KB .zst payload!
         var items = await store.ListSessionItemsAsync("sess_shared", 0, 10, ct);

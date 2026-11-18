@@ -201,7 +201,11 @@ public sealed class ApiV1RestIntegrationTests
                     kind = "command",
                     access = "read_only",
                     ready = true,
-                    goal = "printf 'TASK_ATTEMPT_OK\\n'"
+                    goal = """head -c 90000 /dev/zero | tr '\000' x; printf 'TASK_ATTEMPT_OK\n'""",
+                    gate = new
+                    {
+                        steps = new[] { new { name = "verify", cmd = """head -c 90000 /dev/zero | tr '\000' x >&2; printf 'GATE_OK\n' >&2""" } }
+                    }
                 }
             });
         Assert.Equal(HttpStatusCode.OK, addTaskBlockResp.StatusCode);
@@ -219,6 +223,27 @@ public sealed class ApiV1RestIntegrationTests
         Assert.NotNull(attempts);
         Assert.Single(attempts!);
         Assert.Equal("done", attempts![0].Status);
+        var result = attempts[0].WorkerResult!.Value;
+        Assert.EndsWith("TASK_ATTEMPT_OK\n", result.GetProperty("stdout").GetString());
+        Assert.True(result.GetProperty("stdoutTruncated").GetBoolean());
+        Assert.InRange(result.GetProperty("stdout").GetString()!.Length, 1, 4096);
+        var gateStep = attempts[0].GateVerdict!.Value.GetProperty("steps")[0];
+        Assert.EndsWith("GATE_OK\n", gateStep.GetProperty("stderr").GetString());
+        Assert.True(gateStep.GetProperty("stderrTruncated").GetBoolean());
+        Assert.InRange(gateStep.GetProperty("stderr").GetString()!.Length, 1, 4096);
+
+        cluster.TimeProvider.Advance(TimeSpan.FromDays(15));
+        var stats = await kernel.RunMaintenancePassAsync();
+        Assert.Equal(1, stats.CompactedAttempts);
+        using var compactedResp = await client.GetAsync($"/api/v1/tracks/{trackId}/tasks/verify-echo/attempts");
+        var compacted = Assert.Single((await compactedResp.Content.ReadFromJsonAsync<List<TaskAttemptDto>>(PergaJsonDefaults.ApiOptions))!);
+        Assert.Equal(attempts[0].AttemptId, compacted.AttemptId);
+        Assert.Equal("done", compacted.Status);
+        Assert.True(compacted.GateVerdict!.Value.GetProperty("passed").GetBoolean());
+        Assert.True(compacted.GateVerdict.Value.GetProperty("steps")[0].GetProperty("outputExpired").GetBoolean());
+        Assert.Equal(0, compacted.WorkerResult!.Value.GetProperty("exitCode").GetInt32());
+        Assert.False(compacted.WorkerResult.Value.TryGetProperty("stdout", out _));
+        Assert.Equal(0, (await kernel.RunMaintenancePassAsync()).CompactedAttempts);
     }
 
     [Fact]

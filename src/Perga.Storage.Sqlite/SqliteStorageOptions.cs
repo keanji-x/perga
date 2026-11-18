@@ -1,5 +1,3 @@
-using System.Text.Json;
-
 namespace Perga.Storage.Sqlite;
 
 /// <summary>
@@ -38,12 +36,3 @@ public sealed record SqliteStorageOptions
 
     public string ResolveBlobsRootDir() => Path.Combine(ResolveDataDir(), "blobs");
 }
-
-/// <summary>
-/// Captures an in-flight <c>task_attempts</c> workspace lease discovered during boot crash reconciliation.
-/// </summary>
-public sealed record InterruptedAttemptLeaseDto(
-    string AttemptId,
-    string TaskId,
-    string TrackId,
-    JsonElement WorkspaceLease);
