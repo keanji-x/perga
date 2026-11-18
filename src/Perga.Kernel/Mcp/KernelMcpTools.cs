@@ -32,6 +32,11 @@ public static class KernelMcpToolNames
     // Contract completion tools (BoundAttemptId != null ONLY)
     public const string TaskDone = "perga_task_done";
     public const string TaskFail = "perga_task_fail";
+    public const string SessionRead = "perga_session_read";
+    public const string SessionSend = "perga_session_send";
+    public const string SessionInterrupt = "perga_session_interrupt";
+    public const string SessionUpdateSettings = "perga_session_update_settings";
+    public const string TaskDispatch = "perga_task_dispatch";
 
     public static readonly IReadOnlyList<string> All =
     [
@@ -52,7 +57,12 @@ public static class KernelMcpToolNames
         TrackRename,
         TrackClose,
         TaskDone,
-        TaskFail
+        TaskFail,
+        SessionRead,
+        SessionSend,
+        SessionInterrupt,
+        SessionUpdateSettings,
+        TaskDispatch
     ];
 }
 
@@ -67,11 +77,12 @@ public static class KernelMcpCatalog
 
     public static IReadOnlyList<McpToolDescriptor> GetAllTools() => AllDescriptors;
 
-    public static IReadOnlyList<McpToolDescriptor> GetToolsForSession(string? boundAttemptId)
+    public static IReadOnlyList<McpToolDescriptor> GetToolsForSession(string? boundAttemptId, bool isLead = false)
     {
         var isBound = !string.IsNullOrEmpty(boundAttemptId);
         return AllDescriptors
             .Where(d => isBound ? !IsGovernanceOnly(d.Name) : !IsCompletionOnly(d.Name))
+            .Where(d => !IsWorkerOperatorOnly(d.Name) || (!isBound && isLead))
             .ToArray();
     }
 
@@ -86,6 +97,10 @@ public static class KernelMcpCatalog
     public static bool IsCompletionOnly(string toolName) => toolName is
         KernelMcpToolNames.TaskDone or
         KernelMcpToolNames.TaskFail;
+
+    public static bool IsWorkerOperatorOnly(string toolName) => toolName is
+        KernelMcpToolNames.SessionRead or KernelMcpToolNames.SessionSend or KernelMcpToolNames.SessionInterrupt or
+        KernelMcpToolNames.SessionUpdateSettings or KernelMcpToolNames.TaskDispatch;
 
     private static IReadOnlyList<McpToolDescriptor> BuildDescriptors()
     {
@@ -128,7 +143,17 @@ public static class KernelMcpCatalog
             new(KernelMcpToolNames.TaskDone, "Submit completed work for the bound task attempt and trigger gate verification (contract subagent only).",
                 Schema("""{"type":"object","properties":{"result":{}}}""")),
             new(KernelMcpToolNames.TaskFail, "Report failure for the bound task attempt and discard lease (contract subagent only).",
-                Schema("""{"type":"object","required":["reason"],"properties":{"reason":{"type":"string"},"result":{}}}"""))
+                Schema("""{"type":"object","required":["reason"],"properties":{"reason":{"type":"string"},"result":{}}}""")),
+            new(KernelMcpToolNames.SessionRead, "Read recent Worker messages, current turn progress, and open approvals. Find the session through perga_track_status.",
+                Schema("""{"type":"object","required":["sessionId"],"properties":{"sessionId":{"type":"string"},"beforeId":{"type":"integer"},"limit":{"type":"integer","minimum":1,"maximum":100},"activityTurnId":{"type":"string"},"afterSequence":{"type":"integer","minimum":0},"waitMs":{"type":"integer","minimum":0,"maximum":10000}}}""")),
+            new(KernelMcpToolNames.SessionSend, "Send to an idle or interrupted Worker, or steer its exact current turn. Set allowQueue to queue on providers without native steer. Reuse requestKey to retry.",
+                Schema("""{"type":"object","required":["sessionId","attemptId","content","requestKey"],"properties":{"sessionId":{"type":"string"},"attemptId":{"type":"string"},"turnId":{"type":"string"},"content":{"type":"string"},"requestKey":{"type":"string"},"allowQueue":{"type":"boolean"}}}""")),
+            new(KernelMcpToolNames.SessionInterrupt, "Interrupt the specified Worker turn and keep its Attempt available for continuation.",
+                Schema("""{"type":"object","required":["sessionId","attemptId","turnId"],"properties":{"sessionId":{"type":"string"},"attemptId":{"type":"string"},"turnId":{"type":"string"}}}""")),
+            new(KernelMcpToolNames.SessionUpdateSettings, "Set a Worker's configuration for the next turn. Read its latest settings and capability first.",
+                Schema("""{"type":"object","required":["sessionId","attemptId","version","model","reasoningEffort","approvalMode"],"properties":{"sessionId":{"type":"string"},"attemptId":{"type":"string"},"version":{"type":"integer","minimum":0},"model":{"type":["string","null"]},"reasoningEffort":{"type":["string","null"]},"approvalMode":{"enum":["ask","deny"]}}}""")),
+            new(KernelMcpToolNames.TaskDispatch, "Dispatch a Worker on the current Track. Only the goal is required. Reuse an optional requestKey to retry safely.",
+                Schema("""{"type":"object","required":["goal"],"properties":{"goal":{"type":"string"},"requestKey":{"type":"string"},"access":{"enum":["read_only","read_write"]},"acceptance":{"type":"string"},"dependsOn":{"type":"array","items":{"type":"string"}},"gate":{"type":"string"},"provider":{"type":"string"},"model":{"type":"string"}}}"""))
         ];
     }
 }
@@ -143,6 +168,9 @@ public static class KernelMcpDispatcher
         CancellationToken ct = default)
     {
         var args = arguments.ValueKind == JsonValueKind.Undefined ? JsonHelpers.EmptyObject : arguments;
+        var origin = KernelMcpCatalog.IsCompletionOnly(toolName) && caller.BoundAttemptId is not null
+            ? await kernel.Actors.GetOrActivate(caller.TrackId).CaptureWorkerCompletionOriginAsync(caller, ct).ConfigureAwait(false)
+            : null;
         await kernel.GuardMcpToolCallAsync(caller.TrackId, caller.SessionId, "perga", toolName, args, ct)
             .ConfigureAwait(false);
 
@@ -166,6 +194,15 @@ public static class KernelMcpDispatcher
             {
                 var tasks = await kernel.ListTasksAsync(caller.TrackId, ct).ConfigureAwait(false);
                 return JsonHelpers.ToElement(tasks);
+            }
+
+            case KernelMcpToolNames.TaskDispatch:
+            {
+                var request = JsonHelpers.Deserialize<DispatchWorkerRequest>(args)
+                    ?? throw KernelException.InvalidArgument("Worker dispatch requires a goal.");
+                var receipt = await kernel.DispatchWorkerAsync(caller.TrackId, request, OptionalStringArg(args, ["requestKey"]), caller, ct)
+                    .ConfigureAwait(false);
+                return JsonHelpers.ToElement(receipt);
             }
 
             case KernelMcpToolNames.UserAsk:
@@ -199,6 +236,43 @@ public static class KernelMcpDispatcher
             {
                 var status = await kernel.GetTrackStatusAsync(caller.TrackId, ct).ConfigureAwait(false);
                 return JsonHelpers.ToElement(status);
+            }
+
+            case KernelMcpToolNames.SessionRead:
+            {
+                var sessionId = RequireStringArg(args, ["sessionId"]);
+                var limit = (int)Math.Clamp(OptionalInt64Arg(args, "limit") ?? 20, 1, 100);
+                var page = await kernel.GetSessionItemsAsync(sessionId, limit: limit, ct: ct, latest: true,
+                    beforeId: OptionalInt64Arg(args, "beforeId"), caller: caller,
+                    activityTurnId: OptionalStringArg(args, ["activityTurnId"]), afterSequence: OptionalInt64Arg(args, "afterSequence"),
+                    waitMs: (int)Math.Clamp(OptionalInt64Arg(args, "waitMs") ?? 0, 0, 10_000))
+                    .ConfigureAwait(false);
+                return JsonHelpers.ToElement(page);
+            }
+
+            case KernelMcpToolNames.SessionSend:
+            {
+                var sessionId = RequireStringArg(args, ["sessionId"]);
+                var request = new WorkerMessageRequest(RequireStringArg(args, ["attemptId"]), RequireStringArg(args, ["content"]),
+                    RequireStringArg(args, ["requestKey"]), OptionalStringArg(args, ["turnId"]),
+                    JsonHelpers.TryGetPropertyIgnoreCase(args, ["allowQueue"], out var allowQueue) && allowQueue.ValueKind == JsonValueKind.True);
+                return JsonHelpers.ToElement(await kernel.SendWorkerMessageAsync(sessionId, request, caller, ct).ConfigureAwait(false));
+            }
+
+            case KernelMcpToolNames.SessionInterrupt:
+                await kernel.InterruptWorkerAsync(RequireStringArg(args, ["sessionId"]), RequireStringArg(args, ["attemptId"]),
+                    RequireStringArg(args, ["turnId"]), caller, ct).ConfigureAwait(false);
+                return JsonHelpers.ToElement(new { ok = true });
+
+            case KernelMcpToolNames.SessionUpdateSettings:
+            {
+                var sessionId = RequireStringArg(args, ["sessionId"]);
+                if (OptionalInt64Arg(args, "version") is not (>= 0 and <= int.MaxValue) ||
+                    !JsonHelpers.TryGetPropertyIgnoreCase(args, ["model"], out _) ||
+                    !JsonHelpers.TryGetPropertyIgnoreCase(args, ["reasoningEffort"], out _))
+                    throw KernelException.InvalidArgument("version, model and reasoningEffort are required.");
+                var request = JsonHelpers.Deserialize<UpdateWorkerSettingsRequest>(args)!;
+                return JsonHelpers.ToElement(await kernel.UpdateWorkerSettingsAsync(sessionId, request, caller, ct).ConfigureAwait(false));
             }
 
             case KernelMcpToolNames.TerminalOpen:
@@ -294,7 +368,7 @@ public static class KernelMcpDispatcher
                 JsonElement? workerResult = JsonHelpers.TryGetPropertyIgnoreCase(args, ["result", "workerResult", "worker_result"], out var wr)
                     ? wr.Clone()
                     : null;
-                var res = await kernel.CompleteAttemptDoneAsync(caller.TrackId, caller.SessionId, workerResult, ct)
+                var res = await kernel.CompleteAttemptDoneAsync(caller.TrackId, caller.SessionId, workerResult, ct, origin)
                     .ConfigureAwait(false);
                 return JsonHelpers.ToElement(res);
             }
@@ -305,7 +379,7 @@ public static class KernelMcpDispatcher
                 JsonElement? workerResult = JsonHelpers.TryGetPropertyIgnoreCase(args, ["result", "workerResult", "worker_result"], out var wr)
                     ? wr.Clone()
                     : null;
-                var res = await kernel.CompleteAttemptFailAsync(caller.TrackId, caller.SessionId, reason, workerResult, ct)
+                var res = await kernel.CompleteAttemptFailAsync(caller.TrackId, caller.SessionId, reason, workerResult, ct, origin)
                     .ConfigureAwait(false);
                 return JsonHelpers.ToElement(res);
             }
@@ -314,6 +388,10 @@ public static class KernelMcpDispatcher
                 throw KernelException.NotFound($"Unknown kernel MCP tool '{toolName}'.");
         }
     }
+
+    private static long? OptionalInt64Arg(JsonElement args, string name) =>
+        JsonHelpers.TryGetPropertyIgnoreCase(args, [name], out var value) && value.ValueKind == JsonValueKind.Number &&
+        value.TryGetInt64(out var parsed) ? parsed : null;
 
     private static ReportCommitRequest ParseReportCommitArgs(JsonElement args)
     {

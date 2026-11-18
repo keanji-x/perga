@@ -61,7 +61,7 @@ import {
   type Track, type TrackDetailWire, type TrackPatchBody, type TrackRecipe,
 } from '../../../../core/domain/track.ts';
 import {
-  abandonSessionInputOperation, compactPlannerOperation, interruptPlannerOperation, sendPlannerInputOperation, steerQueuedSessionMessageOperation, removeQueuedSessionMessageOperation,
+  abandonSessionInputOperation, compactPlannerOperation, interruptPlannerOperation, sendPlannerInputOperation, sendWorkerMessageOperation, steerQueuedSessionMessageOperation, removeQueuedSessionMessageOperation,
   createTrackConversationOperation, trackConversationsOperation, setConversationArchiveOperation,
   createSerialWriter, deletePlannerInputOperation, editPlannerInputOperation, steerPlannerInputOperation,
   modelCatalogOperation, plannerQueueWriteFailure, setPlannerModelOperation,
@@ -71,6 +71,7 @@ import {
 } from '../../../../core/domain/conversation.ts';
 import { harnessLiveOperation } from '../../../../core/domain/conversation-live.ts';
 import { setPlannerPermissionModeOperation } from '../../../../core/domain/planner-permission-mode.ts';
+import { updateWorkerSettingsOperation } from '../../../../core/domain/worker-session.ts';
 import { recoverConversationOperation, abandonConversationOperation, restartPlannerOperation, type RunRecovery } from '../../../../core/domain/conversation-restart.ts';
 import {
   ApiError, classifyFailure, DELETE_FAILURES, DELETE_TEXT, refusalText, writeFailureOf, writeFailureText,
@@ -262,8 +263,14 @@ export function usePlannerMutations(transport: ApiTransportPort, cardId: string,
     /* Admitted at the press, as every chat write is: a stop that cannot leave the browser is not sent (#2068). */
     compact: () => Promise.resolve().then(() => admitTransport(transport))
       .then((admitted) => runOperation(admitted, compactPlannerOperation(cardId), unauthorized)).then(refreshAfter),
-    interrupt: () => Promise.resolve().then(() => admitTransport(transport))
-      .then((admitted) => runOperation(admitted, interruptPlannerOperation(cardId), unauthorized)).then(refreshAfter),
+    interrupt: (worker?: { attemptId: string; turnId: string }) => Promise.resolve().then(() => admitTransport(transport))
+      .then((admitted) => runOperation(admitted, interruptPlannerOperation(cardId, worker), unauthorized)).then(refreshAfter),
+    sendWorker: (key: string, body: Parameters<typeof sendWorkerMessageOperation>[2]) =>
+      Promise.resolve().then(() => admitTransport(transport))
+        .then(admitted => runOperation(admitted, sendWorkerMessageOperation(cardId, key, body), unauthorized)).then(refreshAfter),
+    updateWorkerSettings: (settings: Parameters<typeof updateWorkerSettingsOperation>[1]) =>
+      Promise.resolve().then(() => admitTransport(transport))
+        .then(admitted => runOperation(admitted, updateWorkerSettingsOperation(cardId, settings), unauthorized)).then(refreshAfter),
     /* Settles once the run read started after the answer has landed, so what follows reads the new session, not the
        wedge it replaced (#2192). A failure refreshes too: one whose outcome is unknown may have started a session. */
     restart: (recovery?: RunRecovery | null) => {

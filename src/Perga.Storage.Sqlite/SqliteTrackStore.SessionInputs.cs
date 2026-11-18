@@ -238,6 +238,8 @@ public sealed partial class SqliteTrackStore : ISessionInputStore
                 UPDATE session_turns SET status = 'unknown', error_text = 'Host stopped during dispatch.'
                 WHERE status = 'running' AND id IN (SELECT turn_id FROM session_inputs);
                 UPDATE session_inputs SET delivery_state = 'unknown' WHERE delivery_state = 'dispatching';
+                UPDATE worker_messages SET delivery = 'unknown' WHERE delivery = 'dispatching';
+                UPDATE worker_messages SET delivery = 'interrupted' WHERE delivery = 'queued';
                 """, new { Now = now }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
 
             foreach (var row in interrupted)

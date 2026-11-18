@@ -16,6 +16,7 @@ export type SessionLiveToolState = Readonly<{
 }>;
 
 export type SessionLiveBuffer = Readonly<{
+  parts?: readonly Readonly<{ sequence: number; delta: string }>[];
   sessionId: string;
   turnId: string;
   text: string;
@@ -40,7 +41,8 @@ export function applySessionDeltaToBuffer(
       updatedAtMs: delta.createdAtMs,
     };
   if (delta.kind === 'session.text_delta') {
-    return { ...base, text: base.text + delta.delta, updatedAtMs: delta.createdAtMs };
+    const parts = delta.sequence === undefined ? base.parts : [...(base.parts ?? []), { sequence: delta.sequence, delta: delta.delta }].slice(-128);
+    return { ...base, text: base.text + delta.delta, parts, updatedAtMs: delta.createdAtMs };
   }
   if (delta.kind === 'session.thinking_delta') {
     return { ...base, thinking: base.thinking + delta.delta, updatedAtMs: delta.createdAtMs };

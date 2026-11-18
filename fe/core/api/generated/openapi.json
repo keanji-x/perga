@@ -14706,11 +14706,15 @@
             "name": "trackId",
             "in": "path",
             "required": true,
-            "schema": { "type": "string" }
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
-          "202": { "description": "Workspace retry accepted" }
+          "202": {
+            "description": "Workspace retry accepted"
+          }
         }
       }
     },
@@ -14992,11 +14996,44 @@
             "schema": {
               "type": "boolean"
             }
+          },
+          {
+            "name": "activityTurnId",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "afterSequence",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "waitMs",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10000
+            }
           }
         ]
       }
     },
     "/api/v1/sessions/{sessionId}/messages": {
+      "parameters": [
+        {
+          "name": "sessionId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
       "post": {
         "parameters": [
           {
@@ -15031,6 +15068,19 @@
                     "type": "boolean",
                     "default": false,
                     "description": "Allow volatile FIFO admission while the session is busy."
+                  },
+                  "attemptId": {
+                    "type": "string",
+                    "description": "Required for a bound Worker."
+                  },
+                  "turnId": {
+                    "type": "string",
+                    "description": "The expected current turn when steering a Worker."
+                  },
+                  "allowQueue": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Allow a Worker message to queue where native steering is unavailable."
                   }
                 }
               }
@@ -15052,6 +15102,9 @@
                     },
                     {
                       "$ref": "#/components/schemas/QueuedMessageReceipt"
+                    },
+                    {
+                      "$ref": "#/components/schemas/WorkerMessageReceipt"
                     }
                   ]
                 }
@@ -15069,6 +15122,9 @@
                     },
                     {
                       "$ref": "#/components/schemas/QueuedMessageReceipt"
+                    },
+                    {
+                      "$ref": "#/components/schemas/WorkerMessageReceipt"
                     }
                   ]
                 }
@@ -15366,6 +15422,31 @@
         "responses": {
           "200": {
             "description": "Interrupted"
+          },
+          "409": {
+            "description": "The Worker attempt or turn changed."
+          }
+        },
+        "requestBody": {
+          "description": "Required for a bound Worker. Both IDs identify the expected active turn.",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "attemptId",
+                  "turnId"
+                ],
+                "properties": {
+                  "attemptId": {
+                    "type": "string"
+                  },
+                  "turnId": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
           }
         }
       }
@@ -15711,6 +15792,161 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{sessionId}/settings": {
+      "parameters": [
+        {
+          "name": "sessionId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "patch": {
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "attemptId",
+                  "version",
+                  "model",
+                  "reasoningEffort",
+                  "approvalMode"
+                ],
+                "properties": {
+                  "attemptId": {
+                    "type": "string"
+                  },
+                  "version": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "model": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "reasoningEffort": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "approvalMode": {
+                    "enum": [
+                      "ask",
+                      "deny"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Settings saved for the next Worker turn.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkerSettings"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The attempt changed or the settings version was superseded."
+          }
+        }
+      }
+    },
+    "/api/v1/tracks/{trackId}/tasks/dispatch": {
+      "parameters": [
+        {
+          "name": "trackId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "goal"
+                ],
+                "properties": {
+                  "goal": {
+                    "type": "string"
+                  },
+                  "access": {
+                    "enum": [
+                      "read_only",
+                      "read_write"
+                    ]
+                  },
+                  "acceptance": {
+                    "type": "string"
+                  },
+                  "dependsOn": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "gate": {
+                    "type": "string"
+                  },
+                  "provider": {
+                    "type": "string"
+                  },
+                  "model": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "The Worker task was committed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkerDispatchReceipt"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The Track is closed or the request key conflicts."
           }
         }
       }
@@ -16866,7 +17102,14 @@
               },
               "message_status": {
                 "type": "string",
-                "enum": ["queued", "sending", "processing", "completed", "failed", "unconfirmed"]
+                "enum": [
+                  "queued",
+                  "sending",
+                  "processing",
+                  "completed",
+                  "failed",
+                  "unconfirmed"
+                ]
               },
               "kind": {
                 "type": "string",
@@ -25248,7 +25491,15 @@
             "type": "string"
           },
           "messageStatus": {
-            "enum": ["queued", "sending", "processing", "completed", "failed", "unconfirmed", null]
+            "enum": [
+              "queued",
+              "sending",
+              "processing",
+              "completed",
+              "failed",
+              "unconfirmed",
+              null
+            ]
           },
           "payload": {},
           "createdAtMs": {
@@ -25367,6 +25618,16 @@
           "canSteer": {
             "type": "boolean",
             "description": "Whether the current active turn supports steering."
+          },
+          "worker": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WorkerActivityDto"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         }
       },
@@ -25500,7 +25761,12 @@
             }
           },
           "workspacePreparation": {
-            "enum": ["pending", "failed", "unknown", null]
+            "enum": [
+              "pending",
+              "failed",
+              "unknown",
+              null
+            ]
           },
           "templateSnapshotSource": {
             "type": [
@@ -25781,6 +26047,242 @@
             "items": {
               "$ref": "#/components/schemas/TrackOverlayItemDto"
             }
+          }
+        }
+      },
+      "WorkerActivityEvent": {
+        "type": "object",
+        "required": [
+          "sequence",
+          "kind",
+          "payload",
+          "createdAtMs"
+        ],
+        "properties": {
+          "sequence": {
+            "type": "integer"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "payload": {},
+          "createdAtMs": {
+            "type": "integer"
+          }
+        }
+      },
+      "WorkerMessageActivity": {
+        "type": "object",
+        "required": [
+          "id",
+          "author",
+          "content",
+          "delivery",
+          "createdAtMs"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "author": {
+            "type": "string"
+          },
+          "content": {
+            "type": "string"
+          },
+          "turnId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "delivery": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "dispatching",
+              "delivered",
+              "rejected",
+              "unknown",
+              "interrupted"
+            ]
+          },
+          "createdAtMs": {
+            "type": "integer"
+          }
+        }
+      },
+      "WorkerActivityDto": {
+        "type": "object",
+        "required": [
+          "task",
+          "attemptId",
+          "phase",
+          "nativeSteer",
+          "openAsks",
+          "sequence",
+          "reset",
+          "events",
+          "messages",
+          "text",
+          "textTruncated",
+          "nextSettings",
+          "canChangeModel",
+          "reasoningEfforts"
+        ],
+        "properties": {
+          "task": {
+            "$ref": "#/components/schemas/TaskDto"
+          },
+          "attemptId": {
+            "type": "string"
+          },
+          "phase": {
+            "type": "string"
+          },
+          "nativeSteer": {
+            "type": "boolean"
+          },
+          "openAsks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AskDto"
+            }
+          },
+          "sequence": {
+            "type": "integer"
+          },
+          "reset": {
+            "type": "boolean"
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkerActivityEvent"
+            }
+          },
+          "messages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkerMessageActivity"
+            }
+          },
+          "text": {
+            "type": "string"
+          },
+          "textTruncated": {
+            "type": "boolean"
+          },
+          "nextSettings": {
+            "$ref": "#/components/schemas/WorkerSettings"
+          },
+          "activeSettings": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WorkerSettings"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "canChangeModel": {
+            "type": "boolean"
+          },
+          "reasoningEfforts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "lastError": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "WorkerMessageReceipt": {
+        "type": "object",
+        "required": [
+          "delivery",
+          "inputId"
+        ],
+        "properties": {
+          "turnId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "delivery": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "dispatching",
+              "delivered",
+              "rejected",
+              "unknown",
+              "interrupted"
+            ]
+          },
+          "inputId": {
+            "type": "string"
+          }
+        }
+      },
+      "WorkerSettings": {
+        "type": "object",
+        "required": [
+          "version",
+          "model",
+          "reasoningEffort",
+          "approvalMode"
+        ],
+        "properties": {
+          "version": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reasoningEffort": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "approvalMode": {
+            "enum": [
+              "ask",
+              "deny"
+            ]
+          }
+        }
+      },
+      "WorkerDispatchReceipt": {
+        "type": "object",
+        "required": [
+          "task",
+          "requestKey"
+        ],
+        "properties": {
+          "task": {
+            "$ref": "#/components/schemas/TaskDto"
+          },
+          "sessionId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "requestKey": {
+            "type": "string"
           }
         }
       }

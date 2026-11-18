@@ -99,11 +99,21 @@ public sealed class PolicyVm : IPolicyVm
             // Tasks spec
             var requireGateForReadWrite = false;
             string? afterWorkerDoneCmd = null;
+            WorkerDispatchDefaults? workerDispatch = null;
             if (TryGetOptionalObject(def, "tasks", "template.tasks", out var tasksObj))
             {
                 requireGateForReadWrite = ReadOptionalBool(tasksObj, "requireGateForReadWrite", "template.tasks.requireGateForReadWrite") ?? false;
                 afterWorkerDoneCmd = ReadOptionalString(tasksObj, "afterWorkerDoneCmd", "template.tasks.afterWorkerDoneCmd");
                 EnsureOptionalFunction(tasksObj, "onSettled", "template.tasks.onSettled");
+                if (TryGetOptionalObject(tasksObj, "dispatch", "template.tasks.dispatch", out var dispatch))
+                {
+                    var access = ReadOptionalString(dispatch, "access", "template.tasks.dispatch.access");
+                    if (access is not (null or "read_only" or "read_write"))
+                        throw new InvalidOperationException("template.tasks.dispatch.access must be read_only or read_write.");
+                    workerDispatch = new WorkerDispatchDefaults(
+                        ReadOptionalString(dispatch, "section", "template.tasks.dispatch.section"), access,
+                        ReadOptionalString(dispatch, "gateInput", "template.tasks.dispatch.gateInput"));
+                }
             }
 
             // Schedules spec
@@ -124,7 +134,8 @@ public sealed class PolicyVm : IPolicyVm
                 WorkspaceCloseCmd: workspaceCloseCmd,
                 AfterWorkerDoneCmd: afterWorkerDoneCmd,
                 Schedules: schedules,
-                InitialReportMarkdown: initialMarkdown);
+                InitialReportMarkdown: initialMarkdown,
+                WorkerDispatch: workerDispatch);
 
             return new CompiledPolicy(id, jsModuleSource, manifest);
         });

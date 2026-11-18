@@ -76,6 +76,7 @@ public sealed class AcpAgentSession : IAgentSession
     public string? NativeThreadId => Volatile.Read(ref _nativeThreadId);
 
     public bool SupportsNativeSteer => false;
+    public bool ShutdownConfirmed => _rpc.ShutdownConfirmed;
 
     internal static async Task<AcpAgentSession> OpenAsync(
         CommandInvocation wrappedCommand,

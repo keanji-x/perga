@@ -84,6 +84,7 @@ import { ContextRing } from '../../features/chat/thread/context-ring.tsx';
 import { useMentionTrigger } from '../../features/chat/thread/mention-trigger.tsx';
 import { ReportBacklinks } from '../../features/report/backlinks/public.tsx';
 import { TaskRecovery, useCurrentTaskRows } from './task-recovery.tsx';
+import { WorkerDispatchControl, WorkerSettingsControl } from './worker-controls.tsx';
 import { useReportPreviewResolver, useReportPreviewViewports } from './report-preview.ts';
 import { useReportSeriesResolver } from './report-series.ts';
 import { ReportReferencePreview } from './report-reference.tsx';
@@ -680,6 +681,8 @@ function useConversationPane(
   });
   const setModel = useCommittedCallback(existingId, store.setModel);
   const setPermissionMode = useCommittedCallback(existingId, store.setPermissionMode);
+  const worker = store.worker;
+  const updateWorkerSettings = store.updateWorkerSettings;
   const [submission, setSubmission] = useState<Readonly<{ conversationId: string; request: number }> | null>(null);
   /* Only a new admitted op asks the shown thread to follow. Retries retain their
      key and reading place; pending work on mount is not a fresh local press. */
@@ -819,7 +822,7 @@ function useConversationPane(
                     }}
                     disabled={editingQueue || composerView.sendBlocked || !composerView.historyReady || replacing}
                   />
-                  <ModelPill
+                  {worker == null && <ModelPill
                     /* Without a scope the catalog read is disabled, so no `unavailable` label can show. */
                     /* An existing conversation keeps issue-time handling: no availability gate here (#1817). */
                     groups={[{ provider: scopeProvider, catalog: composerView.modelCatalog, availability: null }]}
@@ -827,7 +830,9 @@ function useConversationPane(
                     selection={composerView.model}
                     onChange={composerView.setModel}
                     isDisabled={!composerView.historyReady}
-                  />
+                  />}
+                  {worker != null && updateWorkerSettings !== undefined &&
+                    <WorkerSettingsControl key={worker.attemptId} worker={worker} update={updateWorkerSettings} />}
                   {/* A Planner's only (#2348): any other conversation reads `null` and has no approvals to set. */}
                   {composerView.permissionMode !== null && (
                     <PermissionModePill mode={composerView.permissionMode} onChange={composerView.setPermissionMode}
@@ -844,7 +849,7 @@ function useConversationPane(
   ), [existingId, compactComposer, panePresented, composerFocusFor, composerFocusRequest, changeComposer, composerView, draftOnly,
     paneCommands, composerStop, replacing, editingQueue, edit.queuedSaving, editingBar,
     sendText, composerAttachments, mentionTrigger, scopeProvider, plannerAsks, answerAsk,
-    roleValue, roleDisabled, roleDisabledReason, roleChange]);
+    roleValue, roleDisabled, roleDisabledReason, roleChange, worker, updateWorkerSettings]);
 
   const renderDrawer = (resizeGroup: PaneResizeGroup | null = null) => (
       <ConversationSurface
@@ -942,6 +947,7 @@ function useConversationPane(
             {store.contextUsageInvalidated && <ChatFooterNotice tone="neutral">用量待更新</ChatFooterNotice>}
             {store.loadingEarlier && <ChatFooterNotice tone="neutral">Loading earlier messages… Navigation covers loaded history.</ChatFooterNotice>}
             {store.compacting && <ChatFooterNotice>Compacting conversation context…</ChatFooterNotice>}
+            {store.workerStatus != null && <ChatFooterNotice tone="neutral">{store.workerStatus}</ChatFooterNotice>}
             {store.actionError !== null && (
               <ChatFooterNotice><ChatFooterError message={store.actionError} /></ChatFooterNotice>
             )}
@@ -1734,7 +1740,10 @@ function TrackRouteBody({
         {center !== undefined && <div className={mobileChatStyles.embeddedSlot} hidden={!centerActive}>
           {center.render(<div ref={setCenterHost} className={mobileChatStyles.embeddedSlot} />)}
         </div>}
-        {!centerActive && <>{reportHeader}{(!chat.isOpen || chat.selectedConversationId !== plannerCard?.id) && workspaceNotice}<TrackReportRegion
+        {!centerActive && <>{reportHeader}{(!chat.isOpen || chat.selectedConversationId !== plannerCard?.id) && workspaceNotice}
+        {canCloseTrack && shareAccess === null &&
+          <WorkerDispatchControl key={track.id} trackId={track.id} transport={transport} unauthorized={unauthorized} />}
+        <TrackReportRegion
         presentation={reportPresentation}
         trackId={track.id}
         activityAt={track.activityAt}

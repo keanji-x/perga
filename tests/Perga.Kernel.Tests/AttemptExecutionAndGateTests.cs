@@ -10,6 +10,52 @@ namespace Perga.Kernel.Tests;
 public sealed class AttemptExecutionAndGateTests
 {
     [Fact]
+    public async Task CancelDuringGateRetainsLeaseUntilVerificationFinishes()
+    {
+        await using var ctx = new KernelTestContext();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var ct = deadline.Token;
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        ctx.CommandRunner.Handler = async (request, _) =>
+        {
+            if (request.Command == "verify")
+            {
+                entered.TrySetResult();
+                await release.Task.WaitAsync(ct);
+            }
+            return new ShellCommandResult(0, "", "", TimedOut: false, DurationMs: 1);
+        };
+
+        var (_, snap) = await ctx.CreateDefaultTrackAsync();
+        var track = snap.Track;
+        var report = await ctx.Kernel.ReadReportAsync(track.Id, ct: ct);
+        await ctx.Kernel.CommitReportAsync(track.Id, track.LeadSessionId!, new ReportCommitRequest(report.Anchor,
+            [new BlockOp.UpsertBlockOp(null, ReportBlockKind.Task, null, TestJson.FromObject(new
+            {
+                task_key = "guarded", ready = true, access = "read_write", goal_or_cmd = "Implement", gate = "verify"
+            }))]), ct);
+        await ctx.Kernel.WaitForTrackIdleAsync(track.Id, ct);
+        var worker = Assert.Single(await ctx.Kernel.ListSessionsAsync(track.Id, ct), session => session.BoundAttemptId is not null);
+        var finish = ctx.Kernel.CompleteAttemptDoneAsync(track.Id, worker.Id, ct: ct);
+        try
+        {
+            await entered.Task.WaitAsync(ct);
+            var blocked = await Assert.ThrowsAsync<KernelException>(() =>
+                ctx.Kernel.CancelTaskAsync(track.Id, track.LeadSessionId, "guarded", ct: ct));
+            Assert.Equal(KernelErrorCode.Conflict, blocked.Code);
+            Assert.Empty(ctx.DirectDriver.SettleLeaseCalls);
+        }
+        finally
+        {
+            release.TrySetResult();
+        }
+
+        Assert.Equal(TaskRunStatus.Done, (await finish).Status);
+        Assert.Equal(AttemptLeaseDisposition.Promote, Assert.Single(ctx.DirectDriver.SettleLeaseCalls).Disposition);
+    }
+
+    [Fact]
     public async Task TaskDone_RunsAfterWorkerDoneCmdJsonMerge_RunsGate_PromotesLeaseOnPass_UnblocksDependent_AndWakesLead()
     {
         await using var ctx = new KernelTestContext();
@@ -139,14 +185,18 @@ public sealed class AttemptExecutionAndGateTests
         Assert.Contains(ctx.AgentRuntime.OpenedSessions, s => s.LaunchSpec.Sandbox == OsSandboxMode.ReadOnlyBwrap);
     }
 
-    [Fact]
-    public async Task TaskDone_WhenGateFails_DiscardsLease_MarksTaskFailed_AndWakesLead()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task TaskDone_WhenGateFails_DiscardsLease_MarksTaskFailed_AndWakesLead(bool runnerThrows)
     {
         await using var ctx = new KernelTestContext();
         ctx.CommandRunner.Handler = (req, _) =>
         {
             if (req.Command == "cargo test")
             {
+                if (runnerThrows)
+                    throw new IOException("Unable to start cargo-test.");
                 return Task.FromResult(new ShellCommandResult(101, "", "1 test failed", TimedOut: false, DurationMs: 15));
             }
 

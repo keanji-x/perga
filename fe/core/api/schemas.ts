@@ -1266,7 +1266,7 @@ export function decodeWireEvent(input: unknown): WireEventDecodeResult {
     if (perga.kind === 'delta') {
       const delta: PergaStreamDelta = perga.delta;
       if (delta.kind === 'session.text_delta') {
-        return { status: 'ready', value: { ev: 'session.text_delta', data: { sessionId: delta.sessionId, turnId: delta.turnId, delta: delta.delta, createdAtMs: delta.createdAtMs } } };
+        return { status: 'ready', value: { ev: 'session.text_delta', data: { sessionId: delta.sessionId, turnId: delta.turnId, delta: delta.delta, sequence: delta.sequence, createdAtMs: delta.createdAtMs } } };
       }
       if (delta.kind === 'session.thinking_delta') {
         return { status: 'ready', value: { ev: 'session.thinking_delta', data: { sessionId: delta.sessionId, turnId: delta.turnId, delta: delta.delta, createdAtMs: delta.createdAtMs } } };

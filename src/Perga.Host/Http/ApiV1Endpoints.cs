@@ -14,7 +14,12 @@ namespace Perga.Host.Http;
 public sealed record SendMessageHttpBody(
     string Content,
     bool? SteerIfRunning = null,
-    bool? QueueIfBusy = null);
+    bool? QueueIfBusy = null,
+    string? AttemptId = null,
+    string? TurnId = null,
+    bool AllowQueue = false);
+
+public sealed record InterruptWorkerHttpBody(string AttemptId, string TurnId);
 
 public sealed record SteerQueuedMessageHttpBody(string TurnId);
 
@@ -191,6 +196,17 @@ public static class ApiV1Endpoints
             return Results.Json(attempts, PergaJsonDefaults.ApiOptions);
         });
 
+        v1.MapPost("/tracks/{trackId}/tasks/dispatch", async (string trackId, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
+        {
+            var keys = ctx.Request.Headers["Idempotency-Key"];
+            if (keys.Count > 1)
+                return HttpErrorHandling.BadRequest("invalid_argument", "Exactly one Idempotency-Key is allowed.");
+            var request = await ReadRequiredJsonBodyAsync<DispatchWorkerRequest>(ctx, ct).ConfigureAwait(false);
+            var receipt = await kernel.DispatchWorkerAsync(trackId, request, keys.Count == 0 ? null : keys.ToString().Trim(), caller: null, ct)
+                .ConfigureAwait(false);
+            return Results.Json(receipt, PergaJsonDefaults.ApiOptions, statusCode: StatusCodes.Status202Accepted);
+        });
+
         v1.MapPost("/tracks/{trackId}/tasks/{taskKey}/cancel", async (string trackId, string taskKey, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
         {
             var body = await ReadOptionalJsonBodyAsync(ctx, () => new CancelTaskHttpBody(), ct).ConfigureAwait(false);
@@ -249,15 +265,14 @@ public static class ApiV1Endpoints
             return Results.Json(patched, PergaJsonDefaults.ApiOptions);
         });
 
-        v1.MapGet("/sessions/{sessionId}/items", async (string sessionId, long? afterId, int? limit, bool? latest, long? beforeId, IPergaKernel kernel, CancellationToken ct) =>
+        v1.MapGet("/sessions/{sessionId}/items", async (string sessionId, long? afterId, int? limit, bool? latest,
+            long? beforeId, string? activityTurnId, long? afterSequence, int? waitMs, IPergaKernel kernel, CancellationToken ct) =>
         {
             var page = await kernel.GetSessionItemsAsync(
                 sessionId,
                 afterId ?? 0,
                 limit ?? 100,
-                ct,
-                latest ?? false,
-                beforeId).ConfigureAwait(false);
+                ct, latest ?? false, beforeId, activityTurnId: activityTurnId, afterSequence: afterSequence, waitMs: waitMs ?? 0).ConfigureAwait(false);
             return Results.Json(page, PergaJsonDefaults.ApiOptions);
         });
 
@@ -281,6 +296,15 @@ public static class ApiV1Endpoints
             if (string.IsNullOrWhiteSpace(body.Content))
             {
                 return HttpErrorHandling.BadRequest("invalid_argument", "Message content cannot be empty.");
+            }
+
+            if (body.AttemptId is not null)
+            {
+                var result = await kernel.SendWorkerMessageAsync(sessionId,
+                    new WorkerMessageRequest(body.AttemptId, body.Content, idempotencyKey, body.TurnId, body.AllowQueue),
+                    caller: null, ct).ConfigureAwait(false);
+                return Results.Json(result, PergaJsonDefaults.ApiOptions,
+                    statusCode: result.Delivery == "queued" ? StatusCodes.Status202Accepted : StatusCodes.Status200OK);
             }
 
             if (body.SteerIfRunning == true && body.QueueIfBusy == true)
@@ -346,9 +370,13 @@ public static class ApiV1Endpoints
             return Results.Json(receipt, PergaJsonDefaults.ApiOptions);
         });
 
-        v1.MapPost("/sessions/{sessionId}/interrupt", async (string sessionId, IPergaKernel kernel, CancellationToken ct) =>
+        v1.MapPost("/sessions/{sessionId}/interrupt", async (string sessionId, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
         {
-            await kernel.InterruptSessionAsync(sessionId, ct).ConfigureAwait(false);
+            var target = await ReadOptionalJsonBodyAsync<InterruptWorkerHttpBody?>(ctx, () => null, ct).ConfigureAwait(false);
+            if (target is null)
+                await kernel.InterruptSessionAsync(sessionId, ct).ConfigureAwait(false);
+            else
+                await kernel.InterruptWorkerAsync(sessionId, target.AttemptId, target.TurnId, caller: null, ct).ConfigureAwait(false);
             return Results.Json(new { ok = true }, PergaJsonDefaults.ApiOptions);
         });
 
@@ -356,6 +384,13 @@ public static class ApiV1Endpoints
         {
             var compacted = await kernel.CompactSessionAsync(sessionId, ct).ConfigureAwait(false);
             return Results.Json(compacted, PergaJsonDefaults.ApiOptions);
+        });
+
+        v1.MapPatch("/sessions/{sessionId}/settings", async (string sessionId, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
+        {
+            var request = await ReadRequiredJsonBodyAsync<UpdateWorkerSettingsRequest>(ctx, ct).ConfigureAwait(false);
+            var settings = await kernel.UpdateWorkerSettingsAsync(sessionId, request, caller: null, ct).ConfigureAwait(false);
+            return Results.Json(settings, PergaJsonDefaults.ApiOptions);
         });
 
         // ------------------- Asks -------------------

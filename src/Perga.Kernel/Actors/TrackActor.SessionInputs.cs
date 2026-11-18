@@ -28,6 +28,8 @@ public sealed partial class TrackActor
 
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
             var session = RequireSessionCore(sessionId);
+            if (session.BoundAttemptId is not null)
+                throw KernelException.InvalidArgument("Worker messages require attemptId and the active turnId when steering.");
             if (_queuedMessageRequests.TryGetValue((sessionId, request.IdempotencyKey), out var prior))
             {
                 RequireMatchingHash(prior.Hash, hash);

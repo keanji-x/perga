@@ -40,7 +40,17 @@ public sealed record HarnessLaunchSpec(
 
 public sealed record TurnInput(
     string Prompt,
-    string CorrelationId);
+    string CorrelationId,
+    string? Model = null,
+    string? ReasoningEffort = null);
+
+public sealed record WorkerConfigurationSupport(bool ModelOverride, IReadOnlyList<string> ReasoningEfforts)
+{
+    public static WorkerConfigurationSupport ForProvider(string provider) =>
+        string.Equals(provider, "codex", StringComparison.OrdinalIgnoreCase)
+            ? new(true, ["low", "medium", "high", "xhigh"])
+            : new(false, []);
+}
 
 public sealed record TokenUsage(
     long InputTokens,
@@ -75,6 +85,7 @@ public interface IAgentSession : IAsyncDisposable
 {
     string? NativeThreadId { get; }
     bool SupportsNativeSteer { get; }
+    bool ShutdownConfirmed => true;
 
     IAsyncEnumerable<UnifiedAgentEvent> StreamTurnAsync(TurnInput input, CancellationToken ct);
     Task CancelTurnAsync(CancellationToken ct);

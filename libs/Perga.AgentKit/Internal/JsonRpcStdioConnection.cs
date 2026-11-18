@@ -146,6 +146,8 @@ internal sealed class JsonRpcStdioConnection : IAsyncDisposable
         return _process.WriteLineAsync(json, ct);
     }
 
+    internal bool ShutdownConfirmed => _process.ShutdownConfirmed;
+
     public async ValueTask DisposeAsync()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0)

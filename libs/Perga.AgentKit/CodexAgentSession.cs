@@ -145,6 +145,7 @@ public sealed class CodexAgentSession : IAgentSession
     public string? NativeThreadId => Volatile.Read(ref _nativeThreadId);
 
     public bool SupportsNativeSteer => true;
+    public bool ShutdownConfirmed => _rpc.ShutdownConfirmed;
 
     internal static async Task<CodexAgentSession> OpenAsync(
         CommandInvocation wrappedCommand,
@@ -430,8 +431,8 @@ public sealed class CodexAgentSession : IAgentSession
         CancellationToken ct)
     {
         var cachedFallback = Volatile.Read(ref _fallbackModel);
-        var allowFallback = _configuredModel is null && cachedFallback is null;
-        return ExecuteTurnStartAsync(threadId, input, cachedFallback, turnState, allowFallback, ct);
+        var allowFallback = input.Model is null && _configuredModel is null && cachedFallback is null;
+        return ExecuteTurnStartAsync(threadId, input, input.Model ?? cachedFallback, turnState, allowFallback, ct);
     }
 
     private async Task ExecuteTurnStartAsync(
@@ -460,6 +461,8 @@ public sealed class CodexAgentSession : IAgentSession
         {
             turnParams["model"] = modelOverride;
         }
+        if (input.ReasoningEffort is not null)
+            turnParams["effort"] = input.ReasoningEffort;
 
         try
         {
