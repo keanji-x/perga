@@ -83,7 +83,7 @@ focused cases while iterating and include affected consumers and integration
 tests before delivery.
 
 ```sh
-# .NET 10. For a focused run, use a test project and --filter.
+# .NET 11. For a focused run, use a test project and --filter.
 dotnet test Perga.sln
 
 # Install when dependencies are missing or the lockfile has changed.
