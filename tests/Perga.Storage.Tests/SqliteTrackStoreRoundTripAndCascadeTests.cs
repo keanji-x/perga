@@ -1,13 +1,48 @@
 using System.Text.Json.Nodes;
 using Dapper;
 using Perga.Contracts;
+using Perga.Kernel.Ports;
 using Perga.ReportDoc;
 using Perga.Storage.Sqlite;
+using Perga.VcsKit;
 
 namespace Perga.Storage.Tests;
 
 public sealed class SqliteTrackStoreRoundTripAndCascadeTests
 {
+    [Fact]
+    public async Task WorkspaceRecoveryRetriesRepeatableAllocationAndPreservesUncertaintyAboutInitialization()
+    {
+        await using var harness = await StorageTestHarness.CreateAsync();
+        var ct = CancellationToken.None;
+        await harness.Store.UpsertAreaAsync(StorageTestHarness.CreateArea(), ct);
+
+        async Task SeedAsync(string id, WorkspacePreparationPhase phase, bool repeatable)
+        {
+            var (track, report, lead) = StorageTestHarness.CreateSeedTrack(id, leadSessionId: $"lead_{id}");
+            var preparation = new WorkspacePreparation(
+                new WorkspaceProvisionRequest(id, "/src", "/workspaces", []), null, phase, RepeatableProvision: repeatable);
+            await harness.Store.CreateTrackAsync(new TrackCreation(track, report, null, lead, [],
+                null, preparation, []), null, ct);
+        }
+
+        await SeedAsync("trk_repeatable", WorkspacePreparationPhase.Provisioning, repeatable: true);
+        await SeedAsync("trk_legacy", WorkspacePreparationPhase.Provisioning, repeatable: false);
+        await SeedAsync("trk_hook", WorkspacePreparationPhase.Initializing, repeatable: true);
+        await SeedAsync("trk_mount", WorkspacePreparationPhase.Mounting, repeatable: true);
+
+        var recovered = await harness.Store.RecoverWorkspacePreparationsAsync(ct);
+        Assert.Equal(new[] { "trk_mount", "trk_repeatable" }, recovered.Order());
+        Assert.Equal(WorkspacePreparationPhase.Pending,
+            (await harness.Store.GetWorkspacePreparationAsync("trk_repeatable", ct))!.Phase);
+        Assert.Equal(WorkspacePreparationPhase.Unknown,
+            (await harness.Store.GetWorkspacePreparationAsync("trk_legacy", ct))!.Phase);
+        Assert.Equal(WorkspacePreparationPhase.Unknown,
+            (await harness.Store.GetWorkspacePreparationAsync("trk_hook", ct))!.Phase);
+        Assert.Equal(WorkspacePreparationPhase.Provisioned,
+            (await harness.Store.GetWorkspacePreparationAsync("trk_mount", ct))!.Phase);
+    }
+
     [Fact]
     public async Task AreasAndTracks_FullCrudAggregateSnapshotAndCascadeColdBlobCleanup_RoundTripsExact()
     {

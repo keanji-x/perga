@@ -47,6 +47,11 @@ public sealed class TrackCreationTests
         using var rejected = await PostAsync(host, "/api/v1/tracks", "unavailable-workspace",
             new { areaId, cwd = source, workspaceOptionId = "copy" });
         Assert.Equal(HttpStatusCode.BadRequest, rejected.StatusCode);
+        using var unsupported = await PostAsync(host, "/api/v1/tracks", "overlay-without-launcher",
+            new { areaId, cwd = source, workspaceDriver = OverlayWorkspaceDriver.Id });
+        Assert.Equal(HttpStatusCode.Conflict, unsupported.StatusCode);
+        using var failure = JsonDocument.Parse(await unsupported.Content.ReadAsStringAsync());
+        Assert.Equal("precondition_failed", failure.RootElement.GetProperty("code").GetString());
         using var tracks = await host.Client.GetAsync($"/api/v1/areas/{areaId}/tracks");
         Assert.Empty((await ReadAsync(tracks)).EnumerateArray());
 

@@ -14,7 +14,7 @@ public sealed record VcsServiceOptions
     public string FallbackAuthorEmail { get; init; } = "perga@localhost";
 }
 
-public sealed class VcsService : IVcsService
+public sealed partial class VcsService : IVcsService
 {
     private readonly IProcessRunner _processRunner;
     private readonly VcsServiceOptions _options;
@@ -1815,7 +1815,8 @@ public sealed class VcsService : IVcsService
         return result;
     }
 
-    private static (string RootPath, bool HasJj, bool HasGit)? FindNearestVcsRoot(string startDirectory, bool searchAncestors = true)
+    private static (string RootPath, bool HasJj, bool HasGit)? FindNearestVcsRoot(
+        string startDirectory, bool searchAncestors = true, bool ignoreAmbientRoots = true)
     {
         var current = NormalizeDirectoryPath(startDirectory);
         var tempRoot = NormalizeDirectoryPath(Path.GetTempPath());
@@ -1826,7 +1827,7 @@ public sealed class VcsService : IVcsService
             var isFilesystemRoot = string.IsNullOrEmpty(parent) || string.Equals(parent, current, StringComparison.Ordinal);
 
             // Never treat `/` or the system temp root (`/tmp`) itself as a repository root.
-            if (!isFilesystemRoot && !string.Equals(current, tempRoot, PathComparison))
+            if (!ignoreAmbientRoots || (!isFilesystemRoot && !string.Equals(current, tempRoot, PathComparison)))
             {
                 var hasJj = IsValidJjMarker(Path.Combine(current, ".jj"));
                 var hasGit = IsValidGitMarker(Path.Combine(current, ".git"));

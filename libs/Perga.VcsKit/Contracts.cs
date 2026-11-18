@@ -53,6 +53,9 @@ public interface IWorkspaceDriver
 {
     string DriverId { get; }
     bool SupportsParallelIsolatedWriteLeases { get; }
+    bool ProvisionIsRepeatable => false;
+    bool VerifyMountOnAccess => false;
+    Task<bool> IsAvailableAsync(string? source, CancellationToken ct) => Task.FromResult(true);
 
     Task<WorkspaceSpec> ProvisionTrackAsync(WorkspaceProvisionRequest req, CancellationToken ct = default);
     Task<MountedWorkspace> EnsureMountedAsync(WorkspaceSpec spec, CancellationToken ct = default);
@@ -66,6 +69,7 @@ public interface IWorkspaceDriver
         AttemptLeaseDisposition disposition,
         CancellationToken ct = default);
     Task TeardownTrackAsync(WorkspaceSpec spec, CancellationToken ct = default);
+    Task CleanupDeletedTrackAsync(WorkspaceSpec spec) => Task.CompletedTask;
 }
 
 public interface IWorkspaceDriverRegistry
@@ -82,6 +86,8 @@ public enum VcsBackendKind
     GitWorktree = 1,
     PlainDirectory = 2
 }
+
+public sealed class WorkspaceUnavailableException(string message) : InvalidOperationException(message);
 
 public sealed class WorkspaceBackendUnavailableException(VcsBackendKind backend)
     : InvalidOperationException($"The selected workspace backend '{backend}' is no longer available.");

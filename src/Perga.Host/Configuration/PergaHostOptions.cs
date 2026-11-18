@@ -11,6 +11,8 @@ public sealed class PergaHostOptions
     public string? DbPath { get; set; }
     public string? TemplatesDirectory { get; set; }
     public string? WorkspacesRootDirectory { get; set; }
+    public string? OverlayWorkspaceWarmCommand { get; set; }
+    public string? OverlayWorkspaceCacheVersion { get; set; }
     public string? StaticWebRootDirectory { get; set; }
     public string? McpPluginsConfigPath { get; set; }
     public string? McpBaseUri { get; set; }

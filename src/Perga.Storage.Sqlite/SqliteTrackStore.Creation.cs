@@ -72,10 +72,15 @@ public sealed partial class SqliteTrackStore
         {
             await conn.ExecuteAsync(new CommandDefinition(
                 """
-                UPDATE track_workspace_preparations SET intent_json = json_set(intent_json, '$.Phase', @Unknown)
+                UPDATE track_workspace_preparations
+                SET intent_json = json_set(intent_json, '$.Phase',
+                    CASE WHEN json_extract(intent_json, '$.Phase') = @Provisioning
+                              AND json_extract(intent_json, '$.RepeatableProvision') = 1
+                         THEN @Pending ELSE @Unknown END)
                 WHERE json_extract(intent_json, '$.Phase') IN (@Provisioning, @Initializing);
                 """, new { Unknown = WorkspacePreparationPhase.Unknown, Provisioning = WorkspacePreparationPhase.Provisioning,
-                    Initializing = WorkspacePreparationPhase.Initializing }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
+                    Initializing = WorkspacePreparationPhase.Initializing, Pending = WorkspacePreparationPhase.Pending },
+                tx, cancellationToken: innerCt)).ConfigureAwait(false);
             await conn.ExecuteAsync(new CommandDefinition(
                 """
                 UPDATE track_workspace_preparations SET intent_json = json_set(intent_json, '$.Phase', @Provisioned)
