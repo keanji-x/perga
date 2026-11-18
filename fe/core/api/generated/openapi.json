@@ -16038,6 +16038,49 @@
           }
         }
       }
+    },
+    "/api/v1/sessions/{sessionId}/permission-mode": {
+      "parameters": [
+        {
+          "name": "sessionId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "put": {
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "permission_mode": {
+                    "type": "string"
+                  },
+                  "permissionMode": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentSessionDto"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -20546,12 +20589,7 @@
       },
       "PlannerPermissionMode": {
         "type": "string",
-        "description": "What a Planner card's provider may do outside its sandbox (#2348, #2441): nothing, what the\nperson allows when asked, or anything, with no sandbox at all. Stored on the card as the server-owned payload key `permission_mode`; new Planner\ncards use their ACP registration’s declared default, or `never` without one; delegated children inherit their parent’s mode. Only `PUT /api/cards/{id}/planner/permission-mode` changes it.",
-        "enum": [
-          "never",
-          "ask",
-          "full"
-        ]
+        "description": "Provider-declared session permission mode ID (e.g., never/ask/full for Codex, dontAsk/default/acceptEdits/bypassPermissions for Claude)."
       },
       "PlannerRunReadResponse": {
         "anyOf": [
@@ -24948,6 +24986,42 @@
               "string",
               "null"
             ]
+          },
+          "permissionModes": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "label",
+                "description"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "label": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "tone": {
+                  "type": "string",
+                  "enum": [
+                    "neutral",
+                    "warning",
+                    "danger"
+                  ]
+                },
+                "isDefault": {
+                  "type": "boolean"
+                }
+              }
+            }
           }
         }
       },
@@ -25048,6 +25122,12 @@
           },
           "updatedAtMs": {
             "type": "integer"
+          },
+          "permissionMode": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
@@ -25184,6 +25264,12 @@
           },
           "updatedAtMs": {
             "type": "integer"
+          },
+          "permissionMode": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
@@ -25282,6 +25368,12 @@
           },
           "updatedAtMs": {
             "type": "integer"
+          },
+          "permissionMode": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
@@ -25400,6 +25492,12 @@
           },
           "updatedAtMs": {
             "type": "integer"
+          },
+          "permissionMode": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
@@ -25548,6 +25646,12 @@
             ]
           },
           "text": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "permissionMode": {
             "type": [
               "string",
               "null"

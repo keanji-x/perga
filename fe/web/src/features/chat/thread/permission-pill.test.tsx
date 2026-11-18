@@ -58,4 +58,25 @@ describe('PermissionModePill', () => {
     const button = screen.getByRole('button', { name: 'Approvals: Ask me' });
     expect(button.hasAttribute('disabled') || button.getAttribute('aria-disabled') === 'true').toBe(true);
   });
+
+  it('renders provider-declared options and hides when empty', () => {
+    const onChange = vi.fn();
+    const { rerender } = render(
+      <PermissionModePill
+        mode="acceptEdits"
+        options={[
+          { id: 'dontAsk', label: 'Never', description: 'Auto-denies unapproved actions.', tone: 'neutral', isDefault: true },
+          { id: 'acceptEdits', label: 'Accept edits', description: 'Auto-approves edits.', tone: 'warning', isDefault: false },
+          { id: 'bypassPermissions', label: 'Full access', description: 'No sandbox.', tone: 'danger', isDefault: false },
+        ]}
+        onChange={onChange}
+      />,
+    );
+    const menu = openMenu('Approvals: Accept edits');
+    fireEvent.click(within(menu).getByRole('menuitem', { name: /^Full access/ }));
+    expect(onChange).toHaveBeenCalledWith('bypassPermissions');
+
+    rerender(<PermissionModePill mode="dontAsk" options={[]} onChange={onChange} />);
+    expect(screen.queryByRole('button')).toBeNull();
+  });
 });

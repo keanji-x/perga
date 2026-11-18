@@ -1,4 +1,5 @@
-import type { AgentProvider, ConversationPendingInput, HarnessTimeoutEvidence, PlannerAttachment, PlannerPermissionMode } from '../../../../core/api/generated/wire.ts';
+import type { AgentProvider, ConversationPendingInput, HarnessTimeoutEvidence, PlannerAttachment } from '../../../../core/api/generated/wire.ts';
+import type { PlannerPermissionMode } from '../../../../core/domain/planner-permission-mode.ts';
 import type { Conversation, CreatedConversation, SideConversation, ConversationKind, ConversationState, ModelCatalog, ModelSelection, PendingQueueEntry, PlannerQueueEditOutcome, PlannerRunTokenUsage, PlannerQueueWriteOutcome, TranscriptEntry } from '../../../../core/domain/conversation.ts';
 import type { FailedSendOp, PendingQueueSend, ReplacedTurn, QueueDisplayAccounting } from '../../../../core/domain/conversation-outbox.ts';
 import type { ConversationStopFeedback } from '../../../../core/domain/conversation-stop.ts';
@@ -155,7 +156,7 @@ export type PlannerConversationScope = Readonly<{
 export type ConversationCreationSource = Readonly<{
   derivedCardId: (idempotencyKey: string) => string;
   create: (text: string, idempotencyKey: string, provider: AgentProvider, selection: ModelSelection, side: SideConversation | undefined,
-    answered: (result: CreatedConversation) => void) => Promise<CreatedConversation>;
+    answered: (result: CreatedConversation) => void, permissionMode?: string | null) => Promise<CreatedConversation>;
   inspect: (cardId: string, idempotencyKey: string) => Promise<import('../../../../core/api/generated/wire.ts').ConversationInitialInputObservation>;
   refresh: (beforePublish: (rows: readonly Conversation[]) => void) => Promise<readonly Conversation[]>;
 }>;

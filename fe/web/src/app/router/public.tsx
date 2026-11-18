@@ -29,6 +29,7 @@ import { writeClipboardText } from '../../ui/operation-feedback/clipboard.ts';
 import { useConversationEdit } from '../conversations/edit.ts';
 import { readErrorText } from '../../../../core/domain/read-failure.ts';
 import { notSentMessage } from '../../../../core/domain/conversation-delivery.ts';
+import { defaultPermissionModeFor, permissionModesForProvider } from '../../../../core/domain/agent-providers.ts';
 import { DELETE_FAILURES, DELETE_TEXT, NotSentError, writeFailureText } from '../../../../core/domain/failure-class.ts';
 // Code-based TanStack Router setup, built inside a factory so a test can inject the
 // transport and QueryClient; also the composition point for route-owned surfaces.
@@ -739,6 +740,10 @@ function useConversationPane(
     savedEntry={edit.savedQueuedEntry} onFocusComposer={refocusQueuedComposer} onPresenceChange={pendingPresenceChanged} onSteer={canSteer ? steerQueuedEntry : undefined} />,
   [existingId, threadPresented, store.pendingQueue, store.pendingInputs, store.pendingSends, store.pendingQueueOverflow, store.queueDisplayAccounting, store.sending, store.queueWriteOut,
     deleteQueuedEntry, editQueuedEntry, edit.canEditQueued, store.nativeQueue, edit.queued?.entry.entry_id, edit.savedQueuedEntry, refocusQueuedComposer, pendingPresenceChanged, canSteer, steerQueuedEntry]);
+  const scopePermissionModes = useMemo(
+    () => permissionModesForProvider(steerCapabilities.data, scopeProvider),
+    [steerCapabilities.data, scopeProvider],
+  );
   const hasSideConversation = options?.onSide !== undefined;
   const composerView = useMemo(() => ({
     compact: compact,
@@ -760,6 +765,8 @@ function useConversationPane(
     stopping: store.stopping,
     working: store.working
   }), [compact, store.compacting, store.manualCompactSupported, store.attachmentsSupported, store.contextUsage, store.historyReady, interrupt, store.model, store.modelCatalog, store.permissionMode, store.sendBlocked, store.sending, store.canQueueWhileRunning, store.providerRecoveryHoldsSend, setModel, setPermissionMode, store.stopping, store.working]);
+  const effectivePermissionMode = composerView.permissionMode;
+  const hasPermissionMetadata = steerCapabilities.data !== undefined && scopePermissionModes.length > 0;
   const { bar: editingBar } = edit;
   const replacing = edit.replacing || edit.queuedSaving;
   const editingQueue = edit.queued !== null;
@@ -844,10 +851,16 @@ function useConversationPane(
                   {worker != null && <WorkerActivityControl key={`activity-${worker.attemptId}`} worker={worker} />}
                   {worker != null && workerDelivery != null &&
                     <WorkerDeliveryControl {...workerDelivery} nativeSteer={worker.nativeSteer} />}
-                  {/* A Planner's only (#2348): any other conversation reads `null` and has no approvals to set. */}
-                  {composerView.permissionMode !== null && (
-                    <PermissionModePill mode={composerView.permissionMode} onChange={composerView.setPermissionMode}
-                      isDisabled={!composerView.historyReady} />
+                  {/* Provider-declared approval mode for Lead and Assistant sessions; null hides for task-bound or unsupported sessions. */}
+                  {effectivePermissionMode !== null && (
+                    <PermissionModePill
+                      mode={effectivePermissionMode}
+                      options={hasPermissionMetadata
+                        ? scopePermissionModes
+                        : [{ id: effectivePermissionMode, label: effectivePermissionMode, description: 'Provider approval options unavailable.', tone: 'neutral', isDefault: true }]}
+                      onChange={composerView.setPermissionMode}
+                      isDisabled={!composerView.historyReady || !hasPermissionMetadata}
+                    />
                   )}
                   {/* The Planner's own row on its Track: the Track's role, not the conversation's, so no turn gates it. */}
                   {roleValue !== null && roleChange !== undefined && (
@@ -859,7 +872,7 @@ function useConversationPane(
             />
   ), [existingId, compactComposer, panePresented, composerFocusFor, composerFocusRequest, changeComposer, composerView, draftOnly,
     paneCommands, composerStop, replacing, editingQueue, edit.queuedSaving, editingBar,
-    sendText, composerAttachments, mentionTrigger, scopeProvider, conversationAsks, answerAsk,
+    sendText, composerAttachments, mentionTrigger, scopeProvider, scopePermissionModes, hasPermissionMetadata, effectivePermissionMode, conversationAsks, answerAsk,
     roleValue, roleDisabled, roleDisabledReason, roleChange, worker, updateWorkerSettings, workerDelivery]);
 
   const renderDrawer = (resizeGroup: PaneResizeGroup | null = null) => (
@@ -905,11 +918,38 @@ function useConversationPane(
               mentionTrigger={mentionTrigger}
               changeText={setNewConversationText}
               /* Menu membership and readiness come from the managed backend declarations. */
-              footerActions={<ModelPill groups={managed.groups} provider={draft.provider} selection={draft.model}
-                effortControl={compactComposer ? 'in-menu' : 'separate'}
-                onChange={(model, provider) => withDraft(draft, current => current.creating || current.submitted !== null
-                  ? current : { ...current, model, provider })}
-                isDisabled={creating || draft.submitted !== null || !supportsDraftModel || !managed.supportsAssistantProviders} />} />
+              footerActions={(() => {
+                const draftPermissionModes = draft === null ? [] : permissionModesForProvider(managed.answers, draft.provider);
+                const draftPermissionMode = draft?.permissionMode ?? defaultPermissionModeFor(draftPermissionModes);
+                return (
+                  <HStack gap={1} align="center" wrap="wrap" className={footerStyles.group}>
+                    <ModelPill groups={managed.groups} provider={draft.provider} selection={draft.model}
+                      effortControl={compactComposer ? 'in-menu' : 'separate'}
+                      onChange={(model, provider) => withDraft(draft, current => {
+                        if (current.creating || current.submitted !== null) return current;
+                        const nextModes = permissionModesForProvider(managed.answers, provider);
+                        const nextMode = current.provider === provider
+                          ? current.permissionMode
+                          : defaultPermissionModeFor(nextModes);
+                        return { ...current, model, provider, permissionMode: nextMode };
+                      })}
+                      isDisabled={creating || draft.submitted !== null || !supportsDraftModel || !managed.supportsAssistantProviders} />
+                    {draftPermissionMode !== null && draftPermissionModes.length > 0 && (
+                      <PermissionModePill
+                        mode={draftPermissionMode}
+                        options={draftPermissionModes}
+                        onChange={(permissionMode) => withDraft(draft, current =>
+                          current.creating || current.submitted !== null ? current : { ...current, permissionMode })}
+                        isDisabled={creating || draft.submitted !== null}
+                      />
+                    )}
+                    {roleValue !== null && roleChange !== undefined && (
+                      <PlannerRolePill value={roleValue} onChange={roleChange} isDisabled={roleDisabled}
+                        disabledReason={roleDisabledReason} />
+                    )}
+                  </HStack>
+                );
+              })()} />
           </>
         ) : open === null ? undefined : archived ? (
           <>{readError}<ArchivedConversationNotice key={open.id} conversation={open} onArchive={options?.onArchive} /></>

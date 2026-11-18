@@ -561,7 +561,8 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                        context_usage_ratio AS ContextUsageRatio,
                        archived_at_ms AS ArchivedAtMs,
                        created_at_ms AS CreatedAtMs,
-                       updated_at_ms AS UpdatedAtMs
+                       updated_at_ms AS UpdatedAtMs,
+                       permission_mode AS PermissionMode
                 FROM agent_sessions
                 WHERE track_id = @TrackId
                 ORDER BY created_at_ms ASC, id ASC;
@@ -1945,12 +1946,12 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                 INSERT INTO agent_sessions (
                     id, track_id, bound_task_id, bound_attempt_id, title,
                     provider, model, native_thread_id, epoch, status,
-                    context_usage_ratio, archived_at_ms, created_at_ms, updated_at_ms
+                    context_usage_ratio, archived_at_ms, created_at_ms, updated_at_ms, permission_mode
                 )
                 VALUES (
                     @Id, @TrackId, @BoundTaskId, @BoundAttemptId, @Title,
                     @Provider, @Model, @NativeThreadId, @Epoch, @Status,
-                    @ContextUsageRatio, @ArchivedAtMs, @CreatedAtMs, @UpdatedAtMs
+                    @ContextUsageRatio, @ArchivedAtMs, @CreatedAtMs, @UpdatedAtMs, @PermissionMode
                 )
                 ON CONFLICT(id) DO UPDATE SET
                     bound_task_id = excluded.bound_task_id,
@@ -1963,7 +1964,8 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                     status = excluded.status,
                     context_usage_ratio = excluded.context_usage_ratio,
                     archived_at_ms = excluded.archived_at_ms,
-                    updated_at_ms = excluded.updated_at_ms;
+                    updated_at_ms = excluded.updated_at_ms,
+                    permission_mode = excluded.permission_mode;
                 """,
                 new
                 {
@@ -1980,7 +1982,8 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                     session.ContextUsageRatio,
                     session.ArchivedAtMs,
                     session.CreatedAtMs,
-                    session.UpdatedAtMs
+                    session.UpdatedAtMs,
+                    session.PermissionMode
                 },
                 transaction: tx,
                 cancellationToken: ct));
@@ -2127,7 +2130,8 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
             ContextUsageRatio: r.ContextUsageRatio,
             ArchivedAtMs: r.ArchivedAtMs,
             CreatedAtMs: r.CreatedAtMs,
-            UpdatedAtMs: r.UpdatedAtMs);
+            UpdatedAtMs: r.UpdatedAtMs,
+            PermissionMode: r.PermissionMode);
 
     private static SessionTurnDto MapTurn(SessionTurnRow r) =>
         new(
@@ -2318,6 +2322,7 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
         public long? ArchivedAtMs { get; init; }
         public long CreatedAtMs { get; init; }
         public long UpdatedAtMs { get; init; }
+        public string? PermissionMode { get; init; }
     }
 
     private sealed class SessionTurnRow

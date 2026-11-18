@@ -17,7 +17,7 @@ import { sessionCreationReceiptSchema, sessionInputReceiptSchema, type SessionIn
 import type {
   AgentProvider, ConversationInitialInputReceiptResult, HarnessInputPresentation, HarnessInputSegment, HarnessItem, HarnessPhaseTag,
   HarnessInterruptionReason, HarnessTimeoutEvidence,
-  PlannerAttachment, PlannerPermissionMode, SystemInputPresentation, TrackConversationSummary, UploadAttachmentResponse,
+  PlannerAttachment, SystemInputPresentation, TrackConversationSummary, UploadAttachmentResponse,
 } from '../api/generated/wire.js';
 import type { ApiFailure, ApiOperation } from '../api/types.js';
 import {
@@ -26,7 +26,7 @@ import {
   MAIL_SEND_TOOL,
 } from '../keys/mcp-tools.js';
 import { classifyFailure, failureReason, refusedText, type FailureTable, type WriteFailure, type WriteText } from './failure-class.js';
-import { plannerPermissionModeSchema } from './planner-permission-mode.js';
+import { plannerPermissionModeSchema, type PlannerPermissionMode } from './planner-permission-mode.js';
 import { sha256Hex } from './sha256.js';
 import { initialInputReceiptResultSchema } from './conversation-initial-input.js';
 
@@ -461,7 +461,7 @@ export function plannerRunOperation(cardId: string): ApiOperation<PlannerRun> {
           pending_overflow: 0,
           model: page.session.model ?? null,
           reasoning_effort: null,
-          permission_mode: null,
+          permission_mode: page.session.boundTaskId ? null : (page.session.permissionMode ?? null),
           blocked_reason: page.session.status === 'unknown' ? 'The previous message has an unknown outcome.' : null,
           recovery: null,
           attachments_supported: false,
@@ -1091,7 +1091,7 @@ export function trackConversationsOperation(trackId: string): ApiOperation<Conve
  * conversation after a timeout.
  */
 export function createTrackConversationOperation(
-  trackId: string, text: string, idempotencyKey: string, provider: AgentProvider, selection: ModelSelection, side?: SideConversation,
+  trackId: string, text: string, idempotencyKey: string, provider: AgentProvider, selection: ModelSelection, side?: SideConversation, permissionMode?: string | null,
 ): ApiOperation<CreatedConversation> {
   const derivedTitle = conversationNameFrom(text);
   return {
@@ -1105,6 +1105,7 @@ export function createTrackConversationOperation(
       ...(side === undefined ? {} : { side }),
       ...(selection.model === null ? {} : { model: selection.model }),
       ...(selection.reasoning_effort === null ? {} : { reasoning_effort: selection.reasoning_effort }),
+      ...(permissionMode == null ? {} : { permissionMode }),
     },
     responseSchema: z.union([
       sessionCreationReceiptSchema.refine(result => result.firstInput != null && result.session.trackId === trackId)

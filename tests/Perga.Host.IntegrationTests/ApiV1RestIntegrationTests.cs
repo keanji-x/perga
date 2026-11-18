@@ -641,4 +641,77 @@ public sealed class ApiV1RestIntegrationTests
 
         return exe;
     }
+
+    [Fact]
+    public async Task SessionPermissionMode_LeadAndAssistant_PersistsValidatesAndRejectsInvalid()
+    {
+        await using var cluster = new PergaHostTestCluster();
+        var client = cluster.Client;
+
+        var areaResp = await client.PostAsJsonAsync("/api/v1/areas", new { name = "PermArea" }, PergaJsonDefaults.ApiOptions);
+        areaResp.EnsureSuccessStatusCode();
+        var area = (await areaResp.Content.ReadFromJsonAsync<AreaDto>(PergaJsonDefaults.ApiOptions))!;
+
+        var trackResp = await client.PostAsJsonAsync("/api/v1/tracks", new
+        {
+            areaId = area.Id,
+            title = "Permission Mode Track",
+            provider = "codex"
+        }, PergaJsonDefaults.ApiOptions);
+        trackResp.EnsureSuccessStatusCode();
+        using var snapDoc = JsonDocument.Parse(await trackResp.Content.ReadAsStringAsync());
+        var trackEl = snapDoc.RootElement.GetProperty("track");
+        var trackId = trackEl.GetProperty("id").GetString()!;
+        var leadSessionId = trackEl.GetProperty("leadSessionId").GetString()!;
+
+        // 1. Lead session defaults to provider's default ("never" for codex) and can switch to "ask" and "full".
+        using var putLeadAsk = await client.PutAsJsonAsync(
+            $"/api/v1/sessions/{leadSessionId}/permission-mode",
+            new { permission_mode = "ask" },
+            PergaJsonDefaults.ApiOptions);
+        Assert.Equal(HttpStatusCode.OK, putLeadAsk.StatusCode);
+        var updatedLead = (await putLeadAsk.Content.ReadFromJsonAsync<AgentSessionDto>(PergaJsonDefaults.ApiOptions))!;
+        Assert.Equal("ask", updatedLead.PermissionMode);
+
+        // 2. Assistant session created with explicit permissionMode = "acceptEdits" for claude.
+        using var createSubReq = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/tracks/{trackId}/sessions")
+        {
+            Content = JsonContent.Create(new { title = "Claude Helper", provider = "claude", permissionMode = "acceptEdits" })
+        };
+        createSubReq.Headers.Add("Idempotency-Key", "idem-perm-sub-1");
+        using var createSubResp = await client.SendAsync(createSubReq);
+        Assert.Equal(HttpStatusCode.Created, createSubResp.StatusCode);
+        var createdSub = (await createSubResp.Content.ReadFromJsonAsync<SessionCreationReceipt>(PergaJsonDefaults.ApiOptions))!;
+        Assert.Equal("acceptEdits", createdSub.Session.PermissionMode);
+
+        // 3. Switch Assistant session to "bypassPermissions" and verify persistence in GET /sessions.
+        using var putSubBypass = await client.PutAsJsonAsync(
+            $"/api/v1/sessions/{createdSub.Session.Id}/permission-mode",
+            new { permission_mode = "bypassPermissions" },
+            PergaJsonDefaults.ApiOptions);
+        Assert.Equal(HttpStatusCode.OK, putSubBypass.StatusCode);
+        var updatedSub = (await putSubBypass.Content.ReadFromJsonAsync<AgentSessionDto>(PergaJsonDefaults.ApiOptions))!;
+        Assert.Equal("bypassPermissions", updatedSub.PermissionMode);
+
+        var sessions = (await client.GetFromJsonAsync<List<AgentSessionDto>>(
+            $"/api/v1/tracks/{trackId}/sessions", PergaJsonDefaults.ApiOptions))!;
+        Assert.Equal("ask", sessions.Single(s => s.Id == leadSessionId).PermissionMode);
+        Assert.Equal("bypassPermissions", sessions.Single(s => s.Id == createdSub.Session.Id).PermissionMode);
+
+        // 4. Unsupported mode for provider returns 400.
+        using var putInvalid = await client.PutAsJsonAsync(
+            $"/api/v1/sessions/{leadSessionId}/permission-mode",
+            new { permission_mode = "bypassPermissions" },
+            PergaJsonDefaults.ApiOptions);
+        Assert.Equal(HttpStatusCode.BadRequest, putInvalid.StatusCode);
+
+        // 5. Reusing Idempotency-Key with a different permissionMode returns 409 Conflict.
+        using var conflictSubReq = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/tracks/{trackId}/sessions")
+        {
+            Content = JsonContent.Create(new { title = "Claude Helper", provider = "claude", permissionMode = "default" })
+        };
+        conflictSubReq.Headers.Add("Idempotency-Key", "idem-perm-sub-1");
+        using var conflictSubResp = await client.SendAsync(conflictSubReq);
+        Assert.Equal(HttpStatusCode.Conflict, conflictSubResp.StatusCode);
+    }
 }

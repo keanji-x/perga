@@ -55,6 +55,16 @@ function setup({ theme = 'light', mode = 'never', asks = [], putMode, answer }: 
     if (request.path === '/api/areas') body = [{ id: 'area', name: 'Work', color: '#123456', sort: 1, kind: 'user', created_at: 1, updated_at: 1 }];
     if (request.path === '/api/areas/area/tracks') body = [TRACK];
     if (request.path === '/api/settings') body = {};
+    if (request.path.startsWith('/api/v1/bootstrap?scope=managed')) body = [{
+      accepts_unavailable_blank_track: true,
+      availability: { provider: 'codex', status: 'ready', reason: null, checked_at_ms: 1, authentication_method: 'cli', authentication_notice: null },
+      permission_modes: [
+        { id: 'never', label: 'Never', description: 'Sandbox only; never asks.', tone: 'neutral', isDefault: true },
+        { id: 'ask', label: 'Ask me', description: 'Pauses the turn to ask you.', tone: 'warning', isDefault: false },
+        { id: 'full', label: 'Full access', description: "No sandbox; never asks. Runs with your account's access.", tone: 'danger', isDefault: false },
+      ],
+      capabilities: { managed_conversation: true, steer: true, images: false, manual_compact: true, history_replacement: false, requires_ready_availability: false },
+    }];
     if (request.path === `/api/tracks/${TRACK.id}`) body = { track: TRACK, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true, cards: [PLANNER],
       overlays: [{ id: 'activity', plugin_id: 'kernel', entity_kind: 'track', entity_id: TRACK.id, kind: 'activity', updated_at: 5,
         payload: { schemaVersion: 4, working: false, attention: asks.length > 0 ? 'input' : 'none', activity_at_ms: 5, items: asks, cards: [] } }] };
@@ -66,7 +76,7 @@ function setup({ theme = 'light', mode = 'never', asks = [], putMode, answer }: 
       track_id: TRACK.id, thread_id: 'thread', turn_id: null, turn_error_text: null, item_uuid: null, item_type: 'agentMessage',
       method: 'item/completed', created_at_ms: 1,
       params: JSON.stringify({ item: { id: 'reply', type: 'agentMessage', text: 'The release checklist is green. Running the server tests next.' } }) }], null);
-    if (request.method === 'PUT' && request.path === `/api/cards/${PLANNER.id}/planner/permission-mode`) {
+    if (request.method === 'PUT' && request.path === `/api/v1/sessions/${PLANNER.id}/permission-mode`) {
       const sent = request.body as { permission_mode: Mode };
       const response = putMode?.(sent) ?? answered(200, { card_id: PLANNER.id, permission_mode: sent.permission_mode });
       if (response.status === 200) stored = sent.permission_mode;
@@ -87,7 +97,7 @@ function setup({ theme = 'light', mode = 'never', asks = [], putMode, answer }: 
 }
 
 const modeWrites = (requests: readonly ApiRequest[]) => requests.filter((request) => request.method === 'PUT'
-  && request.path.endsWith('/planner/permission-mode'));
+  && request.path.endsWith('/permission-mode'));
 const answers = (requests: readonly ApiRequest[]) => requests.filter((request) => request.path.endsWith('/answer'));
 
 function expectNoHorizontalScroll() {

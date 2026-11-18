@@ -1,34 +1,41 @@
-// A Planner card's permission mode (#2348, #2441): whether its provider stays in its sandbox, may
-// pause a turn to ask the person before it acts outside it, or runs with no sandbox at all. `GET /api/cards/{id}/planner/run` reads it; the one write is
-// `PUT /api/cards/{id}/planner/permission-mode`, which only the person may make. A change applies
-// from the Planner's next turn.
+// A session's permission mode: whether its harness stays in its sandbox, may pause a turn to ask
+// the person before acting outside it, or runs with no sandbox at all. Applies from the next turn.
 
 import { z } from 'zod';
-import type { PlannerPermissionMode, SetPlannerPermissionModeResponse } from '../api/generated/wire.js';
+import { agentSessionDtoSchema } from '../api/perga-v1.js';
 import type { ApiOperation } from '../api/types.js';
 import type { FailureTable, WriteFailure, WriteText } from './failure-class.js';
 
-/** The closed set the server stores; `null` on the run read means the card is not a Planner. */
-export const plannerPermissionModeSchema: z.ZodType<PlannerPermissionMode> = z.enum(['never', 'ask', 'full']);
+export type PlannerPermissionMode = string;
+export type SetPlannerPermissionModeResponse = Readonly<{ card_id: string; permission_mode: string }>;
 
-/** Store `mode` on the card. The answer echoes the stored mode rather than the one asked for. */
+/** Provider-declared mode ID; `null` on the run read means no mode is set / task-bound session. */
+export const plannerPermissionModeSchema: z.ZodType<PlannerPermissionMode> = z.string().min(1);
+
+/** Store `mode` on the session via `/api/v1/sessions/{sessionId}/permission-mode`. */
 export function setPlannerPermissionModeOperation(
-  cardId: string, mode: PlannerPermissionMode,
+  sessionId: string, mode: PlannerPermissionMode,
 ): ApiOperation<SetPlannerPermissionModeResponse> {
   return {
     method: 'PUT',
-    path: `/api/cards/${encodeURIComponent(cardId)}/planner/permission-mode`,
+    path: `/api/v1/sessions/${encodeURIComponent(sessionId)}/permission-mode`,
     body: { permission_mode: mode },
-    responseSchema: z.object({ card_id: z.string(), permission_mode: plannerPermissionModeSchema }),
+    responseSchema: z.union([
+      agentSessionDtoSchema.transform((session): SetPlannerPermissionModeResponse => ({
+        card_id: session.id,
+        permission_mode: session.permissionMode ?? mode,
+      })),
+      z.object({ card_id: z.string(), permission_mode: plannerPermissionModeSchema }),
+    ]),
   };
 }
 
 /**
- * What a failed mode change says. 403 (not the person, or not a Planner card), 404 and 422 are
- * answered before anything is stored; a 5xx, a lost or an unreadable answer may follow a stored one.
+ * What a failed mode change says. 400, 403, 404 and 422 are answered before anything is stored;
+ * a 5xx, a lost or an unreadable answer may follow a stored one.
  */
 export const PLANNER_PERMISSION_MODE_FAILURES: FailureTable<WriteFailure> = Object.freeze({
-  rules: Object.freeze([Object.freeze({ status: Object.freeze([403, 404, 422]), is: 'refused' as const })]),
+  rules: Object.freeze([Object.freeze({ status: Object.freeze([400, 403, 404, 422]), is: 'refused' as const })]),
   unauthorized: 'refused',
   otherwise: 'unknown',
 });
