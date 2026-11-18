@@ -13,7 +13,10 @@ namespace Perga.Host.Http;
 
 public sealed record SendMessageHttpBody(
     string Content,
-    bool? SteerIfRunning = null);
+    bool? SteerIfRunning = null,
+    bool? QueueIfBusy = null);
+
+public sealed record SteerQueuedMessageHttpBody(string TurnId);
 
 public sealed record SteerMessageHttpBody(string TurnId, string Content);
 
@@ -274,11 +277,15 @@ public static class ApiV1Endpoints
                 return HttpErrorHandling.BadRequest("invalid_argument", "Message content cannot be empty.");
             }
 
-            var (receipt, steered, replay) = await kernel.AcceptMessageAsync(
-                    sessionId,
-                    new SendMessageRequest(body.Content, idempotencyKey, body.SteerIfRunning ?? false),
-                    ct)
+            if (body.SteerIfRunning == true && body.QueueIfBusy == true)
+                return HttpErrorHandling.BadRequest("invalid_argument", "Choose either queuing or steering.");
+
+            var (receipt, steered, replay, queued) = await kernel.AcceptMessageAsync(
+                sessionId, new SendMessageRequest(body.Content, idempotencyKey, body.SteerIfRunning ?? false, body.QueueIfBusy ?? false), ct)
                 .ConfigureAwait(false);
+            if (queued is not null)
+                return Results.Json(queued, PergaJsonDefaults.ApiOptions,
+                    statusCode: replay ? StatusCodes.Status200OK : StatusCodes.Status202Accepted);
             if (receipt is null)
             {
                 return Results.Json(steered, PergaJsonDefaults.ApiOptions);
@@ -300,6 +307,23 @@ public static class ApiV1Endpoints
 
             var result = await kernel.SteerMessageAsync(sessionId, body.TurnId, body.Content, ct).ConfigureAwait(false);
             return Results.Json(result, PergaJsonDefaults.ApiOptions);
+        });
+
+        v1.MapPost("/sessions/{sessionId}/messages/queue/{inputId}/steer", async (
+            string sessionId, string inputId, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
+        {
+            var body = await ReadRequiredJsonBodyAsync<SteerQueuedMessageHttpBody>(ctx, ct).ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(body.TurnId))
+                return HttpErrorHandling.BadRequest("invalid_argument", "A target turn is required.");
+            var result = await kernel.SteerQueuedMessageAsync(sessionId, inputId, body.TurnId, ct).ConfigureAwait(false);
+            return Results.Json(result, PergaJsonDefaults.ApiOptions);
+        });
+
+        v1.MapDelete("/sessions/{sessionId}/messages/queue/{inputId}", async (
+            string sessionId, string inputId, IPergaKernel kernel, CancellationToken ct) =>
+        {
+            await kernel.RemoveQueuedMessageAsync(sessionId, inputId, ct).ConfigureAwait(false);
+            return Results.NoContent();
         });
 
         v1.MapGet("/sessions/{sessionId}/inputs/{inputId}", async (

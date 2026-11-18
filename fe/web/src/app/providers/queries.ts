@@ -61,7 +61,7 @@ import {
   type Track, type TrackDetailWire, type TrackPatchBody, type TrackRecipe,
 } from '../../../../core/domain/track.ts';
 import {
-  abandonSessionInputOperation, compactPlannerOperation, interruptPlannerOperation, sendPlannerInputOperation, steerSessionMessageOperation,
+  abandonSessionInputOperation, compactPlannerOperation, interruptPlannerOperation, sendPlannerInputOperation, steerQueuedSessionMessageOperation, removeQueuedSessionMessageOperation,
   createTrackConversationOperation, trackConversationsOperation, setConversationArchiveOperation,
   createSerialWriter, deletePlannerInputOperation, editPlannerInputOperation, steerPlannerInputOperation,
   modelCatalogOperation, plannerQueueWriteFailure, setPlannerModelOperation,
@@ -241,16 +241,21 @@ export function usePlannerMutations(transport: ApiTransportPort, cardId: string,
     /* `admitted` is the caller's: a keyed send is admitted at the press, and each retry is admitted again.
        `answered` runs when the 200 is in hand, before the refresh starts its reads. */
     send: (text: string, attachments: readonly string[], idempotencyKey: string, replacesTurn: string | null,
-      admitted: ApiTransportPort, answered: () => void) =>
-      runOperation(admitted, sendPlannerInputOperation(cardId, text, attachments, idempotencyKey, replacesTurn), unauthorized)
+      admitted: ApiTransportPort, answered: () => void, queueIfBusy = false) =>
+      runOperation(admitted, sendPlannerInputOperation(cardId, text, attachments, idempotencyKey, replacesTurn, false, queueIfBusy), unauthorized)
         .then((sent) => { answered(); return refreshAfterInput(sent, replacesTurn !== null); }, (error: unknown) => {
           // A refusal may expose a stale revision; a lost answer may follow a durable write.
           refreshInputMetadata(admitted, error);
           throw error;
         }),
-    steerSessionMessage: (turnId: string, text: string, admitted: ApiTransportPort) =>
-      runOperation(admitted, steerSessionMessageOperation(cardId, turnId, text), unauthorized)
-        .then(result => refreshAfterInput(result, false)),
+    steerQueuedSessionMessage: (inputId: string, turnId: string) =>
+      Promise.resolve().then(() => admitTransport(transport))
+        .then(admitted => runOperation(admitted, steerQueuedSessionMessageOperation(cardId, inputId, turnId), unauthorized))
+        .finally(() => { refreshAfterInput(undefined, false); }),
+    removeQueuedSessionMessage: (inputId: string) =>
+      Promise.resolve().then(() => admitTransport(transport))
+        .then(admitted => runOperation(admitted, removeQueuedSessionMessageOperation(cardId, inputId), unauthorized))
+        .finally(() => { refreshAfterInput(undefined, false); }),
     abandonSessionInput: (inputId: string) => Promise.resolve().then(() => admitTransport(transport))
       .then(admitted => runOperation(admitted, abandonSessionInputOperation(cardId, inputId), unauthorized))
       .then(result => refreshAfterInput(result, false)),

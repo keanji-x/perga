@@ -77,6 +77,7 @@ export async function retryUnknownSend<T>(
   failureOf: (error: unknown) => ApiFailure | null,
   pause: (retry: number) => Promise<void>,
   unknown: boolean,
+  retries = SEND_RETRIES,
 ): Promise<KeyedSendAnswer<T>> {
   let unknownSoFar = unknown;
   for (let index = 0; ; index += 1) {
@@ -86,7 +87,7 @@ export async function retryUnknownSend<T>(
       const kind = classifyFailure(failureOf(error), SEND_FAILURES);
       if (kind === 'unknown') {
         unknownSoFar = true;
-        if (index < SEND_RETRIES) {
+        if (index < retries) {
           await pause(index);
           continue;
         }

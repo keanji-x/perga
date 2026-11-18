@@ -198,7 +198,8 @@ public sealed class WebSocketsIntegrationTests
             }
         }
 
-        Assert.Equal(new[] { "queued", "running" }, sessionStatuses.TakeLast(2));
+        Assert.Contains("queued", sessionStatuses);
+        Assert.Contains("running", sessionStatuses.SkipWhile(status => status != "queued").Skip(1));
         Assert.Contains(liveKinds, k => k.Kind == KernelEventKinds.SessionThinkingDelta && !k.HasEventId);
         Assert.Contains(liveKinds, k => k.Kind == KernelEventKinds.SessionToolProgress && !k.HasEventId);
         Assert.Contains(liveKinds, k => k.Kind == KernelEventKinds.SessionTextDelta && !k.HasEventId);

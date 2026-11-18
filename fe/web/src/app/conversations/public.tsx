@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useSyncExternalStore, type Reac
 import { EMPTY_COMPOSER, isComposerEmpty } from '../../../../core/domain/conversation-composer.ts';
 import { NO_UPLOAD } from '../../features/planner/attachments.tsx';
 import { useState } from '../../ui/state/public.ts';
-import { createConversationOwner, NO_SENDS, NO_ROWS, NO_TURNS, NO_STEERING_MESSAGES, type ConversationSnapshot } from './registry-owner.ts';
+import { createConversationOwner, NO_SENDS, NO_ROWS, NO_TURNS, type ConversationSnapshot } from './registry-owner.ts';
 
 export type { ConversationDraft, ConversationDraftId, ConversationEdit, QueuedConversationEdit, EditNotice,
   RefusedSendNotice, RememberedConversation, ConversationRegistry } from './registry-model.ts';
@@ -57,10 +57,6 @@ export function useConversationDraft(scopeId: string | null) {
 
 export function useConversationSendOps(cardId: string | null) {
   return useSnapshot(useCallback((state: ConversationSnapshot) => cardId === null ? NO_SENDS : state.outboxes[cardId] ?? NO_SENDS, [cardId]), cardId !== null);
-}
-
-export function useConversationSteeringMessages(cardId: string) {
-  return useSnapshot(useCallback((state: ConversationSnapshot) => state.steeringMessages[cardId] ?? NO_STEERING_MESSAGES, [cardId]), cardId !== '');
 }
 
 export function useConversationSpentRows(cardId: string | null) {

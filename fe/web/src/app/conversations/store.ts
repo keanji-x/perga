@@ -29,7 +29,6 @@ import { useLiveReplies } from './live-replies.ts';
 import { useConversationOutbox, useRunReads } from './outbox.ts';
 import type { ConversationRouteIntent, ConversationStore, PlannerConversationScope } from './contracts.ts';
 
-import { useSteeringMessages } from './steering.ts';
 /** Tombstone key: entry ids are unique per card, not globally. */
 function forgottenKey(card: string, entryId: string): string {
   return `${card}\u0000${entryId}`;
@@ -134,8 +133,25 @@ export function useConversationStore(
        up is shown again (`tombstoneHides`). */
   const [forgotten, setForgotten] = useState<ReadonlyMap<string, number>>(() => new Map());
   // Let the initial-input owner account for its suppressed rows before ordinary local tombstones filter the queue.
-  const currentQueue = useMemo(() => canonical ? pendingQueueWithCurrentHumanVersions(servedQueue,serverTurns) : servedQueue,
-    [canonical,servedQueue,serverTurns]);
+  const savedMessageIds = useMemo(() => new Set(serverTurns.flatMap(turn =>
+    isUserConversationTurn(turn) && turn.human !== undefined ? [turn.human.messageId] : [])), [serverTurns]);
+  const [handoff, setHandoff] = useState(() => ({ cardId, source: servedQueue, saved: savedMessageIds, ids: run.data?.queue_handoff_ids, rows: servedQueue }));
+  let handoffRows = handoff.rows;
+  if (handoff.cardId !== cardId || handoff.source !== servedQueue || handoff.saved !== savedMessageIds || handoff.ids !== run.data?.queue_handoff_ids) {
+    const currentIds = new Set(servedQueue.map(entry => entry.entry_id));
+    const handoffIds = new Set(run.data?.queue_handoff_ids);
+    const waitingForHistory = handoff.cardId === cardId ? handoff.rows.filter(entry =>
+      (handoffIds.has(entry.entry_id) || entry.state === 'processing') &&
+      !currentIds.has(entry.entry_id) && !savedMessageIds.has(entry.entry_id))
+      .map((entry): PendingQueueEntry => handoffIds.has(entry.entry_id) ? { ...entry, state: 'processing' } : entry) : [];
+    handoffRows = [...waitingForHistory, ...servedQueue];
+    setHandoff({ cardId, source: servedQueue, saved: savedMessageIds, ids: run.data?.queue_handoff_ids, rows: handoffRows });
+  }
+  const currentQueue = useMemo(() => {
+    const entries = pergaInputProtocol ? handoffRows.filter(entry => entry.state === 'unconfirmed' ||
+      !savedMessageIds.has(entry.entry_id)) : servedQueue;
+    return canonical ? pendingQueueWithCurrentHumanVersions(entries, serverTurns) : entries;
+  }, [canonical, handoffRows, pergaInputProtocol, savedMessageIds, servedQueue, serverTurns]);
   const initialQueue = useMemo(() => initialInputQueueView(currentQueue, acceptedInitial, initialObservation.data, landedRun),
     [currentQueue, acceptedInitial, initialObservation.data, landedRun]);
   const pendingQueue = useMemo(
@@ -206,13 +222,12 @@ export function useConversationStore(
   const landedTranscript = transcriptReads.startOf(history.data);
   /* A refetch keeping `run.data` restamps it; this re-renders only because `run.dataUpdatedAt` is read above (#2068). */
   const landed = useMemo(() => ({ transcript: landedTranscript, run: landedRun }), [landedTranscript, landedRun]);
-  const steeringTarget = pergaInputProtocol && phase === 'turn_running' && working && run.error === null
-    ? run.data?.running_turn?.turn_id ?? null : null;
-  const steering = useSteeringMessages(cardId, transport, serverEntries, mutations.steerSessionMessage);
+  const canQueueWhileRunning = pergaInputProtocol && phase === 'turn_running' && working && run.error === null;
+  const steeringTarget = run.data?.native_turn_id ?? null;
   const outbox = useConversationOutbox({
     removedMessages, viewerId:currentUser?.userId ?? null,
     cardId, transport, send: mutations.send, serverEntries, serverTurns, liveReplies, queuedEntries: pendingQueue,
-    stalled: inputStalled, landed, initialInput, reportedInput, queuesInput: kernelQueuesInput(phase), highWater: displayItems.reduce((maximum,item) => Math.max(maximum,item.cursor.position),0),
+    stalled: inputStalled, landed, initialInput, reportedInput, queuesInput: kernelQueuesInput(phase), queueIfBusy: pergaInputProtocol, highWater: displayItems.reduce((maximum,item) => Math.max(maximum,item.cursor.position),0),
     pressed: () => { setActionError(null); stop.clearFeedback(); restart.clearError(); },
   });
   const { view, accountQueueDisplay } = outbox;
@@ -308,18 +323,34 @@ export function useConversationStore(
 
   /* Held in the registry, so a strip remounted on the way back still sees its conversation's write out (#2068). */
   const deleteQueuedEntry = (entry: PendingQueueEntry) =>
-    registry.holdQueueWrite(cardId, () => removeQueued(entry, removed => {
-      // Import the real ACK before the mutation owner starts either reconciliation read.
-      outbox.forgetQueuedEntry(removed);
-      forgetQueuedEntry(entry);
-    }).then(observeQueueOutcome));
+    registry.holdQueueWrite<PlannerQueueWriteOutcome>(cardId, async () => {
+      if (pergaInputProtocol) {
+        await mutations.removeQueuedSessionMessage(entry.entry_id);
+        outbox.forgetQueuedEntry({ card_id: cardId, entry_id: entry.entry_id, rev: entry.rev, text: null });
+        forgetQueuedEntry(entry);
+        return { kind: 'done' };
+      }
+      return removeQueued(entry, removed => {
+        // Import the real ACK before the mutation owner starts either reconciliation read.
+        outbox.forgetQueuedEntry(removed);
+        forgetQueuedEntry(entry);
+      }).then(observeQueueOutcome);
+    });
   /* A persisted handoff retires the queue copy; canonical Unknown remains a held submission. */
   const steerQueuedEntry = phase === 'turn_running' && !executionHeld && !stalled && run.error === null
-    && (!canonical || run.data?.native_turn_id != null)
-    ? (entry: PendingQueueEntry) => registry.holdQueueWrite(cardId,
-      () => (canonical
-        ? mutations.steerCanonicalQueued(entry,canonicalCarrier(),run.data!.native_turn_id!,() => { forgetQueuedEntry(entry); })
-        : mutations.steerQueued(entry.entry_id, entry.rev, () => { forgetQueuedEntry(entry); })).then(observeQueueOutcome))
+    && (!canonical || steeringTarget !== null)
+    && (!pergaInputProtocol || (!run.isFetching && run.data?.can_steer_queued === true))
+    ? (entry: PendingQueueEntry) => registry.holdQueueWrite<PlannerQueueWriteOutcome>(cardId,
+      async () => {
+        if (pergaInputProtocol) {
+          const result = await mutations.steerQueuedSessionMessage(entry.entry_id, steeringTarget!);
+          if (result.delivery === 'queued') return { kind: 'not_running' };
+          return { kind: 'done' };
+        }
+        return (canonical
+          ? mutations.steerCanonicalQueued(entry, canonicalCarrier(), steeringTarget!, () => { forgetQueuedEntry(entry); })
+          : mutations.steerQueued(entry.entry_id, entry.rev, () => { forgetQueuedEntry(entry); })).then(observeQueueOutcome);
+      })
     : undefined;
 
   const resolveInput = async (decision: 'keep' | 'retry', submission: import('../../../../core/api/generated/wire.ts').ConversationSubmissionDelivery) => {
@@ -340,8 +371,8 @@ export function useConversationStore(
   return {
     conversations,
     turns: conversation === null ? NO_TURNS : presentation.transcript,
-    steeringMessages: steering.messages,
-    canSendSupplement: steeringTarget !== null,
+    canQueueWhileRunning,
+    nativeQueue: pergaInputProtocol,
     pending: pendingConversationIds(conversation, working, !stalled && view.sending),
     working,
     canStop,
@@ -352,7 +383,7 @@ export function useConversationStore(
     stopping,
     stopFeedback,
     sending: view.sending,
-    sendBlocked: view.blocked || run.data?.unknown_session_input != null || (pergaInputProtocol && working && steeringTarget === null),
+    sendBlocked: view.blocked || run.data?.unknown_session_input != null || (pergaInputProtocol && working && !canQueueWhileRunning),
     initialInputChecking: view.checkingInitialInput && initialInputError === null,
     initialInputError,
     retryInitialInput: () => { void initialObservation.refetch().catch(() => undefined); void history.refetch().catch(() => undefined); },
@@ -385,15 +416,7 @@ export function useConversationStore(
     retrySend: outbox.retrySend,
     discardFailedSend: outbox.discardFailedSend,
     dismissFailedSend: outbox.dismissFailedSend,
-    send: (id, text, attachments, fromComposer, replaces) => {
-      if (steeringTarget !== null && fromComposer && replaces === null) {
-        if (id !== cardId || attachments.length > 0 || text.trim().length === 0 || view.blocked) return null;
-        const attempt = steering.send(steeringTarget, text);
-        if (attempt !== null) { setActionError(null); stop.clearFeedback(); restart.clearError(); }
-        return attempt;
-      }
-      return outbox.send(id, text, attachments, fromComposer, replaces);
-    },
+    send: outbox.send,
     attachmentsSupported: (run.data?.attachments_supported ?? false) && (scopeKind !== 'track-assistant' || (!capabilities.isError
       && capabilities.data?.find(answer => answer.availability.provider === provider)?.capabilities.images === true)),
     historyReplacementSupported,

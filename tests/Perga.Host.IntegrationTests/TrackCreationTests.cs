@@ -41,7 +41,14 @@ public sealed class TrackCreationTests
             using var patch = await host.Client.PatchAsJsonAsync($"/api/v1/tracks/{trackId}", new { title = "Renamed while pending" }).WaitAsync(Deadline);
             Assert.Equal("Renamed while pending", (await ReadAsync(patch)).GetProperty("title").GetString());
             using var before = await host.Client.GetAsync($"/api/v1/sessions/{leadId}/items").WaitAsync(Deadline);
-            var item = Assert.Single((await ReadAsync(before)).GetProperty("items").EnumerateArray());
+            var beforePage = await ReadAsync(before);
+            var item = Assert.Single(beforePage.GetProperty("items").EnumerateArray());
+            Assert.Empty(beforePage.GetProperty("queuedMessages").EnumerateArray());
+            using var followUp = await PostAsync(host, $"/api/v1/sessions/{leadId}/messages", "while-preparing",
+                new { content = "Follow-up during setup", queueIfBusy = true });
+            Assert.Equal(HttpStatusCode.Conflict, followUp.StatusCode);
+            using var setupError = JsonDocument.Parse(await followUp.Content.ReadAsStringAsync());
+            Assert.Equal("precondition_failed", setupError.RootElement.GetProperty("code").GetString());
             Assert.Equal(request.firstMessage, item.GetProperty("payload").GetProperty("content").GetString());
             Assert.Equal("user", item.GetProperty("kind").GetString());
             Assert.Empty(host.AgentRuntime.ExecutedTurns);

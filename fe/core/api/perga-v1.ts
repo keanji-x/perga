@@ -279,6 +279,7 @@ export type SessionTurnDto = z.infer<typeof sessionTurnDtoSchema>;
 
 export const sessionInputReceiptSchema = z.object({
   inputId: z.string(),
+  messageId: z.string().optional(),
   turnId: z.string(),
   sessionId: z.string(),
   deliveryState: z.enum(['accepted', 'dispatching', 'delivered', 'rejected', 'unknown']),
@@ -302,6 +303,7 @@ export const sessionItemDtoSchema = z.object({
   kind: z.enum(['user', 'thinking', 'assistant_text', 'tool_call', 'tool_result', 'turn_outcome', 'turn_error']).or(z.string()),
   payload: z.unknown(),
   createdAtMs: z.number(),
+  messageStatus: z.enum(['queued', 'sending', 'processing', 'completed', 'failed', 'unconfirmed']).nullish(),
 });
 export type SessionItemDto = z.infer<typeof sessionItemDtoSchema>;
 
@@ -309,6 +311,10 @@ export const sessionItemsPageDtoSchema = z.object({
   items: z.array(sessionItemDtoSchema).nullish().transform((v) => v ?? []),
   activeTurn: sessionTurnDtoSchema.nullish(),
   unknownInput: sessionInputReceiptSchema.nullable(),
+  queuedMessages: z.array(z.object({ id: z.string(), text: z.string(), queuedAtMs: z.number(),
+    state: z.enum(['waiting', 'steering', 'sending', 'processing', 'unconfirmed']) })).optional(),
+  canSteer: z.boolean().optional(),
+  queueHandoffIds: z.array(z.string()).optional(),
   session: agentSessionDtoSchema,
   hasMoreBefore: z.boolean().optional(),
 });

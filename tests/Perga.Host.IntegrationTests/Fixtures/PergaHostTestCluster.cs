@@ -60,6 +60,8 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
     private int _probeCount;
     private int _forceRefreshProbeCount;
 
+    public bool SupportsSteering { get; set; } = true;
+
     public IReadOnlyCollection<RecordedSessionOpen> OpenedSessions => _openedSessions.ToArray();
     public IReadOnlyCollection<RecordedTurnExecution> ExecutedTurns => _executedTurns.ToArray();
     public int ProbeCount => Volatile.Read(ref _probeCount);
@@ -146,7 +148,7 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
         }
 
         public string? NativeThreadId { get; }
-        public bool SupportsNativeSteer => true;
+        public bool SupportsNativeSteer => _owner.SupportsSteering;
 
         public async IAsyncEnumerable<UnifiedAgentEvent> StreamTurnAsync(
             TurnInput input,

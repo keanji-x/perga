@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
 import { currentResponseMessage, latestUserMessage } from './conversation-actions.js';
-import type { OptimisticConversationTurn } from './conversation.js';
+import { opensExchange, type OptimisticConversationTurn } from './conversation.js';
 
 it('copies verbatim Markdown from the current response only', () => {
   const reply = { id: 'reply', author: 'agent' as const, text: 'Answer\n\n```ts\nx()\n```', atMs: 2 };
@@ -28,4 +28,17 @@ it('does not regenerate a previous prompt across a system or turn boundary', () 
   expect(latestUserMessage([user, { id: 'wake', author: 'system', label: 'Wake', text: 'Automatic turn', atMs: 3 },
     { id: 'reply', author: 'agent', text: 'Automatic response', atMs: 4 }])).toBeNull();
   expect(latestUserMessage([user, end, { id: 'reply', author: 'agent', text: 'Automatic response', atMs: 3 }])).toBeNull();
+});
+
+it('keeps a stored supplement within the current response and retains the original prompt', () => {
+  const prompt = { id: 'prompt', author: 'you' as const, text: 'Original prompt', atMs: 1 };
+  const reply = { id: 'reply', author: 'agent' as const, text: 'Current answer', atMs: 2 };
+  const supplement = { id: 'supplement', author: 'you' as const, text: 'A supplement', atMs: 3, supplemental: true };
+  const turns = [prompt, reply, supplement];
+  expect(currentResponseMessage(turns, false)).toBe(reply);
+  expect(latestUserMessage(turns)).toBe(prompt);
+  expect(opensExchange(turns, 2)).toBe(false);
+  const outcome = { id: 'end', author: 'turn' as const, elapsedMs: null, turnId: 'turn', status: 'completed' as const, atMs: 3 };
+  expect(currentResponseMessage([prompt, reply, outcome, supplement], true)).toBe(reply);
+  expect(latestUserMessage([prompt, reply, outcome, supplement])).toBe(prompt);
 });

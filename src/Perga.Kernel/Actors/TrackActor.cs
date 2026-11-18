@@ -763,7 +763,9 @@ public sealed partial class TrackActor : IAsyncDisposable
             var unknown = session.Status == "unknown"
                 ? await _store.SessionInputs.FindUnresolvedAsync(sessionId, ct).ConfigureAwait(false)
                 : null;
-            return new SessionItemsPageDto(items, activeTurn, session, unknown?.Receipt, hasMoreBefore);
+            return new SessionItemsPageDto(items.Select(item => WithMessageStatus(item, running)).ToArray(),
+                activeTurn, session, unknown?.Receipt, hasMoreBefore,
+                ReadQueuedMessagesCore(sessionId), running?.CanSteerQueuedMessages == true, ReadQueueHandoffsCore(sessionId));
         }, ct);
     }
 
@@ -2288,13 +2290,14 @@ public sealed partial class TrackActor : IAsyncDisposable
         string triggerKind,
         string prompt,
         CancellationToken ct,
-        PersistedSessionInput? input = null, Guid? wakeReservation = null, string? mailId = null, string? wakeInputId = null)
+        PersistedSessionInput? input = null, Guid? wakeReservation = null, string? mailId = null,
+        string? wakeInputId = null, QueuedMessage? queuedMessage = null)
     {
         if (input is null)
             await WaitForWorkspacePreparationAsync(ct).ConfigureAwait(false);
         Interlocked.Increment(ref _inFlightExternalOps);
         ActiveTurnState? pendingCleanup = null;
-        var recordUserAtStart = input is null && wakeReservation is null && triggerKind == "user";
+        var recordUserAtStart = input is null && triggerKind == "user" && (wakeReservation is null || queuedMessage is not null);
         try
         {
             // Durable turns already hold the session slot; compact after their durable outcome.
@@ -2389,14 +2392,14 @@ public sealed partial class TrackActor : IAsyncDisposable
                 {
                     var failed = turnDto with { Status = "failed", ErrorText = "The provider could not start the queued message.", CompletedAtMs = NowMs() };
                     var idle = runningSession with { Status = "idle", UpdatedAtMs = failed.CompletedAtMs.Value };
-                    await CompleteWakeTurnCoreAsync(failed, [CreateWakeUserItem(turnDto, prompt, wakeInputId, failed.ErrorText)], idle)
+                    await CompleteWakeTurnCoreAsync(failed, [CreateWakeUserItem(turnDto, prompt, wakeInputId, failed.ErrorText)], idle, queuedMessage)
                         .ConfigureAwait(false);
                     return (null, effectivePrompt, failed);
                 }
 
                 if (recordUserAtStart)
                 {
-                    var userItem = CreateWakeUserItem(turnDto, prompt, null);
+                    var userItem = CreateWakeUserItem(turnDto, prompt, wakeInputId);
                     var recorded = await _store.RecordTurnAndItemsWithIdsAsync(turnDto, [userItem], runningSession, ct)
                         .ConfigureAwait(false);
                     turnDto = recorded.Turn;
@@ -2404,7 +2407,7 @@ public sealed partial class TrackActor : IAsyncDisposable
 
                 _sessions[session.Id] = runningSession;
                 var turnCts = CancellationTokenSource.CreateLinkedTokenSource(ct, _actorShutdownCts.Token);
-                var activeState = new ActiveTurnState(session.Id, turnDto, agentSession, turnCts);
+                var activeState = new ActiveTurnState(session.Id, turnDto, agentSession, turnCts, input is not null || recordUserAtStart);
                 _activeTurns[session.Id] = activeState;
                 pendingCleanup = activeState;
                 if (wakeReservation is not null)
@@ -2485,6 +2488,18 @@ public sealed partial class TrackActor : IAsyncDisposable
                         await _store.SessionInputs.MarkDeliveredAsync(input, boundThreadId,
                             (evt as UnifiedAgentEvent.TurnAccepted)?.NativeTurnId, CancellationToken.None).ConfigureAwait(false);
                         delivered = true;
+                    }
+                    if (confirmsDelivery && !activeTurn.ProviderAccepted)
+                    {
+                        await EnqueueAsync(_ =>
+                        {
+                            activeTurn.ProviderAccepted = true;
+                            if (queuedMessage is not null)
+                                queuedMessage.State = QueuedMessageState.Processing;
+                            if (input is not null || queuedMessage is not null)
+                                NotifyQueueChangedCore(sessionId);
+                            return Task.CompletedTask;
+                        }, _actorShutdownCts.Token).ConfigureAwait(false);
                     }
                     switch (evt)
                     {
@@ -2614,13 +2629,13 @@ public sealed partial class TrackActor : IAsyncDisposable
             if (mailId is { } pendingMailId && activeTurn.Interrupted)
                 await _store.AcknowledgeMailWakeAsync(pendingMailId, CancellationToken.None).ConfigureAwait(false);
 
-            if (input is not null && !conclusive)
+            if ((input is not null || queuedMessage is not null) && !conclusive)
             {
                 turnStatus = "unknown";
                 errorText ??= "Provider outcome could not be confirmed.";
             }
 
-            if (wakeInputId is not null && turnStatus == "failed")
+            if (wakeInputId is not null && !recordUserAtStart && turnStatus == "failed")
                 items[0] = CreateWakeUserItem(activeTurn.TurnDto, prompt, wakeInputId, "The follow-up turn failed.");
 
             var endNow = NowMs();
@@ -2678,7 +2693,7 @@ public sealed partial class TrackActor : IAsyncDisposable
                 var updatedSession = currentSession with
                 {
                     NativeThreadId = boundThreadId ?? activeTurn.AgentSession.NativeThreadId ?? currentSession.NativeThreadId,
-                    Status = turnStatus == "unknown" ? "unknown" : "idle",
+                    Status = turnStatus == "unknown" && input is not null ? "unknown" : "idle",
                     ContextUsageRatio = nextRatio,
                     UpdatedAtMs = endNow
                 };
@@ -2697,7 +2712,7 @@ public sealed partial class TrackActor : IAsyncDisposable
                 }
                 else
                 {
-                    await CompleteWakeTurnCoreAsync(completedTurn, items, updatedSession).ConfigureAwait(false);
+                    await CompleteWakeTurnCoreAsync(completedTurn, items, updatedSession, queuedMessage).ConfigureAwait(false);
                 }
 
                 _activeTurns.Remove(sessionId);
@@ -2773,12 +2788,14 @@ public sealed partial class TrackActor : IAsyncDisposable
                 : JsonHelpers.ToElement(new { v = 1, content = prompt, triggerKind = turn.TriggerKind, inputId, deliveryError }),
             CreatedAtMs: turn.StartedAtMs!.Value);
 
-    private async Task CompleteWakeTurnCoreAsync(SessionTurnDto turn, IReadOnlyList<SessionItemDto> items, AgentSessionDto session)
+    private async Task CompleteWakeTurnCoreAsync(SessionTurnDto turn, IReadOnlyList<SessionItemDto> items,
+        AgentSessionDto session, QueuedMessage? queuedMessage)
     {
         var ct = CancellationToken.None;
         var turnEvent = TurnCompletedEvent(turn, session.UpdatedAtMs);
         await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
         await _store.RecordTurnAndItemsAsync(turn, items, session, ct).ConfigureAwait(false);
+        queuedMessage?.Remove(stored: true);
         _sessions[session.Id] = session;
         await _store.AppendEventAsync(turnEvent, ct).ConfigureAwait(false);
         await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, turnEvent, ct).ConfigureAwait(false);
@@ -3026,27 +3043,41 @@ public sealed partial class TrackActor : IAsyncDisposable
         if (!WorkspaceReady || _track.ClosedAtMs is not null || _activeTurns.ContainsKey(sessionId) || _compactingSessions.Contains(sessionId) ||
             _reservedWakeSessions.ContainsKey(sessionId) || !_sessions.TryGetValue(sessionId, out var session) ||
             HoldsDurableSlot(session) ||
-            !_pendingWakes.TryGetValue(sessionId, out var queued) || !queued.TryDequeue(out var wake))
+            !_pendingWakes.TryGetValue(sessionId, out var queued))
             return;
+
+        while (queued.TryPeek(out var skipped) && skipped.Message?.State is QueuedMessageState.Removed or QueuedMessageState.HandedOff or QueuedMessageState.Unconfirmed)
+            queued.Dequeue();
+        if (!queued.TryPeek(out var wake) || wake.Message?.State == QueuedMessageState.Steering)
+            return;
+        queued.Dequeue();
+        if (wake.Message is { } message)
+            message.State = QueuedMessageState.Sending;
 
         if (wake.MailId is not null)
             Interlocked.Decrement(ref _queuedMailWakes);
         var reservation = Guid.NewGuid();
         _reservedWakeSessions.Add(sessionId, reservation);
-        TrackBackgroundJob(() => RunReservedWakeAsync(sessionId, wake.TriggerKind, wake.Prompt, reservation, _actorShutdownCts.Token, wake.MailId, wake.InputId));
+        _ = TrackBackgroundJob(() => RunReservedWakeAsync(sessionId, wake.TriggerKind, wake.Prompt, reservation, _actorShutdownCts.Token, wake.MailId, wake.InputId, wake.Message));
     }
 
-    private async Task RunReservedWakeAsync(string sessionId, string kind, string prompt, Guid reservation, CancellationToken ct, string? mailId, string? inputId = null)
+    private async Task RunReservedWakeAsync(string sessionId, string kind, string prompt, Guid reservation, CancellationToken ct, string? mailId, string? inputId = null, QueuedMessage? message = null)
     {
         try
         {
-            await ExecuteSessionTurnPipelineAsync(sessionId, kind, prompt, ct, wakeReservation: reservation, mailId: mailId, wakeInputId: inputId).ConfigureAwait(false);
+            await ExecuteSessionTurnPipelineAsync(sessionId, kind, prompt, ct, wakeReservation: reservation, mailId: mailId, wakeInputId: inputId, queuedMessage: message).ConfigureAwait(false);
         }
         finally
         {
             if (!_actorShutdownCts.IsCancellationRequested)
                 await EnqueueAsync(_ =>
                 {
+                    if (message?.State is QueuedMessageState.Sending or QueuedMessageState.Processing)
+                    {
+                        message.State = QueuedMessageState.Unconfirmed;
+                        NotifyQueueChangedCore(sessionId);
+                    }
+
                     if (_reservedWakeSessions.TryGetValue(sessionId, out var current) && current == reservation)
                     {
                         _reservedWakeSessions.Remove(sessionId);
@@ -3057,9 +3088,9 @@ public sealed partial class TrackActor : IAsyncDisposable
         }
     }
 
-    private sealed record PendingWake(string TriggerKind, string Prompt, string? MailId, string? InputId);
+    private sealed record PendingWake(string TriggerKind, string Prompt, string? MailId, string? InputId, QueuedMessage? Message);
 
-    private void EnqueuePendingWakeCore(string sessionId, string triggerKind, string prompt, string? mailId = null, string? inputId = null)
+    private void EnqueuePendingWakeCore(string sessionId, string triggerKind, string prompt, string? mailId = null, string? inputId = null, QueuedMessage? message = null)
     {
         if (!_pendingWakes.TryGetValue(sessionId, out var queue))
         {
@@ -3069,7 +3100,7 @@ public sealed partial class TrackActor : IAsyncDisposable
 
         if (mailId is not null)
             Interlocked.Increment(ref _queuedMailWakes);
-        queue.Enqueue(new PendingWake(triggerKind, prompt, mailId, inputId));
+        queue.Enqueue(new PendingWake(triggerKind, prompt, mailId, inputId, message));
     }
 
     private async Task SwitchLeadSessionCoreAsync(string newLeadSessionId, long now, CancellationToken ct)
@@ -3613,14 +3644,17 @@ public sealed partial class TrackActor : IAsyncDisposable
         string sessionId,
         SessionTurnDto turnDto,
         IAgentSession agentSession,
-        CancellationTokenSource turnCts)
+        CancellationTokenSource turnCts,
+        bool hasStoredTurn)
     {
+        public bool CanSteerQueuedMessages => hasStoredTurn && AgentSession.SupportsNativeSteer;
         public string SessionId { get; } = sessionId;
         public SessionTurnDto TurnDto { get; } = turnDto;
         public IAgentSession AgentSession { get; } = agentSession;
         public CancellationTokenSource TurnCts { get; } = turnCts;
         public HashSet<string> OwnedAskIds { get; } = new(StringComparer.Ordinal);
         public bool Interrupted { get; set; }
+        public bool ProviderAccepted { get; set; }
     }
 
     private sealed class ActiveAttemptState(

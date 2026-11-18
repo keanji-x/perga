@@ -1,5 +1,5 @@
 import type { AgentProvider, ConversationPendingInput, HarnessTimeoutEvidence, PlannerAttachment, PlannerPermissionMode } from '../../../../core/api/generated/wire.ts';
-import type { Conversation, CreatedConversation, SideConversation, ConversationKind, ConversationState, ModelCatalog, ModelSelection, PendingQueueEntry, PlannerQueueEditOutcome, PlannerRunTokenUsage, PlannerQueueWriteOutcome, TranscriptEntry, SteeringMessage } from '../../../../core/domain/conversation.ts';
+import type { Conversation, CreatedConversation, SideConversation, ConversationKind, ConversationState, ModelCatalog, ModelSelection, PendingQueueEntry, PlannerQueueEditOutcome, PlannerRunTokenUsage, PlannerQueueWriteOutcome, TranscriptEntry } from '../../../../core/domain/conversation.ts';
 import type { FailedSendOp, PendingQueueSend, ReplacedTurn, QueueDisplayAccounting } from '../../../../core/domain/conversation-outbox.ts';
 import type { ConversationStopFeedback } from '../../../../core/domain/conversation-stop.ts';
 import type { RunRecovery } from '../../../../core/domain/conversation-restart.ts';
@@ -11,8 +11,8 @@ export type ConversationStore = Readonly<{
   conversations: readonly Conversation[];
   /** This selected scope's messages and actions, in canonical display order. */
   turns: readonly TranscriptEntry[];
-  steeringMessages: readonly SteeringMessage[];
-  canSendSupplement: boolean;
+  canQueueWhileRunning: boolean;
+  nativeQueue: boolean;
   pending: ReadonlySet<string>;
   working: boolean;
   canStop: boolean;
