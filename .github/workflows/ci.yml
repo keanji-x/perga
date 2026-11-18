@@ -35,16 +35,17 @@ jobs:
       - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
         with:
           dotnet-version: '11.0.x'
-      - name: Install Jujutsu for Host integration tests
+      - name: Install Jujutsu for .NET tests
         run: |
-          mkdir -p "$RUNNER_TEMP/jj"
+          # The VCS suite exercises discovery in ~/.local/bin with PATH overridden.
+          mkdir -p "$HOME/.local/bin"
           archive="$RUNNER_TEMP/jj.tar.gz"
           curl --fail --silent --show-error --location --retry 3 --max-time 120 \
             --output "$archive" \
             https://github.com/jj-vcs/jj/releases/download/v0.28.2/jj-v0.28.2-x86_64-unknown-linux-musl.tar.gz
           echo "c91894dd8b0ae21a10bf3a8530082e480e14d61fa4e3ad0b985268875fa7fb34  $archive" | sha256sum --check
-          tar -xzf "$archive" -C "$RUNNER_TEMP/jj" ./jj
-          echo "$RUNNER_TEMP/jj" >> "$GITHUB_PATH"
+          tar -xzf "$archive" -C "$HOME/.local/bin" ./jj
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - name: Install repository Rust toolchain
         run: rustup toolchain install --no-self-update
       - name: Check terminal bridge formatting
@@ -55,8 +56,11 @@ jobs:
         run: |
           cargo test --locked --release
           cargo build --locked --release --bin perga-term-bridge
+      - name: Build .NET solution
+        run: dotnet build Perga.sln --configuration Release
       - name: Test .NET solution
-        run: dotnet test Perga.sln --configuration Release
+        # Avoid concurrent builds and test projects competing with PolicyVm's 50 ms clock.
+        run: dotnet test Perga.sln --configuration Release --no-build --maxcpucount:1
       - name: Publish Host and bundle terminal bridge and templates
         run: |
           dotnet publish src/Perga.Host/Perga.Host.csproj --configuration Release --no-build --output perga
