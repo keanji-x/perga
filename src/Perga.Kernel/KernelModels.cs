@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Perga.AgentKit;
 using Perga.Contracts;
 using Perga.PolicyVm;
@@ -44,7 +45,12 @@ public sealed record CreateTrackRequest(
     string? ParentAttemptId = null,
     IReadOnlyList<string>? EnabledPlugins = null,
     string? BaseRevision = null,
-    double? SortOrder = null);
+    double? SortOrder = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? WorkspaceOptionId = null);
+
+public sealed record TrackWorkspaceOptionDto(string Id, string Label, string Description);
+
+public sealed record TrackWorkspaceOptionsDto(string? DefaultId, IReadOnlyList<TrackWorkspaceOptionDto> Options);
 
 public sealed record PatchTrackRequest(
     string? Title = null,

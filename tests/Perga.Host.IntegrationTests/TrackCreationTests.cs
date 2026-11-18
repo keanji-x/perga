@@ -7,12 +7,86 @@ using Microsoft.Extensions.DependencyInjection;
 using Perga.Host.IntegrationTests.Fixtures;
 using Perga.Kernel;
 using Perga.Kernel.Ports;
+using Perga.VcsKit;
 
 namespace Perga.Host.IntegrationTests;
 
 public sealed class TrackCreationTests
 {
     private static readonly TimeSpan Deadline = TimeSpan.FromSeconds(10);
+
+    [Fact]
+    public async Task WorkspaceOptionsAreReadOnlyAndAnExplicitGitChoiceIsPersistedAndReplayed()
+    {
+        var process = new WorkspaceProcess();
+        var vcs = new VcsService(process, new VcsServiceOptions { AutoColocateJj = true, JjExecutablePath = "jj" });
+        await using var host = new PergaHostTestCluster(
+            configureExtraServices: services => services.AddSingleton<IVcsService>(vcs));
+        var areaId = await CreateAreaAsync(host);
+        using var inherited = await host.Client.GetAsync($"/api/v1/areas/{areaId}/workspace-options");
+        Assert.Equal("copy", (await ReadAsync(inherited)).GetProperty("defaultId").GetString());
+        using var cleared = await host.Client.GetAsync($"/api/v1/areas/{areaId}/workspace-options?cwd=");
+        Assert.Equal("managed", (await ReadAsync(cleared)).GetProperty("defaultId").GetString());
+        var source = Path.Combine(host.DataDir, "colocated");
+        Directory.CreateDirectory(Path.Combine(source, ".git"));
+        await File.WriteAllTextAsync(Path.Combine(source, ".git", "HEAD"), "ref: refs/heads/main\n");
+        var optionsPath = $"/api/v1/areas/{areaId}/workspace-options?cwd={Uri.EscapeDataString(source)}";
+        using var gitOnly = await host.Client.GetAsync(optionsPath);
+        Assert.Equal("git", (await ReadAsync(gitOnly)).GetProperty("defaultId").GetString());
+        Assert.False(Directory.Exists(Path.Combine(source, ".jj")));
+        Assert.Empty(process.Calls);
+
+        Directory.CreateDirectory(Path.Combine(source, ".jj", "repo"));
+        using var colocated = await host.Client.GetAsync(optionsPath);
+        var options = await ReadAsync(colocated);
+        Assert.Equal("jj", options.GetProperty("defaultId").GetString());
+        Assert.Equal(new[] { "jj", "git", "direct" },
+            options.GetProperty("options").EnumerateArray().Select(option => option.GetProperty("id").GetString()));
+        Assert.Empty(process.Calls);
+
+        using var rejected = await PostAsync(host, "/api/v1/tracks", "unavailable-workspace",
+            new { areaId, cwd = source, workspaceOptionId = "copy" });
+        Assert.Equal(HttpStatusCode.BadRequest, rejected.StatusCode);
+        using var tracks = await host.Client.GetAsync($"/api/v1/areas/{areaId}/tracks");
+        Assert.Empty((await ReadAsync(tracks)).EnumerateArray());
+
+        var body = new { areaId, cwd = source, workspaceOptionId = "git" };
+        using var created = await PostAsync(host, "/api/v1/tracks", "chosen-git", body);
+        var id = (await ReadAsync(created)).GetProperty("track").GetProperty("id").GetString()!;
+        await host.Services.GetRequiredService<IPergaKernel>().WaitForTrackIdleAsync(id).WaitAsync(Deadline);
+        using var ready = await host.Client.GetAsync($"/api/v1/tracks/{id}");
+        var spec = (await ReadAsync(ready)).GetProperty("track").GetProperty("workspaceSpec");
+        Assert.Equal("GitWorktree", spec.GetProperty("metadata").GetProperty("Kind").GetString());
+        using var replay = await PostAsync(host, "/api/v1/tracks", "chosen-git", body);
+        Assert.Equal(id, (await ReadAsync(replay)).GetProperty("track").GetProperty("id").GetString());
+        var checkout = Assert.Single(process.Calls, call => call.Arguments.First() == "worktree");
+        Assert.Equal("git", checkout.FileName);
+        Assert.Equal("add", checkout.Arguments[1]);
+        Assert.All(process.Calls, call => Assert.Equal("git", call.FileName));
+
+        using var managed = await PostAsync(host, "/api/v1/tracks", "empty-cwd",
+            new { areaId, cwd = "", workspaceOptionId = "managed" });
+        var managedId = (await ReadAsync(managed)).GetProperty("track").GetProperty("id").GetString()!;
+        await host.Services.GetRequiredService<IPergaKernel>().WaitForTrackIdleAsync(managedId).WaitAsync(Deadline);
+        using var managedReady = await host.Client.GetAsync($"/api/v1/tracks/{managedId}");
+        var managedSpec = (await ReadAsync(managedReady)).GetProperty("track").GetProperty("workspaceSpec");
+        Assert.True(managedSpec.GetProperty("managedEmptyWorkspace").GetBoolean());
+    }
+
+    private sealed class WorkspaceProcess : IProcessRunner
+    {
+        public System.Collections.Concurrent.ConcurrentQueue<ProcessRunRequest> Calls { get; } = new();
+
+        public Task<ProcessRunResult> RunAsync(ProcessRunRequest request, CancellationToken ct = default)
+        {
+            Calls.Enqueue(request);
+            if (request.Arguments.First() == "show-ref")
+                return Task.FromResult(new ProcessRunResult(1, "", ""));
+            Assert.Equal("worktree", request.Arguments.First());
+            Directory.CreateDirectory(request.Arguments.Last());
+            return Task.FromResult(new ProcessRunResult(0, "", ""));
+        }
+    }
 
     [Fact]
     public async Task CommittedTrackCanBeReplayedReadAndEditedWhileFirstMessageWaitsForWorkspace()

@@ -22,7 +22,8 @@ public sealed record WorkspaceProvisionRequest(
     string TargetRootDir,
     IReadOnlyList<string> LowerCacheDirs,
     string? BaseRevision = null,
-    bool NewEmptyWorkspace = false);
+    bool NewEmptyWorkspace = false,
+    VcsBackendKind? VcsBackend = null);
 
 public sealed record WorkspaceSpec(
     string DriverId,
@@ -77,10 +78,13 @@ public interface IWorkspaceDriverRegistry
 
 public enum VcsBackendKind
 {
-    JjColocated,
-    GitWorktree,
-    PlainDirectory
+    JjColocated = 0,
+    GitWorktree = 1,
+    PlainDirectory = 2
 }
+
+public sealed class WorkspaceBackendUnavailableException(VcsBackendKind backend)
+    : InvalidOperationException($"The selected workspace backend '{backend}' is no longer available.");
 
 public sealed record IsolatedWorkspace(
     VcsBackendKind Kind,
@@ -122,7 +126,9 @@ public sealed record PushResult(
 public interface IVcsService
 {
     Task<VcsBackendKind> DetectAsync(string path, CancellationToken ct);
-    Task<IsolatedWorkspace> CreateWorkspaceAsync(string repoPath, string workspaceName, string targetDir, string? baseRev = null, CancellationToken ct = default);
+    IReadOnlyList<VcsBackendKind> ListWorkspaceBackends(string path);
+    Task<IsolatedWorkspace> CreateWorkspaceAsync(string repoPath, string workspaceName, string targetDir, string? baseRev = null,
+        CancellationToken ct = default, VcsBackendKind? backend = null);
     Task RemoveWorkspaceAsync(IsolatedWorkspace workspace, CancellationToken ct = default);
     Task<RevisionSnapshot> SnapshotWorkingCopyAsync(string workspacePath, string? commitMessageIfGit = null, CancellationToken ct = default);
     Task RestoreOperationAsync(string workspacePath, string opId, CancellationToken ct = default);

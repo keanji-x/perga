@@ -37,11 +37,17 @@ export type NewTrackDraft = Readonly<{
   /** Absolute path, or the key is absent: an empty string would take the attached branch with a path that cannot work. */
   cwd?: string;
   isolation?: RepoIsolationMode;
+  workspaceOptionId?: string;
   templateId?: string;
   templateInput?: Readonly<Record<string, unknown>>;
 }>;
 
 export type NewTrackFormProps = Readonly<{
+  workspaceOptions?: Readonly<{
+    cwd: string;
+    templateId?: string;
+    result: import('../../../../../core/domain/track.ts').TrackWorkspaceOptions | null;
+  }>;
   /** App-composed model controls beside the send button. */
   modelControls?: ReactNode;
   /** Available Perga templates for explicit selection and typed `inputsSchema` entry. */
@@ -85,6 +91,9 @@ export type NewTrackFormState = Readonly<{
   message: string;
   cwd: string;
   isolation?: RepoIsolationMode;
+  workspaceOptionId?: string;
+  workspaceOptionCwd?: string;
+  activeTemplateId?: string;
   templateId?: string | null;
   templateInputs?: PergaTemplateRawValues;
 }>;
@@ -92,12 +101,16 @@ export type NewTrackFormState = Readonly<{
 export function NewTrackForm({
   modelControls, templates, defaultTemplateId, submitting, error, readNotice, initialCwd, listDirectory, onSubmit,
   errorAction, initialDraft, onDraftChange, submitBlocked = false, locked = false, mentionTrigger,
+  workspaceOptions: workspaceOptionsState,
 }: NewTrackFormProps) {
   const fieldId = useId();
   const [message, setMessage] = useState(initialDraft?.message ?? '');
   const [cwd, setCwd] = useState(initialDraft?.cwd ?? initialCwd ?? '');
   const [isolation, setIsolation] = useState<RepoIsolationMode>(initialDraft?.isolation ?? 'worktree');
-  const [templateId, setTemplateId] = useState<string | null>(initialDraft?.templateId ?? defaultTemplateId ?? null);
+  const [workspaceChoice, setWorkspaceChoice] = useState(initialDraft?.workspaceOptionId === undefined ? null
+    : { id: initialDraft.workspaceOptionId, cwd: initialDraft.workspaceOptionCwd ?? initialDraft.cwd });
+  const [templateId, setTemplateId] = useState<string | null>(
+    initialDraft?.templateId === undefined ? defaultTemplateId ?? null : initialDraft.templateId);
   const [templateInputs, setTemplateInputs] = useState<PergaTemplateRawValues>(initialDraft?.templateInputs ?? {});
   const [browsing, setBrowsing] = useState<DialogOrigin | null>(null);
   const composerHostRef = useRef<HTMLDivElement | null>(null);
@@ -129,13 +142,21 @@ export function NewTrackForm({
     [templateFields, templateInputs],
   );
 
+  const activeTemplateId = activeTemplate?.id;
+  const workspaceOptions = workspaceOptionsState === undefined ? undefined
+    : workspaceOptionsState.cwd === cwd && workspaceOptionsState.templateId === activeTemplateId
+      ? workspaceOptionsState.result : null;
+  const selectedWorkspaceOption = workspaceChoice === null ? workspaceOptions?.defaultId ?? undefined
+    : workspaceChoice.cwd === cwd ? workspaceOptions?.options.find((option) => option.id === workspaceChoice.id)?.id : undefined;
+
   useEffect(() => {
+    const workspace = workspaceChoice === null ? {} : { workspaceOptionId: workspaceChoice.id, workspaceOptionCwd: workspaceChoice.cwd };
     if (hasTemplates) {
-      onDraftChange?.({ message, cwd, isolation, templateId, templateInputs });
+      onDraftChange?.({ message, cwd, isolation, templateId, templateInputs, activeTemplateId, ...workspace });
     } else {
       onDraftChange?.({ message, cwd, isolation });
     }
-  }, [message, cwd, isolation, templateId, templateInputs, hasTemplates, onDraftChange]);
+  }, [message, cwd, isolation, templateId, templateInputs, activeTemplateId, workspaceChoice, hasTemplates, onDraftChange]);
 
   /* The caret starts in the field. Found by query, not ref: `ChatComposerInput`
    * forwards its DOM `ref` to the wrapper, which is not focusable. Mount-only, so
@@ -145,19 +166,21 @@ export function NewTrackForm({
     field?.focus();
   }, []);
 
-  const templateInputsValid = activeTemplate === undefined || compiledTemplateInputs.valid;
-  const valid = !isBlankForKernel(message) && templateInputsValid;
+  const templateInputsValid = locked || activeTemplate === undefined || compiledTemplateInputs.valid;
+  const workspaceSelectionValid = workspaceOptions === undefined || selectedWorkspaceOption !== undefined || locked;
+  const valid = !isBlankForKernel(message) && templateInputsValid && workspaceSelectionValid;
 
   function draftFor(text: string, forAction = false): NewTrackDraft | null {
     /* Blank refuses the submit; it does not rewrite it. `text` goes to the caller
            exactly as typed, and the kernel forwards it untrimmed. */
-    if (isBlankForKernel(text) || !templateInputsValid || submitting || (submitBlocked && !forAction)) return null;
+    if (isBlankForKernel(text) || !templateInputsValid || !workspaceSelectionValid || submitting || (submitBlocked && !forAction)) return null;
     /* Spread, not `cwd: cwd || undefined`: the caller keys managed-vs-attached on
            whether the key is there. A path travels byte-for-byte; leading/trailing
            spaces are legal POSIX path characters. */
     return {
       message: text,
       ...(cwd === '' ? {} : { cwd, isolation }),
+      ...(selectedWorkspaceOption === undefined ? {} : { workspaceOptionId: selectedWorkspaceOption }),
       ...(activeTemplate === undefined
         ? {}
         : {
@@ -348,9 +371,11 @@ export function NewTrackForm({
             </div>}
             footerActions={<ComposerPreferences browsing={browsing !== null}
               folder={{ buttonId: folderId, value: cwd, isolation, clearLabel: FOLDER_CLEAR_LABEL,
+                workspaceOptions, workspaceOptionId: selectedWorkspaceOption,
+                onWorkspaceOptionChange: (id) => setWorkspaceChoice({ id, cwd }),
                 onIsolationChange: setIsolation,
                 onBrowse: (origin) => setBrowsing(origin),
-                onClear: () => { setCwd(''); setIsolation('worktree'); },
+                onClear: () => { setCwd(''); setIsolation('worktree'); setWorkspaceChoice(null); },
                 isDisabled: submitting || locked }}
             />}
             /* Model and Create stay together at the trailing edge. */

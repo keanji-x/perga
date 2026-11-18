@@ -44,6 +44,7 @@ public interface IPergaKernel : IAsyncDisposable
     // Tracks
     Task<IReadOnlyList<TrackDto>> ListTracksAsync(string? areaId = null, bool includeClosed = false, CancellationToken ct = default);
     Task<TrackAggregateSnapshot> CreateTrackAsync(CreateTrackRequest req, CancellationToken ct = default, string? requestKey = null);
+    Task<TrackWorkspaceOptionsDto> GetTrackWorkspaceOptionsAsync(string areaId, string? cwd, string? templateId, CancellationToken ct);
     Task RetryWorkspaceAsync(string trackId, CancellationToken ct = default);
     Task<TrackAggregateSnapshot> GetTrackAggregateAsync(string trackId, CancellationToken ct = default);
     Task<TrackStatusDto> GetTrackStatusAsync(string trackId, CancellationToken ct = default);
@@ -119,7 +120,7 @@ public interface IPergaKernel : IAsyncDisposable
     Task WaitForTrackIdleAsync(string trackId, CancellationToken ct = default);
 }
 
-public sealed class PergaKernelService : IPergaKernel
+public sealed partial class PergaKernelService : IPergaKernel
 {
     private const long ProviderProbeCacheTtlMs = 60_000L;
     private const int BinarySniffBytes = 8 * 1024;
@@ -583,16 +584,20 @@ public sealed class PergaKernelService : IPergaKernel
         var leadSessionId = $"ses_{Guid.NewGuid():N}";
         var now = NowMs();
 
-        var driverId = !string.IsNullOrWhiteSpace(req.WorkspaceDriver)
-            ? req.WorkspaceDriver!
-            : !string.IsNullOrWhiteSpace(policy?.Manifest.WorkspaceDriver)
-                ? policy!.Manifest.WorkspaceDriver!
-                : _options.DefaultWorkspaceDriver;
-
-        var blankWorkspace = string.IsNullOrWhiteSpace(req.Cwd) && string.IsNullOrWhiteSpace(area.DefaultCwd);
+        var source = WorkspaceSource(area, req.Cwd, useExplicitEmpty: req.WorkspaceOptionId is not null);
+        WorkspaceChoice? choice = null;
+        if (req.WorkspaceOptionId is { } optionId)
+        {
+            if (!string.IsNullOrWhiteSpace(req.WorkspaceDriver))
+                throw KernelException.InvalidArgument("Choose a workspace option or specify a workspace driver.");
+            choice = WorkspaceChoices(source, policy?.Manifest.WorkspaceDriver).FirstOrDefault(candidate => candidate.Option.Id == optionId)
+                ?? throw KernelException.InvalidArgument("The selected workspace option is unavailable for this folder. Choose an available workspace option.");
+        }
+        var driverId = choice?.DriverId ?? PreferredWorkspaceDriver(req.WorkspaceDriver, policy?.Manifest.WorkspaceDriver);
+        var blankWorkspace = source is null;
         var sourcePath = blankWorkspace
             ? Path.Combine(_options.WorkspacesRootDirectory, trackId)
-            : string.IsNullOrWhiteSpace(req.Cwd) ? area.DefaultCwd! : req.Cwd!;
+            : source!;
         var targetRootDir = Path.Combine(_options.WorkspacesRootDirectory, blankWorkspace ? "_worktrees" : trackId);
         var lowerCacheDirs = policy?.Manifest.WorkspaceLowerCacheDirs ?? [];
         var createCommand = policy?.Manifest.WorkspaceCreateCmd;
@@ -602,7 +607,7 @@ public sealed class PergaKernelService : IPergaKernel
         _workspaceDrivers.GetRequired(driverId);
         var preparation = new WorkspacePreparation(
             new WorkspaceProvisionRequest(trackId, Path.GetFullPath(sourcePath), Path.GetFullPath(targetRootDir),
-                lowerCacheDirs, req.BaseRevision, NewEmptyWorkspace: blankWorkspace),
+                lowerCacheDirs, req.BaseRevision, NewEmptyWorkspace: blankWorkspace, VcsBackend: choice?.Backend),
             createCommand);
 
         var templateInputs = JsonHelpers.EnsureClonedObject(req.TemplateInputs);

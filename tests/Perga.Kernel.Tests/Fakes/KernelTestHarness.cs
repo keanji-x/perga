@@ -1562,8 +1562,12 @@ internal sealed class FakeVcsService : IVcsService
     public Task<VcsBackendKind> DetectAsync(string path, CancellationToken ct) =>
         Task.FromResult(VcsBackendKind.JjColocated);
 
-    public Task<IsolatedWorkspace> CreateWorkspaceAsync(string repoPath, string workspaceName, string targetDir, string? baseRev = null, CancellationToken ct = default) =>
-        Task.FromResult(new IsolatedWorkspace(VcsBackendKind.JjColocated, repoPath, workspaceName, targetDir, baseRev));
+    public IReadOnlyList<VcsBackendKind> ListWorkspaceBackends(string path) =>
+        [VcsBackendKind.JjColocated, VcsBackendKind.GitWorktree];
+
+    public Task<IsolatedWorkspace> CreateWorkspaceAsync(string repoPath, string workspaceName, string targetDir, string? baseRev = null,
+        CancellationToken ct = default, VcsBackendKind? backend = null) =>
+        Task.FromResult(new IsolatedWorkspace(backend ?? VcsBackendKind.JjColocated, repoPath, workspaceName, targetDir, baseRev));
 
     public Task RemoveWorkspaceAsync(IsolatedWorkspace workspace, CancellationToken ct = default) =>
         Task.CompletedTask;

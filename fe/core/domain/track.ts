@@ -18,9 +18,11 @@ import {
   trackAggregateSnapshotDtoSchema,
   trackDtoSchema,
   trackWorkspaceSchema,
+  trackWorkspaceOptionsDtoSchema,
   type AskDto,
   type TerminalDto,
   type TrackAggregateSnapshotDto,
+  type TrackWorkspaceOptionsDto,
   type TrackDto,
 } from '../api/schemas.js';
 import type { AgentProvider, WorkspaceIsolation } from '../api/generated/wire.js';
@@ -393,6 +395,7 @@ export type NewTrackBody = Readonly<{
   cwd?: string | null;
   /** Explicit isolation for an attached folder; omitted defaults to `worktree` on the server. */
   isolation?: 'worktree' | 'none';
+  workspace_option_id?: string;
   theme: ThemeRgb;
   /**
    * `false` requires `cwd` to already sit under a claimed folder (409 naming the area otherwise);
@@ -877,15 +880,30 @@ export function retryTrackWorkspaceOperation(trackId: string): ApiOperation<unkn
   };
 }
 
+export type TrackWorkspaceOptions = TrackWorkspaceOptionsDto;
+
+export function trackWorkspaceOptionsOperation(areaId: string, cwd?: string, templateId?: string): ApiOperation<TrackWorkspaceOptions> {
+  const query = [
+    ...(cwd === undefined ? [] : [`cwd=${encodeURIComponent(cwd)}`]),
+    ...(templateId ? [`templateId=${encodeURIComponent(templateId)}`] : []),
+  ].join('&');
+  return {
+    method: 'GET',
+    path: `/api/v1/areas/${encodeURIComponent(areaId)}/workspace-options${query === '' ? '' : `?${query}`}`,
+    responseSchema: trackWorkspaceOptionsDtoSchema,
+  };
+}
+
 /**
  * `POST /api/v1/tracks`, keyed per draft on every create, with or without `first_message`.
  */
 export function createTrackOperation(body: NewTrackBody, idempotencyKey: string): ApiOperation<TrackWire> {
+  const { workspace_option_id: workspaceOptionId, ...rest } = body;
   const wireBody = {
-    ...body,
+    ...rest,
     areaId: body.area_id,
     provider: toWireAgentProvider(body.planner_provider),
-    ...(body.isolation !== undefined
+    ...(workspaceOptionId !== undefined ? { workspaceOptionId } : body.isolation !== undefined
       ? { workspaceDriver: body.isolation === 'worktree' ? 'vcs-workspace' : 'direct' }
       : {}),
     ...(body.template_id !== undefined ? { templateId: body.template_id } : {}),

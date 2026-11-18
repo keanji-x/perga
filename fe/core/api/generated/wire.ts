@@ -1239,6 +1239,7 @@ export type AskDto = import('../perga-v1.js').AskDto;
 export type MailDto = import('../perga-v1.js').MailDto;
 export type TerminalDto = import('../perga-v1.js').TerminalDto;
 export type TrackAggregateSnapshotDto = import('../perga-v1.js').TrackAggregateSnapshotDto;
+export type TrackWorkspaceOptionsDto = import('../perga-v1.js').TrackWorkspaceOptionsDto;
 export type ReportReadResultDto = import('../perga-v1.js').ReportReadResultDto;
 export type WorkspaceFileResultDto = import('../perga-v1.js').WorkspaceFileResultDto;
 export type HostDirEntryDto = import('../perga-v1.js').HostDirEntryDto;

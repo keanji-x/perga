@@ -14577,6 +14577,23 @@
         }
       }
     },
+    "/api/v1/areas/{areaId}/workspace-options": {
+      "get": {
+        "parameters": [
+          { "name": "areaId", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "cwd", "in": "query", "schema": { "type": "string" } },
+          { "name": "templateId", "in": "query", "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Available workspace options for the selected folder and template.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TrackWorkspaceOptionsDto" } } }
+          },
+          "400": { "description": "The selected folder or its workspace options are unavailable." },
+          "404": { "description": "Area or template not found." }
+        }
+      }
+    },
     "/api/v1/tracks": {
       "post": {
         "parameters": [
@@ -14592,6 +14609,29 @@
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["areaId"],
+                "properties": {
+                  "areaId": { "type": "string" },
+                  "cwd": {
+                    "type": ["string", "null"],
+                    "description": "An empty string with workspaceOptionId selects a managed source. Omitting the field uses the Area default."
+                  },
+                  "templateId": { "type": ["string", "null"] },
+                  "workspaceOptionId": {
+                    "type": ["string", "null"],
+                    "description": "An option ID returned by GET /api/v1/areas/{areaId}/workspace-options."
+                  }
+                }
+              }
+            }
+          }
+        },
         "responses": {
           "201": {
             "content": {
@@ -14603,7 +14643,7 @@
             }
           },
           "400": {
-            "description": "Invalid idempotency key."
+            "description": "Invalid idempotency key or unavailable workspace option."
           },
           "409": {
             "description": "The key was already used with different request data."
@@ -25402,6 +25442,26 @@
               "integer",
               "null"
             ]
+          }
+        }
+      },
+      "TrackWorkspaceOptionsDto": {
+        "type": "object",
+        "required": ["defaultId", "options"],
+        "properties": {
+          "defaultId": { "type": ["string", "null"] },
+          "options": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": ["id", "label", "description"],
+              "properties": {
+                "id": { "type": "string" },
+                "label": { "type": "string" },
+                "description": { "type": "string" }
+              }
+            }
           }
         }
       },

@@ -376,6 +376,12 @@ export const trackAggregateSnapshotDtoSchema = z.object({
 });
 export type TrackAggregateSnapshotDto = z.infer<typeof trackAggregateSnapshotDtoSchema>;
 
+export const trackWorkspaceOptionsDtoSchema = z.object({
+  defaultId: z.string().min(1).nullable(),
+  options: z.array(z.object({ id: z.string().min(1), label: z.string(), description: z.string() })).min(1),
+}).refine((result) => result.defaultId === null || result.options.some((option) => option.id === result.defaultId));
+export type TrackWorkspaceOptionsDto = z.infer<typeof trackWorkspaceOptionsDtoSchema>;
+
 export const hostDirEntryDtoSchema = z.object({
   name: z.string(),
   isDir: z.boolean().optional(),
