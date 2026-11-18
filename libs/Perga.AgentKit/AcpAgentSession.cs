@@ -76,6 +76,12 @@ public sealed class AcpAgentSession : IAgentSession
     public string? NativeThreadId => Volatile.Read(ref _nativeThreadId);
 
     public bool SupportsNativeSteer => false;
+    private bool _configureWorker;
+    private string? _workerLaunchModel;
+    private string? _legacyWorkerModel;
+    private AcpWorkerOptions? _workerOptions;
+    private AcpWorkerOptions? _workerDefaults;
+    public WorkerProviderConfiguration? WorkerConfiguration => Volatile.Read(ref _workerOptions)?.ToProviderConfiguration(_workerDefaults);
     public bool ShutdownConfirmed => _rpc.ShutdownConfirmed;
     public bool RequiresTerminalStop => true;
     public bool SupportsSessionResume { get; private set; }
@@ -303,6 +309,15 @@ public sealed class AcpAgentSession : IAgentSession
         }
 
         Volatile.Write(ref _nativeThreadId, resolvedSessionId);
+        _configureWorker = spec.ConfigureWorker;
+        if (_configureWorker)
+        {
+            _workerLaunchModel = spec.Model?.Trim();
+            var workerOptions = AcpWorkerOptions.Read(response);
+            if (!isResume) _workerDefaults = workerOptions;
+            Volatile.Write(ref _workerOptions, workerOptions);
+            return;
+        }
 
         if (!string.IsNullOrWhiteSpace(spec.Model))
         {
@@ -342,6 +357,39 @@ public sealed class AcpAgentSession : IAgentSession
         TurnStreamState turnState,
         CancellationToken ct)
     {
+        if (_configureWorker)
+        {
+            try
+            {
+                var model = Volatile.Read(ref _workerOptions)?.Model;
+                if (input.Model is { } requestedModel)
+                {
+                    if (model is null && requestedModel == _workerLaunchModel)
+                        await SetLegacyWorkerLaunchModelAsync(sessionId, requestedModel, ct).ConfigureAwait(false);
+                    else
+                        await SetWorkerOptionAsync(sessionId, model, requestedModel, model: true, ct).ConfigureAwait(false);
+                }
+                if (input.ReasoningEffort is not null)
+                    await SetWorkerOptionAsync(sessionId, Volatile.Read(ref _workerOptions)?.Reasoning,
+                        input.ReasoningEffort, model: false, ct).ConfigureAwait(false);
+                var applied = Volatile.Read(ref _workerOptions);
+                if ((input.Model is not null && (applied?.Model?.Current ?? _legacyWorkerModel) != input.Model) ||
+                    (input.ReasoningEffort is not null && applied?.Reasoning?.Current != input.ReasoningEffort))
+                    throw new InvalidOperationException("The ACP session did not confirm the selected model and reasoning effort together.");
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                turnState.CompleteQuietly();
+                return;
+            }
+            catch (Exception ex)
+            {
+                turnState.TryFinish(new UnifiedAgentEvent.TurnError("worker_configuration_rejected", ex.Message,
+                    IsRetryable: false, BeforePrompt: true));
+                return;
+            }
+        }
+
         var pendingSystem = Interlocked.Exchange(ref _pendingSystemPrompt, null);
         var effectivePrompt = string.IsNullOrWhiteSpace(pendingSystem)
             ? input.Prompt
@@ -414,6 +462,36 @@ public sealed class AcpAgentSession : IAgentSession
         }
     }
 
+    private async Task SetLegacyWorkerLaunchModelAsync(string sessionId, string model, CancellationToken ct)
+    {
+        if (_legacyWorkerModel == model) return;
+
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeout.CancelAfter(TimeSpan.FromSeconds(5));
+        var args = new Dictionary<string, object?> { ["sessionId"] = sessionId, ["modelId"] = model };
+        var result = await _rpc.SendRequestAsync("session/set_model", args, timeout.Token).ConfigureAwait(false);
+        if (result.ValueKind != JsonValueKind.Object || TryGetBool(result, "success") == false)
+            throw new InvalidOperationException("The ACP session did not acknowledge the Worker launch model.");
+        _legacyWorkerModel = model;
+    }
+
+    private async Task SetWorkerOptionAsync(string sessionId, AcpWorkerOption? option, string value, bool model, CancellationToken ct)
+    {
+        if (option is null || !option.Values.Any(choice => choice.Id == value))
+            throw new InvalidOperationException("The ACP session did not offer the requested Worker setting.");
+        if (option.Current == value) return;
+
+        var args = new Dictionary<string, object?> { ["sessionId"] = sessionId, ["configId"] = option.Id, ["value"] = value };
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeout.CancelAfter(TimeSpan.FromSeconds(5));
+        var result = await _rpc.SendRequestAsync("session/set_config_option", args, timeout.Token).ConfigureAwait(false);
+        var current = AcpWorkerOptions.Read(result);
+        if (current is not null) Volatile.Write(ref _workerOptions, current);
+        var applied = model ? current?.Model : current?.Reasoning;
+        if (applied?.Id != option.Id || applied.Current != value)
+            throw new InvalidOperationException("The ACP session did not confirm the requested Worker setting.");
+    }
+
     private void OnNotification(string method, JsonElement parameters)
     {
         if (!string.Equals(method, "session/update", StringComparison.Ordinal))
@@ -421,8 +499,7 @@ public sealed class AcpAgentSession : IAgentSession
             return;
         }
 
-        var turnState = Volatile.Read(ref _currentTurn);
-        if (turnState is null || parameters.ValueKind != JsonValueKind.Object)
+        if (parameters.ValueKind != JsonValueKind.Object)
         {
             return;
         }
@@ -430,6 +507,13 @@ public sealed class AcpAgentSession : IAgentSession
         var update = parameters.TryGetProperty("update", out var updateObj) && updateObj.ValueKind == JsonValueKind.Object
             ? updateObj
             : parameters;
+
+        if (_configureWorker && TryGetString(parameters, "sessionId") == NativeThreadId &&
+            TryGetString(update, "sessionUpdate") == "config_option_update" && AcpWorkerOptions.Read(update) is { } options)
+            Volatile.Write(ref _workerOptions, options);
+
+        var turnState = Volatile.Read(ref _currentTurn);
+        if (turnState is null) return;
 
         var kind = TryGetString(update, "sessionUpdate")
                    ?? TryGetString(update, "type")

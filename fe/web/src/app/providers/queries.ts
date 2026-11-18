@@ -276,9 +276,9 @@ export function usePlannerMutations(transport: ApiTransportPort, cardId: string,
     sendWorker: (key: string, body: Parameters<typeof sendWorkerMessageOperation>[2]) =>
       Promise.resolve().then(() => admitTransport(transport))
         .then(admitted => runOperation(admitted, sendWorkerMessageOperation(cardId, key, body), unauthorized)).then(refreshAfter),
-    updateWorkerSettings: (settings: Parameters<typeof updateWorkerSettingsOperation>[1]) =>
+    updateWorkerSettings: (settings: Parameters<typeof updateWorkerSettingsOperation>[1], approvalKey?: string) =>
       Promise.resolve().then(() => admitTransport(transport))
-        .then(admitted => runOperation(admitted, updateWorkerSettingsOperation(cardId, settings), unauthorized)).then(refreshAfter),
+        .then(admitted => runOperation(admitted, updateWorkerSettingsOperation(cardId, settings, approvalKey), unauthorized)).then(refreshAfter),
     answerWorkerAsk: (trackId: string, askId: AskId, answers: readonly AskAnswer[], questions: readonly AskQuestion[]) =>
       Promise.resolve().then(() => admitTransport(transport))
         .then(admitted => runOperation(admitted, answerAskOperation(trackId, askId, answers, questions), unauthorized))

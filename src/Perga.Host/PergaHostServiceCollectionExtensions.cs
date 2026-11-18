@@ -131,6 +131,9 @@ public static class PergaHostServiceCollectionExtensions
                 sp.GetService<IServer>()));
         services.TryAddSingleton<IMcpSessionBridge>(sp => sp.GetRequiredService<HostMcpSessionBridge>());
 
+        services.TryAddSingleton(sp => new Perga.Host.Http.WorkerApprovalAuthorization(
+            sp.GetRequiredService<PergaHostOptions>().WorkerApprovalAuthorizationSha256));
+
         services.TryAddSingleton<IPergaKernel>(sp =>
         {
             var opts = sp.GetRequiredService<PergaHostOptions>();
@@ -143,6 +146,7 @@ public static class PergaHostServiceCollectionExtensions
             var kernelOpts = new KernelOptions
             {
                 Version = opts.Version,
+                WorkerApprovalAuthorizationConfigured = sp.GetRequiredService<Perga.Host.Http.WorkerApprovalAuthorization>().IsConfigured,
                 TemplatesDirectory = opts.TemplatesDirectory,
                 WorkspacesRootDirectory = paths.WorkspacesRootDir,
                 DefaultProvider = opts.DefaultProvider,

@@ -36,21 +36,14 @@ public sealed record HarnessLaunchSpec(
     IReadOnlyDictionary<string, McpServerConfig> McpServers,
     OsSandboxMode Sandbox = OsSandboxMode.None,
     IReadOnlyList<OverlayMountSpec>? OverlayMounts = null,
-    string? StateKey = null);
+    string? StateKey = null,
+    bool ConfigureWorker = false);
 
 public sealed record TurnInput(
     string Prompt,
     string CorrelationId,
     string? Model = null,
     string? ReasoningEffort = null);
-
-public sealed record WorkerConfigurationSupport(bool ModelOverride, IReadOnlyList<string> ReasoningEfforts)
-{
-    public static WorkerConfigurationSupport ForProvider(string provider) =>
-        string.Equals(provider, "codex", StringComparison.OrdinalIgnoreCase)
-            ? new(true, ["low", "medium", "high", "xhigh"])
-            : new(false, []);
-}
 
 public sealed record TokenUsage(
     long InputTokens,
@@ -69,7 +62,7 @@ public abstract record UnifiedAgentEvent
     public sealed record ApprovalRequested(string RequestId, string ToolName, JsonElement Args) : UnifiedAgentEvent;
     public sealed record TurnInterrupted : UnifiedAgentEvent;
     public sealed record TurnCompleted(TokenUsage? Usage) : UnifiedAgentEvent;
-    public sealed record TurnError(string Code, string Message, bool IsRetryable, bool IsConclusive = false) : UnifiedAgentEvent;
+    public sealed record TurnError(string Code, string Message, bool IsRetryable, bool IsConclusive = false, bool BeforePrompt = false) : UnifiedAgentEvent;
 }
 
 public sealed record ProviderStatus(
@@ -85,6 +78,7 @@ public interface IAgentSession : IAsyncDisposable
 {
     string? NativeThreadId { get; }
     bool SupportsNativeSteer { get; }
+    WorkerProviderConfiguration? WorkerConfiguration => null;
     bool ShutdownConfirmed => true;
     bool SupportsSessionResume => false;
     bool RequiresTerminalStop => false;

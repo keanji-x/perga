@@ -21,6 +21,10 @@ it('shows Worker progress and approvals, preserves retry targets, and stops the 
   const approval = { id: 'worker-ask', trackId: 'daily', status: 'open', createdAtMs: 4,
     questions: [{ question: 'Approve reading the report?', options: ['Approve', 'Deny'], isMultiSelect: false }] };
   let settings = { version: 0, model: null as string | null, reasoningEffort: null as string | null, approvalMode: 'ask' };
+  const providerConfiguration = { defaultModel: 'gpt-5.4-mini', defaultReasoningEffort: 'low', models: [
+    { id: 'gpt-5.4-mini', name: 'GPT 5.4 Mini', reasoningEfforts: ['low'], defaultReasoningEffort: 'low' },
+    { id: 'gpt-5.4', name: 'GPT 5.4', reasoningEfforts: ['low', 'high'], defaultReasoningEffort: 'low' },
+  ] };
   const view = renderDailyFixture({ initial: '/track/daily?panel=conversations', extraPlanner: true, reply: request => {
     if (request.path === '/api/v1/bootstrap') return ok({ assistantProviders: true, conversationInitialInput: true,
       webCompatVersion: WEB_COMPAT_VERSION, minWebCompatVersion: WEB_COMPAT_VERSION, syncEventVersion: 29, dbInstanceId: 'worker-session' });
@@ -42,14 +46,15 @@ it('shows Worker progress and approvals, preserves retry targets, and stops the 
         ],
         messages: [{ id: 'old-message', author: 'lead', content: 'Read the weekly report.', delivery: 'delivered', createdAtMs: 2 }],
         openAsks: approvalOpen ? [approval] : [],
-        nextSettings: settings, activeSettings: settings, canChangeModel: true, reasoningEfforts: ['low', 'high'] },
+        nextSettings: settings, activeSettings: settings, canChangeModel: true, reasoningEfforts: ['low'],
+        providerConfiguration, approvalAuthorizationConfigured: true },
     });
     if (request.path === '/api/v1/tracks/daily/asks/worker-ask/answer') {
       approvalOpen = false;
       return ok({ ...approval, status: 'answered', answeredAtMs: 5 });
     }
     if (request.path === `${path}/settings`) {
-      settings = { ...(request.body as typeof settings), version: 1 };
+      settings = { ...(request.body as typeof settings), version: settings.version + 1 };
       return ok(settings);
     }
     if (request.path === `${path}/messages`) {
@@ -90,7 +95,8 @@ it('shows Worker progress and approvals, preserves retry targets, and stops the 
 
     fireEvent.click(await screen.findByRole('button', { name: 'Worker settings' }));
     expect(within(screen.getByRole('region', { name: 'Current turn settings' })).getByText('Ask a person')).toBeVisible();
-    fireEvent.change(await screen.findByRole('textbox', { name: 'Model' }), { target: { value: 'gpt-5.4' } });
+    expect(within(screen.getByRole('combobox', { name: 'Reasoning effort' })).queryByRole('option', { name: 'high' })).toBeNull();
+    fireEvent.change(await screen.findByRole('combobox', { name: 'Model' }), { target: { value: 'gpt-5.4' } });
     fireEvent.change(screen.getByRole('combobox', { name: 'Reasoning effort' }), { target: { value: 'high' } });
     fireEvent.change(screen.getByRole('combobox', { name: 'Approvals' }), { target: { value: 'deny' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
@@ -98,6 +104,16 @@ it('shows Worker progress and approvals, preserves retry targets, and stops the 
     expect(view.requests.find(request => request.path === `${path}/settings`)?.body).toEqual({
       attemptId: 'attempt-1', version: 0, model: 'gpt-5.4', reasoningEffort: 'high', approvalMode: 'deny',
     });
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Worker settings' }));
+    fireEvent.change(screen.getByRole('combobox', { name: 'Model' }), { target: { value: '' } });
+    expect(within(screen.getByRole('combobox', { name: 'Approvals' })).getByRole('option', { name: 'Ask a person' })).toBeDisabled();
+    expect(screen.queryByLabelText('Owner authorization key')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
+    await screen.findByText('Settings saved for the next turn.');
+    const restoredSettings = view.requests.filter(request => request.path === `${path}/settings`)[1];
+    expect(restoredSettings.body).toEqual({ attemptId: 'attempt-1', version: 1, model: null, reasoningEffort: null, approvalMode: 'deny' });
+    expect(restoredSettings.headers?.['X-Perga-Worker-Approval-Key']).toBeUndefined();
 
     const composer = await screen.findByRole('combobox', { name: 'Message' });
     await act(async () => { composer.textContent = 'Review the dates'; fireEvent.input(composer); await Promise.resolve(); });

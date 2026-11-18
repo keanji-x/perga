@@ -16,6 +16,50 @@ public sealed class CodexProviderTests : IDisposable
         });
 
     [Fact]
+    public async Task WorkerConfigurationUsesLiveModelEffortsAndTheEffectiveDirectoryDefault()
+    {
+        await using var runtime = new AgentRuntime(new AgentRuntimeOptions
+        {
+            ProviderOverrides = new Dictionary<string, ProviderCommandOverride>
+            {
+                ["codex"] = new(_fixture.MockCodexPath, Env: new Dictionary<string, string>
+                {
+                    ["MOCK_CODEX_CONFIG_JSON"] = """{"model":"small","model_reasoning_effort":"medium"}""",
+                    ["MOCK_CODEX_MODELS_JSON"] = """
+                        {"data":[
+                          {"model":"large","displayName":"Large","isDefault":true,"supportedReasoningEfforts":[{"reasoningEffort":"high"}],"defaultReasoningEffort":"high"},
+                          {"model":"small","displayName":"Small","isDefault":false,"supportedReasoningEfforts":[{"reasoningEffort":"low"},{"reasoningEffort":"medium"}],"defaultReasoningEffort":"low"}
+                        ]}
+                        """
+                })
+            }
+        });
+        var spec = new HarnessLaunchSpec("codex", null, _fixture.WorkspaceDir, null, null,
+            MockCliFixture.CreateSampleMcpServers(), ConfigureWorker: true);
+        await using var session = await runtime.OpenSessionAsync(spec, CancellationToken.None);
+        var configuration = Assert.IsType<WorkerProviderConfiguration>(session.WorkerConfiguration);
+        Assert.Equal("small", configuration.DefaultModel);
+        Assert.Equal("medium", configuration.GetDefaultReasoningEffort(null));
+        Assert.Equal(["high"], configuration.GetReasoningEfforts("large"));
+        Assert.Equal(["low", "medium"], configuration.GetReasoningEfforts("small"));
+    }
+
+    [Theory]
+    [InlineData("REJECT_WORKER_CONFIGURATION")]
+    [InlineData("REJECT_WORKER_CONFIGURATION_EARLY_EVENT")]
+    public async Task WorkerTurnDoesNotAcknowledgeAConfigurationAlreadyRejectedAtStart(string prompt)
+    {
+        await using var runtime = CreateRuntime();
+        var spec = new HarnessLaunchSpec("codex", null, _fixture.WorkspaceDir, null, null,
+            MockCliFixture.CreateSampleMcpServers(), ConfigureWorker: true);
+        await using var session = await runtime.OpenSessionAsync(spec, CancellationToken.None);
+
+        var events = await DrainTurnAsync(session, new TurnInput(prompt, "worker-rejection", "large"));
+        Assert.DoesNotContain(events, item => item is UnifiedAgentEvent.TurnAccepted);
+        Assert.Contains(events, item => item is UnifiedAgentEvent.TurnError { Code: "model_not_found", BeforePrompt: true });
+    }
+
+    [Fact]
     public async Task Codex_FullMultiTurnLifecycle_ThreadStartAndResume_McpAndEvents()
     {
         await using var runtime = CreateRuntime();

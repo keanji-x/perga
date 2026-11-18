@@ -16,6 +16,7 @@ export type ApiRequest = Readonly<{
   path: string;
   credentials: 'include';
   headers?: Readonly<Record<string, string>>;
+  redirect?: 'error';
   body?: unknown;
   signal?: ApiAbortSignal;
   timeoutMs?: number;
@@ -88,6 +89,7 @@ export type ApiOperation<T> = Readonly<{
   body?: unknown;
   /** Request headers the operation itself needs, merged over the `content-type` the client adds for a body. */
   headers?: Readonly<Record<string, string>>;
+  redirect?: 'error';
   signal?: ApiAbortSignal;
   timeoutMs?: number;
 }>;

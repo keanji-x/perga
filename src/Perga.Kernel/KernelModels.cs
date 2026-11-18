@@ -140,7 +140,8 @@ public sealed record WorkerActivityDto(
     IReadOnlyList<AskDto> OpenAsks, long Sequence, bool Reset,
     IReadOnlyList<WorkerActivityEvent> Events, IReadOnlyList<WorkerMessageActivity> Messages,
     string Text, bool TextTruncated, WorkerSettings NextSettings, WorkerSettings? ActiveSettings,
-    bool CanChangeModel, IReadOnlyList<string> ReasoningEfforts, string? LastError);
+    bool CanChangeModel, IReadOnlyList<string> ReasoningEfforts, string? LastError,
+    WorkerProviderConfiguration? ProviderConfiguration = null, bool ApprovalAuthorizationConfigured = false);
 
 public sealed record WorkerSettings(long Version, string? Model, string? ReasoningEffort, string ApprovalMode);
 

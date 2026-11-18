@@ -402,10 +402,12 @@ public static class ApiV1Endpoints
             return Results.Json(compacted, PergaJsonDefaults.ApiOptions);
         });
 
-        v1.MapPatch("/sessions/{sessionId}/settings", async (string sessionId, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
+        v1.MapPatch("/sessions/{sessionId}/settings", async (string sessionId, HttpContext ctx, IPergaKernel kernel,
+            WorkerApprovalAuthorization approval, CancellationToken ct) =>
         {
             var request = await ReadRequiredJsonBodyAsync<UpdateWorkerSettingsRequest>(ctx, ct).ConfigureAwait(false);
-            var settings = await kernel.UpdateWorkerSettingsAsync(sessionId, request, caller: null, ct).ConfigureAwait(false);
+            var settings = await kernel.UpdateWorkerSettingsAsync(sessionId, request, caller: null, ct,
+                verifiedApprovalOwner: approval.Verify(ctx)).ConfigureAwait(false);
             return Results.Json(settings, PergaJsonDefaults.ApiOptions);
         });
 

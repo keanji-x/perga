@@ -318,6 +318,14 @@ export const workerSettingsSchema = z.object({
 });
 export type WorkerSettings = z.infer<typeof workerSettingsSchema>;
 
+const workerProviderConfigurationSchema = z.object({
+  models: z.array(z.object({ id: z.string(), name: z.string(), reasoningEfforts: z.array(z.string()),
+    defaultReasoningEffort: z.string().nullish() })),
+  defaultModel: z.string().nullish(),
+  defaultReasoningEffort: z.string().nullish(),
+  sessionReasoningEfforts: z.array(z.string()).nullish(),
+});
+
 export const workerActivitySchema = z.object({
   task: taskDtoSchema,
   attemptId: z.string(),
@@ -332,6 +340,8 @@ export const workerActivitySchema = z.object({
   activeSettings: workerSettingsSchema.nullish(),
   canChangeModel: z.boolean(),
   reasoningEfforts: z.array(z.string()),
+  providerConfiguration: workerProviderConfigurationSchema.nullish(),
+  approvalAuthorizationConfigured: z.boolean().optional(),
   lastError: z.string().nullish(),
   events: z.array(z.object({ sequence: z.number(), kind: z.string(), payload: z.unknown(), createdAtMs: z.number() })),
   messages: z.array(z.object({ id: z.string(), author: z.string(), content: z.string(),

@@ -2486,6 +2486,8 @@ public sealed partial class TrackActor : IAsyncDisposable
 
                     agentSession = await GetOrOpenAgentSessionCoreAsync(session, overrideSystemPrompt: null, ct)
                         .ConfigureAwait(false);
+                    if (workerSettings is not null)
+                        workerSettings = ResolveWorkerTurnSettingsCore(session, workerSettings);
                 }
                 catch when (input is not null)
                 {
@@ -2544,6 +2546,7 @@ public sealed partial class TrackActor : IAsyncDisposable
             var turnStatus = "completed";
 
             var delivered = false;
+            var rejectedBeforePrompt = false;
             var conclusive = false;
 
             if (input is null && !recordUserAtStart)
@@ -2587,7 +2590,8 @@ public sealed partial class TrackActor : IAsyncDisposable
                     var confirmsDelivery = evt is UnifiedAgentEvent.TurnAccepted or UnifiedAgentEvent.TextDelta or
                         UnifiedAgentEvent.ThinkingDelta or UnifiedAgentEvent.ToolCallStarted or
                         UnifiedAgentEvent.ToolCallCompleted or UnifiedAgentEvent.ApprovalRequested or
-                        UnifiedAgentEvent.TurnCompleted or UnifiedAgentEvent.TurnInterrupted or UnifiedAgentEvent.TurnError { IsConclusive: true };
+                        UnifiedAgentEvent.TurnCompleted or UnifiedAgentEvent.TurnInterrupted or
+                        UnifiedAgentEvent.TurnError { IsConclusive: true, BeforePrompt: false };
                     if (mailId is not null && confirmsDelivery)
                     {
                         await _store.AcknowledgeMailWakeAsync(mailId, CancellationToken.None).ConfigureAwait(false);
@@ -2716,6 +2720,7 @@ public sealed partial class TrackActor : IAsyncDisposable
                             break;
 
                         case UnifiedAgentEvent.TurnError te:
+                            rejectedBeforePrompt = te.BeforePrompt;
                             conclusive = te.IsConclusive;
                             turnStatus = "failed";
                             errorText = $"{te.Code}: {te.Message}";
@@ -2759,7 +2764,8 @@ public sealed partial class TrackActor : IAsyncDisposable
                 items[0] = CreateWakeUserItem(activeTurn.TurnDto, prompt, wakeInputId, "The follow-up turn failed.");
             if (workerInput is not null && !delivered)
                 await _store.WorkerMessages.UpdateAsync(workerInput with { ResultTurnId = activeTurn.TurnDto.Id,
-                    Delivery = turnStatus == "interrupted" ? "interrupted" : "unknown" }, CancellationToken.None).ConfigureAwait(false);
+                    Delivery = turnStatus == "interrupted" ? "interrupted" : rejectedBeforePrompt ? "rejected" : "unknown" },
+                    CancellationToken.None).ConfigureAwait(false);
 
             var endNow = NowMs();
             if (thinkingAccum.Length > 0)
@@ -2829,6 +2835,8 @@ public sealed partial class TrackActor : IAsyncDisposable
                 };
                 var completedTurn = activeTurn.TurnDto with
                 {
+                    Input = activeTurn.Settings is null ? activeTurn.TurnDto.Input :
+                        JsonHelpers.ToElement(new { prompt, workerSettings = activeTurn.ProviderAccepted ? activeTurn.Settings : null }),
                     Status = turnStatus,
                     Usage = finalUsage is null ? null : JsonHelpers.ToElement(finalUsage),
                     ErrorText = errorText,
@@ -3141,7 +3149,8 @@ public sealed partial class TrackActor : IAsyncDisposable
             McpServers: mcpReg.McpServers,
             Sandbox: sandboxMode,
             OverlayMounts: overlayMounts,
-            StateKey: session.Id);
+            StateKey: session.Id,
+            ConfigureWorker: session.BoundAttemptId is not null);
     }
 
     private async Task DispatchLeadWakePromptIfNeededAsync(string triggerKind, string wakePrompt, CancellationToken ct, string? mailId = null, bool recovering = false)
@@ -3840,6 +3849,7 @@ public sealed partial class TrackActor : IAsyncDisposable
         public bool InterruptionUnconfirmed { get; set; }
         public bool Settling { get; set; }
         public string? LastError { get; set; }
+        public WorkerProviderConfiguration? ProviderConfiguration { get; set; }
     }
 
     private sealed record PendingAskSuspension(

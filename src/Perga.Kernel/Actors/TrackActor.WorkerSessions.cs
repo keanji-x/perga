@@ -39,11 +39,13 @@ public sealed partial class TrackActor
 
         var messages = await _store.WorkerMessages.RecentAsync(session.Id, ct).ConfigureAwait(false);
         var settings = await ReadWorkerSettingsCoreAsync(session, ct).ConfigureAwait(false);
-        var support = WorkerConfigurationSupport.ForProvider(session.Provider);
+        var configuration = GetWorkerProviderConfigurationCore(session.Id, attempt);
         return new WorkerActivityDto(task, attemptId, phase, active?.AgentSession.SupportsNativeSteer == true,
             asks, sequence, reset, events, messages.Select(message => new WorkerMessageActivity(message.Id, message.AuthorId,
                 message.Content, message.ResultTurnId ?? message.TargetTurnId, message.Delivery, message.CreatedAtMs)).ToArray(), text, truncated,
-            settings, active?.Settings, support.ModelOverride, support.ReasoningEfforts, attempt?.LastError);
+            settings, active?.ProviderAccepted == true ? active.Settings : null, configuration?.Models.Count > 0,
+            configuration?.GetReasoningEfforts(settings.Model) ?? [], attempt?.LastError, configuration,
+            _options.WorkerApprovalAuthorizationConfigured);
     }
 
     private async Task<WorkerSettings> ReadWorkerSettingsCoreAsync(AgentSessionDto session, CancellationToken ct) =>
@@ -51,42 +53,68 @@ public sealed partial class TrackActor
         ?? new WorkerSettings(0, session.Model, null, "ask");
 
     public Task<WorkerSettings> UpdateWorkerSettingsAsync(
-        string sessionId, UpdateWorkerSettingsRequest request, string? callerSessionId, CancellationToken ct) =>
+        string sessionId, UpdateWorkerSettingsRequest request, string? callerSessionId, CancellationToken ct,
+        bool verifiedApprovalOwner = false) =>
         EnqueueAsync(async _ =>
         {
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
             RequireWorkerOperatorCore(callerSessionId);
-            var (session, _) = RequireCurrentWorkerCore(sessionId, request.AttemptId);
+            var (session, attempt) = RequireCurrentWorkerCore(sessionId, request.AttemptId);
             var current = await ReadWorkerSettingsCoreAsync(session, ct).ConfigureAwait(false);
             if (request.Version != current.Version)
                 throw KernelException.Conflict("Worker settings changed. Refresh before updating them.");
 
             var model = request.Model?.Trim();
-            var support = WorkerConfigurationSupport.ForProvider(session.Provider);
-            if (model != current.Model && (!support.ModelOverride || string.IsNullOrWhiteSpace(model)))
-                throw KernelException.InvalidArgument("Choose an explicit model supported by this Worker provider.");
-            if (model != current.Model)
-            {
-                var providers = await _agentRuntime.ProbeProvidersAsync(ct).ConfigureAwait(false);
-                if (!providers.Any(provider => provider.Available && provider.Provider == session.Provider &&
-                    provider.Models.Contains(model!, StringComparer.Ordinal)))
-                    throw KernelException.InvalidArgument("The model is not listed by this Worker provider.");
-            }
-            if (request.ReasoningEffort != current.ReasoningEffort &&
-                (request.ReasoningEffort is null || !support.ReasoningEfforts.Contains(request.ReasoningEffort, StringComparer.Ordinal)))
-                throw KernelException.InvalidArgument("Choose an explicit reasoning effort supported by this Worker provider.");
+            var configuration = GetWorkerProviderConfigurationCore(session.Id, attempt);
+            if (model != current.Model && (model is null ? configuration?.DefaultModel is null
+                : configuration?.Models.Any(option => option.Id == model) != true))
+                throw KernelException.InvalidArgument("Choose a model reported by this Worker provider or an available provider default.");
+            if (request.ReasoningEffort is { } effort && (effort != current.ReasoningEffort || model != current.Model) &&
+                configuration?.GetReasoningEfforts(model).Contains(effort, StringComparer.Ordinal) != true)
+                throw KernelException.InvalidArgument("This Worker provider did not report that reasoning effort for the selected model.");
+            if (request.ReasoningEffort is null && current.ReasoningEffort is not null && configuration?.GetDefaultReasoningEffort(model) is null)
+                throw KernelException.InvalidArgument("This Worker provider did not report a reasoning default for the selected model.");
             if (request.ApprovalMode is not ("ask" or "deny"))
                 throw KernelException.InvalidArgument("Worker approval mode must be ask or deny.");
-            if (current.ApprovalMode == "deny" && request.ApprovalMode == "ask")
-                throw KernelException.Forbidden("Start a new attempt to restore approval requests. Denied requests cannot be re-enabled for this attempt.");
+            var restoringApproval = current.ApprovalMode == "deny" && request.ApprovalMode == "ask";
+            if (restoringApproval && (callerSessionId is not null || !verifiedApprovalOwner || !_options.WorkerApprovalAuthorizationConfigured))
+                throw KernelException.Forbidden("Restoring Worker approval requests requires verified authorization from the installation owner.");
 
             var next = new WorkerSettings(checked(current.Version + 1), model, request.ReasoningEffort, request.ApprovalMode);
             var evt = SessionUpdatedEvent(session);
             await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
-            await _store.WorkerSettings!.WriteAsync(sessionId, next, callerSessionId ?? "owner:installation", evt, ct).ConfigureAwait(false);
+            var author = restoringApproval ? "owner:verified" : callerSessionId ?? "owner:installation";
+            await _store.WorkerSettings!.WriteAsync(sessionId, next, author, evt, ct).ConfigureAwait(false);
             await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, evt, ct).ConfigureAwait(false);
             return next;
         }, ct);
+
+    private WorkerProviderConfiguration? GetWorkerProviderConfigurationCore(string sessionId, ActiveAttemptState? attempt)
+    {
+        if (!_openAgentSessions.TryGetValue(sessionId, out var agent)) return attempt?.ProviderConfiguration;
+        if (agent.WorkerConfiguration is not { } configuration || attempt is null) return agent.WorkerConfiguration;
+
+        // Some adapters report current values on resume without reporting the original defaults.
+        var previous = attempt.ProviderConfiguration;
+        var model = configuration.DefaultModel;
+        if (model is null && previous?.DefaultModel is { } originalModel && configuration.Models.Any(option => option.Id == originalModel))
+            model = originalModel;
+        var effort = configuration.DefaultReasoningEffort;
+        if (effort is null && previous?.DefaultReasoningEffort is { } originalEffort && previous.DefaultModel == model &&
+            configuration.GetReasoningEfforts(model).Contains(originalEffort, StringComparer.Ordinal))
+            effort = originalEffort;
+        attempt.ProviderConfiguration = configuration with { DefaultModel = model, DefaultReasoningEffort = effort };
+        return attempt.ProviderConfiguration;
+    }
+
+    private WorkerSettings ResolveWorkerTurnSettingsCore(AgentSessionDto session, WorkerSettings desired)
+    {
+        if (session.BoundAttemptId is not { } attemptId || !_activeAttempts.TryGetValue(attemptId, out var attempt) ||
+            (GetWorkerProviderConfigurationCore(session.Id, attempt) ?? attempt.ProviderConfiguration) is not { } configuration)
+            return desired;
+        var model = desired.Model ?? configuration.DefaultModel;
+        return desired with { Model = model, ReasoningEffort = desired.ReasoningEffort ?? configuration.GetDefaultReasoningEffort(model) };
+    }
 
     private (AgentSessionDto Session, ActiveAttemptState Attempt) RequireCurrentWorkerCore(
         string sessionId, string expectedAttemptId)
