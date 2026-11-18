@@ -6,13 +6,123 @@ public sealed class ProbeProvidersTests : IDisposable
 
     public void Dispose() => _fixture.Dispose();
 
+    [Theory]
+    [InlineData("acp:antigravity")]
+    [InlineData("acp:opencode")]
+    [InlineData("acp:custom")]
+    public async Task AcpDiscoveryReturnsAdvertisedModels(string provider)
+    {
+        await using var runtime = new AgentRuntime(new AgentRuntimeOptions
+        {
+            ProviderOverrides = new Dictionary<string, ProviderCommandOverride>(_fixture.UnavailableProviders(), StringComparer.OrdinalIgnoreCase)
+            {
+                [provider] = new(_fixture.MockAcpPath, Env: new Dictionary<string, string>
+                { ["MOCK_ACP_MODELS"] = "{\"models\":{\"availableModels\":[{\"modelId\":\"mock-model-a\"},{\"modelId\":\"mock-model-b\"}]}}" })
+            }
+        });
+        var status = Assert.Single(await runtime.ProbeProvidersAsync(CancellationToken.None), s => s.Provider == provider);
+        Assert.True(status.Available);
+        Assert.Equal(["mock-model-a", "mock-model-b"], status.Models);
+    }
+
+    [Theory]
+    [InlineData("{\"configOptions\":[{\"category\":\"model\",\"id\":\"choice\",\"options\":[{\"value\":\"model-1\"},{\"group\":\"Other\",\"options\":[{\"value\":\"model-2\"}]}]}]}", false)]
+    [InlineData("{}", true)]
+    public async Task AcpDiscoveryReadsConfigOptionsAndHonorsOverrides(string advertised, bool explicitOverride)
+    {
+        await using var runtime = new AgentRuntime(new AgentRuntimeOptions
+        {
+            ProviderOverrides = new Dictionary<string, ProviderCommandOverride>(_fixture.UnavailableProviders(), StringComparer.OrdinalIgnoreCase)
+            {
+                ["acp:custom"] = new(_fixture.MockAcpPath,
+                    Env: new Dictionary<string, string> { ["MOCK_ACP_MODELS"] = advertised },
+                    Models: explicitOverride ? ["override"] : null)
+            }
+        });
+        var status = Assert.Single(await runtime.ProbeProvidersAsync(CancellationToken.None), s => s.Provider == "acp:custom");
+        Assert.True(status.Available);
+        Assert.Equal(explicitOverride ? ["override"] : new[] { "model-1", "model-2" }, status.Models);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ExplicitModelsIncludingEmptyBypassAcpProbe(bool empty)
+    {
+        var log = Path.Combine(_fixture.RootDir, "discovery.jsonl");
+        string[] models = empty ? [] : ["override"];
+        await using var runtime = new AgentRuntime(new AgentRuntimeOptions
+        {
+            ProviderOverrides = new Dictionary<string, ProviderCommandOverride>(_fixture.UnavailableProviders(), StringComparer.OrdinalIgnoreCase)
+            {
+                ["acp:custom"] = new(_fixture.MockAcpPath,
+                    Env: new Dictionary<string, string> { ["MOCK_ACP_LOG"] = log }, Models: models)
+            }
+        });
+        var status = Assert.Single(await runtime.ProbeProvidersAsync(CancellationToken.None), s => s.Provider == "acp:custom");
+        Assert.Equal(models, status.Models);
+        Assert.False(File.Exists(log));
+    }
+
+    [Fact]
+    public async Task FailedAcpHandshakeKeepsProviderAvailableWithoutInventingModels()
+    {
+        var path = _fixture.WriteExecutable("version-only.py", "#!/usr/bin/env python3\nprint('version-only')\n");
+        await using var runtime = new AgentRuntime(new AgentRuntimeOptions
+        {
+            ProbeTimeout = TimeSpan.FromMilliseconds(300),
+            ProviderOverrides = new Dictionary<string, ProviderCommandOverride>(_fixture.UnavailableProviders(), StringComparer.OrdinalIgnoreCase) { ["acp:antigravity"] = new(path) }
+        });
+        var status = Assert.Single(await runtime.ProbeProvidersAsync(CancellationToken.None), s => s.Provider == "acp:antigravity");
+        Assert.True(status.Available);
+        Assert.Empty(status.Models);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task OpenCodeFallbackHasItsOwnTimeoutAndDrainsStderr(bool modelsTimeout)
+    {
+        var path = _fixture.WriteExecutable("opencode-fallback.py", """
+            #!/usr/bin/env python3
+            import os, sys, time
+            if '--version' in sys.argv:
+                print('opencode mock')
+            elif 'models' in sys.argv:
+                if os.environ['MODELS_TIMEOUT'] == 'true':
+                    time.sleep(30)
+                else:
+                    sys.stderr.write('x' * 262144)
+                    sys.stderr.flush()
+                    print('provider/model')
+            else:
+                time.sleep(30)
+            """);
+        await using var runtime = new AgentRuntime(new AgentRuntimeOptions
+        {
+            ProbeTimeout = TimeSpan.FromMilliseconds(500),
+            ProviderOverrides = new Dictionary<string, ProviderCommandOverride>(_fixture.UnavailableProviders(), StringComparer.OrdinalIgnoreCase)
+            {
+                ["acp:opencode"] = new(path, Env: new Dictionary<string, string>
+                {
+                    ["MODELS_TIMEOUT"] = modelsTimeout ? "true" : "false"
+                })
+            }
+        });
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var status = Assert.Single(await runtime.ProbeProvidersAsync(deadline.Token), s => s.Provider == "acp:opencode");
+        Assert.True(status.Available);
+        Assert.Null(status.Reason);
+        Assert.Equal(modelsTimeout ? Array.Empty<string>() : ["provider/model"], status.Models);
+    }
+
     [Fact]
     public async Task ProbeProvidersAsync_ReportsLiveModelsMissingFailingAndTimeoutCleanly()
     {
         var options = new AgentRuntimeOptions
         {
             ProbeTimeout = TimeSpan.FromMilliseconds(800),
-            ProviderOverrides = new Dictionary<string, ProviderCommandOverride>
+            ProviderOverrides = new Dictionary<string, ProviderCommandOverride>(_fixture.UnavailableProviders(), StringComparer.OrdinalIgnoreCase)
             {
                 ["codex"] = new(_fixture.MockCodexPath),
                 ["claude"] = new(_fixture.MockClaudePath, Models: ["claude-sonnet-4-6-custom"]),
@@ -66,7 +176,7 @@ public sealed class ProbeProvidersTests : IDisposable
 
         await using var liveRuntime = new AgentRuntime(new AgentRuntimeOptions
         {
-            ProviderOverrides = new Dictionary<string, ProviderCommandOverride>
+            ProviderOverrides = new Dictionary<string, ProviderCommandOverride>(_fixture.UnavailableProviders(), StringComparer.OrdinalIgnoreCase)
             {
                 ["acp:antigravity"] = new(_fixture.MockAcpPath),
                 ["acp:opencode"] = new(
@@ -77,15 +187,16 @@ public sealed class ProbeProvidersTests : IDisposable
 
         var liveStatuses = await liveRuntime.ProbeProvidersAsync(CancellationToken.None);
         var agyLive = Assert.Single(liveStatuses, s => s.Provider == "acp:antigravity");
-        Assert.Equal(["gemini-4-carbon-medium", "gemini-4-carbon-high", "claude-sonnet-5-5-medium"], agyLive.Models);
+        Assert.Equal(["gemini-4-carbon", "claude-sonnet-5-5"], agyLive.Models);
+        Assert.Equal(["medium", "high"], agyLive.ModelCatalog![0].SupportedReasoningEfforts.Select(e => e.ReasoningEffort));
 
         var opencodeLive = Assert.Single(liveStatuses, s => s.Provider == "acp:opencode");
         Assert.Equal(["opencode-sonnet-4-6", "opencode-gpt-5.4"], opencodeLive.Models);
 
-        // When model/list or session/new fails, fall back to updated DefaultCodexModels & DefaultAntigravityModels
+        // Codex retains its configured defaults; ACP failures must not invent model IDs.
         await using var fallbackRuntime = new AgentRuntime(new AgentRuntimeOptions
         {
-            ProviderOverrides = new Dictionary<string, ProviderCommandOverride>
+            ProviderOverrides = new Dictionary<string, ProviderCommandOverride>(_fixture.UnavailableProviders(), StringComparer.OrdinalIgnoreCase)
             {
                 ["codex"] = new(versionOnlyCli),
                 ["acp:antigravity"] = new(versionOnlyCli)
@@ -97,9 +208,7 @@ public sealed class ProbeProvidersTests : IDisposable
         Assert.Equal(["gpt-5.4", "gpt-5.3-codex", "o4-mini"], codexFallback.Models);
 
         var agyFallback = Assert.Single(fallbackStatuses, s => s.Provider == "acp:antigravity");
-        Assert.Equal(
-            ["gemini-4-carbon-medium", "gemini-4-carbon-high", "gemini-3.8-flash-high", "claude-sonnet-5-5-medium"],
-            agyFallback.Models);
+        Assert.Empty(agyFallback.Models);
     }
 
     [Fact]
@@ -126,7 +235,7 @@ public sealed class ProbeProvidersTests : IDisposable
         {
             ProbeCacheTtl = TimeSpan.FromSeconds(60),
             TimeProvider = fakeClock,
-            ProviderOverrides = new Dictionary<string, ProviderCommandOverride>
+            ProviderOverrides = new Dictionary<string, ProviderCommandOverride>(_fixture.UnavailableProviders(), StringComparer.OrdinalIgnoreCase)
             {
                 ["codex"] = new(countingCli, Models: ["gpt-5.4"]),
                 ["claude"] = new("/nonexistent/claude"),
@@ -185,7 +294,7 @@ public sealed class ProbeProvidersTests : IDisposable
         await using var runtime = new AgentRuntime(new AgentRuntimeOptions
         {
             Sandbox = new OsSandboxOptions { HomeDirectoryOverride = fakeHome },
-            ProviderOverrides = new Dictionary<string, ProviderCommandOverride>
+            ProviderOverrides = new Dictionary<string, ProviderCommandOverride>(_fixture.UnavailableProviders(), StringComparer.OrdinalIgnoreCase)
             {
                 ["codex"] = new("codex", Env: new Dictionary<string, string> { ["HOME"] = fakeHome, ["PATH"] = poisonedPath }, Models: ["gpt-5.4"]),
                 ["acp:antigravity"] = new("agy", Env: new Dictionary<string, string> { ["HOME"] = fakeHome, ["PATH"] = poisonedPath }, Models: ["gemini-4-carbon-medium"])

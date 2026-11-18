@@ -16,6 +16,14 @@ public sealed class MockCliFixture : IDisposable
     public string MockSlowVersionPath { get; }
     public string MockFailingVersionPath { get; }
 
+    public Dictionary<string, ProviderCommandOverride> UnavailableProviders() => new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["codex"] = new(Path.Combine(RootDir, "unavailable-codex")),
+        ["claude"] = new(Path.Combine(RootDir, "unavailable-claude")),
+        ["acp:antigravity"] = new(Path.Combine(RootDir, "unavailable-agy")),
+        ["acp:opencode"] = new(Path.Combine(RootDir, "unavailable-opencode"))
+    };
+
     public MockCliFixture()
     {
         RootDir = Path.Combine(Path.GetTempPath(), $"perga-agentkit-tests-{Guid.NewGuid():N}");
@@ -867,6 +875,9 @@ for raw_line in sys.stdin:
         continue
 
     params = msg.get("params") or {}
+    if os.environ.get("MOCK_ACP_LOG"):
+        with open(os.environ["MOCK_ACP_LOG"], "a") as log:
+            log.write(json.dumps(msg) + "\n")
     if method == "initialize":
         mcp_caps = {"http": True} if os.environ.get("MOCK_ACP_HTTP_MCP") == "1" else {}
         send({
@@ -900,6 +911,8 @@ for raw_line in sys.stdin:
             if os.environ.get("MOCK_ACP_WORKER_OPTIONS") == "1":
                 state["model"] = "small"
                 send({"jsonrpc": "2.0", "id": msg_id, "result": {"sessionId": state["session_id"], "configOptions": worker_config_options()}})
+            elif "MOCK_ACP_MODELS" in os.environ:
+                send({"jsonrpc": "2.0", "id": msg_id, "result": {"sessionId": state["session_id"], **json.loads(os.environ["MOCK_ACP_MODELS"])}})
             elif os.environ.get("MOCK_ACP_CONFIG_OPTIONS_MODELS") == "1":
                 send({
                     "jsonrpc": "2.0",
@@ -942,13 +955,20 @@ for raw_line in sys.stdin:
         else:
             send({"jsonrpc": "2.0", "id": msg_id, "error": {"code": -32602, "message": "wrong session"}})
     elif method == "session/set_model":
-        if os.environ.get("MOCK_ACP_NO_SET_MODEL") == "1":
+        code = int(os.environ.get("MOCK_ACP_MODEL_ERROR", "0"))
+        if code:
+            send({"jsonrpc": "2.0", "id": msg_id, "error": {"code": code, "message": "model switch failed"}})
+        elif os.environ.get("MOCK_ACP_NO_SET_MODEL") == "1":
             send({"jsonrpc": "2.0", "id": msg_id, "error": {"code": -32601, "message": "Method not found"}})
         else:
             state["model"] = params.get("modelId")
             state["model_set_method"] = "session/set_model"
             send({"jsonrpc": "2.0", "id": msg_id, "result": {}})
     elif method == "session/set_config_option":
+        code = int(os.environ.get("MOCK_ACP_MODEL_ERROR", "0"))
+        if code:
+            send({"jsonrpc": "2.0", "id": msg_id, "error": {"code": code, "message": "model switch failed"}})
+            continue
         if os.environ.get("MOCK_ACP_WORKER_OPTIONS") == "1":
             if params.get("configId") == "worker-model":
                 state["model"] = params.get("value")

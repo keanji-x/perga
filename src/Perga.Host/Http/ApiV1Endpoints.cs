@@ -380,6 +380,14 @@ public static class ApiV1Endpoints
             return Results.Json(receipt, PergaJsonDefaults.ApiOptions);
         });
 
+        v1.MapPut("/sessions/{sessionId}/model", async (
+            string sessionId, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
+        {
+            var req = await ReadRequiredJsonBodyAsync<UpdateSessionModelRequest>(ctx, ct).ConfigureAwait(false);
+            var session = await kernel.UpdateSessionModelAsync(sessionId, req, ct).ConfigureAwait(false);
+            return Results.Json(session, PergaJsonDefaults.ApiOptions);
+        });
+
         v1.MapPost("/sessions/{sessionId}/resume", async (
             string sessionId, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
         {

@@ -24,38 +24,32 @@ import styles from './model-pill.module.css';
 
 const FOLLOW_DEFAULT_LABEL = 'Default';
 
-/** A standing note rather than a per-switch warning: the catalog carries no context window, so whether a switch compacts is unknowable here. */
-const SWITCH_NOTE = 'Switching to a model with a smaller context window can make codex compact the history first.';
-
 /**
  * Legacy Planner presentation only; managed groups use the declared provider identifier.
  * Total over AgentProvider, so a new backend is a compile error until its Planner presentation is declared.
  * `unavailable` says why that provider's `source: 'unavailable'` catalog is empty. A Claude group waits for
  * its availability and catalog before it joins a menu that offers other providers (`hiddenUntilKnown`); a
- * Codex one stays while the daemon is down, saying so. Only codex compacts (`switchNote`).
+ * Codex one stays while the daemon is down, saying so.
  * The host supplies the server's blank-creation capability only on the new-track surface.
  */
 const PROVIDERS: Readonly<Record<AgentProvider, Readonly<{
-  label: string; unavailable: string; hiddenUntilKnown: boolean; switchNote: boolean;
+  label: string; unavailable: string; hiddenUntilKnown: boolean;
 }>>> = Object.freeze({
   codex: Object.freeze({
-    label: 'Codex', unavailable: 'codex is not running', hiddenUntilKnown: false, switchNote: true,
+    label: 'Codex', unavailable: 'codex is not running', hiddenUntilKnown: false,
   }),
   claude: Object.freeze({
     label: 'Claude', unavailable: 'Claude cannot run on this server right now', hiddenUntilKnown: true,
-    switchNote: false,
   }),
   opencode: Object.freeze({
     label: 'OpenCode', unavailable: 'OpenCode cannot run on this server right now', hiddenUntilKnown: true,
-    switchNote: false,
   }),
   antigravity: Object.freeze({
-    label: 'Antigravity (agy)', unavailable: 'Antigravity (agy) cannot run on this server right now', hiddenUntilKnown: true,
+    label: 'Antigravity', unavailable: 'Antigravity cannot run on this server right now', hiddenUntilKnown: true,
     switchNote: false,
   }),
   grok: Object.freeze({
     label: 'Grok', unavailable: 'Grok cannot run on this server right now', hiddenUntilKnown: true,
-    switchNote: false,
   }),
 });
 
@@ -79,8 +73,8 @@ function legacyPresentation(provider: string) {
 }
 
 /** Managed display needs no provider-specific UI registration. */
-function providerLabel<Provider extends string>(group: ModelGroup<Provider> | undefined, provider: Provider): string {
-  return group?.selectionProblem !== undefined ? provider : (legacyPresentation(provider)?.label ?? provider);
+function providerLabel<Provider extends string>(_group: ModelGroup<Provider> | undefined, provider: Provider): string {
+  return legacyPresentation(provider)?.label ?? provider;
 }
 
 type CatalogEntry = ModelCatalog['models'][number];
@@ -171,7 +165,6 @@ export function ModelPill<Provider extends string = AgentProvider>({
   const effortDefault = selection.model === null
     ? catalog?.default.reasoning_effort ?? null
     : chosen?.default_reasoning_effort ?? null;
-  const switchNote = shown.some((group) => group.selectionProblem === undefined && legacyPresentation(group.provider)?.switchNote);
 
   return (
     <HStack gap={1} align="center" wrap="wrap" className={styles.group}>
@@ -222,14 +215,7 @@ export function ModelPill<Provider extends string = AgentProvider>({
               </div>
             </>
           )}
-          {switchNote && (
-            <>
-              <Divider />
-              <div className={styles.note} role="note">
-                <Text type="supporting">{SWITCH_NOTE}</Text>
-              </div>
-            </>
-          )}
+
         </DropdownMenu>
       </span>
       {effortControl === 'separate' && efforts.length > 1 && (

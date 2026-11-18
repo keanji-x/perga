@@ -162,7 +162,7 @@ public sealed class McpKernelAndVcsIntegrationTests
     }
 
     [Fact]
-    public async Task McpKernel_All18PergaTools_DynamicToolsList_And_BoundAttemptFences_WorkEndToEnd()
+    public async Task McpKernel_All21PergaTools_DynamicToolsList_And_BoundAttemptFences_WorkEndToEnd()
     {
         await using var cluster = new PergaHostTestCluster();
         var client = cluster.Client;
@@ -200,9 +200,12 @@ public sealed class McpKernelAndVcsIntegrationTests
 
         // 1. Lead gets the shared, governance and Worker control tools.
         var leadTools = await ListToolNamesAsync(cluster, "/mcp/kernel", leadToken, ct);
-        Assert.Equal(23, leadTools.Count);
+        Assert.Equal(26, leadTools.Count);
         Assert.Contains(KernelMcpToolNames.TaskAccept, leadTools);
         Assert.Contains(KernelMcpToolNames.TrackClose, leadTools);
+        Assert.Contains(KernelMcpToolNames.TemplateLs, leadTools);
+        Assert.Contains(KernelMcpToolNames.TemplateCat, leadTools);
+        Assert.Contains(KernelMcpToolNames.TrackSet, leadTools);
         Assert.DoesNotContain(KernelMcpToolNames.TaskDone, leadTools);
         Assert.DoesNotContain(KernelMcpToolNames.TaskFail, leadTools);
 
@@ -304,7 +307,7 @@ public sealed class McpKernelAndVcsIntegrationTests
         Assert.DoesNotContain(KernelMcpToolNames.TaskCancel, subTools);
         Assert.DoesNotContain(KernelMcpToolNames.TrackClose, subTools);
 
-        // Contract Subagent calling ALL 6 governance tools -> all fenced with isError: true!
+        // Contract Subagent calling ALL 9 governance tools -> all fenced with isError: true!
         foreach (var (govTool, govArgs) in new (string, object)[]
                  {
                      (KernelMcpToolNames.TaskCancel, new { taskKey = "work-cancel" }),
@@ -312,7 +315,10 @@ public sealed class McpKernelAndVcsIntegrationTests
                      (KernelMcpToolNames.TaskReject, new { taskKey = "work-1", note = "bad" }),
                      (KernelMcpToolNames.MailSend, new { toTrackId = trackBId, summary = "hi", body = "hi" }),
                      (KernelMcpToolNames.TrackRename, new { title = "Hijack" }),
-                     (KernelMcpToolNames.TrackClose, new { })
+                     (KernelMcpToolNames.TrackClose, new { }),
+                     (KernelMcpToolNames.TemplateLs, new { }),
+                     (KernelMcpToolNames.TemplateCat, new { }),
+                     (KernelMcpToolNames.TrackSet, new { templateId = "dev" })
                  })
         {
             var (_, isFenceErr) = await CallToolAsync(cluster, "/mcp/kernel", contractToken, govTool, govArgs, ct);

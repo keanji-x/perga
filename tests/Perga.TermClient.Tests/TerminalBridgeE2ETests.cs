@@ -223,7 +223,9 @@ public sealed class TerminalBridgeE2ETests
 
             // Connect real ClientWebSocket over TCP using GetWebSocketRelayUri AND a second ClientWebSocket over UDS!
             using var tcpWs = new ClientWebSocket();
-            await tcpWs.ConnectAsync(relayUri, ct);
+            // These endpoints are the local test daemon, independent of ambient HTTP proxies.
+            using var loopbackHttp = new HttpClient(new SocketsHttpHandler { UseProxy = false });
+            await tcpWs.ConnectAsync(relayUri, loopbackHttp, ct);
 
             using var udsWs = await udsClient.ConnectWebSocketAsync("t_ws_1", ct);
 
@@ -348,7 +350,7 @@ public sealed class TerminalBridgeE2ETests
             Assert.DoesNotContain(settled.Frame.Text, line => line.Contains("PHASE_BUSY", StringComparison.Ordinal));
 
             // Also verify `POST /` JSON-RPC root alias directly over HTTP.
-            using var http = new HttpClient();
+            using var http = new HttpClient(new SocketsHttpHandler { UseProxy = false });
             var rootResp = await http.PostAsync(
                 daemon.TcpEndpoint!,
                 new StringContent(

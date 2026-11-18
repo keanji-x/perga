@@ -42,6 +42,7 @@ public sealed partial class TrackActor : IAsyncDisposable
     private TrackDto _track = null!;
     private ReportDocument _report = null!;
     private CompiledPolicy? _policy;
+    private string _policyGeneration = Guid.NewGuid().ToString("N");
     private string? _templateSnapshotSource;
     private MountedWorkspace? _mountedWorkspace;
     private readonly List<TaskDto> _tasks = [];
@@ -50,6 +51,7 @@ public sealed partial class TrackActor : IAsyncDisposable
     private readonly Dictionary<string, TerminalDto> _terminals = new(StringComparer.Ordinal);
     private readonly Dictionary<string, int> _nextTurnIndexBySession = new(StringComparer.Ordinal);
     private readonly Dictionary<string, IAgentSession> _openAgentSessions = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, (string? Model, string? ReasoningEffort)> _boundAgentModels = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string?> _openAgentSessionPermissionModes = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Guid> _reservedWakeSessions = new(StringComparer.Ordinal);
     private readonly Dictionary<string, ActiveTurnState> _activeTurns = new(StringComparer.Ordinal);
@@ -299,6 +301,66 @@ public sealed partial class TrackActor : IAsyncDisposable
         }, ct);
     }
 
+    public Task<TrackDto> SetTemplateBySessionAsync(string callerSessionId, string? templateId,
+        string? source, string expectedPolicyGeneration, JsonElement? inputs, CancellationToken ct = default)
+    {
+        return EnqueueAsync(async _ =>
+        {
+            await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
+            RequireGovernanceSessionCore(callerSessionId, KernelMcpToolNames.TrackSet);
+            if (_policyGeneration != expectedPolicyGeneration)
+                throw KernelException.PolicyDenied("Active policy changed after template application was authorized.");
+            if (_track.ClosedAtMs is not null)
+                throw KernelException.Conflict("Cannot set a template on a closed track.");
+            if ((templateId is null) == (source is null) ||
+                templateId is not null && string.IsNullOrWhiteSpace(templateId) ||
+                source is not null && string.IsNullOrWhiteSpace(source))
+                throw KernelException.InvalidArgument("Specify exactly one non-empty 'templateId' or 'source'.");
+            if (inputs is { ValueKind: not JsonValueKind.Object })
+                throw KernelException.InvalidArgument("'inputs' must be an object.");
+
+            var nextInputs = JsonHelpers.EnsureClonedObject(inputs);
+            CompiledPolicy policy;
+            JsonElement state;
+            try
+            {
+                policy = templateId is not null
+                    ? _templateCatalog.GetRequiredPolicy(templateId)
+                    : _templateCatalog.GetOrCompileSnapshot(source!);
+                var init = _policyVm.InitState(policy, nextInputs);
+                state = (init.Output.ValueKind != JsonValueKind.Undefined ? init.Output : init.NextState).Clone();
+            }
+            catch (KernelException) { throw; }
+            catch (Exception ex)
+            {
+                throw KernelException.InvalidArgument($"Template compilation or initialization failed: {ex.Message}");
+            }
+
+            var now = NowMs();
+            var nextTrack = _track with
+            {
+                TemplateId = policy.TemplateId,
+                TemplateInputs = nextInputs,
+                TemplateState = state,
+                EnabledPlugins = _track.EnabledPlugins.Concat(policy.Manifest.DefaultPlugins).Distinct(StringComparer.Ordinal).ToArray(),
+                UpdatedAtMs = now
+            };
+            var evt = new EventEnvelopeDto(null, nextTrack.AreaId, TrackId, KernelEventKinds.TrackUpdated,
+                JsonHelpers.ToElement(nextTrack), now);
+            await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
+            await _store.UpdateTrackTemplateAndEmitAsync(nextTrack, policy.JsSource, evt, ct).ConfigureAwait(false);
+            _policy = policy;
+            _policyGeneration = Guid.NewGuid().ToString("N");
+            _templateSnapshotSource = policy.JsSource;
+            var pluginsChanged = !_track.EnabledPlugins.SequenceEqual(nextTrack.EnabledPlugins, StringComparer.Ordinal);
+            _track = nextTrack;
+            if (pluginsChanged)
+                _mcpBridge.UpdateTrackPlugins(TrackId, nextTrack.EnabledPlugins);
+            await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, evt, ct).ConfigureAwait(false);
+            return _track;
+        }, ct);
+    }
+
     public async Task<TrackDto> CloseTrackBySessionAsync(string callerSessionId, CancellationToken ct = default)
     {
         var closedTrack = await EnqueueAsync(async _ =>
@@ -400,6 +462,8 @@ public sealed partial class TrackActor : IAsyncDisposable
             foreach (var kvp in _openAgentSessions.ToArray())
             {
                 _openAgentSessions.Remove(kvp.Key);
+                _boundAgentModels.Remove(kvp.Key);
+                _openAgentSessionPermissionModes.Remove(kvp.Key);
                 await kvp.Value.DisposeAsync().ConfigureAwait(false);
             }
 
@@ -727,7 +791,7 @@ public sealed partial class TrackActor : IAsyncDisposable
             BoundAttemptId: null,
             Title: string.IsNullOrWhiteSpace(req.Title) ? "Subagent" : req.Title,
             Provider: provider,
-            Model: req.Model ?? GetDefaultModelCore(),
+            Model: req.Model ?? GetDefaultModelCore(provider),
             NativeThreadId: null,
             Epoch: 1,
             Status: "idle",
@@ -735,6 +799,7 @@ public sealed partial class TrackActor : IAsyncDisposable
             ArchivedAtMs: null,
             CreatedAtMs: now,
             UpdatedAtMs: now,
+            ReasoningEffort: string.IsNullOrWhiteSpace(req.ReasoningEffort) ? null : req.ReasoningEffort.Trim(),
             PermissionMode: permissionMode);
     }
 
@@ -913,6 +978,34 @@ public sealed partial class TrackActor : IAsyncDisposable
         return await dispatch.RunningOrCachedTask!.WaitAsync(ct).ConfigureAwait(false);
     }
 
+    public Task<AgentSessionDto> UpdateSessionModelAsync(
+        string sessionId, UpdateSessionModelRequest req, CancellationToken ct = default)
+    {
+        return EnqueueAsync(async _ =>
+        {
+            await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
+            var session = RequireSessionCore(sessionId);
+            if (session.BoundAttemptId is not null)
+                throw KernelException.InvalidArgument("Worker models must be changed through Worker settings.");
+            var model = string.IsNullOrWhiteSpace(req.Model) ? null : req.Model.Trim();
+            var reasoningEffort = model is null || string.IsNullOrWhiteSpace(req.ReasoningEffort)
+                ? null
+                : req.ReasoningEffort.Trim();
+            var updated = session with { Model = model, ReasoningEffort = reasoningEffort, UpdatedAtMs = NowMs() };
+            await PersistAndEmitSessionUpdatedCoreAsync(updated, updated.UpdatedAtMs, ct).ConfigureAwait(false);
+
+            // Never change the provider underneath an active turn. Its next reuse reconciles.
+            if (!_activeTurns.ContainsKey(sessionId) && !_compactingSessions.Contains(sessionId) &&
+                !_sessionResumeHolds.ContainsKey(sessionId) && _openAgentSessions.ContainsKey(sessionId))
+            {
+                using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, _actorShutdownCts.Token);
+                await GetOrOpenAgentSessionCoreAsync(updated, overrideSystemPrompt: null, linkedCts.Token).ConfigureAwait(false);
+            }
+
+            return updated;
+        }, ct);
+    }
+
     public Task InterruptSessionAsync(string sessionId, CancellationToken ct = default) =>
         EnqueueAsync(async _ =>
         {
@@ -1003,6 +1096,7 @@ public sealed partial class TrackActor : IAsyncDisposable
                 _openAgentSessions.Remove(sessionId, out var open))
             {
                 _openAgentSessionPermissionModes.Remove(sessionId);
+                _boundAgentModels.Remove(sessionId);
                 toDispose = open;
             }
 
@@ -1606,7 +1700,7 @@ public sealed partial class TrackActor : IAsyncDisposable
         }, ct).ConfigureAwait(false);
     }
 
-    public async Task GuardMcpToolCallAsync(
+    public async Task<string> GuardMcpToolCallAsync(
         string sessionId,
         string mcpServer,
         string toolName,
@@ -1616,10 +1710,14 @@ public sealed partial class TrackActor : IAsyncDisposable
         Interlocked.Increment(ref _inFlightExternalOps);
         try
         {
+            string authorizedPolicyGeneration = null!;
             var askSuspension = await EnqueueAsync<PendingAskSuspension?>(async _ =>
             {
                 await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
                 var caller = RequireSessionCore(sessionId);
+                if (string.Equals(mcpServer, "perga", StringComparison.OrdinalIgnoreCase) &&
+                    KernelMcpCatalog.IsGovernanceOnly(toolName))
+                    RequireGovernanceSessionCore(sessionId, toolName);
 
                 if (!string.Equals(mcpServer, "perga", StringComparison.OrdinalIgnoreCase) &&
                     !string.Equals(mcpServer, "vcs", StringComparison.OrdinalIgnoreCase) &&
@@ -1629,6 +1727,8 @@ public sealed partial class TrackActor : IAsyncDisposable
                         $"MCP plugin '{mcpServer}' is not enabled on track '{TrackId}'.");
                 }
 
+                // Capture before evaluation, including across an AskHuman suspension.
+                authorizedPolicyGeneration = _policyGeneration;
                 if (mcpServer == "perga" && KernelMcpCatalog.IsWorkerOperatorOnly(toolName))
                     RequireWorkerOperatorCore(caller.Id);
 
@@ -1648,14 +1748,18 @@ public sealed partial class TrackActor : IAsyncDisposable
                     Inputs: _track.TemplateInputs);
 
                 var eval = _policyVm.GuardToolCall(_policy, ctx, _track.TemplateState);
-                await UpdateTemplateStateIfChangedCoreAsync(eval.NextState, ct).ConfigureAwait(false);
+                // An allowed replacement initializes its own state atomically. Denied or
+                // suspended attempts still retain the current policy's guard state updates.
+                if (!string.Equals(mcpServer, "perga", StringComparison.OrdinalIgnoreCase) ||
+                    toolName != KernelMcpToolNames.TrackSet || eval.Output is not GuardDecision.Allow)
+                    await UpdateTemplateStateIfChangedCoreAsync(eval.NextState, ct).ConfigureAwait(false);
 
                 return await ApplyGuardDecisionCoreAsync(eval.Output, caller.Id, ct).ConfigureAwait(false);
             }, ct).ConfigureAwait(false);
 
             if (askSuspension is null)
             {
-                return;
+                return authorizedPolicyGeneration;
             }
 
             if (askSuspension.ShouldWakeLead)
@@ -1669,6 +1773,7 @@ public sealed partial class TrackActor : IAsyncDisposable
                 throw KernelException.PolicyDenied(
                     $"MCP tool '{mcpServer}:{toolName}' denied by human on ask '{askSuspension.Ask.Id}'.");
             }
+            return authorizedPolicyGeneration;
         }
         finally
         {
@@ -1768,6 +1873,8 @@ public sealed partial class TrackActor : IAsyncDisposable
         {
             _policy = _templateCatalog.TryGetPolicy(_track.TemplateId!);
         }
+
+        _policyGeneration = Guid.NewGuid().ToString("N");
 
         _tasks.Clear();
         _tasks.AddRange(snapshot.Tasks);
@@ -3072,6 +3179,8 @@ public sealed partial class TrackActor : IAsyncDisposable
             return await EnqueueAsync(async _ =>
             {
                 _openAgentSessions.Remove(sessionId);
+                _boundAgentModels.Remove(sessionId);
+                _openAgentSessionPermissionModes.Remove(sessionId);
                 var current = RequireSessionCore(sessionId);
                 var now = NowMs();
 
@@ -3117,6 +3226,7 @@ public sealed partial class TrackActor : IAsyncDisposable
                     : null;
                 var freshAgentSession = await OpenFreshAgentSessionCoreAsync(compacted, seedPrompt, ct).ConfigureAwait(false);
                 _openAgentSessions[sessionId] = freshAgentSession;
+                _boundAgentModels[sessionId] = (compacted.Model, compacted.ReasoningEffort);
                 _openAgentSessionPermissionModes[sessionId] = desiredMode;
 
                 return compacted;
@@ -3145,16 +3255,44 @@ public sealed partial class TrackActor : IAsyncDisposable
 
         if (_openAgentSessions.TryGetValue(session.Id, out var existing))
         {
-            if (!_openAgentSessionPermissionModes.TryGetValue(session.Id, out var openMode) ||
-                string.Equals(openMode, desiredMode, StringComparison.Ordinal))
+            var samePermission = !_openAgentSessionPermissionModes.TryGetValue(session.Id, out var openMode) ||
+                string.Equals(openMode, desiredMode, StringComparison.Ordinal);
+            if (samePermission && _boundAgentModels.TryGetValue(session.Id, out var bound) &&
+                string.Equals(bound.Model, session.Model, StringComparison.Ordinal) &&
+                string.Equals(bound.ReasoningEffort, session.ReasoningEffort, StringComparison.Ordinal))
+            {
                 return existing;
+            }
+
+            var switched = false;
+            try
+            {
+                switched = samePermission && await existing.TrySetModelAsync(session.Model, session.ReasoningEffort, ct).ConfigureAwait(false);
+            }
+            catch
+            {
+                _openAgentSessions.Remove(session.Id);
+                _boundAgentModels.Remove(session.Id);
+                _openAgentSessionPermissionModes.Remove(session.Id);
+                await existing.DisposeAsync().ConfigureAwait(false);
+                throw;
+            }
+
+            if (switched)
+            {
+                _boundAgentModels[session.Id] = (session.Model, session.ReasoningEffort);
+                return existing;
+            }
+
             _openAgentSessions.Remove(session.Id);
+            _boundAgentModels.Remove(session.Id);
             _openAgentSessionPermissionModes.Remove(session.Id);
             await existing.DisposeAsync().ConfigureAwait(false);
         }
 
         var opened = await OpenFreshAgentSessionCoreAsync(session, overrideSystemPrompt, ct).ConfigureAwait(false);
         _openAgentSessions[session.Id] = opened;
+        _boundAgentModels[session.Id] = (session.Model, session.ReasoningEffort);
         _openAgentSessionPermissionModes[session.Id] = desiredMode;
         return opened;
     }
@@ -3218,6 +3356,7 @@ public sealed partial class TrackActor : IAsyncDisposable
             McpServers: mcpReg.McpServers,
             Sandbox: sandboxMode,
             OverlayMounts: overlayMounts,
+            ReasoningEffort: session.ReasoningEffort,
             StateKey: session.Id,
             ConfigureWorker: session.BoundAttemptId is not null,
             PermissionMode: session.BoundTaskId is null
@@ -3647,6 +3786,7 @@ public sealed partial class TrackActor : IAsyncDisposable
             CreatedAtMs: now);
         await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
         await _store.UpsertSessionAsync(session, evt, ct).ConfigureAwait(false);
+        _sessions[session.Id] = session;
         await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, evt, ct).ConfigureAwait(false);
     }
 
@@ -3710,14 +3850,18 @@ public sealed partial class TrackActor : IAsyncDisposable
         return _options.DefaultProvider;
     }
 
-    private string? GetDefaultModelCore()
+    private string? GetDefaultModelCore(string provider)
     {
-        if (_track.LeadSessionId is { } leadId && _sessions.TryGetValue(leadId, out var lead))
+        if (_track.LeadSessionId is { } leadId &&
+            _sessions.TryGetValue(leadId, out var lead) &&
+            string.Equals(lead.Provider, provider, StringComparison.OrdinalIgnoreCase))
         {
             return lead.Model;
         }
 
-        return _options.DefaultModel;
+        return string.Equals(_options.DefaultProvider, provider, StringComparison.OrdinalIgnoreCase)
+            ? _options.DefaultModel
+            : null;
     }
 
     private int NextTurnIndexCore(string sessionId)
@@ -3737,7 +3881,10 @@ public sealed partial class TrackActor : IAsyncDisposable
                 ? $"Contract Subagent (BoundAttemptId={session.BoundAttemptId})"
                 : "Collaborative Subagent (Unbound)";
 
-        return $"You are operating in Perga Track '{_track.Title}' ({TrackId}) as {role}.\n\n## Current Report\n{reportMd}";
+        var templateNote = session.IsLead && _policy is null
+            ? "\n\nTemplates are optional and implicit. If useful, discover them with perga_template_ls, inspect a template or the authoring contract with perga_template_cat, and apply one with perga_track_set using templateId or custom .perga.js source (plus optional inputs)."
+            : string.Empty;
+        return $"You are operating in Perga Track '{_track.Title}' ({TrackId}) as {role}.{templateNote}\n\n## Current Report\n{reportMd}";
     }
 
     private string BuildEpochSeedSystemPrompt(
@@ -3836,6 +3983,8 @@ public sealed partial class TrackActor : IAsyncDisposable
         foreach (var kvp in _openAgentSessions.ToArray())
         {
             _openAgentSessions.Remove(kvp.Key);
+            _boundAgentModels.Remove(kvp.Key);
+            _openAgentSessionPermissionModes.Remove(kvp.Key);
             try
             {
                 await kvp.Value.DisposeAsync().ConfigureAwait(false);

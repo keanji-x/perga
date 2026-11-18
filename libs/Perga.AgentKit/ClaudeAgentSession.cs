@@ -285,6 +285,8 @@ public sealed class ClaudeAgentSession : IAgentSession
         await _process.WriteLineAsync(jsonLine, ct).ConfigureAwait(false);
     }
 
+    public Task<bool> TrySetModelAsync(string? model, string? reasoningEffort = null, CancellationToken ct = default) => Task.FromResult(false);
+
     public Task<SteerDelivery> SteerAsync(string turnCorrelationId, string message, CancellationToken ct) =>
         Task.FromResult(SteerDelivery.Declined);
 

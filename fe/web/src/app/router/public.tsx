@@ -923,6 +923,11 @@ function useConversationPane(
                 const draftPermissionMode = draft?.permissionMode ?? defaultPermissionModeFor(draftPermissionModes);
                 return (
                   <HStack gap={1} align="center" wrap="wrap" className={footerStyles.group}>
+                    <PlannerAttachButton
+                      attachments={composerAttachments}
+                      support={{ available: false, reason: ATTACHED_WORKSPACE_REASON }}
+                      disabled
+                    />
                     <ModelPill groups={managed.groups} provider={draft.provider} selection={draft.model}
                       effortControl={compactComposer ? 'in-menu' : 'separate'}
                       onChange={(model, provider) => withDraft(draft, current => {

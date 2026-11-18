@@ -46,6 +46,7 @@ public sealed record CreateTrackRequest(
     IReadOnlyList<string>? EnabledPlugins = null,
     string? BaseRevision = null,
     double? SortOrder = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ReasoningEffort = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? WorkspaceOptionId = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? PermissionMode = null);
 
@@ -96,6 +97,7 @@ public sealed record CreateSessionRequest(
     string? Provider = null,
     string? Model = null,
     string? Text = null,
+    string? ReasoningEffort = null,
     string? IdempotencyKey = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? PermissionMode = null);
 
@@ -107,6 +109,8 @@ public sealed record PatchSessionRequest(
     bool? Archived = null);
 
 public sealed record SteeringResult(string InputId, string Delivery);
+
+public sealed record UpdateSessionModelRequest(string? Model, string? ReasoningEffort = null);
 
 public sealed record SendMessageRequest(
     string Content,

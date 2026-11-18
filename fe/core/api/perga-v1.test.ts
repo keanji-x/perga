@@ -24,9 +24,9 @@ import {
   createTrackConversationOperation,
   interruptPlannerOperation,
   modelCatalogOperation,
+  setPlannerModelOperation,
   sendPlannerInputOperation,
   setConversationArchiveOperation,
-  setPlannerModelOperation,
   trackConversationsOperation,
 } from '../domain/conversation.js';
 import { buildConversationTranscript, conversationItemsOperation, conversationRunOperation } from '../domain/conversation-display.js';
@@ -156,6 +156,69 @@ describe('Perga /api/v1 protocol contracts', () => {
 
     const detail = templateDetailOperation('feature-dev').responseSchema.parse(sampleBootstrap.templates);
     expect(detail.body).toContain('# Plan');
+  });
+
+  it('preserves rich provider model metadata and selects the advertised default', () => {
+    const modelCatalog = [
+      { model: 'first', displayName: 'First model', description: 'First description', isDefault: false,
+        defaultReasoningEffort: null, supportedReasoningEfforts: [] },
+      { model: 'preferred', displayName: 'Preferred model', description: 'Provider description', isDefault: true,
+        defaultReasoningEffort: 'high', supportedReasoningEfforts: [
+          { reasoningEffort: 'low', description: 'Fast' },
+          { reasoningEffort: 'high', description: 'Thorough' },
+        ] },
+    ];
+    const bootstrap = { ...sampleBootstrap, providers: [
+      { provider: 'codex', available: true, models: ['legacy-only'], modelCatalog },
+      { provider: 'acp:opencode', available: true, models: ['other-provider'] },
+    ] };
+    expect(bootstrapDtoSchema.parse(bootstrap).providers[0].modelCatalog).toEqual(modelCatalog);
+    for (const scope of [
+      { kind: 'provider' as const, provider: 'codex' as const },
+      { kind: 'card' as const, cardId: 'session/a', provider: 'codex' as const },
+    ]) {
+      const operation = modelCatalogOperation(scope);
+      const catalog = operation.responseSchema.parse(bootstrap);
+      expect(catalog.models).toEqual(modelCatalog.map(entry => ({
+        id: entry.model, model: entry.model, resolved_model: null,
+        display_name: entry.displayName, description: entry.description, is_default: entry.isDefault,
+        default_reasoning_effort: entry.defaultReasoningEffort,
+        supported_reasoning_efforts: entry.supportedReasoningEfforts.map(effort => ({
+          reasoning_effort: effort.reasoningEffort, description: effort.description,
+        })),
+      })));
+      expect(catalog).toMatchObject({ source: 'live', default_source: 'config_read', default: {
+        model: 'preferred', reasoning_effort: 'high', supported_reasoning_efforts: [
+          { reasoning_effort: 'low', description: 'Fast' },
+          { reasoning_effort: 'high', description: 'Thorough' },
+        ],
+      } });
+      expect(operation.responseSchema.parse({ ...bootstrap, providers: [{ ...bootstrap.providers[0], available: false }] }))
+        .toMatchObject({ source: 'unavailable', models: catalog.models, default: catalog.default });
+    }
+  });
+
+  it('scopes a card catalog to its provider and reports provider availability', () => {
+    const scope = { kind: 'card' as const, cardId: 'session/a', provider: 'antigravity' as const };
+    const operation = modelCatalogOperation(scope);
+    expect(operation.responseSchema.parse(sampleBootstrap)).toMatchObject({
+      source: 'live', models: [{ model: 'gemini-3.1-pro' }, { model: 'gemini-3-flash' }],
+    });
+    expect(modelCatalogOperation({ ...scope, provider: 'claude' }).responseSchema.parse(sampleBootstrap).source).toBe('unavailable');
+    expect(modelCatalogOperation({ ...scope, provider: 'grok' }).responseSchema.parse(sampleBootstrap).source).toBe('unavailable');
+    expect(operation.responseSchema.parse({ version: 'test', providers: [{ provider: 'acp:antigravity', available: true, models: [] }] }))
+      .toMatchObject({ source: 'live', models: [] });
+    expect(operation.responseSchema.safeParse({ models: [], source: 'live' }).success).toBe(false);
+  });
+
+  it('updates a session model with the v1 request and session response', () => {
+    const operation = setPlannerModelOperation('session/a', { model: 'chosen', reasoning_effort: null });
+    expect(operation.method).toBe('PUT');
+    expect(operation.path).toBe('/api/v1/sessions/session%2Fa/model');
+    expect(operation.body).toEqual({ model: 'chosen', reasoningEffort: null });
+    expect(operation.responseSchema.parse({
+      id: 'session/a', trackId: 'track', provider: 'codex', model: 'chosen', createdAtMs: 1, updatedAtMs: 2,
+    })).toMatchObject({ id: 'session/a', model: 'chosen' });
   });
 
   it('maps Area CRUD operations to /api/v1/areas with camelCase bodies and clearDefaultCwd', () => {
@@ -675,9 +738,9 @@ describe('Perga /api/v1 protocol contracts', () => {
 
     const setModelOp = setPlannerModelOperation('ses_lead', { model: null, reasoning_effort: null });
     expect(setModelOp).toMatchObject({
-      method: 'PATCH',
-      path: '/api/v1/sessions/ses_lead',
-      body: { model: null, clearModel: true, reasoning_effort: null },
+      method: 'PUT',
+      path: '/api/v1/sessions/ses_lead/model',
+      body: { model: null, reasoningEffort: null },
     });
     const archiveOp = setConversationArchiveOperation('trk_1', 'ses_sub1', true);
     expect(archiveOp).toMatchObject({
@@ -685,7 +748,7 @@ describe('Perga /api/v1 protocol contracts', () => {
       path: '/api/v1/sessions/ses_sub1',
       body: { archived: true },
     });
-    const cardScopedCatalog = modelCatalogOperation({ kind: 'card', cardId: 'ses_lead' }, { provider: 'claude' })
+    const cardScopedCatalog = modelCatalogOperation({ kind: 'card', cardId: 'ses_lead', provider: 'claude' })
       .responseSchema.parse(sampleBootstrap);
     expect(cardScopedCatalog.source).toBe('unavailable');
     expect(cardScopedCatalog.models).toEqual([]);

@@ -355,12 +355,11 @@ describe('ModelPill', () => {
     expect(document.body.textContent).not.toContain('codex is not running');
   });
 
-  it('explains the compaction risk once, as a note rather than a per-switch warning', () => {
+  it('does not invent a provider compaction warning', () => {
     render(
       <ModelPill provider="codex" groups={[{ provider: 'codex', availability: null, catalog: catalog() }]} selection={FOLLOW_INSTALLATION_DEFAULT} onChange={vi.fn()} />,
     );
-    const note = within(openMenu(/^Model:/)).getByRole('note');
-    expect(note.textContent).toContain('smaller context window');
+    expect(within(openMenu(/^Model:/)).queryByRole('note')).toBeNull();
     expect(screen.queryByRole('menuitem', { name: /smaller context window/ })).toBeNull();
   });
 

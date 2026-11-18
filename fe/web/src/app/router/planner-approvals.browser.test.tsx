@@ -1,4 +1,3 @@
-import { historicalConversationPage, conversationCardId, historicalConversationRun } from './conversation-read-data.ts';
 import { prepareReportDocument } from '../../features/report/document/preparation.ts';
 import '../../styles/entry.css';
 // #2348 A4 in a real browser: a Planner conversation's approval setting beside the model picker, and a
@@ -19,10 +18,10 @@ afterEach(async () => {
   await page.viewport(1280, 720);
 });
 
-const TRACK = { workspace: { isolation: 'none' as const, kind: 'attached' as const, path: '/tmp', frozen_at: null }, id: 'approvals-track', area_id: 'area', title: 'Release 2.0', sort: 1, cwd: '/tmp',
-  pinned_at: null, closed_at: null, created_at: 1, updated_at: 2 };
-const PLANNER = { id: 'planner', track_id: TRACK.id, kind: 'codex', title: 'Planner', sort: 1,
-  payload: { planner_harness: true }, deletable: false, created_at: 1, updated_at: 2 };
+const TRACK = { id: 'approvals-track', areaId: 'area', title: 'Release 2.0', cwd: '/tmp',
+  workspaceDriver: 'direct', leadSessionId: 'planner', createdAtMs: 1, updatedAtMs: 2 };
+const PLANNER = { id: 'planner', trackId: TRACK.id, isLead: true, provider: 'codex', title: 'Planner',
+  model: null, reasoningEffort: null, createdAtMs: 1, updatedAtMs: 2 };
 const HOLD_TITLE = 'Run `cargo test -p calm-server` (cwd /work/neige)?';
 const HOLD = {
   source: 'ask', key: 'ask:12', text: HOLD_TITLE, at_ms: 5, ask_id: 12,
@@ -34,8 +33,8 @@ type Mode = 'never' | 'ask' | 'full' | null;
 type Options = Readonly<{
   theme?: 'light' | 'dark';
   mode?: Mode;
-  asks?: readonly unknown[];
-  /** The answer to `PUT /planner/permission-mode`; by default it stores the mode asked for. */
+  asks?: readonly (typeof HOLD)[];
+  /** The answer to `PUT /api/v1/sessions/{id}/permission-mode`; by default it stores the mode asked for. */
   putMode?: (body: { permission_mode: Mode }) => ApiTransportResponse;
   /** The answer to the hold ask's answer route. */
   answer?: () => ApiTransportResponse;
@@ -52,37 +51,37 @@ function setup({ theme = 'light', mode = 'never', asks = [], putMode, answer }: 
     await Promise.resolve();
     requests.push(request);
     let body: unknown = [];
-    if (request.path === '/api/areas') body = [{ id: 'area', name: 'Work', color: '#123456', sort: 1, kind: 'user', created_at: 1, updated_at: 1 }];
-    if (request.path === '/api/areas/area/tracks') body = [TRACK];
-    if (request.path === '/api/settings') body = {};
-    if (request.path.startsWith('/api/v1/bootstrap?scope=managed')) body = [{
-      accepts_unavailable_blank_track: true,
-      availability: { provider: 'codex', status: 'ready', reason: null, checked_at_ms: 1, authentication_method: 'cli', authentication_notice: null },
-      permission_modes: [
+    const session = { ...PLANNER, permissionMode: stored };
+    const bootstrap = { version: 'test', providers: [{ provider: 'codex', available: true,
+      models: [], permissionModes: [
         { id: 'never', label: 'Never', description: 'Sandbox only; never asks.', tone: 'neutral', isDefault: true },
         { id: 'ask', label: 'Ask me', description: 'Pauses the turn to ask you.', tone: 'warning', isDefault: false },
         { id: 'full', label: 'Full access', description: "No sandbox; never asks. Runs with your account's access.", tone: 'danger', isDefault: false },
-      ],
-      capabilities: { managed_conversation: true, steer: true, images: false, manual_compact: true, history_replacement: false, requires_ready_availability: false },
-    }];
-    if (request.path === `/api/tracks/${TRACK.id}`) body = { track: TRACK, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true, cards: [PLANNER],
-      overlays: [{ id: 'activity', plugin_id: 'kernel', entity_kind: 'track', entity_id: TRACK.id, kind: 'activity', updated_at: 5,
-        payload: { schemaVersion: 4, working: false, attention: asks.length > 0 ? 'input' : 'none', activity_at_ms: 5, items: asks, cards: [] } }] };
-    if (request.path.includes('/planner/run?contract=conversation_v1')) body = historicalConversationRun({ card_id: PLANNER.id, worker_session_id: 'session',
-      phase: asks.length > 0 ? 'turn_running' : 'idle', model: null, reasoning_effort: null, permission_mode: stored,
-      blocked_reason: null, manual_compact_supported: true, recovery: null, compact_outcome: null, context_usage_invalidated: false, running_turn: asks.length > 0 ? { turn_id: 'turn-1', elapsed_ms: 42_000 } : null, attachments_supported: true }, 'idle', true);
-    if (request.path.endsWith('/harness/live')) body = { turn_id: null, items: [] };
-    if (request.path.includes('/harness/items')) body = historicalConversationPage(conversationCardId(request.path), [{ id: 1, worker_session_id: 'session', card_id: PLANNER.id,
-      track_id: TRACK.id, thread_id: 'thread', turn_id: null, turn_error_text: null, item_uuid: null, item_type: 'agentMessage',
-      method: 'item/completed', created_at_ms: 1,
-      params: JSON.stringify({ item: { id: 'reply', type: 'agentMessage', text: 'The release checklist is green. Running the server tests next.' } }) }], null);
+      ] }] };
+    const askDtos = asks.map(ask => ({ id: String(ask.ask_id), trackId: TRACK.id, status: 'open',
+      questions: ask.questions.map(question => ({ question: question.title, options: question.options, isMultiSelect: false })),
+      answer: null, createdAtMs: ask.at_ms, answeredAtMs: null }));
+    if (request.path.startsWith('/api/v1/bootstrap')) body = bootstrap;
+    if (request.path === '/api/v1/areas') body = [{ id: 'area', name: 'Work', color: '#123456', createdAtMs: 1, updatedAtMs: 1 }];
+    if (request.path === '/api/v1/areas/area/tracks?includeClosed=true') body = [TRACK];
+    if (request.path === '/api/settings') body = {};
+    if (request.path === `/api/v1/tracks/${TRACK.id}`) body = { track: TRACK,
+      report: { docRev: 0, summary: '', blocks: [] }, tasks: [], sessions: [session], openAsks: askDtos };
+    if (request.path === `/api/v1/tracks/${TRACK.id}/sessions`) body = [session];
+    if (request.path.startsWith(`/api/v1/sessions/${PLANNER.id}/items?`)) body = { session,
+      unknownInput: null, activeTurn: asks.length > 0
+        ? { id: 'turn-1', sessionId: PLANNER.id, status: 'running', startedAtMs: Date.now() - 42_000 } : null,
+      items: [{ id: 1, sessionId: PLANNER.id, turnId: 'previous-turn', kind: 'assistant_text',
+        payload: { text: 'The release checklist is green. Running the server tests next.' }, createdAtMs: 1 }] };
     if (request.method === 'PUT' && request.path === `/api/v1/sessions/${PLANNER.id}/permission-mode`) {
       const sent = request.body as { permission_mode: Mode };
-      const response = putMode?.(sent) ?? answered(200, { card_id: PLANNER.id, permission_mode: sent.permission_mode });
+      const response = putMode?.(sent) ?? answered(200, { ...session, permissionMode: sent.permission_mode });
       if (response.status === 200) stored = sent.permission_mode;
       return response;
     }
-    if (request.path === `/api/tracks/${TRACK.id}/asks/12/answer`) return answer?.() ?? answered(204, undefined);
+    if (request.method === 'POST' && request.path === `/api/v1/tracks/${TRACK.id}/asks/12/answer`)
+      return answer?.() ?? answered(200, { ...askDtos.find(ask => ask.id === '12'), status: 'answered',
+        answer: request.body, answeredAtMs: 6 });
     return { status: 200, statusText: 'OK', body };
   } };
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -394,8 +393,8 @@ it.each([
 
   await ask.getByRole('button', { name: 'Allow for this session' }).click();
   await expect.poll(() => answers(requests).length).toBe(1);
-  expect(answers(requests)[0]?.path).toBe(`/api/tracks/${TRACK.id}/asks/12/answer`);
-  expect(answers(requests)[0]?.body).toEqual({ answers: [{ option: 1 }] });
+  expect(answers(requests)[0]?.path).toBe(`/api/v1/tracks/${TRACK.id}/asks/12/answer`);
+  expect(answers(requests)[0]?.body).toEqual({ answers: [{ option: 1, value: 'Allow for this session' }] });
   await expect.element(ask).not.toBeInTheDocument();
 });
 

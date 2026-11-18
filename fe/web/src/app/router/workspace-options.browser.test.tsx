@@ -18,7 +18,7 @@ it('renders Host workspace choices and requires a new choice when the selected m
       const ok = (body: unknown) => ({ status: 200, statusText: 'OK', body });
       if (request.path === '/api/v1/areas')
         return ok([{ id: 'project-area', name: 'Project', color: '#123456', defaultCwd: '/repo', createdAtMs: 1, updatedAtMs: 1 }]);
-      if (request.path === '/api/v1/templates') return ok([]);
+      if (request.path === '/api/v1/templates') return ok([{ id: 'dev', title: 'Development', tasks: [], availability: { status: 'ready' } }]);
       const url = new URL(request.path, 'http://fixture.test');
       if (url.pathname === '/api/v1/areas/project-area/workspace-options') {
         const direct = { id: 'direct', label: 'Direct from Host', description: 'Use the source directory.' };
@@ -40,6 +40,7 @@ it('renders Host workspace choices and requires a new choice when the selected m
     },
   });
 
+  await expect.element(page.getByRole('combobox', { name: 'Template', exact: true })).not.toBeInTheDocument();
   const repo = page.getByRole('button', { name: /^Repo:/ });
   const create = page.getByRole('button', { name: 'Create track' });
   await page.getByRole('combobox', { name: 'What this track should do' }).fill('Keep the draft');
@@ -61,4 +62,6 @@ it('renders Host workspace choices and requires a new choice when the selected m
   const request = fixture.requests.find((item) => item.path === '/api/v1/tracks' && item.method === 'POST');
   expect(request?.body).toMatchObject({ cwd: '/repo/other', workspaceOptionId: 'direct', firstMessage: 'Keep the draft' });
   expect(request?.body).not.toHaveProperty('workspaceDriver');
+  expect(request?.body).not.toHaveProperty('templateId');
+  expect(fixture.requests.some(item => item.path === '/api/v1/templates')).toBe(false);
 });
