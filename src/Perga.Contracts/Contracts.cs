@@ -154,7 +154,8 @@ public sealed record MailDto(
     string Summary,
     string Body,
     long? ReadAtMs,
-    long CreatedAtMs);
+    long CreatedAtMs,
+    string? ReplyToMailId = null);
 
 public sealed record TerminalDto(
     string Id,

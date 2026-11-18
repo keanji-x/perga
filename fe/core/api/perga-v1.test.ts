@@ -55,6 +55,14 @@ import {
 import { parsePergaMarkdownBlocks } from '../markdown/public.js';
 
 describe('Perga /api/v1 protocol contracts', () => {
+  it('decodes historical mail and preserves the parent ID of a reply', () => {
+    const envelope = { eventId: 8, areaId: 'area', trackId: 'receiver', kind: 'mail.received', createdAtMs: 1 };
+    const mail = { id: 'mail', fromTrackId: 'sender', toTrackId: 'receiver', summary: 'Reply', body: 'Details', createdAtMs: 1 };
+    expect(decodePergaEventEnvelope({ ...envelope, payload: mail })).toMatchObject({ status: 'ready' });
+    expect(decodePergaEventEnvelope({ ...envelope, payload: { ...mail, replyToMailId: 'parent' } }))
+      .toMatchObject({ status: 'ready', event: { payload: { replyToMailId: 'parent' } } });
+  });
+
   const sampleBootstrap = {
     version: '0.1.0',
     providers: [

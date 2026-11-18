@@ -86,7 +86,7 @@ public interface IPergaKernel : IAsyncDisposable
     Task<AskDto> AnswerAskAsync(string trackId, string askId, JsonElement answer, CancellationToken ct = default);
 
     // Cross-Track Mail
-    Task<MailDto> SendMailAsync(string fromTrackId, string callerSessionId, string toTrackId, string summary, string body, CancellationToken ct = default);
+    Task<MailDto> SendMailAsync(string fromTrackId, string callerSessionId, string? toTrackId, string summary, string body, CancellationToken ct = default, string? replyToMailId = null);
     Task<IReadOnlyList<MailDto>> ListMailsAsync(string trackId, bool unreadOnly = false, CancellationToken ct = default);
     Task<MailDto> ReadMailAsync(string trackId, string mailId, CancellationToken ct = default);
 
@@ -734,10 +734,11 @@ public sealed class PergaKernelService : IPergaKernel
     public Task<MailDto> SendMailAsync(
         string fromTrackId,
         string callerSessionId,
-        string toTrackId,
+        string? toTrackId,
         string summary,
         string body,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        string? replyToMailId = null)
     {
         var senderActor = Actors.GetOrActivate(fromTrackId);
         return senderActor.SendCrossTrackMailAsync(
@@ -747,10 +748,10 @@ public sealed class PergaKernelService : IPergaKernel
             body,
             deliverToTargetTrack: async (mail, token) =>
             {
-                var targetActor = Actors.GetOrActivate(toTrackId);
+                var targetActor = Actors.GetOrActivate(mail.ToTrackId);
                 await targetActor.ReceiveMailAsync(mail, token).ConfigureAwait(false);
             },
-            ct);
+            ct, replyToMailId);
     }
 
     public Task<IReadOnlyList<MailDto>> ListMailsAsync(

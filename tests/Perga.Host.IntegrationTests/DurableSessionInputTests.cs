@@ -26,7 +26,7 @@ public sealed class DurableSessionInputTests
             string turnId;
             await using (var host = new PergaHostTestCluster(directory.FullName))
             {
-                (trackId, sessionId) = await CreateTrackAsync(host);
+                (trackId, sessionId) = await host.CreateTrackAsync();
                 using var accepted = await SendAsync(host.Client, $"/api/v1/sessions/{sessionId}/messages",
                     "same-message", new { content = "Keep one turn" });
                 Assert.Equal(HttpStatusCode.Accepted, accepted.StatusCode);
@@ -65,7 +65,7 @@ public sealed class DurableSessionInputTests
             var request = new { title = "First message", provider = "claude", text = "One initial message" };
             await using (var host = new PergaHostTestCluster(directory.FullName))
             {
-                (trackId, _) = await CreateTrackAsync(host);
+                (trackId, _) = await host.CreateTrackAsync();
                 var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                 var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                 host.AgentRuntime.SetTurnHandler(StreamAsync);
@@ -131,7 +131,7 @@ public sealed class DurableSessionInputTests
             string trackId;
             string sessionId;
             await using (var host = new PergaHostTestCluster(directory.FullName))
-                (trackId, sessionId) = await CreateTrackAsync(host);
+                (trackId, sessionId) = await host.CreateTrackAsync();
 
             // Seed the exact committed rows left at each crash boundary.
             await using (var db = new SqliteConnection($"Data Source={Path.Combine(directory.FullName, "perga.db")};Pooling=False"))
@@ -191,7 +191,7 @@ public sealed class DurableSessionInputTests
             string trackId;
             string sessionId;
             await using (var original = new PergaHostTestCluster(directory.FullName))
-                (trackId, sessionId) = await CreateTrackAsync(original);
+                (trackId, sessionId) = await original.CreateTrackAsync();
             await using (var db = new SqliteConnection($"Data Source={dbPath};Pooling=False"))
             {
                 await db.OpenAsync();
@@ -246,7 +246,7 @@ public sealed class DurableSessionInputTests
     public async Task FailedFinalizationKeepsDeliveryEvidenceAndBlocksSecondDispatch()
     {
         await using var host = new PergaHostTestCluster();
-        var (trackId, sessionId) = await CreateTrackAsync(host);
+        var (trackId, sessionId) = await host.CreateTrackAsync();
         await using var db = new SqliteConnection($"Data Source={Path.Combine(host.DataDir, "perga.db")};Pooling=False");
         await db.OpenAsync();
         await db.ExecuteAsync(
@@ -282,20 +282,6 @@ public sealed class DurableSessionInputTests
         Assert.Equal(receipt.TurnId, item.GetProperty("turnId").GetString());
         Assert.Equal(receipt.InputId, item.GetProperty("payload").GetProperty("inputId").GetString());
         Assert.Equal(text, item.GetProperty("payload").GetProperty("content").GetString());
-    }
-
-    private static async Task<(string TrackId, string SessionId)> CreateTrackAsync(PergaHostTestCluster host)
-    {
-        using var areaResponse = await host.Client.PostAsJsonAsync("/api/v1/areas",
-            new { name = "Durable input", defaultCwd = host.DataDir });
-        areaResponse.EnsureSuccessStatusCode();
-        var area = (await areaResponse.Content.ReadFromJsonAsync<AreaDto>(PergaJsonDefaults.ApiOptions))!;
-        using var trackResponse = await host.Client.PostAsJsonAsync("/api/v1/tracks",
-            new { areaId = area.Id, cwd = host.DataDir });
-        trackResponse.EnsureSuccessStatusCode();
-        using var snapshot = JsonDocument.Parse(await trackResponse.Content.ReadAsStringAsync());
-        var track = snapshot.RootElement.GetProperty("track");
-        return (track.GetProperty("id").GetString()!, track.GetProperty("leadSessionId").GetString()!);
     }
 
     private static async Task<HttpResponseMessage> SendAsync(HttpClient client, string path, string key, object body)

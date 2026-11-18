@@ -518,6 +518,21 @@ public sealed class McpKernelAndVcsIntegrationTests
         Assert.False(mailCatErr);
         Assert.Contains("All 24 routes are live.", mailCatText, StringComparison.Ordinal);
 
+        var (replyText, replyError) = await CallToolAsync(cluster, "/mcp/kernel", peerLeadToken,
+            KernelMcpToolNames.MailSend, new { replyToMailId = mailId, summary = "Received", body = "Review underway" }, ct);
+        Assert.False(replyError, replyText);
+        var reply = Assert.Single(await kernel.ListMailsAsync(trackAId, ct: ct));
+        Assert.Equal(mailId, reply.ReplyToMailId);
+        Assert.Equal(trackBId, reply.FromTrackId);
+
+        var (_, foreignParentError) = await CallToolAsync(cluster, "/mcp/kernel", leadToken,
+            KernelMcpToolNames.MailSend, new { replyToMailId = mailId, summary = "Wrong inbox", body = "test" }, ct);
+        Assert.True(foreignParentError);
+        var (_, twoAddressesError) = await CallToolAsync(cluster, "/mcp/kernel", peerLeadToken,
+            KernelMcpToolNames.MailSend, new { toTrackId = trackAId, replyToMailId = mailId, summary = "Both", body = "test" }, ct);
+        Assert.True(twoAddressesError);
+        Assert.Single(await kernel.ListMailsAsync(trackAId, ct: ct));
+
         // perga_task_accept, perga_task_reject, perga_task_cancel, perga_track_rename, perga_track_close!
         var (accText, accErr) = await CallToolAsync(
             cluster,

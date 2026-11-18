@@ -51,7 +51,7 @@ public sealed partial class TrackActor : IAsyncDisposable
     private readonly Dictionary<string, IAgentSession> _openAgentSessions = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Guid> _reservedWakeSessions = new(StringComparer.Ordinal);
     private readonly Dictionary<string, ActiveTurnState> _activeTurns = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, Queue<(string TriggerKind, string Prompt)>> _pendingWakes = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Queue<(string TriggerKind, string Prompt, string? MailId)>> _pendingWakes = new(StringComparer.Ordinal);
     private readonly Dictionary<string, TaskCompletionSource<JsonElement>> _pendingAskWaiters = new(StringComparer.Ordinal);
     private readonly Dictionary<string, ActiveAttemptState> _activeAttempts = new(StringComparer.Ordinal);
     private readonly Dictionary<(string SessionId, string IdempotencyKey), Task<SessionTurnDto>> _idempotencyTurns = new();
@@ -108,7 +108,10 @@ public sealed partial class TrackActor : IAsyncDisposable
 
     public long LastActivityAtMs => Volatile.Read(ref _lastActivityAtMs);
 
+    private int _queuedMailWakes;
+
     public bool HasActiveWork =>
+        Volatile.Read(ref _queuedMailWakes) > 0 ||
         Volatile.Read(ref _queuedMailboxOps) > 0 ||
         Volatile.Read(ref _inFlightExternalOps) > 0 ||
         !_backgroundJobs.IsEmpty;
@@ -1039,26 +1042,36 @@ public sealed partial class TrackActor : IAsyncDisposable
 
     public async Task<MailDto> SendCrossTrackMailAsync(
         string callerSessionId,
-        string toTrackId,
+        string? toTrackId,
         string summary,
         string body,
         Func<MailDto, CancellationToken, Task> deliverToTargetTrack,
-        CancellationToken ct = default)
+        CancellationToken ct, string? replyToMailId)
     {
         var mail = await EnqueueAsync(async _ =>
         {
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
             RequireGovernanceSessionCore(callerSessionId, "perga_mail_send");
+            if ((toTrackId is null) == (replyToMailId is null) ||
+                string.IsNullOrWhiteSpace(toTrackId ?? replyToMailId))
+                throw KernelException.InvalidArgument("Specify exactly one of toTrackId and replyToMailId.");
+            if (replyToMailId is not null)
+            {
+                var parent = await _store.FindReceivedMailAsync(TrackId, replyToMailId, ct).ConfigureAwait(false)
+                    ?? throw KernelException.NotFound("Original mail was not found in this Track's inbox.");
+                toTrackId = parent.FromTrackId;
+            }
 
             var now = NowMs();
             return new MailDto(
                 Id: $"mail_{Guid.NewGuid():N}",
                 FromTrackId: TrackId,
-                ToTrackId: toTrackId,
+                ToTrackId: toTrackId!,
                 Summary: summary,
                 Body: body,
                 ReadAtMs: null,
-                CreatedAtMs: now);
+                CreatedAtMs: now,
+                ReplyToMailId: replyToMailId);
         }, ct).ConfigureAwait(false);
 
         await deliverToTargetTrack(mail, ct).ConfigureAwait(false);
@@ -1067,9 +1080,9 @@ public sealed partial class TrackActor : IAsyncDisposable
 
     internal async Task ReceiveMailAsync(MailDto mail, CancellationToken ct = default)
     {
-        await EnqueueAsync(async _ =>
+        var shouldWake = await EnqueueAsync(async _ =>
         {
-            await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
+            await EnsureHydratedCoreAsync(ct, mountWorkspace: false).ConfigureAwait(false);
             var evt = new EventEnvelopeDto(
                 EventId: null,
                 AreaId: _track.AreaId,
@@ -1079,15 +1092,20 @@ public sealed partial class TrackActor : IAsyncDisposable
                 CreatedAtMs: mail.CreatedAtMs);
 
             await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
-            await _store.UpsertMailAsync(mail, evt, ct).ConfigureAwait(false);
-            await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, evt, ct).ConfigureAwait(false);
+            var requestWake = _track.ClosedAtMs is null && _track.LeadSessionId is not null;
+            await _store.UpsertMailAsync(mail, evt, ct, requestWake).ConfigureAwait(false);
+            await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, evt, CancellationToken.None).ConfigureAwait(false);
+            return requestWake;
         }, ct).ConfigureAwait(false);
 
-        await WakeLeadAsync(
-            triggerKind: "wake",
-            wakePrompt: $"New cross-track mail '{mail.Id}' from track '{mail.FromTrackId}': {mail.Summary}\n\n{mail.Body}",
-            ct: ct).ConfigureAwait(false);
+        if (shouldWake)
+            await WakeForMailAsync(mail, _actorShutdownCts.Token).ConfigureAwait(false);
     }
+
+    internal Task WakeForMailAsync(MailDto mail, CancellationToken ct, bool recovering = false) =>
+        DispatchLeadWakePromptIfNeededAsync("wake",
+            $"New cross-track mail '{mail.Id}' from track '{mail.FromTrackId}': {mail.Summary}\n\n{mail.Body}",
+            ct, mail.Id, recovering);
 
     public Task<IReadOnlyList<MailDto>> ListMailsAsync(bool unreadOnly = false, CancellationToken ct = default)
     {
@@ -1123,7 +1141,7 @@ public sealed partial class TrackActor : IAsyncDisposable
                 CreatedAtMs: now);
 
             await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
-            await _store.UpsertMailAsync(readMail, evt, ct).ConfigureAwait(false);
+            await _store.UpsertMailAsync(readMail, evt, ct, requestWake: false).ConfigureAwait(false);
             await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, evt, ct).ConfigureAwait(false);
             return readMail;
         }, ct);
@@ -2124,7 +2142,7 @@ public sealed partial class TrackActor : IAsyncDisposable
         string triggerKind,
         string prompt,
         CancellationToken ct,
-        PersistedSessionInput? input = null, Guid? wakeReservation = null)
+        PersistedSessionInput? input = null, Guid? wakeReservation = null, string? mailId = null)
     {
         Interlocked.Increment(ref _inFlightExternalOps);
         ActiveTurnState? pendingCleanup = null;
@@ -2265,6 +2283,11 @@ public sealed partial class TrackActor : IAsyncDisposable
                         UnifiedAgentEvent.ThinkingDelta or UnifiedAgentEvent.ToolCallStarted or
                         UnifiedAgentEvent.ToolCallCompleted or UnifiedAgentEvent.ApprovalRequested or
                         UnifiedAgentEvent.TurnCompleted or UnifiedAgentEvent.TurnInterrupted or UnifiedAgentEvent.TurnError { IsConclusive: true };
+                    if (mailId is not null && confirmsDelivery)
+                    {
+                        await _store.AcknowledgeMailWakeAsync(mailId, CancellationToken.None).ConfigureAwait(false);
+                        mailId = null;
+                    }
                     if (input is not null && ((!delivered && confirmsDelivery) || evt is UnifiedAgentEvent.TurnAccepted))
                     {
                         await _store.SessionInputs.MarkDeliveredAsync(input, boundThreadId,
@@ -2392,6 +2415,9 @@ public sealed partial class TrackActor : IAsyncDisposable
                 turnStatus = "failed";
                 errorText = ex.Message;
             }
+
+            if (mailId is not null && activeTurn.Interrupted)
+                await _store.AcknowledgeMailWakeAsync(mailId, CancellationToken.None).ConfigureAwait(false);
 
             if (input is not null && !conclusive)
             {
@@ -2715,13 +2741,15 @@ public sealed partial class TrackActor : IAsyncDisposable
         return await _agentRuntime.OpenSessionAsync(launchSpec, ct).ConfigureAwait(false);
     }
 
-    private async Task DispatchLeadWakePromptIfNeededAsync(string triggerKind, string wakePrompt, CancellationToken ct)
+    private async Task DispatchLeadWakePromptIfNeededAsync(string triggerKind, string wakePrompt, CancellationToken ct, string? mailId = null, bool recovering = false)
     {
         var check = await EnqueueAsync<(string? LeadSessionId, Guid? Reservation)>(async _ =>
         {
-            await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
+            await EnsureHydratedCoreAsync(ct, mountWorkspace: false).ConfigureAwait(false);
             if (_track.ClosedAtMs is not null || string.IsNullOrEmpty(_track.LeadSessionId))
             {
+                if (mailId is not null)
+                    await _store.AcknowledgeMailWakeAsync(mailId, ct).ConfigureAwait(false);
                 return (null, null);
             }
 
@@ -2734,7 +2762,7 @@ public sealed partial class TrackActor : IAsyncDisposable
             if (_activeTurns.ContainsKey(leadId) || HoldsDurableSlot(_sessions[leadId]) ||
                 _compactingSessions.Contains(leadId) || _reservedWakeSessions.ContainsKey(leadId))
             {
-                EnqueuePendingWakeCore(leadId, triggerKind, wakePrompt);
+                EnqueuePendingWakeCore(leadId, triggerKind, wakePrompt, mailId);
                 return (leadId, null);
             }
 
@@ -2749,13 +2777,13 @@ public sealed partial class TrackActor : IAsyncDisposable
             return;
         }
 
-        if (_options.DispatchWakesInBackground)
+        if (recovering || _options.DispatchWakesInBackground)
         {
-            TrackBackgroundJob(() => RunReservedWakeAsync(check.LeadSessionId, triggerKind, wakePrompt, reservation, _actorShutdownCts.Token));
+            TrackBackgroundJob(() => RunReservedWakeAsync(check.LeadSessionId, triggerKind, wakePrompt, reservation, _actorShutdownCts.Token, mailId));
         }
         else
         {
-            await RunReservedWakeAsync(check.LeadSessionId, triggerKind, wakePrompt, reservation, ct).ConfigureAwait(false);
+            await RunReservedWakeAsync(check.LeadSessionId, triggerKind, wakePrompt, reservation, ct, mailId).ConfigureAwait(false);
         }
     }
 
@@ -2767,16 +2795,18 @@ public sealed partial class TrackActor : IAsyncDisposable
             !_pendingWakes.TryGetValue(sessionId, out var queued) || !queued.TryDequeue(out var wake))
             return;
 
+        if (wake.MailId is not null)
+            Interlocked.Decrement(ref _queuedMailWakes);
         var reservation = Guid.NewGuid();
         _reservedWakeSessions.Add(sessionId, reservation);
-        TrackBackgroundJob(() => RunReservedWakeAsync(sessionId, wake.TriggerKind, wake.Prompt, reservation, _actorShutdownCts.Token));
+        TrackBackgroundJob(() => RunReservedWakeAsync(sessionId, wake.TriggerKind, wake.Prompt, reservation, _actorShutdownCts.Token, wake.MailId));
     }
 
-    private async Task RunReservedWakeAsync(string sessionId, string kind, string prompt, Guid reservation, CancellationToken ct)
+    private async Task RunReservedWakeAsync(string sessionId, string kind, string prompt, Guid reservation, CancellationToken ct, string? mailId)
     {
         try
         {
-            await ExecuteSessionTurnPipelineAsync(sessionId, kind, prompt, ct, wakeReservation: reservation).ConfigureAwait(false);
+            await ExecuteSessionTurnPipelineAsync(sessionId, kind, prompt, ct, wakeReservation: reservation, mailId: mailId).ConfigureAwait(false);
         }
         finally
         {
@@ -2793,15 +2823,17 @@ public sealed partial class TrackActor : IAsyncDisposable
         }
     }
 
-    private void EnqueuePendingWakeCore(string sessionId, string triggerKind, string prompt)
+    private void EnqueuePendingWakeCore(string sessionId, string triggerKind, string prompt, string? mailId = null)
     {
         if (!_pendingWakes.TryGetValue(sessionId, out var queue))
         {
-            queue = new Queue<(string TriggerKind, string Prompt)>();
+            queue = new Queue<(string TriggerKind, string Prompt, string? MailId)>();
             _pendingWakes[sessionId] = queue;
         }
 
-        queue.Enqueue((triggerKind, prompt));
+        if (mailId is not null)
+            Interlocked.Increment(ref _queuedMailWakes);
+        queue.Enqueue((triggerKind, prompt, mailId));
     }
 
     private async Task SwitchLeadSessionCoreAsync(string newLeadSessionId, long now, CancellationToken ct)
