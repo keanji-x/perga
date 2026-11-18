@@ -213,15 +213,21 @@ public sealed partial class SqliteTrackStore : ISessionInputStore
         PersistedSessionInput input, AgentSessionDto session, EventEnvelopeDto sessionEvent, CancellationToken ct) =>
         _writer.EnqueueAsync(async (conn, tx, innerCt) =>
         {
-            RequireOne(await conn.ExecuteAsync(new CommandDefinition(
-                """
-                UPDATE session_inputs SET resolved_at_ms = @Now
-                WHERE id = @InputId AND resolved_at_ms IS NULL
-                  AND EXISTS (SELECT 1 FROM session_turns WHERE id = turn_id AND status = 'unknown');
-                """, new { input.Receipt.InputId, Now = session.UpdatedAtMs }, tx, cancellationToken: innerCt)).ConfigureAwait(false));
+            await MarkSessionInputResolvedAsync(conn, tx, input, session.UpdatedAtMs, innerCt).ConfigureAwait(false);
             await UpsertSessionInternalAsync(conn, tx, session, innerCt).ConfigureAwait(false);
             await InsertEventInternalAsync(conn, tx, sessionEvent, innerCt).ConfigureAwait(false);
         }, ct);
+
+    private static async Task MarkSessionInputResolvedAsync(SqliteConnection conn, SqliteTransaction tx,
+        PersistedSessionInput input, long now, CancellationToken ct)
+    {
+        RequireOne(await conn.ExecuteAsync(new CommandDefinition(
+            """
+            UPDATE session_inputs SET resolved_at_ms = @Now
+            WHERE id = @InputId AND resolved_at_ms IS NULL
+              AND EXISTS (SELECT 1 FROM session_turns WHERE id = turn_id AND status = 'unknown');
+            """, new { input.Receipt.InputId, Now = now }, tx, cancellationToken: ct)).ConfigureAwait(false));
+    }
 
     public Task<IReadOnlyList<(string TrackId, PersistedSessionInput Input)>> RecoverSessionInputsAsync(CancellationToken ct) =>
         _writer.EnqueueAsync<IReadOnlyList<(string, PersistedSessionInput)>>(async (conn, tx, innerCt) =>

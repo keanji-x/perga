@@ -74,6 +74,7 @@ public sealed class ClaudeAgentSession : IAgentSession
 
     public bool SupportsNativeSteer => false;
     public bool ShutdownConfirmed => _process.ShutdownConfirmed;
+    public bool RequiresTerminalStop => true;
 
     public string McpConfigFilePath => _mcpConfigFilePath;
 

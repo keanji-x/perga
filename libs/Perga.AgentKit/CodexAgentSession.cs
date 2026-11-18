@@ -16,6 +16,7 @@ public sealed class CodexAgentSession : IAgentSession
     private sealed class TurnStreamState
     {
         private readonly HashSet<string> _ignoredTurnIds = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, JsonElement> _earlyCompletions = new(StringComparer.Ordinal);
         private int _hasEmittedProgress;
         private int _fallbackClaimed;
         private int _finished;
@@ -63,6 +64,7 @@ public sealed class CodexAgentSession : IAgentSession
                     _ignoredTurnIds.Add(current);
                 }
 
+                _earlyCompletions.Clear();
                 Volatile.Write(ref TurnId, null);
                 TurnIdReady = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
             }
@@ -78,6 +80,25 @@ public sealed class CodexAgentSession : IAgentSession
             lock (_ignoredTurnIds)
             {
                 return _ignoredTurnIds.Contains(turnId);
+            }
+        }
+
+        public void BufferEarlyCompletion(string turnId, JsonElement parameters)
+        {
+            lock (_ignoredTurnIds)
+            {
+                if (_earlyCompletions.Count < 4)
+                    _earlyCompletions.TryAdd(turnId, parameters);
+            }
+        }
+
+        public JsonElement? TakeEarlyCompletion(string turnId)
+        {
+            lock (_ignoredTurnIds)
+            {
+                var found = _earlyCompletions.Remove(turnId, out var parameters);
+                _earlyCompletions.Clear();
+                return found ? parameters : null;
             }
         }
 
@@ -146,6 +167,8 @@ public sealed class CodexAgentSession : IAgentSession
 
     public bool SupportsNativeSteer => true;
     public bool ShutdownConfirmed => _rpc.ShutdownConfirmed;
+    public bool SupportsSessionResume => true;
+    public bool RequiresTerminalStop => true;
 
     internal static async Task<CodexAgentSession> OpenAsync(
         CommandInvocation wrappedCommand,
@@ -415,7 +438,7 @@ public sealed class CodexAgentSession : IAgentSession
         }
 
         var response = await _rpc.SendRequestAsync(method, threadParams, ct).ConfigureAwait(false);
-        var resolvedThreadId = ExtractThreadId(response) ?? spec.ResumeNativeThreadId;
+        var resolvedThreadId = ExtractThreadId(response);
         if (string.IsNullOrWhiteSpace(resolvedThreadId))
         {
             throw new InvalidOperationException($"Codex '{method}' response did not contain a thread id.");
@@ -466,43 +489,37 @@ public sealed class CodexAgentSession : IAgentSession
 
         try
         {
-            var result = await _rpc.SendRequestAsync("turn/start", turnParams, ct).ConfigureAwait(false);
-            var turnId = ExtractTurnId(result);
-            turnState.TrySetTurnId(turnId);
-            if (turnId is not null)
-                turnState.Events.Writer.TryWrite(new UnifiedAgentEvent.TurnAccepted(turnId));
-
-            if (result.ValueKind == JsonValueKind.Object &&
-                result.TryGetProperty("turn", out var turnObj) &&
-                turnObj.ValueKind == JsonValueKind.Object)
+            await _rpc.SendRequestAsync("turn/start", turnParams, ct, response =>
             {
-                var usage = TryParseUsage(turnObj) ?? TryParseUsage(result);
-                if (usage is not null)
+                var turnId = ExtractTurnId(response);
+                if (turnId is null)
+                    throw new InvalidOperationException("Codex did not return the native turn ID.");
+                if (!ReferenceEquals(Volatile.Read(ref _currentTurn), turnState) || !turnState.TrySetTurnId(turnId))
+                    return;
+
+                turnState.Events.Writer.TryWrite(new UnifiedAgentEvent.TurnAccepted(turnId));
+                if (turnState.TakeEarlyCompletion(turnId) is { } early)
+                    OnNotification("turn/completed", early);
+
+                if (turnState.IsTurnIgnored(turnId) || response.ValueKind != JsonValueKind.Object ||
+                    !response.TryGetProperty("turn", out var turn) || turn.ValueKind != JsonValueKind.Object)
+                    return;
+
+                turnState.LatestUsage = TryParseUsage(turn) ?? TryParseUsage(response) ?? turnState.LatestUsage;
+                if (!string.Equals(TryGetString(turn, "status"), "failed", StringComparison.OrdinalIgnoreCase))
+                    return;
+
+                var (code, message, retryable) = ExtractCodexError(turn);
+                if (allowFallback && CanTriggerModelFallback(turnState, code, message) && turnState.TryClaimModelFallback())
                 {
-                    turnState.LatestUsage = usage;
+                    turnState.IgnoreTurnAndResetForRetry(turnId);
+                    _ = RetryTurnWithFallbackModelAsync(threadId, input, turnState, code, message, retryable,
+                        isConclusive: true, ct);
+                    return;
                 }
 
-                if (turnObj.TryGetProperty("status", out var statusProp) &&
-                    statusProp.ValueKind == JsonValueKind.String)
-                {
-                    var status = statusProp.GetString();
-                    if (string.Equals(status, "failed", StringComparison.OrdinalIgnoreCase))
-                    {
-                        var (code, msg, retryable) = ExtractCodexError(turnObj);
-                        if (allowFallback &&
-                            CanTriggerModelFallback(turnState, code, msg) &&
-                            turnState.TryClaimModelFallback())
-                        {
-                            turnState.IgnoreTurnAndResetForRetry(turnId);
-                            await RetryTurnWithFallbackModelAsync(threadId, input, turnState, code, msg, retryable, isConclusive: true, ct)
-                                .ConfigureAwait(false);
-                            return;
-                        }
-
-                        turnState.TryFinish(new UnifiedAgentEvent.TurnError(code, msg, retryable, IsConclusive: true));
-                    }
-                }
-            }
+                turnState.TryFinish(new UnifiedAgentEvent.TurnError(code, message, retryable, IsConclusive: true));
+            }).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -646,12 +663,6 @@ public sealed class CodexAgentSession : IAgentSession
 
         switch (method)
         {
-            case "turn/started":
-            {
-                turnState.TrySetTurnId(notifTurnId);
-                break;
-            }
-
             case "item/agentMessage/delta":
             case "agent_message_delta":
             case "codex/event/agent_message_delta":
@@ -783,6 +794,10 @@ public sealed class CodexAgentSession : IAgentSession
 
             case "turn/completed":
             {
+                if (notifTurnId is null ||
+                    (TryGetString(parameters, "threadId") is { } threadId && threadId != turnState.ThreadId))
+                    break;
+
                 var usage = TryParseUsage(parameters) ?? turnState.LatestUsage;
                 var status = TryGetString(parameters, "status");
                 JsonElement turnObj = default;
@@ -795,8 +810,19 @@ public sealed class CodexAgentSession : IAgentSession
                     usage = TryParseUsage(turnObj) ?? usage;
                 }
 
-                if (string.Equals(status, "failed", StringComparison.OrdinalIgnoreCase) ||
-                    (hasTurnObj && turnObj.TryGetProperty("error", out var turnErr) && turnErr.ValueKind == JsonValueKind.Object))
+                if (status is not ("failed" or "completed" or "interrupted" or "cancelled" or "canceled"))
+                    break;
+
+                var boundTurnId = Volatile.Read(ref turnState.TurnId);
+                if (boundTurnId is null)
+                {
+                    turnState.BufferEarlyCompletion(notifTurnId, parameters);
+                    break;
+                }
+                if (boundTurnId != notifTurnId)
+                    break;
+
+                if (string.Equals(status, "failed", StringComparison.OrdinalIgnoreCase))
                 {
                     var (code, msg, retryable) = ExtractCodexError(hasTurnObj ? turnObj : parameters);
                     if (CanTriggerModelFallback(turnState, code, msg) &&
@@ -823,7 +849,7 @@ public sealed class CodexAgentSession : IAgentSession
                 {
                     turnState.TryFinish(new UnifiedAgentEvent.TurnInterrupted());
                 }
-                else
+                else if (string.Equals(status, "completed", StringComparison.OrdinalIgnoreCase))
                 {
                     turnState.TryFinish(new UnifiedAgentEvent.TurnCompleted(usage));
                 }

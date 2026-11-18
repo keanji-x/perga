@@ -38,6 +38,7 @@ public sealed record TrackCreation(TrackDto Track, ReportDocument Report, string
 
 public sealed record WorkerDispatchIntent(string TrackId, string AuthorId, string RequestKey, string RequestHash, string TaskKey);
 public sealed record StoredWorkerDispatch(string RequestHash, string TaskId);
+public sealed record ProviderSessionResumeFence(string SessionId, string TurnId, string NativeId, bool Quiescent);
 
 public interface ITrackReadStore
 {
@@ -50,6 +51,7 @@ public interface ITrackReadStore
     Task<TrackAggregateSnapshot?> LoadTrackAggregateAsync(string trackId, CancellationToken ct);
     Task<IReadOnlyList<ReportBlock>> GetReportRevisionBlocksAsync(string trackId, int docRev, CancellationToken ct);
     Task<IReadOnlyList<TaskAttemptDto>> ListAttemptsForTaskAsync(string taskId, CancellationToken ct);
+    Task<IReadOnlyList<ProviderSessionResumeFence>> ListSessionResumeFencesAsync(string trackId, CancellationToken ct);
     Task<IReadOnlyList<SessionItemDto>> ListSessionItemsAsync(string sessionId, long afterId = 0, int limit = 100, CancellationToken ct = default, bool latest = false, long? beforeId = null);
     async Task<(IReadOnlyList<SessionItemDto> Items, bool HasMoreBefore)> ListSessionItemsPageAsync(
         string sessionId,
@@ -121,6 +123,8 @@ public interface ITrackStore : ITrackReadStore
     IWorkerSettingsStore? WorkerSettings => null;
     Task<IReadOnlyList<(string TrackId, PersistedSessionInput Input)>> RecoverSessionInputsAsync(CancellationToken ct);
     Task UpsertSessionAsync(AgentSessionDto session, EventEnvelopeDto? evt, CancellationToken ct);
+    Task SaveSessionResumeFenceAsync(ProviderSessionResumeFence fence, CancellationToken ct);
+    Task CompleteSessionResumeAsync(AgentSessionDto session, PersistedSessionInput? unresolved, EventEnvelopeDto sessionEvent, CancellationToken ct);
     Task RecordTurnAndItemsAsync(SessionTurnDto turn, IReadOnlyList<SessionItemDto> newItems, AgentSessionDto? updatedSession, CancellationToken ct);
     Task<(SessionTurnDto Turn, IReadOnlyList<long> ItemIds)> RecordTurnAndItemsWithIdsAsync(
         SessionTurnDto turn,

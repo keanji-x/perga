@@ -15407,6 +15407,60 @@
         }
       }
     },
+    "/api/v1/sessions/{sessionId}/resume": {
+      "post": {
+        "summary": "Resume the original provider session after stopping the observed turn",
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "turnId"
+                ],
+                "properties": {
+                  "turnId": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Provider context restored",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentSessionDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing target turn"
+          },
+          "404": {
+            "description": "Session not found"
+          },
+          "409": {
+            "description": "Recovery is in progress, the target is stale, or safe stop could not be confirmed"
+          }
+        }
+      }
+    },
     "/api/v1/sessions/{sessionId}/interrupt": {
       "parameters": [
         {
@@ -25614,6 +25668,20 @@
               "type": "string"
             },
             "description": "Recent queue identities whose user rows were committed to history."
+          },
+          "resume": {
+            "oneOf": [
+              {
+                "type": "object",
+                "required": ["turnId", "state"],
+                "properties": {
+                  "turnId": { "type": "string" },
+                  "state": { "enum": ["available", "resuming", "paused"] },
+                  "canStartFresh": { "type": "boolean" }
+                }
+              },
+              { "type": "null" }
+            ]
           },
           "canSteer": {
             "type": "boolean",

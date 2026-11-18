@@ -338,6 +338,12 @@ export const workerActivitySchema = z.object({
     turnId: z.string().nullish(), delivery: z.string(), createdAtMs: z.number() })),
 });
 export type WorkerActivity = z.infer<typeof workerActivitySchema>;
+export const providerSessionResumeSchema = z.object({
+  turnId: z.string().min(1),
+  state: z.enum(['available', 'resuming', 'paused']),
+  canStartFresh: z.boolean().optional(),
+});
+export type ProviderSessionResume = z.infer<typeof providerSessionResumeSchema>;
 
 export const sessionItemsPageDtoSchema = z.object({
   items: z.array(sessionItemDtoSchema).nullish().transform((v) => v ?? []),
@@ -347,6 +353,7 @@ export const sessionItemsPageDtoSchema = z.object({
     state: z.enum(['waiting', 'steering', 'sending', 'processing', 'unconfirmed']) })).optional(),
   canSteer: z.boolean().optional(),
   queueHandoffIds: z.array(z.string()).optional(),
+  resume: providerSessionResumeSchema.nullish(),
   session: agentSessionDtoSchema,
   hasMoreBefore: z.boolean().optional(),
   worker: workerActivitySchema.nullish(),

@@ -102,6 +102,8 @@ export type ConversationStore = Readonly<{
   loadEarlier: () => boolean;
   /** Why the queue is not draining, when the reader has to act; a standing condition of the conversation, unlike `actionError`. */
   blockedReason: string | null;
+  providerRecoveryHoldsSend: boolean;
+  providerResume: Readonly<{ state: 'available' | 'resuming' | 'paused'; start: () => void }> | null;
   abandonUnknownInput: (() => void) | null;
   terminalTimeout: HarnessTimeoutEvidence | null;
   currentOutcome: import('../../../../core/domain/conversation-display.ts').CurrentConversationOutcome | null;

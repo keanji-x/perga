@@ -414,6 +414,19 @@ for raw_line in sys.stdin:
         prompt_text = inputs[0].get("text", "") if inputs else ""
         corr_id = params.get("correlationId", "")
         turn_model = params.get("model")
+        if prompt_text == "FAIL_BEFORE_START_REPLY" and turn_model is None:
+            failed = {"id": turn_id, "status": "failed",
+                      "error": {"code": "model_not_found", "message": "Model not found"}}
+            send({"jsonrpc": "2.0", "method": "turn/completed", "params": {
+                "threadId": state["thread_id"], "turn": failed}})
+            send({"jsonrpc": "2.0", "id": msg_id, "result": {"turn": failed}})
+            continue
+        if prompt_text == "COMPLETE_BEFORE_START_REPLY":
+            for completed_id, status in (("wrong_turn", "interrupted"), (turn_id, "completed")):
+                send({"jsonrpc": "2.0", "method": "turn/completed", "params": {
+                    "threadId": state["thread_id"], "turn": {"id": completed_id, "status": status}}})
+            send({"jsonrpc": "2.0", "id": msg_id, "result": {"turn": {"id": turn_id, "status": "inProgress"}}})
+            continue
         send({"jsonrpc": "2.0", "id": msg_id, "result": {"turn": {"id": turn_id, "status": "inProgress"}}})
         t = threading.Thread(target=run_turn, args=(turn_id, prompt_text, corr_id, turn_model), daemon=True)
         t.start()
@@ -837,17 +850,24 @@ for raw_line in sys.stdin:
             "id": msg_id,
             "result": {
                 "protocolVersion": 1,
-                "agentCapabilities": {"loadSession": True, "mcpCapabilities": mcp_caps}
+                "agentCapabilities": {
+                    "loadSession": os.environ.get("MOCK_ACP_DISABLE_LOAD") != "1",
+                    "mcpCapabilities": mcp_caps,
+                    "sessionCapabilities": {"resume": {}, "close": {}} if os.environ.get("MOCK_ACP_RESUME") == "1" else {}
+                }
             }
         })
-    elif method in ("session/new", "session/load"):
+    elif method in ("session/new", "session/load", "session/resume"):
         state["session_method"] = method
         state["mcp_servers"] = params.get("mcpServers") or []
         state["model"] = params.get("model")
         state["system_prompt"] = params.get("systemPrompt")
-        if method == "session/load":
+        if method in ("session/load", "session/resume"):
             state["session_id"] = params.get("sessionId")
-            send({"jsonrpc": "2.0", "id": msg_id, "result": {}})
+            if os.environ.get("MOCK_ACP_INVALID_RESUME") == "1":
+                send({"jsonrpc": "2.0", "id": msg_id})
+            else:
+                send({"jsonrpc": "2.0", "id": msg_id, "result": {}})
         else:
             state["session_id"] = "acp_sess_001"
             if os.environ.get("MOCK_ACP_CONFIG_OPTIONS_MODELS") == "1":
@@ -885,6 +905,12 @@ for raw_line in sys.stdin:
                         }
                     }
                 })
+    elif method == "session/close":
+        if params.get("sessionId") == state["session_id"]:
+            result = {"success": False} if os.environ.get("MOCK_ACP_INVALID_CLOSE") == "1" else {}
+            send({"jsonrpc": "2.0", "id": msg_id, "result": result})
+        else:
+            send({"jsonrpc": "2.0", "id": msg_id, "error": {"code": -32602, "message": "wrong session"}})
     elif method == "session/set_model":
         if os.environ.get("MOCK_ACP_NO_SET_MODEL") == "1":
             send({"jsonrpc": "2.0", "id": msg_id, "error": {"code": -32601, "message": "Method not found"}})

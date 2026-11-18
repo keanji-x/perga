@@ -23,7 +23,9 @@ internal sealed class JsonRpcStdioConnection : IAsyncDisposable
     private readonly Action<string, JsonElement> _onNotification;
     private readonly Action<JsonElement, string, JsonElement> _onServerRequest;
     private readonly Action<Exception?> _onDisconnected;
-    private readonly ConcurrentDictionary<string, TaskCompletionSource<JsonElement>> _pendingRequests = new(StringComparer.Ordinal);
+    private sealed record PendingRequest(TaskCompletionSource<JsonElement> Completion, Action<JsonElement>? ObserveResult);
+
+    private readonly ConcurrentDictionary<string, PendingRequest> _pendingRequests = new(StringComparer.Ordinal);
     private readonly CancellationTokenSource _pumpCts = new();
     private readonly Task _pumpTask;
     private long _nextRequestId;
@@ -59,13 +61,14 @@ internal sealed class JsonRpcStdioConnection : IAsyncDisposable
             _ => idElement.GetRawText()
         };
 
-    public async Task<JsonElement> SendRequestAsync(string method, object? parameters, CancellationToken ct)
+    public async Task<JsonElement> SendRequestAsync(string method, object? parameters, CancellationToken ct,
+        Action<JsonElement>? observeResult = null)
     {
         var numericId = Interlocked.Increment(ref _nextRequestId);
         var key = $"n:{numericId.ToString(CultureInfo.InvariantCulture)}";
         var tcs = new TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        if (!_pendingRequests.TryAdd(key, tcs))
+        if (!_pendingRequests.TryAdd(key, new PendingRequest(tcs, observeResult)))
         {
             throw new InvalidOperationException($"Duplicate JSON-RPC request id '{key}'.");
         }
@@ -80,7 +83,7 @@ internal sealed class JsonRpcStdioConnection : IAsyncDisposable
         {
             if (_pendingRequests.TryRemove(key, out var removed))
             {
-                removed.TrySetCanceled(ct);
+                removed.Completion.TrySetCanceled(ct);
             }
         });
 
@@ -243,7 +246,7 @@ internal sealed class JsonRpcStdioConnection : IAsyncDisposable
         if (hasId && !hasMethod)
         {
             var key = NormalizeIdKey(idProp);
-            if (!_pendingRequests.TryRemove(key, out var tcs))
+            if (!_pendingRequests.TryRemove(key, out var pending))
             {
                 return;
             }
@@ -258,17 +261,27 @@ internal sealed class JsonRpcStdioConnection : IAsyncDisposable
                     ? mProp.GetString() ?? "JSON-RPC error"
                     : errProp.GetRawText();
                 JsonElement? data = errProp.TryGetProperty("data", out var dProp) ? dProp.Clone() : null;
-                tcs.TrySetException(new JsonRpcRemoteException(code, msg, data));
+                pending.Completion.TrySetException(new JsonRpcRemoteException(code, msg, data));
                 return;
             }
 
             if (root.TryGetProperty("result", out var resProp))
             {
-                tcs.TrySetResult(resProp.Clone());
+                try
+                {
+                    var result = resProp.Clone();
+                    // Bind request identity before reading the following provider notification.
+                    pending.ObserveResult?.Invoke(result);
+                    pending.Completion.TrySetResult(result);
+                }
+                catch (Exception error)
+                {
+                    pending.Completion.TrySetException(error);
+                }
             }
             else
             {
-                tcs.TrySetResult(CreateEmptyJsonObject());
+                pending.Completion.TrySetException(new InvalidOperationException("A JSON-RPC response must contain a result or error."));
             }
 
             return;
@@ -299,9 +312,9 @@ internal sealed class JsonRpcStdioConnection : IAsyncDisposable
     {
         foreach (var kvp in _pendingRequests)
         {
-            if (_pendingRequests.TryRemove(kvp.Key, out var tcs))
+            if (_pendingRequests.TryRemove(kvp.Key, out var pending))
             {
-                tcs.TrySetException(ex);
+                pending.Completion.TrySetException(ex);
             }
         }
     }

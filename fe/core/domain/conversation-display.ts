@@ -6,7 +6,7 @@ import { sessionInputReceiptSchema, workerActivitySchema } from '../api/perga-v1
 import {
   agentProviderSchema,
   conversationCursorSchema,
-  sessionItemsPageDtoSchema,
+  sessionItemsPageDtoSchema, providerSessionResumeSchema,
   workerSessionStateSchema,
   type SessionItemsPageDto,
 } from '../api/schemas.js';
@@ -444,6 +444,7 @@ export const conversationRunMetadataSchema = z.object({
   native_turn_id:z.string().nullable(),
   can_steer_queued:z.boolean().optional(),
   queue_handoff_ids:z.array(z.string()).optional(),
+  provider_resume:providerSessionResumeSchema.nullish(),
 }).refine(run=>run.input_contract !== 'canonical' || run.runtime_state !== null,
   'Canonical runs require their actual current runtime state').refine(run=>run.input_contract !== 'historical' || run.terminal_outcome === null,
   'Historical runs do not carry a current canonical terminal outcome');
@@ -493,6 +494,7 @@ export function conversationRunOperation(card: string): ApiOperation<PlannerRun 
             ? { turn_id: page.activeTurn.id, elapsed_ms: Math.max(0, Date.now() - (page.activeTurn.startedAtMs ?? Date.now())) }
             : null,
           unknown_session_input: page.unknownInput,
+          ...(page.resume == null ? {} : { provider_resume: page.resume }),
           input_contract: 'canonical',
           runtime_state: running ? 'running' : 'idle',
           history_replacement_supported: false,

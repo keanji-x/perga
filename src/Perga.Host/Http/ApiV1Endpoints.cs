@@ -21,6 +21,8 @@ public sealed record SendMessageHttpBody(
 
 public sealed record InterruptWorkerHttpBody(string AttemptId, string TurnId);
 
+public sealed record ResumeProviderSessionHttpBody(string TurnId);
+
 public sealed record SteerQueuedMessageHttpBody(string TurnId);
 
 public sealed record SteerMessageHttpBody(string TurnId, string Content);
@@ -368,6 +370,16 @@ public static class ApiV1Endpoints
         {
             var receipt = await kernel.ResolveUnknownInputAsync(sessionId, inputId, ct).ConfigureAwait(false);
             return Results.Json(receipt, PergaJsonDefaults.ApiOptions);
+        });
+
+        v1.MapPost("/sessions/{sessionId}/resume", async (
+            string sessionId, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
+        {
+            var body = await ReadRequiredJsonBodyAsync<ResumeProviderSessionHttpBody>(ctx, ct).ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(body.TurnId))
+                return HttpErrorHandling.BadRequest("invalid_argument", "A target turn is required.");
+            var session = await kernel.ResumeProviderSessionAsync(sessionId, body.TurnId, ct).ConfigureAwait(false);
+            return Results.Json(session, PergaJsonDefaults.ApiOptions);
         });
 
         v1.MapPost("/sessions/{sessionId}/interrupt", async (string sessionId, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>

@@ -38,6 +38,7 @@ public sealed partial class TrackActor
                 return new(null, null, true, new(sessionId, prior.Id));
             }
 
+            RequireSessionDispatchAvailableCore(sessionId);
             if (request.SteerIfRunning && (_activeTurns.ContainsKey(sessionId) ||
                 _idempotencyTurns.ContainsKey((sessionId, request.IdempotencyKey))))
                 return new(null, null, false);
@@ -129,6 +130,10 @@ public sealed partial class TrackActor
             if (input.Receipt.TurnStatus != "unknown" || session.Status != "unknown")
                 throw KernelException.Conflict("Only an unresolved unknown input can be abandoned.");
 
+            _sessionResumeHolds.TryGetValue(sessionId, out var resume);
+            if (resume is not null && (resume.Busy || !resume.Quiescent || resume.TurnId != input.Receipt.TurnId))
+                throw KernelException.PreconditionFailed("Confirm that the previous provider execution has stopped before replacing its session.");
+
             // The previous provider thread may still contain effects from the unknown turn.
             var updated = session with
             {
@@ -140,10 +145,15 @@ public sealed partial class TrackActor
                 await agent.DisposeAsync().ConfigureAwait(false);
             var sessionEvent = SessionUpdatedEvent(updated);
             await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
-            await _store.SessionInputs.ResolveAsync(input, updated, sessionEvent, ct).ConfigureAwait(false);
+            if (resume is null)
+                await _store.SessionInputs.ResolveAsync(input, updated, sessionEvent, ct).ConfigureAwait(false);
+            else
+                await _store.CompleteSessionResumeAsync(updated, input, sessionEvent, ct).ConfigureAwait(false);
+
             _sessions[sessionId] = updated;
+            ReleaseSessionResumeCore(sessionId);
             SchedulePendingWakeCore(sessionId);
-            await PublishInputEventAsync(sessionEvent).ConfigureAwait(false);
+            NotifyQueueChangedCore(sessionId);
             return input.Receipt with { ResolvedAtMs = updated.UpdatedAtMs };
         }, ct);
 

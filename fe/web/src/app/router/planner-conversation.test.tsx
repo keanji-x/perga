@@ -1132,7 +1132,7 @@ describe('planner conversation regressions', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: 'Say it now' }));
 
-    expect(await screen.findByText(/stays queued and will go with the next turn/)).toBeTruthy();
+    expect(await screen.findByText(/still queued for a follow-up turn/)).toBeTruthy();
     expect(document.querySelector('[data-nc-pending-entry="entry-9"]')).not.toBeNull();
   });
 

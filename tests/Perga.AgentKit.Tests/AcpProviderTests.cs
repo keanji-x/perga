@@ -84,6 +84,51 @@ public sealed class AcpProviderTests : IDisposable
         Assert.DoesNotContain("<system_instructions>", loadedText, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task AcpRestoreUsesNegotiatedResumeAndRejectsUnsupportedProviders(bool supportsResume)
+    {
+        await using var runtime = CreateRuntime(new Dictionary<string, string>
+        {
+            ["MOCK_ACP_DISABLE_LOAD"] = "1",
+            ["MOCK_ACP_RESUME"] = supportsResume ? "1" : "0",
+        });
+        var spec = new HarnessLaunchSpec("acp:antigravity", null, _fixture.WorkspaceDir, "stored-session", null,
+            MockCliFixture.CreateSampleMcpServers());
+        if (!supportsResume)
+        {
+            await Assert.ThrowsAsync<NotSupportedException>(() => runtime.OpenSessionAsync(spec, CancellationToken.None));
+            return;
+        }
+
+        await using var session = await runtime.OpenSessionAsync(spec, CancellationToken.None);
+        Assert.Equal("stored-session", session.NativeThreadId);
+        var events = await DrainTurnAsync(session, new TurnInput("next", "resume-turn"));
+        Assert.Contains(events, item => item is UnifiedAgentEvent.TextDelta text &&
+            text.Delta.Contains("session/resume|stored-session", StringComparison.Ordinal));
+        Assert.True(session.SupportsScopedClose);
+        Assert.True(await session.TryCloseSessionAsync(CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task AcpMalformedRecoveryRepliesDoNotConfirmResumeOrClose()
+    {
+        await using var runtime = CreateRuntime(new Dictionary<string, string>
+        {
+            ["MOCK_ACP_RESUME"] = "1",
+            ["MOCK_ACP_INVALID_RESUME"] = "1",
+            ["MOCK_ACP_INVALID_CLOSE"] = "1",
+        });
+        var spec = new HarnessLaunchSpec("acp:antigravity", null, _fixture.WorkspaceDir, "stored-session", null,
+            MockCliFixture.CreateSampleMcpServers());
+        await Assert.ThrowsAsync<InvalidOperationException>(() => runtime.OpenSessionAsync(spec, CancellationToken.None));
+
+        await using var session = await runtime.OpenSessionAsync(spec with { ResumeNativeThreadId = null }, CancellationToken.None);
+        Assert.True(session.SupportsScopedClose);
+        Assert.False(await session.TryCloseSessionAsync(CancellationToken.None));
+    }
+
     [Fact]
     public async Task AcpSetModel_FallsBackToSetConfigOptionWhenSetModelReturnsMethodNotFound()
     {

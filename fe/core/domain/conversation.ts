@@ -782,6 +782,16 @@ export function sendPlannerInputOperation(
   };
 }
 
+export function resumeProviderSessionOperation(sessionId: string, turnId: string) {
+  return {
+    method: 'POST',
+    path: `/api/v1/sessions/${encodeURIComponent(sessionId)}/resume`,
+    body: { turnId },
+    timeoutMs: 30_000,
+    responseSchema: agentSessionDtoSchema.refine(session => session.id === sessionId),
+  } satisfies ApiOperation<unknown>;
+}
+
 export function abandonSessionInputOperation(sessionId: string, inputId: string): ApiOperation<SessionInputReceipt> {
   return { method: 'POST', path: `/api/v1/sessions/${encodeURIComponent(sessionId)}/inputs/${encodeURIComponent(inputId)}/abandon`,
     responseSchema: sessionInputReceiptSchema };
