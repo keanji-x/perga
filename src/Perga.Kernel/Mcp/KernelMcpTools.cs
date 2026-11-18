@@ -158,7 +158,7 @@ public static class KernelMcpDispatcher
         CancellationToken ct = default)
     {
         var args = arguments.ValueKind == JsonValueKind.Undefined ? JsonHelpers.EmptyObject : arguments;
-        var expectedPolicyEpoch = await kernel.GuardMcpToolCallAsync(caller.TrackId, caller.SessionId, "perga", toolName, args, ct)
+        var expectedPolicyGeneration = await kernel.GuardMcpToolCallAsync(caller.TrackId, caller.SessionId, "perga", toolName, args, ct)
             .ConfigureAwait(false);
 
         switch (toolName)
@@ -310,7 +310,7 @@ public static class KernelMcpDispatcher
                 var source = TemplateStringArg(args, "source");
                 JsonElement? inputs = JsonHelpers.TryGetPropertyIgnoreCase(args, ["inputs"], out var value) ? value.Clone() : null;
                 return JsonHelpers.ToElement(await kernel.SetTrackTemplateAsync(caller.TrackId, caller.SessionId,
-                    templateId, source, expectedPolicyEpoch, inputs, ct).ConfigureAwait(false));
+                    templateId, source, expectedPolicyGeneration, inputs, ct).ConfigureAwait(false));
             }
 
             case KernelMcpToolNames.TrackClose:

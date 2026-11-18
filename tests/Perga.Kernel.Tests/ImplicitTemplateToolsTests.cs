@@ -148,17 +148,46 @@ public sealed class ImplicitTemplateToolsTests
         if (alreadyTemplated)
             await Call(ctx, caller, KernelMcpToolNames.TrackSet, new { source = allowing });
         var args = TestJson.FromObject(new { source = allowing });
-        var epochs = await Task.WhenAll(
+        var generations = await Task.WhenAll(
             ctx.Kernel.GuardMcpToolCallAsync(snap.Track.Id, caller.SessionId, "perga", KernelMcpToolNames.TrackSet, args),
             ctx.Kernel.GuardMcpToolCallAsync(snap.Track.Id, caller.SessionId, "perga", KernelMcpToolNames.TrackSet, args));
-        Assert.Equal(epochs[0], epochs[1]);
-        await ctx.Kernel.SetTrackTemplateAsync(snap.Track.Id, caller.SessionId, null, allowing, epochs[0]);
+        Assert.Equal(generations[0], generations[1]);
+        await ctx.Kernel.SetTrackTemplateAsync(snap.Track.Id, caller.SessionId, null, allowing, generations[0]);
         var before = await ctx.Kernel.GetTrackAggregateAsync(snap.Track.Id);
         var events = ctx.Store.PersistedEvents.Count;
         var ex = await Assert.ThrowsAsync<KernelException>(() => ctx.Kernel.SetTrackTemplateAsync(
-            snap.Track.Id, caller.SessionId, null, allowing, epochs[1]));
+            snap.Track.Id, caller.SessionId, null, allowing, generations[1]));
         Assert.Equal(KernelErrorCode.PolicyDenied, ex.Code);
         Assert.Equal(before.Track, (await ctx.Kernel.GetTrackAggregateAsync(snap.Track.Id)).Track);
+        Assert.Equal(events, ctx.Store.PersistedEvents.Count);
+    }
+
+    [Fact]
+    public async Task TrackSet_AfterActorEviction_RejectsAuthorizationFromBeforePolicySwap()
+    {
+        await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
+        var (_, snap) = await ctx.CreateDefaultTrackAsync();
+        var caller = Caller(snap);
+        var args = TestJson.FromObject(new { source = Source });
+        var generation = await ctx.Kernel.GuardMcpToolCallAsync(snap.Track.Id, caller.SessionId,
+            "perga", KernelMcpToolNames.TrackSet, args);
+        await Call(ctx, caller, KernelMcpToolNames.TrackSet, new { source = Source });
+
+        ctx.Time.Advance(TimeSpan.FromHours(1));
+        Assert.Equal(1, await ctx.Kernel.Actors.EvictIdleActorsAsync());
+        Assert.False(ctx.Kernel.Actors.IsTrackActiveInMemory(snap.Track.Id));
+        var denied = await Assert.ThrowsAsync<KernelException>(() => ctx.Kernel.GuardMcpToolCallAsync(
+            snap.Track.Id, caller.SessionId, "perga", KernelMcpToolNames.TrackSet, args));
+        Assert.Equal(KernelErrorCode.PolicyDenied, denied.Code);
+
+        var before = (await ctx.Store.LoadTrackAggregateAsync(snap.Track.Id, default))!;
+        var events = ctx.Store.PersistedEvents.Count;
+        var stale = await Assert.ThrowsAsync<KernelException>(() => ctx.Kernel.SetTrackTemplateAsync(
+            snap.Track.Id, caller.SessionId, null, Source, generation));
+        Assert.Equal(KernelErrorCode.PolicyDenied, stale.Code);
+        var after = (await ctx.Store.LoadTrackAggregateAsync(snap.Track.Id, default))!;
+        Assert.Equal(before.Track, after.Track);
+        Assert.Equal(before.TemplateSnapshotSource, after.TemplateSnapshotSource);
         Assert.Equal(events, ctx.Store.PersistedEvents.Count);
     }
 

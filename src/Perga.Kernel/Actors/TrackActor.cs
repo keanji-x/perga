@@ -42,7 +42,7 @@ public sealed partial class TrackActor : IAsyncDisposable
     private TrackDto _track = null!;
     private ReportDocument _report = null!;
     private CompiledPolicy? _policy;
-    private long _policyEpoch;
+    private string _policyGeneration = Guid.NewGuid().ToString("N");
     private string? _templateSnapshotSource;
     private MountedWorkspace? _mountedWorkspace;
     private readonly List<TaskDto> _tasks = [];
@@ -130,7 +130,7 @@ public sealed partial class TrackActor : IAsyncDisposable
         _track = track;
         _report = report;
         _policy = policy;
-        _policyEpoch++;
+        _policyGeneration = Guid.NewGuid().ToString("N");
         _templateSnapshotSource = templateSnapshotSource;
         _mountedWorkspace = mountedWorkspace;
 
@@ -318,13 +318,13 @@ public sealed partial class TrackActor : IAsyncDisposable
     }
 
     public Task<TrackDto> SetTemplateBySessionAsync(string callerSessionId, string? templateId,
-        string? source, long expectedPolicyEpoch, JsonElement? inputs, CancellationToken ct = default)
+        string? source, string expectedPolicyGeneration, JsonElement? inputs, CancellationToken ct = default)
     {
         return EnqueueAsync(async _ =>
         {
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
             RequireGovernanceSessionCore(callerSessionId, KernelMcpToolNames.TrackSet);
-            if (_policyEpoch != expectedPolicyEpoch)
+            if (_policyGeneration != expectedPolicyGeneration)
                 throw KernelException.PolicyDenied("Active policy changed after template application was authorized.");
             if (_track.ClosedAtMs is not null)
                 throw KernelException.Conflict("Cannot set a template on a closed track.");
@@ -366,7 +366,7 @@ public sealed partial class TrackActor : IAsyncDisposable
             await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
             await _store.UpdateTrackTemplateAndEmitAsync(nextTrack, policy.JsSource, evt, ct).ConfigureAwait(false);
             _policy = policy;
-            _policyEpoch++;
+            _policyGeneration = Guid.NewGuid().ToString("N");
             _templateSnapshotSource = policy.JsSource;
             var pluginsChanged = !_track.EnabledPlugins.SequenceEqual(nextTrack.EnabledPlugins, StringComparer.Ordinal);
             _track = nextTrack;
@@ -1374,7 +1374,7 @@ public sealed partial class TrackActor : IAsyncDisposable
         }, ct).ConfigureAwait(false);
     }
 
-    public async Task<long> GuardMcpToolCallAsync(
+    public async Task<string> GuardMcpToolCallAsync(
         string sessionId,
         string mcpServer,
         string toolName,
@@ -1384,7 +1384,7 @@ public sealed partial class TrackActor : IAsyncDisposable
         Interlocked.Increment(ref _inFlightExternalOps);
         try
         {
-            long authorizedPolicyEpoch = 0;
+            string authorizedPolicyGeneration = null!;
             var askSuspension = await EnqueueAsync<PendingAskSuspension?>(async _ =>
             {
                 await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
@@ -1402,7 +1402,7 @@ public sealed partial class TrackActor : IAsyncDisposable
                 }
 
                 // Capture before evaluation, including across an AskHuman suspension.
-                authorizedPolicyEpoch = _policyEpoch;
+                authorizedPolicyGeneration = _policyGeneration;
                 if (_policy is null)
                 {
                     return null;
@@ -1430,7 +1430,7 @@ public sealed partial class TrackActor : IAsyncDisposable
 
             if (askSuspension is null)
             {
-                return authorizedPolicyEpoch;
+                return authorizedPolicyGeneration;
             }
 
             if (askSuspension.ShouldWakeLead)
@@ -1444,7 +1444,7 @@ public sealed partial class TrackActor : IAsyncDisposable
                 throw KernelException.PolicyDenied(
                     $"MCP tool '{mcpServer}:{toolName}' denied by human on ask '{askSuspension.Ask.Id}'.");
             }
-            return authorizedPolicyEpoch;
+            return authorizedPolicyGeneration;
         }
         finally
         {
@@ -1549,7 +1549,7 @@ public sealed partial class TrackActor : IAsyncDisposable
             _policy = _templateCatalog.TryGetPolicy(_track.TemplateId!);
         }
 
-        _policyEpoch++;
+        _policyGeneration = Guid.NewGuid().ToString("N");
 
         _tasks.Clear();
         _tasks.AddRange(snapshot.Tasks);
