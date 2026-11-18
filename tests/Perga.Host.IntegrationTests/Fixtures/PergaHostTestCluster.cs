@@ -45,7 +45,8 @@ public sealed class AdvanceableTimeProvider : TimeProvider
 
 public sealed record RecordedSessionOpen(
     HarnessLaunchSpec Spec,
-    DateTimeOffset OpenedAt);
+    DateTimeOffset OpenedAt,
+    string? NativeThreadId);
 
 public sealed record RecordedTurnExecution(
     HarnessLaunchSpec Spec,
@@ -57,6 +58,8 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
     private readonly ConcurrentQueue<RecordedTurnExecution> _executedTurns = new();
     private Func<HarnessLaunchSpec, TurnInput, CancellationToken, IAsyncEnumerable<UnifiedAgentEvent>>? _turnHandler;
     private Func<string, Task<bool>>? _steerHandler;
+    public Func<CancellationToken, Task>? CancelHandler { get; set; }
+    public Func<CancellationToken, Task<bool>>? CloseHandler { get; set; }
     private int _probeCount;
     private int _forceRefreshProbeCount;
 
@@ -104,8 +107,8 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
     public Task<IAgentSession> OpenSessionAsync(HarnessLaunchSpec spec, CancellationToken ct)
     {
         _ = ct;
-        _openedSessions.Enqueue(new RecordedSessionOpen(spec, DateTimeOffset.UtcNow));
         IAgentSession session = new ScriptableAgentSession(this, spec);
+        _openedSessions.Enqueue(new RecordedSessionOpen(spec, DateTimeOffset.UtcNow, session.NativeThreadId));
         return Task.FromResult(session);
     }
 
@@ -149,6 +152,11 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
 
         public string? NativeThreadId { get; }
         public bool SupportsNativeSteer => _owner.SupportsSteering;
+        public bool SupportsSessionResume => true;
+        public bool SupportsScopedClose => _owner.CloseHandler is not null;
+
+        public Task<bool> TryCloseSessionAsync(CancellationToken ct) =>
+            _owner.CloseHandler?.Invoke(ct) ?? Task.FromResult(false);
 
         public async IAsyncEnumerable<UnifiedAgentEvent> StreamTurnAsync(
             TurnInput input,
@@ -171,7 +179,8 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
 
         public Task CancelTurnAsync(CancellationToken ct)
         {
-            _ = ct;
+            if (_owner.CancelHandler is { } handler)
+                return handler(ct);
             _activeTurnCts?.Cancel();
             return Task.CompletedTask;
         }

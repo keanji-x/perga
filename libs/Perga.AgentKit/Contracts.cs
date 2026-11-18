@@ -86,6 +86,10 @@ public interface IAgentSession : IAsyncDisposable
     string? NativeThreadId { get; }
     bool SupportsNativeSteer { get; }
     bool ShutdownConfirmed => true;
+    bool SupportsSessionResume => false;
+    bool RequiresTerminalStop => false;
+    bool SupportsScopedClose => false;
+    Task<bool> TryCloseSessionAsync(CancellationToken ct) => Task.FromResult(false);
 
     IAsyncEnumerable<UnifiedAgentEvent> StreamTurnAsync(TurnInput input, CancellationToken ct);
     Task CancelTurnAsync(CancellationToken ct);

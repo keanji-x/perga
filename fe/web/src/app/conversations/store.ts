@@ -190,6 +190,11 @@ export function useConversationStore(
   /** What went wrong with an action of the card it names; another card's is never this one's. */
   const [compactPending, setCompactPending] = useState<ReadonlySet<string>>(() => new Set());
   const compactLeases = useRef(new Set<string>());
+  const resumeLeases = useRef(new Set<string>());
+  const [resumePending, setResumePending] = useState<ReadonlySet<string>>(() => new Set());
+  const providerResume = run.data?.provider_resume ?? null;
+  const resumeState = resumePending.has(cardId) ? 'resuming' : providerResume?.state;
+  const recoveryHoldsSend = resumeState === 'resuming' || resumeState === 'paused';
   const [actionError, setActionError] = useState<Readonly<{ cardId: string; message: string }> | null>(null);
   const [workerSending, setWorkerSending] = useState<string | null>(null);
   const workerSendLease = useRef<string | null>(null);
@@ -212,7 +217,7 @@ export function useConversationStore(
     transcriptKey: transcriptQuery.queryKey, transcriptReads, items, worker,
   });
   const working = !executionHeld && !stalled && (phase === 'issuing_turn' || phase === 'compacting' || phase === 'turn_running');
-  const canStop = working && (!pergaInputProtocol || phase === 'turn_running');
+  const canStop = resumeState !== 'resuming' && working && (!pergaInputProtocol || phase === 'turn_running');
   const stop = useConversationStop({
     cardId, canStop,
     responseEnded: run.error === null && (canonical && !pergaInputProtocol
@@ -343,7 +348,7 @@ export function useConversationStore(
       }).then(observeQueueOutcome);
     });
   /* A persisted handoff retires the queue copy; canonical Unknown remains a held submission. */
-  const steerQueuedEntry = phase === 'turn_running' && !executionHeld && !stalled && run.error === null
+  const steerQueuedEntry = !recoveryHoldsSend && phase === 'turn_running' && !executionHeld && !stalled && run.error === null
     && (!canonical || steeringTarget !== null)
     && (!pergaInputProtocol || (!run.isFetching && run.data?.can_steer_queued === true))
     ? (entry: PendingQueueEntry) => registry.holdQueueWrite<PlannerQueueWriteOutcome>(cardId,
@@ -425,7 +430,7 @@ export function useConversationStore(
     stopping,
     stopFeedback,
     sending: view.sending || workerSending === cardId,
-    sendBlocked: view.blocked || run.data?.unknown_session_input != null ||
+    sendBlocked: recoveryHoldsSend || view.blocked || run.data?.unknown_session_input != null ||
       (worker === null ? pergaInputProtocol && working && !canQueueWhileRunning : !['running', 'paused'].includes(worker.phase)),
     initialInputChecking: view.checkingInitialInput && initialInputError === null,
     initialInputError,
@@ -463,7 +468,7 @@ export function useConversationStore(
     attachmentsSupported: (run.data?.attachments_supported ?? false) && (scopeKind !== 'track-assistant' || (!capabilities.isError
       && capabilities.data?.find(answer => answer.availability.provider === provider)?.capabilities.images === true)),
     historyReplacementSupported,
-    manualCompactSupported: run.data?.manual_compact_supported === true,
+    manualCompactSupported: !recoveryHoldsSend && run.data?.manual_compact_supported === true,
     contextUsage: run.data?.context_usage_invalidated === true ? null : run.data?.token_usage ?? null,
     compactOutcome: run.data?.compact_outcome ?? null,
     contextUsageInvalidated: run.data?.context_usage_invalidated === true,
@@ -471,7 +476,7 @@ export function useConversationStore(
     uploadAttachment: mutations.uploadAttachment,
     compacting: compactPending.has(cardId) || phase === 'compacting',
     compact: () => {
-      if (compactLeases.current.has(cardId) || cardId === '') return;
+      if (recoveryHoldsSend || compactLeases.current.has(cardId) || cardId === '') return;
       const compactFor = cardId;
       compactLeases.current.add(compactFor);
       setCompactPending((current) => new Set([...current, compactFor]));
@@ -494,7 +499,29 @@ export function useConversationStore(
     retryRun: () => { void run.refetch().catch(() => undefined); if (acceptedInitial !== undefined) void initialObservation.refetch().catch(() => undefined); },
     loadEarlier,
     blockedReason: run.data?.blocked_reason ?? null,
-    abandonUnknownInput: run.data?.unknown_session_input == null ? null : () => {
+    providerRecoveryHoldsSend: recoveryHoldsSend,
+    providerResume: providerResume === null || resumeState === undefined || run.error !== null ? null : {
+      state: resumeState,
+      start: () => {
+        if (resumeLeases.current.has(cardId) || resumeState === 'resuming') return;
+        const id = cardId;
+        resumeLeases.current.add(id);
+        setResumePending(current => new Set([...current, id]));
+        setActionError(null);
+        void mutations.resumeProviderSession(providerResume.turnId).catch((error: unknown) => {
+          if (shownCardId.current === id)
+            setActionError({ cardId: id, message: error instanceof Error ? error.message : 'Could not resume this provider session.' });
+        }).finally(() => {
+          resumeLeases.current.delete(id);
+          setResumePending(current => {
+            const next = new Set(current);
+            next.delete(id);
+            return next;
+          });
+        });
+      },
+    },
+    abandonUnknownInput: run.data?.unknown_session_input == null || (recoveryHoldsSend && (resumeState === 'resuming' || providerResume?.canStartFresh !== true)) ? null : () => {
       const input = run.data?.unknown_session_input;
       if (input == null || input.sessionId !== cardId) return;
       setActionError(null);
@@ -509,6 +536,7 @@ export function useConversationStore(
     model,
     modelCatalog: modelCatalog.data ?? null,
     setModel: (selection) => {
+      if (recoveryHoldsSend) return;
       const setFor = cardId;
       setActionError(null);
       /* Dropped when it settles while another conversation is shown: kept, it would show for one commit on the way back (#2068). */

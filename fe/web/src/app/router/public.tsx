@@ -747,11 +747,12 @@ function useConversationPane(
     sendBlocked: store.sendBlocked,
     sending: store.sending,
     canQueueWhileRunning: store.canQueueWhileRunning,
+    providerRecoveryHoldsSend: store.providerRecoveryHoldsSend,
     setModel: setModel,
     setPermissionMode: setPermissionMode,
     stopping: store.stopping,
     working: store.working
-  }), [compact, store.compacting, store.manualCompactSupported, store.attachmentsSupported, store.contextUsage, store.historyReady, interrupt, store.model, store.modelCatalog, store.permissionMode, store.sendBlocked, store.sending, store.canQueueWhileRunning, setModel, setPermissionMode, store.stopping, store.working]);
+  }), [compact, store.compacting, store.manualCompactSupported, store.attachmentsSupported, store.contextUsage, store.historyReady, interrupt, store.model, store.modelCatalog, store.permissionMode, store.sendBlocked, store.sending, store.canQueueWhileRunning, store.providerRecoveryHoldsSend, setModel, setPermissionMode, store.stopping, store.working]);
   const { bar: editingBar } = edit;
   const replacing = edit.replacing || edit.queuedSaving;
   const editingQueue = edit.queued !== null;
@@ -829,7 +830,7 @@ function useConversationPane(
                     provider={scopeProvider}
                     selection={composerView.model}
                     onChange={composerView.setModel}
-                    isDisabled={!composerView.historyReady}
+                    isDisabled={!composerView.historyReady || composerView.providerRecoveryHoldsSend}
                   />}
                   {worker != null && updateWorkerSettings !== undefined &&
                     <WorkerSettingsControl key={worker.attemptId} worker={worker} update={updateWorkerSettings} />}
@@ -962,6 +963,15 @@ function useConversationPane(
                 onClick={store.restart.start}>{store.restart.strip.action}</ChatFooterRemedy>}</ChatFooterNotice>}
             {/* Not an `alert`: nothing just happened, the condition was already true when
                             this page opened. */}
+            {!archived && store.providerResume !== null && (
+              <ChatFooterNotice tone="neutral">
+                {store.providerResume.state === 'resuming' ? 'Restoring the provider session…'
+                  : store.providerResume.state === 'paused' ? 'Provider recovery is paused.' : null}
+                {store.providerResume.state !== 'resuming' && <ChatFooterRemedy onClick={store.providerResume.start}>
+                  Resume provider session
+                </ChatFooterRemedy>}
+              </ChatFooterNotice>
+            )}
             {!store.stalled && !store.executionHeld && store.blockedReason !== null && (
               <ChatFooterNotice>
                 <ChatFooterError message={store.blockedReason} />

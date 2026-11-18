@@ -61,7 +61,7 @@ import {
   type Track, type TrackDetailWire, type TrackPatchBody, type TrackRecipe,
 } from '../../../../core/domain/track.ts';
 import {
-  abandonSessionInputOperation, compactPlannerOperation, interruptPlannerOperation, sendPlannerInputOperation, sendWorkerMessageOperation, steerQueuedSessionMessageOperation, removeQueuedSessionMessageOperation,
+  abandonSessionInputOperation, resumeProviderSessionOperation, compactPlannerOperation, interruptPlannerOperation, sendPlannerInputOperation, sendWorkerMessageOperation, steerQueuedSessionMessageOperation, removeQueuedSessionMessageOperation,
   createTrackConversationOperation, trackConversationsOperation, setConversationArchiveOperation,
   createSerialWriter, deletePlannerInputOperation, editPlannerInputOperation, steerPlannerInputOperation,
   modelCatalogOperation, plannerQueueWriteFailure, setPlannerModelOperation,
@@ -257,6 +257,14 @@ export function usePlannerMutations(transport: ApiTransportPort, cardId: string,
       Promise.resolve().then(() => admitTransport(transport))
         .then(admitted => runOperation(admitted, removeQueuedSessionMessageOperation(cardId, inputId), unauthorized))
         .finally(() => { refreshAfterInput(undefined, false); }),
+    resumeProviderSession: (turnId: string) => Promise.resolve().then(() => admitTransport(transport))
+      .then(admitted => runOperation(admitted, resumeProviderSessionOperation(cardId, turnId), unauthorized))
+      .finally(async () => {
+        void cancelThenInvalidate(client, transcriptKey);
+        void cancelThenInvalidate(client, queryKeys.initialInputPrefix());
+        refreshInputMetadata();
+        await cancelThenInvalidate(client, queryKeys.plannerRun(cardId));
+      }),
     abandonSessionInput: (inputId: string) => Promise.resolve().then(() => admitTransport(transport))
       .then(admitted => runOperation(admitted, abandonSessionInputOperation(cardId, inputId), unauthorized))
       .then(result => refreshAfterInput(result, false)),

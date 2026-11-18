@@ -568,6 +568,15 @@ internal sealed class InMemoryTrackStore : ITrackStore
     public Task<IReadOnlyList<(string TrackId, PersistedSessionInput Input)>> RecoverSessionInputsAsync(CancellationToken ct) =>
         Task.FromResult<IReadOnlyList<(string, PersistedSessionInput)>>([]);
 
+    public Task<IReadOnlyList<ProviderSessionResumeFence>> ListSessionResumeFencesAsync(string trackId, CancellationToken ct) =>
+        Task.FromResult<IReadOnlyList<ProviderSessionResumeFence>>([]);
+
+    public Task SaveSessionResumeFenceAsync(ProviderSessionResumeFence fence, CancellationToken ct) =>
+        throw new NotSupportedException();
+
+    public Task CompleteSessionResumeAsync(AgentSessionDto session, PersistedSessionInput? unresolved,
+        EventEnvelopeDto sessionEvent, CancellationToken ct) => throw new NotSupportedException();
+
     public Task<bool> HasSessionTurnAsync(string sessionId, string turnId, CancellationToken ct)
     {
         lock (_gate)

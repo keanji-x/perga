@@ -31,6 +31,7 @@ public sealed partial class TrackActor
                 var session = RequireSessionCore(sessionId);
                 if (session.BoundAttemptId is not null)
                     throw KernelException.InvalidArgument("Worker messages require an attempt target.");
+                RequireSessionDispatchAvailableCore(sessionId);
                 RequireDispatchWorkspace(session);
                 if (session.Status == "unknown")
                     throw KernelException.Conflict("Resolve the current turn before sending another message.");

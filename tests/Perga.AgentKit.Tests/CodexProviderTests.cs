@@ -250,6 +250,41 @@ public sealed class CodexProviderTests : IDisposable
         Assert.False(err.IsRetryable);
     }
 
+    [Fact]
+    public async Task EarlyCompletionIsAppliedOnlyToTheTurnReturnedByStart()
+    {
+        await using var runtime = CreateRuntime();
+        var spec = new HarnessLaunchSpec("codex", null, _fixture.WorkspaceDir, null, null,
+            MockCliFixture.CreateSampleMcpServers());
+        await using var session = await runtime.OpenSessionAsync(spec, CancellationToken.None);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var events = new List<UnifiedAgentEvent>();
+        await foreach (var item in session.StreamTurnAsync(new("COMPLETE_BEFORE_START_REPLY", "early"), deadline.Token))
+            events.Add(item);
+
+        var accepted = Assert.Single(events.OfType<UnifiedAgentEvent.TurnAccepted>());
+        Assert.Equal("turn_1", accepted.NativeTurnId);
+        Assert.Single(events.OfType<UnifiedAgentEvent.TurnCompleted>());
+        Assert.DoesNotContain(events, item => item is UnifiedAgentEvent.TurnInterrupted);
+    }
+
+    [Fact]
+    public async Task EarlyModelFailureCannotCloseTheFallbackTurn()
+    {
+        await using var runtime = CreateRuntime();
+        var spec = new HarnessLaunchSpec("codex", null, _fixture.WorkspaceDir, null, null,
+            MockCliFixture.CreateSampleMcpServers());
+        await using var session = await runtime.OpenSessionAsync(spec, CancellationToken.None);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var events = new List<UnifiedAgentEvent>();
+        await foreach (var item in session.StreamTurnAsync(new("FAIL_BEFORE_START_REPLY", "fallback"), deadline.Token))
+            events.Add(item);
+
+        Assert.Contains(events, item => item is UnifiedAgentEvent.TurnAccepted { NativeTurnId: "turn_2" });
+        Assert.Single(events.OfType<UnifiedAgentEvent.TurnCompleted>());
+        Assert.DoesNotContain(events, item => item is UnifiedAgentEvent.TurnError);
+    }
+
     private static async Task<List<UnifiedAgentEvent>> DrainTurnAsync(IAgentSession session, TurnInput input)
     {
         var list = new List<UnifiedAgentEvent>();

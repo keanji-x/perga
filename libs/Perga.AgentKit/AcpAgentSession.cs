@@ -77,6 +77,27 @@ public sealed class AcpAgentSession : IAgentSession
 
     public bool SupportsNativeSteer => false;
     public bool ShutdownConfirmed => _rpc.ShutdownConfirmed;
+    public bool RequiresTerminalStop => true;
+    public bool SupportsSessionResume { get; private set; }
+    public bool SupportsScopedClose { get; private set; }
+
+    public async Task<bool> TryCloseSessionAsync(CancellationToken ct)
+    {
+        var sessionId = NativeThreadId;
+        if (!SupportsScopedClose || string.IsNullOrWhiteSpace(sessionId))
+            return false;
+
+        try
+        {
+            var response = await _rpc.SendRequestAsync("session/close", new { sessionId }, ct).ConfigureAwait(false);
+            return response.ValueKind == JsonValueKind.Object && response.EnumerateObject().All(property => property.NameEquals("_meta"));
+        }
+        catch (JsonRpcRemoteException error) when (error.Code == -32002)
+        {
+            // ACP defines unknown session as an idempotent close.
+            return true;
+        }
+    }
 
     internal static async Task<AcpAgentSession> OpenAsync(
         CommandInvocation wrappedCommand,
@@ -201,6 +222,10 @@ public sealed class AcpAgentSession : IAgentSession
         _turnLock.Dispose();
     }
 
+    private static bool HasSessionCapability(JsonElement capabilities, string name) =>
+        capabilities.ValueKind == JsonValueKind.Object &&
+        capabilities.TryGetProperty(name, out var capability) && capability.ValueKind == JsonValueKind.Object;
+
     private async Task InitializeAndBindSessionAsync(HarnessLaunchSpec spec, CancellationToken ct)
     {
         var initParams = new Dictionary<string, object?>
@@ -224,6 +249,14 @@ public sealed class AcpAgentSession : IAgentSession
 
         var initResult = await _rpc.SendRequestAsync("initialize", initParams, ct).ConfigureAwait(false);
         var supportsHttpMcp = AcpStdioHttpMcpBridge.SupportsHttpMcp(initResult);
+        var agentCapabilities = initResult.ValueKind == JsonValueKind.Object &&
+            initResult.TryGetProperty("agentCapabilities", out var capabilities) ? capabilities : default;
+        var sessionCapabilities = agentCapabilities.ValueKind == JsonValueKind.Object &&
+            agentCapabilities.TryGetProperty("sessionCapabilities", out var scoped) ? scoped : default;
+        var canResume = HasSessionCapability(sessionCapabilities, "resume");
+        var canLoad = TryGetBool(agentCapabilities, "loadSession") == true;
+        SupportsSessionResume = canResume || canLoad;
+        SupportsScopedClose = HasSessionCapability(sessionCapabilities, "close");
         var nodePath = supportsHttpMcp ? null : AcpStdioHttpMcpBridge.ResolveNodeExecutable(_environment);
 
         var sessionParams = new Dictionary<string, object?>
@@ -236,7 +269,13 @@ public sealed class AcpAgentSession : IAgentSession
         string method;
         if (isResume)
         {
-            method = "session/load";
+            if (canResume)
+                method = "session/resume";
+            else if (canLoad)
+                method = "session/load";
+            else
+                throw new NotSupportedException("This ACP provider did not advertise session resume or load.");
+
             sessionParams["sessionId"] = spec.ResumeNativeThreadId;
         }
         else
@@ -249,9 +288,15 @@ public sealed class AcpAgentSession : IAgentSession
         }
 
         var response = await _rpc.SendRequestAsync(method, sessionParams, ct).ConfigureAwait(false);
+        if (response.ValueKind != JsonValueKind.Object || TryGetBool(response, "success") == false ||
+            (response.TryGetProperty("sessionId", out _) && string.IsNullOrWhiteSpace(TryGetString(response, "sessionId"))) ||
+            (response.TryGetProperty("id", out _) && string.IsNullOrWhiteSpace(TryGetString(response, "id"))))
+            throw new InvalidOperationException($"ACP '{method}' returned an invalid session result.");
         var resolvedSessionId = TryGetString(response, "sessionId")
                                 ?? TryGetString(response, "id")
                                 ?? spec.ResumeNativeThreadId;
+        if (isResume && !string.Equals(resolvedSessionId, spec.ResumeNativeThreadId, StringComparison.Ordinal))
+            throw new InvalidOperationException($"ACP '{method}' did not restore the requested session.");
         if (string.IsNullOrWhiteSpace(resolvedSessionId))
         {
             throw new InvalidOperationException($"ACP '{method}' response did not contain a sessionId.");
@@ -331,7 +376,7 @@ public sealed class AcpAgentSession : IAgentSession
                     ? errObj.GetString() ?? "ACP turn error."
                     : TryGetString(errObj, "message") ?? errObj.GetRawText();
                 var retryable = TryGetBool(errObj, "isRetryable") ?? TryGetBool(errObj, "retryable") ?? false;
-                turnState.TryFinish(new UnifiedAgentEvent.TurnError(code, msg, retryable, IsConclusive: true));
+                turnState.TryFinish(new UnifiedAgentEvent.TurnError(code, msg, retryable));
                 return;
             }
 
@@ -339,6 +384,13 @@ public sealed class AcpAgentSession : IAgentSession
                 string.Equals(stopReason, "canceled", StringComparison.OrdinalIgnoreCase))
             {
                 turnState.TryFinish(new UnifiedAgentEvent.TurnInterrupted());
+                return;
+            }
+
+            if (stopReason is not ("end_turn" or "max_tokens" or "max_turn_requests" or "refusal"))
+            {
+                turnState.TryFinish(new UnifiedAgentEvent.TurnError("acp_unconfirmed_turn",
+                    "The provider returned no recognized stop reason.", IsRetryable: false));
                 return;
             }
 

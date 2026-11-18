@@ -178,7 +178,7 @@ describe('PendingQueue', () => {
     renderQueue({ onSteer });
     await userEvent.click(screen.getByRole('button', { name: 'Say it now' }));
     expect(await screen.findByText(/Still queued/)).toBeTruthy();
-    expect(screen.getByText(/stays queued and will go with the next turn/)).toBeTruthy();
+    expect(screen.getByText(/still queued for a follow-up turn/)).toBeTruthy();
     expect(rows()).toHaveLength(1);
     expect(screen.getByRole('button', { name: 'Delete this message' })).toBeTruthy();
   });

@@ -81,6 +81,7 @@ public sealed class SqliteMigratorTests
                 "track_workspace_preparations",
                 "asks",
                 "mails",
+                "provider_session_resume",
                 "terminals",
                 "events",
                 "worker_messages",
