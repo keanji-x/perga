@@ -9,6 +9,48 @@ public sealed class MainMigrationUpgradeTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public async Task VersionEightTurnEffortUpgradeLeavesHistoryUnspecifiedAndRollsBackOnFailure(bool failUpgrade)
+    {
+        var directory = Directory.CreateTempSubdirectory("perga-turn-effort-upgrade-");
+        var path = Path.Combine(directory.FullName, "v8.db");
+        try
+        {
+            var original = SqliteMigrator.LoadEmbeddedMigrations().Where(m => m.Version <= 8).ToArray();
+            await new SqliteMigrator(original).MigrateAsync(path);
+            await using var connection = new SqliteConnection($"Data Source={path};Pooling=False");
+            await connection.OpenAsync();
+            await connection.ExecuteAsync("""
+                INSERT INTO areas (id, name, color, created_at_ms, updated_at_ms) VALUES ('area', 'Area', '#000000', 1, 1);
+                INSERT INTO tracks (id, area_id, cwd, created_at_ms, updated_at_ms) VALUES ('track', 'area', '/tmp', 1, 1);
+                INSERT INTO agent_sessions (id, track_id, provider, model, reasoning_effort, created_at_ms, updated_at_ms)
+                VALUES ('session', 'track', 'codex', 'B', 'high', 1, 1);
+                INSERT INTO session_turns (id, session_id, turn_index, trigger_kind, status, provider, model)
+                VALUES ('turn', 'session', 1, 'user', 'queued', 'codex', 'A');
+                """);
+            if (failUpgrade)
+            {
+                await connection.ExecuteAsync("CREATE TRIGGER reject_v9 BEFORE INSERT ON schema_migrations WHEN NEW.version = 9 BEGIN SELECT RAISE(ABORT, 'injected receipt failure'); END;");
+                await Assert.ThrowsAsync<SqliteException>(() => new SqliteMigrator().MigrateAsync(path));
+                Assert.Equal(8, await connection.ExecuteScalarAsync<long>("SELECT MAX(version) FROM schema_migrations;"));
+                Assert.Equal(0, await connection.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM pragma_table_info('session_turns') WHERE name = 'reasoning_effort';"));
+                await connection.ExecuteAsync("DROP TRIGGER reject_v9;");
+            }
+            await new SqliteMigrator().MigrateAsync(path);
+            await new SqliteMigrator().MigrateAsync(path);
+            Assert.Null(await connection.ExecuteScalarAsync<string?>("SELECT reasoning_effort FROM session_turns WHERE id = 'turn';"));
+            Assert.Equal("A", await connection.ExecuteScalarAsync<string>("SELECT model FROM session_turns WHERE id = 'turn';"));
+            Assert.Equal("high", await connection.ExecuteScalarAsync<string>("SELECT reasoning_effort FROM agent_sessions WHERE id = 'session';"));
+            foreach (var migration in original)
+                Assert.Equal(migration.ChecksumSha256, await connection.ExecuteScalarAsync<string>(
+                    "SELECT checksum_sha256 FROM schema_migrations WHERE version = @Version AND name = @Name;", migration));
+            Assert.True(File.Exists($"{path}.bak-v8"));
+        }
+        finally { SqliteConnection.ClearAllPools(); directory.Delete(recursive: true); }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public async Task ReleasedMain_UpgradesToReasoningEffortWithoutRewritingReceiptsOrLosingData(bool failUpgrade)
     {
         var directory = Path.Combine(Path.GetTempPath(), $"perga-lineage-{Guid.NewGuid():N}");
@@ -54,7 +96,7 @@ public sealed class MainMigrationUpgradeTests
             Assert.Null(await upgraded.ExecuteScalarAsync<string?>("SELECT reasoning_effort FROM agent_sessions WHERE id = 'session';"));
             Assert.Equal("Retained input", await upgraded.ExecuteScalarAsync<string>("SELECT content FROM session_messages WHERE id = 'input' AND request_key = 'original-key' AND request_hash = 'original-hash' AND delivery = 'queued';"));
             Assert.Equal("{\"retained\":true}", await upgraded.ExecuteScalarAsync<string>("SELECT intent_json FROM track_workspace_preparations WHERE track_id = 'track';"));
-            Assert.Equal(8, await upgraded.ExecuteScalarAsync<long>("SELECT MAX(version) FROM schema_migrations;"));
+            Assert.Equal(9, await upgraded.ExecuteScalarAsync<long>("SELECT MAX(version) FROM schema_migrations;"));
             foreach (var migration in original)
             {
                 Assert.Equal(migration.ChecksumSha256, await upgraded.ExecuteScalarAsync<string>(

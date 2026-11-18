@@ -1,0 +1,142 @@
+namespace Perga.AgentKit.Internal;
+
+internal sealed record AcpRawModel(string ModelId, string? Name, string? Description);
+
+// One table owns the public grouped defaults and their exact advertised wire IDs.
+internal sealed class AcpModelCatalog(
+    IReadOnlyList<ProviderModelInfo> models,
+    Dictionary<string, AcpModelCatalog.Selection> selections)
+{
+    private static readonly string[] KnownEffortSuffixes = ["low", "medium", "high", "xhigh", "max", "ultra"];
+    internal sealed record Selection(string DefaultId, Dictionary<string, string> Variants);
+    internal IReadOnlyList<ProviderModelInfo> Models { get; } = models;
+
+    internal string Resolve(string model, string? effort)
+    {
+        if (!selections.TryGetValue(model, out var selection))
+            return model; // Preserve explicit raw IDs and provider validation of unknown IDs.
+        return !string.IsNullOrWhiteSpace(effort) && selection.Variants.TryGetValue(effort.Trim(), out var rawId)
+            ? rawId : selection.DefaultId;
+    }
+
+    internal static AcpModelCatalog Build(
+        IReadOnlyList<AcpRawModel> rawModels,
+        string? currentModelId)
+    {
+        if (rawModels.Count == 0)
+        {
+            return new([], new(StringComparer.Ordinal));
+        }
+
+        static (string BaseId, string? Effort) SplitEffortSuffix(string modelId)
+        {
+            foreach (var suffix in KnownEffortSuffixes)
+            {
+                var dashSuffix = "-" + suffix;
+                if (modelId.EndsWith(dashSuffix, StringComparison.OrdinalIgnoreCase) &&
+                    modelId.Length > dashSuffix.Length)
+                {
+                    return (modelId[..^dashSuffix.Length], suffix);
+                }
+            }
+
+            return (modelId, null);
+        }
+
+        static string StripEffortFromDisplayName(string? name, string? effort)
+        {
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                return string.Empty;
+            }
+
+            var trimmed = name.Trim();
+            if (effort is null)
+            {
+                return trimmed;
+            }
+
+            var parenSuffix = $" ({effort})";
+            if (trimmed.EndsWith(parenSuffix, StringComparison.OrdinalIgnoreCase))
+            {
+                return trimmed[..^parenSuffix.Length].TrimEnd();
+            }
+
+            var dashSuffix = $"-{effort}";
+            if (trimmed.EndsWith(dashSuffix, StringComparison.OrdinalIgnoreCase))
+            {
+                return trimmed[..^dashSuffix.Length].TrimEnd();
+            }
+
+            return trimmed;
+        }
+
+        var (currentBase, _) = string.IsNullOrWhiteSpace(currentModelId)
+            ? (string.Empty, null)
+            : SplitEffortSuffix(currentModelId);
+
+        var order = new List<string>();
+        var groups = new Dictionary<string, (string? DisplayName, string? Description, Dictionary<string, string> Variants, string? BareId)>(StringComparer.Ordinal);
+
+        foreach (var raw in rawModels)
+        {
+            var (baseId, effort) = SplitEffortSuffix(raw.ModelId);
+            if (!groups.TryGetValue(baseId, out var entry))
+            {
+                entry = (null, null, new(StringComparer.OrdinalIgnoreCase), null);
+                order.Add(baseId);
+            }
+
+            var cleanName = StripEffortFromDisplayName(raw.Name, effort);
+            if (string.IsNullOrWhiteSpace(entry.DisplayName) && !string.IsNullOrWhiteSpace(cleanName))
+            {
+                entry.DisplayName = cleanName;
+            }
+
+            if (string.IsNullOrWhiteSpace(entry.Description) && !string.IsNullOrWhiteSpace(raw.Description))
+            {
+                entry.Description = raw.Description;
+            }
+
+            if (effort is not null)
+            {
+                entry.Variants.TryAdd(effort, raw.ModelId);
+            }
+            else
+            {
+                entry.BareId ??= raw.ModelId;
+            }
+
+            groups[baseId] = entry;
+        }
+
+        var catalog = new List<ProviderModelInfo>(order.Count);
+        var selections = new Dictionary<string, Selection>(StringComparer.Ordinal);
+        for (var i = 0; i < order.Count; i++)
+        {
+            var baseId = order[i];
+            var entry = groups[baseId];
+            var sortedEfforts = KnownEffortSuffixes
+                .Where(e => entry.Variants.ContainsKey(e))
+                .Select(e => new ProviderModelEffort(e, e))
+                .ToArray();
+            var defaultEffort = entry.BareId is not null ? null : sortedEfforts.Any(e => e.ReasoningEffort == "medium")
+                ? "medium"
+                : sortedEfforts.FirstOrDefault()?.ReasoningEffort;
+            selections.Add(baseId, new(entry.BareId ?? entry.Variants[defaultEffort!], entry.Variants));
+            var isDefault = !string.IsNullOrWhiteSpace(currentBase)
+                ? string.Equals(baseId, currentBase, StringComparison.Ordinal)
+                : i == 0;
+
+            catalog.Add(new ProviderModelInfo(
+                Model: baseId,
+                DisplayName: string.IsNullOrWhiteSpace(entry.DisplayName) ? baseId : entry.DisplayName!,
+                Description: entry.Description ?? string.Empty,
+                IsDefault: isDefault,
+                DefaultReasoningEffort: defaultEffort,
+                SupportedReasoningEfforts: sortedEfforts));
+        }
+
+        return new(catalog, selections);
+    }
+}

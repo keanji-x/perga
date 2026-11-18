@@ -988,7 +988,7 @@ public sealed partial class TrackActor : IAsyncDisposable
             if (session.BoundAttemptId is not null)
                 throw KernelException.InvalidArgument("Worker models must be changed through Worker settings.");
             var model = string.IsNullOrWhiteSpace(req.Model) ? null : req.Model.Trim();
-            var reasoningEffort = model is null || string.IsNullOrWhiteSpace(req.ReasoningEffort)
+            var reasoningEffort = string.IsNullOrWhiteSpace(req.ReasoningEffort)
                 ? null
                 : req.ReasoningEffort.Trim();
             var updated = session with { Model = model, ReasoningEffort = reasoningEffort, UpdatedAtMs = NowMs() };
@@ -2634,7 +2634,7 @@ public sealed partial class TrackActor : IAsyncDisposable
                     await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
                     if (!await _store.SessionInputs.ClaimAsync(input, runningSession, runningEvent, ct).ConfigureAwait(false))
                         return (null, effectivePrompt, null);
-                    session = session with { Provider = input.Provider, Model = input.Model };
+                    session = session with { Provider = input.Provider, Model = input.Model, ReasoningEffort = input.ReasoningEffort };
                 }
 
                 IAgentSession agentSession;

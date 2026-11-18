@@ -46,9 +46,8 @@ public sealed class AcpAgentSession : IAgentSession
         }
     }
 
-    private static readonly string[] KnownEffortSuffixes = ["low", "medium", "high", "xhigh", "max", "ultra"];
+    private AcpModelCatalog _modelCatalog = AcpModelCatalog.Build([], null);
 
-    internal sealed record AcpRawModel(string ModelId, string? Name, string? Description);
 
     private readonly JsonRpcStdioConnection _rpc;
     private readonly IReadOnlyDictionary<string, string> _environment;
@@ -124,7 +123,7 @@ public sealed class AcpAgentSession : IAgentSession
             return false;
         }
 
-        var resolvedModelId = ResolveAcpModelId(model.Trim(), reasoningEffort);
+        var resolvedModelId = _modelCatalog.Resolve(model.Trim(), reasoningEffort);
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeoutCts.CancelAfter(_handshakeTimeout);
 
@@ -154,31 +153,6 @@ public sealed class AcpAgentSession : IAgentSession
                 return false;
             }
         }
-    }
-
-    private string ResolveAcpModelId(string model, string? reasoningEffort)
-    {
-        if (!string.IsNullOrWhiteSpace(reasoningEffort))
-        {
-            var candidate = $"{model}-{reasoningEffort.Trim()}";
-            if (AvailableModels.Contains(candidate, StringComparer.Ordinal))
-            {
-                return candidate;
-            }
-        }
-
-        if (AvailableModels.Contains(model, StringComparer.Ordinal))
-        {
-            return model;
-        }
-
-        var mediumCandidate = $"{model}-medium";
-        if (AvailableModels.Contains(mediumCandidate, StringComparer.Ordinal))
-        {
-            return mediumCandidate;
-        }
-
-        return model;
     }
 
     internal static async Task<AcpAgentSession> OpenAsync(
@@ -409,7 +383,8 @@ public sealed class AcpAgentSession : IAgentSession
 
         var (rawModels, currentModelId) = ExtractAvailableModels(response);
         AvailableModels = rawModels.Select(m => m.ModelId).ToArray();
-        AvailableModelCatalog = BuildAcpModelCatalog(rawModels, currentModelId);
+        _modelCatalog = AcpModelCatalog.Build(rawModels, currentModelId);
+        AvailableModelCatalog = _modelCatalog.Models;
         if (!string.IsNullOrWhiteSpace(spec.Model))
         {
             await TrySetModelAsync(spec.Model, spec.ReasoningEffort, ct).ConfigureAwait(false);
@@ -477,128 +452,6 @@ public sealed class AcpAgentSession : IAgentSession
         }
 
         return (result, currentModelId);
-    }
-
-    internal static IReadOnlyList<ProviderModelInfo> BuildAcpModelCatalog(
-        IReadOnlyList<AcpRawModel> rawModels,
-        string? currentModelId)
-    {
-        if (rawModels.Count == 0)
-        {
-            return [];
-        }
-
-        static (string BaseId, string? Effort) SplitEffortSuffix(string modelId)
-        {
-            foreach (var suffix in KnownEffortSuffixes)
-            {
-                var dashSuffix = "-" + suffix;
-                if (modelId.EndsWith(dashSuffix, StringComparison.OrdinalIgnoreCase) &&
-                    modelId.Length > dashSuffix.Length)
-                {
-                    return (modelId[..^dashSuffix.Length], suffix);
-                }
-            }
-
-            return (modelId, null);
-        }
-
-        static string StripEffortFromDisplayName(string? name, string? effort)
-        {
-            if (string.IsNullOrWhiteSpace(name))
-            {
-                return string.Empty;
-            }
-
-            var trimmed = name.Trim();
-            if (effort is null)
-            {
-                return trimmed;
-            }
-
-            var parenSuffix = $" ({effort})";
-            if (trimmed.EndsWith(parenSuffix, StringComparison.OrdinalIgnoreCase))
-            {
-                return trimmed[..^parenSuffix.Length].TrimEnd();
-            }
-
-            var dashSuffix = $"-{effort}";
-            if (trimmed.EndsWith(dashSuffix, StringComparison.OrdinalIgnoreCase))
-            {
-                return trimmed[..^dashSuffix.Length].TrimEnd();
-            }
-
-            return trimmed;
-        }
-
-        var (currentBase, _) = string.IsNullOrWhiteSpace(currentModelId)
-            ? (string.Empty, null)
-            : SplitEffortSuffix(currentModelId);
-
-        var order = new List<string>();
-        var groups = new Dictionary<string, (string? DisplayName, string? Description, List<string> Efforts, bool HasBare)>(StringComparer.Ordinal);
-
-        foreach (var raw in rawModels)
-        {
-            var (baseId, effort) = SplitEffortSuffix(raw.ModelId);
-            if (!groups.TryGetValue(baseId, out var entry))
-            {
-                entry = (null, null, [], false);
-                order.Add(baseId);
-            }
-
-            var cleanName = StripEffortFromDisplayName(raw.Name, effort);
-            if (string.IsNullOrWhiteSpace(entry.DisplayName) && !string.IsNullOrWhiteSpace(cleanName))
-            {
-                entry.DisplayName = cleanName;
-            }
-
-            if (string.IsNullOrWhiteSpace(entry.Description) && !string.IsNullOrWhiteSpace(raw.Description))
-            {
-                entry.Description = raw.Description;
-            }
-
-            if (effort is not null)
-            {
-                if (!entry.Efforts.Contains(effort, StringComparer.OrdinalIgnoreCase))
-                {
-                    entry.Efforts.Add(effort.ToLowerInvariant());
-                }
-            }
-            else
-            {
-                entry.HasBare = true;
-            }
-
-            groups[baseId] = entry;
-        }
-
-        var catalog = new List<ProviderModelInfo>(order.Count);
-        for (var i = 0; i < order.Count; i++)
-        {
-            var baseId = order[i];
-            var entry = groups[baseId];
-            var sortedEfforts = KnownEffortSuffixes
-                .Where(e => entry.Efforts.Contains(e, StringComparer.OrdinalIgnoreCase))
-                .Select(e => new ProviderModelEffort(e, e))
-                .ToArray();
-            var defaultEffort = sortedEfforts.Any(e => e.ReasoningEffort == "medium")
-                ? "medium"
-                : sortedEfforts.FirstOrDefault()?.ReasoningEffort;
-            var isDefault = !string.IsNullOrWhiteSpace(currentBase)
-                ? string.Equals(baseId, currentBase, StringComparison.Ordinal)
-                : i == 0;
-
-            catalog.Add(new ProviderModelInfo(
-                Model: baseId,
-                DisplayName: string.IsNullOrWhiteSpace(entry.DisplayName) ? baseId : entry.DisplayName!,
-                Description: entry.Description ?? string.Empty,
-                IsDefault: isDefault,
-                DefaultReasoningEffort: defaultEffort,
-                SupportedReasoningEfforts: sortedEfforts));
-        }
-
-        return catalog;
     }
 
     private async Task RunSessionPromptRpcAsync(

@@ -376,6 +376,9 @@ for raw_line in sys.stdin:
         continue
 
     params = msg.get("params") or {}
+    if os.environ.get("MOCK_CODEX_LOG"):
+        with open(os.environ["MOCK_CODEX_LOG"], "a", encoding="utf-8") as log:
+            log.write(json.dumps(msg) + "\n")
     if method == "initialize":
         send({"jsonrpc": "2.0", "id": msg_id, "result": {"userAgent": "codex-mock/0.99.0"}})
     elif method == "initialized":
@@ -955,6 +958,11 @@ for raw_line in sys.stdin:
         else:
             send({"jsonrpc": "2.0", "id": msg_id, "error": {"code": -32602, "message": "wrong session"}})
     elif method == "session/set_model":
+        if os.environ.get("MOCK_ACP_STRICT_MODELS") == "1":
+            advertised = json.loads(os.environ["MOCK_ACP_MODELS"])["models"]["availableModels"]
+            if params.get("modelId") not in [m["modelId"] for m in advertised]:
+                send({"jsonrpc": "2.0", "id": msg_id, "error": {"code": -32602, "message": "unadvertised model"}})
+                continue
         code = int(os.environ.get("MOCK_ACP_MODEL_ERROR", "0"))
         if code:
             send({"jsonrpc": "2.0", "id": msg_id, "error": {"code": code, "message": "model switch failed"}})

@@ -16,10 +16,48 @@ public sealed class AcpProviderTests : IDisposable
         {
             ProviderOverrides = new Dictionary<string, ProviderCommandOverride>
             {
+                ["codex"] = new(Path.Combine(_fixture.RootDir, "unavailable-codex")),
+                ["claude"] = new(Path.Combine(_fixture.RootDir, "unavailable-claude")),
                 ["acp:antigravity"] = new(_fixture.MockAcpPath, Env: acpEnv),
                 ["acp:opencode"] = new(_fixture.MockAcpPath, Env: acpEnv)
             }
         });
+
+    [Theory]
+    [InlineData("vendor/model-high", null, "vendor/model-high")]
+    [InlineData("vendor/model-high", "high", "vendor/model-high")]
+    [InlineData("vendor/model-HIGH", "high", "vendor/model-HIGH")]
+    [InlineData("vendor/model-low,vendor/model-high", null, "vendor/model-low")]
+    [InlineData("vendor/model-low,vendor/model-high", "high", "vendor/model-high")]
+    [InlineData("vendor/model,vendor/model-high", null, "vendor/model")]
+    [InlineData("vendor/model-medium,vendor/model-high", null, "vendor/model-medium")]
+    public async Task AdvertisedGroupDefaultAndEffortUseExactIdsOnOpenAndSwitch(string ids, string? effort, string expected)
+    {
+        var log = Path.Combine(_fixture.RootDir, "strict-model.jsonl");
+        var modelIds = ids.Split(',');
+        await using var runtime = CreateRuntime(new Dictionary<string, string>
+        {
+            ["MOCK_ACP_LOG"] = log,
+            ["MOCK_ACP_STRICT_MODELS"] = "1",
+            ["MOCK_ACP_MODELS"] = JsonSerializer.Serialize(new { models = new {
+                currentModelId = modelIds[0], availableModels = modelIds.Select(id => new { modelId = id }) } })
+        });
+        var status = Assert.Single(await runtime.ProbeProvidersAsync(CancellationToken.None), p => p.Provider == "acp:opencode");
+        var model = Assert.Single(status.ModelCatalog!);
+        Assert.Equal("vendor/model", model.Model);
+        if (effort is null && !modelIds.Contains("vendor/model"))
+            Assert.Equal(expected[(expected.LastIndexOf('-') + 1)..].ToLowerInvariant(), model.DefaultReasoningEffort);
+        if (modelIds.Contains("vendor/model"))
+            Assert.Null(model.DefaultReasoningEffort);
+        await using var session = await runtime.OpenSessionAsync(new HarnessLaunchSpec(
+            "acp:opencode", model.Model, _fixture.WorkspaceDir, null, null,
+            new Dictionary<string, McpServerConfig>(), ReasoningEffort: effort), CancellationToken.None);
+        Assert.True(await session.TrySetModelAsync(model.Model, effort));
+        var calls = File.ReadAllLines(log).Select(line => JsonSerializer.Deserialize<JsonElement>(line))
+            .Where(call => call.GetProperty("method").GetString() == "session/set_model").ToArray();
+        Assert.Equal(2, calls.Length);
+        Assert.All(calls, call => Assert.Equal(expected, call.GetProperty("params").GetProperty("modelId").GetString()));
+    }
 
     [Fact]
     public async Task ModelSelectionPropagatesErrorsOtherThanMethodNotFound()

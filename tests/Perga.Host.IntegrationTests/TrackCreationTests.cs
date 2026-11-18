@@ -16,6 +16,42 @@ public sealed class TrackCreationTests
     private static readonly TimeSpan Deadline = TimeSpan.FromSeconds(10);
 
     [Fact]
+    public async Task AcceptedFirstInputKeepsModelAndEffortWhileWorkspaceWaits()
+    {
+        var runner = new GatedSetup();
+        await using var host = CreateHost(runner);
+        var areaId = await CreateAreaAsync(host);
+        using var response = await PostAsync(host, "/api/v1/tracks", "frozen-selection",
+            new { areaId, templateId = "gated-setup", provider = "codex", model = "A", reasoningEffort = "low", firstMessage = "frozen input" });
+        var created = await ReadAsync(response);
+        var trackId = created.GetProperty("track").GetProperty("id").GetString()!;
+        var sessionId = created.GetProperty("track").GetProperty("leadSessionId").GetString()!;
+        await runner.Entered.Task.WaitAsync(Deadline);
+        try
+        {
+            using var update = await host.Client.PutAsJsonAsync($"/api/v1/sessions/{sessionId}/model", new { model = "B", reasoningEffort = "high" });
+            update.EnsureSuccessStatusCode();
+            using var permission = await host.Client.PutAsJsonAsync($"/api/v1/sessions/{sessionId}/permission-mode", new { permissionMode = "ask" });
+            permission.EnsureSuccessStatusCode();
+            Assert.Empty(host.AgentRuntime.ExecutedTurns);
+        }
+        finally { runner.Release.TrySetResult(0); }
+        var kernel = host.Services.GetRequiredService<IPergaKernel>();
+        await kernel.WaitForTrackIdleAsync(trackId).WaitAsync(Deadline);
+        var execution = Assert.Single(host.AgentRuntime.ExecutedTurns);
+        Assert.Equal("A", execution.Spec.Model);
+        Assert.Equal("low", execution.Spec.ReasoningEffort);
+        Assert.Equal("ask", execution.Spec.PermissionMode);
+        var desired = Assert.Single(await kernel.ListSessionsAsync(trackId));
+        Assert.Equal("B", desired.Model);
+        Assert.Equal("high", desired.ReasoningEffort);
+        await kernel.SendMessageAsync(sessionId, new("next input", "next-selection"));
+        var next = host.AgentRuntime.ExecutedTurns.Last();
+        Assert.Equal("B", next.Spec.Model);
+        Assert.Equal("high", next.Spec.ReasoningEffort);
+    }
+
+    [Fact]
     public async Task WorkspaceOptionsAreReadOnlyAndAnExplicitGitChoiceIsPersistedAndReplayed()
     {
         var process = new WorkspaceProcess();
