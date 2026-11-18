@@ -24719,6 +24719,12 @@
               "null"
             ]
           },
+          "reasoningEffort": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "text": {
             "type": [
               "string",
