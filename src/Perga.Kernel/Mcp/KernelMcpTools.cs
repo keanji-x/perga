@@ -122,14 +122,14 @@ public static class KernelMcpCatalog
 
         return
         [
-            new(KernelMcpToolNames.ReportRead, "Read the current track report document, block revisions, and read anchor.",
-                Schema("""{"type":"object","properties":{}}""")),
-            new(KernelMcpToolNames.ReportCommit, "Atomically apply block operations to the track report using a ReadAnchor.",
-                Schema("""{"type":"object","required":["anchor","ops"],"properties":{"anchor":{"type":"object"},"ops":{"type":"array","items":{"type":"object"}},"summary":{"type":"string"},"commitMessage":{"type":"string"}}}""")),
+            new(KernelMcpToolNames.ReportRead, "Read the current track report document, block revisions, and read anchor. Supports optional format ('full'|'blocks'|'markdown'|'outline'), sectionH1/blockIds scoping, and includeContract for perga-block authoring specs.",
+                Schema(KernelMcpReportSupport.ReportReadSchemaJson)),
+            new(KernelMcpToolNames.ReportCommit, "Atomically apply block operations (replace_section, upsert, delete, move) to the track report using a ReadAnchor. Returns a compact commit receipt by default; set includeDocument=true for full renderedMarkdown and blocks.",
+                Schema(KernelMcpReportSupport.ReportCommitSchemaJson)),
             new(KernelMcpToolNames.TaskLs, "List all tasks declared in the track.",
                 Schema("""{"type":"object","properties":{}}""")),
             new(KernelMcpToolNames.UserAsk, "Suspend and ask the human user one or more structured multiple-choice questions.",
-                Schema("""{"type":"object","required":["questions"],"properties":{"questions":{"type":"array","items":{"type":"object"}}}}""")),
+                Schema(KernelMcpReportSupport.UserAskSchemaJson)),
             new(KernelMcpToolNames.MailLs, "List cross-track mails delivered to this track.",
                 Schema("""{"type":"object","properties":{"unreadOnly":{"type":"boolean"}}}""")),
             new(KernelMcpToolNames.MailCat, "Read a specific mail by ID and mark it as read.",
@@ -139,9 +139,9 @@ public static class KernelMcpCatalog
             new(KernelMcpToolNames.TerminalOpen, "Open or reuse an idempotent PTY terminal in the workspace.",
                 Schema("""{"type":"object","properties":{"title":{"type":"string"},"program":{"type":"string"},"args":{"type":"array","items":{"type":"string"}},"cwd":{"type":"string"},"idempotencyKey":{"type":"string"},"cols":{"type":"integer"},"rows":{"type":"integer"}}}""")),
             new(KernelMcpToolNames.TerminalRead, "Observe terminal screen frame and optional wait condition.",
-                Schema("""{"type":"object","required":["terminalId"],"properties":{"terminalId":{"type":"string"},"scrollOffset":{"type":"integer"},"waitFor":{"type":"string"},"waitMs":{"type":"integer"},"settleMs":{"type":"integer"}}}""")),
+                Schema(KernelMcpReportSupport.TerminalReadSchemaJson)),
             new(KernelMcpToolNames.TerminalInput, "Send text, keys, paste, or submit action to a terminal.",
-                Schema("""{"type":"object","required":["terminalId","kind","payload"],"properties":{"terminalId":{"type":"string"},"kind":{"type":"string"},"payload":{}}}""")),
+                Schema(KernelMcpReportSupport.TerminalInputSchemaJson)),
             new(KernelMcpToolNames.TaskCancel, "Cancel a task and discard any active attempt lease (governance only).",
                 Schema("""{"type":"object","required":["taskKey"],"properties":{"taskKey":{"type":"string"},"reason":{"type":"string"}}}""")),
             new(KernelMcpToolNames.TaskAccept, "Record semantic acceptance verdict on a task (governance only).",
@@ -203,15 +203,16 @@ public static class KernelMcpDispatcher
             case KernelMcpToolNames.ReportRead:
             {
                 var res = await kernel.ReadReportAsync(caller.TrackId, caller.SessionId, ct).ConfigureAwait(false);
-                return JsonHelpers.ToElement(res);
+                return KernelMcpReportSupport.FormatReportReadResponse(res, args);
             }
 
             case KernelMcpToolNames.ReportCommit:
             {
                 var commitReq = ParseReportCommitArgs(args);
+                var includeDocument = KernelMcpReportSupport.ParseIncludeDocumentArg(args);
                 var res = await kernel.CommitReportAsync(caller.TrackId, caller.SessionId, commitReq, ct)
                     .ConfigureAwait(false);
-                return JsonHelpers.ToElement(res);
+                return KernelMcpReportSupport.FormatReportCommitResponse(res, includeDocument);
             }
 
             case KernelMcpToolNames.TaskLs:
@@ -455,16 +456,19 @@ public static class KernelMcpDispatcher
         if (!JsonHelpers.TryGetPropertyIgnoreCase(args, ["anchor"], out var anchorElem) ||
             anchorElem.ValueKind != JsonValueKind.Object)
         {
-            throw KernelException.InvalidArgument("Missing 'anchor' object.");
+            throw KernelException.InvalidArgument(
+                "Missing 'anchor' object. Pass the ReadAnchor returned by perga_report_read, e.g. {\"docRev\":0,\"knownBlockRevs\":{\"b_1234\":1},\"wholeDocumentRead\":true}.");
         }
 
         var anchor = JsonHelpers.Deserialize<ReadAnchor>(anchorElem)
-                     ?? throw KernelException.InvalidArgument("Invalid 'anchor' object.");
+                     ?? throw KernelException.InvalidArgument(
+                         "Invalid 'anchor' object. Expected {\"docRev\":0,\"knownBlockRevs\":{\"b_1234\":1},\"wholeDocumentRead\":true}.");
 
         if (!JsonHelpers.TryGetPropertyIgnoreCase(args, ["ops"], out var opsElem) ||
             opsElem.ValueKind != JsonValueKind.Array)
         {
-            throw KernelException.InvalidArgument("Missing 'ops' array.");
+            throw KernelException.InvalidArgument(
+                "Missing 'ops' array. Example: [{\"op\":\"replace_section\",\"sectionH1\":\"Overview\",\"markdown\":\"...\"}].");
         }
 
         var ops = new List<BlockOp>();
@@ -540,7 +544,8 @@ public static class KernelMcpDispatcher
             }
 
             default:
-                throw KernelException.InvalidArgument($"Unsupported BlockOp type '{type}'.");
+                throw KernelException.InvalidArgument(
+                    $"Unsupported BlockOp type '{type}'. Supported ops: replace_section ({{op,sectionH1,markdown}}), upsert ({{op,id?,blockKind?,markdown?,payload?,position?}}), delete ({{op,id}}), move ({{op,id,toIndex}}).");
         }
     }
 
