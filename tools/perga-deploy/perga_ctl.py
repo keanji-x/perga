@@ -60,7 +60,7 @@ class Controller(DatabaseRecovery, SystemdInstallation, ReleaseStaging):
         if not path.exists():
             return values
         allowed = {'PERGA_INSTANCE_NAME', 'PERGA_HOST_URL', 'PERGA_DATA_DIR', 'PERGA_STATIC_WEB_DIR',
-                   'PERGA_TEMPLATES_DIR', 'PERGA_RELEASE_URL_PREFIX', 'ASPNETCORE_URLS'}
+                   'PERGA_TEMPLATES_DIR', 'PERGA_RELEASE_URL_PREFIX', 'PERGA_ENABLE_OVERLAYFS', 'ASPNETCORE_URLS'}
         for raw in path.read_text().splitlines():
             if not raw.strip() or raw.lstrip().startswith('#'):
                 continue
@@ -86,6 +86,8 @@ class Controller(DatabaseRecovery, SystemdInstallation, ReleaseStaging):
         Http(values.get('PERGA_HOST_URL', ''))
         if values.get('ASPNETCORE_URLS') != values.get('PERGA_HOST_URL'):
             raise DeployError('Host listen URL and management URL must match')
+        if values.get('PERGA_ENABLE_OVERLAYFS', '0') not in ('0', '1'):
+            raise DeployError('PERGA_ENABLE_OVERLAYFS must be 0 or 1')
         return values
 
     def current(self, link='current'):

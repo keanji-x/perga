@@ -114,6 +114,7 @@ class Harness(unittest.TestCase):
         term = (self.base / 'units/demo-term.service').read_text()
         self.assertIn('http+unix://%t/demo/term.sock', host)
         self.assertIn('Perga__AutoManageTerminalBridge=false', host)
+        self.assertIn(f'ExecStart=/usr/bin/python3 {self.root}/bin/perga_host.py', host)
         self.assertNotIn('PartOf=', term)
         self.assertIn('RuntimeDirectoryMode=0700', term)
         self.assertEqual((self.root / 'config.env').stat().st_mode & 0o777, 0o600)
@@ -121,6 +122,46 @@ class Harness(unittest.TestCase):
         self.assertEqual(self.controller.status()['current'], 'releases/r1')
         with self.assertRaisesRegex(ctl.DeployError, 'existing installation'):
             self.controller.install(self.args(self.archive(self.old)))
+
+    def test_managed_host_selects_overlayfs_only_when_enabled(self):
+        launcher = self.root / 'bin/perga-overlayfs-launch.py'
+        source = MODULE.parent.parent / 'perga-overlayfs/launch.py'
+        self.assertEqual(launcher.read_bytes(), source.read_bytes())
+        launcher.write_text(
+            "import json, os, sys\n"
+            "print(json.dumps([sys.argv[1:], os.getenv('PERGA_TERM_BRIDGE_URL'), "
+            "os.environ['Perga__AutoManageTerminalBridge'], "
+            "os.environ['Perga__TerminalBridgeEndpoint'], "
+            "os.environ['Perga__TerminalBridgeExecutablePath']]))\n"
+        )
+        host = self.root / 'current/host/Perga.Host'
+        host.write_text('#!/bin/sh\nprintf "%s\\n" "$PERGA_TERM_BRIDGE_URL"\n')
+        entrypoint = [sys.executable, str(self.root / 'bin/perga_host.py')]
+        env = dict(os.environ, PERGA_TERM_BRIDGE_URL='http+unix:///run/example.sock')
+        env.pop('PERGA_ENABLE_OVERLAYFS', None)
+        env.pop('Perga__WorkspacesRootDirectory', None)
+        direct = subprocess.run(entrypoint, env=env, capture_output=True, text=True, check=True)
+        self.assertEqual(direct.stdout.strip(), env['PERGA_TERM_BRIDGE_URL'])
+
+        config = self.root / 'config.env'
+        with config.open('a') as stream:
+            stream.write('PERGA_ENABLE_OVERLAYFS=1\n')
+        env.update(self.controller.validate_config())
+        overlay = subprocess.run(entrypoint, env=env, capture_output=True, text=True, check=True)
+        self.assertEqual(json.loads(overlay.stdout), [
+            ['--data-dir', str(self.root / 'data'),
+             '--workspaces', str(self.root / 'data/workspaces'), '--', str(host)],
+            None, 'true', '', str(self.root / 'current/termBridge/perga-term-bridge'),
+        ])
+
+        with config.open('a') as stream:
+            stream.write('PERGA_ENABLE_OVERLAYFS=typo\n')
+        with self.assertRaisesRegex(ctl.DeployError, 'PERGA_ENABLE_OVERLAYFS must be 0 or 1'):
+            self.controller.validate_config()
+        invalid = subprocess.run(entrypoint, env=dict(env, PERGA_ENABLE_OVERLAYFS='typo'),
+                                 capture_output=True, text=True)
+        self.assertNotEqual(invalid.returncode, 0)
+        self.assertIn('PERGA_ENABLE_OVERLAYFS must be 0 or 1', invalid.stderr)
 
     def test_install_start_order(self):
         fresh = ctl.Controller(self.base / 'fresh', name='demo', systemctl=self.systemctl)

@@ -30,6 +30,27 @@ commit can leave unmounted files for operator cleanup. Snapshot publication uses
 Verification should cover two simultaneous Tracks, a real mount and remount,
 Git branch independence, separate build outputs, and safe deletion.
 
+## Managed installations
+
+Set `PERGA_ENABLE_OVERLAYFS=1` in the managed installation's `config.env` and
+restart the Host to offer OverlayFS when creating a Track. The setting defaults
+to `0`. The updated installer configures the Host service to use
+`bin/perga_host.py`. For an existing installation, install that entry point
+and `tools/perga-overlayfs/launch.py` as `bin/perga-overlayfs-launch.py`, then
+set the service's `ExecStart` to `/usr/bin/python3 <root>/bin/perga_host.py`.
+Set the flag in a systemd drop-in until the installed controller has been
+updated to recognize it in `config.env`.
+
+With OverlayFS enabled, the entry point starts the Host-managed terminal bridge
+from the current release so terminals can see workspace mounts. The external
+bridge remains available for use when the flag is off. Restarting an
+OverlayFS-enabled Host closes the terminals it manages. Keep the flag enabled
+while the installation has Tracks that need OverlayFS mounts.
+
+The launcher mounts a fresh `/proc` in its private PID namespace before
+starting the Host. This lets the Host and its subprocesses look up PIDs in
+their own namespace. If the mount fails, startup aborts before the Host starts.
+
 ## Run on Linux
 
 Use Linux 5.11 or later with OverlayFS and unprivileged user namespaces

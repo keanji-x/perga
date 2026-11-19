@@ -212,6 +212,12 @@ def supervise_namespace(args, workspace_root, storage, lock_fd):
         if select.select([parent_read], [], [], 0)[0]:
             return 1  # The outer supervisor already exited.
         os.close(parent_read)
+        # procfs uses the PID namespace of the process that mounts it.
+        # Mount it from PID 1 before the Host starts any subprocesses.
+        proc_flags = MOUNT_FLAGS | 8  # MS_NOEXEC
+        if LIBC.mount(b"proc", b"/proc", b"proc", proc_flags, None) != 0:
+            error = ctypes.get_errno()
+            raise OSError(error, "Could not mount /proc for the Perga PID namespace.")
         return launch_host(args, workspace_root, storage, lock_fd)
 
     os.close(parent_read)

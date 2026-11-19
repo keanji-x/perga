@@ -35,10 +35,14 @@ class SystemdInstallation:
                 stream.write(''.join(k + '=' + v + '\n' for k, v in values.items()))
         binaries = self.root / 'bin'
         binaries.mkdir(exist_ok=True)
-        sources = list(Path(__file__).resolve().parent.glob('*.py'))
-        sources.append(Path(__file__).resolve().parent / 'perga-ctl')
-        for source in sources:
-            target = binaries / source.name
+        tools = Path(__file__).resolve().parent
+        sources = {path.name: path for path in tools.glob('*.py')}
+        sources['perga-ctl'] = tools / 'perga-ctl'
+        launcher = tools.parent / 'perga-overlayfs' / 'launch.py'
+        if launcher.is_file():
+            sources['perga-overlayfs-launch.py'] = launcher
+        for name, source in sources.items():
+            target = binaries / name
             if source != target:
                 shutil.copy2(source, target)
             target.chmod(0o755)
@@ -47,7 +51,7 @@ class SystemdInstallation:
                 f'After={self.name}-term.service\n\n[Service]\nType=simple\nWorkingDirectory={self.root}\n'
                 f'EnvironmentFile={config}\nEnvironment=Perga__AutoManageTerminalBridge=false\n'
                 f'Environment=PERGA_TERM_BRIDGE_URL=http+unix://%t/{self.name}/term.sock\n'
-                f'ExecStart={self.root}/current/host/Perga.Host' + common)
+                f'ExecStart=/usr/bin/python3 {binaries}/perga_host.py' + common)
         term = (f'[Unit]\nDescription=Perga terminal bridge ({self.name})\n\n[Service]\nType=simple\n'
                 f'RuntimeDirectory={self.name}\nRuntimeDirectoryMode=0700\n'
                 f'ExecStart={self.root}/current/termBridge/perga-term-bridge --listen-uds %t/{self.name}/term.sock' + common)

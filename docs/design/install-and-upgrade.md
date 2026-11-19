@@ -32,7 +32,7 @@ against an existing live instance without an explicit maintenance window.
     perga.db.bak-v{N}            # online SQLite snapshot before schema upgrade
     perga.db.failed-<timestamp>  # failed database and matching -wal/-shm files
   config.env                    # mode 0600; parsed data, never sourced as shell
-  bin/perga-ctl, bin/*.py   # stable controller, independent of current
+  bin/perga-ctl, bin/*.py     # stable controller and Host launchers
   releases/<id>/
     manifest.json
     host/Perga.Host              # executable apphost plus publish dependencies
@@ -100,16 +100,20 @@ WorkingDirectory=<root>
 EnvironmentFile=<root>/config.env
 Environment=PERGA_TERM_BRIDGE_URL=http+unix://%t/<name>/term.sock
 Environment=Perga__AutoManageTerminalBridge=false
-ExecStart=<root>/current/host/Perga.Host
+ExecStart=/usr/bin/python3 <root>/bin/perga_host.py
 UMask=0077
 Restart=on-failure
 ```
 
-Both install into `default.target`. Host restart has no `PartOf` or `BindsTo`
-relationship that kills the bridge. A running bridge keeps the old executable
+Both install into `default.target`. In the default mode, the Host uses the
+separate bridge. Host restart has no `PartOf` or `BindsTo` relationship that
+kills that bridge. A running bridge keeps the old executable
 mapping across `current` swaps, preserving terminal sessions. A changed bridge
 requires `--restart-term-bridge`, explicitly accepting terminal loss; `--force`
 does not grant that permission. Upgrade stops Host before changing bridge.
+Set `PERGA_ENABLE_OVERLAYFS=1` to enable the [OverlayFS launcher](../track-overlayfs.md#managed-installations).
+In that mode, the Host-managed bridge shares the workspace mount namespace
+and its terminals end when the Host stops.
 Use `loginctl enable-linger` separately if services must survive logout; the
 installer never changes host-wide linger policy.
 
