@@ -9,13 +9,17 @@ test.use({ contextOptions: { reducedMotion: 'reduce' } });
 test('shows a streamed reply before its turn ends, and the same text once stored', async ({ page, request }) => {
   const area = await createArea(request, `Live reply ${Date.now()}`);
   try {
-    // Keyed first_message is the existing canonical Codex entry on main.
     const created = await request.post('/api/tracks', {headers:{'Idempotency-Key':`p2-live-${Date.now()}`},data:{
-      area_id:area.id,planner_provider:'codex',title:'Canonical live reply',first_message:'fake-reply-hold: Streamed |before |the end',
+      area_id:area.id,planner_provider:'codex',title:'Canonical live reply',
       theme:{fg:[216,219,226],bg:[15,20,24]},
     }});
     expect(created.status()).toBe(201);
-    const track = await created.json() as {id:string};
+    const track = await created.json() as {id:string;lead_session_id:string};
+    const msg = await request.post(`/api/sessions/${track.lead_session_id}/messages`, {
+      headers:{'Idempotency-Key':`p2-live-msg-${Date.now()}`},
+      data:{content:'fake-reply-hold: Streamed |before |the end'},
+    });
+    expect(msg.status()).toBe(202);
     await page.goto(`/next/track/${track.id}`);
     const opener = page.getByRole('button', { name: /^Conversation fake-reply-hold:/ });
     await opener.click();

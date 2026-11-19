@@ -61,6 +61,7 @@ function setup(options: Options = {}) {
     [track.id, { track, cards }],
     [created.id, { track: created, cards: createdCards }],
   ]);
+  let postedMessage = false;
   const requests: ApiRequest[] = [];
   const values = new Map<string, string>();
   const transport: ApiTransportPort = {
@@ -90,7 +91,21 @@ function setup(options: Options = {}) {
       if (request.path.includes('view=run')) {
         return Promise.resolve(ok(historicalConversationRun({ card_id: conversationCardId(request.path), worker_session_id: 'r', phase: 'idle', manual_compact_supported: true, recovery: null, compact_outcome: null, context_usage_invalidated: false }, 'idle', true)));
       }
-      if (request.path.includes('/items') && !request.path.includes('view=')) return Promise.resolve(ok(historicalConversationPage(conversationCardId(request.path), [], null)));
+      if (request.method === 'POST' && (request.path.endsWith('/messages') || request.path.endsWith('/planner/input'))) {
+        postedMessage = true;
+        const cardId = conversationCardId(request.path);
+        return Promise.resolve(ok({ card_id: cardId, worker_session_id: cardId, entry_id: 'entry-1' }));
+      }
+      if (request.path.includes('/items') && !request.path.includes('view=')) {
+        const items = postedMessage ? [{
+          id: 1, worker_session_id: 'r', card_id: conversationCardId(request.path), track_id: created.id, thread_id: 't',
+          turn_id: null, turn_error_text: null, item_uuid: 'entry-1', item_type: 'userMessage', method: 'item/completed',
+          params: JSON.stringify({ item: { id: 'entry-1', type: 'userMessage', content: [{ type: 'text', text: 'Read it' }] } }),
+          input_segments: [{ presentation: 'user', text: 'Read it', attachments: [] }],
+          created_at_ms: 1,
+        }] : [];
+        return Promise.resolve(ok(historicalConversationPage(conversationCardId(request.path), items, null)));
+      }
       if (request.path === '/api/settings') return Promise.resolve(ok({}));
       return Promise.resolve(ok([]));
     },

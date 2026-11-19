@@ -22,13 +22,16 @@ public sealed class TrackCreationTests
         await using var host = CreateHost(runner);
         var areaId = await CreateAreaAsync(host);
         using var response = await PostAsync(host, "/api/v1/tracks", "frozen-selection",
-            new { areaId, templateId = "gated-setup", provider = "codex", model = "A", reasoningEffort = "low", firstMessage = "frozen input" });
+            new { areaId, templateId = "gated-setup", provider = "codex", model = "A", reasoningEffort = "low" });
         var created = await ReadAsync(response);
         var trackId = created.GetProperty("track").GetProperty("id").GetString()!;
         var sessionId = created.GetProperty("track").GetProperty("leadSessionId").GetString()!;
         await runner.Entered.Task.WaitAsync(Deadline);
         try
         {
+            using var firstMsg = await PostAsync(host, $"/api/v1/sessions/{sessionId}/messages", "frozen-input",
+                new { content = "frozen input" });
+            Assert.Equal(HttpStatusCode.Accepted, firstMsg.StatusCode);
             using var update = await host.Client.PutAsJsonAsync($"/api/v1/sessions/{sessionId}/model", new { model = "B", reasoningEffort = "high" });
             update.EnsureSuccessStatusCode();
             using var permission = await host.Client.PutAsJsonAsync($"/api/v1/sessions/{sessionId}/permission-mode", new { permissionMode = "ask" });
@@ -135,7 +138,7 @@ public sealed class TrackCreationTests
         var runner = new GatedSetup();
         await using var host = CreateHost(runner);
         var areaId = await CreateAreaAsync(host);
-        var request = new { areaId, templateId = "gated-setup", firstMessage = "Keep this message" };
+        var request = new { areaId, templateId = "gated-setup" };
 
         var results = await Task.WhenAll(
             PostAsync(host, "/api/v1/tracks", "track-draft", request),
@@ -157,19 +160,15 @@ public sealed class TrackCreationTests
             Assert.Equal("Renamed while pending", (await ReadAsync(patch)).GetProperty("title").GetString());
             using var before = await host.Client.GetAsync($"/api/v1/sessions/{leadId}/items").WaitAsync(Deadline);
             var beforePage = await ReadAsync(before);
-            var item = Assert.Single(beforePage.GetProperty("items").EnumerateArray());
+            Assert.Empty(beforePage.GetProperty("items").EnumerateArray());
             Assert.Empty(beforePage.GetProperty("queuedMessages").EnumerateArray());
             using var followUp = await PostAsync(host, $"/api/v1/sessions/{leadId}/messages", "while-preparing",
                 new { content = "Follow-up during setup", queueIfBusy = true });
-            Assert.Equal(HttpStatusCode.Conflict, followUp.StatusCode);
-            using var setupError = JsonDocument.Parse(await followUp.Content.ReadAsStringAsync());
-            Assert.Equal("precondition_failed", setupError.RootElement.GetProperty("code").GetString());
-            Assert.Equal(request.firstMessage, item.GetProperty("payload").GetProperty("content").GetString());
-            Assert.Equal("user", item.GetProperty("kind").GetString());
+            Assert.Equal(HttpStatusCode.Accepted, followUp.StatusCode);
             Assert.Empty(host.AgentRuntime.ExecutedTurns);
 
             using var conflict = await PostAsync(host, "/api/v1/tracks", "track-draft",
-                new { areaId, request.templateId, firstMessage = "Different text" });
+                new { areaId, request.templateId, title = "Different title" });
             Assert.Equal(HttpStatusCode.Conflict, conflict.StatusCode);
             using var error = JsonDocument.Parse(await conflict.Content.ReadAsStringAsync());
             Assert.Equal("idempotency_key_reused", error.RootElement.GetProperty("code").GetString());
@@ -200,8 +199,10 @@ public sealed class TrackCreationTests
         await using var host = CreateHost(runner);
         var areaId = await CreateAreaAsync(host);
         using var create = await PostAsync(host, "/api/v1/tracks", "track-draft",
-            new { areaId, templateId = "gated-setup", firstMessage = "Run after retry" });
-        var trackId = (await ReadAsync(create)).GetProperty("track").GetProperty("id").GetString()!;
+            new { areaId, templateId = "gated-setup" });
+        var createdDoc = await ReadAsync(create);
+        var trackId = createdDoc.GetProperty("track").GetProperty("id").GetString()!;
+        var leadId = createdDoc.GetProperty("track").GetProperty("leadSessionId").GetString()!;
         var kernel = host.Services.GetRequiredService<IPergaKernel>();
         await kernel.WaitForTrackIdleAsync(trackId).WaitAsync(Deadline);
         using var failed = await host.Client.GetAsync($"/api/v1/tracks/{trackId}");
@@ -213,6 +214,10 @@ public sealed class TrackCreationTests
         runner.Release.TrySetResult(0);
         await kernel.WaitForTrackIdleAsync(trackId).WaitAsync(Deadline);
         Assert.Equal(2, runner.Invocations);
+        using var msg = await PostAsync(host, $"/api/v1/sessions/{leadId}/messages", "after-retry",
+            new { content = "Run after retry" });
+        Assert.Equal(HttpStatusCode.Accepted, msg.StatusCode);
+        await kernel.WaitForTrackIdleAsync(trackId).WaitAsync(Deadline);
         Assert.Single(host.AgentRuntime.ExecutedTurns);
     }
 
@@ -223,11 +228,16 @@ public sealed class TrackCreationTests
         await using var host = CreateHost(runner);
         var areaId = await CreateAreaAsync(host);
         using var create = await PostAsync(host, "/api/v1/tracks", "close-reopen",
-            new { areaId, templateId = "gated-setup", firstMessage = "Wait until this Track is open" });
-        var trackId = (await ReadAsync(create)).GetProperty("track").GetProperty("id").GetString()!;
+            new { areaId, templateId = "gated-setup" });
+        var createdDoc = await ReadAsync(create);
+        var trackId = createdDoc.GetProperty("track").GetProperty("id").GetString()!;
+        var leadId = createdDoc.GetProperty("track").GetProperty("leadSessionId").GetString()!;
         var url = $"/api/v1/tracks/{trackId}";
         var kernel = host.Services.GetRequiredService<IPergaKernel>();
         await runner.Entered.Task.WaitAsync(Deadline);
+        using var queued = await PostAsync(host, $"/api/v1/sessions/{leadId}/messages", "defer-while-closed",
+            new { content = "Wait until this Track is open" });
+        Assert.Equal(HttpStatusCode.Accepted, queued.StatusCode);
         using var closed = await host.Client.PatchAsJsonAsync(url, new { closed = true });
         closed.EnsureSuccessStatusCode();
         runner.Release.TrySetResult(0);
@@ -247,7 +257,7 @@ public sealed class TrackCreationTests
         var runner = new GatedSetup();
         await using var host = CreateHost(runner);
         var areaId = await CreateAreaAsync(host);
-        var request = new { areaId, templateId = "gated-setup", firstMessage = "Keep the queued message" };
+        var request = new { areaId, templateId = "gated-setup" };
         using var create = await PostAsync(host, "/api/v1/tracks", "write-failure", request);
         var trackId = (await ReadAsync(create)).GetProperty("track").GetProperty("id").GetString()!;
         var url = $"/api/v1/tracks/{trackId}";
@@ -286,7 +296,7 @@ public sealed class TrackCreationTests
             {
                 areaId = await CreateAreaAsync(first);
                 using var created = await PostAsync(first, "/api/v1/tracks", "restart-track",
-                    new { areaId, templateId = "gated-setup", firstMessage = "Still waiting" });
+                    new { areaId, templateId = "gated-setup" });
                 trackId = (await ReadAsync(created)).GetProperty("track").GetProperty("id").GetString()!;
                 await firstRunner.Entered.Task.WaitAsync(Deadline);
             }
@@ -295,7 +305,7 @@ public sealed class TrackCreationTests
             await using var restarted = CreateHost(restartedRunner, directory.FullName);
             Assert.Equal(areaId, await CreateAreaAsync(restarted));
             using var replay = await PostAsync(restarted, "/api/v1/tracks", "restart-track",
-                new { areaId, templateId = "gated-setup", firstMessage = "Still waiting" });
+                new { areaId, templateId = "gated-setup" });
             var snapshot = await ReadAsync(replay);
             Assert.Equal(trackId, snapshot.GetProperty("track").GetProperty("id").GetString());
             Assert.Equal("unknown", snapshot.GetProperty("workspacePreparation").GetString());

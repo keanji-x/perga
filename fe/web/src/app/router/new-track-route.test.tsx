@@ -24,7 +24,7 @@ vi.mock('./new-track-drafts.tsx', async importOriginal => {
     const value = original.useNewTrackSession(...args);
     const request = value.session === null ? null : restored.request;
     const session = useMemo(() => request === null || value.session === null ? value.session : {
-      ...value.session, request, form: { message: request.body.first_message ?? '', cwd: request.body.cwd ?? '' },
+      ...value.session, request, form: { message: request.message ?? '', cwd: request.body.cwd ?? '' },
     }, [request, value.session]);
     useLayoutEffect(() => {
       if (request === null || session === null) return;
@@ -282,8 +282,8 @@ describe('New track model selection', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
     await screen.findByText(UNCONFIRMED_TRACK);
     const original = createdTrackRequests(sent)[0];
-    expect(original?.body).toMatchObject({ model: 'gpt-5',
-      first_message: 'Use these settings from the first turn' });
+    expect(original?.body).toMatchObject({ model: 'gpt-5' });
+    expect(original?.body).not.toHaveProperty('first_message');
     expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Model: gpt-5' }).disabled).toBe(true);
     await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
     await waitFor(() => expect(createdTrackRequests(sent)).toHaveLength(2));
@@ -343,7 +343,7 @@ describe('New track model selection', () => {
     await waitFor(() => expect(createdTrackRequests(sent)).toHaveLength(1));
     expect(createdTrackRequests(sent)[0]?.body).toMatchObject({ planner_provider: 'claude' });
     expect(createdTrackRequests(sent)[0]?.body).not.toHaveProperty('model');
-    expect(createdTrackRequests(sent)[0]?.body).toHaveProperty('first_message', 'Plan while Claude is down');
+    expect(createdTrackRequests(sent)[0]?.body).not.toHaveProperty('first_message');
     expect(sent.some((request) => request.path === '/api/v1/bootstrap?scope=providers')).toBe(true);
   });
 
@@ -387,7 +387,8 @@ describe('New track model selection', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
     await waitFor(() => expect(createdTrackRequests(sent)).toHaveLength(1));
     const body = createdTrackRequests(sent)[0]?.body;
-    expect(body).toMatchObject({ planner_provider: 'claude', model: 'sonnet', first_message: 'Plan with Claude' });
+    expect(body).toMatchObject({ planner_provider: 'claude', model: 'sonnet' });
+    expect(body).not.toHaveProperty('first_message');
     expect(body).not.toHaveProperty('reasoning_effort');
   });
 
@@ -472,8 +473,9 @@ describe('New track model selection', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
     await waitFor(() => expect(createdTrackRequests(sent)).toHaveLength(1));
     expect(createdTrackRequests(sent)[0]?.body).toMatchObject({
-      planner_provider: 'codex', first_message: 'Start the Planner',
+      planner_provider: 'codex',
     });
+    expect(createdTrackRequests(sent)[0]?.body).not.toHaveProperty('first_message');
   });
 });
 
@@ -746,8 +748,7 @@ describe('the new-track page is a route reached from Area groups', () => {
     expect(body).toMatchObject({ area_id: 'c2' });
     expect(body).toHaveProperty('theme');
     expect(body).not.toHaveProperty('title');
-    expect(body).toMatchObject({ first_message: 'Read it' });
-    expect(plannerInputTexts(sent)).toEqual([]);
+    expect(body).not.toHaveProperty('first_message');
     // The managed-workspace branch is keyed on *absence*, not on a value:
     // `cwd: null` and `attach_folder: false` are both a different kernel path.
     expect(body).not.toHaveProperty('cwd');
@@ -774,10 +775,10 @@ describe('the new-track page is a route reached from Area groups', () => {
     await waitFor(() => expect(createdTrackBodies(sent)).toHaveLength(1));
     expect(createdTrackBodies(sent)[0]).toMatchObject({
       area_id: 'c1',
-      first_message: message,
       cwd: '/srv/ area ',
       attach_folder: true,
     });
+    expect(createdTrackBodies(sent)[0]).not.toHaveProperty('first_message');
     expect(createdTrackBodies(sent)[0]).not.toHaveProperty('template_id');
     expect(createdTrackBodies(sent)[0]).not.toHaveProperty('template_input');
     expect(createdTrackBodies(sent)[0]).not.toHaveProperty('recipe_id');
@@ -810,7 +811,7 @@ describe('the new-track page is a route reached from Area groups', () => {
     await userEvent.type(screen.getByLabelText(TASK_LABEL), padded);
     await userEvent.click(await screen.findByRole('button', { name: 'Create track' }));
     await waitFor(() => expect(createdTrackBodies(sent)).toHaveLength(1));
-    expect(createdTrackBodies(sent)[0]).toMatchObject({ first_message: padded });
+    expect(createdTrackBodies(sent)[0]).not.toHaveProperty('first_message');
   });
 
   /* With `attach_folder` omitted the kernel refuses any path no area has already claimed. */
@@ -879,13 +880,13 @@ describe('the new-track page is a route reached from Area groups', () => {
     const [failed, recovered] = createdTrackRequests(sent);
     expect(failed?.body).toMatchObject({
       area_id: 'c2', cwd: '/srv/app', attach_folder: true,
-      first_message: 'Read it',
     });
+    expect(failed?.body).not.toHaveProperty('first_message');
     expect(recovered?.body).toMatchObject({
       area_id: 'c2', cwd: '/srv/app', attach_folder: true,
-      first_message: 'Read it',
       allow_cross_area_cwd: { folder_id: 4, area_id: 'c1' },
     });
+    expect(recovered?.body).not.toHaveProperty('first_message');
     expect(recovered?.headers?.['Idempotency-Key']).toBeDefined();
     expect(recovered?.headers?.['Idempotency-Key']).not.toBe(failed?.headers?.['Idempotency-Key']);
     await waitFor(() => expect(window.location.pathname).toBe(`${APP_BASEPATH}/track/w-new`));
@@ -916,7 +917,8 @@ describe('the new-track page is a route reached from Area groups', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
     await waitFor(() => expect(createdTrackRequests(sent)).toHaveLength(3));
     const request = createdTrackRequests(sent)[2];
-    expect(request?.body).toMatchObject({ area_id: 'c2', cwd: '/srv/app', first_message: 'Current intent' });
+    expect(request?.body).toMatchObject({ area_id: 'c2', cwd: '/srv/app' });
+    expect(request?.body).not.toHaveProperty('first_message');
     expect(request?.body).not.toHaveProperty('allow_cross_area_cwd');
   });
 
@@ -961,9 +963,10 @@ describe('the new-track page is a route reached from Area groups', () => {
     await waitFor(() => expect(createdTrackRequests(sent)).toHaveLength(2));
     const recovered = createdTrackRequests(sent)[1];
     expect(recovered?.body).toMatchObject({
-      area_id: 'c2', first_message: 'Current message',
+      area_id: 'c2',
       allow_cross_area_cwd: { folder_id: 4, area_id: 'c1' },
     });
+    expect(recovered?.body).not.toHaveProperty('first_message');
     expect(recovered?.body).not.toHaveProperty('template_id');
     expect(recovered?.body).toMatchObject({ cwd: '/srv/app', attach_folder: true });
   });
@@ -990,7 +993,8 @@ describe('the new-track page is a route reached from Area groups', () => {
 
     await waitFor(() => expect(createdTrackRequests(sent)).toHaveLength(2));
     const retried = createdTrackRequests(sent)[1];
-    expect(retried?.body).toMatchObject({ area_id: 'c2', first_message: 'Read it' });
+    expect(retried?.body).toMatchObject({ area_id: 'c2' });
+    expect(retried?.body).not.toHaveProperty('first_message');
     expect(retried?.body).not.toHaveProperty('cwd');
     expect(retried?.body).not.toHaveProperty('attach_folder');
   });
@@ -1004,10 +1008,10 @@ describe('the new-track page is a route reached from Area groups', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
     await waitFor(() => expect(createdTrackBodies(sent)).toHaveLength(1));
     expect(createdTrackBodies(sent)[0]).toMatchObject({
-      area_id: 'c2', first_message: 'Read it anyway',
+      area_id: 'c2',
     });
+    expect(createdTrackBodies(sent)[0]).not.toHaveProperty('first_message');
     expect(createdTrackBodies(sent)[0]).not.toHaveProperty('title');
-    expect(plannerInputTexts(sent)).toEqual([]);
   });
 });
 
@@ -1087,13 +1091,12 @@ describe('the sentence is delivered by the create, and the track opens on it', (
 
     await waitFor(() => expect(createdTrackBodies(sent)).toHaveLength(1));
     await waitFor(() => expect(window.location.pathname).toBe(`${APP_BASEPATH}/track/w-new`));
-    expect(createdTrackBodies(sent)[0]).toMatchObject({ first_message: 'Read it' });
+    expect(createdTrackBodies(sent)[0]).not.toHaveProperty('first_message');
     expect(createdTrackRequests(sent)[0]?.headers?.['Idempotency-Key']).toBeDefined();
     /* The `waitFor` above returns the instant the first create is seen; the landing
            is the settle window, so the count is read after the track page mounts. */
     await findTrackPage();
     expect(createdTrackBodies(sent)).toHaveLength(1);
-    expect(plannerInputTexts(sent)).toEqual([]);
   });
 
   it('opens the track\'s planner conversation on arrival', async () => {
@@ -1139,11 +1142,11 @@ describe('the sentence is delivered by the create, and the track opens on it', (
     expect(drawer.querySelector('[data-nc-thread-empty]')).toBeNull();
     const items = sent.filter((request) => request.path.includes('/items') && !request.path.includes('view='));
     expect(items.length).toBeGreaterThan(0);
-    expect(plannerInputTexts(sent)).toEqual([]);
+    expect(plannerInputTexts(sent)).toEqual(['Read it']);
   });
 
-  it('shows nothing for the first sentence until the kernel has written its row', async () => {
-    harness({ });
+  it('shows the sent first message optimistically while sending to the planner', async () => {
+    const { sent } = harness({ });
     await userEvent.click(await screen.findByRole('button', { name: 'New track in Reading' }));
     await findComposer();
     await userEvent.click(screen.getByLabelText(TASK_LABEL));
@@ -1152,8 +1155,9 @@ describe('the sentence is delivered by the create, and the track opens on it', (
 
     await waitFor(() => expect(window.location.pathname).toBe(`${APP_BASEPATH}/track/w-new`));
     const drawer = await screen.findByRole('complementary', { name: 'Planner' });
-    await waitFor(() => expect(drawer.querySelector('[data-nc-thread-empty]')).not.toBeNull());
-    expect(drawer.querySelectorAll('[data-nc-turn="unknown"]')).toHaveLength(0);
+    await waitFor(() => expect(plannerInputTexts(sent)).toEqual(['Read it']));
+    await waitFor(() => expect(drawer.querySelector('[data-nc-thread-empty]')).toBeNull());
+    expect(drawer.querySelectorAll('[data-nc-turn="you"]')).toHaveLength(1);
   });
 
   it('navigates before the track detail lands, and opens the drawer when it does', async () => {
@@ -1264,9 +1268,11 @@ describe('the sentence is delivered by the create, and the track opens on it', (
     expect(fresh?.headers?.['Idempotency-Key'])
       .not.toBe(exhausted?.headers?.['Idempotency-Key']);
     expect(createdTrackBodies(sent)).toEqual([
-      expect.objectContaining({ first_message: 'Read it' }),
-      expect.objectContaining({ first_message: 'Read it' }),
+      expect.objectContaining({ area_id: 'c2' }),
+      expect.objectContaining({ area_id: 'c2' }),
     ]);
+    expect(createdTrackBodies(sent)[0]).not.toHaveProperty('first_message');
+    expect(createdTrackBodies(sent)[1]).not.toHaveProperty('first_message');
   });
 
   /* The server answers `idempotency_key_reused` both for a different create under the key and for a
@@ -1351,8 +1357,8 @@ it.each([
   { template_id: 'legacy-template', template_input: { ticket: 'old-input' } },
   { recipe_id: 'legacy-recipe' },
 ])('replays a restored unknown creation with its original starting point %j', async startingPoint => {
-  const request = { key: 'legacy-unconfirmed-key', body: {
-    area_id: 'c1', planner_provider: 'codex' as const, first_message: '  Legacy intent  ',
+  const request = { key: 'legacy-unconfirmed-key', message: '  Legacy intent  ', body: {
+    area_id: 'c1', planner_provider: 'codex' as const,
     theme: { fg: [12, 34, 56] as [number, number, number], bg: [255, 255, 255] as [number, number, number] }, ...startingPoint,
   } };
   restored.request = request;
@@ -1387,7 +1393,7 @@ it.each([
   await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
   await waitFor(() => expect(createdTrackBodies(sent)).toHaveLength(1));
   const body = createdTrackBodies(sent)[0];
-  expect(body).toHaveProperty('first_message', message);
+  expect(body).not.toHaveProperty('first_message');
   if (selected) expect(body).toHaveProperty('template_id', 'deploy');
   else expect(body).not.toHaveProperty('template_id');
 });
@@ -1400,7 +1406,7 @@ it('leaves a pasted template reference to the first message when no catalog was 
   await userEvent.paste('use @`template:deploy`');
   await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
   await waitFor(() => expect(createdTrackBodies(sent)).toHaveLength(1));
-  expect(createdTrackBodies(sent)[0]).toHaveProperty('first_message', 'use @`template:deploy`');
+  expect(createdTrackBodies(sent)[0]).not.toHaveProperty('first_message');
   expect(createdTrackBodies(sent)[0]).not.toHaveProperty('template_id');
   expect(sent.some(request => request.path === '/api/v1/templates')).toBe(false);
 });

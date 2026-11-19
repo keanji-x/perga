@@ -137,15 +137,12 @@ describe('plannerProviderOf', () => {
 describe('track create operation', () => {
   const theme = { fg: [1, 2, 3], bg: [4, 5, 6] } as const;
 
-  it('carries the draft key on every create, with or without a first message', () => {
+  it('carries the draft key on every create', () => {
     const keyed = createTrackOperation(
-      { area_id: 'area', planner_provider: 'codex', theme, first_message: 'ship it' },
+      { area_id: 'area', planner_provider: 'codex', theme },
       'draft-key',
     );
     expect(keyed.headers).toEqual({ 'Idempotency-Key': 'draft-key' });
-
-    const messageLess = createTrackOperation({ area_id: 'area', planner_provider: 'codex', theme }, 'draft-key');
-    expect(messageLess.headers).toEqual({ 'Idempotency-Key': 'draft-key' });
   });
 });
 

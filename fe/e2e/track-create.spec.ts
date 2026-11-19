@@ -77,10 +77,8 @@ test('creates a track from an Area group with no title, and persists it', async 
   expect(body).toMatchObject({ area_id: area.id, planner_provider: 'codex' });
   expect(body).toHaveProperty('theme');
   expect(body).not.toHaveProperty('title');
-  /* Asserted against the typed string, so a create that posted other text is not confused with delivery. */
-  expect(body).toMatchObject({ first_message: message });
-  /* 201, not "some 2xx": `first_message` is validated before anything is minted, so a rejected sentence is a 400. */
-  expect((await createRequest.response())?.status(), 'the create carrying the sentence must be accepted').toBe(201);
+  expect(body).not.toHaveProperty('first_message');
+  expect((await createRequest.response())?.status(), 'the create must be accepted').toBe(201);
   expect(body).not.toHaveProperty('cwd');
   expect(body).not.toHaveProperty('attach_folder');
   // No-template must not send these: the kernel 400s an empty `template_id` and the body is `deny_unknown_fields`.
@@ -139,8 +137,8 @@ test('creates a track from an Area group with no title, and persists it', async 
 
   /* `waitForRequest` returned on the first create; give the page a bounded moment, then count again. */
   await page.waitForTimeout(1_000);
-  expect(creates, 'the create carrying the sentence must happen exactly once').toHaveLength(1);
-  expect((creates[0]?.postDataJSON() as { first_message?: unknown }).first_message).toBe(message);
+  expect(creates, 'the create must happen exactly once').toHaveLength(1);
+  expect((creates[0]?.postDataJSON() as { first_message?: unknown }).first_message).toBeUndefined();
 
   await expect.poll(() => frames.filter(frame => frame.ev === 'harness.phase.changed'
     && (frame.data as { card_id?: string; new_phase?: string } | undefined)?.card_id === plannerCard?.id
@@ -183,8 +181,8 @@ test('creates the planner with the model and effort selected beside Send', async
   await page.getByRole('button', { name: 'Create track' }).click();
   const response = await creation;
   expect(response.status()).toBe(201);
-  expect(response.request().postDataJSON()).toMatchObject({ model: 'e2e-model', reasoning_effort: 'high',
-    first_message: 'Start with the selected configuration' });
+  expect(response.request().postDataJSON()).toMatchObject({ model: 'e2e-model', reasoning_effort: 'high' });
+  expect(response.request().postDataJSON()).not.toHaveProperty('first_message');
   const track = await response.json() as { id: string };
   await expect(page).toHaveURL(new RegExp(`/track/${track.id}$`));
   const detailResponse = await request.get(`/api/tracks/${track.id}`);
@@ -280,7 +278,8 @@ for (const width of [1280, 390, 320]) {
     await expect(page.getByRole('alert').filter({ hasText: 'unconfirmed' })).toBeVisible();
     await page.getByRole('button', { name: 'Create track', exact: true }).click();
     await expect.poll(() => attempts.length).toBe(2);
-    expect(attempts[0]?.body).toMatchObject({ area_id: area.id, first_message: '  Keep this request exactly  ', });
+    expect(attempts[0]?.body).toMatchObject({ area_id: area.id });
+    expect(attempts[0]?.body).not.toHaveProperty('first_message');
     for (const key of ['template_id', 'template_input', 'recipe_id', 'cwd', 'attach_folder']) expect(attempts[0]?.body).not.toHaveProperty(key);
     expect(attempts[0]?.key).toBeTruthy();
     expect(attempts[1]).toEqual(attempts[0]);

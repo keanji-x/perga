@@ -413,14 +413,12 @@ describe('Perga /api/v1 protocol contracts', () => {
       cwd: '/repo',
       isolation: 'worktree',
       theme: { fg: [0, 0, 0], bg: [255, 255, 255] },
-      first_message: 'Start here',
     }, 'idem-t1');
     expect(createOp.path).toBe('/api/v1/tracks');
     expect(createOp.body).toMatchObject({
       areaId: 'area_1',
       provider: 'codex',
       workspaceDriver: 'vcs-workspace',
-      firstMessage: 'Start here',
     });
 
     const createDirectAcpOp = createTrackOperation({

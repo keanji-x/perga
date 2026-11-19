@@ -38,14 +38,22 @@ public sealed class McpKernelAndVcsIntegrationTests
                 areaId = area.Id,
                 title = "MCP Streamable Track",
                 cwd = wsDir,
-                enabledPlugins = new[] { "market-data" },
-                firstMessage = "Boot lead session"
+                enabledPlugins = new[] { "market-data" }
             },
             ct);
         trackResp.EnsureSuccessStatusCode();
 
         using var created = JsonDocument.Parse(await trackResp.Content.ReadAsStringAsync(ct));
         var createdTrackId = created.RootElement.GetProperty("track").GetProperty("id").GetString()!;
+        var createdLeadId = created.RootElement.GetProperty("track").GetProperty("leadSessionId").GetString()!;
+        await cluster.Services.GetRequiredService<IPergaKernel>().WaitForTrackIdleAsync(createdTrackId, ct);
+        using var bootReq = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/sessions/{createdLeadId}/messages")
+        {
+            Content = JsonContent.Create(new { content = "Boot lead session" })
+        };
+        bootReq.Headers.Add("Idempotency-Key", "boot-mcp-streamable");
+        using var bootResp = await client.SendAsync(bootReq, ct);
+        bootResp.EnsureSuccessStatusCode();
         await cluster.Services.GetRequiredService<IPergaKernel>().WaitForTrackIdleAsync(createdTrackId, ct);
 
         // Verify HarnessLaunchSpec captured Host-minted pg_<guid> token & MCP server URLs!
@@ -175,10 +183,10 @@ public sealed class McpKernelAndVcsIntegrationTests
         using var areaResp = await client.PostAsJsonAsync("/api/v1/areas", new { name = "Kernel Tools", defaultCwd = wsDir }, ct);
         var area = (await areaResp.Content.ReadFromJsonAsync<AreaDto>(PergaJsonDefaults.ApiOptions, ct))!;
 
-        // Create target Track B (for cross-track mail) and primary Track A with firstMessage so both Lead sessions open & mint real pg_<guid> tokens!
+        // Create target Track B (for cross-track mail) and primary Track A, then send a message so both Lead sessions open & mint real pg_<guid> tokens!
         using var trackBResp = await client.PostAsJsonAsync(
             "/api/v1/tracks",
-            new { areaId = area.Id, title = "Peer Track B", cwd = wsDir, firstMessage = "Init Track B Lead" },
+            new { areaId = area.Id, title = "Peer Track B", cwd = wsDir },
             ct);
         using var snapB = JsonDocument.Parse(await trackBResp.Content.ReadAsStringAsync(ct));
         var trackBId = snapB.RootElement.GetProperty("track").GetProperty("id").GetString()!;
@@ -186,14 +194,34 @@ public sealed class McpKernelAndVcsIntegrationTests
 
         using var trackAResp = await client.PostAsJsonAsync(
             "/api/v1/tracks",
-            new { areaId = area.Id, title = "Primary Track A", cwd = wsDir, firstMessage = "Init Track A Lead" },
+            new { areaId = area.Id, title = "Primary Track A", cwd = wsDir },
             ct);
         using var snapA = JsonDocument.Parse(await trackAResp.Content.ReadAsStringAsync(ct));
         var trackAId = snapA.RootElement.GetProperty("track").GetProperty("id").GetString()!;
         var trackALeadId = snapA.RootElement.GetProperty("track").GetProperty("leadSessionId").GetString()!;
 
-        await cluster.Services.GetRequiredService<IPergaKernel>().WaitForTrackIdleAsync(trackAId, ct);
-        await cluster.Services.GetRequiredService<IPergaKernel>().WaitForTrackIdleAsync(trackBId, ct);
+        var kernel = cluster.Services.GetRequiredService<IPergaKernel>();
+        await kernel.WaitForTrackIdleAsync(trackAId, ct);
+        await kernel.WaitForTrackIdleAsync(trackBId, ct);
+        using (var initB = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/sessions/{trackBLeadId}/messages")
+        {
+            Content = JsonContent.Create(new { content = "Init Track B Lead" })
+        })
+        {
+            initB.Headers.Add("Idempotency-Key", "init-track-b");
+            (await client.SendAsync(initB, ct)).EnsureSuccessStatusCode();
+        }
+        using (var initA = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/sessions/{trackALeadId}/messages")
+        {
+            Content = JsonContent.Create(new { content = "Init Track A Lead" })
+        })
+        {
+            initA.Headers.Add("Idempotency-Key", "init-track-a");
+            (await client.SendAsync(initA, ct)).EnsureSuccessStatusCode();
+        }
+
+        await kernel.WaitForTrackIdleAsync(trackAId, ct);
+        await kernel.WaitForTrackIdleAsync(trackBId, ct);
         var hostBridge = cluster.Services.GetRequiredService<HostMcpSessionBridge>();
         var leadToken = hostBridge.GetTokenForSession(trackALeadId)!;
         var peerLeadToken = hostBridge.GetTokenForSession(trackBLeadId)!;
@@ -374,7 +402,6 @@ public sealed class McpKernelAndVcsIntegrationTests
         Assert.False(doneErr, doneText);
         allowSubagentFinishTcs.TrySetResult();
 
-        var kernel = cluster.Services.GetRequiredService<IPergaKernel>();
         await kernel.WaitForTrackIdleAsync(trackAId, ct);
 
         // Also test perga_task_fail on a dedicated bound attempt session!

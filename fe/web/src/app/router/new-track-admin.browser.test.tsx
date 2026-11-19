@@ -68,7 +68,8 @@ it.each([[1280, 844], [390, 844], [320, 700]])('Role: Admin beside the model pic
   expect(page.getByRole('checkbox').elements()).toEqual([]);
   await create('Run the area');
   await expect.poll(() => creates.length).toBe(1);
-  expect(creates[0]?.body).toMatchObject({ area_id: 'c1', admin: true, first_message: 'Run the area' });
+  expect(creates[0]?.body).toMatchObject({ area_id: 'c1', admin: true });
+  expect(creates[0]?.body).not.toHaveProperty('first_message');
   /* Locked with the model picker while the create is in flight. */
   await expect.element(roleTrigger('Admin')).toBeDisabled();
   expect(document.documentElement.scrollWidth).toBe(width);
@@ -79,6 +80,7 @@ it('the default Member role sends no `admin` key', async () => {
   await expect.element(roleTrigger('Member')).toBeVisible();
   await create('Just a track');
   await expect.poll(() => creates.length).toBe(1);
-  expect(creates[0]?.body).toMatchObject({ area_id: 'c1', first_message: 'Just a track' });
+  expect(creates[0]?.body).toMatchObject({ area_id: 'c1' });
+  expect(creates[0]?.body).not.toHaveProperty('first_message');
   expect(creates[0]?.body).not.toHaveProperty('admin');
 });

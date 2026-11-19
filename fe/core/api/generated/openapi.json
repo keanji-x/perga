@@ -10608,7 +10608,7 @@
           {
             "name": "Idempotency-Key",
             "in": "header",
-            "description": "Required with first_message; keep the original key to reconcile retries under the same creation contract.",
+            "description": "Keep the original key to reconcile retries under the same creation contract.",
             "required": false,
             "schema": {
               "type": [
@@ -10650,7 +10650,7 @@
             }
           },
           "401": {
-            "description": "No verified live Human source for first_message, or the session is invalid or revoked",
+            "description": "The session is invalid or revoked",
             "content": {
               "application/json": {
                 "schema": {
@@ -18302,14 +18302,7 @@
               "string",
               "null"
             ],
-            "description": "Message-less resource creation keeps the existing cwd/claim contract.\nHuman first-message creation supports only the configured managed root;\nan explicit cwd requires its own preparation and is currently refused."
-          },
-          "first_message": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "The verified Human's first accepted message. Requires Idempotency-Key.\nCanonical input and original resource acknowledgement commit before any\nnative startup; a later startup failure cannot undo that acceptance."
+            "description": "Message-less resource creation keeps the existing cwd/claim contract."
           },
           "fork_report_from": {
             "type": [

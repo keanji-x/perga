@@ -49,7 +49,8 @@ it.each([1280, 390])('composer defaults attached folders to worktree isolation (
   await page.getByRole('combobox', { name: 'What this track should do' }).fill('Plan');
   await page.getByRole('button', { name: 'Create track' }).click();
   await expect.poll(() => creates.length).toBe(1);
-  expect(creates[0]?.body).toMatchObject({ cwd: '/repo', isolation: 'worktree', first_message: 'Plan' });
+  expect(creates[0]?.body).toMatchObject({ cwd: '/repo', isolation: 'worktree' });
+  expect(creates[0]?.body).not.toHaveProperty('first_message');
   await expect.element(page.getByText('Folder overlaps Neige-owned location /repo/.claude/worktrees/track-other')).toBeVisible();
   expect(document.documentElement.scrollWidth).toBe(width);
 });

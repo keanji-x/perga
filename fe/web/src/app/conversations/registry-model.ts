@@ -151,6 +151,8 @@ export type ConversationRegistry = Readonly<{
   ) => void;
   requestOpen: (conversationId: string, options?: { focusComposer?: boolean }) => void;
   clearOpenRequest: () => void;
+  queueTrackInitialSend: (trackId: string, text: string, key: string) => void;
+  consumeTrackInitialSend: (trackId: string) => void;
   /** Failed first-message attempts live here, above every route remount. */
   draftOf: (scopeId: string) => ConversationDraft | null;
   startDraft: (draft: ConversationDraft) => void;

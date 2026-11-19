@@ -252,8 +252,8 @@ it('offers @ in the new-track sentence, lets Enter pick, and creates with the in
 
   await page.getByRole('button', { name: 'Create track' }).click();
   await expect.poll(() => requests.filter((request) => request.method === 'POST' && request.path === '/api/tracks').length).toBe(1);
-  const created = requests.find((request) => request.method === 'POST' && request.path === '/api/tracks')!.body as { first_message: string };
-  expect(created.first_message).toBe(`Continue ${BLOCK_INSERT}\u00A0`);
+  const created = requests.find((request) => request.method === 'POST' && request.path === '/api/tracks')!.body as { first_message?: string };
+  expect(created.first_message).toBeUndefined();
 });
 
 it('includes plugin documentation in a new conversation first message without report reads', async () => {
@@ -333,6 +333,7 @@ it('loads templates only after @ and creates from the selected named template ch
   await page.getByRole('button', { name: 'Create track' }).click();
   await expect.poll(() => requests.filter(request => request.method === 'POST' && request.path === '/api/tracks').length).toBe(1);
   expect(requests.find(request => request.method === 'POST' && request.path === '/api/tracks')!.body).toMatchObject({
-    template_id: 'small-change', first_message: 'Use @`template:small-change`\u00A0',
+    template_id: 'small-change',
   });
+  expect(requests.find(request => request.method === 'POST' && request.path === '/api/tracks')!.body).not.toHaveProperty('first_message');
 });

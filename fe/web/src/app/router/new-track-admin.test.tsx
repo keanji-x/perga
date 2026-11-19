@@ -65,7 +65,8 @@ describe('New track Role', () => {
     await userEvent.type(screen.getByLabelText(TASK_LABEL), 'Run the area');
     await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
     await screen.findByText(UNCONFIRMED_TRACK);
-    expect(creates()[0]?.body).toMatchObject({ area_id: 'c1', admin: true, first_message: 'Run the area' });
+    expect(creates()[0]?.body).toMatchObject({ area_id: 'c1', admin: true });
+    expect(creates()[0]?.body).not.toHaveProperty('first_message');
     expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Role: Admin' }).disabled).toBe(true);
     expect(screen.getByRole<HTMLButtonElement>('button', { name: /^Model: / }).disabled).toBe(true);
 
@@ -88,7 +89,8 @@ describe('New track Role', () => {
     await userEvent.type(screen.getByLabelText(TASK_LABEL), 'Another track');
     await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
     await waitFor(() => expect(creates()).toHaveLength(2));
-    expect(creates()[1]?.body).toMatchObject({ area_id: 'c2', first_message: 'Another track' });
+    expect(creates()[1]?.body).toMatchObject({ area_id: 'c2' });
+    expect(creates()[1]?.body).not.toHaveProperty('first_message');
     expect(creates()[1]?.body).not.toHaveProperty('admin');
   });
 });

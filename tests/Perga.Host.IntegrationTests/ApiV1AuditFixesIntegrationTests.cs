@@ -334,8 +334,7 @@ public sealed class ApiV1AuditFixesIntegrationTests
             {
                 areaId = area1.Id,
                 title = "Isolated Blank Track",
-                templateId = "dev",
-                firstMessage = "Kick off async first turn"
+                templateId = "dev"
             })
         };
         trackReq1.Headers.Add("Idempotency-Key", "idem-track-1");
@@ -358,14 +357,24 @@ public sealed class ApiV1AuditFixesIntegrationTests
             {
                 areaId = area1.Id,
                 title = "Isolated Blank Track",
-                templateId = "dev",
-                firstMessage = "Kick off async first turn"
+                templateId = "dev"
             })
         };
         trackReq2.Headers.Add("Idempotency-Key", "idem-track-1");
         using var trackResp2 = await client.SendAsync(trackReq2);
         using var trackSnap2 = JsonDocument.Parse(await trackResp2.Content.ReadAsStringAsync());
         Assert.Equal(trackId, trackSnap2.RootElement.GetProperty("track").GetProperty("id").GetString());
+
+        var kernel = cluster.Services.GetRequiredService<IPergaKernel>();
+        await kernel.WaitForTrackIdleAsync(trackId);
+
+        using var msgReq = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/sessions/{leadSessionId}/messages")
+        {
+            Content = JsonContent.Create(new { content = "Kick off async first turn" })
+        };
+        msgReq.Headers.Add("Idempotency-Key", "idem-msg-1");
+        using var msgResp = await client.SendAsync(msgReq);
+        Assert.Equal(HttpStatusCode.Accepted, msgResp.StatusCode);
 
         // Wait for background firstMessage turn to enter StreamTurnAsync -> verify 409 Conflict on PATCH model while running!
         await turnStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -384,7 +393,6 @@ public sealed class ApiV1AuditFixesIntegrationTests
 
         // Release firstMessage turn and wait for idle
         releaseTurn.TrySetResult();
-        var kernel = cluster.Services.GetRequiredService<IPergaKernel>();
         await kernel.WaitForTrackIdleAsync(trackId);
 
         // Restore default fast turn handler

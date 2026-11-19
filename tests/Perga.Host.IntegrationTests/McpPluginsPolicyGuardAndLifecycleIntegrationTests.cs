@@ -194,14 +194,23 @@ public sealed class McpPluginsPolicyGuardAndLifecycleIntegrationTests
             var area = (await areaResp.Content.ReadFromJsonAsync<AreaDto>(PergaJsonDefaults.ApiOptions, ct))!;
 
             // Initially only "http-quote" is enabled via template default ("stdio-calc" NOT enabled yet!).
-            // Passing firstMessage opens Lead's IAgentSession and mints its real HostMcpSessionBridge pg_<guid> token!
+            // Sending a message opens Lead's IAgentSession and mints its real HostMcpSessionBridge pg_<guid> token!
             using var trackResp = await client.PostAsJsonAsync(
                 "/api/v1/tracks",
-                new { areaId = area.Id, templateId = "guarded-mcp-test", cwd = wsDir, firstMessage = "Init lead session" },
+                new { areaId = area.Id, templateId = "guarded-mcp-test", cwd = wsDir },
                 ct);
             trackResp.EnsureSuccessStatusCode();
             using var snap = JsonDocument.Parse(await trackResp.Content.ReadAsStringAsync(ct));
             var trackId = snap.RootElement.GetProperty("track").GetProperty("id").GetString()!;
+            var leadSessionId = snap.RootElement.GetProperty("track").GetProperty("leadSessionId").GetString()!;
+
+            await kernel.WaitForTrackIdleAsync(trackId, ct);
+            using var initMsg = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/sessions/{leadSessionId}/messages")
+            {
+                Content = JsonContent.Create(new { content = "Init lead session" })
+            };
+            initMsg.Headers.Add("Idempotency-Key", "init-guarded-mcp");
+            (await client.SendAsync(initMsg, ct)).EnsureSuccessStatusCode();
 
             await kernel.WaitForTrackIdleAsync(trackId, ct);
             var openedLead = Assert.Single(cluster.AgentRuntime.OpenedSessions);

@@ -411,16 +411,6 @@ export type NewTrackBody = Readonly<{
   template_input?: Readonly<Record<string, unknown>>;
   /** The chosen user recipe's id. Mutually exclusive with `template_id` (400 naming both). Absent, never `''`. */
   recipe_id?: string;
-  /**
-   * The reader's first sentence, seeded to the planner by this create. Blank per `isBlankForKernel`
-   * omits the key; a sent value goes verbatim, untrimmed.
-   */
-  first_message?: string;
-}>;
-
-/** A body before the reader's first sentence is added to it. */
-export type NewTrackBodyWithoutFirstMessage = Omit<NewTrackBody, 'first_message'> & Readonly<{
-  first_message?: undefined;
 }>;
 
 /** A selectable starting point for a new track. `input_schema` is present exactly when a running trusted plugin is bound and the template takes input. */
@@ -881,7 +871,7 @@ export function trackWorkspaceOptionsOperation(areaId: string, cwd?: string, tem
 }
 
 /**
- * `POST /api/v1/tracks`, keyed per draft on every create, with or without `first_message`.
+ * `POST /api/v1/tracks`, keyed per draft on every create.
  */
 export function createTrackOperation(body: NewTrackBody, idempotencyKey: string): ApiOperation<TrackWire> {
   const { workspace_option_id: workspaceOptionId, ...rest } = body;
@@ -894,7 +884,6 @@ export function createTrackOperation(body: NewTrackBody, idempotencyKey: string)
       : {}),
     ...(body.template_id !== undefined ? { templateId: body.template_id } : {}),
     ...(body.template_input !== undefined ? { templateInputs: body.template_input } : {}),
-    ...(body.first_message !== undefined ? { firstMessage: body.first_message } : {}),
     ...(body.reasoning_effort !== undefined ? { reasoningEffort: body.reasoning_effort } : {}),
   };
   return {

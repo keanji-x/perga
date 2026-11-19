@@ -9,7 +9,7 @@ import { ApiError, classifyFailure, NotSentError, refusedText, writeFailureOf } 
 import { selectedReadyTemplateId } from '../../../../core/domain/mentions.ts';
 import {
   isBlankForKernel, TRACK_CREATE_FAILURES, TRACK_CREATE_TEXT, trackCreateWorkspaceError,
-  trackWorkspaceOptionsOperation, type NewTrackBodyWithoutFirstMessage, type TrackTemplate,
+  trackWorkspaceOptionsOperation, type NewTrackBody, type TrackTemplate,
 } from '../../../../core/domain/track.ts';
 import { readErrorText } from '../../../../core/domain/read-failure.ts';
 import { ModelPill, PlannerRolePill } from '../../features/chat/thread/model-pill.tsx';
@@ -26,6 +26,7 @@ import { readHostThemeRgb } from '../theme/host-rgb.ts';
 import { mintIdempotencyKey } from '../providers/idempotency-key.ts';
 import { useGo, useRouteParam } from './navigation.ts';
 import { useNewTrackSession, type NewTrackSession, type TrackCreationRequest } from './new-track-drafts.tsx';
+import { useConversationCommands } from '../conversations/public.tsx';
 
 type RouteProps = { transport: ApiTransportPort; unauthorized: UnauthorizedChannel; pergaMode?: boolean };
 
@@ -70,6 +71,7 @@ function NewTrackEditor({ transport, unauthorized, pergaMode = false, workspace,
     retry: false,
   });
   const trackMutations = useTrackMutations(transport, unauthorized);
+  const conversationRegistry = useConversationCommands();
   const go = useGo();
   const listDirectory = createDirectoryLister(transport, unauthorized, pergaMode);
   /* The sentence is the new track's Planner's first message, and that Planner reads this Area's reports; there is no track yet to rank first. */
@@ -123,15 +125,18 @@ function NewTrackEditor({ transport, unauthorized, pergaMode = false, workspace,
       ...(draft.workspaceOptionId === undefined ? {} : { cwd: draft.cwd ?? '', workspace_option_id: draft.workspaceOptionId }),
       ...(current.role === 'admin' ? { admin: true } : {}),
       ...(authorization === undefined ? {} : { allow_cross_area_cwd: authorization }),
-    } satisfies NewTrackBodyWithoutFirstMessage;
+    } satisfies NewTrackBody;
     // The original wire body travels with the key. A retry after navigation,
     // theme changes or template refresh must not silently change its payload.
     const request: TrackCreationRequest = replacementKey === undefined && current.request !== null
       ? current.request
-      : { body: isBlankForKernel(draft.message) ? body : { ...body, first_message: draft.message }, key: attemptKey };
+      : { body, key: attemptKey, ...(isBlankForKernel(draft.message) ? {} : { message: draft.message }) };
     store.update(areaId, { creating: true, request, error: null, canRetryAsNewTrack: false, folderConflict: null });
     const creation = trackMutations.create(request.body, request.key);
     void creation.then((track) => {
+      if (request.message !== undefined && !isBlankForKernel(request.message)) {
+        conversationRegistry.queueTrackInitialSend(track.id, request.message, `${request.key}:init`);
+      }
       // A late acknowledgement belongs to its draft; it never steals the
       // navigation the reader made while waiting. Returning offers Open track.
       store.update(areaId, { createdTrackId: track.id });
