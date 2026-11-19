@@ -192,6 +192,27 @@
     margin-inline-start: auto;
   }
 
+  .noticeReadState {
+    position: relative;
+    z-index: 2;
+    flex: none;
+    min-block-size: var(--control-h-sm);
+    padding-inline: var(--space-1);
+    border-radius: var(--radius-highlight);
+    color: var(--text-3);
+    cursor: pointer;
+  }
+
+  .noticeReadState[data-nc-notification-unread] {
+    color: var(--accent);
+    font-weight: var(--weight-semibold);
+  }
+
+  .noticeReadState:hover,
+  .noticeReadState:focus-visible {
+    background: var(--overlay-hover);
+  }
+
   /* The body is body text, below the panel title. Astryx's `Markdown` is sized through the variables
      it documents (as the chat's `.reply` does), scoped to this wrapper so the chat is untouched:
      paragraphs and list items at the UI step, headings never larger than semibold body text, inline
@@ -335,32 +356,19 @@
     color: var(--text-on-accent);
   }
   @media (width < 60rem) {
-
     .needsInputNotice {
-      display: none;
+      inset-block: calc(env(safe-area-inset-top) + var(--control-h-touch) + var(--space-4) * 2 + var(--space-2)) auto;
+      inset-inline-end: var(--space-2);
     }
 
-
-  }
-  @media (width < 60rem) {
-    .timeoutNotice.needsInputNoticeExpanded {
-      display: flex;
-      inset-inline: 10px;
-      inset-block-end: calc(10px + env(safe-area-inset-bottom));
+    .needsInputNoticeExpanded {
+      inset-inline-start: var(--space-2);
       inline-size: auto;
     }
 
-
-  }
-  @media (width < 60rem) {
-
-    .timeoutNotice.needsInputNoticeCompact {
-      display: grid;
-      inset-inline-end: 10px;
-      inset-block-end: calc(10px + env(safe-area-inset-bottom));
+    .noticeBehindMobileSurface {
+      display: none;
     }
-
-
   }
     }
 }

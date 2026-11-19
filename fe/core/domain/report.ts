@@ -9,6 +9,7 @@ import { isCalendarDate } from './report-date.js';
 import { nativeViewPayloadSchema, type NativeViewPayload } from './report-view.js';
 import { sameOriginPath } from './report-src.js';
 import { htmlBlockPayloadSchema, type HtmlBlockPayload } from './report-html.js';
+import { reportTaskKey, reportTaskPayload } from './report-task-declaration.js';
 export { inlineTableBlockPayloadSchema } from './report-table.js';
 export { isCalendarDate } from './report-date.js';
 
@@ -264,13 +265,7 @@ const blockWireSchema = z.object({
 });
 
 function normalizePergaTaskPayload(raw: Record<string, unknown>, blockId: string): Record<string, unknown> {
-  const key = typeof raw.key === 'string'
-    ? raw.key
-    : typeof raw.task_key === 'string'
-      ? raw.task_key
-      : typeof raw.taskKey === 'string'
-        ? raw.taskKey
-        : blockId;
+  const key = reportTaskKey(raw, blockId);
   const rawKind = typeof raw.kind === 'string'
     ? raw.kind
     : typeof raw.type === 'string'
@@ -332,7 +327,7 @@ function normalizePergaTaskPayload(raw: Record<string, unknown>, blockId: string
 }
 
 function resolveWirePayload(wire: z.infer<typeof blockWireSchema>): unknown {
-  let payload = wire.payload;
+  let payload = wire.kind === 'task' ? reportTaskPayload(wire) ?? wire.payload : wire.payload;
   if ((payload === null || payload === undefined) && typeof wire.markdown === 'string') {
     if (wire.kind === 'prose') {
       payload = { markdown: wire.markdown };

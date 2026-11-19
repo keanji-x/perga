@@ -1230,22 +1230,16 @@ function TrackRoute({ transport, unauthorized, cardRuntime, recentFiles, prepare
   );
 }
 
-/**
- * The Notifications aside from `activity.items`: one row per item, in the kernel's order (newest
- * first) and in the kernel's words. No item names a card: all sources belong to the Planner.
- */
-function trackNotifications(items: TrackActivity['attentionItems']): readonly TrackInputNotification[] {
+/** The Notifications aside shows where the reader can follow up on each activity item. */
+function trackNotifications(items: TrackActivity['attentionItems'], isRead: (key: string, atMs: number) => boolean): readonly TrackInputNotification[] {
   return items.map((item): TrackInputNotification => {
-    let kind: TrackInputNotification['kind'];
+    const base = { key: item.key, text: item.text, atMs: item.atMs, read: isRead(item.key, item.atMs) };
     switch (item.source) {
-      case 'ask': kind = item.delivery === 'hold' ? 'approval' : 'ask'; break;
-      case 'planner_down': kind = 'planner-down'; break;
-      case 'planner_turn_timeout': kind = 'planner-turn-timeout'; break;
+      case 'ask': return { ...base, kind: item.delivery === 'hold' ? 'approval' : 'ask', action: item.action };
+      case 'planner_down': return { ...base, kind: 'planner-down' };
+      case 'planner_turn_timeout': return { ...base, kind: 'planner-turn-timeout' };
+      case 'task_failed': return { ...base, kind: 'task-failed', blockId: item.blockId };
     }
-    return {
-      key: item.key, kind, text: item.text, atMs: item.atMs,
-      ...(item.source !== 'ask' || item.action === undefined ? {} : { action: item.action }),
-    };
   });
 }
 
@@ -1479,16 +1473,14 @@ function TrackRouteBody({
   );
   useMobileConversationOwner({ track, conversations: rows, onArchive: conversationMutations.archive, onNew: chat.startConversation,
     selectedConversationId: chat.selectedConversationId, onClose: chat.close, onOpen: chat.openConversation, conversationOpen: chat.isOpen });
-  const inputNotifications = useMemo(
-    (): readonly TrackInputNotification[] => [
-      ...(snapshot.pendingApprovals ?? []).map(approval => ({
-        key: approval.id, kind: 'approval' as const, text: approval.questions[0]?.question ?? 'Approval required',
-        atMs: approval.createdAtMs,
-      })),
-      ...trackNotifications(track.attentionItems),
-    ],
-    [snapshot.pendingApprovals, track.attentionItems],
-  );
+  const notificationIsRead = (key: string, atMs: number) => preferences.trackNotificationRead(track.id, key, atMs);
+  const inputNotifications: readonly TrackInputNotification[] = [
+    ...(snapshot.pendingApprovals ?? []).map(approval => ({
+      key: approval.id, kind: 'approval' as const, text: approval.questions[0]?.question ?? 'Approval required',
+      atMs: approval.createdAtMs, read: notificationIsRead(approval.id, approval.createdAtMs),
+    })),
+    ...trackNotifications(track.attentionItems, notificationIsRead),
+  ];
   /* Stable across renders that do not change the overlays, so a live table is
      not handed a new resolver identity on every keystroke elsewhere. */
   const resolveOverlay = useCallback(
@@ -1868,8 +1860,7 @@ function TrackRouteBody({
       showConversationAction={!centerActive}
       conversationOpen={!centerActive && chat.isOpen}
       inputNotifications={inputNotifications}
-      /* Both kinds of item are the Planner's, so both reply to it: sending it a message is what
-         answers an ask and what makes a stopped Planner continue. */
+      onNotificationReadChange={(item, read) => preferences.setTrackNotificationRead(track.id, item.key, item.atMs, read)}
       onReply={plannerCard === undefined ? undefined : () => {
         center?.onOpenAssistant();
         registry.requestOpen(plannerCard.id, { focusComposer: true });

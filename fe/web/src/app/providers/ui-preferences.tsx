@@ -57,7 +57,7 @@ export function createUiPreferences(storage?: UiPreferenceStorage) {
     memory.set(key, value);
     return value;
   };
-  const write = (key: string, value: Preference, notifyLayout: boolean) => {
+  const write = (key: string, value: Preference, notifySubscribers: boolean) => {
     if (read(key) === value) return;
     memory.set(key, value);
     try {
@@ -65,9 +65,11 @@ export function createUiPreferences(storage?: UiPreferenceStorage) {
     } catch {
       // The current app instance still remembers the choice when storage fails.
     }
-    if (!notifyLayout) return;
+    if (!notifySubscribers) return;
     notify();
   };
+  const notificationKey = (trackId: string, key: string) =>
+    `browser:track-notification:${JSON.stringify([database, trackId, key])}`;
   return Object.freeze({
     databaseScope: () => database,
     /** The database the visible data belongs to; a `null` scope keeps no per-database choice. */
@@ -94,8 +96,8 @@ export function createUiPreferences(storage?: UiPreferenceStorage) {
       if (recoveryScope === scope) return;
       recoveryScope = scope; browserNamespace = browserNamespaceOf(scope); memory.clear(); notify();
     },
-    // Only layout changes are live: conversation selection is restored on route
-    // entry and owned by React while open, so saving it must not move focus.
+    // Mounted views subscribe to live preferences. Conversation selection is restored on route entry
+    // and owned by React while open, so saving it does not publish a change.
     subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; },
     getSnapshot: () => revision,
     areaExpanded(id: string): boolean {
@@ -159,6 +161,11 @@ export function createUiPreferences(storage?: UiPreferenceStorage) {
       return typeof stored === 'string' ? stored : null;
     },
     setReadReceiptsJson: (json: string | null) => write('browser:perga-read-receipts', json, false),
+    trackNotificationRead(trackId: string, key: string, atMs: number): boolean {
+      return read(notificationKey(trackId, key)) === String(atMs);
+    },
+    setTrackNotificationRead: (trackId: string, key: string, atMs: number, isRead: boolean) =>
+      write(notificationKey(trackId, key), isRead ? String(atMs) : null, true),
   });
 }
 

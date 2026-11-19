@@ -17,8 +17,8 @@ export type AttentionKind = 'none' | 'input' | 'failed';
 /** The per-card verdict the overlay's `cards[]` carries; a card without one has no indicator. */
 export type CardActivity = 'working' | 'input' | 'failed';
 
-/** Kernel notification sources: a question, an outage, or a confirmed turn timeout independent of attention. */
-export type NotificationSource = 'ask' | 'planner_down' | 'planner_turn_timeout';
+/** Notification sources projected from Track activity. */
+export type NotificationSource = 'ask' | 'planner_down' | 'planner_turn_timeout' | 'task_failed';
 
 /** One question of an ask: the first option is the recommended one; none means a free answer. */
 export type AskQuestion = Readonly<{ title: string; detail?: string; options: readonly string[] }>;
@@ -48,6 +48,7 @@ export type ActivityItem =
     source: 'ask'; askId: AskId; questions: readonly AskQuestion[]; delivery: AskDelivery;
     action?: import('../api/generated/wire.js').AskAction;
   }>)
+  | (ActivityItemBase & Readonly<{ source: 'task_failed'; blockId: string }>)
   | (ActivityItemBase & Readonly<{ source: 'planner_down' | 'planner_turn_timeout' }>);
 
 /**

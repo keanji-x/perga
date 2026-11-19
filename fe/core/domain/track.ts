@@ -30,6 +30,7 @@ import {
 } from './activity.js';
 import { visibleAreas, type Area } from './area.js';
 import { normalizeAskQuestions } from './ask.js';
+import { liveReportTaskKey } from './report-task-declaration.js';
 import {
   casAttempts, classifyFailure, NotSentError, refusedText, writeFailureOf,
   type FailureTable, type Landed, type WriteClass, type WriteFailure, type WriteText,
@@ -67,13 +68,13 @@ export type TrackActivity = Readonly<{
   now: string;
   /** From the kernel `activity` overlay: something dispatched is still running. */
   working: boolean;
-  /** Same overlay: the fold of `attentionItems` — a `planner_down` item → failed, an `ask` → input; timeout alone stays none. */
+  /** Same overlay: whether the Track needs input or has a failure. */
   attention: AttentionKind;
   /** Same overlay: high-water mark of completion-class evidence; the read receipt compares against it. */
   activityAt: number | null;
   /** Latest finite write/evidence time from the kernel activity overlay; used for recent-activity ordering. */
   recentAt: number | null;
-  /** Same overlay: every ask, outage and turn-timeout notification, with the kernel's words for it. */
+  /** Same overlay: questions, failures and turn timeouts with their recorded details. */
   attentionItems: readonly ActivityItem[];
   /** Same overlay: the per-card verdicts, keyed by card id. Read through `cardActivityOf`. */
   cards: Readonly<Record<string, CardActivity>>;
@@ -195,6 +196,13 @@ const activityItemWireSchema = z.discriminatedUnion('source', [
     text: z.string(),
     at_ms: z.number(),
   }),
+  z.object({
+    source: z.literal('task_failed'),
+    key: z.string(),
+    text: z.string(),
+    at_ms: z.number(),
+    block_id: z.string(),
+  }),
 ]);
 const activityCardWireSchema = z.object({
   card_id: z.string(),
@@ -225,7 +233,9 @@ function activityOverlayFields(payload: unknown): Partial<TrackActivity> | null 
         ...base, source: 'ask', askId: item.data.ask_id, questions: item.data.questions, delivery: item.data.delivery,
         ...(item.data.action === undefined ? {} : { action: item.data.action }),
       }
-      : { ...base, source: item.data.source });
+      : item.data.source === 'task_failed'
+        ? { ...base, source: 'task_failed', blockId: item.data.block_id }
+        : { ...base, source: item.data.source });
   }
   const cards: Record<string, CardActivity> = {};
   for (const row of parsed.data.cards) {
@@ -695,11 +705,25 @@ export function snapshotActivityOverlays(snapshot: TrackAggregateSnapshotDto): O
   const openAskItems = snapshot.openAsks
     .filter((ask) => ask.status === 'open')
     .map(askDtoToActivityItem);
+  const failedTasks = snapshot.tasks.filter((task) => task.status === 'failed');
+  const failedBlockIds = new Set(failedTasks.map((task) => task.blockId));
+  const currentTaskKeys = new Map(snapshot.report.blocks
+    .filter((block) => failedBlockIds.has(block.id))
+    .map((block) => [block.id, liveReportTaskKey(block)] as const));
+  const failedTaskItems = failedTasks
+    .filter((task) => currentTaskKeys.get(task.blockId) === task.taskKey)
+    .map((task) => ({
+      source: 'task_failed',
+      key: `task_failed:${task.id}`,
+      text: `${task.taskKey}: ${task.statusDetail?.trim() || 'Review the task for details.'}`,
+      at_ms: task.updatedAtMs,
+      block_id: task.blockId,
+    }));
   const working = snapshot.tasks.some((task) => task.status === 'running' || task.status === 'verifying')
     || snapshot.sessions.some((session) => session.status === 'running');
   const attention = openAskItems.length > 0 || (snapshot.pendingApprovals?.length ?? 0) > 0
     ? 'input'
-    : snapshot.tasks.some((task) => task.status === 'failed')
+    : failedTasks.length > 0
       ? 'failed'
       : 'none';
   return [{
@@ -713,7 +737,7 @@ export function snapshotActivityOverlays(snapshot: TrackAggregateSnapshotDto): O
       working,
       attention,
       activity_at_ms: snapshot.track.updatedAtMs,
-      items: openAskItems,
+      items: [...openAskItems, ...failedTaskItems],
       cards: snapshot.sessions
         .filter((session) => session.status === 'running')
         .map((session) => ({ card_id: session.id, state: 'working' })),
