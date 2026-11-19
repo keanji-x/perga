@@ -5,11 +5,23 @@ internal sealed record AcpRawModel(string ModelId, string? Name, string? Descrip
 // One table owns the public grouped defaults and their exact advertised wire IDs.
 internal sealed class AcpModelCatalog(
     IReadOnlyList<ProviderModelInfo> models,
-    Dictionary<string, AcpModelCatalog.Selection> selections)
+    Dictionary<string, AcpModelCatalog.Selection> selections,
+    AcpSessionOption? thoughtLevel)
 {
     private static readonly string[] KnownEffortSuffixes = ["low", "medium", "high", "xhigh", "max", "ultra"];
     internal sealed record Selection(string DefaultId, Dictionary<string, string> Variants);
-    internal IReadOnlyList<ProviderModelInfo> Models { get; } = models;
+    internal AcpSessionOption? ThoughtLevel { get; } = thoughtLevel;
+    internal IReadOnlyList<ProviderModelInfo> Models { get; } = models.Select(model =>
+        model.SupportedReasoningEfforts.Count == 0 && thoughtLevel is not null
+            ? model with
+            {
+                DefaultReasoningEffort = thoughtLevel.Current,
+                SupportedReasoningEfforts = thoughtLevel.Values.Select(value => new ProviderModelEffort(value.Id, value.Name)).ToArray()
+            }
+            : model).ToArray();
+
+    internal bool UsesThoughtLevel(string? model) => ThoughtLevel is not null &&
+        (model is null || !selections.TryGetValue(model, out var selection) || selection.Variants.Count == 0);
 
     internal string Resolve(string model, string? effort)
     {
@@ -21,11 +33,12 @@ internal sealed class AcpModelCatalog(
 
     internal static AcpModelCatalog Build(
         IReadOnlyList<AcpRawModel> rawModels,
-        string? currentModelId)
+        string? currentModelId,
+        AcpSessionOption? thoughtLevel = null)
     {
         if (rawModels.Count == 0)
         {
-            return new([], new(StringComparer.Ordinal));
+            return new([], new(StringComparer.Ordinal), thoughtLevel);
         }
 
         static (string BaseId, string? Effort) SplitEffortSuffix(string modelId)
@@ -71,7 +84,7 @@ internal sealed class AcpModelCatalog(
             return trimmed;
         }
 
-        var (currentBase, _) = string.IsNullOrWhiteSpace(currentModelId)
+        var (currentBase, currentEffort) = string.IsNullOrWhiteSpace(currentModelId)
             ? (string.Empty, null)
             : SplitEffortSuffix(currentModelId);
 
@@ -122,9 +135,16 @@ internal sealed class AcpModelCatalog(
                 .Where(e => entry.Variants.ContainsKey(e))
                 .Select(e => new ProviderModelEffort(e, e))
                 .ToArray();
-            var defaultEffort = entry.BareId is not null ? null : sortedEfforts.Any(e => e.ReasoningEffort == "medium")
-                ? "medium"
-                : sortedEfforts.FirstOrDefault()?.ReasoningEffort;
+            string? defaultEffort = null;
+            if (entry.BareId is null)
+            {
+                if (baseId == currentBase && currentEffort is not null && entry.Variants.ContainsKey(currentEffort))
+                    defaultEffort = currentEffort;
+                else if (entry.Variants.ContainsKey("medium"))
+                    defaultEffort = "medium";
+                else
+                    defaultEffort = sortedEfforts.FirstOrDefault()?.ReasoningEffort;
+            }
             var defaultId = entry.BareId ?? entry.Variants[defaultEffort!];
             // A derived name may already be a wire ID belonging to another group.
             // Publish this group's raw variants instead, so every row stays selectable
@@ -161,6 +181,6 @@ internal sealed class AcpModelCatalog(
                 SupportedReasoningEfforts: sortedEfforts));
         }
 
-        return new(catalog, selections);
+        return new(catalog, selections, thoughtLevel);
     }
 }

@@ -222,6 +222,329 @@ public sealed class AcpProviderTests : IDisposable
         Assert.All(calls, call => Assert.Equal(expected, call.GetProperty("params").GetProperty("modelId").GetString()));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DefaultModelEffortAppliesOnOpenAndSwitch(bool configFallback)
+    {
+        var log = Path.Combine(_fixture.RootDir, "default-effort.jsonl");
+        await using var runtime = CreateRuntime(new Dictionary<string, string>
+        {
+            ["MOCK_ACP_LOG"] = log,
+            ["MOCK_ACP_NO_SET_MODEL"] = configFallback ? "1" : "0",
+            ["MOCK_ACP_MODELS"] = """{"models":{"currentModelId":"vendor/model-high","availableModels":[{"modelId":"vendor/model-low"},{"modelId":"vendor/model-high"}]}}"""
+        });
+        var status = Assert.Single(await runtime.ProbeProvidersAsync(CancellationToken.None), p => p.Provider == "acp:opencode");
+        Assert.Equal("high", Assert.Single(status.ModelCatalog!).DefaultReasoningEffort);
+        File.Delete(log);
+        await using var session = await runtime.OpenSessionAsync(new HarnessLaunchSpec(
+            "acp:opencode", null, _fixture.WorkspaceDir, null, null,
+            new Dictionary<string, McpServerConfig>(), ReasoningEffort: "low"), CancellationToken.None);
+        Assert.True(await session.TrySetModelAsync(null, "high"));
+        Assert.True(await session.TrySetModelAsync("vendor/model"));
+        Assert.True(await session.TrySetModelAsync("  ", " low "));
+        Assert.False(await session.TrySetModelAsync(null, "unsupported"));
+        Assert.False(await session.TrySetModelAsync(null, null));
+        var calls = File.ReadAllLines(log).Select(line => JsonSerializer.Deserialize<JsonElement>(line))
+            .Where(call => call.GetProperty("method").GetString() == (configFallback ? "session/set_config_option" : "session/set_model")).ToArray();
+        Assert.Equal(new[] { "vendor/model-low", "vendor/model-high", "vendor/model-high", "vendor/model-low" },
+            calls.Select(call => call.GetProperty("params").GetProperty(configFallback ? "value" : "modelId").GetString()));
+    }
+
+    [Theory]
+    [InlineData("{}")]
+    [InlineData("""{"models":{"currentModelId":"bare-model","availableModels":[{"modelId":"bare-model"}]}}""")]
+    public async Task EffortOnlyWithoutAdvertisedMappingDoesNotInventModelIds(string payload)
+    {
+        var log = Path.Combine(_fixture.RootDir, "unknown-effort.jsonl");
+        await using var runtime = CreateRuntime(new Dictionary<string, string>
+        {
+            ["MOCK_ACP_LOG"] = log,
+            ["MOCK_ACP_MODELS"] = payload
+        });
+        await using var session = await runtime.OpenSessionAsync(new HarnessLaunchSpec(
+            "acp:opencode", null, _fixture.WorkspaceDir, null, null,
+            new Dictionary<string, McpServerConfig>(), ReasoningEffort: "high"), CancellationToken.None);
+        Assert.False(await session.TrySetModelAsync(null, "high"));
+        Assert.DoesNotContain(File.ReadAllLines(log), line => line.Contains("session/set_", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("small")]
+    public async Task OrdinarySessionsDiscoverAndApplyThoughtLevel(string? model)
+    {
+        var log = Path.Combine(_fixture.RootDir, "ordinary-thought.jsonl");
+        await using var runtime = CreateRuntime(new Dictionary<string, string>
+        {
+            ["MOCK_ACP_LOG"] = log,
+            ["MOCK_ACP_WORKER_OPTIONS"] = "1"
+        });
+        var status = Assert.Single(await runtime.ProbeProvidersAsync(CancellationToken.None), p => p.Provider == "acp:opencode");
+        var small = Assert.Single(status.ModelCatalog!, m => m.Model == "small");
+        Assert.Equal("normal", small.DefaultReasoningEffort);
+        Assert.Equal(new[] { "normal", "deep" }, small.SupportedReasoningEfforts.Select(e => e.ReasoningEffort));
+        File.Delete(log);
+        await using var session = await runtime.OpenSessionAsync(new HarnessLaunchSpec(
+            "acp:opencode", model, _fixture.WorkspaceDir, null, null,
+            new Dictionary<string, McpServerConfig>(), ReasoningEffort: "deep"), CancellationToken.None);
+        var deepRevision = session.ContextUsageRevision;
+        Assert.NotNull(deepRevision);
+        Assert.True(await session.TrySetModelAsync(null, "normal"));
+        Assert.NotEqual(deepRevision, session.ContextUsageRevision);
+        var normalRevision = session.ContextUsageRevision;
+        Assert.True(await session.TrySetModelAsync(null, "normal"));
+        Assert.Equal(normalRevision, session.ContextUsageRevision);
+        Assert.False(await session.TrySetModelAsync(null, "unsupported"));
+        Assert.False(await session.TrySetModelAsync(null, null));
+        var calls = File.ReadAllLines(log).Select(line => JsonSerializer.Deserialize<JsonElement>(line))
+            .Where(call => call.GetProperty("method").GetString() == "session/set_config_option" &&
+                call.GetProperty("params").GetProperty("configId").GetString() == "worker-thought").ToArray();
+        Assert.Equal(new[] { "deep", "normal" }, calls.Select(call => call.GetProperty("params").GetProperty("value").GetString()));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ThoughtLevelInitialDefaultEffortDoesNotSetModel(bool advertisedModel)
+    {
+        var log = Path.Combine(_fixture.RootDir, "thought-initial-default.jsonl");
+        var models = advertisedModel
+            ? "\"models\":{\"currentModelId\":\"small\",\"availableModels\":[{\"modelId\":\"small\"}]},"
+            : "";
+        await using var runtime = CreateRuntime(new Dictionary<string, string>
+        {
+            ["MOCK_ACP_LOG"] = log,
+            ["MOCK_ACP_MODEL_ERROR"] = "-32602",
+            ["MOCK_ACP_MODELS"] = "{" + models + """
+                "configOptions":[{"id":"thought","category":"thought_level","type":"select",
+                "currentValue":"normal","options":[{"value":"normal"},{"value":"deep"}]}]}
+                """
+        });
+        await using var session = await runtime.OpenSessionAsync(new HarnessLaunchSpec(
+            "acp:opencode", null, _fixture.WorkspaceDir, null, null,
+            new Dictionary<string, McpServerConfig>(), ReasoningEffort: "deep"), CancellationToken.None);
+        Assert.True(await session.TrySetModelAsync(null, "normal"));
+        Assert.False(await session.TrySetModelAsync(null, null));
+        var calls = File.ReadAllLines(log).Select(line => JsonSerializer.Deserialize<JsonElement>(line)).ToArray();
+        Assert.DoesNotContain(calls, call => call.GetProperty("method").GetString() == "session/set_model");
+        Assert.Equal(new[] { "deep", "normal" }, calls
+            .Where(call => call.GetProperty("method").GetString() == "session/set_config_option")
+            .Select(call => call.GetProperty("params").GetProperty("value").GetString()));
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task ThoughtLevelResumeWithoutExplicitEffortCanSetModel(bool onOpen, bool configFallback)
+    {
+        var log = Path.Combine(_fixture.RootDir, "thought-resume-model.jsonl");
+        await using var runtime = CreateRuntime(new Dictionary<string, string>
+        {
+            ["MOCK_ACP_LOG"] = log,
+            ["MOCK_ACP_WORKER_OPTIONS"] = "1",
+            ["MOCK_ACP_NO_SET_MODEL"] = configFallback ? "1" : "0"
+        });
+        await using var session = await runtime.OpenSessionAsync(new HarnessLaunchSpec(
+            "acp:opencode", onOpen ? "large" : null, _fixture.WorkspaceDir, "resumed-session", null,
+            new Dictionary<string, McpServerConfig>()), CancellationToken.None);
+        if (!onOpen) Assert.True(await session.TrySetModelAsync("large", null));
+
+        var calls = File.ReadAllLines(log).Select(line => JsonSerializer.Deserialize<JsonElement>(line)).ToArray();
+        var modelCall = Assert.Single(calls, call => call.GetProperty("method").GetString() ==
+            (configFallback ? "session/set_config_option" : "session/set_model"));
+        Assert.Equal("large", modelCall.GetProperty("params").GetProperty(configFallback ? "value" : "modelId").GetString());
+        if (configFallback) Assert.Equal("model", modelCall.GetProperty("params").GetProperty("configId").GetString());
+        Assert.DoesNotContain(calls, call => call.GetProperty("method").GetString() == "session/set_config_option" &&
+            call.GetProperty("params").GetProperty("configId").GetString() == "worker-thought");
+    }
+
+    [Theory]
+    [InlineData("normal", false)]
+    [InlineData("normal", true)]
+    [InlineData("deep", false)]
+    [InlineData("deep", true)]
+    public async Task ThoughtLevelResumeExplicitEffortPreventsReset(string effort, bool onOpen)
+    {
+        var log = Path.Combine(_fixture.RootDir, "thought-resume-explicit.jsonl");
+        await using var runtime = CreateRuntime(new Dictionary<string, string>
+        {
+            ["MOCK_ACP_LOG"] = log,
+            ["MOCK_ACP_WORKER_OPTIONS"] = "1"
+        });
+        await using var session = await runtime.OpenSessionAsync(new HarnessLaunchSpec(
+            "acp:opencode", null, _fixture.WorkspaceDir, "resumed-session", null,
+            new Dictionary<string, McpServerConfig>(), ReasoningEffort: onOpen ? effort : null), CancellationToken.None);
+        if (!onOpen) Assert.True(await session.TrySetModelAsync(null, effort));
+        var before = File.ReadAllLines(log).Length;
+        Assert.False(await session.TrySetModelAsync("large", null));
+        Assert.Equal(before, File.ReadAllLines(log).Length);
+
+        Assert.True(await session.TrySetModelAsync("small", effort));
+        before = File.ReadAllLines(log).Length;
+        Assert.False(await session.TrySetModelAsync("large", null));
+        Assert.Equal(before, File.ReadAllLines(log).Length);
+    }
+
+    [Fact]
+    public async Task ThoughtLevelResumeCannotResetToResumedEffort()
+    {
+        var log = Path.Combine(_fixture.RootDir, "thought-resume.jsonl");
+        await using var runtime = CreateRuntime(new Dictionary<string, string>
+        {
+            ["MOCK_ACP_LOG"] = log,
+            ["MOCK_ACP_WORKER_OPTIONS"] = "1"
+        });
+        await using var session = await runtime.OpenSessionAsync(new HarnessLaunchSpec(
+            "acp:opencode", null, _fixture.WorkspaceDir, "resumed-session", null,
+            new Dictionary<string, McpServerConfig>()), CancellationToken.None);
+        Assert.True(await session.TrySetModelAsync("small", "deep"));
+        var before = File.ReadAllLines(log).Length;
+        Assert.False(await session.TrySetModelAsync("large", null));
+        Assert.Equal(before, File.ReadAllLines(log).Length);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task ThoughtLevelModelSwitchReappliesEffort(bool returnsOptions, bool configFallback)
+    {
+        var log = Path.Combine(_fixture.RootDir, "thought-model-reset.jsonl");
+        await using var runtime = CreateRuntime(new Dictionary<string, string>
+        {
+            ["MOCK_ACP_LOG"] = log,
+            ["MOCK_ACP_WORKER_OPTIONS"] = "1",
+            ["MOCK_ACP_RESET_MODEL_EFFORT"] = "1",
+            ["MOCK_ACP_MODEL_RESPONSE_OPTIONS"] = returnsOptions ? "1" : "0",
+            ["MOCK_ACP_NO_SET_MODEL"] = configFallback ? "1" : "0"
+        });
+        await using var session = await runtime.OpenSessionAsync(new HarnessLaunchSpec(
+            "acp:opencode", null, _fixture.WorkspaceDir, null, null,
+            new Dictionary<string, McpServerConfig>(), ReasoningEffort: "deep"), CancellationToken.None);
+        Assert.True(await session.TrySetModelAsync("large", "deep"));
+        var calls = File.ReadAllLines(log).Select(line => JsonSerializer.Deserialize<JsonElement>(line));
+        Assert.Equal(new[] { "deep", "deep" }, calls
+            .Where(call => call.GetProperty("method").GetString() == "session/set_config_option" &&
+                call.GetProperty("params").GetProperty("configId").GetString() == "worker-thought")
+            .Select(call => call.GetProperty("params").GetProperty("value").GetString()));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ThoughtLevelDefaultModelRestoresAfterExplicitSelection(bool configFallback)
+    {
+        var log = Path.Combine(_fixture.RootDir, "thought-default-model.jsonl");
+        await using var runtime = CreateRuntime(new Dictionary<string, string>
+        {
+            ["MOCK_ACP_LOG"] = log,
+            ["MOCK_ACP_WORKER_OPTIONS"] = "1",
+            ["MOCK_ACP_NO_SET_MODEL"] = configFallback ? "1" : "0"
+        });
+        await using var session = await runtime.OpenSessionAsync(new HarnessLaunchSpec(
+            "acp:opencode", "large", _fixture.WorkspaceDir, null, null,
+            new Dictionary<string, McpServerConfig>(), ReasoningEffort: "deep"), CancellationToken.None);
+
+        Assert.True(await session.TrySetModelAsync("  ", "normal"));
+
+        var calls = File.ReadAllLines(log).Select(line => JsonSerializer.Deserialize<JsonElement>(line))
+            .Where(call => call.GetProperty("method").GetString() ==
+                (configFallback ? "session/set_config_option" : "session/set_model"))
+            .Select(call => call.GetProperty("params"))
+            .Where(parameters => !configFallback || parameters.GetProperty("configId").GetString() == "model");
+        Assert.Equal(new[] { "large", "small" },
+            calls.Select(parameters => parameters.GetProperty(configFallback ? "value" : "modelId").GetString()));
+    }
+
+    [Fact]
+    public async Task ThoughtLevelUnknownDefaultModelRequiresReopen()
+    {
+        var log = Path.Combine(_fixture.RootDir, "thought-unknown-default.jsonl");
+        await using var runtime = CreateRuntime(new Dictionary<string, string>
+        {
+            ["MOCK_ACP_LOG"] = log,
+            ["MOCK_ACP_MODELS"] = """
+                {"configOptions":[{"id":"thought","category":"thought_level","type":"select",
+                  "currentValue":"normal","options":[{"value":"normal"},{"value":"deep"}]}]}
+                """
+        });
+        await using var session = await runtime.OpenSessionAsync(new HarnessLaunchSpec(
+            "acp:opencode", "large", _fixture.WorkspaceDir, null, null,
+            new Dictionary<string, McpServerConfig>(), ReasoningEffort: "deep"), CancellationToken.None);
+        var before = File.ReadAllLines(log).Length;
+        Assert.False(await session.TrySetModelAsync(null, "normal"));
+        Assert.Equal(before, File.ReadAllLines(log).Length);
+    }
+
+    [Theory]
+    [InlineData("small", null)]
+    [InlineData("large", "  ")]
+    public async Task ThoughtLevelBlankEffortRestoresInitialDefault(string model, string? effort)
+    {
+        var log = Path.Combine(_fixture.RootDir, "thought-default-effort.jsonl");
+        await using var runtime = CreateRuntime(new Dictionary<string, string>
+        {
+            ["MOCK_ACP_LOG"] = log,
+            ["MOCK_ACP_WORKER_OPTIONS"] = "1"
+        });
+        await using var session = await runtime.OpenSessionAsync(new HarnessLaunchSpec(
+            "acp:opencode", "small", _fixture.WorkspaceDir, null, null,
+            new Dictionary<string, McpServerConfig>()), CancellationToken.None);
+        Assert.DoesNotContain(File.ReadAllLines(log), line => line.Contains("worker-thought", StringComparison.Ordinal));
+        Assert.True(await session.TrySetModelAsync("small", "deep"));
+        Assert.True(await session.TrySetModelAsync(model, effort));
+        Assert.True(await session.TrySetModelAsync(model, null));
+
+        var calls = File.ReadAllLines(log).Select(line => JsonSerializer.Deserialize<JsonElement>(line))
+            .Where(call => call.GetProperty("method").GetString() == "session/set_config_option" &&
+                call.GetProperty("params").GetProperty("configId").GetString() == "worker-thought");
+        Assert.Equal(new[] { "deep", "normal" },
+            calls.Select(call => call.GetProperty("params").GetProperty("value").GetString()));
+    }
+
+    [Theory]
+    [InlineData(false, false, false, false)]
+    [InlineData(false, true, false, false)]
+    [InlineData(false, false, true, false)]
+    [InlineData(false, true, true, false)]
+    [InlineData(true, false, false, false)]
+    [InlineData(true, true, false, false)]
+    [InlineData(true, false, true, false)]
+    [InlineData(true, true, true, false)]
+    [InlineData(false, false, false, true)]
+    [InlineData(true, false, false, true)]
+    public async Task DefaultModelEffortKeepsConfirmedIdleUsageRevision(bool thoughtLevel, bool configFallback, bool switchModel, bool modelUnavailable)
+    {
+        await using var runtime = CreateRuntime(new Dictionary<string, string>
+        {
+            ["MOCK_ACP_WORKER_OPTIONS"] = thoughtLevel ? "1" : "0",
+            ["MOCK_ACP_NO_SET_MODEL"] = configFallback ? "1" : "0",
+            ["MOCK_ACP_MODEL_ERROR"] = modelUnavailable ? "-32601" : "0",
+            ["MOCK_ACP_POST_SESSION_DELAY_MS"] = "300",
+            ["MOCK_ACP_POST_SESSION_USAGE"] = """{"used":100,"size":200000}"""
+        });
+        await using var session = await runtime.OpenSessionAsync(new HarnessLaunchSpec(
+            "acp:opencode", null, _fixture.WorkspaceDir, null, null,
+            new Dictionary<string, McpServerConfig>(), ReasoningEffort: thoughtLevel ? "deep" : modelUnavailable ? "medium" : "high"), CancellationToken.None);
+        if (switchModel)
+        {
+            Assert.True(await session.TrySetModelAsync(thoughtLevel ? "large" : "gemini-4-carbon", thoughtLevel ? "deep" : "high"));
+            Assert.True(await session.TrySetModelAsync("  ", thoughtLevel ? "normal" : "medium"));
+        }
+
+        var received = new TaskCompletionSource<IdleContextUsage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var pending = session.AttachIdleContextUsageHandler(usage => received.TrySetResult(usage));
+        foreach (var buffered in pending) received.TrySetResult(buffered);
+        var usage = await received.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        Assert.NotNull(session.ContextUsageRevision);
+        Assert.Equal(session.ContextUsageRevision, usage.ContextUsageRevision);
+        Assert.Equal(100, usage.Usage.EffectiveUsedTokens);
+    }
+
     [Fact]
     public async Task ModelSelectionPropagatesErrorsOtherThanMethodNotFound()
     {

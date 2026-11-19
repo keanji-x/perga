@@ -50,3 +50,13 @@ it('formats the reported ratio and preserves usage when the window is unknown', 
     expect(operation.responseSchema.parse({ ...page, session: { ...session, contextUsage: null } }).token_usage).toBeNull();
   }
 });
+
+it.each(['idle', 'running'])('retains persisted effort for explicit and default models while %s', status => {
+  for (const model of ['model', null]) {
+    for (const reasoningEffort of ['high', null, undefined]) {
+      expect(conversationRunOperation(session.id).responseSchema.parse({ ...page,
+        session: { ...session, model, status, reasoningEffort },
+      })).toMatchObject({ model, reasoning_effort: reasoningEffort ?? null });
+    }
+  }
+});

@@ -51,6 +51,11 @@ public sealed class AcpAgentSession : IAgentSession
         }
     }
 
+    private string? _defaultModel;
+    private bool _hasExplicitModel;
+    private string? _defaultThoughtLevel;
+    private string? _appliedThoughtLevel;
+    private bool _hasExplicitThoughtLevel;
     private AcpModelCatalog _modelCatalog = AcpModelCatalog.Build([], null);
 
 
@@ -148,8 +153,8 @@ public sealed class AcpAgentSession : IAgentSession
     private bool _configureWorker;
     private string? _workerLaunchModel;
     private string? _legacyWorkerModel;
-    private AcpWorkerOptions? _workerOptions;
-    private AcpWorkerOptions? _workerDefaults;
+    private AcpSessionOptions? _workerOptions;
+    private AcpSessionOptions? _workerDefaults;
     public WorkerProviderConfiguration? WorkerConfiguration => Volatile.Read(ref _workerOptions)?.ToProviderConfiguration(_workerDefaults);
     public bool ShutdownConfirmed => _rpc.ShutdownConfirmed;
     public bool RequiresTerminalStop => true;
@@ -177,7 +182,7 @@ public sealed class AcpAgentSession : IAgentSession
     public IReadOnlyList<PermissionModeOption> AvailablePermissionModes { get; private set; } = [];
 
     internal IReadOnlyList<string> AvailableModels { get; private set; } = [];
-    internal IReadOnlyList<ProviderModelInfo> AvailableModelCatalog { get; private set; } = [];
+    internal IReadOnlyList<ProviderModelInfo> AvailableModelCatalog => _modelCatalog.Models;
 
     public bool CanReuseContextWindow => true;
     public long? ContextUsageRevision
@@ -206,7 +211,7 @@ public sealed class AcpAgentSession : IAgentSession
         }
     }
 
-    private void ApplyWorkerOptions(AcpWorkerOptions? options)
+    private void ApplyWorkerOptions(AcpSessionOptions? options)
     {
         lock (_idleUsageLock)
         {
@@ -218,13 +223,65 @@ public sealed class AcpAgentSession : IAgentSession
     public async Task<bool> TrySetModelAsync(string? model, string? reasoningEffort = null, CancellationToken ct = default)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-        // ACP requires a model ID. Resetting to the provider default needs a fresh session.
-        if (string.IsNullOrWhiteSpace(model))
-        {
+        var hasModel = !string.IsNullOrWhiteSpace(model);
+        var effort = string.IsNullOrWhiteSpace(reasoningEffort) ? null : reasoningEffort.Trim();
+        if (!hasModel && effort is null) return false;
+
+        // A blank model keeps the group advertised as the session's initial default.
+        var requestedModel = hasModel ? model!.Trim() : _defaultModel;
+        var entry = _modelCatalog.Models.FirstOrDefault(row => row.Model == requestedModel);
+        var reasoningOption = _modelCatalog.ThoughtLevel;
+        var useThoughtLevel = _modelCatalog.UsesThoughtLevel(requestedModel);
+        if (!hasModel && !useThoughtLevel &&
+            entry?.SupportedReasoningEfforts.Any(value => string.Equals(value.ReasoningEffort, effort, StringComparison.OrdinalIgnoreCase)) != true)
             return false;
+        if (useThoughtLevel && effort is not null && !reasoningOption!.Values.Any(value => value.Id == effort))
+            return false;
+
+        var thoughtLevel = useThoughtLevel ? effort ?? _defaultThoughtLevel : null;
+        // A loaded effort is not evidence of the provider's initial default to restore.
+        if (useThoughtLevel && thoughtLevel is null && _hasExplicitThoughtLevel) return false;
+
+        if (hasModel || !useThoughtLevel || _hasExplicitModel)
+        {
+            if (requestedModel is null || !await TrySetAcpModelAsync(requestedModel, reasoningEffort, ct).ConfigureAwait(false))
+                return false;
+            _hasExplicitModel = hasModel;
         }
 
-        var requestedModel = model.Trim();
+        if (thoughtLevel is not null && thoughtLevel != _appliedThoughtLevel)
+        {
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeoutCts.CancelAfter(_handshakeTimeout);
+            try
+            {
+                await _rpc.SendRequestAsync("session/set_config_option", new
+                {
+                    sessionId = NativeThreadId,
+                    configId = reasoningOption!.Id,
+                    value = thoughtLevel
+                }, timeoutCts.Token, _ =>
+                {
+                    _appliedThoughtLevel = thoughtLevel;
+                    _hasExplicitThoughtLevel = effort is not null;
+                    ConfirmContextBinding(requestedModel is null ? null : _modelCatalog.Resolve(requestedModel, reasoningEffort), thoughtLevel);
+                }).ConfigureAwait(false);
+            }
+            catch (JsonRpcRemoteException error) when (error.Code == -32601)
+            {
+                return false;
+            }
+        }
+        else if (thoughtLevel is not null)
+        {
+            // An explicit selection still counts when it matches the loaded value.
+            _hasExplicitThoughtLevel = effort is not null;
+        }
+        return true;
+    }
+
+    private async Task<bool> TrySetAcpModelAsync(string requestedModel, string? reasoningEffort, CancellationToken ct)
+    {
         var resolvedModelId = _modelCatalog.Resolve(requestedModel, reasoningEffort);
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeoutCts.CancelAfter(_handshakeTimeout);
@@ -260,7 +317,11 @@ public sealed class AcpAgentSession : IAgentSession
     private void ConfirmModelResult(JsonElement result, string modelId)
     {
         if (ConfirmsModel(result, modelId))
-            ConfirmContextBinding(modelId);
+        {
+            // Providers may reset thought_level on a model change. Missing options mean unknown state.
+            _appliedThoughtLevel = AcpSessionOptions.Read(result)?.Reasoning?.Current;
+            ConfirmContextBinding(modelId, _appliedThoughtLevel);
+        }
     }
 
     private static bool ConfirmsModel(JsonElement result, string modelId)
@@ -553,7 +614,7 @@ public sealed class AcpAgentSession : IAgentSession
 
             if (_configureWorker)
             {
-                var options = AcpWorkerOptions.Read(res);
+                var options = AcpSessionOptions.Read(res);
                 if (!isResume) _workerDefaults = options;
                 ApplyWorkerOptions(options);
                 return;
@@ -629,13 +690,15 @@ public sealed class AcpAgentSession : IAgentSession
 
         var (rawModels, currentModelId) = ExtractAvailableModels(response);
         AvailableModels = rawModels.Select(m => m.ModelId).ToArray();
-        _modelCatalog = AcpModelCatalog.Build(rawModels, currentModelId);
-        AvailableModelCatalog = _modelCatalog.Models;
-        if (!string.IsNullOrWhiteSpace(spec.Model))
+        _modelCatalog = AcpModelCatalog.Build(rawModels, currentModelId, AcpSessionOptions.Read(response)?.Reasoning);
+        _defaultModel = _modelCatalog.Models.FirstOrDefault(model => model.IsDefault)?.Model;
+        _appliedThoughtLevel = _modelCatalog.ThoughtLevel?.Current;
+        if (!isResume) _defaultThoughtLevel = _appliedThoughtLevel;
+        if (!string.IsNullOrWhiteSpace(spec.Model) || !string.IsNullOrWhiteSpace(spec.ReasoningEffort))
         {
-            var requestedModel = spec.Model.Trim();
-            var modelSet = await TrySetModelAsync(requestedModel, spec.ReasoningEffort, ct).ConfigureAwait(false);
-            if (!modelSet &&
+            var requestedModel = string.IsNullOrWhiteSpace(spec.Model) ? _defaultModel : spec.Model.Trim();
+            var modelSet = await TrySetModelAsync(spec.Model, spec.ReasoningEffort, ct).ConfigureAwait(false);
+            if (!modelSet && requestedModel is not null &&
                 !string.IsNullOrWhiteSpace(currentModelId) &&
                 string.Equals(currentModelId, _modelCatalog.Resolve(requestedModel, spec.ReasoningEffort), StringComparison.Ordinal))
             {
@@ -866,7 +929,7 @@ public sealed class AcpAgentSession : IAgentSession
             throw new InvalidOperationException("The ACP session did not acknowledge the Worker launch model.");
     }
 
-    private async Task SetWorkerOptionAsync(string sessionId, AcpWorkerOption? option, string value, bool model, CancellationToken ct)
+    private async Task SetWorkerOptionAsync(string sessionId, AcpSessionOption? option, string value, bool model, CancellationToken ct)
     {
         if (option is null || !option.Values.Any(choice => choice.Id == value))
             throw new InvalidOperationException("The ACP session did not offer the requested Worker setting.");
@@ -875,10 +938,10 @@ public sealed class AcpAgentSession : IAgentSession
         var args = new Dictionary<string, object?> { ["sessionId"] = sessionId, ["configId"] = option.Id, ["value"] = value };
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeout.CancelAfter(TimeSpan.FromSeconds(5));
-        AcpWorkerOptions? current = null;
+        AcpSessionOptions? current = null;
         await _rpc.SendRequestAsync("session/set_config_option", args, timeout.Token, response =>
         {
-            current = AcpWorkerOptions.Read(response);
+            current = AcpSessionOptions.Read(response);
             if (current is not null)
                 ApplyWorkerOptions(current);
         }).ConfigureAwait(false);
@@ -913,7 +976,7 @@ public sealed class AcpAgentSession : IAgentSession
             : parameters;
 
         if (_configureWorker && TryGetString(parameters, "sessionId") == NativeThreadId &&
-            TryGetString(update, "sessionUpdate") == "config_option_update" && AcpWorkerOptions.Read(update) is { } options)
+            TryGetString(update, "sessionUpdate") == "config_option_update" && AcpSessionOptions.Read(update) is { } options)
             ApplyWorkerOptions(options);
 
         var updateKind = TryGetString(update, "sessionUpdate")

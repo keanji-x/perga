@@ -1179,7 +1179,10 @@ for raw_line in sys.stdin:
         else:
             state["model"] = params.get("modelId")
             state["model_set_method"] = "session/set_model"
-            send({"jsonrpc": "2.0", "id": msg_id, "result": {}})
+            if os.environ.get("MOCK_ACP_RESET_MODEL_EFFORT") == "1":
+                state["worker_effort"] = "normal"
+            result = {"configOptions": worker_config_options()} if os.environ.get("MOCK_ACP_WORKER_OPTIONS") == "1" and os.environ.get("MOCK_ACP_MODEL_RESPONSE_OPTIONS") != "0" else {}
+            send({"jsonrpc": "2.0", "id": msg_id, "result": result})
             switch_usage_raw = os.environ.get("MOCK_ACP_MODEL_SWITCH_USAGE")
             if switch_usage_raw:
                 send({
@@ -1192,15 +1195,18 @@ for raw_line in sys.stdin:
                 })
     elif method == "session/set_config_option":
         code = int(os.environ.get("MOCK_ACP_MODEL_ERROR", "0"))
-        if code:
+        if code and params.get("configId") == "model":
             send({"jsonrpc": "2.0", "id": msg_id, "error": {"code": code, "message": "model switch failed"}})
             continue
         if os.environ.get("MOCK_ACP_WORKER_OPTIONS") == "1":
-            if params.get("configId") == "worker-model":
+            if params.get("configId") in ("worker-model", "model"):
                 state["model"] = params.get("value")
+                if os.environ.get("MOCK_ACP_RESET_MODEL_EFFORT") == "1":
+                    state["worker_effort"] = "normal"
             if params.get("configId") == "worker-thought" and os.environ.get("MOCK_ACP_REJECT_WORKER_EFFORT") != "1":
                 state["worker_effort"] = params.get("value")
-            send({"jsonrpc": "2.0", "id": msg_id, "result": {"configOptions": worker_config_options()}})
+            result = {} if params.get("configId") == "model" and os.environ.get("MOCK_ACP_MODEL_RESPONSE_OPTIONS") == "0" else {"configOptions": worker_config_options()}
+            send({"jsonrpc": "2.0", "id": msg_id, "result": result})
             continue
         if params.get("configId") == "model":
             state["model"] = params.get("value")

@@ -1,5 +1,4 @@
 /** One typed read contract over the existing transcript resource. Display identities are not native turns. */
-import { sessionContextUsage } from './session-context-usage.js';
 import { z } from 'zod';
 import { DEPLOYMENT_OWNER_USER_ID } from '../api/auth.js';
 import type { ApiOperation } from '../api/types.js';
@@ -13,7 +12,7 @@ import {
 } from '../api/schemas.js';
 import type { ConversationTerminalOutcome, ConversationCursor, ConversationDisplayItem, ConversationPage, ConversationPendingInput, ConversationActiveInput, ConversationSubmissionDelivery, HarnessItem as TranscriptRow } from '../api/generated/wire.js';
 import { plannerPermissionModeSchema } from './planner-permission-mode.js';
-import { messageStatusSchema, SYSTEM_PRESENTATION_LABELS, systemInputPresentationSchema, buildTranscript, retireFollowedThoughts, harnessTimeoutEvidenceSchema, harnessItemSchema as transcriptRowSchema, HARNESS_ITEMS_PAGE_LIMIT as TRANSCRIPT_PAGE_LIMIT, type PlannerRun, type TranscriptEntry } from './conversation.js';
+import { projectPlannerRun, messageStatusSchema, SYSTEM_PRESENTATION_LABELS, systemInputPresentationSchema, buildTranscript, retireFollowedThoughts, harnessTimeoutEvidenceSchema, harnessItemSchema as transcriptRowSchema, HARNESS_ITEMS_PAGE_LIMIT as TRANSCRIPT_PAGE_LIMIT, type PlannerRun, type TranscriptEntry } from './conversation.js';
 
 /** Native acknowledgement can arrive at END. Defer intervention for the exact
  * tracked execution without changing its delivery fact; other held inputs remain visible. */
@@ -447,30 +446,18 @@ export function conversationRunOperation(card: string): ApiOperation<PlannerRun 
     method: 'GET',
     path: `/api/v1/sessions/${encodeURIComponent(card)}/items?afterId=0&limit=1&view=run`,
     responseSchema: sessionItemsPageDtoSchema.transform((page): PlannerRun & z.infer<typeof conversationRunMetadataSchema> => {
-      const running = page.activeTurn !== null && page.activeTurn !== undefined && page.activeTurn.status === 'running';
+      const run = projectPlannerRun(card, page);
+      const running = run.running_turn !== null;
       return {
-        card_id: card,
-        worker_session_id: page.session.id,
-        phase: page.worker?.phase === 'interrupting' ? 'issuing_interrupt' : running ? 'turn_running' : page.session.status === 'queued' ? 'issuing_turn' : 'idle',
+        ...run,
+        phase: page.worker?.phase === 'interrupting' ? 'issuing_interrupt' : run.phase,
         worker: page.worker,
         pending: page.queuedMessages?.map(message => ({
           entry_id: message.id, text: message.text, rev: 1, queued_at_ms: message.queuedAtMs, state: message.state,
         })) ?? [],
-        pending_overflow: 0,
         ...(page.queueHandoffIds === undefined ? {} : { queue_handoff_ids: page.queueHandoffIds }),
         ...(page.canSteer === undefined ? {} : { can_steer_queued: page.canSteer }),
-        model: page.session.model ?? null,
-        reasoning_effort: null,
-        permission_mode: page.session.permissionMode ?? null,
-        blocked_reason: page.session.status === 'unknown' ? 'The previous message has an unknown outcome.' : null,
-        recovery: null,
-        attachments_supported: false,
         manual_compact_supported: page.worker == null,
-        compact_outcome: null,
-        token_usage: sessionContextUsage(page.session),
-        running_turn: running && page.activeTurn !== null && page.activeTurn !== undefined
-          ? { turn_id: page.activeTurn.id, elapsed_ms: Math.max(0, Date.now() - (page.activeTurn.startedAtMs ?? Date.now())) }
-          : null,
         unknown_session_input: page.unknownInput,
         ...(page.resume == null ? {} : { provider_resume: page.resume }),
         input_contract: 'canonical',
@@ -480,7 +467,7 @@ export function conversationRunOperation(card: string): ApiOperation<PlannerRun 
         terminal_outcome: null,
         pending_inputs: [],
         active_input: null,
-        native_turn_id: running && page.activeTurn !== null && page.activeTurn !== undefined ? page.activeTurn.id : null,
+        native_turn_id: run.running_turn?.turn_id ?? null,
       };
     }),
   };
