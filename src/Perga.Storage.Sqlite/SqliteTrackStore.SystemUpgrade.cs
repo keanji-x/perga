@@ -8,6 +8,9 @@ namespace Perga.Storage.Sqlite;
 
 public sealed partial class SqliteTrackStore : ISystemUpgradeStore
 {
+    private const string UpgradeMailIdPrefix = TrackWakeRequests.SystemUpgradeMailIdPrefix;
+    private const string UpgradeWakeKeyPrefix = TrackWakeRequests.SystemUpgradeMailKeyPrefix;
+
     public async Task<int> GetSchemaVersionAsync(CancellationToken ct)
     {
         EnsureInitialized();
@@ -16,11 +19,46 @@ public sealed partial class SqliteTrackStore : ISystemUpgradeStore
             "SELECT COALESCE(MAX(version), 0) FROM schema_migrations;", cancellationToken: ct)).ConfigureAwait(false);
     }
 
+    public Task<IReadOnlyList<string>> PrepareUpgradeNotificationRetriesAsync(CancellationToken ct) =>
+        _writer.EnqueueAsync<IReadOnlyList<string>>(async (conn, tx, token) =>
+        {
+            await conn.ExecuteAsync(new CommandDefinition($"""
+                UPDATE track_wakes SET state='{TrackWakeStates.Pending}', turn_id=NULL, reason='{TrackWakeReasons.UpgradeRetry}'
+                WHERE state='{TrackWakeStates.Delivering}' AND coalesce_key IN (
+                    SELECT '{UpgradeWakeKeyPrefix}' || job_id FROM system_upgrade_receipts
+                    WHERE notification_status LIKE 'delivery_failed:%');
+                UPDATE system_upgrade_receipts SET notification_status='queued'
+                WHERE notification_status LIKE 'delivery_failed:%' AND EXISTS (
+                    SELECT 1 FROM track_wakes w WHERE w.coalesce_key='{UpgradeWakeKeyPrefix}' || job_id AND w.state='{TrackWakeStates.Pending}');
+                -- Repair projections if delivery committed before receipt acknowledgement.
+                UPDATE system_upgrade_receipts SET notification_status='notified'
+                WHERE notification_status='queued' AND EXISTS (
+                    SELECT 1 FROM track_wakes w WHERE w.coalesce_key='{UpgradeWakeKeyPrefix}' || job_id AND w.state='{TrackWakeStates.Done}');
+                -- Only undelivered notifications become unavailable; 'notified' is final even if the track closes later.
+                -- Deleting a track cascades away its mail, so absence of an open-track mail covers both closure and deletion.
+                UPDATE system_upgrade_receipts SET notification_status='target_unavailable'
+                WHERE (notification_status='queued' OR notification_status LIKE 'delivery_failed:%') AND NOT EXISTS (
+                    SELECT 1 FROM mails m JOIN tracks t ON t.id=m.to_track_id
+                    WHERE m.id='{UpgradeMailIdPrefix}' || job_id AND t.closed_at_ms IS NULL);
+                UPDATE mails SET wake_pending=0 WHERE id IN (
+                    SELECT '{UpgradeMailIdPrefix}' || job_id FROM system_upgrade_receipts
+                    WHERE notification_status IN ('notified','target_unavailable'));
+                """, transaction: tx, cancellationToken: token)).ConfigureAwait(false);
+            return (await conn.QueryAsync<string>(new CommandDefinition($"""
+                SELECT DISTINCT w.track_id FROM track_wakes w
+                JOIN system_upgrade_receipts r ON w.coalesce_key='{UpgradeWakeKeyPrefix}' || r.job_id
+                JOIN tracks t ON t.id=w.track_id AND t.closed_at_ms IS NULL
+                WHERE w.state='{TrackWakeStates.Pending}';
+                """, transaction: tx, cancellationToken: token)).ConfigureAwait(false)).AsList();
+        }, ct);
+
+    public Task AcknowledgeUpgradeNotificationAsync(string mailId, CancellationToken ct) => AcknowledgeMailWakeAsync(mailId, ct);
+
     public Task MarkUpgradeNotificationFailedAsync(string mailId, string error, CancellationToken ct) =>
         _writer.EnqueueAsync(async (conn, tx, token) =>
         {
             await conn.ExecuteAsync(new CommandDefinition(
-                "UPDATE system_upgrade_receipts SET notification_status = @Status WHERE 'system-upgrade:' || job_id = @MailId;",
+                $"UPDATE system_upgrade_receipts SET notification_status = @Status WHERE '{UpgradeMailIdPrefix}' || job_id = @MailId;",
                 new { Status = "delivery_failed: " + error, MailId = mailId }, tx, cancellationToken: token)).ConfigureAwait(false);
         }, ct);
 
@@ -45,12 +83,17 @@ public sealed partial class SqliteTrackStore : ISystemUpgradeStore
                 JsonSerializer.SerializeToElement(receipt, new JsonSerializerOptions(JsonSerializerDefaults.Web)), now);
             await InsertEventInternalAsync(conn, tx, evt, token).ConfigureAwait(false);
             if (target is not null)
+            {
                 await conn.ExecuteAsync(new CommandDefinition("""
                     INSERT INTO mails(id, from_track_id, to_track_id, summary, body, wake_pending, created_at_ms)
                     VALUES (@Id, 'system:upgrade', @Target, @Summary, @Json, 1, @Now);
-                    """, new { Id = "system-upgrade:" + receipt.JobId, Target = target,
+                    """, new { Id = TrackWakeRequests.SystemUpgradeMailId(receipt.JobId), Target = target,
                         Summary = "System upgrade " + receipt.Status, Json = json, Now = now }, tx,
                     cancellationToken: token)).ConfigureAwait(false);
+                await EnqueueWakeInternalAsync(conn, tx, TrackWakeRequests.Mail(new MailDto(
+                    TrackWakeRequests.SystemUpgradeMailId(receipt.JobId), "system:upgrade", target,
+                    "System upgrade " + receipt.Status, json, null, now)), now, token).ConfigureAwait(false);
+            }
             return true;
         }, ct);
     }

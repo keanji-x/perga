@@ -43,7 +43,7 @@ internal sealed class FakeManualTimeProvider : TimeProvider
     }
 }
 
-internal sealed class InMemoryTrackStore : ITrackStore
+internal sealed partial class InMemoryTrackStore : ITrackStore
 {
     private readonly object _gate = new();
     private readonly Dictionary<string, AreaDto> _areas = new(StringComparer.Ordinal);
@@ -406,8 +406,12 @@ internal sealed class InMemoryTrackStore : ITrackStore
             return Task.FromResult(_workspacePreparations.GetValueOrDefault(trackId));
     }
 
-    public Task<IReadOnlyList<PersistedSessionInput>> ListAcceptedTrackInputsAsync(string trackId, CancellationToken ct) =>
-        Task.FromResult<IReadOnlyList<PersistedSessionInput>>([]);
+    public Task<IReadOnlyList<PersistedSessionInput>> ListAcceptedTrackInputsAsync(string trackId, CancellationToken ct)
+    {
+        lock (_gate) return Task.FromResult<IReadOnlyList<PersistedSessionInput>>(_inputs.Values
+            .Where(i => _sessions[i.Receipt.SessionId].TrackId == trackId && i.Receipt.TurnStatus == "queued")
+            .GroupBy(i => i.Receipt.TurnId).Select(g => g.First() with { Content = string.Join("\n\n", g.Select(i => i.Content)) }).ToArray());
+    }
 
     public Task<IReadOnlyList<string>> RecoverWorkspacePreparationsAsync(CancellationToken ct) =>
         Task.FromResult<IReadOnlyList<string>>([]);
@@ -441,6 +445,10 @@ internal sealed class InMemoryTrackStore : ITrackStore
         lock (_gate)
         {
             _tracks[track.Id] = track;
+            if (track.ClosedAtMs is not null)
+                for (var i = 0; i < _trackWakes.Count; i++)
+                    if (_trackWakes[i] is { State: TrackWakeStates.Pending or TrackWakeStates.Delivering } w && w.TrackId == track.Id)
+                        _trackWakes[i] = w with { State = TrackWakeStates.Dropped, Reason = TrackWakeReasons.TrackClosed };
             if (evt is not null)
             {
                 AppendEventLocked(evt);
@@ -456,6 +464,9 @@ internal sealed class InMemoryTrackStore : ITrackStore
         {
             if (FailTemplateUpdate) throw new IOException("template persistence failure");
             _templateSnapshots[track.Id] = templateSnapshot;
+            for (var i = 0; i < _trackWakes.Count; i++)
+                if (_trackWakes[i] is { State: TrackWakeStates.Pending, Kind: TrackWakeKinds.Schedule } w && w.TrackId == track.Id)
+                    _trackWakes[i] = w with { State = TrackWakeStates.Dropped, Reason = TrackWakeReasons.TemplateChanged };
             return UpdateTrackAndEmitAsync(track, evt, ct);
         }
     }
@@ -484,6 +495,7 @@ internal sealed class InMemoryTrackStore : ITrackStore
         lock (_gate)
         {
             _reports[trackId] = report;
+            if (authorSessionId is null && dispatch is null) EnqueueWakeLocked(TrackWakeRequests.Report(trackId, report.DocRev, evt.Payload));
             _revisions[(trackId, report.DocRev)] = compressedRevisionBlocks.ToArray();
             _tasksByTrack[trackId] = syncedTasks.ToList();
 
@@ -504,7 +516,7 @@ internal sealed class InMemoryTrackStore : ITrackStore
         EventEnvelopeDto? evt,
         CancellationToken ct,
         AgentSessionDto? session = null,
-        EventEnvelopeDto? sessionEvent = null)
+        EventEnvelopeDto? sessionEvent = null, string? wakePrompt = null)
     {
         lock (_gate)
         {
@@ -528,6 +540,7 @@ internal sealed class InMemoryTrackStore : ITrackStore
                 list.Add(task);
             }
 
+            if (attempt?.FinishedAtMs is not null) EnqueueWakeLocked(TrackWakeRequests.TaskSettled(task, attempt, wakePrompt), once: true);
             if (attempt is not null)
             {
                 if (!_attemptsByTask.TryGetValue(task.Id, out var attList))
@@ -575,19 +588,53 @@ internal sealed class InMemoryTrackStore : ITrackStore
         }
     }
 
-    public ISessionInputStore SessionInputs => throw new NotSupportedException();
-
-    public Task<IReadOnlyList<(string TrackId, PersistedSessionInput Input)>> RecoverSessionInputsAsync(CancellationToken ct) =>
-        Task.FromResult<IReadOnlyList<(string, PersistedSessionInput)>>([]);
+    public Task<IReadOnlyList<(string TrackId, PersistedSessionInput Input)>> RecoverSessionInputsAsync(CancellationToken ct)
+    {
+        lock (_gate)
+        {
+            foreach (var group in _inputs.Values.Where(i => i.Receipt.TurnStatus == "running").GroupBy(i => i.Receipt.TurnId).ToArray())
+            {
+                var first = group.First();
+                var session = _sessions[first.Receipt.SessionId];
+                foreach (var member in group)
+                {
+                    _inputs[Key(member)] = member with { Receipt = member.Receipt with { TurnStatus = "unknown",
+                        DeliveryState = member.Receipt.DeliveryState == "dispatching" ? "unknown" : member.Receipt.DeliveryState } };
+                }
+                var turns = _turnsBySession[session.Id];
+                var index = turns.FindIndex(t => t.Id == first.Receipt.TurnId);
+                turns[index] = turns[index] with { Status = "unknown", ErrorText = "Host stopped during dispatch." };
+                _sessions[session.Id] = session with { Status = "unknown" };
+                AppendEventLocked(new(null, _tracks[session.TrackId].AreaId, session.TrackId, KernelEventKinds.TurnCompleted,
+                    TestJson.FromObject(turns[index]), DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
+            }
+            return Task.FromResult<IReadOnlyList<(string, PersistedSessionInput)>>(_inputs.Values.Where(i => i.Receipt.TurnStatus == "queued")
+                .GroupBy(i => i.Receipt.TurnId).Select(g => (_sessions[g.First().Receipt.SessionId].TrackId,
+                    g.First() with { Content = string.Join("\n\n", g.Select(i => i.Content)) })).ToArray());
+        }
+    }
 
     public Task<IReadOnlyList<ProviderSessionResumeFence>> ListSessionResumeFencesAsync(string trackId, CancellationToken ct) =>
-        Task.FromResult<IReadOnlyList<ProviderSessionResumeFence>>([]);
+        Task.FromResult<IReadOnlyList<ProviderSessionResumeFence>>(_resumeFences.Values.Where(f => _sessions[f.SessionId].TrackId == trackId).ToArray());
 
-    public Task SaveSessionResumeFenceAsync(ProviderSessionResumeFence fence, CancellationToken ct) =>
-        throw new NotSupportedException();
+    public Task SaveSessionResumeFenceAsync(ProviderSessionResumeFence fence, CancellationToken ct)
+    {
+        lock (_gate) _resumeFences[fence.SessionId] = fence;
+        return Task.CompletedTask;
+    }
 
     public Task CompleteSessionResumeAsync(AgentSessionDto session, PersistedSessionInput? unresolved,
-        EventEnvelopeDto sessionEvent, CancellationToken ct) => throw new NotSupportedException();
+        EventEnvelopeDto sessionEvent, CancellationToken ct)
+    {
+        lock (_gate)
+        {
+            _resumeFences.Remove(session.Id);
+            if (unresolved is not null) return ResolveAsync(unresolved, session, sessionEvent, ct);
+            _sessions[session.Id] = session;
+            AppendEventLocked(sessionEvent);
+            return Task.CompletedTask;
+        }
+    }
 
     public Task<bool> HasSessionTurnAsync(string sessionId, string turnId, CancellationToken ct)
     {
@@ -703,25 +750,11 @@ internal sealed class InMemoryTrackStore : ITrackStore
         lock (_gate)
         {
             _asks[ask.Id] = ask;
+            if (ask.Delivery == AskDelivery.Wake && ask.AnsweredAtMs is not null)
+                EnqueueWakeLocked(TrackWakeRequests.Ask(ask), once: true);
             AppendEventLocked(evt);
             return Task.CompletedTask;
         }
-    }
-
-    private readonly HashSet<string> _pendingMailWakes = [];
-
-    public Task AcknowledgeMailWakeAsync(string mailId, CancellationToken ct)
-    {
-        lock (_gate)
-            _pendingMailWakes.Remove(mailId);
-        return Task.CompletedTask;
-    }
-
-    public Task<IReadOnlyList<MailDto>> ListPendingMailWakesAsync(CancellationToken ct)
-    {
-        lock (_gate)
-            return Task.FromResult<IReadOnlyList<MailDto>>(_mailsByToTrack.Values.SelectMany(list => list)
-                .Where(mail => _pendingMailWakes.Contains(mail.Id)).ToList());
     }
 
     public Task<MailDto?> FindReceivedMailAsync(string trackId, string mailId, CancellationToken ct)
@@ -749,7 +782,7 @@ internal sealed class InMemoryTrackStore : ITrackStore
             {
                 list.Add(mail);
                 if (requestWake)
-                    _pendingMailWakes.Add(mail.Id);
+                    EnqueueWakeLocked(TrackWakeRequests.Mail(mail), once: true);
             }
 
             AppendEventLocked(evt);
@@ -873,6 +906,8 @@ internal sealed class InMemoryTrackStore : ITrackStore
                 }
             }
 
+            foreach (var id in affected)
+                if (_tracks[id].LeadSessionId is not null) EnqueueWakeLocked(TrackWakeRequests.Boot(id));
             return Task.FromResult<IReadOnlyList<string>>(affected.ToArray());
         }
     }
@@ -1690,7 +1725,7 @@ internal sealed class FakeVcsService : IVcsService
         Task.FromResult(new PushResult(bookmarkOrBranch, "origin", "def456"));
 }
 
-internal sealed class KernelTestContext : IAsyncDisposable
+internal sealed partial class KernelTestContext : IAsyncDisposable
 {
     public InMemoryTrackStore Store { get; } = new();
     public InMemoryReportDocEngine ReportEngine { get; } = new();

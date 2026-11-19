@@ -87,7 +87,8 @@ public sealed class TrackCreationTests
         var desired = Assert.Single(await kernel.ListSessionsAsync(trackId));
         Assert.Equal("B", desired.Model);
         Assert.Equal("high", desired.ReasoningEffort);
-        await kernel.SendMessageAsync(sessionId, new("next input", "next-selection"));
+        await kernel.AcceptMessageAsync(sessionId, new("next input", "next-selection"), default);
+        await kernel.WaitForTrackIdleAsync(trackId).WaitAsync(Deadline);
         var next = host.AgentRuntime.ExecutedTurns.Last();
         Assert.Equal("B", next.Spec.Model);
         Assert.Equal("high", next.Spec.ReasoningEffort);

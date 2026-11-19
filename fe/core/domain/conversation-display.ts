@@ -114,13 +114,14 @@ export function sessionItemsPageDtoToConversationPage(
     if (item.kind === 'user') {
       const content = typeof payloadObj.content === 'string' ? payloadObj.content : '';
       const triggerKind = typeof payloadObj.triggerKind === 'string' ? payloadObj.triggerKind : 'user';
-      if (triggerKind === 'wake' || triggerKind === 'scheduler') {
+      if (triggerKind === 'wake' || triggerKind === 'scheduler' || triggerKind === 'system') {
+        const presentation = systemInputPresentationSchema.safeParse(payloadObj.presentation);
         return [{
           cursor: itemCursor,
           source: {
             kind: 'system',
             observation_id: String(item.id),
-            presentation: 'system',
+            presentation: presentation.success ? presentation.data : 'system',
             text: content,
             created_at_ms: item.createdAtMs,
           },

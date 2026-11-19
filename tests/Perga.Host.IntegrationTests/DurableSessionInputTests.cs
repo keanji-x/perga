@@ -86,7 +86,8 @@ public sealed class DurableSessionInputTests
             var persisted = Assert.Single(await kernelAfterRestart.ListSessionsAsync(trackId));
             Assert.True(persisted.ContextUsageInvalidated);
             Assert.Equal(990, persisted.ContextUsedTokens);
-            await kernelAfterRestart.SendMessageAsync(sessionId, new("use B", "current-model"));
+            await kernelAfterRestart.AcceptMessageAsync(sessionId, new("use B", "current-model"), default);
+            await kernelAfterRestart.WaitForTrackIdleAsync(trackId);
             Assert.Equal("B", Assert.Single(restarted.AgentRuntime.ExecutedTurns).Spec.Model);
             Assert.False(Assert.Single(await kernelAfterRestart.ListSessionsAsync(trackId)).ContextUsageInvalidated);
         }
@@ -532,7 +533,7 @@ public sealed class DurableSessionInputTests
         async IAsyncEnumerable<UnifiedAgentEvent> Stream(
             HarnessLaunchSpec spec, TurnInput input, [EnumeratorCancellation] CancellationToken ct)
         {
-            if (input.Prompt == "second queued")
+            if (input.Prompt.EndsWith("second queued", StringComparison.Ordinal))
             {
                 followUpSending.TrySetResult();
                 await allowProviderOutput.Task.WaitAsync(ct);
@@ -543,7 +544,7 @@ public sealed class DurableSessionInputTests
                 turnStarted.TrySetResult();
                 await endTurn.Task.WaitAsync(ct);
             }
-            if (input.Prompt == "second queued")
+            if (input.Prompt.EndsWith("second queued", StringComparison.Ordinal))
             {
                 followUpStarted.TrySetResult();
                 await endFollowUp.Task.WaitAsync(ct);
@@ -612,7 +613,7 @@ public sealed class DurableSessionInputTests
             endFollowUp.TrySetResult();
             await kernel.WaitForTrackIdleAsync(trackId);
 
-            Assert.Equal(supportsSteering ? new[] { "initial", "second queued" } : new[] { "initial", "first queued", "second queued" },
+            Assert.Equal(supportsSteering ? new[] { "initial", "second queued" } : new[] { "initial", "first queued\n\nsecond queued" },
                 host.AgentRuntime.ExecutedTurns.Select(execution => execution.Input.Prompt));
             var final = await ReadPageAsync();
             Assert.Equal("completed", Assert.Single(final.Items, item => item.Kind == "user" &&

@@ -51,9 +51,9 @@ public sealed class CronosScheduleHostedService : BackgroundService
         {
             if (_kernel.DispatchAdmission.Draining) return 0;
             var nowUtc = _timeProvider.GetUtcNow();
-            var openTracks = await _kernel.ListTracksAsync(areaId: null, includeClosed: false, ct)
+            var openTracks = await _readStore.ListOpenTrackScheduleSourcesAsync(ct)
                 .ConfigureAwait(false);
-            var activeTrackIds = new HashSet<string>(openTracks.Select(static t => t.Id), StringComparer.Ordinal);
+            var activeTrackIds = new HashSet<string>(openTracks.Select(static t => t.TrackId), StringComparer.Ordinal);
 
             // Clean up watermarks for closed or deleted tracks.
             foreach (var key in _watermarks.Keys.ToArray())
@@ -68,8 +68,7 @@ public sealed class CronosScheduleHostedService : BackgroundService
             foreach (var track in openTracks)
             {
                 ct.ThrowIfCancellationRequested();
-                var schedules = await ResolveSchedulesForTrackAsync(track.Id, track.TemplateId, ct)
-                    .ConfigureAwait(false);
+                var schedules = ResolveSchedulesForTrack(track.TemplateSnapshotSource, track.TemplateId);
                 if (schedules.Count == 0)
                 {
                     continue;
@@ -91,12 +90,12 @@ public sealed class CronosScheduleHostedService : BackgroundService
                             "Invalid cron expression '{Cron}' on schedule '{ScheduleId}' for track '{TrackId}'.",
                             spec.Cron,
                             spec.Id,
-                            track.Id);
+                            track.TrackId);
                         continue;
                     }
 
                     var tz = ResolveTimeZone(spec.Timezone);
-                    var key = (track.Id, spec.Id);
+                    var key = (track.TrackId, spec.Id);
                     var watermark = _watermarks.GetOrAdd(key, initialBaseline);
 
                     if (nowUtc <= watermark)
@@ -111,7 +110,7 @@ public sealed class CronosScheduleHostedService : BackgroundService
                         _watermarks[key] = nowUtc;
                         try
                         {
-                            await _kernel.TriggerScheduleWakeAsync(track.Id, spec.Id, ct).ConfigureAwait(false);
+                            await _kernel.TriggerScheduleWakeAsync(track.TrackId, spec.Id, ct).ConfigureAwait(false);
                             Interlocked.Increment(ref _triggeredWakeCount);
                             fired++;
                         }
@@ -121,7 +120,7 @@ public sealed class CronosScheduleHostedService : BackgroundService
                                 ex,
                                 "Failed to trigger schedule wake '{ScheduleId}' on track '{TrackId}'.",
                                 spec.Id,
-                                track.Id);
+                                track.TrackId);
                         }
                     }
                 }
@@ -170,15 +169,12 @@ public sealed class CronosScheduleHostedService : BackgroundService
         _evalLock.Dispose();
     }
 
-    private async Task<IReadOnlyList<ScheduleSpec>> ResolveSchedulesForTrackAsync(
-        string trackId,
-        string? templateId,
-        CancellationToken ct)
+    private IReadOnlyList<ScheduleSpec> ResolveSchedulesForTrack(
+        string? snapshotSource, string? templateId)
     {
-        var snap = await _readStore.LoadTrackAggregateAsync(trackId, ct).ConfigureAwait(false);
-        if (!string.IsNullOrWhiteSpace(snap?.TemplateSnapshotSource))
+        if (!string.IsNullOrWhiteSpace(snapshotSource))
         {
-            var compiled = _kernel.Templates.GetOrCompileSnapshot(snap.TemplateSnapshotSource!);
+            var compiled = _kernel.Templates.GetOrCompileSnapshot(snapshotSource!);
             return compiled.Manifest.Schedules;
         }
 

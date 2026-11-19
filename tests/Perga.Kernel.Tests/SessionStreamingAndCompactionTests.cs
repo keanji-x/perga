@@ -81,7 +81,7 @@ public sealed class SessionStreamingAndCompactionTests
         var switched = await ctx.Kernel.PatchSessionAsync(sub.Id, new(Provider: "acp:custom"));
         Assert.Null(switched.PermissionMode);
         await ctx.Kernel.SetSessionPermissionModeAsync(lead.Id, "inspect");
-        await ctx.Kernel.SendMessageAsync(lead.Id, new("go", "mode-input"));
+        await ctx.SendAndWaitForTurnAsync(lead.Id, new("go", "mode-input"));
         Assert.Equal("inspect", ctx.AgentRuntime.OpenedSessions.Last().LaunchSpec.PermissionMode);
         await Assert.ThrowsAsync<KernelException>(() => ctx.Kernel.SetSessionPermissionModeAsync(lead.Id, "invented"));
         await Assert.ThrowsAsync<KernelException>(() => ctx.Kernel.CreateTrackAsync(new(AreaId: area.Id, Provider: "acp:custom", PermissionMode: "invented")));
@@ -101,7 +101,7 @@ public sealed class SessionStreamingAndCompactionTests
         Assert.Equal(KernelErrorCode.PreconditionFailed, error.Code);
         // No discovery is needed to preserve the workspace's own default.
         var snap = await ctx.Kernel.CreateTrackAsync(new(AreaId: area.Id, Provider: "acp:custom"));
-        await ctx.Kernel.SendMessageAsync(snap.Track.LeadSessionId!, new("go", "go"));
+        await ctx.SendAndWaitForTurnAsync(snap.Track.LeadSessionId!, new("go", "go"));
         Assert.Null(ctx.AgentRuntime.OpenedSessions.Last().LaunchSpec.PermissionMode);
     }
 
@@ -137,14 +137,14 @@ public sealed class SessionStreamingAndCompactionTests
         var area = await ctx.Kernel.CreateAreaAsync(new("Modes"));
         var snap = await ctx.Kernel.CreateTrackAsync(new(AreaId: area.Id, Provider: "acp:custom", PermissionMode: "project-plan"));
         var id = snap.Track.LeadSessionId!;
-        await ctx.Kernel.SendMessageAsync(id, new("first", "first"));
+        await ctx.SendAndWaitForTurnAsync(id, new("first", "first"));
         var original = Assert.Single(ctx.AgentRuntime.OpenedSessions);
         original.SupportsModelSwitch = supportsSwitch;
         ctx.AgentRuntime.Providers = [new("acp:custom", false, null, "discovery unavailable", [], PermissionModes: [])];
         var probes = ctx.AgentRuntime.PermissionModeProbeCalls;
         ctx.AgentRuntime.PermissionModeProbe = (_, _) => throw new IOException("discovery lost");
         await ctx.Kernel.UpdateSessionModelAsync(id, new("next-model"));
-        await ctx.Kernel.SendMessageAsync(id, new("next", "next"));
+        await ctx.SendAndWaitForTurnAsync(id, new("next", "next"));
         Assert.Equal(supportsSwitch ? 1 : 2, ctx.AgentRuntime.OpenedSessions.Count);
         Assert.All(ctx.AgentRuntime.OpenedSessions, opened => Assert.Equal("project-plan", opened.LaunchSpec.PermissionMode));
         if (!supportsSwitch)
@@ -162,7 +162,7 @@ public sealed class SessionStreamingAndCompactionTests
         await using var ctx = new KernelTestContext();
         var (_, snap) = await ctx.CreateDefaultTrackAsync();
         var id = snap.Track.LeadSessionId!;
-        await ctx.Kernel.SendMessageAsync(id, new SendMessageRequest("first", "first"));
+        await ctx.SendAndWaitForTurnAsync(id, new SendMessageRequest("first", "first"));
         var original = Assert.Single(ctx.AgentRuntime.OpenedSessions);
         original.SupportsModelSwitch = supportsSwitch;
 
@@ -180,7 +180,7 @@ public sealed class SessionStreamingAndCompactionTests
             Assert.Equal("new-model", opened[1].LaunchSpec.Model);
             Assert.Equal(original.NativeThreadId, opened[1].LaunchSpec.ResumeNativeThreadId);
         }
-        await ctx.Kernel.SendMessageAsync(id, new SendMessageRequest("next", "next"));
+        await ctx.SendAndWaitForTurnAsync(id, new SendMessageRequest("next", "next"));
         Assert.Equal(opened.Length, ctx.AgentRuntime.OpenedSessions.Count);
         await ctx.Kernel.UpdateSessionModelAsync(id, new UpdateSessionModelRequest("new-model"));
         Assert.Single(original.ModelSwitches);
@@ -192,14 +192,14 @@ public sealed class SessionStreamingAndCompactionTests
         await using var ctx = new KernelTestContext();
         var (_, snap) = await ctx.CreateDefaultTrackAsync();
         var id = snap.Track.LeadSessionId!;
-        await ctx.Kernel.SendMessageAsync(id, new SendMessageRequest("first", "first"));
+        await ctx.SendAndWaitForTurnAsync(id, new SendMessageRequest("first", "first"));
         var original = Assert.Single(ctx.AgentRuntime.OpenedSessions);
         ctx.AgentRuntime.OnBeforeOpenSession = _ => throw new InvalidOperationException("provider unavailable");
         await Assert.ThrowsAsync<InvalidOperationException>(() => ctx.Kernel.UpdateSessionModelAsync(id, new UpdateSessionModelRequest("retry-model")));
         Assert.True(original.Disposed);
         Assert.Equal("retry-model", (await ctx.Kernel.ListSessionsAsync(snap.Track.Id)).Single(s => s.Id == id).Model);
         ctx.AgentRuntime.OnBeforeOpenSession = null;
-        await ctx.Kernel.SendMessageAsync(id, new SendMessageRequest("retry", "retry"));
+        await ctx.SendAndWaitForTurnAsync(id, new SendMessageRequest("retry", "retry"));
         Assert.Equal("retry-model", ctx.AgentRuntime.OpenedSessions.Last().LaunchSpec.Model);
         Assert.Equal(2, ctx.AgentRuntime.OpenedSessions.Count);
     }
@@ -223,7 +223,7 @@ public sealed class SessionStreamingAndCompactionTests
             yield return new UnifiedAgentEvent.TurnCompleted(null);
         }
         Task turn = compacting ? ctx.Kernel.CompactSessionAsync(id) :
-            ctx.Kernel.SendMessageAsync(id, new SendMessageRequest("first", "first"));
+            ctx.SendAndWaitForTurnAsync(id, new SendMessageRequest("first", "first"));
         await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
         var original = Assert.Single(ctx.AgentRuntime.OpenedSessions);
         original.SupportsModelSwitch = true;
@@ -238,7 +238,7 @@ public sealed class SessionStreamingAndCompactionTests
             release.TrySetResult();
         }
         await turn;
-        await ctx.Kernel.SendMessageAsync(id, new SendMessageRequest("next", "next"));
+        await ctx.SendAndWaitForTurnAsync(id, new SendMessageRequest("next", "next"));
         if (compacting)
         {
             Assert.Empty(original.ModelSwitches);
@@ -269,7 +269,7 @@ public sealed class SessionStreamingAndCompactionTests
             await release.Task.WaitAsync(ct);
             yield return new UnifiedAgentEvent.TurnCompleted(null);
         }
-        var turn = ctx.Kernel.SendMessageAsync(id, new SendMessageRequest("first", "first"));
+        var turn = ctx.SendAndWaitForTurnAsync(id, new SendMessageRequest("first", "first"));
         await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
         var original = Assert.Single(ctx.AgentRuntime.OpenedSessions);
         original.SupportsModelSwitch = true;
@@ -282,7 +282,7 @@ public sealed class SessionStreamingAndCompactionTests
         }
         finally { release.TrySetResult(); }
         await turn;
-        await ctx.Kernel.SendMessageAsync(id, new SendMessageRequest("next", "next"));
+        await ctx.SendAndWaitForTurnAsync(id, new SendMessageRequest("next", "next"));
         Assert.True(original.Disposed);
         Assert.Empty(original.ModelSwitches);
         Assert.Equal(2, ctx.AgentRuntime.OpenedSessions.Count);
@@ -311,7 +311,7 @@ public sealed class SessionStreamingAndCompactionTests
         ctx.AgentRuntime.TurnScript = (session, input, ct) =>
             StreamScriptedTurn(session, input, Interlocked.Increment(ref turnCallNum), ct);
 
-        var turn1 = await ctx.Kernel.SendMessageAsync(leadId, new SendMessageRequest("Analyze repo", "idem-auto-compact"));
+        var turn1 = await ctx.SendAndWaitForTurnAsync(leadId, new SendMessageRequest("Analyze repo", "idem-auto-compact"));
         Assert.Equal("completed", turn1.Status);
         Assert.Equal(1, turn1.Epoch);
 
@@ -370,7 +370,7 @@ public sealed class SessionStreamingAndCompactionTests
             return StreamScriptedTurn(session, new TurnInput("Analyze repo", "idem"), 1, ct);
         };
 
-        var turn1 = await ctx.Kernel.SendMessageAsync(leadId, new SendMessageRequest("Analyze repo", "idem-native-auto"));
+        var turn1 = await ctx.SendAndWaitForTurnAsync(leadId, new SendMessageRequest("Analyze repo", "idem-native-auto"));
         Assert.Equal("completed", turn1.Status);
 
         var sessionsAfterAuto = await ctx.Kernel.ListSessionsAsync(trackId);
@@ -438,8 +438,8 @@ public sealed class SessionStreamingAndCompactionTests
         var leadId = snap.Track.LeadSessionId!;
 
         // 1. Idempotency-Key deduplication
-        var t1 = await ctx.Kernel.SendMessageAsync(leadId, new SendMessageRequest("Hello once", "same-key-1"));
-        var t2 = await ctx.Kernel.SendMessageAsync(leadId, new SendMessageRequest("Hello once", "same-key-1"));
+        var t1 = await ctx.SendAndWaitForTurnAsync(leadId, new SendMessageRequest("Hello once", "same-key-1"));
+        var t2 = await ctx.SendAndWaitForTurnAsync(leadId, new SendMessageRequest("Hello once", "same-key-1"));
         Assert.Equal(t1.Id, t2.Id);
         Assert.Single(ctx.Store.GetTurnsForSession(leadId));
 
@@ -447,7 +447,7 @@ public sealed class SessionStreamingAndCompactionTests
         var releaseTurn = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         ctx.AgentRuntime.TurnScript = (_, _, ct) => StreamWithApprovalAndGate(releaseTurn.Task, ct);
 
-        var inFlightTurnTask = ctx.Kernel.SendMessageAsync(leadId, new SendMessageRequest("Run guarded shell", "key-approval"));
+        var inFlightTurnTask = ctx.SendAndWaitForTurnAsync(leadId, new SendMessageRequest("Run guarded shell", "key-approval"));
 
         // Wait for ApprovalRequested to materialize as an OpenAsk on the track
         AskDto? approvalAsk = null;
@@ -464,7 +464,7 @@ public sealed class SessionStreamingAndCompactionTests
         Assert.NotNull(approvalAsk);
 
         // Steer while turn is running!
-        var steeredTurn = await ctx.Kernel.SendMessageAsync(
+        var steeredTurn = await ctx.SendAndWaitForTurnAsync(
             leadId,
             new SendMessageRequest("Use --release flag", "key-steer", SteerIfRunning: true));
         Assert.Equal("running", steeredTurn.Status);
@@ -489,7 +489,7 @@ public sealed class SessionStreamingAndCompactionTests
         var neverEnding = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         ctx.AgentRuntime.TurnScript = (_, _, ct) => StreamBlockingUntilCanceled(neverEnding.Task, ct);
 
-        var interruptedTurnTask = ctx.Kernel.SendMessageAsync(leadId, new SendMessageRequest("Long job", "key-interrupt"));
+        var interruptedTurnTask = ctx.SendAndWaitForTurnAsync(leadId, new SendMessageRequest("Long job", "key-interrupt"));
         for (var i = 0; i < 50; i++)
         {
             var page = await ctx.Kernel.GetSessionItemsAsync(leadId);
@@ -569,7 +569,13 @@ public sealed class SessionStreamingAndCompactionTests
         [EnumeratorCancellation] CancellationToken ct)
     {
         yield return new UnifiedAgentEvent.TextDelta("Starting long work...");
-        await blocker.WaitAsync(ct);
+        try { await blocker.WaitAsync(ct); }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+        if (ct.IsCancellationRequested)
+        {
+            yield return new UnifiedAgentEvent.TurnInterrupted();
+            yield break;
+        }
         yield return new UnifiedAgentEvent.TurnCompleted(null);
     }
 
@@ -602,7 +608,7 @@ public sealed class SessionStreamingAndCompactionTests
 
         ctx.AgentRuntime.TurnScript = (_, _, ct) => StreamWithProviderOptions(providerOptions, ct);
 
-        var turnTask = ctx.Kernel.SendMessageAsync(leadId, new SendMessageRequest("Run command", "key-opts"));
+        var turnTask = ctx.SendAndWaitForTurnAsync(leadId, new SendMessageRequest("Run command", "key-opts"));
 
         AskDto? approvalAsk = null;
         for (var i = 0; i < 50 && approvalAsk is null; i++)

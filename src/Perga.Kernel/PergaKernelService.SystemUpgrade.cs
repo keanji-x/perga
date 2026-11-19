@@ -23,7 +23,7 @@ public sealed partial class PergaKernelService
             {
                 try
                 {
-                    await Actors.GetOrActivate(track.Id).TriggerSchedulerAsync().ConfigureAwait(false);
+                    await Actors.GetOrActivate(track.Id).ResumeSchedulingAsync().ConfigureAwait(false);
                 }
                 catch (Exception ex)
                 {

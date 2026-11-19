@@ -40,6 +40,7 @@ public sealed class CronosSnapshotScheduleTests
         Assert.Empty(cluster.AgentRuntime.ExecutedTurns);
         kernel.DispatchAdmission.SetDraining(false);
         Assert.Equal(1, await scheduler.EvaluateDueSchedulesOnceAsync());
+        await kernel.WaitForTrackIdleAsync(snap.Track.Id);
         Assert.Contains(cluster.AgentRuntime.ExecutedTurns,
             turn => turn.Input.Prompt.Contains("SNAPSHOT_PULSE", StringComparison.Ordinal));
     }

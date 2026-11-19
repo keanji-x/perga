@@ -196,7 +196,7 @@ public sealed partial class TrackActor
         foreach (var input in inputs)
             DispatchAcceptedInput(input);
         foreach (var sessionId in _sessions.Keys)
-            await SchedulePendingWakeCoreAsync(sessionId).ConfigureAwait(false);
+            await PokeSessionCoreAsync(sessionId).ConfigureAwait(false);
         if (_tasks.Count > 0)
             _ = TrackBackgroundJob(() => TriggerSchedulerAsync(_actorShutdownCts.Token));
     }

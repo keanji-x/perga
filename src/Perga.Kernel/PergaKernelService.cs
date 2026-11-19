@@ -106,7 +106,6 @@ public interface IPergaKernel : IAsyncDisposable
     Task RemoveQueuedMessageAsync(string sessionId, string inputId, CancellationToken ct, McpSessionPrincipal? caller = null, string? attemptId = null);
     Task<SteeringResult> SteerMessageAsync(string sessionId, string turnId, string content, CancellationToken ct, string? requestKey = null);
 
-    Task<SessionTurnDto> SendMessageAsync(string sessionId, SendMessageRequest req, CancellationToken ct = default);
     Task<AgentSessionDto> UpdateSessionModelAsync(string sessionId, UpdateSessionModelRequest req, CancellationToken ct = default);
     Task InterruptSessionAsync(string sessionId, CancellationToken ct = default);
     Task<AgentSessionDto> CompactSessionAsync(string sessionId, CancellationToken ct = default);
@@ -133,6 +132,7 @@ public interface IPergaKernel : IAsyncDisposable
     // MCP Policy Guard, Tool Dispatch & Schedules
     Task<string> GuardMcpToolCallAsync(string trackId, string sessionId, string mcpServer, string toolName, JsonElement arguments, CancellationToken ct = default);
     Task<JsonElement> InvokeKernelMcpToolAsync(McpSessionPrincipal caller, string toolName, JsonElement arguments, CancellationToken ct = default);
+    Task<bool> CancelPendingWakeAsync(string trackId, string wakeId, CancellationToken ct = default);
     Task TriggerScheduleWakeAsync(string trackId, string scheduleId, CancellationToken ct = default);
 
     // Synchronization helper for tests / shutdown
@@ -1251,15 +1251,6 @@ public sealed partial class PergaKernelService : IPergaKernel
         return await Actors.GetOrActivate(trackId).SteerMessageAsync(sessionId, turnId, content, ct, requestKey).ConfigureAwait(false);
     }
 
-    public async Task<SessionTurnDto> SendMessageAsync(
-        string sessionId,
-        SendMessageRequest req,
-        CancellationToken ct = default)
-    {
-        var trackId = await ResolveTrackIdForSessionAsync(sessionId, ct).ConfigureAwait(false);
-        return await Actors.GetOrActivate(trackId).SendMessageAsync(sessionId, req, ct).ConfigureAwait(false);
-    }
-
     public async Task<AgentSessionDto> UpdateSessionModelAsync(
         string sessionId, UpdateSessionModelRequest req, CancellationToken ct = default)
     {
@@ -1394,6 +1385,9 @@ public sealed partial class PergaKernelService : IPergaKernel
         JsonElement arguments,
         CancellationToken ct = default) =>
         KernelMcpDispatcher.ExecuteGuardedAsync(this, caller, toolName, arguments, ct);
+
+    public Task<bool> CancelPendingWakeAsync(string trackId, string wakeId, CancellationToken ct = default) =>
+        Actors.GetOrActivate(trackId).CancelPendingWakeAsync(wakeId, ct);
 
     public Task TriggerScheduleWakeAsync(string trackId, string scheduleId, CancellationToken ct = default) =>
         Actors.GetOrActivate(trackId).TriggerScheduleWakeAsync(scheduleId, ct);

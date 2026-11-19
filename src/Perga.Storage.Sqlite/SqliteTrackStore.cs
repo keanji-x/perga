@@ -427,6 +427,17 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
             ct);
     }
 
+    public async Task<IReadOnlyList<OpenTrackScheduleSource>> ListOpenTrackScheduleSourcesAsync(CancellationToken ct)
+    {
+        EnsureInitialized();
+        await using var conn = await OpenReadConnectionAsync(ct).ConfigureAwait(false);
+        var rows = await conn.QueryAsync<OpenTrackScheduleSourceRow>(new CommandDefinition("""
+            SELECT id AS Id, template_id AS TemplateId, template_snapshot AS TemplateSnapshot, created_at_ms AS CreatedAtMs
+            FROM tracks WHERE closed_at_ms IS NULL
+            """, cancellationToken: ct)).ConfigureAwait(false);
+        return rows.Select(row => new OpenTrackScheduleSource(row.Id, row.TemplateId, row.TemplateSnapshot, row.CreatedAtMs)).ToArray();
+    }
+
     public async Task<IReadOnlyList<TrackDto>> ListTracksAsync(
         string? areaId = null,
         bool includeClosed = false,
@@ -688,6 +699,15 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                         transaction: tx,
                         cancellationToken: innerCt)).ConfigureAwait(false);
 
+                if (track.ClosedAtMs is not null || templateSnapshot is not null)
+                    await conn.ExecuteAsync(new CommandDefinition($"""
+                        UPDATE track_wakes SET state='{TrackWakeStates.Dropped}', reason=@Reason, updated_at_ms=@Now
+                        WHERE track_id=@TrackId AND
+                            ((@Closed=1 AND state IN ('{TrackWakeStates.Pending}','{TrackWakeStates.Delivering}')) OR
+                             (@Closed=0 AND state='{TrackWakeStates.Pending}' AND kind='{TrackWakeKinds.Schedule}'));
+                        """, new { TrackId = track.Id, Now = track.UpdatedAtMs, Closed = track.ClosedAtMs is not null,
+                            Reason = track.ClosedAtMs is not null ? TrackWakeReasons.TrackClosed : TrackWakeReasons.TemplateChanged }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
+
                 if (evt is not null)
                 {
                     await InsertEventInternalAsync(conn, tx, evt, innerCt).ConfigureAwait(false);
@@ -854,6 +874,8 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                 await conn.ExecuteAsync(new CommandDefinition(
                     "UPDATE report_revisions SET event_id = @EventId, summary = @Summary, leading_comment = @LeadingComment, before_blocks_zstd = @BeforeBlocks, summary_before = @BeforeSummary, leading_comment_before = @BeforeComment WHERE track_id = @TrackId AND doc_rev = @DocRev;",
                     new { EventId = reportEventId, TrackId = trackId, report.DocRev, report.Summary, report.LeadingComment, BeforeBlocks = beforeBlocks, BeforeSummary = previous.Summary, BeforeComment = previous.Comment }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
+                if (authorSessionId is null && dispatch is null)
+                    await EnqueueWakeInternalAsync(conn, tx, TrackWakeRequests.Report(trackId, report.DocRev, evt.Payload), nowMs, innerCt).ConfigureAwait(false);
                 if (dispatch is not null)
                 {
                     var dispatched = syncedTasks.Single(task => task.TaskKey == dispatch.TaskKey);
@@ -900,7 +922,7 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
         EventEnvelopeDto? evt,
         CancellationToken ct,
         AgentSessionDto? session = null,
-        EventEnvelopeDto? sessionEvent = null)
+        EventEnvelopeDto? sessionEvent = null, string? wakePrompt = null)
     {
         ArgumentNullException.ThrowIfNull(task);
         EnsureInitialized();
@@ -986,6 +1008,8 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                             cancellationToken: innerCt)).ConfigureAwait(false);
                 }
 
+                if (attempt?.FinishedAtMs is not null)
+                    await EnqueueWakeOnceInternalAsync(conn, tx, TrackWakeRequests.TaskSettled(task, attempt, wakePrompt), task.UpdatedAtMs, innerCt).ConfigureAwait(false);
                 if (evt is not null)
                 {
                     await InsertEventInternalAsync(conn, tx, evt, innerCt).ConfigureAwait(false);
@@ -1365,6 +1389,8 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                         transaction: tx,
                         cancellationToken: innerCt)).ConfigureAwait(false);
 
+                if (ask.Delivery == AskDelivery.Wake && ask.AnsweredAtMs is not null)
+                    await EnqueueWakeOnceInternalAsync(conn, tx, TrackWakeRequests.Ask(ask), ask.AnsweredAtMs.Value, innerCt).ConfigureAwait(false);
                 await InsertEventInternalAsync(conn, tx, evt, innerCt).ConfigureAwait(false);
             },
             ct);
@@ -1405,15 +1431,18 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
         return _writer.EnqueueAsync(
             async (conn, tx, innerCt) =>
             {
+                var isNew = !await conn.ExecuteScalarAsync<bool>(new CommandDefinition(
+                    "SELECT EXISTS(SELECT 1 FROM mails WHERE id=@Id);", new { mail.Id }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
                 await conn.ExecuteAsync(
                     new CommandDefinition(
                         """
                         INSERT INTO mails (id, from_track_id, to_track_id, summary, body, read_at_ms, created_at_ms, reply_to_mail_id, wake_pending)
-                        VALUES (@Id, @FromTrackId, @ToTrackId, @Summary, @Body, @ReadAtMs, @CreatedAtMs, @ReplyToMailId, @RequestWake)
+                        VALUES (@Id, @FromTrackId, @ToTrackId, @Summary, @Body, @ReadAtMs, @CreatedAtMs, @ReplyToMailId, 0)
                         ON CONFLICT(id) DO UPDATE SET
                             summary = excluded.summary,
                             body = excluded.body,
-                            read_at_ms = excluded.read_at_ms;
+                            read_at_ms = excluded.read_at_ms,
+                            wake_pending = 0;
                         """,
                         new
                         {
@@ -1430,6 +1459,8 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                         transaction: tx,
                         cancellationToken: innerCt)).ConfigureAwait(false);
 
+                if (requestWake && isNew)
+                    await EnqueueWakeOnceInternalAsync(conn, tx, TrackWakeRequests.Mail(mail), mail.CreatedAtMs, innerCt).ConfigureAwait(false);
                 await InsertEventInternalAsync(conn, tx, evt, innerCt).ConfigureAwait(false);
             },
             ct);
@@ -1457,12 +1488,12 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
         _writer.EnqueueAsync(async (conn, tx, token) =>
         {
             await conn.ExecuteAsync(new CommandDefinition(
-                """
+                $"""
                 UPDATE mails SET wake_pending = 0 WHERE id = @mailId;
                 UPDATE system_upgrade_receipts SET notification_status = CASE
                     WHEN EXISTS (SELECT 1 FROM mails m JOIN tracks t ON t.id = m.to_track_id
                         WHERE m.id = @mailId AND t.closed_at_ms IS NULL) THEN 'notified' ELSE 'target_unavailable' END
-                    WHERE 'system-upgrade:' || job_id = @mailId;
+                    WHERE '{UpgradeMailIdPrefix}' || job_id = @mailId;
                 """,
                 new { mailId }, tx, cancellationToken: token)).ConfigureAwait(false);
         }, ct);
@@ -1483,9 +1514,6 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
             new { trackId, mailId }, cancellationToken: ct)).ConfigureAwait(false);
         return row is null ? null : MapMail(row);
     }
-
-    public Task<IReadOnlyList<MailDto>> ListPendingMailWakesAsync(CancellationToken ct) =>
-        QueryMailsAsync(" WHERE wake_pending = 1 ORDER BY created_at_ms, id;", null, ct);
 
     public Task<IReadOnlyList<MailDto>> ListMailsAsync(string trackId, bool unreadOnly = false, CancellationToken ct = default)
     {
@@ -1862,6 +1890,11 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                         transaction: tx,
                         cancellationToken: innerCt)).ConfigureAwait(false);
 
+                foreach (var trackId in affectedTrackIds)
+                    if (await conn.ExecuteScalarAsync<bool>(new CommandDefinition(
+                        "SELECT EXISTS(SELECT 1 FROM tracks WHERE id=@Id AND lead_session_id IS NOT NULL);",
+                        new { Id = trackId }, tx, cancellationToken: innerCt)).ConfigureAwait(false))
+                        await EnqueueWakeInternalAsync(conn, tx, TrackWakeRequests.Boot(trackId), nowMs, innerCt).ConfigureAwait(false);
                 return affectedTrackIds;
             },
             ct);
@@ -2324,6 +2357,14 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
         public double SortOrder { get; init; }
         public long CreatedAtMs { get; init; }
         public long UpdatedAtMs { get; init; }
+    }
+
+    private sealed class OpenTrackScheduleSourceRow
+    {
+        public string Id { get; init; } = string.Empty;
+        public string? TemplateId { get; init; }
+        public string? TemplateSnapshot { get; init; }
+        public long CreatedAtMs { get; init; }
     }
 
     private sealed class ReportRow

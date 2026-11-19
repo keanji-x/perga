@@ -44,6 +44,8 @@ public sealed record ProviderSessionResumeFence(string SessionId, string TurnId,
 public sealed record InterruptedAttemptLeaseDto(
     string AttemptId, string TaskId, string TrackId, JsonElement WorkspaceLease);
 
+public sealed record OpenTrackScheduleSource(string TrackId, string? TemplateId, string? TemplateSnapshotSource, long CreatedAtMs);
+
 public interface ITrackReadStore
 {
     string DatabaseId => string.Empty;
@@ -51,6 +53,7 @@ public interface ITrackReadStore
     Task<IReadOnlyList<AreaDto>> ListAreasAsync(CancellationToken ct);
     Task<AreaDto?> GetAreaAsync(string areaId, CancellationToken ct);
     Task<IReadOnlyList<TrackDto>> ListTracksAsync(string? areaId = null, bool includeClosed = false, CancellationToken ct = default);
+    Task<IReadOnlyList<OpenTrackScheduleSource>> ListOpenTrackScheduleSourcesAsync(CancellationToken ct);
     Task<TrackDto?> GetTrackAsync(string trackId, CancellationToken ct);
     Task<TrackAggregateSnapshot?> LoadTrackAggregateAsync(string trackId, CancellationToken ct);
     Task<IReadOnlyList<ReportBlock>> GetReportRevisionBlocksAsync(string trackId, int docRev, CancellationToken ct);
@@ -75,7 +78,6 @@ public interface ITrackReadStore
         return (items.Take(limit).ToArray(), false);
     }
 
-    Task<IReadOnlyList<MailDto>> ListPendingMailWakesAsync(CancellationToken ct);
     Task<MailDto?> FindReceivedMailAsync(string trackId, string mailId, CancellationToken ct);
     Task<IReadOnlyList<MailDto>> ListMailsAsync(string trackId, bool unreadOnly = false, CancellationToken ct = default);
     Task<IReadOnlyList<TerminalDto>> ListTerminalsAsync(string trackId, CancellationToken ct);
@@ -120,12 +122,13 @@ public interface ITrackStore : ITrackReadStore
         Task.FromResult<IReadOnlyList<string>>([]);
 
     Task UpsertTaskAndAttemptAsync(TaskDto task, TaskAttemptDto? attempt, JsonElement? nextTemplateState, EventEnvelopeDto? evt, CancellationToken ct,
-        AgentSessionDto? session = null, EventEnvelopeDto? sessionEvent = null);
+        AgentSessionDto? session = null, EventEnvelopeDto? sessionEvent = null, string? wakePrompt = null);
     Task<bool> HasSessionTurnAsync(string sessionId, string turnId, CancellationToken ct);
     Task<IReadOnlyList<SessionTurnDto>> ListSessionTurnsAsync(string sessionId, CancellationToken ct) =>
         Task.FromResult<IReadOnlyList<SessionTurnDto>>([]);
     Task<int> GetLastTurnIndexAsync(string sessionId, CancellationToken ct);
     ISessionInputStore SessionInputs { get; }
+    ITrackWakeStore TrackWakes { get; }
     ISessionMessageStore? SessionMessages => null;
     IWorkerSettingsStore? WorkerSettings => null;
     Task<IReadOnlyList<(string TrackId, PersistedSessionInput Input)>> RecoverSessionInputsAsync(CancellationToken ct);
@@ -143,7 +146,6 @@ public interface ITrackStore : ITrackReadStore
         IReadOnlyList<SessionItemDto> newItems,
         CancellationToken ct = default);
     Task UpsertAskAsync(AskDto ask, EventEnvelopeDto evt, CancellationToken ct);
-    Task AcknowledgeMailWakeAsync(string mailId, CancellationToken ct);
     Task UpsertMailAsync(MailDto mail, EventEnvelopeDto evt, CancellationToken ct, bool requestWake = true);
     Task UpsertTerminalAsync(TerminalDto terminal, EventEnvelopeDto? evt, CancellationToken ct);
     Task DeleteTerminalAsync(string trackId, string terminalId, EventEnvelopeDto? evt, CancellationToken ct);

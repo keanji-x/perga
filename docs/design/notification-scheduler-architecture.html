@@ -1,0 +1,1613 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Perga 通知、定时器与消息调度统一大架构</title>
+<style>
+  :root {
+    --bg: #f8fafc;
+    --panel: #ffffff;
+    --panel-alt: #f1f5f9;
+    --border: #cbd5e1;
+    --border-strong: #94a3b8;
+    --text: #0f172a;
+    --muted: #475569;
+    --subtle: #64748b;
+    --blue: #2563eb;
+    --blue-fill: #eff6ff;
+    --purple: #7c3aed;
+    --purple-fill: #f5f3ff;
+    --amber: #d97706;
+    --amber-fill: #fffbeb;
+    --green: #059669;
+    --green-fill: #ecfdf5;
+    --teal: #0d9488;
+    --teal-fill: #f0fdfa;
+    --rose: #e11d48;
+    --rose-fill: #fff1f2;
+    --slate: #475569;
+    --slate-fill: #f1f5f9;
+    --edge: #94a3b8;
+    --code-bg: #0f172a;
+    --code-fg: #e2e8f0;
+    --shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0b1120;
+      --panel: #111827;
+      --panel-alt: #1e293b;
+      --border: #334155;
+      --border-strong: #475569;
+      --text: #f1f5f9;
+      --muted: #cbd5e1;
+      --subtle: #94a3b8;
+      --blue: #60a5fa;
+      --blue-fill: #172554;
+      --purple: #a78bfa;
+      --purple-fill: #2e1065;
+      --amber: #fbbf24;
+      --amber-fill: #451a03;
+      --green: #34d399;
+      --green-fill: #064e3b;
+      --teal: #2dd4bf;
+      --teal-fill: #134e4a;
+      --rose: #fb7185;
+      --rose-fill: #4c0519;
+      --slate: #94a3b8;
+      --slate-fill: #1e293b;
+      --edge: #64748b;
+      --code-bg: #020617;
+      --code-fg: #e2e8f0;
+      --shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --bg: #0b1120;
+    --panel: #111827;
+    --panel-alt: #1e293b;
+    --border: #334155;
+    --border-strong: #475569;
+    --text: #f1f5f9;
+    --muted: #cbd5e1;
+    --subtle: #94a3b8;
+    --blue: #60a5fa;
+    --blue-fill: #172554;
+    --purple: #a78bfa;
+    --purple-fill: #2e1065;
+    --amber: #fbbf24;
+    --amber-fill: #451a03;
+    --green: #34d399;
+    --green-fill: #064e3b;
+    --teal: #2dd4bf;
+    --teal-fill: #134e4a;
+    --rose: #fb7185;
+    --rose-fill: #4c0519;
+    --slate: #94a3b8;
+    --slate-fill: #1e293b;
+    --edge: #64748b;
+    --code-bg: #020617;
+    --code-fg: #e2e8f0;
+    --shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    padding: 12px 14px 18px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    font-size: 12.5px;
+    line-height: 1.5;
+  }
+
+  code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 11px;
+    background: var(--panel-alt);
+    border: 1px solid var(--border);
+    padding: 0 4px;
+    border-radius: 4px;
+  }
+
+  .topbar {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 10px;
+    flex-wrap: wrap;
+  }
+
+  .title-wrap h1 {
+    margin: 0 0 4px;
+    font-size: 15.5px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+  }
+
+  .iron-rule {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    background: var(--purple-fill);
+    border: 1px solid var(--purple);
+    color: var(--text);
+    padding: 3px 9px;
+    border-radius: 999px;
+    font-size: 11.2px;
+    font-weight: 600;
+  }
+
+  .iron-rule .badge {
+    background: var(--purple);
+    color: #fff;
+    padding: 0 6px;
+    border-radius: 999px;
+    font-size: 10.2px;
+  }
+
+  .nav-group {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .seg-btn {
+    appearance: none;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    color: var(--muted);
+    padding: 5px 10px;
+    border-radius: 7px;
+    font-size: 11.8px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: border-color 0.12s ease, background 0.12s ease, color 0.12s ease;
+  }
+
+  .seg-btn:hover { border-color: var(--border-strong); color: var(--text); }
+  .seg-btn.active { background: var(--blue); border-color: var(--blue); color: #fff; }
+  .seg-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+  .legend {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    font-size: 11.2px;
+    color: var(--muted);
+    margin-bottom: 10px;
+    align-items: center;
+  }
+
+  .dot {
+    display: inline-block;
+    width: 9px;
+    height: 9px;
+    border-radius: 2px;
+    margin-right: 4px;
+    vertical-align: middle;
+  }
+
+  .view { display: none; }
+  .view.active { display: block; }
+
+  /* Tab 1: Overview */
+  .main-split {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 330px;
+    gap: 10px;
+    align-items: start;
+  }
+
+  @media (max-width: 940px) {
+    .main-split { grid-template-columns: 1fr; }
+  }
+
+  .canvas-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 8px;
+    box-shadow: var(--shadow);
+    overflow-x: auto;
+  }
+
+  svg#archSvg {
+    width: 100%;
+    min-width: 680px;
+    height: auto;
+    display: block;
+    user-select: none;
+  }
+
+  .zone-rect { rx: 10; ry: 10; stroke-width: 1.4; stroke-dasharray: 5 4; }
+  .zone-label { font-size: 11px; font-weight: 700; letter-spacing: 0.01em; }
+
+  .mod-node { cursor: pointer; }
+  .mod-node rect.box {
+    rx: 7; ry: 7; stroke-width: 1.5;
+    transition: stroke-width 0.12s ease, filter 0.12s ease, opacity 0.15s ease;
+  }
+  .mod-node:hover rect.box { stroke-width: 2.3; }
+  .mod-node.selected rect.box {
+    stroke-width: 2.8;
+    filter: drop-shadow(0 0 6px rgba(37, 99, 235, 0.35));
+  }
+  .mod-node.dimmed { opacity: 0.32; }
+
+  .node-title { font-size: 11.8px; font-weight: 700; fill: var(--text); }
+  .node-sub { font-size: 10px; fill: var(--muted); }
+  .node-mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 9.8px;
+    font-weight: 700;
+  }
+
+  .flow-edge {
+    fill: none;
+    stroke: var(--edge);
+    stroke-width: 1.6;
+    transition: stroke 0.15s ease, stroke-width 0.15s ease, opacity 0.15s ease;
+  }
+  .flow-edge.dashed { stroke-dasharray: 4 3; }
+  .flow-edge.dimmed { opacity: 0.16; }
+  .flow-edge.active-out { stroke: var(--blue); stroke-width: 2.5; opacity: 1; }
+  .flow-edge.active-in { stroke: var(--green); stroke-width: 2.5; opacity: 1; }
+  .edge-tag { font-size: 9.6px; font-weight: 700; fill: var(--muted); }
+
+  .drawer {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 13px;
+    box-shadow: var(--shadow);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .d-head { border-bottom: 1px solid var(--border); padding-bottom: 7px; }
+  .d-pill {
+    display: inline-block;
+    font-size: 10.2px;
+    font-weight: 700;
+    padding: 1px 7px;
+    border-radius: 999px;
+    margin-bottom: 4px;
+  }
+  .d-title { margin: 0; font-size: 14px; font-weight: 700; }
+  .d-file {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 10.5px;
+    color: var(--subtle);
+    word-break: break-all;
+    margin-top: 2px;
+  }
+  .d-sec { font-size: 11px; font-weight: 700; color: var(--blue); margin-top: 2px; }
+  .d-box {
+    background: var(--panel-alt);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 7px 9px;
+    font-size: 11.8px;
+    color: var(--text);
+  }
+  .d-list { margin: 0; padding-left: 16px; font-size: 11.6px; color: var(--muted); }
+  .d-list li { margin-bottom: 3px; }
+  .d-list li b { color: var(--text); }
+  .d-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+  .chip {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 10.2px;
+    padding: 1px 6px;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    background: var(--panel-alt);
+    color: var(--text);
+  }
+  .chip.in { background: var(--green-fill); border-color: var(--green); color: var(--green); }
+  .chip.out { background: var(--blue-fill); border-color: var(--blue); color: var(--blue); }
+
+  /* Tab 2: Before vs After */
+  .diff-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+  @media (max-width: 820px) { .diff-grid { grid-template-columns: 1fr; } }
+
+  .diff-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 11px 12px;
+    box-shadow: var(--shadow);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .diff-card h3 { margin: 0; font-size: 13px; font-weight: 700; }
+  .diff-pair {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  @media (max-width: 500px) { .diff-pair { grid-template-columns: 1fr; } }
+  .before-box, .after-box {
+    border-radius: 7px;
+    padding: 8px 9px;
+    font-size: 11.5px;
+    border: 1px solid;
+  }
+  .before-box {
+    background: var(--rose-fill);
+    border-color: var(--rose);
+  }
+  .after-box {
+    background: var(--green-fill);
+    border-color: var(--green);
+  }
+  .tag-ba {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 700;
+    margin-bottom: 4px;
+    text-transform: uppercase;
+  }
+  .before-box .tag-ba { color: var(--rose); }
+  .after-box .tag-ba { color: var(--green); }
+
+  /* Tab 3: Interactive Walkthrough */
+  .walk-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    flex-wrap: wrap;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 9px 11px;
+    margin-bottom: 10px;
+    box-shadow: var(--shadow);
+  }
+  .walk-scenarios, .walk-controls {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  .step-counter {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 11.5px;
+    font-weight: 700;
+    color: var(--purple);
+    padding: 0 4px;
+  }
+  .walk-banner {
+    background: var(--blue-fill);
+    border: 1px solid var(--blue);
+    border-radius: 8px;
+    padding: 8px 11px;
+    margin-bottom: 10px;
+    font-size: 12px;
+  }
+  .walk-banner strong { color: var(--blue); }
+  .walk-cols {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 9px;
+  }
+  @media (max-width: 960px) { .walk-cols { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (max-width: 560px) { .walk-cols { grid-template-columns: 1fr; } }
+
+  .walk-col {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    padding: 10px;
+    box-shadow: var(--shadow);
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    min-height: 220px;
+  }
+  .walk-col-h {
+    font-size: 11.5px;
+    font-weight: 700;
+    padding-bottom: 5px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .state-item {
+    background: var(--panel-alt);
+    border: 1px solid var(--border);
+    border-left-width: 3px;
+    border-radius: 6px;
+    padding: 6px 8px;
+    font-size: 11.4px;
+  }
+  .state-item.amber { border-left-color: var(--amber); }
+  .state-item.blue { border-left-color: var(--blue); }
+  .state-item.purple { border-left-color: var(--purple); }
+  .state-item.green { border-left-color: var(--green); }
+  .state-item.rose { border-left-color: var(--rose); }
+  .state-pill {
+    display: inline-block;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 9.8px;
+    font-weight: 700;
+    padding: 0 5px;
+    border-radius: 4px;
+    margin-bottom: 3px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+  }
+  .walk-note {
+    margin-top: 10px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 9px 11px;
+    font-size: 11.8px;
+    color: var(--muted);
+  }
+  .walk-note b { color: var(--text); }
+
+  /* Tab 4: Persistence & State Machine */
+  .persist-grid {
+    display: grid;
+    grid-template-columns: 1.05fr 0.95fr;
+    gap: 10px;
+    align-items: start;
+  }
+  @media (max-width: 920px) { .persist-grid { grid-template-columns: 1fr; } }
+
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 11px 12px;
+    box-shadow: var(--shadow);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .card h3 { margin: 0; font-size: 13.2px; font-weight: 700; }
+
+  pre.sql {
+    margin: 0;
+    background: var(--code-bg);
+    color: var(--code-fg);
+    padding: 9px 10px;
+    border-radius: 7px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 10.6px;
+    line-height: 1.45;
+    overflow-x: auto;
+  }
+
+  .phase-box {
+    background: var(--panel-alt);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--purple);
+    border-radius: 6px;
+    padding: 7px 9px;
+    font-size: 11.6px;
+  }
+  .phase-box.p2 { border-left-color: var(--amber); }
+  .phase-box ul { margin: 4px 0 0; padding-left: 16px; color: var(--muted); }
+  .phase-box li { margin-bottom: 2px; }
+
+  svg#fsmSvg {
+    width: 100%;
+    min-width: 440px;
+    height: auto;
+    display: block;
+  }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="title-wrap">
+    <h1>Perga 通知、定时器与消息调度统一大架构</h1>
+    <div class="iron-rule">
+      <span class="badge">核心铁律</span>
+      <span>业务入口只做「同事务落库 + 调 <code>SessionTurnScheduler.Poke()</code>」，不再自行判断闲/忙或直接拉起 Turn</span>
+    </div>
+  </div>
+  <div class="nav-group">
+    <button class="seg-btn active" data-tab="v-arch">1. 总览大架构</button>
+    <button class="seg-btn" data-tab="v-diff">2. 改造前后对比</button>
+    <button class="seg-btn" data-tab="v-walk">3. 单步流程演练</button>
+    <button class="seg-btn" data-tab="v-persist">4. 持久化与状态机</button>
+    <button class="seg-btn" id="themeBtn" title="切换浅色/深色主题">浅 / 深色</button>
+  </div>
+</div>
+
+<div class="legend">
+  <span><i class="dot" style="background:var(--blue)"></i>显式消息队列 (<code>session_messages</code>)</span>
+  <span><i class="dot" style="background:var(--amber)"></i>统一系统唤醒箱 (<code>track_wakes</code>)</span>
+  <span><i class="dot" style="background:var(--purple)"></i>唯一仲裁层 (<code>SessionTurnScheduler</code>)</span>
+  <span><i class="dot" style="background:var(--green)"></i>纯粹执行层 (<code>SessionTurnRunner</code>)</span>
+  <span><i class="dot" style="background:var(--rose)"></i>独立边界（不进异步唤醒队列）</span>
+</div>
+
+<!-- TAB 1: ARCHITECTURE TOPOLOGY -->
+<div class="view active" id="v-arch">
+  <div class="main-split">
+    <div class="canvas-card">
+      <svg id="archSvg" viewBox="0 0 920 680" aria-label="Perga 通知与消息调度统一大架构图">
+        <defs>
+          <marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M 0 1 L 10 5 L 0 9 z" fill="var(--edge)" />
+          </marker>
+          <marker id="arr-blue" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M 0 1 L 10 5 L 0 9 z" fill="var(--blue)" />
+          </marker>
+          <marker id="arr-green" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M 0 1 L 10 5 L 0 9 z" fill="var(--green)" />
+          </marker>
+        </defs>
+
+        <!-- ZONE 1: SOURCES -->
+        <rect class="zone-rect" x="10" y="10" width="236" height="122" fill="var(--blue-fill)" stroke="var(--blue)" />
+        <text class="zone-label" x="20" y="27" fill="var(--blue)">Layer 1A · 显式指令入口</text>
+
+        <rect class="zone-rect" x="256" y="10" width="424" height="122" fill="var(--amber-fill)" stroke="var(--amber)" />
+        <text class="zone-label" x="266" y="27" fill="var(--amber)">Layer 1B · 6 类异步系统唤醒源（只写表 + Poke）</text>
+
+        <rect class="zone-rect" x="690" y="10" width="220" height="122" fill="var(--rose-fill)" stroke="var(--rose)" />
+        <text class="zone-label" x="700" y="27" fill="var(--rose)">独立边界 · 不进唤醒队列</text>
+
+        <!-- ZONE 2: SQLITE PERSISTENCE -->
+        <rect class="zone-rect" x="10" y="160" width="670" height="126" fill="var(--panel-alt)" stroke="var(--border-strong)" />
+        <text class="zone-label" x="20" y="177" fill="var(--text)">Layer 2 · SQLite Single-Writer 持久层（Transactional Outbox：业务事实与通知同事务提交）</text>
+
+        <!-- ZONE 3: SCHEDULER -->
+        <rect class="zone-rect" x="10" y="314" width="670" height="114" fill="var(--purple-fill)" stroke="var(--purple)" />
+        <text class="zone-label" x="20" y="331" fill="var(--purple)">Layer 3 · 唯一调度仲裁层（从 TrackActor 拆出，收敛 7 个并发集合）</text>
+
+        <!-- ZONE 4: RUNNER -->
+        <rect class="zone-rect" x="10" y="456" width="670" height="106" fill="var(--green-fill)" stroke="var(--green)" />
+        <text class="zone-label" x="20" y="473" fill="var(--green)">Layer 4 · 纯粹执行层（替换 520 行大泥球 ExecuteSessionTurnPipelineAsync）</text>
+
+        <!-- ZONE 5: RUNTIME & OBSERVATION -->
+        <rect class="zone-rect" x="10" y="586" width="430" height="82" fill="var(--teal-fill)" stroke="var(--teal)" />
+        <text class="zone-label" x="20" y="603" fill="var(--teal)">Layer 5A · Provider 运行时</text>
+
+        <rect class="zone-rect" x="454" y="586" width="456" height="82" fill="var(--slate-fill)" stroke="var(--border-strong)" />
+        <text class="zone-label" x="464" y="603" fill="var(--text)">Layer 5B · 旁路事件广播与前端渲染</text>
+
+        <!-- EDGES -->
+        <path class="flow-edge" data-from="src_human" data-to="db_msgs" d="M 128 118 L 128 188" marker-end="url(#arr)" />
+        <path class="flow-edge" data-from="src_mail" data-to="db_wakes" d="M 326 74 L 385 188" marker-end="url(#arr)" />
+        <path class="flow-edge" data-from="src_task" data-to="db_wakes" d="M 468 74 L 452 188" marker-end="url(#arr)" />
+        <path class="flow-edge" data-from="src_ask" data-to="db_wakes" d="M 608 74 L 520 188" marker-end="url(#arr)" />
+        <path class="flow-edge" data-from="src_report" data-to="db_wakes" d="M 326 118 L 410 188" marker-end="url(#arr)" />
+        <path class="flow-edge" data-from="src_cron" data-to="db_wakes" d="M 468 118 L 468 188" marker-end="url(#arr)" />
+        <path class="flow-edge" data-from="src_boot" data-to="db_wakes" d="M 608 118 L 545 188" marker-end="url(#arr)" />
+
+        <path class="flow-edge" data-from="db_msgs" data-to="node_scheduler" d="M 155 256 L 155 342" marker-end="url(#arr)" />
+        <path class="flow-edge" data-from="db_wakes" data-to="node_scheduler" d="M 468 256 L 468 342" marker-end="url(#arr)" />
+        <path class="flow-edge dashed" data-from="excl_worker" data-to="node_scheduler" d="M 795 122 C 795 290, 740 375, 668 375" marker-end="url(#arr)" />
+
+        <path class="flow-edge" data-from="node_scheduler" data-to="node_runner" d="M 310 418 L 310 482" marker-end="url(#arr)" />
+        <path class="flow-edge dashed" data-from="node_runner" data-to="node_scheduler" d="M 615 482 L 615 418" marker-end="url(#arr)" />
+        <text class="edge-tag" x="622" y="449">结算回调 Poke</text>
+
+        <path class="flow-edge" data-from="node_runner" data-to="node_provider" d="M 225 550 L 225 610" marker-end="url(#arr)" />
+        <path class="flow-edge dashed" data-from="node_runner" data-to="node_fe" d="M 540 550 L 580 610" marker-end="url(#arr)" />
+        <path class="flow-edge dashed" data-from="db_wakes" data-to="node_fe" d="M 664 222 C 735 222, 745 530, 720 610" marker-end="url(#arr)" />
+        <path class="flow-edge dashed" data-from="excl_eventhub" data-to="node_fe" d="M 800 84 L 885 84 L 885 636 L 860 636" marker-end="url(#arr)" />
+
+        <!-- LAYER 1 NODES -->
+        <g class="mod-node" data-id="src_human">
+          <rect class="box" x="22" y="38" width="212" height="80" fill="var(--panel)" stroke="var(--blue)" />
+          <text class="node-title" x="32" y="58">人类输入 &amp; Worker 控制</text>
+          <text class="node-sub" x="32" y="75">· HTTP AcceptMessageAsync</text>
+          <text class="node-sub" x="32" y="90">· 排队可单条撤回 / Steer</text>
+          <text class="node-mono" x="32" y="107" fill="var(--blue)">request_key 强幂等 · 排队多条可合并 1 Turn</text>
+        </g>
+
+        <g class="mod-node" data-id="src_mail">
+          <rect class="box" x="266" y="36" width="128" height="38" fill="var(--panel)" stroke="var(--amber)" />
+          <text class="node-title" x="275" y="53">跨 Track 邮件</text>
+          <text class="node-sub" x="275" y="67">mail:{mailId} [关键]</text>
+        </g>
+
+        <g class="mod-node" data-id="src_task">
+          <rect class="box" x="404" y="36" width="128" height="38" fill="var(--panel)" stroke="var(--amber)" />
+          <text class="node-title" x="413" y="53">Task 结算</text>
+          <text class="node-sub" x="413" y="67">task_attempt:{id} [关键]</text>
+        </g>
+
+        <g class="mod-node" data-id="src_ask">
+          <rect class="box" x="542" y="36" width="128" height="38" fill="var(--panel)" stroke="var(--amber)" />
+          <text class="node-title" x="551" y="53">Ask 回答(Wake)</text>
+          <text class="node-sub" x="551" y="67">ask:{askId} [关键]</text>
+        </g>
+
+        <g class="mod-node" data-id="src_report">
+          <rect class="box" x="266" y="82" width="128" height="38" fill="var(--panel)" stroke="var(--amber)" />
+          <text class="node-title" x="275" y="99">Human 改 Report</text>
+          <text class="node-sub" x="275" y="113">report_edit [非关键]</text>
+        </g>
+
+        <g class="mod-node" data-id="src_cron">
+          <rect class="box" x="404" y="82" width="128" height="38" fill="var(--panel)" stroke="var(--amber)" />
+          <text class="node-title" x="413" y="99">Cronos 定时器</text>
+          <text class="node-sub" x="413" y="113">schedule:{id} [非关键]</text>
+        </g>
+
+        <g class="mod-node" data-id="src_boot">
+          <rect class="box" x="542" y="82" width="128" height="38" fill="var(--panel)" stroke="var(--amber)" />
+          <text class="node-title" x="551" y="99">Boot 恢复</text>
+          <text class="node-sub" x="551" y="113">boot_reconcile [非关键]</text>
+        </g>
+
+        <!-- EXCLUDED BOUNDARY NODES -->
+        <g class="mod-node" data-id="excl_hold">
+          <rect class="box" x="700" y="36" width="200" height="26" fill="var(--panel)" stroke="var(--rose)" />
+          <text class="node-title" x="709" y="53" font-size="11">AskDelivery.Hold (同步门闩)</text>
+        </g>
+        <g class="mod-node" data-id="excl_eventhub">
+          <rect class="box" x="700" y="68" width="200" height="26" fill="var(--panel)" stroke="var(--rose)" />
+          <text class="node-title" x="709" y="85" font-size="11">EventHub / events (只读 WS)</text>
+        </g>
+        <g class="mod-node" data-id="excl_worker">
+          <rect class="box" x="700" y="100" width="200" height="26" fill="var(--panel)" stroke="var(--slate)" />
+          <text class="node-title" x="709" y="117" font-size="11">Worker 首轮启动 (绑 Attempt)</text>
+        </g>
+
+        <!-- LAYER 2 NODES -->
+        <g class="mod-node" data-id="db_msgs">
+          <rect class="box" x="22" y="188" width="268" height="68" fill="var(--panel)" stroke="var(--blue)" />
+          <text class="node-title" x="32" y="208">session_messages + steers</text>
+          <text class="node-sub" x="32" y="224">· 排队逐条可撤回 / Steer · 出队批量合 Turn</text>
+          <text class="node-sub" x="32" y="239">· 失败 Fail Fast · unknown 按 Turn 级一键解锁</text>
+          <text class="node-mono" x="32" y="251" fill="var(--blue)">0011 放宽 input_turn 非唯一 · Turn 级结算</text>
+        </g>
+
+        <g class="mod-node" data-id="db_wakes">
+          <rect class="box" x="304" y="188" width="360" height="68" fill="var(--panel)" stroke="var(--amber)" />
+          <text class="node-title" x="314" y="208">track_wakes（纯日志异步唤醒箱 · 0011）</text>
+          <text class="node-sub" x="314" y="224">· 零运行期 DELETE · target=NULL 动态指当前 Lead</text>
+          <text class="node-sub" x="314" y="239">· 记录 reason / turn_id / attempts（维护任务按批裁剪）</text>
+          <text class="node-mono" x="314" y="251" fill="var(--amber)">pending → delivering → done / dropped</text>
+        </g>
+
+        <rect x="22" y="262" width="642" height="18" rx="4" fill="var(--amber-fill)" stroke="var(--amber)" stroke-width="1" />
+        <text class="node-mono" x="32" y="274" fill="var(--amber)">Outbox 纯日志：同键先标旧 pending 为 dropped(coalesced) 再追加新行；UpsertMail 仅对未关闭轨且首次插入</text>
+
+        <!-- LAYER 3 NODE -->
+        <g class="mod-node selected" data-id="node_scheduler">
+          <rect class="box" x="22" y="342" width="642" height="76" fill="var(--panel)" stroke="var(--purple)" />
+          <text class="node-title" x="34" y="363">SessionTurnScheduler（唯一调度入口：PokeAsync · TryScheduleNext）</text>
+          <text class="node-sub" x="34" y="381">每会话单一状态机：Idle │ Running (+Steer) │ Compacting │ Resuming │ BlockedUnknown</text>
+          <text class="node-mono" x="34" y="401" fill="var(--purple)">① 优先批量合并消费 session_messages 排队用户消息 → ② 空闲且为当前 Lead 时，Batch Drain(LIMIT 32) pending track_wakes</text>
+        </g>
+
+        <!-- LAYER 4 NODE -->
+        <g class="mod-node" data-id="node_runner">
+          <rect class="box" x="22" y="482" width="642" height="68" fill="var(--panel)" stroke="var(--green)" />
+          <text class="node-title" x="34" y="502">SessionTurnRunner（纯流式执行引擎 · 只依赖 ITurnWorkItem 接口）</text>
+          <text class="node-sub" x="34" y="519">工作项：SessionInputBatchWorkItem │ WorkerMessageWorkItem │ TrackWakeBatchWorkItem（单条原格式 / 多条打包）</text>
+          <text class="node-mono" x="34" y="537" fill="var(--green)">3 钩子：PreparePromptAsync() → OnProviderDeliveredAsync() → OnTurnSettledAsync(outcome)（失败 Fail Fast）→ Poke</text>
+        </g>
+
+        <!-- LAYER 5 NODES -->
+        <g class="mod-node" data-id="node_provider">
+          <rect class="box" x="22" y="610" width="406" height="48" fill="var(--panel)" stroke="var(--teal)" />
+          <text class="node-title" x="32" y="630">IAgentSession (Codex / Claude / ACP)</text>
+          <text class="node-sub" x="32" y="647">首个 confirmsDelivery（含 BeforePrompt=false 判定）即刻签收，防半途崩溃重发</text>
+        </g>
+
+        <g class="mod-node" data-id="node_fe">
+          <rect class="box" x="466" y="610" width="432" height="48" fill="var(--panel)" stroke="var(--border-strong)" />
+          <text class="node-title" x="476" y="630">EventHub → WebSocket → 前端 UI</text>
+          <text class="node-sub" x="476" y="647">修 conversation-display.ts 漏判 system，并透传 system_mail / task 等样式</text>
+        </g>
+      </svg>
+    </div>
+
+    <div class="drawer" id="inspectorDrawer"></div>
+  </div>
+</div>
+
+<!-- TAB 2: BEFORE VS AFTER -->
+<div class="view" id="v-diff">
+  <div class="diff-grid">
+    <div class="diff-card">
+      <h3>1. 入口分叉与并发状态集合</h3>
+      <div class="diff-pair">
+        <div class="before-box">
+          <span class="tag-ba">改造前 · 散做一团</span>
+          <div>8 个入口各自手写闲/忙判断与预约锁；并发互斥分散在 <code>_activeTurns</code>、<code>_reservedWakeSessions</code>、<code>_compactingSessions</code>、<code>_steering</code>、<code>_sessionResumeHolds</code>、<code>_dispatchingInputs</code>、<code>HoldsDurableSlot</code> 7 处，且相互漏检（如 wake 漏检 <code>_steering</code> 与 <code>Messages.NextAsync</code>）。</div>
+        </div>
+        <div class="after-box">
+          <span class="tag-ba">改造后 · 单一真源</span>
+          <div>所有入口只落库并调用 <code>SessionTurnScheduler.Poke()</code>。7 个集合收敛为清晰的每会话单一状态机（<code>Idle / Running / Compacting / Resuming / BlockedUnknown</code>），全系统只在 <code>TryScheduleNext</code> 一处裁决互斥与优先级。</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="diff-card">
+      <h3>2. 唤醒持久性与纯日志审计</h3>
+      <div class="diff-pair">
+        <div class="before-box">
+          <span class="tag-ba">改造前 · 只有 Mail 持久化</span>
+          <div>仅 Mail 写 <code>mails.wake_pending</code> 并计入 <code>_queuedMailWakes</code>；Task 结算、Schedule、Ask 回答、Report 编辑全在纯内存 <code>_pendingWakes</code> 且不计入 <code>HasActiveWork</code>，Actor 空闲驱逐或进程重启直接静默丢失。</div>
+        </div>
+        <div class="after-box">
+          <span class="tag-ba">改造后 · 纯日志 Outbox + 维护裁剪</span>
+          <div>6 类系统唤醒同事务写入 <code>track_wakes</code>，零运行期 <code>DELETE</code>，单调记录 <code>reason / turn_id / attempts</code> 便于排障；运行期失败立刻 Fail Fast 回 <code>idle</code>，终态由既有 <code>RunMaintenancePassAsync</code>（7 天 / 5 万条）按批裁剪。</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="diff-card">
+      <h3>3. 切换 Lead / 关 Track / 切模板取消</h3>
+      <div class="diff-pair">
+        <div class="before-box">
+          <span class="tag-ba">改造前 · 错发与计数泄漏</span>
+          <div><code>DispatchLeadWakePromptIfNeededAsync</code> 入队时写死 <code>oldLeadId</code>，切换 Lead 后不会迁移 <code>_pendingWakes</code>，导致通知错发给已降级的 Subagent；关闭 Track 不清内存队列，<code>_queuedMailWakes &gt; 0</code> 致 Actor 永不驱逐。</div>
+        </div>
+        <div class="after-box">
+          <span class="tag-ba">改造后 · 动态绑定与原子作废</span>
+          <div><code>target_session_id = NULL</code> 在领取时刻动态解析最新 <code>LeadSessionId</code>，切 Lead 只需 <code>Poke(newLead)</code>；内部 <code>CancelPendingWakeAsync</code> 接入关 Track（<code>track_closed</code>）与切模板（<code>template_changed</code>），零泄漏且保留取消日志。</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="diff-card">
+      <h3>4. 执行引擎 · 用户排队合并 · Turn 级结算</h3>
+      <div class="diff-pair">
+        <div class="before-box">
+          <span class="tag-ba">改造前 · 520 行大泥球 + 逐条强绑</span>
+          <div><code>ExecuteSessionTurnPipelineAsync</code> 混杂 5 套分支与死代码；<code>0006</code> 唯一索引强绑 1 条消息 1 个 Turn，多条排队用户消息必须逐轮跑 <code>SessionInputs</code> 单行更新。</div>
+        </div>
+        <div class="after-box">
+          <span class="tag-ba">改造后 · Runner + 用户批合 Turn 结算</span>
+          <div><code>SessionTurnRunner</code> 对接 <code>SessionInputBatchWorkItem</code> / <code>WorkerMessageWorkItem</code> / <code>TrackWakeBatchWorkItem</code>；排队用户消息可逐条撤回 / Steer，出队合进 1 个 <code>turn_id</code>，<code>unknown</code> 一键整批解锁，修复 <code>SessionInputs</code> 5 处单行假设，不做逐条失败归因。</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="diff-card">
+      <h3>5. Cronos 定时调度与 Fail Fast（零缓存）</h3>
+      <div class="diff-pair">
+        <div class="before-box">
+          <span class="tag-ba">改造前 · 全量查表 + 提前改脏</span>
+          <div>每 15s 对每个开放 Track 调全量 <code>LoadTrackAggregateAsync</code>（查 5 张表）并重编译模板；<code>TriggerScheduleWakeAsync</code> 在入队前就跑 <code>BuildScheduleWakePrompt</code>（如 <code>checkInCount++</code>），唤醒若丢则状态永久错位。</div>
+        </div>
+        <div class="after-box">
+          <span class="tag-ba">改造后 · 轻查 + 延迟求值 + 不缓存</span>
+          <div>Host 改单表轻查询（停机错过不补发）；领取开 Turn 时才求值，<code>schedule</code> 遇无证据故障直接 Fail Fast 标 <code>dropped(runtime_failed)</code>（重启亦标 <code>boot_dropped</code>），天然至多执行一次——无需缓存求值结果、不建水位表、无死循环。</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="diff-card">
+      <h3>6. 两阶段重启恢复与前端渲染</h3>
+      <div class="diff-pair">
+        <div class="before-box">
+          <span class="tag-ba">改造前 · 4 轮抢槽 + 错显 Owner</span>
+          <div><code>BootReconciler</code> 分 4 轮各自向 Actor 发恢复调用互相抢槽；<code>UpsertMailAsync</code> 应用层判开/闭存在竞态；前端 <code>conversation-display.ts</code> 只认 <code>wake / scheduler</code> 漏掉 <code>system</code>，重启通知误显为 <code>Owner</code>。</div>
+        </div>
+        <div class="after-box">
+          <span class="tag-ba">改造后 · 先纯 DB 收敛 + 单次 Poke</span>
+          <div>Step 1 纯 DB 收敛（按 <code>turn_id</code> 分组恢复用户输入、同事务写 <code>boot</code>、关键 3 类 <code>delivering</code> 先去冲突再退 <code>pending</code>、非关键标 <code>boot_dropped</code>），Step 2 每轨只调一次 <code>Poke()</code>；修前端 <code>system</code> 判别与 <code>UpsertMail</code> SQL 开轨守卫。</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- TAB 3: INTERACTIVE WALKTHROUGH -->
+<div class="view" id="v-walk">
+  <div class="walk-bar">
+    <div class="walk-scenarios" id="walkScenarios"></div>
+    <div class="walk-controls">
+      <button class="seg-btn" id="prevStepBtn">上一步</button>
+      <span class="step-counter" id="stepCounter">1 / 4</span>
+      <button class="seg-btn" id="nextStepBtn">下一步</button>
+      <button class="seg-btn" id="resetStepBtn">重置</button>
+    </div>
+  </div>
+  <div class="walk-banner" id="walkBanner"></div>
+  <div class="walk-cols" id="walkCols"></div>
+  <div class="walk-note" id="walkNote"></div>
+</div>
+
+<!-- TAB 4: PERSISTENCE & FSM -->
+<div class="view" id="v-persist">
+  <div class="persist-grid">
+    <div class="card">
+      <h3>1. <code>track_wakes</code> 完整生命周期状态机（纯日志）</h3>
+      <div style="overflow-x:auto">
+        <svg id="fsmSvg" viewBox="0 0 540 280" aria-label="track_wakes 状态机图">
+          <defs>
+            <marker id="farr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M 0 1 L 10 5 L 0 9 z" fill="var(--edge)" />
+            </marker>
+          </defs>
+          <!-- pending -->
+          <rect x="20" y="96" width="128" height="58" rx="8" fill="var(--amber-fill)" stroke="var(--amber)" stroke-width="2" />
+          <text x="84" y="121" text-anchor="middle" font-weight="700" font-size="13" fill="var(--text)">pending</text>
+          <text x="84" y="139" text-anchor="middle" font-size="10" fill="var(--muted)">可合并 · 可取消</text>
+
+          <!-- delivering -->
+          <rect x="210" y="96" width="136" height="58" rx="8" fill="var(--purple-fill)" stroke="var(--purple)" stroke-width="2" />
+          <text x="278" y="121" text-anchor="middle" font-weight="700" font-size="13" fill="var(--text)">delivering</text>
+          <text x="278" y="139" text-anchor="middle" font-size="10" fill="var(--muted)">turn_id · attempts++</text>
+
+          <!-- done -->
+          <rect x="400" y="34" width="120" height="54" rx="8" fill="var(--green-fill)" stroke="var(--green)" stroke-width="2" />
+          <text x="460" y="57" text-anchor="middle" font-weight="700" font-size="13" fill="var(--text)">done</text>
+          <text x="460" y="75" text-anchor="middle" font-size="10" fill="var(--muted)">7天/5万条维护裁剪</text>
+
+          <!-- dropped -->
+          <rect x="400" y="170" width="120" height="54" rx="8" fill="var(--rose-fill)" stroke="var(--rose)" stroke-width="2" />
+          <text x="460" y="193" text-anchor="middle" font-weight="700" font-size="13" fill="var(--text)">dropped</text>
+          <text x="460" y="211" text-anchor="middle" font-size="10" fill="var(--muted)">带 reason 可分析</text>
+
+          <!-- Transitions -->
+          <path d="M 148 116 L 208 116" fill="none" stroke="var(--edge)" stroke-width="1.8" marker-end="url(#farr)" />
+          <text x="178" y="109" text-anchor="middle" font-size="9.5" fill="var(--muted)">Batch 领取</text>
+
+          <path d="M 208 138 L 148 138" fill="none" stroke="var(--amber)" stroke-width="1.8" stroke-dasharray="4 3" marker-end="url(#farr)" />
+          <text x="178" y="155" text-anchor="middle" font-size="9.5" fill="var(--amber)">仅重启捞回关键3类(boot_requeued)</text>
+
+          <!-- Self coalesce loop -->
+          <path d="M 55 96 C 55 56, 113 56, 113 96" fill="none" stroke="var(--amber)" stroke-width="1.6" marker-end="url(#farr)" />
+          <text x="84" y="61" text-anchor="middle" font-size="9.5" fill="var(--amber)">同键覆盖: 旧行→dropped(coalesced)</text>
+
+          <!-- delivering -> done -->
+          <path d="M 346 112 L 398 66" fill="none" stroke="var(--green)" stroke-width="1.8" marker-end="url(#farr)" />
+          <text x="352" y="77" text-anchor="middle" font-size="9.5" fill="var(--green)">首个 confirmsDelivery / 中断</text>
+
+          <!-- delivering -> dropped -->
+          <path d="M 346 140 L 398 186" fill="none" stroke="var(--rose)" stroke-width="1.8" marker-end="url(#farr)" />
+          <text x="348" y="177" text-anchor="middle" font-size="9.5" fill="var(--rose)">非关键失败/重启丢弃/关轨</text>
+
+          <!-- pending -> dropped -->
+          <path d="M 84 154 C 84 222, 260 226, 398 206" fill="none" stroke="var(--rose)" stroke-width="1.6" stroke-dasharray="4 3" marker-end="url(#farr)" />
+          <text x="235" y="230" text-anchor="middle" font-size="9.5" fill="var(--rose)">合并/取消/关轨/切模板</text>
+        </svg>
+      </div>
+      <h3>2. L2 两阶段实施路线</h3>
+      <div class="phase-box">
+        <b>阶段 1 · 拆出调度器与执行器骨架（零 DB 变更）</b>
+        <ul>
+          <li>从 <code>TrackActor</code> 拆出 <code>SessionTurnScheduler</code>（收敛 7 个状态集合为单一状态机）与 <code>SessionTurnRunner</code> + <code>ITurnWorkItem</code>；</li>
+          <li>下线旧同步 <code>SendMessageAsync</code>（存量测试迁至 <code>AcceptMessageAsync</code>），删除死代码 <code>_crossTrackWakeCallback</code> 与 <code>ShouldWakeLead</code>；</li>
+          <li>为 <code>CronosScheduleHostedService</code> 增加单表轻查询读取模板快照。</li>
+        </ul>
+      </div>
+      <div class="phase-box p2">
+        <b>阶段 2 · 落地 <code>0011_track_wakes.sql</code>、用户合并与前端修复</b>
+        <ul>
+          <li>新增纯 DDL 迁移 <code>0011_track_wakes.sql</code>（建 <code>track_wakes</code> 与 3 条索引 + 放宽 <code>idx_session_messages_input_turn</code> 为非唯一），移除 <code>mails.wake_pending</code> 读写与内存队列；</li>
+          <li>实现 <code>SessionInputBatchWorkItem</code> 与 <code>SessionInputs</code> 5 处单行修复 + 按 <code>turn_id</code> 分组重启恢复；接入 <code>UpsertMailAsync</code> SQL 开轨守卫与 <code>PruneTrackWakesAsync</code>；</li>
+          <li>修复前端 <code>conversation-display.ts</code> 漏判 <code>system</code>；补齐回滚/崩溃/合并/切 Lead/关 Track/防毒丸测试，全量跑 <code>dotnet test Perga.sln</code> 与 <code>fe</code> 检查并完成 2 轮独立评审。</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>3. <code>0011_track_wakes.sql</code>（纯 DDL，无历史回填）</h3>
+      <pre class="sql">CREATE TABLE track_wakes (
+    ordinal           INTEGER PRIMARY KEY AUTOINCREMENT,
+    id                TEXT NOT NULL UNIQUE,
+    track_id          TEXT NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+    target_session_id TEXT REFERENCES agent_sessions(id) ON DELETE CASCADE,
+    kind              TEXT NOT NULL CHECK (kind IN (
+                          'mail', 'schedule', 'task_settled',
+                          'ask_answered', 'report_edited', 'boot'
+                      )),
+    coalesce_key      TEXT,
+    payload_json      TEXT NOT NULL DEFAULT '{}',
+    state             TEXT NOT NULL CHECK (state IN (
+                          'pending', 'delivering', 'done', 'dropped'
+                      )),
+    reason            TEXT,
+    turn_id           TEXT,
+    attempts          INTEGER NOT NULL DEFAULT 0,
+    created_at_ms     INTEGER NOT NULL,
+    updated_at_ms     INTEGER NOT NULL
+);
+
+CREATE UNIQUE INDEX idx_track_wakes_coalesce_pending
+    ON track_wakes(track_id, coalesce_key)
+    WHERE state = 'pending' AND coalesce_key IS NOT NULL;
+CREATE INDEX idx_track_wakes_active
+    ON track_wakes(track_id, state, ordinal) WHERE state IN ('pending', 'delivering');
+CREATE INDEX idx_track_wakes_gc
+    ON track_wakes(state, updated_at_ms, ordinal) WHERE state IN ('done', 'dropped');
+
+-- 允许同一 turn_id 合并多条 queued 用户消息（保留索引名兼容 SqliteMigratorTests）
+DROP INDEX idx_session_messages_input_turn;
+CREATE INDEX idx_session_messages_input_turn
+    ON session_messages(turn_id) WHERE source = 'session' AND turn_id IS NOT NULL;</pre>
+
+      <h3>4. 关键 SQL 操作（纯日志合并 · 三步重启收敛 · 维护裁剪）</h3>
+      <pre class="sql">-- ① 同事务纯日志合并（旧 pending 标 dropped 再追加新 pending，零运行期 DELETE）
+UPDATE track_wakes SET state = 'dropped', reason = 'coalesced', updated_at_ms = @Now
+WHERE track_id = @TrackId AND coalesce_key = @CoalesceKey AND state = 'pending';
+INSERT INTO track_wakes (...) VALUES (...);
+
+-- ② BootReconciler 重启三步收敛
+UPDATE track_wakes SET state = 'dropped', reason = 'boot_superseded', updated_at_ms = @Now
+WHERE state = 'delivering' AND coalesce_key IS NOT NULL
+  AND EXISTS (SELECT 1 FROM track_wakes p
+              WHERE p.track_id = track_wakes.track_id AND p.coalesce_key = track_wakes.coalesce_key AND p.state = 'pending');
+UPDATE track_wakes SET state = 'dropped', reason = 'boot_dropped', updated_at_ms = @Now
+WHERE state = 'delivering' AND kind IN ('schedule', 'report_edited', 'boot');
+UPDATE track_wakes SET state = 'pending', reason = 'boot_requeued', turn_id = NULL, updated_at_ms = @Now
+WHERE state = 'delivering' AND kind IN ('mail', 'task_settled', 'ask_answered');
+
+-- ③ RunMaintenancePassAsync 定期裁剪（7 天 + 5 万终态上限，每批 LIMIT 1000）
+DELETE FROM track_wakes WHERE ordinal IN (
+    SELECT ordinal FROM track_wakes WHERE state IN ('done', 'dropped') AND ordinal &lt;= @Cutoff ORDER BY ordinal LIMIT 1000
+);</pre>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var NODE_INFO = {
+    src_human: {
+      pill: "显式指令入口",
+      color: "var(--blue)",
+      fill: "var(--blue-fill)",
+      title: "人类输入 & Worker 控制入口",
+      file: "TrackActor.SessionInputs.cs / TrackActor.Steering.cs / TrackActor.WorkerSessions.cs",
+      summary: "承载用户在聊天框发送的普通消息（AcceptMessageAsync）以及 Lead/用户对 Worker 发送的排队、Steer、撤回操作。",
+      contracts: [
+        "排队态（queued）每条独立保存：严格保留 request_key/hash 幂等，支持单条撤回（Withdraw）或 Steer。",
+        "出队执行时，排队中的多条用户消息合并进 1 个 turn_id 发给 Provider，聊天流仍保留每条独立用户气泡。",
+        "Steer 仅在目标会话处于 Running 且存在匹配 ActiveTurn 时执行；入队后只写库 + Poke(sessionId)。"
+      ],
+      pitfall: "老同步入口 SendMessageAsync（TrackActor.cs:911）仅供存量测试使用，重构阶段 1 统一迁移至 AcceptMessageAsync 并删除。",
+      ins: [],
+      outs: ["db_msgs"]
+    },
+    src_mail: {
+      pill: "关键异步唤醒源",
+      color: "var(--amber)",
+      fill: "var(--amber-fill)",
+      title: "跨 Track 邮件 (mail)",
+      file: "TrackActor.cs#ReceiveMailAsync / SqliteTrackStore.cs#UpsertMailAsync",
+      summary: "收件 Track 收到新邮件时，在 UpsertMailAsync 同事务写入 mails、events(mail.received) 与 track_wakes，再触发 Poke。",
+      contracts: [
+        "coalesce_key = 'mail:{mailId}'，SQL 层守卫仅在 requestWake=true、目标 Track 未关闭（closed_at_ms IS NULL）且首次见该 mail 时写入。",
+        "target_session_id = NULL，投递时动态解析当前 Track.LeadSessionId。",
+        "属于防卡死关键 3 类：运行期无确认失败不原地重试（立刻回 idle），仅在 Host 重启时退回 pending 重投。"
+      ],
+      pitfall: "彻底淘汰 mails.wake_pending 与内存计数器 _queuedMailWakes，消除应用层判断闭合的 TOCTOU 竞态与计数泄漏。",
+      ins: [],
+      outs: ["db_wakes"]
+    },
+    src_task: {
+      pill: "关键异步唤醒源",
+      color: "var(--amber)",
+      fill: "var(--amber-fill)",
+      title: "Task Attempt 结算 (task_settled)",
+      file: "TrackActor.cs#CompleteAttemptDone / FailByAttemptIdAsync",
+      summary: "任务 Gate 验证通过或 Attempt 失败时，在同一事务内更新 tasks / task_attempts / template_state 并写入 track_wakes。",
+      contracts: [
+        "coalesce_key = 'task_attempt:{attemptId}'，保证每次 Attempt 结算精确通知一次。",
+        "多个并行任务同时完成时，由调度器一次 Batch Drain 合并进同一个 Lead Turn。",
+        "属于防卡死关键 3 类：无确认即崩溃时由 BootReconciler 恢复，确保子任务完成不会让父轨永远失聪。"
+      ],
+      pitfall: "原实现只在内存 _pendingWakes 排队且不计入 HasActiveWork，Actor 空闲驱逐或重启会丢通知；新设计完全持久不丢。",
+      ins: [],
+      outs: ["db_wakes"]
+    },
+    src_ask: {
+      pill: "关键异步唤醒源",
+      color: "var(--amber)",
+      fill: "var(--amber-fill)",
+      title: "Ask 回答通知 (ask_answered)",
+      file: "TrackActor.cs#AnswerAskAsync",
+      summary: "仅当 Ask 属于 AskDelivery.Wake（普通提问）且当前 Lead 没有阻塞在该 Ask 上时，才随提交回答同事务写入 track_wakes。",
+      contracts: [
+        "coalesce_key = 'ask:{askId}'。",
+        "属于防卡死关键 3 类：无确认即崩溃时在重启阶段退回 pending 恢复。",
+        "AskDelivery.Hold（审批挂起）不经过此通道，保持现有 409 与实时 waiter 契约。"
+      ],
+      pitfall: "清理原 PendingAskSuspension.ShouldWakeLead（恒为 false 的死分支）。",
+      ins: [],
+      outs: ["db_wakes"]
+    },
+    src_report: {
+      pill: "非关键异步唤醒源",
+      color: "var(--amber)",
+      fill: "var(--amber-fill)",
+      title: "Human 编辑 Report (report_edited)",
+      file: "TrackActor.cs#UpdateReportBlockByHumanAsync",
+      summary: "人类在 UI 编辑 Report block 时，随保存报告同事务写入 track_wakes，提示 Lead 审阅最新改动。",
+      contracts: [
+        "coalesce_key = 'report_edit'，纯日志合并：同事务先把旧 pending 标为 dropped(coalesced)，再插入最新 pending 行。",
+        "属于非关键唤醒：运行期无确认失败直接 Fail Fast 标 dropped(runtime_failed)，重启未完成直接标 dropped(boot_dropped)。"
+      ],
+      pitfall: "delivering 期间再来新编辑时允许另起一条 pending 不丢最新修改；崩溃恢复先淘汰被新 pending 覆盖的旧 delivering。",
+      ins: [],
+      outs: ["db_wakes"]
+    },
+    src_cron: {
+      pill: "非关键异步唤醒源",
+      color: "var(--amber)",
+      fill: "var(--amber-fill)",
+      title: "Cronos 定时唤醒 (schedule)",
+      file: "CronosScheduleHostedService.cs",
+      summary: "后台每 15s 用单表轻查询扫描开放 Track 的模板快照，到点后向 track_wakes 插入一条轻量记录并 Poke。",
+      contracts: [
+        "coalesce_key = 'schedule:{scheduleId}'，同一计划未消费前用纯日志合并去重不堆积。",
+        "停机窗口内错过的定时任务不补发（不建水位表，避免盘前/复盘任务开机误触）。",
+        "领取开 Turn 时才求值 BuildScheduleWakePrompt 并提交 template_state；失败直接 Fail Fast 标 dropped，天然至多一次且无需 Prompt 缓存。"
+      ],
+      pitfall: "原实现每 15s 全量 LoadTrackAggregateAsync 查 5 张表，且提前运行带副作用的 JS（如 checkInCount++）；切模板时通过 CancelPendingWakeAsync(template_changed) 作废旧计划。",
+      ins: [],
+      outs: ["db_wakes"]
+    },
+    src_boot: {
+      pill: "非关键异步唤醒源",
+      color: "var(--amber)",
+      fill: "var(--amber-fill)",
+      title: "Boot 崩溃恢复 (boot)",
+      file: "BootReconciler.cs#ReconcileAsync",
+      summary: "两阶段恢复：Step 1 纯 DB 收敛（清租约、按 turn_id 分组恢复用户输入、同事务写 boot 与归位 delivering）；Step 2 每轨仅调一次 Poke()。",
+      contracts: [
+        "coalesce_key = 'boot_reconcile'，连续多次重启只留最新一条 pending 恢复提醒。",
+        "写入 triggerKind = 'system'；若崩溃在 TurnAccepted 前，boot 与待重投的关键通知天然 Batch Drain 进同一 Turn。"
+      ],
+      pitfall: "原实现分 4 轮各自向 Actor 发异步恢复互相抢槽，且按消息逐条发重复 TurnCompleted 事件，前端还漏判 system。",
+      ins: [],
+      outs: ["db_wakes"]
+    },
+    excl_hold: {
+      pill: "独立边界（同步门闩）",
+      color: "var(--rose)",
+      fill: "var(--rose-fill)",
+      title: "AskDelivery.Hold — 绝不并入异步队列",
+      file: "TrackActor.cs#CreateAskSuspensionCoreAsync",
+      summary: "策略拦截 AskHuman 或 Provider 工具审批请求的同步挂起门闩，使用内存 TaskCompletionSource 阻塞原 MCP / Provider 调用。",
+      contracts: [
+        "回答后只唤醒原实时协程继续执行当前工具调用，绝不会新起一轮 Lead Turn。",
+        "若进程重启或所属 Turn 已取消，回答接口必须返回 409 Conflict。"
+      ],
+      pitfall: "详见 docs/design/paused-approval-v1.md 刚落地的权限隔离契约，必须与异步唤醒队列严格隔离。",
+      ins: [],
+      outs: []
+    },
+    excl_eventhub: {
+      pill: "独立边界（只读观测）",
+      color: "var(--rose)",
+      fill: "var(--rose-fill)",
+      title: "EventHub / events — 只推客户端，不驱动执行",
+      file: "EventHub.cs / EventsWebSocketHandler.cs",
+      summary: "负责向浏览器 / 订阅方广播状态变化事件和瞬态流式 Delta，支持 ?since= 断线重放与 7 天滑窗裁剪。",
+      contracts: [
+        "只读消费，可被维护任务裁剪，不承担任何 Agent 执行调度职责。",
+        "Persistent 事件随业务与 track_wakes 同一事务追加到 events 表，提交后广播。"
+      ],
+      pitfall: "不要把 UI 通知总线和 Agent 执行队列混为一谈。",
+      ins: [],
+      outs: ["node_fe"]
+    },
+    excl_worker: {
+      pill: "独立边界（Task 首轮）",
+      color: "var(--slate)",
+      fill: "var(--slate-fill)",
+      title: "Worker 首轮启动 (TaskGraphScheduler)",
+      file: "TrackActor.cs#StartTaskAttemptCoreAsync",
+      summary: "由任务依赖图调度器创建的 Contract Subagent 首轮 Turn，生命周期绑定具体的 TaskAttempt 与工作区租约。",
+      contracts: [
+        "统一通过 SessionTurnScheduler 占位并交给 SessionTurnRunner 执行，不再私自操作 _reservedWakeSessions。",
+        "主机崩溃后旧 Attempt 标记为 interrupted 并归档其会话，不会跨重启自动重放首轮。"
+      ],
+      pitfall: "纳入调度器统一占位后，消除了它与后续 Worker 消息之间的竞态窗口。",
+      ins: [],
+      outs: ["node_scheduler"]
+    },
+    db_msgs: {
+      pill: "持久队列 · 显式输入",
+      color: "var(--blue)",
+      fill: "var(--blue-fill)",
+      title: "session_messages + session_message_steers",
+      file: "Migrations/0006_session_messages.sql + 0011 + SqliteTrackStore.SessionInputs.cs",
+      summary: "专职承载用户与 Lead 显式发给具体会话的指令、排队消息、Steer 尝试记录及收据绑定。",
+      contracts: [
+        "0011 将 idx_session_messages_input_turn 放宽为非唯一索引（保留索引名），允许出队时将多条 queued 用户消息合并进 1 个 turn_id。",
+        "按 Turn 级处理结果：明确失败立即 Fail Fast 回 idle；unknown 只锁一次会话，一键解锁整批（WHERE source='session' AND turn_id=@TurnId）。",
+        "Claim / MarkDelivered / Settle / MarkResolved / Boot 恢复全部修复单行假设，按 turn_id 整批提交或分组发出 1 条恢复事件。"
+      ],
+      pitfall: "不做逐条失败归因、不给队列制造多余中间态；同时保留 session_items(message_ordinal) 唯一索引与独立用户气泡展示。",
+      ins: ["src_human"],
+      outs: ["node_scheduler"]
+    },
+    db_wakes: {
+      pill: "纯日志唤醒箱 · 无运行期 DELETE",
+      color: "var(--amber)",
+      fill: "var(--amber-fill)",
+      title: "track_wakes（新增 0011 纯 DDL 表）",
+      file: "Migrations/0011_track_wakes.sql / SqliteTrackStore.Maintenance.cs",
+      summary: "全系统唯一的异步系统唤醒纯日志队列：零运行期 DELETE，单调四态 + reason / turn_id / attempts 支撑排障分析。",
+      contracts: [
+        "四态：pending → delivering → done | dropped；合并先标旧 pending 为 dropped(coalesced) 再追加新行。",
+        "target_session_id = NULL 动态绑定当前 Track.LeadSessionId；绝不将会话置为 unknown。",
+        "复用 RunMaintenancePassAsync 对 done/dropped 终态按 7 天 / 5 万条上限每批 1000 行裁剪（不删开轨活跃 pending）。"
+      ],
+      pitfall: "BootReconciler 退回关键 3 类 delivering 前，必须先标被新 pending 覆盖者为 boot_superseded，再将非关键 3 类标 boot_dropped。",
+      ins: ["src_mail", "src_task", "src_ask", "src_report", "src_cron", "src_boot"],
+      outs: ["node_scheduler", "node_fe"]
+    },
+    node_scheduler: {
+      pill: "唯一仲裁中枢",
+      color: "var(--purple)",
+      fill: "var(--purple-fill)",
+      title: "SessionTurnScheduler（从 TrackActor 拆出）",
+      file: "Perga.Kernel/Actors/SessionTurnScheduler.cs（待拆）",
+      summary: "整个重构的灵魂：收敛散落在 TrackActor 7 处的状态集合，暴露全系统唯一的调度入口 PokeAsync。",
+      contracts: [
+        "每会话单一状态机：Idle │ Running │ Compacting │ Resuming │ BlockedUnknown。",
+        "门禁全集中于此：Track 开启、非删除中、WorkspaceReady、Attempt 有效且未暂停。",
+        "仲裁顺序：① 先批量合并消费 session_messages 排队用户消息 → ② 空闲且为当前 Lead 时，Batch Drain(LIMIT 32) pending track_wakes。"
+      ],
+      pitfall: "PokeAsync 支持后台派发与 DispatchWakesInBackground = false 的测试同步等待两种模式，且运行期失败后回 idle 不自旋防死循环。",
+      ins: ["db_msgs", "db_wakes", "excl_worker", "node_runner"],
+      outs: ["node_runner"]
+    },
+    node_runner: {
+      pill: "纯粹执行器",
+      color: "var(--green)",
+      fill: "var(--green-fill)",
+      title: "SessionTurnRunner + ITurnWorkItem",
+      file: "Perga.Kernel/Actors/SessionTurnRunner.cs（待拆）",
+      summary: "替换原 520 行 ExecuteSessionTurnPipelineAsync，自身完全不认识 Mail、Ask、Report 或 Schedule。",
+      contracts: [
+        "3 个正交工作项：SessionInputBatchWorkItem（用户批量）、WorkerMessageWorkItem、TrackWakeBatchWorkItem（单条原格式 / 多条打包）。",
+        "只面向 3 个钩子：PreparePromptAsync / OnProviderDeliveredAsync / OnTurnSettledAsync。",
+        "运行期失败直接 Fail Fast 回 idle（不原地无限重试毒丸），再通过 Poke 拉起后续新入队任务。"
+      ],
+      pitfall: "用户消息、Worker 消息与系统唤醒分立各自 WorkItem 保持正交，不互相串写状态或制造跨表耦合。",
+      ins: ["node_scheduler"],
+      outs: ["node_provider", "node_fe", "node_scheduler"]
+    },
+    node_provider: {
+      pill: "Agent 运行时",
+      color: "var(--teal)",
+      fill: "var(--teal-fill)",
+      title: "IAgentSession (Codex / Claude / ACP)",
+      file: "libs/Perga.AgentKit/",
+      summary: "执行实际模型推理与工具调用流。一旦收到首个 confirmsDelivery 事件，即刻在持久化层签收送达。",
+      contracts: [
+        "confirmsDelivery 包含 TurnAccepted / 增量流 / 工具调用 / TurnCompleted / TurnInterrupted 及 BeforePrompt=false 明确失败。",
+        "BeforePrompt=true 失败不算送达：系统唤醒走 Fail Fast（非关键置 dropped，关键留 delivering 待重启捞回），用户批次直接 fail 回 idle。",
+        "收到首个 confirmsDelivery 或流中断时立即置 done，杜绝跑到一半崩溃后重启重复发信。"
+      ],
+      pitfall: "不能拖到 Turn 全部结束才签收 track_wakes，否则 LLM 流式输出途中崩溃会丢失已投递事实。",
+      ins: ["node_runner"],
+      outs: []
+    },
+    node_fe: {
+      pill: "观测与渲染修复",
+      color: "var(--slate)",
+      fill: "var(--slate-fill)",
+      title: "EventHub → WebSocket → 前端展示",
+      file: "fe/core/domain/conversation-display.ts",
+      summary: "前端会话记录通过 triggerKind 与 presentation 渲染系统消息卡片；本次同步修复长期存在的 system 漏判。",
+      contracts: [
+        "conversation-display.ts 将 triggerKind === 'system' 与 'wake'/'scheduler' 统一识别为系统输入而非人类 Owner。",
+        "透传 track_wakes.kind 到前端 wire.ts 已预留的 system_mail / system_task_completed 等细分样式。"
+      ],
+      pitfall: "第 115 行当前只判了 wake || scheduler，导致 Boot 恢复系统通知在界面上被画成用户发的文本。",
+      ins: ["node_runner", "db_wakes", "excl_eventhub"],
+      outs: []
+    }
+  };
+
+  var WALK_SCENARIOS = [
+    {
+      id: "batch",
+      label: "A. 忙碌积压 + 纯日志合并",
+      steps: [
+        {
+          banner: "初始状态：Lead 会话正在运行用户 Turn（trn_01），此时陆续收到 3 类后台变更。",
+          note: "关键点：Lead 忙时，没有任何调用方去抢占 Turn 或维护各自的内存队列。",
+          source: [{ cls: "blue", tag: "进行中", text: "Lead 正在跑用户问题 trn_01，状态机 = Running。" }],
+          db: [{ cls: "purple", tag: "agent_sessions", text: "Lead: status = running (trn_01)" }],
+          sched: [{ cls: "purple", tag: "状态机", text: "ses_lead: Running(trn_01)\n调度门禁拒绝新 Turn" }],
+          runner: [{ cls: "green", tag: "Runner", text: "流式输出 trn_01 中..." }]
+        },
+        {
+          banner: "第 1 步：收到 1 封跨 Track 邮件 + 2 个并行 Task 完成结算。",
+          note: "UpsertMailAsync 与 Task 结算在同一 SQLite 事务内写入 track_wakes(pending) 后调用 Poke()。",
+          source: [
+            { cls: "amber", tag: "Mail", text: "UpsertMailAsync (mail_88)" },
+            { cls: "amber", tag: "Task x2", text: "t-api Done, t-fe Done" }
+          ],
+          db: [
+            { cls: "amber", tag: "track_wakes #1", text: "kind=mail · key=mail:88 · state=pending" },
+            { cls: "amber", tag: "track_wakes #2", text: "kind=task_settled · key=att_1 · state=pending" },
+            { cls: "amber", tag: "track_wakes #3", text: "kind=task_settled · key=att_2 · state=pending" }
+          ],
+          sched: [{ cls: "purple", tag: "Poke(lead)", text: "检测到 ses_lead == Running\n安全返回，待会儿再领" }],
+          runner: [{ cls: "green", tag: "Runner", text: "继续执行 trn_01，零干扰" }]
+        },
+        {
+          banner: "第 2 步：人类在右侧 Report 连续修改并保存 3 次（纯日志合并，零运行期 DELETE）。",
+          note: "先同事务把旧 pending 标为 dropped(coalesced) 留痕，再插入最新 pending 行（docRev=7），部分唯一索引全程守护。",
+          source: [{ cls: "amber", tag: "Report 编辑 x3", text: "docRev: 5 → 6 → 7（3 次保存）" }],
+          db: [
+            { cls: "amber", tag: "track_wakes #1..#3", text: "1 封 Mail + 2 个 Task (pending)" },
+            { cls: "rose", tag: "track_wakes #4a,#4b", text: "docRev=5,6 → state=dropped · reason=coalesced" },
+            { cls: "amber", tag: "track_wakes #4c", text: "kind=report_edited · key=report_edit · docRev=7 · pending" }
+          ],
+          sched: [{ cls: "purple", tag: "Poke(lead)", text: "ses_lead 仍为 Running\n活跃 pending 仅 4 条" }],
+          runner: [{ cls: "green", tag: "Runner", text: "trn_01 即将结束..." }]
+        },
+        {
+          banner: "第 3 步：trn_01 结算 → Batch Drain 领取 4 条 → 收到首个 confirmsDelivery 当场置 done！",
+          note: "确认时机在收到首个 TurnAccepted/Delta 时当场写入（不等 Turn 结束），防止中途崩溃导致重发。",
+          source: [{ cls: "green", tag: "结算触发", text: "trn_01 OnTurnSettledAsync → Poke()" }],
+          db: [
+            { cls: "green", tag: "track_wakes #1..#4c", text: "delivering(trn_02, attempts=1) → 首个 confirmsDelivery → done(delivered)" }
+          ],
+          sched: [{ cls: "purple", tag: "TryScheduleNext", text: "Idle → session_messages(空) → Batch Drain(LIMIT 32) → Running(trn_02)" }],
+          runner: [{ cls: "green", tag: "TrackWakeBatchWorkItem", text: "合并渲染：1 封邮件 + 2 任务结果 + 1 次报告修订 → 只消耗 1 个 LLM Turn" }]
+        }
+      ]
+    },
+    {
+      id: "cron",
+      label: "B. 定时延迟求值 + Fail Fast",
+      steps: [
+        {
+          banner: "第 1 步：Cronos 15s 单表轻查询匹配到定时计划，写入轻量 pending 记录。",
+          note: "Host 不查 5 张表、不建停机补发水位表、也不提前跑 JS！",
+          source: [{ cls: "amber", tag: "Cronos 15s 轮询", text: "单表轻查命中 cadence-checkin 到点" }],
+          db: [
+            { cls: "amber", tag: "track_wakes", text: "kind=schedule · key=schedule:cadence-checkin\npayload={ scheduleId } · state=pending" },
+            { cls: "blue", tag: "tracks.template_state", text: "checkInCount = 4（尚未递增！）" }
+          ],
+          sched: [{ cls: "purple", tag: "Poke()", text: "Lead 正好空闲" }],
+          runner: [{ cls: "green", tag: "Runner", text: "待命" }]
+        },
+        {
+          banner: "第 2 步：Lead 领取后在 PreparePromptAsync 求值 JS 并同事务提交 template_state。",
+          note: "只有在真正准备发给 Provider 前一刻才执行 BuildScheduleWakePrompt（checkInCount = 5），无需落库缓存 Prompt。",
+          source: [{ cls: "green", tag: "领取开跑", text: "Scheduler 领取为 delivering(trn_10, attempts=1)" }],
+          db: [
+            { cls: "amber", tag: "track_wakes", text: "state=delivering · turn_id=trn_10" },
+            { cls: "blue", tag: "tracks.template_state", text: "checkInCount = 5" }
+          ],
+          sched: [{ cls: "purple", tag: "状态机", text: "ses_lead: Running(trn_10)" }],
+          runner: [{ cls: "green", tag: "PreparePromptAsync", text: "延迟求值 JS → 准备向 Provider 发请求" }]
+        },
+        {
+          banner: "第 3 步：分支 1——Provider 返回 BeforePrompt 断网/鉴权错误（运行期无确认失败）。",
+          note: "彻底拒绝进程内无限重试毒丸！schedule 等非关键唤醒直接 Fail Fast 标 dropped(runtime_failed)，Session 立刻回 idle；关键邮件才留 delivering 待重启捞回一次。",
+          source: [{ cls: "rose", tag: "BeforePrompt 错误", text: "TurnError(BeforePrompt=true)" }],
+          db: [
+            { cls: "rose", tag: "track_wakes(schedule)", text: "state=dropped · reason=runtime_failed" },
+            { cls: "amber", tag: "若同批含关键 mail", text: "mail 暂留 delivering，但运行期同样不死循环重试" },
+            { cls: "blue", tag: "agent_sessions", text: "status = idle（绝不卡死用户）" }
+          ],
+          sched: [{ cls: "purple", tag: "Fail Fast", text: "ses_lead 回到 Idle，记失败 Turn 供用户决策" }],
+          runner: [{ cls: "rose", tag: "OnTurnSettledAsync", text: "结束本轮，不原地再 Poke 同一条故障唤醒" }]
+        },
+        {
+          banner: "第 4 步：分支 2——若在 BeforePrompt 前进程崩溃重启，天然保证至多执行一次。",
+          note: "重启时 schedule 直接标 dropped(boot_dropped)，因此 JS checkInCount=5 绝不会二次递增，也完全省掉 Prompt 缓存字段！",
+          source: [{ cls: "amber", tag: "Host 重启", text: "BootReconciler 扫描 delivering" }],
+          db: [
+            { cls: "rose", tag: "track_wakes(schedule)", text: "state=dropped · reason=boot_dropped" },
+            { cls: "blue", tag: "tracks.template_state", text: "checkInCount 保持为 5，绝不重跑" }
+          ],
+          sched: [{ cls: "purple", tag: "单次 Poke", text: "仅重投关键 3 类未送达唤醒（若有）" }],
+          runner: [{ cls: "green", tag: "轻量整洁", text: "零缓存字段 + 零毒丸死循环" }]
+        }
+      ]
+    },
+    {
+      id: "conflict",
+      label: "C. 重启三步收敛与两阶段恢复",
+      steps: [
+        {
+          banner: "第 1 步：mail #1 与 report_edit #10 正在 delivering，同时人类又保存了 report_edit #11(pending)。",
+          note: "部分唯一索引只覆盖 state='pending'，因此库内允许旧 delivering(#10) 与新 pending(#11) 并存不丢新修改。",
+          source: [{ cls: "amber", tag: "并发编辑后崩溃", text: "Provider 未及确认 TurnAccepted 时主机断电" }],
+          db: [
+            { cls: "purple", tag: "track_wakes #1", text: "kind=mail · state=delivering" },
+            { cls: "purple", tag: "track_wakes #2", text: "kind=report_edited · key=report_edit · docRev=10 · delivering" },
+            { cls: "amber", tag: "track_wakes #3", text: "kind=report_edited · key=report_edit · docRev=11 · pending" }
+          ],
+          sched: [{ cls: "rose", tag: "进程重启", text: "进入 BootReconciler Step 1" }],
+          runner: [{ cls: "rose", tag: "无确认中断", text: "Turn 未收到 confirmsDelivery" }]
+        },
+        {
+          banner: "第 2 步：BootReconciler Step 1——纯 DB 三步收敛 + 写入 boot。",
+          note: "① 先淘汰被更新 pending 覆盖的 delivering(#2→boot_superseded) 防唯一索引冲突；② 丢弃其余非关键 delivering(boot_dropped)；③ 关键 mail #1 退回 pending(boot_requeued)；④ 同事务写 boot(pending)。",
+          source: [{ cls: "amber", tag: "Boot Step 1", text: "纯 SQLite 事务收敛所有中断与唤醒" }],
+          db: [
+            { cls: "amber", tag: "track_wakes #1", text: "kind=mail → state=pending · reason=boot_requeued · turn_id=NULL" },
+            { cls: "rose", tag: "track_wakes #2", text: "kind=report_edited(#10) → dropped(boot_superseded)" },
+            { cls: "amber", tag: "track_wakes #3,#4", text: "保留最新 report_edited(#11) 与 boot(pending)" }
+          ],
+          sched: [{ cls: "purple", tag: "尚未拉起", text: "等 DB 全部收敛完毕再统一调度，绝不 4 轮抢槽" }],
+          runner: [{ cls: "green", tag: "待命", text: "无重复 TurnCompleted 事件" }]
+        },
+        {
+          banner: "第 3 步：BootReconciler Step 2——每条开放 Track 只调一次 Poke()。",
+          note: "若之前已收到 TurnAccepted 再崩，mail 已是 done 只需跑 boot；若未收到，则 [mail, report_edit #11, boot] 打包成 1 个恢复 Turn。",
+          source: [{ cls: "green", tag: "Boot Step 2", text: "每条 Track 唯一 PokeAsync()" }],
+          db: [
+            { cls: "green", tag: "track_wakes #1,#3,#4", text: "Batch Drain 打包为 trn_boot → TurnAccepted 后全置 done(delivered)" }
+          ],
+          sched: [{ cls: "purple", tag: "TryScheduleNext", text: "只抢占 1 个槽位，干净零竞争" }],
+          runner: [{ cls: "green", tag: "TrackWakeBatchWorkItem", text: "triggerKind='system'，前端正确渲染为系统消息" }]
+        }
+      ]
+    },
+    {
+      id: "leadswitch",
+      label: "D. 切 Lead · 关 Track · 切模板取消",
+      steps: [
+        {
+          banner: "第 1 步：Track 积压了 2 条待消费的系统唤醒（target_session_id = NULL）。",
+          note: "入队时不绑定具体 sessionId，通知归属于 Track 的「当前 Lead 角色」。",
+          source: [{ cls: "amber", tag: "积压中", text: "1 封邮件 + 1 个 Task 结算等待中" }],
+          db: [
+            { cls: "amber", tag: "track_wakes", text: "2 条 pending · target_session_id = NULL" },
+            { cls: "blue", tag: "tracks", text: "lead_session_id = ses_lead_A · closed_at_ms = NULL" }
+          ],
+          sched: [{ cls: "purple", tag: "状态机", text: "ses_lead_A 正忙或处于 BlockedUnknown" }],
+          runner: [{ cls: "green", tag: "Runner", text: "暂未领取" }]
+        },
+        {
+          banner: "第 2 步：用户把 Lead 切换为 ses_lead_B。",
+          note: "无需任何队列迁移代码！SwitchLeadSessionCoreAsync 只需更新指针并调用 Poke(ses_lead_B)。",
+          source: [{ cls: "blue", tag: "切换 Lead", text: "PatchTrack(leadSessionId = ses_lead_B)" }],
+          db: [
+            { cls: "blue", tag: "tracks", text: "lead_session_id = ses_lead_B" },
+            { cls: "amber", tag: "track_wakes", text: "原封不动，领取瞬间解析到新 Lead B" }
+          ],
+          sched: [{ cls: "purple", tag: "Poke(ses_lead_B)", text: "校验 B == CurrentLead → 立刻领取并开跑！A 绝不会误收" }],
+          runner: [{ cls: "green", tag: "Runner", text: "用 ses_lead_B 上下文消化通知" }]
+        },
+        {
+          banner: "第 3 步：若切换模板或关闭 Track，内部 CancelPendingWakeAsync 同事务作废。",
+          note: "纯日志保留原因码：关 Track 记 dropped(track_closed)、切模板记 dropped(template_changed)，不 DELETE 且彻底消灭驱逐泄漏。",
+          source: [{ cls: "rose", tag: "关轨 / 切模板", text: "CloseTrack 或 TrackSet(template)" }],
+          db: [
+            { cls: "rose", tag: "track_wakes", text: "pending/delivering → dropped · reason='track_closed' | 'template_changed'" }
+          ],
+          sched: [{ cls: "purple", tag: "状态机", text: "活跃待办归零，Actor 可安全驱逐，重开无陈旧误触" }],
+          runner: [{ cls: "rose", tag: "安全中止", text: "不泄漏、留痕可查" }]
+        }
+      ]
+    },
+    {
+      id: "userbatch",
+      label: "E. 用户排队合并 + Turn 级结算",
+      steps: [
+        {
+          banner: "第 1 步：Lead 正在忙 trn_01，用户连续排队发送了 3 条补充消息（msg1, msg2, msg3）。",
+          note: "排队中（queued, turn_id IS NULL）每条消息仍是独立记录：用户可单独撤回 msg2 或手动 Steer 其中 1 条。",
+          source: [{ cls: "blue", tag: "用户排队 x3", text: "AcceptMessageAsync(queueIfBusy=true) x3" }],
+          db: [
+            { cls: "blue", tag: "session_messages", text: "msg1, msg2, msg3 · delivery=queued · turn_id=NULL" },
+            { cls: "blue", tag: "操作", text: "撤回 msg2 → delivery=withdrawn（仅剩 msg1, msg3）" }
+          ],
+          sched: [{ cls: "purple", tag: "状态机", text: "ses_lead: Running(trn_01)" }],
+          runner: [{ cls: "green", tag: "Runner", text: "继续完成 trn_01" }]
+        },
+        {
+          banner: "第 2 步：trn_01 结束，Scheduler 批量出队将 [msg1, msg3] 合进同 1 个 turn_id (trn_02)。",
+          note: "0011 放宽 idx_session_messages_input_turn 为非唯一索引；session_items 依然各自挂一条 user 气泡，UI 原样逐条展示。",
+          source: [{ cls: "green", tag: "批量出队", text: "trn_01 结算 → Poke()" }],
+          db: [
+            { cls: "blue", tag: "session_messages", text: "msg1, msg3 同设 turn_id=trn_02 · delivery=dispatching" },
+            { cls: "blue", tag: "session_items", text: "2 条独立 user item 各自绑定 message_ordinal" }
+          ],
+          sched: [{ cls: "purple", tag: "TryScheduleNext", text: "批量 Promote → 领入 SessionInputBatchWorkItem" }],
+          runner: [{ cls: "green", tag: "PreparePromptAsync", text: "按 ordinal 顺序合并 [msg1, msg3] 作为 1 个 Turn 发给 Provider" }]
+        },
+        {
+          banner: "第 3 步：Turn 级失败 / unknown 结算（只记录用户真正关心能处理的，不做逐条归因）。",
+          note: "① 明确失败（BeforePrompt=true 等）→ Fail Fast，trn_02 置 failed、Session 回 idle；② 不确定结果（unknown）→ 只锁 1 次会话，用户点 1 次恢复按键按 WHERE turn_id = trn_02 一键全部解锁。",
+          source: [{ cls: "rose", tag: "用户操作面极简", text: "Fail Fast 回 idle 或 1 键 Start fresh provider session" }],
+          db: [
+            { cls: "green", tag: "SessionInputs 修复", text: "Claim / MarkDelivered / Settle / Resolve 全改 WHERE turn_id=@TurnId 批量更新" },
+            { cls: "amber", tag: "重启恢复", text: "RecoverSessionInputsAsync 按 turn_id 分组，绝不重复发事件或派发" }
+          ],
+          sched: [{ cls: "purple", tag: "恢复就绪", text: "解锁后自动 Poke()，继续消费剩余队列" }],
+          runner: [{ cls: "green", tag: "正交清晰", text: "用户无心理负担，代码无拆条包袱" }]
+        }
+      ]
+    }
+  ];
+
+  // Tab switching
+  var tabBtns = document.querySelectorAll(".seg-btn[data-tab]");
+  var views = document.querySelectorAll(".view");
+  tabBtns.forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var target = btn.getAttribute("data-tab");
+      tabBtns.forEach(function (b) { b.classList.toggle("active", b === btn); });
+      views.forEach(function (v) { v.classList.toggle("active", v.id === target); });
+    });
+  });
+
+  // Theme toggle (no storage access)
+  var themeBtn = document.getElementById("themeBtn");
+  themeBtn.addEventListener("click", function () {
+    var root = document.documentElement;
+    var cur = root.getAttribute("data-theme");
+    if (!cur) {
+      var prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+      cur = prefersDark ? "dark" : "light";
+    }
+    root.setAttribute("data-theme", cur === "dark" ? "light" : "dark");
+  });
+
+  // Tab 1 inspector & highlight
+  var nodes = document.querySelectorAll("#archSvg .mod-node");
+  var edges = document.querySelectorAll("#archSvg .flow-edge");
+  var drawer = document.getElementById("inspectorDrawer");
+
+  function renderDrawer(id) {
+    var info = NODE_INFO[id];
+    if (!info) return;
+
+    nodes.forEach(function (n) {
+      var nid = n.getAttribute("data-id");
+      var related = nid === id || info.ins.indexOf(nid) >= 0 || info.outs.indexOf(nid) >= 0;
+      n.classList.toggle("selected", nid === id);
+      n.classList.toggle("dimmed", !related);
+    });
+
+    edges.forEach(function (e) {
+      var from = e.getAttribute("data-from");
+      var to = e.getAttribute("data-to");
+      var isOut = from === id;
+      var isIn = to === id;
+      e.classList.toggle("active-out", isOut);
+      e.classList.toggle("active-in", isIn);
+      e.classList.toggle("dimmed", !isOut && !isIn);
+    });
+
+    var contractsHtml = info.contracts.map(function (c) {
+      return "<li>" + escapeHtml(c) + "</li>";
+    }).join("");
+
+    var inHtml = info.ins.length
+      ? info.ins.map(function (k) { return '<span class="chip in">' + escapeHtml(NODE_INFO[k] ? NODE_INFO[k].title : k) + "</span>"; }).join("")
+      : '<span class="chip">外部 / 触发起点</span>';
+
+    var outHtml = info.outs.length
+      ? info.outs.map(function (k) { return '<span class="chip out">' + escapeHtml(NODE_INFO[k] ? NODE_INFO[k].title : k) + "</span>"; }).join("")
+      : '<span class="chip">终态 / 旁路出口</span>';
+
+    drawer.innerHTML =
+      '<div class="d-head">' +
+        '<span class="d-pill" style="background:' + info.fill + ";color:" + info.color + ";border:1px solid " + info.color + '">' + escapeHtml(info.pill) + "</span>" +
+        '<h2 class="d-title">' + escapeHtml(info.title) + "</h2>" +
+        '<div class="d-file">' + escapeHtml(info.file) + "</div>" +
+      "</div>" +
+      '<div class="d-sec">职责边界</div>' +
+      '<div class="d-box">' + escapeHtml(info.summary) + "</div>" +
+      '<div class="d-sec">核心契约</div>' +
+      '<ul class="d-list">' + contractsHtml + "</ul>" +
+      '<div class="d-sec">解决的痛点 / 防坑点</div>' +
+      '<div class="d-box">' + escapeHtml(info.pitfall) + "</div>" +
+      '<div class="d-sec">上游输入 → 下游去向</div>' +
+      '<div class="d-chips">' + inHtml + "</div>" +
+      '<div class="d-chips">' + outHtml + "</div>";
+  }
+
+  nodes.forEach(function (n) {
+    n.addEventListener("click", function () {
+      renderDrawer(n.getAttribute("data-id"));
+    });
+  });
+
+  renderDrawer("node_scheduler");
+
+  // Tab 3 interactive walkthrough
+  var walkScenariosEl = document.getElementById("walkScenarios");
+  var prevBtn = document.getElementById("prevStepBtn");
+  var nextBtn = document.getElementById("nextStepBtn");
+  var resetBtn = document.getElementById("resetStepBtn");
+  var stepCounter = document.getElementById("stepCounter");
+  var walkBanner = document.getElementById("walkBanner");
+  var walkCols = document.getElementById("walkCols");
+  var walkNote = document.getElementById("walkNote");
+
+  var activeScenarioIdx = 0;
+  var activeStepIdx = 0;
+
+  function renderWalk() {
+    var sc = WALK_SCENARIOS[activeScenarioIdx];
+    var step = sc.steps[activeStepIdx];
+
+    walkScenariosEl.innerHTML = "";
+    WALK_SCENARIOS.forEach(function (s, idx) {
+      var b = document.createElement("button");
+      b.className = "seg-btn" + (idx === activeScenarioIdx ? " active" : "");
+      b.textContent = s.label;
+      b.addEventListener("click", function () {
+        activeScenarioIdx = idx;
+        activeStepIdx = 0;
+        renderWalk();
+      });
+      walkScenariosEl.appendChild(b);
+    });
+
+    stepCounter.textContent = (activeStepIdx + 1) + " / " + sc.steps.length;
+    prevBtn.disabled = activeStepIdx === 0;
+    nextBtn.disabled = activeStepIdx === sc.steps.length - 1;
+
+    walkBanner.innerHTML = "<strong>当前步骤：</strong>" + escapeHtml(step.banner);
+    walkNote.innerHTML = "<b>设计要点：</b>" + escapeHtml(step.note);
+
+    var cols = [
+      { title: "1. 触发源 / 事件", list: step.source },
+      { title: "2. SQLite 持久层状态", list: step.db },
+      { title: "3. SessionTurnScheduler", list: step.sched },
+      { title: "4. SessionTurnRunner", list: step.runner }
+    ];
+
+    walkCols.innerHTML = cols.map(function (col) {
+      var items = col.list.map(function (it) {
+        return '<div class="state-item ' + it.cls + '">' +
+          '<span class="state-pill">' + escapeHtml(it.tag) + "</span>" +
+          "<div>" + escapeHtml(it.text).replace(/\n/g, "<br/>") + "</div>" +
+        "</div>";
+      }).join("");
+      return '<div class="walk-col"><div class="walk-col-h">' + escapeHtml(col.title) + "</div>" + items + "</div>";
+    }).join("");
+  }
+
+  prevBtn.addEventListener("click", function () {
+    if (activeStepIdx > 0) { activeStepIdx--; renderWalk(); }
+  });
+  nextBtn.addEventListener("click", function () {
+    if (activeStepIdx < WALK_SCENARIOS[activeScenarioIdx].steps.length - 1) {
+      activeStepIdx++;
+      renderWalk();
+    }
+  });
+  resetBtn.addEventListener("click", function () {
+    activeStepIdx = 0;
+    renderWalk();
+  });
+
+  renderWalk();
+
+  function escapeHtml(str) {
+    return String(str)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+})();
+</script>
+</body>
+</html>

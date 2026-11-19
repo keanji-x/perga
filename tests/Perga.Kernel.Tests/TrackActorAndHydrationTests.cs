@@ -73,7 +73,7 @@ public sealed class TrackActorAndHydrationTests
         };
 
         // 1. Trigger session turn on uncached track -> must run EnsureMountedAsync BEFORE OpenSessionAsync
-        await ctx.Kernel.SendMessageAsync("ses_lead_cold", new SendMessageRequest("Check mount", "idem-cold-1"));
+        await ctx.SendAndWaitForTurnAsync("ses_lead_cold", new SendMessageRequest("Check mount", "idem-cold-1"));
         Assert.True(ensureMountedSeenBeforeSessionOpen);
         Assert.Single(ctx.DirectDriver.EnsureMountedCalls);
 

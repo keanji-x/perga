@@ -31,7 +31,8 @@ public sealed class SessionModelTests
                 host.AgentRuntime.SupportsModelSwitch = true;
                 host.AgentRuntime.CompactHandler = _ => Task.FromResult(new NativeCompactResult(null, "Compacted."));
                 host.AgentRuntime.SetTurnHandler(Stream);
-                await kernel.SendMessageAsync(sessionId, new("sample", "before-model-switch"));
+                await kernel.AcceptMessageAsync(sessionId, new("sample", "before-model-switch"), default);
+                await kernel.WaitForTrackIdleAsync(trackId);
                 var sampled = Assert.Single(await kernel.ListSessionsAsync(trackId));
                 Assert.Equal(250, sampled.ContextUsedTokens);
                 Assert.NotNull(sampled.ContextUsageAtMs);
@@ -105,7 +106,7 @@ public sealed class SessionModelTests
             yield return new UnifiedAgentEvent.ContextUsageUpdated(new TokenUsage(10, 5, 0, 1000, UsedTokens: 300));
             yield return new UnifiedAgentEvent.TurnCompleted(noFinalUsage ? null : new TokenUsage(10, 5, 0, 1000, UsedTokens: 400));
         }
-        var turn = kernel.SendMessageAsync(sessionId, new("sample A", "failed-model-write"));
+        await kernel.AcceptMessageAsync(sessionId, new("sample A", "failed-model-write"), default);
         try
         {
             await sampled.Task.WaitAsync(TimeSpan.FromSeconds(10));
@@ -126,7 +127,7 @@ public sealed class SessionModelTests
             Assert.False(unchanged.ContextUsageInvalidated);
         }
         finally { release.TrySetResult(); }
-        await turn;
+        await kernel.WaitForTrackIdleAsync(trackId);
         var completed = Assert.Single(await kernel.ListSessionsAsync(trackId));
         Assert.Equal("A", completed.Model);
         Assert.Equal(noFinalUsage ? 300 : 400, completed.ContextUsedTokens);
@@ -213,7 +214,8 @@ public sealed class SessionModelTests
                 var restored = Assert.Single(await restoredKernel.ListSessionsAsync(trackId), s => s.Id == sessionId);
                 Assert.Null(restored.Model);
                 Assert.Equal("high", restored.ReasoningEffort);
-                await restoredKernel.SendMessageAsync(sessionId, new SendMessageRequest("use default", "default-effort"));
+                await restoredKernel.AcceptMessageAsync(sessionId, new SendMessageRequest("use default", "default-effort"), default);
+                await restoredKernel.WaitForTrackIdleAsync(trackId).WaitAsync(TimeSpan.FromSeconds(10));
                 var launch = Assert.Single(reopened.AgentRuntime.ExecutedTurns).Spec;
                 Assert.Null(launch.Model);
                 Assert.Equal("high", launch.ReasoningEffort);
