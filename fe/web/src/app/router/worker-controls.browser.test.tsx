@@ -19,7 +19,7 @@ it('shows Worker progress and approvals, preserves retry targets, and stops the 
   let queuedVisible = false;
   let staleSteers = 0;
   let currentTurn = 'turn-1';
-  const approval = { id: 'worker-ask', trackId: 'daily', status: 'open', createdAtMs: 4,
+  const approval = { id: 'worker-ask', trackId: 'daily', status: 'open', delivery: 'wake', createdAtMs: 4,
     questions: [{ question: 'Approve reading the report?', options: ['Approve', 'Deny'], isMultiSelect: false }] };
   let settings = { version: 0, model: null as string | null, reasoningEffort: null as string | null, approvalMode: 'ask' };
   const providerConfiguration = { defaultModel: 'gpt-5.4-mini', defaultReasoningEffort: 'low', models: [
@@ -29,13 +29,13 @@ it('shows Worker progress and approvals, preserves retry targets, and stops the 
   const view = renderDailyFixture({ initial: '/track/daily?panel=conversations', extraPlanner: true, reply: request => {
     if (request.path === '/api/v1/bootstrap') return ok({ assistantProviders: true, conversationInitialInput: true,
       webCompatVersion: WEB_COMPAT_VERSION, minWebCompatVersion: WEB_COMPAT_VERSION, syncEventVersion: 29, dbInstanceId: 'worker-session' });
-    if (request.path === '/api/v1/bootstrap?scope=managed') return ok([{
-      availability: { provider: 'codex', status: 'ready', reason: null, checked_at_ms: 1, authentication_method: null, authentication_notice: null },
-      accepts_unavailable_blank_track: true, capabilities: { managed_conversation: true, steer: true, images: false,
-        manual_compact: false, history_replacement: false, requires_ready_availability: false },
-    }]);
+    if (request.path === '/api/v1/bootstrap?scope=managed') return ok({ version: 'test', providers: [{
+      provider: 'codex', available: true, models: [], permissionModes: [
+        { id: 'never', label: 'Never', description: 'Never asks.', tone: 'neutral', isDefault: true },
+      ],
+    }] });
     if (request.path.startsWith(`${path}/items?`)) return ok({
-      session: { id, trackId: 'daily', provider: 'codex', boundTaskId: 'task-1', boundAttemptId: 'attempt-1', status: paused ? 'idle' : 'running', createdAtMs: 1, updatedAtMs: 2 },
+      session: { id, trackId: 'daily', provider: 'codex', permissionMode: 'never', boundTaskId: 'task-1', boundAttemptId: 'attempt-1', status: paused ? 'idle' : 'running', createdAtMs: 1, updatedAtMs: 2 },
       items: [], unknownInput: null,
       queuedMessages: queuedVisible ? [{ id: 'input-2', text: 'Inspect later', queuedAtMs: 2, state: 'waiting' }] : [],
       activeTurn: paused ? null : { id: currentTurn, sessionId: id, status: 'running', startedAtMs: Date.now() },
@@ -86,6 +86,7 @@ it('shows Worker progress and approvals, preserves retry targets, and stops the 
   try {
     fireEvent.click(await screen.findByRole('button', { name: /Conversation Other conversation/ }));
     await screen.findByText('The Worker is reviewing the report.');
+    expect(screen.queryByRole('button', { name: /^Approvals:/ })).toBeNull();
     await screen.findByText('Approve reading the report?');
     fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
     await waitFor(() => expect(view.requests.find(request => request.path === '/api/v1/tracks/daily/asks/worker-ask/answer')?.body).toEqual({

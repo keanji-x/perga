@@ -461,7 +461,7 @@ export function plannerRunOperation(cardId: string): ApiOperation<PlannerRun> {
           pending_overflow: 0,
           model: page.session.model ?? null,
           reasoning_effort: page.session.reasoningEffort ?? null,
-          permission_mode: page.session.boundTaskId ? null : (page.session.permissionMode ?? null),
+          permission_mode: page.session.permissionMode ?? null,
           blocked_reason: page.session.status === 'unknown' ? 'The previous message has an unknown outcome.' : null,
           recovery: null,
           attachments_supported: false,

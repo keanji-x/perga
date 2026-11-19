@@ -851,8 +851,8 @@ function useConversationPane(
                   {worker != null && <WorkerActivityControl key={`activity-${worker.attemptId}`} worker={worker} />}
                   {worker != null && workerDelivery != null &&
                     <WorkerDeliveryControl {...workerDelivery} nativeSteer={worker.nativeSteer} />}
-                  {/* Provider-declared approval mode for Lead and Assistant sessions; null hides for task-bound or unsupported sessions. */}
-                  {effectivePermissionMode !== null && (
+                  {/* Provider-declared approval mode for Lead and Assistant sessions; Workers use their own settings. */}
+                  {worker == null && effectivePermissionMode !== null && (
                     <PermissionModePill
                       mode={effectivePermissionMode}
                       options={hasPermissionMetadata
