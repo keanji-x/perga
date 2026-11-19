@@ -21,17 +21,19 @@ public sealed class CodexAgentSession : IAgentSession
         private int _fallbackClaimed;
         private int _finished;
 
-        public TurnStreamState(string threadId, TurnInput input, CancellationToken turnToken)
+        public TurnStreamState(string threadId, TurnInput input, CancellationToken turnToken, bool isCompact = false)
         {
             ThreadId = threadId;
             Input = input;
             TurnToken = turnToken;
+            IsCompact = isCompact;
         }
 
         public string ThreadId { get; }
         public TurnInput Input { get; }
         public string CorrelationId => Input.CorrelationId;
         public CancellationToken TurnToken { get; }
+        public bool IsCompact { get; }
 
         public Channel<UnifiedAgentEvent> Events { get; } = Channel.CreateUnbounded<UnifiedAgentEvent>(
             new UnboundedChannelOptions { SingleReader = true, SingleWriter = false });
@@ -224,7 +226,7 @@ public sealed class CodexAgentSession : IAgentSession
             throw new InvalidOperationException("Codex session has an unconfirmed canceled compaction.");
         }
 
-        var turnState = new TurnStreamState(threadId, new TurnInput("/compact", $"compact_{Guid.NewGuid():N}"), ct);
+        var turnState = new TurnStreamState(threadId, new TurnInput("/compact", $"compact_{Guid.NewGuid():N}"), ct, isCompact: true);
         Volatile.Write(ref _currentTurn, turnState);
         try
         {
@@ -785,6 +787,7 @@ public sealed class CodexAgentSession : IAgentSession
     }
 
     private bool CanTriggerModelFallback(TurnStreamState turnState, string code, string message) =>
+        !turnState.IsCompact &&
         (!_configureWorker || turnState.Input is { Model: null, ReasoningEffort: null }) &&
         _configuredModel is null &&
         Volatile.Read(ref _fallbackModel) is null &&
@@ -871,6 +874,11 @@ public sealed class CodexAgentSession : IAgentSession
         {
             case "turn/started":
             {
+                if (ExtractThreadId(parameters) is { } startedTid && startedTid != turnState.ThreadId)
+                {
+                    break;
+                }
+
                 if (!string.IsNullOrWhiteSpace(notifTurnId))
                 {
                     turnState.TrySetTurnId(notifTurnId);
@@ -881,7 +889,18 @@ public sealed class CodexAgentSession : IAgentSession
 
             case "thread/compacted":
             {
+                if (!turnState.IsCompact)
+                {
+                    break;
+                }
+
                 if (TryGetString(parameters, "threadId") is { } tid && tid != turnState.ThreadId)
+                {
+                    break;
+                }
+
+                var boundCompactTurnId = Volatile.Read(ref turnState.TurnId);
+                if (boundCompactTurnId is not null && notifTurnId is not null && notifTurnId != boundCompactTurnId)
                 {
                     break;
                 }
