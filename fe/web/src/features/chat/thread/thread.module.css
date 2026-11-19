@@ -926,7 +926,7 @@
     --shadow-low: var(--shadow-float);
   }
 
-  .composer [popover]:has([role='listbox']) {
+  .composer [popover]:has([role='listbox']):not(:has([role='menu'])) {
     position-anchor: --nc-composer-menu !important;
     position-area: none !important;
     position-try-fallbacks: none !important;

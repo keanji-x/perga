@@ -284,7 +284,7 @@ describe('planner conversation regressions', () => {
     const drawer = screen.getByRole('complementary', { name: 'Planner chat' });
     fireEvent.click(within(drawer).getByRole('button', { name: /^Model:/ }));
     /* Nothing answers `GET /api/models` here, so "Default" is the one choice the menu can offer. */
-    fireEvent.click(await screen.findByRole('menuitem', { name: /^Default/ }));
+    fireEvent.click(await screen.findByRole('radio', { name: /^Default/ }));
 
     await waitFor(() => {
       const writes = requests.filter((request) => request.path.endsWith('/model'));

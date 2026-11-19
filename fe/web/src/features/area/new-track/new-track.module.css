@@ -208,7 +208,7 @@
     anchor-name: --nc-new-track-menu;
   }
 
-  .composer [popover]:has([role='listbox']) {
+  .composer [popover]:has([role='listbox']):not(:has([role='menu'])) {
     position-anchor: --nc-new-track-menu !important;
     position-area: none !important;
     position-try-fallbacks: flip-block !important;

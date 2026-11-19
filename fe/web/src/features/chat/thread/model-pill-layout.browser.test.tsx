@@ -31,13 +31,13 @@ it.each([390, 1280])('each Claude row is one line, its resolved id at the right 
   render(<ModelPill provider="claude" selection={FOLLOW_INSTALLATION_DEFAULT} onChange={vi.fn()}
     groups={[{ provider: 'claude', availability: null, catalog: CATALOG }]} />);
   await userEvent.click(screen.getByRole('button', { name: /^Model:/ }));
-  const menu = await screen.findByRole('menu');
+  const menu = await screen.findByRole('dialog');
   const bounds = menu.getBoundingClientRect();
   expect(bounds.left).toBeGreaterThanOrEqual(0);
   expect(bounds.right).toBeLessThanOrEqual(width);
   const rights: number[] = [];
   for (const [name, resolved] of [['Default', LONG], ['Opus (1M context)', LONG], ['Haiku', 'claude-haiku-4-5-20251001']] as const) {
-    const row = within(menu).getByRole('menuitem', { name: new RegExp(`^${name.replace(/[()]/g, '\\$&')}`) });
+    const row = within(menu).getByRole('radio', { name: new RegExp(`^${name.replace(/[()]/g, '\\$&')}`) });
     const label = within(row).getByText(name, { exact: true });
     const id = within(row).getByTitle(resolved);
     const [labelBox, idBox, rowBox] = [label.getBoundingClientRect(), id.getBoundingClientRect(), row.getBoundingClientRect()];

@@ -15,6 +15,7 @@ import { createRecoveryTransports } from '../../systems/recovery/transport.ts';
 import { onlineManager, QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { RouterProvider } from '@tanstack/react-router';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useEffect, useLayoutEffect } from 'react';
@@ -1774,7 +1775,7 @@ describe('track conversations', () => {
       setup((request) => request.path.endsWith('/model') ? timedOut() : undefined);
       await openAssistant();
       fireEvent.click(within(drawerElement()).getByRole('button', { name: /^Model:/ }));
-      fireEvent.click(await screen.findByRole('menuitem', { name: /^Default/ }));
+      fireEvent.click(await screen.findByRole('radio', { name: /^Default/ }));
       expect((await screen.findByRole('alert')).textContent).toBe('The model change is unconfirmed.');
       expect(chatText()).not.toMatch(CONNECTIVITY);
     });
@@ -1816,7 +1817,7 @@ describe('track conversations', () => {
       it('model select: says the model was not changed', async () => {
         const requests = await offlineAfterOpening(() => undefined);
         fireEvent.click(within(drawerElement()).getByRole('button', { name: /^Model:/ }));
-        fireEvent.click(await screen.findByRole('menuitem', { name: /^Default/ }));
+        fireEvent.click(await screen.findByRole('radio', { name: /^Default/ }));
         expect((await screen.findByRole('alert')).textContent).toBe('The model was not changed.');
         expect(requests.filter((request) => request.path.endsWith('/model'))).toEqual([]);
       });
@@ -4069,8 +4070,9 @@ it.each([false, true])('selects a model before the first conversation message an
   }, undefined, bundled ? access : undefined);
   await openDraft();
   fireEvent.click(await screen.findByRole('button', { name: /^Model:/ }));
-  fireEvent.click(await screen.findByRole('menuitem', { name: 'gpt-5' }));
-  expect(screen.queryByRole('button', { name: /^Reasoning effort:/ })).toBeNull();
+  fireEvent.click(await screen.findByRole('radio', { name: 'gpt-5' }));
+  screen.getByRole('slider', { name: 'Reasoning effort' }).focus();
+  await userEvent.keyboard('{Home}{End}');
   expect(creates(requests, CONVERSATIONS)).toHaveLength(0);
   await write('Use this model from the start');
   await waitFor(() => expect(creates(requests, CONVERSATIONS)).toHaveLength(1));
@@ -4086,7 +4088,7 @@ it('keeps first-message selection disabled on an older server that would ignore 
   const model = await screen.findByRole('button', { name: /^Model:/ });
   expect(model.hasAttribute('disabled') || model.getAttribute('aria-disabled') === 'true').toBe(true);
   fireEvent.click(model);
-  expect(screen.queryByRole('menuitem', { name: /^Default/ })).toBeNull();
+  expect(screen.queryByRole('radio', { name: /^Default/ })).toBeNull();
 });
 
 it('uses a spinner while a closed conversation runs, a blue unread dot on completion, and no dot after reading', async () => {
@@ -4144,13 +4146,13 @@ it('keeps the first-message model fixed when a menu opened before sending is sel
   const modelPicker = await screen.findByRole('button', { name: /^Model:/ });
   await waitFor(() => expect(modelPicker.hasAttribute('disabled') || modelPicker.getAttribute('aria-disabled') === 'true').toBe(false));
   fireEvent.click(modelPicker);
-  fireEvent.click(await screen.findByRole('menuitem', { name: 'chosen-model' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Model: Codex chosen-model' }));
+  fireEvent.click(await screen.findByRole('radio', { name: 'chosen-model' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Model: codex chosen-model' }));
   await write('Keep my choice');
   await waitFor(() => expect(creates(requests, CONVERSATIONS)).toHaveLength(1));
   try {
-    fireEvent.click(screen.getByRole('menuitem', { name: /^Default/, hidden: true }));
-    expect(screen.getByRole('button', { name: /^Model:/ }).getAttribute('aria-label')).toBe('Model: Codex chosen-model');
+    fireEvent.click(screen.getByRole('radio', { name: /^Default/, hidden: true }));
+    expect(screen.getByRole('button', { name: /^Model:/ }).getAttribute('aria-label')).toBe('Model: codex chosen-model');
   } finally {
     await act(async () => { settle(failure(500, 'internal', 'Try again')); await pending; });
   }

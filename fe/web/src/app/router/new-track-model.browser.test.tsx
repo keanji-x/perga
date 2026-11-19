@@ -52,19 +52,22 @@ it('keeps phone preferences compact while selecting model and effort in one menu
   const onChange = vi.fn();
   const view = render(<ModelForm onChange={onChange} />);
   try {
-    await userEvent.click(screen.getByRole('button', { name: 'Model: Default' }));
-    await userEvent.click(screen.getByRole('menuitem', { name: 'Test model' }));
-    // Reopen the trigger through the keyboard contract, away from the pointer guard.
-    screen.getByRole('button', { name: 'Model: Test model' }).focus();
-    await userEvent.keyboard('{ArrowDown}');
-    await userEvent.click(screen.getByRole('menuitem', { name: /high/ }));
+    await userEvent.click(screen.getByRole('button', { name: /^Model:/ }));
+    await userEvent.click(screen.getByRole('radio', { name: 'Test model' }));
+    // Navigate via Tab alone (no programmatic focus) to reach the effort slider inside the dialog.
+    const slider = screen.getByRole('slider', { name: 'Reasoning effort' });
+    for (let i = 0; i < 6 && document.activeElement !== slider; i += 1) {
+      await userEvent.keyboard('{Tab}');
+    }
+    expect(document.activeElement).toBe(slider);
+    await userEvent.keyboard('{End}');
     expect(onChange).toHaveBeenLastCalledWith({ model: 'test-model', reasoning_effort: 'high' });
     expect(screen.queryByRole('button', { name: /^Reasoning effort:/ })).toBeNull();
     expect(screen.getAllByRole('button')).toHaveLength(3); // Options, Model and Create track.
     for (const [width, height] of [[390, 844], [320, 700]]) {
       await page.viewport(width, height);
       expect(await screen.findByRole('button', { name: width === 320 ? 'Track options' : 'Repo: Neige workspace' })).toBeTruthy();
-      const model = screen.getByRole('button', { name: 'Model: Test model' }).getBoundingClientRect();
+      const model = screen.getByRole('button', { name: /^Model: Test model/ }).getBoundingClientRect();
       const send = screen.getByRole('button', { name: 'Create track' }).getBoundingClientRect();
       expect(Math.abs(model.top + model.height / 2 - send.top - send.height / 2)).toBeLessThan(2);
       expect(model.right).toBeLessThanOrEqual(send.left);
@@ -140,7 +143,7 @@ it('keeps long custom preferences readable inside overflow and preserves the fol
   try {
     await page.viewport(320, 740);
     await userEvent.click(screen.getByRole('button', { name: 'Model: Default' }));
-    await userEvent.click(screen.getByRole('menuitem', { name: modelName }));
+    await userEvent.click(screen.getByRole('radio', { name: modelName }));
     await userEvent.click(await screen.findByRole('button', { name: 'Track options' }));
     const options = await screen.findByRole('dialog', { name: 'Track options' });
     for (const width of [320, 390]) {
@@ -310,10 +313,10 @@ it('uses the card radius for the composer while retaining full pill and send con
     }
 
     await page.getByRole('button', { name: 'Model: Default', exact: true }).click();
-    const modelMenu = await page.getByRole('menu').findElement();
+    const modelMenu = await page.getByRole('dialog').findElement();
     expect(getComputedStyle(modelMenu).borderRadius).toBe('16px');
     expect(getComputedStyle(modelMenu).paddingTop).toBe('4px');
-    expect(getComputedStyle(await page.getByRole('menuitem', { name: 'Test model', exact: true }).findElement()).borderRadius).toBe('12px');
+    expect(getComputedStyle(await page.getByRole('radio', { name: 'Test model', exact: true }).findElement()).borderRadius).toBe('4px');
     expect(getComputedStyle(document.documentElement).getPropertyValue('-webkit-tap-highlight-color')).toBe('rgba(0, 0, 0, 0)');
   } finally {
     view.unmount();

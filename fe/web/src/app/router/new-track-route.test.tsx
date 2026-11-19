@@ -85,11 +85,12 @@ const CLAUDE_DEFAULT_TRIGGER = 'Model: Claude Default';
 
 /** Pick `item` from the `group` section of the open model menu. */
 async function pick(trigger: string, group: 'Codex' | 'Claude', item: string | RegExp) {
-  (await screen.findByRole('button', { name: trigger })).focus();
-  /* By keyboard: astryx swallows a trigger click that lands right after its menu hid. */
-  await userEvent.keyboard('{ArrowDown}');
-  const section = await screen.findByRole('group', { name: group });
-  await userEvent.click(within(section).getByRole('menuitem', { name: item }));
+  await userEvent.click(await screen.findByRole('button', { name: trigger }));
+  const providers = await screen.findByRole('group', { name: 'Providers' });
+  await userEvent.click(within(providers).getByRole('radio', { name: group }));
+  const models = screen.getByRole('group', { name: 'Models' });
+  await userEvent.click(within(models).getByRole('radio', { name: item }));
+  await userEvent.keyboard('{Escape}');
 }
 
 function harness(options: {
@@ -269,7 +270,8 @@ describe('New track model selection', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'New track in Work' }));
     await findComposer();
     await userEvent.click(await screen.findByRole('button', { name: 'Model: Default' }));
-    await userEvent.click(await screen.findByRole('menuitem', { name: 'gpt-5' }));
+    await userEvent.click(await screen.findByRole('radio', { name: 'gpt-5' }));
+    await userEvent.keyboard('{Escape}');
     await userEvent.click(screen.getByLabelText(TASK_LABEL));
     await userEvent.paste('Use these settings from the first turn');
     await userEvent.click(screen.getByRole('button', { name: 'Go to Today' }));
@@ -278,7 +280,6 @@ describe('New track model selection', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Go to Today' }));
     await userEvent.click(await screen.findByRole('button', { name: 'New track in Work' }));
     expect(await screen.findByRole('button', { name: 'Model: gpt-5' })).toBeTruthy();
-    expect(screen.queryByRole('button', { name: /^Reasoning effort:/ })).toBeNull();
     await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
     await screen.findByText(UNCONFIRMED_TRACK);
     const original = createdTrackRequests(sent)[0];
@@ -296,10 +297,9 @@ describe('New track model selection', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'New track in Work' }));
     await findComposer();
     await userEvent.click(await screen.findByRole('button', { name: 'Model: Default' }));
-    await userEvent.click(await screen.findByRole('menuitem', { name: 'gpt-5' }));
-    await userEvent.click(screen.getByRole('button', { name: 'Model: gpt-5' }));
-    await userEvent.click(screen.getByRole('menuitem', { name: 'Default' }));
-    expect(screen.queryByRole('button', { name: /^Reasoning effort:/ })).toBeNull();
+    await userEvent.click(await screen.findByRole('radio', { name: 'gpt-5' }));
+    await userEvent.click(screen.getByRole('radio', { name: 'Default' }));
+    await userEvent.keyboard('{Escape}');
     await userEvent.type(screen.getByLabelText(TASK_LABEL), 'Follow the default');
     await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
     await waitFor(() => expect(createdTrackRequests(sent)).toHaveLength(1));
@@ -312,9 +312,9 @@ describe('New track model selection', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'New track in Work' }));
     await findComposer();
     await userEvent.click(await screen.findByRole('button', { name: 'Model: Default' }));
-    await screen.findByRole('menuitem', { name: 'gpt-5' });
-    expect(screen.queryByRole('group', { name: 'Claude' })).toBeNull();
-    expect(screen.queryByRole('menuitem', { name: /^sonnet/ })).toBeNull();
+    await screen.findByRole('radio', { name: 'gpt-5' });
+    expect(screen.queryByRole('radio', { name: 'Claude' })).toBeNull();
+    expect(screen.queryByRole('radio', { name: /^sonnet/ })).toBeNull();
   });
 
   it('offers no Claude group before its catalog has answered', async () => {
@@ -322,8 +322,8 @@ describe('New track model selection', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'New track in Work' }));
     await findComposer();
     await userEvent.click(await screen.findByRole('button', { name: 'Model: Default' }));
-    await screen.findByRole('menuitem', { name: 'gpt-5' });
-    expect(screen.queryByRole('group', { name: 'Claude' })).toBeNull();
+    await screen.findByRole('radio', { name: 'gpt-5' });
+    expect(screen.queryByRole('radio', { name: 'Claude' })).toBeNull();
   });
 
   it('creates a fresh blank track with unavailable Claude and its server reason (#3037)', async () => {
@@ -331,13 +331,15 @@ describe('New track model selection', () => {
     const { sent } = harness({ claudePlanner: true, claudeUnavailable: reason });
     await userEvent.click(await screen.findByRole('button', { name: 'New track in Work' }));
     await findComposer();
-    (await screen.findByRole('button', { name: 'Model: Codex Default' })).focus();
-    await userEvent.keyboard('{ArrowDown}');
-    const claude = await screen.findByRole('group', { name: 'Claude' });
-    expect(within(claude).getByRole('note').textContent).toBe(`Claude is unavailable: ${reason} A track can still be created; it runs once Claude is back.`);
-    const defaultChoice = within(claude).getByRole('menuitem', { name: /^Default/ });
+    await userEvent.click(await screen.findByRole('button', { name: 'Model: Codex Default' }));
+    const providers = await screen.findByRole('group', { name: 'Providers' });
+    await userEvent.click(within(providers).getByRole('radio', { name: 'Claude' }));
+    const models = screen.getByRole('group', { name: 'Models' });
+    expect(within(models).getByRole('note').textContent).toBe(`Claude is unavailable: ${reason} A track can still be created; it runs once Claude is back.`);
+    const defaultChoice = within(models).getByRole('radio', { name: /^Default/ });
     expect(defaultChoice.getAttribute('aria-disabled') === 'true' || defaultChoice.hasAttribute('disabled')).toBe(false);
     await userEvent.click(defaultChoice);
+    await userEvent.keyboard('{Escape}');
     await userEvent.type(screen.getByLabelText(TASK_LABEL), 'Plan while Claude is down');
     await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
     await waitFor(() => expect(createdTrackRequests(sent)).toHaveLength(1));
@@ -382,7 +384,6 @@ describe('New track model selection', () => {
     await pick('Model: Codex gpt-5', 'Claude', /^sonnet/);
     expect(await screen.findByRole('button', { name: 'Model: Claude sonnet' })).toBeTruthy();
     /* sonnet's own levels are offered, starting from its default: Codex's `high` did not come along. */
-    expect(screen.queryByRole('button', { name: /^Reasoning effort:/ })).toBeNull();
     await userEvent.type(screen.getByLabelText(TASK_LABEL), 'Plan with Claude');
     await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
     await waitFor(() => expect(createdTrackRequests(sent)).toHaveLength(1));
@@ -451,14 +452,13 @@ describe('New track model selection', () => {
     const drawer = await screen.findByRole('complementary', { name: 'Planner' });
     const trigger = await within(drawer).findByRole('button', { name: 'Model: Default' });
     await waitFor(() => expect((trigger as HTMLButtonElement).disabled).toBe(false));
-    expect(within(drawer).queryByRole('button', { name: /^Reasoning effort:/ })).toBeNull();
-    trigger.focus();
-    await userEvent.keyboard('{ArrowDown}');
-    const menu = await screen.findByRole('menu');
-    expect(within(menu).getAllByRole('menuitem').map((item) => item.textContent))
+    await userEvent.click(trigger);
+    const dialog = await screen.findByRole('dialog');
+    const models = within(dialog).getByRole('group', { name: 'Models' });
+    expect(within(models).getAllByRole('radio').map((item) => item.textContent))
       .toEqual(['DefaultSelected', 'opus[1m]', 'claude-fable-5-1[1m]', 'sonnet', 'haiku']);
-    expect(within(menu).queryByRole('group')).toBeNull();
-    await userEvent.click(within(menu).getByRole('menuitem', { name: /^haiku/ }));
+    expect(within(dialog).queryByRole('radio', { name: 'Codex' })).toBeNull();
+    await userEvent.click(within(models).getByRole('radio', { name: /^haiku/ }));
     await waitFor(() => expect(sent.filter((request) => request.method === 'PUT'
       && request.path === '/api/v1/sessions/card-planner/model').map((request) => request.body))
       .toEqual([{ model: 'haiku', reasoningEffort: null }]));

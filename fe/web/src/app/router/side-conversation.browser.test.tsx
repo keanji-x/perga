@@ -287,11 +287,12 @@ async function openEmptySide(field: ReturnType<typeof page.getByRole>) {
 async function configureHeldSide(side: ReturnType<typeof page.getByRole>) {
   await side.getByRole('combobox', { name: 'Message', exact: true }).fill('Original unsent side words');
   await side.getByRole('button', { name: /^Model:/ }).click();
-  await page.getByRole('menuitem', { name: /^Probe Model/ }).click();
-  await side.getByRole('button', { name: /^Reasoning effort:/ }).click();
-  await page.getByRole('menuitem', { name: /^high/ }).click();
-  await expect.element(side.getByRole('button', { name: 'Model: codex Probe Model', exact: true })).toBeVisible();
-  await expect.element(side.getByRole('button', { name: 'Reasoning effort: high', exact: true })).toBeVisible();
+  await page.getByRole('radio', { name: /^Probe Model/ }).click();
+  const slider = document.querySelector<HTMLElement>('[role="slider"][aria-label="Reasoning effort"]')!;
+  slider.focus();
+  await userEvent.keyboard('{End}');
+  await userEvent.keyboard('{Escape}');
+  await expect.element(side.getByRole('button', { name: 'Model: codex Probe Model · high', exact: true })).toBeVisible();
 }
 
 it.each([false, true])('preserves complete held Today side through presentation roundtrips (explicit: %s)', async explicit => {
@@ -324,14 +325,13 @@ it.each([false, true])('preserves complete held Today side through presentation 
   await page.viewport(1440, 900);
   // No reopen: words alone would conceal a discarded key/model/snapshot.
   await expect.element(side.getByRole('combobox', { name: 'Message', exact: true })).toHaveTextContent('Original unsent side words');
-  await expect.element(side.getByRole('button', { name: 'Model: codex Probe Model', exact: true })).toBeVisible();
-  await expect.element(side.getByRole('button', { name: 'Reasoning effort: high', exact: true })).toBeVisible();
+  await expect.element(side.getByRole('button', { name: 'Model: codex Probe Model · high', exact: true })).toBeVisible();
   const sideElement = side.element();
   await page.getByRole('button', { name: 'Terminal', exact: true }).click();
   await expect.element(page.getByRole('button', { name: 'Hide terminal', exact: true })).toBeVisible();
   await expect.element(sideElement).not.toBeVisible();
   await page.getByRole('button', { name: 'Discussion', exact: true }).click();
-  await expect.element(side.getByRole('button', { name: 'Model: codex Probe Model', exact: true })).toBeVisible();
+  await expect.element(side.getByRole('button', { name: 'Model: codex Probe Model · high', exact: true })).toBeVisible();
   expect(fixture.requests.filter(request => request.method === 'POST' && request.path.endsWith('/conversations'))).toEqual([]);
   await page.screenshot({ path: `../../../../test-results/owner-held-${explicit ? 'explicit' : 'default'}.png` });
   await side.getByRole('combobox', { name: 'Message', exact: true }).click();
@@ -426,7 +426,7 @@ it.each([false, true].flatMap(explicit => ['hidden', 'returned', 'retry'].map(se
       expect(id).toBe(trackConversationCardId('daily', original.headers!['Idempotency-Key']));
       expect(boundary.posts).toEqual(settlement === 'retry' ? [original, original] : [original]);
       await expect.element(side.getByRole('button', { name: 'Model: Probe Model', exact: true })).toBeVisible();
-      await expect.element(side.getByRole('button', { name: 'Reasoning effort: high', exact: true })).toBeVisible();
+      await expect.element(side.getByRole('button', { name: 'Model: codex Probe Model · high', exact: true })).toBeVisible();
       // A is reached by the production create receipt and list publication above.
       // Its continuation draft and address survive the same host projections.
       const sideField = side.getByRole('combobox', { name: 'Message', exact: true });

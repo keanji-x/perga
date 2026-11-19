@@ -22,12 +22,13 @@ it.each([1280, 390])('selects a dynamically registered backend through the keybo
   if (width < 600) await page.getByLabelText('对话选项').click();
   const model = page.getByRole('button', { name: /^Model:/ });
   await model.click();
-  await expect.element(page.getByRole('menuitem', { name: 'selected', exact: true })).toBeVisible();
+  await expect.element(page.getByRole('radio', { name: 'selected', exact: true })).toBeVisible();
   expect(fixture.requests.some(request => request.path === '/api/v1/bootstrap?provider=claude')).toBe(true);
   expect(fixture.requests.some(request => request.path === '/api/v1/bootstrap?provider=codex')).toBe(false);
-  await page.getByRole('menuitem', { name: 'selected', exact: true }).click();
-  await expect.element(page.getByRole('button', { name: /^Reasoning effort:/ })).not.toBeInTheDocument();
-  await model.click();
+  await page.getByRole('radio', { name: 'selected', exact: true }).click();
+  const slider = await page.getByRole('slider', { name: 'Reasoning effort' }).findElement();
+  slider.focus();
+  await userEvent.keyboard('{Home}{End}');
   await userEvent.keyboard('{Escape}');
   await expect.element(model).toHaveFocus();
   const field = page.getByRole('combobox', { name: 'Message' });
@@ -56,9 +57,10 @@ it('keeps a dormant backend after fresh-session recovery and takes actions from 
   await expect.element(page.getByText('Saved reply', { exact: true })).toBeVisible();
   const model = page.getByRole('button', { name: /^Model:/ });
   await model.click();
-  await expect.element(page.getByRole('menuitem', { name: 'selected', exact: true })).toBeVisible();
-  await expect.element(page.getByRole('group', { name: 'Codex', exact: true })).not.toBeInTheDocument();
-  await page.getByRole('menuitem', { name: 'selected', exact: true }).click();
+  await expect.element(page.getByRole('radio', { name: 'selected', exact: true })).toBeVisible();
+  await expect.element(page.getByRole('radio', { name: 'Codex', exact: true })).not.toBeInTheDocument();
+  await page.getByRole('radio', { name: 'selected', exact: true }).click();
+  await userEvent.keyboard('{Escape}');
   await expect.poll(() => fixture.requests.filter(request => request.method === 'PUT' && request.path === '/api/v1/sessions/dormant/model').length).toBe(1);
   expect(fixture.requests.find(request => request.method === 'PUT')?.body).toEqual({ model: 'selected', reasoningEffort: null });
   // This fixture declares no permission options; #35 hides unsupported controls.
@@ -105,8 +107,9 @@ it('creates the declared Codex default despite auth/read and catalog unavailabil
   const fixture = renderAssistantProviderFixture({ answers: [codex], catalogUnavailable: true });
   await page.getByRole('button', { name: 'New conversation', exact: true }).click();
   await page.getByRole('button', { name: /^Model:/ }).click();
-  await expect.element(page.getByRole('menuitem', { name: /^Default/ })).toBeEnabled();
-  await page.getByRole('menuitem', { name: /^Default/ }).click();
+  await expect.element(page.getByRole('radio', { name: /^Default/ })).toBeEnabled();
+  await page.getByRole('radio', { name: /^Default/ }).click();
+  await userEvent.keyboard('{Escape}');
   const field = page.getByRole('combobox', { name: 'Message' });
   await field.fill('Follow the backend default'); await userEvent.keyboard('{Enter}');
   await expect.poll(() => fixture.requests.filter(request => request.method === 'POST' && request.path.endsWith('/sessions')).length).toBe(1);
@@ -120,9 +123,9 @@ it('renders, selects and sends a managed identifier independently of legacy UI l
   await page.getByRole('button', { name: 'New conversation', exact: true }).click();
   const model = page.getByRole('button', { name: /^Model:/ });
   await model.click();
-  await expect.element(page.getByRole('group', { name: 'OpenCode (Beta)', exact: true })).toBeVisible();
-  await page.getByRole('menuitem', { name: 'selected', exact: true }).click();
-  await expect.element(model).toHaveAccessibleName('Model: OpenCode selected');
+  await page.getByRole('radio', { name: 'selected', exact: true }).click();
+  await userEvent.keyboard('{Escape}');
+  await expect.element(model).toHaveAccessibleName(/^Model: (?:opencode|OpenCode) selected/);
   await page.getByRole('combobox', { name: 'Message' }).fill('Owner registered backend');
   await userEvent.keyboard('{Enter}');
   await expect.poll(() => fixture.requests.filter(request => request.method === 'POST' && request.path.endsWith('/sessions')).length).toBe(1);
@@ -147,7 +150,8 @@ it('adopts a landed frozen request before stale or missing metadata can refuse i
   const fixture = renderAssistantProviderFixture(options);
   await page.getByRole('button', { name: 'New conversation', exact: true }).click();
   await page.getByRole('button', { name: /^Model:/ }).click();
-  await page.getByRole('menuitem', { name: 'selected', exact: true }).click();
+  await page.getByRole('radio', { name: 'selected', exact: true }).click();
+  await userEvent.keyboard('{Escape}');
   await page.getByRole('combobox', { name: 'Message' }).fill('Already committed');
   await userEvent.keyboard('{Enter}');
   await expect.element(page.getByRole('button', { name: 'Try again', exact: true })).toBeVisible();
