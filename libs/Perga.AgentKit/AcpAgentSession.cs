@@ -163,7 +163,9 @@ public sealed class AcpAgentSession : IAgentSession
         HarnessLaunchSpec spec,
         TimeSpan handshakeTimeout,
         Action<IAgentSession>? onDispose,
-        CancellationToken ct)
+        CancellationToken ct,
+        IReadOnlyList<PermissionModeOption>? extraPermissionModes = null,
+        bool skipSetPermissionMode = false)
     {
         var process = StdioSubprocess.Start(wrappedCommand);
         var session = new AcpAgentSession(process, wrappedCommand.Environment, spec.ResumeNativeThreadId, handshakeTimeout, onDispose);
@@ -171,7 +173,11 @@ public sealed class AcpAgentSession : IAgentSession
         {
             using var handshakeCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             handshakeCts.CancelAfter(handshakeTimeout);
-            await session.InitializeAndBindSessionAsync(spec, handshakeCts.Token).ConfigureAwait(false);
+            await session.InitializeAndBindSessionAsync(
+                spec,
+                extraPermissionModes,
+                skipSetPermissionMode,
+                handshakeCts.Token).ConfigureAwait(false);
             return session;
         }
         catch
@@ -295,7 +301,11 @@ public sealed class AcpAgentSession : IAgentSession
         capabilities.ValueKind == JsonValueKind.Object &&
         capabilities.TryGetProperty(name, out var capability) && capability.ValueKind == JsonValueKind.Object;
 
-    private async Task InitializeAndBindSessionAsync(HarnessLaunchSpec spec, CancellationToken ct)
+    private async Task InitializeAndBindSessionAsync(
+        HarnessLaunchSpec spec,
+        IReadOnlyList<PermissionModeOption>? extraPermissionModes,
+        bool skipSetPermissionMode,
+        CancellationToken ct)
     {
         var initParams = new Dictionary<string, object?>
         {
@@ -317,9 +327,6 @@ public sealed class AcpAgentSession : IAgentSession
         };
 
         var initResult = await _rpc.SendRequestAsync("initialize", initParams, ct).ConfigureAwait(false);
-        var isAntigravityServer = initResult.ValueKind == JsonValueKind.Object &&
-            initResult.TryGetProperty("agentInfo", out var agentInfo) &&
-            string.Equals(TryGetString(agentInfo, "name"), "Antigravity ACP Server", StringComparison.Ordinal);
         var supportsHttpMcp = AcpStdioHttpMcpBridge.SupportsHttpMcp(initResult);
         var agentCapabilities = initResult.ValueKind == JsonValueKind.Object &&
             initResult.TryGetProperty("agentCapabilities", out var capabilities) ? capabilities : default;
@@ -376,25 +383,22 @@ public sealed class AcpAgentSession : IAgentSession
 
         var permissionModes = AcpPermissionModes.Read(response);
         var availableModes = permissionModes.Options;
-        if (isAntigravityServer && !availableModes.Any(m => string.Equals(m.Id, "bypassPermissions", StringComparison.Ordinal)))
+        if (extraPermissionModes is { Count: > 0 })
         {
-            availableModes =
-            [
-                .. availableModes,
-                new PermissionModeOption(
-                    "bypassPermissions",
-                    "Full access",
-                    "Auto-approves all tool permission requests without prompting.",
-                    "danger",
-                    IsDefault: false)
-            ];
+            var merged = new List<PermissionModeOption>(availableModes);
+            foreach (var extra in extraPermissionModes)
+            {
+                if (!merged.Any(m => string.Equals(m.Id, extra.Id, StringComparison.Ordinal)))
+                {
+                    merged.Add(extra);
+                }
+            }
+            availableModes = merged;
         }
 
         AvailablePermissionModes = availableModes;
         var requestedMode = spec.PermissionMode?.Trim();
-        var isAntigravityBypass = isAntigravityServer &&
-            string.Equals(requestedMode, "bypassPermissions", StringComparison.Ordinal);
-        if (!string.IsNullOrWhiteSpace(requestedMode) && !isAntigravityBypass)
+        if (!skipSetPermissionMode && !string.IsNullOrWhiteSpace(requestedMode))
         {
             var modeParams = new Dictionary<string, object?> { ["sessionId"] = resolvedSessionId };
             if (permissionModes.ConfigId is { } configId)

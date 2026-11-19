@@ -140,15 +140,28 @@ public sealed class AcpProviderTests : IDisposable
     }
 
     [Fact]
-    public async Task AntigravityServerExposesBypassPermissionsAndPassesDangerouslySkipPermissions()
+    public async Task AntigravityExecutableExposesBypassPermissionsAndPassesDangerouslySkipPermissions()
     {
+        if (OperatingSystem.IsWindows()) return;
+        var agyWrapper = Path.Combine(_fixture.RootDir, "agy");
+        File.WriteAllText(agyWrapper, $"""
+            #!/bin/sh
+            exec "{_fixture.MockAcpPath}" "$@"
+            """);
+        File.SetUnixFileMode(agyWrapper, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+
         var log = Path.Combine(_fixture.RootDir, "antigravity-bypass.jsonl");
-        await using var runtime = CreateRuntime(new Dictionary<string, string>
+        await using var runtime = new AgentRuntime(new AgentRuntimeOptions
         {
-            ["MOCK_ACP_LOG"] = log,
-            ["MOCK_ACP_LOG_ARGV"] = "1",
-            ["MOCK_ACP_AGENT_NAME"] = "Antigravity ACP Server",
-            ["MOCK_ACP_MODELS"] = """{"modes":{"currentModeId":"default","availableModes":[{"id":"default","name":"Default"},{"id":"auto","name":"Auto"}]}}"""
+            ProviderOverrides = new Dictionary<string, ProviderCommandOverride>
+            {
+                ["acp:antigravity"] = new(agyWrapper, Env: new Dictionary<string, string>
+                {
+                    ["MOCK_ACP_LOG"] = log,
+                    ["MOCK_ACP_LOG_ARGV"] = "1",
+                    ["MOCK_ACP_MODELS"] = """{"modes":{"currentModeId":"default","availableModes":[{"id":"default","name":"Default"},{"id":"auto","name":"Auto"}]}}"""
+                })
+            }
         });
 
         var probed = await runtime.ProbePermissionModesAsync("acp:antigravity", _fixture.WorkspaceDir, OsSandboxMode.None, null, CancellationToken.None);
