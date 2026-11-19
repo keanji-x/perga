@@ -50,16 +50,25 @@ public sealed class AcpAgentSession : IAgentSession
     private AcpModelCatalog _modelCatalog = AcpModelCatalog.Build([], null);
 
 
+    private static readonly TimeSpan DefaultCommandsGraceTimeout = TimeSpan.FromSeconds(2);
+
     private readonly JsonRpcStdioConnection _rpc;
     private readonly IReadOnlyDictionary<string, string> _environment;
     private readonly Action<IAgentSession>? _onDispose;
     private readonly TimeSpan _handshakeTimeout;
+    private readonly TimeSpan _commandsGraceTimeout;
     private readonly SemaphoreSlim _turnLock = new(1, 1);
     private readonly ConcurrentDictionary<string, PendingAcpPermission> _pendingPermissions = new(StringComparer.Ordinal);
+    private readonly TaskCompletionSource _availableCommandsObserved = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly object _idleUsageLock = new();
+    private Action<IdleContextUsage>? _idleUsageHandler;
+    private IdleContextUsage? _pendingIdleUsage;
     private TurnStreamState? _currentTurn;
     private string? _nativeThreadId;
     private string? _lastEmittedThreadId;
     private string? _pendingSystemPrompt;
+    private string? _configuredModel;
+    private long _latestContextWindowTokens;
     private bool _supportsNativeCompact;
     private int _disposed;
 
@@ -68,11 +77,15 @@ public sealed class AcpAgentSession : IAgentSession
         IReadOnlyDictionary<string, string> environment,
         string? initialSessionId,
         TimeSpan handshakeTimeout,
-        Action<IAgentSession>? onDispose)
+        Action<IAgentSession>? onDispose,
+        TimeSpan? commandsGraceTimeout = null)
     {
         _environment = environment;
         _nativeThreadId = initialSessionId;
         _handshakeTimeout = handshakeTimeout > TimeSpan.Zero ? handshakeTimeout : TimeSpan.FromSeconds(15);
+        _commandsGraceTimeout = commandsGraceTimeout is { } grace && grace > TimeSpan.Zero
+            ? grace
+            : DefaultCommandsGraceTimeout;
         _onDispose = onDispose;
         _rpc = new JsonRpcStdioConnection(
             process,
@@ -85,6 +98,52 @@ public sealed class AcpAgentSession : IAgentSession
 
     public bool SupportsNativeSteer => false;
     public bool SupportsNativeCompact => Volatile.Read(ref _supportsNativeCompact);
+
+    public async ValueTask<bool> ResolveNativeCompactSupportAsync(CancellationToken ct)
+    {
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        if (Volatile.Read(ref _supportsNativeCompact))
+        {
+            return true;
+        }
+
+        if (!_availableCommandsObserved.Task.IsCompleted)
+        {
+            try
+            {
+                await _availableCommandsObserved.Task.WaitAsync(_commandsGraceTimeout, ct).ConfigureAwait(false);
+            }
+            catch (TimeoutException)
+            {
+                // Provider did not advertise commands within the grace window; fall back to current flag.
+            }
+        }
+
+        return SupportsNativeCompact;
+    }
+
+    public IdleContextUsage? AttachIdleContextUsageHandler(Action<IdleContextUsage>? handler)
+    {
+        lock (_idleUsageLock)
+        {
+            if (Volatile.Read(ref _disposed) != 0)
+            {
+                _idleUsageHandler = null;
+                _pendingIdleUsage = null;
+                return null;
+            }
+
+            _idleUsageHandler = handler;
+            if (handler is null)
+            {
+                return null;
+            }
+
+            var pending = _pendingIdleUsage;
+            _pendingIdleUsage = null;
+            return pending;
+        }
+    }
     private bool _configureWorker;
     private string? _workerLaunchModel;
     private string? _legacyWorkerModel;
@@ -119,6 +178,16 @@ public sealed class AcpAgentSession : IAgentSession
     internal IReadOnlyList<string> AvailableModels { get; private set; } = [];
     internal IReadOnlyList<ProviderModelInfo> AvailableModelCatalog { get; private set; } = [];
 
+    private void OnModelConfigured(string? model)
+    {
+        lock (_idleUsageLock)
+        {
+            Volatile.Write(ref _configuredModel, model);
+            _pendingIdleUsage = null;
+            Interlocked.Exchange(ref _latestContextWindowTokens, 0);
+        }
+    }
+
     public async Task<bool> TrySetModelAsync(string? model, string? reasoningEffort = null, CancellationToken ct = default)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
@@ -128,7 +197,8 @@ public sealed class AcpAgentSession : IAgentSession
             return false;
         }
 
-        var resolvedModelId = _modelCatalog.Resolve(model.Trim(), reasoningEffort);
+        var requestedModel = model.Trim();
+        var resolvedModelId = _modelCatalog.Resolve(requestedModel, reasoningEffort);
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeoutCts.CancelAfter(_handshakeTimeout);
 
@@ -138,7 +208,7 @@ public sealed class AcpAgentSession : IAgentSession
             {
                 sessionId = NativeThreadId,
                 modelId = resolvedModelId
-            }, timeoutCts.Token).ConfigureAwait(false);
+            }, timeoutCts.Token, _ => OnModelConfigured(requestedModel)).ConfigureAwait(false);
             return true;
         }
         catch (JsonRpcRemoteException ex) when (ex.Code == -32601)
@@ -150,7 +220,7 @@ public sealed class AcpAgentSession : IAgentSession
                     sessionId = NativeThreadId,
                     configId = "model",
                     value = resolvedModelId
-                }, timeoutCts.Token).ConfigureAwait(false);
+                }, timeoutCts.Token, _ => OnModelConfigured(requestedModel)).ConfigureAwait(false);
                 return true;
             }
             catch (JsonRpcRemoteException configEx) when (configEx.Code == -32601)
@@ -167,10 +237,11 @@ public sealed class AcpAgentSession : IAgentSession
         Action<IAgentSession>? onDispose,
         CancellationToken ct,
         IReadOnlyList<PermissionModeOption>? extraPermissionModes = null,
-        bool skipSetPermissionMode = false)
+        bool skipSetPermissionMode = false,
+        TimeSpan? commandsGraceTimeout = null)
     {
         var process = StdioSubprocess.Start(wrappedCommand);
-        var session = new AcpAgentSession(process, wrappedCommand.Environment, spec.ResumeNativeThreadId, handshakeTimeout, onDispose);
+        var session = new AcpAgentSession(process, wrappedCommand.Environment, spec.ResumeNativeThreadId, handshakeTimeout, onDispose, commandsGraceTimeout);
         try
         {
             using var handshakeCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -192,7 +263,7 @@ public sealed class AcpAgentSession : IAgentSession
     public async Task<NativeCompactResult> CompactAsync(CancellationToken ct)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-        if (!SupportsNativeCompact)
+        if (!await ResolveNativeCompactSupportAsync(ct).ConfigureAwait(false))
         {
             throw new NotSupportedException("This ACP session does not advertise /compact.");
         }
@@ -337,6 +408,13 @@ public sealed class AcpAgentSession : IAgentSession
             return;
         }
 
+        _availableCommandsObserved.TrySetResult();
+        lock (_idleUsageLock)
+        {
+            _idleUsageHandler = null;
+            _pendingIdleUsage = null;
+        }
+
         _onDispose?.Invoke(this);
         var active = Interlocked.Exchange(ref _currentTurn, null);
         active?.CompleteQuietly();
@@ -413,7 +491,22 @@ public sealed class AcpAgentSession : IAgentSession
             }
         }
 
-        var response = await _rpc.SendRequestAsync(method, sessionParams, ct).ConfigureAwait(false);
+        var response = await _rpc.SendRequestAsync(method, sessionParams, ct, res =>
+        {
+            if (res.ValueKind != JsonValueKind.Object || TryGetBool(res, "success") == false)
+            {
+                return;
+            }
+
+            var id = TryGetString(res, "sessionId")
+                     ?? TryGetString(res, "id")
+                     ?? spec.ResumeNativeThreadId;
+            if (!string.IsNullOrWhiteSpace(id) &&
+                (!isResume || string.Equals(id, spec.ResumeNativeThreadId, StringComparison.Ordinal)))
+            {
+                Volatile.Write(ref _nativeThreadId, id);
+            }
+        }).ConfigureAwait(false);
         if (response.ValueKind != JsonValueKind.Object || TryGetBool(response, "success") == false ||
             (response.TryGetProperty("sessionId", out _) && string.IsNullOrWhiteSpace(TryGetString(response, "sessionId"))) ||
             (response.TryGetProperty("id", out _) && string.IsNullOrWhiteSpace(TryGetString(response, "id"))))
@@ -479,7 +572,14 @@ public sealed class AcpAgentSession : IAgentSession
         AvailableModelCatalog = _modelCatalog.Models;
         if (!string.IsNullOrWhiteSpace(spec.Model))
         {
-            await TrySetModelAsync(spec.Model, spec.ReasoningEffort, ct).ConfigureAwait(false);
+            var requestedModel = spec.Model.Trim();
+            var modelSet = await TrySetModelAsync(requestedModel, spec.ReasoningEffort, ct).ConfigureAwait(false);
+            if (!modelSet &&
+                !string.IsNullOrWhiteSpace(currentModelId) &&
+                string.Equals(currentModelId, _modelCatalog.Resolve(requestedModel, spec.ReasoningEffort), StringComparison.Ordinal))
+            {
+                OnModelConfigured(requestedModel);
+            }
         }
     }
 
@@ -707,6 +807,15 @@ public sealed class AcpAgentSession : IAgentSession
             return;
         }
 
+        var notificationSessionId = TryGetString(parameters, "sessionId");
+        var currentSessionId = NativeThreadId;
+        if (!string.IsNullOrWhiteSpace(notificationSessionId) &&
+            !string.IsNullOrWhiteSpace(currentSessionId) &&
+            !string.Equals(notificationSessionId, currentSessionId, StringComparison.Ordinal))
+        {
+            return;
+        }
+
         var update = parameters.TryGetProperty("update", out var updateObj) && updateObj.ValueKind == JsonValueKind.Object
             ? updateObj
             : parameters;
@@ -723,9 +832,11 @@ public sealed class AcpAgentSession : IAgentSession
         {
             if (update.TryGetProperty("availableCommands", out var cmds) && cmds.ValueKind == JsonValueKind.Array)
             {
+                var hasCommands = false;
                 var hasCompact = false;
                 foreach (var cmd in cmds.EnumerateArray())
                 {
+                    hasCommands = true;
                     if (string.Equals(TryGetString(cmd, "name"), "compact", StringComparison.OrdinalIgnoreCase))
                     {
                         hasCompact = true;
@@ -734,6 +845,10 @@ public sealed class AcpAgentSession : IAgentSession
                 }
 
                 Volatile.Write(ref _supportsNativeCompact, hasCompact);
+                if (hasCompact || hasCommands)
+                {
+                    _availableCommandsObserved.TrySetResult();
+                }
             }
 
             return;
@@ -744,11 +859,42 @@ public sealed class AcpAgentSession : IAgentSession
             var usage = TryParseAcpUsage(update);
             if (usage is not null)
             {
+                if (usage.ContextWindowTokens is > 0)
+                {
+                    Interlocked.Exchange(ref _latestContextWindowTokens, usage.ContextWindowTokens.Value);
+                }
+
                 if (Volatile.Read(ref _currentTurn) is { } activeTurn)
                 {
                     usage = MergeUsage(usage, activeTurn.LatestUsage)!;
                     activeTurn.LatestUsage = usage;
                     activeTurn.Events.Writer.TryWrite(new UnifiedAgentEvent.ContextUsageUpdated(usage));
+                }
+                else if (!_configureWorker)
+                {
+                    var cachedWindow = Interlocked.Read(ref _latestContextWindowTokens);
+                    var effectiveWindow = usage.ContextWindowTokens ?? (cachedWindow > 0 ? cachedWindow : null);
+                    if (effectiveWindow is > 0 && usage.EffectiveUsedTokens >= 0)
+                    {
+                        var idleUsage = new IdleContextUsage(
+                            usage with { ContextWindowTokens = effectiveWindow },
+                            Volatile.Read(ref _configuredModel),
+                            NativeThreadId);
+                        Action<IdleContextUsage>? handler = null;
+                        lock (_idleUsageLock)
+                        {
+                            if (Volatile.Read(ref _disposed) == 0)
+                            {
+                                handler = _idleUsageHandler;
+                                if (handler is null)
+                                {
+                                    _pendingIdleUsage = idleUsage;
+                                }
+                            }
+                        }
+
+                        handler?.Invoke(idleUsage);
+                    }
                 }
             }
 
@@ -895,6 +1041,7 @@ public sealed class AcpAgentSession : IAgentSession
 
     private void OnDisconnected(Exception? ex)
     {
+        _availableCommandsObserved.TrySetResult();
         var turnState = Volatile.Read(ref _currentTurn);
         if (turnState is null)
         {
@@ -1097,11 +1244,17 @@ public sealed class AcpAgentSession : IAgentSession
                      ?? TryGetLong(source, "cachedReadTokens")
                      ?? TryGetLong(source, "cached_input_tokens")
                      ?? 0L;
-        var window = TryGetLong(source, "contextWindowTokens")
-                     ?? TryGetLong(source, "context_window_tokens")
-                     ?? TryGetLong(source, "size")
-                     ?? TryGetLong(container, "contextWindowTokens")
-                     ?? TryGetLong(container, "size");
+        if (input < 0 || output < 0 || used < 0 || cached < 0)
+        {
+            return null;
+        }
+
+        var rawWindow = TryGetLong(source, "contextWindowTokens")
+                        ?? TryGetLong(source, "context_window_tokens")
+                        ?? TryGetLong(source, "size")
+                        ?? TryGetLong(container, "contextWindowTokens")
+                        ?? TryGetLong(container, "size");
+        var window = rawWindow is > 0 ? rawWindow : null;
 
         return new TokenUsage(input ?? 0L, output ?? 0L, cached, window, used);
     }

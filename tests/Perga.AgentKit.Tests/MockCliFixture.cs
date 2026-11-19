@@ -776,6 +776,7 @@ import json
 import os
 import sys
 import threading
+import time
 
 if "--version" in sys.argv:
     sys.stdout.write("acp-mock 1.4.2\n")
@@ -1078,20 +1079,66 @@ for raw_line in sys.stdin:
                         }
                     }
                 })
-        if os.environ.get("MOCK_ACP_ADVERTISE_COMPACT") == "1":
+        advertise_mode = os.environ.get("MOCK_ACP_ADVERTISE_COMPACT", "")
+        post_delay_ms = int(os.environ.get("MOCK_ACP_POST_SESSION_DELAY_MS", "0"))
+        post_usage_raw = os.environ.get("MOCK_ACP_POST_SESSION_USAGE")
+        if advertise_mode == "empty_then_compact":
             send({
                 "jsonrpc": "2.0",
                 "method": "session/update",
                 "params": {
                     "sessionId": state["session_id"],
-                    "update": {
-                        "sessionUpdate": "available_commands_update",
-                        "availableCommands": [
-                            {"name": "compact", "description": "Compact the conversation"}
-                        ]
-                    }
+                    "update": {"sessionUpdate": "available_commands_update", "availableCommands": []}
                 }
             })
+
+        def send_post_session_updates(sid=state["session_id"]):
+            if post_delay_ms > 0:
+                time.sleep(post_delay_ms / 1000.0)
+            if advertise_mode in ("1", "empty_then_compact"):
+                send({
+                    "jsonrpc": "2.0",
+                    "method": "session/update",
+                    "params": {
+                        "sessionId": sid,
+                        "update": {
+                            "sessionUpdate": "available_commands_update",
+                            "availableCommands": [
+                                {"name": "compact", "description": "Compact the conversation"}
+                            ]
+                        }
+                    }
+                })
+            elif advertise_mode == "no_compact":
+                send({
+                    "jsonrpc": "2.0",
+                    "method": "session/update",
+                    "params": {
+                        "sessionId": sid,
+                        "update": {
+                            "sessionUpdate": "available_commands_update",
+                            "availableCommands": [
+                                {"name": "help", "description": "Show help"}
+                            ]
+                        }
+                    }
+                })
+            if post_usage_raw:
+                usage_payload = json.loads(post_usage_raw)
+                send({
+                    "jsonrpc": "2.0",
+                    "method": "session/update",
+                    "params": {
+                        "sessionId": sid,
+                        "update": {"sessionUpdate": "usage_update", **usage_payload}
+                    }
+                })
+
+        if advertise_mode in ("1", "empty_then_compact", "no_compact") or post_usage_raw:
+            if post_delay_ms > 0:
+                threading.Thread(target=send_post_session_updates, daemon=True).start()
+            else:
+                send_post_session_updates()
     elif method == "session/close":
         if params.get("sessionId") == state["session_id"]:
             result = {"success": False} if os.environ.get("MOCK_ACP_INVALID_CLOSE") == "1" else {}
@@ -1115,6 +1162,16 @@ for raw_line in sys.stdin:
             state["model"] = params.get("modelId")
             state["model_set_method"] = "session/set_model"
             send({"jsonrpc": "2.0", "id": msg_id, "result": {}})
+            switch_usage_raw = os.environ.get("MOCK_ACP_MODEL_SWITCH_USAGE")
+            if switch_usage_raw:
+                send({
+                    "jsonrpc": "2.0",
+                    "method": "session/update",
+                    "params": {
+                        "sessionId": state["session_id"],
+                        "update": {"sessionUpdate": "usage_update", **json.loads(switch_usage_raw)}
+                    }
+                })
     elif method == "session/set_config_option":
         code = int(os.environ.get("MOCK_ACP_MODEL_ERROR", "0"))
         if code:

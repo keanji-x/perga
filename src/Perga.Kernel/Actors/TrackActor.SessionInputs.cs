@@ -152,7 +152,7 @@ public sealed partial class TrackActor
             var updated = session with
             {
                 Status = "idle", Epoch = checked(session.Epoch + 1), NativeThreadId = null,
-                ContextUsageRatio = 0, ContextUsedTokens = 0, ContextUsageAtMs = null,
+                ContextUsageRatio = 0, ContextUsedTokens = 0, ContextWindowTokens = null, ContextUsageAtMs = null,
                 ContextUsageInvalidated = false, UpdatedAtMs = NowMs()
             };
             _mcpBridge.RevokeSession(sessionId);

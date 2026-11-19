@@ -236,10 +236,10 @@ public sealed partial class TrackActor
                 await _store.CompleteSessionResumeAsync(updated, unknown, evt, CancellationToken.None).ConfigureAwait(false);
 
                 _sessions[sessionId] = updated;
-                _openAgentSessions[sessionId] = replacement;
-                _boundAgentModels[sessionId] = (spec.Model, spec.ReasoningEffort);
-                _openAgentSessionPermissionModes[sessionId] = spec.PermissionMode;
-                return updated;
+                ReleaseSessionResumeCore(sessionId);
+                await RegisterOpenAgentSessionCoreAsync(updated, replacement, spec.PermissionMode, CancellationToken.None)
+                    .ConfigureAwait(false);
+                return RequireSessionCore(sessionId);
             }, CancellationToken.None).ConfigureAwait(false);
             success = true;
             return restored;

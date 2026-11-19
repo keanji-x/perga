@@ -3223,7 +3223,7 @@ public sealed partial class TrackActor : IAsyncDisposable
                 return (session, oldAgentSession, turnIdx);
             }, CancellationToken.None).ConfigureAwait(false);
 
-            if (prep.OldAgentSession.SupportsNativeCompact)
+            if (await prep.OldAgentSession.ResolveNativeCompactSupportAsync(ct).ConfigureAwait(false))
             {
                 var compactTurnId = $"trn_{prep.HandoverTurnIndex:D6}_{Guid.NewGuid():N}";
                 var nativeStartedAt = NowMs();
@@ -3345,6 +3345,7 @@ public sealed partial class TrackActor : IAsyncDisposable
                     NativeThreadId = null,
                     ContextUsageRatio = 0.0,
                     ContextUsedTokens = 0,
+                    ContextWindowTokens = null,
                     ContextUsageAtMs = null,
                     ContextUsageInvalidated = false,
                     Status = "idle",
@@ -3362,11 +3363,10 @@ public sealed partial class TrackActor : IAsyncDisposable
                 // Seed fresh IAgentSession with ResumeNativeThreadId == null and SystemPrompt = Report + Handover Summary.
                 var desiredMode = compacted.PermissionMode;
                 var freshAgentSession = await OpenFreshAgentSessionCoreAsync(compacted, seedPrompt, ct).ConfigureAwait(false);
-                _openAgentSessions[sessionId] = freshAgentSession;
-                _boundAgentModels[sessionId] = (compacted.Model, compacted.ReasoningEffort);
-                _openAgentSessionPermissionModes[sessionId] = desiredMode;
+                _compactingSessions.Remove(sessionId);
+                await RegisterOpenAgentSessionCoreAsync(compacted, freshAgentSession, desiredMode, ct).ConfigureAwait(false);
 
-                return compacted;
+                return RequireSessionCore(sessionId);
             }, ct).ConfigureAwait(false);
         }
         finally
@@ -3426,9 +3426,7 @@ public sealed partial class TrackActor : IAsyncDisposable
         }
 
         var opened = await OpenFreshAgentSessionCoreAsync(session, overrideSystemPrompt, ct).ConfigureAwait(false);
-        _openAgentSessions[session.Id] = opened;
-        _boundAgentModels[session.Id] = (session.Model, session.ReasoningEffort);
-        _openAgentSessionPermissionModes[session.Id] = desiredMode;
+        await RegisterOpenAgentSessionCoreAsync(session, opened, desiredMode, ct).ConfigureAwait(false);
         return opened;
     }
 
