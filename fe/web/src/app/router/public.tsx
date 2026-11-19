@@ -702,8 +702,7 @@ function useConversationPane(
   const setModel = useCommittedCallback(existingId, store.setModel);
   const setPermissionMode = useCommittedCallback(existingId, store.setPermissionMode);
   const worker = store.worker;
-  const commitWorkerSettings = useCommittedCallback(existingId, store.updateWorkerSettings ?? (() => Promise.reject(new NotSentError())));
-  const updateWorkerSettings = store.updateWorkerSettings === undefined ? undefined : commitWorkerSettings;
+  const updateWorkerSettings = useCommittedCallback(existingId, store.updateWorkerSettings);
   const workerDelivery = store.workerDelivery;
   const [submission, setSubmission] = useState<Readonly<{ conversationId: string; request: number }> | null>(null);
   /* Only a new admitted op asks the shown thread to follow. Retries retain their
