@@ -1090,6 +1090,9 @@ public sealed class CodexAgentSession : IAgentSession
             case "turn/error":
             case "turn/failed":
             {
+                if (TryGetBool(parameters, "willRetry") == true)
+                    break;
+
                 var (code, msg, retryable) = ExtractCodexError(parameters);
                 if (CanTriggerModelFallback(turnState, code, msg) &&
                     turnState.TryClaimModelFallback())

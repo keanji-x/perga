@@ -141,6 +141,30 @@ def run_turn(turn_id, prompt, correlation_id, turn_model=None):
         "params": {"threadId": state["thread_id"], "turn": {"id": turn_id, "status": "inProgress"}}
     })
 
+    if prompt in ("RECONNECT_THEN_COMPLETE", "RECONNECT_THEN_FAIL"):
+        send({
+            "jsonrpc": "2.0",
+            "method": "error",
+            "params": {
+                "threadId": state["thread_id"],
+                "turnId": turn_id,
+                "willRetry": True,
+                "error": {"code": "stream_disconnected", "message": "Reconnecting... 2/5", "isRetryable": False}
+            }
+        })
+        if prompt == "RECONNECT_THEN_FAIL":
+            send({
+                "jsonrpc": "2.0",
+                "method": "error",
+                "params": {
+                    "threadId": state["thread_id"],
+                    "turnId": turn_id,
+                    "willRetry": False,
+                    "error": {"code": "stream_disconnected", "message": "Reconnect attempts exhausted", "isRetryable": True}
+                }
+            })
+            return
+
     stale_default = os.environ.get("MOCK_CODEX_STALE_DEFAULT_MODEL")
     if stale_default and not effective_model:
         nested_err = json.dumps({
