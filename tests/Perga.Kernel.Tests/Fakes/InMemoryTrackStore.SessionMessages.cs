@@ -62,7 +62,7 @@ internal sealed partial class InMemoryTrackStore : ISessionInputStore, ISessionM
         }
     }
 
-    private PersistedSessionInput BindInput(AgentSessionDto session, SessionMessage message, bool followUp)
+    private PersistedSessionInput BindInputLocked(AgentSessionDto session, SessionMessage message, bool followUp)
     {
         var index = (_turnsBySession.GetValueOrDefault(session.Id)?.Select(t => t.TurnIndex).DefaultIfEmpty().Max() ?? 0) + 1;
         var turnId = $"trn_{index:D6}_{Guid.NewGuid():N}";
@@ -71,8 +71,8 @@ internal sealed partial class InMemoryTrackStore : ISessionInputStore, ISessionM
         _inputs.Add(Key(message), input);
         _messages[Key(message)] = message with { TurnId = turnId };
         var turn = new SessionTurnDto(turnId, session.Id, index, session.Epoch, "user", TestJson.FromObject(new { }), "queued", null, null, null, null);
-        var recorded = RecordTurnAndItemsWithIdsAsync(turn, [new(0, session.Id, turnId, "user",
-            TestJson.FromObject(new { v = 1, content = message.Content, triggerKind = "user", inputId = message.Id }), session.UpdatedAtMs)], session).GetAwaiter().GetResult();
+        var recorded = RecordTurnAndItemsLocked(turn, [new(0, session.Id, turnId, "user",
+            TestJson.FromObject(new { v = 1, content = message.Content, triggerKind = "user", inputId = message.Id }), session.UpdatedAtMs)], session);
         input = input with { UserItemId = recorded.Turn.UserItemId };
         _inputs[Key(message)] = input;
         return input;
@@ -84,7 +84,7 @@ internal sealed partial class InMemoryTrackStore : ISessionInputStore, ISessionM
         {
             if (_sessions[session.Id].Status is "queued" or "running" or "unknown")
                 throw KernelException.Conflict("The session already has an active or unresolved turn.");
-            var input = BindInput(session, new($"inp_{Guid.NewGuid():N}", session.Id, null, "owner:installation", request.Key,
+            var input = BindInputLocked(session, new($"inp_{Guid.NewGuid():N}", session.Id, null, "owner:installation", request.Key,
                 request.Hash, null, null, request.Content, "queued", session.UpdatedAtMs, "input"), false);
             AppendEventLocked(sessionEvent);
             return Task.FromResult(input);
@@ -99,12 +99,12 @@ internal sealed partial class InMemoryTrackStore : ISessionInputStore, ISessionM
                 _sessions[session.Id].Status is "queued" or "running" or "unknown")
                 return Task.FromResult<PersistedSessionInput?>(null);
             var batch = _messages.Values.Where(m => m.SessionId == session.Id && m.AttemptId is null && m.Delivery == "queued" && m.TurnId is null).ToArray();
-            var input = BindInput(session, message, true);
+            var input = BindInputLocked(session, message, true);
             foreach (var next in batch.Where(m => m.Id != message.Id))
             {
                 _messages[Key(next)] = next with { TurnId = input.Receipt.TurnId };
-                var itemIds = AppendSessionItemsAsync(session.Id, [new(0, session.Id, input.Receipt.TurnId, "user",
-                    TestJson.FromObject(new { v = 1, content = next.Content, triggerKind = "user", inputId = next.Id }), session.UpdatedAtMs)], ct).GetAwaiter().GetResult();
+                var itemIds = AppendSessionItemsLocked(session.Id, [new(0, session.Id, input.Receipt.TurnId, "user",
+                    TestJson.FromObject(new { v = 1, content = next.Content, triggerKind = "user", inputId = next.Id }), session.UpdatedAtMs)]);
                 _inputs[Key(next)] = input with { Receipt = input.Receipt with { InputId = next.Id }, Content = next.Content, UserItemId = itemIds[0] };
             }
             input = input with { Content = string.Join("\n\n", batch.Select(m => m.Content)) };
@@ -118,7 +118,7 @@ internal sealed partial class InMemoryTrackStore : ISessionInputStore, ISessionM
         lock (_gate)
         {
             _sessions[session.Id] = session;
-            var input = firstInput is null ? null : BindInput(session, new($"inp_{Guid.NewGuid():N}", session.Id, null,
+            var input = firstInput is null ? null : BindInputLocked(session, new($"inp_{Guid.NewGuid():N}", session.Id, null,
                 "owner:installation", firstInput.Key, firstInput.Hash, null, null, firstInput.Content, "queued", session.UpdatedAtMs, "input"), false);
             _sessionCreations.Add((intent.TrackId, intent.Key), new(intent.Hash, session, input));
             AppendEventLocked(sessionEvent);
@@ -172,7 +172,7 @@ internal sealed partial class InMemoryTrackStore : ISessionInputStore, ISessionM
                 _inputs[Key(member)] = member with { Receipt = member.Receipt with { DeliveryState = delivery, TurnStatus = turn.Status } };
                 _messages[Key(member)] = _messages[Key(member)] with { Delivery = delivery };
             }
-            RecordTurnAndItemsWithIdsAsync(turn, items, session, ct).GetAwaiter().GetResult();
+            RecordTurnAndItemsLocked(turn, items, session);
             foreach (var evt in events) AppendEventLocked(evt);
             return Task.CompletedTask;
         }
@@ -243,7 +243,7 @@ internal sealed partial class InMemoryTrackStore : ISessionInputStore, ISessionM
             if (outcome == "delivered")
             {
                 _messages[Key(message)] = message with { TurnId = turnId, DeliveredTurnId = turnId, Delivery = outcome };
-                if (item is not null) AppendSessionItemsAsync(message.SessionId, [item], ct).GetAwaiter().GetResult();
+                if (item is not null) AppendSessionItemsLocked(message.SessionId, [item]);
             }
             return Task.FromResult(outcome);
         }
