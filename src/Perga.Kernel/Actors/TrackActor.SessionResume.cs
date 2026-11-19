@@ -236,7 +236,9 @@ public sealed partial class TrackActor
 
                 _sessions[sessionId] = updated;
                 ReleaseSessionResumeCore(sessionId);
-                await RegisterOpenAgentSessionCoreAsync(updated, replacement, spec.PermissionMode, CancellationToken.None)
+                await RegisterOpenAgentSessionCoreAsync(
+                    updated with { Model = spec.Model, ReasoningEffort = spec.ReasoningEffort },
+                    replacement, spec.PermissionMode, CancellationToken.None)
                     .ConfigureAwait(false);
                 return RequireSessionCore(sessionId);
             }, CancellationToken.None).ConfigureAwait(false);

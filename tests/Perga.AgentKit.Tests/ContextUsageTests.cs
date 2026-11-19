@@ -71,7 +71,7 @@ public sealed class ContextUsageTests : IDisposable
     }
 
     [Fact]
-    public async Task ClaudeUsesLastAssistantSnapshotAndCachesWindowBetweenTurns()
+    public async Task ClaudeUsesLastAssistantSnapshotAndReportsOnlyTheCurrentWindow()
     {
         await using var runtime = CreateRuntime();
         await using var session = await OpenAsync(runtime, "claude");
@@ -81,18 +81,12 @@ public sealed class ContextUsageTests : IDisposable
             var usage = Assert.Single(events.OfType<UnifiedAgentEvent.TurnCompleted>()).Usage;
             Assert.NotNull(usage);
             Assert.Equal(200, usage.InputTokens);
-            Assert.Equal(200000, usage.ContextWindowTokens);
+            Assert.Equal(prompt == "CONTEXT_CLAUDE" ? 200000L : (long?)null, usage.ContextWindowTokens);
             Assert.Equal(20, usage.OutputTokens);
             Assert.Equal(400, usage.CachedInputTokens);
             Assert.Equal(920, usage.UsedTokens);
             var updates = events.OfType<UnifiedAgentEvent.ContextUsageUpdated>().ToArray();
-            Assert.Equal(prompt == "CONTEXT_CLAUDE" ? 1 : 3, updates.Length);
-            Assert.Equal(usage, updates[^1].Usage);
-            if (updates.Length == 3)
-            {
-                Assert.Equal(820, updates[0].Usage.EffectiveUsedTokens);
-                Assert.Equal(920, updates[1].Usage.EffectiveUsedTokens);
-            }
+            Assert.Equal(usage, Assert.Single(updates).Usage);
             Assert.IsType<UnifiedAgentEvent.TurnCompleted>(events[^1]);
         }
         // A new turn without an assistant frame must not reuse the previous snapshot.
@@ -120,7 +114,8 @@ public sealed class ContextUsageTests : IDisposable
         Assert.Equal(prompt == "CONTEXT_ACP_STANDARD" ? 2 : 1, updates.Length);
         Assert.Equal(1234, updates[0].Usage.UsedTokens);
         Assert.Equal(1234, updates[0].Usage.EffectiveUsedTokens);
-        Assert.All(updates, update => Assert.Equal(1048576, update.Usage.ContextWindowTokens));
+        Assert.Equal(1_048_576, updates[0].Usage.ContextWindowTokens);
+        Assert.All(updates.Skip(1), update => Assert.Null(update.Usage.ContextWindowTokens));
         if (updates.Length == 2)
         {
             Assert.Equal(275, updates[1].Usage.EffectiveUsedTokens);

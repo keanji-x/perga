@@ -301,7 +301,6 @@ export type PlannerRun = Readonly<{
   /** Whether the bound Planner backend implements manual context compaction. */
   manual_compact_supported: boolean;
   compact_outcome: CompactOutcome | null;
-  context_usage_invalidated: boolean;
   /** How full the model's context is, or `null` when the harness has never reported it. */
   token_usage: PlannerRunTokenUsage | null;
   /** The turn the harness is running; non-null exactly when `phase` is `turn_running`. */
@@ -402,7 +401,6 @@ export function plannerRunOperation(cardId: string): ApiOperation<PlannerRun> {
         attachments_supported: false,
         manual_compact_supported: true,
         compact_outcome: null,
-        context_usage_invalidated: page.session.contextUsageInvalidated,
         token_usage: sessionContextUsage(page.session),
         running_turn: running && page.activeTurn !== null && page.activeTurn !== undefined
           ? { turn_id: page.activeTurn.id, elapsed_ms: Math.max(0, Date.now() - (page.activeTurn.startedAtMs ?? Date.now())) }

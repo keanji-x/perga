@@ -11,6 +11,8 @@ internal static class NativeCompactHelper
     {
         var summary = new StringBuilder();
         TokenUsage? usage = null;
+        long? contextUsageRevision = 0;
+        long? completedPromptId = null;
 
         await foreach (var evt in events.WithCancellation(ct).ConfigureAwait(false))
         {
@@ -21,6 +23,8 @@ internal static class NativeCompactHelper
                     break;
                 case UnifiedAgentEvent.TurnCompleted tc:
                     usage = tc.Usage;
+                    contextUsageRevision = tc.ContextUsageRevision;
+                    completedPromptId = tc.CompletedPromptId;
                     break;
                 case UnifiedAgentEvent.TurnError te:
                     throw new InvalidOperationException(te.Message);
@@ -30,6 +34,6 @@ internal static class NativeCompactHelper
         }
 
         var summaryText = summary.ToString().Trim();
-        return new NativeCompactResult(usage, string.IsNullOrEmpty(summaryText) ? "Context compacted." : summaryText);
+        return new NativeCompactResult(usage, string.IsNullOrEmpty(summaryText) ? "Context compacted." : summaryText, contextUsageRevision, completedPromptId);
     }
 }

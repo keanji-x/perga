@@ -166,7 +166,7 @@ describe('conversationNameFrom', () => {
 describe('track conversations', () => {
   const row = agentSessionDtoSchema.parse({
     id: 'card-3', trackId: 'track-1', title: null, isLead: false, provider: 'codex',
-    status: 'starting', createdAtMs: 1, updatedAtMs: 7,
+    status: 'starting', contextUsage: null, createdAtMs: 1, updatedAtMs: 7,
   });
 
   it('maps session identity, role, provider and timestamps into a unified conversation', () => {
@@ -1306,7 +1306,7 @@ it('edits the same queued entry with the exact observed revision and requires st
 
 it('retains session archive metadata in the conversation', () => {
   const row = agentSessionDtoSchema.parse({ id: 'card', trackId: 'track', isLead: false,
-    provider: 'claude', status: 'idle', createdAtMs: 1, updatedAtMs: 2, archivedAtMs: 42 });
+    provider: 'claude', status: 'idle', contextUsage: null, createdAtMs: 1, updatedAtMs: 2, archivedAtMs: 42 });
   expect(agentSessionDtoToConversation(row).archivedAt).toBe(42);
 });
 

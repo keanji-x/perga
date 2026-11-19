@@ -219,7 +219,7 @@ describe('Perga /api/v1 protocol contracts', () => {
     expect(operation.path).toBe('/api/v1/sessions/session%2Fa/model');
     expect(operation.body).toEqual({ model: 'chosen', reasoningEffort: null });
     expect(operation.responseSchema.parse({
-      id: 'session/a', trackId: 'track', provider: 'codex', model: 'chosen', createdAtMs: 1, updatedAtMs: 2,
+      id: 'session/a', trackId: 'track', provider: 'codex', model: 'chosen', contextUsage: null, createdAtMs: 1, updatedAtMs: 2,
     })).toMatchObject({ id: 'session/a', model: 'chosen' });
   });
 
@@ -333,9 +333,7 @@ describe('Perga /api/v1 protocol contracts', () => {
           nativeThreadId: 'thr_1',
           epoch: 2,
           status: 'running',
-          contextUsedTokens: 107_520,
-          contextWindowTokens: 256_000,
-          contextUsageAtMs: 2400,
+          contextUsage: { usedTokens: 107_520, windowTokens: 256_000, observedAtMs: 2400, ratio: 0.42 },
           archivedAtMs: null,
           createdAtMs: 1000,
           updatedAtMs: 2500,
@@ -497,9 +495,7 @@ describe('Perga /api/v1 protocol contracts', () => {
         nativeThreadId: 'thr_1',
         epoch: 2,
         status: 'idle',
-        contextUsedTokens: 166_400,
-        contextWindowTokens: 256_000,
-        contextUsageAtMs: 1250,
+        contextUsage: { usedTokens: 166_400, windowTokens: 256_000, observedAtMs: 1250, ratio: 0.65 },
         archivedAtMs: null,
         createdAtMs: 900,
         updatedAtMs: 1300,
@@ -710,7 +706,7 @@ describe('Perga /api/v1 protocol contracts', () => {
       session: {
         id: 'ses_lead', trackId: 'trk_1', isLead: true, boundTaskId: null, boundAttemptId: null,
         title: 'Lead', provider: 'codex', model: 'gpt-5', nativeThreadId: 'thr_1', epoch: 1,
-        status: 'idle', contextUsedTokens: null, contextWindowTokens: null, contextUsageAtMs: null, archivedAtMs: null, createdAtMs: 90, updatedAtMs: 130,
+        status: 'idle', contextUsage: null, archivedAtMs: null, createdAtMs: 90, updatedAtMs: 130,
       },
     });
     expect(errorPage.next_cursor?.position).toBe(10);
@@ -735,7 +731,7 @@ describe('Perga /api/v1 protocol contracts', () => {
       session: {
         id: 'ses_lead', trackId: 'trk_1', isLead: true, boundTaskId: null, boundAttemptId: null,
         title: 'Lead', provider: 'codex', model: 'gpt-5', nativeThreadId: 'thr_1', epoch: 1,
-        status: 'idle', contextUsedTokens: null, contextWindowTokens: null, contextUsageAtMs: null, archivedAtMs: null, createdAtMs: 90, updatedAtMs: 130,
+        status: 'idle', contextUsage: null, archivedAtMs: null, createdAtMs: 90, updatedAtMs: 130,
       },
     });
     expect(run.permission_mode).toBeNull();

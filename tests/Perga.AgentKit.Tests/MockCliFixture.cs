@@ -938,8 +938,18 @@ def handle_prompt(req_id, params):
             }
         }
     })
+    if prompt_text == "ACP_NO_SIZE_USAGE":
+        send({
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "result": {
+                "stopReason": "end_turn",
+                "usage": {"inputTokens": 300, "outputTokens": 50}
+            }
+        })
+        return
     if prompt_text.startswith("CONTEXT_ACP"):
-        update = {"sessionUpdate": "usage_update", "used": 1234, "size": 1048576}
+        update = {"sessionUpdate": "usage_update", "used": 1234, "size": int(os.environ.get("MOCK_ACP_PROMPT_WINDOW", "1048576"))}
         send({"jsonrpc": "2.0", "method": "session/update", "params": {"sessionId": state["session_id"], "update": update}})
         if prompt_text == "CONTEXT_ACP_STANDARD":
             update = {"sessionUpdate": "usage_update", "usage": {"inputTokens": 200, "outputTokens": 75, "cachedReadTokens": 40}}
@@ -1124,21 +1134,29 @@ for raw_line in sys.stdin:
                     }
                 })
             if post_usage_raw:
-                usage_payload = json.loads(post_usage_raw)
-                send({
-                    "jsonrpc": "2.0",
-                    "method": "session/update",
-                    "params": {
-                        "sessionId": sid,
-                        "update": {"sessionUpdate": "usage_update", **usage_payload}
-                    }
-                })
+                parsed_usage = json.loads(post_usage_raw)
+                usage_items = parsed_usage if isinstance(parsed_usage, list) else [parsed_usage]
+                for usage_payload in usage_items:
+                    send({
+                        "jsonrpc": "2.0",
+                        "method": "session/update",
+                        "params": {
+                            "sessionId": sid,
+                            "update": {"sessionUpdate": "usage_update", **usage_payload}
+                        }
+                    })
 
         if advertise_mode in ("1", "empty_then_compact", "no_compact") or post_usage_raw:
             if post_delay_ms > 0:
                 threading.Thread(target=send_post_session_updates, daemon=True).start()
             else:
                 send_post_session_updates()
+        exit_after_ms = int(os.environ.get("MOCK_ACP_EXIT_AFTER_SESSION_MS", "0"))
+        if exit_after_ms > 0:
+            def exit_soon():
+                time.sleep(exit_after_ms / 1000.0)
+                os._exit(0)
+            threading.Thread(target=exit_soon, daemon=True).start()
     elif method == "session/close":
         if params.get("sessionId") == state["session_id"]:
             result = {"success": False} if os.environ.get("MOCK_ACP_INVALID_CLOSE") == "1" else {}

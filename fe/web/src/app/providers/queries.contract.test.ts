@@ -1092,7 +1092,7 @@ describe('input metadata mutation reconciliation', () => {
           paths.push(request.path);
           if (request.path === '/api/v1/tracks/w1') return ok({
             track: { id: 'w1', areaId: 'c1', createdAtMs: 1, updatedAtMs: 2 }, report: {}, tasks: [], openAsks: [],
-            sessions: [{ id: 'card-1', trackId: 'w1', title, isLead: true, provider: 'codex', status: 'idle', createdAtMs: 1, updatedAtMs: 2 }],
+            sessions: [{ id: 'card-1', trackId: 'w1', title, isLead: true, provider: 'codex', status: 'idle', contextUsage: null, createdAtMs: 1, updatedAtMs: 2 }],
           });
           title = 'Edited';
           if (outcome === 'unknown') throw new Error('connection lost after write');

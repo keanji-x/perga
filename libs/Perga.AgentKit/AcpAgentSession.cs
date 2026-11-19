@@ -16,6 +16,8 @@ public sealed class AcpAgentSession : IAgentSession
         string RejectOptionId,
         IReadOnlySet<string> ValidOptionIds);
 
+    private sealed record CompletedContextPrompt(long Id, long? Revision);
+
     private sealed class TurnStreamState
     {
         public Channel<UnifiedAgentEvent> Events { get; } = Channel.CreateUnbounded<UnifiedAgentEvent>(
@@ -23,8 +25,10 @@ public sealed class AcpAgentSession : IAgentSession
 
         public HashSet<string> StartedToolIds { get; } = new(StringComparer.Ordinal);
         public TokenUsage? LatestUsage;
+        public long ContextUsageRevision;
         public volatile bool CancelRequested;
         private int _finished;
+        public bool IsFinished => Volatile.Read(ref _finished) != 0;
 
         public bool TryFinish(UnifiedAgentEvent terminalEvent)
         {
@@ -63,12 +67,16 @@ public sealed class AcpAgentSession : IAgentSession
     private readonly object _idleUsageLock = new();
     private Action<IdleContextUsage>? _idleUsageHandler;
     private IdleContextUsage? _pendingIdleUsage;
+    private IdleContextUsage? _pendingIdleUsageWithWindow;
     private TurnStreamState? _currentTurn;
     private string? _nativeThreadId;
     private string? _lastEmittedThreadId;
     private string? _pendingSystemPrompt;
-    private string? _configuredModel;
-    private long _latestContextWindowTokens;
+    private (string? ModelId, string? Effort) _confirmedConfiguration;
+    private long _contextUsageRevision;
+    private long _nextContextPromptId;
+    private CompletedContextPrompt? _lastCompletedContextPrompt;
+    private bool _useRestoredModelOnPrompt;
     private bool _supportsNativeCompact;
     private int _disposed;
 
@@ -122,26 +130,19 @@ public sealed class AcpAgentSession : IAgentSession
         return SupportsNativeCompact;
     }
 
-    public IdleContextUsage? AttachIdleContextUsageHandler(Action<IdleContextUsage>? handler)
+    public IReadOnlyList<IdleContextUsage> AttachIdleContextUsageHandler(Action<IdleContextUsage>? handler)
     {
         lock (_idleUsageLock)
         {
-            if (Volatile.Read(ref _disposed) != 0)
-            {
-                _idleUsageHandler = null;
-                _pendingIdleUsage = null;
-                return null;
-            }
-
-            _idleUsageHandler = handler;
-            if (handler is null)
-            {
-                return null;
-            }
-
-            var pending = _pendingIdleUsage;
+            _idleUsageHandler = _disposed == 0 ? handler : null;
+            var latest = _pendingIdleUsage;
+            var window = _pendingIdleUsageWithWindow;
             _pendingIdleUsage = null;
-            return pending;
+            _pendingIdleUsageWithWindow = null;
+            if (_idleUsageHandler is null || latest is null)
+                return [];
+
+            return window is not null && !ReferenceEquals(latest, window) ? [window, latest] : [latest];
         }
     }
     private bool _configureWorker;
@@ -178,13 +179,39 @@ public sealed class AcpAgentSession : IAgentSession
     internal IReadOnlyList<string> AvailableModels { get; private set; } = [];
     internal IReadOnlyList<ProviderModelInfo> AvailableModelCatalog { get; private set; } = [];
 
-    private void OnModelConfigured(string? model)
+    public bool CanReuseContextWindow => true;
+    public long? ContextUsageRevision
+    {
+        get
+        {
+            var revision = Interlocked.Read(ref _contextUsageRevision);
+            return revision > 0 ? revision : null;
+        }
+    }
+
+    private void ConfirmContextBinding(string? modelId, string? effort = null)
     {
         lock (_idleUsageLock)
         {
-            Volatile.Write(ref _configuredModel, model);
+            var configuration = (modelId, effort);
+            if (_contextUsageRevision != 0 && _confirmedConfiguration == configuration)
+            {
+                return;
+            }
+
+            _confirmedConfiguration = configuration;
             _pendingIdleUsage = null;
-            Interlocked.Exchange(ref _latestContextWindowTokens, 0);
+            _pendingIdleUsageWithWindow = null;
+            Interlocked.Increment(ref _contextUsageRevision);
+        }
+    }
+
+    private void ApplyWorkerOptions(AcpWorkerOptions? options)
+    {
+        lock (_idleUsageLock)
+        {
+            Volatile.Write(ref _workerOptions, options);
+            ConfirmContextBinding(options?.Model?.Current ?? _legacyWorkerModel, options?.Reasoning?.Current);
         }
     }
 
@@ -204,30 +231,44 @@ public sealed class AcpAgentSession : IAgentSession
 
         try
         {
-            await _rpc.SendRequestAsync("session/set_model", new
+            var result = await _rpc.SendRequestAsync("session/set_model", new
             {
                 sessionId = NativeThreadId,
                 modelId = resolvedModelId
-            }, timeoutCts.Token, _ => OnModelConfigured(requestedModel)).ConfigureAwait(false);
-            return true;
+            }, timeoutCts.Token, res => ConfirmModelResult(res, resolvedModelId)).ConfigureAwait(false);
+            return ConfirmsModel(result, resolvedModelId);
         }
         catch (JsonRpcRemoteException ex) when (ex.Code == -32601)
         {
             try
             {
-                await _rpc.SendRequestAsync("session/set_config_option", new
+                var result = await _rpc.SendRequestAsync("session/set_config_option", new
                 {
                     sessionId = NativeThreadId,
                     configId = "model",
                     value = resolvedModelId
-                }, timeoutCts.Token, _ => OnModelConfigured(requestedModel)).ConfigureAwait(false);
-                return true;
+                }, timeoutCts.Token, res => ConfirmModelResult(res, resolvedModelId)).ConfigureAwait(false);
+                return ConfirmsModel(result, resolvedModelId);
             }
             catch (JsonRpcRemoteException configEx) when (configEx.Code == -32601)
             {
                 return false;
             }
         }
+    }
+
+    private void ConfirmModelResult(JsonElement result, string modelId)
+    {
+        if (ConfirmsModel(result, modelId))
+            ConfirmContextBinding(modelId);
+    }
+
+    private static bool ConfirmsModel(JsonElement result, string modelId)
+    {
+        if (result.ValueKind != JsonValueKind.Object || TryGetBool(result, "success") == false)
+            return false;
+        var (_, currentModelId) = ExtractAvailableModels(result);
+        return currentModelId is null || string.Equals(currentModelId, modelId, StringComparison.Ordinal);
     }
 
     internal static async Task<AcpAgentSession> OpenAsync(
@@ -413,6 +454,7 @@ public sealed class AcpAgentSession : IAgentSession
         {
             _idleUsageHandler = null;
             _pendingIdleUsage = null;
+            _pendingIdleUsageWithWindow = null;
         }
 
         _onDispose?.Invoke(this);
@@ -491,6 +533,8 @@ public sealed class AcpAgentSession : IAgentSession
             }
         }
 
+        _configureWorker = spec.ConfigureWorker;
+        _workerLaunchModel = _configureWorker ? spec.Model?.Trim() : null;
         var response = await _rpc.SendRequestAsync(method, sessionParams, ct, res =>
         {
             if (res.ValueKind != JsonValueKind.Object || TryGetBool(res, "success") == false)
@@ -505,6 +549,29 @@ public sealed class AcpAgentSession : IAgentSession
                 (!isResume || string.Equals(id, spec.ResumeNativeThreadId, StringComparison.Ordinal)))
             {
                 Volatile.Write(ref _nativeThreadId, id);
+            }
+
+            if (_configureWorker)
+            {
+                var options = AcpWorkerOptions.Read(res);
+                if (!isResume) _workerDefaults = options;
+                ApplyWorkerOptions(options);
+                return;
+            }
+
+            var (observedModels, observedCurrentModelId) = ExtractAvailableModels(res);
+            if (string.IsNullOrWhiteSpace(spec.Model))
+            {
+                if (!isResume || !string.IsNullOrWhiteSpace(observedCurrentModelId))
+                    ConfirmContextBinding(observedCurrentModelId);
+                return;
+            }
+
+            if (!string.IsNullOrWhiteSpace(observedCurrentModelId))
+            {
+                var catalog = AcpModelCatalog.Build(observedModels, observedCurrentModelId);
+                if (string.Equals(observedCurrentModelId, catalog.Resolve(spec.Model.Trim(), spec.ReasoningEffort), StringComparison.Ordinal))
+                    ConfirmContextBinding(observedCurrentModelId);
             }
         }).ConfigureAwait(false);
         if (response.ValueKind != JsonValueKind.Object || TryGetBool(response, "success") == false ||
@@ -556,15 +623,9 @@ public sealed class AcpAgentSession : IAgentSession
         }
 
         Volatile.Write(ref _nativeThreadId, resolvedSessionId);
-        _configureWorker = spec.ConfigureWorker;
+        _useRestoredModelOnPrompt = isResume && string.IsNullOrWhiteSpace(spec.Model);
         if (_configureWorker)
-        {
-            _workerLaunchModel = spec.Model?.Trim();
-            var workerOptions = AcpWorkerOptions.Read(response);
-            if (!isResume) _workerDefaults = workerOptions;
-            Volatile.Write(ref _workerOptions, workerOptions);
             return;
-        }
 
         var (rawModels, currentModelId) = ExtractAvailableModels(response);
         AvailableModels = rawModels.Select(m => m.ModelId).ToArray();
@@ -578,7 +639,7 @@ public sealed class AcpAgentSession : IAgentSession
                 !string.IsNullOrWhiteSpace(currentModelId) &&
                 string.Equals(currentModelId, _modelCatalog.Resolve(requestedModel, spec.ReasoningEffort), StringComparison.Ordinal))
             {
-                OnModelConfigured(requestedModel);
+                ConfirmContextBinding(currentModelId);
             }
         }
     }
@@ -652,6 +713,7 @@ public sealed class AcpAgentSession : IAgentSession
         TurnStreamState turnState,
         CancellationToken ct)
     {
+        long? workerRevision = null;
         if (_configureWorker)
         {
             try
@@ -667,10 +729,14 @@ public sealed class AcpAgentSession : IAgentSession
                 if (input.ReasoningEffort is not null)
                     await SetWorkerOptionAsync(sessionId, Volatile.Read(ref _workerOptions)?.Reasoning,
                         input.ReasoningEffort, model: false, ct).ConfigureAwait(false);
-                var applied = Volatile.Read(ref _workerOptions);
-                if ((input.Model is not null && (applied?.Model?.Current ?? _legacyWorkerModel) != input.Model) ||
-                    (input.ReasoningEffort is not null && applied?.Reasoning?.Current != input.ReasoningEffort))
-                    throw new InvalidOperationException("The ACP session did not confirm the selected model and reasoning effort together.");
+                lock (_idleUsageLock)
+                {
+                    var applied = _workerOptions;
+                    if ((input.Model is not null && (applied?.Model?.Current ?? _legacyWorkerModel) != input.Model) ||
+                        (input.ReasoningEffort is not null && applied?.Reasoning?.Current != input.ReasoningEffort))
+                        throw new InvalidOperationException("The ACP session did not confirm the selected model and reasoning effort together.");
+                    workerRevision = ContextUsageRevision;
+                }
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -704,48 +770,25 @@ public sealed class AcpAgentSession : IAgentSession
             }
         };
 
-        await RunRawPromptRpcAsync(promptParams, turnState, ct).ConfigureAwait(false);
+        await RunRawPromptRpcAsync(promptParams, turnState, ct, workerRevision).ConfigureAwait(false);
     }
 
     private async Task RunRawPromptRpcAsync(
         Dictionary<string, object?> promptParams,
         TurnStreamState turnState,
-        CancellationToken ct)
+        CancellationToken ct,
+        long? workerRevision = null)
     {
         try
         {
-            var result = await _rpc.SendRequestAsync("session/prompt", promptParams, ct).ConfigureAwait(false);
-            var usage = MergeUsage(TryParseAcpUsage(result), turnState.LatestUsage);
-            var stopReason = TryGetString(result, "stopReason");
-
-            if (result.ValueKind == JsonValueKind.Object &&
-                result.TryGetProperty("error", out var errObj) &&
-                errObj.ValueKind is not (JsonValueKind.Null or JsonValueKind.Undefined))
-            {
-                var code = TryGetString(errObj, "code") ?? "acp_turn_error";
-                var msg = errObj.ValueKind == JsonValueKind.String
-                    ? errObj.GetString() ?? "ACP turn error."
-                    : TryGetString(errObj, "message") ?? errObj.GetRawText();
-                var retryable = TryGetBool(errObj, "isRetryable") ?? TryGetBool(errObj, "retryable") ?? false;
-                turnState.TryFinish(new UnifiedAgentEvent.TurnError(code, msg, retryable));
-                return;
-            }
-
-            if (string.Equals(stopReason, "cancelled", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(stopReason, "canceled", StringComparison.OrdinalIgnoreCase))
-            {
-                turnState.TryFinish(new UnifiedAgentEvent.TurnInterrupted());
-                return;
-            }
-
-            if (stopReason is not ("end_turn" or "max_tokens" or "max_turn_requests" or "refusal"))
-            {
-                turnState.TryFinish(new UnifiedAgentEvent.TurnError("acp_unconfirmed_turn",
-                    "The provider returned no recognized stop reason.", IsRetryable: false));
-                return;
-            }
-
-            turnState.TryFinish(new UnifiedAgentEvent.TurnCompleted(usage));
+            if (_useRestoredModelOnPrompt && ContextUsageRevision is null)
+                ConfirmContextBinding(null);
+            var revision = workerRevision ?? ContextUsageRevision;
+            Interlocked.Exchange(ref turnState.ContextUsageRevision, revision ?? 0);
+            Volatile.Write(ref _lastCompletedContextPrompt, null);
+            var prompt = new CompletedContextPrompt(Interlocked.Increment(ref _nextContextPromptId), revision);
+            await _rpc.SendRequestAsync("session/prompt", promptParams, ct,
+                result => CompleteRawPrompt(result, turnState, prompt)).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -765,6 +808,42 @@ public sealed class AcpAgentSession : IAgentSession
         }
     }
 
+    private void CompleteRawPrompt(JsonElement result, TurnStreamState turnState, CompletedContextPrompt prompt)
+    {
+        var stopReason = TryGetString(result, "stopReason");
+
+        if (result.ValueKind == JsonValueKind.Object &&
+            result.TryGetProperty("error", out var errObj) &&
+            errObj.ValueKind is not (JsonValueKind.Null or JsonValueKind.Undefined))
+        {
+            var code = TryGetString(errObj, "code") ?? "acp_turn_error";
+            var msg = errObj.ValueKind == JsonValueKind.String
+                ? errObj.GetString() ?? "ACP turn error."
+                : TryGetString(errObj, "message") ?? errObj.GetRawText();
+            var retryable = TryGetBool(errObj, "isRetryable") ?? TryGetBool(errObj, "retryable") ?? false;
+            turnState.TryFinish(new UnifiedAgentEvent.TurnError(code, msg, retryable));
+            return;
+        }
+
+        if (string.Equals(stopReason, "cancelled", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(stopReason, "canceled", StringComparison.OrdinalIgnoreCase))
+        {
+            turnState.TryFinish(new UnifiedAgentEvent.TurnInterrupted());
+            return;
+        }
+
+        if (stopReason is not ("end_turn" or "max_tokens" or "max_turn_requests" or "refusal"))
+        {
+            turnState.TryFinish(new UnifiedAgentEvent.TurnError("acp_unconfirmed_turn",
+                "The provider returned no recognized stop reason.", IsRetryable: false));
+            return;
+        }
+
+        var usage = MergeUsage(TryParseAcpUsage(result), turnState.LatestUsage);
+        Volatile.Write(ref _lastCompletedContextPrompt, prompt);
+        turnState.TryFinish(new UnifiedAgentEvent.TurnCompleted(usage, prompt.Revision, prompt.Id));
+    }
+
     private async Task SetLegacyWorkerLaunchModelAsync(string sessionId, string model, CancellationToken ct)
     {
         if (_legacyWorkerModel == model) return;
@@ -772,10 +851,19 @@ public sealed class AcpAgentSession : IAgentSession
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeout.CancelAfter(TimeSpan.FromSeconds(5));
         var args = new Dictionary<string, object?> { ["sessionId"] = sessionId, ["modelId"] = model };
-        var result = await _rpc.SendRequestAsync("session/set_model", args, timeout.Token).ConfigureAwait(false);
-        if (result.ValueKind != JsonValueKind.Object || TryGetBool(result, "success") == false)
+        var result = await _rpc.SendRequestAsync("session/set_model", args, timeout.Token, response =>
+        {
+            if (ConfirmsModel(response, model))
+            {
+                lock (_idleUsageLock)
+                {
+                    _legacyWorkerModel = model;
+                    ConfirmContextBinding(model);
+                }
+            }
+        }).ConfigureAwait(false);
+        if (!ConfirmsModel(result, model))
             throw new InvalidOperationException("The ACP session did not acknowledge the Worker launch model.");
-        _legacyWorkerModel = model;
     }
 
     private async Task SetWorkerOptionAsync(string sessionId, AcpWorkerOption? option, string value, bool model, CancellationToken ct)
@@ -787,9 +875,13 @@ public sealed class AcpAgentSession : IAgentSession
         var args = new Dictionary<string, object?> { ["sessionId"] = sessionId, ["configId"] = option.Id, ["value"] = value };
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeout.CancelAfter(TimeSpan.FromSeconds(5));
-        var result = await _rpc.SendRequestAsync("session/set_config_option", args, timeout.Token).ConfigureAwait(false);
-        var current = AcpWorkerOptions.Read(result);
-        if (current is not null) Volatile.Write(ref _workerOptions, current);
+        AcpWorkerOptions? current = null;
+        await _rpc.SendRequestAsync("session/set_config_option", args, timeout.Token, response =>
+        {
+            current = AcpWorkerOptions.Read(response);
+            if (current is not null)
+                ApplyWorkerOptions(current);
+        }).ConfigureAwait(false);
         var applied = model ? current?.Model : current?.Reasoning;
         if (applied?.Id != option.Id || applied.Current != value)
             throw new InvalidOperationException("The ACP session did not confirm the requested Worker setting.");
@@ -822,7 +914,7 @@ public sealed class AcpAgentSession : IAgentSession
 
         if (_configureWorker && TryGetString(parameters, "sessionId") == NativeThreadId &&
             TryGetString(update, "sessionUpdate") == "config_option_update" && AcpWorkerOptions.Read(update) is { } options)
-            Volatile.Write(ref _workerOptions, options);
+            ApplyWorkerOptions(options);
 
         var updateKind = TryGetString(update, "sessionUpdate")
                          ?? TryGetString(update, "type")
@@ -856,45 +948,41 @@ public sealed class AcpAgentSession : IAgentSession
 
         if (string.Equals(updateKind, "usage_update", StringComparison.Ordinal))
         {
-            var usage = TryParseAcpUsage(update);
-            if (usage is not null)
+            if (TryParseAcpUsage(update) is { } usage)
             {
-                if (usage.ContextWindowTokens is > 0)
+                var activeTurn = Volatile.Read(ref _currentTurn);
+                if (activeTurn is { IsFinished: false })
                 {
-                    Interlocked.Exchange(ref _latestContextWindowTokens, usage.ContextWindowTokens.Value);
-                }
-
-                if (Volatile.Read(ref _currentTurn) is { } activeTurn)
-                {
-                    usage = MergeUsage(usage, activeTurn.LatestUsage)!;
-                    activeTurn.LatestUsage = usage;
-                    activeTurn.Events.Writer.TryWrite(new UnifiedAgentEvent.ContextUsageUpdated(usage));
+                    var revision = Interlocked.Read(ref activeTurn.ContextUsageRevision);
+                    if (revision != 0 && revision == ContextUsageRevision)
+                    {
+                        activeTurn.LatestUsage = MergeUsage(usage, activeTurn.LatestUsage);
+                        activeTurn.Events.Writer.TryWrite(new UnifiedAgentEvent.ContextUsageUpdated(usage, revision));
+                    }
                 }
                 else if (!_configureWorker)
                 {
-                    var cachedWindow = Interlocked.Read(ref _latestContextWindowTokens);
-                    var effectiveWindow = usage.ContextWindowTokens ?? (cachedWindow > 0 ? cachedWindow : null);
-                    if (effectiveWindow is > 0 && usage.EffectiveUsedTokens >= 0)
+                    IdleContextUsage idleUsage;
+                    Action<IdleContextUsage>? handler;
+                    lock (_idleUsageLock)
                     {
-                        var idleUsage = new IdleContextUsage(
-                            usage with { ContextWindowTokens = effectiveWindow },
-                            Volatile.Read(ref _configuredModel),
-                            NativeThreadId);
-                        Action<IdleContextUsage>? handler = null;
-                        lock (_idleUsageLock)
-                        {
-                            if (Volatile.Read(ref _disposed) == 0)
-                            {
-                                handler = _idleUsageHandler;
-                                if (handler is null)
-                                {
-                                    _pendingIdleUsage = idleUsage;
-                                }
-                            }
-                        }
+                        if (_disposed != 0 || _contextUsageRevision == 0)
+                            return;
 
-                        handler?.Invoke(idleUsage);
+                        var completedPrompt = Volatile.Read(ref _lastCompletedContextPrompt);
+                        idleUsage = new IdleContextUsage(usage, _contextUsageRevision, NativeThreadId,
+                            completedPrompt is not null && completedPrompt.Revision == _contextUsageRevision ? completedPrompt.Id : null);
+                        handler = _idleUsageHandler;
+                        if (handler is null)
+                        {
+                            // Buffer the latest reading and the latest explicit window until the Kernel attaches.
+                            _pendingIdleUsage = idleUsage;
+                            if (usage.ContextWindowTokens is not null)
+                                _pendingIdleUsageWithWindow = idleUsage;
+                        }
                     }
+
+                    handler?.Invoke(idleUsage);
                 }
             }
 
@@ -1249,15 +1337,21 @@ public sealed class AcpAgentSession : IAgentSession
             return null;
         }
 
-        var rawWindow = TryGetLong(source, "contextWindowTokens")
-                        ?? TryGetLong(source, "context_window_tokens")
-                        ?? TryGetLong(source, "size")
-                        ?? TryGetLong(container, "contextWindowTokens")
-                        ?? TryGetLong(container, "size");
-        var window = rawWindow is > 0 ? rawWindow : null;
+        long? window = null;
+        if (TryGetWindow(source, out var rawWindow) || TryGetWindow(container, out rawWindow))
+        {
+            if (rawWindow.ValueKind != JsonValueKind.Number || !rawWindow.TryGetInt64(out var value) || value <= 0)
+                return null;
+            window = value;
+        }
 
         return new TokenUsage(input ?? 0L, output ?? 0L, cached, window, used);
     }
+
+    private static bool TryGetWindow(JsonElement usage, out JsonElement window) =>
+        usage.TryGetProperty("contextWindowTokens", out window) ||
+        usage.TryGetProperty("context_window_tokens", out window) ||
+        usage.TryGetProperty("size", out window);
 
     private static string? TryGetString(JsonElement obj, string propertyName) =>
         obj.ValueKind == JsonValueKind.Object &&
@@ -1276,7 +1370,7 @@ public sealed class AcpAgentSession : IAgentSession
     private static long? TryGetLong(JsonElement obj, string propertyName) =>
         obj.ValueKind == JsonValueKind.Object &&
         obj.TryGetProperty(propertyName, out var prop) &&
-        prop.TryGetInt64(out var val)
+        prop.ValueKind == JsonValueKind.Number && prop.TryGetInt64(out var val)
             ? val
             : null;
 

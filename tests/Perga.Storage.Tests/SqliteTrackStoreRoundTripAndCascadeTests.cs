@@ -17,11 +17,10 @@ public sealed class SqliteTrackStoreRoundTripAndCascadeTests
         var ct = CancellationToken.None;
         await harness.Store.UpsertAreaAsync(StorageTestHarness.CreateArea(), ct);
         var (track, report, lead) = StorageTestHarness.CreateSeedTrack();
-        lead = lead with { ContextUsedTokens = 1234, ContextWindowTokens = 1000, ContextUsageAtMs = 42,
-            ContextUsageRatio = 1, ContextUsageInvalidated = true };
+        lead = lead with { ContextUsage = new SessionContextUsage(1234, 1000, 42) };
         await harness.Store.CreateTrackAsync(track, report, null, lead, ct);
         Assert.Equal(lead, Assert.Single((await harness.Store.LoadTrackAggregateAsync(track.Id, ct))!.Sessions));
-        var reset = lead with { ContextUsedTokens = 0, ContextUsageRatio = 0, ContextUsageAtMs = null, ContextUsageInvalidated = false };
+        var reset = lead with { ContextUsage = null };
         await harness.Store.UpsertSessionAsync(reset, StorageTestHarness.CreateEvent("session.updated", track.Id, track.AreaId), ct);
         Assert.Equal(reset, Assert.Single((await harness.Store.LoadTrackAggregateAsync(track.Id, ct))!.Sessions));
     }
@@ -104,7 +103,6 @@ public sealed class SqliteTrackStoreRoundTripAndCascadeTests
             NativeThreadId: null,
             Epoch: 1,
             Status: "idle",
-            ContextUsageRatio: 0.35,
             ArchivedAtMs: null,
             CreatedAtMs: 2_100,
             UpdatedAtMs: 2_100);
@@ -360,7 +358,7 @@ public sealed class SqliteTrackStoreRoundTripAndCascadeTests
                 new SessionItemDto(0, "sess_a", "turn_1", "thinking", StorageTestHarness.Json("""{"text":"plan"}"""), 4_100),
                 new SessionItemDto(0, "sess_a", "turn_1", "assistant_text", StorageTestHarness.Json("""{"text":"Done!"}"""), 4_200)
             ],
-            updatedSession: leadA with { Status = "idle", ContextUsageRatio = 0.25, UpdatedAtMs = 4_200 },
+            updatedSession: leadA with { Status = "idle", ContextUsage = new SessionContextUsage(250, 1000, 4_200), UpdatedAtMs = 4_200 },
             ct);
 
         Assert.Single(await store.ListSessionTurnsAsync("sess_a", ct));

@@ -133,7 +133,6 @@ internal sealed class StorageTestHarness : IAsyncDisposable
             NativeThreadId: "th_lead_1",
             Epoch: 1,
             Status: "idle",
-            ContextUsageRatio: 0.12,
             ArchivedAtMs: null,
             CreatedAtMs: nowMs,
             UpdatedAtMs: nowMs);

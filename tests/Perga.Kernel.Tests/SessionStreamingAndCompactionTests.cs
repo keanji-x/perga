@@ -320,7 +320,7 @@ public sealed class SessionStreamingAndCompactionTests
         var leadAfterAuto = sessionsAfterAuto.Single(s => s.Id == leadId);
         Assert.Equal(2, leadAfterAuto.Epoch);
         Assert.Null(leadAfterAuto.NativeThreadId);
-        Assert.Equal(0.0, leadAfterAuto.ContextUsageRatio);
+        Assert.Null(leadAfterAuto.ContextUsage);
 
         var openedArray = ctx.AgentRuntime.OpenedSessions.ToArray();
         Assert.Equal(2, openedArray.Length);
@@ -341,7 +341,7 @@ public sealed class SessionStreamingAndCompactionTests
         var manuallyCompacted = await ctx.Kernel.CompactSessionAsync(leadId);
         Assert.Equal(3, manuallyCompacted.Epoch);
         Assert.Null(manuallyCompacted.NativeThreadId);
-        Assert.Equal(0.0, manuallyCompacted.ContextUsageRatio);
+        Assert.Null(manuallyCompacted.ContextUsage);
         Assert.True(epoch2Session.Disposed);
 
         var allOpened = ctx.AgentRuntime.OpenedSessions.ToArray();
@@ -377,11 +377,10 @@ public sealed class SessionStreamingAndCompactionTests
         var leadAfterAuto = sessionsAfterAuto.Single(s => s.Id == leadId);
         Assert.Equal(1, leadAfterAuto.Epoch);
         Assert.Equal("thr_epoch_1", leadAfterAuto.NativeThreadId);
-        Assert.Equal(reportsUsage ? 0.2 : 0, leadAfterAuto.ContextUsageRatio, precision: 4);
-        Assert.Equal(reportsUsage ? 20_000L : 0L, leadAfterAuto.ContextUsedTokens);
-        Assert.Equal(reportsUsage, leadAfterAuto.ContextUsageAtMs is not null);
-        Assert.Equal(100_000, leadAfterAuto.ContextWindowTokens);
-        Assert.False(leadAfterAuto.ContextUsageInvalidated);
+        Assert.Equal(reportsUsage ? 0.2 : (double?)null, leadAfterAuto.ContextUsage?.Ratio);
+        Assert.Equal(reportsUsage ? 20_000L : (long?)null, leadAfterAuto.ContextUsage?.UsedTokens);
+        Assert.Equal(reportsUsage, leadAfterAuto.ContextUsage?.ObservedAtMs is not null);
+        Assert.Equal(reportsUsage ? 100_000L : (long?)null, leadAfterAuto.ContextUsage?.WindowTokens);
 
         var opened = ctx.AgentRuntime.OpenedSessions.ToArray();
         Assert.Single(opened);
@@ -391,10 +390,10 @@ public sealed class SessionStreamingAndCompactionTests
         var manual = await ctx.Kernel.CompactSessionAsync(leadId);
         Assert.Equal(1, manual.Epoch);
         Assert.Equal("thr_epoch_1", manual.NativeThreadId);
-        Assert.Equal(reportsUsage ? 0.2 : 0, manual.ContextUsageRatio, precision: 4);
-        Assert.Equal(reportsUsage ? 20_000L : 0L, manual.ContextUsedTokens);
-        Assert.Equal(reportsUsage, manual.ContextUsageAtMs is not null);
-        Assert.False(manual.ContextUsageInvalidated);
+        Assert.Equal(reportsUsage ? 0.2 : (double?)null, manual.ContextUsage?.Ratio);
+        Assert.Equal(reportsUsage ? 20_000L : (long?)null, manual.ContextUsage?.UsedTokens);
+        Assert.Equal(reportsUsage, manual.ContextUsage?.ObservedAtMs is not null);
+
         Assert.Equal(2, opened[0].CompactCalls);
     }
 

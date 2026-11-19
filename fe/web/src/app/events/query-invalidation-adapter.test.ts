@@ -498,7 +498,7 @@ function metadataRead(respectsAbort = false, trackId = 'track-1') {
   const transport = { send: (request: ApiRequest) => new Promise<ApiTransportResponse>((resolve, reject) => {
     const body = { track: { id: trackId, areaId: 'area-1', createdAtMs: 1, updatedAtMs: 2 },
       report: {}, tasks: [], openAsks: [], sessions: [{ id: 'card-1', trackId, title, isLead: true,
-        provider: 'codex', status: 'idle', createdAtMs: 1, updatedAtMs: 2 }] };
+        provider: 'codex', status: 'idle', contextUsage: null, createdAtMs: 1, updatedAtMs: 2 }] };
     reads.push({ request, release: () => resolve({ status: 200, statusText: 'OK', body }) });
     if (respectsAbort) request.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true });
   }) };

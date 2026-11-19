@@ -212,7 +212,6 @@ public sealed class SqliteColdBlobAndConcurrencyTests
             NativeThreadId: null,
             Epoch: 1,
             Status: "idle",
-            ContextUsageRatio: 0,
             ArchivedAtMs: null,
             CreatedAtMs: 90_000,
             UpdatedAtMs: 90_000);

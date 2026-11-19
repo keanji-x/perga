@@ -166,10 +166,17 @@ public sealed record AgentSessionDto(
     string? NativeThreadId,
     int Epoch,
     string Status,
-    double ContextUsageRatio,
     long? ArchivedAtMs,
     long CreatedAtMs,
-    long UpdatedAtMs);
+    long UpdatedAtMs,
+    SessionContextUsage? ContextUsage);
+
+public sealed record SessionContextUsage(long UsedTokens, long? WindowTokens, long ObservedAtMs)
+{
+    public double? Ratio => WindowTokens is > 0
+        ? Math.Clamp((double)UsedTokens / WindowTokens.Value, 0.0, 1.0)
+        : null;
+}
 
 public sealed record SessionTurnDto(
     string Id,
@@ -940,12 +947,13 @@ public interface ITerminalBridgeClient : IAsyncDisposable
      - **`Lead`（主理代表：`Track.LeadSessionId == session.Id` / `IsLead == true`）**：默认代表指针，接收外部 `Mail` 到达唤醒、后台 `Task` 完结/失败唤醒、UI 上提交的 `Ask` 回答与外部 `Report` 修改唤醒；可通过 `SetLeadSessionAsync` 随时切换主理会话。
      - **`Subagent`（协作者：`IsLead == false`）**：分为 **自由协作（`BoundAttemptId == null`）** 与 **契约协作（`BoundAttemptId != null`，由 `TaskGraphScheduler` 按 Task 派发）**；两者在前端共享同一会话流式查看与实时 Steer 纠偏能力，均可读写 `ReportDoc`（乐观锁防盲写）与调用 `perga_terminal_open/read`；唯一硬边界由内核在 `/mcp/kernel` 统一看守——绑定了在途 `BoundAttemptId` 的 `Subagent` 拥有 `perga_task_done / fail`，并被禁止改动 `task` 块或调用 `perga_task_accept/reject/cancel` 自我判过。
 3. **原生压缩优先与 Epoch 换页兜底（Native Compaction + Epoch Handover Fallback）**：
-   - 当 `ContextUsageRatio >= 0.80` 或用户触发 `CompactSessionAsync`：
-     - 若底层 `IAgentSession.SupportsNativeCompact == true`，原地调用 `CompactAsync` 并保留 `NativeThreadId`、进程与 `Epoch`，按返回的 `Usage` 更新 `ContextUsageRatio`（无 `Usage` 则归零）；
+   - `TrackActor` 统一合并空闲通知、回合和压缩的用量观测。只在适配器确认同一会话绑定及配置时复用实测窗口。迁移后的 SQLite 会话表仅保存实测的用量、窗口和时间，重连后的自动压缩等待当前绑定的新读数。
+   - 当当前绑定的 `ContextUsage.Ratio >= 0.80` 或用户触发 `CompactSessionAsync`：
+     - provider 支持原生压缩时，原地调用 `CompactAsync` 并保留 `NativeThreadId`、进程与 `Epoch`。有用量就更新快照，无用量就清除占用读数；
      - 否则回退到宿主自管 Epoch 换页：
        1. 向当前底层 `IAgentSession` 发送一条普通对话 Turn，要求输出结构化交接摘要（当前进展、关键路径、已验证结论、下一步）；
        2. 关闭旧底层 `IAgentSession` 实例；
-       3. 在数据库更新该 `AgentSession` 的 `Epoch = Epoch + 1`、`NativeThreadId = null`、`ContextUsageRatio = 0.0`；
+       3. 在数据库更新该 `AgentSession` 的 `Epoch = Epoch + 1`、`NativeThreadId = null`、`ContextUsage = null`；
        4. 用「最新 Report 全文 + 交接摘要」作为系统种子打开全新底层 `IAgentSession` 并绑定新 `NativeThreadId`（前端 `SessionId` 与历史消息流水保持连贯不断）。
 4. **`TaskGraphScheduler` 租约感知调度与 `afterWorkerDoneCmd`**：
    - `ComputeSchedulable(tasks, bool allowParallelWriteLeases = false)`：筛选 `ready == true`、所有 `depends_on` 任务处于 `Done`、非 `Draft`/`Running`/`Verifying`/`Done`/`Failed`/`Canceled` 的任务；当 `driver.SupportsParallelIsolatedWriteLeases == false`（一期默认）时，存在在途 `ReadWrite` 任务则返回空，存在在途 `ReadOnly` 任务仅放行 `ReadOnly`，无在途则按优先级与创建时间放行 `ReadOnly` 集合或单个最高优 `ReadWrite`；未来若挂载了支持独立 per-attempt CoW `upperdir` 的 `OverlayFS` 驱动（`SupportsParallelIsolatedWriteLeases == true`），调度器无需改动即可并发放行多个相互隔离的投机写 Attempt。

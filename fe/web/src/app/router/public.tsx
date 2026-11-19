@@ -1017,7 +1017,6 @@ function useConversationPane(
               <ChatFooterNotice><ChatFooterError message={options.sideError} /></ChatFooterNotice>
             )}
             {store.compactOutcome?.status === 'completed' && <ChatFooterNotice tone="neutral">已压缩</ChatFooterNotice>}
-            {store.contextUsageInvalidated && <ChatFooterNotice tone="neutral">用量待更新</ChatFooterNotice>}
             {store.loadingEarlier && <ChatFooterNotice tone="neutral">Loading earlier messages… Navigation covers loaded history.</ChatFooterNotice>}
             {store.compacting && <ChatFooterNotice>Compacting conversation context…</ChatFooterNotice>}
             {store.workerStatus != null && <ChatFooterNotice tone="neutral">{store.workerStatus}</ChatFooterNotice>}

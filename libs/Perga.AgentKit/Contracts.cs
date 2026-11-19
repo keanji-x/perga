@@ -87,8 +87,8 @@ public abstract record UnifiedAgentEvent
         JsonElement Args,
         IReadOnlyList<ApprovalOption>? Options = null) : UnifiedAgentEvent;
     public sealed record TurnInterrupted : UnifiedAgentEvent;
-    public sealed record ContextUsageUpdated(TokenUsage Usage) : UnifiedAgentEvent;
-    public sealed record TurnCompleted(TokenUsage? Usage) : UnifiedAgentEvent;
+    public sealed record ContextUsageUpdated(TokenUsage Usage, long? ContextUsageRevision = 0) : UnifiedAgentEvent;
+    public sealed record TurnCompleted(TokenUsage? Usage, long? ContextUsageRevision = 0, long? CompletedPromptId = null) : UnifiedAgentEvent;
     public sealed record TurnError(string Code, string Message, bool IsRetryable, bool IsConclusive = false, bool BeforePrompt = false) : UnifiedAgentEvent;
 }
 
@@ -122,12 +122,15 @@ public sealed record ProviderStatus(
 
 public sealed record NativeCompactResult(
     TokenUsage? Usage = null,
-    string? Summary = null);
+    string? Summary = null,
+    long? ContextUsageRevision = 0,
+    long? CompletedPromptId = null);
 
 public sealed record IdleContextUsage(
     TokenUsage Usage,
-    string? Model,
-    string? NativeThreadId);
+    long? ContextUsageRevision,
+    string? NativeThreadId,
+    long? CompletedPromptId = null);
 
 public enum SteerDelivery { Accepted, Declined, Unconfirmed }
 
@@ -135,10 +138,13 @@ public interface IAgentSession : IAsyncDisposable
 {
     string? NativeThreadId { get; }
     bool SupportsNativeSteer { get; }
+    // Revisions are local to this session instance. Null means the producing configuration is unconfirmed.
+    long? ContextUsageRevision => 0;
+    bool CanReuseContextWindow => false;
     bool SupportsNativeCompact => false;
     ValueTask<bool> ResolveNativeCompactSupportAsync(CancellationToken ct) =>
         ValueTask.FromResult(SupportsNativeCompact);
-    IdleContextUsage? AttachIdleContextUsageHandler(Action<IdleContextUsage>? handler) => null;
+    IReadOnlyList<IdleContextUsage> AttachIdleContextUsageHandler(Action<IdleContextUsage>? handler) => [];
     WorkerProviderConfiguration? WorkerConfiguration => null;
     bool ShutdownConfirmed => true;
     bool SupportsSessionResume => false;

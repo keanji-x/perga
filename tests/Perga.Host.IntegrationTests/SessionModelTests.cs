@@ -34,30 +34,28 @@ public sealed class SessionModelTests
                 await kernel.AcceptMessageAsync(sessionId, new("sample", "before-model-switch"), default);
                 await kernel.WaitForTrackIdleAsync(trackId);
                 var sampled = Assert.Single(await kernel.ListSessionsAsync(trackId));
-                Assert.Equal(250, sampled.ContextUsedTokens);
-                Assert.NotNull(sampled.ContextUsageAtMs);
-                Assert.False(sampled.ContextUsageInvalidated);
+                Assert.Equal(250, sampled.ContextUsage?.UsedTokens);
+                Assert.NotNull(sampled.ContextUsage?.ObservedAtMs);
+
                 using var response = await host.Client.PutAsJsonAsync($"/api/v1/sessions/{sessionId}/model", new { model = "next-model" });
                 response.EnsureSuccessStatusCode();
                 var switched = await response.Content.ReadFromJsonAsync<AgentSessionDto>(PergaJsonDefaults.ApiOptions);
-                Assert.True(switched!.ContextUsageInvalidated);
-                Assert.Equal(250, switched.ContextUsedTokens);
+                Assert.Null(switched!.ContextUsage);
+
                 var compacted = await kernel.CompactSessionAsync(sessionId);
                 Assert.Single(host.AgentRuntime.OpenedSessions);
                 Assert.Equal("next-model", compacted.Model);
-                Assert.Equal(0, compacted.ContextUsedTokens);
-                Assert.Equal(0, compacted.ContextUsageRatio);
-                Assert.Null(compacted.ContextUsageAtMs);
-                Assert.False(compacted.ContextUsageInvalidated);
+
+                Assert.Null(compacted.ContextUsage);
+
             }
             await using var reopened = new PergaHostTestCluster(directory.FullName);
             var restored = Assert.Single(await reopened.Services.GetRequiredService<IPergaKernel>().ListSessionsAsync(trackId));
             Assert.Equal(sessionId, restored.Id);
             Assert.Equal("next-model", restored.Model);
-            Assert.Equal(0, restored.ContextUsedTokens);
-            Assert.Equal(0, restored.ContextUsageRatio);
-            Assert.Null(restored.ContextUsageAtMs);
-            Assert.False(restored.ContextUsageInvalidated);
+
+            Assert.Null(restored.ContextUsage);
+
         }
         finally { directory.Delete(recursive: true); }
 
@@ -67,6 +65,73 @@ public sealed class SessionModelTests
             yield return new UnifiedAgentEvent.ContextUsageUpdated(new TokenUsage(10, 5, 0, 1000, UsedTokens: 250));
             await Task.Yield();
             yield return new UnifiedAgentEvent.TurnCompleted(null);
+        }
+    }
+
+    [Fact]
+    public async Task ContextSnapshotSurvivesRestartWithoutReusingItsWindow()
+    {
+        var directory = Directory.CreateTempSubdirectory("perga-context-reconnect-");
+        try
+        {
+            string trackId;
+            string sessionId;
+            long observedAt;
+            await using (var host = new PergaHostTestCluster(directory.FullName))
+            {
+                (trackId, sessionId) = await host.CreateTrackAsync();
+                host.AgentRuntime.SetTurnHandler((_, _, _) => Report(window: 1000, used: 250));
+                await SampleAsync(host, trackId, sessionId, "warm-window");
+                using var page = await ReadUsagePageAsync(host, sessionId);
+                var session = page.RootElement.GetProperty("session");
+                Assert.False(session.TryGetProperty("contextUsageRatio", out _));
+                Assert.False(session.TryGetProperty("contextUsageInvalidated", out _));
+                var usage = session.GetProperty("contextUsage");
+                Assert.Equal(250, usage.GetProperty("usedTokens").GetInt64());
+                Assert.Equal(1000, usage.GetProperty("windowTokens").GetInt64());
+                Assert.Equal(0.25, usage.GetProperty("ratio").GetDouble());
+                host.AgentRuntime.SetTurnHandler((_, _, _) => Report(window: null, used: 300));
+                await SampleAsync(host, trackId, sessionId, "same-binding-without-window");
+                using var followUp = await ReadUsagePageAsync(host, sessionId);
+                var sameBinding = followUp.RootElement.GetProperty("session").GetProperty("contextUsage");
+                Assert.Equal(1000, sameBinding.GetProperty("windowTokens").GetInt64());
+                observedAt = sameBinding.GetProperty("observedAtMs").GetInt64();
+            }
+
+            await using var reopened = new PergaHostTestCluster(directory.FullName);
+            using var oldPage = await ReadUsagePageAsync(reopened, sessionId);
+            Assert.Equal(observedAt, oldPage.RootElement.GetProperty("session").GetProperty("contextUsage")
+                .GetProperty("observedAtMs").GetInt64());
+
+            reopened.AgentRuntime.SetTurnHandler((_, _, _) => Report(window: null, used: 900));
+            await SampleAsync(reopened, trackId, sessionId, "reconnected-without-window");
+            using var newPage = await ReadUsagePageAsync(reopened, sessionId);
+            var newUsage = newPage.RootElement.GetProperty("session").GetProperty("contextUsage");
+            Assert.Equal(900, newUsage.GetProperty("usedTokens").GetInt64());
+            Assert.Equal(JsonValueKind.Null, newUsage.GetProperty("windowTokens").ValueKind);
+            Assert.Equal(JsonValueKind.Null, newUsage.GetProperty("ratio").ValueKind);
+            Assert.Single(reopened.AgentRuntime.ExecutedTurns);
+        }
+        finally { directory.Delete(recursive: true); }
+
+        static async IAsyncEnumerable<UnifiedAgentEvent> Report(long? window, long used)
+        {
+            await Task.Yield();
+            yield return new UnifiedAgentEvent.TurnCompleted(new TokenUsage(used, 0, 0, window, UsedTokens: used));
+        }
+
+        static async Task SampleAsync(PergaHostTestCluster host, string trackId, string sessionId, string key)
+        {
+            var kernel = host.Services.GetRequiredService<IPergaKernel>();
+            await kernel.AcceptMessageAsync(sessionId, new("sample", key), default);
+            await kernel.WaitForTrackIdleAsync(trackId);
+        }
+
+        static async Task<JsonDocument> ReadUsagePageAsync(PergaHostTestCluster host, string sessionId)
+        {
+            using var response = await host.Client.GetAsync($"/api/v1/sessions/{sessionId}/items");
+            response.EnsureSuccessStatusCode();
+            return JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         }
     }
 
@@ -110,7 +175,7 @@ public sealed class SessionModelTests
         try
         {
             await sampled.Task.WaitAsync(TimeSpan.FromSeconds(10));
-            Assert.False(Assert.Single(await kernel.ListSessionsAsync(trackId)).ContextUsageInvalidated);
+            Assert.NotNull(Assert.Single(await kernel.ListSessionsAsync(trackId)).ContextUsage);
             await using var db = new SqliteConnection($"Data Source={Path.Combine(host.DataDir, "perga.db")};Pooling=False");
             await db.OpenAsync();
             await db.ExecuteAsync("""
@@ -124,14 +189,14 @@ public sealed class SessionModelTests
             Assert.Contains("simulated model persistence failure", error.Message);
             var unchanged = Assert.Single(await kernel.ListSessionsAsync(trackId));
             Assert.Equal("A", unchanged.Model);
-            Assert.False(unchanged.ContextUsageInvalidated);
+            Assert.Equal(250, unchanged.ContextUsage?.UsedTokens);
         }
         finally { release.TrySetResult(); }
         await kernel.WaitForTrackIdleAsync(trackId);
         var completed = Assert.Single(await kernel.ListSessionsAsync(trackId));
         Assert.Equal("A", completed.Model);
-        Assert.Equal(noFinalUsage ? 300 : 400, completed.ContextUsedTokens);
-        Assert.False(completed.ContextUsageInvalidated);
+        Assert.Equal(noFinalUsage ? 300 : 400, completed.ContextUsage?.UsedTokens);
+
     }
 
     [Fact]
@@ -158,7 +223,7 @@ public sealed class SessionModelTests
                 Assert.Equal("chosen-model", session!.Model);
                 Assert.Equal("high", session.ReasoningEffort);
                 Assert.Equal("ask", session.PermissionMode);
-                Assert.True(session.ContextUsageInvalidated);
+                Assert.Null(session.ContextUsage);
                 using var missing = await host.Client.PutAsJsonAsync("/api/v1/sessions/missing/model", new { model = "chosen-model" });
                 Assert.Equal(HttpStatusCode.NotFound, missing.StatusCode);
             }
@@ -168,7 +233,7 @@ public sealed class SessionModelTests
             var restored = (await kernel.ListSessionsAsync(trackId)).Single(s => s.Id == sessionId);
             Assert.Equal("high", restored.ReasoningEffort);
             Assert.Equal("ask", restored.PermissionMode);
-            Assert.True(restored.ContextUsageInvalidated);
+            Assert.Null(restored.ContextUsage);
             using var reset = await reopened.Client.PutAsJsonAsync($"/api/v1/sessions/{sessionId}/model", new { model = (string?)null });
             Assert.Equal(HttpStatusCode.OK, reset.StatusCode);
             var cleared = await reset.Content.ReadFromJsonAsync<AgentSessionDto>(PergaJsonDefaults.ApiOptions);
