@@ -137,6 +137,7 @@ public sealed class TrackScheduleIntegrationTests
                 var area = await kernel.CreateAreaAsync(new CreateAreaRequest("Restart", DefaultCwd: first.DataDir));
                 var snap = await kernel.CreateTrackAsync(new CreateTrackRequest(area.Id, Title: "Persistent", Cwd: first.DataDir));
                 trackId = snap.Track.Id;
+                await kernel.WaitForTrackIdleAsync(trackId).WaitAsync(Deadline);
                 var leadCaller = new McpSessionPrincipal("lead-tok", trackId, snap.Track.LeadSessionId!, true, null, null, []);
                 await KernelMcpDispatcher.ExecuteGuardedAsync(kernel, leadCaller, KernelMcpToolNames.ScheduleSet,
                     JsonSerializer.SerializeToElement(new
