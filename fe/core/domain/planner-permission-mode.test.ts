@@ -31,7 +31,7 @@ describe('session permission mode', () => {
     expect(responseSchema.safeParse({ ...RUN, permission_mode: '' }).success).toBe(false);
   });
 
-  it('production conversationRunOperation preserves Lead/Assistant permissionMode and nulls task-bound sessions', () => {
+  it('production conversationRunOperation preserves Lead, Assistant, and task-bound session permissionMode', () => {
     const { responseSchema } = conversationRunOperation('ses_1');
     const basePage = {
       items: [],
@@ -66,6 +66,6 @@ describe('session permission mode', () => {
         permissionMode: 'full',
       },
     });
-    expect(taskBound.permission_mode).toBeNull();
+    expect(taskBound.permission_mode).toBe('full');
   });
 });

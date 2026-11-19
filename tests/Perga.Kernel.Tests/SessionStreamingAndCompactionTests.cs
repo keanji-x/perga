@@ -315,6 +315,56 @@ public sealed class SessionStreamingAndCompactionTests
         Assert.True(activeFakeSession.CancelCalled);
     }
 
+    [Fact]
+    public async Task TaskWorkerSession_ReceivesDefaultPermissionModeOnCreateAndLaunch()
+    {
+        await using var ctx = new KernelTestContext();
+        var (_, snap) = await ctx.CreateDefaultTrackAsync();
+        var trackId = snap.Track.Id;
+        var leadId = snap.Track.LeadSessionId!;
+
+        var openedWorker = new TaskCompletionSource<ScriptableFakeAgentSession>(TaskCreationOptions.RunContinuationsAsynchronously);
+        ctx.AgentRuntime.TurnScript = (session, input, ct) =>
+        {
+            if (session.LaunchSpec.ConfigureWorker)
+                openedWorker.TrySetResult(session);
+            return StreamScriptedTurn(session, input, 1, ct);
+        };
+
+        var r0 = await ctx.Kernel.ReadReportAsync(trackId, leadId);
+        await ctx.Kernel.CommitReportAsync(trackId, leadId, new ReportCommitRequest(
+            r0.Anchor,
+            [new BlockOp.UpsertBlockOp("b_worker_perm", ReportBlockKind.Task, null, TestJson.FromObject(new
+            {
+                key = "worker-perm",
+                kind = "codex",
+                goal = "Run worker task",
+                ready = true,
+                declared_by = "spec",
+                no_gate_reason = "test"
+            }))]));
+
+        var workerSession = await openedWorker.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal("never", workerSession.LaunchSpec.PermissionMode);
+
+        var sessions = await ctx.Kernel.ListSessionsAsync(trackId);
+        var bound = Assert.Single(sessions, s => s.BoundTaskId is not null);
+        Assert.Equal("never", bound.PermissionMode);
+    }
+
+    [Fact]
+    public async Task PatchSession_ProviderChange_ResetsPermissionModeToNewProviderDefault()
+    {
+        await using var ctx = new KernelTestContext();
+        var (_, snap) = await ctx.CreateDefaultTrackAsync();
+        var leadId = snap.Track.LeadSessionId!;
+
+        await ctx.Kernel.SetSessionPermissionModeAsync(leadId, "ask");
+        var patched = await ctx.Kernel.PatchSessionAsync(leadId, new PatchSessionRequest(Provider: "claude"));
+        Assert.Equal("claude", patched.Provider);
+        Assert.Equal("dontAsk", patched.PermissionMode);
+    }
+
     private static async IAsyncEnumerable<UnifiedAgentEvent> StreamBlockingUntilCanceled(
         Task blocker,
         [EnumeratorCancellation] CancellationToken ct)

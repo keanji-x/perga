@@ -858,6 +858,9 @@ public sealed partial class TrackActor : IAsyncDisposable
                 ? (req.Archived.Value ? (existing.ArchivedAtMs ?? now) : null)
                 : existing.ArchivedAtMs;
             var nextNativeThreadId = providerChanged ? null : existing.NativeThreadId;
+            var nextPermissionMode = providerChanged
+                ? ProviderPermissionModes.GetDefaultMode(nextProvider)
+                : existing.PermissionMode;
 
             var updated = existing with
             {
@@ -865,6 +868,7 @@ public sealed partial class TrackActor : IAsyncDisposable
                 Provider = nextProvider,
                 Model = nextModel,
                 NativeThreadId = nextNativeThreadId,
+                PermissionMode = nextPermissionMode,
                 ArchivedAtMs = nextArchived,
                 UpdatedAtMs = now
             };
@@ -2114,6 +2118,7 @@ public sealed partial class TrackActor : IAsyncDisposable
                             string.Equals(task.Kind, "cmd", StringComparison.OrdinalIgnoreCase) ||
                             string.Equals(task.Kind, "shell", StringComparison.OrdinalIgnoreCase) ||
                             string.Equals(task.Kind, "terminal", StringComparison.OrdinalIgnoreCase);
+        var workerProvider = string.IsNullOrWhiteSpace(task.Provider) ? GetDefaultProviderCore() : task.Provider!;
         var subagent = isCommandTask ? null : new AgentSessionDto(
             Id: $"ses_{Guid.NewGuid():N}",
             TrackId: TrackId,
@@ -2121,7 +2126,7 @@ public sealed partial class TrackActor : IAsyncDisposable
             BoundTaskId: task.Id,
             BoundAttemptId: attemptId,
             Title: $"Task: {task.TaskKey}",
-            Provider: string.IsNullOrWhiteSpace(task.Provider) ? GetDefaultProviderCore() : task.Provider!,
+            Provider: workerProvider,
             Model: ResolveTaskWorkerModelCore(task),
             NativeThreadId: null,
             Epoch: 1,
@@ -2129,7 +2134,8 @@ public sealed partial class TrackActor : IAsyncDisposable
             ContextUsageRatio: 0.0,
             ArchivedAtMs: null,
             CreatedAtMs: now,
-            UpdatedAtMs: now);
+            UpdatedAtMs: now,
+            PermissionMode: ProviderPermissionModes.GetDefaultMode(workerProvider));
 
         var runningTask = task with { Status = TaskRunStatus.Running, StatusDetail = "Allocating workspace.",
             LatestAttemptId = attemptId, UpdatedAtMs = now };
@@ -3239,9 +3245,7 @@ public sealed partial class TrackActor : IAsyncDisposable
                 var seedPrompt = BuildEpochSeedSystemPrompt(compacted, latestReportMarkdown, handoverSummary);
 
                 // Seed fresh IAgentSession with ResumeNativeThreadId == null and SystemPrompt = Report + Handover Summary.
-                var desiredMode = compacted.BoundTaskId is null
-                    ? compacted.PermissionMode ?? ProviderPermissionModes.GetDefaultMode(compacted.Provider)
-                    : null;
+                var desiredMode = compacted.PermissionMode ?? ProviderPermissionModes.GetDefaultMode(compacted.Provider);
                 var freshAgentSession = await OpenFreshAgentSessionCoreAsync(compacted, seedPrompt, ct).ConfigureAwait(false);
                 _openAgentSessions[sessionId] = freshAgentSession;
                 _boundAgentModels[sessionId] = (compacted.Model, compacted.ReasoningEffort);
@@ -3267,9 +3271,7 @@ public sealed partial class TrackActor : IAsyncDisposable
         string? overrideSystemPrompt,
         CancellationToken ct)
     {
-        var desiredMode = session.BoundTaskId is null
-            ? session.PermissionMode ?? ProviderPermissionModes.GetDefaultMode(session.Provider)
-            : null;
+        var desiredMode = session.PermissionMode ?? ProviderPermissionModes.GetDefaultMode(session.Provider);
 
         if (_openAgentSessions.TryGetValue(session.Id, out var existing))
         {
@@ -3377,9 +3379,7 @@ public sealed partial class TrackActor : IAsyncDisposable
             ReasoningEffort: session.ReasoningEffort,
             StateKey: session.Id,
             ConfigureWorker: session.BoundAttemptId is not null,
-            PermissionMode: session.BoundTaskId is null
-                ? session.PermissionMode ?? ProviderPermissionModes.GetDefaultMode(session.Provider)
-                : null);
+            PermissionMode: session.PermissionMode ?? ProviderPermissionModes.GetDefaultMode(session.Provider));
     }
 
     private async Task DispatchLeadWakePromptIfNeededAsync(string triggerKind, string wakePrompt, CancellationToken ct, string? mailId = null, bool recovering = false)

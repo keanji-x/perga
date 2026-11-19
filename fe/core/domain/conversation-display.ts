@@ -475,7 +475,7 @@ export function conversationRunOperation(card: string): ApiOperation<PlannerRun 
           ...(page.canSteer === undefined ? {} : { can_steer_queued: page.canSteer }),
           model: page.session.model ?? null,
           reasoning_effort: null,
-          permission_mode: page.session.boundTaskId ? null : (page.session.permissionMode ?? null),
+          permission_mode: page.session.permissionMode ?? null,
           blocked_reason: page.session.status === 'unknown' ? 'The previous message has an unknown outcome.' : null,
           recovery: null,
           attachments_supported: false,
