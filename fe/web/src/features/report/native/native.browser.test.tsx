@@ -248,7 +248,7 @@ it('reaches disclosures and snapshot controls using the unchanged shared dialog'
   await userEvent.keyboard('{Tab}');
   expect(document.activeElement?.textContent).toContain('快照信息');
   await userEvent.keyboard('{Enter}');
-  await expect.element(page.getByRole('dialog').getByText(/operations-r1/)).toBeVisible();
+  await expect.element(page.getByRole('dialog').getByText(/snap-r1/)).toBeVisible();
 });
 
 it('keeps the App fill timestamps readable in a local table scroller at 320px', async () => {

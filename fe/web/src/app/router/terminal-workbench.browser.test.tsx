@@ -3,47 +3,12 @@ import { act, cleanup, fireEvent, screen, waitFor } from '@testing-library/react
 import { commands, page, userEvent } from 'vitest/browser';
 import { afterEach, beforeAll, expect, it, vi } from 'vitest';
 import { openTerminalCommand, setupWorkbench, terminalCard } from './terminal-workbench-fixture.tsx';
-import type { TerminalDto } from '../../../../core/api/perga-v1.ts';
 import { workbenchSockets } from './terminal-workbench-socket-fixture.ts';
 
 beforeAll(async () => { await import('../../systems/terminal/xterm-view.tsx'); });
 afterEach(async () => { cleanup(); document.getElementById('root')?.remove(); vi.unstubAllGlobals(); delete document.documentElement.dataset.theme; await commands.emulateReducedMotion(false); });
 
-it.each(['Tools', '/terminal'])('opens a Host terminal through %s and reloads running and exited inventory', async entry => {
-  await page.viewport(1440, 900);
-  const { sockets, Socket } = workbenchSockets();
-  vi.stubGlobal('WebSocket', Socket);
-  const hostTerminals: TerminalDto[] = [];
-  let fixture = setupWorkbench({ hostTerminals });
-  if (entry === 'Tools') {
-    await page.getByRole('button', { name: 'Tools', exact: true }).click();
-    await page.getByRole('menuitem', { name: 'terminal', exact: true }).click();
-  } else {
-    await openTerminalCommand();
-  }
-  await waitFor(() => expect(sockets).toHaveLength(1));
-  act(() => sockets[0].open());
-  await expect.element(page.getByRole('textbox', { name: 'Terminal input' })).toBeVisible();
-  expect(fixture.posts()).toHaveLength(1);
-
-  const reload = () => {
-    cleanup();
-    document.getElementById('root')?.remove();
-    fixture = setupWorkbench({ hostTerminals });
-  };
-  reload();
-  const row = page.getByRole('button', { name: /^Host shell/ });
-  await expect.element(row).toBeVisible();
-  await row.click();
-  await page.getByRole('button', { name: 'Delete card Host shell', exact: true }).click();
-  await page.getByRole('dialog', { name: 'Delete this card?' }).getByRole('button', { name: 'Delete card', exact: true }).click();
-  await waitFor(() => expect(hostTerminals[0].status).toBe('exited'));
-  reload();
-  await expect.element(row).toBeVisible();
-  expect(fixture.posts()).toHaveLength(0);
-});
-
-it('opens below the conversation, retains real xterm through hide and side tabs, and preserves shell keys', async () => {
+it('opens below the conversation, retains real xterm through hide and reopen, and preserves shell keys', async () => {
   await page.viewport(1512, 950);
   const { sockets, Socket } = workbenchSockets(); vi.stubGlobal('WebSocket', Socket);
   const card = { ...terminalCard('shell', { source: 'manual', in_workbench: true }), payload: { terminal_presentation: { source: 'manual', in_workbench: true },  terminal_id: 'pty-1' } };
@@ -51,12 +16,6 @@ it('opens below the conversation, retains real xterm through hide and side tabs,
   await page.getByRole('button', { name: 'Conversation Main discussion' }).click();
   const main = page.getByRole('complementary', { name: 'Main discussion' });
   const field = main.getByRole('combobox', { name: 'Message' });
-  await field.fill('/side'); await field.click(); await userEvent.keyboard('{Enter}');
-  const side = page.getByRole('region', { name: 'Side conversation · Codex' });
-  const draft = side.getByRole('combobox', { name: 'Message' });
-  await draft.fill('keep this side draft');
-  const draftNode = draft.element();
-  const sideScroll = draftNode.closest('[data-nc-drawer]')?.querySelector('[data-nc-drawer-scroll]');
   await main.getByRole('combobox', { name: 'Message' }).fill('/terminal');
   await field.click(); await userEvent.keyboard('{Enter}');
   await waitFor(() => expect(sockets).toHaveLength(1));
@@ -67,12 +26,12 @@ it('opens below the conversation, retains real xterm through hide and side tabs,
   const terminal = document.querySelector('[data-nc-terminal-workbench]')!;
   expect(terminal.getBoundingClientRect().top).toBeGreaterThan(main.element().getBoundingClientRect().top);
   expect(textarea.closest('[data-nc-terminal-viewport]')!.getBoundingClientRect().height).toBeGreaterThan(80);
-  expect(sockets[0].sent.filter(frame => frame[0] === 1)).toHaveLength(0);
+  expect(sockets[0].sent.filter(frame => frame[0] === 0x01)).toHaveLength(0);
   await userEvent.keyboard('echo test');
   await userEvent.keyboard('{Escape}{Control>}c{/Control}');
   expect(screen.getByRole('button', { name: 'Hide terminal' })).toBeTruthy();
-  expect(sockets[0].sent.some(frame => frame[0] === 1)).toBe(true);
-  const inputBytes = sockets[0].sent.flatMap(frame => frame[0] === 1 ? [...frame.subarray(1)] : []);
+  expect(sockets[0].sent.some(frame => frame[0] === 0x01)).toBe(true);
+  const inputBytes = sockets[0].sent.flatMap(frame => frame[0] === 0x01 ? [...frame.subarray(1)] : []);
   expect(inputBytes).toContain(27);
   expect(inputBytes).toContain(3);
   expect(fixture.requests.some(request => request.path.endsWith('/interrupt'))).toBe(false);
@@ -80,25 +39,12 @@ it('opens below the conversation, retains real xterm through hide and side tabs,
   expect(document.activeElement).not.toBe(textarea);
   await userEvent.keyboard('{Tab}');
   expect(document.activeElement).toBe(textarea);
-  const choices = page.getByRole('group', { name: 'Discussion and terminal' });
-  const discussion = choices.getByRole('button', { name: 'Discussion' });
-  const terminalChoice = choices.getByRole('button', { name: 'Terminal', exact: true });
-  expect(screen.queryByRole('tablist')).toBeNull();
-  await expect.element(terminalChoice).toHaveAttribute('aria-pressed', 'true');
-  act(() => (discussion.element() as HTMLButtonElement).focus());
-  await userEvent.keyboard('{Enter}');
-  await expect.element(discussion).toHaveAttribute('aria-pressed', 'true');
-  await expect.element(draft).toHaveTextContent('keep this side draft');
-  expect(draft.element()).toBe(draftNode);
-  expect(draftNode.closest('[data-nc-drawer]')?.querySelector('[data-nc-drawer-scroll]')).toBe(sideScroll);
-  expect(document.querySelector('[data-nc-terminal-input]')).toBe(textarea);
-  await userEvent.keyboard('{Tab}');
-  expect(document.activeElement).toBe(terminalChoice.element());
-  await userEvent.keyboard(' ');
-  await expect.element(terminalChoice).toHaveAttribute('aria-pressed', 'true');
   await page.getByRole('button', { name: 'Hide terminal' }).click();
   expect(document.querySelector('[data-nc-terminal-input]')).toBe(textarea);
   expect(sockets[0].readyState).toBe(1);
+  await field.fill('/terminal'); await field.click(); await userEvent.keyboard('{Enter}');
+  expect(document.querySelector('[data-nc-terminal-input]')).toBe(textarea);
+  expect(sockets).toHaveLength(1);
   expect(fixture.posts()).toHaveLength(0);
 });
 
@@ -108,7 +54,7 @@ it('keeps exited output attached and reopens the same existing card without crea
   const fixture = setupWorkbench({ cards: [{ ...terminalCard('finished', { source: 'manual', in_workbench: true }), payload: { terminal_presentation: { source: 'manual', in_workbench: true },  terminal_id: 'pty-1' } }] });
   await page.getByRole('button', { name: /^finished/ }).click();
   await waitFor(() => expect(sockets).toHaveLength(1));
-  act(() => { sockets[0].open(); sockets[0].exit(); });
+  act(() => { sockets[0].open(); sockets[0].exit(0); });
   await expect.element(page.getByText('Session exited.')).toBeVisible();
   const input = document.querySelector('[data-nc-terminal-input]');
   await page.getByRole('button', { name: 'Hide terminal' }).click();
@@ -119,17 +65,13 @@ it('keeps exited output attached and reopens the same existing card without crea
   expect(screen.getByRole('button', { name: 'Hide terminal' })).toBeTruthy();
 });
 
-it.each(['Hide terminal', 'Discussion'])('retains an unvisited survivor and its socket after %s', async action => {
+it('retains an unvisited survivor and its socket after Hide terminal', async () => {
   await page.viewport(1512, 950);
   const { sockets, Socket } = workbenchSockets(); vi.stubGlobal('WebSocket', Socket);
   const fixture = setupWorkbench({ cards: ['first', 'second'].map(id => ({ ...terminalCard(id, { source: 'manual', in_workbench: true }), payload: { terminal_presentation: { source: 'manual', in_workbench: true },  terminal_id: 'pty-1' } })) });
   const mount = vi.spyOn(fixture.runtime.host, 'mount');
   await page.getByRole('button', { name: 'Conversation Main discussion' }).click();
   const field = page.getByRole('complementary', { name: 'Main discussion' }).getByRole('combobox', { name: 'Message' });
-  await field.fill('/side'); await field.click(); await userEvent.keyboard('{Enter}');
-  const draft = page.getByRole('region', { name: 'Side conversation · Codex' }).getByRole('combobox', { name: 'Message' });
-  await draft.fill('fallback side draft');
-  const draftNode = draft.element();
   expect(mount).toHaveBeenCalledTimes(0);
   await field.fill('/terminal'); await field.click(); await userEvent.keyboard('{Enter}');
   await waitFor(() => expect(sockets).toHaveLength(1));
@@ -143,14 +85,12 @@ it.each(['Hide terminal', 'Discussion'])('retains an unvisited survivor and its 
   const input = dock?.querySelector('[data-nc-terminal-input]');
   expect(input).toBeTruthy();
   const host = fixture.runtime.host.resolve('second');
-  await page.getByRole('button', { name: action, exact: true }).click();
+  await page.getByRole('button', { name: 'Hide terminal', exact: true }).click();
   expect(document.querySelector('[data-nc-card-dock][data-nc-card-id="second"]')).toBe(dock);
   expect(dock?.querySelector('[data-nc-terminal-input]')).toBe(input);
   expect(fixture.runtime.host.resolve('second')).toBe(host);
   expect(sockets[1].readyState).toBe(1);
-  expect(draft.element()).toBe(draftNode);
-  await expect.element(draft).toHaveTextContent('fallback side draft');
-  await page.getByRole('button', { name: 'Terminal', exact: true }).click();
+  await field.fill('/terminal'); await field.click(); await userEvent.keyboard('{Enter}');
   expect(mount).toHaveBeenCalledTimes(2);
   expect(sockets).toHaveLength(2);
   expect(fixture.posts()).toHaveLength(0);
@@ -434,9 +374,6 @@ for (const theme of ['light', 'dark'] as const) {
     document.documentElement.dataset.theme = theme;
     const main = page.getByRole('complementary', { name: 'Main discussion' });
     const field = main.getByRole('combobox', { name: 'Message' });
-    await field.fill('/side'); await field.click(); await userEvent.keyboard('{Enter}');
-    const side = page.getByRole('region', { name: 'Side conversation · Codex' });
-    await expect.element(side).toBeVisible();
     await field.fill('/terminal'); await field.click(); await userEvent.keyboard('{Enter}');
     const outer = screen.getByRole('region', { name: 'Track workbench' });
     await waitFor(() => expect(outer.querySelector('[data-nc-terminal-card]')).not.toBeNull());
@@ -449,17 +386,26 @@ for (const theme of ['light', 'dark'] as const) {
     expect(actual.overflow).toBe('hidden');
     await page.screenshot({ path: `../../../../test-results/terminal-command-frame-${theme}.png` });
 
-    await page.getByRole('button', { name: 'Discussion', exact: true }).click();
-    expect(screen.getByRole('region', { name: 'Track workbench' })).toBe(outer);
-    expect(getComputedStyle(outer).boxShadow).toBe('none');
-    expect(getComputedStyle(outer).overflow).toBe('visible');
-    expect(getComputedStyle(side.element()).boxShadow).toBe(expected.boxShadow);
-    const seam = side.element().parentElement!.nextElementSibling!;
-    expect(seam.querySelector('[data-nc-drawer-seam]')).not.toBeNull();
-    expect(outer.querySelector('[data-nc-terminal-card]')).toBe(terminal);
-    await page.getByRole('button', { name: 'Terminal', exact: true }).click();
+    await page.getByRole('button', { name: 'Hide terminal', exact: true }).click();
+    await expect.poll(() => outer.checkVisibility()).toBe(false);
+    await field.fill('/terminal'); await field.click(); await userEvent.keyboard('{Enter}');
     expect(outer.querySelector('[data-nc-terminal-card]')).toBe(terminal);
     expect(getComputedStyle(outer).boxShadow).toBe(expected.boxShadow);
     expect(getComputedStyle(outer).overflow).toBe('hidden');
   });
 }
+
+it('cold-opens the requested terminal after the tools inventory arrives', async () => {
+  await page.viewport(1512, 950);
+  let release!: () => void;
+  const toolsRead = new Promise<void>(resolve => { release = resolve; });
+  const fixture = setupWorkbench({ initialCard: 'cold', toolsRead,
+    cards: [terminalCard('cold', { source: 'manual', in_workbench: true })] });
+  await expect.element(page.getByRole('region', { name: 'Workbench' })).toBeVisible();
+  expect(fixture.router.state.location.search).toHaveProperty('card', 'cold');
+  await act(async () => { release(); await toolsRead; });
+  await expect.element(page.getByRole('button', { name: 'Hide terminal' })).toBeVisible();
+  expect(document.querySelector('[data-nc-card-dock]:not([hidden])')?.getAttribute('data-nc-card-id')).toBe('cold');
+  expect(fixture.router.state.location.search).toHaveProperty('card', 'cold');
+  expect(fixture.posts()).toEqual([]);
+});

@@ -1,3 +1,4 @@
+import { fixtureSnapshot, fixtureTrack } from './session-contract-fixture.ts';
 import '../../styles/entry.css';
 import { cleanup } from '@testing-library/react';
 import { afterEach, expect, it } from 'vitest';
@@ -43,10 +44,7 @@ it.each([1440, 390, 320])('keeps the empty daily report and conversation reachab
 });
 it.each([1440, 390])('uses the fixed report schema without actions at %i', async (width) => {
   await page.viewport(width, 900);
-  const { requests } = renderDailyFixture({ initial: '/track/project', reply: request => request.path === '/api/tracks/project' ? { status: 200, statusText: 'OK', body: {
-    track: { id: 'project', area_id: 'project-area', title: '新项目', sort: 0, workspace: { isolation: 'managed', kind: 'managed', path: '/tmp', frozen_at: null }, cwd: '/tmp', pinned_at: null, closed_at: null, created_at: 1, updated_at: 2 },
-    planner_revision: 0, can_reopen: false, can_admin: false, can_close: true, cards: [], overlays: [],
-  } } : undefined });
+  const { requests } = renderDailyFixture({ initial: '/track/project', reply: request => request.path === '/api/v1/tracks/project' ? { status: 200, statusText: 'OK', body: fixtureSnapshot(fixtureTrack('project', { areaId: 'project-area', title: '新项目' })) } : undefined });
   await expect.poll(() => document.querySelector('[data-nc-report-empty]') !== null).toBe(true);
   const title = page.getByRole('heading', { name: '进展会整理在这里' }).element();
   expect(getComputedStyle(title).fontSize).toBe('20px');

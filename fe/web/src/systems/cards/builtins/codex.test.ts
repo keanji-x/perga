@@ -31,29 +31,6 @@ describe('CODEX_CARD_ENTRY', () => {
     })).toBeNull();
   });
 
-  /* Kind `'codex'` mints three different cards; the payload's `planner_harness` bit is the only thing separating a harness from an ordinary worker. The refusal is the mechanism, not registration order. */
-  it('[INV-CARD-180] refuses planner harness payloads so they fall through to planner', () => {
-    expect(CODEX_CARD_ENTRY.fromKernel?.({
-      id: 's1', kind: 'codex', payload: { planner_harness: true },
-    })).toBeNull();
-    const registry = createCardRegistry();
-    registerAvailableBuiltinCards(registry);
-    expect(
-      registry.resolve({ id: 's1', kind: 'codex', payload: { planner_harness: true } })?.type,
-      'a planner harness card must still resolve as planner through the production registry',
-    ).toBe('planner');
-    expect(registry.get('planner')?.headless).toBe(true);
-    expect(registry.resolve({ id: 'x1', kind: 'codex', payload: { terminal_id: 't1' } })?.type)
-      .toBe('codex');
-  });
-
-  it('reads only the exact discriminator, not any truthy planner_harness', () => {
-    // `isPlannerHarnessPayload` is `=== true`; sharing it with planner keeps the two entries from disagreeing.
-    for (const payload of [{ planner_harness: false }, { planner_harness: 'true' }, { planner_harness: 1 }, null, 'x']) {
-      expect(CODEX_CARD_ENTRY.fromKernel?.({ id: 'p', kind: 'codex', payload })?.type).toBe('codex');
-    }
-  });
-
   /* The third shape under kind `'codex'`: an area plain-chat card carries `harness_profile: "plain_chat"` and has no PTY, so claiming it would render `TerminalCardView` with a null terminal forever. */
   it('[INV-CHAT-016] refuses area plain-chat cards, which have no PTY to render', () => {
     expect(CODEX_CARD_ENTRY.fromKernel?.({
@@ -117,7 +94,6 @@ describe('CODEX_CARD_ENTRY', () => {
     const { visible, unknown } = partitionTrackCards(registry, [
       wire('k-codex', 'codex', { terminal_id: 't1' }),
       wire('k-term', 'terminal', { terminal_id: 't2' }),
-      wire('k-planner', 'codex', { planner_harness: true }),
     ]);
     expect(visible.map((slot) => slot.card.type)).toEqual(['codex', 'terminal']);
     expect(unknown).toEqual([]);

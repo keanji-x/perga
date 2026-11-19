@@ -1,3 +1,4 @@
+import type { TrackAggregateSnapshotDto } from '../../../../core/api/perga-v1.ts';
 import { sha256 } from '@noble/hashes/sha256';
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils';
 
@@ -57,11 +58,14 @@ export function createEvidencePreviewTransport(): ApiTransportPort {
     if (request.path === '/api/v1/tracks/reference-demo' || request.path === '/api/v1/tracks/link-preview') {
       const trackId = request.path.slice('/api/v1/tracks/'.length);
       const report = trackId === 'reference-demo' ? referencedReport() : evidenceExamples();
-      return ok({ track: { workspace: { isolation: 'none' as const, kind: 'attached' as const, path: '/preview', frozen_at: null }, id: trackId, title: trackId === 'reference-demo' ? '另一份报告' : '来源预览', area_id: 'examples',
-        sort: 1, cwd: '/preview', created_at: 1, updated_at: 1 }, planner_revision: 0, can_reopen: false, can_admin: false, can_close: false, overlays: [],
-        cards: [{ id: `report-${trackId}`, track_id: trackId, kind: 'track-report', title: null, sort: 1, deletable: false,
-          created_at: 1, updated_at: 1, payload: { schemaVersion: 3, docRev: 1, ...report } }],
-      });
+      const snapshot: TrackAggregateSnapshotDto = {
+        track: { id: trackId, areaId: 'examples', title: trackId === 'reference-demo' ? '另一份报告' : '来源预览',
+          cwd: '/preview', workspaceDriver: 'direct', workspaceSpec: {}, templateInputs: {}, templateState: {}, enabledPlugins: [], sortOrder: 1, createdAtMs: 1, updatedAtMs: 1 },
+        report: { docRev: 1, summary: report.summary, leadingComment: '', blocks: (report.blocks ?? []).map(block => ({
+          id: block.id, kind: block.kind, rev: 1, markdown: block.kind === 'prose' ? block.payload.markdown : '', payload: 'payload' in block ? block.payload : null,
+        })) }, sessions: [], tasks: [], openAsks: [],
+      };
+      return ok(snapshot);
     }
     const source = /^\/api\/tracks\/(link-preview|reference-demo)\/sources\/(src_[0-9a-f]{8})$/.exec(request.path);
     if (source !== null && (source[2] === 'src_0971fbde' || source[2] === 'src_fa11ed00')) {

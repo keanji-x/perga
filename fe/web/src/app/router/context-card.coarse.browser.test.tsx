@@ -19,7 +19,7 @@ it('keeps both statuses and persistent actions visible in distinct columns on to
       { blockId: 'no-menu', key: 'No menu', status: 'done', statusDetail: null, kind: 'codex', workerCardId: null, state: 'ready', declaration: null, pendingReason: null },
     ],
     conversationContextList: <ChatList context showTrack={false} onArchive={vi.fn().mockResolvedValue(undefined)} onOpen={vi.fn()} cards={{ chat: 'working' }} conversations={[
-      { id: 'chat', provider: 'codex', trackId: 'w1', title: 'Chat', kind: 'track-assistant', state: 'running', updatedAt: 1 },
+      { id: 'chat', provider: 'codex', trackId: 'w1', title: 'Chat', isLead: false, kind: 'agent', state: 'running', updatedAt: 1 },
     ]} />,
   });
   await userEvent.click(document.querySelector<HTMLElement>('[data-nc-work-inventory] button[aria-expanded]')!);

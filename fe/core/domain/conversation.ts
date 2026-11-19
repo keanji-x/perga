@@ -1,8 +1,7 @@
 import { z } from 'zod';
 import { activityContent } from './conversation-activity-content.js';
-import { runRecoverySchema, type RunRecovery } from './conversation-restart.js';
+import type { RunRecovery } from './conversation-restart.js';
 import {
-  agentProviderSchema,
   agentSessionDtoSchema,
   bootstrapDtoSchema,
   normalizeWireAgentProvider,
@@ -15,9 +14,9 @@ import {
 import { sessionCreationReceiptSchema, sessionInputReceiptSchema, type SessionInputReceipt } from '../api/perga-v1.js';
 
 import type {
-  AgentProvider, ConversationInitialInputReceiptResult, HarnessInputPresentation, HarnessInputSegment, HarnessItem, HarnessPhaseTag,
+  AgentProvider, HarnessInputPresentation, HarnessInputSegment, HarnessItem, HarnessPhaseTag,
   HarnessInterruptionReason, HarnessTimeoutEvidence,
-  PlannerAttachment, SystemInputPresentation, TrackConversationSummary, UploadAttachmentResponse,
+  PlannerAttachment, SystemInputPresentation, UploadAttachmentResponse,
 } from '../api/generated/wire.js';
 import type { ApiFailure, ApiOperation } from '../api/types.js';
 import {
@@ -26,18 +25,15 @@ import {
   MAIL_SEND_TOOL,
 } from '../keys/mcp-tools.js';
 import { classifyFailure, failureReason, refusedText, type FailureTable, type WriteFailure, type WriteText } from './failure-class.js';
-import { plannerPermissionModeSchema, type PlannerPermissionMode } from './planner-permission-mode.js';
+import { type PlannerPermissionMode } from './planner-permission-mode.js';
 import { sha256Hex } from './sha256.js';
-import { initialInputReceiptResultSchema } from './conversation-initial-input.js';
 
 /** A frozen discussion source; does not name a provider session. */
 export type SideConversation = Readonly<{ source_card_id: string; context: string }>;
 
-export const PLANNER_CONVERSATION_KIND = 'shared-spec' as const;
-
-/** What kind of thing the conversation is; `'track-assistant'` is derived server-side from the card's own marker. */
+/** What kind of thing the conversation is; `'agent'` is derived server-side from the card's own marker. */
 export type ConversationKind =
-  | 'terminal' | 'codex' | 'claude' | 'shared-spec' | 'track-assistant';
+  | 'terminal' | 'codex' | 'claude' | 'agent';
 
 /** Mirrors `WorkerSessionState`. */
 export type ConversationState =
@@ -45,6 +41,7 @@ export type ConversationState =
 
 export type Conversation = Readonly<{
   id: string;
+  isLead?: boolean;
   trackId: string;
   /** Assistant archive metadata; other conversation kinds have no archive lifecycle. */
   archivedAt?: number | null;
@@ -72,31 +69,19 @@ export type Conversation = Readonly<{
   turns?: number;
 }>;
 
+export type SubmittedConversationInput = Readonly<{ text: string; atMs: number }>;
+
 export type CreatedConversation = Readonly<{
   conversation: Conversation;
-}> & (Readonly<{ sessionInput: SessionInputReceipt; initialInput?: never }>
-  | Readonly<{ initialInput: ConversationInitialInputReceiptResult; sessionInput?: never }>);
+  sessionInput: SessionInputReceipt;
+}>;
 
 /** What a session is called when it has no name of its own. */
 export const CONVERSATION_KIND_LABEL: Readonly<Record<ConversationKind, string>> = Object.freeze({
   terminal: 'Terminal',
   codex: 'Codex',
   claude: 'Claude',
-  'shared-spec': 'Planner',
-  'track-assistant': 'Assistant',
-});
-
-/**
- * Who is entitled to say what state a conversation of this kind is in: `'server'` when a list
- * endpoint read `worker_sessions.state`, `'route'` when only the surface reading its harness
- * knows. A total `Record` so a new kind is a compile error.
- */
-export const CONVERSATION_STATE_SOURCE: Readonly<Record<ConversationKind, 'server' | 'route'>> = Object.freeze({
-  terminal: 'route',
-  codex: 'route',
-  claude: 'route',
-  'shared-spec': 'route',
-  'track-assistant': 'server',
+  agent: 'Assistant',
 });
 
 /** The one name a conversation shows, wherever it is shown. */
@@ -240,10 +225,6 @@ export const harnessItemSchema: z.ZodType<HarnessItem> = z.object({
   turn_error_text: z.string().nullable(),
 });
 
-const harnessPhaseSchema = z.enum([
-  'pending_thread_start', 'idle', 'issuing_turn', 'compacting', 'issuing_interrupt',
-  'turn_running', 'turn_completed', 'resumed', 'wedged',
-]);
 
 /**
  * Whether a message posted *now* goes on the harness pending queue rather than straight into
@@ -281,13 +262,6 @@ export type PendingQueueEntry = Readonly<{
   state?: 'waiting' | 'steering' | 'sending' | 'processing' | 'unconfirmed';
 }>;
 
-const pendingQueueEntrySchema: z.ZodType<PendingQueueEntry> = z.object({
-  entry_id: z.string(),
-  text: z.string(),
-  rev: z.number(),
-  queued_at_ms: z.number(),
-});
-
 export type CompactOutcome = Readonly<{
   operation_id: string;
   thread_id: string;
@@ -298,7 +272,7 @@ export type CompactOutcome = Readonly<{
 export type PlannerRun = Readonly<{
   card_id: string;
   worker_session_id?: string | null;
-  phase?: z.infer<typeof harnessPhaseSchema> | null;
+  phase?: HarnessPhaseTag | null;
   /** The addressable page of the pending queue, in queue order. */
   pending: readonly PendingQueueEntry[];
   /**
@@ -339,11 +313,6 @@ export type PlannerRun = Readonly<{
  */
 export type PlannerRunningTurn = Readonly<{ turn_id: string; elapsed_ms: number }>;
 
-const plannerRunningTurnSchema: z.ZodType<PlannerRunningTurn> = z.object({
-  turn_id: z.string(),
-  elapsed_ms: z.number(),
-});
-
 /**
  * The context-occupancy reading, exactly as the server ships it. `percent` is the server's
  * number and the only thing a meter may be drawn from — it is NOT `used_tokens / context_window`.
@@ -359,13 +328,6 @@ export type PlannerRunTokenUsage = Readonly<{
   at_ms: number;
 }>;
 
-const plannerRunTokenUsageSchema: z.ZodType<PlannerRunTokenUsage> = z.object({
-  used_tokens: z.number(),
-  context_window: z.number().nullable(),
-  percent: z.number().nullable(),
-  at_ms: z.number(),
-});
-
 /** Reversible retained-DOM commit budget, shared by requests and cursor termination. */
 export const HARNESS_ITEMS_PAGE_LIMIT = 60;
 
@@ -374,115 +336,86 @@ ApiOperation<HarnessItem[]> {
   return {
     method: 'GET',
     path: `/api/v1/sessions/${encodeURIComponent(cardId)}/items?afterId=${afterId}&limit=${HARNESS_ITEMS_PAGE_LIMIT}&direction=${direction}`,
-    responseSchema: z.union([
-      sessionItemsPageDtoSchema.transform((page) => {
-        const threadId = page.session.nativeThreadId || `epoch-${page.session.epoch}`;
-        return page.items.flatMap((item): HarnessItem[] => {
-          const payloadObj = typeof item.payload === 'object' && item.payload !== null
-            ? (item.payload as Record<string, unknown>)
-            : {};
-          if (item.kind === 'user') {
-            const content = typeof payloadObj.content === 'string' ? payloadObj.content : '';
-            return [{
-              id: item.id,
-              worker_session_id: item.sessionId,
-              card_id: cardId,
-              track_id: page.session.trackId,
-              thread_id: threadId,
-              turn_id: item.turnId || null,
-              item_uuid: `item-${item.id}`,
-              item_type: 'userMessage',
-              method: 'item/completed',
-              params: JSON.stringify({ completedAtMs: item.createdAtMs, item: { type: 'userMessage', content: [{ text: content }] } }),
-              created_at_ms: item.createdAtMs,
-              turn_error_text: null,
-            }];
-          }
-          if (item.kind === 'assistant_text') {
-            const text = typeof payloadObj.text === 'string' ? payloadObj.text : '';
-            return [{
-              id: item.id,
-              worker_session_id: item.sessionId,
-              card_id: cardId,
-              track_id: page.session.trackId,
-              thread_id: threadId,
-              turn_id: item.turnId || null,
-              item_uuid: `item-${item.id}`,
-              item_type: 'agentMessage',
-              method: 'item/completed',
-              params: JSON.stringify({ completedAtMs: item.createdAtMs, item: { type: 'agentMessage', text } }),
-              created_at_ms: item.createdAtMs,
-              turn_error_text: null,
-            }];
-          }
-          return [];
-        });
-      }),
-      z.array(harnessItemSchema),
-    ]),
+    responseSchema: sessionItemsPageDtoSchema.transform((page) => {
+      const threadId = page.session.nativeThreadId || `epoch-${page.session.epoch}`;
+      return page.items.flatMap((item): HarnessItem[] => {
+        const payloadObj = typeof item.payload === 'object' && item.payload !== null
+          ? (item.payload as Record<string, unknown>)
+          : {};
+        if (item.kind === 'user') {
+          const content = typeof payloadObj.content === 'string' ? payloadObj.content : '';
+          return [{
+            id: item.id,
+            worker_session_id: item.sessionId,
+            card_id: cardId,
+            track_id: page.session.trackId,
+            thread_id: threadId,
+            turn_id: item.turnId || null,
+            item_uuid: `item-${item.id}`,
+            item_type: 'userMessage',
+            method: 'item/completed',
+            params: JSON.stringify({ completedAtMs: item.createdAtMs, item: { type: 'userMessage', content: [{ text: content }] } }),
+            created_at_ms: item.createdAtMs,
+            turn_error_text: null,
+          }];
+        }
+        if (item.kind === 'assistant_text') {
+          const text = typeof payloadObj.text === 'string' ? payloadObj.text : '';
+          return [{
+            id: item.id,
+            worker_session_id: item.sessionId,
+            card_id: cardId,
+            track_id: page.session.trackId,
+            thread_id: threadId,
+            turn_id: item.turnId || null,
+            item_uuid: `item-${item.id}`,
+            item_type: 'agentMessage',
+            method: 'item/completed',
+            params: JSON.stringify({ completedAtMs: item.createdAtMs, item: { type: 'agentMessage', text } }),
+            created_at_ms: item.createdAtMs,
+            turn_error_text: null,
+          }];
+        }
+        return [];
+      });
+    }),
   };
 }
-
-export const legacyPlannerRunSchema = z.object({
-  card_id: z.string(), worker_session_id: z.string().nullable().optional(), phase: harnessPhaseSchema.nullable().optional(),
-  /* Defaulted rather than required: a dormant card and older servers answer without them. */
-  pending: z.array(pendingQueueEntrySchema).optional().default([]),
-  pending_overflow: z.number().optional().default(0),
-  /* `.nullable()` and NOT `.optional()`: the server always sends these, so accepting absence
-     would hide the day one stopped being sent. */
-  model: z.string().nullable(), reasoning_effort: z.string().nullable(),
-  permission_mode: plannerPermissionModeSchema.nullable(),
-  blocked_reason: z.string().nullable(),
-  recovery: runRecoverySchema.nullable(),
-  /* Absent on older servers, and false is the safe read. */
-  attachments_supported: z.boolean().optional().default(false),
-  manual_compact_supported: z.boolean(),
-  compact_outcome: z.object({ operation_id: z.string(), thread_id: z.string(), turn_id: z.string().nullable(),
-    status: z.enum(['started', 'completed', 'interrupted', 'failed', 'unconfirmed', 'refused']),
-  }).nullable(),
-  context_usage_invalidated: z.boolean(),
-  /* Absent on older servers and whenever the harness has never reported a usage frame; `null` draws no meter. */
-  token_usage: plannerRunTokenUsageSchema.nullable().optional().default(null),
-  running_turn: plannerRunningTurnSchema.nullable(),
-});
 
 export function plannerRunOperation(cardId: string): ApiOperation<PlannerRun> {
   return {
     method: 'GET', path: `/api/v1/sessions/${encodeURIComponent(cardId)}/items?afterId=0&limit=1&view=planner-run`,
-    responseSchema: z.union([
-      sessionItemsPageDtoSchema.transform((page): PlannerRun => {
-        const running = page.activeTurn !== null && page.activeTurn !== undefined && page.activeTurn.status === 'running';
-        const ratio = Math.max(0, Math.min(1, page.session.contextUsageRatio));
-        return {
-          card_id: cardId,
-          worker_session_id: page.session.id,
-          phase: running ? 'turn_running' : page.session.status === 'queued' ? 'issuing_turn' : 'idle',
-          pending: [],
-          pending_overflow: 0,
-          model: page.session.model ?? null,
-          reasoning_effort: page.session.reasoningEffort ?? null,
-          permission_mode: page.session.permissionMode ?? null,
-          blocked_reason: page.session.status === 'unknown' ? 'The previous message has an unknown outcome.' : null,
-          recovery: null,
-          attachments_supported: false,
-          manual_compact_supported: true,
-          compact_outcome: null,
-          context_usage_invalidated: false,
-          token_usage: ratio > 0
-            ? {
-              used_tokens: Math.round(ratio * 200_000),
-              context_window: 200_000,
-              percent: Math.round(ratio * 100),
-              at_ms: page.session.updatedAtMs,
-            }
-            : null,
-          running_turn: running && page.activeTurn !== null && page.activeTurn !== undefined
-            ? { turn_id: page.activeTurn.id, elapsed_ms: Math.max(0, Date.now() - (page.activeTurn.startedAtMs ?? Date.now())) }
-            : null,
-        };
-      }),
-      legacyPlannerRunSchema,
-    ]),
+    responseSchema: sessionItemsPageDtoSchema.transform((page): PlannerRun => {
+      const running = page.activeTurn !== null && page.activeTurn !== undefined && page.activeTurn.status === 'running';
+      const ratio = Math.max(0, Math.min(1, page.session.contextUsageRatio));
+      return {
+        card_id: cardId,
+        worker_session_id: page.session.id,
+        phase: running ? 'turn_running' : page.session.status === 'queued' ? 'issuing_turn' : 'idle',
+        pending: [],
+        pending_overflow: 0,
+        model: page.session.model ?? null,
+        reasoning_effort: page.session.reasoningEffort ?? null,
+        permission_mode: page.session.permissionMode ?? null,
+        blocked_reason: page.session.status === 'unknown' ? 'The previous message has an unknown outcome.' : null,
+        recovery: null,
+        attachments_supported: false,
+        manual_compact_supported: true,
+        compact_outcome: null,
+        context_usage_invalidated: false,
+        token_usage: ratio > 0
+          ? {
+            used_tokens: Math.round(ratio * 200_000),
+            context_window: 200_000,
+            percent: Math.round(ratio * 100),
+            at_ms: page.session.updatedAtMs,
+          }
+          : null,
+        running_turn: running && page.activeTurn !== null && page.activeTurn !== undefined
+          ? { turn_id: page.activeTurn.id, elapsed_ms: Math.max(0, Date.now() - (page.activeTurn.startedAtMs ?? Date.now())) }
+          : null,
+      };
+    }),
   };
 }
 
@@ -979,42 +912,6 @@ const conversationStateSchema = z.enum([
 /** The longest first message the server accepts, checked before it is sent. */
 export const CONVERSATION_TEXT_MAX = 32768;
 
-/* Track conversations: written out rather than aliased to the area schema, and living here
-   rather than in `core/api/schemas.ts` because `kind: 'track-assistant'` is not in the event vocabulary. */
-
-export const trackConversationSummarySchema: z.ZodType<TrackConversationSummary> = z.object({
-  archivedAt: z.number().nullable(),
-  provider: agentProviderSchema,
-  id: z.string(),
-  trackId: z.string(),
-  title: z.string().nullable(),
-  kind: z.string(),
-  state: conversationStateSchema.nullable(),
-  updatedAt: z.number(),
-  // Required and nullable, as the kernel sends it; an older kernel's rows lack it and are rejected.
-  lastTurnCompletedAt: z.number().nullable(),
-  sourceCardId: z.string().optional(),
-});
-
-/**
- * `trackTitle` is absent because this endpoint does not send it; `kind` is pinned because it is the
- * only value this endpoint produces.
- */
-export function toTrackConversation(row: TrackConversationSummary): Conversation {
-  return {
-    provider: row.provider,
-    archivedAt: row.archivedAt,
-    id: row.id,
-    trackId: row.trackId,
-    ...(row.sourceCardId === undefined ? {} : { sourceCardId: row.sourceCardId }),
-    title: row.title,
-    kind: 'track-assistant',
-    state: row.state,
-    updatedAt: row.updatedAt,
-    lastTurnCompletedAt: row.lastTurnCompletedAt,
-  };
-}
-
 /** Idempotent assignment: a retry cannot toggle a conversation back. */
 export function setConversationArchiveOperation(
   trackId: string, cardId: string, archived: boolean, options?: Readonly<{ perga?: boolean }>,
@@ -1044,23 +941,12 @@ export function agentSessionDtoToConversation(dto: AgentSessionDto): Conversatio
     trackId: dto.trackId,
     archivedAt: dto.archivedAtMs ?? null,
     title: dto.title ?? (dto.boundTaskId ? `Task: ${dto.boundTaskId}` : null),
-    kind: dto.isLead ? 'shared-spec' : 'track-assistant',
+    kind: 'agent',
+    isLead: dto.isLead,
     provider,
     state: stateParsed.success ? stateParsed.data : 'idle',
     updatedAt: dto.updatedAtMs,
     lastTurnCompletedAt: dto.updatedAtMs,
-  };
-}
-
-export function trackConversationsOperation(trackId: string): ApiOperation<Conversation[]> {
-  return {
-    method: 'GET',
-    path: `/api/v1/tracks/${encodeURIComponent(trackId)}/sessions`,
-    responseSchema: z.union([
-      z.array(agentSessionDtoSchema).transform((sessions) =>
-        sessions.filter((session) => !session.isLead).map(agentSessionDtoToConversation)),
-      z.array(trackConversationSummarySchema).transform((rows) => rows.map(toTrackConversation)),
-    ]),
   };
 }
 
@@ -1070,7 +956,7 @@ export function trackConversationsOperation(trackId: string): ApiOperation<Conve
  */
 export function createTrackConversationOperation(
   trackId: string, text: string, idempotencyKey: string, provider: AgentProvider, selection: ModelSelection, side?: SideConversation, permissionMode?: string | null,
-): ApiOperation<CreatedConversation> {
+): ApiOperation<CreatedConversation & Readonly<{ session: AgentSessionDto }>> {
   const derivedTitle = conversationNameFrom(text);
   return {
     method: 'POST',
@@ -1085,15 +971,12 @@ export function createTrackConversationOperation(
       ...(selection.reasoning_effort === null ? {} : { reasoningEffort: selection.reasoning_effort }),
       ...(permissionMode == null ? {} : { permissionMode }),
     },
-    responseSchema: z.union([
-      sessionCreationReceiptSchema.refine(result => result.firstInput != null && result.session.trackId === trackId)
+    responseSchema: sessionCreationReceiptSchema.refine(result => result.firstInput != null && result.session.trackId === trackId)
         .transform((result) => ({
+          session: result.session,
           conversation: agentSessionDtoToConversation(result.session),
           sessionInput: result.firstInput!,
         })),
-      trackConversationSummarySchema.and(z.object({ initialInput: initialInputReceiptResultSchema }))
-        .transform((row) => ({ conversation: toTrackConversation(row), initialInput: row.initialInput })),
-    ]),
   };
 }
 
@@ -1162,15 +1045,6 @@ export const CONVERSATION_CREATE_TEXT: WriteText = Object.freeze({
   refused: 'The conversation was not started.',
   unknown: 'Starting the conversation is unconfirmed. Try again to check the same conversation.',
 });
-
-/**
- * The unknown sentence for each remedy a draft offers while its create is unconfirmed: the sentence names the button the
- * footer shows. Both buttons look for this key's conversation before anything new is created.
- */
-export function conversationCreateUnknownText(remedy: 'retry' | 'new-conversation'): string {
-  return remedy === 'retry' ? CONVERSATION_CREATE_TEXT.unknown
-    : 'Starting the conversation is unconfirmed. Sending it as a new conversation checks for that one first.';
-}
 
 /**
  * What a failed create (`null`: no answer was read) means for the draft, with its sentence: `retry` says only that it is

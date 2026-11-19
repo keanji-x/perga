@@ -7,7 +7,7 @@ import { useLayoutEffect, useRef, type ReactNode, type RefObject } from 'react';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
-import type { TrackDetailWire } from '../../../../core/domain/track.ts';
+import type { TrackAggregateSnapshotDto } from '../../../../core/api/schemas.ts';
 import { dailyTrackOperation, reportChangesOperation, reportEditsOperation, shiftDailyDate, supervisorSnapshotOperation, type ReportChange } from '../../../../core/domain/daily-planner.ts';
 import { DEPLOYMENT_OWNER_USER_ID } from '../../../../core/api/auth.ts';
 import { supervisorDetails, supervisorReport } from '../../../../core/domain/supervisor-view.ts';
@@ -35,7 +35,7 @@ export type DailyCenterPresentation = Readonly<{
 export function DailyTodayRoute({ transport, unauthorized, selectedDate, onOpenTrack, renderTrack }: Readonly<{
   transport: ApiTransportPort; unauthorized: UnauthorizedChannel; selectedDate?: string;
   onOpenTrack: (trackId: string) => void;
-  renderTrack: (detail: TrackDetailWire, evidence: ReactNode, panelContent: ReactNode, intro: ReactNode, supervisor: ReactNode, center?: DailyCenterPresentation) => ReactNode;
+  renderTrack: (detail: TrackAggregateSnapshotDto, evidence: ReactNode, panelContent: ReactNode, intro: ReactNode, supervisor: ReactNode, center?: DailyCenterPresentation) => ReactNode;
 }>) {
   const [view, setView] = useState<DailyCenterView>('assistant');
   const previousView = useRef(view);

@@ -36,7 +36,7 @@ it.each([
 });
 
 it.each(['open', 'close', 'stop'] as const)('typed unavailable /%s is not sent and retains the draft', async command => {
-  const fixture = renderCommandFixture({ canClose: false, canReopen: false });
+  const fixture = renderCommandFixture({ closed: command === 'close' });
   const input = await open();
   await type(input, '/');
   await waitFor(() => expect(screen.getAllByRole('option').length).toBeGreaterThan(0));
@@ -70,20 +70,20 @@ it('menu and typed close share the same execution and the page menu refetch fenc
 });
 
 it('shows registry order and filters by command-name prefix', async () => {
-  renderCommandFixture({ running: true }); const input = await open();
+  renderCommandFixture(); const input = await open();
   await type(input, '/');
   await waitFor(() => expect(screen.getAllByRole('option').map(option => option.querySelectorAll('span')[1]?.textContent))
-    .toEqual(['stop', 'new', 'side', 'compact', 'terminal', 'close']));
+    .toEqual(['new', 'side', 'compact', 'terminal', 'close']));
   await type(input, '/cl');
   await waitFor(() => expect(screen.getAllByRole('option').map(option => option.textContent)).toEqual(['closeClose this Track']));
 });
 
-it('executes /stop through the same interrupt endpoint as Stop', async () => {
-  const fixture = renderCommandFixture({ running: true }); const input = await open();
-  await type(input, '/stop');
-  await screen.findByRole('option', { name: /^stop/ });
-  fireEvent.keyDown(input, { key: 'Enter' });
-  fireEvent.keyDown(input, { key: 'Enter' });
+it('keeps the v1 running composer read-only and interrupts once through Stop', async () => {
+  const fixture = renderCommandFixture({ running: true });
+  await userEvent.click(await screen.findByRole('button', { name: /Conversation Daily Planner conversation/ }));
+  const input = await screen.findByRole('combobox', { name: 'Message' });
+  await waitFor(() => expect(input.getAttribute('contenteditable')).toBe('true'));
+  await userEvent.click(await screen.findByRole('button', { name: /^Stop$/ }));
   await waitFor(() => expect(fixture.requests.filter(request => request.path.endsWith('/interrupt'))).toHaveLength(1));
   expect(fixture.requests.filter(request => request.path.endsWith('/messages'))).toHaveLength(0);
 });
@@ -147,10 +147,10 @@ it('retains a side question when its registered execution refuses it', async () 
 });
 
 
-it.each(['Explain /close', 'Please do not use /stop'])('completes a slash word in prose %s without executing it', async text => {
-  const fixture = renderCommandFixture({ running: true }); const input = await open();
+it.each(['Explain /close', 'Please do not use /close'])('completes a slash word in prose %s without executing it', async text => {
+  const fixture = renderCommandFixture(); const input = await open();
   await type(input, text);
-  await screen.findByRole('option', { name: text.endsWith('/stop') ? /^stop/ : /^close/ });
+  await screen.findByRole('option', { name: /^close/ });
   fireEvent.keyDown(input, { key: 'Enter' });
   expect(input.textContent).toBe(text);
   expect(fixture.requests.filter(request => ['PATCH', 'PUT', 'POST'].includes(request.method))).toHaveLength(0);
@@ -177,9 +177,9 @@ it('discards a late command failure after switching conversations and restores o
 });
 
 const gestures = ['Enter', 'Tab', 'Shift+Enter', 'Shift+Tab', 'IME Enter', 'click'] as const;
-it.each(['close', 'stop'].flatMap(command => gestures.map(gesture => [command, gesture] as const)))(
+it.each(['close'].flatMap(command => gestures.map(gesture => [command, gesture] as const)))(
   'menu /%s with %s waits for completion before submit executes once', async (command, gesture) => {
-    const fixture = renderCommandFixture({ running: true }); const input = await open();
+    const fixture = renderCommandFixture(); const input = await open();
     await type(input, `/${command}`);
     const option = await screen.findByRole('option', { name: new RegExp(`^${command}`) });
     if (gesture === 'click') await userEvent.click(option);
@@ -224,29 +224,3 @@ it.each(['/rename New title', '/pin', '/unpin', '/admin', '/member', '/askme', '
     .toEqual([expect.objectContaining({ text })]));
   expect(fixture.requests.filter(request => request.method === 'PATCH' || request.method === 'PUT')).toHaveLength(0);
 });
-
-
-it.each(['sent', 'queued'] as const)('editing %s messages never offers the command menu', async edit => {
-  renderCommandFixture({ edit, running: edit === 'queued' });
-  await open();
-  await userEvent.click(await screen.findByRole('button', { name: edit === 'sent' ? 'Edit message' : 'Edit queued message' }));
-  const input = screen.getByRole('combobox', { name: 'Message' });
-  await type(input, '/');
-  expect(screen.queryByRole('listbox', { name: 'Commands' })).toBeNull();
-});
-
-it.each((['sent', 'queued'] as const).flatMap(edit => ['/close', '/stop', '/new'].map(text => [edit, text] as const)))(
-  'editing %s saves %s through the original message contract without command effects', async (edit, text) => {
-    const fixture = renderCommandFixture({ edit, running: edit === 'queued' });
-    await open();
-    await userEvent.click(await screen.findByRole('button', { name: edit === 'sent' ? 'Edit message' : 'Edit queued message' }));
-    const input = screen.getByRole('combobox', { name: 'Message' });
-    await type(input, text);
-    await userEvent.click(screen.getByRole('button', { name: edit === 'sent' ? 'Replace message' : 'Save queued message' }));
-    await waitFor(() => expect(fixture.requests.filter(request => ['POST', 'PATCH', 'PUT', 'DELETE'].includes(request.method))
-      .map(({ method, path, body }) => ({ method, path, body }))).toEqual([edit === 'sent'
-      ? { method: 'POST', path: '/api/v1/sessions/daily-planner/messages', body: { content: text, steerIfRunning: false, text, replaces_turn: 'turn' } }
-      : { method: 'PATCH', path: '/api/cards/daily-planner/planner/input/queued', body: { text, if_entry_rev: 2 } }]));
-    expect(screen.queryByText('Editing message')).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Send first message' })).toBeNull();
-  });

@@ -9,7 +9,7 @@ import {
   claudeInstalledVersionOperation, refreshClaudeInstalledVersionOperation, restartClaudeCardOperation,
   type ClaudeCardPort,
 } from '../../../../core/domain/claude-card.ts';
-import type { TrackDetailWire } from '../../../../core/domain/track.ts';
+import type { CardWire } from '../../../../core/domain/track.ts';
 import { queryKeys, runOperation } from './queries.ts';
 
 /**
@@ -28,11 +28,8 @@ export function createClaudeCardPort(
     },
     restart: async (cardId) => {
       const card = await runOperation(transport, restartClaudeCardOperation(cardId), unauthorized);
-      client.setQueryData(queryKeys.trackDetail(card.track_id), (previous: TrackDetailWire | undefined) => (
-        previous === undefined ? previous : {
-          ...previous,
-          cards: previous.cards.map((existing) => (existing.id === card.id ? card : existing)),
-        }
+      client.setQueryData(queryKeys.trackTools(card.track_id), (previous: CardWire[] | undefined) => (
+        previous?.map((existing) => (existing.id === card.id ? card : existing))
       ));
       void client.invalidateQueries({ queryKey: queryKeys.trackDetail(card.track_id) });
       return card;

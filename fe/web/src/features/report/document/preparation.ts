@@ -1,13 +1,13 @@
+import type { ReportDocumentDto } from '../../../../../core/api/schemas.ts';
 import {
   extractOutline, parse, REPORT_MAX_DEPTH, reportHeadingIdPolicy, sanitizeAstPolicy,
   type MarkdownParseResult,
 } from '../../../../../core/markdown/public.ts';
 import {
-  deriveReportOutline, readTrackReport, trackReportCardIn,
+  deriveReportOutline, readReportDocument,
   type ReportBlock, type ReportOutlineItem, type TrackReport,
 } from '../../../../../core/domain/report.ts';
 import { reportDocumentReferenceRepository, reportReferenceRepository, type ReferenceRepository } from '../../../../../core/domain/report-references.ts';
-import type { CardWire } from '../../../../../core/domain/track.ts';
 
 export type PreparedProse = Readonly<{
   source: string;
@@ -89,38 +89,24 @@ export function prepareReportDocument(report: TrackReport | null): PreparedRepor
 export type ReportPreparationPort = (report: TrackReport | null, signal: AbortSignal) => PreparedReport | Promise<PreparedReport>;
 
 /** Cheap canonical input identity. It contains no prepared syntax or live capabilities. */
-export type ReportSource = Readonly<{ card: CardWire | null; report: TrackReport | null }>;
+export type ReportSource = Readonly<{ report: TrackReport | null }>;
 
-/** Per-router derived data only. Weak keys do not extend query-card reachability. */
+/** Per-router derived data only. Weak keys do not extend document reachability. */
 export function createReportPreparationCache() {
-  const sources = new WeakMap<CardWire, ReportSource>();
+  const documents = new WeakMap<ReportDocumentDto, ReportSource>();
   const prepared = new WeakMap<ReportSource, PreparedReport>();
-  const emptySource: ReportSource = { card: null, report: null };
   const empty = prepareReportDocument(null);
-  prepared.set(emptySource, empty);
-  const sourceOf = (cards: readonly CardWire[]): ReportSource => {
-    const card = trackReportCardIn(cards);
-    if (card === undefined) return emptySource;
-    let source = sources.get(card);
-    if (source === undefined) {
-      source = { card, report: readTrackReport([card]) };
-      sources.set(card, source);
-      if (source.report === null) prepared.set(source, empty);
-    }
-    return source;
-  };
   return {
-    source: sourceOf,
-    peek: (source: ReportSource): PreparedReport | undefined => prepared.get(source),
-    read(cards: readonly CardWire[]): PreparedReport {
-      const source = sourceOf(cards);
-      let result = prepared.get(source);
-      if (result === undefined) {
-        result = prepareReportDocument(source.report);
-        prepared.set(source, result);
+    documentSource(document: ReportDocumentDto): ReportSource {
+      let source = documents.get(document);
+      if (source === undefined) {
+        source = { report: readReportDocument(document) };
+        documents.set(document, source);
+        if (source.report === null) prepared.set(source, empty);
       }
-      return result;
+      return source;
     },
+    peek: (source: ReportSource): PreparedReport | undefined => prepared.get(source),
     async prepare(source: ReportSource, execute: ReportPreparationPort, signal: AbortSignal): Promise<PreparedReport> {
       signal.throwIfAborted();
       const cached = prepared.get(source);

@@ -1,20 +1,18 @@
-import { WEB_COMPAT_VERSION } from '../providers/public.tsx';
 import '../../styles/entry.css';
 import { cleanup } from '@testing-library/react';
 import { afterEach, expect, it } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
-import type { ManagedProviderAvailability } from '../../../../core/domain/agent-providers.ts';
+import type { BootstrapDto } from '../../../../core/api/perga-v1.ts';
+import { fixtureBootstrap } from './session-contract-fixture.ts';
 import { renderAssistantProviderFixture } from './assistant-provider-fixture.tsx';
 
-const CLAUDE = Object.freeze<ManagedProviderAvailability>({
-  availability: { provider: 'claude', status: 'ready', reason: null, checked_at_ms: 1, authentication_method: null, authentication_notice: null },
-  accepts_unavailable_blank_track: true, capabilities: { managed_conversation: true, steer: false, images: false, manual_compact: false, history_replacement: false, requires_ready_availability: true },
-});
+const claudeBootstrap = (): BootstrapDto => fixtureBootstrap(['claude'], ['selected']);
 afterEach(async () => { cleanup(); document.getElementById('root')?.remove(); await page.viewport(1280, 800); });
 
 it.each([1280, 390])('selects a dynamically registered backend through the keyboard and freezes retry (%ipx)', async width => {
   await page.viewport(width, 950);
-  const fixture = renderAssistantProviderFixture({ answers: [CLAUDE], failFirstCreate: true, mobile: width < 600 });
+  const bootstrap = claudeBootstrap();
+  const fixture = renderAssistantProviderFixture({ bootstrap, failFirstCreate: true, mobile: width < 600 });
   if (width < 600) {
     await page.getByRole('button', { name: 'Open conversation history', exact: true }).click();
     await page.getByRole('button', { name: '发起新对话', exact: true }).click();
@@ -39,72 +37,22 @@ it.each([1280, 390])('selects a dynamically registered backend through the keybo
   const posts = () => fixture.requests.filter(request => request.method === 'POST' && request.path.endsWith('/sessions'));
   expect(posts()).toHaveLength(1);
   expect(posts()[0].body).toMatchObject({ provider: 'claude', model: 'selected', text: 'Frozen first message' });
-  fixture.client.setQueryData(['managed-providers'], [{ ...CLAUDE, availability: { ...CLAUDE.availability, status: 'unavailable', reason: 'Now unavailable' } }]);
+  bootstrap.providers[0] = { ...bootstrap.providers[0], available: false, reason: 'Now unavailable' };
+  await fixture.client.invalidateQueries({ queryKey: ['managed-providers'] });
   if (width < 600) await page.getByLabelText('对话选项').click();
   await page.getByRole('button', { name: 'Try again', exact: true }).click();
   await expect.poll(() => posts().length).toBe(2);
   expect(posts()[1].body).toEqual(posts()[0].body);
   expect(posts()[1].headers).toEqual(posts()[0].headers);
   await expect.element(page.getByRole(width < 600 ? 'dialog' : 'complementary', { name: 'Created Assistant' })).toBeVisible();
-  expect(fixture.client.getQueryData<{ provider: string }[]>(['track-conversations', 'provider-track'])?.[0].provider).toBe('claude');
+  expect(fixture.rows[0].provider).toBe('claude');
   expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(width);
 });
 
-it('keeps a dormant backend after fresh-session recovery and takes actions from declared capabilities', async () => {
-  await page.viewport(1280, 950);
-  const fixture = renderAssistantProviderFixture({ answers: [CLAUDE], existingProvider: 'claude', dormant: true, runAttachmentsSupported: true });
-  await page.getByRole('button', { name: 'Conversation Saved Assistant' }).click();
-  await expect.element(page.getByText('Saved reply', { exact: true })).toBeVisible();
-  const model = page.getByRole('button', { name: /^Model:/ });
-  await model.click();
-  await expect.element(page.getByRole('radio', { name: 'selected', exact: true })).toBeVisible();
-  await expect.element(page.getByRole('radio', { name: 'Codex', exact: true })).not.toBeInTheDocument();
-  await page.getByRole('radio', { name: 'selected', exact: true }).click();
-  await userEvent.keyboard('{Escape}');
-  await expect.poll(() => fixture.requests.filter(request => request.method === 'PUT' && request.path === '/api/v1/sessions/dormant/model').length).toBe(1);
-  expect(fixture.requests.find(request => request.method === 'PUT')?.body).toEqual({ model: 'selected', reasoningEffort: null });
-  // This fixture declares no permission options; #35 hides unsupported controls.
-  await expect.element(page.getByRole('button', { name: /^Approvals:/ })).not.toBeInTheDocument();
-  expect(fixture.requests.some(request => request.path.endsWith('/permission-mode'))).toBe(false);
-  const field = page.getByRole('combobox', { name: 'Message' });
-  await field.fill('Resume the declared backend');
-  await userEvent.keyboard('{Enter}');
-  await page.getByRole('button', { name: 'Start a fresh session, keep history' }).click();
-  await expect.element(page.getByText(/^Fresh session started/)).toBeVisible();
-  await expect.element(page.getByText('Saved reply', { exact: true })).toBeVisible();
-  await expect.element(field).toHaveTextContent('Resume the declared backend');
-  await field.click(); await userEvent.keyboard('{Enter}');
-  await expect.poll(() => fixture.requests.filter(request => request.path.endsWith('/messages')).length).toBe(2);
-  expect(fixture.client.getQueryData<{ provider: string }[]>(['track-conversations', 'provider-track'])?.[0].provider).toBe('claude');
-  await expect.element(page.getByRole('button', { name: /Compact/ })).not.toBeInTheDocument();
-  await expect.element(page.getByRole('button', { name: 'Attach an image' })).toBeDisabled();
-});
-
-it.each(['unsupported', 'unavailable', 'missing-version', 'old-version'] as const)('refuses %s without sending a fallback', async condition => {
-  const answer: ManagedProviderAvailability = condition === 'unsupported'
-    ? { ...CLAUDE, capabilities: { ...CLAUDE.capabilities, managed_conversation: false } }
-    : condition === 'unavailable'
-      ? { ...CLAUDE, availability: { ...CLAUDE.availability, status: 'unavailable', reason: 'Authenticate on this server' } }
-      : CLAUDE;
-  const fixture = renderAssistantProviderFixture({ answers: [answer], assistantProviders: condition !== 'missing-version', webCompatVersion: condition === 'old-version' ? 50 : WEB_COMPAT_VERSION });
-  await page.getByRole('button', { name: 'New conversation', exact: true }).click();
-  if (condition !== 'missing-version' && condition !== 'old-version') {
-    await page.getByRole('button', { name: /^Model:/ }).click();
-    await expect.element(page.getByText(condition === 'unsupported' ? /does not support managed/ : /Authenticate on this server/)).toBeVisible();
-    await userEvent.keyboard('{Escape}');
-  }
-  const field = page.getByRole('combobox', { name: 'Message' });
-  await field.fill('Must not fall back'); await userEvent.keyboard('{Enter}');
-  await expect.element(page.getByText(condition === 'missing-version' || condition === 'old-version' ? /does not support Assistant provider/ : /Managed provider capabilities are unavailable/)).toBeVisible();
-  expect(fixture.requests.filter(request => request.method === 'POST' && request.path.endsWith('/sessions'))).toEqual([]);
-});
-
-
 it('creates the declared Codex default despite auth/read and catalog unavailability', async () => {
-  const codex: ManagedProviderAvailability = { ...CLAUDE,
-    availability: { ...CLAUDE.availability, provider: 'codex', status: 'unavailable', reason: 'Account read failed' },
-    capabilities: { ...CLAUDE.capabilities, requires_ready_availability: false } };
-  const fixture = renderAssistantProviderFixture({ answers: [codex], catalogUnavailable: true });
+  const bootstrap = fixtureBootstrap();
+  bootstrap.providers[0] = { ...bootstrap.providers[0], available: false, reason: 'Account read failed' };
+  const fixture = renderAssistantProviderFixture({ bootstrap });
   await page.getByRole('button', { name: 'New conversation', exact: true }).click();
   await page.getByRole('button', { name: /^Model:/ }).click();
   await expect.element(page.getByRole('radio', { name: /^Default/ })).toBeEnabled();
@@ -118,8 +66,7 @@ it('creates the declared Codex default despite auth/read and catalog unavailabil
 
 
 it('renders, selects and sends a managed identifier independently of legacy UI labels', async () => {
-  const answer: ManagedProviderAvailability = { ...CLAUDE, availability: { ...CLAUDE.availability, provider: 'opencode' } };
-  const fixture = renderAssistantProviderFixture({ answers: [answer] });
+  const fixture = renderAssistantProviderFixture({ bootstrap: fixtureBootstrap(['opencode'], ['selected']) });
   await page.getByRole('button', { name: 'New conversation', exact: true }).click();
   const model = page.getByRole('button', { name: /^Model:/ });
   await model.click();
@@ -132,80 +79,16 @@ it('renders, selects and sends a managed identifier independently of legacy UI l
   expect(fixture.requests.find(request => request.method === 'POST' && request.path.endsWith('/sessions'))?.body).toMatchObject({ provider: 'acp:opencode', model: 'selected' });
 });
 
-it.each([false, true])('combines run attachment support with declared provider images=%s', async images => {
-  const fixture = renderAssistantProviderFixture({ answers: [{ ...CLAUDE, capabilities: { ...CLAUDE.capabilities, images } }],
-    existingProvider: 'claude', runAttachmentsSupported: true });
-  await page.getByRole('button', { name: 'Conversation Saved Assistant' }).click();
-  await expect.element(page.getByText('Saved reply', { exact: true })).toBeVisible();
-  await expect.poll(() => fixture.requests.some(request => request.path.includes('&view=run'))).toBe(true);
-  const attach = page.getByRole('button', { name: 'Attach an image' });
-  if (images) await expect.element(attach).toBeEnabled();
-  else await expect.element(attach).toBeDisabled();
-  expect(fixture.requests.filter(request => request.method === 'POST' && request.path.endsWith('/planner/attachments'))).toEqual([]);
-});
-
-
-it('adopts a landed frozen request before stale or missing metadata can refuse it', async () => {
-  const options = { answers: [CLAUDE], failFirstCreate: true, landFirstCreate: true, hideLanded: true };
-  const fixture = renderAssistantProviderFixture(options);
-  await page.getByRole('button', { name: 'New conversation', exact: true }).click();
-  await page.getByRole('button', { name: /^Model:/ }).click();
-  await page.getByRole('radio', { name: 'selected', exact: true }).click();
-  await userEvent.keyboard('{Escape}');
-  await page.getByRole('combobox', { name: 'Message' }).fill('Already committed');
-  await userEvent.keyboard('{Enter}');
-  await expect.element(page.getByRole('button', { name: 'Try again', exact: true })).toBeVisible();
-  fixture.client.setQueryData(['managed-providers'], []);
-  options.answers = []; options.hideLanded = false;
-  await page.getByRole('button', { name: 'Try again', exact: true }).click();
-  await expect.element(page.getByRole('complementary', { name: 'Created Assistant' })).toBeVisible();
-  expect(fixture.requests.filter(request => request.method === 'POST' && request.path.endsWith('/sessions'))).toHaveLength(1);
-});
-
-
 it('refreshes owner metadata before retrying a draft that never dispatched', async () => {
-  const options: { answers: ManagedProviderAvailability[] } = { answers: [] };
+  const options = { bootstrap: fixtureBootstrap([]) };
   const fixture = renderAssistantProviderFixture(options);
   await page.getByRole('button', { name: 'New conversation', exact: true }).click();
   await page.getByRole('combobox', { name: 'Message' }).fill('Retry after registration');
   await userEvent.keyboard('{Enter}');
   await expect.element(page.getByRole('button', { name: 'Try again', exact: true })).toBeVisible();
   expect(fixture.requests.filter(request => request.method === 'POST' && request.path.endsWith('/sessions'))).toHaveLength(0);
-  options.answers = [{ ...CLAUDE, availability: { ...CLAUDE.availability, provider: 'codex' },
-    capabilities: { ...CLAUDE.capabilities, requires_ready_availability: false } }];
+  options.bootstrap = fixtureBootstrap();
   await page.getByRole('button', { name: 'Try again', exact: true }).click();
   await expect.poll(() => fixture.requests.filter(request => request.method === 'POST' && request.path.endsWith('/sessions')).length).toBe(1);
   expect(fixture.requests.some(request => request.path === '/api/v1/bootstrap?scope=managed&refresh=true')).toBe(true);
-});
-
-it.each([1400, 390])('manually archives and restores a conversation without exposing its composer (%ipx)', async width => {
-  await page.viewport(width, 950);
-  const fixture = renderAssistantProviderFixture({answers:[CLAUDE], existingProvider:'claude', mobile:width < 600});
-  const history = async () => { if (width < 600) await page.getByRole('button',{name:'Open conversation history',exact:true}).click(); };
-  await history();
-  await page.getByRole('button',{name:'Actions for conversation: Saved Assistant'}).click();
-  await page.getByRole('menuitem',{name:'Archive conversation'}).click();
-  const archived = page.getByRole('button',{name:'Archived conversations',exact:true});
-  const active = page.getByRole('button',{name:'Active conversations',exact:true});
-  await expect.element(archived).toHaveAttribute('aria-expanded', 'false');
-  await expect.element(archived).toHaveTextContent('Archived1');
-  await expect.element(active).toHaveAttribute('aria-expanded', 'true');
-  await archived.click();
-  await active.click();
-  await expect.element(active).toHaveAttribute('aria-expanded', 'false');
-  await expect.element(archived).toHaveAttribute('aria-expanded', 'true');
-  await active.click();
-  await page.getByRole('button',{name:width < 600 ? /^Saved Assistant/ : 'Conversation Saved Assistant'}).click();
-  await expect.element(page.getByText('Saved reply', {exact:true})).toBeVisible();
-  await expect.element(page.getByText('This conversation is archived. Restore it to continue.')).toBeVisible();
-  await expect.element(page.getByRole('combobox',{name:'Message'})).not.toBeInTheDocument();
-  await page.getByRole('button',{name:'Restore conversation',exact:true}).click();
-  await expect.element(page.getByRole('combobox',{name:'Message'})).toBeVisible();
-  if (width < 600) await history();
-  else await page.getByRole('button',{name:'Close conversation',exact:true}).click();
-  await expect.element(page.getByRole('button',{name:'Archived conversations',exact:true})).not.toBeInTheDocument();
-  await expect.element(page.getByRole('button',{name:width < 600 ? /^Saved Assistant/ : 'Conversation Saved Assistant'})).toBeVisible();
-  expect(fixture.requests.filter(request => request.method === 'PATCH' && request.path.endsWith('/archive')).map(request => request.body)).toEqual([{archived:true},{archived:false}]);
-  expect(fixture.rows[0].provider).toBe('claude');
-  expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(width);
 });

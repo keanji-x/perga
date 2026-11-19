@@ -1,5 +1,5 @@
 import '../../styles/entry.css';
-import { AREA, setup } from './mobile-browser-fixture.tsx';
+import { setup } from './mobile-browser-fixture.tsx';
 import { observeHistory } from './mobile-history-browser-trace.ts';
 import { withFontRoleProbe, fontRoleSnapshot } from '../../../../tools/styles/font-role-fixture.ts';
 /*
@@ -11,7 +11,6 @@ import { commands, page, userEvent } from 'vitest/browser';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 
-import { createReadReceiptsKernel } from '../providers/read-receipts-fixture.tsx';
 
 afterEach(async () => { cleanup(); vi.restoreAllMocks(); await commands.emulateReducedMotion(false); });
 
@@ -237,12 +236,12 @@ describe('Track mobile presentation', () => {
     await page.getByRole('button', { name: 'Back to workspace' }).click();
     await expect.poll(() => page.getByRole('dialog', { name: 'Tracks and settings' }).query()).toBeNull();
     await openSettings();
-    await page.getByRole('button', { name: 'Network', exact: true }).click();
-    await page.getByRole('heading', { name: 'Network', exact: true }).findElement();
-    expect(router.state.location.pathname).toBe('/settings/network');
+    await page.getByRole('button', { name: 'Appearance', exact: true }).click();
+    await page.getByRole('heading', { name: 'Appearance', exact: true }).findElement();
+    expect(router.state.location.pathname).toBe('/settings/appearance');
     expect(page.getByRole('navigation', { name: 'Settings sections' }).query()).toBeNull();
-    const networkInput = await page.getByRole('textbox', { name: 'HTTP proxy', exact: true }).findElement();
-    const field = networkInput.closest('li')!;
+    const networkInput = await page.getByRole('combobox', { name: 'Theme', exact: true }).findElement();
+    const field = networkInput.parentElement!;
     const fieldBox = field.getBoundingClientRect();
     expect(fieldBox.width).toBeLessThanOrEqual(320);
     expect(networkInput.getBoundingClientRect().left).toBeGreaterThanOrEqual(fieldBox.left);
@@ -338,7 +337,6 @@ describe('Track mobile presentation', () => {
     expect(page.getByRole('heading', { name: label, exact: true }).all()).toHaveLength(1);
     expect(page.getByRole('navigation', { name: 'Settings categories' }).query()).toBeNull();
     expect(page.getByRole('navigation', { name: 'Settings sections' }).query()).toBeNull();
-    if (label === 'Network') await page.getByRole('textbox', { name: 'HTTP proxy', exact: true }).findElement();
     if (label === 'Plugins') await page.getByRole('button', { name: /^Add a plugin/ }).findElement();
     if (label === 'Network') await page.screenshot({ path: '../../../../test-results/mobile-settings-network-page.png' });
     router.history.back();
@@ -476,11 +474,22 @@ describe('Track mobile presentation', () => {
     const unsubscribe = router.subscribe('onResolved', () => { trace.record('route'); });
     try {
       await page.getByRole('button', { name: 'Open conversation history' }).click();
-      const settings = await page.getByRole('button', { name: '设置', exact: true }).findElement();
+      const settingsControl = page.getByRole('button', { name: '设置', exact: true });
+      const openingControl = await settingsControl.findElement();
+      // Native drawer entrance animation must settle before measuring its edge hit target.
+      await Promise.allSettled(openingControl.closest('dialog')!.getAnimations({ subtree: true })
+        .filter(animation => animation.effect?.getComputedTiming().endTime !== Infinity)
+        .map(animation => animation.finished));
+      const settings = await settingsControl.findElement();
       const box = settings.getBoundingClientRect();
       expect(box.height).toBeGreaterThanOrEqual(44);
       trace.record('before-settings-edge-click');
-      await page.elementLocator(settings).click({ position: { x: 4, y: box.height / 2 } });
+      await expect.poll(() => {
+        const control = settingsControl.element();
+        const bounds = control.getBoundingClientRect();
+        return document.elementFromPoint(bounds.left + 4, bounds.top + bounds.height / 2)?.closest('button') === control;
+      }).toBe(true);
+      await settingsControl.click({ position: { x: 4, y: box.height / 2 } });
       trace.record('after-settings-edge-click');
       await expect.poll(() => router.state.location.pathname).toBe('/settings');
       await page.getByRole('navigation', { name: 'Settings categories' }).findElement();
@@ -589,51 +598,6 @@ describe('Track mobile presentation', () => {
   });
 
 
-});
-
-
-it('clears manual unread when reopening the current Track through mobile navigation', async () => {
-  await page.viewport(390, 844);
-  const receipts = createReadReceiptsKernel({ baselineMs: 1_000 });
-  const router = setup('/track/w1', AREA.name, () => undefined, receipts);
-  await openTrackNavigation();
-  await page.getByRole('button', { name: 'Actions for track Responsive mobile UI', exact: true }).click();
-  await page.getByRole('menuitem', { name: 'Mark as unread', exact: true }).click();
-  await expect.poll(() => receipts.stored('track', 'w1')?.manualUnread).toBe(true);
-  await page.getByRole('button', { name: 'Responsive mobile UI', exact: true }).click();
-  await expect.poll(() => document.querySelector('main')?.hasAttribute('inert')).toBe(false);
-  expect(router.state.location.pathname).toBe('/track/w1');
-  await expect.poll(() => receipts.stored('track', 'w1')?.manualUnread).toBe(false);
-});
-
-
-it('retains unread when a selected Track detail cannot be loaded', async () => {
-  await page.viewport(1400, 900);
-  const receipts = createReadReceiptsKernel({ baselineMs: 1_000 });
-  setup('/track/w1', AREA.name, () => undefined, receipts);
-  await page.getByRole('button', { name: 'Track Remote access', exact: true }).hover();
-  await page.getByRole('button', { name: 'Actions for track Remote access', exact: true }).click();
-  await page.getByRole('menuitem', { name: 'Mark as unread', exact: true }).click();
-  await expect.poll(() => receipts.stored('track', 'w2')?.manualUnread).toBe(true);
-  await page.getByRole('button', { name: 'Track Remote access', exact: true }).click();
-  await expect.element(page.getByRole('alert')).toBeVisible();
-  expect(receipts.stored('track', 'w2')?.manualUnread).toBe(true);
-  expect(receipts.posts().map((request) => request.path).filter((path) => path.includes('/w2/')))
-    .toEqual(['/api/read-receipts/track/w2/unread']);
-});
-
-
-it('acknowledges a repeated desktop selection only in the rendered Track view', async () => {
-  await page.viewport(1400, 900);
-  const receipts = createReadReceiptsKernel({ baselineMs: 1_000 });
-  setup('/track/w1', AREA.name, () => undefined, receipts);
-  const group = page.getByRole('group', { name: 'area Product', exact: true });
-  await group.getByRole('button', { name: 'Track Responsive mobile UI', exact: true }).hover();
-  await group.getByRole('button', { name: 'Actions for track Responsive mobile UI', exact: true }).click();
-  await page.getByRole('menuitem', { name: 'Mark as unread', exact: true }).click();
-  await expect.poll(() => receipts.stored('track', 'w1')?.manualUnread).toBe(true);
-  await group.getByRole('button', { name: 'Track Responsive mobile UI', exact: true }).click();
-  await expect.poll(() => receipts.stored('track', 'w1')?.manualUnread).toBe(false);
 });
 
 

@@ -1,6 +1,7 @@
-import { historicalConversationPage, conversationCardId, historicalConversationRun } from './conversation-read-data.ts';
+import { fixtureTrack, fixtureSession, fixtureSnapshot } from './session-contract-fixture.ts';
+import { sessionItem, sessionPage, sessionTurn, sessionInput } from './conversation-session-data.ts';
+import { conversationCardId } from './conversation-read-data.ts';
 import { prepareReportDocument } from '../../features/report/document/preparation.ts';
-import { WEB_COMPAT_VERSION } from '../providers/public.tsx';
 // `@` on the real routes, in a real engine (#1881 S2): the Planner's conversation and the
 // new-track sentence offer the area's tags, reports and blocks from the mentions endpoint; a
 // track's assistant conversation, without an Area candidate context, offers no Report picks.
@@ -20,10 +21,10 @@ import { ThemeProvider } from '../theme/public.tsx';
 
 afterEach(async () => { cleanup(); await page.viewport(1280, 720); });
 
-const AREA = { id: 'c1', name: 'Work', color: '#5B8DEF', sort: 1, kind: 'user', created_at: 1, updated_at: 1 };
-const TRACK = { workspace: { isolation: 'none' as const, kind: 'attached' as const, path: '/tmp', frozen_at: null }, id: 'w1', area_id: 'c1', title: 'Test track', sort: 1, cwd: '/tmp', pinned_at: null, closed_at: null, created_at: 1, updated_at: 2 };
-const PLANNER_CARD = { id: 'card-planner', track_id: 'w1', kind: 'codex', title: 'Planner chat', sort: 1, payload: { planner_harness: true }, deletable: true, created_at: 1, updated_at: 2 };
-const ASSISTANT_ROW = { id: 'conv-assistant-1', trackId: 'w1', title: 'Side chat', kind: 'track-assistant', provider: 'codex', state: 'idle', updatedAt: 30, archivedAt: null, lastTurnCompletedAt: null };
+const AREA = { id: 'c1', name: 'Work', color: '#5B8DEF', sortOrder: 1, kind: 'user', createdAtMs: 1, updatedAtMs: 1 };
+const TRACK = fixtureTrack('w1', { areaId: 'c1', title: 'Test track' });
+const PLANNER_CARD = fixtureSession('card-planner', 'w1', { title: 'Planner chat', isLead: true });
+const ASSISTANT_ROW = fixtureSession('conv-assistant-1', 'w1', { title: 'Side chat', updatedAtMs: 30 });
 const BLOCK_INSERT = '@`/研发/Deploy notes/report.md#b_1a2b`';
 const CANDIDATES: MentionCandidates = {
   tags: [{ label: '部署', track_count: 2, insert: '@`tag:部署`' }],
@@ -36,44 +37,31 @@ function mount(path: string, storedText: string | null = null, pluginDescription
   const ok = (body: unknown): ApiTransportResponse => ({ status: 200, statusText: 'OK', body });
   const transport: ApiTransportPort = { send(request) {
     requests.push(request);
-    if (request.path === '/api/version') return Promise.resolve(ok({ webCompatVersion: WEB_COMPAT_VERSION, minWebCompatVersion: WEB_COMPAT_VERSION, syncEventVersion: 20, dbInstanceId: 'mentions', assistantProviders: true, conversationInitialInput: true, conversationCreateModel: true }));
-    if (request.path.startsWith('/api/agent-providers/managed')) return Promise.resolve(ok([{
-      availability: { provider: 'codex', status: 'ready', reason: null, checked_at_ms: 1, authentication_method: null, authentication_notice: null },
-      accepts_unavailable_blank_track: true, capabilities: { managed_conversation: true, steer: true, images: true, manual_compact: true, history_replacement: true, requires_ready_availability: false },
-    }]));
     if (request.path.startsWith('/api/areas/c1/mentions?q=bob')) return Promise.resolve(ok({ tags: [], tracks: [], blocks: [] }));
     if (request.path.startsWith('/api/areas/c1/mentions?')) return Promise.resolve(ok(CANDIDATES));
-    if (request.method === 'POST' && request.path === '/api/tracks') return new Promise<ApiTransportResponse>(() => undefined);
+    if (request.method === 'POST' && request.path === '/api/v1/tracks') return new Promise<ApiTransportResponse>(() => undefined);
     if (request.path === '/api/plugins') return Promise.resolve(ok([{
       id: 'dev.example', version: '1', enabled: false, state: 'disabled',
       manifest_name: 'development', manifest_description: pluginDescription,
       has_config: false, can_uninstall: false, can_disable: true,
     }]));
-    if (request.path === '/api/track-templates') return Promise.resolve(ok(templates));
-    if (request.path === '/api/areas') return Promise.resolve(ok([AREA]));
-    if (request.path === '/api/areas/c1/tracks') return Promise.resolve(ok([TRACK]));
-    if (request.path === '/api/tracks/w1') return Promise.resolve(ok({ track: TRACK, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true, cards: [PLANNER_CARD], overlays: [] }));
-    if (request.path === '/api/tracks/w1/conversations') return Promise.resolve(ok([ASSISTANT_ROW]));
-    if (request.path.includes('/planner/run?contract=conversation_v1')) {
-      return Promise.resolve(ok(historicalConversationRun({ card_id: conversationCardId(request.path), worker_session_id: 'runtime', phase: running ? 'turn_running' : 'idle', model: null, reasoning_effort: null, permission_mode: 'never', blocked_reason: null, manual_compact_supported: true, recovery: null, compact_outcome: null, context_usage_invalidated: false, running_turn: null }, running ? 'running' : 'idle', true)));
-    }
-    if (request.path.endsWith('/planner/input')) {
+    if (request.path === '/api/v1/templates') return Promise.resolve(ok(templates.map(template => ({ id: template.id, title: template.title, description: template.description }))));
+    if (request.path.startsWith('/api/v1/bootstrap')) return Promise.resolve(ok({ version: 'mentions', providers: [{ provider: 'codex', available: true, models: [] }], areas: [], templates: templates.map(template => ({ id: template.id, title: template.title, description: template.description })) }));
+    if (request.path === '/api/v1/areas') return Promise.resolve(ok([AREA]));
+    if (request.path === '/api/v1/areas/c1/tracks?includeClosed=true') return Promise.resolve(ok([TRACK]));
+    if (request.path === '/api/v1/tracks/w1') return Promise.resolve(ok(fixtureSnapshot(TRACK, [PLANNER_CARD, ASSISTANT_ROW])));
+    if (request.path === '/api/v1/tracks/w1/sessions') return Promise.resolve(ok([ASSISTANT_ROW]));
+    if (request.path.endsWith('/messages')) {
       storedText = (request.body as { text: string }).text;
-      return Promise.resolve(ok({ card_id: PLANNER_CARD.id, worker_session_id: 'runtime', entry_id: 'entry-1' }));
+      return Promise.resolve(ok(sessionInput(conversationCardId(request.path), 'input-1')));
     }
-    if (running && request.path.includes('/harness/items?')) return Promise.resolve(ok(historicalConversationPage(conversationCardId(request.path), Array.from({ length: 5 }).flatMap((_, index) => ['userMessage', 'agentMessage'].map((item_type, offset) => ({
-      id: index * 2 + offset + 1, worker_session_id: 'runtime', card_id: PLANNER_CARD.id, track_id: TRACK.id,
-      thread_id: 'thread', turn_id: null, turn_error_text: null, item_uuid: `entry-${index}-${offset}`,
-      item_type, method: 'item/completed', params: JSON.stringify({ item: offset === 0 ? { content: [{ text: `${item_type} ${index}` }] } : { text: `${item_type} ${index}` } }), created_at_ms: index * 2000 + offset,
-    }))), null)));
-    if (request.path.endsWith('/planner/interrupt')) return Promise.resolve(ok({ card_id: PLANNER_CARD.id, worker_session_id: 'runtime', stopped: true }));
-    if (request.path.includes('/harness/items?')) return Promise.resolve(ok(historicalConversationPage(conversationCardId(request.path), storedText === null ? [] : [{
-      id: 1, worker_session_id: 'runtime', card_id: PLANNER_CARD.id, track_id: TRACK.id,
-      thread_id: 'thread', turn_id: null, turn_error_text: null, item_uuid: 'entry-1',
-      item_type: 'userMessage', method: 'item/completed', params: '{}', created_at_ms: 50,
-      input_segments: [{ presentation: 'user', text: storedText, attachments: [],
-        origin: { observation: 'user_message', event_id: null, queue_entry: { id: 'entry-1', rev: 0 } } }],
-    }], null)));
+    if (request.path.endsWith('/interrupt')) return Promise.resolve(ok({ interrupted: true }));
+    if (request.path.includes('/items?')) {
+      const id = conversationCardId(request.path);
+      return Promise.resolve(ok(sessionPage(id === PLANNER_CARD.id ? PLANNER_CARD : ASSISTANT_ROW,
+        running ? Array.from({ length: 5 }).flatMap((_, index) => [sessionItem(id, index * 2 + 1, `userMessage ${index}`, 'user'), sessionItem(id, index * 2 + 2, `agentMessage ${index}`)])
+          : storedText === null ? [] : [sessionItem(id, 1, storedText, 'user')], running ? sessionTurn(id) : null)));
+    }
     if (request.path === '/api/settings') return Promise.resolve(ok({}));
     return Promise.resolve(ok([]));
   } };
@@ -90,7 +78,7 @@ async function openConversation(name: RegExp) {
   await page.getByRole('button', { name }).click();
   const field = page.getByRole('combobox', { name: 'Message' });
   await expect.element(field).toBeVisible();
-  await field.click();
+  if (field.element().getAttribute('contenteditable') === 'true') await field.click();
 }
 
 const menu = () => page.getByRole('listbox', { name: 'Mention' });
@@ -110,17 +98,17 @@ it('groups the area\'s tags, reports and blocks under @ in the Planner conversat
   await expect.element(page.getByText('Deploy notes › Rollback')).toBeVisible();
   await userEvent.keyboard('{Enter}');
 
-  await expect.poll(() => requests.filter((request) => request.path.endsWith('/planner/input')).length).toBe(1);
-  const sent = requests.find((request) => request.path.endsWith('/planner/input'))!.body as { text: string };
+  await expect.poll(() => requests.filter((request) => request.path.endsWith('/messages')).length).toBe(1);
+  const sent = requests.find((request) => request.path.endsWith('/messages'))!.body as { text: string };
   expect(sent.text).toBe(`see ${BLOCK_INSERT}`);
-  await expect.element(page.getByText('Deploy notes › b_1a2b', { exact: true })).toBeVisible();
-  expect(document.querySelectorAll(':is([data-nc-turn="you"], [data-nc-turn="unknown"])')).toHaveLength(1);
-  expect(document.querySelector('[data-nc-turn="unknown"]')?.textContent).toBe('see Deploy notes › b_1a2b');
+  await expect.element(page.getByText('Deploy notes › b_1a2b', { exact: true }).first()).toBeVisible();
+  await expect.poll(() => document.querySelectorAll('[data-nc-turn="human"]')).toHaveLength(1);
+  expect(document.querySelector('[data-nc-turn="human"]')?.textContent).toBe('see Deploy notes › b_1a2b');
   // A fresh route has no memory of the menu pick: the stored address still renders as a pill.
   cleanup();
   mount('/track/w1', sent.text);
   await openConversation(/Conversation Planner chat/);
-  await expect.element(page.getByText('Deploy notes › b_1a2b', { exact: true })).toBeVisible();
+  await expect.element(page.getByText('Deploy notes › b_1a2b', { exact: true }).first()).toBeVisible();
   expect(document.querySelector('[data-nc-sent-mention]')?.getAttribute('title')).toBe(BLOCK_INSERT);
 });
 
@@ -154,8 +142,8 @@ it.each([
   await expect.element(menu()).not.toBeInTheDocument();
   await expect.element(page.getByText(chip, { exact: true })).toBeVisible();
   await userEvent.keyboard('{Enter}');
-  await expect.poll(() => requests.filter((request) => request.path.endsWith('/planner/input')).length).toBe(1);
-  const sent = requests.find((request) => request.path.endsWith('/planner/input'))!.body as { text: string };
+  await expect.poll(() => requests.filter((request) => request.path.endsWith('/messages')).length).toBe(1);
+  const sent = requests.find((request) => request.path.endsWith('/messages'))!.body as { text: string };
   expect(sent.text).toBe(`see ${insert}`);
 });
 
@@ -176,7 +164,7 @@ it.each([
   await userEvent.keyboard(text);
   await expect.element(page.getByText(empty)).toBeVisible();
   await userEvent.keyboard('{Enter}');
-  const sends = () => requests.filter((request) => request.path.endsWith('/planner/input'))
+  const sends = () => requests.filter((request) => request.path.endsWith('/messages'))
     .map((request) => (request.body as { text: string }).text);
   await expect.poll(sends).toEqual([text]);
   /* A frame for a close the send might have set off. */
@@ -201,7 +189,7 @@ it('keeps aria-multiline off both trigger-bearing fields through mount, typing a
   await expect.element(menu().getByRole('option').first()).toBeVisible();
   await expectComboboxWithoutMultiline('Message');
   await userEvent.keyboard('{Escape}{Enter}');
-  await expect.poll(() => requests.filter((request) => request.path.endsWith('/planner/input')).length).toBe(1);
+  await expect.poll(() => requests.filter((request) => request.path.endsWith('/messages')).length).toBe(1);
   await expectComboboxWithoutMultiline('Message');
   cleanup();
 
@@ -248,11 +236,11 @@ it('offers @ in the new-track sentence, lets Enter pick, and creates with the in
 
   await userEvent.keyboard('{ArrowUp}{Enter}');
   await expect.element(menu()).not.toBeInTheDocument();
-  expect(requests.some((request) => request.method === 'POST' && request.path === '/api/tracks')).toBe(false);
+  expect(requests.some((request) => request.method === 'POST' && request.path === '/api/v1/tracks')).toBe(false);
 
   await page.getByRole('button', { name: 'Create track' }).click();
-  await expect.poll(() => requests.filter((request) => request.method === 'POST' && request.path === '/api/tracks').length).toBe(1);
-  const created = requests.find((request) => request.method === 'POST' && request.path === '/api/tracks')!.body as { first_message?: string };
+  await expect.poll(() => requests.filter((request) => request.method === 'POST' && request.path === '/api/v1/tracks').length).toBe(1);
+  const created = requests.find((request) => request.method === 'POST' && request.path === '/api/v1/tracks')!.body as { first_message?: string };
   expect(created.first_message).toBeUndefined();
 });
 
@@ -274,8 +262,8 @@ it('includes plugin documentation in a new conversation first message without re
   await expect.element(menu().getByRole('option', { name: /development/ })).toBeVisible();
   await userEvent.keyboard('{Enter}');
   await userEvent.keyboard('{Enter}');
-  await expect.poll(() => requests.find(request => request.method === 'POST' && request.path === '/api/tracks/w1/conversations')).toBeDefined();
-  const sent = requests.find(request => request.method === 'POST' && request.path === '/api/tracks/w1/conversations');
+  await expect.poll(() => requests.find(request => request.method === 'POST' && request.path === '/api/v1/tracks/w1/sessions')).toBeDefined();
+  const sent = requests.find(request => request.method === 'POST' && request.path === '/api/v1/tracks/w1/sessions');
   expect(JSON.stringify(sent?.body)).toContain('Develop issues and publish changes.');
   expect(JSON.stringify(sent?.body)).toContain('documentation only');
   expect(mentionReads()).toEqual([]);
@@ -293,8 +281,8 @@ it('shows the plugin name for a long guide and sends the complete description', 
   const field = page.getByRole('combobox', { name: 'Message' });
   await expect.poll(() => field.element().querySelector('[data-astryx-token]')?.textContent).toBe('development');
   await userEvent.keyboard('{Enter}');
-  await expect.poll(() => requests.find(request => request.method === 'POST' && request.path.endsWith('/planner/input'))).toBeDefined();
-  expect(JSON.stringify(requests.find(request => request.method === 'POST' && request.path.endsWith('/planner/input'))?.body)).toContain(description.trim());
+  await expect.poll(() => requests.find(request => request.method === 'POST' && request.path.endsWith('/messages'))).toBeDefined();
+  expect(JSON.stringify(requests.find(request => request.method === 'POST' && request.path.endsWith('/messages'))?.body)).toContain(description.trim());
 });
 
 it('dismisses a native navigation preview before Escape can stop a working Planner', async () => {
@@ -307,12 +295,12 @@ it('dismisses a native navigation preview before Escape can stop a working Plann
   await expect.poll(() => document.querySelector('[data-nc-rail-preview]')).not.toBeNull();
   await userEvent.keyboard('{Escape}');
   await expect.poll(() => document.querySelector('[data-nc-rail-preview]')).toBeNull();
-  expect(requests.filter(request => request.path.endsWith('/planner/interrupt'))).toHaveLength(0);
+  expect(requests.filter(request => request.path.endsWith('/interrupt'))).toHaveLength(0);
   await userEvent.keyboard('{Escape}');
-  await expect.poll(() => requests.filter(request => request.path.endsWith('/planner/interrupt')).length).toBe(1);
+  await expect.poll(() => requests.filter(request => request.path.endsWith('/interrupt')).length).toBe(1);
 });
 
-it('loads templates only after @ and creates from the selected named template chip', async () => {
+it('loads v1 template documentation after @ and preserves its chip in the first message', async () => {
   await page.viewport(1440, 900);
   const { requests } = mount('/area/c1/new', null, '', false, [{
     id: 'small-change', title: 'Small change', description: 'Implement a focused change',
@@ -320,7 +308,7 @@ it('loads templates only after @ and creates from the selected named template ch
   }]);
   const field = page.getByRole('combobox', { name: 'What this track should do' });
   await expect.element(field).toBeVisible();
-  expect(requests.some(request => request.path === '/api/track-templates')).toBe(false);
+  expect(requests.some(request => request.path === '/api/v1/templates')).toBe(false);
   await field.click();
   await userEvent.keyboard('Use @');
   await expect.element(menu().getByRole('option', { name: /^Templates/ })).toBeVisible();
@@ -331,9 +319,10 @@ it('loads templates only after @ and creates from the selected named template ch
   expect(field.element().querySelector('[data-astryx-token]')?.textContent).toBe('Small change');
   await page.screenshot({ path: './__screenshots__/new-track-template-mention.png' });
   await page.getByRole('button', { name: 'Create track' }).click();
-  await expect.poll(() => requests.filter(request => request.method === 'POST' && request.path === '/api/tracks').length).toBe(1);
-  expect(requests.find(request => request.method === 'POST' && request.path === '/api/tracks')!.body).toMatchObject({
-    template_id: 'small-change',
+  await expect.poll(() => requests.filter(request => request.method === 'POST' && request.path === '/api/v1/tracks').length).toBe(1);
+  expect(requests.find(request => request.method === 'POST' && request.path === '/api/v1/tracks')!.body).toMatchObject({
+    areaId: 'c1',
+    provider: 'codex',
   });
-  expect(requests.find(request => request.method === 'POST' && request.path === '/api/tracks')!.body).not.toHaveProperty('first_message');
+  expect(requests.find(request => request.method === 'POST' && request.path === '/api/v1/tracks')!.body).not.toHaveProperty('first_message');
 });

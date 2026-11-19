@@ -17,7 +17,7 @@ function setup() {
   let currentTrackId = 'A';
   let owner = {};
   const props = () => ({ owner, open, currentTrackId, onNew, onOpenChange,
-    conversations: Array.from({ length: 30 }, (_, i) => ({ id: `chat-${i}`, trackId: currentTrackId, title: `Conversation ${i}`, kind: 'track-assistant' as const, provider: 'codex' as const, state: 'idle' as const, updatedAt: 0 })), loading: false, failed: false, onRetry: vi.fn(), onSelect,
+    conversations: Array.from({ length: 30 }, (_, i) => ({ id: `chat-${i}`, trackId: currentTrackId, title: `Conversation ${i}`, isLead: false, kind: 'agent' as const, provider: 'codex' as const, state: 'idle' as const, updatedAt: 0 })), loading: false, failed: false, onRetry: vi.fn(), onSelect,
     onOpenSettings, accountLabel: 'Account', accountInitial: 'A', onSignOut: vi.fn(), now: 0,
     scopeLabel: 'Current track', selectedConversationId: 'chat-0', trackGroups: { pinned: [], unread: [], waiting: [] },
     onOpenTrack: vi.fn(), isUnread: () => false, tracksLoading: false, tracksError: null, onRetryTracks: vi.fn(),

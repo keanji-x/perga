@@ -1,32 +1,31 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import * as markdown from '../../../../../core/markdown/public.ts';
-import { deriveReportOutline, readTrackReport, trackReportLinkUrl, type TrackReport } from '../../../../../core/domain/report.ts';
-import type { CardWire } from '../../../../../core/domain/track.ts';
+import { deriveReportOutline, readReportDocument, trackReportLinkUrl, type TrackReport } from '../../../../../core/domain/report.ts';
+import type { ReportDocumentDto } from '../../../../../core/api/schemas.ts';
 import { reportDocumentReferenceRepository } from '../../../../../core/domain/report-references.ts';
 import { createReportPreparationCache, prepareProse, prepareReportDocument } from './preparation.ts';
 import { PreparedProseBlock } from './content.tsx';
 import { ReportDocument } from './public.tsx';
 
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
-function card(markdown = '# Stored report\n\nEvidence.'): CardWire {
-  return { id: 'report', track_id: 'track', kind: 'track-report', title: null, sort: 0,
-    payload: { schemaVersion: 3, docRev: 1, summary: '', body: '', blocks: [
-      { id: 'one', kind: 'prose', rev: 1, payload: { markdown } },
-    ] }, deletable: false, created_at: 1, updated_at: 1 };
+function document(markdown = '# Stored report\n\nEvidence.'): ReportDocumentDto {
+  return { docRev: 1, summary: '', leadingComment: '', blocks: [
+    { id: 'one', kind: 'prose', rev: 1, markdown, payload: null },
+  ] };
 }
 
-it('reuses only the same immutable report card and keeps router caches independent', () => {
+it('reuses immutable document identity and keeps router caches independent', async () => {
   const first = createReportPreparationCache(); const second = createReportPreparationCache();
-  const report = card(); const value = first.read([report]);
-  expect(first.read([report])).toBe(value);
-  expect(first.read([{ ...report, id: 'unrelated', kind: 'notes', payload: {} }, report])).toBe(value);
-  expect(second.read([report])).not.toBe(value);
-  const changed = { ...report, payload: card('# New report\n\nNew body.').payload };
-  expect(first.read([changed])).not.toBe(value);
-  expect(first.read([report])).toBe(value);
-  expect(first.read([]).kind).toBe('empty');
-  expect(first.read([{ ...report, payload: null }]).kind).toBe('empty');
+  const report = document(); const signal = new AbortController().signal;
+  const source = first.documentSource(report);
+  const value = await first.prepare(source, prepareReportDocument, signal);
+  expect(first.documentSource(report)).toBe(source);
+  expect(await first.prepare(source, prepareReportDocument, signal)).toBe(value);
+  expect(await second.prepare(second.documentSource(report), prepareReportDocument, signal)).not.toBe(value);
+  const changed = document('# New report\n\nNew body.');
+  expect(await first.prepare(first.documentSource(changed), prepareReportDocument, signal)).not.toBe(value);
+  expect(first.peek(source)).toBe(value);
 });
 
 it('shares syntax without merging distinct block anchors or changing core metadata policy', () => {
@@ -87,18 +86,17 @@ it('retains current callbacks and file admission when prepared syntax is reused'
 });
 
 it('rejects a preparation supplied for another report identity', () => {
-  const one = readTrackReport([card()]); const other = readTrackReport([card('# Other')]);
+  const one = readReportDocument(document()); const other = readReportDocument(document('# Other'));
   expect(() => render(<ReportDocument report={other} preparation={prepareReportDocument(one)} empty={null} />))
     .toThrow('Report preparation does not match the displayed report');
 });
 
 it('decodes stable report sources and peeks without preparing Markdown', async () => {
   const parse = vi.spyOn(markdown, 'parse');
-  const cache = createReportPreparationCache(); const wire = card();
-  const source = cache.source([wire]);
-  expect(source.card).toBe(wire);
-  expect(source.report).toEqual(readTrackReport([wire]));
-  expect(cache.source([{ ...wire, kind: 'notes', payload: {} }, wire])).toBe(source);
+  const cache = createReportPreparationCache(); const wire = document();
+  const source = cache.documentSource(wire);
+  expect(source.report).toEqual(readReportDocument(wire));
+  expect(cache.documentSource(wire)).toBe(source);
   expect(cache.peek(source)).toBeUndefined();
   expect(parse).not.toHaveBeenCalled();
   const execute = vi.fn((report: TrackReport | null) => structuredClone(prepareReportDocument(report)));
@@ -106,7 +104,7 @@ it('decodes stable report sources and peeks without preparing Markdown', async (
   expect(execute).toHaveBeenCalledTimes(1);
   expect(prepared.report).not.toBe(source.report);
   expect(cache.peek(source)).toBe(prepared);
-  expect(cache.read([wire])).toBe(prepared);
+  expect(cache.peek(source)).toBe(prepared);
   expect(await cache.prepare(source, execute, new AbortController().signal)).toBe(prepared);
   expect(execute).toHaveBeenCalledTimes(1);
 });
@@ -114,11 +112,11 @@ it('decodes stable report sources and peeks without preparing Markdown', async (
 it('does not execute empty inputs, pre-aborted leases or retain aborted results and failures', async () => {
   const cache = createReportPreparationCache();
   const execute = vi.fn(prepareReportDocument);
-  const empty = cache.source([]); const invalid = cache.source([{ ...card(), payload: null }]);
+  const empty = cache.documentSource({ ...document(), blocks: [] }); const invalid = cache.documentSource({ ...document(), blocks: [] });
   expect(await cache.prepare(empty, execute, new AbortController().signal)).toBe(cache.peek(empty));
   expect(await cache.prepare(invalid, execute, new AbortController().signal)).toBe(cache.peek(invalid));
   expect(execute).not.toHaveBeenCalled();
-  const source = cache.source([card()]);
+  const source = cache.documentSource(document());
   const controller = new AbortController(); controller.abort();
   await expect(cache.prepare(source, execute, controller.signal)).rejects.toMatchObject({ name: 'AbortError' });
   expect(execute).not.toHaveBeenCalled();

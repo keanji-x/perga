@@ -7,7 +7,7 @@ import { DropdownMenu, DropdownMenuItem } from '@astryxdesign/core/DropdownMenu'
 import { Icon } from '../../../ui/icon/public.tsx';
 import { ConversationGroups } from './groups.tsx';
 import { activityLabelOf, type CardActivity } from '../../../../../core/domain/activity.ts';
-import { conversationName, CONVERSATION_KIND_LABEL, PLANNER_CONVERSATION_KIND, type Conversation } from '../../../../../core/domain/conversation.ts';
+import { conversationName, CONVERSATION_KIND_LABEL, type Conversation } from '../../../../../core/domain/conversation.ts';
 import { deriveConversationList } from '../../../../../core/view/conversation-list.ts';
 import { ContextIconSlot, ContextItem, ContextList } from '../../../ui/panel-card/context.tsx';
 import { ActivityIndicator } from '../../../ui/activity-indicator/public.tsx';
@@ -53,10 +53,10 @@ export function ChatList({
         const trackTitle = conversation.trackTitle;
         const turns = conversation.turns;
         if (context) {
-          const role = CONVERSATION_KIND_LABEL[conversation.kind];
+          const role = conversation.isLead === true ? 'Planner' : CONVERSATION_KIND_LABEL[conversation.kind];
           const contextDescription = [name === role ? null : role, description].filter(Boolean).join(' · ') || null;
           return <li key={conversation.id}>
-          <ContextConversationItem conversation={conversation} onArchive={onArchive} icon={conversation.kind === PLANNER_CONVERSATION_KIND ? 'tasks' : 'chat'} label={name}
+          <ContextConversationItem conversation={conversation} onArchive={onArchive} icon={conversation.isLead === true ? 'tasks' : 'chat'} label={name}
             trailing={activity === 'quiet' ? undefined : <ContextIconSlot><ActivityIndicator state={activity} /></ContextIconSlot>} unread={unread} selected={active} buttonProps={{
             'aria-label': `Conversation ${name}${activity === 'working' ? ', working' : ''}`,
             'aria-current': active ? 'true' : undefined,
@@ -67,7 +67,7 @@ export function ChatList({
         </li>;
         }
         return (
-          <li key={conversation.id} className={`${styles.item} ${onArchive !== undefined && conversation.kind === 'track-assistant' ? styles.withActions : ''}`}>
+          <li key={conversation.id} className={`${styles.item} ${onArchive !== undefined && conversation.kind === 'agent' && conversation.isLead !== true ? styles.withActions : ''}`}>
             <button
               type="button"
               data-nc-role="row"
@@ -88,7 +88,7 @@ export function ChatList({
               </span>
             </button>
             {description !== null && <span hidden id={descriptionId}>{description}</span>}
-            {onArchive !== undefined && conversation.kind === 'track-assistant' && <ConversationArchiveAction conversation={conversation} onArchive={onArchive} className={styles.actions} />}
+            {onArchive !== undefined && conversation.kind === 'agent' && conversation.isLead !== true && <ConversationArchiveAction conversation={conversation} onArchive={onArchive} className={styles.actions} />}
             {activity !== 'quiet' && <span className={styles.statusSlot} aria-hidden="true">
               <ActivityIndicator state={activity} />
             </span>}
@@ -157,7 +157,7 @@ function ContextConversationItem({ conversation, onArchive, ...props }: React.Co
   onArchive?: (cardId: string, archived: boolean) => Promise<void>;
 }>) {
   const { pending, error, change } = useArchiveAction(conversation, onArchive);
-  const canArchive = onArchive !== undefined && conversation.kind === 'track-assistant';
+  const canArchive = onArchive !== undefined && conversation.kind === 'agent' && conversation.isLead !== true;
   return <>
     <ContextItem {...props} menuLabel={`Actions for conversation: ${conversationName(conversation)}`}
       menu={canArchive ? <DropdownMenuItem label={conversation.archivedAt != null ? 'Restore conversation' : 'Archive conversation'}

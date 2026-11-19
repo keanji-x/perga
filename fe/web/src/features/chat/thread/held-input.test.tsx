@@ -40,7 +40,7 @@ function activeDelivery(provider: Conversation['provider']): ConversationActiveI
 }
 
 it.each(['codex','claude','opencode','grok'] as const)('defers the delivery warning for the exact active %s execution until settlement', provider => {
-  const conversation: Conversation={provider,id:'card',trackId:'track',title:null,kind:'track-assistant',state:'running',updatedAt:1};
+  const conversation: Conversation={provider,id:'card',trackId:'track',title:null,kind:'agent',isLead:false,state:'running',updatedAt:1};
   const active=activeDelivery(provider);
   const props={conversation,turns:[{id:'reply',author:'agent' as const,text:'The normal reply is streaming.',atMs:1}],cards:{},stalled:false,hasPendingMessages:false,canContinue:false,keepInput:async () => {}};
   const view=render(<ChatThread {...props} activeInput={active} pending />);
@@ -55,14 +55,14 @@ it.each(['codex','claude','opencode','grok'] as const)('defers the delivery warn
 
 it('preserves a different held input while a new execution is active', () => {
   const active=activeDelivery('grok');
-  render(<ChatThread conversation={{provider:'grok',id:'card',trackId:'track',title:null,kind:'track-assistant',state:'running',updatedAt:1}}
+  render(<ChatThread conversation={{provider:'grok',id:'card',trackId:'track',title:null,kind:'agent',isLead:false,state:'running',updatedAt:1}}
     turns={[]} cards={{}} stalled={false} hasPendingMessages={false} canContinue={false} pending
     activeInput={{...active,current_execution_id:'different-logical'}} keepInput={async () => {}} />);
   expect(screen.getByText('Delivery not confirmed')).toBeTruthy();
 });
 
 it.each(['paused','unconfirmed'] as const)('keeps real uncertainty visible for a %s current execution', state => {
-  render(<ChatThread conversation={{provider:'grok',id:'card',trackId:'track',title:null,kind:'track-assistant',state:'running',updatedAt:1}}
+  render(<ChatThread conversation={{provider:'grok',id:'card',trackId:'track',title:null,kind:'agent',isLead:false,state:'running',updatedAt:1}}
     turns={[]} cards={{}} stalled={state==='paused'} statusUnconfirmed={state==='unconfirmed'} hasPendingMessages={false} canContinue={false} pending
     activeInput={activeDelivery('grok')} keepInput={async () => {}} />);
   expect(screen.getByText('Delivery not confirmed')).toBeTruthy();

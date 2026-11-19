@@ -69,7 +69,6 @@ no translation table or silent rejection of an unknown address.
 | overlays | `['overlays', 'track' or 'card']` |
 | task verdicts / backlinks | `['track-report', trackId]` / `['track-backlinks', trackId]`, plus their bare prefixes |
 | conversation list | `['track-conversations', trackId]`, or its bare prefix when ownership is unknown |
-| accepted-input observation | `['conversation-initial-input', trackId, cardId]`, plus track and global prefixes |
 | transcript / planner run | `['harness-items', cardId]` / `['planner-run', cardId]` |
 | plugins / templates / plugin data | `['plugins']` / `['track-templates']` / `['plugin-data', pluginId]` (all windows) |
 | Model catalog | `['model-catalog', scope]` |
@@ -85,22 +84,22 @@ Resulting per-kind behavior (all unchanged by the address refactor):
 | `area.updated` | write through an existing area, invalidate areas |
 | `area.deleted` | retire that area's child queries, invalidate areas + track overlays + all task verdicts |
 | `track.updated` | invalidate that area's track list + track detail + all task verdicts |
-| `track.deleted` | invalidate area's track list + track overlays + all task verdicts; remove track detail, its verdicts and its accepted-input observations |
+| `track.deleted` | invalidate area's track list + track overlays + all task verdicts; remove track detail and its verdicts |
 | `card.added` | invalidate track detail + conversation list + all task verdicts |
-| `card.updated` | invalidate track detail + conversation list + card planner run + accepted-input observation |
-| `card.deleted` | invalidate track detail + all task verdicts; remove that card's accepted-input observations |
-| `worker_session.started` / `worker_session.status_changed` / `worker_session.superseded` | invalidate card overlays, resolved track detail, task verdicts, conversation list and accepted-input observations; unresolved ownership uses resource prefixes |
+| `card.updated` | invalidate track detail + conversation list + card planner run |
+| `card.deleted` | invalidate track detail + all task verdicts |
+| `worker_session.started` / `worker_session.status_changed` / `worker_session.superseded` | invalidate card overlays, resolved track detail, task verdicts, conversation list; unresolved ownership uses resource prefixes |
 | `overlay.set` / `overlay.deleted` | invalidate overlays of that kind, plus track detail if ownership resolves |
 | `track.report_edited` | invalidate all task verdicts and backlinks, the edited track detail and Today resolve |
 | `plan.updated` with string `agent_message` | invalidate that track's verdicts; companion projection events without the message are no-ops |
 | `terminal.deleted`, `codex.worker_requested`, `terminal.worker_requested` | invalidate task verdicts by named track or resolved card ownership, with prefix fallback |
 | `task.dispatched`, `task.completed`, `task.failed`, `task.gate_result`, `task.regate_requested` | invalidate task verdicts by prefix only; opaque task ids are never parsed |
 | `task.git_delivery_settled` | invalidate the explicitly named track's verdicts |
-| `harness.item.added` | invalidate transcript + accepted-input observation; a persisted user message also refreshes track detail and conversation list |
+| `harness.item.added` | invalidate transcript; a persisted user message also refreshes track detail and conversation list |
 | `harness.presentation.changed` | invalidate transcript + planner run + track detail + conversation list |
-| `harness.phase.changed` | invalidate accepted-input observation + planner run + transcript + track detail + conversation list; `turn_completed` also refreshes the card's model catalog |
-| `harness.transcript.cleared` / `harness.transcript.rewound` | reset transcript; invalidate accepted-input observation + transcript + planner run + track detail + conversation list |
-| `harness.user_message.enqueued` / `harness.queue.changed` | invalidate accepted-input observation + transcript + planner run + track detail + conversation list; restored queue also resets transcript |
+| `harness.phase.changed` | invalidate planner run + transcript + track detail + conversation list; `turn_completed` also refreshes the card's model catalog |
+| `harness.transcript.cleared` / `harness.transcript.rewound` | reset transcript; invalidate transcript + planner run + track detail + conversation list |
+| `harness.user_message.enqueued` / `harness.queue.changed` | invalidate transcript + planner run + track detail + conversation list; restored queue also resets transcript |
 | `plugin.state` | invalidate plugins + track templates; transient-state polling remains |
 | `plugin.data.changed` | invalidate that plugin's data prefix, reaching all cached calendar windows |
 | `codex.hook`, `claude.hook`, other explicit no-op kinds | no cache operations; hooks write no task rows and have no workspace query |
@@ -127,7 +126,7 @@ If either resource gains a query, add its address to the core factory and its
 policy to the plan together, with a production-entry-point contract test.
 
 Cancel-first execution remains app policy: track detail, conversations, verdicts,
-accepted-input observations, transcript, planner run, backlinks, plugins,
+transcript, planner run, backlinks, plugins,
 templates, plugin data and track overlays cancel before invalidation. Card
 overlays retain ordinary invalidation. A replay boundary resets transcript
 windows and cancels track overlays before invalidating everything. Confirmed

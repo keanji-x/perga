@@ -19,30 +19,6 @@ function bootedRegistry() {
 }
 
 describe('headless card filtering', () => {
-  it('[INV-CARD-226] binds originalIndex before filtering, so surviving cards still address the wire array', () => {
-    const cards = [
-      wire({ id: 'planner-1', kind: 'codex', payload: { planner_harness: true } }),
-      wire({ id: 'report', kind: 'track-report' }),
-      wire({ id: 'term-1', kind: 'terminal' }),
-      wire({ id: 'term-2', kind: 'terminal' }),
-    ];
-    const { visible, unknown } = partitionTrackCards(bootedRegistry(), cards);
-
-    // `originalIndex` must index the raw card list, not the visible one: removing by display index would delete the headless planner harness.
-    expect(visible.map((slot) => [slot.wire.id, slot.originalIndex])).toEqual([['term-1', 2], ['term-2', 3]]);
-    expect(unknown).toEqual([]);
-    for (const slot of visible) expect(cards[slot.originalIndex]).toBe(slot.wire);
-  });
-
-  it('[INV-CARD-226] drops resolved planner and track-report cards from both branches', () => {
-    const { visible, unknown } = partitionTrackCards(bootedRegistry(), [
-      wire({ id: 'planner-1', kind: 'codex', payload: { planner_harness: true } }),
-      wire({ id: 'report', kind: 'track-report' }),
-    ]);
-    expect(visible).toEqual([]);
-    expect(unknown).toEqual([]);
-  });
-
   it('[INV-CARD-226] filters raw track-report kinds out of the unknown branch defensively', () => {
     const bare = createCardRegistry();
     const { visible, unknown } = partitionTrackCards(bare, [
@@ -64,12 +40,6 @@ describe('headless card filtering', () => {
     expect(visible.map((slot) => slot.card.type)).toEqual(['codex', 'codex', 'codex']);
     expect(visible.map((slot) => slot.originalIndex)).toEqual([0, 1, 2]);
     expect(unknown).toEqual([]);
-  });
-
-  it('[INV-CARD-226] accepts the known gap: a payload-less planner card cannot be recognised as headless', () => {
-    const bare = createCardRegistry();
-    const { unknown } = partitionTrackCards(bare, [wire({ id: 'planner-1', kind: 'codex', payload: null })]);
-    expect(unknown.map((slot) => slot.wire.id)).toEqual(['planner-1']);
   });
 
   it('routes cards with a surface into the visible branch with their wire and index', () => {

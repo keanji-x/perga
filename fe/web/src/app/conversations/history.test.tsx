@@ -1,3 +1,5 @@
+import { fixtureSession } from '../router/session-contract-fixture.ts';
+import { sessionPage, sessionItem } from '../router/conversation-session-data.ts';
 import { conversationCursorSchema } from '../../../../core/api/schemas.ts';
 // @vitest-environment jsdom
 import { createElement, type ReactNode } from 'react';
@@ -14,7 +16,7 @@ import { earlierReadingPosition, historyRows, latestHistory as applyLatestPage, 
 import type { ConversationCursor, ConversationPage, ConversationDisplayItem } from '../../../../core/api/generated/wire.ts';
 type Row = ConversationDisplayItem;
 function cursor(position: number): ConversationCursor {
-  return { contract: 'conversation_v1', source: 'historical_raw', card_id: 'card', position };
+  return { contract: 'conversation_v1', source: 'presentation', card_id: 'card', position };
 }
 function rows(first: number, count = 60): Row[] {
   return Array.from({ length: count }, (_, i) => ({ cursor: cursor(first + i), source: { kind: 'historical_raw', item: {
@@ -38,11 +40,17 @@ function setup() {
   const paths: string[] = [];
   let newest = rows(61);
   let earlier = rows(1);
+  let earlierFails = false;
   let held: ReturnType<typeof deferred<Row[]>> | null = null;
   const options = pageOptions({ send: async request => {
     paths.push(request.path);
+    if (earlierFails && new URL(request.path, 'http://fixture').searchParams.has('cursor')) {
+      return { status: 503, statusText: 'Unavailable', body: { error: 'history expired' } };
+    }
     const body = !new URL(request.path, 'http://fixture').searchParams.has('cursor') ? newest : await (held?.promise ?? earlier);
-    return { status: 200, statusText: 'OK', body: page(body) };
+    return { status: 200, statusText: 'OK', body: sessionPage(fixtureSession('card', 'track'),
+      [...(body.length === 60 ? [sessionItem('card', body[0].cursor.position - 1, '')] : []),
+        ...body.map(row => sessionItem('card', row.cursor.position, ''))]) };
   } }, 'card', createUnauthorizedChannel({ enqueue: task => task() }));
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   let sequence = 0;
@@ -53,7 +61,7 @@ function setup() {
   }, { wrapper: ({ children }: { children: ReactNode }) => createElement(QueryClientProvider, { client }, children) });
   const view = mount();
   return { ...view, mount, client, paths, key: options.queryKey,
-    newest: (value: Row[]) => { newest = value; }, earlier: (value: Row[]) => { earlier = value; },
+    newest: (value: Row[]) => { newest = value; }, earlier: (value: Row[]) => { earlier = value; earlierFails = false; }, failEarlier: () => { earlierFails = true; },
     hold: () => { held = deferred<Row[]>(); return held; } };
 }
 afterEach(cleanup);
@@ -106,13 +114,13 @@ it('discards an earlier response superseded by an equal-payload latest read', as
   view.client.clear();
 });
 
-it('surfaces an expired nonadvancing cursor and retries only on explicit input', async () => {
+it('surfaces a failed v1 earlier read and retries only on explicit input', async () => {
   const view = setup();
   await waitFor(() => expect(view.result.current.history.isSuccess).toBe(true));
-  view.earlier(rows(61));
+  view.failEarlier();
   act(() => { view.result.current.history.loadEarlier(); });
   await waitFor(() => expect(view.result.current.history.earlier.failed).toBe(true));
-  expect(view.result.current.history.error?.message).toContain('did not advance');
+  expect(view.result.current.history.error).toMatchObject({ failure: { status: 503 } });
   expect(view.paths).toHaveLength(2);
   view.earlier(rows(1));
   act(() => { expect(view.result.current.history.loadEarlier()).toBe(true); });
@@ -191,7 +199,7 @@ it.each(['clear', 'rewind', 'restored', 'replay'] as const)('expires retained wi
 it('retires an old cursor error when a real latest read supersedes it without replaying that cursor', async () => {
   const view = setup();
   await waitFor(() => expect(view.result.current.history.isSuccess).toBe(true));
-  view.earlier(rows(61));
+  view.failEarlier();
   act(() => { view.result.current.history.loadEarlier(); });
   await waitFor(() => expect(view.result.current.history.earlier.failed).toBe(true));
   view.newest(rows(181));

@@ -2,14 +2,12 @@ import { describe, expect, it } from 'vitest';
 
 import type { KernelCardInput } from '../registry.js';
 import { createCardRegistry } from '../registry.js';
-import { ASSISTANT_CARD_ENTRY } from './assistant.ts';
 import { CLAUDE_CARD_ENTRY } from './claude.ts';
 import { CODEX_CARD_ENTRY } from './codex.ts';
 import { FILE_VIEWER_CARD_ENTRY } from './file-viewer.tsx';
 import { partitionTrackCards } from './headless-filter.js';
 import type { BuiltinCardType } from './register.js';
 import { BUILTIN_CARD_ORDER, registerAvailableBuiltinCards } from './register.js';
-import { PLANNER_CARD_ENTRY } from './planner.js';
 import { TERMINAL_CARD_ENTRY } from './terminal.js';
 import { TRACK_REPORT_CARD_ENTRY } from './track-report.js';
 
@@ -19,19 +17,19 @@ declare module '../registry.js' {
   }
 }
 
-const LANDED = [
-  'terminal', 'codex', 'planner', 'assistant', 'claude', 'track-report', 'file-viewer',
-] as const;
+const LANDED = Object.freeze([
+  'terminal', 'codex', 'claude', 'track-report', 'file-viewer',
+] as const);
 
 describe('builtin card composition contract', () => {
-  it('[INV-CARD-225] pins the nine-item order tuple', () => {
+  it('[INV-CARD-225] pins the seven-item order tuple', () => {
     // Insertion order is the fallback-scan order, so this literal is the resolution semantics.
     expect([...BUILTIN_CARD_ORDER]).toEqual([
-      'terminal', 'codex', 'planner', 'assistant', 'claude', 'track-report',
+      'terminal', 'codex', 'claude', 'track-report',
       'file-viewer', 'iframe', 'plugin-iframe',
     ]);
-    expect(BUILTIN_CARD_ORDER).toHaveLength(9);
-    expect(new Set(BUILTIN_CARD_ORDER).size).toBe(9);
+    expect(BUILTIN_CARD_ORDER).toHaveLength(7);
+    expect(new Set(BUILTIN_CARD_ORDER).size).toBe(7);
   });
 
   it('registers only the entries that exist, with no placeholders for the two that do not', () => {
@@ -44,8 +42,6 @@ describe('builtin card composition contract', () => {
     }
     expect(registry.get('terminal')).toBe(TERMINAL_CARD_ENTRY);
     expect(registry.get('codex')).toBe(CODEX_CARD_ENTRY);
-    expect(registry.get('planner')).toBe(PLANNER_CARD_ENTRY);
-    expect(registry.get('assistant')).toBe(ASSISTANT_CARD_ENTRY);
     expect(registry.get('claude')).toBe(CLAUDE_CARD_ENTRY);
     expect(registry.get('track-report')).toBe(TRACK_REPORT_CARD_ENTRY);
     expect(registry.get('file-viewer')).toBe(FILE_VIEWER_CARD_ENTRY);
@@ -58,7 +54,7 @@ describe('builtin card composition contract', () => {
     const tupleIndexes = registered.map((type) => BUILTIN_CARD_ORDER.indexOf(type as never));
     expect(tupleIndexes).not.toContain(-1);
     expect([...tupleIndexes]).toEqual([...tupleIndexes].sort((left, right) => left - right));
-    expect(tupleIndexes).toEqual([0, 1, 2, 3, 4, 5, 6]);
+    expect(tupleIndexes).toEqual([0, 1, 2, 3, 4]);
     const skipped = BUILTIN_CARD_ORDER
       .map((type, index) => ({ type, index }))
       .filter(({ type }) => !(registered as readonly string[]).includes(type));
@@ -66,41 +62,10 @@ describe('builtin card composition contract', () => {
     expect(Math.min(...skipped.map(({ index }) => index))).toBeGreaterThan(Math.max(...tupleIndexes));
   });
 
-  it('[INV-CARD-180] leaves the shared codex kind to the codex adapter first, then falls back to planner', () => {
-    // What can fail here is codex's refusal of `planner_harness`; `resolve` falls through `null`, so this does not prove the order.
-    const registry = createCardRegistry();
-    registry.register(CODEX_CARD_ENTRY);
-    registry.register(PLANNER_CARD_ENTRY);
-
-    expect(
-      registry.resolve({ id: 'planner', kind: 'codex', payload: { planner_harness: true } })?.type,
-      'planner_harness must fall through the earlier codex adapter and resolve as planner',
-    ).toBe('planner');
-    expect(
-      registry.resolve({ id: 'codex', kind: 'codex', payload: {} })?.type,
-      'ordinary codex payload must resolve through codex before the shared-kind planner fallback',
-    ).toBe('codex');
-  });
-
-  it('[INV-CARD-180] leaves an assistant-marked codex card to the assistant adapter', () => {
-    const registry = createCardRegistry();
-    registry.register(CODEX_CARD_ENTRY);
-    registry.register(ASSISTANT_CARD_ENTRY);
-
-    expect(
-      registry.resolve({ id: 'a', kind: 'codex', payload: { harness_profile: 'assistant' } })?.type,
-      'the assistant marker must fall through the earlier codex adapter',
-    ).toBe('assistant');
-    expect(
-      registry.resolve({ id: 'p', kind: 'codex', payload: { harness_profile: 'plain_chat' } }),
-      'a plain chat card is not a track assistant',
-    ).toBeNull();
-  });
-
   // `headless` is optional on the interface; a spurious declaration deletes every card of that type, a missing one shows an empty card.
   describe('headless is declared on the entry, and the declaration is what filters', () => {
     const HEADLESS_BY_TYPE: Readonly<Record<BuiltinCardType, boolean>> = Object.freeze({
-      terminal: false, codex: false, planner: true, assistant: true, claude: false,
+      terminal: false, codex: false, claude: false,
       'track-report': true, 'file-viewer': false, iframe: false, 'plugin-iframe': false,
     });
     const bootedProductionRegistry = () => {
@@ -160,8 +125,6 @@ describe('builtin card composition contract', () => {
     const PROBE_BY_TYPE: Readonly<Record<(typeof LANDED)[number], KernelCardInput>> = Object.freeze({
       terminal: { id: 'probe-term', kind: 'terminal', payload: { terminal_id: 't1' } },
       codex: { id: 'probe-codex', kind: 'codex', payload: { terminal_id: 't3' } },
-      planner: { id: 'probe-planner', kind: 'codex', payload: { planner_harness: true } },
-      assistant: { id: 'probe-assistant', kind: 'codex', payload: { harness_profile: 'assistant' } },
       claude: { id: 'probe-claude', kind: 'claude', payload: { terminal_id: 't2' } },
       'track-report': { id: 'probe-report', kind: 'track-report', payload: null },
       'file-viewer': { id: 'probe-file', kind: 'file-viewer', payload: { path: '/tmp/probe.txt' } },

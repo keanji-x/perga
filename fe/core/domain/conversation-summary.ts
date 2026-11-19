@@ -1,5 +1,5 @@
 import type { AgentProvider } from '../api/generated/wire.js';
-import { CONVERSATION_STATE_SOURCE, conversationNameFrom, isOptimisticConversationTurn, type Conversation, type ConversationKind, type ConversationMessage, type ConversationState } from './conversation.js';
+import { conversationNameFrom, isOptimisticConversationTurn, type Conversation, type ConversationKind, type ConversationMessage, type ConversationState } from './conversation.js';
 
 /** Everything about the open conversation that does *not* come from its turns. */
 export type ConversationFacts = Readonly<{
@@ -10,6 +10,7 @@ export type ConversationFacts = Readonly<{
   trackTitle: string | undefined;
   cardTitle: string | null;
   kind: ConversationKind;
+  isLead?: boolean;
   state: ConversationState | null;
   working: boolean;
   stalled: boolean;
@@ -32,12 +33,8 @@ export function describeConversation(
     title: facts.cardTitle
       ?? conversationNameFrom(turns.find(isOptimisticConversationTurn)?.text ?? ''),
     kind: facts.kind,
-    /* The server's state is the server's to report (`run_status_for` writes `turn_pending`,
-           never `running`); the local phase wins only while a turn is in flight.
-           `CONVERSATION_STATE_SOURCE` is a total table so a new kind cannot silently fall into `else`. */
-    state: facts.stalled ? 'failed' : CONVERSATION_STATE_SOURCE[facts.kind] === 'server'
-      ? (facts.working ? 'turn_pending' : facts.state)
-      : (facts.working ? 'running' : 'idle'),
+    isLead: facts.isLead,
+    state: facts.stalled ? 'failed' : facts.working ? 'running' : facts.state,
     updatedAt: turns.at(-1)?.atMs ?? facts.fallbackUpdatedAt,
     turns: turns.length,
   };

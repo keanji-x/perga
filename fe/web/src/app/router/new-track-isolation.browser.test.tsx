@@ -18,14 +18,14 @@ afterEach(() => { cleanup(); document.getElementById('root')?.remove(); });
 function mount() {
   const creates: ApiRequest[] = [];
   const transport: ApiTransportPort = { send(request) {
-    if (request.method === 'POST' && request.path === '/api/tracks') {
+    if (request.method === 'POST' && request.path === '/api/v1/tracks') {
       creates.push(request);
       return Promise.resolve({ status: 400, statusText: 'Bad Request', body: {
         code: 'bad_request', error: 'Folder overlaps Neige-owned location /repo/.claude/worktrees/track-other',
       } });
     }
-    const body = request.path === '/api/areas' ? [{ id: 'a', name: 'Work', color: '#5B8DEF',
-      sort: 0, kind: 'user', default_cwd: '/repo', created_at: 1, updated_at: 1 }]
+    const body = request.path === '/api/v1/areas' ? [{ id: 'a', name: 'Work', color: '#5B8DEF',
+      sortOrder: 0, defaultCwd: '/repo', createdAtMs: 1, updatedAtMs: 1 }]
       : request.path.startsWith('/api/fs/listdir') ? { path: new URL(request.path, 'http://test').searchParams.get('path') ?? '/repo', parent: '/',
         entries: Array.from({ length: 16 }, (_, i) => ({ name: `folder-${i.toString().padStart(2, '0')}`, is_dir: true })) }
       : request.path === '/api/settings' ? {} : [];
@@ -49,7 +49,7 @@ it.each([1280, 390])('composer defaults attached folders to worktree isolation (
   await page.getByRole('combobox', { name: 'What this track should do' }).fill('Plan');
   await page.getByRole('button', { name: 'Create track' }).click();
   await expect.poll(() => creates.length).toBe(1);
-  expect(creates[0]?.body).toMatchObject({ cwd: '/repo', isolation: 'worktree' });
+  expect(creates[0]?.body).toMatchObject({ cwd: '/repo', workspaceDriver: 'vcs-workspace' });
   expect(creates[0]?.body).not.toHaveProperty('first_message');
   await expect.element(page.getByText('Folder overlaps Neige-owned location /repo/.claude/worktrees/track-other')).toBeVisible();
   expect(document.documentElement.scrollWidth).toBe(width);

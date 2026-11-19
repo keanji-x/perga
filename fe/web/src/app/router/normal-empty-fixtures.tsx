@@ -1,3 +1,4 @@
+import { fixtureSnapshot, fixtureTrack, fixtureReport } from './session-contract-fixture.ts';
 import { conversationCommands } from '../../features/chat/thread/composer-command.ts';
 import { ReportSourcePanel } from '../../features/report/source/public.tsx';
 import { ReportSeriesBlock } from '../../features/report/series/public.tsx';
@@ -89,8 +90,7 @@ export function mountEmptyResolvedSeries() {
 }
 
 export function mountEmptyReportReference(missingBlock: boolean) {
-  const card = {id:'report',track_id:'project',kind:'track-report',title:null,sort:-1,payload:{schemaVersion:3,docRev:0,summary:'',body:'# 报告'},deletable:false,created_at:1,updated_at:2};
-  const transport = {send: ()=>Promise.resolve(ok({track,planner_revision: 0, can_reopen:false,can_admin:false,can_close:true,cards:missingBlock ? [card] : [],overlays:[]}))};
+  const transport = { send: () => Promise.resolve(ok(fixtureSnapshot(fixtureTrack('project'), [], fixtureReport(missingBlock ? '# 报告' : '')))) };
   const unauthorized=createUnauthorizedChannel({enqueue:task=>task()});
   mount(<QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false}}})}><ReportReferencePreview transport={transport} unauthorized={unauthorized} target={{trackId:'project',blockId:missingBlock ? 'missing' : null}} onOpenLink={noop} onOpenSource={noop} onOpenFile={noop}/></QueryClientProvider>,true);
 }

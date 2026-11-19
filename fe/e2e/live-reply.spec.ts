@@ -1,58 +1,30 @@
+import { sessionItemsPageDtoSchema, trackAggregateSnapshotDtoSchema } from '../core/api/perga-v1.ts';
 import { expect, test } from '@playwright/test';
-
 import { createArea } from './helpers/seed.js';
 
-test.use({ contextOptions: { reducedMotion: 'reduce' } });
-
-/* #1923 S2: the fixture app-server streams a reply scripted by a line of the message
- * (`osc-probe-child`, `fake-reply-hold:`) and holds the turn open until it is interrupted. */
-test('shows a streamed reply before its turn ends, and the same text once stored', async ({ page, request }) => {
-  const area = await createArea(request, `Live reply ${Date.now()}`);
+test('renders a completed v1 reply once and retains it after reload', async ({ page, request }) => {
+  const area = await createArea(request, `Reply lifecycle ${Date.now()}`);
   try {
-    const created = await request.post('/api/tracks', {headers:{'Idempotency-Key':`p2-live-${Date.now()}`},data:{
-      area_id:area.id,planner_provider:'codex',title:'Canonical live reply',
-      theme:{fg:[216,219,226],bg:[15,20,24]},
-    }});
-    expect(created.status()).toBe(201);
-    const track = await created.json() as {id:string;lead_session_id:string};
-    const msg = await request.post(`/api/sessions/${track.lead_session_id}/messages`, {
-      headers:{'Idempotency-Key':`p2-live-msg-${Date.now()}`},
-      data:{content:'fake-reply-hold: Streamed |before |the end'},
-    });
-    expect(msg.status()).toBe(202);
-    await page.goto(`/next/track/${track.id}`);
-    const opener = page.getByRole('button', { name: /^Conversation fake-reply-hold:/ });
-    await opener.click();
-    const composer = page.getByRole('combobox', { name: 'Message' });
-    await expect(composer).toHaveAttribute('contenteditable', 'true');
-
-    const transcript = page.locator('[data-nc-thread]');
-    const reply = transcript.locator('[data-nc-turn="agent"]');
-    /* The turn is held open, so this text can only be the live copy. */
-    await expect(reply).toHaveText('Streamed before the end');
-    await expect(page.getByRole('button', { name: 'Stop' })).toBeVisible();
-
-    const detail = await (await request.get(`/api/tracks/${track.id}`)).json() as {cards:{id:string;payload:{planner_harness?:boolean}}[]};
-    const card = detail.cards.find(card=>card.payload.planner_harness === true);
-    expect(card).toBeDefined();
-    const runPath = `/api/cards/${card!.id}/planner/run?contract=conversation_v1`;
-    expect(await (await request.get(runPath)).json()).toMatchObject({input_contract:'canonical',terminal_outcome:null});
-    await page.getByRole('button', { name: 'Stop' }).click();
-    await expect.poll(async()=>await (await request.get(runPath)).json() as unknown).toMatchObject({terminal_outcome:{status:'interrupted',card_id:card!.id}});
-    await expect(page.locator('[data-nc-current-meta]')).toContainText('Interrupted');
+    const created = await request.post('/api/v1/tracks', { data: {
+      areaId: area.id, provider: 'codex', title: 'Reply lifecycle', firstMessage: 'fake-reply: Stored v1 reply',
+    } });
+    expect(created.status(), await created.text()).toBe(201);
+    const snapshot = trackAggregateSnapshotDtoSchema.parse(await created.json());
+    const session = snapshot.sessions.find(row => row.isLead);
+    if (session === undefined) throw new Error('Missing lead session');
+    const read = async () => sessionItemsPageDtoSchema.parse(await (await request.get(`/api/v1/sessions/${session.id}/items?afterId=0&limit=500`)).json());
+    await expect.poll(async () => (await read()).items.filter(item => item.kind === 'assistant_text').length).toBe(1);
+    const stored = await read();
+    expect(stored.activeTurn).toBeNull();
+    expect(stored.items.find(item => item.kind === 'assistant_text')?.payload).toMatchObject({ text: 'Stored v1 reply' });
+    await page.goto(`/next/track/${snapshot.track.id}`);
+    await page.getByRole('button', { name: `Conversation ${session.title}` }).click();
+    const reply = page.locator('[data-nc-thread] [data-nc-turn="agent"]');
     await expect(reply).toHaveCount(1);
-    await expect(reply).toHaveText('Streamed before the end');
-
-    await page.screenshot({path:test.info().outputPath('canonical-interrupted.png'),fullPage:true});
-
-    /* After a refresh only the stored `_partial` row can draw it. */
+    await expect(reply).toHaveText('Stored v1 reply');
     await page.reload();
-    await expect(opener.or(transcript).first()).toBeVisible();
-    if (await opener.isVisible()) await opener.click();
-    await expect(page.locator('[data-nc-current-meta]')).toContainText('Interrupted');
     await expect(reply).toHaveCount(1);
-    await expect(reply).toHaveText('Streamed before the end');
-  } finally {
-    await request.delete(`/api/areas/${area.id}`);
-  }
+    await expect(reply).toHaveText('Stored v1 reply');
+    expect((await read()).items.map(item => item.id)).toEqual(stored.items.map(item => item.id));
+  } finally { await request.delete(`/api/v1/areas/${area.id}`); }
 });

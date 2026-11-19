@@ -1,3 +1,4 @@
+import type { TrackAggregateSnapshotDto } from '../../../../core/api/perga-v1.ts';
 import { cleanup, fireEvent, render } from '@testing-library/react';
 import { commands, page, userEvent } from 'vitest/browser';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -122,18 +123,17 @@ async function mountMobileReport() {
       + Array.from({ length: 24 }, (_, i) => `Child paragraph ${i}. Scroll inside this child.`).join('\n\n')],
     ['grandchild', `# Grandchild fixture\n\n[Go parent](${reportUrl}#parent)`],
   ].map(([id, markdown]) => ({ id, kind: 'prose' as const, payload: { markdown } }));
-  const report = { summary: '', body: '', blocks };
   const base = createEvidencePreviewTransport();
   const transport: ApiTransportPort = { send: async request => {
-    if (request.path === '/api/areas') return { status: 200, statusText: 'OK', body: [{ id: 'examples', name: 'Examples', color: '#123456', sort: 1, kind: 'user', created_at: 1, updated_at: 1 }] };
+    if (request.path === '/api/v1/areas') return { status: 200, statusText: 'OK', body: [{ id: 'examples', name: 'Examples', color: '#123456', sortOrder: 1, kind: 'user', createdAtMs: 1, updatedAtMs: 1 }] };
     if (request.path === '/api/settings') return { status: 200, statusText: 'OK', body: {} };
     if (request.path.endsWith('/report')) return { status: 200, statusText: 'OK', body: { taskDiagnostics: [] } };
-    if (request.path === '/api/areas/examples/tracks') return { status: 200, statusText: 'OK', body: [] };
+    if (request.path === '/api/v1/areas/examples/tracks?includeClosed=true') return { status: 200, statusText: 'OK', body: [] };
     const response = await base.send(request);
-    if (request.path !== '/api/tracks/reference-demo') return response;
-    const body = response.body as { cards: { payload: unknown }[] };
-    return { ...response, body: { ...body, cards: body.cards.map(card => ({ ...card,
-      payload: { schemaVersion: 3, docRev: 1, ...report } })) } };
+    if (request.path !== '/api/v1/tracks/reference-demo') return response;
+    const body = response.body as TrackAggregateSnapshotDto;
+    return { ...response, body: { ...body, report: { docRev: 1, summary: '', leadingComment: '',
+      blocks: blocks.map(block => ({ id: block.id, kind: block.kind, rev: 1, markdown: block.payload.markdown, payload: null })) } } };
   } };
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const unauthorized = createUnauthorizedChannel({ enqueue: task => task() });

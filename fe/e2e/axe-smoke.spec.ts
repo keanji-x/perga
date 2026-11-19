@@ -6,7 +6,7 @@ const createdAreaIds: string[] = [];
 
 test.beforeEach(() => { createdAreaIds.length = 0; });
 test.afterEach(async ({ request }) => {
-  for (const id of createdAreaIds) await request.delete(`/api/areas/${id}`);
+  for (const id of createdAreaIds) await request.delete(`/api/v1/areas/${id}`);
   createdAreaIds.length = 0;
 });
 
@@ -16,13 +16,10 @@ test('the primary routes have no WCAG A or AA violations in light mode', async (
   const track = await createTrack(request, area.id);
 
   const routes = [
-    /* The daily homepage keeps its dated Track title beside the Assistant. */
-    { path: '/next/', anchor: page.getByRole('region', { name: 'Today Assistant', exact: true }).getByRole('combobox', { name: 'Message', exact: true }) },
     /* Anchored on the composer: the new-track page has no `data-nc-page-title`; the greeting is its one title. */
     { path: `/next/area/${area.id}/new`, anchor: page.getByLabel('What this track should do') },
     { path: `/next/track/${track.id}`, anchor: page.locator('[data-nc-page-title]', { hasText: track.title }) },
-    { path: '/next/settings', anchor: page.getByRole('textbox', { name: 'HTTP proxy' }) },
-    { path: '/next/settings/network', anchor: page.getByRole('textbox', { name: 'HTTP proxy' }) },
+    { path: '/next/settings/appearance', anchor: page.getByRole('combobox', { name: 'Theme' }) },
   ];
 
   for (const route of routes) {

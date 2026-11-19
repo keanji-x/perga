@@ -15,74 +15,24 @@ import { ThemeProvider } from '../theme/public.tsx';
 
 afterEach(async () => { cleanup(); await page.viewport(1280, 720); });
 
-const AREA = { id: 'c1', name: 'Work', color: '#5B8DEF', sort: 1, kind: 'user', created_at: 1, updated_at: 1 };
-const LIVE_CATALOG = {
-  models: [{ id: 'fast', model: 'gpt-5', resolved_model: null, display_name: 'GPT-5', description: '', is_default: true,
-    default_reasoning_effort: 'low', supported_reasoning_efforts: [
-      { reasoning_effort: 'low', description: 'Answers sooner' },
-      { reasoning_effort: 'high', description: 'Thinks longer' },
-    ] }],
-  default: { model: null, reasoning_effort: null, supported_reasoning_efforts: null }, default_source: 'unknown', source: 'live', fetched_at_ms: 1,
-};
-/* What `routes/models.rs` answers for `?provider=claude` (#1822): the Claude CLI's own list, and nothing on a
-   server without Claude Planners. */
-const LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'].map((level) => ({ reasoning_effort: level, description: null }));
-const CLAUDE_CATALOG = {
-  models: [
-    ['opus[1m]', 'claude-opus-5-5[1m]', 'Opus (1M context)', LEVELS],
-    ['claude-fable-5-1[1m]', 'claude-fable-5-1', 'Fable', LEVELS],
-    ['sonnet', 'claude-sonnet-5', 'Sonnet', LEVELS],
-    ['haiku', 'claude-haiku-4-5-20251001', 'Haiku', []],
-  ].map(([value, resolved, name, levels]) => ({
-    id: value, model: value, resolved_model: resolved, display_name: name, description: '', is_default: false,
-    supported_reasoning_efforts: levels, default_reasoning_effort: null,
-  })),
-  default: { model: 'claude-opus-5-5[1m]', reasoning_effort: null, supported_reasoning_efforts: LEVELS },
-  default_source: 'claude_cli', source: 'live', fetched_at_ms: 1,
-};
-const NO_CLAUDE = {
-  ...CLAUDE_CATALOG, models: [], source: 'unavailable', fetched_at_ms: null,
-  default: { model: null, reasoning_effort: null, supported_reasoning_efforts: null }, default_source: 'unknown',
-};
+const AREA = { id: 'c1', name: 'Work', color: '#5B8DEF', sortOrder: 1, createdAtMs: 1, updatedAtMs: 1 };
 
-/** What `routes/agent_providers.rs` answers alongside each catalog (#1817). */
-function availability(claude: 'ready' | 'not_configured') {
-  return [
-    { provider: 'codex', status: 'ready', reason: null, authentication_method: null, authentication_notice: null, checked_at_ms: 1 },
-    claude === 'ready'
-      ? { provider: 'claude', status: 'ready', reason: null, authentication_method: null, authentication_notice: null, checked_at_ms: 1 }
-      : { provider: 'claude', status: 'not_configured', reason: 'calm-server was started without --claude-planner-config', authentication_method: null, authentication_notice: null, checked_at_ms: 1 },
-  ];
-}
-
-function mount(claude: unknown, opencode = false, opencodeCatalog: unknown = NO_CLAUDE) {
+function mount(providers = ['codex', 'claude', 'opencode']) {
   const creates: ApiRequest[] = [];
-  const ok = (body: unknown): ApiTransportResponse => ({ status: 200, statusText: 'OK', body });
-  const transport: ApiTransportPort = { send(request) {
-    if (request.method === 'POST' && request.path === '/api/tracks') {
+  const transport: ApiTransportPort = { async send(request) {
+    if (request.method === 'POST' && request.path === '/api/v1/tracks') {
       creates.push(request);
-      /* Held: the page stays put, so the request is all there is to read. */
       return new Promise<ApiTransportResponse>(() => undefined);
     }
-    if (request.path === '/api/areas') return Promise.resolve(ok([AREA]));
-    if (request.path === '/api/v1/bootstrap?provider=codex') return Promise.resolve(ok(LIVE_CATALOG));
-    if (request.path === '/api/v1/bootstrap?provider=claude') return Promise.resolve(ok(claude));
-    if (request.path === '/api/v1/bootstrap?provider=opencode') return Promise.resolve(ok(opencodeCatalog));
-    if (request.path === '/api/agent-providers' || request.path === '/api/agent-providers/managed') {
-      const answers = [...availability(claude === NO_CLAUDE ? 'not_configured' : 'ready'),
-        { provider: 'opencode', status: opencode ? 'ready' : 'not_configured', reason: opencode ? null : 'Configure the agent', checked_at_ms: 1, authentication_method: null, authentication_notice: null }];
-      return Promise.resolve(ok(request.path.endsWith('/managed') ? answers.map((entry) => ({
-        availability: entry, accepts_unavailable_blank_track: true,
-        capabilities: { managed_conversation: true, steer: false, images: false, manual_compact: false,
-          history_replacement: false, requires_ready_availability: true },
-      })) : answers));
-    }
-    if (request.path === '/api/settings') return Promise.resolve(ok({}));
-    return Promise.resolve(ok([]));
+    let body: unknown = [];
+    if (request.path === '/api/v1/areas') body = [AREA];
+    if (request.path.startsWith('/api/v1/bootstrap')) body = { version: 'providers', areas: [AREA], templates: [],
+      providers: providers.map(provider => ({ provider, available: true, version: 'test', models: [`${provider}-model`] })) };
+    if (request.path === '/api/settings') body = {};
+    return { status: 200, statusText: 'OK', body };
   } };
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  const unauthorized = createUnauthorizedChannel({ enqueue: (task) => task() });
-  const router = createAppRouter({ prepareReport: prepareReportDocument, transport, client, cards: bootTestCardRuntime(), unauthorized, onSignOut: () => undefined });
+  const router = createAppRouter({ prepareReport: prepareReportDocument, transport, client, cards: bootTestCardRuntime(), unauthorized: createUnauthorizedChannel({ enqueue: task => task() }), onSignOut: () => undefined });
   router.update({ history: createMemoryHistory({ initialEntries: ['/area/c1/new'] }) });
   render(<QueryClientProvider client={client}><ThemeProvider><RouterProvider router={router} /></ThemeProvider></QueryClientProvider>);
   return { creates };
@@ -93,94 +43,26 @@ async function openModelMenu(name: string) {
   await page.getByRole('button', { name }).click();
 }
 
-it.each([1280, 390])('a Claude pick sets provider and model, drops the Codex effort and offers its own (%ipx)', async (width) => {
+it.each([['claude', 'Claude', 1280], ['claude', 'Claude', 390], ['opencode', 'OpenCode', 1280], ['opencode', 'OpenCode', 390]] as const)('selects %s and creates from bootstrap models (%s) at %ipx', async (provider, label, width) => {
   await page.viewport(width, 844);
-  const { creates } = mount(CLAUDE_CATALOG);
+  const { creates } = mount();
   await openModelMenu('Model: Codex Default');
-  await page.getByRole('group', { name: 'Models' }).getByRole('radio', { name: 'GPT-5' }).click();
-  const slider = document.querySelector<HTMLElement>('[role="slider"][aria-label="Reasoning effort"]')!;
-  slider.focus();
-  await userEvent.keyboard('{End}');
-
-  await page.getByRole('group', { name: 'Providers' }).getByRole('radio', { name: 'Claude' }).click();
-  await page.getByRole('group', { name: 'Models' }).getByRole('radio', { name: 'Haiku' }).click();
+  await page.getByRole('group', { name: 'Providers' }).getByRole('radio', { name: label }).click();
+  await page.getByRole('radio', { name: `${provider}-model`, exact: true }).click();
   await userEvent.keyboard('{Escape}');
-  await expect.element(page.getByRole('button', { name: 'Model: Claude Haiku' })).toBeVisible();
-  /* Haiku declares no effort level, so there is none to pick. */
-  await expect.element(page.getByRole('slider', { name: 'Reasoning effort' })).not.toBeInTheDocument();
-
-  await openModelMenu('Model: Claude Haiku');
-  await page.getByRole('group', { name: 'Models' }).getByRole('radio', { name: 'Fable' }).click();
-  await expect.element(page.getByRole('button', { name: /^Model: Claude Fable/ })).toBeVisible();
-  const fableSlider = document.querySelector<HTMLElement>('[role="slider"][aria-label="Reasoning effort"]')!;
-  fableSlider.focus();
-  await userEvent.keyboard('{ArrowRight}{ArrowRight}');
-  await userEvent.keyboard('{Escape}');
-
-  /* The picker and Create share one row, with no horizontal scroll. */
-  const model = (await page.getByRole('button', { name: /^Model: Claude Fable/ }).findElement()).getBoundingClientRect();
-  const send = (await page.getByRole('button', { name: 'Create track' }).findElement()).getBoundingClientRect();
-  expect(Math.abs(model.top + model.height / 2 - send.top - send.height / 2)).toBeLessThan(2);
-  expect(model.right).toBeLessThanOrEqual(send.left);
-  expect(send.right).toBeLessThanOrEqual(width);
-  expect(document.documentElement.scrollWidth).toBe(width);
-
-  /* `combobox`: the route attaches the `@` menu, and a field with a trigger takes that role. */
-  await page.getByRole('combobox', { name: 'What this track should do' }).fill('Plan with Claude');
+  await expect.element(page.getByRole('button', { name: `Model: ${label} ${provider}-model` })).toBeVisible();
+  await page.getByRole('combobox', { name: 'What this track should do' }).fill('Plan the release');
   await page.getByRole('button', { name: 'Create track' }).click();
   await expect.poll(() => creates.length).toBe(1);
-  expect(creates[0]?.body).toMatchObject({
-    planner_provider: 'claude', model: 'claude-fable-5-1[1m]', reasoning_effort: 'high',
-  });
-  expect(creates[0]?.body).not.toHaveProperty('first_message');
+  expect(creates[0].body).toMatchObject({ provider: provider === 'opencode' ? 'acp:opencode' : provider, areaId: 'c1', model: `${provider}-model` });
+  expect(creates[0].body).not.toHaveProperty('first_message');
+  expect(creates[0].headers?.['Idempotency-Key']).toBeTruthy();
+  expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(width);
 });
 
-it('offers only Codex on a server without Claude Planners', async () => {
-  mount(NO_CLAUDE);
+it('offers only providers declared by bootstrap', async () => {
+  mount(['codex']);
   await openModelMenu('Model: Default');
-  await expect.element(page.getByRole('radio', { name: 'GPT-5' })).toBeVisible();
-  await expect.element(page.getByRole('group', { name: 'Providers' }).getByRole('radio', { name: 'Claude' })).not.toBeInTheDocument();
-  await expect.element(page.getByRole('radio', { name: 'Sonnet' })).not.toBeInTheDocument();
-});
-
-it.each([1280, 390])('OpenCode can create a track with inherited agent settings (%ipx)', async (width) => {
-  await page.viewport(width, 844);
-  const { creates } = mount(NO_CLAUDE, true);
-  await openModelMenu('Model: Codex Default');
-  await page.getByRole('group', { name: 'Providers' }).getByRole('radio', { name: 'OpenCode', exact: true }).click();
-  await page.getByRole('group', { name: 'Models' }).getByRole('radio', { name: 'Default', exact: true }).click();
-  await userEvent.keyboard('{Escape}');
-  await expect.element(page.getByRole('button', { name: 'Model: OpenCode Default' })).toBeVisible();
-  await page.getByRole('combobox', { name: 'What this track should do' }).fill('Plan with OpenCode');
-  await page.getByRole('button', { name: 'Create track' }).click();
-  await expect.poll(() => creates.length).toBe(1);
-  expect(creates[0]?.body).toMatchObject({ planner_provider: 'opencode' });
-  expect(creates[0]?.body).not.toHaveProperty('first_message');
-  expect(creates[0]?.body).not.toHaveProperty('model');
-  expect(creates[0]?.body).not.toHaveProperty('reasoning_effort');
-  expect(document.documentElement.scrollWidth).toBe(width);
-});
-
-it.each([1280, 390])('OpenCode models can be selected before creating a track (%ipx)', async (width) => {
-  await page.viewport(width, 844);
-  const catalog = {
-    models: [{ id: 'deepseek/deepseek-flash', model: 'deepseek/deepseek-flash', resolved_model: null,
-      display_name: 'DeepSeek Flash', description: '', is_default: false,
-      supported_reasoning_efforts: [], default_reasoning_effort: null }],
-    default: { model: 'zhipuai/glm-5.2', reasoning_effort: null, supported_reasoning_efforts: [] },
-    default_source: 'acp_session', source: 'live', fetched_at_ms: 1,
-  };
-  const { creates } = mount(NO_CLAUDE, true, catalog);
-  await openModelMenu('Model: Codex Default');
-  await page.getByRole('group', { name: 'Providers' }).getByRole('radio', { name: 'OpenCode', exact: true }).click();
-  await page.getByRole('group', { name: 'Models' }).getByRole('radio', { name: 'DeepSeek Flash' }).click();
-  await userEvent.keyboard('{Escape}');
-  await expect.element(page.getByRole('button', { name: 'Model: OpenCode DeepSeek Flash' })).toBeVisible();
-  await page.getByRole('combobox', { name: 'What this track should do' }).fill('Plan with DeepSeek');
-  await page.getByRole('button', { name: 'Create track' }).click();
-  await expect.poll(() => creates.length).toBe(1);
-  expect(creates[0]?.body).toMatchObject({ planner_provider: 'opencode', model: 'deepseek/deepseek-flash' });
-  expect(creates[0]?.body).not.toHaveProperty('first_message');
-  expect(creates[0]?.body).not.toHaveProperty('reasoning_effort');
-  expect(document.documentElement.scrollWidth).toBe(width);
+  await expect.element(page.getByRole('radio', { name: 'codex-model' })).toBeVisible();
+  expect(page.getByRole('group', { name: 'Providers' }).getByRole('radio', { name: 'Claude' }).query()).toBeNull();
 });

@@ -104,7 +104,7 @@ export type TrackPageProps = Readonly<{
   /** App-composed panel module: shares the desktop card, precedes the report on compact screens. */
   panelContent?: ReactNode;
   cards: readonly CardWire[];
-  /** Full Track card identities, independently of panel visibility or openability. */
+  /** Full Track resource identities, including agent sessions and independent tools. */
   existingCardIds: ReadonlySet<string>;
   /** The track's tasks, joined by `app/router` from the report's `task` blocks and the kernel's verdicts. */
   tasks: readonly ReportTaskRow[];

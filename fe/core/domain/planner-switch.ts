@@ -1,32 +1,14 @@
 import { NotSentError } from './failure-class.js';
-import { z } from 'zod';
-import { trackDtoSchema } from '../api/schemas.js';
+import { trackDtoSchema, type TrackDto } from '../api/schemas.js';
 import type { ApiFailure, ApiOperation } from '../api/types.js';
 
-export type PlannerSwitchRequest = Readonly<{
-  target_assistant_card_id: string;
-  expected_planner_card_id: string;
-  expected_revision: number;
-}>;
-export const plannerSwitchResponseSchema = z.object({
-  track_id: z.string(), planner_card_id: z.string(), demoted_card_id: z.string(),
-  planner_revision: z.number().int().nonnegative(),
-});
-export type PlannerSwitchResponse = z.infer<typeof plannerSwitchResponseSchema>;
-export function plannerSwitchOperation(trackId: string, body: PlannerSwitchRequest): ApiOperation<PlannerSwitchResponse> {
+/** The v1 Track patch returns the persisted Track, without a separate role revision. */
+export function plannerSwitchOperation(trackId: string, leadSessionId: string): ApiOperation<TrackDto> {
   return {
     method: 'PATCH',
     path: `/api/v1/tracks/${encodeURIComponent(trackId)}`,
-    body: { leadSessionId: body.target_assistant_card_id },
-    responseSchema: z.union([
-      trackDtoSchema.transform((dto) => ({
-        track_id: dto.id,
-        planner_card_id: dto.leadSessionId ?? body.target_assistant_card_id,
-        demoted_card_id: body.expected_planner_card_id,
-        planner_revision: Math.max(body.expected_revision, Math.floor(dto.updatedAtMs)),
-      })),
-      plannerSwitchResponseSchema,
-    ]),
+    body: { leadSessionId },
+    responseSchema: trackDtoSchema,
   };
 }
 

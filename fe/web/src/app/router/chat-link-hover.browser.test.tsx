@@ -1,3 +1,5 @@
+import { fixtureTrack, fixtureSession, fixtureSnapshot } from './session-contract-fixture.ts';
+import { sessionPage, sessionItem, sessionTurn } from './conversation-session-data.ts';
 import '../../styles/entry.css';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMemoryHistory, RouterProvider, type AnyRoute } from '@tanstack/react-router';
@@ -15,7 +17,7 @@ import { prepareReportDocument } from '../../features/report/document/preparatio
 import { queryKeys } from '../providers/queries.ts';
 import { Profiler } from 'react';
 import { useConversationCommands, type ConversationRegistry } from '../conversations/public.tsx';
-import { conversationCardId, historicalConversationPage, historicalConversationRun } from './conversation-read-data.ts';
+import { conversationCardId } from './conversation-read-data.ts';
 
 afterEach(() => { cleanup(); document.getElementById('root')?.remove(); });
 
@@ -23,34 +25,26 @@ async function setup({ streaming = false, historySuffix = '', narrow = false, fi
   await page.viewport(narrow ? 390 : 1440, narrow ? 844 : 900);
   const requests: ApiRequest[] = [];
   const evidence = createEvidencePreviewTransport();
-  const track = { workspace: { isolation: 'none' as const, kind: 'attached' as const, path: '/preview', frozen_at: null }, id: 'link-preview', area_id: 'examples', title: 'Chat preview', sort: 1,
-    cwd: '/preview', pinned_at: null, closed_at: null, created_at: 1, updated_at: 2 };
-  const card = { id: 'chat-card', track_id: track.id, kind: 'codex', title: 'Link chat', sort: 1,
-    payload: { planner_harness: true, planner_provider: 'codex' }, deletable: true, created_at: 1, updated_at: 2 };
+  const track = fixtureTrack('link-preview', { areaId: 'examples', title: 'Chat preview', cwd: '/preview' });
+  const card = fixtureSession('chat-card', track.id, { title: 'Link chat', isLead: true });
+  const other = fixtureSession('chat-b', track.id, { title: 'Other chat' });
   const live = { text: 'Streaming reply starts.' };
   const text = '[**Chat source**](neige://source/src_0971fbde#q1) · [Chat report](' + trackReportLinkUrl('reference-demo') + ') · [Chat file](./notes.md) · [Chat website](https://example.com) · [Today](/next/) · [Legacy Today](/next/today) · [Outside](/etc/passwd) · [Escape](../../secret.txt) · [Email](mailto:reader@example.com) · [Phone](tel:+123) · [Section](#part)';
-  function history(cardId = card.id) {
-    return [{ id: 1, worker_session_id: 'chat-runtime', card_id: cardId,
-      track_id: track.id, thread_id: 'chat-thread', turn_id: 'stored', turn_error_text: null, item_uuid: 'reply',
-      item_type: 'agentMessage', method: 'item/completed', params: JSON.stringify({ item: { id: 'reply', type: 'agentMessage', text: text + historySuffix } }),
-      created_at_ms: 1 }];
-  }
   const transport: ApiTransportPort = { async send(request) {
     requests.push(request);
-    if (request.path.includes('/sources/') || request.path === '/api/tracks/reference-demo') return evidence.send(request);
+    if (request.path.includes('/sources/') || request.path === '/api/v1/tracks/reference-demo') return evidence.send(request);
     let body: unknown = [];
-    if (request.path === '/api/areas') body = [{ id: 'examples', name: 'Examples', color: '#123456', sort: 1, kind: 'user', created_at: 1, updated_at: 1 }];
-    if (request.path === '/api/areas/examples/tracks') body = [track];
-    if (request.path === '/api/tracks/link-preview') body = { track, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true, cards: [card, { ...card, id: 'chat-b', title: 'Other chat', payload: { harness_profile: 'assistant', planner_provider: 'codex' } }], overlays: [] };
-    if (request.path === '/api/tracks/link-preview/conversations') body = [{ id: 'chat-b', trackId: track.id, title: 'Other chat', kind: 'track-assistant', provider: 'codex', state: 'idle', updatedAt: 2, archivedAt: null, lastTurnCompletedAt: null }];
+    if (request.path === '/api/v1/areas') body = [{ id: 'examples', name: 'Examples', color: '#123456', sortOrder: 1, kind: 'user', createdAtMs: 1, updatedAtMs: 1 }];
+    if (request.path === '/api/v1/areas/examples/tracks?includeClosed=true') body = [track];
+    if (request.path === '/api/v1/tracks/link-preview') body = fixtureSnapshot(track, [card, other]);
+    if (request.path === '/api/v1/tracks/link-preview/sessions') body = [card, other];
     if (request.path === '/api/settings') body = {};
-    if (request.path.includes('/planner/run?contract=conversation_v1')) body = historicalConversationRun({ card_id: conversationCardId(request.path), worker_session_id: 'chat-runtime', phase: streaming ? 'issuing_turn' : 'idle',
-      model: null, reasoning_effort: null, permission_mode: null, blocked_reason: null,
-      manual_compact_supported: true, recovery: null, compact_outcome: null, context_usage_invalidated: false,
-      running_turn: streaming ? {turn_id:'live-turn',elapsed_ms:1} : null },streaming ? 'running' : 'idle',true);
-    if (request.path.includes('/harness/items?contract=conversation_v1')) body = historicalConversationPage(conversationCardId(request.path),history(conversationCardId(request.path)),null);
-    if (request.path.endsWith('/harness/live')) body = { turn_id: 'live-turn', items: [{ item_id: 'live-reply', text: live.text }] };
-    if (request.path.includes('/workspace/readfile')) body = { path: new URL(request.path, 'http://fixture').searchParams.get('path'), text: fileText, size: fileText.length, truncated: false };
+    if (request.path.includes('/items?')) {
+      const id = conversationCardId(request.path);
+      body = sessionPage(id === card.id ? card : other, [sessionItem(id, 1, text + historySuffix, 'assistant_text', 'stored'),
+        ...(streaming ? [sessionItem(id, 2, live.text, 'assistant_text', 'live-turn')] : [])], streaming ? sessionTurn(id, 'live-turn') : null);
+    }
+    if (request.path.includes('/files')) body = { path: new URL(request.path, 'http://fixture').searchParams.get('path'), text: fileText, size: fileText.length, truncated: false };
     return { status: 200, statusText: 'OK', body };
   } };
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -76,14 +70,14 @@ async function setup({ streaming = false, historySuffix = '', narrow = false, fi
     registry.requestOpen(id);
   }, append: async (text = '\n\nNew incremental [Live file](./live.md).') => {
     live.text += text;
-    await client.refetchQueries({ queryKey: queryKeys.harnessLive(card.id) });
+    await client.refetchQueries({ queryKey: queryKeys.harnessItems(card.id) });
   } };
 }
 
 it('previews chat evidence through the production router in the conversation track', async () => {
   const { requests } = await setup();
   await expect.element(page.getByRole('button', { name: 'Chat source', exact: true })).toBeVisible();
-  expect(requests.filter(request => request.path.includes('/sources/') || request.path.includes('/workspace/readfile') || request.path === '/api/tracks/reference-demo')).toHaveLength(0);
+  expect(requests.filter(request => request.path.includes('/sources/') || request.path.includes('/files') || request.path === '/api/v1/tracks/reference-demo')).toHaveLength(0);
   await page.getByRole('button', { name: 'Chat source', exact: true }).hover();
   await expect.element(page.getByRole('heading', { name: '来源正文预览 · 示例摘要', exact: true })).toBeVisible();
   const trigger = page.getByRole('button', { name: 'Chat source', exact: true }).element().getBoundingClientRect();
@@ -103,7 +97,7 @@ it('previews chat evidence through the production router in the conversation tra
   await page.getByRole('button', { name: '关闭来源', exact: true }).click();
   await page.getByRole('button', { name: 'Chat file', exact: true }).hover();
   await expect.element(page.getByRole('heading', { name: 'Chat file contents', exact: true })).toBeVisible();
-  expect(requests.some(request => request.path === '/api/tracks/link-preview/workspace/readfile?path=notes.md')).toBe(true);
+  expect(requests.some(request => request.path === '/api/v1/tracks/link-preview/files?path=notes.md')).toBe(true);
   // Nearby previews may cover other links; Escape restores the reading surface.
   await userEvent.keyboard('{Escape}');
   await expect.poll(() => page.getByRole('dialog', { name: 'Preview: Chat file' }).query()).toBeNull();
@@ -131,7 +125,7 @@ it.each(['history', 'incremental'])('rejects malformed navigation hrefs without 
   expect(document.querySelector('[data-nc-thread]')?.textContent).toContain('Chat source');
   expect(page.getByText('Something went wrong!', { exact: true }).query()).toBeNull();
   expect(router.history.location.pathname).toBe(`${APP_BASEPATH}/track/link-preview`);
-  expect(requests.filter(request => request.path.includes('/workspace/readfile'))).toHaveLength(0);
+  expect(requests.filter(request => request.path.includes('/files'))).toHaveLength(0);
   await page.getByRole('button', { name: 'Chat file', exact: true }).hover();
   await expect.element(page.getByRole('heading', { name: 'Chat file contents', exact: true })).toBeVisible();
   await userEvent.keyboard('{Escape}');
@@ -155,7 +149,7 @@ it('renders incremental links and keeps external loading explicit', async () => 
   await expect.element(page.getByRole('button', { name: 'Chat file', exact: true })).toBeVisible();
   await expect.element(page.getByText('Streaming reply starts.', { exact: true })).toBeVisible();
   await append();
-  expect(requests.some(request => request.path === '/api/cards/chat-card/harness/live')).toBe(true);
+  expect(requests.some(request => request.path.startsWith('/api/v1/sessions/chat-card/items?'))).toBe(true);
   await page.getByRole('button', { name: 'Live file', exact: true }).hover();
   await expect.element(page.getByRole('heading', { name: 'Chat file contents', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Chat website', exact: true }).hover();
@@ -220,7 +214,7 @@ it.each(['native initial', 'desktop to narrow'])('keeps file body above the nati
   await content.wheel({ delta: { y: -240 } });
   await expect.poll(() => body.scrollTop).toBe(0);
   await content.getByRole('button', { name: 'Read nested', exact: true }).click();
-  await expect.poll(() => requests.some(request => request.path.includes('/workspace/readfile?path=nested.md'))).toBe(true);
+  await expect.poll(() => requests.some(request => request.path.includes('/files?path=nested.md'))).toBe(true);
   await expect.poll(() => document.querySelector('[data-nc-mobile-chat-panel]')?.closest('dialog')?.open).toBe(true);
 });
 

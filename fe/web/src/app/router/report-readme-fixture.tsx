@@ -1,7 +1,8 @@
-import { historicalConversationPage, conversationCardId, historicalConversationRun } from './conversation-read-data.ts';
+import { sessionPage, sessionItem } from './conversation-session-data.ts';
+import { fixtureSnapshot, fixtureSession, fixtureTrack, fixtureReport } from './session-contract-fixture.ts';
 import { prepareReportDocument } from '../../features/report/document/preparation.ts';
-// Real routing/rendering; only the API transport is scripted. File bodies stay
-// imported from the repository so tables, links and document length cannot drift.
+// Scripted v1 responses exercise the real router and document renderer.
+// The long document includes beginning and ending links for keyboard and wheel checks.
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMemoryHistory, RouterProvider } from '@tanstack/react-router';
 import { render } from '@testing-library/react';
@@ -27,6 +28,9 @@ Read the [English README](../README.md) for the high-level overview.
 | Reference | Summary |
 | --- | --- |
 | Architecture | Core boundaries and verification |
+${Array.from({ length: 18 }, (_, index) => `## Documentation topic ${index}\n\n${'Detailed guidance for reading and operating the workspace. '.repeat(12)}`).join('\n\n')}
+
+[Prose ratchet](./prose-ratchet.md)
 `;
 
 const rootReadme = `# Neige Calm
@@ -44,22 +48,18 @@ export function renderReadmeFixture(initial: string, detailReady: Promise<void> 
   options: Readonly<{ shortReport?: boolean; failFileRead?: boolean }> = {}) {
   let fileReadFailed = options.failFileRead ?? false;
   const requests: ApiRequest[] = [];
-  const track = { workspace: { isolation: 'none' as const, kind: 'attached' as const, path: '/repo', frozen_at: null }, id: README_TRACK_ID, area_id: 'project', title: 'Documentation preview', sort: 1,
-    cwd: '/repo', pinned_at: null, closed_at: null, created_at: 1, updated_at: 2 };
-  const card = { id: 'planner', track_id: track.id, kind: 'codex', title: 'Existing conversation', sort: 1,
-    payload: { planner_harness: true }, deletable: false, created_at: 1, updated_at: 2 };
-  const report = { ...card, id: 'report', kind: 'track-report', title: null, sort: 0,
-    payload: { schemaVersion: 3, docRev: 1, summary: '', body: '', blocks: [{ id: 'documentation', kind: 'prose', rev: 1,
-      payload: { markdown: `# Report\n\n${options.shortReport ? '' : readme}\n\nRead [docs/README.md](docs/README.md).` } }] } };
+  const track = fixtureTrack(README_TRACK_ID, { areaId: 'project', title: 'Documentation preview', cwd: '/repo', sortOrder: 1, closedAtMs: null, createdAtMs: 1, updatedAtMs: 2 });
+  const card = fixtureSession('planner', track.id, { title: 'Existing conversation', isLead: true });
+  const report = fixtureReport(`# Report\n\n${options.shortReport ? '' : readme}\n\nRead [docs/README.md](docs/README.md).`);
   const ok = (body: unknown): ApiTransportResponse => ({ status: 200, statusText: 'OK', body });
   const transport: ApiTransportPort = { async send(request) {
     requests.push(request);
     if (request.method !== 'GET') throw new Error(`Unexpected write: ${request.method} ${request.path}`);
-    if (request.path === '/api/v1/areas') return ok([{ id: 'project', name: 'Project', color: '#6574cd', sort: 1, kind: 'user', created_at: 1, updated_at: 1 }]);
+    if (request.path === '/api/v1/areas') return ok([{ id: 'project', name: 'Project', color: '#6574cd', sortOrder: 1, kind: 'user', createdAtMs: 1, updatedAtMs: 1 }]);
     if (request.path === '/api/v1/areas/project/tracks?includeClosed=true') return ok([track]);
     if (request.path === `/api/v1/tracks/${track.id}`) {
       await detailReady;
-      return ok({ track, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true, cards: [card, report], overlays: [] });
+      return ok(fixtureSnapshot(track, [card], report));
     }
     if (request.path === `/api/v1/tracks/${track.id}/report`) return ok({ taskDiagnostics: [] });
     if (request.path === `/api/v1/tracks/${track.id}/files?path=docs%2FREADME.md`) {
@@ -71,11 +71,7 @@ export function renderReadmeFixture(initial: string, detailReady: Promise<void> 
       return ok({ path: '/repo/README.md', size: new TextEncoder().encode(rootReadme).length, text: rootReadme, truncated: false });
     }
     if (request.path.includes('/files?path=')) throw new Error(`Unexpected file read: ${request.path}`);
-    if (request.path.includes('&view=run')) return ok(historicalConversationRun({ card_id: card.id, worker_session_id: 'runtime', phase: 'idle',
-      model: null, reasoning_effort: null, permission_mode: 'never', blocked_reason: null, pending_queue: [], manual_compact_supported: true, recovery: null, compact_outcome: null, context_usage_invalidated: false, running_turn: null, final_reply: null }, 'idle', true));
-    if (request.path.includes('/items?') && !request.path.includes('&view=')) return ok(historicalConversationPage(conversationCardId(request.path), [{ id: 1, worker_session_id: 'runtime', card_id: card.id, track_id: track.id,
-      thread_id: 'thread', turn_id: null, turn_error_text: null, item_uuid: null, item_type: 'agentMessage', method: 'item/completed',
-      params: JSON.stringify({ item: { text: 'Conversation remains available while reading documentation.' } }), created_at_ms: 1 }], null));
+    if (request.path.includes('/items?')) return ok(sessionPage(card, [sessionItem(card.id, 1, 'Conversation remains available while reading documentation.')]));
     if (request.path === '/api/settings') return ok({});
     return ok([]);
   } };

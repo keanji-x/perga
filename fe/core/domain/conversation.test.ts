@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { agentSessionDtoSchema } from '../api/perga-v1.js';
 import type { HarnessItem, HarnessPhaseTag } from '../api/generated/wire.js';
 import {
   TASK_LS_TOOL, REPORT_READ_TOOLS, REPORT_WRITE_TOOLS, TASK_ACCEPT_TOOL, TASK_REJECT_TOOL, DEV_PUBLISH_TOOL,
@@ -8,15 +9,15 @@ import {
 
 import {
   buildTranscript, CONVERSATION_NAME_MAX, conversationName, conversationNameFrom,
-  CONVERSATION_CREATE_TEXT, CONVERSATION_STATE_SOURCE, conversationCreateFailure,
+  CONVERSATION_CREATE_TEXT, conversationCreateFailure,
   createSerialWriter, createTrackConversationOperation, sendPlannerInputOperation, editPlannerInputOperation,
   harnessItemToActivity, harnessItemToTurns as transcriptRowToMessages,
   isOptimisticConversationTurn, isQueuedConversationTurn, kernelQueuesInput,
   mergeTranscript, plannerQueueWriteFailure, readableCommand,
   reconcileUserEchoes, serverItemHighWater,
-  toTrackConversation, trackConversationCardId,
-  trackConversationsOperation, transcriptRowToTurnOutcome,
-  type Conversation, type ConversationKind, type ConversationTurn, type OptimisticConversationTurn,
+  agentSessionDtoToConversation, trackConversationCardId,
+  transcriptRowToTurnOutcome,
+  type Conversation, type ConversationTurn, type OptimisticConversationTurn,
   type TranscriptEntry,
 } from './conversation.js';
 
@@ -163,48 +164,24 @@ describe('conversationNameFrom', () => {
 });
 
 describe('track conversations', () => {
-  const row = {
-    id: 'card-3', trackId: 'track-1', title: null, kind: 'track-assistant', provider: 'codex' as const,
-    state: 'starting' as const, updatedAt: 7, archivedAt: null, lastTurnCompletedAt: null,
-  };
-
-  it('preserves the declared provider on a dormant Assistant', () => {
-    expect(toTrackConversation({ ...row, provider: 'claude', state: null })).toMatchObject({ provider: 'claude', state: null });
+  const row = agentSessionDtoSchema.parse({
+    id: 'card-3', trackId: 'track-1', title: null, isLead: false, provider: 'codex',
+    status: 'starting', createdAtMs: 1, updatedAtMs: 7,
   });
 
-  it('decodes a list row into the app\'s own shape', () => {
-    const operation = trackConversationsOperation('track 1');
-    expect(operation.method).toBe('GET');
-    expect(operation.path).toBe('/api/v1/tracks/track%201/sessions');
-    expect(operation.responseSchema.parse([row])).toEqual([{
-      id: 'card-3', trackId: 'track-1', title: null, kind: 'track-assistant', provider: 'codex',
-      state: 'starting', updatedAt: 7, archivedAt: null, lastTurnCompletedAt: null,
-    }]);
-    expect(operation.responseSchema.parse([{ ...row, archivedAt: null, lastTurnCompletedAt: 9 }])[0].lastTurnCompletedAt).toBe(9);
+  it('maps session identity, role, provider and timestamps into a unified conversation', () => {
+    expect(agentSessionDtoToConversation(row)).toEqual({
+      id: 'card-3', trackId: 'track-1', title: null, kind: 'agent', isLead: false,
+      provider: 'codex', state: 'starting', updatedAt: 7, archivedAt: null, lastTurnCompletedAt: 7,
+    });
+    expect(agentSessionDtoToConversation({ ...row, isLead: true, provider: 'acp:opencode', status: 'queued' }))
+      .toMatchObject({ kind: 'agent', isLead: true, provider: 'opencode', state: 'turn_pending' });
   });
 
-  it('requires the declared provider even without a live session', () => {
-    const withoutProvider: Partial<typeof row> = { ...row };
-    delete withoutProvider.provider;
-    expect(trackConversationsOperation('w').responseSchema.safeParse([{ ...withoutProvider, state: null }]).success).toBe(false);
-    expect(trackConversationsOperation('w').responseSchema.safeParse([{ ...row, provider: 'unregistered' }]).success).toBe(false);
-  });
-
-  it('requires lastTurnCompletedAt on a list row, null or a number', () => {
-    const schema = trackConversationsOperation('w').responseSchema;
-    const withoutField: Partial<typeof row> = { ...row };
-    delete withoutField.lastTurnCompletedAt;
-    expect(schema.safeParse([withoutField]).success).toBe(false);
-    expect(schema.safeParse([{ ...row, archivedAt: null, lastTurnCompletedAt: null }]).success).toBe(true);
-    expect(schema.safeParse([{ ...row, archivedAt: null, lastTurnCompletedAt: 1000 }]).success).toBe(true);
-    expect(schema.safeParse([{ ...row, lastTurnCompletedAt: '1000' }]).success).toBe(false);
-  });
-
-  it('rejects a row whose session state is not one the kernel can produce', () => {
-    expect(trackConversationsOperation('w').responseSchema.safeParse([{ ...row, state: 'dormant' }]).success)
-      .toBe(false);
-    expect(trackConversationsOperation('w').responseSchema.safeParse([{ ...row, state: null }]).success)
-      .toBe(true);
+  it('requires the declared provider on the session DTO', () => {
+    const missing: Partial<typeof row> = { ...row };
+    delete missing.provider;
+    expect(agentSessionDtoSchema.safeParse(missing).success).toBe(false);
   });
 
   it.each([
@@ -239,7 +216,7 @@ describe('track conversations', () => {
   });
 
   it('leaves the track title absent rather than inventing one, and names the row Assistant', () => {
-    const conversation = toTrackConversation(row);
+    const conversation = agentSessionDtoToConversation(row);
     expect(conversationName(conversation)).toBe('Assistant');
     expect(Object.hasOwn(conversation, 'trackTitle')).toBe(false);
     expect(Object.hasOwn(conversation, 'turns')).toBe(false);
@@ -251,9 +228,11 @@ describe('track conversations', () => {
     expect(operation.path).toBe('/api/v1/tracks/track%201/sessions');
     expect(operation.body).toEqual({ title: 'hello', text: 'hello', provider: 'claude' });
     expect(operation.headers).toEqual({ 'Idempotency-Key': 'key-a' });
-    expect(operation.responseSchema.parse({ ...row, initialInput: { kind: 'legacy-unavailable' } }).conversation.kind).toBe('track-assistant');
-    expect(operation.responseSchema.safeParse(row).success).toBe(false);
-    expect(operation.responseSchema.safeParse({ ...row, initialInput: { kind: 'known', receipt: { version: 'unsupported' } } }).success).toBe(false);
+    const firstInput = { inputId: 'input', turnId: 'turn', sessionId: row.id,
+      deliveryState: 'accepted', turnStatus: 'queued', statusUrl: '/input' };
+    expect(operation.responseSchema.parse({ session: { ...row, trackId: 'track 1' }, firstInput }).conversation.kind).toBe('agent');
+    expect(operation.responseSchema.safeParse({ session: row }).success).toBe(false);
+    expect(operation.responseSchema.safeParse({ session: row, firstInput }).success).toBe(false);
   });
 
   it('sends a planner message under the key its retries reuse', () => {
@@ -284,23 +263,6 @@ describe('track conversations', () => {
     expect(trackConversationCardId('track-1', 'key-a')).toBe('conv-55cef7267426fe78493bdd46ca6b1220');
     expect(trackConversationCardId('track-1', 'key-b')).not.toBe(trackConversationCardId('track-1', 'key-a'));
     expect(trackConversationCardId('track-2', 'key-a')).not.toBe(trackConversationCardId('track-1', 'key-a'));
-  });
-});
-
-/* Every kind says who owns its `state`, and the table is total. */
-describe('CONVERSATION_STATE_SOURCE', () => {
-  const KINDS: readonly ConversationKind[] = [
-    'terminal', 'codex', 'claude', 'shared-spec', 'track-assistant',
-  ];
-
-  it('decides every kind, and only those', () => {
-    expect(Object.keys(CONVERSATION_STATE_SOURCE).sort()).toEqual([...KINDS].sort());
-    for (const kind of KINDS) expect(CONVERSATION_STATE_SOURCE[kind]).toMatch(/^(server|route)$/);
-  });
-
-  it('names the listed kinds as the server\'s to report', () => {
-    expect(KINDS.filter((kind) => CONVERSATION_STATE_SOURCE[kind] === 'server'))
-      .toEqual(['track-assistant']);
   });
 });
 
@@ -1342,15 +1304,11 @@ it('edits the same queued entry with the exact observed revision and requires st
   expect(operation.responseSchema.safeParse({ card_id: 'card/a', entry_id: 'entry/b', rev: 8, text: 'revised middle message' }).success).toBe(true);
 });
 
-it('requires archive metadata on Assistant summaries and retains a saved timestamp', () => {
-  const schema = trackConversationsOperation('track').responseSchema;
-  const row = {id:'card',trackId:'track',title:null,kind:'track-assistant',provider:'claude',state:null,
-    updatedAt:1,lastTurnCompletedAt:null,archivedAt:42};
-  expect(schema.parse([row])[0].archivedAt).toBe(42);
-  const missing: Record<string, unknown> = {...row}; delete missing.archivedAt;
-  expect(schema.safeParse([missing]).success).toBe(false);
+it('retains session archive metadata in the conversation', () => {
+  const row = agentSessionDtoSchema.parse({ id: 'card', trackId: 'track', isLead: false,
+    provider: 'claude', status: 'idle', createdAtMs: 1, updatedAtMs: 2, archivedAtMs: 42 });
+  expect(agentSessionDtoToConversation(row).archivedAt).toBe(42);
 });
-
 
 describe('ACP activity content in the transcript', () => {
   function nativeRow(id: number, itemType: string, item: Record<string, unknown>, method = 'item/completed'): Parameters<typeof buildTranscript>[0][number] {

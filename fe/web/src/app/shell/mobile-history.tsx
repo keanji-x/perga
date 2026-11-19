@@ -13,7 +13,7 @@ import { Button } from '@astryxdesign/core/Button';
 import { Icon } from '@astryxdesign/core/Icon';
 import { DropdownMenu } from '@astryxdesign/core/DropdownMenu';
 import type { Conversation } from '../../../../core/domain/conversation.ts';
-import { PLANNER_CONVERSATION_KIND, conversationName } from '../../../../core/domain/conversation.ts';
+import { conversationName } from '../../../../core/domain/conversation.ts';
 import { Icon as UiIcon } from '../../ui/icon/public.tsx';
 import { ErrorBox } from '../../ui/error-box/public.tsx';
 import styles from './mobile-history.module.css';
@@ -24,7 +24,7 @@ const VIEW_LABELS: Readonly<Record<HistoryView, string>> = Object.freeze({ curre
 
 function historyTitle(row: Conversation): string {
   const name = conversationName(row);
-  return row.trackTitle && (row.kind === PLANNER_CONVERSATION_KIND || row.title === null) ? row.trackTitle : name;
+  return row.trackTitle && (row.isLead === true || row.title === null) ? row.trackTitle : name;
 }
 
 function historySubtitle(row: Conversation): string {
@@ -152,9 +152,9 @@ export function MobileHistory({ owner, open, onOpenChange, conversations, loadin
                 {rows.map((row) => <div key={row.id} className={styles.conversationRow}><button type="button" className={styles.row} aria-current={row.id === selectedConversationId ? 'true' : undefined}
                   aria-label={`${historyTitle(row)}${historySubtitle(row) ? ` ${historySubtitle(row)}` : ''}`} onClick={() => leave(() => onSelect(row))}>
                   <span className={styles.title}>{historyTitle(row)}</span>
-                  <span className={styles.meta} title={historySubtitle(row)}>{row.kind === PLANNER_CONVERSATION_KIND ? null : historySubtitle(row)}<span aria-hidden="true">{row.kind === PLANNER_CONVERSATION_KIND ? '' : ' · '}{new Date(row.updatedAt).toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' }).replaceAll('/', '-')}</span></span>
+                  <span className={styles.meta} title={historySubtitle(row)}>{row.isLead === true ? null : historySubtitle(row)}<span aria-hidden="true">{row.isLead === true ? '' : ' · '}{new Date(row.updatedAt).toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' }).replaceAll('/', '-')}</span></span>
                 </button>
-                {onArchive !== undefined && row.kind === 'track-assistant' && <ConversationArchiveAction
+                {onArchive !== undefined && row.kind === 'agent' && row.isLead !== true && <ConversationArchiveAction
                   conversation={row} onArchive={onArchive} className={styles.conversationActions} />}
                 </div>)}
               </section>)}

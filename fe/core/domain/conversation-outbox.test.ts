@@ -328,7 +328,7 @@ it('uses acknowledged operation state even when an accepted legacy receipt has n
 
 it('retires an edited queued send against the revised transcript text without leaving a phantom input', () => {
   const sent = op('edited', CONFIRMED, { text: 'old middle text', queued: true, entryId: 'middle' });
-  const edited = synchronizeQueuedSends([sent], { displayed: [{ entry_id: 'middle', text: 'new middle text', rev: 1, queued_at_ms: 10 }], reported: [] });
+  const edited = synchronizeQueuedSends([sent], { displayed: [{ entry_id: 'middle', text: 'new middle text', rev: 1, queued_at_ms: 10 }] });
   const revised = { ...row('5', 'new middle text'), queueEntryId: 'middle' };
   const shown = view(edited, [revised]);
   expect(shown.retire).toEqual([{ key: sent.key, row: '5' }]);
@@ -338,8 +338,8 @@ it('retires an edited queued send against the revised transcript text without le
 
 it('does not roll a successful queue edit back to an older cached queue revision', () => {
   const sent = op('edited', CONFIRMED, { text: 'before', queued: true, entryId: 'middle' });
-  const fresh = synchronizeQueuedSends([sent], { displayed: [{ entry_id: 'middle', text: 'after', rev: 2, queued_at_ms: 10 }], reported: [] });
-  const stale = synchronizeQueuedSends(fresh, { displayed: [{ entry_id: 'middle', text: 'before', rev: 1, queued_at_ms: 10 }], reported: [] });
+  const fresh = synchronizeQueuedSends([sent], { displayed: [{ entry_id: 'middle', text: 'after', rev: 2, queued_at_ms: 10 }] });
+  const stale = synchronizeQueuedSends(fresh, { displayed: [{ entry_id: 'middle', text: 'before', rev: 1, queued_at_ms: 10 }] });
   expect(stale).toBe(fresh);
   expect(stale[0].echo.text).toBe('after');
 });
@@ -347,25 +347,18 @@ it('does not roll a successful queue edit back to an older cached queue revision
 it('updates only the confirmed queue identity when equal messages coexist', () => {
   const confirmed = op('known', CONFIRMED, { queued: true, entryId: 'known' });
   const unconfirmed = op('unknown', SENDING, { queued: true });
-  const shown = synchronizeQueuedSends([confirmed, unconfirmed], { displayed: [{ entry_id: 'known', text: 'edited', rev: 1, queued_at_ms: 10 }], reported: [] });
+  const shown = synchronizeQueuedSends([confirmed, unconfirmed], { displayed: [{ entry_id: 'known', text: 'edited', rev: 1, queued_at_ms: 10 }] });
   expect(shown[0].echo.text).toBe('edited'); expect(shown[1]).toBe(unconfirmed);
 });
 
-it('keeps accepted first-input evidence outside ordinary queue placement and send delivery helpers', () => {
-  const initial: import('./conversation-outbox.js').AcceptedInitialInput = {
-    phase: 'initial-accepted', localWrite: null, inputFact: null, sourceWitness: null, key: 'create', trackId: 'track', submitted: { text: 'first input', atMs: 1 },
-    receipt: { version: 'initial-input-v1', entryId: 'first-entry', entryRev: 0, queuedAtMs: 2,
-      textSha256: 'a'.repeat(64), initialRuntimeId: 'runtime' },
-  };
-  const first: ConversationTurn = { id: 'initial-create', author: 'you', text: initial.submitted.text, atMs: 1 };
-  const later = op('later', SENDING, { text: 'later input', queued: true });
-  const operations = [initial, later];
-  const drawn = { ...later.echo, queued: false };
-  const shown = presentPendingMessages([first, drawn], [], [first, later.echo],
-    rememberQueuePlacements(new Map(), operations, []), null, false, operations);
-  expect(shown.transcript).toEqual([first]);
-  expect(shown.queue).toEqual([]);
-  expect(shown.sending).toEqual([{ ...later.echo, delivery: 'sending' }]);
-  expect(synchronizeQueuedSends(operations, { displayed: [{ entry_id: 'first-entry', text: 'edited first input', rev: 1, queued_at_ms: 2 }], reported: [] })[0]).toBe(initial);
-  expect(rememberQueuePlacements(new Map(), operations, []).has('first-entry')).toBe(false);
+it('hands a v1 creation echo to the exact published human input once history arrives', () => {
+  const accepted = op('creation', CONFIRMED, { before: 0, text: 'First message', entryId: 'first-input' });
+  const initial = { ...accepted, echo: { ...accepted.echo, authorUserId: 'local-owner' } };
+  const stored: ConversationTurn = { id: 'human:first-input', author: 'you', text: 'First message', atMs: 3,
+    human: { messageId: 'first-input', userId: 'local-owner', displayName: 'Owner', revision: 1 } };
+  expect(texts(view([initial]).transcript)).toEqual(['First message']);
+  expect(view([initial]).retire).toEqual([]);
+  expect(view([initial], [{ ...stored, human: { ...stored.human!, messageId: 'other-input' } }]).retire).toEqual([]);
+  expect(texts(view([initial], [stored]).transcript)).toEqual(['First message']);
+  expect(view([initial], [stored]).retire).toEqual([{ key: 'creation', row: stored.id }]);
 });

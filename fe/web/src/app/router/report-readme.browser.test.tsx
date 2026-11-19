@@ -137,8 +137,8 @@ it.each([390, 1000, 1440])('cold-loads docs/README.md in the document viewport a
   const { router, requests } = renderReadmeFixture(README_FILE_URL);
   await visibleReadme();
   expect(router.history.location.href).toBe(README_FILE_URL);
-  expect(requests.filter(request => request.path.includes('/readfile')).map(request => request.path))
-    .toEqual([`/api/tracks/${README_TRACK_ID}/workspace/readfile?path=docs%2FREADME.md`]);
+  expect(requests.filter(request => request.path.includes('/files?path=')).map(request => request.path))
+    .toEqual([`/api/v1/tracks/${README_TRACK_ID}/files?path=docs%2FREADME.md`]);
   expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(width);
   expect(trackPage().scrollTop).toBe(0);
   await page.screenshot({ path: `./__screenshots__/report-readme-cold-${width}.png` });
@@ -298,8 +298,8 @@ for (const width of [390, 1000, 1440]) for (const conversation of [false, true])
     fixture.recoverFileRead();
     await userEvent.click(retry);
     await visibleReadme();
-    expect(fixture.requests.filter(request => request.path.includes('/readfile')).map(request => request.path))
-      .toEqual(Array<string>(2).fill(`/api/tracks/${README_TRACK_ID}/workspace/readfile?path=docs%2FREADME.md`));
+    expect(fixture.requests.filter(request => request.path.includes('/files?path=')).map(request => request.path))
+      .toEqual(Array<string>(2).fill(`/api/v1/tracks/${README_TRACK_ID}/files?path=docs%2FREADME.md`));
     expect(fixture.router.history.location.href).toBe(README_FILE_URL);
   });
 }

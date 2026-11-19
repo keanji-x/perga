@@ -5,12 +5,14 @@ import {
   createTrackOperation, deleteCardOperation, hasFailed, isBlankForKernel, isClosed,
   isWorking, needsUserAttention, toTrack, trackActivityFrom, trackActivitiesFrom,
   sortAreaTracksByRecent, trackRecentAt, limitAreaTracks, railAreaTracks, AREA_TRACK_LIMIT,
-  trackActivityState, trackDetailSchema, updateTrackOperation,
+  trackActivityState, updateTrackOperation,
   NEUTRAL_ACTIVITY, UNTITLED_TRACK_LABEL, trackDisplayTitle, trackWireSchema, tracksInAreaOperation,
-  userVisibleTracks, trackOverlayPayload, plannerProviderOf,
-  overlaysByKindOperation, trackDetailOperation, type Track, type OverlayWire,
+  userVisibleTracks, trackOverlayPayload,
+  trackDetailOperation, terminalDtoToCardWire, type Track, type OverlayWire,
 } from './track.js';
+import { terminalPresentation } from './terminal-presentation.js';
 import type { Area } from './area.js';
+import { overlaySchema } from '../api/schemas.js';
 import { performApiRequest } from '../api/client.js';
 
 const baseWire = { workspace: { isolation: 'none' as const, kind: 'attached' as const, path: '', frozen_at: null },
@@ -29,55 +31,42 @@ function track(overrides: Partial<Track>): Track {
 
 const DAY = 24 * 60 * 60 * 1000;
 
-describe('track detail planner revision contract', () => {
-  const detail = { track: baseWire, can_reopen: false, can_close: true, can_admin: false, cards: [], overlays: [] };
-
-  it.each([undefined, -1, 1.5])('rejects invalid planner_revision %s', (revision) => {
-    const body = revision === undefined ? detail : { ...detail, planner_revision: revision };
-    expect(trackDetailSchema.safeParse(body).success).toBe(false);
-  });
-
-  it.each([0, 7])('retains planner_revision %s through the API decoder', async (revision) => {
-    const body = { ...detail, planner_revision: revision };
-    expect(trackDetailSchema.parse(body)).toMatchObject({ planner_revision: revision });
+describe('track aggregate HTTP decode', () => {
+  it('returns the authoritative DTO without synthesizing cards or revision metadata', async () => {
+    const body = { track: { id: 'w1', areaId: 'c1', createdAtMs: 1, updatedAtMs: 2 },
+      report: { docRev: 7, blocks: [] }, sessions: [], tasks: [], openAsks: [] };
     const result = await performApiRequest({
       send: () => Promise.resolve({ status: 200, statusText: 'OK', body }),
     }, trackDetailOperation('w1'));
-    expect(result).toMatchObject({ status: 'ready', value: { planner_revision: revision } });
+    expect(result).toMatchObject({ status: 'ready', value: {
+      track: { id: 'w1', areaId: 'c1' }, report: { docRev: 7 }, sessions: [],
+    } });
+    expect(trackDetailOperation('w1').responseSchema.safeParse({ track: baseWire }).success).toBe(false);
   });
 });
 
-describe('card and overlay HTTP decode', () => {
-  const card = {
-    id: 'card', track_id: 'w1', kind: 'note', sort: 0,
-    payload: { arbitrary: ['kept'] }, created_at: 1, updated_at: 2,
-  };
-  const overlay = {
-    id: 'overlay', plugin_id: 'plugin', entity_kind: 'future-entity', entity_id: 'w1',
-    kind: 'future-kind', payload: { arbitrary: ['kept'] }, updated_at: 2,
-  };
-  const detail = (cards: unknown[], overlays: unknown[]) => trackDetailOperation('w1').responseSchema.parse({
-    track: baseWire, planner_revision: 0, can_reopen: false, can_close: true, can_admin: false, cards, overlays,
-  });
+describe('independent tool and overlay decode', () => {
+  const card = { id: 'card', track_id: 'w1', kind: 'note', sort: 0,
+    payload: { arbitrary: ['kept'] }, created_at: 1, updated_at: 2 };
 
-  it('defaults the HTTP card title to null and deletable to true, and strips unknown fields', () => {
-    expect(detail([{ ...card, future_field: 'ignored' }], []).cards)
-      .toEqual([{ ...card, title: null, deletable: true }]);
-    expect(createCardOperation('w1', { kind: card.kind, payload: card.payload }, 'key').responseSchema.parse(card))
+  it('defaults tool metadata and strips unknown fields on the create receipt', () => {
+    expect(createCardOperation('w1', { kind: card.kind, payload: card.payload }, 'key')
+      .responseSchema.parse({ ...card, future_field: 'ignored' }))
       .toEqual({ ...card, title: null, deletable: true });
   });
 
-  it('preserves explicit card titles, null and deletable false', () => {
+  it('preserves explicit tool titles and deletion policy', () => {
     for (const title of ['Named', null]) {
       const input = { ...card, title, deletable: false };
-      expect(detail([input], []).cards).toEqual([input]);
+      expect(createCardOperation('w1', { kind: card.kind, payload: card.payload }, 'key')
+        .responseSchema.parse(input)).toEqual(input);
     }
   });
 
-  it('keeps opaque overlay payloads and open kinds, stripping unknown fields in both HTTP readers', () => {
-    const input = { ...overlay, future_field: 'ignored', deletable: false };
-    expect(detail([], [input]).overlays).toEqual([overlay]);
-    expect(overlaysByKindOperation('track').responseSchema.parse([input])).toEqual([overlay]);
+  it('keeps opaque overlay payloads and open kinds while stripping unknown fields', () => {
+    const overlay = { id: 'overlay', plugin_id: 'plugin', entity_kind: 'future-entity', entity_id: 'w1',
+      kind: 'future-kind', payload: { arbitrary: ['kept'] }, updated_at: 2 };
+    expect(overlaySchema.parse({ ...overlay, future_field: 'ignored' })).toEqual(overlay);
   });
 });
 
@@ -121,16 +110,6 @@ describe('track wire decode', () => {
 
   it('percent-encodes the area id into the list path', () => {
     expect(tracksInAreaOperation('a/b').path).toBe('/api/v1/areas/a%2Fb/tracks?includeClosed=true');
-  });
-});
-
-describe('plannerProviderOf', () => {
-  it('reads the server-owned key, and Codex for anything else', () => {
-    expect(plannerProviderOf({ planner_harness: true, planner_provider: 'claude' })).toBe('claude');
-    expect(plannerProviderOf({ planner_harness: true, planner_provider: 'opencode' })).toBe('opencode');
-    expect(plannerProviderOf({ planner_harness: true, planner_provider: 'codex' })).toBe('codex');
-    expect(plannerProviderOf({ planner_harness: true })).toBe('codex');
-    expect(plannerProviderOf(null)).toBe('codex');
   });
 });
 
@@ -188,15 +167,6 @@ describe('open and closed', () => {
   it('reads closed from closedAt alone', () => {
     expect(isClosed(track({ closedAt: null }))).toBe(false);
     expect(isClosed(track({ closedAt: 5 }))).toBe(true);
-  });
-
-  it('requires the server-derived Reopen and Close capabilities on track detail', () => {
-    const detail = { track: { ...baseWire }, planner_revision: 0, cards: [], overlays: [] };
-    expect(trackDetailSchema.safeParse(detail).success).toBe(false);
-    expect(trackDetailSchema.safeParse({ ...detail, can_reopen: true }).success).toBe(false);
-    expect(trackDetailSchema.safeParse({ ...detail, can_admin: false, can_close: true }).success).toBe(false);
-    expect(trackDetailSchema.parse({ ...detail, can_reopen: true, can_admin: false, can_close: false }))
-      .toMatchObject({ can_reopen: true, can_admin: false, can_close: false });
   });
 
   it('builds the reopen PATCH without a parallel endpoint', () => {
@@ -670,4 +640,9 @@ describe('trackOverlayPayload', () => {
       expect(trackOverlayPayload('t1', [overlay({})], source)).toBeUndefined();
     }
   });
+});
+
+it.each([null, 'attempt-1'])('makes a v1 terminal consumable by the Track workbench (attempt=%s)', attemptId => {
+  const card = terminalDtoToCardWire({ id: 'terminal-1', trackId: 'w1', attemptId, title: 'Shell', cwd: '/tmp', status: 'exited', createdAtMs: 1 });
+  expect(terminalPresentation(card)).toEqual({ source: attemptId === null ? 'unrecorded' : 'task', in_workbench: true });
 });

@@ -1,4 +1,5 @@
-import { conversationCardId, historicalConversationPage, historicalConversationRun } from '../router/conversation-read-data.ts';
+import { fixtureBootstrap, fixtureReport, fixtureSession, fixtureSnapshot, fixtureTrack } from '../router/session-contract-fixture.ts';
+import { sessionPage } from '../router/conversation-session-data.ts';
 import { prepareReportDocument } from '../../features/report/document/preparation.ts';
 import { withFontRoleProbe, fontRoleSnapshot } from '../../../../tools/styles/font-role-fixture.ts';
 import '../../styles/entry.css';
@@ -19,47 +20,34 @@ declare module 'vitest/internal/browser' {
 }
 
 afterEach(cleanup);
-const AREA = { id: 'c1', name: 'Product', color: '#5B8DEF', sort: 1, kind: 'user', created_at: 1, updated_at: 1 };
+const AREA = { id: 'c1', name: 'Product', color: '#5B8DEF', sortOrder: 1, folders: [], createdAtMs: 1, updatedAtMs: 1 };
 const ok = (body: unknown): ApiTransportResponse => ({ status: 200, statusText: 'OK', body });
 function setup(path: string, areaName = AREA.name, onRequest: (request: ApiRequest) => void = () => undefined, title = 'Responsive mobile UI', options: Readonly<{ trackAreaId?: string; failTracks?: boolean; failAreas?: boolean; longLists?: boolean; longReport?: boolean; viewportRoot?: boolean }> = {}) {
-  const track = { workspace: { isolation: 'worktree', kind: 'attached', path: '/tmp', frozen_at: null, worktree: '/tmp/.worktrees/w1' }, id: 'w1', area_id: options.trackAreaId ?? 'c1', title, sort: 1, cwd: '/tmp',
-    pinned_at: null, closed_at: null, created_at: 1, updated_at: 2 };
-  const report = { id: 'report', track_id: 'w1', title: 'Report', kind: 'track-report', sort: 0,
-    deletable: false, created_at: 1, updated_at: 1, payload: { schemaVersion: 3, docRev: 1, summary: '', body: '',
-      blocks: [{ id: 'prose', kind: 'prose', rev: 1, payload: { markdown: options.longReport ? '# Findings\n\n' + Array.from({ length: 60 }, (_, index) => `Paragraph ${index + 1}: report content remains below the fixed workspace header.`).join('\n\n') : '## Findings\n\n[Source detail](neige://source/src_2c9e0a1b)' } }] } };
-  const planner = { id: 'planner', track_id: 'w1', title: 'Design review', kind: 'codex', sort: 1,
-    deletable: false, created_at: 1, updated_at: 1, payload: { planner_harness: true } };
-  const source = { source_id: 'src_2c9e0a1b', provenance: 'manual', title: 'Source detail with a deliberately long title that must remain inside the shared mobile header',
-    body: 'Existing source text.', body_bytes: 21, body_sha256: 'ab', captured_at: '2026-09-15T08:00:00Z',
-    origin: { kind: 'manual' }, quotes: [] };
+  const track = fixtureTrack('w1', { areaId: options.trackAreaId ?? 'c1', title, leadSessionId: 'planner', workspaceDriver: 'vcs-workspace', workspaceSpec: { logicalRoot: '/tmp', worktreePath: '/tmp/.worktrees/w1' } });
+  const report = fixtureReport(options.longReport ? '# Findings\n\n' + Array.from({ length: 60 }, (_, index) => `Paragraph ${index + 1}: report content remains below the fixed workspace header.`).join('\n\n') : '## Findings\n\n[Source detail](neige://source/src_2c9e0a1b)');
+  const planner = fixtureSession('planner', 'w1', { title: 'Design review', isLead: true });
   const transport: ApiTransportPort = { send(request) {
     return Promise.resolve(reply(request));
   } };
   function reply(request: ApiRequest): ApiTransportResponse {
     onRequest(request);
-    if (request.method === 'PATCH' && request.path === '/api/tracks/w1') {
+    if (request.path.startsWith('/api/v1/bootstrap')) return ok(fixtureBootstrap());
+    if (request.method === 'PATCH' && request.path === '/api/v1/tracks/w1') {
       const next = (request.body as { title: string }).title;
       if (next === 'Rejected name') return { status: 500, statusText: 'Server Error', body: { error: 'Rename unavailable' } };
       track.title = next;
       return ok(track);
     }
-    if ((options.failAreas && request.path === '/api/areas') || (options.failTracks && request.path === '/api/areas/c2/tracks')) return { status: 500, statusText: 'Server Error', body: { error: 'List unavailable' } };
-    if (request.path === '/api/areas') return ok([...(options.longLists ? Array.from({ length: 18 }, (_, index) => ({ ...AREA, id: `extra${index}`, name: `Area ${index}`, sort: index - 18 })) : []), { ...AREA, name: areaName }, { ...AREA, id: 'c2', name: 'Frontend' }]);
-    if (request.path === '/api/areas/c1/tracks') return ok([...(track.area_id === 'c1' ? [track] : []), { ...track, area_id: 'c1', id: 'w2', title: 'Another track' }, ...(options.longLists ? Array.from({ length: 25 }, (_, index) => ({ ...track, id: `long${index}`, title: `Long track ${index}` })) : [])]);
-    if (request.path === '/api/areas/c2/tracks') return ok([{ ...track, area_id: 'c2', id: 'w3', title: 'Frontend track' }]);
-    if (request.path === '/api/today/daily') return ok({ date: '2026-10-04', time_zone: 'Asia/Shanghai', track_id: 'daily' });
-    if (request.path === '/api/tracks/daily') return ok({
-      track: { ...track, id: 'daily', area_id: 'system-area', title: '2026-10-04' },
-      cards: [{ ...report, id: 'daily-report', track_id: 'daily' }, { ...planner, id: 'daily-planner', track_id: 'daily' }],
-      overlays: [], planner_revision: 0, can_reopen: false, can_admin: false, can_close: false,
-    });
-    if (request.path === '/api/tracks/w1') return ok({ track, cards: [report, planner, { ...planner, id: 'terminal', title: 'Terminal', kind: 'terminal', payload: { terminal_presentation: { source: 'manual', in_workbench: true } } }], overlays: [], planner_revision: 0, can_reopen: false, can_admin: false, can_close: true });
-    if (request.path === '/api/tracks/w2') return ok({ track: { ...track, id: 'w2', title: 'Another track' }, cards: [], overlays: [], planner_revision: 0, can_reopen: false, can_admin: false, can_close: true });
-    if (request.path === '/api/tracks/w1/report') return ok({ taskDiagnostics: [] });
-    if (request.path.endsWith('/sources/src_2c9e0a1b')) return ok(source);
-    if (request.path.includes('/planner/run?contract=conversation_v1')) return ok(historicalConversationRun({ card_id: conversationCardId(request.path), worker_session_id: 'runtime', phase: 'idle', model: null, reasoning_effort: null, permission_mode: 'never', blocked_reason: null, manual_compact_supported: true, recovery: null, compact_outcome: null, context_usage_invalidated: false, running_turn: null }, 'idle', true));
-    if (request.path.includes('/harness/items')) return ok(historicalConversationPage(conversationCardId(request.path), [], null));
-    if (request.path === '/api/settings') return ok({ settings: {} });
+    if ((options.failAreas && request.path === '/api/v1/areas') || (options.failTracks && request.path === '/api/v1/areas/c2/tracks?includeClosed=true')) return { status: 500, statusText: 'Server Error', body: { error: 'List unavailable' } };
+    if (request.path === '/api/v1/areas') return ok([...(options.longLists ? Array.from({ length: 18 }, (_, index) => ({ ...AREA, id: `extra${index}`, name: `Area ${index}`, sortOrder: index - 18 })) : []), { ...AREA, name: areaName }, { ...AREA, id: 'c2', name: 'Frontend' }]);
+    if (request.path === '/api/v1/areas/c1/tracks?includeClosed=true') return ok([...(track.areaId === 'c1' ? [track] : []), { ...track, areaId: 'c1', id: 'w2', title: 'Another track' }, ...(options.longLists ? Array.from({ length: 25 }, (_, index) => ({ ...track, id: `long${index}`, title: `Long track ${index}` })) : [])]);
+    if (request.path === '/api/v1/areas/c2/tracks?includeClosed=true') return ok([{ ...track, areaId: 'c2', id: 'w3', title: 'Frontend track' }]);
+    if (request.path === '/api/v1/tracks/w1') return ok(fixtureSnapshot(track, [planner], report));
+    if (request.path === '/api/v1/tracks/w1/terminals') return ok([{ id: 'terminal', trackId: 'w1', title: 'Terminal', status: 'exited', cwd: '/tmp', createdAtMs: 1 }]);
+    if (request.path === '/api/v1/tracks/w1/sessions') return ok([planner]);
+    if (request.path === '/api/v1/tracks/w2') return ok(fixtureSnapshot({ ...track, id: 'w2', title: 'Another track' }));
+    if (request.path === '/api/v1/tracks/w1/report') return ok(report);
+    if (request.path.startsWith('/api/v1/sessions/planner/items?')) return ok(sessionPage(planner));
     return ok([]);
   }
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -73,35 +61,6 @@ function setup(path: string, areaName = AREA.name, onRequest: (request: ApiReque
   return router;
 }
 const settlePaint = () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
-
-describe.each([390, 1280])('Settings resizing from %ipx', (initialWidth) => {
-it.each([
-  { section: 'network', label: 'HTTP proxy', key: 'http_proxy', value: 'http://draft-proxy:3128' },
-  { section: 'network', label: 'HTTPS proxy', key: 'https_proxy', value: 'http://draft-secure-proxy:3128' },
-] as const)('preserves an unfinished $label across Settings resize until a real blur', async ({ section, label, key, value }) => {
-  await page.viewport(initialWidth, 844);
-  const writes: ApiRequest[] = [];
-  setup(`/settings/${section}`, AREA.name, (request) => { if (request.method !== 'GET') writes.push(request); });
-  const field = page.getByRole('textbox', { name: label, exact: true });
-  await field.fill(value);
-  const input = await field.findElement() as HTMLInputElement;
-  if (input.selectionStart !== null) input.setSelectionRange(2, 5);
-  const selection = [input.selectionStart, input.selectionEnd];
-  for (const width of [1280, 390, 1280, 390]) {
-    await page.viewport(width, 900);
-    await settlePaint();
-    expect(writes).toEqual([]);
-    expect(await field.findElement()).toBe(input);
-    expect(input.value).toBe(value);
-    expect(document.activeElement).toBe(input);
-    expect([input.selectionStart, input.selectionEnd]).toEqual(selection);
-  }
-  await userEvent.keyboard('{Tab}');
-  await expect.poll(() => writes.length).toBe(1);
-  expect(writes[0].body).toEqual({ settings: { [key]: value } });
-  await page.viewport(1280, 720);
-});
-});
 
 it('removes abandoned title containers when switching Tracks', async () => {
   await page.viewport(390, 844);
@@ -526,15 +485,11 @@ describe('Unified mobile headers', () => {
     await page.getByRole('button', { name: 'Close conversation' }).click();
     await expect.poll(() => document.querySelector('[data-nc-mobile-chat-panel]')?.closest('dialog')?.open).toBe(false);
     await page.getByRole('button', { name: 'Back to Report' }).click();
-    await page.getByRole('button', { name: 'Source detail', exact: true }).click();
-    await page.getByText('Existing source text.', { exact: true }).findElement();
-    await record('source', (await page.getByRole('button', { name: 'Back to Report', exact: true }).findElement()).closest('header')!);
-    await page.getByRole('button', { name: 'Back to Report' }).click();
     await expect.poll(() => [...document.querySelectorAll('[data-nc-drawer]')].every((drawer) => !drawer.checkVisibility())).toBe(true);
     await page.getByRole('button', { name: 'Open conversation history' }).click();
     await page.getByRole('button', { name: '设置', exact: true }).click();
     await record('settings', (await page.getByRole('heading', { name: 'Settings', exact: true }).findElement()).closest('header')!);
-    expect(frames).toHaveLength(9);
+    expect(frames).toHaveLength(8);
   });
 
   it('uses one shared header on a cold card view instead of stacking the shell and card headers', async () => {
@@ -633,10 +588,10 @@ describe('shared desktop primary header', () => {
 
   it('keeps Today and reading titles aligned when text scales', async () => {
     await page.viewport(1440, 900);
-    setup('/', AREA.name, () => undefined, 'Responsive mobile UI', { viewportRoot: true });
+    setup('/track/w1', AREA.name, () => undefined, 'Responsive mobile UI', { viewportRoot: true });
     await waitFor(() => expect(document.querySelector('[data-nc-header-rows]')).not.toBeNull());
-    const title = document.querySelector<HTMLElement>('[aria-label="Rename track"]')!;
-    const today = document.querySelector<HTMLElement>('[aria-label="Go to Today"]')!;
+    const title = await page.getByRole('button', { name: 'Rename track', exact: true }).findElement() as HTMLElement;
+    const today = await page.getByRole('button', { name: 'Go to Today', exact: true }).findElement() as HTMLElement;
     const centre = (element: HTMLElement) => { const box = element.getBoundingClientRect(); return box.top + box.height / 2; };
     expect(centre(title)).toBeCloseTo(centre(today), 0);
     // Font scaling preserves the shared title alignment.

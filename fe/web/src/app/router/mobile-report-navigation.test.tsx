@@ -1,3 +1,4 @@
+import { fixtureSnapshot, fixtureTrack } from './session-contract-fixture.ts';
 import { prepareReportDocument } from '../../features/report/document/preparation.ts';
 // @vitest-environment jsdom
 /* The real `AppShell`, the real track route, a real router and a real memory history: every claim
@@ -18,10 +19,7 @@ import { bootTestCardRuntime } from './test-card-runtime.ts';
 const AREA = { id: 'c1', name: 'Product', color: '#5B8DEF', sort: 1, kind: 'user', created_at: 1, updated_at: 1 };
 /* A second empty Area makes the centered selector’s destination observable. */
 const OTHER_AREA = { id: 'c2', name: 'Second', color: '#8B7FE8', sort: 2, kind: 'user', created_at: 1, updated_at: 1 };
-const TRACK = { workspace: { isolation: 'none' as const, kind: 'attached' as const, path: '/tmp', frozen_at: null },
-  id: 'w1', area_id: 'c1', title: 'Responsive mobile UI', sort: 1, cwd: '/tmp',
-  pinned_at: null, closed_at: null, created_at: 1, updated_at: 2,
-};
+const TRACK = fixtureTrack('w1', { areaId: 'c1', title: 'Responsive mobile UI', cwd: '/tmp', sortOrder: 1, closedAtMs: null, createdAtMs: 1, updatedAtMs: 2 });
 const CARD = {
   id: 'card-term', track_id: 'w1', kind: 'terminal', title: 'Build log', sort: 1,
   payload: { terminal_presentation: { source: 'manual', in_workbench: true }, }, deletable: true, created_at: 1, updated_at: 2,
@@ -54,9 +52,8 @@ function setup(path: string) {
       if (request.path === '/api/v1/areas') return Promise.resolve(ok([AREA, OTHER_AREA]));
       if (request.path === '/api/v1/areas/c1/tracks?includeClosed=true') return Promise.resolve(ok([TRACK]));
       if (request.path === '/api/v1/areas/c2/tracks?includeClosed=true') return Promise.resolve(ok([]));
-      if (request.path === '/api/v1/tracks/w1') return Promise.resolve(ok({
-        track: TRACK, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true, cards: [CARD, REPORT_CARD], overlays: [],
-      }));
+      if (request.path === '/api/v1/tracks/w1') return Promise.resolve(ok(fixtureSnapshot(TRACK, [], { docRev: REPORT_CARD.payload.docRev, summary: REPORT_CARD.payload.summary, leadingComment: '', blocks: REPORT_CARD.payload.blocks.map(block => ({ ...block, markdown: block.payload.markdown ?? '' })) })));
+      if (request.path === '/api/v1/tracks/w1/terminals') return Promise.resolve(ok([CARD]));
       if (request.path === '/api/v1/tracks/w1/report') return Promise.resolve(ok({ taskDiagnostics: [] }));
       return Promise.resolve(ok([]));
     },

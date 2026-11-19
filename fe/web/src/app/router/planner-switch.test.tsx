@@ -1,19 +1,17 @@
 import { ChatComposer } from '../../features/chat/thread/public.tsx';
 import { conversationCommands } from '../../features/chat/thread/composer-command.ts';
-import { PLANNER_CONVERSATION_KIND, type Conversation } from '../../../../core/domain/conversation.ts';
 import { onlineManager, QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import type { ApiRequest, ApiTransportPort } from '../../../../core/api/types.ts';
-import type { TrackDetailWire } from '../../../../core/domain/track.ts';
+import type { TrackAggregateSnapshotDto } from '../../../../core/api/schemas.ts';
 import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { usePlannerSwitchControl } from './planner-switch-control.ts';
-import { useMobileHistoryData } from '../shell/mobile-history-data.ts';
 import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
 import { renderPlannerSwitchFixture } from './planner-switch-fixture.tsx';
+import { fixtureBootstrap } from './session-contract-fixture.ts';
 import { renderAssistantProviderFixture } from './assistant-provider-fixture.tsx';
-import { trackConversationRows } from '../conversations/planner-row.ts';
 import { queryKeys } from '../providers/query-keys.ts';
 import { trackDetailQueryOptions } from '../providers/queries.ts';
 
@@ -112,7 +110,7 @@ it.each(['success', 'response lost'])('settles %s offline as unconfirmed without
     await screen.findByText('Planner switching is unconfirmed. Refresh to check.');
     await waitFor(() => expect(input.textContent).toBe('/planner'));
     expect(fixture.requests.filter(request => request.method === 'GET' &&
-      (request.path === '/api/v1/tracks/daily' || request.path === '/api/v1/tracks/daily/sessions')).length).toBeGreaterThan(2);
+      (request.path === '/api/v1/tracks/daily' || request.path === '/api/v1/tracks/daily/sessions')).length).toBeGreaterThan(1);
     expect(writes(fixture)).toHaveLength(1);
     await submit(input);
     await screen.findByText('Planner switching was not sent.');
@@ -191,19 +189,18 @@ it('reports a definitely unsent switch without a POST', async () => {
 it('uses the selected scope rather than the page Track, reads an uncached pair once, and never retries CAS', async () => {
   const fixture = renderPlannerSwitchFixture();
   await screen.findByRole('button', { name: /Conversation Other conversation/ });
-  const detail = fixture.client.getQueryData<TrackDetailWire>(queryKeys.trackDetail('daily'))!;
+  const detail = fixture.client.getQueryData<TrackAggregateSnapshotDto>(queryKeys.trackDetail('daily'))!;
   cleanup(); document.getElementById('root')?.remove();
   const requests: ApiRequest[] = [];
   const transport: ApiTransportPort = { send: request => {
     requests.push(request);
     return Promise.resolve(request.method === 'GET'
-      ? { status: 200, statusText: 'OK', body: { ...detail, planner_revision: 42,
-        track: { ...detail.track, id: 'actual-track' }, cards: detail.cards.map(card => ({ ...card, track_id: 'actual-track' })) } }
+      ? { status: 200, statusText: 'OK', body: { ...detail, track: { ...detail.track, id: 'actual-track' }, sessions: detail.sessions.map(session => ({ ...session, trackId: 'actual-track' })) } }
       : { status: 409, statusText: 'Conflict', body: { code: 'planner_changed', error: 'ABA', card_id: 'daily-planner' } });
   } };
   const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={fixture.client}>{children}</QueryClientProvider>;
   const hook = renderHook(() => usePlannerSwitchControl(transport, createUnauthorizedChannel({ enqueue: task => task() }), {
-    id: 'actual-track', cardId: 'second-planner', provider: 'codex', kind: 'track-assistant', cardTitle: null, updatedAt: 2,
+    id: 'actual-track', cardId: 'second-planner', provider: 'codex', kind: 'agent', isLead: false, cardTitle: null, updatedAt: 2,
   }), { wrapper });
   await act(async () => { await expect(hook.result.current()).rejects.toThrow('The Planner changed.'); });
   expect(requests.filter(request => request.method === 'PATCH').map(({ path, body }) => ({ path, body }))).toEqual([{
@@ -221,7 +218,7 @@ it('does not pause or write when the uncached detail preflight fails offline', a
   } };
   const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={fixture.client}>{children}</QueryClientProvider>;
   const hook = renderHook(() => usePlannerSwitchControl(transport, createUnauthorizedChannel({ enqueue: task => task() }), {
-    id: 'missing-detail', cardId: 'second-planner', provider: 'codex', kind: 'track-assistant', cardTitle: null, updatedAt: 2,
+    id: 'missing-detail', cardId: 'second-planner', provider: 'codex', kind: 'agent', isLead: false, cardTitle: null, updatedAt: 2,
   }), { wrapper });
   onlineManager.setOnline(false);
   const paused = fixture.client.fetchQuery(trackDetailQueryOptions(transport, 'missing-detail',
@@ -246,7 +243,7 @@ it('accepts events before the mutation response without resubmission', async () 
   const input = await open(); await submit(input); await waitFor(() => expect(finish).toBeTypeOf('function'));
   await act(async () => {
     await fixture.client.invalidateQueries({ queryKey: queryKeys.trackDetail('daily') });
-    await fixture.client.invalidateQueries({ queryKey: queryKeys.trackConversations('daily') });
+
   });
   await screen.findByRole('button', { name: /Role: Member/ });
   act(() => { finish(); });
@@ -254,90 +251,19 @@ it('accepts events before the mutation response without resubmission', async () 
   expect(screen.queryByRole('alert')).toBeNull(); expect(writes(fixture)).toHaveLength(1);
 });
 
-it.each(['detail-first', 'list-first'])('history deduplicates roles through %s and another read failure', async order => {
-  const fixture = renderPlannerSwitchFixture(); await screen.findByRole('button', { name: /Conversation Other conversation/ });
-  const detailKey = queryKeys.trackDetail('daily'); const listKey = queryKeys.trackConversations('daily');
-  const detail = fixture.client.getQueryData<TrackDetailWire>(detailKey)!;
-  const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={fixture.client}>{children}</QueryClientProvider>;
-  let current: readonly Conversation[] = [];
-  const hook = renderHook(() => useMobileHistoryData({ send: () => Promise.reject(new Error('unexpected read')) },
-    createUnauthorizedChannel({ enqueue: task => task() }), [{ id: 'daily', areaId: 'daily-area', title: '2026-10-04' }], current, false), { wrapper });
-  const assertPair = (plannerId: string, ids = ['daily-planner', 'second-planner']) => {
-    expect(hook.result.current.conversations.map(row => row.id).sort()).toEqual(ids);
-    expect(hook.result.current.conversations.filter(row => row.kind === PLANNER_CONVERSATION_KIND).map(row => row.id)).toEqual([plannerId]);
-    expect(hook.result.current.conversations.every(row => row.trackTitle === '2026-10-04')).toBe(true);
-  };
-  assertPair('daily-planner'); fixture.commit();
-  await act(async () => {
-    if (order === 'detail-first') fixture.client.setQueryData(detailKey, { ...detail, cards: fixture.cards(), planner_revision: 8 });
-    else fixture.client.setQueryData(listKey, fixture.list());
-    await new Promise(resolve => setTimeout(resolve, 0));
-  });
-  assertPair(order === 'detail-first' ? 'second-planner' : 'daily-planner', [order === 'detail-first' ? 'second-planner' : 'daily-planner']);
-  await act(async () => {
-    fixture.client.getQueryCache().find({ queryKey: order === 'detail-first' ? listKey : detailKey })!
-      .setState({ status: 'error', error: new Error('other query failed') });
-    await new Promise(resolve => setTimeout(resolve, 0));
-  });
-  assertPair(order === 'detail-first' ? 'second-planner' : 'daily-planner', [order === 'detail-first' ? 'second-planner' : 'daily-planner']);
-  await act(async () => {
-    fixture.client.setQueryData(detailKey, { ...detail, cards: fixture.cards(), planner_revision: 8 });
-    fixture.client.setQueryData(listKey, fixture.list());
-    await new Promise(resolve => setTimeout(resolve, 0));
-  });
-  assertPair('second-planner');
-  current = [{ provider: 'codex', id: 'daily-planner', trackId: 'daily', title: 'Daily Planner conversation',
-    kind: PLANNER_CONVERSATION_KIND, state: null, updatedAt: 2, lastTurnCompletedAt: null }];
-  hook.rerender(); assertPair('second-planner');
-});
-
-
-it('uses the listed Assistant provider through model, capabilities and side', async () => {
-  const fixture = renderAssistantProviderFixture({ existingProvider: 'claude', runAttachmentsSupported: true, answers: [{
-    availability: { provider: 'claude', status: 'ready', reason: null, checked_at_ms: 1, authentication_method: null, authentication_notice: null },
-    accepts_unavailable_blank_track: true, capabilities: { managed_conversation: true, steer: false, images: false,
-      manual_compact: false, history_replacement: false, requires_ready_availability: true },
-  }] });
+it('reads v1 provider model identifiers without a legacy model write', async () => {
+  const fixture = renderAssistantProviderFixture({ existingProvider: 'claude', bootstrap: fixtureBootstrap(['claude'], ['selected']) });
   await userEvent.click(await screen.findByRole('button', { name: 'Conversation Saved Assistant' }));
-  const input = await screen.findByRole('combobox', { name: 'Message' });
+  await screen.findByRole('combobox', { name: 'Message' });
   await screen.findByText('Saved reply');
   await userEvent.click(screen.getByRole('button', { name: /^Model:/ }));
   await screen.findByRole('radio', { name: 'selected' });
   expect(fixture.requests.filter(request => request.path.startsWith('/api/v1/bootstrap?card_id=')).map(request => request.path)).toContain('/api/v1/bootstrap?card_id=dormant');
   expect(screen.queryByRole('radio', { name: 'Codex' })).toBeNull();
-  await userEvent.click(screen.getByRole('radio', { name: 'selected' }));
-  await waitFor(() => expect(fixture.requests.some(request => request.path === '/api/v1/sessions/dormant/model')).toBe(true));
+  fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
   expect(screen.getByRole('button', { name: 'Attach an image' }).getAttribute('aria-disabled')).toBe('true');
-  expect(screen.queryByRole('button', { name: /Compact/ })).toBeNull();
-  await submit(input, '/side Keep this backend');
-  await waitFor(() => expect(fixture.requests.find(request => request.method === 'POST' && request.path.endsWith('/sessions'))?.body)
-    .toMatchObject({ provider: 'claude', side: { source_card_id: 'dormant' } }));
-});
-
-it('keeps Planner first when unchanged rows have equal update times', async () => {
-  const fixture = renderPlannerSwitchFixture();
-  await screen.findByRole('button', { name: /Conversation Other conversation/ });
-  const detail = fixture.client.getQueryData<TrackDetailWire>(queryKeys.trackDetail('daily'))!;
-  const cards = detail.cards.map(card => card.id === 'second-planner'
-    ? { ...card, payload: { ...card.payload as object, side_source_card_id: 'parent' } } : card);
-  const rows = trackConversationRows('daily', 'Track', cards, fixture.list().map(row => ({ ...row, title: 'Stale title', sourceCardId: 'stale-parent', archivedAt: 123 })));
-  expect(rows.map(row => row.id)).toEqual(['daily-planner', 'second-planner']);
-  expect(rows[1]).toMatchObject({ title: 'Stale title', sourceCardId: 'stale-parent', archivedAt: 123, state: 'idle' });
-});
-
-it('history supplies display titles without detail and preserves the current fallback', () => {
-  const client = new QueryClient();
-  client.setQueryData(queryKeys.trackConversations('daily'), [
-    { provider: 'codex', id: 'a', trackId: 'daily', title: null, kind: 'track-assistant', state: null, updatedAt: 2 },
-    { provider: 'codex', id: 'b', trackId: 'daily', title: null, kind: 'track-assistant', state: null, updatedAt: 2 },
-  ]);
-  const current: Conversation = { provider: 'claude', id: 'a', trackId: 'daily', trackTitle: 'Current display',
-    title: 'Current fallback', kind: 'track-assistant', state: null, updatedAt: 3 };
-  const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
-  const hook = renderHook(() => useMobileHistoryData({ send: () => Promise.reject(new Error('No read')) },
-    createUnauthorizedChannel({ enqueue: task => task() }), [{ id: 'daily', areaId: 'area', title: '' }], [current], false), { wrapper });
-  expect(hook.result.current.conversations.find(row => row.id === 'a')).toEqual(current);
-  expect(hook.result.current.conversations.find(row => row.id === 'b')?.trackTitle).toBe('Untitled track');
+  expect(fixture.requests.some(request => request.path.endsWith('/model'))).toBe(false);
+  expect(fixture.requests.filter(request => request.method === 'POST' && request.path.endsWith('/sessions'))).toHaveLength(0);
 });
 
 it.each(['mounted', 'reopened'] as const)('full composer preserves edits after pending command success (%s)', async mode => {
@@ -352,66 +278,30 @@ it.each(['mounted', 'reopened'] as const)('full composer preserves edits after p
   }
   await type(input, 'New full draft');
   act(() => { finish(); });
-  await waitFor(() => expect(fixture.client.getQueryData<TrackDetailWire>(queryKeys.trackDetail('daily'))?.planner_revision).toBe(8));
+  await waitFor(() => expect(fixture.client.getQueryData<TrackAggregateSnapshotDto>(queryKeys.trackDetail('daily'))?.track.leadSessionId).toBe('second-planner'));
   expect(input.textContent).toBe('New full draft');
 });
 
-it.each([undefined, null, 'future', 'codex'])('uses only listed Assistant metadata with detail provider %s', assistant_provider => {
-  const cards = [{ id: 'a', track_id: 't', kind: 'codex', title: 'Detail title', sort: 0,
-    payload: { harness_profile: 'assistant', assistant_provider }, deletable: false, created_at: 1, updated_at: 2 }];
-  const listed: Conversation = { id: 'a', trackId: 't', title: 'Listed title', provider: 'claude',
-    sourceCardId: 'parent', kind: 'track-assistant', state: null, updatedAt: 3 };
-  expect(trackConversationRows('t', 'Track', cards, [listed])).toEqual([{ ...listed, trackTitle: 'Track' }]);
-  expect(trackConversationRows('t', 'Track', cards, [])).toEqual([]);
-});
 
-it.each([
-  { order: 'detail-first', list: 'valid' }, { order: 'list-first', list: 'valid' },
-  { order: 'detail-first', list: 'missing' }, { order: 'detail-first', list: 'stale' },
-  { order: 'detail-first', list: 'failed' },
-])('confirms success only after both fresh reads ($order, $list)', async ({ order, list }) => {
+it.each(['missing-target', 'still-lead', 'valid'] as const)('confirms a switch from a fresh aggregate (%s)', async mode => {
   const fixture = renderPlannerSwitchFixture();
   await screen.findByRole('button', { name: /Conversation Other conversation/ });
-  const snapshot = fixture.client.getQueryData<TrackDetailWire>(queryKeys.trackDetail('daily'))!;
+  const snapshot = fixture.client.getQueryData<TrackAggregateSnapshotDto>(queryKeys.trackDetail('daily'))!;
   cleanup(); document.getElementById('root')?.remove();
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   client.setQueryData(queryKeys.trackDetail('daily'), snapshot);
   fixture.commit();
-  const resolvers = new Map<string, () => void>();
-  const transport: ApiTransportPort = { send: request => {
-    if (request.method === 'PATCH') return Promise.resolve(fixture.receipt());
-    return new Promise(resolve => resolvers.set(request.path.endsWith('/sessions') ? 'list-first' : 'detail-first', () => resolve({
-      status: request.path.endsWith('/sessions') && list === 'failed' ? 503 : 200, statusText: 'OK',
-      body: request.path.endsWith('/sessions')
-        ? list === 'missing' ? [] : list === 'stale' ? [...fixture.list(), { ...fixture.list()[0], id: 'second-planner' }] : fixture.list()
-        : { ...snapshot, cards: fixture.cards(), planner_revision: 8 },
-    })));
-  } };
+  const transport: ApiTransportPort = { send: request => Promise.resolve(request.method === 'PATCH' ? fixture.receipt() : ({
+    status: 200, statusText: 'OK', body: mode === 'still-lead' ? snapshot : {
+      ...fixture.snapshot(), sessions: fixture.sessions().filter(session => mode !== 'missing-target' || session.id !== 'second-planner'),
+    },
+  })) };
   const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
   const hook = renderHook(() => usePlannerSwitchControl(transport, createUnauthorizedChannel({ enqueue: task => task() }), {
-    id: 'daily', cardId: 'second-planner', provider: 'codex', kind: 'track-assistant', cardTitle: null, updatedAt: 2,
+    id: 'daily', cardId: 'second-planner', provider: 'codex', kind: 'agent', isLead: false, cardTitle: null, updatedAt: 2,
   }), { wrapper });
-  let settled = false;
-  let outcome!: Promise<boolean>;
-  act(() => { outcome = hook.result.current().finally(() => { settled = true; }); });
-  await waitFor(() => expect(resolvers.size).toBe(2));
-  await act(async () => { resolvers.get(order)!(); await new Promise(resolve => setTimeout(resolve, 0)); });
-  expect(settled).toBe(false);
-  await act(async () => { resolvers.get(order === 'detail-first' ? 'list-first' : 'detail-first')!();
-    if (list === 'valid') expect(await outcome).toBe(true);
-    else await expect(outcome).rejects.toThrow('Planner switching is unconfirmed.'); });
-});
-
-it.each(['detail-first', 'list-first'])('projects one role per card in %s order', order => {
-  const planner = (id: string) => ({ id, track_id: 't', kind: 'codex', title: id, sort: 0,
-    payload: { planner_harness: true }, deletable: false, created_at: 1, updated_at: 2 });
-  const assistant = (id: string): Conversation => ({ id, trackId: 't', title: id, provider: 'claude',
-    kind: 'track-assistant', state: null, updatedAt: 2 });
-  const rows = trackConversationRows('t', 'Track', [planner(order === 'detail-first' ? 'new' : 'old')],
-    [assistant(order === 'detail-first' ? 'new' : 'old')]);
-  expect(rows.map(row => [row.id, row.kind])).toEqual([[order === 'detail-first' ? 'new' : 'old', PLANNER_CONVERSATION_KIND]]);
-  const final = trackConversationRows('t', 'Track', [planner('new')], [assistant('old')]);
-  expect(final.map(row => [row.id, row.kind, row.provider])).toEqual([
-    ['new', PLANNER_CONVERSATION_KIND, 'codex'], ['old', 'track-assistant', 'claude'],
-  ]);
+  await act(async () => {
+    if (mode === 'valid') expect(await hook.result.current()).toBe(true);
+    else await expect(hook.result.current()).rejects.toThrow('Planner switching is unconfirmed.');
+  });
 });

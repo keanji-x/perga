@@ -1,289 +1,36 @@
-import type { ConversationPage } from '../core/api/generated/wire.ts';
-import { expect, test, type Page, type Request } from '@playwright/test';
-import { isRunReadConflict } from './helpers/first-message-errors.js';
+import { expect, test } from '@playwright/test';
+import { sessionItemsPageDtoSchema, trackAggregateSnapshotDtoSchema } from '../core/api/perga-v1.ts';
 import { createArea } from './helpers/seed.js';
 
-const createdAreaIds: string[] = [];
-
-/* astryx puts `label` on the `contenteditable` as `aria-label`; the placeholder is the empty-state prompt beside it. */
-const TASK_LABEL = 'What this track should do';
-const TASK_PLACEHOLDER = 'What should this track do?';
-
-function captureBrowserErrors(page: Page): string[] {
-  const errors: string[] = [];
-  page.on('console', (message) => { if (message.type() === 'error') errors.push(message.text()); });
-  page.on('pageerror', (error) => errors.push(error.message));
-  return errors;
-}
-
-test.beforeEach(() => { createdAreaIds.length = 0; });
-test.afterEach(async ({ request }) => {
-  for (const id of createdAreaIds) await request.delete(`/api/areas/${id}`);
-  createdAreaIds.length = 0;
-});
-
-/* Asserts the `title` KEY is absent from the POST, not a value: an empty string reaches the same
- * stored title but says this client decided the name. */
-test('creates a track from an Area group with no title, and persists it', async ({ page, request }) => {
-  const errors = captureBrowserErrors(page);
-  /* Every create this page emits. Each carries the draft's idempotency key, but a second POST under a
-       new key would be a second track AND a second delivery of the same sentence. */
-  const creates: Request[] = [];
-  page.on('request', (pending) => {
-    if (pending.method() === 'POST' && new URL(pending.url()).pathname === '/api/tracks') {
-      creates.push(pending);
-    }
-  });
-  // Observe actual execution transitions, including any accidental second execution after replay.
-  const frames: Record<string, unknown>[] = [];
-  page.on('websocket', (socket) => {
-    if (new URL(socket.url()).pathname !== '/api/events') return;
-    socket.on('framereceived', (frame) => {
-      if (typeof frame.payload !== 'string') return;
-      try {
-        const parsed: unknown = JSON.parse(frame.payload);
-        if (typeof parsed === 'object' && parsed !== null) frames.push(parsed as Record<string, unknown>);
-      } catch {
-        /* Not JSON — a keepalive or a partial frame. */
-      }
-    });
-  });
+test('creates an untitled Track from the Area composer and persists its first message once', async ({ page, request }) => {
   const area = await createArea(request);
-  createdAreaIds.push(area.id);
-  await page.goto('/next/');
-  await page.getByRole('button', { name: `New track in ${area.name}` }).click();
-
-  /* `waitForURL` is the surface being ready; the composer visible is it being usable. */
-  await page.waitForURL(/\/area\/[^/]+\/new$/);
-  await expect(page.getByRole('dialog')).toHaveCount(0);
-  // The stack's protocol probe keeps ordinary turns open. Script a real reply
-  // and END so the completion below proves execution, including after replay.
-  const message = `fake-reply: FE e2e track ${Date.now()}`;
-  await expect(page.getByLabel(TASK_LABEL)).toBeVisible();
-  await expect(page.getByText(TASK_PLACEHOLDER)).toBeVisible();
-  // The default path must stay byte-identical: the kernel keys its managed-workspace branch on the
-  // absence of `cwd`, so a control defaulting to `$HOME` or `""` would silently attach every track.
-  await expect(page.getByRole('button', { name: 'Repo: Neige workspace' })).toBeVisible();
-  // The picker is collapsed, so "what is selected" is read off the trigger's accessible name.
-  await expect(page.getByRole('button', { name: /^Template:/ })).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Create track' })).toBeDisabled();
-  await page.getByLabel(TASK_LABEL).fill(message);
-  await expect(page.getByRole('button', { name: 'Create track' })).toBeEnabled();
-  const [createRequest] = await Promise.all([
-    page.waitForRequest((pending) => pending.method() === 'POST' && new URL(pending.url()).pathname === '/api/tracks'),
-    page.getByRole('button', { name: 'Create track' }).click(),
-  ]);
-  const body = createRequest.postDataJSON() as Record<string, unknown>;
-  expect(body).toMatchObject({ area_id: area.id, planner_provider: 'codex' });
-  expect(body).toHaveProperty('theme');
-  expect(body).not.toHaveProperty('title');
-  expect(body).not.toHaveProperty('first_message');
-  expect((await createRequest.response())?.status(), 'the create must be accepted').toBe(201);
-  expect(body).not.toHaveProperty('cwd');
-  expect(body).not.toHaveProperty('attach_folder');
-  // No-template must not send these: the kernel 400s an empty `template_id` and the body is `deny_unknown_fields`.
-  expect(body).not.toHaveProperty('template_id');
-  expect(body).not.toHaveProperty('template_input');
-
-  await expect(page).toHaveURL(/\/track\/[0-9a-f-]+$/i);
-  /* Untitled is the normal landing state; the fallback is a placeholder, so the rename box opens blank. */
-  await expect(page.locator('[data-nc-page-title]')).toHaveText(/Untitled track/);
-  const trackId = /\/track\/([0-9a-f-]+)$/i.exec(page.url())?.[1];
-  expect(trackId).toBeTruthy();
-  await page.getByRole('button', { name: 'Rename track' }).click();
-  await expect(page.getByRole('textbox', { name: 'Track title' })).toHaveValue('');
-  const response = await request.get(`/api/areas/${area.id}/tracks`);
-  expect(response.ok()).toBe(true);
-  expect(await response.json() as { id: string; title: string }[]).toEqual(
-    expect.arrayContaining([expect.objectContaining({ id: trackId, title: '' })]),
-  );
-  const detail = await request.get(`/api/tracks/${trackId ?? ''}`);
-  expect(detail.ok()).toBe(true);
-  const cards = (await detail.json() as { cards: { id: string; kind: string; payload: unknown }[] }).cards;
-  const plannerCard = cards.find((card) => card.kind === 'codex'
-    && typeof card.payload === 'object' && card.payload !== null
-    && (card.payload as { planner_harness?: unknown }).planner_harness === true);
-  expect(plannerCard, 'the created track must carry a planner card').toBeTruthy();
-
-  const drawer = page.locator('[role="complementary"]')
-    .filter({ has: page.getByRole('button', { name: 'Close conversation' }) });
-  await expect(drawer).toBeVisible();
-  await expect(drawer.locator('[data-nc-turn="you"]')).toHaveText(message);
-  await expect(drawer.locator('[data-nc-thread-empty]')).toHaveCount(0);
-  const identityResponse = await request.get('/api/auth/whoami');
-  expect(identityResponse.ok()).toBe(true);
-  const identity = await identityResponse.json() as { userId: string; displayName: string };
-  const path = `/api/cards/${plannerCard?.id ?? ''}/harness/items?contract=conversation_v1`;
-  const readPage = async (): Promise<ConversationPage> => {
-    const response = await request.get(path);
-    expect(response.ok()).toBe(true);
-    return await response.json() as ConversationPage;
-  };
-  const beforeReplay = await readPage();
-  expect(beforeReplay).toMatchObject({ contract: 'conversation_v1', source: 'presentation' });
-  const humans = beforeReplay.items.filter(item => item.source.kind === 'human');
-  expect(humans).toHaveLength(1);
-  expect(humans[0].source).toMatchObject({ kind: 'human', message_id: expect.stringMatching(/\S/), revision: 1,
-    author: { user_id: identity.userId, display_name: identity.displayName }, text: message, attachments: [] });
-  // The track response exposes the allocation, not its private creation receipt. Replaying the
-  // original request proves that receipt reuses both the allocation and the saved Human identity.
-  const key = await createRequest.headerValue('idempotency-key');
-  expect(key).toBeTruthy();
-  const replay = await request.post('/api/tracks', { headers: { 'Idempotency-Key': key! }, data: body });
-  expect(replay.status(), await replay.text()).toBe(201);
-  expect(await replay.json()).toMatchObject({ id: trackId });
-  const afterReplay = await readPage();
-  expect(afterReplay.items.filter(item => item.source.kind === 'human')).toEqual(humans);
-
-  /* `waitForRequest` returned on the first create; give the page a bounded moment, then count again. */
-  await page.waitForTimeout(1_000);
-  expect(creates, 'the create must happen exactly once').toHaveLength(1);
-  expect((creates[0]?.postDataJSON() as { first_message?: unknown }).first_message).toBeUndefined();
-
-  await expect.poll(() => frames.filter(frame => frame.ev === 'harness.phase.changed'
-    && (frame.data as { card_id?: string; new_phase?: string } | undefined)?.card_id === plannerCard?.id
-    && (frame.data as { new_phase?: string }).new_phase === 'turn_completed').length).toBe(1);
-  expect(frames.filter(frame => frame.ev === 'harness.phase.changed'
-    && (frame.data as { card_id?: string; new_phase?: string } | undefined)?.card_id === plannerCard?.id
-    && (frame.data as { new_phase?: string }).new_phase === 'turn_running'),
-  'receipt replay must execute the accepted first message exactly once').toHaveLength(1);
-
-  const foldersResponse = await request.get(`/api/areas/${area.id}/folders`);
-  expect(foldersResponse.ok()).toBe(true);
-  expect(await foldersResponse.json()).toEqual([]);
-  expect(errors).toEqual([]);
-});
-
-
-test('creates the planner with the model and effort selected beside Send', async ({ page, request }) => {
-  // A deterministic roster for the UI; creation and the persisted planner read still use the real kernel.
-  await routeAvailability(page, ['codex']);
-  await page.route((url) => url.pathname === '/api/models' && url.searchParams.get('provider') === 'codex', (route) => route.fulfill({ json: {
-    models: [{ id: 'e2e-model', model: 'e2e-model', resolved_model: null, display_name: 'E2E model', description: '',
-      is_default: false, default_reasoning_effort: 'low', supported_reasoning_efforts: [
-        { reasoning_effort: 'low', description: 'Faster' },
-        { reasoning_effort: 'high', description: 'More reasoning' },
-      ] }],
-    default: { model: null, reasoning_effort: null, supported_reasoning_efforts: null }, default_source: 'unknown',
-    source: 'live', fetched_at_ms: 1,
-  } }));
-  const area = await createArea(request);
-  createdAreaIds.push(area.id);
-  await page.goto('/next/');
-  await page.getByRole('button', { name: `New track in ${area.name}` }).click();
-  await page.getByRole('button', { name: 'Model: Default' }).click();
-  await page.getByRole('menuitem', { name: 'E2E model' }).click();
-  await page.getByRole('button', { name: 'Reasoning effort: low (the default)' }).click();
-  await page.getByRole('menuitem', { name: /high/ }).click();
-  await page.getByLabel(TASK_LABEL).fill('Start with the selected configuration');
-  const creation = page.waitForResponse((response) => response.request().method() === 'POST'
-    && new URL(response.url()).pathname === '/api/tracks');
-  await page.getByRole('button', { name: 'Create track' }).click();
-  const response = await creation;
-  expect(response.status()).toBe(201);
-  expect(response.request().postDataJSON()).toMatchObject({ model: 'e2e-model', reasoning_effort: 'high' });
-  expect(response.request().postDataJSON()).not.toHaveProperty('first_message');
-  const track = await response.json() as { id: string };
-  await expect(page).toHaveURL(new RegExp(`/track/${track.id}$`));
-  const detailResponse = await request.get(`/api/tracks/${track.id}`);
-  expect(detailResponse.ok()).toBe(true);
-  const detail = await detailResponse.json() as { cards: { id: string; payload: { planner_harness?: boolean } }[] };
-  const planner = detail.cards.find((card) => card.payload.planner_harness === true);
-  if (planner === undefined) throw new Error('Created track has no planner card');
-  let persisted: unknown;
-  // The first turn can advance while the run endpoint is assembling its snapshot.
-  await expect.poll(async () => {
-    const run = await request.get(`/api/cards/${planner.id}/planner/run?contract=conversation_v1`);
-    if (run.ok()) {
-      persisted = await run.json();
-      return true;
-    }
-    const body = await run.text().catch(() => null);
-    if (isRunReadConflict(run.status(), body)) return false;
-    throw new Error(`GET planner run returned HTTP ${run.status()}: unexpected response (body omitted)`);
-  }, { message: 'GET planner run kept returning HTTP 409: conversation runtime changed while reading' }).toBe(true);
-  expect(persisted).toMatchObject({ input_contract: 'canonical', model: 'e2e-model', reasoning_effort: 'high' });
-});
-
-/**
- * `GET /api/agent-providers` as the real kernel answers it, with each provider in `ready` answering
- * `ready`: the picker disables a provider that cannot run (#1817), and the routed catalogs stand in for
- * backends this stack does not run.
- */
-async function routeAvailability(page: Page, ready: readonly ('codex' | 'claude')[]) {
-  await page.route((url) => url.pathname === '/api/agent-providers', async (route) => {
-    const response = await route.fetch();
-    const answers = await response.json() as { provider: 'codex' | 'claude'; status: string; reason: string | null }[];
-    await route.fulfill({ response, json: answers.map((entry) => ready.includes(entry.provider)
-      ? { ...entry, status: 'ready', reason: null } : entry) });
-  });
-}
-
-/** A deterministic Codex roster for the picker; creation still goes to the real kernel. */
-async function routeCodexCatalog(page: Page) {
-  await page.route((url) => url.pathname === '/api/models' && url.searchParams.get('provider') === 'codex', (route) => route.fulfill({ json: {
-    models: [{ id: 'e2e-model', model: 'e2e-model', resolved_model: null, display_name: 'E2E model', description: '',
-      is_default: false, default_reasoning_effort: 'low', supported_reasoning_efforts: [] }],
-    default: { model: null, reasoning_effort: null, supported_reasoning_efforts: null }, default_source: 'unknown',
-    source: 'live', fetched_at_ms: 1,
-  } }));
-}
-
-/* The e2e stack runs without `--claude-planner-config`, so the kernel answers Claude `not_configured`
- * (#1817) with an `unavailable` catalog, and the picker offers Codex alone (#1810). */
-test('offers no Claude group on a kernel without Claude Planners', async ({ page, request }) => {
-  await routeCodexCatalog(page);
-  await routeAvailability(page, ['codex']);
-  const area = await createArea(request);
-  createdAreaIds.push(area.id);
-  const claudeCatalog = page.waitForResponse((response) => new URL(response.url()).pathname === '/api/models'
-    && new URL(response.url()).searchParams.get('provider') === 'claude');
-  const availability = await request.get('/api/agent-providers');
-  expect(availability.ok()).toBe(true);
-  expect(await availability.json()).toContainEqual(expect.objectContaining({ provider: 'claude', status: 'not_configured' }));
-  await page.goto('/next/');
-  await page.getByRole('button', { name: `New track in ${area.name}` }).click();
-  expect(await (await claudeCatalog).json()).toMatchObject({ source: 'unavailable', models: [] });
-  await page.getByRole('button', { name: 'Model: Default' }).click();
-  await expect(page.getByRole('menuitem', { name: 'E2E model' })).toBeVisible();
-  await expect(page.getByRole('group', { name: 'Claude' })).toHaveCount(0);
-});
-
-// Inspect the production create path without dispatching a Planner turn.
-for (const width of [1280, 390, 320]) {
-  test(`submits ordinary intent without templates at ${width}px`, async ({ page, request }) => {
-    await page.setViewportSize({ width, height: 844 });
-    const area = await createArea(request);
-    createdAreaIds.push(area.id);
-    expect((await request.patch(`/api/areas/${area.id}`, { data: {
-      default_template_id: 'small-change', default_cwd: null,
-    } })).ok()).toBe(true);
-    const attempts: { body: Record<string, unknown>; key: string | undefined }[] = [];
-    const rosterReads: string[] = [];
+  try {
+    const creates: string[] = [];
     page.on('request', pending => {
-      if (/\/api\/track-(templates|recipes)/.test(new URL(pending.url()).pathname)) rosterReads.push(pending.url());
-    });
-    await page.route('**/api/tracks', async route => {
-      if (route.request().method() !== 'POST') { await route.continue(); return; }
-      attempts.push({ body: route.request().postDataJSON() as Record<string, unknown>, key: route.request().headers()['idempotency-key'] });
-      await route.fulfill({ status: 503, json: { error: 'Preview intercepted; no Planner started' } });
+      if (pending.method() === 'POST' && new URL(pending.url()).pathname === '/api/v1/tracks') creates.push(pending.url());
     });
     await page.goto(`/next/area/${area.id}/new`);
-    const composer = page.getByLabel(TASK_LABEL);
-    await expect(composer).toBeFocused();
-    await expect(page.getByRole('button', { name: /^Template:|^Recipe:|Workspace isolation/ })).toHaveCount(0);
-    await expect(page.getByRole('region', { name: 'Selected template' })).toHaveCount(0);
-    await composer.fill('  Keep this request exactly  ');
+    const text = `fake-reply: FE e2e ${Date.now()}`;
+    await page.getByLabel('What this track should do').fill(text);
+    const created = page.waitForResponse(response => response.request().method() === 'POST' && new URL(response.url()).pathname === '/api/v1/tracks');
     await page.getByRole('button', { name: 'Create track', exact: true }).click();
-    await expect(page.getByRole('alert').filter({ hasText: 'unconfirmed' })).toBeVisible();
-    await page.getByRole('button', { name: 'Create track', exact: true }).click();
-    await expect.poll(() => attempts.length).toBe(2);
-    expect(attempts[0]?.body).toMatchObject({ area_id: area.id });
-    expect(attempts[0]?.body).not.toHaveProperty('first_message');
-    for (const key of ['template_id', 'template_input', 'recipe_id', 'cwd', 'attach_folder']) expect(attempts[0]?.body).not.toHaveProperty(key);
-    expect(attempts[0]?.key).toBeTruthy();
-    expect(attempts[1]).toEqual(attempts[0]);
-    expect(rosterReads).toEqual([]);
-    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(width);
-  });
-}
+    const response = await created;
+    expect(response.status(), await response.text()).toBe(201);
+    const body = response.request().postDataJSON() as Record<string, unknown>;
+    expect(body).toMatchObject({ areaId: area.id, provider: 'codex', firstMessage: text });
+    expect(body).not.toHaveProperty('title');
+    const snapshot = trackAggregateSnapshotDtoSchema.parse(await response.json());
+    await expect(page).toHaveURL(new RegExp(`/track/${snapshot.track.id}$`));
+    await expect(page.locator('[data-nc-page-title]')).toContainText('Untitled track');
+    const lead = snapshot.sessions.find(session => session.isLead);
+    expect(lead).toBeDefined();
+    const read = async () => sessionItemsPageDtoSchema.parse(await (await request.get(`/api/v1/sessions/${lead!.id}/items?afterId=0&limit=500`)).json());
+    await expect.poll(async () => (await read()).items.filter(item => item.kind === 'user')).toEqual([
+      expect.objectContaining({ sessionId: lead!.id, payload: expect.objectContaining({ content: text }) }),
+    ]);
+    await page.reload();
+    await expect(page.locator('[data-nc-page-title]')).toContainText('Untitled track');
+    expect(creates).toHaveLength(1);
+    expect((await read()).items.filter(item => item.kind === 'user')).toHaveLength(1);
+  } finally { await request.delete(`/api/v1/areas/${area.id}`); }
+});

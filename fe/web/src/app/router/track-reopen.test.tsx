@@ -1,3 +1,4 @@
+import { fixtureSnapshot, fixtureTrack } from './session-contract-fixture.ts';
 import { prepareReportDocument } from '../../features/report/document/preparation.ts';
 // @vitest-environment jsdom
 
@@ -9,7 +10,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 
 import type { ApiRequest, ApiTransportPort, ApiTransportResponse } from '../../../../core/api/types.ts';
 import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
-import type { TrackWire } from '../../../../core/domain/track.ts';
+import type { TrackDto } from '../../../../core/api/perga-v1.ts';
 import { ThemeProvider } from '../theme/public.tsx';
 import { createAppRouter } from './public.tsx';
 import { bootTestCardRuntime } from './test-card-runtime.ts';
@@ -23,13 +24,10 @@ const area = {
 
 type Harness = Readonly<{ requests: ApiRequest[]; client: QueryClient; healRefetch: () => void }>;
 
-/** The whole router over a fake kernel whose PATCH flips `closed_at`; with `failRefetch` the detail reads after it fail until healed. */
+/** The whole router over a fake kernel whose PATCH flips `closedAtMs`; with `failRefetch` the detail reads after it fail until healed. */
 function renderTrack(closedAt: number | null, { failRefetch = false } = {}): Harness {
   const requests: ApiRequest[] = [];
-  let track: TrackWire = { workspace: { isolation: 'none' as const, kind: 'attached' as const, path: '/tmp', frozen_at: null },
-    id: 'w1', area_id: 'c1', title: 'Recover me', sort: 1, cwd: '/tmp',
-    pinned_at: null, closed_at: closedAt, admin_granted_at: null, created_at: 1, updated_at: 2,
-  };
+  let track: TrackDto = fixtureTrack('w1', { areaId: 'c1', title: 'Recover me', cwd: '/tmp', sortOrder: 1, closedAtMs: closedAt, createdAtMs: 1, updatedAtMs: 2 });
   let refetchFails = false;
   const ok = (body: unknown): ApiTransportResponse => ({ status: 200, statusText: 'OK', body });
   const transport: ApiTransportPort = {
@@ -40,7 +38,7 @@ function renderTrack(closedAt: number | null, { failRefetch = false } = {}): Har
       if (request.path === '/api/overlays?entity_kind=track') return Promise.resolve(ok([]));
       if (request.method === 'PATCH' && request.path === '/api/v1/tracks/w1') {
         const { closed } = request.body as { closed: boolean };
-        track = { ...track, closed_at: closed ? 42 : null, updated_at: track.updated_at + 1 };
+        track = { ...track, closedAtMs: closed ? 42 : null, updatedAtMs: track.updatedAtMs + 1 };
         refetchFails = failRefetch;
         return Promise.resolve(ok(track));
       }
@@ -48,8 +46,7 @@ function renderTrack(closedAt: number | null, { failRefetch = false } = {}): Har
         if (refetchFails) {
           return Promise.resolve({ status: 500, statusText: 'Refresh failed', body: {} });
         }
-        const closed = track.closed_at !== null;
-        return Promise.resolve(ok({ track, planner_revision: 0, can_reopen: closed, can_admin: false, can_close: !closed, cards: [], overlays: [] }));
+        return Promise.resolve(ok(fixtureSnapshot(track, [])));
       }
       if (request.path.endsWith('/sessions')) return Promise.resolve(ok([]));
       if (request.path === '/api/settings') return Promise.resolve(ok({}));

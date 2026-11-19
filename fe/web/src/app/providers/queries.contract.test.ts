@@ -1,3 +1,5 @@
+import { fixtureSession } from '../router/session-contract-fixture.ts';
+import { sessionPage, sessionItem } from '../router/conversation-session-data.ts';
 import { historicalConversationPage } from '../router/conversation-read-data.ts';
 // @vitest-environment jsdom
 // Invariants owned by the shared query layer.
@@ -22,7 +24,7 @@ import { coordinateRecoveryQueries } from './recovery-queries.ts';
 import { ApiError, NotSentError } from '../../../../core/domain/failure-class.ts';
 import {
   areaListQueryOptions, conversationHistoryQueryOptions as transcriptQueryOptions, queryKeys, runOperation, taskVerdictsRefetchInterval,
-  trackOverlaysQueryOptions, trackDetailQueryOptions, trackConversationsQueryOptions,
+  trackOverlaysQueryOptions, trackDetailQueryOptions,
   useAreaMutations, usePlannerMutations, useTrackMutations, useWorkspace, tracksInAreaQueryOptions,
   useTrackConversationMutations, useTrackRecipeMutations,
   seriesRefetchInterval, trackReportSeriesQueryOptions, trackSourceQueryOptions, type SeriesRead,
@@ -682,9 +684,9 @@ describe('delete mutation wiring', () => {
 
     await expect(result.current.send('accepted by the server', [], 'send-key', null, transport, () => { order.push('answered'); }))
       .resolves.toMatchObject({ card_id: 'card-1' });
-    await waitFor(() => expect(invalidate).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(invalidate).toHaveBeenCalledTimes(2));
     /* The answer is noted before any refresh read starts, and a read still out from before it is cancelled first. */
-    expect(order).toEqual(['answered', 'cancel', 'cancel', 'cancel', 'refresh', 'refresh', 'refresh']);
+    expect(order).toEqual(['answered', 'cancel', 'cancel', 'refresh', 'refresh']);
   });
 });
 
@@ -711,7 +713,7 @@ describe('a delete answered done drops its cache entry like a success', () => {
 
   it.each([['done', notFound, false], ['unknown', lost, true]] as const)('track delete answered %s', async (_name, answer, kept) => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    client.setQueryData(queryKeys.trackDetail('w1'), { track: baseTrackWire, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true, cards: [], overlays: [] });
+    client.setQueryData(queryKeys.trackDetail('w1'), { track: { id: 'w1', areaId: 'c1', createdAtMs: 1, updatedAtMs: 2 }, report: {}, sessions: [], tasks: [], openAsks: [] });
     const transport: ApiTransportPort = { send: (request) => (request.method === 'GET' ? new Promise(() => undefined) : answer()) };
     const { result } = renderHook(() => useTrackMutations(transport, unauthorized), { wrapper: wrapper(client) });
     await act(() => expect(result.current.remove('w1', 'c1')).rejects.toBeInstanceOf(ApiError));
@@ -719,15 +721,12 @@ describe('a delete answered done drops its cache entry like a success', () => {
   });
 });
 
-describe('track detail mutation cache writes', () => {
+describe('tool inventory mutation cache writes', () => {
   const cardWire = (id: string) => ({
     id, track_id: 'w1', kind: 'terminal', title: null, sort: 1, payload: {},
     deletable: true, created_at: 1, updated_at: 2,
   });
-  const detail = {
-    track: { ...baseTrackWire }, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true,
-    cards: [cardWire('card-a'), cardWire('card-b')], overlays: [],
-  };
+  const tools = [cardWire('card-a'), cardWire('card-b')];
 
   function mounted(transport: ApiTransportPort) {
     const client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
@@ -737,7 +736,7 @@ describe('track detail mutation cache writes', () => {
     return { client, result };
   }
 
-  it('drops the deleted row from the cached track detail without waiting for a refetch', async () => {
+  it('drops the deleted row from the cached tool inventory without waiting for a refetch', async () => {
     let reads = 0;
     const transport: ApiTransportPort = {
       send: (request) => {
@@ -746,13 +745,13 @@ describe('track detail mutation cache writes', () => {
       },
     };
     const { client, result } = mounted(transport);
-    client.setQueryData(queryKeys.trackDetail('w1'), detail);
+    client.setQueryData(queryKeys.trackTools('w1'), tools);
 
     await act(() => result.current.removeCard('w1', 'card-a'));
 
-    const after = client.getQueryData<typeof detail>(queryKeys.trackDetail('w1'));
-    expect(after?.cards.map((card) => card.id)).toEqual(['card-b']);
-    // And it was this write, not a re-read: the detail was never fetched at all.
+    const after = client.getQueryData<typeof tools>(queryKeys.trackTools('w1'));
+    expect(after?.map((card) => card.id)).toEqual(['card-b']);
+    // And it was this write, not a re-read: the inventory was never fetched at all.
     expect(reads).toBe(0);
   });
 
@@ -766,11 +765,11 @@ describe('track detail mutation cache writes', () => {
       },
     };
     const { client, result } = mounted(transport);
-    client.setQueryData(queryKeys.trackDetail('w1'), detail);
+    client.setQueryData(queryKeys.trackTools('w1'), tools);
 
     await act(() => expect(result.current.removeCard('w1', 'card-a')).rejects.toBeInstanceOf(ApiError));
 
-    expect(client.getQueryData<typeof detail>(queryKeys.trackDetail('w1'))?.cards.map((card) => card.id)).toEqual(['card-b']);
+    expect(client.getQueryData<typeof tools>(queryKeys.trackTools('w1'))?.map((card) => card.id)).toEqual(['card-b']);
     expect(reads).toBe(0);
   });
 
@@ -783,21 +782,21 @@ describe('track detail mutation cache writes', () => {
         send: (request) => (request.method === 'GET' ? new Promise<ApiTransportResponse>(() => undefined) : answer()),
       };
       const { client, result } = mounted(transport);
-      client.setQueryData(queryKeys.trackDetail('w1'), detail);
+      client.setQueryData(queryKeys.trackTools('w1'), tools);
       await act(() => expect(result.current.removeCard('w1', 'card-a')).rejects.toBeInstanceOf(ApiError));
-      expect(client.getQueryData<typeof detail>(queryKeys.trackDetail('w1'))?.cards.map((card) => card.id))
+      expect(client.getQueryData<typeof tools>(queryKeys.trackTools('w1'))?.map((card) => card.id))
         .toEqual(['card-a', 'card-b']);
     }
   });
 
-  it('leaves a detail it has no copy of alone rather than inventing one', async () => {
+  it('leaves an inventory it has no copy of alone rather than inventing one', async () => {
     const transport: ApiTransportPort = { send: () => Promise.resolve(ok(undefined)) };
     const { client, result } = mounted(transport);
     await act(() => result.current.removeCard('w1', 'card-a'));
-    expect(client.getQueryData(queryKeys.trackDetail('w1'))).toBeUndefined();
+    expect(client.getQueryData(queryKeys.trackTools('w1'))).toBeUndefined();
   });
 
-  it('writes a created card into the cached detail so the board can draw it at once', async () => {
+  it('writes a created card into the cached inventory so the board can draw it at once', async () => {
     const created = cardWire('card-new');
     const transport: ApiTransportPort = {
       send: (request) => (request.method === 'POST'
@@ -805,27 +804,27 @@ describe('track detail mutation cache writes', () => {
         : new Promise<ApiTransportResponse>(() => undefined)),
     };
     const { client, result } = mounted(transport);
-    client.setQueryData(queryKeys.trackDetail('w1'), detail);
+    client.setQueryData(queryKeys.trackTools('w1'), tools);
 
     await act(() => result.current.createCard('w1', { kind: 'file-viewer', payload: { path: '/x' } }, 'card-key'));
 
-    expect(client.getQueryData<typeof detail>(queryKeys.trackDetail('w1'))?.cards.map((card) => card.id))
+    expect(client.getQueryData<typeof tools>(queryKeys.trackTools('w1'))?.map((card) => card.id))
       .toEqual(['card-a', 'card-b', 'card-new']);
   });
 
   /* A replayed create answers with a row the cache already holds. */
-  it('does not duplicate a card the cached detail already carries', async () => {
+  it('does not duplicate a card the cached inventory already carries', async () => {
     const transport: ApiTransportPort = {
       send: (request) => (request.method === 'POST'
         ? Promise.resolve(ok(cardWire('card-b')))
         : new Promise<ApiTransportResponse>(() => undefined)),
     };
     const { client, result } = mounted(transport);
-    client.setQueryData(queryKeys.trackDetail('w1'), detail);
+    client.setQueryData(queryKeys.trackTools('w1'), tools);
 
     await act(() => result.current.createCodex('w1', { theme: { fg: [0, 0, 0], bg: [1, 1, 1] } }, 'replayed-key'));
 
-    expect(client.getQueryData<typeof detail>(queryKeys.trackDetail('w1'))?.cards.map((card) => card.id))
+    expect(client.getQueryData<typeof tools>(queryKeys.trackTools('w1'))?.map((card) => card.id))
       .toEqual(['card-a', 'card-b']);
   });
 });
@@ -855,11 +854,10 @@ describe('track create folders cache', () => {
 });
 
 describe('planner history pagination', () => {
-  it('uses the returned contract cursor rather than a raw item row id', async () => {
-    const cursor = { contract:'conversation_v1',card_id:'card',source:'presentation',position:7 } as const;
-    const { transport, paths } = recordingTransport(request => ok({
-      contract:'conversation_v1',source:'presentation',items:[],next_cursor:request.path.includes('&cursor=') ? null : cursor,
-    }));
+  it('passes the v1 page cursor into the next read', async () => {
+    const cursor = { contract:'conversation_v1',card_id:'card',source:'presentation',position:8 } as const;
+    const { transport, paths } = recordingTransport(() => ok(sessionPage(fixtureSession('card', 'track'),
+      Array.from({ length: 67 }, (_, index) => sessionItem('card', index + 1, `Reply ${index}`)))));
     const options = transcriptQueryOptions(transport, 'card', unauthorized);
     const page = await options.queryFn({ position: { kind: 'latest' } });
     expect(page.next_cursor).toEqual(cursor);
@@ -1025,8 +1023,7 @@ describe('input metadata mutation reconciliation', () => {
       const unsubscribe = channel.subscribe(() => access.invalidate('login'));
       const transport = createRecoveryTransports({ send: request => {
         paths.push(request.path);
-        if (request.method === 'GET') return Promise.resolve(ok({ track: baseTrackWire,
-          planner_revision: 0, can_reopen: false, can_admin: false, can_close: true, overlays: [], cards: [] }));
+        if (request.method === 'GET') return Promise.resolve(ok({ track: { id: 'w1', areaId: 'c1', createdAtMs: 1, updatedAtMs: 2 }, report: {}, sessions: [], tasks: [], openAsks: [] }));
         if (outcome === '401') return Promise.resolve({ status: 401, statusText: 'Unauthorized', body: { error: 'Sign in' } });
         if (outcome === 'offline') access.change('offline');
         else { access.invalidate('recovering'); access.change('connected'); }
@@ -1057,7 +1054,6 @@ describe('input metadata mutation reconciliation', () => {
       expect(answered).not.toHaveBeenCalled();
       expect(paths).toEqual(['/api/v1/tracks/w1', ...(outcome === 'local denial' ? [] : ['/api/v1/sessions/card-1/messages'])]);
       expect(client.getQueryState(queryKeys.trackDetail('w1'))).toMatchObject({ status: 'success', isInvalidated: true });
-      expect(client.getQueryState(queryKeys.trackConversations('w1'))).toBeUndefined();
       // The existing recovery coordinator, rather than a retained write or custom retry, resumes stale reads.
       act(() => { access.invalidate('recovering'); access.change('connected'); });
       await waitFor(() => expect(paths.filter(path => path === '/api/v1/tracks/w1')).toHaveLength(2));
@@ -1082,7 +1078,6 @@ describe('input metadata mutation reconciliation', () => {
     expect(cancel).not.toHaveBeenCalled();
     expect(invalidate.mock.calls).toEqual([
       [{ queryKey: queryKeys.trackDetail('w1'), refetchType: 'none' }],
-      [{ queryKey: queryKeys.trackConversations('w1'), refetchType: 'none' }],
     ]);
   });
 
@@ -1095,14 +1090,10 @@ describe('input metadata mutation reconciliation', () => {
         const transport: ApiTransportPort = { send: async request => {
           await Promise.resolve();
           paths.push(request.path);
-          if (request.path === '/api/v1/tracks/w1') return ok({ track: baseTrackWire,
-            planner_revision: 0, can_reopen: false, can_admin: false, can_close: true, overlays: [], cards: [{
-              id: 'card-1', track_id: 'w1', kind: 'codex', title, sort: 0, payload: { planner_harness: true },
-              deletable: true, created_at: 1, updated_at: 2,
-            }] });
-          if (request.path === '/api/v1/tracks/w1/sessions') return ok([{
-            id: 'assistant', trackId: 'w1', title, kind: 'track-assistant', provider: 'codex', state: 'idle', updatedAt: 2, archivedAt: null, lastTurnCompletedAt: null,
-          }]);
+          if (request.path === '/api/v1/tracks/w1') return ok({
+            track: { id: 'w1', areaId: 'c1', createdAtMs: 1, updatedAtMs: 2 }, report: {}, tasks: [], openAsks: [],
+            sessions: [{ id: 'card-1', trackId: 'w1', title, isLead: true, provider: 'codex', status: 'idle', createdAtMs: 1, updatedAtMs: 2 }],
+          });
           title = 'Edited';
           if (outcome === 'unknown') throw new Error('connection lost after write');
           if (outcome !== 'success') return { status: outcome === 'gone' ? 404 : 409, statusText: 'Refused',
@@ -1110,13 +1101,10 @@ describe('input metadata mutation reconciliation', () => {
           return ok({ card_id: 'card-1', worker_session_id: 'runtime', entry_id: 'entry', text: title, rev: 1, steered: true, turn_id: 'running-turn' });
         } };
         const detailOptions = trackDetailQueryOptions(transport, 'w1', unauthorized);
-        const listOptions = trackConversationsQueryOptions(transport, 'w1', unauthorized);
-        await client.fetchQuery(detailOptions); await client.fetchQuery(listOptions);
+        await client.fetchQuery(detailOptions);
         const detail = new QueryObserver(client, detailOptions);
-        const list = new QueryObserver(client, listOptions);
         const releaseDetail = detail.subscribe(() => undefined);
-        const releaseList = list.subscribe(() => undefined);
-        for (const key of [queryKeys.trackDetail('foreign'), queryKeys.trackConversations('foreign')]) client.setQueryData(key, 'untouched');
+        for (const key of [queryKeys.trackDetail('foreign')]) client.setQueryData(key, 'untouched');
         const clear = vi.spyOn(client, 'clear');
         // Active reads make accidental run/history refresh observable; inactive cache entries cannot.
         const reads = { run: 0, history: 0 };
@@ -1143,24 +1131,22 @@ describe('input metadata mutation reconciliation', () => {
             if (action === 'send') await result.current.send('Edited', [], 'key', null, transport, answered);
           } catch { /* Sends reject on refusal/unknown; reconciliation is still required. */ }
         });
-        await waitFor(() => expect(detail.getCurrentResult().data?.cards[0]?.title).toBe('Edited'));
-        await waitFor(() => expect(list.getCurrentResult().data?.[0]?.title).toBe('Edited'));
-        for (const key of [queryKeys.trackDetail('foreign'), queryKeys.trackConversations('foreign')]) {
+        await waitFor(() => expect(detail.getCurrentResult().data?.sessions[0]?.title).toBe('Edited'));
+        for (const key of [queryKeys.trackDetail('foreign')]) {
           expect(client.getQueryData(key)).toBe('untouched');
           expect(client.getQueryState(key)?.isInvalidated).toBe(false);
         }
         const refreshExisting = action !== 'send' || outcome === 'success';
         await waitFor(() => expect(reads).toEqual({ run: refreshExisting ? 2 : 1, history: refreshExisting ? 2 : 1 }));
         expect(cancel.mock.calls.map(([filters]) => filters?.queryKey)).toEqual([
-          ...(outcome === 'success' ? [transcriptKey, queryKeys.plannerRun('card-1'), queryKeys.initialInputPrefix()] : []),
-          queryKeys.trackDetail('w1'), queryKeys.trackConversations('w1'),
-          ...(action !== 'send' && outcome !== 'success' ? [queryKeys.initialInputPrefix()] : []),
+          ...(outcome === 'success' ? [transcriptKey, queryKeys.plannerRun('card-1')] : []),
+          queryKeys.trackDetail('w1'),
         ]);
         expect(answered).toHaveBeenCalledTimes(action === 'send' && outcome === 'success' ? 1 : 0);
         for (const release of releases) release();
         expect(paths.some(path => path.includes('/harness/items'))).toBe(false);
         expect(clear).not.toHaveBeenCalled();
-        releaseDetail(); releaseList(); unmount(); client.clear();
+        releaseDetail(); unmount(); client.clear();
       }
     },
   );

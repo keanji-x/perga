@@ -5,9 +5,6 @@ import type { ModelCatalogScope } from '../domain/conversation.ts';
  * share these factories; prefix factories address every cached instance of a resource.
  * Pure values only: executing cache operations remains the platform adapter's responsibility.
  */
-export const initialInputPrefix = () => ['conversation-initial-input'] as const;
-export const initialInputTrack = (trackId: string) => ['conversation-initial-input', trackId] as const;
-export const initialInput = (trackId: string, cardId: string) => ['conversation-initial-input', trackId, cardId] as const;
 export const areas = () => ['areas'] as const;
 export const trackLists = () => ['tracks'] as const;
 export const tracksInArea = (areaId: string) => ['tracks', areaId] as const;
@@ -26,8 +23,7 @@ export const plannerRun = (cardId: string) => ['planner-run', cardId] as const;
 export const modelCatalog = (scope: ModelCatalogScope) => ['model-catalog', scope] as const;
 export const modelCatalogForCard = (cardId: string) => ['model-catalog', { kind: 'card', cardId }] as const;
 export const modelCatalogPrefix = () => ['model-catalog'] as const;
-export const trackConversations = (trackId: string) => ['track-conversations', trackId] as const;
-export const trackConversationsPrefix = () => ['track-conversations'] as const;
+export const trackDetailPrefix = () => ['track'] as const;
 export const sessionLive = (sessionId: string) => ['session-live', sessionId] as const;
 export const trackTerminals = (trackId: string) => ['track-terminals', trackId] as const;
 export const taskAttemptsPrefix = (trackId: string) => ['task-attempts', trackId] as const;

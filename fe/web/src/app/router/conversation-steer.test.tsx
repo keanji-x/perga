@@ -5,38 +5,44 @@ import type { ApiTransportResponse } from '../../../../core/api/types.ts';
 import { mountSteerFixture as mount, steerAnswer as answer } from './conversation-steer-fixture.tsx';
 
 const ok = (body: unknown): ApiTransportResponse => ({ status: 200, statusText: 'OK', body });
-
 afterEach(() => { cleanup(); document.getElementById('root')?.remove(); });
 async function open() {
   await userEvent.click(await screen.findByRole('button', { name: /Conversation Daily Planner conversation/ }));
-  await screen.findByText('Queued words');
-  expect(screen.getByRole('button', { name: 'Edit queued message' })).toBeTruthy();
-  expect(screen.getByRole('button', { name: 'Delete this message' })).toBeTruthy();
+  await screen.findByText('Stored words');
 }
-it.each([['codex', true], ['claude', false], ['opencode', false]] as const)(
-  'steer follows the managed capability for %s through route assembly', async (provider, steer) => {
-    const fixture = mount(provider, () => ok(answer(provider, steer)));
+function expectNoQueueControls() {
+  for (const name of ['Say it now', 'Edit queued message', 'Delete this message']) {
+    expect(screen.queryByRole('button', { name })).toBeNull();
+  }
+}
+
+// v1 reports providers via BootstrapDto, but exposes no editable pending queue.
+it.each(['codex', 'claude', 'opencode'] as const)(
+  'does not invent queued steering controls from the %s bootstrap', async provider => {
+    const fixture = mount(provider, () => ok(answer(provider)));
     await open();
-    await waitFor(() => expect(fixture.client.getQueryData(['managed-providers'])).toEqual(answer(provider, steer)));
-    expect(screen.queryByRole('button', { name: 'Say it now' }) !== null).toBe(steer);
+    await waitFor(() => expect(fixture.client.getQueryData(['managed-providers'])).toMatchObject([
+      { availability: { provider }, capabilities: { steer: true, history_replacement: false } },
+    ]));
+    expectNoQueueControls();
   });
-it('steer stays hidden while loading, appears when known, and hides on a stale-data query error', async () => {
+it('keeps queue controls absent while bootstrap loads and after a stale-data query error', async () => {
   let release!: (response: ApiTransportResponse) => void;
   const managed = new Promise<ApiTransportResponse>(resolve => { release = resolve; });
   let failed = false;
   const fixture = mount('codex', () => failed ? { status: 503, statusText: 'Unavailable', body: { error: 'offline' } } : managed);
   await open();
-  expect(screen.queryByRole('button', { name: 'Say it now' })).toBeNull();
-  await act(async () => { release(ok(answer('codex', true))); await managed; });
-  await screen.findByRole('button', { name: 'Say it now' });
+  expectNoQueueControls();
+  await act(async () => { release(ok(answer('codex'))); await managed; });
+  await waitFor(() => expect(fixture.client.getQueryData(['managed-providers'])).toBeDefined());
   await act(async () => {
     failed = true;
     await fixture.client.refetchQueries({ queryKey: ['managed-providers'] });
   });
-  await waitFor(() => expect(screen.queryByRole('button', { name: 'Say it now' })).toBeNull());
+  expectNoQueueControls();
 });
-it('steer stays hidden when the managed query fails before any answer', async () => {
+it('keeps persisted input readable when managed bootstrap fails before any answer', async () => {
   mount('codex', () => ({ status: 503, statusText: 'Unavailable', body: { error: 'offline' } }));
   await open();
-  expect(screen.queryByRole('button', { name: 'Say it now' })).toBeNull();
+  expectNoQueueControls();
 });

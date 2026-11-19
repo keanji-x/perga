@@ -1,35 +1,34 @@
+import { fixtureTrack, fixtureSession, fixtureSnapshot, fixtureBootstrap } from './session-contract-fixture.ts';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createMemoryHistory, RouterProvider } from '@tanstack/react-router';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { ApiRequest, ApiTransportPort, ApiTransportResponse } from '../../../../core/api/types.ts';
 import type { TerminalPresentation } from '../../../../core/domain/terminal-presentation.ts';
-import type { TerminalDto } from '../../../../core/api/perga-v1.ts';
 import type { CardWire } from '../../../../core/domain/track.ts';
 import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { prepareReportDocument } from '../../features/report/document/preparation.ts';
 import { createReadReceiptsKernel } from '../providers/read-receipts-fixture.tsx';
-import { WEB_COMPAT_VERSION } from '../providers/public.tsx';
+import { sessionPage, sessionItem } from './conversation-session-data.ts';
 import { ThemeProvider } from '../theme/public.tsx';
 import { createAppRouter, APP_BASEPATH } from './public.tsx';
 import { bootTestCardRuntime } from './test-card-runtime.ts';
-import { conversationCardId, historicalConversationPage, historicalConversationRun } from './conversation-read-data.ts';
+import { conversationCardId } from './conversation-read-data.ts';
 
 export function terminalCard(id: string, presentation: TerminalPresentation, trackId = 'workbench'): CardWire {
   return { id, track_id: trackId, kind: 'terminal', title: id, sort: 1, payload: { terminal_presentation: presentation }, deletable: true, created_at: 1, updated_at: 2 };
 }
 
 /** HTTP boundary fixture; production router, mutations, card registry and lifecycle remain real. */
-export function setupWorkbench({ cards: initial = [] as CardWire[], defer = false, lost = false, daily = false, failure = null as null | 'definite' | 'unknown', initialCard = null as string | null, secondaryReads = null as Promise<void> | null, hostTerminals = null as TerminalDto[] | null, createdTerminalId = null as string | null } = {}) {
+export function setupWorkbench({ cards: initial = [] as CardWire[], defer = false, lost = false, daily = false, failure = null as null | 'definite' | 'unknown', initialCard = null as string | null, secondaryReads = null as Promise<void> | null, toolsRead = null as Promise<void> | null, createdTerminalId = null as string | null } = {}) {
   const requests: ApiRequest[] = [];
   const receipts = createReadReceiptsKernel({ baselineMs: 0 });
   const cards = [...initial];
   const otherCards: CardWire[] = [];
-  const live = { text: '' };
+  const savedReply = { text: '' };
   const releases: (() => void)[] = [];
   const keys = new Map<string, CardWire>();
-  const track = { workspace: { isolation: 'none' as const, kind: 'attached' as const, path: '/tmp', frozen_at: null }, id: 'workbench', area_id: 'area', title: 'Workbench track', sort: 1,
-    cwd: '/tmp', pinned_at: null, closed_at: null, created_at: 1, updated_at: 2 };
-  const parent = { id: 'parent', trackId: track.id, title: 'Main discussion', archivedAt: null, kind: 'track-assistant', provider: 'codex', state: 'idle', updatedAt: 2, lastTurnCompletedAt: null };
+  const track = fixtureTrack('workbench', { areaId: 'area', title: 'Workbench track' });
+  const parent = fixtureSession('parent', track.id, { title: 'Main discussion' });
   const rows = [parent];
   let lose = lost;
   const ok = (body: unknown): ApiTransportResponse => ({ status: 200, statusText: 'OK', body });
@@ -39,36 +38,18 @@ export function setupWorkbench({ cards: initial = [] as CardWire[], defer = fals
     if (receipt !== undefined) return receipt;
     const { path, method } = request;
     if (path === '/api/today/daily') return ok({ date: '2026-10-17', time_zone: 'Asia/Shanghai', track_id: track.id });
-    if (path === '/api/v1/bootstrap') return ok({ assistantProviders: true, conversationSide: true, webCompatVersion: WEB_COMPAT_VERSION,
-      minWebCompatVersion: WEB_COMPAT_VERSION, syncEventVersion: 1, dbInstanceId: 'workbench-tests' });
-    if (path.startsWith('/api/v1/bootstrap?scope=managed')) return ok([{ availability: { provider: 'codex', status: 'ready', reason: null, checked_at_ms: 1, authentication_method: null, authentication_notice: null },
-      accepts_unavailable_blank_track: true, capabilities: { managed_conversation: true, steer: true, images: true, manual_compact: true, history_replacement: true, requires_ready_availability: false } }]);
+    if (path === '/api/v1/bootstrap') return ok(fixtureBootstrap());
+    if (path.startsWith('/api/v1/bootstrap?scope=managed')) return ok({ version: 'test', providers: [{ provider: 'codex', available: true, version: null, reason: null, models: [] }], templates: [], areas: [] });
     if (path === '/api/v1/areas') return ok([{ id: 'area', name: 'Work', color: '#123456', sort: 1, kind: 'user', created_at: 1, updated_at: 1 }]);
     if (path === '/api/v1/areas/area/tracks?includeClosed=true') return ok([track]);
     if (path === '/api/settings') return ok({});
-    if (path === '/api/v1/tracks/other') return ok({ track: { ...track, id: 'other', title: 'Other track' }, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true, cards: [...otherCards], overlays: [] });
-    if (hostTerminals !== null) {
-      if (path === '/api/v1/tracks/workbench') return ok({
-        track: { id: track.id, areaId: 'area', title: track.title, createdAtMs: 1, updatedAtMs: 1 },
-        report: { blocks: [] },
-      });
-      if (path === '/api/v1/tracks/workbench/terminals') {
-        if (method === 'GET') return ok([...hostTerminals]);
-        if (method === 'POST') {
-          const dto = { id: 'pty-1', trackId: track.id, title: 'Host shell', status: 'running', cwd: '/tmp', createdAtMs: 1 };
-          hostTerminals.push(dto);
-          return ok(dto);
-        }
-      }
-      if (method === 'DELETE' && path === '/api/v1/tracks/workbench/terminals/pty-1') {
-        hostTerminals[0] = { ...hostTerminals[0], status: 'exited', exitCode: 0, exitedAtMs: 2 };
-        return ok(undefined);
-      }
-    }
-    if (path === '/api/v1/tracks/workbench') return ok({ track, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true, cards: [...cards], overlays: [] });
+    if (path === '/api/v1/tracks/other') return ok(fixtureSnapshot({ ...track, id: 'other', title: 'Other track' }));
+    if (path === '/api/v1/tracks/workbench') return ok(fixtureSnapshot(track, rows));
     if (secondaryReads !== null && ['/api/v1/tracks/workbench/report', '/api/v1/tracks/workbench/sessions', '/api/tracks/workbench/backlinks'].includes(path)) await secondaryReads;
     if (path === '/api/v1/tracks/workbench/report') return ok({ taskDiagnostics: [] });
     if (path === '/api/v1/tracks/workbench/sessions') return ok(rows);
+    if (path === '/api/v1/tracks/workbench/terminals' && method === 'GET') { await toolsRead; return ok(cards); }
+    if (path === '/api/v1/tracks/other/terminals' && method === 'GET') return ok(otherCards);
     if (path === '/api/v1/tracks/other/terminals' && method === 'POST') {
       const card = terminalCard('other-terminal', { source: 'manual', in_workbench: true }, 'other'); otherCards.push(card); return ok(card);
     }
@@ -99,14 +80,10 @@ export function setupWorkbench({ cards: initial = [] as CardWire[], defer = fals
       return ok(undefined);
     }
     if (method === 'DELETE' && path.startsWith('/api/cards/')) { cards.splice(cards.findIndex(card => card.id === path.split('/')[3]), 1); return ok(undefined); }
-    if (path.includes('&view=run')) return ok(historicalConversationRun({ card_id: conversationCardId(path), worker_session_id: 'session-parent', phase: live.text === '' ? 'idle' : 'issuing_turn', model: null,
-      reasoning_effort: null, permission_mode: null, blocked_reason: null, recovery: null, manual_compact_supported: true, compact_outcome: null, context_usage_invalidated: false, running_turn: null }, live.text === '' ? 'idle' : 'running', true));
-    if (path.includes('/items?') && !path.includes('&view=')) return ok(historicalConversationPage(conversationCardId(path), [], null));
-    if (path.endsWith('&view=live') || path.endsWith('&view=live-legacy')) return ok(live.text === ''
-      ? (path.endsWith('&view=live') ? { contract: 'conversation_v1', turn: null } : { turn_id: null, items: [] })
-      : (path.endsWith('&view=live')
-        ? { contract: 'conversation_v1', turn: { thread_id: 'thread-parent', turn_id: 'streamed-turn', items: [{ item_id: 'streamed-message', text: live.text }] } }
-        : { turn_id: 'streamed-turn', items: [{ item_id: 'streamed-message', text: live.text }] }));
+    if (path.includes('/items?')) {
+      const session = { ...parent, id: conversationCardId(path), status: 'idle' };
+      return ok(sessionPage(session, savedReply.text === '' ? [] : [sessionItem(session.id, 1, savedReply.text)]));
+    }
     return ok([]);
   } };
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
@@ -117,7 +94,7 @@ export function setupWorkbench({ cards: initial = [] as CardWire[], defer = fals
   router.update({ history: createMemoryHistory({ initialEntries: [`${APP_BASEPATH}${daily ? '/' : '/track/workbench'}${initialCard === null ? '' : `?card=${encodeURIComponent(initialCard)}`}`] }) });
   const container = document.createElement('div'); container.id = 'root'; document.body.append(container);
   const view = render(<QueryClientProvider client={client}><ThemeProvider><RouterProvider router={router} /></ThemeProvider></QueryClientProvider>, { container });
-  return { ...view, requests, releases, router, client, runtime, cards, live, posts: () => requests.filter(request => request.method === 'POST' && request.path.endsWith('/terminals')) };
+  return { ...view, requests, releases, router, client, runtime, cards, savedReply, posts: () => requests.filter(request => request.method === 'POST' && request.path.endsWith('/terminals')) };
 }
 
 

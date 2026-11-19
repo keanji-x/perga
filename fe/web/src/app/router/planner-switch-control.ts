@@ -2,14 +2,12 @@ import { useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
-import type { TrackDetailWire } from '../../../../core/domain/track.ts';
+import type { TrackAggregateSnapshotDto } from '../../../../core/api/schemas.ts';
 import { NotSentError, writeFailureOf } from '../../../../core/domain/failure-class.ts';
 import { plannerSwitchFailure, PLANNER_SWITCH_UNCONFIRMED } from '../../../../core/domain/planner-switch.ts';
-import { invalidationPlanFor } from '../../../../core/events/invalidation-plan.ts';
-import { plannerCardIn } from '../../systems/cards/public.ts';
 import { useCommittedCallback } from '../../ui/state/committed-callback.ts';
 import { usePlannerSwitchMutation } from '../providers/planner-switch-mutation.ts';
-import { trackConversationsQueryOptions, trackDetailQueryOptions } from '../providers/queries.ts';
+import { queryKeys, trackDetailQueryOptions } from '../providers/queries.ts';
 import type { PlannerConversationScope } from '../conversations/contracts.ts';
 
 /** Owns one pane's human intent; scope is the selected conversation, never the page Track. */
@@ -21,39 +19,27 @@ export function usePlannerSwitchControl(transport: ApiTransportPort, unauthorize
     if (scope === null || pending.current) return false;
     pending.current = true;
     const options = trackDetailQueryOptions(transport, scope.id, unauthorized);
-    let detail: TrackDetailWire | undefined;
+    let detail: TrackAggregateSnapshotDto | undefined;
     try {
       // Intent reads must reach the bounded transport even if Query considers the browser offline.
-      const cached = client.getQueryData<TrackDetailWire>(options.queryKey);
-      if (cached === undefined) await client.cancelQueries({ queryKey: options.queryKey });
-      const snapshot: TrackDetailWire = cached
+      const cached = client.getQueryData<TrackAggregateSnapshotDto>(options.queryKey);
+      if (cached === undefined) await client.cancelQueries({ queryKey: options.queryKey, exact: true });
+      const snapshot: TrackAggregateSnapshotDto = cached
         ?? await client.fetchQuery({ ...options, retry: false, networkMode: 'always' });
       detail = snapshot;
-      const planner = plannerCardIn(snapshot.cards);
+      const planner = snapshot.sessions.find(session => session.isLead);
       if (planner === undefined) throw new Error(PLANNER_SWITCH_UNCONFIRMED.en);
       const refresh = async () => {
-        const assistantOptions = trackConversationsQueryOptions(transport, scope.id, unauthorized);
-        // Same authoritative CardUpdated plan as the stream; cancel stale reads before replacement.
-        const keys = snapshot.cards.filter(card => card.id === planner.id || card.id === scope.cardId).flatMap(card => invalidationPlanFor({
-          ev: 'card.updated', data: { ...card, title: card.title ?? undefined },
-        }).invalidate);
-        const uniqueKeys = [...new Map(keys.map(key => [JSON.stringify(key), key])).values()];
-        await Promise.all(uniqueKeys.map(queryKey => client.cancelQueries({ queryKey })));
-        // Preserve all stream refreshes, but their online-only retries must not block this intent.
-        for (const queryKey of uniqueKeys) void client.invalidateQueries({ queryKey }).catch(() => undefined);
-        // Invalidation can create online-only paused reads. Replace them before bounded confirmation.
-        await Promise.all([options.queryKey, assistantOptions.queryKey].map(queryKey => client.cancelQueries({ queryKey })));
-        return Promise.all([
-          client.fetchQuery({ ...options, retry: false, networkMode: 'always' }).catch(() => null),
-          client.fetchQuery({ ...assistantOptions, retry: false, networkMode: 'always' }).catch(() => null),
-        ]);
+        const keys = [options.queryKey, queryKeys.plannerRun(planner.id), queryKeys.plannerRun(scope.cardId)];
+        await Promise.all(keys.map(queryKey => client.cancelQueries({ queryKey, exact: true })));
+        // Keep the aggregate and each session run fresh; tool resources have their own cache.
+        for (const queryKey of keys) void client.invalidateQueries({ queryKey, exact: true,
+          refetchType: queryKey === options.queryKey ? 'none' : 'active' }).catch(() => undefined);
+        return client.fetchQuery({ ...options, retry: false, networkMode: 'always' }).catch(() => null);
       };
       let receipt;
       try {
-        receipt = await mutation.mutateAsync({ trackId: scope.id, body: {
-          target_assistant_card_id: scope.cardId, expected_planner_card_id: planner.id,
-          expected_revision: snapshot.planner_revision,
-        } });
+        receipt = await mutation.mutateAsync({ trackId: scope.id, leadSessionId: scope.cardId });
       } catch (error) {
         const writeFailure = writeFailureOf(error);
         const failure = plannerSwitchFailure(writeFailure);
@@ -62,15 +48,14 @@ export function usePlannerSwitchControl(transport: ApiTransportPort, unauthorize
           if (failure.unconfirmed) await refresh();
           else void refresh().catch(() => undefined);
         }
-        const card = snapshot.cards.find(card => card.id === failure.cardId);
+        const card = snapshot.sessions.find(session => session.id === failure.cardId);
         const role = failure.cardId === planner.id ? 'Original Planner' : failure.cardId === scope.cardId ? 'Target Assistant' : null;
         throw new Error(`${failure.message}${role === null ? '' : ` (${role}: ${card?.title ?? failure.cardId})`}`);
       }
-      const [confirmed, assistants] = await refresh();
-      if (confirmed === null || receipt.track_id !== scope.id || receipt.planner_card_id !== scope.cardId || receipt.demoted_card_id !== planner.id
-        || confirmed.planner_revision < receipt.planner_revision || plannerCardIn(confirmed.cards)?.id !== scope.cardId
-        || assistants === null || !assistants.some(row => row.id === planner.id && row.trackId === scope.id && row.kind === 'track-assistant')
-        || assistants.some(row => row.id === scope.cardId)) {
+      const confirmed = await refresh();
+      if (confirmed === null || receipt.id !== scope.id || receipt.leadSessionId !== scope.cardId
+        || confirmed.sessions.find(session => session.isLead)?.id !== scope.cardId
+        || !confirmed.sessions.some(session => session.id === planner.id && !session.isLead)) {
         throw new Error(PLANNER_SWITCH_UNCONFIRMED.en);
       }
       return true;
