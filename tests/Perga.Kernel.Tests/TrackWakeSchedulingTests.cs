@@ -127,6 +127,44 @@ public sealed class TrackWakeSchedulingTests
     }
 
     [Fact]
+    public async Task InMemoryWakeTransitionsStampUpdatedAt()
+    {
+        await using var ctx = new KernelTestContext();
+        var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
+        var id = snapshot.Track.Id;
+        ctx.Store.WakeClock = ctx.Time;
+        var wakes = ctx.Store.TrackWakes;
+        foreach (var key in new[] { "done", "recovered", "canceled" })
+            await wakes.EnqueueAsync(TrackWakeRequests.Prompt(id, "mail", $"mail:{key}", key), default);
+        var created = (await wakes.ListAsync(id, default)).Where(w => w.State == TrackWakeStates.Pending).ToArray();
+        Assert.Equal(3, created.Length);
+        var createdAt = created[0].CreatedAtMs;
+
+        async Task<TrackWake> Stamped(TrackWake wake, Func<Task> transition)
+        {
+            ctx.Time.Advance(TimeSpan.FromSeconds(1));
+            await transition();
+            var stored = Assert.Single(await wakes.ListAsync(id, default), w => w.Id == wake.Id);
+            Assert.Equal(ctx.Time.GetUtcNow().ToUnixTimeMilliseconds(), stored.UpdatedAtMs);
+            Assert.Equal(createdAt, stored.CreatedAtMs);
+            return stored;
+        }
+
+        var canceled = await Stamped(created[2], () => wakes.CancelPendingWakeAsync(id, created[2].Id, default));
+        Assert.Equal(TrackWakeStates.Dropped, canceled.State);
+        IReadOnlyList<TrackWake> claimed = [];
+        var done = await Stamped(created[0], async () => claimed = await wakes.ClaimBatchAsync(id, snapshot.Track.LeadSessionId!, 32, default));
+        Assert.Equal(TrackWakeStates.Delivering, done.State);
+        Assert.Equal(created[1].UpdatedAtMs + 2000, Assert.Single(claimed, w => w.Id == created[1].Id).UpdatedAtMs);
+        done = await Stamped(created[0], () => wakes.LinkTurnAsync([done], "trn_linked", default));
+        Assert.Equal("trn_linked", done.TurnId);
+        done = await Stamped(created[0], () => wakes.MarkDoneAsync([done], TrackWakeReasons.Delivered, "trn_linked", default));
+        Assert.Equal(TrackWakeStates.Done, done.State);
+        var recovered = await Stamped(created[1], () => wakes.RecoverOnBootAsync(default));
+        Assert.NotEqual(TrackWakeStates.Delivering, recovered.State);
+    }
+
+    [Fact]
     public async Task LeadSwitchRoutesPendingDynamicWakesToNewLead()
     {
         await using var ctx = new KernelTestContext();

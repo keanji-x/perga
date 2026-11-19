@@ -7,11 +7,13 @@ internal sealed partial class InMemoryTrackStore : ITrackWakeStore
     private readonly List<TrackWake> _trackWakes = [];
     private long _wakeOrdinal;
     public ITrackWakeStore TrackWakes => this;
+    public TimeProvider WakeClock { get; set; } = TimeProvider.System;
+    private long NowMs() => WakeClock.GetUtcNow().ToUnixTimeMilliseconds();
     private void EnqueueWakeLocked(TrackWakeRequest request, bool once = false)
     {
         if (!_tracks.TryGetValue(request.TrackId, out var track) || track.ClosedAtMs is not null) return;
         if (once && _trackWakes.Any(w => w.TrackId == request.TrackId && w.CoalesceKey == request.CoalesceKey)) return;
-        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var now = NowMs();
         for (var i = 0; i < _trackWakes.Count; i++)
             if (_trackWakes[i] is { State: TrackWakeStates.Pending } w && request.CoalesceKey is not null &&
                 w.TrackId == request.TrackId && w.CoalesceKey == request.CoalesceKey)
@@ -29,20 +31,24 @@ internal sealed partial class InMemoryTrackStore : ITrackWakeStore
     {
         lock (_gate)
         {
+            var now = NowMs();
             var claimed = new List<TrackWake>();
             for (var i = 0; i < _trackWakes.Count && claimed.Count < Math.Clamp(limit, 1, 32); i++)
                 if (_trackWakes[i] is { State: TrackWakeStates.Pending } w && w.TrackId == trackId &&
                     _tracks[trackId].ClosedAtMs is null && (w.TargetSessionId is null || w.TargetSessionId == targetSessionId))
-                { w = w with { State = TrackWakeStates.Delivering, Attempts = w.Attempts + 1 }; _trackWakes[i] = w; claimed.Add(w); }
+                { w = w with { State = TrackWakeStates.Delivering, Attempts = w.Attempts + 1, UpdatedAtMs = now }; _trackWakes[i] = w; claimed.Add(w); }
             return Task.FromResult<IReadOnlyList<TrackWake>>(claimed);
         }
     }
     private Task TransitionAsync(IReadOnlyList<TrackWake> batch, string state, string? reason, string? turnId)
     {
         lock (_gate)
+        {
+            var now = NowMs();
             for (var i = 0; i < _trackWakes.Count; i++)
                 if (_trackWakes[i] is { State: TrackWakeStates.Delivering } w && batch.Any(b => b.Id == w.Id))
-                    _trackWakes[i] = w with { State = state, Reason = reason, TurnId = turnId ?? w.TurnId };
+                    _trackWakes[i] = w with { State = state, Reason = reason, TurnId = turnId ?? w.TurnId, UpdatedAtMs = now };
+        }
         return Task.CompletedTask;
     }
     public Task MarkDoneAsync(IReadOnlyList<TrackWake> batch, string reason, string turnId, CancellationToken ct) => TransitionAsync(batch, TrackWakeStates.Done, reason, turnId);
@@ -54,7 +60,7 @@ internal sealed partial class InMemoryTrackStore : ITrackWakeStore
         {
             var i = _trackWakes.FindIndex(w => w.Id == wakeId && w.TrackId == trackId && w.State == TrackWakeStates.Pending);
             if (i < 0) return Task.FromResult(false);
-            _trackWakes[i] = _trackWakes[i] with { State = TrackWakeStates.Dropped, Reason = TrackWakeReasons.Canceled };
+            _trackWakes[i] = _trackWakes[i] with { State = TrackWakeStates.Dropped, Reason = TrackWakeReasons.Canceled, UpdatedAtMs = NowMs() };
             return Task.FromResult(true);
         }
     }
@@ -62,16 +68,18 @@ internal sealed partial class InMemoryTrackStore : ITrackWakeStore
     {
         lock (_gate)
         {
+            var now = NowMs();
             var tracks = _trackWakes.Where(w => w.State == TrackWakeStates.Delivering).Select(w => w.TrackId).Distinct().ToArray();
             for (var i = 0; i < _trackWakes.Count; i++)
                 if (_trackWakes[i] is { State: TrackWakeStates.Delivering, CoalesceKey: not null } w && _trackWakes.Any(n =>
                     n.TrackId == w.TrackId && n.CoalesceKey == w.CoalesceKey &&
                     (n.State == TrackWakeStates.Pending || n.State == TrackWakeStates.Delivering && n.Ordinal > w.Ordinal)))
-                    _trackWakes[i] = w with { State = TrackWakeStates.Dropped, Reason = TrackWakeReasons.BootSuperseded };
+                    _trackWakes[i] = w with { State = TrackWakeStates.Dropped, Reason = TrackWakeReasons.BootSuperseded, UpdatedAtMs = now };
             for (var i = 0; i < _trackWakes.Count; i++)
                 if (_trackWakes[i] is { State: TrackWakeStates.Delivering } w)
                     _trackWakes[i] = w with { State = w.IsCritical ? TrackWakeStates.Pending : TrackWakeStates.Dropped,
-                        Reason = w.IsCritical ? TrackWakeReasons.BootRequeued : TrackWakeReasons.BootDropped, TurnId = w.IsCritical ? null : w.TurnId };
+                        Reason = w.IsCritical ? TrackWakeReasons.BootRequeued : TrackWakeReasons.BootDropped, TurnId = w.IsCritical ? null : w.TurnId,
+                        UpdatedAtMs = now };
             return Task.FromResult<IReadOnlyList<string>>(tracks);
         }
     }

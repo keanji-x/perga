@@ -669,58 +669,64 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
         CancellationToken ct = default, SessionMessage? dispatchMessage = null)
     {
         lock (_gate)
+            return Task.FromResult(RecordTurnAndItemsLocked(turn, newItems, updatedSession));
+    }
+
+    private (SessionTurnDto Turn, IReadOnlyList<long> ItemIds) RecordTurnAndItemsLocked(
+        SessionTurnDto turn,
+        IReadOnlyList<SessionItemDto> newItems,
+        AgentSessionDto? updatedSession)
+    {
+        if (!_turnsBySession.TryGetValue(turn.SessionId, out var turns))
         {
-            if (!_turnsBySession.TryGetValue(turn.SessionId, out var turns))
-            {
-                turns = [];
-                _turnsBySession[turn.SessionId] = turns;
-            }
-
-            if (!_itemsBySession.TryGetValue(turn.SessionId, out var items))
-            {
-                items = [];
-                _itemsBySession[turn.SessionId] = items;
-            }
-
-            var ids = new List<long>(newItems.Count);
-            long? userItemId = turn.UserItemId;
-            foreach (var item in newItems)
-            {
-                var assignedId = _nextItemId++;
-                items.Add(item with { Id = assignedId });
-                ids.Add(assignedId);
-                if (userItemId is null && item.Kind == "user")
-                {
-                    userItemId = assignedId;
-                }
-            }
-
-            userItemId ??= items.FirstOrDefault(i => i.TurnId == turn.Id && i.Kind == "user")?.Id;
-            var storedTurn = userItemId == turn.UserItemId ? turn : turn with { UserItemId = userItemId };
-
-            var tIdx = turns.FindIndex(t => t.Id == storedTurn.Id);
-            if (tIdx >= 0)
-            {
-                turns[tIdx] = storedTurn;
-            }
-            else
-            {
-                if (turns.Any(t => t.TurnIndex == storedTurn.TurnIndex))
-                {
-                    throw new InvalidOperationException(
-                        $"Duplicate (session_id={storedTurn.SessionId}, turn_index={storedTurn.TurnIndex}) violated!");
-                }
-
-                turns.Add(storedTurn);
-            }
-
-            if (updatedSession is not null)
-            {
-                _sessions[updatedSession.Id] = updatedSession;
-            }
-
-            return Task.FromResult<(SessionTurnDto, IReadOnlyList<long>)>((storedTurn, ids));
+            turns = [];
+            _turnsBySession[turn.SessionId] = turns;
         }
+
+        if (!_itemsBySession.TryGetValue(turn.SessionId, out var items))
+        {
+            items = [];
+            _itemsBySession[turn.SessionId] = items;
+        }
+
+        var ids = new List<long>(newItems.Count);
+        long? userItemId = turn.UserItemId;
+        foreach (var item in newItems)
+        {
+            var assignedId = _nextItemId++;
+            items.Add(item with { Id = assignedId });
+            ids.Add(assignedId);
+            if (userItemId is null && item.Kind == "user")
+            {
+                userItemId = assignedId;
+            }
+        }
+
+        userItemId ??= items.FirstOrDefault(i => i.TurnId == turn.Id && i.Kind == "user")?.Id;
+        var storedTurn = userItemId == turn.UserItemId ? turn : turn with { UserItemId = userItemId };
+
+        var tIdx = turns.FindIndex(t => t.Id == storedTurn.Id);
+        if (tIdx >= 0)
+        {
+            turns[tIdx] = storedTurn;
+        }
+        else
+        {
+            if (turns.Any(t => t.TurnIndex == storedTurn.TurnIndex))
+            {
+                throw new InvalidOperationException(
+                    $"Duplicate (session_id={storedTurn.SessionId}, turn_index={storedTurn.TurnIndex}) violated!");
+            }
+
+            turns.Add(storedTurn);
+        }
+
+        if (updatedSession is not null)
+        {
+            _sessions[updatedSession.Id] = updatedSession;
+        }
+
+        return (storedTurn, ids);
     }
 
     public Task<IReadOnlyList<long>> AppendSessionItemsAsync(
@@ -729,23 +735,26 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
         CancellationToken ct = default)
     {
         lock (_gate)
+            return Task.FromResult(AppendSessionItemsLocked(sessionId, newItems));
+    }
+
+    private IReadOnlyList<long> AppendSessionItemsLocked(string sessionId, IReadOnlyList<SessionItemDto> newItems)
+    {
+        if (!_itemsBySession.TryGetValue(sessionId, out var items))
         {
-            if (!_itemsBySession.TryGetValue(sessionId, out var items))
-            {
-                items = [];
-                _itemsBySession[sessionId] = items;
-            }
-
-            var ids = new List<long>(newItems.Count);
-            foreach (var item in newItems)
-            {
-                var id = _nextItemId++;
-                items.Add(item with { Id = id });
-                ids.Add(id);
-            }
-
-            return Task.FromResult<IReadOnlyList<long>>(ids);
+            items = [];
+            _itemsBySession[sessionId] = items;
         }
+
+        var ids = new List<long>(newItems.Count);
+        foreach (var item in newItems)
+        {
+            var id = _nextItemId++;
+            items.Add(item with { Id = id });
+            ids.Add(id);
+        }
+
+        return ids;
     }
 
     public Task UpsertAskAsync(AskDto ask, EventEnvelopeDto evt, CancellationToken ct)
