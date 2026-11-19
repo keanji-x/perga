@@ -50,9 +50,8 @@ public sealed partial class TrackActor : IAsyncDisposable
     private readonly Dictionary<string, AskDto> _asks = new(StringComparer.Ordinal);
     private readonly Dictionary<string, TerminalDto> _terminals = new(StringComparer.Ordinal);
     private readonly Dictionary<string, int> _nextTurnIndexBySession = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, IAgentSession> _openAgentSessions = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, (string? Model, string? ReasoningEffort)> _boundAgentModels = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, string?> _openAgentSessionPermissionModes = new(StringComparer.Ordinal);
+    private sealed record OpenSessionHandle(IAgentSession Agent, HarnessLaunchSpec LaunchSpec, SessionRuntimeSettings Settings);
+    private readonly Dictionary<string, OpenSessionHandle> _openSessionHandles = new(StringComparer.Ordinal);
     private readonly SessionTurnScheduler _scheduler;
     private readonly SessionTurnRunner _turnRunner;
     private readonly Dictionary<string, TaskCompletionSource<JsonElement>> _pendingAskWaiters = new(StringComparer.Ordinal);
@@ -472,12 +471,11 @@ public sealed partial class TrackActor : IAsyncDisposable
             }
 
             // 5. Dispose open agent sessions & revoke MCP tokens
-            foreach (var kvp in _openAgentSessions.ToArray())
+            foreach (var kvp in _openSessionHandles.ToArray())
             {
-                _openAgentSessions.Remove(kvp.Key);
-                _boundAgentModels.Remove(kvp.Key);
-                _openAgentSessionPermissionModes.Remove(kvp.Key);
-                await kvp.Value.DisposeAsync().ConfigureAwait(false);
+                _openSessionHandles.Remove(kvp.Key);
+
+                await kvp.Value.Agent.DisposeAsync().ConfigureAwait(false);
             }
 
             _mcpBridge.RevokeTrack(TrackId);
@@ -800,25 +798,14 @@ public sealed partial class TrackActor : IAsyncDisposable
         }, ct);
     }
 
-    private async Task<string?> ResolveSessionPermissionModeCoreAsync(
-        string provider, string? requested, bool isLead, CancellationToken ct)
+    private string? ResolveSessionPermissionModeCore(string provider, string? requested, string? sessionId = null)
     {
-        var probesAcp = provider.StartsWith("acp:", StringComparison.OrdinalIgnoreCase)
-            && !string.IsNullOrWhiteSpace(requested);
-        // Never wait for Drain inside the actor queue; account for the entire probe.
-        using var admission = probesAcp
-            ? _options.DispatchAdmission.TryEnter() ?? throw KernelException.Conflict("Cannot probe permission modes while draining.")
-            : null;
-        var cwd = string.IsNullOrWhiteSpace(_track.Cwd) ? _workspacePreparation?.Request.SourcePath : _track.Cwd;
-        IReadOnlyList<OverlayMountSpec>? overlays = null;
-        if (probesAcp && !string.IsNullOrWhiteSpace(_track.Cwd))
-        {
-            var mounted = await EnsureWorkspaceMountedCoreAsync(ct).ConfigureAwait(false);
-            cwd = mounted.MergedCwd;
-            overlays = MapOverlayLayers(mounted.ProcessOverlayLayers);
-        }
-        return await RuntimePermissionModes.ResolveAsync(_agentRuntime, provider, requested, ct,
-            isLead ? _options.LeadSandboxMode : _options.FreeSubagentSandboxMode, overlays, cwd).ConfigureAwait(false);
+        IReadOnlyList<PermissionModeOption>? modes = null;
+        if (sessionId is not null && !_scheduler.HasResumeHold(sessionId) &&
+            _openSessionHandles.TryGetValue(sessionId, out var handle) &&
+            string.Equals(handle.LaunchSpec.Provider, provider, StringComparison.OrdinalIgnoreCase))
+            modes = handle.Agent.AvailablePermissionModes;
+        return RuntimePermissionModes.Resolve(provider, requested, modes);
     }
 
     private async Task<AgentSessionDto> NewSubagentSessionCoreAsync(CreateSessionRequest req, CancellationToken ct)
@@ -827,7 +814,7 @@ public sealed partial class TrackActor : IAsyncDisposable
         var provider = string.IsNullOrWhiteSpace(req.Provider)
             ? GetDefaultProviderCore()
             : (TaskBlockSynchronizer.NormalizeProviderId(req.Provider) ?? req.Provider!.Trim());
-        var permissionMode = await ResolveSessionPermissionModeCoreAsync(provider, req.PermissionMode, isLead: false, ct).ConfigureAwait(false);
+        var permissionMode = ResolveSessionPermissionModeCore(provider, req.PermissionMode);
 
         return new AgentSessionDto(
             Id: $"ses_{Guid.NewGuid():N}",
@@ -891,9 +878,9 @@ public sealed partial class TrackActor : IAsyncDisposable
             if (providerChanged || modelChanged)
             {
                 _mcpBridge.RevokeSession(sessionId);
-                if (_openAgentSessions.Remove(sessionId, out var cachedSession))
+                if (_openSessionHandles.Remove(sessionId, out var cachedSession))
                 {
-                    await cachedSession.DisposeAsync().ConfigureAwait(false);
+                    await cachedSession.Agent.DisposeAsync().ConfigureAwait(false);
                 }
             }
 
@@ -904,7 +891,7 @@ public sealed partial class TrackActor : IAsyncDisposable
                 : existing.ArchivedAtMs;
             var nextNativeThreadId = providerChanged ? null : existing.NativeThreadId;
             var nextPermissionMode = providerChanged
-                ? await ResolveSessionPermissionModeCoreAsync(nextProvider, null, existing.IsLead, ct).ConfigureAwait(false)
+                ? ResolveSessionPermissionModeCore(nextProvider, null)
                 : existing.PermissionMode;
 
             var updated = existing with
@@ -981,7 +968,7 @@ public sealed partial class TrackActor : IAsyncDisposable
 
             // Never change the provider underneath an active turn. Its next reuse reconciles.
             if (!_scheduler.HasActive(sessionId) && !_scheduler.IsCompacting(sessionId) &&
-                !_scheduler.HasResumeHold(sessionId) && _openAgentSessions.ContainsKey(sessionId))
+                !_scheduler.HasResumeHold(sessionId) && _openSessionHandles.ContainsKey(sessionId))
             {
                 // Persist even during Drain; the next admitted turn reconciles the cache.
                 using var admission = _options.DispatchAdmission.TryEnter();
@@ -1041,8 +1028,7 @@ public sealed partial class TrackActor : IAsyncDisposable
 
     public async Task<AgentSessionDto> SetSessionPermissionModeAsync(string sessionId, string permissionMode, CancellationToken ct = default)
     {
-        IAgentSession? toDispose = null;
-        var updated = await EnqueueAsync(async _ =>
+        return await EnqueueAsync(async _ =>
         {
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
             var session = RequireSessionCore(sessionId);
@@ -1053,7 +1039,7 @@ public sealed partial class TrackActor : IAsyncDisposable
 
             if (string.IsNullOrWhiteSpace(permissionMode))
                 throw KernelException.InvalidArgument("Permission mode is required.");
-            var trimmed = await ResolveSessionPermissionModeCoreAsync(session.Provider, permissionMode, session.IsLead, ct).ConfigureAwait(false);
+            var trimmed = ResolveSessionPermissionModeCore(session.Provider, permissionMode, sessionId);
             if (string.Equals(session.PermissionMode, trimmed, StringComparison.Ordinal))
             {
                 return session;
@@ -1067,25 +1053,8 @@ public sealed partial class TrackActor : IAsyncDisposable
             await PersistAndEmitSessionUpdatedCoreAsync(next, next.UpdatedAtMs, ct).ConfigureAwait(false);
             _sessions[sessionId] = next;
 
-            // If idle (neither running a turn nor compacting), close any cached provider subprocess so the next turn launches with the new mode.
-            if (!_scheduler.HasActive(sessionId) &&
-                !_scheduler.IsCompacting(sessionId) &&
-                _openAgentSessions.Remove(sessionId, out var open))
-            {
-                _openAgentSessionPermissionModes.Remove(sessionId);
-                _boundAgentModels.Remove(sessionId);
-                toDispose = open;
-            }
-
             return next;
         }, ct).ConfigureAwait(false);
-
-        if (toDispose is not null)
-        {
-            await toDispose.DisposeAsync().ConfigureAwait(false);
-        }
-
-        return updated;
     }
 
     // ------------------- Tasks, Governance & Attempt Settlement -------------------
@@ -2064,7 +2033,7 @@ public sealed partial class TrackActor : IAsyncDisposable
                 ArchivedAtMs: null,
                 CreatedAtMs: now,
                 UpdatedAtMs: now,
-                PermissionMode: await RuntimePermissionModes.ResolveAsync(_agentRuntime, workerProvider, null, ct, task.Access == AccessMode.ReadOnly ? _options.ReadOnlyTaskSandboxMode : _options.ReadWriteTaskSandboxMode, null).ConfigureAwait(false));
+                PermissionMode: RuntimePermissionModes.Resolve(workerProvider, null));
 
             var runningTask = task with { Status = TaskRunStatus.Running, StatusDetail = "Allocating workspace.",
                 LatestAttemptId = attemptId, UpdatedAtMs = now };
@@ -2645,9 +2614,8 @@ public sealed partial class TrackActor : IAsyncDisposable
             // 3 & 4. Update Epoch = Epoch + 1, NativeThreadId = null, clear context usage -> seed fresh IAgentSession with latest Report + handover summary!
             return await EnqueueAsync(async _ =>
             {
-                _openAgentSessions.Remove(sessionId);
-                _boundAgentModels.Remove(sessionId);
-                _openAgentSessionPermissionModes.Remove(sessionId);
+                _openSessionHandles.Remove(sessionId);
+
                 var current = RequireSessionCore(sessionId);
                 var now = NowMs();
 
@@ -2688,10 +2656,9 @@ public sealed partial class TrackActor : IAsyncDisposable
                 var seedPrompt = BuildEpochSeedSystemPrompt(compacted, latestReportMarkdown, handoverSummary);
 
                 // Seed fresh IAgentSession with ResumeNativeThreadId == null and SystemPrompt = Report + Handover Summary.
-                var desiredMode = compacted.PermissionMode;
-                var freshAgentSession = await OpenFreshAgentSessionCoreAsync(compacted, seedPrompt, ct).ConfigureAwait(false);
+                var fresh = await OpenFreshAgentSessionCoreAsync(compacted, seedPrompt, ct).ConfigureAwait(false);
                 _scheduler.EndCompacting(sessionId);
-                await RegisterOpenAgentSessionCoreAsync(compacted, freshAgentSession, desiredMode, ct).ConfigureAwait(false);
+                await RegisterOpenAgentSessionCoreAsync(compacted, fresh.Agent, fresh.Spec, ct).ConfigureAwait(false);
 
                 return RequireSessionCore(sessionId);
             }, ct).ConfigureAwait(false);
@@ -2713,58 +2680,41 @@ public sealed partial class TrackActor : IAsyncDisposable
         string? overrideSystemPrompt,
         CancellationToken ct)
     {
-        var desiredMode = session.PermissionMode;
-
-        if (_openAgentSessions.TryGetValue(session.Id, out var existing))
+        var desired = new SessionRuntimeSettings(session.Model, session.ReasoningEffort, session.PermissionMode);
+        if (_openSessionHandles.TryGetValue(session.Id, out var handle))
         {
-            var samePermission = !_openAgentSessionPermissionModes.TryGetValue(session.Id, out var openMode) ||
-                string.Equals(openMode, desiredMode, StringComparison.Ordinal);
-            if (samePermission && _boundAgentModels.TryGetValue(session.Id, out var bound) &&
-                string.Equals(bound.Model, session.Model, StringComparison.Ordinal) &&
-                string.Equals(bound.ReasoningEffort, session.ReasoningEffort, StringComparison.Ordinal))
-            {
-                return existing;
-            }
-
-            var switched = false;
             try
             {
-                switched = samePermission && await existing.TrySetModelAsync(session.Model, session.ReasoningEffort, ct).ConfigureAwait(false);
+                if (await handle.Agent.TryReconcileSettingsAsync(desired, ct).ConfigureAwait(false))
+                {
+                    if (handle.Settings.Model != desired.Model || handle.Settings.ReasoningEffort != desired.ReasoningEffort)
+                        InvalidateContextBindingCore(session.Id);
+                    _openSessionHandles[session.Id] = handle with { Settings = desired };
+                    return handle.Agent;
+                }
             }
             catch
             {
-                _openAgentSessions.Remove(session.Id);
-                _boundAgentModels.Remove(session.Id);
-                _openAgentSessionPermissionModes.Remove(session.Id);
-                await existing.DisposeAsync().ConfigureAwait(false);
+                _openSessionHandles.Remove(session.Id);
+                await handle.Agent.DisposeAsync().ConfigureAwait(false);
                 throw;
             }
-
-            if (switched)
-            {
-                InvalidateContextBindingCore(session.Id);
-                _boundAgentModels[session.Id] = (session.Model, session.ReasoningEffort);
-                return existing;
-            }
-
-            _openAgentSessions.Remove(session.Id);
-            _boundAgentModels.Remove(session.Id);
-            _openAgentSessionPermissionModes.Remove(session.Id);
-            await existing.DisposeAsync().ConfigureAwait(false);
+            _openSessionHandles.Remove(session.Id);
+            await handle.Agent.DisposeAsync().ConfigureAwait(false);
         }
 
         var opened = await OpenFreshAgentSessionCoreAsync(session, overrideSystemPrompt, ct).ConfigureAwait(false);
-        await RegisterOpenAgentSessionCoreAsync(session, opened, desiredMode, ct).ConfigureAwait(false);
-        return opened;
+        await RegisterOpenAgentSessionCoreAsync(session, opened.Agent, opened.Spec, ct).ConfigureAwait(false);
+        return opened.Agent;
     }
 
-    private async Task<IAgentSession> OpenFreshAgentSessionCoreAsync(
+    private async Task<(IAgentSession Agent, HarnessLaunchSpec Spec)> OpenFreshAgentSessionCoreAsync(
         AgentSessionDto session,
         string? overrideSystemPrompt,
         CancellationToken ct)
     {
         var spec = await BuildAgentLaunchSpecCoreAsync(session, overrideSystemPrompt, ct).ConfigureAwait(false);
-        return await _agentRuntime.OpenSessionAsync(spec, ct).ConfigureAwait(false);
+        return (await _agentRuntime.OpenSessionAsync(spec, ct).ConfigureAwait(false), spec);
     }
 
     private async Task<HarnessLaunchSpec> BuildAgentLaunchSpecCoreAsync(
@@ -3345,14 +3295,13 @@ public sealed partial class TrackActor : IAsyncDisposable
             // Ignore shutdown cancellation.
         }
 
-        foreach (var kvp in _openAgentSessions.ToArray())
+        foreach (var kvp in _openSessionHandles.ToArray())
         {
-            _openAgentSessions.Remove(kvp.Key);
-            _boundAgentModels.Remove(kvp.Key);
-            _openAgentSessionPermissionModes.Remove(kvp.Key);
+            _openSessionHandles.Remove(kvp.Key);
+
             try
             {
-                await kvp.Value.DisposeAsync().ConfigureAwait(false);
+                await kvp.Value.Agent.DisposeAsync().ConfigureAwait(false);
             }
             catch
             {

@@ -27,7 +27,7 @@ public sealed partial class TrackActor
         if (active?.AgentSession.SupportsSessionResume == true && !string.IsNullOrWhiteSpace(active.AgentSession.NativeThreadId ?? session.NativeThreadId))
             return new(active.TurnDto.Id, "available");
         if (unknown is not null && !string.IsNullOrWhiteSpace(session.NativeThreadId) &&
-            _openAgentSessions.TryGetValue(session.Id, out var agent) && agent.SupportsSessionResume && agent.SupportsScopedClose)
+            _openSessionHandles.TryGetValue(session.Id, out var agent) && agent.Agent.SupportsSessionResume && agent.Agent.SupportsScopedClose)
             return new(unknown.TurnId, "available");
         return null;
     }
@@ -101,7 +101,8 @@ public sealed partial class TrackActor
                 throw KernelException.Conflict("The session already has a recovery for a different or pending operation.");
 
             _scheduler.TryGetActive(sessionId, out var active);
-            _openAgentSessions.TryGetValue(sessionId, out var old);
+            _openSessionHandles.TryGetValue(sessionId, out var oldHandle);
+            var old = oldHandle?.Agent;
             if (active is not null && active.TurnDto.Id != turnId)
                 throw KernelException.Conflict("The observed provider turn is no longer current.");
 
@@ -191,9 +192,8 @@ public sealed partial class TrackActor
                     throw KernelException.Conflict("The previous provider turn has not settled.");
                 if (session.Status == "running")
                     throw KernelException.PreconditionFailed("The previous turn outcome could not be recorded.");
-                _openAgentSessions.Remove(sessionId);
-                _boundAgentModels.Remove(sessionId);
-                _openAgentSessionPermissionModes.Remove(sessionId);
+                _openSessionHandles.Remove(sessionId);
+
                 rebinding = true;
                 _mcpBridge.RevokeSession(sessionId);
                 return await BuildAgentLaunchSpecCoreAsync(session with { NativeThreadId = hold.NativeId }, null, ct)
@@ -235,7 +235,7 @@ public sealed partial class TrackActor
                 ReleaseSessionResumeCore(sessionId);
                 await RegisterOpenAgentSessionCoreAsync(
                     updated with { Model = spec.Model, ReasoningEffort = spec.ReasoningEffort },
-                    replacement, spec.PermissionMode, CancellationToken.None)
+                    replacement, spec, CancellationToken.None)
                     .ConfigureAwait(false);
                 return RequireSessionCore(sessionId);
             }, CancellationToken.None).ConfigureAwait(false);

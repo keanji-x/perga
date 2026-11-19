@@ -74,9 +74,7 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
 
     public IReadOnlyCollection<RecordedSessionOpen> OpenedSessions => _openedSessions.ToArray();
     public IReadOnlyCollection<RecordedTurnExecution> ExecutedTurns => _executedTurns.ToArray();
-    public bool FailPermissionDiscovery { get; set; }
     public IReadOnlyList<PermissionModeOption>? AcpPermissionModes { get; set; }
-    public Func<CancellationToken, Task<IReadOnlyList<PermissionModeOption>>>? PermissionProbeHandler { get; set; }
 
     public int ProbeCount => Volatile.Read(ref _probeCount);
     public int ForceRefreshProbeCount => Volatile.Read(ref _forceRefreshProbeCount);
@@ -90,14 +88,6 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
     public void SetSteerHandler(Func<string, Task<bool>> handler)
     {
         _steerHandler = handler;
-    }
-
-    public Task<IReadOnlyList<PermissionModeOption>> ProbePermissionModesAsync(
-        string provider, string? cwd, OsSandboxMode sandbox, IReadOnlyList<OverlayMountSpec>? overlayMounts, CancellationToken ct)
-    {
-        if (PermissionProbeHandler is { } handler) return handler(ct);
-        if (FailPermissionDiscovery) throw new IOException("Discovery unavailable");
-        return Task.FromResult(AcpPermissionModes ?? (IReadOnlyList<PermissionModeOption>)[]);
     }
 
     public Task<IReadOnlyList<ProviderStatus>> ProbeProvidersAsync(CancellationToken ct)
@@ -160,12 +150,14 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
     {
         private readonly ScriptableAgentRuntime _owner;
         private readonly HarnessLaunchSpec _spec;
+        private SessionRuntimeSettings _appliedSettings;
         private CancellationTokenSource? _activeTurnCts;
 
         public ScriptableAgentSession(ScriptableAgentRuntime owner, HarnessLaunchSpec spec)
         {
             _owner = owner;
             _spec = spec;
+            _appliedSettings = new(spec.Model, spec.ReasoningEffort, spec.PermissionMode);
             NativeThreadId = spec.ResumeNativeThreadId ?? $"thr_{Guid.NewGuid():N}";
         }
 
@@ -234,6 +226,15 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
                 _owner.ApprovalHandler?.Invoke();
                 return Task.CompletedTask;
             };
+        }
+
+        public async Task<bool> TryReconcileSettingsAsync(SessionRuntimeSettings settings, CancellationToken ct)
+        {
+            if (settings == _appliedSettings) return true;
+            if (settings.PermissionMode != _appliedSettings.PermissionMode ||
+                !await TrySetModelAsync(settings.Model, settings.ReasoningEffort, ct)) return false;
+            _appliedSettings = settings;
+            return true;
         }
 
         public Task<bool> TrySetModelAsync(string? model, string? reasoningEffort = null, CancellationToken ct = default) => Task.FromResult(_owner.SupportsModelSwitch);

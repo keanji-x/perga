@@ -8,7 +8,7 @@ using Perga.AgentKit.Internal;
 
 namespace Perga.AgentKit;
 
-public sealed class AcpAgentSession : IAgentSession
+public sealed partial class AcpAgentSession : IAgentSession
 {
     private sealed record PendingAcpPermission(
         JsonElement RawId,
@@ -181,7 +181,7 @@ public sealed class AcpAgentSession : IAgentSession
         }
     }
 
-    public IReadOnlyList<PermissionModeOption> AvailablePermissionModes { get; private set; } = [];
+    public IReadOnlyList<PermissionModeOption> AvailablePermissionModes => Volatile.Read(ref _permissionModes).Options;
 
     internal IReadOnlyList<string> AvailableModels { get; private set; } = [];
     internal IReadOnlyList<ProviderModelInfo> AvailableModelCatalog => _modelCatalog.Models;
@@ -222,118 +222,6 @@ public sealed class AcpAgentSession : IAgentSession
         }
     }
 
-    public async Task<bool> TrySetModelAsync(string? model, string? reasoningEffort = null, CancellationToken ct = default)
-    {
-        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-        var hasModel = !string.IsNullOrWhiteSpace(model);
-        var effort = string.IsNullOrWhiteSpace(reasoningEffort) ? null : reasoningEffort.Trim();
-        if (!hasModel && effort is null) return false;
-
-        // A blank model keeps the group advertised as the session's initial default.
-        var requestedModel = hasModel ? model!.Trim() : _defaultModel;
-        var entry = _modelCatalog.Models.FirstOrDefault(row => row.Model == requestedModel);
-        var reasoningOption = _modelCatalog.ThoughtLevel;
-        var useThoughtLevel = _modelCatalog.UsesThoughtLevel(requestedModel);
-        if (!hasModel && !useThoughtLevel &&
-            entry?.SupportedReasoningEfforts.Any(value => string.Equals(value.ReasoningEffort, effort, StringComparison.OrdinalIgnoreCase)) != true)
-            return false;
-        if (useThoughtLevel && effort is not null && !reasoningOption!.Values.Any(value => value.Id == effort))
-            return false;
-
-        var thoughtLevel = useThoughtLevel ? effort ?? _defaultThoughtLevel : null;
-        // A loaded effort is not evidence of the provider's initial default to restore.
-        if (useThoughtLevel && thoughtLevel is null && _hasExplicitThoughtLevel) return false;
-
-        if (hasModel || !useThoughtLevel || _hasExplicitModel)
-        {
-            if (requestedModel is null || !await TrySetAcpModelAsync(requestedModel, reasoningEffort, ct).ConfigureAwait(false))
-                return false;
-            _hasExplicitModel = hasModel;
-        }
-
-        if (thoughtLevel is not null && thoughtLevel != _appliedThoughtLevel)
-        {
-            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            timeoutCts.CancelAfter(_handshakeTimeout);
-            try
-            {
-                await _rpc.SendRequestAsync("session/set_config_option", new
-                {
-                    sessionId = NativeThreadId,
-                    configId = reasoningOption!.Id,
-                    value = thoughtLevel
-                }, timeoutCts.Token, _ =>
-                {
-                    _appliedThoughtLevel = thoughtLevel;
-                    _hasExplicitThoughtLevel = effort is not null;
-                    ConfirmContextBinding(requestedModel is null ? null : _modelCatalog.Resolve(requestedModel, reasoningEffort), thoughtLevel);
-                }).ConfigureAwait(false);
-            }
-            catch (JsonRpcRemoteException error) when (error.Code == -32601)
-            {
-                return false;
-            }
-        }
-        else if (thoughtLevel is not null)
-        {
-            // An explicit selection still counts when it matches the loaded value.
-            _hasExplicitThoughtLevel = effort is not null;
-        }
-        return true;
-    }
-
-    private async Task<bool> TrySetAcpModelAsync(string requestedModel, string? reasoningEffort, CancellationToken ct)
-    {
-        var resolvedModelId = _modelCatalog.Resolve(requestedModel, reasoningEffort);
-        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        timeoutCts.CancelAfter(_handshakeTimeout);
-
-        try
-        {
-            var result = await _rpc.SendRequestAsync("session/set_model", new
-            {
-                sessionId = NativeThreadId,
-                modelId = resolvedModelId
-            }, timeoutCts.Token, res => ConfirmModelResult(res, resolvedModelId)).ConfigureAwait(false);
-            return ConfirmsModel(result, resolvedModelId);
-        }
-        catch (JsonRpcRemoteException ex) when (ex.Code == -32601)
-        {
-            try
-            {
-                var result = await _rpc.SendRequestAsync("session/set_config_option", new
-                {
-                    sessionId = NativeThreadId,
-                    configId = "model",
-                    value = resolvedModelId
-                }, timeoutCts.Token, res => ConfirmModelResult(res, resolvedModelId)).ConfigureAwait(false);
-                return ConfirmsModel(result, resolvedModelId);
-            }
-            catch (JsonRpcRemoteException configEx) when (configEx.Code == -32601)
-            {
-                return false;
-            }
-        }
-    }
-
-    private void ConfirmModelResult(JsonElement result, string modelId)
-    {
-        if (ConfirmsModel(result, modelId))
-        {
-            // Providers may reset thought_level on a model change. Missing options mean unknown state.
-            _appliedThoughtLevel = AcpSessionOptions.Read(result)?.Reasoning?.Current;
-            ConfirmContextBinding(modelId, _appliedThoughtLevel);
-        }
-    }
-
-    private static bool ConfirmsModel(JsonElement result, string modelId)
-    {
-        if (result.ValueKind != JsonValueKind.Object || TryGetBool(result, "success") == false)
-            return false;
-        var (_, currentModelId) = ExtractAvailableModels(result);
-        return currentModelId is null || string.Equals(currentModelId, modelId, StringComparison.Ordinal);
-    }
-
     internal static async Task<AcpAgentSession> OpenAsync(
         CommandInvocation wrappedCommand,
         HarnessLaunchSpec spec,
@@ -341,7 +229,7 @@ public sealed class AcpAgentSession : IAgentSession
         Action<IAgentSession>? onDispose,
         CancellationToken ct,
         IReadOnlyList<PermissionModeOption>? extraPermissionModes = null,
-        bool skipSetPermissionMode = false,
+        IReadOnlyList<string>? launchArgumentModes = null,
         TimeSpan? commandsGraceTimeout = null)
     {
         var process = StdioSubprocess.Start(wrappedCommand);
@@ -353,7 +241,7 @@ public sealed class AcpAgentSession : IAgentSession
             await session.InitializeAndBindSessionAsync(
                 spec,
                 extraPermissionModes,
-                skipSetPermissionMode,
+                launchArgumentModes,
                 handshakeCts.Token).ConfigureAwait(false);
             return session;
         }
@@ -582,9 +470,11 @@ public sealed class AcpAgentSession : IAgentSession
     private async Task InitializeAndBindSessionAsync(
         HarnessLaunchSpec spec,
         IReadOnlyList<PermissionModeOption>? extraPermissionModes,
-        bool skipSetPermissionMode,
+        IReadOnlyList<string>? launchArgumentModes,
         CancellationToken ct)
     {
+        _extraPermissionModes = Array.AsReadOnly((extraPermissionModes ?? []).ToArray());
+        Volatile.Write(ref _permissionModes, new(_extraPermissionModes, null));
         var initParams = new Dictionary<string, object?>
         {
             ["protocolVersion"] = 1,
@@ -660,6 +550,7 @@ public sealed class AcpAgentSession : IAgentSession
                 (!isResume || string.Equals(id, spec.ResumeNativeThreadId, StringComparison.Ordinal)))
             {
                 Volatile.Write(ref _nativeThreadId, id);
+                RefreshPermissionModes(res);
             }
 
             if (_configureWorker)
@@ -699,39 +590,13 @@ public sealed class AcpAgentSession : IAgentSession
             throw new InvalidOperationException($"ACP '{method}' response did not contain a sessionId.");
         }
 
-        var permissionModes = AcpPermissionModes.Read(response);
-        var availableModes = permissionModes.Options;
-        if (extraPermissionModes is { Count: > 0 })
-        {
-            var merged = new List<PermissionModeOption>(availableModes);
-            foreach (var extra in extraPermissionModes)
-            {
-                if (!merged.Any(m => string.Equals(m.Id, extra.Id, StringComparison.Ordinal)))
-                {
-                    merged.Add(extra);
-                }
-            }
-            availableModes = merged;
-        }
-
-        AvailablePermissionModes = availableModes;
+        var permissionModes = Volatile.Read(ref _permissionModes);
+        _launchArgumentModes = new HashSet<string>(launchArgumentModes ?? [], StringComparer.Ordinal);
         var requestedMode = spec.PermissionMode?.Trim();
-        if (!skipSetPermissionMode && !string.IsNullOrWhiteSpace(requestedMode))
-        {
-            var modeParams = new Dictionary<string, object?> { ["sessionId"] = resolvedSessionId };
-            if (permissionModes.ConfigId is { } configId)
-            {
-                modeParams["configId"] = configId;
-                modeParams["value"] = requestedMode;
-            }
-            else
-            {
-                modeParams["modeId"] = requestedMode;
-            }
-            await _rpc.SendRequestAsync(
-                permissionModes.ConfigId is null ? "session/set_mode" : "session/set_config_option",
-                modeParams, ct).ConfigureAwait(false);
-        }
+        ValidatePermissionMode(requestedMode, permissionModes);
+        if (requestedMode is not null && !_launchArgumentModes.Contains(requestedMode))
+            await SetPermissionModeAsync(requestedMode, resolvedSessionId, permissionModes, ct).ConfigureAwait(false);
+        _appliedSettings = new(spec.Model, spec.ReasoningEffort, requestedMode);
 
         Volatile.Write(ref _nativeThreadId, resolvedSessionId);
         _useRestoredModelOnPrompt = isResume && string.IsNullOrWhiteSpace(spec.Model);
@@ -1036,9 +901,13 @@ public sealed class AcpAgentSession : IAgentSession
             ? updateObj
             : parameters;
 
-        if (_configureWorker && TryGetString(parameters, "sessionId") == NativeThreadId &&
-            TryGetString(update, "sessionUpdate") == "config_option_update" && AcpSessionOptions.Read(update) is { } options)
-            ApplyWorkerOptions(options);
+        if (!string.IsNullOrWhiteSpace(currentSessionId) && notificationSessionId == currentSessionId &&
+            TryGetString(update, "sessionUpdate") == "config_option_update")
+        {
+            RefreshPermissionModes(update);
+            if (_configureWorker && AcpSessionOptions.Read(update) is { } options)
+                ApplyWorkerOptions(options);
+        }
 
         var updateKind = TryGetString(update, "sessionUpdate")
                          ?? TryGetString(update, "type")

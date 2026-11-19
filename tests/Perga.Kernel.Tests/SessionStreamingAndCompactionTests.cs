@@ -8,59 +8,21 @@ namespace Perga.Kernel.Tests;
 
 public sealed class SessionStreamingAndCompactionTests
 {
-    [Theory]
-    [InlineData(0)]
-    [InlineData(1)]
-    [InlineData(2)]
-    public async Task PermissionDiscoveryUsesOwningSandboxAndMountedOverlaysEvenWhenValidationFails(int failure)
+    [Fact]
+    public async Task ColdPermissionUpdatesPersistWithoutDiscoveryMountOrAdmission()
     {
-        await using var ctx = new KernelTestContext(new KernelOptions
-        {
-            LeadSandboxMode = OsSandboxMode.ReadOnlyBwrap,
-            FreeSubagentSandboxMode = OsSandboxMode.WorkspaceWriteBwrap,
-            ActorEvictionSweepInterval = TimeSpan.Zero
-        });
-        ctx.DirectDriver.OverlayLayersToInject = [new(["/lower"], "/upper", "/work", "/merged")];
-        ctx.AgentRuntime.PermissionModeProbe = (_, _) => [new("plan", "Plan", "", "neutral", true)];
-        var area = await ctx.Kernel.CreateAreaAsync(new("Isolation"));
-        var snap = await ctx.Kernel.CreateTrackAsync(new(AreaId: area.Id, Provider: "acp:custom", PermissionMode: "plan"));
-        var creation = Assert.Single(ctx.AgentRuntime.PermissionModeProbeIsolation);
-        Assert.Equal(OsSandboxMode.ReadOnlyBwrap, creation.Sandbox);
-        Assert.Null(creation.Overlays); // Source validation precedes workspace preparation.
-        await ctx.Kernel.WaitForTrackIdleAsync(snap.Track.Id);
-        var sub = await ctx.Kernel.CreateSubagentSessionAsync(snap.Track.Id, new(Provider: "acp:custom", PermissionMode: "plan"));
-        Assert.Equal(OsSandboxMode.WorkspaceWriteBwrap, ctx.AgentRuntime.PermissionModeProbeIsolation.Last().Sandbox);
-        Assert.Equal("/merged", Assert.Single(ctx.AgentRuntime.PermissionModeProbeIsolation.Last().Overlays!).TargetPath);
-        foreach (var (id, sandbox) in new[] { (snap.Track.LeadSessionId!, OsSandboxMode.ReadOnlyBwrap), (sub.Id, OsSandboxMode.WorkspaceWriteBwrap) })
-        {
-            await ctx.Kernel.SetSessionPermissionModeAsync(id, "plan");
-            var probe = ctx.AgentRuntime.PermissionModeProbeIsolation.Last();
-            Assert.Equal(sandbox, probe.Sandbox);
-            Assert.Equal("/merged", Assert.Single(probe.Overlays!).TargetPath);
-        }
-        ctx.AgentRuntime.PermissionModeProbe = (_, _) => failure switch
-        {
-            1 => throw new IOException("offline"),
-            2 => [],
-            _ => [new("plan", "Plan", "", "neutral", true)]
-        };
-        foreach (var (id, sandbox) in new[] { (snap.Track.LeadSessionId!, OsSandboxMode.ReadOnlyBwrap), (sub.Id, OsSandboxMode.WorkspaceWriteBwrap) })
-        {
-            var error = await Assert.ThrowsAsync<KernelException>(() => ctx.Kernel.SetSessionPermissionModeAsync(id, "invalid"));
-            Assert.Equal(failure != 0 ? KernelErrorCode.PreconditionFailed : KernelErrorCode.InvalidArgument, error.Code);
-            var probe = ctx.AgentRuntime.PermissionModeProbeIsolation.Last();
-            Assert.Equal(sandbox, probe.Sandbox);
-            Assert.Equal("/merged", Assert.Single(probe.Overlays!).TargetPath);
-            Assert.Equal("plan", (await ctx.Kernel.ListSessionsAsync(snap.Track.Id)).Single(session => session.Id == id).PermissionMode);
-        }
-        var failedSub = await Assert.ThrowsAsync<KernelException>(() => ctx.Kernel.CreateSubagentSessionAsync(snap.Track.Id, new(Provider: "acp:custom", PermissionMode: "invalid")));
-        Assert.Equal(failure != 0 ? KernelErrorCode.PreconditionFailed : KernelErrorCode.InvalidArgument, failedSub.Code);
-        var failedSubProbe = ctx.AgentRuntime.PermissionModeProbeIsolation.Last();
-        Assert.Equal(OsSandboxMode.WorkspaceWriteBwrap, failedSubProbe.Sandbox);
-        Assert.Equal("/merged", Assert.Single(failedSubProbe.Overlays!).TargetPath);
-        var failedCreate = await Assert.ThrowsAsync<KernelException>(() => ctx.Kernel.CreateTrackAsync(new(AreaId: area.Id, Provider: "acp:custom", PermissionMode: "invalid")));
-        Assert.Equal(failure != 0 ? KernelErrorCode.PreconditionFailed : KernelErrorCode.InvalidArgument, failedCreate.Code);
-        Assert.Equal(OsSandboxMode.ReadOnlyBwrap, ctx.AgentRuntime.PermissionModeProbeIsolation.Last().Sandbox);
+        await using var ctx = new KernelTestContext();
+        var area = await ctx.Kernel.CreateAreaAsync(new("Modes"));
+        ctx.Kernel.DispatchAdmission.SetDraining(true);
+        var snap = await ctx.Kernel.CreateTrackAsync(new(AreaId: area.Id, Provider: "acp:custom", PermissionMode: " unknown "));
+        var sub = await ctx.Kernel.CreateSubagentSessionAsync(snap.Track.Id, new(Provider: "acp:custom", PermissionMode: "unknown"));
+        await ctx.Kernel.SetSessionPermissionModeAsync(sub.Id, " another ");
+        Assert.Equal("unknown", (await ctx.Kernel.ListSessionsAsync(snap.Track.Id)).Single(s => s.IsLead).PermissionMode);
+        Assert.Equal("another", (await ctx.Kernel.ListSessionsAsync(snap.Track.Id)).Single(s => s.Id == sub.Id).PermissionMode);
+        Assert.Empty(ctx.AgentRuntime.OpenedSessions);
+        Assert.Equal(0, ctx.AgentRuntime.ProviderProbeCalls);
+        Assert.Equal(0, ctx.Kernel.DispatchAdmission.ActiveDispatches);
+        ctx.Kernel.DispatchAdmission.SetDraining(false);
     }
 
     [Fact]
@@ -83,47 +45,30 @@ public sealed class SessionStreamingAndCompactionTests
         await ctx.Kernel.SetSessionPermissionModeAsync(lead.Id, "inspect");
         await ctx.SendAndWaitForTurnAsync(lead.Id, new("go", "mode-input"));
         Assert.Equal("inspect", ctx.AgentRuntime.OpenedSessions.Last().LaunchSpec.PermissionMode);
+        ctx.AgentRuntime.OpenedSessions.Last().AvailablePermissionModes = ctx.AgentRuntime.Providers.Single().PermissionModes!;
         await Assert.ThrowsAsync<KernelException>(() => ctx.Kernel.SetSessionPermissionModeAsync(lead.Id, "invented"));
-        await Assert.ThrowsAsync<KernelException>(() => ctx.Kernel.CreateTrackAsync(new(AreaId: area.Id, Provider: "acp:custom", PermissionMode: "invented")));
-        await Assert.ThrowsAsync<KernelException>(() => ctx.Kernel.CreateSubagentSessionAsync(snap.Track.Id, new(Provider: "acp:custom", PermissionMode: "invented")));
-    }
-
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task ExplicitAcpModeDiscoveryFailureIsRetryable(bool throws)
-    {
-        await using var ctx = new KernelTestContext();
-        ctx.AgentRuntime.PermissionModeProbe = (_, _) => throws ? throw new IOException("offline") : [];
-        var area = await ctx.Kernel.CreateAreaAsync(new("Modes"));
-        var error = await Assert.ThrowsAsync<KernelException>(() => ctx.Kernel.CreateTrackAsync(
-            new(AreaId: area.Id, Provider: "acp:custom", PermissionMode: "project-plan")));
-        Assert.Equal(KernelErrorCode.PreconditionFailed, error.Code);
-        // No discovery is needed to preserve the workspace's own default.
-        var snap = await ctx.Kernel.CreateTrackAsync(new(AreaId: area.Id, Provider: "acp:custom"));
-        await ctx.SendAndWaitForTurnAsync(snap.Track.LeadSessionId!, new("go", "go"));
-        Assert.Null(ctx.AgentRuntime.OpenedSessions.Last().LaunchSpec.PermissionMode);
+        await ctx.Kernel.CreateTrackAsync(new(AreaId: area.Id, Provider: "acp:custom", PermissionMode: "invented"));
+        await ctx.Kernel.CreateSubagentSessionAsync(snap.Track.Id, new(Provider: "acp:custom", PermissionMode: "invented"));
     }
 
     [Fact]
-    public async Task ExplicitAcpModesUseRequestAndTrackWorkspaceCatalogue()
+    public async Task ColdInvalidModeFailsAtOpenAndCanBeCorrectedForRetry()
     {
         await using var ctx = new KernelTestContext();
         var area = await ctx.Kernel.CreateAreaAsync(new("Modes"));
-        string? requestedCwd = null;
-        ctx.AgentRuntime.PermissionModeProbe = (_, cwd) =>
+        var snap = await ctx.Kernel.CreateTrackAsync(new(AreaId: area.Id, Provider: "acp:custom", PermissionMode: "invalid"));
+        var id = snap.Track.LeadSessionId!;
+        ctx.AgentRuntime.OnBeforeOpenSession = spec =>
         {
-            requestedCwd = cwd;
-            return cwd == "/workspace/project" ? [new("project-plan", "Plan", "", "neutral", true)] : [];
+            if (spec.PermissionMode == "invalid") throw new ArgumentException("Unsupported mode");
         };
-        var snap = await ctx.Kernel.CreateTrackAsync(new(AreaId: area.Id, Provider: "acp:custom", Cwd: "/workspace/project", PermissionMode: "project-plan"));
-        Assert.Equal("/workspace/project", requestedCwd);
-        var sub = await ctx.Kernel.CreateSubagentSessionAsync(snap.Track.Id, new(Provider: "acp:custom", PermissionMode: "project-plan"));
-        Assert.Equal("project-plan", sub.PermissionMode);
-        await ctx.Kernel.SetSessionPermissionModeAsync(sub.Id, "project-plan");
-        Assert.Equal("/workspace/project", requestedCwd);
-        var error = await Assert.ThrowsAsync<KernelException>(() => ctx.Kernel.SetSessionPermissionModeAsync(sub.Id, "invented"));
-        Assert.Equal(KernelErrorCode.InvalidArgument, error.Code);
+        Assert.Equal("failed", (await ctx.SendAndWaitForTurnAsync(id, new("fail", "fail"))).Status);
+        Assert.Empty(ctx.AgentRuntime.OpenedSessions);
+        Assert.Equal("invalid", (await ctx.Kernel.ListSessionsAsync(snap.Track.Id)).Single().PermissionMode);
+        await ctx.Kernel.SetSessionPermissionModeAsync(id, "plan");
+        Assert.Equal("completed", (await ctx.SendAndWaitForTurnAsync(id, new("retry", "retry"))).Status);
+        Assert.Equal("plan", Assert.Single(ctx.AgentRuntime.OpenedSessions).LaunchSpec.PermissionMode);
+        Assert.Equal(0, ctx.AgentRuntime.ProviderProbeCalls);
     }
 
     [Theory]
@@ -141,8 +86,7 @@ public sealed class SessionStreamingAndCompactionTests
         var original = Assert.Single(ctx.AgentRuntime.OpenedSessions);
         original.SupportsModelSwitch = supportsSwitch;
         ctx.AgentRuntime.Providers = [new("acp:custom", false, null, "discovery unavailable", [], PermissionModes: [])];
-        var probes = ctx.AgentRuntime.PermissionModeProbeCalls;
-        ctx.AgentRuntime.PermissionModeProbe = (_, _) => throw new IOException("discovery lost");
+        var probes = ctx.AgentRuntime.ProviderProbeCalls;
         await ctx.Kernel.UpdateSessionModelAsync(id, new("next-model"));
         await ctx.SendAndWaitForTurnAsync(id, new("next", "next"));
         Assert.Equal(supportsSwitch ? 1 : 2, ctx.AgentRuntime.OpenedSessions.Count);
@@ -151,7 +95,7 @@ public sealed class SessionStreamingAndCompactionTests
             Assert.Equal(original.NativeThreadId, ctx.AgentRuntime.OpenedSessions.Last().LaunchSpec.ResumeNativeThreadId);
         await ctx.Kernel.CompactSessionAsync(id);
         Assert.Equal("project-plan", ctx.AgentRuntime.OpenedSessions.Last().LaunchSpec.PermissionMode);
-        Assert.Equal(probes, ctx.AgentRuntime.PermissionModeProbeCalls);
+        Assert.Equal(probes, ctx.AgentRuntime.ProviderProbeCalls);
     }
 
     [Theory]
@@ -545,11 +489,13 @@ public sealed class SessionStreamingAndCompactionTests
             }))]));
 
         var workerSession = await openedWorker.Task.WaitAsync(TimeSpan.FromSeconds(10));
-        Assert.Equal(dynamicModes ? "runtime-worker" : provider.StartsWith("acp:") ? null : "never", workerSession.LaunchSpec.PermissionMode);
+        Assert.Equal(provider.StartsWith("acp:") ? null : "never", workerSession.LaunchSpec.PermissionMode);
 
         var sessions = await ctx.Kernel.ListSessionsAsync(trackId);
         var bound = Assert.Single(sessions, s => s.BoundTaskId is not null);
-        Assert.Equal(dynamicModes ? "runtime-worker" : provider.StartsWith("acp:") ? null : "never", bound.PermissionMode);
+        var rejected = await Assert.ThrowsAsync<KernelException>(() => ctx.Kernel.SetSessionPermissionModeAsync(bound.Id, "plan"));
+        Assert.Equal(KernelErrorCode.InvalidArgument, rejected.Code);
+        Assert.Equal(provider.StartsWith("acp:") ? null : "never", bound.PermissionMode);
     }
 
     [Fact]

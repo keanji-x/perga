@@ -66,7 +66,7 @@ import {
   createSerialWriter, deletePlannerInputOperation, editPlannerInputOperation, steerPlannerInputOperation,
   modelCatalogOperation, plannerQueueWriteFailure, setPlannerModelOperation,
   uploadPlannerAttachmentOperation, PLANNER_ATTACHMENT_FAILURES, UPLOAD_TEXT,
-  type ModelCatalogScope, type ModelSelection, type ModelSelectionResult,
+  type ModelCatalogScope, type ModelSelection, type ModelSelectionResult, type PlannerRun,
   type PlannerQueueWriteOutcome, type PlannerQueueEditOutcome, type PendingQueueEntry, type PlannerInputMutation,
 } from '../../../../core/domain/conversation.ts';
 import { harnessLiveOperation } from '../../../../core/domain/conversation-live.ts';
@@ -82,6 +82,7 @@ import { WEB_COMPAT_VERSION, type ServerVersionInfo } from './public.tsx';
 import type {
   AskAnswer, PlannerPermissionMode, SetPlannerPermissionModeResponse, UploadAttachmentResponse,
 } from '../../../../core/api/generated/wire.ts';
+import type { ConversationRegistry } from '../conversations/registry-model.ts';
 import { cancelThenInvalidate } from '../events/query-refresh.ts';
 
 /** A failed capability preflight guarantees no Area POST was submitted. */
@@ -165,12 +166,12 @@ export function modelCatalogQueryOptions(
  */
 function useCardSettingWriter<A, R>(
   transport: ApiTransportPort, cardId: string, operation: (cardId: string, value: A) => ApiOperation<R>,
-  unauthorized: UnauthorizedChannel,
+  unauthorized: UnauthorizedChannel, accepted: (result: R) => R = result => result,
 ): (value: A) => Promise<R> {
   const writer = useRef<{ cardId: string; write: (value: A) => Promise<R> } | null>(null);
   if (writer.current === null || writer.current.cardId !== cardId) {
     const serial = createSerialWriter((intent: { value: A; transport: ApiTransportPort }) =>
-      runOperation(intent.transport, operation(cardId, intent.value), unauthorized));
+      runOperation(intent.transport, operation(cardId, intent.value), unauthorized).then(accepted));
     writer.current = {
       cardId,
       write: (value: A) => {
@@ -182,12 +183,38 @@ function useCardSettingWriter<A, R>(
   return writer.current.write;
 }
 
-export function usePlannerMutations(transport: ApiTransportPort, cardId: string, trackId: string | null, unauthorized: UnauthorizedChannel) {
+export function usePlannerMutations(transport: ApiTransportPort, cardId: string, trackId: string | null, unauthorized: UnauthorizedChannel, permissions: ConversationRegistry) {
   const client = useQueryClient();
   const setModelWrite = useCardSettingWriter<ModelSelection, ModelSelectionResult>(
     transport, cardId, setPlannerModelOperation, unauthorized);
-  const setPermissionModeWrite = useCardSettingWriter<PlannerPermissionMode, SetPlannerPermissionModeResponse>(
-    transport, cardId, setPlannerPermissionModeOperation, unauthorized);
+  // The tab registry owns serialization across A → B → A and actual pane remounts.
+  // Admission belongs to the press; waiting for the preceding write must not admit an offline press later.
+  const setPermissionModeWrite = (mode: PlannerPermissionMode): Promise<SetPlannerPermissionModeResponse> => {
+    let admitted: ApiTransportPort;
+    try { admitted = admitTransport(transport); } catch (error) { return Promise.reject(error instanceof Error ? error : new Error('Could not change permission mode.')); }
+    const previous = permissions.permissionWriteOf(cardId);
+    const key = plannerRunQueryOptions(transport, cardId, unauthorized).queryKey;
+    const dispatch = () => {
+      const readVersion = client.getQueryState(key)?.dataUpdateCount;
+      return runOperation(admitted, setPlannerPermissionModeOperation(cardId, mode), unauthorized).then(result => {
+        // A completed GET is authoritative too. Neither an older ACK nor its cancellation may revert it.
+        const publish = permissions.permissionWriteOf(cardId) === held
+          && client.getQueryState(key)?.dataUpdateCount === readVersion;
+        if (publish) {
+          // Cancellation reverts a pending GET synchronously, before the ACK is published.
+          void cancelThenInvalidate(client, queryKeys.plannerRun(cardId));
+          client.setQueryData<PlannerRun>(key,
+            current => current === undefined ? current : { ...current, permission_mode: result.permission_mode });
+        } else {
+          void cancelThenInvalidate(client, queryKeys.plannerRun(cardId));
+        }
+        return result;
+      });
+    };
+    const write = previous === undefined ? dispatch() : previous.catch(() => undefined).then(dispatch);
+    const held = permissions.holdPermissionWrite(cardId, write);
+    return held;
+  };
   const transcriptKey = queryKeys.harnessItems(cardId);
   const refreshTranscript = () => client.invalidateQueries({ queryKey: transcriptKey });
   const refreshAfter = <T,>(result: T): T => {
@@ -347,9 +374,9 @@ export function usePlannerMutations(transport: ApiTransportPort, cardId: string,
             .catch(() => undefined);
           return refreshAfter(result);
         }),
-    /* The stored mode is read back from `planner-run`, as the model is. */
+    /* Each actual PUT publishes its ACK inside the serial writer, before the next queued intent. */
     setPermissionMode: (mode: PlannerPermissionMode): Promise<SetPlannerPermissionModeResponse> =>
-      setPermissionModeWrite(mode).then(refreshAfter),
+      setPermissionModeWrite(mode),
     /* No `refreshAfter`: an upload changes nothing any query holds until a send names it. Every failure, the
      * admission's included, rejects with the sentence the strip shows, read against the route's table. */
     uploadAttachment: async (readBytes: () => Promise<Uint8Array>, contentType: string) => {

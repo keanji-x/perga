@@ -1,3 +1,4 @@
+import { useTestConversationRegistry } from './permission-registry-fixture.ts';
 import { QueryClient, QueryClientProvider, MutationCache, onlineManager } from '@tanstack/react-query';
 import { renderHook, cleanup, act, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
@@ -42,7 +43,7 @@ it('queued production model selections retain their original permit across recov
   let finish!: (reply: ApiTransportResponse) => void;
   const send = vi.fn(() => new Promise<ApiTransportResponse>(resolve => { finish = resolve; }));
   const transport = createRecoveryTransports({ send }, access).business; const client = new QueryClient();
-  const { result } = renderHook(() => usePlannerMutations(transport, 'card-a', 'track-a', createUnauthorizedChannel({ enqueue: task => task() })), {
+  const { result } = renderHook(() => usePlannerMutations(transport, 'card-a', 'track-a', createUnauthorizedChannel({ enqueue: task => task() }), useTestConversationRegistry()), {
     wrapper: ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>,
   });
   const first = result.current.setModel({ model: 'first', reasoning_effort: null }).catch(error => error as unknown);
@@ -133,7 +134,7 @@ it.each([1, 2])('does not upload %i old picked files after their asynchronous re
   const transport = createRecoveryTransports({ send }, access).business; const client = new QueryClient();
   const channel = createUnauthorizedChannel({ enqueue: task => task() });
   const { result } = renderHook(() => {
-    const mutations = usePlannerMutations(transport, 'card-a', 'track-a', channel);
+    const mutations = usePlannerMutations(transport, 'card-a', 'track-a', channel, useTestConversationRegistry());
     const images = useCardImages('card-a');
     return usePlannerAttachments(mutations.uploadAttachment, 'card-a', images);
   }, { wrapper: ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider> });
@@ -156,7 +157,7 @@ it.each(['abandon_session', 'recover_session'] as const)('canonical fresh recove
   const send = vi.fn<(request: ApiRequest) => Promise<ApiTransportResponse>>(() => Promise.resolve({ status: 200, statusText: 'OK', body: { card_id: 'card-a', old_carrier_id: 'old', carrier_id: 'fresh' } }));
   const transport = createRecoveryTransports({ send }, access).business;
   const client = new QueryClient();
-  const { result } = renderHook(() => usePlannerMutations(transport, 'card-a', 'track-a', createUnauthorizedChannel({ enqueue: task => task() })), {
+  const { result } = renderHook(() => usePlannerMutations(transport, 'card-a', 'track-a', createUnauthorizedChannel({ enqueue: task => task() }), useTestConversationRegistry()), {
     wrapper: ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>,
   });
   const recovery = { cause: action === 'recover_session' ? 'terminal_provider_error' : 'unknown_outcome', action, request: { carrier_id: 'old', submission_id: 'submission', attempt_id: 'attempt', revision: '18446744073709551614' } } as const;

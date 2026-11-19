@@ -9,6 +9,7 @@ namespace Perga.AgentKit;
 
 public sealed class ClaudeAgentSession : IAgentSession
 {
+    private readonly SessionRuntimeSettings _appliedSettings;
     private static readonly Encoding Utf8NoBom = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
 
     private sealed record PendingClaudeApproval(string RequestId, JsonElement OriginalInput);
@@ -65,8 +66,10 @@ public sealed class ClaudeAgentSession : IAgentSession
         StdioSubprocess process,
         string mcpConfigFilePath,
         string? initialThreadId,
+        SessionRuntimeSettings settings,
         Action<IAgentSession>? onDispose)
     {
+        _appliedSettings = settings;
         _process = process;
         _mcpConfigFilePath = mcpConfigFilePath;
         _nativeThreadId = initialThreadId;
@@ -157,6 +160,7 @@ public sealed class ClaudeAgentSession : IAgentSession
                 subprocess,
                 tempJsonPath,
                 spec.ResumeNativeThreadId,
+                new(spec.Model, spec.ReasoningEffort, spec.PermissionMode),
                 onDispose);
         }
         catch
@@ -349,6 +353,9 @@ public sealed class ClaudeAgentSession : IAgentSession
         var jsonLine = JsonSerializer.Serialize(controlResponse);
         await _process.WriteLineAsync(jsonLine, ct).ConfigureAwait(false);
     }
+
+    public Task<bool> TryReconcileSettingsAsync(SessionRuntimeSettings settings, CancellationToken ct) =>
+        Task.FromResult(settings == _appliedSettings);
 
     public Task<bool> TrySetModelAsync(string? model, string? reasoningEffort = null, CancellationToken ct = default) => Task.FromResult(false);
 

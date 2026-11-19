@@ -113,6 +113,7 @@ export function createConversationOwner(submittedStorage?: () => Storage) {
     entries: {}, conversations: NO_CONVERSATIONS, drafts: {}, openRequest: null, pendingTrackInitialSends: readPendingTrackInitialSends(pendingInitialSendsKey, submittedStorage), outboxes: {}, workerSends: {}, spentRows: {},
     composers: {}, newComposers: {}, uploads: {}, edits: {}, notices: {}, queueWrites: {}, restarts: {}, resolutions: {},
   };
+  const permissionWrites = new Map<string, Promise<unknown>>();
   let read = 0;
   const listeners = new Set<() => void>();
   const commit = (next: ConversationSnapshot) => {
@@ -132,6 +133,19 @@ export function createConversationOwner(submittedStorage?: () => Storage) {
     commit({ ...state, entries, conversations });
   };
   const commands: ConversationRegistry = {
+    permissionWriteOf: id => permissionWrites.get(id),
+    holdPermissionWrite: (id, write) => {
+      const previous = permissionWrites.get(id);
+      // A rejected ancestor must not settle a later barrier while another real PUT is still out.
+      const pending = previous === undefined ? write : Promise.allSettled([previous, write]).then(results => {
+        for (const result of results) if (result.status === 'rejected') throw result.reason;
+        return write;
+      });
+      permissionWrites.set(id, pending);
+      const settled = () => { if (permissionWrites.get(id) === pending) permissionWrites.delete(id); };
+      void Promise.allSettled([previous, write]).then(settled);
+      return pending;
+    },
     beginResolution: (id, decision, args, key) => {
       const slot = `${id}\u0000${args.attempt_id}`;
       const previous = state.resolutions[slot];

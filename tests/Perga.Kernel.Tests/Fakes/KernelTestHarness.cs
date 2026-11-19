@@ -1355,6 +1355,7 @@ internal sealed class ConfigurableFakePolicyVm : IPolicyVm
 internal sealed class ScriptableFakeAgentSession : IAgentSession
 {
     private readonly Func<ScriptableFakeAgentSession, TurnInput, CancellationToken, IAsyncEnumerable<UnifiedAgentEvent>> _turnHandler;
+    private SessionRuntimeSettings _appliedSettings;
 
     public ScriptableFakeAgentSession(
         HarnessLaunchSpec launchSpec,
@@ -1362,6 +1363,7 @@ internal sealed class ScriptableFakeAgentSession : IAgentSession
         Func<ScriptableFakeAgentSession, TurnInput, CancellationToken, IAsyncEnumerable<UnifiedAgentEvent>> turnHandler)
     {
         LaunchSpec = launchSpec;
+        _appliedSettings = new(launchSpec.Model, launchSpec.ReasoningEffort, launchSpec.PermissionMode);
         NativeThreadId = initialNativeThreadId;
         _turnHandler = turnHandler;
     }
@@ -1369,6 +1371,7 @@ internal sealed class ScriptableFakeAgentSession : IAgentSession
     private Action<IdleContextUsage>? _idleUsageHandler;
 
     public HarnessLaunchSpec LaunchSpec { get; }
+    public IReadOnlyList<PermissionModeOption> AvailablePermissionModes { get; set; } = [];
     public string? NativeThreadId { get; set; }
     public bool SupportsNativeSteer { get; set; } = true;
     public bool CanReuseContextWindow => true;
@@ -1415,6 +1418,19 @@ internal sealed class ScriptableFakeAgentSession : IAgentSession
 
     public bool SupportsModelSwitch { get; set; }
     public ConcurrentQueue<string?> ModelSwitches { get; } = new();
+    public Func<SessionRuntimeSettings, CancellationToken, Task<bool>>? ReconcileSettingsHandler { get; set; }
+    public ConcurrentQueue<SessionRuntimeSettings> ReconciledSettings { get; } = new();
+    public async Task<bool> TryReconcileSettingsAsync(SessionRuntimeSettings settings, CancellationToken ct)
+    {
+        if (settings == _appliedSettings) return true;
+        ReconciledSettings.Enqueue(settings);
+        var applied = ReconcileSettingsHandler is { } handler ? await handler(settings, ct)
+            : settings.PermissionMode == _appliedSettings.PermissionMode &&
+                await TrySetModelAsync(settings.Model, settings.ReasoningEffort, ct);
+        if (applied) _appliedSettings = settings;
+        return applied;
+    }
+
     public Task<bool> TrySetModelAsync(string? model, string? reasoningEffort = null, CancellationToken ct = default)
     {
         ModelSwitches.Enqueue(model);
@@ -1468,6 +1484,7 @@ internal sealed class ScriptableFakeAgentSession : IAgentSession
 internal sealed class ScriptableFakeAgentRuntime : IAgentRuntime
 {
     private int _threadCounter;
+    public bool SupportsSessionResume { get; set; }
 
     public ConcurrentQueue<ScriptableFakeAgentSession> OpenedSessions { get; } = new();
     public Action<HarnessLaunchSpec>? OnBeforeOpenSession { get; set; }
@@ -1480,19 +1497,12 @@ internal sealed class ScriptableFakeAgentRuntime : IAgentRuntime
     public IReadOnlyList<ProviderStatus> Providers { get; set; } =
         [new ProviderStatus("codex", true, "1.0.0", null, ["gpt-5"])];
 
-    public Func<string, string?, IReadOnlyList<PermissionModeOption>>? PermissionModeProbe { get; set; }
-    public List<(OsSandboxMode Sandbox, IReadOnlyList<OverlayMountSpec>? Overlays)> PermissionModeProbeIsolation { get; } = [];
-    public int PermissionModeProbeCalls { get; private set; }
-
-    public Task<IReadOnlyList<PermissionModeOption>> ProbePermissionModesAsync(string provider, string? cwd, OsSandboxMode sandbox, IReadOnlyList<OverlayMountSpec>? overlayMounts, CancellationToken ct)
+    public int ProviderProbeCalls { get; private set; }
+    public Task<IReadOnlyList<ProviderStatus>> ProbeProvidersAsync(CancellationToken ct)
     {
-        PermissionModeProbeCalls++;
-        PermissionModeProbeIsolation.Add((sandbox, overlayMounts));
-        return Task.FromResult(PermissionModeProbe is { } probe ? probe(provider, cwd)
-            : Providers.FirstOrDefault(status => status.Provider == provider)?.PermissionModes ?? []);
+        ProviderProbeCalls++;
+        return ProbeScript?.Invoke(ct) ?? Task.FromResult(Providers);
     }
-
-    public Task<IReadOnlyList<ProviderStatus>> ProbeProvidersAsync(CancellationToken ct) => ProbeScript?.Invoke(ct) ?? Task.FromResult(Providers);
 
     public Task<IAgentSession> OpenSessionAsync(HarnessLaunchSpec spec, CancellationToken ct)
     {
@@ -1502,6 +1512,7 @@ internal sealed class ScriptableFakeAgentRuntime : IAgentRuntime
             spec,
             threadId,
             (s, inp, token) => (TurnScript ?? DefaultTurnScript)(s, inp, token));
+        session.SupportsSessionResume = SupportsSessionResume;
         OpenedSessions.Enqueue(session);
         OnOpenedSession?.Invoke(session);
         return Task.FromResult<IAgentSession>(session);
@@ -1535,6 +1546,7 @@ internal sealed class SpyWorkspaceDriver : IWorkspaceDriver
     public bool SupportsParallelIsolatedWriteLeases { get; set; }
     public IReadOnlyList<WorkspaceOverlayLayer>? OverlayLayersToInject { get; set; }
     public string? OverrideMountedMergedCwd { get; set; }
+    public bool VerifyMountOnAccess { get; set; }
 
     public ConcurrentQueue<WorkspaceProvisionRequest> ProvisionCalls { get; } = new();
     public ConcurrentQueue<WorkspaceSpec> EnsureMountedCalls { get; } = new();
@@ -1741,7 +1753,7 @@ internal sealed partial class KernelTestContext : IAsyncDisposable
     public EventHub EventHub { get; } = new();
     public PergaKernelService Kernel { get; }
 
-    public KernelTestContext(KernelOptions? options = null, IPolicyVm? policyVm = null)
+    public KernelTestContext(KernelOptions? options = null, IPolicyVm? policyVm = null, IAgentRuntime? agentRuntime = null)
     {
         DriverRegistry = new FakeWorkspaceDriverRegistry(DirectDriver, CowOverlayDriver);
         var effectiveOptions = options ?? new KernelOptions
@@ -1753,7 +1765,7 @@ internal sealed partial class KernelTestContext : IAsyncDisposable
             Store,
             ReportEngine,
             policyVm ?? PolicyVm,
-            AgentRuntime,
+            agentRuntime ?? AgentRuntime,
             DriverRegistry,
             VcsService,
             TerminalClient,

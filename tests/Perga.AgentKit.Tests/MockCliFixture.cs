@@ -837,6 +837,10 @@ if "--version" in sys.argv:
     sys.stdout.flush()
     sys.exit(0)
 
+if os.environ.get("MOCK_ACP_PID_FILE"):
+    with open(os.environ["MOCK_ACP_PID_FILE"], "w") as pid_file:
+        pid_file.write(str(os.getpid()))
+
 write_lock = threading.Lock()
 state = {
     "session_id": None,
@@ -1147,6 +1151,10 @@ for raw_line in sys.stdin:
     if os.environ.get("MOCK_ACP_LOG"):
         with open(os.environ["MOCK_ACP_LOG"], "a") as log:
             log.write(json.dumps(msg) + "\n")
+    if method in ("session/set_model", "session/prompt") and os.environ.get("MOCK_ACP_PERMISSION_UPDATE"):
+        send({"jsonrpc": "2.0", "method": "session/update", "params": {
+            "sessionId": os.environ.get("MOCK_ACP_PERMISSION_UPDATE_SESSION", state["session_id"]),
+            "update": {"sessionUpdate": "config_option_update", **json.loads(os.environ["MOCK_ACP_PERMISSION_UPDATE"])}}})
     if method == "initialize":
         mcp_caps = {"http": True} if os.environ.get("MOCK_ACP_HTTP_MCP") == "1" else {}
         if os.environ.get("MOCK_ACP_LOG") and os.environ.get("MOCK_ACP_LOG_ARGV") == "1":
@@ -1301,7 +1309,11 @@ for raw_line in sys.stdin:
         else:
             send({"jsonrpc": "2.0", "id": msg_id, "error": {"code": -32602, "message": "wrong session"}})
     elif method == "session/set_mode":
-        send({"jsonrpc": "2.0", "id": msg_id, "result": {}})
+        code = int(os.environ.get("MOCK_ACP_MODE_ERROR", "0"))
+        if code:
+            send({"jsonrpc": "2.0", "id": msg_id, "error": {"code": code, "message": "mode switch failed"}})
+        else:
+            send({"jsonrpc": "2.0", "id": msg_id, "result": json.loads(os.environ.get("MOCK_ACP_PERMISSION_RESPONSE", "{}"))})
     elif method == "session/set_model":
         if os.environ.get("MOCK_ACP_STRICT_MODELS") == "1":
             advertised = json.loads(os.environ["MOCK_ACP_MODELS"])["models"]["availableModels"]
@@ -1331,6 +1343,10 @@ for raw_line in sys.stdin:
                     }
                 })
     elif method == "session/set_config_option":
+        mode_error = int(os.environ.get("MOCK_ACP_MODE_ERROR", "0"))
+        if params.get("configId") == "permission-policy" and mode_error:
+            send({"jsonrpc": "2.0", "id": msg_id, "error": {"code": mode_error, "message": "mode switch failed"}})
+            continue
         code = int(os.environ.get("MOCK_ACP_MODEL_ERROR", "0"))
         if code and params.get("configId") == "model":
             send({"jsonrpc": "2.0", "id": msg_id, "error": {"code": code, "message": "model switch failed"}})
@@ -1348,7 +1364,7 @@ for raw_line in sys.stdin:
         if params.get("configId") == "model":
             state["model"] = params.get("value")
             state["model_set_method"] = "session/set_config_option"
-        send({"jsonrpc": "2.0", "id": msg_id, "result": {}})
+        send({"jsonrpc": "2.0", "id": msg_id, "result": json.loads(os.environ.get("MOCK_ACP_PERMISSION_RESPONSE", "{}"))})
     elif method == "session/prompt":
         state["cancel_event"].clear()
         t = threading.Thread(target=handle_prompt, args=(msg_id, params), daemon=True)
