@@ -239,13 +239,13 @@ public sealed class CodexAgentSession : IAgentSession
         Volatile.Write(ref _currentCompact, compactState);
         try
         {
-            await _rpc.SendRequestAsync(
-                "thread/compact/start",
-                new Dictionary<string, object?> { ["threadId"] = threadId },
-                ct).ConfigureAwait(false);
-
             try
             {
+                await _rpc.SendRequestAsync(
+                    "thread/compact/start",
+                    new Dictionary<string, object?> { ["threadId"] = threadId },
+                    ct).ConfigureAwait(false);
+
                 return await compactState.Completion.Task.WaitAsync(ct).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -304,6 +304,18 @@ public sealed class CodexAgentSession : IAgentSession
 
         var threadId = NativeThreadId ?? throw new InvalidOperationException("Codex session has no bound NativeThreadId.");
         await _turnLock.WaitAsync(ct).ConfigureAwait(false);
+        if (Volatile.Read(ref _disposed) != 0)
+        {
+            try { _turnLock.Release(); } catch (ObjectDisposedException) { }
+            throw new ObjectDisposedException(nameof(CodexAgentSession));
+        }
+
+        if (Volatile.Read(ref _compactAbandoned) != 0)
+        {
+            try { _turnLock.Release(); } catch (ObjectDisposedException) { }
+            throw new InvalidOperationException("Codex session has an unconfirmed canceled compaction.");
+        }
+
         var turnState = new TurnStreamState(threadId, input, ct);
         Volatile.Write(ref _currentTurn, turnState);
 
