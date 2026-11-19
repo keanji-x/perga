@@ -708,6 +708,12 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                         """, new { TrackId = track.Id, Now = track.UpdatedAtMs, Closed = track.ClosedAtMs is not null,
                             Reason = track.ClosedAtMs is not null ? TrackWakeReasons.TrackClosed : TrackWakeReasons.TemplateChanged }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
 
+                if (track.ClosedAtMs is not null)
+                    await conn.ExecuteAsync(new CommandDefinition($"""
+                        UPDATE track_schedules SET state='{TrackScheduleStates.Canceled}', next_fire_at_ms=NULL, updated_at_ms=@Now
+                        WHERE track_id=@TrackId AND state='{TrackScheduleStates.Active}';
+                        """, new { TrackId = track.Id, Now = track.UpdatedAtMs }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
+
                 if (evt is not null)
                 {
                     await InsertEventInternalAsync(conn, tx, evt, innerCt).ConfigureAwait(false);

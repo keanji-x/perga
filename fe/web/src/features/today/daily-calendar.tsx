@@ -1,10 +1,23 @@
+import { useEffect, useMemo } from 'react';
 import { SegmentedControl, SegmentedControlItem } from '@astryxdesign/core/SegmentedControl';
+import type { TodayCalendarDay, TodayScheduleItem } from '../../../../core/domain/daily-planner.ts';
 import { Icon } from '../../ui/icon/public.tsx';
 import { PanelModule } from '../../ui/panel-card/public.tsx';
 import { useState } from '../../ui/state/public.ts';
 import styles from './daily-calendar.module.css';
 
 type CalendarViewMode = 'week' | 'month';
+
+export type DailyCalendarProps = Readonly<{
+  today?: string;
+  selectedDate?: string;
+  days?: readonly TodayCalendarDay[];
+  selectedSchedules?: readonly TodayScheduleItem[];
+  scheduleTimeZone?: string;
+  onSelectDate?: (date: string) => void;
+  onVisibleRangeChange?: (range: Readonly<{ start: string; end: string }>) => void;
+  onOpenTrack?: (trackId: string) => void;
+}>;
 
 function localDay(): string {
   const now = new Date();
@@ -33,14 +46,48 @@ function startOfWeekMonday(isoDate: string): string {
   return formatIsoDate(date);
 }
 
+function formatScheduleTime(ms: number, timeZone: string): string {
+  try {
+    return new Intl.DateTimeFormat('en-GB', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+      timeZone,
+    }).format(new Date(ms));
+  } catch {
+    return new Intl.DateTimeFormat('en-GB', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+      timeZone: 'UTC',
+    }).format(new Date(ms));
+  }
+}
+
 const WEEKDAY_LABELS = Object.freeze(['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] as const);
 
-/** Visit-local week/month visual anchor; clicking a day updates selection in place. */
-export function DailyCalendar({ today = localDay() }: Readonly<{ today?: string }>) {
-  const [selected, setSelected] = useState(today);
+/** Week/month calendar navigation with optional day indicators and scheduled wakes. */
+export function DailyCalendar({
+  today = localDay(),
+  selectedDate,
+  days,
+  selectedSchedules,
+  scheduleTimeZone,
+  onSelectDate,
+  onVisibleRangeChange,
+  onOpenTrack,
+}: DailyCalendarProps) {
+  const [internalSelected, setInternalSelected] = useState(selectedDate ?? today);
   const [mode, setMode] = useState<CalendarViewMode>('week');
-  const [anchorDate, setAnchorDate] = useState(today);
+  const [anchorDate, setAnchorDate] = useState(selectedDate ?? today);
+  const [trackedSelectedProp, setTrackedSelectedProp] = useState(selectedDate);
 
+  if (selectedDate !== trackedSelectedProp) {
+    setTrackedSelectedProp(selectedDate);
+    setAnchorDate(selectedDate ?? today);
+  }
+
+  const activeSelected = selectedDate ?? internalSelected;
   const anchorMonth = anchorDate.slice(0, 7);
   const [year, monthNumber] = anchorMonth.split('-').map(Number);
 
@@ -57,16 +104,39 @@ export function DailyCalendar({ today = localDay() }: Readonly<{ today?: string 
     ? (new Date(Date.UTC(year, monthNumber - 1, 1)).getUTCDay() + 6) % 7
     : 0;
 
-  const visibleDays: readonly string[] = mode === 'week'
-    ? Array.from({ length: 7 }, (_, index) => addDays(startOfWeekMonday(anchorDate), index))
-    : Array.from(
-        { length: new Date(Date.UTC(year, monthNumber, 0)).getUTCDate() },
-        (_, index) => `${anchorMonth}-${String(index + 1).padStart(2, '0')}`,
-      );
+  const visibleDays: readonly string[] = useMemo(() => (
+    mode === 'week'
+      ? Array.from({ length: 7 }, (_, index) => addDays(startOfWeekMonday(anchorDate), index))
+      : Array.from(
+          { length: new Date(Date.UTC(year, monthNumber, 0)).getUTCDate() },
+          (_, index) => `${anchorMonth}-${String(index + 1).padStart(2, '0')}`,
+        )
+  ), [anchorDate, anchorMonth, mode, monthNumber, year]);
+
+  const visibleStart = visibleDays[0];
+  const visibleEnd = visibleDays[visibleDays.length - 1];
+
+  useEffect(() => {
+    onVisibleRangeChange?.({ start: visibleStart, end: visibleEnd });
+  }, [onVisibleRangeChange, visibleEnd, visibleStart]);
+
+  const daysByDate = useMemo(() => {
+    const map = new Map<string, TodayCalendarDay>();
+    if (days !== undefined) {
+      for (const entry of days) map.set(entry.date, entry);
+    }
+    return map;
+  }, [days]);
+
+  const selectDay = (day: string) => {
+    if (selectedDate === undefined) setInternalSelected(day);
+    setAnchorDate(day);
+    onSelectDate?.(day);
+  };
 
   const monthTitle = new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' })
     .format(new Date(`${anchorMonth}-01T12:00:00Z`));
-  const showTodayJump = selected !== today || (mode === 'week'
+  const showTodayJump = activeSelected !== today || (mode === 'week'
     ? startOfWeekMonday(anchorDate) !== startOfWeekMonday(today)
     : anchorMonth !== today.slice(0, 7));
 
@@ -104,7 +174,7 @@ export function DailyCalendar({ today = localDay() }: Readonly<{ today?: string 
             <button
               type="button"
               className={styles.todayButton}
-              onClick={() => { setSelected(today); setAnchorDate(today); }}
+              onClick={() => selectDay(today)}
             >
               Today
             </button>
@@ -127,7 +197,11 @@ export function DailyCalendar({ today = localDay() }: Readonly<{ today?: string 
           {Array.from({ length: monthFirstOffset }, (_, index) => <span key={`blank-${index}`} aria-hidden="true" />)}
           {visibleDays.map((day) => {
             const isToday = day === today;
-            const isSelected = day === selected;
+            const isSelected = day === activeSelected;
+            const info = daysByDate.get(day);
+            const hasTrack = info?.has_daily_track === true;
+            const hasReport = info?.has_report === true;
+            const scheduleCount = info?.schedule_count ?? 0;
             return (
               <button
                 key={day}
@@ -137,17 +211,62 @@ export function DailyCalendar({ today = localDay() }: Readonly<{ today?: string 
                 aria-pressed={isSelected}
                 data-nc-today={isToday ? '' : undefined}
                 data-nc-selected={isSelected ? '' : undefined}
-                onClick={() => { setSelected(day); setAnchorDate(day); }}
+                data-nc-has-track={hasTrack ? '' : undefined}
+                data-nc-has-report={hasReport ? '' : undefined}
+                data-nc-schedule-count={scheduleCount > 0 ? String(scheduleCount) : undefined}
+                onClick={() => selectDay(day)}
               >
                 <span className={`${styles.dateBadge} ${isSelected ? styles.selectedDate : ''}`}>
                   <span className={`${styles.dayNumber} ${isToday ? styles.todayNumber : ''}`}>
                     {Number(day.slice(8, 10))}
                   </span>
+                  {(hasTrack || hasReport || scheduleCount > 0) && (
+                    <span className={styles.dayDots} aria-hidden="true">
+                      {(hasTrack || hasReport) && (
+                        <span className={`${styles.dayDot} ${hasReport ? styles.reportDot : styles.trackDot}`} />
+                      )}
+                      {scheduleCount > 0 && <span className={`${styles.dayDot} ${styles.scheduleDot}`} />}
+                    </span>
+                  )}
                 </span>
               </button>
             );
           })}
         </div>
+
+        {selectedSchedules !== undefined && selectedSchedules.length > 0 && (
+          <section className={styles.agenda} aria-label="Scheduled wakes">
+            <h3 className={styles.agendaHeading}>Scheduled · {selectedSchedules.length}</h3>
+            <ul className={styles.agendaList}>
+              {selectedSchedules.map((item) => (
+                <li key={item.id} className={styles.agendaItem}>
+                  <span className={styles.agendaTime}>
+                    {formatScheduleTime(item.next_fire_at_ms, scheduleTimeZone ?? item.timezone)}
+                  </span>
+                  <span className={styles.agendaBody}>
+                    <span className={styles.agendaTitle}>{item.title}</span>
+                    <span className={styles.agendaMeta}>
+                      {onOpenTrack !== undefined ? (
+                        <button
+                          type="button"
+                          className={styles.agendaTrackButton}
+                          onClick={() => onOpenTrack(item.track_id)}
+                        >
+                          {item.track_title || item.track_id}
+                        </button>
+                      ) : (
+                        <span>{item.track_title || item.track_id}</span>
+                      )}
+                      {item.schedule_kind === 'cron' && (
+                        <span className={styles.agendaCron}>{item.cron_expr ?? 'cron'}</span>
+                      )}
+                    </span>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
       </section>
     </PanelModule>
   );

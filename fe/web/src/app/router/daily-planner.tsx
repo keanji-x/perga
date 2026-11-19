@@ -5,12 +5,13 @@ import { Icon } from '../../ui/icon/public.tsx';
 import { useCompactViewport } from '../../ui/viewport/public.ts';
 import styles from './daily-planner.module.css';
 // Reuse the Track route body; this composition only resolves dates and report evidence.
-import { useLayoutEffect, useRef, type ReactNode, type RefObject } from 'react';
+import { useCallback, useLayoutEffect, useRef, type ReactNode, type RefObject } from 'react';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import type { TrackAggregateSnapshotDto } from '../../../../core/api/schemas.ts';
-import { dailyTrackOperation, reportChangesOperation, reportEditsOperation, shiftDailyDate, supervisorSnapshotOperation, type ReportChange } from '../../../../core/domain/daily-planner.ts';
+import { dailyTrackOperation, isDailyDate, reportChangesOperation, reportEditsOperation, shiftDailyDate, supervisorSnapshotOperation, todayCalendarOperation, todaySchedulesOperation, type ReportChange } from '../../../../core/domain/daily-planner.ts';
+import { PanelCard } from '../../ui/panel-card/public.tsx';
 import { DEPLOYMENT_OWNER_USER_ID } from '../../../../core/api/auth.ts';
 import { supervisorDetails, supervisorReport } from '../../../../core/domain/supervisor-view.ts';
 import { SupervisorWaitChart } from '../../features/today/supervisor-wait.tsx';
@@ -35,9 +36,23 @@ export type DailyCenterPresentation = Readonly<{
   render: (assistant: ReactNode) => ReactNode;
 }>;
 
-export function DailyTodayRoute({ transport, unauthorized, selectedDate, onOpenTrack, renderTrack, pergaMode = false }: Readonly<{
+function browserLocalDay(): string {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+}
+
+function initialCalendarRange(anchor: string): Readonly<{ start: string; end: string }> {
+  const [year, month, day] = anchor.split('-').map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  const mondayOffset = (date.getUTCDay() + 6) % 7;
+  const start = shiftDailyDate(anchor, -mondayOffset);
+  return { start, end: shiftDailyDate(start, 6) };
+}
+
+export function DailyTodayRoute({ transport, unauthorized, selectedDate, onOpenTrack, onSelectDate, renderTrack, pergaMode = false }: Readonly<{
   transport: ApiTransportPort; unauthorized: UnauthorizedChannel; selectedDate?: string; pergaMode?: boolean;
   onOpenTrack: (trackId: string) => void;
+  onSelectDate?: (date: string | undefined) => void;
   renderTrack: (detail: TrackAggregateSnapshotDto, evidence: ReactNode, panelContent: ReactNode, intro: ReactNode, supervisor: ReactNode, center?: DailyCenterPresentation) => ReactNode;
 }>) {
   const [view, setView] = useState<DailyCenterView>('assistant');
@@ -56,6 +71,11 @@ export function DailyTodayRoute({ transport, unauthorized, selectedDate, onOpenT
   }, [view]);
   const user = useCurrentUser();
   const showSupervisor = !pergaMode && user?.userId === DEPLOYMENT_OWNER_USER_ID;
+  const validSelectedDate = selectedDate !== undefined && isDailyDate(selectedDate) ? selectedDate : undefined;
+  const [visibleRange, setVisibleRange] = useState(() => initialCalendarRange(validSelectedDate ?? browserLocalDay()));
+  const handleRangeChange = useCallback((next: Readonly<{ start: string; end: string }>) => {
+    setVisibleRange((current) => (current.start === next.start && current.end === next.end ? current : next));
+  }, [setVisibleRange]);
   const daily = useQuery({
     queryKey: ['daily-planner', selectedDate ?? 'today'],
     queryFn: async () => {
@@ -70,20 +90,63 @@ export function DailyTodayRoute({ transport, unauthorized, selectedDate, onOpenT
     },
     refetchInterval: 30_000,
   });
+  const calendar = useQuery({
+    queryKey: ['daily-calendar', visibleRange.start, visibleRange.end],
+    enabled: pergaMode,
+    queryFn: () => runOperation(transport, todayCalendarOperation(visibleRange.start, visibleRange.end), unauthorized),
+    refetchInterval: 30_000,
+  });
+  const serverToday = calendar.data?.today ?? (selectedDate === undefined ? daily.data?.date : undefined);
+  const activeCalendarDay = validSelectedDate ?? serverToday ?? browserLocalDay();
+  const daySchedules = useQuery({
+    queryKey: ['daily-schedules', activeCalendarDay],
+    enabled: pergaMode && isDailyDate(activeCalendarDay),
+    queryFn: () => runOperation(transport, todaySchedulesOperation(activeCalendarDay), unauthorized),
+    refetchInterval: 30_000,
+  });
+  const handleSelectDate = useCallback((day: string) => {
+    if (onSelectDate === undefined) return;
+    onSelectDate(serverToday !== undefined && day === serverToday ? undefined : day);
+  }, [onSelectDate, serverToday]);
+  const calendarNode = pergaMode ? (
+    <DailyCalendar
+      today={serverToday}
+      selectedDate={validSelectedDate ?? serverToday}
+      days={calendar.data?.days}
+      selectedSchedules={daySchedules.data?.schedules}
+      scheduleTimeZone={daySchedules.data?.time_zone ?? calendar.data?.time_zone}
+      onSelectDate={onSelectDate === undefined ? undefined : handleSelectDate}
+      onVisibleRangeChange={handleRangeChange}
+      onOpenTrack={onOpenTrack}
+    />
+  ) : null;
   const trackId = daily.data?.track_id;
   const detail = useQuery({ ...trackDetailQueryOptions(transport, trackId ?? '', unauthorized), enabled: trackId !== undefined });
   const supervisor = !pergaMode && selectedDate === undefined && <DailySupervisor transport={transport} unauthorized={unauthorized} />;
   const withSupervisor = (content: ReactNode) => <>{supervisor}{content}</>;
   if (daily.isError) return withSupervisor(<ErrorBox message={readErrorText(daily.error, 'The daily Planner is unavailable.')} onRetry={() => { void daily.refetch(); }} />);
   if (daily.isPending) return withSupervisor(<p role="status">Loading daily Planner…</p>);
-  if (daily.data === null) return withSupervisor(<>{pergaMode && <DailyCalendar key={selectedDate ?? 'today'} />}{selectedDate === undefined ? <p role="status">Preparing today’s Track…</p> : <EmptyState variant="panel" icon={<Icon name="file" />} title="No daily Track was created for this date." description="这一天还没有日报记录。" />}</>);
+  if (daily.data === null) {
+    const emptyNotice = selectedDate === undefined
+      ? <p role="status">Preparing today’s Track…</p>
+      : <EmptyState variant="panel" icon={<Icon name="file" />} title="No daily Track was created for this date." description="这一天还没有日报记录。" />;
+    if (pergaMode) {
+      return withSupervisor(
+        <div className={styles.missingDayLayout}>
+          <div className={styles.missingDayMain}>{emptyNotice}</div>
+          <aside className={styles.missingDayAside}><PanelCard>{calendarNode}</PanelCard></aside>
+        </div>,
+      );
+    }
+    return withSupervisor(emptyNotice);
+  }
   if (detail.isError) return withSupervisor(<ErrorBox message={readErrorText(detail.error, 'The daily Track could not be loaded.')} onRetry={() => { void detail.refetch(); }} />);
   if (detail.data === undefined || detail.data.track.id !== trackId) return withSupervisor(<p role="status">Loading daily Track…</p>);
   const date = daily.data.date;
   return renderTrack({ ...detail.data, track: { ...detail.data.track, title: date } },
     pergaMode ? null : <DailyReportChanges key={date} isToday={selectedDate === undefined} date={shiftDailyDate(date, -1)}
       transport={transport} unauthorized={unauthorized} onOpenTrack={onOpenTrack} />,
-    pergaMode ? <DailyCalendar key={date} today={selectedDate === undefined ? date : undefined} /> : null,
+    calendarNode,
     <header className={styles.reportIntro}><h2>{selectedDate === undefined ? '今天的重点' : '当天的重点'}</h2><p>让工作更轻松，也更有条理。</p></header>,
     supervisor,
     selectedDate === undefined ? {

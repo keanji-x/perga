@@ -1,7 +1,9 @@
 using System.Collections.Concurrent;
 using Cronos;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Perga.Contracts;
 using Perga.Host.Configuration;
 using Perga.Kernel;
 using Perga.Kernel.Ports;
@@ -13,6 +15,8 @@ public sealed class CronosScheduleHostedService : BackgroundService
 {
     private readonly IPergaKernel _kernel;
     private readonly ITrackReadStore _readStore;
+    private readonly ITrackScheduleStore? _scheduleStore;
+    private readonly IScheduleCronEvaluator _cronEvaluator;
     private readonly PergaHostOptions _options;
     private readonly TimeProvider _timeProvider;
     private readonly ILogger<CronosScheduleHostedService> _logger;
@@ -27,9 +31,24 @@ public sealed class CronosScheduleHostedService : BackgroundService
         PergaHostOptions options,
         TimeProvider timeProvider,
         ILogger<CronosScheduleHostedService> logger)
+        : this(kernel, readStore, options, timeProvider, logger, scheduleStore: null, cronEvaluator: null)
+    {
+    }
+
+    [ActivatorUtilitiesConstructor]
+    public CronosScheduleHostedService(
+        IPergaKernel kernel,
+        ITrackReadStore readStore,
+        PergaHostOptions options,
+        TimeProvider timeProvider,
+        ILogger<CronosScheduleHostedService> logger,
+        ITrackScheduleStore? scheduleStore = null,
+        IScheduleCronEvaluator? cronEvaluator = null)
     {
         _kernel = kernel ?? throw new ArgumentNullException(nameof(kernel));
         _readStore = readStore ?? throw new ArgumentNullException(nameof(readStore));
+        _scheduleStore = scheduleStore;
+        _cronEvaluator = cronEvaluator ?? new CronosScheduleCronEvaluator();
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _timeProvider = timeProvider ?? TimeProvider.System;
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
@@ -126,6 +145,11 @@ public sealed class CronosScheduleHostedService : BackgroundService
                 }
             }
 
+            if (_scheduleStore is not null && !_kernel.DispatchAdmission.Draining)
+            {
+                fired += await FireDueDurableSchedulesAsync(nowUtc.ToUnixTimeMilliseconds(), ct).ConfigureAwait(false);
+            }
+
             return fired;
         }
         finally
@@ -167,6 +191,53 @@ public sealed class CronosScheduleHostedService : BackgroundService
     {
         base.Dispose();
         _evalLock.Dispose();
+    }
+
+    private async Task<int> FireDueDurableSchedulesAsync(long nowMs, CancellationToken ct)
+    {
+        var firedCount = 0;
+        var tracksToPoke = new HashSet<string>(StringComparer.Ordinal);
+        while (!_kernel.DispatchAdmission.Draining)
+        {
+            var batch = await _scheduleStore!.FireDueAsync(nowMs, schedule =>
+            {
+                if (string.IsNullOrWhiteSpace(schedule.CronExpr))
+                    return null;
+                var next = _cronEvaluator.GetNextOccurrenceMs(schedule.CronExpr, schedule.Timezone, nowMs);
+                if (!next.HasValue)
+                    _logger.LogWarning("Durable schedule '{ScheduleId}' on track '{TrackId}' had no future occurrence and completed.", schedule.Id, schedule.TrackId);
+                return next;
+            }, ct).ConfigureAwait(false);
+
+            if (batch.Count == 0)
+                break;
+
+            foreach (var item in batch)
+            {
+                tracksToPoke.Add(item.TrackId);
+                Interlocked.Increment(ref _triggeredWakeCount);
+                firedCount++;
+            }
+
+            if (batch.Count < 64)
+                break;
+        }
+
+        foreach (var trackId in tracksToPoke)
+        {
+            if (_kernel.DispatchAdmission.Draining)
+                break;
+            try
+            {
+                await _kernel.Actors.GetOrActivate(trackId).PokeLeadAsync(ct).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogWarning(ex, "Failed to poke lead for durable schedule wake on track '{TrackId}'.", trackId);
+            }
+        }
+
+        return firedCount;
     }
 
     private IReadOnlyList<ScheduleSpec> ResolveSchedulesForTrack(

@@ -142,6 +142,11 @@ public interface IPergaKernel : IAsyncDisposable
     Task<JsonElement> InvokeKernelMcpToolAsync(McpSessionPrincipal caller, string toolName, JsonElement arguments, CancellationToken ct = default);
     Task<bool> CancelPendingWakeAsync(string trackId, string wakeId, CancellationToken ct = default);
     Task TriggerScheduleWakeAsync(string trackId, string scheduleId, CancellationToken ct = default);
+    Task<TrackScheduleDto> SetTrackScheduleAsync(string trackId, SetTrackScheduleRequest request, CancellationToken ct = default);
+    Task<IReadOnlyList<TrackScheduleDto>> ListTrackSchedulesAsync(string trackId, bool includeTerminal = false, CancellationToken ct = default);
+    Task<bool> CancelTrackScheduleAsync(string trackId, string scheduleId, CancellationToken ct = default);
+    Task<TodayCalendarDto> GetTodayCalendarAsync(string startDate, string endDate, CancellationToken ct = default);
+    Task<TodaySchedulesDto> GetTodaySchedulesAsync(string date, CancellationToken ct = default);
 
     // Synchronization helper for tests / shutdown
     Task WaitForTrackIdleAsync(string trackId, CancellationToken ct = default);
@@ -154,6 +159,7 @@ public sealed partial class PergaKernelService : IPergaKernel
     private static readonly string ProcessDbInstanceId = Guid.NewGuid().ToString("N");
 
     private readonly ISystemUpgradeController? _systemUpgradeController;
+    private readonly IScheduleCronEvaluator? _scheduleCronEvaluator;
     private readonly ITrackStore _store;
     private readonly IReportDocEngine _reportEngine;
     private readonly IPolicyVm _policyVm;
@@ -187,7 +193,8 @@ public sealed partial class PergaKernelService : IPergaKernel
         EventHub? eventHub = null,
         TimeProvider? timeProvider = null,
         ISystemUpgradeController? systemUpgradeController = null,
-        ISystemUpgradeReceiptSource? upgradeReceiptSource = null)
+        ISystemUpgradeReceiptSource? upgradeReceiptSource = null,
+        IScheduleCronEvaluator? scheduleCronEvaluator = null)
     {
         _store = store ?? throw new ArgumentNullException(nameof(store));
         _reportEngine = reportEngine ?? throw new ArgumentNullException(nameof(reportEngine));
@@ -199,6 +206,7 @@ public sealed partial class PergaKernelService : IPergaKernel
         _options = options ?? new KernelOptions();
         _agentRuntime = agentRuntime;
         _systemUpgradeController = systemUpgradeController;
+        _scheduleCronEvaluator = scheduleCronEvaluator;
         _timeProvider = timeProvider ?? TimeProvider.System;
         _commandRunner = commandRunner ?? new ProcessShellCommandRunner();
         _eventHub = eventHub ?? new EventHub();

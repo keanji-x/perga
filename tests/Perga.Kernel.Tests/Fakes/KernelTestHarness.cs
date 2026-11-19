@@ -449,9 +449,14 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
             if (FailTemplateStateUpdate && evt is null) throw new IOException("template state persistence failure");
             _tracks[track.Id] = track;
             if (track.ClosedAtMs is not null)
+            {
                 for (var i = 0; i < _trackWakes.Count; i++)
                     if (_trackWakes[i] is { State: TrackWakeStates.Pending or TrackWakeStates.Delivering } w && w.TrackId == track.Id)
                         _trackWakes[i] = w with { State = TrackWakeStates.Dropped, Reason = TrackWakeReasons.TrackClosed };
+                for (var i = 0; i < _trackSchedules.Count; i++)
+                    if (_trackSchedules[i] is { State: TrackScheduleStates.Active } s && s.TrackId == track.Id)
+                        _trackSchedules[i] = s with { State = TrackScheduleStates.Canceled, NextFireAtMs = null, UpdatedAtMs = track.UpdatedAtMs };
+            }
             if (evt is not null)
             {
                 AppendEventLocked(evt);

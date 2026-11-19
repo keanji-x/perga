@@ -228,7 +228,7 @@ public sealed class McpKernelAndVcsIntegrationTests
 
         // 1. Lead gets the shared, governance and Worker control tools.
         var leadTools = await ListToolNamesAsync(cluster, "/mcp/kernel", leadToken, ct);
-        Assert.Equal(30, leadTools.Count);
+        Assert.Equal(33, leadTools.Count);
         Assert.Contains(KernelMcpToolNames.TaskAccept, leadTools);
         Assert.Contains(KernelMcpToolNames.TrackClose, leadTools);
         Assert.Contains(KernelMcpToolNames.TemplateLs, leadTools);
@@ -328,7 +328,7 @@ public sealed class McpKernelAndVcsIntegrationTests
         // 3. Wait for Contract Subagent (BoundAttemptId != null) to start & inspect its 12-tool fence!
         var contractToken = await contractSubagentTokenTcs.Task.WaitAsync(ct);
         var subTools = await ListToolNamesAsync(cluster, "/mcp/kernel", contractToken, ct);
-        Assert.Equal(12, subTools.Count);
+        Assert.Equal(13, subTools.Count);
         Assert.Contains(KernelMcpToolNames.TaskDone, subTools);
         Assert.Contains(KernelMcpToolNames.TaskFail, subTools);
         Assert.DoesNotContain(KernelMcpToolNames.TaskAccept, subTools);

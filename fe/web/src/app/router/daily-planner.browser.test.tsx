@@ -507,27 +507,87 @@ it.each([900, 600])('shows the shared masthead above a clean perga composer and 
   await page.screenshot({ path: `../../../../test-results/today-v4-${height}.png` });
 });
 
-it.each([1440, 390])('keeps perga calendar selection in place without a daily track at width %s', async width => {
+it.each([1440, 390])('navigates between dates and displays day schedules on perga calendar at width %s', async width => {
   await page.viewport(width, 844);
-  const { router } = renderDailyFixture({ pergaMode: true, initial: '/?day=2026-10-03' });
-  await expect.element(page.getByText('No daily Track was created for this date.')).toBeVisible();
+  const { router, requests } = renderDailyFixture({
+    pergaMode: true,
+    initial: '/',
+    reply: (request) => {
+      if (request.path.startsWith('/api/today/calendar')) {
+        const params = new URL(request.path, 'http://fixture').searchParams;
+        const start = params.get('start') ?? '2026-09-28';
+        const end = params.get('end') ?? '2026-10-04';
+        const days: Array<{ date: string; has_daily_track: boolean; has_report: boolean; schedule_count: number }> = [];
+        const cursor = new Date(`${start}T12:00:00Z`);
+        const limit = new Date(`${end}T12:00:00Z`);
+        while (cursor <= limit && days.length < 62) {
+          const day = cursor.toISOString().slice(0, 10);
+          days.push({
+            date: day,
+            has_daily_track: day === '2026-10-04',
+            has_report: day === '2026-10-04',
+            schedule_count: day === '2026-10-03' ? 1 : 0,
+          });
+          cursor.setUTCDate(cursor.getUTCDate() + 1);
+        }
+        return { status: 200, statusText: 'OK', body: { today: '2026-10-04', time_zone: 'Asia/Shanghai', start, end, days } };
+      }
+      if (request.path.startsWith('/api/today/schedules')) {
+        const date = new URL(request.path, 'http://fixture').searchParams.get('date') ?? '2026-10-04';
+        return {
+          status: 200,
+          statusText: 'OK',
+          body: {
+            date,
+            time_zone: 'UTC',
+            schedules: date === '2026-10-03' ? [{
+              id: 'sch_oct3',
+              track_id: 'project',
+              track_title: 'Project evidence',
+              title: 'Check release pipeline',
+              schedule_kind: 'once',
+              cron_expr: null,
+              timezone: 'UTC',
+              next_fire_at_ms: Date.parse('2026-10-03T14:30:00Z'),
+              state: 'active',
+            }] : [],
+          },
+        };
+      }
+      return undefined;
+    },
+  });
   const calendar = page.getByRole('region', { name: 'Calendar', exact: true });
   await expect.element(calendar).toBeVisible();
+  await expect.element(calendar.getByRole('button', { name: '2026-10-04', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect.element(calendar.getByRole('button', { name: '2026-10-04', exact: true })).toHaveAttribute('data-nc-has-track', '');
+  await expect.element(calendar.getByRole('button', { name: '2026-10-03', exact: true })).toHaveAttribute('data-nc-schedule-count', '1');
+
+  // Switch to Month view and verify paging months fetches the new visible range without altering ?day=.
   await page.getByRole('radio', { name: 'Month', exact: true }).click();
   await expect.element(page.getByRole('radio', { name: 'Month', exact: true })).toBeChecked();
   await calendar.getByRole('button', { name: 'Next month' }).click();
-  const days = calendar.element().querySelectorAll<HTMLButtonElement>('button[aria-pressed]');
-  const selected = days[4].getAttribute('aria-label')!;
-  await calendar.getByRole('button', { name: selected, exact: true }).click();
-  await expect.element(calendar.getByRole('button', { name: selected, exact: true })).toHaveAttribute('aria-pressed', 'true');
-  expect(router.state.location.search).toEqual({ day: '2026-10-03' });
-  await calendar.getByRole('button', { name: 'Today', exact: true }).click();
-  expect(calendar.element().querySelector('[data-nc-today]')?.getAttribute('aria-pressed')).toBe('true');
+  await expect.poll(() => requests.some(r => r.path === '/api/today/calendar?start=2026-11-01&end=2026-11-30')).toBe(true);
+  expect(router.state.location.search).toEqual({ day: undefined });
+
+  // Jump back to Week view and click 2026-10-03 (no daily track, has 1 schedule).
+  await calendar.getByRole('button', { name: 'Previous month' }).click();
   await page.getByRole('radio', { name: 'Week', exact: true }).click();
-  await expect.element(page.getByRole('radio', { name: 'Week', exact: true })).toBeChecked();
-  expect(calendar.element().querySelectorAll('button[aria-pressed]')).toHaveLength(7);
-  expect(router.state.location.search).toEqual({ day: '2026-10-03' });
+  await calendar.getByRole('button', { name: '2026-10-03', exact: true }).click();
+  await expect.poll(() => (router.state.location.search as Readonly<{ day?: string }>).day).toBe('2026-10-03');
   await expect.element(page.getByText('No daily Track was created for this date.')).toBeVisible();
+  await expect.element(calendar.getByRole('button', { name: '2026-10-03', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect.element(calendar.getByText('Check release pipeline', { exact: true })).toBeVisible();
+
+  // Click Today to return to '/' and load today's Track.
+  await calendar.getByRole('button', { name: 'Today', exact: true }).click();
+  await expect.poll(() => (router.state.location.search as Readonly<{ day?: string }>).day).toBeUndefined();
+  await expect.element(calendar.getByRole('button', { name: '2026-10-04', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  if (width >= 1024) {
+    await expect.element(page.getByRole('heading', { name: '今天想推进什么？' })).toBeVisible();
+  } else {
+    await expect.element(page.getByText('Prioritize the release.', { exact: false })).toBeVisible();
+  }
 });
 
 it.each([false, true])('shows perga Conversations only with multiple rows (extra=%s)', async extraPlanner => {

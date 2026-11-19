@@ -30,6 +30,11 @@ public static class TrackWakeRequests
         new(trackId, kind, key, JsonSerializer.SerializeToElement(new { prompt, presentation }));
     public static TrackWakeRequest Schedule(string trackId, string scheduleId) =>
         new(trackId, TrackWakeKinds.Schedule, ScheduleKey(scheduleId), JsonSerializer.SerializeToElement(new { scheduleId }));
+    public static TrackWakeRequest DynamicSchedule(string trackId, string scheduleId, string prompt,
+        string? coalesceKey = null, string? targetSessionId = null) =>
+        new(trackId, TrackWakeKinds.Schedule, coalesceKey ?? ScheduleKey(scheduleId),
+            JsonSerializer.SerializeToElement(new { scheduleId, prompt, presentation = TrackWakePresentations.System }),
+            targetSessionId);
     public static TrackWakeRequest Mail(MailDto mail) => Prompt(mail.ToTrackId, TrackWakeKinds.Mail, MailKey(mail.Id),
         $"New cross-track mail '{mail.Id}' from track '{mail.FromTrackId}': {mail.Summary}\n\n{mail.Body}", TrackWakePresentations.SystemMail);
     public static TrackWakeRequest TaskSettled(TaskDto task, TaskAttemptDto attempt, string? prompt = null) => Prompt(task.TrackId,

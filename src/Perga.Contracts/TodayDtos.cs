@@ -15,3 +15,32 @@ public sealed record DailyReportChangeDto(string TrackId, string TrackTitle, str
     string Patch, bool PatchTruncated);
 public sealed record DailyReportChangesPageDto(string Date, string Timezone, long ThroughEventId,
     IReadOnlyList<DailyReportChangeDto> Changes, string? NextCursor);
+
+public sealed record TodayCalendarDayDto(
+    string Date,
+    bool HasDailyTrack,
+    bool HasReport,
+    int ScheduleCount);
+
+public sealed record TodayCalendarDto(
+    string Today,
+    [property: JsonPropertyName("time_zone")] string TimeZone,
+    string Start,
+    string End,
+    IReadOnlyList<TodayCalendarDayDto> Days);
+
+public sealed record TodayScheduleItemDto(
+    string Id,
+    string TrackId,
+    string TrackTitle,
+    string Title,
+    string ScheduleKind,
+    string? CronExpr,
+    string Timezone,
+    long NextFireAtMs,
+    string State);
+
+public sealed record TodaySchedulesDto(
+    string Date,
+    [property: JsonPropertyName("time_zone")] string TimeZone,
+    IReadOnlyList<TodayScheduleItemDto> Schedules);

@@ -22,6 +22,55 @@ public sealed partial class PergaKernelService
         }
         return id is null ? null : new(day, TodayCalendar.IanaId(zone), id);
     }
+
+    public async Task<TodayCalendarDto> GetTodayCalendarAsync(string startDate, string endDate, CancellationToken ct = default)
+    {
+        var startDay = TodayCalendar.ParseDate(startDate);
+        var endDay = TodayCalendar.ParseDate(endDate);
+        if (endDay < startDay)
+            throw KernelException.InvalidArgument("end must be on or after start.");
+        if (endDay.DayNumber - startDay.DayNumber >= 62)
+            throw KernelException.InvalidArgument("Calendar range cannot exceed 62 days.");
+
+        var zone = TodayCalendar.Zone(_timeProvider);
+        var today = TimeZoneInfo.ConvertTime(_timeProvider.GetUtcNow(), zone).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        var dates = new List<string>(endDay.DayNumber - startDay.DayNumber + 1);
+        for (var cursor = startDay; cursor <= endDay; cursor = cursor.AddDays(1))
+            dates.Add(cursor.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
+
+        var store = (ITodayReadStore)_store;
+        var presence = (await store.ListDailyTrackPresenceAsync(dates, ct).ConfigureAwait(false))
+            .ToDictionary(p => p.Date, StringComparer.Ordinal);
+        var (windowStartMs, _) = TodayCalendar.Bounds(startDate, zone);
+        var (_, windowEndMs) = TodayCalendar.Bounds(endDate, zone);
+        var schedules = await store.ListActiveSchedulesInWindowAsync(windowStartMs, windowEndMs, ct).ConfigureAwait(false);
+        var scheduleCounts = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var item in schedules)
+        {
+            var day = TimeZoneInfo.ConvertTime(DateTimeOffset.FromUnixTimeMilliseconds(item.NextFireAtMs), zone)
+                .ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+            scheduleCounts[day] = scheduleCounts.TryGetValue(day, out var current) ? current + 1 : 1;
+        }
+
+        var days = dates.Select(d =>
+        {
+            presence.TryGetValue(d, out var p);
+            scheduleCounts.TryGetValue(d, out var count);
+            return new TodayCalendarDayDto(d, p?.HasDailyTrack ?? false, p?.HasReport ?? false, count);
+        }).ToArray();
+
+        return new TodayCalendarDto(today, TodayCalendar.IanaId(zone), startDate, endDate, days);
+    }
+
+    public async Task<TodaySchedulesDto> GetTodaySchedulesAsync(string date, CancellationToken ct = default)
+    {
+        TodayCalendar.ParseDate(date);
+        var zone = TodayCalendar.Zone(_timeProvider);
+        var (startMs, endMs) = TodayCalendar.Bounds(date, zone);
+        var store = (ITodayReadStore)_store;
+        var schedules = await store.ListActiveSchedulesInWindowAsync(startMs, endMs, ct).ConfigureAwait(false);
+        return new TodaySchedulesDto(date, TodayCalendar.IanaId(zone), schedules);
+    }
 }
 
 public static class TodayCalendar

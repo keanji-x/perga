@@ -1,6 +1,21 @@
 @layer features {
   .calendarPanel { min-inline-size: 0; }
   .reportPanel { --document-start: 0px; --document-measure: 100%; min-inline-size: 0; }
+  .missingDayLayout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(18rem, 22rem);
+    align-items: start;
+    gap: var(--space-6);
+    padding: var(--space-4) var(--space-6);
+  }
+  .missingDayMain { min-inline-size: 0; }
+  .missingDayAside { min-inline-size: 0; }
+  @media (width < 60rem) {
+    .missingDayLayout {
+      grid-template-columns: minmax(0, 1fr);
+      padding: var(--space-3) var(--space-4);
+    }
+  }
   .reportIntro { display: none; }
   .subviewHeader {
     display: flex;
