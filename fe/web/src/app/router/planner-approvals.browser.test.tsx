@@ -7,6 +7,7 @@ import { createMemoryHistory, RouterProvider } from '@tanstack/react-router';
 import { cleanup, render } from '@testing-library/react';
 import { afterEach, expect, it } from 'vitest';
 import { commands, page, userEvent } from 'vitest/browser';
+import type { PermissionModeOptionDto } from '../../../../core/api/perga-v1.ts';
 import type { ApiRequest, ApiTransportPort, ApiTransportResponse } from '../../../../core/api/types.ts';
 import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { APP_BASEPATH, createAppRouter } from './public.tsx';
@@ -33,6 +34,7 @@ type Mode = 'never' | 'ask' | 'full' | null;
 type Options = Readonly<{
   theme?: 'light' | 'dark';
   mode?: Mode;
+  permissionModes?: readonly PermissionModeOptionDto[];
   asks?: readonly (typeof HOLD)[];
   /** The answer to `PUT /api/v1/sessions/{id}/permission-mode`; by default it stores the mode asked for. */
   putMode?: (body: { permission_mode: Mode }) => ApiTransportResponse;
@@ -44,7 +46,7 @@ const answered = (status: number, body: unknown): ApiTransportResponse => ({
   status, statusText: status === 200 ? 'OK' : status === 204 ? 'No Content' : 'Error', body,
 });
 
-function setup({ theme = 'light', mode = 'never', asks = [], putMode, answer }: Options = {}) {
+function setup({ theme = 'light', mode = 'never', permissionModes, asks = [], putMode, answer }: Options = {}) {
   const requests: ApiRequest[] = [];
   let stored: Mode = mode;
   const transport: ApiTransportPort = { async send(request) {
@@ -53,7 +55,7 @@ function setup({ theme = 'light', mode = 'never', asks = [], putMode, answer }: 
     let body: unknown = [];
     const session = { ...PLANNER, permissionMode: stored };
     const bootstrap = { version: 'test', providers: [{ provider: 'codex', available: true,
-      models: [], permissionModes: [
+      models: [], permissionModes: permissionModes ?? [
         { id: 'never', label: 'Never', description: 'Sandbox only; never asks.', tone: 'neutral', isDefault: true },
         { id: 'ask', label: 'Ask me', description: 'Pauses the turn to ask you.', tone: 'warning', isDefault: false },
         { id: 'full', label: 'Full access', description: "No sandbox; never asks. Runs with your account's access.", tone: 'danger', isDefault: false },
@@ -347,6 +349,9 @@ it.each([
 it.each([
   ['a refusal', answered(403, { code: 'forbidden', error: 'Only you can change what the Planner may do.' }),
     'Only you can change what the Planner may do.'],
+  ['an ACP discovery precondition refusal', answered(409, { code: 'precondition_failed',
+    error: 'Permission modes are unavailable. Retry discovery.' }),
+    'Permission modes are unavailable. Retry discovery.'],
   ['an unknown outcome', answered(500, { code: 'internal', error: 'database is locked' }),
     'The approval setting change is unconfirmed.'],
 ] as const)('says so when a change fails with %s, and keeps showing the stored mode', async (_name, response, shown) => {
@@ -360,9 +365,9 @@ it.each([
   await expect.element(page.getByRole('button', { name: 'Approvals: Never' })).toBeVisible();
 });
 
-it('shows no approval setting for a conversation that is not a Planner', async () => {
+it('shows no approval setting when the provider declares no permission modes', async () => {
   await page.viewport(1280, 800);
-  setup({ mode: null });
+  setup({ mode: null, permissionModes: [] });
   await page.getByRole('button', { name: /Conversation Planner/ }).click();
   await expect.element(page.getByRole('button', { name: /^Model:/ })).toBeVisible();
   expect(page.getByRole('button', { name: /^Approvals:/ }).query()).toBeNull();
