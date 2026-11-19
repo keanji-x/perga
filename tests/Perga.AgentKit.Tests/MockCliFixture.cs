@@ -336,6 +336,18 @@ def run_turn(turn_id, prompt, correlation_id, turn_model=None):
             }
         }
     })
+    if prompt.startswith("CONTEXT_CODEX"):
+        token_usage = {"modelContextWindow": 272000, "total": {"inputTokens": 99000, "outputTokens": 5000}}
+        if prompt != "CONTEXT_CODEX_TOTAL_ONLY":
+            token_usage["last"] = {"inputTokens": 120, "outputTokens": 45, "cachedInputTokens": 30, "totalTokens": 165}
+        send({"jsonrpc": "2.0", "method": "thread/tokenUsage/updated", "params": {"threadId": state["thread_id"], "tokenUsage": token_usage}})
+        if prompt == "CONTEXT_CODEX_MERGE":
+            send({"jsonrpc": "2.0", "method": "turn/usage", "params": {"usage": {"inputTokens": 130, "outputTokens": 50}}})
+        turn = {"id": turn_id, "status": "completed"}
+        if prompt == "CONTEXT_CODEX_MERGE":
+            turn["usage"] = {"inputTokens": 140, "outputTokens": 55}
+        send({"jsonrpc": "2.0", "method": "turn/completed", "params": {"threadId": state["thread_id"], "turn": turn}})
+        return
     mcp_names = ",".join(sorted(state["mcp_servers"].keys()))
     summary = f"codex[{state['thread_method']}|{state['thread_id']}|mcp={mcp_names}|model={effective_model}]:{prompt}"
     send({
@@ -650,6 +662,31 @@ def process_user_turn(user_msg):
         })
         return
 
+    if content.startswith("WINDOW_UPDATE_"):
+        source = content.removeprefix("WINDOW_UPDATE_")
+        if source != "RESULT":
+            usage = {"input_tokens": 200, "output_tokens": 20}
+            if source == "ASSISTANT":
+                usage["context_window_tokens"] = 1000000
+            emit({"type": "assistant", "message": {"role": "assistant", "content": [], "usage": usage}})
+        result = {"type": "result", "subtype": "success", "usage": {"input_tokens": 9000, "output_tokens": 1000}}
+        if source == "MODEL":
+            result["modelUsage"] = {"claude-sonnet-4-6": {"contextWindow": 1000000}}
+        elif source.startswith("RESULT"):
+            result["usage"]["context_window_tokens"] = 1000000
+        emit(result)
+        return
+
+    if content.startswith("CONTEXT_CLAUDE"):
+        if content != "CONTEXT_CLAUDE_FALLBACK":
+            for count in (100, 200):
+                emit({"type": "assistant", "session_id": session_id, "message": {"role": "assistant", "content": [], "usage": {"input_tokens": count, "output_tokens": 20, "cache_creation_input_tokens": 300, "cache_read_input_tokens": 400}}})
+        result = {"type": "result", "subtype": "success", "usage": {"input_tokens": 9000, "output_tokens": 1000, "cache_creation_input_tokens": 2000, "cache_read_input_tokens": 3000}}
+        if content != "CONTEXT_CLAUDE_CACHED_WINDOW":
+            result["modelUsage"] = {"claude-sonnet-4-6": {"contextWindow": 200000}}
+        emit(result)
+        return
+
     emit({
         "type": "stream_event",
         "session_id": session_id,
@@ -772,15 +809,21 @@ def handle_prompt(req_id, params):
     prompt_text = prompt_blocks[0].get("text", "") if prompt_blocks else ""
 
     if prompt_text == "/compact":
-        send({
-            "jsonrpc": "2.0",
-            "method": "session/update",
-            "params": {
-                "sessionId": state["session_id"],
-                "update": {"sessionUpdate": "usage_update", "used": 2048, "size": 1048576}
-            }
-        })
-        send({"jsonrpc": "2.0", "id": req_id, "result": {"stopReason": "end_turn"}})
+        usage_mode = os.environ.get("MOCK_ACP_COMPACT_USAGE", "notification")
+        usage = {"used": 2048, "size": 1048576}
+        if usage_mode == "notification":
+            send({
+                "jsonrpc": "2.0",
+                "method": "session/update",
+                "params": {
+                    "sessionId": state["session_id"],
+                    "update": {"sessionUpdate": "usage_update", **usage}
+                }
+            })
+        result = {"stopReason": "end_turn"}
+        if usage_mode == "response":
+            result.update(usage)
+        send({"jsonrpc": "2.0", "id": req_id, "result": result})
         return
 
     if "TRIGGER_RPC_ERROR" in prompt_text:
@@ -894,6 +937,17 @@ def handle_prompt(req_id, params):
             }
         }
     })
+    if prompt_text.startswith("CONTEXT_ACP"):
+        update = {"sessionUpdate": "usage_update", "used": 1234, "size": 1048576}
+        send({"jsonrpc": "2.0", "method": "session/update", "params": {"sessionId": state["session_id"], "update": update}})
+        if prompt_text == "CONTEXT_ACP_STANDARD":
+            update = {"sessionUpdate": "usage_update", "usage": {"inputTokens": 200, "outputTokens": 75, "cachedReadTokens": 40}}
+            send({"jsonrpc": "2.0", "method": "session/update", "params": {"sessionId": state["session_id"], "update": update}})
+        result = {"stopReason": "end_turn"}
+        if prompt_text != "CONTEXT_ACP_USED":
+            result["usage"] = {"inputTokens": 210, "outputTokens": 80, "cachedReadTokens": 50}
+        send({"jsonrpc": "2.0", "id": req_id, "result": result})
+        return
     mcp_names = ",".join(sorted(s.get("name", "") for s in state["mcp_servers"]))
     worker_effort = f"|effort={state.get('worker_effort', 'normal')}" if os.environ.get("MOCK_ACP_WORKER_OPTIONS") == "1" else ""
     summary = f"acp[{state['session_method']}|{state['session_id']}|sub={state['subcommand_acp']}|model={state['model']}|via={state['model_set_method']}|mcp={mcp_names}{worker_effort}]:{prompt_text}"

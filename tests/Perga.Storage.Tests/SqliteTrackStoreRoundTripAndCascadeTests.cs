@@ -11,6 +11,22 @@ namespace Perga.Storage.Tests;
 public sealed class SqliteTrackStoreRoundTripAndCascadeTests
 {
     [Fact]
+    public async Task ContextUsageReadingsRoundTripAndReset()
+    {
+        await using var harness = await StorageTestHarness.CreateAsync();
+        var ct = CancellationToken.None;
+        await harness.Store.UpsertAreaAsync(StorageTestHarness.CreateArea(), ct);
+        var (track, report, lead) = StorageTestHarness.CreateSeedTrack();
+        lead = lead with { ContextUsedTokens = 1234, ContextWindowTokens = 1000, ContextUsageAtMs = 42,
+            ContextUsageRatio = 1, ContextUsageInvalidated = true };
+        await harness.Store.CreateTrackAsync(track, report, null, lead, ct);
+        Assert.Equal(lead, Assert.Single((await harness.Store.LoadTrackAggregateAsync(track.Id, ct))!.Sessions));
+        var reset = lead with { ContextUsedTokens = 0, ContextUsageRatio = 0, ContextUsageAtMs = null, ContextUsageInvalidated = false };
+        await harness.Store.UpsertSessionAsync(reset, StorageTestHarness.CreateEvent("session.updated", track.Id, track.AreaId), ct);
+        Assert.Equal(reset, Assert.Single((await harness.Store.LoadTrackAggregateAsync(track.Id, ct))!.Sessions));
+    }
+
+    [Fact]
     public async Task WorkspaceRecoveryRetriesRepeatableAllocationAndPreservesUncertaintyAboutInitialization()
     {
         await using var harness = await StorageTestHarness.CreateAsync();

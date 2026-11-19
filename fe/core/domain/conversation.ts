@@ -1,3 +1,4 @@
+import { sessionContextUsage } from './session-context-usage.js';
 import { z } from 'zod';
 import { activityContent } from './conversation-activity-content.js';
 import type { RunRecovery } from './conversation-restart.js';
@@ -314,8 +315,8 @@ export type PlannerRun = Readonly<{
 export type PlannerRunningTurn = Readonly<{ turn_id: string; elapsed_ms: number }>;
 
 /**
- * The context-occupancy reading, exactly as the server ships it. `percent` is the server's
- * number and the only thing a meter may be drawn from — it is NOT `used_tokens / context_window`.
+ * The context-occupancy reading. V1 readings derive percent only within a known window;
+ * overflow and unknown windows leave the meter unavailable.
  */
 export type PlannerRunTokenUsage = Readonly<{
   /** Tokens in the model's context as of its most recent response. */
@@ -324,8 +325,8 @@ export type PlannerRunTokenUsage = Readonly<{
   context_window: number | null;
   /** Context occupancy in `0..=100`, or `null` — see above. */
   percent: number | null;
-  /** Wall clock of the codex frame this came from; a rehydrated reading can be months old. */
-  at_ms: number;
+  /** Wall clock of the reading; null when occupancy was reset without a new sample. */
+  at_ms: number | null;
 }>;
 
 /** Reversible retained-DOM commit budget, shared by requests and cursor termination. */
@@ -387,7 +388,6 @@ export function plannerRunOperation(cardId: string): ApiOperation<PlannerRun> {
     method: 'GET', path: `/api/v1/sessions/${encodeURIComponent(cardId)}/items?afterId=0&limit=1&view=planner-run`,
     responseSchema: sessionItemsPageDtoSchema.transform((page): PlannerRun => {
       const running = page.activeTurn !== null && page.activeTurn !== undefined && page.activeTurn.status === 'running';
-      const ratio = Math.max(0, Math.min(1, page.session.contextUsageRatio));
       return {
         card_id: cardId,
         worker_session_id: page.session.id,
@@ -402,15 +402,8 @@ export function plannerRunOperation(cardId: string): ApiOperation<PlannerRun> {
         attachments_supported: false,
         manual_compact_supported: true,
         compact_outcome: null,
-        context_usage_invalidated: false,
-        token_usage: ratio > 0
-          ? {
-            used_tokens: Math.round(ratio * 200_000),
-            context_window: 200_000,
-            percent: Math.round(ratio * 100),
-            at_ms: page.session.updatedAtMs,
-          }
-          : null,
+        context_usage_invalidated: page.session.contextUsageInvalidated,
+        token_usage: sessionContextUsage(page.session),
         running_turn: running && page.activeTurn !== null && page.activeTurn !== undefined
           ? { turn_id: page.activeTurn.id, elapsed_ms: Math.max(0, Date.now() - (page.activeTurn.startedAtMs ?? Date.now())) }
           : null,

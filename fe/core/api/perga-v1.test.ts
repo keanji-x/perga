@@ -333,7 +333,9 @@ describe('Perga /api/v1 protocol contracts', () => {
           nativeThreadId: 'thr_1',
           epoch: 2,
           status: 'running',
-          contextUsageRatio: 0.42,
+          contextUsedTokens: 107_520,
+          contextWindowTokens: 256_000,
+          contextUsageAtMs: 2400,
           archivedAtMs: null,
           createdAtMs: 1000,
           updatedAtMs: 2500,
@@ -495,7 +497,9 @@ describe('Perga /api/v1 protocol contracts', () => {
         nativeThreadId: 'thr_1',
         epoch: 2,
         status: 'idle',
-        contextUsageRatio: 0.65,
+        contextUsedTokens: 166_400,
+        contextWindowTokens: 256_000,
+        contextUsageAtMs: 1250,
         archivedAtMs: null,
         createdAtMs: 900,
         updatedAtMs: 1300,
@@ -514,7 +518,7 @@ describe('Perga /api/v1 protocol contracts', () => {
     ]);
 
     const run = conversationRunOperation('ses_lead').responseSchema.parse(pageDto);
-    expect(run.token_usage?.percent).toBe(65);
+    expect(run.token_usage).toEqual({ used_tokens: 166_400, context_window: 256_000, percent: 65, at_ms: 1250 });
     expect(run.manual_compact_supported).toBe(true);
 
     const acpConversations = [
@@ -706,7 +710,7 @@ describe('Perga /api/v1 protocol contracts', () => {
       session: {
         id: 'ses_lead', trackId: 'trk_1', isLead: true, boundTaskId: null, boundAttemptId: null,
         title: 'Lead', provider: 'codex', model: 'gpt-5', nativeThreadId: 'thr_1', epoch: 1,
-        status: 'idle', contextUsageRatio: null, archivedAtMs: null, createdAtMs: 90, updatedAtMs: 130,
+        status: 'idle', contextUsedTokens: null, contextWindowTokens: null, contextUsageAtMs: null, archivedAtMs: null, createdAtMs: 90, updatedAtMs: 130,
       },
     });
     expect(errorPage.next_cursor?.position).toBe(10);
@@ -731,7 +735,7 @@ describe('Perga /api/v1 protocol contracts', () => {
       session: {
         id: 'ses_lead', trackId: 'trk_1', isLead: true, boundTaskId: null, boundAttemptId: null,
         title: 'Lead', provider: 'codex', model: 'gpt-5', nativeThreadId: 'thr_1', epoch: 1,
-        status: 'idle', contextUsageRatio: null, archivedAtMs: null, createdAtMs: 90, updatedAtMs: 130,
+        status: 'idle', contextUsedTokens: null, contextWindowTokens: null, contextUsageAtMs: null, archivedAtMs: null, createdAtMs: 90, updatedAtMs: 130,
       },
     });
     expect(run.permission_mode).toBeNull();

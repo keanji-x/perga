@@ -60,7 +60,6 @@ public sealed class AcpAgentSession : IAgentSession
     private string? _nativeThreadId;
     private string? _lastEmittedThreadId;
     private string? _pendingSystemPrompt;
-    private TokenUsage? _latestUsage;
     private bool _supportsNativeCompact;
     private int _disposed;
 
@@ -221,12 +220,11 @@ public sealed class AcpAgentSession : IAgentSession
 
             _ = RunRawPromptRpcAsync(promptParams, turnState, ct);
 
-            var result = await NativeCompactHelper.DrainAsync(
+            // Usage belongs to this operation; a session cache could refer to a previous model or turn.
+            return await NativeCompactHelper.DrainAsync(
                 turnState.Events.Reader.ReadAllAsync(ct),
                 "ACP compaction was interrupted.",
                 ct).ConfigureAwait(false);
-
-            return result with { Usage = result.Usage ?? Volatile.Read(ref _latestUsage) };
         }
         finally
         {
@@ -617,7 +615,7 @@ public sealed class AcpAgentSession : IAgentSession
         try
         {
             var result = await _rpc.SendRequestAsync("session/prompt", promptParams, ct).ConfigureAwait(false);
-            var usage = TryParseAcpUsage(result) ?? turnState.LatestUsage;
+            var usage = MergeUsage(TryParseAcpUsage(result), turnState.LatestUsage);
             var stopReason = TryGetString(result, "stopReason");
 
             if (result.ValueKind == JsonValueKind.Object &&
@@ -746,10 +744,11 @@ public sealed class AcpAgentSession : IAgentSession
             var usage = TryParseAcpUsage(update);
             if (usage is not null)
             {
-                Volatile.Write(ref _latestUsage, usage);
                 if (Volatile.Read(ref _currentTurn) is { } activeTurn)
                 {
+                    usage = MergeUsage(usage, activeTurn.LatestUsage)!;
                     activeTurn.LatestUsage = usage;
+                    activeTurn.Events.Writer.TryWrite(new UnifiedAgentEvent.ContextUsageUpdated(usage));
                 }
             }
 
@@ -841,16 +840,7 @@ public sealed class AcpAgentSession : IAgentSession
                 break;
             }
 
-            case "usage_update":
-            {
-                var usage = TryParseAcpUsage(update);
-                if (usage is not null)
-                {
-                    turnState.LatestUsage = usage;
-                }
 
-                break;
-            }
         }
     }
 
@@ -1076,6 +1066,12 @@ public sealed class AcpAgentSession : IAgentSession
         string.Equals(status, "failed", StringComparison.OrdinalIgnoreCase) ||
         string.Equals(status, "error", StringComparison.OrdinalIgnoreCase);
 
+    private static TokenUsage? MergeUsage(TokenUsage? usage, TokenUsage? latest) =>
+        usage is null ? latest : usage with
+        {
+            ContextWindowTokens = usage.ContextWindowTokens ?? latest?.ContextWindowTokens
+        };
+
     private static TokenUsage? TryParseAcpUsage(JsonElement container)
     {
         if (container.ValueKind != JsonValueKind.Object)
@@ -1091,7 +1087,8 @@ public sealed class AcpAgentSession : IAgentSession
                     ?? TryGetLong(source, "input_tokens")
                     ?? TryGetLong(source, "used");
         var output = TryGetLong(source, "outputTokens") ?? TryGetLong(source, "output_tokens");
-        if (input is null && output is null)
+        var used = TryGetLong(source, "used");
+        if (input is null && output is null && used is null)
         {
             return null;
         }
@@ -1102,9 +1099,11 @@ public sealed class AcpAgentSession : IAgentSession
                      ?? 0L;
         var window = TryGetLong(source, "contextWindowTokens")
                      ?? TryGetLong(source, "context_window_tokens")
+                     ?? TryGetLong(source, "size")
+                     ?? TryGetLong(container, "contextWindowTokens")
                      ?? TryGetLong(container, "size");
 
-        return new TokenUsage(input ?? 0L, output ?? 0L, cached, window);
+        return new TokenUsage(input ?? 0L, output ?? 0L, cached, window, used);
     }
 
     private static string? TryGetString(JsonElement obj, string propertyName) =>

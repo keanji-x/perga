@@ -88,6 +88,39 @@ public sealed class ClaudeProviderTests : IDisposable
         Assert.Contains(resumedEvents, e => e is UnifiedAgentEvent.ThreadBound { NativeThreadId: "claude_resumed_77" });
     }
 
+    [Theory]
+    [InlineData("MODEL")]
+    [InlineData("ASSISTANT")]
+    [InlineData("RESULT")]
+    [InlineData("RESULT_WITH_ASSISTANT")]
+    public async Task Claude_ExplicitContextWindow_ReplacesCachedWindowAcrossTurns(string source)
+    {
+        await using var runtime = CreateRuntime();
+        var spec = new HarnessLaunchSpec("claude", null, _fixture.WorkspaceDir, null, null,
+            new Dictionary<string, McpServerConfig>());
+        await using var session = await runtime.OpenSessionAsync(spec, CancellationToken.None);
+
+        foreach (var (prompt, expectedWindow) in new[]
+                 {
+                     ("CONTEXT_CLAUDE", 200000L),
+                     ($"WINDOW_UPDATE_{source}", 1000000L),
+                     ("CONTEXT_CLAUDE_CACHED_WINDOW", 1000000L)
+                 })
+        {
+            var events = await DrainTurnAsync(session, new TurnInput(prompt, prompt));
+            var completed = Assert.Single(events.OfType<UnifiedAgentEvent.TurnCompleted>());
+            Assert.NotNull(completed.Usage);
+            Assert.Equal(expectedWindow, completed.Usage.ContextWindowTokens);
+            var updates = events.OfType<UnifiedAgentEvent.ContextUsageUpdated>().ToArray();
+            Assert.NotEmpty(updates);
+            Assert.Equal(completed.Usage, updates[^1].Usage);
+            if (prompt == "CONTEXT_CLAUDE_CACHED_WINDOW" || source == "ASSISTANT")
+                Assert.All(updates, update => Assert.Equal(expectedWindow, update.Usage.ContextWindowTokens));
+            Assert.Equal(source == "RESULT" && prompt.StartsWith("WINDOW_UPDATE_", StringComparison.Ordinal)
+                ? 9000L : 200L, completed.Usage.InputTokens);
+        }
+    }
+
     [Fact]
     public async Task Claude_ControlApproval_SigintCancel_AndTurnError()
     {

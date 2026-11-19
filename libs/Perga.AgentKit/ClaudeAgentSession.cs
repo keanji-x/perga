@@ -19,6 +19,7 @@ public sealed class ClaudeAgentSession : IAgentSession
             new UnboundedChannelOptions { SingleReader = true, SingleWriter = false });
 
         public HashSet<string> StartedToolIds { get; } = new(StringComparer.Ordinal);
+        public TokenUsage? LatestAssistantUsage;
         public bool SawStreamedText;
         public bool SawStreamedThinking;
         public volatile bool CancelRequested;
@@ -53,6 +54,7 @@ public sealed class ClaudeAgentSession : IAgentSession
     private readonly CancellationTokenSource _pumpCts = new();
     private readonly Task _pumpTask;
     private TurnStreamState? _currentTurn;
+    private long? _contextWindowTokens;
     private string? _nativeThreadId;
     private string? _lastEmittedThreadId;
     private bool _supportsNativeCompact = true;
@@ -513,6 +515,17 @@ public sealed class ClaudeAgentSession : IAgentSession
             {
                 if (turnState is not null)
                 {
+                    if (root.TryGetProperty("message", out var message) &&
+                        message.ValueKind == JsonValueKind.Object &&
+                        TryParseClaudeUsage(message) is { } usage)
+                    {
+                        // Preserve the explicit usage separately from the session fallback.
+                        turnState.LatestAssistantUsage = usage;
+                        _contextWindowTokens = usage.ContextWindowTokens ?? _contextWindowTokens;
+                        usage = usage with { ContextWindowTokens = _contextWindowTokens };
+                        if (usage.ContextWindowTokens is not null)
+                            turnState.Events.Writer.TryWrite(new UnifiedAgentEvent.ContextUsageUpdated(usage));
+                    }
                     HandleAssistantMessage(root, turnState);
                 }
 
@@ -777,9 +790,19 @@ public sealed class ClaudeAgentSession : IAgentSession
         turnState?.Events.Writer.TryWrite(new UnifiedAgentEvent.ApprovalRequested(requestId, toolName, inputElement));
     }
 
-    private static void HandleResultFrame(JsonElement root, TurnStreamState turnState)
+    private void HandleResultFrame(JsonElement root, TurnStreamState turnState)
     {
-        var usage = TryParseClaudeUsage(root);
+        var resultUsage = TryParseClaudeUsage(root);
+        _contextWindowTokens = TryExtractModelUsageContextWindow(root)
+                               ?? turnState.LatestAssistantUsage?.ContextWindowTokens
+                               ?? resultUsage?.ContextWindowTokens
+                               ?? _contextWindowTokens;
+        var usage = turnState.LatestAssistantUsage ?? resultUsage;
+        if (usage is not null)
+        {
+            usage = usage with { ContextWindowTokens = _contextWindowTokens ?? usage.ContextWindowTokens };
+            turnState.Events.Writer.TryWrite(new UnifiedAgentEvent.ContextUsageUpdated(usage));
+        }
         var isError = TryGetBool(root, "is_error") ?? TryGetBool(root, "isError") ?? false;
         var subtype = TryGetString(root, "subtype");
 
@@ -829,7 +852,9 @@ public sealed class ClaudeAgentSession : IAgentSession
                      ?? TryGetLong(usageObj, "contextWindowTokens")
                      ?? TryExtractModelUsageContextWindow(root);
 
-        return new TokenUsage(input ?? 0L, output ?? 0L, cacheRead, window);
+        var cacheCreation = TryGetLong(usageObj, "cache_creation_input_tokens") ?? 0L;
+        return new TokenUsage(input ?? 0L, output ?? 0L, cacheRead, window,
+            (input ?? 0L) + cacheCreation + cacheRead + (output ?? 0L));
     }
 
     private static long? TryExtractModelUsageContextWindow(JsonElement root)
