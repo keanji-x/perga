@@ -102,6 +102,9 @@ public sealed class WebSocketsIntegrationTests
         var trackId = trackSnap.RootElement.GetProperty("track").GetProperty("id").GetString()!;
         var leadSessionId = trackSnap.RootElement.GetProperty("track").GetProperty("leadSessionId").GetString()!;
 
+        var kernel = cluster.Services.GetRequiredService<IPergaKernel>();
+        await kernel.WaitForTrackIdleAsync(trackId, ct);
+
         // Add a draft task block so task.updated is persisted in events table before WS connects.
         using var putResp = await client.PutAsJsonAsync(
             $"/api/v1/tracks/{trackId}/report/blocks/b_tsk1",
@@ -121,6 +124,8 @@ public sealed class WebSocketsIntegrationTests
             },
             ct);
         putResp.EnsureSuccessStatusCode();
+        // The report edit wakes the lead; finish that turn before observing live deltas.
+        await kernel.WaitForTrackIdleAsync(trackId, ct);
 
         // Connect WS with ?since=0&trackId={trackId}
         using var ws = await cluster.ConnectEventsWebSocketAsync($"?since=0&trackId={trackId}", ct);
@@ -181,6 +186,7 @@ public sealed class WebSocketsIntegrationTests
         // Collect live frames until turn.completed arrives.
         var liveKinds = new List<(string Kind, bool HasEventId)>();
         var sessionStatuses = new List<string>();
+        var liveDeltas = new List<JsonElement>();
         while (true)
         {
             using var liveDoc = await PergaHostTestCluster.ReceiveTextJsonFrameAsync(ws, ct);
@@ -188,6 +194,8 @@ public sealed class WebSocketsIntegrationTests
             var kind = root.GetProperty("kind").GetString()!;
             var hasEventId = root.GetProperty("eventId").ValueKind == JsonValueKind.Number;
             liveKinds.Add((kind, hasEventId));
+            if (kind is KernelEventKinds.SessionThinkingDelta or KernelEventKinds.SessionToolProgress or KernelEventKinds.SessionTextDelta)
+                liveDeltas.Add(root.GetProperty("payload").Clone());
             if (kind == KernelEventKinds.SessionUpdated &&
                 root.GetProperty("payload").GetProperty("id").GetString() == leadSessionId)
                 sessionStatuses.Add(root.GetProperty("payload").GetProperty("status").GetString()!);
@@ -198,6 +206,24 @@ public sealed class WebSocketsIntegrationTests
             }
         }
 
+        Assert.Collection(liveDeltas,
+            thinking => Assert.Equal("step-1-thinking", thinking.GetProperty("delta").GetString()),
+            started =>
+            {
+                Assert.Equal("started", started.GetProperty("phase").GetString());
+                Assert.Equal("call_1", started.GetProperty("callId").GetString());
+                Assert.Equal("perga_task_ls", started.GetProperty("name").GetString());
+                Assert.Equal("perga", started.GetProperty("args").GetProperty("q").GetString());
+            },
+            completed =>
+            {
+                Assert.Equal("completed", completed.GetProperty("phase").GetString());
+                Assert.Equal("call_1", completed.GetProperty("callId").GetString());
+                Assert.False(completed.GetProperty("isError").GetBoolean());
+            },
+            text => Assert.Equal("live-text-chunk", text.GetProperty("delta").GetString()));
+        Assert.All(liveDeltas, delta => Assert.Equal(leadSessionId, delta.GetProperty("sessionId").GetString()));
+        Assert.Single(liveDeltas.Select(delta => delta.GetProperty("turnId").GetString()).Distinct());
         Assert.Contains("queued", sessionStatuses);
         Assert.Contains("running", sessionStatuses.SkipWhile(status => status != "queued").Skip(1));
         Assert.Contains(liveKinds, k => k.Kind == KernelEventKinds.SessionThinkingDelta && !k.HasEventId);
