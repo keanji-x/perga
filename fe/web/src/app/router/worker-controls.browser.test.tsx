@@ -35,7 +35,7 @@ it('shows Worker progress and approvals, preserves retry targets, and stops the 
       ],
     }] });
     if (request.path.startsWith(`${path}/items?`)) return ok({
-      session: { id, trackId: 'daily', provider: 'codex', permissionMode: 'never', boundTaskId: 'task-1', boundAttemptId: 'attempt-1', status: paused ? 'idle' : 'running', createdAtMs: 1, updatedAtMs: 2 },
+      session: { id, trackId: 'daily', provider: 'codex', permissionMode: 'never', boundTaskId: 'task-1', boundAttemptId: 'attempt-1', contextUsage: null, status: paused ? 'idle' : 'running', createdAtMs: 1, updatedAtMs: 2 },
       items: [], unknownInput: null,
       queuedMessages: queuedVisible ? [{ id: 'input-2', text: 'Inspect later', queuedAtMs: 2, state: 'waiting' }] : [],
       activeTurn: paused ? null : { id: currentTurn, sessionId: id, status: 'running', startedAtMs: Date.now() },
@@ -213,7 +213,7 @@ it('keeps one timeline item when a waiting conversation message is steered', asy
     if (request.path === '/api/v1/bootstrap') return ok({ assistantProviders: true, conversationInitialInput: true,
       webCompatVersion: WEB_COMPAT_VERSION, minWebCompatVersion: WEB_COMPAT_VERSION, syncEventVersion: 29, dbInstanceId: 'queue-handoff' });
     if (request.path.startsWith(`${path}/items?`)) return ok({
-      session: { id, trackId: 'daily', provider: 'codex', status: 'running', createdAtMs: 1, updatedAtMs: 2 },
+      session: { id, trackId: 'daily', provider: 'codex', contextUsage: null, status: 'running', createdAtMs: 1, updatedAtMs: 2 },
       activeTurn: { id: 'turn-1', sessionId: id, status: 'running', startedAtMs: Date.now() },
       unknownInput: null, canSteer: true,
       queuedMessages: handedOff ? [] : [{ id: 'message-1', text, queuedAtMs: 2, state: 'waiting' }],

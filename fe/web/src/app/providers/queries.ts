@@ -4,7 +4,7 @@ export { queryKeys } from './query-keys.ts';
 import { conversationItemsOperation, conversationRunOperation, keepConversationInputOperation, retryConversationInputOperation } from '../../../../core/domain/conversation-display.ts';
 import { conversationLiveOperation } from '../../../../core/domain/conversation-live.ts';
 import { editQueuedMessageOperation, withdrawQueuedMessageOperation, steerQueuedMessageOperation } from '../../../../core/domain/conversation-queue-controls.ts';
-import type { ConversationCursor, ConversationLiveReplies, HarnessLiveReplies } from '../../../../core/api/generated/wire.ts';
+import type { ConversationCursor, ConversationLiveReplies } from '../../../../core/api/generated/wire.ts';
 // Query and mutation wiring shared by app/router, app/shell and every feature slice. It lives under
 // app/providers because the router renders the shell and both need the same reads (`no-circular`).
 
@@ -69,7 +69,6 @@ import {
   type ModelCatalogScope, type ModelSelection, type ModelSelectionResult,
   type PlannerQueueWriteOutcome, type PlannerQueueEditOutcome, type PendingQueueEntry, type PlannerInputMutation,
 } from '../../../../core/domain/conversation.ts';
-import { harnessLiveOperation } from '../../../../core/domain/conversation-live.ts';
 import { setPlannerPermissionModeOperation } from '../../../../core/domain/planner-permission-mode.ts';
 import { sendWorkerMessageOperation, updateWorkerSettingsOperation } from '../../../../core/domain/worker-session.ts';
 import { recoverConversationOperation, abandonConversationOperation, restartPlannerOperation, type RunRecovery } from '../../../../core/domain/conversation-restart.ts';
@@ -128,12 +127,10 @@ export function conversationHistoryQueryOptions(transport: ApiTransportPort, car
   };
 }
 
-export function harnessLiveQueryOptions(transport: ApiTransportPort, cardId: string, unauthorized: UnauthorizedChannel, canonical:boolean) {
+export function harnessLiveQueryOptions(transport: ApiTransportPort, cardId: string, unauthorized: UnauthorizedChannel) {
   return {
-    queryKey: [...queryKeys.harnessLive(cardId),canonical ? 'conversation_v1':'historical'],
-    queryFn: async ({ signal }: { signal: AbortSignal }):Promise<ConversationLiveReplies|HarnessLiveReplies> => canonical
-      ? runOperation(transport,{...conversationLiveOperation(cardId),signal},unauthorized)
-      : runOperation(transport,{...harnessLiveOperation(cardId),signal},unauthorized),
+    queryKey: [...queryKeys.harnessLive(cardId),'conversation_v1'],
+    queryFn: async ({ signal }: { signal: AbortSignal }):Promise<ConversationLiveReplies> => runOperation(transport,{...conversationLiveOperation(cardId),signal},unauthorized),
   };
 }
 

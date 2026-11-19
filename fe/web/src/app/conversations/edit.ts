@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, type Dispatch, type SetStateAction } fr
 
 import type { ConversationTurnOutcome, TranscriptEntry, PendingQueueEntry, PlannerQueueEditOutcome } from '../../../../core/domain/conversation.ts';
 import { markedReplace, replacingTurn, type ReplacedTurn } from '../../../../core/domain/conversation-outbox.ts';
+import { DORMANT_NOTICE, RESTARTED_NOTICE } from '../../../../core/domain/conversation-restart.ts';
 import { notSentMessage } from '../../../../core/domain/conversation-delivery.ts';
 import { editedTurnRefill, isComposerEmpty, isLatestTurn } from '../../../../core/domain/conversation-composer.ts';
 import { useState } from '../../ui/state/public.ts';
@@ -70,8 +71,8 @@ export function useConversationEdit({ conversationId, transcript, historyReady, 
   const onComposerChange = useCallback<Dispatch<SetStateAction<string>>>(action => {
     if (conversationId === null || !leases.current.has(conversationId)) changeComposer(action);
   }, [conversationId, changeComposer]);
-  const heldNotice = useConversationEditNotice(conversationId);
-  const notice = heldNotice?.kind === 'dormant' || heldNotice?.kind === 'restarted' ? null : heldNotice;
+  // Send refusals remain visible independently of run-state recovery capabilities.
+  const notice = useConversationEditNotice(conversationId);
   const cancel = () => { if (conversationId !== null && !queuedSaving) cancelEdit(conversationId); };
   return {
     held, queued, queuedMissing, queuedSaving, startQueued, saveQueued, onComposerChange,
@@ -86,7 +87,10 @@ export function useConversationEdit({ conversationId, transcript, historyReady, 
       ...(held.kind === 'queued' ? { submitLabel: 'Save queued message', canSubmit: !queuedMissing } : {}) },
     replacing: replacing !== null,
     marked: held?.kind === 'turn' ? held.outcomeId : markedReplace(ops)?.outcomeId ?? null,
-    notice: notice === null ? null : notice.kind === 'refused'
+    notice: notice === null ? null : notice.kind === 'dormant'
+      ? { tone: 'error', lines: notice.edit && !composerEmpty ? [DORMANT_NOTICE, REFILLED_NOTE] : [DORMANT_NOTICE] } as const
+      : notice.kind === 'restarted' ? { tone: 'neutral', lines: [RESTARTED_NOTICE] } as const
+      : notice.kind === 'refused'
       ? { tone: 'error', lines: notice.edit ? [`Edit failed: ${notice.message}`,
         ...(composerEmpty ? [] : [REFILLED_NOTE])]
         : [notSentMessage(notice.message)] } as const

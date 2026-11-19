@@ -1,12 +1,10 @@
-import type { AgentProvider, ConversationPendingInput, HarnessTimeoutEvidence, PlannerAttachment } from '../../../../core/api/generated/wire.ts';
+import type { AgentProvider, PlannerAttachment } from '../../../../core/api/generated/wire.ts';
 import type { PlannerPermissionMode } from '../../../../core/domain/planner-permission-mode.ts';
 import type { Conversation, CreatedConversation, SideConversation, ConversationKind, ConversationState, ModelCatalog, ModelSelection, PendingQueueEntry, PlannerQueueEditOutcome, PlannerRunTokenUsage, PlannerQueueWriteOutcome, TranscriptEntry } from '../../../../core/domain/conversation.ts';
 import type { FailedSendOp, PendingQueueSend, ReplacedTurn, QueueDisplayAccounting } from '../../../../core/domain/conversation-outbox.ts';
 import type { ConversationStopFeedback } from '../../../../core/domain/conversation-stop.ts';
-import type { RunRecovery } from '../../../../core/domain/conversation-restart.ts';
 import type { RunningTurnAnchor } from '../../../../core/domain/conversation-meta.ts';
 import type { UploadAttachment } from '../../features/planner/attachments.tsx';
-import type { RestartStrip } from './restart.ts';
 import type { WorkerMessageMode } from '../../../../core/domain/worker-session.ts';
 import type { OpenAsk } from '../../../../core/domain/ask.ts';
 import type { AskAnswer } from '../../../../core/api/generated/wire.ts';
@@ -22,14 +20,9 @@ export type ConversationStore = Readonly<{
   /** This selected scope's messages and actions, in canonical display order. */
   turns: readonly TranscriptEntry[];
   canQueueWhileRunning: boolean;
-  nativeQueue: boolean;
   pending: ReadonlySet<string>;
   working: boolean;
   canStop: boolean;
-  stalled: boolean;
-  recovery: RunRecovery | null;
-  /** Canonical content acceptance remains separate from a held execution. */
-  inputStalled: boolean;
   /** Actual current session is terminal; display hold does not prevent saving new content. */
   executionHeld: boolean;
   stopping: boolean;
@@ -40,17 +33,10 @@ export type ConversationStore = Readonly<{
   awaitingConversationUpdate: boolean;
   /** The addressable page of the harness pending queue. */
   pendingQueue: readonly PendingQueueEntry[];
-  /** Canonical pending facts in queue order; bodies belong only to the display page, with no V1 CAS address. */
-  pendingInputs: readonly ConversationPendingInput[];
-  keepInput: (submission: import('../../../../core/api/generated/wire.ts').ConversationSubmissionDelivery) => Promise<void>;
-  retryInput: (submission: import('../../../../core/api/generated/wire.ts').ConversationSubmissionDelivery) => Promise<void>;
-  activeInput: import('../../../../core/api/generated/wire.ts').ConversationActiveInput | null;
   pendingSends: readonly PendingQueueSend[];
   /** Versioned displayed carriers and intentional owner suppression; never suppresses an alive queue row. */
   queueDisplayAccounting: QueueDisplayAccounting;
   editQueuedEntry: (entry: PendingQueueEntry, text: string) => Promise<PlannerQueueEditOutcome>;
-  /** Queued messages that exist but carry no id to address them by. */
-  pendingQueueOverflow: number;
   deleteQueuedEntry: (entry: PendingQueueEntry) => Promise<PlannerQueueWriteOutcome>;
   /** A delete or steer of this card's queued entries is unanswered, whichever view made it. */
   queueWriteOut: boolean;
@@ -83,22 +69,16 @@ export type ConversationStore = Readonly<{
    */
   send: (conversationId: string, text: string, attachments: readonly PlannerAttachment[], fromComposer: boolean,
     replaces: ReplacedTurn | null, idempotencyKey?: string) => Promise<void> | null;
-  /** Whether this card's track can take image attachments at all. */
-  attachmentsSupported: boolean;
-  historyReplacementSupported: boolean;
   /** How full this conversation's context is; `null` when the harness has never said. */
   contextUsage: PlannerRunTokenUsage | null;
   /** Where the running turn's clock starts, anchored when the run response arrived; `null` when no turn is running. */
   runningAnchor: RunningTurnAnchor | null;
   uploadAttachment: UploadAttachment;
   interrupt: () => void;
-  /** The fresh-session strip (#2192): what it says and its action, or `null` when there is nothing to say. */
-  restart: Readonly<{ strip: RestartStrip | null; pending: boolean; start: () => void }>;
   /** Declared by the bound Planner backend; false until the run read answers. */
   manualCompactSupported: boolean;
   compact: () => void;
   compacting: boolean;
-  compactOutcome: import('../../../../core/domain/conversation.ts').CompactOutcome | null;
   retryHistory: () => void;
   retryRun: () => void;
   /** False means newest reconciliation still owns the query; no input was spent. */
@@ -108,8 +88,6 @@ export type ConversationStore = Readonly<{
   providerRecoveryHoldsSend: boolean;
   providerResume: Readonly<{ state: 'available' | 'resuming' | 'paused'; start: () => void }> | null;
   abandonUnknownInput: (() => void) | null;
-  terminalTimeout: HarnessTimeoutEvidence | null;
-  currentOutcome: import('../../../../core/domain/conversation-display.ts').CurrentConversationOutcome | null;
   /** What this conversation's turns run with. */
   model: ModelSelection;
   /** What may be chosen, or `null` until the catalog has answered once. */

@@ -26,8 +26,7 @@ type HeldCopies = Readonly<{ cardId: string; read: number; copies: readonly Live
  * layer's recovery gating applies as it does to every read. The copies are held per card, so a
  * switch never shows one card's text in another.
  */
-export function useLiveReplies({ transport, unauthorized, cardId, enabled, phase, runningTurnId, nextRead, transcriptKey, transcriptReads, items, canonical, worker }: {
-  canonical:boolean;
+export function useLiveReplies({ transport, unauthorized, cardId, enabled, phase, runningTurnId, nextRead, transcriptKey, transcriptReads, items, worker }: {
   transport: ApiTransportPort;
   unauthorized: UnauthorizedChannel;
   cardId: string;
@@ -48,8 +47,8 @@ export function useLiveReplies({ transport, unauthorized, cardId, enabled, phase
   const client = useQueryClient();
   const wsConnected = useConnectionStatus()?.connected === true;
   const streaming = enabled && replyMayStream(phase);
-  const scope = useStreamReadScope(cardId, streaming, phase, runningTurnId, nextRead,canonical);
-  const liveOptions = harnessLiveQueryOptions(transport, cardId, unauthorized,canonical);
+  const scope = useStreamReadScope(cardId, streaming, phase, runningTurnId, nextRead);
+  const liveOptions = harnessLiveQueryOptions(transport, cardId, unauthorized);
   const live = useQuery({
     ...liveOptions,
     // A delayed initial read cannot hold up or answer a later streaming visit.
@@ -92,11 +91,6 @@ export function useLiveReplies({ transport, unauthorized, cardId, enabled, phase
   }, [client, transcriptHash]);
   const transcriptStart = useSyncExternalStore(subscribeToQueries, readTranscriptStart);
 
-  // Confirmation of the first identity keeps matching text; a different identity
-  // retires the previous turn immediately, even if an idle phase was not observed.
-  useEffect(() => {
-    if (!canonical && scope.turnId !== null) apply({ kind: 'active-turn', turnId: scope.turnId });
-  }, [apply, scope.turnId,canonical]);
   const reply = live.data;
   // Consume each cache value before committing children, instead of committing
   // the old body once and then the grown body in a passive effect. The cursor
@@ -133,8 +127,7 @@ export function useLiveReplies({ transport, unauthorized, cardId, enabled, phase
 
   const visible = useMemo(
     () => {
-      let current = canonical || scope.turnId === null ? copies
-        : reconcileLiveReplies(copies, { kind: 'active-turn', turnId: scope.turnId });
+      let current = copies;
       const recent = worker?.events.filter(event => event.kind === 'session.text_delta') ?? [];
       const snapshot = worker?.textTruncated === true ? `…\n${worker.text}` : worker?.text ?? '';
       const tail = wsLive?.turnId === scope.turnId ? wsLive?.parts?.filter(part => part.sequence > (worker?.sequence ?? 0)) : undefined;
@@ -153,7 +146,7 @@ export function useLiveReplies({ transport, unauthorized, cardId, enabled, phase
       }
       return reconcileLiveReplies(current, { kind: 'transcript', items, readStart: transcriptStart });
     },
-    [copies, items, transcriptStart, scope.turnId, canonical, wsLive, wsPersistedInTranscript, worker],
+    [copies, items, transcriptStart, scope.turnId, wsLive, wsPersistedInTranscript, worker],
   );
 
   const wsActivities = useMemo((): readonly ConversationActivity[] => {
@@ -237,14 +230,14 @@ export function useLiveReplies({ transport, unauthorized, cardId, enabled, phase
  * non-streaming phase was observed. Query keys bind separately to confirmed ids. */
 function useStreamReadScope(
   cardId: string, streaming: boolean, phase: HarnessPhaseTag | null,
-  runningTurnId: string | null, nextRead: () => number, canonical:boolean,
+  runningTurnId: string | null, nextRead: () => number,
 ) {
-  const [scope, setScope] = useState(() => ({ cardId, streaming, phase, turnId: runningTurnId, read: nextRead(),canonical }));
-  const starts = scope.cardId !== cardId || scope.canonical !== canonical || (streaming && !scope.streaming)
+  const [scope, setScope] = useState(() => ({ cardId, streaming, phase, turnId: runningTurnId, read: nextRead() }));
+  const starts = scope.cardId !== cardId || (streaming && !scope.streaming)
     || (streaming && phase === 'issuing_turn' && scope.phase !== 'issuing_turn');
   const turnId = starts ? runningTurnId : runningTurnId ?? scope.turnId;
   if (starts || scope.streaming !== streaming || scope.phase !== phase || scope.turnId !== turnId) {
-    setScope({ cardId, streaming, phase, turnId, read: starts ? nextRead() : scope.read,canonical });
+    setScope({ cardId, streaming, phase, turnId, read: starts ? nextRead() : scope.read });
   }
   return scope;
 }

@@ -104,6 +104,79 @@ function openMenu(name: RegExp): HTMLElement {
 }
 
 describe('ModelPill', () => {
+  it('announces Default for unset effort when the model declares no default', () => {
+    render(<ModelPill provider="codex"
+      groups={[{ provider: 'codex', availability: null, catalog: catalog({ models: [model({
+        supported_reasoning_efforts: [{ reasoning_effort: 'low', description: null }, { reasoning_effort: 'high', description: null }],
+        default_reasoning_effort: null,
+      })] }) }]}
+      selection={{ model: 'gpt-5', reasoning_effort: null }} onChange={vi.fn()} />);
+    const menu = openMenu(/^Model:/);
+    expect(within(menu).getByRole('slider', { name: 'Reasoning effort' }).getAttribute('aria-valuetext')).toBe('Default');
+  });
+
+  it.each([1, 2])('keeps null on Save and Cancel, selects low, and clears to Default (%s efforts)', count => {
+    const onChange = vi.fn();
+    render(<ModelPill provider="codex"
+      groups={[{ provider: 'codex', availability: null, catalog: catalog({ models: [model({
+        supported_reasoning_efforts: ['low', 'high'].slice(0, count).map(reasoning_effort => ({ reasoning_effort, description: null })),
+        default_reasoning_effort: null,
+      })] }) }]}
+      selection={{ model: 'gpt-5', reasoning_effort: null }} onChange={onChange} />);
+    let menu = openMenu(/^Model:/);
+    fireEvent.click(within(menu).getByRole('button', { name: 'Save' }));
+    expect(onChange).toHaveBeenLastCalledWith({ model: 'gpt-5', reasoning_effort: null }, 'codex');
+    onChange.mockClear();
+    menu = openMenu(/^Model:/);
+    fireEvent.keyDown(within(menu).getByRole('slider'), { key: 'ArrowRight' });
+    expect(within(menu).getByRole('slider').getAttribute('aria-valuetext')).toBe('low');
+    fireEvent.click(within(menu).getByRole('button', { name: 'Save' }));
+    expect(onChange).toHaveBeenLastCalledWith({ model: 'gpt-5', reasoning_effort: 'low' }, 'codex');
+    menu = openMenu(/^Model:/);
+    fireEvent.keyDown(within(menu).getByRole('slider'), { key: 'ArrowRight' });
+    fireEvent.keyDown(within(menu).getByRole('slider'), { key: 'Home' });
+    expect(within(menu).getByRole('slider').getAttribute('aria-valuetext')).toBe('Default');
+    fireEvent.click(within(menu).getByRole('button', { name: 'Save' }));
+    expect(onChange).toHaveBeenLastCalledWith({ model: 'gpt-5', reasoning_effort: null }, 'codex');
+    onChange.mockClear();
+    menu = openMenu(/^Model:/);
+    fireEvent.keyDown(within(menu).getByRole('slider'), { key: 'End' });
+    fireEvent.click(within(menu).getByRole('button', { name: 'Cancel' }));
+    menu = openMenu(/^Model:/);
+    expect(within(menu).getByRole('slider').getAttribute('aria-valuetext')).toBe('Default');
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it.each([null, 'unadvertised'])('keeps an unset unadvertised default separate from low (%s)', defaultEffort => {
+    render(<ModelPill provider="codex" groups={[{ provider: 'codex', availability: null,
+      catalog: catalog({ models: [model({ default_reasoning_effort: defaultEffort })] }) }]}
+      selection={{ model: 'gpt-5', reasoning_effort: null }} onChange={vi.fn()} />);
+    expect(within(openMenu(/^Model:/)).getByRole('slider').getAttribute('aria-valuetext')).toBe('Default');
+  });
+
+  it('preserves an unadvertised explicit effort on untouched Save and offers supported replacements', () => {
+    const onChange = vi.fn();
+    render(<ModelPill provider="codex" groups={[{ provider: 'codex', availability: null, catalog: catalog() }]}
+      selection={{ model: 'gpt-5', reasoning_effort: 'future' }} onChange={onChange} />);
+    let menu = openMenu(/^Model:/);
+    expect(within(menu).getByRole('slider').getAttribute('aria-valuetext')).toBe('future (Unavailable)');
+    fireEvent.click(within(menu).getByRole('button', { name: 'Save' }));
+    expect(onChange).toHaveBeenLastCalledWith({ model: 'gpt-5', reasoning_effort: 'future' }, 'codex');
+    menu = openMenu(/^Model:/);
+    fireEvent.keyDown(within(menu).getByRole('slider'), { key: 'End' });
+    fireEvent.click(within(menu).getByRole('button', { name: 'Save' }));
+    expect(onChange).toHaveBeenLastCalledWith({ model: 'gpt-5', reasoning_effort: 'high' }, 'codex');
+  });
+
+  it('preserves explicit null installation metadata instead of inheriting the model default', () => {
+    const declared = catalog({ models: [model({ default_reasoning_effort: 'low' })],
+      default: { model: 'gpt-5', reasoning_effort: null, supported_reasoning_efforts: [{ reasoning_effort: 'low', description: null }] } });
+    render(<ModelPill provider="codex" groups={[{ provider: 'codex', availability: null, catalog: declared }]}
+      selection={FOLLOW_INSTALLATION_DEFAULT} onChange={vi.fn()} />);
+    expect(trigger(/^Model:/).textContent).not.toContain('·');
+    expect(within(openMenu(/^Model:/)).getByRole('slider').getAttribute('aria-valuetext')).toBe('Default');
+  });
+
   it('names the default it is actually following, and includes effort when provided', () => {
     render(
       <ModelPill provider="codex" groups={[{ provider: 'codex', availability: null, catalog: catalog() }]} selection={FOLLOW_INSTALLATION_DEFAULT} onChange={vi.fn()} />,

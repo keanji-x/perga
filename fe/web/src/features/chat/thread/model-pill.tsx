@@ -181,7 +181,7 @@ function effortsFor<Provider extends string>(
     ? defaultEfforts
     : chosen?.supported_reasoning_efforts) ?? [];
   const effortDefault = modelId === null
-    ? catalog?.default.reasoning_effort ?? chosen?.default_reasoning_effort ?? null
+    ? catalog?.default.reasoning_effort !== undefined ? catalog.default.reasoning_effort : chosen?.default_reasoning_effort ?? null
     : chosen?.default_reasoning_effort ?? null;
   return { efforts, effortDefault };
 }
@@ -262,20 +262,24 @@ export function ModelPill<Provider extends string = AgentProvider>({
   const draftGroup = shown.find((group) => group.provider === draft.provider);
   const draftBlocked = draftGroup === undefined || catalogReason(draftGroup).blocked !== null;
 
-  const effortStops = viewedEffortInfo.efforts.map((entry) => ({
+  const effortStops: { value: string | null; label: string }[] = viewedEffortInfo.efforts.map((entry) => ({
     value: entry.reasoning_effort,
     label: entry.reasoning_effort,
   }));
-  const defaultStopIndex = viewedEffortInfo.effortDefault === null
-    ? 0
-    : Math.max(0, effortStops.findIndex((stop) => stop.value === viewedEffortInfo.effortDefault));
-  const sliderIndex = viewedEffortValue === null
-    ? defaultStopIndex
-    : Math.max(0, effortStops.findIndex((stop) => stop.value === viewedEffortValue));
+  const advertisedDefault = effortStops.findIndex(stop => stop.value === viewedEffortInfo.effortDefault);
+  if (effortStops.length > 0 && advertisedDefault === -1) {
+    effortStops.unshift({ value: null, label: FOLLOW_DEFAULT_LABEL });
+  }
+  // Keep an unavailable saved value visible until the user deliberately replaces it.
+  if (viewedEffortValue !== null && !effortStops.some(stop => stop.value === viewedEffortValue)) {
+    effortStops.unshift({ value: viewedEffortValue, label: `${viewedEffortValue} (Unavailable)` });
+  }
+  const sliderIndex = effortStops.findIndex(stop => stop.value === (viewedEffortValue
+    ?? (advertisedDefault === -1 ? null : viewedEffortInfo.effortDefault)));
   const currentStopLabel = effortStops.at(sliderIndex)?.label ?? FOLLOW_DEFAULT_LABEL;
   const displayedEffortLabel = viewedEffortInfo.efforts.length === 0
     ? 'N/A'
-    : viewedEffortValue === null && viewedEffortInfo.effortDefault !== null
+    : viewedEffortValue === null && advertisedDefault !== -1
       ? `${currentStopLabel} (${FOLLOW_DEFAULT_LABEL})`
       : currentStopLabel;
 
