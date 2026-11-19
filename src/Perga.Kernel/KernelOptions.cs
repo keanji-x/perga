@@ -22,4 +22,6 @@ public sealed record KernelOptions
     public string McpBaseUri { get; init; } = "http://127.0.0.1:5000";
     public bool DispatchWakesInBackground { get; init; } = false;
     public int DefaultHookTimeoutSecs { get; init; } = 300;
+    public TimeSpan ProviderCancelDispatchGrace { get; init; } = TimeSpan.FromSeconds(2);
+    public TimeSpan ProviderTerminalStopGrace { get; init; } = TimeSpan.FromSeconds(10);
 }

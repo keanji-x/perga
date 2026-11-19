@@ -193,9 +193,12 @@ public sealed partial class TrackActor
                 // The Stop caller sees the failure. Settlement records available evidence.
             }
 
-            if (active.UnconfirmedCancel)
+            if (active.Control.HasUnfinishedCancel)
                 outcome.Conclusive = false;
-            if (active.StoppedBeforeDispatch)
+            bool stoppedBeforeDispatch;
+            lock (active.Control.Sync)
+                stoppedBeforeDispatch = active.Control.StoppedBeforeDispatch;
+            if (stoppedBeforeDispatch)
             {
                 outcome.Conclusive = true;
                 outcome.RejectedBeforePrompt = true;
@@ -465,7 +468,7 @@ public sealed partial class TrackActor
         // active turn, which means the turn never settled.
         private async Task CleanUpAbandonedTurnAsync(ITurnWorkItem work, ActiveTurnState active)
         {
-            _ = actor.SealTurn(active);
+            ObserveTaskFault(actor.SealTurn(active));
             try
             {
                 if (!actor._actorShutdownCts.IsCancellationRequested)

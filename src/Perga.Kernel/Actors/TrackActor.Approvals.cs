@@ -17,15 +17,36 @@ public sealed partial class TrackActor
 
     private enum ExecutionPhase { Starting, Running, Stopping, Ended }
 
-    // This lock only protects in-memory transitions. Provider writes and audit
-    // writes run outside it, with their results admitted against the same state.
+    // This lock only protects in-memory state transitions. Provider I/O, event
+    // publishing, expiration callbacks, and audit writes always run outside it.
     private sealed class ExecutionControl(bool starting = false)
     {
         public object Sync { get; } = new();
         public ExecutionPhase Phase { get; set; } = starting ? ExecutionPhase.Starting : ExecutionPhase.Running;
         public bool StopRequested { get; set; }
+        public bool StoppedBeforeDispatch { get; set; }
         public TaskCompletionSource Stopping { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource<bool> ObservationEnded { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public Task? StopDispatch { get; set; }
+        public Task? CancelCall { get; set; }
+
+        public bool HasUnfinishedCancelLocked => CancelCall is { IsCompleted: false };
+
+        public bool HasUnfinishedCancel
+        {
+            get { lock (Sync) return HasUnfinishedCancelLocked; }
+        }
+
+        public bool HasStopEvidenceLocked =>
+            StoppedBeforeDispatch ||
+            (StopDispatch is not { IsCompleted: false } &&
+             !HasUnfinishedCancelLocked &&
+             ObservationEnded.Task is { IsCompletedSuccessfully: true, Result: true });
+
+        public bool HasStopEvidence
+        {
+            get { lock (Sync) return HasStopEvidenceLocked; }
+        }
     }
 
     private sealed class PendingApproval(
@@ -65,43 +86,83 @@ public sealed partial class TrackActor
         return pending;
     }
 
+    private bool TryDetachApprovalLocked(PendingApproval approval)
+    {
+        if (!_approvals.TryRemove(approval.Dto.Id, out _))
+            return false;
+        approval.Cancellation.Unregister();
+        return true;
+    }
+
+    private List<PendingApproval>? CollectExpiredApprovalsLocked(ExecutionControl control)
+    {
+        List<PendingApproval>? expired = null;
+        foreach (var approval in _approvals.Values)
+        {
+            if (ReferenceEquals(approval.Control, control) && TryDetachApprovalLocked(approval))
+                (expired ??= []).Add(approval);
+        }
+        return expired;
+    }
+
+    private void FinishExpiredApprovals(List<PendingApproval>? expired)
+    {
+        if (expired is null or { Count: 0 })
+            return;
+
+        HashSet<string>? notifiedSessions = null;
+        foreach (var approval in expired)
+        {
+            approval.Expire();
+            if (expired.Count == 1 || (notifiedSessions ??= new(StringComparer.Ordinal)).Add(approval.Dto.SessionId))
+                NotifyApprovalsChanged(approval.Dto.SessionId);
+        }
+    }
+
     private void ExpireApproval(PendingApproval approval)
     {
+        bool detached;
         lock (approval.Control.Sync)
-        {
-            if (!_approvals.TryRemove(approval.Dto.Id, out _))
-                return;
-            approval.Cancellation.Unregister();
-            approval.Expire();
-        }
+            detached = TryDetachApprovalLocked(approval);
+
+        if (!detached)
+            return;
+        approval.Expire();
         NotifyApprovalsChanged(approval.Dto.SessionId);
     }
 
     private void SetApprovalAdmissionClosed(bool closed, bool stopPendingTurns = false)
     {
         HashSet<string>? turns = stopPendingTurns ? new(StringComparer.Ordinal) : null;
+        List<PendingApproval>? expired = null;
         lock (_approvalAdmission)
         {
             _approvalAdmissionClosed = closed;
             if (closed)
+            {
                 foreach (var approval in _approvals.Values)
                 {
                     if (approval.Dto.TurnId is { } turnId)
                         turns?.Add(turnId);
-                    ExpireApproval(approval);
+                    lock (approval.Control.Sync)
+                    {
+                        if (TryDetachApprovalLocked(approval))
+                            (expired ??= []).Add(approval);
+                    }
                 }
+            }
         }
 
-        if (turns is { Count: > 0 })
-            foreach (var active in _scheduler.ActiveTurns)
-                if (turns.Contains(active.TurnDto.Id))
-                    _ = RequestTurnStop(active);
-    }
+        FinishExpiredApprovals(expired);
 
-    private void ExpireApprovalsCore(ExecutionControl control)
-    {
-        foreach (var approval in _approvals.Values.Where(x => ReferenceEquals(x.Control, control)))
-            ExpireApproval(approval);
+        if (turns is { Count: > 0 })
+        {
+            foreach (var active in _scheduler.ActiveTurns)
+            {
+                if (turns.Contains(active.TurnDto.Id))
+                    ObserveTaskFault(RequestTurnStop(active));
+            }
+        }
     }
 
     private void NotifyApprovalsChanged(string sessionId) =>
@@ -137,7 +198,6 @@ public sealed partial class TrackActor
             throw;
         }
 
-        Task? sending = null;
         string delivery = "expired";
         try
         {
@@ -145,15 +205,15 @@ public sealed partial class TrackActor
             lock (pending.Control.Sync)
             {
                 if (_approvalAdmissionClosed || pending.Control.Phase != ExecutionPhase.Running ||
-                    !_approvals.TryRemove(approvalId, out _))
+                    !TryDetachApprovalLocked(pending))
                     throw KernelException.Conflict("The execution ended before the decision could be delivered.");
 
-                pending.Cancellation.Unregister();
-                NotifyApprovalsChanged(pending.Dto.SessionId);
                 delivery = "unconfirmed";
-                sending = pending.Deliver(decision);
             }
-            await sending.ConfigureAwait(false);
+
+            // Notification and provider delivery always run outside admission and control locks.
+            NotifyApprovalsChanged(pending.Dto.SessionId);
+            await pending.Deliver(decision).ConfigureAwait(false);
             delivery = "sent";
         }
         finally
@@ -201,7 +261,7 @@ public sealed partial class TrackActor
                     }
                     catch
                     {
-                        _ = RequestTurnStop(turn);
+                        ObserveTaskFault(RequestTurnStop(turn));
                         throw;
                     }
                 }, static () => { }) is not null)

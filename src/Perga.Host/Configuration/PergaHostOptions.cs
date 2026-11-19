@@ -43,6 +43,9 @@ public sealed class PergaHostOptions
     public TimeSpan MaintenanceInterval { get; set; } = TimeSpan.FromHours(6);
     public bool EnableMaintenanceService { get; set; } = true;
 
+    public TimeSpan ProviderCancelDispatchGrace { get; set; } = TimeSpan.FromSeconds(2);
+    public TimeSpan ProviderTerminalStopGrace { get; set; } = TimeSpan.FromSeconds(10);
+
     public bool CleanupEphemeralDataOnShutdown { get; set; } = true;
 
     public static PergaHostOptions BindFrom(IConfiguration configuration, string contentRootPath)

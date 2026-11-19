@@ -326,6 +326,124 @@ public sealed class PausedApprovalTests
         secondResponse.EnsureSuccessStatusCode();
     }
 
+    [Fact]
+    public async Task TerminalStopWaitsPastCancelDispatchGraceForSlowProviderUnwind()
+    {
+        await using var host = new PergaHostTestCluster(configureHostOptions: opts =>
+        {
+            opts.ProviderCancelDispatchGrace = TimeSpan.FromMilliseconds(150);
+            opts.ProviderTerminalStopGrace = TimeSpan.FromSeconds(3);
+        });
+        host.AgentRuntime.RequiresTerminalStop = true;
+        var cancelSent = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        host.AgentRuntime.CancelHandler = _ =>
+        {
+            cancelSent.TrySetResult();
+            return Task.CompletedTask;
+        };
+        host.AgentRuntime.SetTurnHandler((_, _, ct) => DelayedTerminalStopTurn(cancelSent.Task, TimeSpan.FromMilliseconds(350), ct));
+
+        var (trackId, sessionId) = await host.CreateTrackAsync();
+        await StartTurn(host, sessionId);
+        var approval = await WaitForApproval(host, trackId);
+
+        using var stop = await host.Client.PostAsJsonAsync($"/api/v1/sessions/{sessionId}/interrupt", new { turnId = approval.TurnId });
+        stop.EnsureSuccessStatusCode();
+
+        var kernel = host.Services.GetRequiredService<IPergaKernel>();
+        await kernel.WaitForTrackIdleAsync(trackId).WaitAsync(TimeSpan.FromSeconds(5));
+        var snapshot = await Snapshot(host, trackId);
+        Assert.Equal("idle", snapshot.Sessions.Single(s => s.Id == sessionId).Status);
+        Assert.Empty(snapshot.PendingApprovals);
+    }
+
+    [Fact]
+    public async Task TerminalStopExceedingTerminalGraceAbortsAndFencesSession()
+    {
+        await using var host = new PergaHostTestCluster(configureHostOptions: opts =>
+        {
+            opts.ProviderCancelDispatchGrace = TimeSpan.FromMilliseconds(150);
+            opts.ProviderTerminalStopGrace = TimeSpan.FromMilliseconds(250);
+        });
+        host.AgentRuntime.RequiresTerminalStop = true;
+        var cancelSent = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        host.AgentRuntime.CancelHandler = _ =>
+        {
+            cancelSent.TrySetResult();
+            return Task.CompletedTask;
+        };
+        host.AgentRuntime.SetTurnHandler((_, _, ct) => WedgedApprovalTurn(ct));
+
+        var (trackId, sessionId) = await host.CreateTrackAsync();
+        await StartTurn(host, sessionId);
+        var approval = await WaitForApproval(host, trackId);
+
+        using var stop = await host.Client.PostAsJsonAsync($"/api/v1/sessions/{sessionId}/interrupt", new { turnId = approval.TurnId });
+        Assert.Equal(HttpStatusCode.Conflict, stop.StatusCode);
+        await cancelSent.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        var kernel = host.Services.GetRequiredService<IPergaKernel>();
+        await kernel.WaitForTrackIdleAsync(trackId).WaitAsync(TimeSpan.FromSeconds(5));
+        var snapshot = await Snapshot(host, trackId);
+        Assert.Equal("unknown", snapshot.Sessions.Single(s => s.Id == sessionId).Status);
+        Assert.Empty(snapshot.PendingApprovals);
+    }
+
+    [Fact]
+    public async Task ApprovalDeliveryRunsOutsideAdmissionAndControlLocks()
+    {
+        await using var host = new PergaHostTestCluster();
+        var deliveryEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseDelivery = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var turnFinished = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        host.AgentRuntime.ApprovalHandler = () =>
+        {
+            deliveryEntered.TrySetResult();
+            // Block synchronously inside RespondApprovalAsync to prove neither _approvalAdmission nor Control.Sync is held.
+            releaseDelivery.Task.GetAwaiter().GetResult();
+            turnFinished.TrySetResult();
+        };
+        host.AgentRuntime.SetTurnHandler((_, _, ct) => ApprovalTurn(turnFinished.Task, ct));
+
+        var (trackId, sessionId) = await host.CreateTrackAsync();
+        await StartTurn(host, sessionId);
+        var approval = await WaitForApproval(host, trackId);
+
+        var decideTask = host.Client.PostAsJsonAsync(ApprovalPath(trackId, approval), true);
+        await deliveryEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        try
+        {
+            // While delivery is synchronously blocked inside RespondApprovalAsync:
+            // 1. Closing the track acquires _approvalAdmission (must not block on delivery).
+            // 2. Stopping the turn acquires Control.Sync (must not block on delivery).
+            using var closeResp = await host.Client.PatchAsJsonAsync($"/api/v1/tracks/{trackId}", new { closed = true })
+                .WaitAsync(TimeSpan.FromSeconds(2));
+            closeResp.EnsureSuccessStatusCode();
+        }
+        finally
+        {
+            releaseDelivery.TrySetResult();
+        }
+
+        using var decided = await decideTask.WaitAsync(TimeSpan.FromSeconds(5));
+        decided.EnsureSuccessStatusCode();
+    }
+
+    private static async IAsyncEnumerable<UnifiedAgentEvent> DelayedTerminalStopTurn(
+        Task cancelSent, TimeSpan unwindDelay, [EnumeratorCancellation] CancellationToken ct)
+    {
+        yield return new UnifiedAgentEvent.ApprovalRequested("delayed-terminal-approval", "run_command", JsonSerializer.Deserialize<JsonElement>("{}"));
+        await cancelSent.WaitAsync(ct);
+        await Task.Delay(unwindDelay, ct);
+        yield return new UnifiedAgentEvent.TurnInterrupted();
+    }
+
+    private static async IAsyncEnumerable<UnifiedAgentEvent> WedgedApprovalTurn([EnumeratorCancellation] CancellationToken ct)
+    {
+        yield return new UnifiedAgentEvent.ApprovalRequested("wedged-terminal-approval", "run_command", JsonSerializer.Deserialize<JsonElement>("{}"));
+        await Task.Delay(Timeout.InfiniteTimeSpan, ct);
+    }
+
     private static async IAsyncEnumerable<UnifiedAgentEvent> TerminalApprovalTurn(
         Task stopped, [EnumeratorCancellation] CancellationToken ct)
     {

@@ -39,6 +39,7 @@ public sealed class CodexAgentSession : IAgentSession
             new UnboundedChannelOptions { SingleReader = true, SingleWriter = false });
 
         public ConcurrentDictionary<string, byte> PendingApprovalIds { get; } = new(StringComparer.Ordinal);
+        public object CancelSync { get; } = new();
 
         public TaskCompletionSource<string> TurnIdReady { get; private set; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -353,7 +354,7 @@ public sealed class CodexAgentSession : IAgentSession
             return;
         }
 
-        lock (turnState)
+        lock (turnState.CancelSync)
             turnState.CancelRequested = true;
         await DeclinePendingApprovalsAsync(ct).ConfigureAwait(false);
         var threadId = NativeThreadId;
@@ -776,7 +777,7 @@ public sealed class CodexAgentSession : IAgentSession
 
     private static Task<JsonElement> SendTurnStartAsync(TurnStreamState turn, Func<Task<JsonElement>> send)
     {
-        lock (turn)
+        lock (turn.CancelSync)
         {
             if (!turn.CancelRequested)
                 return send();

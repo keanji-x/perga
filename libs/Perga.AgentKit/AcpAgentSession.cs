@@ -24,6 +24,7 @@ public sealed class AcpAgentSession : IAgentSession
             new UnboundedChannelOptions { SingleReader = true, SingleWriter = false });
 
         public ConcurrentDictionary<string, byte> PendingPermissionIds { get; } = new(StringComparer.Ordinal);
+        public object CancelSync { get; } = new();
         public HashSet<string> StartedToolIds { get; } = new(StringComparer.Ordinal);
         public TokenUsage? LatestUsage;
         public long ContextUsageRevision;
@@ -461,7 +462,7 @@ public sealed class AcpAgentSession : IAgentSession
             return;
         }
 
-        lock (turnState)
+        lock (turnState.CancelSync)
             turnState.CancelRequested = true;
         await CancelPendingPermissionsAsync(ct).ConfigureAwait(false);
         var cancelParams = new Dictionary<string, object?>
@@ -895,7 +896,7 @@ public sealed class AcpAgentSession : IAgentSession
             Volatile.Write(ref _lastCompletedContextPrompt, null);
             var prompt = new CompletedContextPrompt(Interlocked.Increment(ref _nextContextPromptId), revision);
             Task<JsonElement> promptRequest;
-            lock (turnState)
+            lock (turnState.CancelSync)
             {
                 if (turnState.CancelRequested)
                 {
