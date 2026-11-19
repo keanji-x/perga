@@ -373,6 +373,57 @@ public sealed class CodexProviderTests : IDisposable
         Assert.Equal(100_000, result.Usage.ContextWindowTokens);
     }
 
+    [Fact]
+    public async Task NativeCompact_SettlesPendingCompactOnDisposeAsync()
+    {
+        await using var runtime = new AgentRuntime(new AgentRuntimeOptions
+        {
+            ProviderOverrides = new Dictionary<string, ProviderCommandOverride>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["codex"] = new ProviderCommandOverride(
+                    "python3",
+                    PrependArgs: [_fixture.MockCodexPath],
+                    Env: new Dictionary<string, string> { ["MOCK_CODEX_HANG_COMPACT"] = "1" })
+            }
+        });
+        var spec = new HarnessLaunchSpec("codex", null, _fixture.WorkspaceDir, null, null,
+            MockCliFixture.CreateSampleMcpServers());
+        var session = await runtime.OpenSessionAsync(spec, CancellationToken.None);
+
+        var compactTask = session.CompactAsync(CancellationToken.None);
+        await Task.Delay(100);
+        await session.DisposeAsync();
+
+        await Assert.ThrowsAsync<ObjectDisposedException>(async () =>
+            await compactTask.WaitAsync(TimeSpan.FromSeconds(2)));
+    }
+
+    [Fact]
+    public async Task NativeCompact_CanceledBeforeCompletionRefusesOverlappingSubsequentCompact()
+    {
+        await using var runtime = new AgentRuntime(new AgentRuntimeOptions
+        {
+            ProviderOverrides = new Dictionary<string, ProviderCommandOverride>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["codex"] = new ProviderCommandOverride(
+                    "python3",
+                    PrependArgs: [_fixture.MockCodexPath],
+                    Env: new Dictionary<string, string> { ["MOCK_CODEX_DELAY_COMPACT_MS"] = "600" })
+            }
+        });
+        var spec = new HarnessLaunchSpec("codex", null, _fixture.WorkspaceDir, null, null,
+            MockCliFixture.CreateSampleMcpServers());
+        await using var session = await runtime.OpenSessionAsync(spec, CancellationToken.None);
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
+            await session.CompactAsync(cts.Token));
+
+        // Second compaction must not be prematurely completed by the first compaction's late turn/completed.
+        await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+            await session.CompactAsync(CancellationToken.None));
+    }
+
     private static async Task<List<UnifiedAgentEvent>> DrainTurnAsync(IAgentSession session, TurnInput input)
     {
         var list = new List<UnifiedAgentEvent>();

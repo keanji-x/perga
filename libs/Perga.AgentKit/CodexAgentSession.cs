@@ -138,6 +138,7 @@ public sealed class CodexAgentSession : IAgentSession
     private sealed class CompactOperationState(string threadId)
     {
         public string ThreadId { get; } = threadId;
+        public string? TurnId;
         public TokenUsage? LatestUsage;
         public TaskCompletionSource<NativeCompactResult> Completion { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -148,6 +149,7 @@ public sealed class CodexAgentSession : IAgentSession
     private readonly Action<IAgentSession>? _onDispose;
     private readonly SemaphoreSlim _turnLock = new(1, 1);
     private readonly ConcurrentDictionary<string, PendingApproval> _pendingApprovals = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, byte> _ignoredCompactTurnIds = new(StringComparer.Ordinal);
     private readonly HashSet<string> _startedToolCallIds = new(StringComparer.Ordinal);
     private readonly string? _reasoningEffort;
     private TurnStreamState? _currentTurn;
@@ -156,6 +158,7 @@ public sealed class CodexAgentSession : IAgentSession
     private string? _lastEmittedThreadId;
     private string? _fallbackModel;
     private bool _configureWorker;
+    private int _compactAbandoned;
     private int _disposed;
 
     private CodexAgentSession(
@@ -212,9 +215,26 @@ public sealed class CodexAgentSession : IAgentSession
     public async Task<NativeCompactResult> CompactAsync(CancellationToken ct)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        if (Volatile.Read(ref _compactAbandoned) != 0)
+        {
+            throw new InvalidOperationException("Codex session has an unconfirmed canceled compaction.");
+        }
+
         var threadId = NativeThreadId ?? throw new InvalidOperationException("Codex session has no bound NativeThreadId.");
 
         await _turnLock.WaitAsync(ct).ConfigureAwait(false);
+        if (Volatile.Read(ref _disposed) != 0)
+        {
+            try { _turnLock.Release(); } catch (ObjectDisposedException) { }
+            throw new ObjectDisposedException(nameof(CodexAgentSession));
+        }
+
+        if (Volatile.Read(ref _compactAbandoned) != 0)
+        {
+            try { _turnLock.Release(); } catch (ObjectDisposedException) { }
+            throw new InvalidOperationException("Codex session has an unconfirmed canceled compaction.");
+        }
+
         var compactState = new CompactOperationState(threadId);
         Volatile.Write(ref _currentCompact, compactState);
         try
@@ -224,12 +244,50 @@ public sealed class CodexAgentSession : IAgentSession
                 new Dictionary<string, object?> { ["threadId"] = threadId },
                 ct).ConfigureAwait(false);
 
-            return await compactState.Completion.Task.WaitAsync(ct).ConfigureAwait(false);
+            try
+            {
+                return await compactState.Completion.Task.WaitAsync(ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                var activeTurnId = Volatile.Read(ref compactState.TurnId);
+                if (!string.IsNullOrWhiteSpace(activeTurnId))
+                {
+                    _ignoredCompactTurnIds.TryAdd(activeTurnId, 0);
+                    try
+                    {
+                        using var interruptCts = new CancellationTokenSource(TimeSpan.FromSeconds(1));
+                        await _rpc.SendRequestAsync(
+                            "turn/interrupt",
+                            new Dictionary<string, object?> { ["threadId"] = threadId, ["turnId"] = activeTurnId },
+                            interruptCts.Token).ConfigureAwait(false);
+                    }
+                    catch
+                    {
+                        // Best-effort interrupt; if the remote turn has not settled, mark the session unusable below.
+                    }
+                }
+
+                // Wait briefly for terminal confirmation; if still running, abandon the session so no later turn/compact overlaps.
+                try
+                {
+                    await compactState.Completion.Task.WaitAsync(TimeSpan.FromMilliseconds(250)).ConfigureAwait(false);
+                }
+                catch
+                {
+                    if (!compactState.Completion.Task.IsCompleted)
+                    {
+                        Interlocked.Exchange(ref _compactAbandoned, 1);
+                    }
+                }
+
+                throw;
+            }
         }
         finally
         {
             Interlocked.CompareExchange(ref _currentCompact, null, compactState);
-            _turnLock.Release();
+            try { _turnLock.Release(); } catch (ObjectDisposedException) { }
         }
     }
 
@@ -239,6 +297,10 @@ public sealed class CodexAgentSession : IAgentSession
     {
         ArgumentNullException.ThrowIfNull(input);
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        if (Volatile.Read(ref _compactAbandoned) != 0)
+        {
+            throw new InvalidOperationException("Codex session has an unconfirmed canceled compaction.");
+        }
 
         var threadId = NativeThreadId ?? throw new InvalidOperationException("Codex session has no bound NativeThreadId.");
         await _turnLock.WaitAsync(ct).ConfigureAwait(false);
@@ -407,6 +469,8 @@ public sealed class CodexAgentSession : IAgentSession
         _onDispose?.Invoke(this);
         var active = Interlocked.Exchange(ref _currentTurn, null);
         active?.CompleteQuietly();
+        var activeCompact = Interlocked.Exchange(ref _currentCompact, null);
+        activeCompact?.Completion.TrySetException(new ObjectDisposedException(nameof(CodexAgentSession)));
         await _rpc.DisposeAsync().ConfigureAwait(false);
         _turnLock.Dispose();
     }
@@ -1031,6 +1095,28 @@ public sealed class CodexAgentSession : IAgentSession
     private void HandleCompactNotification(string method, JsonElement parameters, CompactOperationState compactState)
     {
         if (ExtractThreadId(parameters) is { } tid && tid != compactState.ThreadId)
+        {
+            return;
+        }
+
+        var notifTurnId = ExtractTurnId(parameters);
+        if (notifTurnId is not null && _ignoredCompactTurnIds.ContainsKey(notifTurnId))
+        {
+            return;
+        }
+
+        if (string.Equals(method, "turn/started", StringComparison.Ordinal))
+        {
+            if (!string.IsNullOrWhiteSpace(notifTurnId))
+            {
+                Interlocked.CompareExchange(ref compactState.TurnId, notifTurnId, null);
+            }
+
+            return;
+        }
+
+        var boundTurnId = Volatile.Read(ref compactState.TurnId);
+        if (boundTurnId is not null && notifTurnId is not null && notifTurnId != boundTurnId)
         {
             return;
         }

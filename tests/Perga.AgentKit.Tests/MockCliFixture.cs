@@ -457,18 +457,32 @@ for raw_line in sys.stdin:
         compact_turn_id = f"turn_compact_{state['turn_counter'] + 1}"
         state["turn_counter"] += 1
         send({"jsonrpc": "2.0", "id": msg_id, "result": {}})
-        send({"jsonrpc": "2.0", "method": "thread/tokenUsage/updated", "params": {
+        send({"jsonrpc": "2.0", "method": "turn/started", "params": {
             "threadId": state["thread_id"],
-            "turnId": compact_turn_id,
-            "tokenUsage": {
-                "last": {"inputTokens": 1200, "outputTokens": 0, "cachedInputTokens": 0},
-                "modelContextWindow": 100000
-            }
+            "turn": {"id": compact_turn_id, "status": "inProgress"}
         }})
-        send({"jsonrpc": "2.0", "method": "turn/completed", "params": {
-            "threadId": state["thread_id"],
-            "turn": {"id": compact_turn_id, "status": "completed"}
-        }})
+        if os.environ.get("MOCK_CODEX_HANG_COMPACT") == "1":
+            continue
+        delay_ms = int(os.environ.get("MOCK_CODEX_DELAY_COMPACT_MS", "0"))
+        def finish_compact(tid=compact_turn_id, d=delay_ms):
+            if d > 0:
+                time.sleep(d / 1000.0)
+            send({"jsonrpc": "2.0", "method": "thread/tokenUsage/updated", "params": {
+                "threadId": state["thread_id"],
+                "turnId": tid,
+                "tokenUsage": {
+                    "last": {"inputTokens": 1200, "outputTokens": 0, "cachedInputTokens": 0},
+                    "modelContextWindow": 100000
+                }
+            }})
+            send({"jsonrpc": "2.0", "method": "turn/completed", "params": {
+                "threadId": state["thread_id"],
+                "turn": {"id": tid, "status": "completed"}
+            }})
+        if delay_ms > 0:
+            threading.Thread(target=finish_compact, daemon=True).start()
+        else:
+            finish_compact()
     elif method == "turn/steer":
         inputs = params.get("input") or []
         state["steer_text"] = inputs[0].get("text", "") if inputs else ""
