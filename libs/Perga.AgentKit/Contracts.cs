@@ -124,6 +124,11 @@ public sealed record NativeCompactResult(
     TokenUsage? Usage = null,
     string? Summary = null);
 
+public sealed record IdleContextUsage(
+    TokenUsage Usage,
+    string? Model,
+    string? NativeThreadId);
+
 public enum SteerDelivery { Accepted, Declined, Unconfirmed }
 
 public interface IAgentSession : IAsyncDisposable
@@ -131,6 +136,9 @@ public interface IAgentSession : IAsyncDisposable
     string? NativeThreadId { get; }
     bool SupportsNativeSteer { get; }
     bool SupportsNativeCompact => false;
+    ValueTask<bool> ResolveNativeCompactSupportAsync(CancellationToken ct) =>
+        ValueTask.FromResult(SupportsNativeCompact);
+    IdleContextUsage? AttachIdleContextUsageHandler(Action<IdleContextUsage>? handler) => null;
     WorkerProviderConfiguration? WorkerConfiguration => null;
     bool ShutdownConfirmed => true;
     bool SupportsSessionResume => false;

@@ -789,6 +789,123 @@ public sealed class AcpProviderTests : IDisposable
         }
     }
 
+    [Theory]
+    [InlineData("1")]
+    [InlineData("empty_then_compact")]
+    public async Task AcpNativeCompact_DelayedAvailableCommandsAndIdleUsageAfterResume_ResolvesAndCaptures(string advertiseMode)
+    {
+        await using var runtime = CreateRuntime(new Dictionary<string, string>
+        {
+            ["MOCK_ACP_RESUME"] = "1",
+            ["MOCK_ACP_ADVERTISE_COMPACT"] = advertiseMode,
+            ["MOCK_ACP_POST_SESSION_DELAY_MS"] = "60",
+            ["MOCK_ACP_POST_SESSION_USAGE"] = "{\"used\": 0, \"size\": 1048576}"
+        });
+
+        await using var session = await runtime.OpenSessionAsync(new HarnessLaunchSpec(
+            "acp:antigravity",
+            "gemini-4-carbon-high",
+            _fixture.WorkspaceDir,
+            "acp_sess_resumed",
+            null,
+            MockCliFixture.CreateSampleMcpServers()), CancellationToken.None);
+
+        var idleTcs = new TaskCompletionSource<IdleContextUsage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var pending = session.AttachIdleContextUsageHandler(u => idleTcs.TrySetResult(u));
+        if (pending is not null)
+        {
+            idleTcs.TrySetResult(pending);
+        }
+
+        Assert.True(await session.ResolveNativeCompactSupportAsync(CancellationToken.None));
+        var idleUsage = await idleTcs.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        Assert.Equal(0, idleUsage.Usage.EffectiveUsedTokens);
+        Assert.Equal(1_048_576, idleUsage.Usage.ContextWindowTokens);
+        Assert.Equal("gemini-4-carbon-high", idleUsage.Model);
+        Assert.Equal("acp_sess_resumed", idleUsage.NativeThreadId);
+
+        var compacted = await session.CompactAsync(CancellationToken.None);
+        Assert.NotNull(compacted.Usage);
+        Assert.Equal(2048, compacted.Usage!.InputTokens);
+        Assert.Equal(1_048_576, compacted.Usage.ContextWindowTokens);
+    }
+
+    [Theory]
+    [InlineData("no_compact")]
+    [InlineData("0")]
+    public async Task AcpNativeCompact_WithoutCompactAdvertisement_ReturnsFalseAndThrowsOnCompact(string advertiseMode)
+    {
+        await using var runtime = CreateRuntime(new Dictionary<string, string>
+        {
+            ["MOCK_ACP_RESUME"] = "1",
+            ["MOCK_ACP_ADVERTISE_COMPACT"] = advertiseMode,
+            ["MOCK_ACP_POST_SESSION_DELAY_MS"] = advertiseMode == "no_compact" ? "40" : "0"
+        });
+
+        await using var session = await runtime.OpenSessionAsync(new HarnessLaunchSpec(
+            "acp:antigravity",
+            null,
+            _fixture.WorkspaceDir,
+            "acp_sess_no_compact",
+            null,
+            MockCliFixture.CreateSampleMcpServers()), CancellationToken.None);
+
+        Assert.False(await session.ResolveNativeCompactSupportAsync(CancellationToken.None));
+        await Assert.ThrowsAsync<NotSupportedException>(() => session.CompactAsync(CancellationToken.None));
+    }
+
+    [Theory]
+    [InlineData("{\"used\": -1, \"size\": 1048576}")]
+    [InlineData("{\"used\": 0, \"size\": 0}")]
+    public async Task AcpIdleUsageUpdate_RejectsInvalidPayloadsAndTagsModelSwitches(string invalidPayload)
+    {
+        await using var runtime = CreateRuntime(new Dictionary<string, string>
+        {
+            ["MOCK_ACP_POST_SESSION_USAGE"] = invalidPayload,
+            ["MOCK_ACP_MODEL_SWITCH_USAGE"] = "{\"used\": 100, \"size\": 200000}"
+        });
+
+        await using var session = await runtime.OpenSessionAsync(new HarnessLaunchSpec(
+            "acp:antigravity",
+            null,
+            _fixture.WorkspaceDir,
+            null,
+            null,
+            MockCliFixture.CreateSampleMcpServers()), CancellationToken.None);
+
+        var received = new List<IdleContextUsage>();
+        var switchedTcs = new TaskCompletionSource<IdleContextUsage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var pending = session.AttachIdleContextUsageHandler(u =>
+        {
+            lock (received)
+            {
+                received.Add(u);
+            }
+
+            switchedTcs.TrySetResult(u);
+        });
+        if (pending is not null)
+        {
+            lock (received)
+            {
+                received.Add(pending);
+            }
+        }
+
+        // Wait briefly to confirm invalid post-session usage was not recorded.
+        await Task.Delay(80);
+        lock (received)
+        {
+            Assert.Empty(received);
+        }
+
+        Assert.True(await session.TrySetModelAsync("gemini-4-carbon-high"));
+        var switched = await switchedTcs.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        Assert.Equal("gemini-4-carbon-high", switched.Model);
+        Assert.Equal(100, switched.Usage.EffectiveUsedTokens);
+        Assert.Equal(200_000, switched.Usage.ContextWindowTokens);
+    }
+
     private static async Task<List<UnifiedAgentEvent>> DrainTurnAsync(IAgentSession session, TurnInput input)
     {
         var list = new List<UnifiedAgentEvent>();

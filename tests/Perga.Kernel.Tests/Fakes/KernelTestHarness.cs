@@ -1343,11 +1343,15 @@ internal sealed class ScriptableFakeAgentSession : IAgentSession
         _turnHandler = turnHandler;
     }
 
+    private Action<IdleContextUsage>? _idleUsageHandler;
+
     public HarnessLaunchSpec LaunchSpec { get; }
     public string? NativeThreadId { get; set; }
     public bool SupportsNativeSteer { get; set; } = true;
     public bool SupportsNativeCompact { get; set; }
+    public Func<ScriptableFakeAgentSession, CancellationToken, ValueTask<bool>>? ResolveNativeCompactSupportHandler { get; set; }
     public Func<ScriptableFakeAgentSession, CancellationToken, Task<NativeCompactResult>>? CompactHandler { get; set; }
+    public IdleContextUsage? PendingIdleUsage { get; set; }
     public int CompactCalls { get; private set; }
     public bool Disposed { get; private set; }
     public bool CancelCalled { get; private set; }
@@ -1385,6 +1389,26 @@ internal sealed class ScriptableFakeAgentSession : IAgentSession
         ModelSwitches.Enqueue(model);
         return Task.FromResult(SupportsModelSwitch);
     }
+
+    public ValueTask<bool> ResolveNativeCompactSupportAsync(CancellationToken ct) =>
+        ResolveNativeCompactSupportHandler is not null
+            ? ResolveNativeCompactSupportHandler(this, ct)
+            : ValueTask.FromResult(SupportsNativeCompact);
+
+    public IdleContextUsage? AttachIdleContextUsageHandler(Action<IdleContextUsage>? handler)
+    {
+        _idleUsageHandler = handler;
+        if (handler is null)
+        {
+            return null;
+        }
+
+        var pending = PendingIdleUsage;
+        PendingIdleUsage = null;
+        return pending;
+    }
+
+    public void EmitIdleContextUsage(IdleContextUsage usage) => _idleUsageHandler?.Invoke(usage);
 
     public Task<NativeCompactResult> CompactAsync(CancellationToken ct)
     {
