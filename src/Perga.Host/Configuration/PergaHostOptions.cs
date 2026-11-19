@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Configuration;
+using Perga.Kernel;
 
 namespace Perga.Host.Configuration;
 
@@ -42,6 +43,9 @@ public sealed class PergaHostOptions
 
     public TimeSpan MaintenanceInterval { get; set; } = TimeSpan.FromHours(6);
     public bool EnableMaintenanceService { get; set; } = true;
+
+    public TimeSpan ProviderCancelDispatchGrace { get; set; } = KernelOptions.DefaultProviderCancelDispatchGrace;
+    public TimeSpan ProviderTerminalStopGrace { get; set; } = KernelOptions.DefaultProviderTerminalStopGrace;
 
     public bool CleanupEphemeralDataOnShutdown { get; set; } = true;
 

@@ -3341,11 +3341,6 @@ public sealed partial class TrackActor : IAsyncDisposable
         {
             get { lock (Control.Sync) return Control.StopRequested; }
         }
-        public bool StoppedBeforeDispatch { get; set; }
-        public TaskCompletionSource<bool> ObservationEnded { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        private Task? _unfinishedCancel;
-        public bool UnconfirmedCancel => Volatile.Read(ref _unfinishedCancel) is { IsCompleted: false };
-        public void TrackUnfinishedCancel(Task cancel) => Volatile.Write(ref _unfinishedCancel, cancel);
         public void CancelStream()
         {
             try { TurnCts.Cancel(); }

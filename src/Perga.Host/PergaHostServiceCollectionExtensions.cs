@@ -174,7 +174,9 @@ public static class PergaHostServiceCollectionExtensions
                 DefaultModel = opts.DefaultModel,
                 DefaultWorkspaceDriver = opts.DefaultWorkspaceDriver,
                 McpBaseUri = baseUri,
-                DispatchWakesInBackground = opts.DispatchWakesInBackground
+                DispatchWakesInBackground = opts.DispatchWakesInBackground,
+                ProviderCancelDispatchGrace = opts.ProviderCancelDispatchGrace,
+                ProviderTerminalStopGrace = opts.ProviderTerminalStopGrace
             };
 
             var policyVm = sp.GetRequiredService<IPolicyVm>();

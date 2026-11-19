@@ -259,21 +259,9 @@ public sealed partial class TrackActor
             if (!_scheduler.TryGetActive(sessionId, out var active) || active.TurnDto.Id != turnId)
                 throw KernelException.Conflict("The Worker turn changed. Refresh the session before interrupting.");
             ct.ThrowIfCancellationRequested();
-            return StopWorkerTurn(active, attempt);
+            return RequestTurnStop(active, workerAttempt: attempt);
         }, ct).ConfigureAwait(false);
         await stop.WaitAsync(ct).ConfigureAwait(false);
-    }
-
-    private Task StopWorkerTurn(ActiveTurnState active, ActiveAttemptState attempt)
-    {
-        lock (active.Control.Sync)
-        {
-            if (active.Control.Phase == ExecutionPhase.Ended)
-                return RequestTurnStop(active);
-            attempt.Paused = true;
-            _mcpBridge.RevokeSession(active.SessionId);
-            return RequestTurnStop(active);
-        }
     }
 
     private async Task CloseInterruptedWorkerCoreAsync(ActiveTurnState turn, ActiveAttemptState attempt)

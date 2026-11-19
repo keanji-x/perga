@@ -6,8 +6,6 @@ namespace Perga.Kernel.Actors;
 
 public sealed partial class TrackActor
 {
-    private static readonly TimeSpan ProviderStopGrace = TimeSpan.FromSeconds(2);
-    private static readonly TimeSpan SessionResumeTimeout = TimeSpan.FromSeconds(20);
     private int _sessionResumeHoldCount;
 
     private sealed class SessionResumeHold(string turnId, string nativeId)
@@ -76,7 +74,7 @@ public sealed partial class TrackActor
     internal async Task<AgentSessionDto> ResumeProviderSessionAsync(string sessionId, string turnId, CancellationToken ct)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct, _actorShutdownCts.Token);
-        deadline.CancelAfter(SessionResumeTimeout + ProviderStopGrace);
+        deadline.CancelAfter(KernelOptions.SessionResumeTimeout + _options.ProviderCancelDispatchGrace);
         try
         {
             return await AcceptSessionResumeAsync(sessionId, turnId, deadline.Token).ConfigureAwait(false);
@@ -158,7 +156,7 @@ public sealed partial class TrackActor
         string sessionId, SessionResumeHold hold, ActiveTurnState? active, IAgentSession? old, bool quiescent)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(_actorShutdownCts.Token);
-        deadline.CancelAfter(SessionResumeTimeout);
+        deadline.CancelAfter(KernelOptions.SessionResumeTimeout);
         var ct = deadline.Token;
         IAgentSession? replacement = null;
         var success = false;
@@ -278,18 +276,13 @@ public sealed partial class TrackActor
         }
     }
 
-    private static bool HasStopEvidence(ActiveTurnState active)
-    {
-        lock (active.Control.Sync)
-            return active.StoppedBeforeDispatch ||
-                active.Control.StopDispatch is not { IsCompleted: false } && !active.UnconfirmedCancel &&
-                active.ObservationEnded.Task is { IsCompletedSuccessfully: true, Result: true };
-    }
+    private static bool HasStopEvidence(ActiveTurnState active) =>
+        active.Control.HasStopEvidence;
 
     private async Task<bool> TryObserveProviderStopAsync(ActiveTurnState active, CancellationToken ct)
     {
         using var grace = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        grace.CancelAfter(ProviderStopGrace);
+        grace.CancelAfter(_options.ProviderCancelDispatchGrace);
         try
         {
             await RequestTurnStop(active, observeTerminal: true).WaitAsync(grace.Token).ConfigureAwait(false);

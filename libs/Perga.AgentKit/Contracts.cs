@@ -164,6 +164,12 @@ public interface IAgentSession : IAsyncDisposable
         string? reason = null,
         CancellationToken ct = default) =>
         RespondApprovalAsync(requestId, approved, reason, ct);
+    // Sessions with a pending request registry claim the response in memory here.
+    // A null result means that the request already ended.
+    // Invoke the returned sender at most once, outside the execution lock.
+    Func<Task>? TryClaimApprovalResponse(
+        string requestId, bool approved, string? selectedOptionId, string? reason, CancellationToken ct) =>
+        () => RespondApprovalAsync(requestId, approved, selectedOptionId, reason, ct);
     Task<bool> TrySetModelAsync(string? model, string? reasoningEffort = null, CancellationToken ct = default);
     Task<SteerDelivery> SteerAsync(string turnCorrelationId, string message, CancellationToken ct);
 }

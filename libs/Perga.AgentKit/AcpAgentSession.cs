@@ -24,6 +24,7 @@ public sealed class AcpAgentSession : IAgentSession
             new UnboundedChannelOptions { SingleReader = true, SingleWriter = false });
 
         public ConcurrentDictionary<string, byte> PendingPermissionIds { get; } = new(StringComparer.Ordinal);
+        public object CancelSync { get; } = new();
         public HashSet<string> StartedToolIds { get; } = new(StringComparer.Ordinal);
         public TokenUsage? LatestUsage;
         public long ContextUsageRevision;
@@ -461,7 +462,7 @@ public sealed class AcpAgentSession : IAgentSession
             return;
         }
 
-        lock (turnState)
+        lock (turnState.CancelSync)
             turnState.CancelRequested = true;
         await CancelPendingPermissionsAsync(ct).ConfigureAwait(false);
         var cancelParams = new Dictionary<string, object?>
@@ -519,13 +520,18 @@ public sealed class AcpAgentSession : IAgentSession
         string? reason = null,
         CancellationToken ct = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(requestId);
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        var send = TryClaimApprovalResponse(requestId, approved, selectedOptionId, reason, ct)
+            ?? throw new InvalidOperationException($"No pending ACP permission request with id '{requestId}'.");
+        await send().ConfigureAwait(false);
+    }
 
-        if (!_pendingPermissions.TryRemove(requestId, out var pending))
-        {
-            throw new InvalidOperationException($"No pending ACP permission request with id '{requestId}'.");
-        }
+    public Func<Task>? TryClaimApprovalResponse(
+        string requestId, bool approved, string? selectedOptionId, string? reason, CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(requestId);
+        if (Volatile.Read(ref _disposed) != 0 || !_pendingPermissions.TryRemove(requestId, out var pending))
+            return null;
 
         var optionId = !string.IsNullOrWhiteSpace(selectedOptionId) && pending.ValidOptionIds.Contains(selectedOptionId)
             ? selectedOptionId
@@ -541,7 +547,7 @@ public sealed class AcpAgentSession : IAgentSession
             ["reason"] = reason
         };
 
-        await _rpc.SendResultResponseAsync(pending.RawId, resultPayload, ct).ConfigureAwait(false);
+        return () => _rpc.SendResultResponseAsync(pending.RawId, resultPayload, ct);
     }
 
     public Task<SteerDelivery> SteerAsync(string turnCorrelationId, string message, CancellationToken ct) =>
@@ -895,7 +901,7 @@ public sealed class AcpAgentSession : IAgentSession
             Volatile.Write(ref _lastCompletedContextPrompt, null);
             var prompt = new CompletedContextPrompt(Interlocked.Increment(ref _nextContextPromptId), revision);
             Task<JsonElement> promptRequest;
-            lock (turnState)
+            lock (turnState.CancelSync)
             {
                 if (turnState.CancelRequested)
                 {

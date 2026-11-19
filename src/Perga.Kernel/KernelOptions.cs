@@ -22,4 +22,23 @@ public sealed record KernelOptions
     public string McpBaseUri { get; init; } = "http://127.0.0.1:5000";
     public bool DispatchWakesInBackground { get; init; } = false;
     public int DefaultHookTimeoutSecs { get; init; } = 300;
+    public static readonly TimeSpan DefaultProviderCancelDispatchGrace = TimeSpan.FromSeconds(2);
+    public static readonly TimeSpan DefaultProviderTerminalStopGrace = TimeSpan.FromSeconds(10);
+    internal static readonly TimeSpan SessionResumeTimeout = TimeSpan.FromSeconds(20);
+    private static readonly TimeSpan MaxTimerDelay = TimeSpan.FromMilliseconds(uint.MaxValue - 1);
+
+    public TimeSpan ProviderCancelDispatchGrace
+    {
+        get;
+        init => field = NormalizeStopGrace(value, MaxTimerDelay - SessionResumeTimeout, DefaultProviderCancelDispatchGrace);
+    } = DefaultProviderCancelDispatchGrace;
+
+    public TimeSpan ProviderTerminalStopGrace
+    {
+        get;
+        init => field = NormalizeStopGrace(value, MaxTimerDelay, DefaultProviderTerminalStopGrace);
+    } = DefaultProviderTerminalStopGrace;
+
+    private static TimeSpan NormalizeStopGrace(TimeSpan value, TimeSpan max, TimeSpan fallback) =>
+        value >= TimeSpan.FromMilliseconds(1) && value <= max ? value : fallback;
 }

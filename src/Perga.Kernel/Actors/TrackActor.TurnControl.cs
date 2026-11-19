@@ -6,20 +6,43 @@ namespace Perga.Kernel.Actors;
 
 public sealed partial class TrackActor
 {
-    private Task RequestTurnStop(ActiveTurnState active, bool observeTerminal = false)
+    private static void ObserveTaskFault(Task task)
+    {
+        if (task.IsCompleted)
+        {
+            _ = task.Exception;
+            return;
+        }
+
+        _ = task.ContinueWith(
+            static completed => _ = completed.Exception,
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+    }
+
+    private Task RequestTurnStop(ActiveTurnState active, bool observeTerminal = false, ActiveAttemptState? workerAttempt = null)
     {
         var control = active.Control;
+        List<PendingApproval>? expired = null;
+        Task stopTask;
         lock (control.Sync)
         {
+            if (workerAttempt is not null && control.Phase != ExecutionPhase.Ended)
+            {
+                workerAttempt.Paused = true;
+                _mcpBridge.RevokeSession(active.SessionId);
+            }
+
             if (control.StopDispatch is { IsCompleted: false } inFlight)
                 return inFlight;
             if (control.Phase == ExecutionPhase.Ended)
-                return HasStopEvidence(active)
+                return control.HasStopEvidenceLocked
                     ? Task.CompletedTask
                     : Task.FromException(KernelException.PreconditionFailed("The provider ended without confirming the turn outcome."));
             if (control.StopDispatch is { } existing)
             {
-                if ((existing.IsFaulted || existing.IsCanceled) && !active.UnconfirmedCancel)
+                if ((existing.IsFaulted || existing.IsCanceled) && !control.HasUnfinishedCancelLocked)
                     return control.StopDispatch = StartTurnStopDispatch(active, observeTerminal);
                 return existing;
             }
@@ -27,15 +50,18 @@ public sealed partial class TrackActor
                 return Task.FromException(KernelException.Conflict("The turn is already being closed."));
 
             var started = control.Phase == ExecutionPhase.Running;
-            active.StoppedBeforeDispatch = !started;
+            control.StoppedBeforeDispatch = !started;
             control.StopRequested = true;
             control.Stopping.TrySetResult();
             control.Phase = ExecutionPhase.Stopping;
-            ExpireApprovalsCore(control);
-            return control.StopDispatch = started
+            expired = CollectExpiredApprovalsLocked(control);
+            stopTask = control.StopDispatch = started
                 ? StartTurnStopDispatch(active, observeTerminal)
                 : Task.CompletedTask;
         }
+
+        FinishExpiredApprovals(expired);
+        return stopTask;
     }
 
     private Task StartTurnStopDispatch(ActiveTurnState active, bool observeTerminal)
@@ -60,29 +86,49 @@ public sealed partial class TrackActor
 
     private async Task DispatchTurnStopAsync(ActiveTurnState active, bool observeTerminal)
     {
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(_actorShutdownCts.Token);
-        deadline.CancelAfter(ProviderStopGrace);
+        var cancelGrace = _options.ProviderCancelDispatchGrace;
+        using var cancelDeadline = CancellationTokenSource.CreateLinkedTokenSource(_actorShutdownCts.Token);
+        cancelDeadline.CancelAfter(cancelGrace);
         Task? dispatch = null;
         try
         {
-            dispatch = active.AgentSession.CancelTurnAsync(deadline.Token);
-            active.TrackUnfinishedCancel(dispatch);
-            await dispatch.WaitAsync(deadline.Token).ConfigureAwait(false);
-            if (observeTerminal || active.AgentSession.RequiresTerminalStop)
-            {
-                if (!await active.ObservationEnded.Task.WaitAsync(deadline.Token).ConfigureAwait(false))
-                    throw KernelException.PreconditionFailed("The provider ended without confirming the turn outcome.");
-            }
-            else
-                active.CancelStream();
+            dispatch = active.AgentSession.CancelTurnAsync(cancelDeadline.Token);
+            lock (active.Control.Sync)
+                active.Control.CancelCall = dispatch;
+            await dispatch.WaitAsync(cancelDeadline.Token).ConfigureAwait(false);
         }
         catch (Exception error) when (error is OperationCanceledException or IOException or InvalidOperationException)
         {
-            if (dispatch is { IsCompleted: false })
-            {
-                _ = dispatch.ContinueWith(task => _ = task.Exception, CancellationToken.None,
-                    TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
-            }
+            if (dispatch is not null)
+                ObserveTaskFault(dispatch);
+            if (!observeTerminal || _actorShutdownCts.IsCancellationRequested)
+                active.CancelStream();
+            if (!_actorShutdownCts.IsCancellationRequested)
+                throw KernelException.PreconditionFailed("The provider did not answer the stop request.");
+            return;
+        }
+
+        if (!observeTerminal && !active.AgentSession.RequiresTerminalStop)
+        {
+            active.CancelStream();
+            return;
+        }
+
+        // Separate cancel-dispatch timeout from terminal-event observation timeout:
+        // Resume probes briefly before falling back to scoped close; normal Stop gives
+        // real providers enough grace to unwind tools/streams cleanly without false unknowns.
+        using var terminalDeadline = observeTerminal
+            ? null
+            : CancellationTokenSource.CreateLinkedTokenSource(_actorShutdownCts.Token);
+        terminalDeadline?.CancelAfter(_options.ProviderTerminalStopGrace);
+        var terminalToken = terminalDeadline?.Token ?? cancelDeadline.Token;
+        try
+        {
+            if (!await active.Control.ObservationEnded.Task.WaitAsync(terminalToken).ConfigureAwait(false))
+                throw KernelException.PreconditionFailed("The provider ended without confirming the turn outcome.");
+        }
+        catch (OperationCanceledException)
+        {
             if (!observeTerminal || _actorShutdownCts.IsCancellationRequested)
                 active.CancelStream();
             if (!_actorShutdownCts.IsCancellationRequested)
@@ -121,7 +167,7 @@ public sealed partial class TrackActor
                 {
                     var item = events.Current;
                     if (item is UnifiedAgentEvent.TurnCompleted or UnifiedAgentEvent.TurnInterrupted or UnifiedAgentEvent.TurnError)
-                        _ = SealTurn(active, item is not UnifiedAgentEvent.TurnError { IsConclusive: false });
+                        ObserveTaskFault(SealTurn(active, item is not UnifiedAgentEvent.TurnError { IsConclusive: false }));
                     var processed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                     inbox.Writer.TryWrite((item, processed));
                     // Ordinary observation keeps the runner's backpressure. Once
@@ -137,7 +183,7 @@ public sealed partial class TrackActor
             }
             finally
             {
-                _ = SealTurn(active);
+                ObserveTaskFault(SealTurn(active));
                 inbox.Writer.TryComplete(failure);
             }
         }
@@ -161,24 +207,32 @@ public sealed partial class TrackActor
 
     private Task SealTurn(ActiveTurnState active, bool conclusive = false)
     {
+        List<PendingApproval>? expired;
+        Task stopTask;
         lock (active.Control.Sync)
         {
             active.Control.Phase = ExecutionPhase.Ended;
-            ExpireApprovalsCore(active.Control);
-            active.ObservationEnded.TrySetResult(conclusive);
-            return active.Control.StopDispatch ?? Task.CompletedTask;
+            expired = CollectExpiredApprovalsLocked(active.Control);
+            active.Control.ObservationEnded.TrySetResult(conclusive);
+            stopTask = active.Control.StopDispatch ?? Task.CompletedTask;
         }
+
+        FinishExpiredApprovals(expired);
+        return stopTask;
     }
 
     private void AbortTurn(ActiveTurnState active)
     {
+        List<PendingApproval>? expired;
         lock (active.Control.Sync)
         {
             active.Control.StopRequested = true;
             active.Control.Stopping.TrySetResult();
             active.Control.Phase = ExecutionPhase.Stopping;
-            ExpireApprovalsCore(active.Control);
+            expired = CollectExpiredApprovalsLocked(active.Control);
         }
+
+        FinishExpiredApprovals(expired);
         active.CancelStream();
     }
 }

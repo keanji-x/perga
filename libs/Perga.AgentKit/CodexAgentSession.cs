@@ -39,6 +39,7 @@ public sealed class CodexAgentSession : IAgentSession
             new UnboundedChannelOptions { SingleReader = true, SingleWriter = false });
 
         public ConcurrentDictionary<string, byte> PendingApprovalIds { get; } = new(StringComparer.Ordinal);
+        public object CancelSync { get; } = new();
 
         public TaskCompletionSource<string> TurnIdReady { get; private set; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -353,7 +354,7 @@ public sealed class CodexAgentSession : IAgentSession
             return;
         }
 
-        lock (turnState)
+        lock (turnState.CancelSync)
             turnState.CancelRequested = true;
         await DeclinePendingApprovalsAsync(ct).ConfigureAwait(false);
         var threadId = NativeThreadId;
@@ -417,13 +418,18 @@ public sealed class CodexAgentSession : IAgentSession
         string? reason = null,
         CancellationToken ct = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(requestId);
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        var send = TryClaimApprovalResponse(requestId, approved, selectedOptionId: null, reason, ct)
+            ?? throw new InvalidOperationException($"No pending Codex approval request with id '{requestId}'.");
+        await send().ConfigureAwait(false);
+    }
 
-        if (!_pendingApprovals.TryRemove(requestId, out var pending))
-        {
-            throw new InvalidOperationException($"No pending Codex approval request with id '{requestId}'.");
-        }
+    public Func<Task>? TryClaimApprovalResponse(
+        string requestId, bool approved, string? selectedOptionId, string? reason, CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(requestId);
+        if (Volatile.Read(ref _disposed) != 0 || !_pendingApprovals.TryRemove(requestId, out var pending))
+            return null;
 
         var decision = approved ? "accept" : "decline";
         var payload = new Dictionary<string, object?>
@@ -433,7 +439,7 @@ public sealed class CodexAgentSession : IAgentSession
             ["reason"] = reason
         };
 
-        await _rpc.SendResultResponseAsync(pending.RawId, payload, ct).ConfigureAwait(false);
+        return () => _rpc.SendResultResponseAsync(pending.RawId, payload, ct);
     }
 
     public Task<bool> TrySetModelAsync(string? model, string? reasoningEffort = null, CancellationToken ct = default) => Task.FromResult(false);
@@ -776,7 +782,7 @@ public sealed class CodexAgentSession : IAgentSession
 
     private static Task<JsonElement> SendTurnStartAsync(TurnStreamState turn, Func<Task<JsonElement>> send)
     {
-        lock (turn)
+        lock (turn.CancelSync)
         {
             if (!turn.CancelRequested)
                 return send();
