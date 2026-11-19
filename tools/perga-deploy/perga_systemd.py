@@ -4,11 +4,27 @@ from pathlib import Path
 import re
 import shutil
 import sys
+import tempfile
 import uuid
 
-from perga_platform import (DeployError, Http, command_env, read_json, run_command,
-                            atomic_json)
+from perga_platform import (DeployError, command_env, read_json, run_command,
+                            atomic_json, sync_dir)
 from perga_sqlite import schema_version
+from perga_config import LEGACY_PATH, write_default_config
+
+
+def replace_file(path, content, mode):
+    fd, temp = tempfile.mkstemp(dir=path.parent, prefix='.' + path.name + '-')
+    try:
+        with os.fdopen(fd, 'wb') as stream:
+            os.fchmod(stream.fileno(), mode)
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temp, path)
+        sync_dir(path.parent)
+    finally:
+        Path(temp).unlink(missing_ok=True)
 
 
 class SystemdInstallation:
@@ -21,18 +37,9 @@ class SystemdInstallation:
             raise DeployError('installation root contains unsafe systemd path characters')
         unit_dir = Path(args.unit_dir).expanduser().absolute()
         unit_dir.mkdir(parents=True, exist_ok=True)
-        config = self.root / 'config.env'
-        expected = {'PERGA_INSTANCE_NAME': self.name, 'PERGA_DATA_DIR': str(self.root / 'data'),
-                    'PERGA_STATIC_WEB_DIR': str(self.root / 'current/web'),
-                    'PERGA_TEMPLATES_DIR': str(self.root / 'current/templates')}
-        if config.exists():
-            self.validate_config()
-        else:
-            Http(args.host_url)
-            values = dict(expected, PERGA_HOST_URL=args.host_url, ASPNETCORE_URLS=args.host_url)
-            fd = os.open(config, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-            with os.fdopen(fd, 'w') as stream:
-                stream.write(''.join(k + '=' + v + '\n' for k, v in values.items()))
+        if self.config() is None:
+            write_default_config(self.root, self.name, args.host_url)
+        config = self.validate_config()
         binaries = self.root / 'bin'
         binaries.mkdir(exist_ok=True)
         tools = Path(__file__).resolve().parent
@@ -41,17 +48,25 @@ class SystemdInstallation:
         launcher = tools.parent / 'perga-overlayfs' / 'launch.py'
         if launcher.is_file():
             sources['perga-overlayfs-launch.py'] = launcher
-        for name, source in sources.items():
+        # Older services can restart while their stable entry points are refreshed.
+        # Publish the shared parser before replacing scripts that import it.
+        order = ['perga_config.py', *sorted(sources.keys() - {'perga_config.py', 'perga_ctl.py'}), 'perga_ctl.py']
+        for name in order:
+            source = sources[name]
             target = binaries / name
             if source != target:
-                shutil.copy2(source, target)
-            target.chmod(0o755)
+                replace_file(target, source.read_bytes(), 0o755)
         common = '\nUMask=0077\nRestart=on-failure\n\n[Install]\nWantedBy=default.target\n'
+        legacy_environment = (f'EnvironmentFile={self.root / LEGACY_PATH}\n'
+                              'Environment=Perga__AutoManageTerminalBridge=false\n'
+                              f'Environment=PERGA_TERM_BRIDGE_URL=http+unix://%t/{self.name}/term.sock\n'
+                              if config.legacy else '')
+        require_toml = '' if config.legacy else ' --require-toml'
         host = (f'[Unit]\nDescription=Perga Host ({self.name})\nWants={self.name}-term.service\n'
                 f'After={self.name}-term.service\n\n[Service]\nType=simple\nWorkingDirectory={self.root}\n'
-                f'EnvironmentFile={config}\nEnvironment=Perga__AutoManageTerminalBridge=false\n'
-                f'Environment=PERGA_TERM_BRIDGE_URL=http+unix://%t/{self.name}/term.sock\n'
-                f'ExecStart=/usr/bin/python3 {binaries}/perga_host.py' + common)
+                f'{legacy_environment}'
+                f'ExecStart=/usr/bin/python3 {binaries}/perga_host.py --name {self.name} '
+                f'--term-socket %t/{self.name}/term.sock{require_toml}' + common)
         term = (f'[Unit]\nDescription=Perga terminal bridge ({self.name})\n\n[Service]\nType=simple\n'
                 f'RuntimeDirectory={self.name}\nRuntimeDirectoryMode=0700\n'
                 f'ExecStart={self.root}/current/termBridge/perga-term-bridge --listen-uds %t/{self.name}/term.sock' + common)
@@ -61,7 +76,7 @@ class SystemdInstallation:
                 backup = self.runtime / ('legacy-' + name)
                 if not backup.exists():
                     shutil.copy2(target, backup)
-            target.write_text(content)
+            replace_file(target, content.encode('utf-8'), 0o644)
         self.systemctl(['daemon-reload'])
         self.systemctl(['enable', self.name + '-term.service', self.name + '.service'])
         if not args.no_start:

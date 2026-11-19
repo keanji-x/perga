@@ -1,7 +1,9 @@
 # Shared Codex Worker home
 
-Set `Perga__CodexWorkerHomeDirectory` to the absolute path of an existing
-directory with mode `0700` on a Linux Host. The owner can sign
+For a managed Linux Host, set `worker_home` in the `[providers.codex]` table
+of `config/perga.toml`. The setting points to an existing directory with
+an absolute path and mode `0700`. For a standalone Host, use the
+`Perga:CodexWorkerHomeDirectory` application configuration key. The owner can sign
 into that directory using Codex device login with file credential storage.
 Keep it outside every Track workspace and every path Perga makes available
 to other sandboxes. In particular, do not place it under the default

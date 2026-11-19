@@ -18,6 +18,7 @@ import time
 import uuid
 
 from perga_platform import DeployError, Http, atomic_json, identifier, read_json, run_command, sync_dir
+from perga_config import load_config, toml_reader
 from perga_manifest import COMPONENTS, ReleaseStaging, make_manifest, verify_release
 from perga_sqlite import DatabaseRecovery, schema_version, validate_database
 from perga_systemd import SystemdInstallation, launch_detached
@@ -55,40 +56,31 @@ class Controller(DatabaseRecovery, SystemdInstallation, ReleaseStaging):
             os.close(fd)
 
     def config(self):
-        values = {}
-        path = self.root / 'config.env'
-        if not path.exists():
-            return values
-        allowed = {'PERGA_INSTANCE_NAME', 'PERGA_HOST_URL', 'PERGA_DATA_DIR', 'PERGA_STATIC_WEB_DIR',
-                   'PERGA_TEMPLATES_DIR', 'PERGA_RELEASE_URL_PREFIX', 'PERGA_ENABLE_OVERLAYFS', 'ASPNETCORE_URLS'}
-        for raw in path.read_text().splitlines():
-            if not raw.strip() or raw.lstrip().startswith('#'):
-                continue
-            key, sep, value = raw.partition('=')
-            if not sep or key not in allowed or any(c in value for c in '\r\n\x00'):
-                raise DeployError('unsupported config.env entry: ' + key)
-            values[key] = value
-        return values
+        return load_config(self.root, self.name)
 
     def http(self, method, path, body=None):
-        transport = self.http_override or Http(
-            self.config().get('PERGA_HOST_URL', 'http://127.0.0.1:4240'),
-            self.runtime / 'system-management-token')
+        transport = self.http_override or Http(self.validate_config().host_url,
+                                               self.runtime / 'system-management-token')
         return transport(method, path, body)
 
     def validate_config(self):
-        expected = {'PERGA_INSTANCE_NAME': self.name, 'PERGA_DATA_DIR': str(self.root / 'data'),
-                    'PERGA_STATIC_WEB_DIR': str(self.root / 'current/web'),
-                    'PERGA_TEMPLATES_DIR': str(self.root / 'current/templates')}
-        values = self.config()
-        if any(values.get(k) != v for k, v in expected.items()):
-            raise DeployError('config.env does not match managed paths/name')
-        Http(values.get('PERGA_HOST_URL', ''))
-        if values.get('ASPNETCORE_URLS') != values.get('PERGA_HOST_URL'):
-            raise DeployError('Host listen URL and management URL must match')
-        if values.get('PERGA_ENABLE_OVERLAYFS', '0') not in ('0', '1'):
-            raise DeployError('PERGA_ENABLE_OVERLAYFS must be 0 or 1')
-        return values
+        config = self.config()
+        if config is None:
+            raise DeployError('missing managed installation configuration')
+        return config
+
+    def prepare_config(self, host_url):
+        if self.config() is None:
+            Http(host_url)
+            toml_reader()
+
+    def configure_services(self, args):
+        with self.lock():
+            self.idle()
+            self.current()
+            self.validate_config()
+            self.configure(args)
+            return self.status()
 
     def current(self, link='current'):
         target = (self.root / link).resolve(strict=True)
@@ -128,9 +120,7 @@ class Controller(DatabaseRecovery, SystemdInstallation, ReleaseStaging):
                 raise DeployError('existing installation; use adopt or upgrade')
             if not re.fullmatch(r'/[A-Za-z0-9_./@+\-]+', str(self.root)):
                 raise DeployError('installation root contains unsafe systemd path characters')
-            Http(args.host_url)
-            if (self.root / 'config.env').exists():
-                self.validate_config()
+            self.prepare_config(args.host_url)
             for unit in (self.name + '.service', self.name + '-term.service'):
                 if (Path(args.unit_dir).expanduser() / unit).exists():
                     raise DeployError('unit already exists; use adopt with stopped services')
@@ -149,9 +139,7 @@ class Controller(DatabaseRecovery, SystemdInstallation, ReleaseStaging):
                 raise DeployError('flat installation must have an existing data directory')
             if not re.fullmatch(r'/[A-Za-z0-9_./@+\-]+', str(self.root)):
                 raise DeployError('installation root contains unsafe systemd path characters')
-            Http(args.host_url)
-            if (self.root / 'config.env').exists():
-                self.validate_config()
+            self.prepare_config(args.host_url)
             for term in (False, True):
                 result = self.systemctl(['is-active', self.name + ('-term.service' if term else '.service')])
                 if result.returncode == 0 or result.stdout.strip() not in ('inactive', 'failed', 'unknown'):
@@ -439,7 +427,7 @@ def parser():
     p.add_argument('--name', default='perga')
     p.add_argument('--timeout', type=float, default=60)
     sub = p.add_subparsers(dest='command', required=True)
-    for name in ('install', 'adopt', 'status', 'check', 'upgrade', 'apply', 'rollback', 'doctor'):
+    for name in ('install', 'adopt', 'configure-services', 'status', 'check', 'upgrade', 'apply', 'rollback', 'doctor'):
         command = sub.add_parser(name)
         for option, kind in (('root', str), ('name', str), ('timeout', float)):
             command.add_argument('--' + option, type=kind, default=argparse.SUPPRESS)
@@ -447,10 +435,13 @@ def parser():
             sources = command.add_mutually_exclusive_group(required=name != 'check')
             for source in ('tarball', 'repo', 'release'):
                 sources.add_argument('--from-' + source)
-        if name in ('install', 'adopt'):
+        if name in ('install', 'adopt', 'configure-services'):
             command.add_argument('--unit-dir', default='~/.config/systemd/user')
+        if name in ('install', 'adopt'):
             command.add_argument('--host-url', default='http://127.0.0.1:4240')
             command.add_argument('--no-start', action='store_true')
+        if name == 'configure-services':
+            command.set_defaults(no_start=True)
         if name in ('upgrade', 'apply', 'rollback'):
             command.add_argument('--force', action='store_true')
             command.add_argument('--restart-term-bridge', action='store_true')
@@ -475,7 +466,7 @@ def main(argv=None):
         elif args.command in ('status', 'doctor'):
             result = getattr(ctl, args.command)()
         else:
-            result = getattr(ctl, args.command)(args)
+            result = getattr(ctl, args.command.replace('-', '_'))(args)
         print(json.dumps(result, indent=2))
         return 1 if args.command == 'doctor' and not result['healthy'] else 0
     except (DeployError, OSError, ValueError, sqlite3.Error, subprocess.SubprocessError, tarfile.TarError) as exc:

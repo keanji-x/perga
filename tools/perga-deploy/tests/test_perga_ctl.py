@@ -107,23 +107,34 @@ class Harness(unittest.TestCase):
             db.execute('CREATE TABLE content(value TEXT)')
             db.execute("INSERT INTO content VALUES ('old data')")
 
+    def write_legacy_config(self, overlayfs='0'):
+        values = {'PERGA_INSTANCE_NAME': 'demo', 'PERGA_DATA_DIR': self.root / 'data',
+                  'PERGA_STATIC_WEB_DIR': self.root / 'current/web',
+                  'PERGA_TEMPLATES_DIR': self.root / 'current/templates',
+                  'PERGA_HOST_URL': 'http://127.0.0.1:4240', 'ASPNETCORE_URLS': 'http://127.0.0.1:4240',
+                  'PERGA_ENABLE_OVERLAYFS': overlayfs}
+        (self.root / 'config.env').write_text(''.join(f'{key}={value}\n' for key, value in values.items()))
+        return {key: str(value) for key, value in values.items()}
+
     def test_install_layout_units_and_config(self):
         self.assertEqual(os.readlink(self.root / 'current'), 'releases/r1')
         self.assertEqual(ctl.verify_release(self.root / 'current')['releaseId'], 'r1')
         host = (self.base / 'units/demo.service').read_text()
         term = (self.base / 'units/demo-term.service').read_text()
-        self.assertIn('http+unix://%t/demo/term.sock', host)
-        self.assertIn('Perga__AutoManageTerminalBridge=false', host)
+        self.assertIn('--term-socket %t/demo/term.sock', host)
+        self.assertIn('--require-toml', host)
+        self.assertNotIn('Environment', host)
         self.assertIn(f'ExecStart=/usr/bin/python3 {self.root}/bin/perga_host.py', host)
         self.assertNotIn('PartOf=', term)
         self.assertIn('RuntimeDirectoryMode=0700', term)
-        self.assertEqual((self.root / 'config.env').stat().st_mode & 0o777, 0o600)
+        self.assertEqual((self.root / 'config/perga.toml').stat().st_mode & 0o777, 0o600)
         self.assertTrue(os.access(self.root / 'bin/perga-ctl', os.X_OK))
         self.assertEqual(self.controller.status()['current'], 'releases/r1')
         with self.assertRaisesRegex(ctl.DeployError, 'existing installation'):
             self.controller.install(self.args(self.archive(self.old)))
 
     def test_managed_host_selects_overlayfs_only_when_enabled(self):
+        (self.root / 'config/perga.toml').unlink()
         launcher = self.root / 'bin/perga-overlayfs-launch.py'
         source = MODULE.parent.parent / 'perga-overlayfs/launch.py'
         self.assertEqual(launcher.read_bytes(), source.read_bytes())
@@ -143,10 +154,8 @@ class Harness(unittest.TestCase):
         direct = subprocess.run(entrypoint, env=env, capture_output=True, text=True, check=True)
         self.assertEqual(direct.stdout.strip(), env['PERGA_TERM_BRIDGE_URL'])
 
-        config = self.root / 'config.env'
-        with config.open('a') as stream:
-            stream.write('PERGA_ENABLE_OVERLAYFS=1\n')
-        env.update(self.controller.validate_config())
+        env.update(self.write_legacy_config('1'))
+        self.assertTrue(self.controller.validate_config().overlayfs)
         overlay = subprocess.run(entrypoint, env=env, capture_output=True, text=True, check=True)
         self.assertEqual(json.loads(overlay.stdout), [
             ['--data-dir', str(self.root / 'data'),
@@ -154,14 +163,90 @@ class Harness(unittest.TestCase):
             None, 'true', '', str(self.root / 'current/termBridge/perga-term-bridge'),
         ])
 
-        with config.open('a') as stream:
-            stream.write('PERGA_ENABLE_OVERLAYFS=typo\n')
+        self.write_legacy_config('typo')
         with self.assertRaisesRegex(ctl.DeployError, 'PERGA_ENABLE_OVERLAYFS must be 0 or 1'):
             self.controller.validate_config()
         invalid = subprocess.run(entrypoint, env=dict(env, PERGA_ENABLE_OVERLAYFS='typo'),
                                  capture_output=True, text=True)
         self.assertNotEqual(invalid.returncode, 0)
         self.assertIn('PERGA_ENABLE_OVERLAYFS must be 0 or 1', invalid.stderr)
+
+    def test_toml_drives_launch_and_provider_paths(self):
+        config = self.root / 'config/perga.toml'
+        config.write_text(
+            '[instance]\nname = "demo"\nhost_url = "http://127.0.0.1:4240"\n'
+            'overlayfs = true\nworkspaces_dir = "/custom workspaces"\n'
+            '\n[providers.codex]\nexecutable = "/tools/bin/codex"\nworker_home = "/private/codex"\n'
+            '\n[providers.agy]\nexecutable = "/tools/bin/agy"\n'
+            '\n[providers.opencode]\nexecutable = "/tools/bin/opencode"\n'
+            '\n[providers.claude]\nexecutable = "/tools/bin/claude"\n'
+            '\n[proxy]\nurl = "http://127.0.0.1:2080"\nno_proxy = ["internal.test"]\n')
+        launcher = self.root / 'bin/perga-overlayfs-launch.py'
+        launcher.write_text(
+            "import json, os, sys\n"
+            "print(json.dumps([sys.argv[1:], os.environ['HTTPS_PROXY'], os.environ['no_proxy'], "
+            "os.environ['ASPNETCORE_URLS']]))\n")
+        entrypoint = [sys.executable, str(self.root / 'bin/perga_host.py'),
+                      '--term-socket', '/run/user/1000/demo/term.sock']
+        result = subprocess.run(entrypoint, capture_output=True, text=True, check=True)
+        arguments, proxy, exclusions, aspnet_urls = json.loads(result.stdout)
+        self.assertEqual(arguments[0:5], ['--data-dir', str((self.root / 'data').resolve()),
+                                          '--workspaces', '/custom workspaces', '--'])
+        self.assertIn('--urls=http://127.0.0.1:4240', arguments)
+        self.assertIn('--Perga:CodexWorkerHomeDirectory=/private/codex', arguments)
+        self.assertIn('--Perga:ProviderExecutables:agy=/tools/bin/agy', arguments)
+        self.assertIn('--Perga:ProviderExecutables:opencode=/tools/bin/opencode', arguments)
+        self.assertIn('--Perga:ProviderExecutables:codex=/tools/bin/codex', arguments)
+        self.assertIn('--Perga:ProviderExecutables:claude=/tools/bin/claude', arguments)
+        self.assertIn('--Perga:AutoManageTerminalBridge=true', arguments)
+        self.assertEqual(proxy, 'http://127.0.0.1:2080')
+        self.assertEqual(exclusions, 'localhost,127.0.0.1,::1,internal.test')
+        self.assertEqual(aspnet_urls, self.controller.validate_config().host_url)
+
+    def test_reconfigure_services_prefers_toml_and_does_not_restart(self):
+        config = self.root / 'config/perga.toml'
+        content = config.read_text()
+        config.unlink()
+        legacy = self.write_legacy_config('1')
+        args = self.args()
+        self.controller.configure_services(args)
+        unit = self.base / 'units/demo.service'
+        self.assertIn('EnvironmentFile=' + str(self.root / 'config.env'), unit.read_text())
+        config.write_text(content)
+        config.chmod(0o600)
+        self.events.clear()
+        self.controller.configure_services(args)
+        self.assertNotIn('EnvironmentFile=', unit.read_text())
+        self.assertFalse(any(event[1] in ('start', 'stop', 'restart') for event in self.events))
+        self.assertTrue((self.root / 'config.env').exists())
+        host = self.root / 'current/host/Perga.Host'
+        host.write_text('#!/bin/sh\nprintf "%s\\n" "$@"\n')
+        entrypoint = [sys.executable, str(self.root / 'bin/perga_host.py'), '--name', 'demo',
+                      '--term-socket', '/run/user/1000/demo/term.sock']
+        result = subprocess.run(entrypoint, env=dict(os.environ, **legacy), capture_output=True, text=True, check=True)
+        self.assertIn('--Perga:AutoManageTerminalBridge=false', result.stdout.splitlines())
+        self.assertIn('--Perga:TerminalBridgeEndpoint=http+unix:///run/user/1000/demo/term.sock',
+                      result.stdout.splitlines())
+        self.assertIn('--Perga:CodexWorkerHomeDirectory=', result.stdout.splitlines())
+
+    def test_invalid_toml_cannot_fall_back_to_legacy(self):
+        self.write_legacy_config()
+        config = self.root / 'config/perga.toml'
+        config.write_text(config.read_text() + 'overlayfs = "false"\n')
+        with self.assertRaisesRegex(ctl.DeployError, 'instance.overlayfs must be a boolean'):
+            self.controller.validate_config()
+
+    def test_toml_unit_rejects_missing_config_before_starting_host(self):
+        self.write_legacy_config()
+        (self.root / 'config/perga.toml').unlink()
+        host = self.root / 'current/host/Perga.Host'
+        host.write_text('#!/bin/sh\necho started\n')
+        result = subprocess.run([sys.executable, str(self.root / 'bin/perga_host.py'), '--name', 'demo',
+                                 '--term-socket', '/run/user/1000/demo/term.sock', '--require-toml'],
+                                capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('missing config/perga.toml', result.stderr)
+        self.assertEqual(result.stdout, '')
 
     def test_install_start_order(self):
         fresh = ctl.Controller(self.base / 'fresh', name='demo', systemctl=self.systemctl)
@@ -438,7 +523,7 @@ class Harness(unittest.TestCase):
         server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
-        config = self.root / 'config.env'
+        config = self.root / 'config/perga.toml'
         config.write_text(config.read_text().replace('http://127.0.0.1:4240',
                           'http://127.0.0.1:' + str(server.server_port)))
         fake_bin = self.base / 'fake-bin'

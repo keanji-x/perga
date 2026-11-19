@@ -11,6 +11,7 @@ from pathlib import Path
 import shutil
 import tarfile
 
+from perga_config import load_config
 from perga_platform import DeployError, NoRedirect, atomic_json, identifier, read_json, run_command, sync_dir
 
 COMPONENTS = ('host', 'web', 'templates', 'termBridge')
@@ -98,7 +99,8 @@ class ReleaseStaging:
                 unpack(args.from_tarball, dest)
             elif args.from_release:
                 url = args.from_release
-                prefix = self.config().get('PERGA_RELEASE_URL_PREFIX', '')
+                config = load_config(self.root, self.name)
+                prefix = config.release_url_prefix if config else ''
                 parsed = urllib.parse.urlsplit(url)
                 if (not prefix.startswith('https://') or not prefix.endswith('/')
                         or not url.startswith(prefix) or parsed.scheme != 'https'

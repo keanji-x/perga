@@ -32,14 +32,11 @@ Git branch independence, separate build outputs, and safe deletion.
 
 ## Managed installations
 
-Set `PERGA_ENABLE_OVERLAYFS=1` in the managed installation's `config.env` and
-restart the Host to offer OverlayFS when creating a Track. The setting defaults
-to `0`. The updated installer configures the Host service to use
-`bin/perga_host.py`. For an existing installation, install that entry point
-and `tools/perga-overlayfs/launch.py` as `bin/perga-overlayfs-launch.py`, then
-set the service's `ExecStart` to `/usr/bin/python3 <root>/bin/perga_host.py`.
-Set the flag in a systemd drop-in until the installed controller has been
-updated to recognize it in `config.env`.
+Set `overlayfs = true` under `[instance]` in the managed installation's
+`config/perga.toml` and restart the Host to offer OverlayFS when creating
+a Track. The setting defaults to false. See
+[installation settings](design/install-and-upgrade.md#instance-settings) for
+the configuration file and migration steps.
 
 With OverlayFS enabled, the entry point starts the Host-managed terminal bridge
 from the current release so terminals can see workspace mounts. The external

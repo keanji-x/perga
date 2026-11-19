@@ -100,12 +100,20 @@ public static class PergaHostServiceCollectionExtensions
 
         services.TryAddSingleton<IReportDocEngine, ReportDocEngine>();
         services.TryAddSingleton<IPolicyVm, PolicyVm.PolicyVm>();
-        services.TryAddSingleton<IAgentRuntime>(sp => new AgentRuntime(new AgentRuntimeOptions
+        services.TryAddSingleton<IAgentRuntime>(sp =>
         {
-            SandboxStateRootDirectory = Path.Combine(sp.GetRequiredService<ResolvedHostStoragePaths>().DataDir, "provider-state"),
-            CodexSandboxApiKey = sp.GetRequiredService<PergaHostOptions>().CodexSandboxApiKey,
-            CodexWorkerHomeDirectory = sp.GetRequiredService<PergaHostOptions>().CodexWorkerHomeDirectory,
-        }));
+            var opts = sp.GetRequiredService<PergaHostOptions>();
+            return new AgentRuntime(new AgentRuntimeOptions
+            {
+                SandboxStateRootDirectory = Path.Combine(sp.GetRequiredService<ResolvedHostStoragePaths>().DataDir, "provider-state"),
+                CodexSandboxApiKey = opts.CodexSandboxApiKey,
+                CodexWorkerHomeDirectory = opts.CodexWorkerHomeDirectory,
+                ProviderOverrides = opts.ProviderExecutables.ToDictionary(
+                    entry => AgentRuntime.NormalizeProviderName(entry.Key),
+                    entry => new ProviderCommandOverride(entry.Value),
+                    StringComparer.OrdinalIgnoreCase),
+            });
+        });
         services.TryAddSingleton<VcsService>();
         services.TryAddSingleton<IVcsService>(sp => sp.GetRequiredService<VcsService>());
         services.TryAddSingleton<IGitHubForgeService, GitHubForgeService>();

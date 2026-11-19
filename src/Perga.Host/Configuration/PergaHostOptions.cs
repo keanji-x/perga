@@ -24,6 +24,7 @@ public sealed class PergaHostOptions
 
     public string DefaultProvider { get; set; } = "codex";
     public string? DefaultModel { get; set; }
+    public Dictionary<string, string> ProviderExecutables { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public string? CodexSandboxApiKey { get; set; }
     public string? CodexWorkerHomeDirectory { get; set; }
     public string? WorkerApprovalAuthorizationSha256 { get; set; }
