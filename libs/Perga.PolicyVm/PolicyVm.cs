@@ -13,7 +13,8 @@ public sealed class PolicyVm : IPolicyVm
     private const string EntryModuleSpecifier = "template.perga.js";
     private const long MaxMemoryBytes = 16L * 1024 * 1024;
     private const int MaxStatementBudget = 10_000;
-    private const int ExecutionTimeoutMs = 50;
+    private const int CompileTimeoutMs = 500;
+    private const int ExecutionTimeoutMs = 200;
     private const int MaxRecursionDepth = 64;
 
     private const string GlobalPreludeScript = """
@@ -54,7 +55,7 @@ public sealed class PolicyVm : IPolicyVm
 
         return ExecuteSandboxed("Compile", () =>
         {
-            using var engine = CreateSandboxedEngine();
+            using var engine = CreateSandboxedEngine(CompileTimeoutMs);
             var def = LoadDefaultTemplateObject(engine, jsModuleSource);
 
             var id = ReadRequiredNonEmptyString(def, "id", "template.id");
@@ -138,7 +139,7 @@ public sealed class PolicyVm : IPolicyVm
                 WorkerDispatch: workerDispatch);
 
             return new CompiledPolicy(id, jsModuleSource, manifest);
-        });
+        }, CompileTimeoutMs);
     }
 
     public PolicyEvalResult<JsonElement> InitState(CompiledPolicy policy, JsonElement inputs)
@@ -460,14 +461,14 @@ public sealed class PolicyVm : IPolicyVm
         });
     }
 
-    private static Engine CreateSandboxedEngine()
+    private static Engine CreateSandboxedEngine(int timeoutMs = ExecutionTimeoutMs)
     {
         var engine = new Engine(options =>
         {
             options.Strict();
             options.LimitMemory(MaxMemoryBytes);
             options.MaxStatements(MaxStatementBudget);
-            options.TimeoutInterval(TimeSpan.FromMilliseconds(ExecutionTimeoutMs));
+            options.TimeoutInterval(TimeSpan.FromMilliseconds(timeoutMs));
             options.LimitRecursion(MaxRecursionDepth);
             options.Interop.Enabled = false;
             options.Interop.AllowGetType = false;
@@ -494,7 +495,7 @@ public sealed class PolicyVm : IPolicyVm
         return obj;
     }
 
-    private static T ExecuteSandboxed<T>(string phase, Func<T> action)
+    private static T ExecuteSandboxed<T>(string phase, Func<T> action, int timeoutMs = ExecutionTimeoutMs)
     {
         try
         {
@@ -521,7 +522,7 @@ public sealed class PolicyVm : IPolicyVm
         catch (TimeoutException ex)
         {
             throw new InvalidOperationException(
-                $"Policy sandbox execution timeout ({ExecutionTimeoutMs}ms) exceeded during {phase}.",
+                $"Policy sandbox execution timeout ({timeoutMs}ms) exceeded during {phase}.",
                 ex);
         }
         catch (JavaScriptException ex)
