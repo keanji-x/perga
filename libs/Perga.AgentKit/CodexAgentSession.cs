@@ -135,25 +135,14 @@ public sealed class CodexAgentSession : IAgentSession
         }
     }
 
-    private sealed class CompactOperationState(string threadId)
-    {
-        public string ThreadId { get; } = threadId;
-        public string? TurnId;
-        public TokenUsage? LatestUsage;
-        public TaskCompletionSource<NativeCompactResult> Completion { get; } =
-            new(TaskCreationOptions.RunContinuationsAsynchronously);
-    }
-
     private readonly JsonRpcStdioConnection _rpc;
     private readonly string? _configuredModel;
     private readonly Action<IAgentSession>? _onDispose;
     private readonly SemaphoreSlim _turnLock = new(1, 1);
     private readonly ConcurrentDictionary<string, PendingApproval> _pendingApprovals = new(StringComparer.Ordinal);
-    private readonly ConcurrentDictionary<string, byte> _ignoredCompactTurnIds = new(StringComparer.Ordinal);
     private readonly HashSet<string> _startedToolCallIds = new(StringComparer.Ordinal);
     private readonly string? _reasoningEffort;
     private TurnStreamState? _currentTurn;
-    private CompactOperationState? _currentCompact;
     private string? _nativeThreadId;
     private string? _lastEmittedThreadId;
     private string? _fallbackModel;
@@ -235,8 +224,8 @@ public sealed class CodexAgentSession : IAgentSession
             throw new InvalidOperationException("Codex session has an unconfirmed canceled compaction.");
         }
 
-        var compactState = new CompactOperationState(threadId);
-        Volatile.Write(ref _currentCompact, compactState);
+        var turnState = new TurnStreamState(threadId, new TurnInput("/compact", $"compact_{Guid.NewGuid():N}"), ct);
+        Volatile.Write(ref _currentTurn, turnState);
         try
         {
             try
@@ -246,14 +235,19 @@ public sealed class CodexAgentSession : IAgentSession
                     new Dictionary<string, object?> { ["threadId"] = threadId },
                     ct).ConfigureAwait(false);
 
-                return await compactState.Completion.Task.WaitAsync(ct).ConfigureAwait(false);
+                var result = await NativeCompactHelper.DrainAsync(
+                    turnState.Events.Reader.ReadAllAsync(ct),
+                    "Codex compaction was interrupted.",
+                    ct).ConfigureAwait(false);
+
+                ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+                return result;
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
-                var activeTurnId = Volatile.Read(ref compactState.TurnId);
+                var activeTurnId = Volatile.Read(ref turnState.TurnId);
                 if (!string.IsNullOrWhiteSpace(activeTurnId))
                 {
-                    _ignoredCompactTurnIds.TryAdd(activeTurnId, 0);
                     try
                     {
                         using var interruptCts = new CancellationTokenSource(TimeSpan.FromSeconds(1));
@@ -268,14 +262,13 @@ public sealed class CodexAgentSession : IAgentSession
                     }
                 }
 
-                // Wait briefly for terminal confirmation; if still running, abandon the session so no later turn/compact overlaps.
                 try
                 {
-                    await compactState.Completion.Task.WaitAsync(TimeSpan.FromMilliseconds(250)).ConfigureAwait(false);
+                    await turnState.Events.Reader.Completion.WaitAsync(TimeSpan.FromMilliseconds(250)).ConfigureAwait(false);
                 }
                 catch
                 {
-                    if (!compactState.Completion.Task.IsCompleted)
+                    if (!turnState.Events.Reader.Completion.IsCompleted)
                     {
                         Interlocked.Exchange(ref _compactAbandoned, 1);
                     }
@@ -286,7 +279,8 @@ public sealed class CodexAgentSession : IAgentSession
         }
         finally
         {
-            Interlocked.CompareExchange(ref _currentCompact, null, compactState);
+            Interlocked.CompareExchange(ref _currentTurn, null, turnState);
+            turnState.CompleteQuietly();
             try { _turnLock.Release(); } catch (ObjectDisposedException) { }
         }
     }
@@ -481,8 +475,6 @@ public sealed class CodexAgentSession : IAgentSession
         _onDispose?.Invoke(this);
         var active = Interlocked.Exchange(ref _currentTurn, null);
         active?.CompleteQuietly();
-        var activeCompact = Interlocked.Exchange(ref _currentCompact, null);
-        activeCompact?.Completion.TrySetException(new ObjectDisposedException(nameof(CodexAgentSession)));
         await _rpc.DisposeAsync().ConfigureAwait(false);
         _turnLock.Dispose();
     }
@@ -866,11 +858,6 @@ public sealed class CodexAgentSession : IAgentSession
         var turnState = Volatile.Read(ref _currentTurn);
         if (turnState is null)
         {
-            if (Volatile.Read(ref _currentCompact) is { } compactState)
-            {
-                HandleCompactNotification(method, parameters, compactState);
-            }
-
             return;
         }
 
@@ -882,6 +869,27 @@ public sealed class CodexAgentSession : IAgentSession
 
         switch (method)
         {
+            case "turn/started":
+            {
+                if (!string.IsNullOrWhiteSpace(notifTurnId))
+                {
+                    turnState.TrySetTurnId(notifTurnId);
+                }
+
+                break;
+            }
+
+            case "thread/compacted":
+            {
+                if (TryGetString(parameters, "threadId") is { } tid && tid != turnState.ThreadId)
+                {
+                    break;
+                }
+
+                var usage = TryParseUsage(parameters) ?? turnState.LatestUsage;
+                turnState.TryFinish(new UnifiedAgentEvent.TurnCompleted(usage));
+                break;
+            }
             case "item/agentMessage/delta":
             case "agent_message_delta":
             case "codex/event/agent_message_delta":
@@ -1104,108 +1112,8 @@ public sealed class CodexAgentSession : IAgentSession
         _ = _rpc.SendErrorResponseAsync(rawId, -32601, $"Unsupported client RPC method '{method}'.", CancellationToken.None);
     }
 
-    private void HandleCompactNotification(string method, JsonElement parameters, CompactOperationState compactState)
-    {
-        if (ExtractThreadId(parameters) is { } tid && tid != compactState.ThreadId)
-        {
-            return;
-        }
-
-        var notifTurnId = ExtractTurnId(parameters);
-        if (notifTurnId is not null && _ignoredCompactTurnIds.ContainsKey(notifTurnId))
-        {
-            return;
-        }
-
-        if (string.Equals(method, "turn/started", StringComparison.Ordinal))
-        {
-            if (!string.IsNullOrWhiteSpace(notifTurnId))
-            {
-                Interlocked.CompareExchange(ref compactState.TurnId, notifTurnId, null);
-            }
-
-            return;
-        }
-
-        var boundTurnId = Volatile.Read(ref compactState.TurnId);
-        if (boundTurnId is not null && notifTurnId is not null && notifTurnId != boundTurnId)
-        {
-            return;
-        }
-
-        switch (method)
-        {
-            case "thread/tokenUsage/updated":
-            case "turn/usage":
-            {
-                var usage = TryParseUsage(parameters);
-                if (usage is not null)
-                {
-                    Volatile.Write(ref compactState.LatestUsage, usage);
-                }
-
-                break;
-            }
-
-            case "thread/compacted":
-            {
-                var usage = TryParseUsage(parameters) ?? Volatile.Read(ref compactState.LatestUsage);
-                compactState.Completion.TrySetResult(new NativeCompactResult(usage, "Context compacted."));
-                break;
-            }
-
-            case "turn/completed":
-            {
-                var usage = TryParseUsage(parameters) ?? Volatile.Read(ref compactState.LatestUsage);
-                var status = TryGetString(parameters, "status");
-                JsonElement turnObj = default;
-                var hasTurnObj = parameters.ValueKind == JsonValueKind.Object &&
-                                 parameters.TryGetProperty("turn", out turnObj) &&
-                                 turnObj.ValueKind == JsonValueKind.Object;
-                if (hasTurnObj)
-                {
-                    status ??= TryGetString(turnObj, "status");
-                    usage = TryParseUsage(turnObj) ?? usage;
-                }
-
-                if (string.Equals(status, "failed", StringComparison.OrdinalIgnoreCase))
-                {
-                    var (_, msg, _) = ExtractCodexError(hasTurnObj ? turnObj : parameters);
-                    compactState.Completion.TrySetException(new InvalidOperationException(msg));
-                }
-                else if (string.Equals(status, "interrupted", StringComparison.OrdinalIgnoreCase) ||
-                         string.Equals(status, "cancelled", StringComparison.OrdinalIgnoreCase) ||
-                         string.Equals(status, "canceled", StringComparison.OrdinalIgnoreCase))
-                {
-                    compactState.Completion.TrySetCanceled();
-                }
-                else if (string.Equals(status, "completed", StringComparison.OrdinalIgnoreCase))
-                {
-                    compactState.Completion.TrySetResult(new NativeCompactResult(usage, "Context compacted."));
-                }
-
-                break;
-            }
-
-            case "error":
-            case "turn/error":
-            case "turn/failed":
-            {
-                var (_, msg, _) = ExtractCodexError(parameters);
-                compactState.Completion.TrySetException(new InvalidOperationException(msg));
-                break;
-            }
-        }
-    }
-
     private void OnDisconnected(Exception? ex)
     {
-        if (Volatile.Read(ref _currentCompact) is { } compactState)
-        {
-            compactState.Completion.TrySetException(
-                ex ?? new IOException("Codex app-server exited unexpectedly during compaction."));
-        }
-
         var turnState = Volatile.Read(ref _currentTurn);
         if (turnState is null)
         {

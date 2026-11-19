@@ -194,8 +194,6 @@ public sealed class AcpAgentSession : IAgentSession
         await _turnLock.WaitAsync(ct).ConfigureAwait(false);
         var turnState = new TurnStreamState();
         Volatile.Write(ref _currentTurn, turnState);
-        var summary = new StringBuilder();
-        TokenUsage? usage = null;
 
         try
         {
@@ -216,26 +214,12 @@ public sealed class AcpAgentSession : IAgentSession
 
             _ = RunRawPromptRpcAsync(promptParams, turnState, ct);
 
-            await foreach (var evt in turnState.Events.Reader.ReadAllAsync(ct).ConfigureAwait(false))
-            {
-                switch (evt)
-                {
-                    case UnifiedAgentEvent.TextDelta td:
-                        summary.Append(td.Delta);
-                        break;
-                    case UnifiedAgentEvent.TurnCompleted tc:
-                        usage = tc.Usage;
-                        break;
-                    case UnifiedAgentEvent.TurnError te:
-                        throw new InvalidOperationException(te.Message);
-                    case UnifiedAgentEvent.TurnInterrupted:
-                        throw new OperationCanceledException("ACP compaction was interrupted.", ct);
-                }
-            }
+            var result = await NativeCompactHelper.DrainAsync(
+                turnState.Events.Reader.ReadAllAsync(ct),
+                "ACP compaction was interrupted.",
+                ct).ConfigureAwait(false);
 
-            usage ??= Volatile.Read(ref _latestUsage);
-            var summaryText = summary.ToString().Trim();
-            return new NativeCompactResult(usage, string.IsNullOrEmpty(summaryText) ? "Context compacted." : summaryText);
+            return result with { Usage = result.Usage ?? Volatile.Read(ref _latestUsage) };
         }
         finally
         {

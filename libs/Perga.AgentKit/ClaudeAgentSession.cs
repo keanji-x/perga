@@ -170,28 +170,10 @@ public sealed class ClaudeAgentSession : IAgentSession
             throw new NotSupportedException("Claude session does not advertise /compact.");
         }
 
-        var summary = new StringBuilder();
-        TokenUsage? usage = null;
-        await foreach (var evt in StreamTurnAsync(new TurnInput("/compact", $"compact_{Guid.NewGuid():N}"), ct)
-                           .ConfigureAwait(false))
-        {
-            switch (evt)
-            {
-                case UnifiedAgentEvent.TextDelta td:
-                    summary.Append(td.Delta);
-                    break;
-                case UnifiedAgentEvent.TurnCompleted tc:
-                    usage = tc.Usage;
-                    break;
-                case UnifiedAgentEvent.TurnError te:
-                    throw new InvalidOperationException(te.Message);
-                case UnifiedAgentEvent.TurnInterrupted:
-                    throw new OperationCanceledException("Claude compaction was interrupted.", ct);
-            }
-        }
-
-        var summaryText = summary.ToString().Trim();
-        return new NativeCompactResult(usage, string.IsNullOrEmpty(summaryText) ? "Context compacted." : summaryText);
+        return await NativeCompactHelper.DrainAsync(
+            StreamTurnAsync(new TurnInput("/compact", $"compact_{Guid.NewGuid():N}"), ct),
+            "Claude compaction was interrupted.",
+            ct).ConfigureAwait(false);
     }
 
     public async IAsyncEnumerable<UnifiedAgentEvent> StreamTurnAsync(
