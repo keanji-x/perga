@@ -216,3 +216,22 @@ it('keeps a v1 accepted first input until session history witnesses its identity
   expect(registry.acceptDraft(draft, { conversation, sessionInput: { sessionId: card, inputId: 'input', turnId: 'turn',
     deliveryState: 'accepted', turnStatus: 'queued', statusUrl: '/status' } }, submitted)).toBe(false);
 });
+
+it('retains the three-generation permission barrier until every real write settles', async () => {
+  const registry = createConversationOwner().commands;
+  let fail!: (error: Error) => void;
+  let finish!: () => void;
+  const first = registry.holdPermissionWrite('a', new Promise<void>((_resolve, reject) => { fail = reject; }));
+  void first.catch(() => undefined);
+  const second = registry.holdPermissionWrite('a', new Promise<void>(resolve => { finish = resolve; }));
+  void second.catch(() => undefined);
+  const third = registry.holdPermissionWrite('a', Promise.resolve());
+  void third.catch(() => undefined);
+  fail(new Error('first failed'));
+  for (let i = 0; i < 10; i++) await Promise.resolve();
+  expect(registry.permissionWriteOf('a')).toBeDefined();
+  finish();
+  await Promise.allSettled([first, second, third]);
+  await Promise.resolve();
+  expect(registry.permissionWriteOf('a')).toBeUndefined();
+});

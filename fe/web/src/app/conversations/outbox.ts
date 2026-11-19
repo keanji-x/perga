@@ -146,7 +146,7 @@ export function useConversationOutbox({
     /* An unknown answer is sent again under the same key, so the server queues the message at most once. Each
        retry is admitted again; one that cannot go out counts as an attempt. */
     const admitRetry = (): ApiTransportPort | null => { try { return admitTransport(transport); } catch { return null; } };
-    return retryUnknownSend(
+    const deliver = () => retryUnknownSend(
       (attempt) => {
         const admitted = attempt === 0 ? admittedAtPress : admitRetry();
         return admitted === null ? Promise.reject(new NotSentError())
@@ -156,7 +156,11 @@ export function useConversationOutbox({
       (error) => (error instanceof ApiError ? error.failure : null),
       (retry) => new Promise<void>((resolve) => { setTimeout(resolve, recoveryDelay(retry, Math.random())); }),
       op.unknown, queueIfBusy ? 0 : SEND_RETRIES,
-    ).then(({ sent, everUnknown }) => {
+    );
+    const prerequisite = registry.permissionWriteOf(sentTo);
+    const delivery = prerequisite === undefined ? deliver() : prerequisite.then(deliver,
+      (error: unknown) => { throw new KeyedSendFailure(error, op.unknown ? 'unknown' : 'refused'); });
+    return delivery.then(({ sent, everUnknown }) => {
       if (fromComposer) releaseComposerImages(sentTo, attachments);
       /* Not claimed: the answer may replay an entry deleted, rewound or reset since, which no read would ever
          show. The echo stays until reads started after this answer land, and they alone then show the message. */

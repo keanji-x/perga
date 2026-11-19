@@ -23,67 +23,26 @@ public sealed class SystemUpgradeTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task DrainRejectsAcpPermissionProbes(bool createTrack)
+    public async Task DrainAllowsAcpPermissionPersistenceWithoutDiscovery(bool createTrack)
     {
         await using var host = new PergaHostTestCluster();
         var (track, lead) = await host.CreateTrackAsync();
         var kernel = host.Services.GetRequiredService<IPergaKernel>();
         await kernel.PatchSessionAsync(lead, new(Provider: "acp:antigravity"));
         var areaId = (await kernel.ListTracksAsync()).Single(t => t.Id == track).AreaId;
-        var probes = 0;
-        host.AgentRuntime.PermissionProbeHandler = _ =>
-        {
-            Interlocked.Increment(ref probes);
-            return Task.FromResult<IReadOnlyList<PermissionModeOption>>([new("act", "Act", "", "warning")]);
-        };
+        var probes = host.AgentRuntime.ProbeCount;
         kernel.DispatchAdmission.SetDraining(true);
-        var error = await Assert.ThrowsAsync<KernelException>(async () =>
+        if (createTrack)
         {
-            if (createTrack)
-                await kernel.CreateTrackAsync(new(areaId, Cwd: host.DataDir, Provider: "acp:antigravity", PermissionMode: "act")).WaitAsync(Deadline);
-            else
-                await kernel.SetSessionPermissionModeAsync(lead, "act").WaitAsync(Deadline);
-        });
-        Assert.Equal(KernelErrorCode.Conflict, error.Code);
-        Assert.Equal(0, probes);
+            var created = await kernel.CreateTrackAsync(new(areaId, Cwd: host.DataDir, Provider: "acp:antigravity", PermissionMode: "act")).WaitAsync(Deadline);
+            Assert.Equal("act", Assert.Single(await kernel.ListSessionsAsync(created.Track.Id)).PermissionMode);
+        }
+        else
+            Assert.Equal("act", (await kernel.SetSessionPermissionModeAsync(lead, "act").WaitAsync(Deadline)).PermissionMode);
+        Assert.Equal(probes, host.AgentRuntime.ProbeCount);
         Assert.Equal(0, kernel.DispatchAdmission.ActiveDispatches);
         Assert.Empty(host.AgentRuntime.OpenedSessions);
-        Assert.Null(Assert.Single(await kernel.ListSessionsAsync(track).WaitAsync(Deadline)).PermissionMode);
-        Assert.Single(await kernel.ListTracksAsync());
-    }
-
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task AcpPermissionProbeCountsUntilItSettlesAcrossDrain(bool createTrack)
-    {
-        await using var host = new PergaHostTestCluster();
-        var (track, lead) = await host.CreateTrackAsync();
-        var kernel = host.Services.GetRequiredService<IPergaKernel>();
-        await kernel.PatchSessionAsync(lead, new(Provider: "acp:antigravity"));
-        var areaId = (await kernel.ListTracksAsync()).Single(t => t.Id == track).AreaId;
-        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        host.AgentRuntime.PermissionProbeHandler = async ct =>
-        {
-            entered.TrySetResult();
-            await release.Task.WaitAsync(ct);
-            return [new("act", "Act", "", "warning")];
-        };
-        Task operation = createTrack
-            ? kernel.CreateTrackAsync(new(areaId, Cwd: host.DataDir, Provider: "acp:antigravity", PermissionMode: "act"))
-            : kernel.SetSessionPermissionModeAsync(lead, "act");
-        try
-        {
-            await entered.Task.WaitAsync(Deadline);
-            Assert.Equal(1, kernel.DispatchAdmission.ActiveDispatches);
-            kernel.DispatchAdmission.SetDraining(true);
-            Assert.Equal(1, (await Info(host).WaitAsync(Deadline)).ActiveDispatches);
-            Assert.False(operation.IsCompleted);
-        }
-        finally { release.TrySetResult(); }
-        await operation.WaitAsync(Deadline);
-        Assert.Equal(0, kernel.DispatchAdmission.ActiveDispatches);
+        kernel.DispatchAdmission.SetDraining(false);
     }
 
     [Fact]

@@ -97,8 +97,8 @@ public sealed partial class TrackActor
 
     private WorkerProviderConfiguration? GetWorkerProviderConfigurationCore(string sessionId, ActiveAttemptState? attempt)
     {
-        if (!_openAgentSessions.TryGetValue(sessionId, out var agent)) return attempt?.ProviderConfiguration;
-        if (agent.WorkerConfiguration is not { } configuration || attempt is null) return agent.WorkerConfiguration;
+        if (!_openSessionHandles.TryGetValue(sessionId, out var agent)) return attempt?.ProviderConfiguration;
+        if (agent.Agent.WorkerConfiguration is not { } configuration || attempt is null) return agent.Agent.WorkerConfiguration;
 
         // Some adapters report current values on resume without reporting the original defaults.
         var previous = attempt.ProviderConfiguration;
@@ -266,12 +266,12 @@ public sealed partial class TrackActor
 
     private async Task CloseInterruptedWorkerCoreAsync(ActiveTurnState turn, ActiveAttemptState attempt)
     {
-        if (_openAgentSessions.Remove(turn.SessionId, out var agent))
+        if (_openSessionHandles.Remove(turn.SessionId, out var agent))
         {
             try
             {
-                await agent.DisposeAsync().ConfigureAwait(false);
-                attempt.InterruptionUnconfirmed = !agent.ShutdownConfirmed;
+                await agent.Agent.DisposeAsync().ConfigureAwait(false);
+                attempt.InterruptionUnconfirmed = !agent.Agent.ShutdownConfirmed;
             }
             catch (Exception)
             {

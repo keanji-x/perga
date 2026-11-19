@@ -58,8 +58,10 @@ public sealed class AcpProviderTests : IDisposable
                 })
             }
         });
-        var modes = await runtime.ProbePermissionModesAsync("acp:antigravity", _fixture.WorkspaceDir,
-            sandbox, [new([lower], null, null, _fixture.WorkspaceDir)], CancellationToken.None);
+        await using var session = await runtime.OpenSessionAsync(new HarnessLaunchSpec(
+            "acp:antigravity", null, _fixture.WorkspaceDir, null, null, new Dictionary<string, McpServerConfig>(),
+            Sandbox: sandbox, OverlayMounts: [new([lower], null, null, _fixture.WorkspaceDir)]), CancellationToken.None);
+        var modes = session.AvailablePermissionModes;
         Assert.Equal("plan", Assert.Single(modes).Id);
         var args = File.ReadAllLines(log);
         Assert.Contains("--overlay-src", args);
@@ -71,7 +73,7 @@ public sealed class AcpProviderTests : IDisposable
     }
 
     [Fact]
-    public async Task PermissionModeProbeUsesWorkspaceAndNullLaunchKeepsWorkspaceDefault()
+    public async Task NullLaunchReadsWorkspaceCatalogueAndKeepsWorkspaceDefault()
     {
         var log = Path.Combine(_fixture.RootDir, "workspace-modes.jsonl");
         await using var runtime = CreateRuntime(new Dictionary<string, string>
@@ -81,16 +83,13 @@ public sealed class AcpProviderTests : IDisposable
         });
         var payload = """{"modes":{"currentModeId":"project-plan","availableModes":[{"id":"project-plan","name":"Project plan"}]}}""";
         File.WriteAllText(Path.Combine(_fixture.WorkspaceDir, "permission-modes.json"), payload);
-        var modes = await runtime.ProbePermissionModesAsync("acp:antigravity", _fixture.WorkspaceDir, OsSandboxMode.None, null, CancellationToken.None);
-        Assert.Equal("project-plan", Assert.Single(modes).Id);
-        Assert.Empty(await runtime.ProbePermissionModesAsync("acp:antigravity", _fixture.RootDir, OsSandboxMode.None, null, CancellationToken.None));
         await using var session = await runtime.OpenSessionAsync(new HarnessLaunchSpec(
             "acp:antigravity", null, _fixture.WorkspaceDir, null, null,
             new Dictionary<string, McpServerConfig>()), CancellationToken.None);
-        Assert.Equal("project-plan", Assert.Single(((AcpAgentSession)session).AvailablePermissionModes).Id);
+        Assert.Equal("project-plan", Assert.Single(session.AvailablePermissionModes).Id);
         var calls = File.ReadAllLines(log).Select(line => JsonSerializer.Deserialize<JsonElement>(line)).ToArray();
         var opens = calls.Where(call => call.GetProperty("method").GetString() == "session/new").ToArray();
-        Assert.Equal([_fixture.WorkspaceDir, _fixture.RootDir, _fixture.WorkspaceDir],
+        Assert.Equal([_fixture.WorkspaceDir],
             opens.Select(call => call.GetProperty("params").GetProperty("cwd").GetString()));
         Assert.DoesNotContain(calls, call => call.GetProperty("method").GetString() is "session/set_mode" or "session/set_config_option");
     }
@@ -105,7 +104,7 @@ public sealed class AcpProviderTests : IDisposable
     [InlineData(2, null, false)]
     [InlineData(2, "restored", false)]
     [InlineData(2, "restored", true)]
-    public async Task PermissionModesAreProbedAndAppliedOnNewLoadAndResume(int shape, string? resume, bool nativeResume)
+    public async Task PermissionModesAreReadAndAppliedOnNewLoadAndResume(int shape, string? resume, bool nativeResume)
     {
         var config = shape != 0;
         var log = Path.Combine(_fixture.RootDir, "mode-calls.jsonl");
@@ -129,7 +128,7 @@ public sealed class AcpProviderTests : IDisposable
         await using var session = await runtime.OpenSessionAsync(new HarnessLaunchSpec(
             "acp:antigravity", null, _fixture.WorkspaceDir, resume, null,
             new Dictionary<string, McpServerConfig>(), PermissionMode: "execute"), CancellationToken.None);
-        Assert.Equal(["safe", "execute"], ((AcpAgentSession)session).AvailablePermissionModes.Select(mode => mode.Id));
+        Assert.Equal(["safe", "execute"], session.AvailablePermissionModes.Select(mode => mode.Id));
         var calls = File.ReadAllLines(log).Select(line => JsonSerializer.Deserialize<JsonElement>(line)).ToArray();
         var selected = Assert.Single(calls, call => call.GetProperty("method").GetString() ==
             (config ? "session/set_config_option" : "session/set_mode"));
@@ -164,17 +163,10 @@ public sealed class AcpProviderTests : IDisposable
             }
         });
 
-        var probed = await runtime.ProbePermissionModesAsync("acp:antigravity", _fixture.WorkspaceDir, OsSandboxMode.None, null, CancellationToken.None);
-        Assert.Equal(["default", "auto", "bypassPermissions"], probed.Select(m => m.Id));
-        var bypassOption = probed.Single(m => m.Id == "bypassPermissions");
-        Assert.Equal("Full access", bypassOption.Label);
-        Assert.Equal("danger", bypassOption.Tone);
-
-        File.Delete(log);
-
         await using var session = await runtime.OpenSessionAsync(new HarnessLaunchSpec(
             "acp:antigravity", null, _fixture.WorkspaceDir, null, null,
             new Dictionary<string, McpServerConfig>(), PermissionMode: "bypassPermissions"), CancellationToken.None);
+        Assert.Contains(session.AvailablePermissionModes, mode => mode.Id == "bypassPermissions" && mode.Label == "Full access");
 
         var entries = File.ReadAllLines(log).Select(line => JsonSerializer.Deserialize<JsonElement>(line)).ToArray();
         var argvEntry = Assert.Single(entries, e => e.TryGetProperty("argv", out _));

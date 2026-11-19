@@ -143,22 +143,6 @@ public sealed class AgentRuntime : IAgentRuntime
         }
     }
 
-    public async Task<IReadOnlyList<PermissionModeOption>> ProbePermissionModesAsync(
-        string provider, string? cwd, OsSandboxMode sandbox, IReadOnlyList<OverlayMountSpec>? overlayMounts, CancellationToken ct)
-    {
-        if (!provider.StartsWith("acp:", StringComparison.OrdinalIgnoreCase))
-            return ProviderPermissionModes.GetModesForProvider(provider);
-
-        // Permission catalogues may depend on project configuration. Never cache a
-        // workspace catalogue as provider-global metadata or borrow one from temp.
-        using var probeCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        probeCts.CancelAfter(GetModelProbeTimeout());
-        await using var session = await OpenSessionAsync(new HarnessLaunchSpec(
-            provider, null, cwd ?? Path.GetTempPath(), null, null,
-            new Dictionary<string, McpServerConfig>(), Sandbox: sandbox, OverlayMounts: overlayMounts), probeCts.Token).ConfigureAwait(false);
-        return ((AcpAgentSession)session).AvailablePermissionModes;
-    }
-
     public async Task<IAgentSession> OpenSessionAsync(HarnessLaunchSpec spec, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(spec);
@@ -262,7 +246,7 @@ public sealed class AgentRuntime : IAgentRuntime
                 UnregisterSession,
                 ct,
                 extraPermissionModes: isAntigravity ? [AntigravityBypassMode] : null,
-                skipSetPermissionMode: isAntigravityBypass).ConfigureAwait(false);
+                launchArgumentModes: isAntigravity ? ["bypassPermissions"] : null).ConfigureAwait(false);
         }
         else
         {

@@ -16,30 +16,26 @@ public sealed class TrackCreationTests
 {
     private static readonly TimeSpan Deadline = TimeSpan.FromSeconds(10);
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task FailedOrEmptyAcpDiscoveryReturnsPreconditionFailedWithoutCreatingTrack(bool throws)
+    [Fact]
+    public async Task ColdAcpModePersistsWithoutOpeningProvider()
     {
         await using var host = new PergaHostTestCluster();
-        host.AgentRuntime.FailPermissionDiscovery = throws;
-        host.AgentRuntime.AcpPermissionModes = [];
         var areaId = await CreateAreaAsync(host);
-        using var response = await PostAsync(host, "/api/v1/tracks", "unavailable-acp-modes",
+        var probes = host.AgentRuntime.ProbeCount;
+        using var response = await PostAsync(host, "/api/v1/tracks", "cold-acp-mode",
             new { areaId, provider = "acp:antigravity", permissionMode = "plan" });
-        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
-        using var failure = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-        Assert.Equal("precondition_failed", failure.RootElement.GetProperty("code").GetString());
-        Assert.Contains("Retry discovery", failure.RootElement.GetProperty("error").GetString());
-        using var tracks = await host.Client.GetAsync($"/api/v1/areas/{areaId}/tracks");
-        Assert.Empty((await ReadAsync(tracks)).EnumerateArray());
+        response.EnsureSuccessStatusCode();
+        var trackId = (await ReadAsync(response)).GetProperty("track").GetProperty("id").GetString()!;
+        Assert.Equal("plan", Assert.Single(await host.Services.GetRequiredService<IPergaKernel>().ListSessionsAsync(trackId)).PermissionMode);
+        Assert.Equal(probes, host.AgentRuntime.ProbeCount);
         Assert.Empty(host.AgentRuntime.OpenedSessions);
     }
 
     [Theory]
     [InlineData(null, null, HttpStatusCode.OK)]
     [InlineData("act", "act", HttpStatusCode.OK)]
-    [InlineData("unknown", null, HttpStatusCode.BadRequest)]
+    [InlineData("unknown", "unknown", HttpStatusCode.OK)]
+    [InlineData("   ", null, HttpStatusCode.BadRequest)]
     public async Task TrackCreateUsesRuntimeModesBeforeBootstrap(string? selected, string? expected, HttpStatusCode status)
     {
         await using var host = new PergaHostTestCluster();

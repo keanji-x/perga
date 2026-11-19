@@ -477,6 +477,7 @@ public sealed class McpPluginsPolicyGuardAndLifecycleIntegrationTests
                     cluster.AgentRuntime.ExecutedTurns,
                     t => t.Input.Prompt.Contains("CRON_PULSE:prod-cluster", StringComparison.Ordinal));
                 Assert.True(maintService.CompletedPasses >= 1);
+                await kernel.WaitForTrackIdleAsync(trackId, ct);
 
                 // Seed an in-flight crashed "Running" turn + "Running" attempt directly in SQLite before shutting down!
                 var nowMs = cluster.TimeProvider.GetUtcNow().ToUnixTimeMilliseconds();

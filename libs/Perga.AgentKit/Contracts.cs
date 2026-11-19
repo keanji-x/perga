@@ -134,8 +134,12 @@ public sealed record IdleContextUsage(
 
 public enum SteerDelivery { Accepted, Declined, Unconfirmed }
 
+public sealed record SessionRuntimeSettings(string? Model, string? ReasoningEffort, string? PermissionMode);
+
 public interface IAgentSession : IAsyncDisposable
 {
+    // Options returned by this open provider session, including registered launch modes.
+    IReadOnlyList<PermissionModeOption> AvailablePermissionModes => [];
     string? NativeThreadId { get; }
     bool SupportsNativeSteer { get; }
     // Revisions are local to this session instance. Null means the producing configuration is unconfirmed.
@@ -170,6 +174,11 @@ public interface IAgentSession : IAsyncDisposable
     Func<Task>? TryClaimApprovalResponse(
         string requestId, bool approved, string? selectedOptionId, string? reason, CancellationToken ct) =>
         () => RespondApprovalAsync(requestId, approved, selectedOptionId, reason, ct);
+    // Called at every idle reuse boundary, including unchanged desired settings.
+    // Validate against current provider constraints before returning true.
+    // False requires disposal and resume/reopen;
+    // a rejected setting throws, and the caller must not dispatch on the old settings.
+    Task<bool> TryReconcileSettingsAsync(SessionRuntimeSettings settings, CancellationToken ct) => Task.FromResult(false);
     Task<bool> TrySetModelAsync(string? model, string? reasoningEffort = null, CancellationToken ct = default);
     Task<SteerDelivery> SteerAsync(string turnCorrelationId, string message, CancellationToken ct);
 }
@@ -177,11 +186,5 @@ public interface IAgentSession : IAsyncDisposable
 public interface IAgentRuntime : IAsyncDisposable
 {
     Task<IReadOnlyList<ProviderStatus>> ProbeProvidersAsync(CancellationToken ct);
-    // Workspace probes require the owning session's effective isolation, even if discovery fails.
-    // An empty catalogue means discovery is unavailable, not an authoritative rejection.
-    async Task<IReadOnlyList<PermissionModeOption>> ProbePermissionModesAsync(string provider, string? cwd, OsSandboxMode sandbox, IReadOnlyList<OverlayMountSpec>? overlayMounts, CancellationToken ct) =>
-        (await ProbeProvidersAsync(ct).ConfigureAwait(false))
-            .FirstOrDefault(status => string.Equals(status.Provider, provider, StringComparison.OrdinalIgnoreCase))?.PermissionModes ?? [];
-
     Task<IAgentSession> OpenSessionAsync(HarnessLaunchSpec spec, CancellationToken ct);
 }

@@ -1,0 +1,170 @@
+// @vitest-environment jsdom
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
+import type { ReactNode } from 'react';
+import { afterEach, expect, it } from 'vitest';
+import type { ApiTransportPort, ApiTransportResponse } from '../../../../core/api/types.ts';
+import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
+import { fixtureSession } from '../router/session-contract-fixture.ts';
+import { sessionPage, sessionReply, sessionInput } from '../router/conversation-session-data.ts';
+import { ConversationProvider, useConversationCommands } from '../conversations/public.tsx';
+import { useConversationStore } from '../conversations/store.ts';
+import { plannerRunQueryOptions, usePlannerMutations } from './queries.ts';
+
+const unauthorized = createUnauthorizedChannel({ enqueue: task => task() });
+afterEach(cleanup);
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>(done => { resolve = done; });
+  return { promise, resolve };
+}
+function wrapper(client: QueryClient) {
+  return ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}><ConversationProvider>{children}</ConversationProvider></QueryClientProvider>;
+}
+
+it('publishes only the latest serialized permission ACK and cancels a stale run read', async () => {
+  const writes = [deferred<ApiTransportResponse>(), deferred<ApiTransportResponse>(), deferred<ApiTransportResponse>()];
+  const stale = deferred<ApiTransportResponse>();
+  let puts = 0;
+  let oldSignal: { readonly aborted: boolean } | undefined;
+  const transport: ApiTransportPort = { send: request => {
+    if (request.method === 'PUT') return writes[puts++].promise;
+    oldSignal = request.signal;
+    return stale.promise;
+  } };
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const options = plannerRunQueryOptions(transport, 'a', unauthorized);
+  // Seed through the production schema, then hold the next GET.
+  const seedTransport: ApiTransportPort = { send: () => Promise.resolve(sessionReply(sessionPage(fixtureSession('a', 't', { permissionMode: 'ask' })))) };
+  client.setQueryData(options.queryKey, await plannerRunQueryOptions(seedTransport, 'a', unauthorized).queryFn({ signal: new AbortController().signal }));
+  const reading = client.fetchQuery({ ...options, queryFn: options.queryFn }).catch(() => undefined);
+  const { result } = renderHook(() => usePlannerMutations(transport, 'a', 't', unauthorized, useConversationCommands()), { wrapper: wrapper(client) });
+  const first = result.current.setPermissionMode('full');
+  const second = result.current.setPermissionMode('never');
+  expect(puts).toBe(1);
+  await act(async () => { writes[0].resolve(sessionReply({ card_id: 'a', permission_mode: 'full' })); await Promise.resolve(); });
+  expect(client.getQueryData<{ permission_mode: string }>(options.queryKey)?.permission_mode).toBe('ask');
+  expect(oldSignal?.aborted).toBe(true);
+  expect(puts).toBe(2);
+  await act(async () => { writes[1].resolve(sessionReply({ card_id: 'a', permission_mode: 'never' })); await second; await first; });
+  stale.resolve(sessionReply(sessionPage(fixtureSession('a', 't', { permissionMode: 'ask' }))));
+  await reading;
+  expect(client.getQueryData<{ permission_mode: string }>(options.queryKey)?.permission_mode).toBe('never');
+  const refused = result.current.setPermissionMode('full');
+  writes[2].resolve({ status: 409, statusText: 'Conflict', body: { code: 'precondition_failed', error: 'Not available' } });
+  await expect(refused).rejects.toThrow();
+  expect(client.getQueryData<{ permission_mode: string }>(options.queryKey)?.permission_mode).toBe('never');
+  client.clear();
+});
+
+it.each([false, true])('holds a production store send behind permission writes and restores attachments on failure (running=%s)', async running => {
+  const write = deferred<ApiTransportResponse>();
+  let posts = 0;
+  const transport: ApiTransportPort = { send: async request => {
+    if (request.method === 'PUT') return write.promise;
+    if (request.method === 'POST') { posts++; return sessionReply(sessionInput('a')); }
+    if (request.path.includes('/items?')) return sessionReply(sessionPage(fixtureSession('a', 't', { permissionMode: 'ask' }), [], running ? {
+      id: 'turn', sessionId: 'a', turnIndex: 1, epoch: 1, triggerKind: 'user', status: 'running', startedAtMs: 1, completedAtMs: null,
+    } : null));
+    return sessionReply([]);
+  } };
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const { result } = renderHook(() => ({ store: useConversationStore(transport, unauthorized, {
+    id: 't', cardId: 'a', title: 'Track', provider: 'codex', kind: 'agent', isLead: false, state: 'idle', updatedAt: 1, cardTitle: null,
+  }, { rows: [], rememberOn: 't' }), registry: useConversationCommands() }), { wrapper: wrapper(client) });
+  await waitFor(() => expect(result.current.store.runReady).toBe(true));
+  const images = [{ id: 'image', url: '/image', contentType: 'image/png', size: 1 }];
+  let sent: Promise<void> | null = null;
+  act(() => {
+    result.current.store.setPermissionMode('full');
+    sent = result.current.store.send('a', 'keep draft', images, true, null);
+  });
+  await act(async () => { await Promise.resolve(); });
+  expect(posts).toBe(0);
+  await act(async () => { write.resolve({ status: 500, statusText: 'Error', body: { error: 'write failed' } }); await sent; });
+  expect(posts).toBe(0);
+  expect(result.current.store.permissionMode).toBe('ask');
+  expect(result.current.store.actionError).not.toBeNull();
+  expect(result.current.registry.composerOf('a')).toMatchObject({ text: 'keep draft', attachments: images });
+  client.clear();
+});
+
+it('scopes delayed ACKs to their original card across switching and unmounting', async () => {
+  const writes = [deferred<ApiTransportResponse>(), deferred<ApiTransportResponse>()];
+  let count = 0;
+  const transport: ApiTransportPort = { send: request => request.method === 'PUT' ? writes[count++].promise
+    : Promise.resolve(sessionReply(sessionPage(fixtureSession('a', 't', { permissionMode: 'ask' })))) };
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  for (const id of ['a', 'b']) {
+    const options = plannerRunQueryOptions(transport, id, unauthorized);
+    client.setQueryData(options.queryKey, await options.queryFn({ signal: new AbortController().signal }));
+  }
+  const { result, rerender, unmount } = renderHook(({ id }) => usePlannerMutations(transport, id, 't', unauthorized, useConversationCommands()), {
+    initialProps: { id: 'a' }, wrapper: wrapper(client),
+  });
+  const first = result.current.setPermissionMode('full');
+  rerender({ id: 'b' });
+  const second = result.current.setPermissionMode('never');
+  writes[1].resolve(sessionReply({ card_id: 'b', permission_mode: 'never' }));
+  await second;
+  unmount();
+  writes[0].resolve(sessionReply({ card_id: 'a', permission_mode: 'full' }));
+  await first;
+  expect(client.getQueryData<{ permission_mode: string }>(plannerRunQueryOptions(transport, 'a', unauthorized).queryKey)?.permission_mode).toBe('full');
+  expect(client.getQueryData<{ permission_mode: string }>(plannerRunQueryOptions(transport, 'b', unauthorized).queryKey)?.permission_mode).toBe('never');
+  client.clear();
+});
+
+it('keeps an unknown retry and its key when a permission prerequisite fails', async () => {
+  const write = deferred<ApiTransportResponse>();
+  const posts: string[] = [];
+  const transport: ApiTransportPort = { send: async request => {
+    if (request.method === 'PUT') return write.promise;
+    if (request.method === 'POST') { posts.push(request.headers?.['Idempotency-Key'] ?? ''); return sessionReply(sessionInput('a')); }
+    if (request.path.includes('/items?')) return sessionReply(sessionPage(fixtureSession('a', 't', { permissionMode: 'ask' })));
+    return sessionReply([]);
+  } };
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const { result } = renderHook(() => ({ store: useConversationStore(transport, unauthorized, {
+    id: 't', cardId: 'a', title: 'Track', provider: 'codex', kind: 'agent', isLead: false, state: 'idle', updatedAt: 1, cardTitle: null,
+  }, { rows: [], rememberOn: 't' }), registry: useConversationCommands() }), { wrapper: wrapper(client) });
+  await waitFor(() => expect(result.current.store.runReady).toBe(true));
+  act(() => { result.current.registry.editOutbox('a', () => [{ key: 'original-key', phase: 'failed', delivery: 'unknown', message: '', fromComposer: true, replaces: null,
+    echo: { id: 'echo', text: 'possibly stored', author: 'you', atMs: 1, serverHighWaterBefore: 0, entryId: null, queued: false } }]); });
+  act(() => { result.current.store.setPermissionMode('full'); result.current.store.retrySend('original-key'); });
+  await act(async () => { write.resolve({ status: 500, statusText: 'Error', body: { error: 'permission failed' } }); await Promise.resolve(); });
+  await waitFor(() => expect(result.current.store.failedSend).toMatchObject({ key: 'original-key', delivery: 'unknown' }));
+  expect(result.current.registry.composerOf('a').text).toBe('');
+  expect(posts).toEqual([]);
+  act(() => { result.current.store.retrySend('original-key'); });
+  await waitFor(() => expect(posts).toEqual(['original-key']));
+  client.clear();
+});
+
+it.each([false, true])('protects a newer confirmed GET from an old ACK across A B A (new write=%s)', async newerWrite => {
+  const writes = [deferred<ApiTransportResponse>(), deferred<ApiTransportResponse>()];
+  let puts = 0;
+  let holdReads = false;
+  const transport: ApiTransportPort = { send: request => request.method === 'PUT' ? writes[puts++].promise
+    : holdReads ? new Promise(() => undefined) : Promise.resolve(sessionReply(sessionPage(fixtureSession('a', 't', { permissionMode: 'never' })))) };
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const { result, rerender } = renderHook(({ id }) => ({ store: useConversationStore(transport, unauthorized, {
+    id: 't', cardId: id, title: 'Track', provider: 'codex', kind: 'agent', isLead: false, state: 'idle', updatedAt: 1, cardTitle: null,
+  }, { rows: [], rememberOn: 't' }) }), { initialProps: { id: 'a' }, wrapper: wrapper(client) });
+  await waitFor(() => expect(result.current.store.runReady).toBe(true));
+  act(() => result.current.store.setPermissionMode('full'));
+  rerender({ id: 'b' }); rerender({ id: 'a' });
+  if (newerWrite) {
+    act(() => result.current.store.setPermissionMode('never'));
+    expect(puts).toBe(1);
+  }
+  await client.fetchQuery(plannerRunQueryOptions(transport, 'a', unauthorized));
+  holdReads = true;
+  await act(async () => { writes[0].resolve(sessionReply({ card_id: 'a', permission_mode: 'full' })); await Promise.resolve(); });
+  expect(client.getQueryData<{ permission_mode: string }>(plannerRunQueryOptions(transport, 'a', unauthorized).queryKey)?.permission_mode).toBe('never');
+  if (newerWrite) {
+    await waitFor(() => expect(puts).toBe(2));
+    await act(async () => { writes[1].resolve(sessionReply({ card_id: 'a', permission_mode: 'never' })); await Promise.resolve(); });
+  }
+  client.clear();
+});

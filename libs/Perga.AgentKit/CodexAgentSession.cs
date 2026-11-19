@@ -9,6 +9,7 @@ namespace Perga.AgentKit;
 
 public sealed class CodexAgentSession : IAgentSession
 {
+    private readonly SessionRuntimeSettings _appliedSettings;
     private sealed record PendingApproval(JsonElement RawId, string Method);
 
     private static readonly string[] FallbackDefaultModels = ["gpt-5.4", "gpt-5.3-codex", "o4-mini"];
@@ -158,13 +159,13 @@ public sealed class CodexAgentSession : IAgentSession
     private CodexAgentSession(
         StdioSubprocess process,
         string? initialThreadId,
-        string? configuredModel,
-        string? reasoningEffort,
+        SessionRuntimeSettings settings,
         Action<IAgentSession>? onDispose)
     {
+        _appliedSettings = settings;
         _nativeThreadId = initialThreadId;
-        _reasoningEffort = string.IsNullOrWhiteSpace(reasoningEffort) ? null : reasoningEffort.Trim();
-        _configuredModel = string.IsNullOrWhiteSpace(configuredModel) ? null : configuredModel.Trim();
+        _reasoningEffort = string.IsNullOrWhiteSpace(settings.ReasoningEffort) ? null : settings.ReasoningEffort.Trim();
+        _configuredModel = string.IsNullOrWhiteSpace(settings.Model) ? null : settings.Model.Trim();
         _onDispose = onDispose;
         _rpc = new JsonRpcStdioConnection(
             process,
@@ -191,7 +192,8 @@ public sealed class CodexAgentSession : IAgentSession
         string? sandboxApiKey = null)
     {
         var process = StdioSubprocess.Start(wrappedCommand);
-        var session = new CodexAgentSession(process, spec.ResumeNativeThreadId, spec.Model, spec.ReasoningEffort, onDispose);
+        var session = new CodexAgentSession(process, spec.ResumeNativeThreadId,
+            new(spec.Model, spec.ReasoningEffort, spec.PermissionMode), onDispose);
         try
         {
             using var handshakeCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -441,6 +443,9 @@ public sealed class CodexAgentSession : IAgentSession
 
         return () => _rpc.SendResultResponseAsync(pending.RawId, payload, ct);
     }
+
+    public Task<bool> TryReconcileSettingsAsync(SessionRuntimeSettings settings, CancellationToken ct) =>
+        Task.FromResult(settings == _appliedSettings);
 
     public Task<bool> TrySetModelAsync(string? model, string? reasoningEffort = null, CancellationToken ct = default) => Task.FromResult(false);
 

@@ -762,13 +762,7 @@ public sealed partial class PergaKernelService : IPergaKernel
 
         var leadProvider = string.IsNullOrWhiteSpace(req.Provider) ? _options.DefaultProvider
             : TaskBlockSynchronizer.NormalizeProviderId(req.Provider) ?? req.Provider.Trim();
-        string? leadPermissionMode;
-        using (var admission = leadProvider.StartsWith("acp:", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(req.PermissionMode)
-            ? DispatchAdmission.TryEnter() ?? throw KernelException.Conflict("Cannot probe permission modes while draining.")
-            : null)
-        {
-            leadPermissionMode = await RuntimePermissionModes.ResolveAsync(_agentRuntime, leadProvider, req.PermissionMode, ct, _options.LeadSandboxMode, null, source).ConfigureAwait(false);
-        }
+        var leadPermissionMode = RuntimePermissionModes.Resolve(leadProvider, req.PermissionMode);
         var leadSession = new AgentSessionDto(
             Id: leadSessionId,
             TrackId: trackId,

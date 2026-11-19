@@ -170,7 +170,7 @@ export function useConversationStore(
   const pendingQueueIds = useMemo(
     () => new Map(pendingQueue.map((entry) => [entry.entry_id, entry.rev])), [pendingQueue],
   );
-  const mutations = usePlannerMutations(transport, cardId, scope === null ? null : scope.id, unauthorized);
+  const mutations = usePlannerMutations(transport, cardId, scope === null ? null : scope.id, unauthorized, registry);
   /** What went wrong with an action of the card it names; another card's is never this one's. */
   const [compactPending, setCompactPending] = useState<ReadonlySet<string>>(() => new Set());
   const compactLeases = useRef(new Set<string>());
@@ -563,7 +563,8 @@ export function useConversationStore(
     setPermissionMode: (mode) => {
       const setFor = cardId;
       setActionError(null);
-      void mutations.setPermissionMode(mode).catch((error: unknown) => {
+      const write = mutations.setPermissionMode(mode);
+      void write.catch((error: unknown) => {
         /* Dropped when it settles while another conversation is shown, as a model change's is (#2068). */
         if (shownCardId.current !== setFor) return;
         setActionError({ cardId: setFor, message: refusalText(writeFailureOf(error), PLANNER_PERMISSION_MODE_FAILURES,

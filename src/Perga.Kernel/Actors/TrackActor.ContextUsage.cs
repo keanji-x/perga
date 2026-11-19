@@ -19,7 +19,7 @@ public sealed partial class TrackActor
 
     private bool IsCurrentContextBindingCore(
         AgentSessionDto session, IAgentSession provider, LiveContextUsage state) =>
-        _openAgentSessions.TryGetValue(session.Id, out var open) && ReferenceEquals(provider, open) &&
+        _openSessionHandles.TryGetValue(session.Id, out var open) && ReferenceEquals(provider, open.Agent) &&
         _liveContextUsage.TryGetValue(provider, out var current) && ReferenceEquals(state, current);
 
     private AgentSessionDto ApplyContextUsageCore(
@@ -54,26 +54,25 @@ public sealed partial class TrackActor
 
     private void InvalidateContextBindingCore(string sessionId)
     {
-        if (_openAgentSessions.TryGetValue(sessionId, out var provider))
-            _liveContextUsage.Remove(provider);
+        if (_openSessionHandles.TryGetValue(sessionId, out var provider))
+            _liveContextUsage.Remove(provider.Agent);
     }
 
     private double? CurrentContextUsageRatioCore(AgentSessionDto session) =>
-        _openAgentSessions.TryGetValue(session.Id, out var provider) &&
-        _liveContextUsage.TryGetValue(provider, out var state) &&
-        state.Revision == provider.ContextUsageRevision && ReferenceEquals(session.ContextUsage, state.Latest)
+        _openSessionHandles.TryGetValue(session.Id, out var provider) &&
+        _liveContextUsage.TryGetValue(provider.Agent, out var state) &&
+        state.Revision == provider.Agent.ContextUsageRevision && ReferenceEquals(session.ContextUsage, state.Latest)
             ? state.Latest?.Ratio
             : null;
 
     private async Task RegisterOpenAgentSessionCoreAsync(
         AgentSessionDto session,
         IAgentSession agentSession,
-        string? permissionMode,
+        HarnessLaunchSpec launchSpec,
         CancellationToken ct)
     {
-        _openAgentSessions[session.Id] = agentSession;
-        _boundAgentModels[session.Id] = (session.Model, session.ReasoningEffort);
-        _openAgentSessionPermissionModes[session.Id] = permissionMode;
+        _openSessionHandles[session.Id] = new(agentSession, launchSpec,
+            new(session.Model, session.ReasoningEffort, launchSpec.PermissionMode));
 
         if (session.BoundAttemptId is not null)
         {
@@ -167,14 +166,13 @@ public sealed partial class TrackActor
             current.BoundAttemptId is not null ||
             current.Epoch != expectedEpoch ||
             _scheduler.HasResumeHold(sessionId) ||
-            !_openAgentSessions.TryGetValue(sessionId, out var openSession) ||
-            !ReferenceEquals(openSession, expectedSession))
+            !_openSessionHandles.TryGetValue(sessionId, out var openSession) ||
+            !ReferenceEquals(openSession.Agent, expectedSession))
         {
             return false;
         }
 
-        if (!_boundAgentModels.TryGetValue(sessionId, out var bound) ||
-            bound != (current.Model, current.ReasoningEffort))
+        if ((openSession.Settings.Model, openSession.Settings.ReasoningEffort) != (current.Model, current.ReasoningEffort))
         {
             return false;
         }

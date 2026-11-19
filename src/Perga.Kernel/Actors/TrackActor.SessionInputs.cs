@@ -148,8 +148,8 @@ public sealed partial class TrackActor
                 ContextUsage = null, UpdatedAtMs = NowMs()
             };
             _mcpBridge.RevokeSession(sessionId);
-            if (_openAgentSessions.Remove(sessionId, out var agent))
-                await agent.DisposeAsync().ConfigureAwait(false);
+            if (_openSessionHandles.Remove(sessionId, out var agent))
+                await agent.Agent.DisposeAsync().ConfigureAwait(false);
             var sessionEvent = SessionUpdatedEvent(updated);
             await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
             if (resume is null)

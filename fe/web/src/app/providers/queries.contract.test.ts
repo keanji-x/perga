@@ -1,3 +1,4 @@
+import { useTestConversationRegistry } from './permission-registry-fixture.ts';
 import { fixtureSession } from '../router/session-contract-fixture.ts';
 import { sessionPage, sessionItem } from '../router/conversation-session-data.ts';
 import { historicalConversationPage } from '../router/conversation-read-data.ts';
@@ -662,7 +663,7 @@ describe('delete mutation wiring', () => {
       return Promise.resolve();
     });
     const transport: ApiTransportPort = { send: () => Promise.resolve(ok({ card_id: 'card-1', worker_session_id: 'runtime-1' })) };
-    const { result } = renderHook(() => usePlannerMutations(transport, 'card-1', null, unauthorized), { wrapper: mutationWrapper(client) });
+    const { result } = renderHook(() => usePlannerMutations(transport, 'card-1', null, unauthorized, useTestConversationRegistry()), { wrapper: mutationWrapper(client) });
     await result.current.send('replacement', [], 'replace-key', 'old-turn', transport, () => { order.push('answered'); });
     expect(order).toEqual(['answered', 'reset']);
     expect(reset).toHaveBeenCalledOnce();
@@ -678,7 +679,7 @@ describe('delete mutation wiring', () => {
     const transport: ApiTransportPort = {
       send: () => Promise.resolve(ok({ card_id: 'card-1', worker_session_id: 'runtime-1' })),
     };
-    const { result } = renderHook(() => usePlannerMutations(transport, 'card-1', null, unauthorized), {
+    const { result } = renderHook(() => usePlannerMutations(transport, 'card-1', null, unauthorized, useTestConversationRegistry()), {
       wrapper: mutationWrapper(client),
     });
 
@@ -1039,7 +1040,7 @@ describe('input metadata mutation reconciliation', () => {
       if (outcome === 'local denial') access.invalidate('offline');
       const answered = vi.fn();
       const cancel = vi.spyOn(client, 'cancelQueries');
-      const { result, unmount } = renderHook(() => usePlannerMutations(transport, 'card-1', 'w1', channel), {
+      const { result, unmount } = renderHook(() => usePlannerMutations(transport, 'card-1', 'w1', channel, useTestConversationRegistry()), {
         wrapper: ({ children }: { children: ReactNode }) => createElement(QueryClientProvider, { client }, children),
       });
       let failure: unknown;
@@ -1068,7 +1069,7 @@ describe('input metadata mutation reconciliation', () => {
     const cancel = vi.spyOn(client, 'cancelQueries');
     const transport: ApiTransportPort = { send: () => Promise.resolve({ status: 401, statusText: 'Unauthorized', body: { error: 'Sign in' } }) };
     const channel = createUnauthorizedChannel({ enqueue: task => task() });
-    const { result } = renderHook(() => usePlannerMutations(transport, 'card-1', 'w1', channel), {
+    const { result } = renderHook(() => usePlannerMutations(transport, 'card-1', 'w1', channel, useTestConversationRegistry()), {
       wrapper: ({ children }: { children: ReactNode }) => createElement(QueryClientProvider, { client }, children),
     });
     const answered = vi.fn();
@@ -1119,7 +1120,7 @@ describe('input metadata mutation reconciliation', () => {
         await waitFor(() => expect(reads).toEqual({ run: 1, history: 1 }));
         const cancel = vi.spyOn(client, 'cancelQueries');
         const answered = vi.fn();
-        const { result, unmount } = renderHook(() => usePlannerMutations(transport, 'card-1', 'w1', unauthorized), {
+        const { result, unmount } = renderHook(() => usePlannerMutations(transport, 'card-1', 'w1', unauthorized, useTestConversationRegistry()), {
           wrapper: ({ children }: { children: ReactNode }) => createElement(QueryClientProvider, { client }, children),
         });
         const entry = { entry_id: 'entry', text: 'Original', rev: 0, queued_at_ms: 1 };
@@ -1163,7 +1164,7 @@ it.each([200,409])('Keep reconciles the run and history on status %s without cac
   const client = new QueryClient();
   const runKey=queryKeys.plannerRun('card'); const historyKey=transcriptQueryOptions(transport,'card',unauthorized).queryKey;
   const before={unchanged:true}; client.setQueryData(runKey,before); client.setQueryData(historyKey,before);
-  const {result}=renderHook(()=>usePlannerMutations(transport,'card','track',unauthorized),{
+  const {result}=renderHook(()=>usePlannerMutations(transport,'card','track',unauthorized, useTestConversationRegistry()),{
     wrapper:({children}:{children:ReactNode})=>createElement(QueryClientProvider,{client},children),
   });
   if(status === 200) await result.current.keep(args,'same-key');

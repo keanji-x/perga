@@ -121,6 +121,7 @@ public sealed class WebSocketsIntegrationTests
             },
             ct);
         putResp.EnsureSuccessStatusCode();
+        await cluster.Services.GetRequiredService<IPergaKernel>().WaitForTrackIdleAsync(trackId, ct);
 
         // Connect WS with ?since=0&trackId={trackId}
         using var ws = await cluster.ConnectEventsWebSocketAsync($"?since=0&trackId={trackId}", ct);
