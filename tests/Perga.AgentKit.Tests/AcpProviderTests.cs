@@ -24,6 +24,122 @@ public sealed class AcpProviderTests : IDisposable
         });
 
     [Theory]
+    [InlineData(OsSandboxMode.ReadOnlyBwrap)]
+    [InlineData(OsSandboxMode.WorkspaceWriteBwrap)]
+    public async Task PermissionDiscoveryPassesSandboxAndOverlaysToProcessLaunch(OsSandboxMode sandbox)
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var wrapper = Path.Combine(_fixture.RootDir, "record-bwrap");
+        var log = Path.Combine(_fixture.RootDir, "sandbox-args");
+        File.WriteAllText(wrapper, """
+            #!/bin/sh
+            printf '%s\n' "$@" > "$SANDBOX_LOG"
+            while [ "$1" != "--" ]; do shift; done
+            shift
+            exec "$@"
+            """);
+        File.SetUnixFileMode(wrapper, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        var lower = Path.Combine(_fixture.RootDir, "lower");
+        Directory.CreateDirectory(lower);
+        await using var runtime = new AgentRuntime(new AgentRuntimeOptions
+        {
+            Sandbox = new OsSandboxOptions
+            {
+                PlatformOverride = System.Runtime.InteropServices.OSPlatform.Linux,
+                BwrapExecutablePath = wrapper,
+                BwrapVersionOverride = new Version(0, 10, 0)
+            },
+            ProviderOverrides = new Dictionary<string, ProviderCommandOverride>
+            {
+                ["acp:antigravity"] = new(_fixture.MockAcpPath, Env: new Dictionary<string, string>
+                {
+                    ["SANDBOX_LOG"] = log,
+                    ["MOCK_ACP_MODELS"] = """{"modes":{"currentModeId":"plan","availableModes":[{"id":"plan","name":"Plan"}]}}"""
+                })
+            }
+        });
+        var modes = await runtime.ProbePermissionModesAsync("acp:antigravity", _fixture.WorkspaceDir,
+            sandbox, [new([lower], null, null, _fixture.WorkspaceDir)], CancellationToken.None);
+        Assert.Equal("plan", Assert.Single(modes).Id);
+        var args = File.ReadAllLines(log);
+        Assert.Contains("--overlay-src", args);
+        Assert.Contains(lower, args);
+        Assert.Contains(_fixture.WorkspaceDir, args);
+        var workspaceBind = Enumerable.Range(0, args.Length - 2).Single(index =>
+            args[index + 1] == _fixture.WorkspaceDir && args[index + 2] == _fixture.WorkspaceDir);
+        Assert.Equal(sandbox == OsSandboxMode.ReadOnlyBwrap ? "--ro-bind" : "--bind", args[workspaceBind]);
+    }
+
+    [Fact]
+    public async Task PermissionModeProbeUsesWorkspaceAndNullLaunchKeepsWorkspaceDefault()
+    {
+        var log = Path.Combine(_fixture.RootDir, "workspace-modes.jsonl");
+        await using var runtime = CreateRuntime(new Dictionary<string, string>
+        {
+            ["MOCK_ACP_LOG"] = log,
+            ["MOCK_ACP_PROJECT_MODES"] = "1"
+        });
+        var payload = """{"modes":{"currentModeId":"project-plan","availableModes":[{"id":"project-plan","name":"Project plan"}]}}""";
+        File.WriteAllText(Path.Combine(_fixture.WorkspaceDir, "permission-modes.json"), payload);
+        var modes = await runtime.ProbePermissionModesAsync("acp:antigravity", _fixture.WorkspaceDir, OsSandboxMode.None, null, CancellationToken.None);
+        Assert.Equal("project-plan", Assert.Single(modes).Id);
+        Assert.Empty(await runtime.ProbePermissionModesAsync("acp:antigravity", _fixture.RootDir, OsSandboxMode.None, null, CancellationToken.None));
+        await using var session = await runtime.OpenSessionAsync(new HarnessLaunchSpec(
+            "acp:antigravity", null, _fixture.WorkspaceDir, null, null,
+            new Dictionary<string, McpServerConfig>()), CancellationToken.None);
+        Assert.Equal("project-plan", Assert.Single(((AcpAgentSession)session).AvailablePermissionModes).Id);
+        var calls = File.ReadAllLines(log).Select(line => JsonSerializer.Deserialize<JsonElement>(line)).ToArray();
+        var opens = calls.Where(call => call.GetProperty("method").GetString() == "session/new").ToArray();
+        Assert.Equal([_fixture.WorkspaceDir, _fixture.RootDir, _fixture.WorkspaceDir],
+            opens.Select(call => call.GetProperty("params").GetProperty("cwd").GetString()));
+        Assert.DoesNotContain(calls, call => call.GetProperty("method").GetString() is "session/set_mode" or "session/set_config_option");
+    }
+
+    [Theory]
+    [InlineData(0, null, false)]
+    [InlineData(0, "restored", false)]
+    [InlineData(0, "restored", true)]
+    [InlineData(1, null, false)]
+    [InlineData(1, "restored", false)]
+    [InlineData(1, "restored", true)]
+    [InlineData(2, null, false)]
+    [InlineData(2, "restored", false)]
+    [InlineData(2, "restored", true)]
+    public async Task PermissionModesAreProbedAndAppliedOnNewLoadAndResume(int shape, string? resume, bool nativeResume)
+    {
+        var config = shape != 0;
+        var log = Path.Combine(_fixture.RootDir, "mode-calls.jsonl");
+        var payload = config
+            ? """{"configOptions":[{"id":"unrelated","category":"model","type":"select","options":[{"value":"wrong"}]},{"id":"agent-mode","category":"mode","type":"select","currentValue":"safe","options":[{"value":"safe","name":"Safe","description":"Read first"},{"group":"Other","options":[{"value":"execute","name":"Execute"}]}]}]}"""
+            : """{"modes":{"currentModeId":"safe","availableModes":[{"id":"safe","name":"Safe","description":"Read first"},{"id":"execute","name":"Execute"}]}}""";
+        if (shape == 2) payload = payload.Replace("agent-mode", "mode").Replace("\"category\":\"mode\",", "");
+        await using var runtime = CreateRuntime(new Dictionary<string, string>
+        {
+            ["MOCK_ACP_MODELS"] = payload,
+            ["MOCK_ACP_LOG"] = log,
+            ["MOCK_ACP_RESUME"] = nativeResume ? "1" : "0"
+        });
+        var statuses = await runtime.ProbeProvidersAsync(CancellationToken.None);
+        foreach (var status in statuses.Where(status => status.Provider.StartsWith("acp:")))
+        {
+            Assert.Equal(["safe", "execute"], status.PermissionModes!.Select(mode => mode.Id));
+            Assert.Equal("safe", Assert.Single(status.PermissionModes!, mode => mode.IsDefault).Id);
+            Assert.Equal("Read first", status.PermissionModes![0].Description);
+        }
+        await using var session = await runtime.OpenSessionAsync(new HarnessLaunchSpec(
+            "acp:antigravity", null, _fixture.WorkspaceDir, resume, null,
+            new Dictionary<string, McpServerConfig>(), PermissionMode: "execute"), CancellationToken.None);
+        Assert.Equal(["safe", "execute"], ((AcpAgentSession)session).AvailablePermissionModes.Select(mode => mode.Id));
+        var calls = File.ReadAllLines(log).Select(line => JsonSerializer.Deserialize<JsonElement>(line)).ToArray();
+        var selected = Assert.Single(calls, call => call.GetProperty("method").GetString() ==
+            (config ? "session/set_config_option" : "session/set_mode"));
+        var parameters = selected.GetProperty("params");
+        Assert.Equal(resume ?? "acp_sess_001", parameters.GetProperty("sessionId").GetString());
+        Assert.Equal("execute", parameters.GetProperty(config ? "value" : "modeId").GetString());
+        if (config) Assert.Equal(shape == 2 ? "mode" : "agent-mode", parameters.GetProperty("configId").GetString());
+    }
+
+    [Theory]
     [InlineData("vendor/model-high", null, "vendor/model-high")]
     [InlineData("vendor/model-high", "high", "vendor/model-high")]
     [InlineData("vendor/model-HIGH", "high", "vendor/model-HIGH")]

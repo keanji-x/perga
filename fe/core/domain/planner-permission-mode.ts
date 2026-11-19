@@ -31,11 +31,15 @@ export function setPlannerPermissionModeOperation(
 }
 
 /**
- * What a failed mode change says. 400, 403, 404 and 422 are answered before anything is stored;
+ * What a failed mode change says. Discovery preconditions and 400, 403, 404 and 422
+ * are answered before anything is stored;
  * a 5xx, a lost or an unreadable answer may follow a stored one.
  */
 export const PLANNER_PERMISSION_MODE_FAILURES: FailureTable<WriteFailure> = Object.freeze({
-  rules: Object.freeze([Object.freeze({ status: Object.freeze([400, 403, 404, 422]), is: 'refused' as const })]),
+  rules: Object.freeze([
+    Object.freeze({ status: Object.freeze([409]), code: 'precondition_failed', is: 'refused' as const }),
+    Object.freeze({ status: Object.freeze([400, 403, 404, 422]), is: 'refused' as const }),
+  ]),
   unauthorized: 'refused',
   otherwise: 'unknown',
 });

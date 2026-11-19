@@ -23,6 +23,7 @@ export type NewTrackSession = Readonly<{
   form: NewTrackFormState | null;
   /** The Planner's backend; `codex` until the reader picks a model from another provider's group. */
   provider: AgentProvider;
+  permissionMode: string | null;
   /** A selection from `provider`'s catalog; set together with `provider` by one pick. */
   model: ModelSelection;
   /** `admin` creates an Area admin Track (`admin: true`); `member` sends no `admin` key. */
@@ -81,6 +82,7 @@ function createDraftStore(submittedStorage?: () => Storage, userId?: string) {
               : typeof value === 'string' || typeof value === 'boolean' ? [[key, value]] : [])),
         },
         provider: request?.body.planner_provider ?? 'codex',
+        permissionMode: request?.body.permissionMode ?? null,
         model: request === null ? FOLLOW_INSTALLATION_DEFAULT : {
           model: request.body.model ?? null, reasoning_effort: request.body.reasoning_effort ?? null,
         },
@@ -93,7 +95,9 @@ function createDraftStore(submittedStorage?: () => Storage, userId?: string) {
     update: (areaId: string, patch: Partial<NewTrackSession>) => {
       const current = drafts.get(areaId);
       if (current === undefined) return;
-      drafts.set(areaId, { ...current, ...patch });
+      drafts.set(areaId, { ...current, ...patch,
+        ...(patch.provider !== undefined && patch.provider !== current.provider ? { permissionMode: null } : {}),
+      });
       if (patch.request !== undefined) remember(areaId, patch.request);
       notify();
     },

@@ -487,8 +487,12 @@ parser.add_argument("--output-format")
 parser.add_argument("--mcp-config")
 parser.add_argument("--resume", default=None)
 parser.add_argument("--model", default=None)
+parser.add_argument("--permission-mode", default=None)
 parser.add_argument("--append-system-prompt", dest="system_prompt", default=None)
 args = parser.parse_args()
+if os.environ.get("MOCK_CLAUDE_ARGS_LOG"):
+    with open(os.environ["MOCK_CLAUDE_ARGS_LOG"], "w") as log:
+        json.dump(sys.argv[1:], log)
 
 if not args.is_print or not args.verbose or args.input_format != "stream-json" or args.output_format != "stream-json":
     sys.stderr.write(f"Invalid required Claude flags: {sys.argv}\n")
@@ -913,7 +917,11 @@ for raw_line in sys.stdin:
                 send({"jsonrpc": "2.0", "id": msg_id, "result": {}})
         else:
             state["session_id"] = "acp_sess_001"
-            if os.environ.get("MOCK_ACP_WORKER_OPTIONS") == "1":
+            if os.environ.get("MOCK_ACP_PROJECT_MODES") == "1":
+                mode_file = os.path.join(params["cwd"], "permission-modes.json")
+                modes = json.load(open(mode_file)) if os.path.isfile(mode_file) else {}
+                send({"jsonrpc": "2.0", "id": msg_id, "result": {"sessionId": state["session_id"], **modes}})
+            elif os.environ.get("MOCK_ACP_WORKER_OPTIONS") == "1":
                 state["model"] = "small"
                 send({"jsonrpc": "2.0", "id": msg_id, "result": {"sessionId": state["session_id"], "configOptions": worker_config_options()}})
             elif "MOCK_ACP_MODELS" in os.environ:
@@ -959,6 +967,8 @@ for raw_line in sys.stdin:
             send({"jsonrpc": "2.0", "id": msg_id, "result": result})
         else:
             send({"jsonrpc": "2.0", "id": msg_id, "error": {"code": -32602, "message": "wrong session"}})
+    elif method == "session/set_mode":
+        send({"jsonrpc": "2.0", "id": msg_id, "result": {}})
     elif method == "session/set_model":
         if os.environ.get("MOCK_ACP_STRICT_MODELS") == "1":
             advertised = json.loads(os.environ["MOCK_ACP_MODELS"])["models"]["availableModels"]

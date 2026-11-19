@@ -47,7 +47,7 @@ public sealed class ProbeProvidersTests : IDisposable
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task ExplicitModelsIncludingEmptyBypassAcpProbe(bool empty)
+    public async Task ExplicitModelsIncludingEmptyArePreservedWhileProbingPermissionModes(bool empty)
     {
         var log = Path.Combine(_fixture.RootDir, "discovery.jsonl");
         string[] models = empty ? [] : ["override"];
@@ -56,12 +56,17 @@ public sealed class ProbeProvidersTests : IDisposable
             ProviderOverrides = new Dictionary<string, ProviderCommandOverride>(_fixture.UnavailableProviders(), StringComparer.OrdinalIgnoreCase)
             {
                 ["acp:custom"] = new(_fixture.MockAcpPath,
-                    Env: new Dictionary<string, string> { ["MOCK_ACP_LOG"] = log }, Models: models)
+                    Env: new Dictionary<string, string>
+                    {
+                        ["MOCK_ACP_LOG"] = log,
+                        ["MOCK_ACP_MODELS"] = """{"modes":{"currentModeId":"plan","availableModes":[{"id":"plan","name":"Plan"}]}}"""
+                    }, Models: models)
             }
         });
         var status = Assert.Single(await runtime.ProbeProvidersAsync(CancellationToken.None), s => s.Provider == "acp:custom");
         Assert.Equal(models, status.Models);
-        Assert.False(File.Exists(log));
+        Assert.True(File.Exists(log));
+        Assert.Equal("plan", Assert.Single(status.PermissionModes!).Id);
     }
 
     [Fact]

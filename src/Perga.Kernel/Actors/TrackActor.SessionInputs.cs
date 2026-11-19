@@ -111,7 +111,7 @@ public sealed partial class TrackActor
             }
 
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
-            var session = NewSubagentSessionCore(request);
+            var session = await NewSubagentSessionCoreAsync(request, ct).ConfigureAwait(false);
             SessionInputRequest? first = null;
             if (request.Text is { } content)
             {

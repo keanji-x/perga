@@ -139,10 +139,12 @@ describe('track create operation', () => {
 
   it('carries the draft key on every create', () => {
     const keyed = createTrackOperation(
-      { area_id: 'area', planner_provider: 'codex', theme },
+      { area_id: 'area', planner_provider: 'codex', theme, permissionMode: 'live-mode' },
       'draft-key',
     );
     expect(keyed.headers).toEqual({ 'Idempotency-Key': 'draft-key' });
+    expect(keyed.path).toBe('/api/v1/tracks');
+    expect(keyed.body).toMatchObject({ permissionMode: 'live-mode' });
   });
 });
 

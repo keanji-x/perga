@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useCallback, useEffect, useRef } from 'react';
 import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
-import { availabilityOf } from '../../../../core/domain/agent-providers.ts';
+import { availabilityOf, permissionModesForProvider } from '../../../../core/domain/agent-providers.ts';
 import { folderConflictMessage } from '../../../../core/domain/area.ts';
 import { ApiError, classifyFailure, NotSentError, refusedText, writeFailureOf } from '../../../../core/domain/failure-class.ts';
 import { selectedReadyTemplateId } from '../../../../core/domain/mentions.ts';
@@ -12,7 +12,7 @@ import {
   trackWorkspaceOptionsOperation, type NewTrackBody, type TrackTemplate,
 } from '../../../../core/domain/track.ts';
 import { readErrorText } from '../../../../core/domain/read-failure.ts';
-import { ModelPill, PlannerRolePill } from '../../features/chat/thread/model-pill.tsx';
+import { ModelPill, PermissionModePill, PlannerRolePill } from '../../features/chat/thread/model-pill.tsx';
 import { useMentionTrigger } from '../../features/chat/thread/mention-trigger.tsx';
 import { NewTrackForm, type NewTrackDraft, type NewTrackFormState } from '../../features/area/new-track/public.tsx';
 import { useCompactViewport } from '../../ui/viewport/public.ts';
@@ -117,6 +117,7 @@ function NewTrackEditor({ transport, unauthorized, pergaMode = false, workspace,
       ...(pergaMode || draft.templateInput === undefined ? {} : { template_input: draft.templateInput }),
       area_id: areaId,
       planner_provider: current.provider,
+      ...(current.permissionMode === null ? {} : { permissionMode: current.permissionMode }),
       theme: readHostThemeRgb(),
       ...(current.model.model === null ? {} : { model: current.model.model }),
       ...(current.model.reasoning_effort === null ? {} : { reasoning_effort: current.model.reasoning_effort }),
@@ -201,6 +202,12 @@ function NewTrackEditor({ transport, unauthorized, pergaMode = false, workspace,
         : undefined}
     mentionTrigger={mentionTrigger}
     modelControls={<>
+      <PermissionModePill
+        mode={session.permissionMode ?? ''}
+        options={permissionModesForProvider(providers.data, session.provider)}
+        onChange={(permissionMode) => { store.update(areaId, { permissionMode }); }}
+        isDisabled={session.creating || session.request !== null}
+      />
       <ModelPill
         groups={[
           { provider: 'codex', catalog: codexCatalog.data ?? null, availability: availabilityOf(availability.data, 'codex'),

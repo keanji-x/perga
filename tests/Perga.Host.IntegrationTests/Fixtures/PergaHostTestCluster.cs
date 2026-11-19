@@ -69,6 +69,9 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
 
     public IReadOnlyCollection<RecordedSessionOpen> OpenedSessions => _openedSessions.ToArray();
     public IReadOnlyCollection<RecordedTurnExecution> ExecutedTurns => _executedTurns.ToArray();
+    public bool FailPermissionDiscovery { get; set; }
+    public IReadOnlyList<PermissionModeOption>? AcpPermissionModes { get; set; }
+
     public int ProbeCount => Volatile.Read(ref _probeCount);
     public int ForceRefreshProbeCount => Volatile.Read(ref _forceRefreshProbeCount);
 
@@ -83,6 +86,13 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
         _steerHandler = handler;
     }
 
+    public Task<IReadOnlyList<PermissionModeOption>> ProbePermissionModesAsync(
+        string provider, string? cwd, OsSandboxMode sandbox, IReadOnlyList<OverlayMountSpec>? overlayMounts, CancellationToken ct)
+    {
+        if (FailPermissionDiscovery) throw new IOException("Discovery unavailable");
+        return Task.FromResult(AcpPermissionModes ?? (IReadOnlyList<PermissionModeOption>)[]);
+    }
+
     public Task<IReadOnlyList<ProviderStatus>> ProbeProvidersAsync(CancellationToken ct)
     {
         _ = ct;
@@ -91,7 +101,7 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
         [
             new("codex", Available: true, Version: "0.10.0-mock", Reason: null, Models: ["gpt-5.4"]),
             new("claude", Available: true, Version: "1.0.0-mock", Reason: null, Models: ["claude-sonnet-4-6"]),
-            new("acp:antigravity", Available: true, Version: "2.0.0-mock", Reason: null, Models: ["gemini-3.1-pro"])
+            new("acp:antigravity", Available: true, Version: "2.0.0-mock", Reason: null, Models: ["gemini-3.1-pro"], PermissionModes: AcpPermissionModes)
         ];
         return Task.FromResult(providers);
     }

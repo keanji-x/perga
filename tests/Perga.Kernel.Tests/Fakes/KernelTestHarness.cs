@@ -1403,11 +1403,22 @@ internal sealed class ScriptableFakeAgentRuntime : IAgentRuntime
 
     public Func<ScriptableFakeAgentSession, TurnInput, CancellationToken, IAsyncEnumerable<UnifiedAgentEvent>>? TurnScript { get; set; }
 
-    public Task<IReadOnlyList<ProviderStatus>> ProbeProvidersAsync(CancellationToken ct) =>
-        Task.FromResult<IReadOnlyList<ProviderStatus>>(
-        [
-            new ProviderStatus("codex", true, "1.0.0", null, ["gpt-5"])
-        ]);
+    public IReadOnlyList<ProviderStatus> Providers { get; set; } =
+        [new ProviderStatus("codex", true, "1.0.0", null, ["gpt-5"])];
+
+    public Func<string, string?, IReadOnlyList<PermissionModeOption>>? PermissionModeProbe { get; set; }
+    public List<(OsSandboxMode Sandbox, IReadOnlyList<OverlayMountSpec>? Overlays)> PermissionModeProbeIsolation { get; } = [];
+    public int PermissionModeProbeCalls { get; private set; }
+
+    public Task<IReadOnlyList<PermissionModeOption>> ProbePermissionModesAsync(string provider, string? cwd, OsSandboxMode sandbox, IReadOnlyList<OverlayMountSpec>? overlayMounts, CancellationToken ct)
+    {
+        PermissionModeProbeCalls++;
+        PermissionModeProbeIsolation.Add((sandbox, overlayMounts));
+        return Task.FromResult(PermissionModeProbe is { } probe ? probe(provider, cwd)
+            : Providers.FirstOrDefault(status => status.Provider == provider)?.PermissionModes ?? []);
+    }
+
+    public Task<IReadOnlyList<ProviderStatus>> ProbeProvidersAsync(CancellationToken ct) => Task.FromResult(Providers);
 
     public Task<IAgentSession> OpenSessionAsync(HarnessLaunchSpec spec, CancellationToken ct)
     {

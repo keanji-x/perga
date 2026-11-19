@@ -497,13 +497,15 @@ describe('Track creation drafts survive navigation', () => {
     expect(retry?.headers).toEqual(first?.headers);
   });
 
-  it.each(['offline', 'rate-limit', 'folder-conflict'] as const)('keeps an earlier unconfirmed request after a later %s rejection', async (rejection) => {
+  it.each(['offline', 'rate-limit', 'folder-conflict', 'discovery'] as const)('keeps an earlier unconfirmed request after a later %s rejection', async (rejection) => {
     const { sent } = harness({ loseFirstCreateAck: true,
       otherAreaDefaults: { default_template_id: null, default_cwd: '/srv/app' },
       trackCreateSequence: rejection === 'offline' ? undefined : [
         rejection === 'rate-limit'
           ? { status: 429, statusText: 'Too Many Requests', body: { error: 'rate limited' } }
-          : { status: 409, statusText: 'Conflict', body: CONFLICT },
+          : rejection === 'discovery'
+            ? { status: 409, statusText: 'Conflict', body: { code: 'precondition_failed', error: 'Retry discovery' } }
+            : { status: 409, statusText: 'Conflict', body: CONFLICT },
       ],
     });
     await userEvent.click(await screen.findByRole('button', { name: 'New track in Reading' }));
