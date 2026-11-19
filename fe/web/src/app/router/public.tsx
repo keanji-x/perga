@@ -11,6 +11,7 @@ import { composerCommands, conversationCommands, conversationCommandBindings, ty
 import { trackCommandBindings } from './track-composer-command.ts';
 import { useTrackClosedControl } from '../../features/track/page/closed-control.ts';
 import { TodayReportEmpty } from '../../features/today/public.tsx';
+import { PanelModule } from '../../ui/panel-card/public.tsx';
 import type { DialogOrigin } from '../../ui/dialog/public.tsx';
 import { PendingQueue, QueueWriteNotice } from '../../features/chat/thread/pending-queue.tsx';
 import { useConversationLinks } from './conversation-links.tsx';
@@ -127,9 +128,9 @@ import {
 } from '../providers/queries.ts';
 import { NewTrackRoute } from './new-track-route.tsx';
 import { DailyTodayRoute, type DailyCenterPresentation } from './daily-planner.tsx';
-import { PergaOverviewRoute } from './perga-overview.tsx';
 import { ConversationComposer, ConversationDock } from './conversation-composer.tsx';
 import mobileChatStyles from './mobile-chat.module.css';
+import dailyStyles from './daily-planner.module.css';
 import { ConversationSurface, type EmbeddedConversationPresentation } from './mobile-conversation-surface.tsx';
 import { agentSessionDtoToConversation } from '../../../../core/domain/conversation.ts';
 import { NewTrackDraftProvider } from './new-track-drafts.tsx';
@@ -236,12 +237,9 @@ export function createRouteTree(deps: AppRouterDeps): AnyRoute {
     component: function DailyRoute() {
       const day = new URLSearchParams(useLocation({ select: (location) => location.searchStr })).get('day') ?? undefined;
       const go = useGo();
-      if (pergaMode) {
-        return <PergaOverviewRoute transport={transport} unauthorized={unauthorized} />;
-      }
-      return <DailyTodayRoute transport={transport} unauthorized={unauthorized} selectedDate={day}
+      return <DailyTodayRoute pergaMode={pergaMode} transport={transport} unauthorized={unauthorized} selectedDate={day}
         onOpenTrack={(trackId) => go({ name: 'track', trackId })}
-        renderTrack={(detail, evidence, panelContent, intro, supervisor, center) => <TrackRouteBody center={center} reportHeader={supervisor} reportEmpty={<TodayReportEmpty />} mobileReportIntro={intro} panelContent={panelContent} reportEvidence={evidence} key={detail.track.id} prepareReport={prepareReport} transport={transport} unauthorized={unauthorized}
+        renderTrack={(detail, evidence, panelContent, intro, supervisor, center) => <TrackRouteBody showWorkspaceIsolation={false} center={center} reportHeader={supervisor} reportEmpty={pergaMode ? null : <TodayReportEmpty />} mobileReportIntro={intro} panelContent={panelContent} reportEvidence={evidence} key={detail.track.id} prepareReport={prepareReport} transport={transport} unauthorized={unauthorized}
           snapshot={detail} cardRuntime={cards} recentFiles={recentFiles} pergaMode={pergaMode} />} />;
     },
   });
@@ -895,9 +893,12 @@ function useConversationPane(
     sendText, composerAttachments, mentionTrigger, scopeProvider, scopePermissionModes, hasPermissionMetadata, displayPermissionMode, conversationAsks, answerAsk,
     roleValue, roleDisabled, roleDisabledReason, roleChange, worker, updateWorkerSettings, workerDelivery]);
 
+  const centeredEmpty = options?.embedded?.active === true && open !== null && store.historyReady && openTurns.length === 0 && !hasPendingMessages && !(pendingPresentation?.conversationId === existingId && pendingPresentation.visible) && !store.sending && !store.working && store.activeInput === null && store.failedSend === null;
+
   const renderDrawer = (resizeGroup: PaneResizeGroup | null = null) => (
       <ConversationSurface
         embedded={options?.embedded}
+        centerEmptyComposer={centeredEmpty}
         mobileSheet={compactComposer}
         focusInput={panePresented && (draftOpen || (open !== null && composerFocusFor === open.id))}
         contextTitle={scope?.title}
@@ -1088,7 +1089,7 @@ function useConversationPane(
                           shows the remembered transcript. */}
             {!threadPresented && outgoingPreview !== undefined && <OutgoingMessage speaker={outgoingPreview.author} text={outgoingPreview.text} mobile={compactViewport} />}
             {!threadPresented && hasPendingMessages && pendingMessages}
-            {threadPresented && (
+            {threadPresented && !centeredEmpty && (
               <ChatThread hasPendingInputs={store.pendingInputs.length > 0} historyPrefetch={historyPrefetch} readingView={threadReadingView} key={open.id} pendingMessages={pendingMessages} activeInput={store.activeInput} keepInput={keepInput} retryInput={retryInput}
                 hasPendingMessages={hasPendingMessages || (pendingPresentation?.conversationId === existingId && pendingPresentation.visible)}
                 conversation={open}
@@ -1266,7 +1267,7 @@ function trackNotifications(items: TrackActivity['attentionItems']): readonly Tr
 }
 
 function TrackRouteBody({
-  transport, unauthorized, snapshot, cardRuntime, recentFiles, reportEvidence, reportHeader, reportEmpty, panelContent, mobileReportIntro, prepareReport, center, pergaMode = false, workspaceWaiting = false, workspaceNotice,
+  transport, unauthorized, snapshot, showWorkspaceIsolation = true, cardRuntime, recentFiles, reportEvidence, reportHeader, reportEmpty, panelContent, mobileReportIntro, prepareReport, center, pergaMode = false, workspaceWaiting = false, workspaceNotice,
 }: {
   transport: ApiTransportPort;
   unauthorized: UnauthorizedChannel;
@@ -1274,6 +1275,7 @@ function TrackRouteBody({
   cardRuntime: CardRuntime;
   recentFiles: RecentFileHistory;
   center?: DailyCenterPresentation;
+  showWorkspaceIsolation?: boolean;
   reportEvidence?: ReactNode;
   reportHeader?: ReactNode;
   workspaceWaiting?: boolean;
@@ -1487,7 +1489,7 @@ function TrackRouteBody({
         commands: plannerCommands,
       },
     },
-    { workspace: { waiting: workspaceWaiting, notice: workspaceNotice }, defaultRowId: center !== undefined && plannerCard !== undefined ? plannerCard.id : null, onPresent: center?.onOpenAssistant, presented: centerActive ? center?.presented : undefined, embedded: center === undefined ? undefined : { active: centerActive, host: centerHost, footerPrefix: center.footerPrefix, label: center.title }, onArchive: conversationMutations.archive, terminal: { workbench, render: () => <TerminalWorkbenchView workbench={workbench} host={trackCardHost}
+    { workspace: { waiting: workspaceWaiting, notice: workspaceNotice }, defaultRowId: center !== undefined && plannerCard !== undefined ? plannerCard.id : null, onPresent: center?.onOpenAssistant, presented: centerActive ? center?.presented : undefined, embedded: center === undefined ? undefined : { active: centerActive, host: centerHost, footerPrefix: center.footerPrefix, emptyIntroduction: center.emptyIntroduction, label: center.title }, onArchive: conversationMutations.archive, terminal: { workbench, render: () => <TerminalWorkbenchView workbench={workbench} host={trackCardHost}
       items={workbench.ordinaryHost ? [] : gridItems.filter(item => workbench.cardIds.has(item.card.id))} visible={!compactViewport && workbench.open}
       onRemove={(id) => cardDeletion.request(id, { kind: 'surface-center' })} /> }, showTrack: false, reportComposer: { ready: true, returnLabel: routePanel === 'conversations' ? 'Conversations' : 'Report' } },
   );
@@ -1709,15 +1711,65 @@ function TrackRouteBody({
     go({ name: 'track', trackId: track.id, blockId, from: routeFrom });
   };
 
+  const reportRegion = pergaMode && centerActive && reportPresentation.visible?.preparation.kind === 'empty' ? null : (
+        <TrackReportRegion
+        presentation={reportPresentation}
+        trackId={track.id}
+        activityAt={track.activityAt}
+        openedAt={navigationCompletedAt}
+        /* `overlay.set` already invalidates this track's detail, so a plugin push
+                   re-renders the block without the report being rewritten. */
+        resolveOverlay={resolveOverlay}
+        resolveSeries={resolveSeries}
+        resolvePreview={resolvePreview}
+        previewViewports={previewViewports}
+        taskVerdicts={verdicts}
+        taskRows={tasks}
+        renderTaskExecution={(task, expanded) => <TaskRecovery
+          key={`${track.id}:${task.key}`} trackId={track.id} taskKey={task.key} expanded={expanded}
+          transport={transport} unauthorized={unauthorized}
+          enableTaskActions={isPergaTrack}
+          openableWorkerIds={openableWorkerIds}
+          openWorker={(cardId) => {
+            if (isPergaTrack && rows.some((row) => row.id === cardId)) {
+              registry.requestOpen(cardId, { focusComposer: false });
+              return;
+            }
+            go({ name: 'track', trackId: track.id, cardId, from: routeFrom });
+          }}
+        />}
+        rail={<ReportOutline items={outline} />}
+        backlinkCounts={backlinks === undefined ? undefined : backlinkCountsByBlock(backlinks.backlinks)}
+        onOpenLink={openReportLink}
+        onOpenFileLink={openReportFile}
+        onOpenSourceLink={openReportSource}
+        onSaveProseBlock={report?.docRev !== undefined
+          ? async (blockId, markdown) => {
+            await trackMutations.updateReportBlock(track.id, blockId, {
+              docRev: report.docRev!,
+              knownBlockRev: report.blockRevs?.[blockId] ?? 1,
+              kind: 'prose',
+              markdown,
+            });
+          }
+          : undefined}
+        fileRoot={track.agentCwd}
+        linkPreview={linkPreview}
+        outlineEmpty={reportEmpty}
+        empty={reportEmpty === undefined ? <ReportEmpty /> : reportEmpty}
+      >{reportEvidence}</TrackReportRegion>
+  );
   return (
     <>
     <TrackStage>
     <TrackPage
       fillReading={centerActive}
+      showWorkspaceIsolation={showWorkspaceIsolation}
       shareLinks={!isPergaTrack && shareAccess === null ? <TrackShareLinks trackId={track.id} areaId={track.areaId} shareable={shareable} transport={transport} unauthorized={unauthorized} /> : undefined}
       onShareTrack={shareable && openShare !== null ? origin => openShare({ scope: { kind: 'track', id: track.id }, title: track.title, origin }) : undefined}
       progressDisclosure={progressDisclosure}
-      panelContent={panelContent}
+      panelHeader={pergaMode && centerActive && panelContent !== undefined && panelContent !== null ? <div className={dailyStyles.calendarPanel}>{panelContent}</div> : undefined}
+      panelContent={pergaMode && centerActive ? <div className={dailyStyles.reportPanel}>{reportPresentation.visible?.preparation.kind !== 'empty' ? <PanelModule title="Daily report" icon="file">{reportRegion}</PanelModule> : reportRegion}</div> : panelContent}
       mobileReportIntro={mobileReportIntro}
       mobilePanelObscured={(!centerActive && chat.isOpen) || sourceOpen}
       mobileHeaderActionsHost={mobileHeaderActionsHost}
@@ -1794,58 +1846,14 @@ function TrackRouteBody({
         else openMobileSection({ kind: 'pages' });
       }}
       report={<>
+        {pergaMode && reportHeader}
         {center !== undefined && <div className={mobileChatStyles.embeddedSlot} hidden={!centerActive}>
           {center.render(<div ref={setCenterHost} className={mobileChatStyles.embeddedSlot} />)}
         </div>}
-        {!centerActive && <>{reportHeader}{(!chat.isOpen || chat.selectedConversationId !== plannerCard?.id) && workspaceNotice}
+        {!centerActive && <>{!pergaMode && reportHeader}{(!chat.isOpen || chat.selectedConversationId !== plannerCard?.id) && workspaceNotice}
         {canCloseTrack && shareAccess === null &&
           <WorkerDispatchControl key={track.id} trackId={track.id} transport={transport} unauthorized={unauthorized} />}
-        <TrackReportRegion
-        presentation={reportPresentation}
-        trackId={track.id}
-        activityAt={track.activityAt}
-        openedAt={navigationCompletedAt}
-        /* `overlay.set` already invalidates this track's detail, so a plugin push
-                   re-renders the block without the report being rewritten. */
-        resolveOverlay={resolveOverlay}
-        resolveSeries={resolveSeries}
-        resolvePreview={resolvePreview}
-        previewViewports={previewViewports}
-        taskVerdicts={verdicts}
-        taskRows={tasks}
-        renderTaskExecution={(task, expanded) => <TaskRecovery
-          key={`${track.id}:${task.key}`} trackId={track.id} taskKey={task.key} expanded={expanded}
-          transport={transport} unauthorized={unauthorized}
-          enableTaskActions={isPergaTrack}
-          openableWorkerIds={openableWorkerIds}
-          openWorker={(cardId) => {
-            if (isPergaTrack && rows.some((row) => row.id === cardId)) {
-              registry.requestOpen(cardId, { focusComposer: false });
-              return;
-            }
-            go({ name: 'track', trackId: track.id, cardId, from: routeFrom });
-          }}
-        />}
-        rail={<ReportOutline items={outline} />}
-        backlinkCounts={backlinks === undefined ? undefined : backlinkCountsByBlock(backlinks.backlinks)}
-        onOpenLink={openReportLink}
-        onOpenFileLink={openReportFile}
-        onOpenSourceLink={openReportSource}
-        onSaveProseBlock={report?.docRev !== undefined
-          ? async (blockId, markdown) => {
-            await trackMutations.updateReportBlock(track.id, blockId, {
-              docRev: report.docRev!,
-              knownBlockRev: report.blockRevs?.[blockId] ?? 1,
-              kind: 'prose',
-              markdown,
-            });
-          }
-          : undefined}
-        fileRoot={track.agentCwd}
-        linkPreview={linkPreview}
-        outlineEmpty={reportEmpty}
-        empty={reportEmpty ?? <ReportEmpty />}
-      >{reportEvidence}</TrackReportRegion></>}
+        {reportRegion}</>}
       </>}
       backlinks={backlinks !== undefined && (backlinks.backlinks.length > 0 || backlinks.truncated || backlinks.skipped_sources > 0)
         ? (
@@ -1861,9 +1869,9 @@ function TrackRouteBody({
         )
         : undefined}
       mobileChatComposer={chat.dock}
-      conversationContextList={chat.contextList}
-      conversationList={chat.list}
-      onStartConversation={chat.startConversation}
+      conversationContextList={!pergaMode || !centerActive || rows.length > 1 ? chat.contextList : undefined}
+      conversationList={!pergaMode || !centerActive || rows.length > 1 ? chat.list : undefined}
+      onStartConversation={!pergaMode || !centerActive || rows.length > 1 ? chat.startConversation : undefined}
       showConversationAction={!centerActive}
       conversationOpen={!centerActive && chat.isOpen}
       inputNotifications={inputNotifications}

@@ -21,8 +21,9 @@ import { DirectoryPicker } from '../directory-picker.tsx';
 import type { ListDirectory } from '../../../ui/directory-browser/public.tsx';
 import { useState } from '../../../ui/state/public.ts';
 import { triggerMenuKeyRoute } from '../../../ui/trigger-menu-keys/public.ts';
-import { NeigeMotion } from '../../../ui/brand/motion.tsx';
+import { CenteredComposerIntroduction } from '../../../ui/drawer/centered-composer-introduction.tsx';
 import styles from './new-track.module.css';
+import { centeredComposerPageClassName, centeredComposerColumnClassName, centeredComposerClassName, centeredComposerSendClassName } from '../../../ui/drawer/centered-composer.ts';
 import { ComposerPreferences } from './composer-preferences.tsx';
 import type { RepoIsolationMode } from './repo-pill.tsx';
 
@@ -205,20 +206,13 @@ export function NewTrackForm({
     : undefined;
 
   return (
-    <div className={styles.page}>
-      <VStack gap={2} className={styles.form}>
+    <div className={centeredComposerPageClassName}>
+      <VStack gap={2} className={centeredComposerColumnClassName}>
 
-        <div className={styles.masthead}>
-          <h1 className={styles.greeting}>
-            <span className={styles.mark} aria-hidden="true"><NeigeMotion kind="creation" /></span>
-            What would you like to work on?
-          </h1>
-        </div>
-
-        <p className={styles.introduction}>
+        <CenteredComposerIntroduction title="What would you like to work on?">
           Describe your request and optionally choose a Repo for your repository.
           An Area groups a project&apos;s work; a Track keeps one request, its conversation and report.
-        </p>
+        </CenteredComposerIntroduction>
 
         {hasTemplatePicker && (
           <div className={styles.templatePanel} data-nc-new-track-templates>
@@ -329,7 +323,7 @@ export function NewTrackForm({
 
         <div
           ref={composerHostRef}
-          className={styles.composer}
+          className={`${styles.composer} ${centeredComposerClassName}`}
           data-nc-new-track-message
           /* Enter is ours: astryx's `ChatComposer.handleSubmit` clears the controlled value unconditionally after calling us, so a refused
              submit would lose the sentence. Only when the field itself is the target; Enter while composing is accepting an IME candidate, not sending. */
@@ -383,7 +377,7 @@ export function NewTrackForm({
             sendButton={(
               <Button
                 type="button"
-                className={styles.send}
+                className={centeredComposerSendClassName}
                 variant="primary"
                 isIconOnly
                 icon={<Icon icon="arrowUp" size="sm" />}

@@ -23,7 +23,7 @@ export function renderDailyFixture({ history, identity, routeProbe, withTranspor
   const requests: ApiRequest[] = [];
   const area = { id: 'daily-area', name: 'system', color: '#6574cd', sortOrder: 0, kind: 'system', createdAtMs: 1, updatedAtMs: 1 };
   const projectArea = { ...area, id: 'project-area', name: 'Project', kind: 'user' };
-  const track = fixtureTrack('daily', { title: 'Renamed daily Track', leadSessionId: 'daily-planner' });
+  const track = fixtureTrack('daily', { title: 'Renamed daily Track', leadSessionId: 'daily-planner', ...(pergaMode ? { workspace: { isolation: 'none', kind: 'attached', path: '/tmp', frozenAt: null } } : {}) });
   const project = fixtureTrack('project', { areaId: projectArea.id, title: projectTitle });
   const card = fixtureSession('daily-planner', track.id, { title: 'Daily Planner conversation', isLead: true, provider: plannerProvider });
   const sessions = [card, ...(extraPlanner ? [fixtureSession('second-planner', track.id, { title: 'Other conversation', provider: plannerProvider })] : [])];

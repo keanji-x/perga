@@ -142,7 +142,7 @@ public sealed class MainMigrationUpgradeTests
             Assert.Null(await upgraded.ExecuteScalarAsync<string?>("SELECT reasoning_effort FROM agent_sessions WHERE id = 'session';"));
             Assert.Equal("Retained input", await upgraded.ExecuteScalarAsync<string>("SELECT content FROM session_messages WHERE id = 'input' AND request_key = 'original-key' AND request_hash = 'original-hash' AND delivery = 'queued';"));
             Assert.Equal("{\"retained\":true}", await upgraded.ExecuteScalarAsync<string>("SELECT intent_json FROM track_workspace_preparations WHERE track_id = 'track';"));
-            Assert.Equal(11, await upgraded.ExecuteScalarAsync<long>("SELECT MAX(version) FROM schema_migrations;"));
+            Assert.Equal(12, await upgraded.ExecuteScalarAsync<long>("SELECT MAX(version) FROM schema_migrations;"));
             foreach (var migration in original)
             {
                 Assert.Equal(migration.ChecksumSha256, await upgraded.ExecuteScalarAsync<string>(

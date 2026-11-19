@@ -99,8 +99,12 @@ export type TrackPageProps = Readonly<{
   track: Pick<Track, 'id' | 'title' | 'closedAt' | 'working' | 'attention' | 'cards'> & Partial<Pick<Track, 'isolation'>>;
   /** Fill the reading column with an app-owned interactive surface. */
   fillReading?: boolean;
+  /** Daily planning surfaces have no checkout isolation to explain. */
+  showWorkspaceIsolation?: boolean;
   /** Visit-scoped choice supplied by the route owner, independently for each Track. */
   progressDisclosure?: DesktopPainterDeps['progressDisclosure'];
+  /** App-composed panel header: rendered at the top of the desktop card before Conversations, and before panelContent on compact screens. */
+  panelHeader?: ReactNode;
   /** App-composed panel module: shares the desktop card, precedes the report on compact screens. */
   panelContent?: ReactNode;
   cards: readonly CardWire[];
@@ -188,8 +192,8 @@ function rowModule(view: TrackPageView, key: RowModuleView['key']): RowModuleVie
   return found;
 }
 
-export function TrackPage({ fillReading = false, mobileReportIntro, mobileChatComposer,
-  panelContent, progressDisclosure, track, cards, existingCardIds, tasks, openableCards, outlineItems = [], report, backlinks, conversationList, conversationContextList,
+export function TrackPage({ fillReading = false, showWorkspaceIsolation = true, mobileReportIntro, mobileChatComposer,
+  panelHeader, panelContent, progressDisclosure, track, cards, existingCardIds, tasks, openableCards, outlineItems = [], report, backlinks, conversationList, conversationContextList,
   shareLinks, onShareTrack, onStartConversation, showConversationAction = true, conversationOpen = false, mobilePanelObscured, inputNotifications = [], onReply, onDismiss, nowMs,
   cardsAction, recentFiles, onOpenCard, onDeleteCard, onSetWorkbench, onOpenTask, onOpenOutline, board, onCloseBoard,
   panel = null, onOpenPanel, onClosePanel,
@@ -442,7 +446,7 @@ export function TrackPage({ fillReading = false, mobileReportIntro, mobileChatCo
             controls={controls} host={mobileTitleReadHost} view={mobileTitleReadView} register={registerMobileTitleEdit} /> : undefined} />}</h1>
         <div className={styles.mobileTitleReadHost} hidden={!titleInHeader}
           ref={(node) => { if (node !== null && mobileTitleReadHost.parentNode !== node) node.appendChild(mobileTitleReadHost); }} />
-        {track.isolation === 'none' && <ExplanationBadge label={NO_ISOLATION_LABEL}>{NO_ISOLATION_EXPLANATION}</ExplanationBadge>}
+        {showWorkspaceIsolation && track.isolation === 'none' && <ExplanationBadge label={NO_ISOLATION_LABEL}>{NO_ISOLATION_EXPLANATION}</ExplanationBadge>}
         {!titleInHeader && <TrackClosedBadge closedAt={track.closedAt} />}
         {!titleInHeader && <TrackAdminBadge adminGrantedAt={adminGrantedAt} />}
         {/* The same indicator the rail paints. `unread` is `false` by construction: the page is the reader, and its receipt clears the moment it is visible. The mobile page head carries no indicator. */}
@@ -453,7 +457,7 @@ export function TrackPage({ fillReading = false, mobileReportIntro, mobileChatCo
         <MobileHeader
           title={trackDisplayTitle(track.title)}
           titleText={<TrackTitle track={track} />}
-          meta={<>{track.isolation === 'none' && <ExplanationBadge label={NO_ISOLATION_LABEL}>{NO_ISOLATION_EXPLANATION}</ExplanationBadge>}<TrackClosedBadge closedAt={track.closedAt} /><TrackAdminBadge adminGrantedAt={adminGrantedAt} /></>}
+          meta={<>{showWorkspaceIsolation && track.isolation === 'none' && <ExplanationBadge label={NO_ISOLATION_LABEL}>{NO_ISOLATION_EXPLANATION}</ExplanationBadge>}<TrackClosedBadge closedAt={track.closedAt} /><TrackAdminBadge adminGrantedAt={adminGrantedAt} /></>}
           level={1}
           backLabel={boardOpen ? 'Report' : mobileBackLabel}
           onBack={boardOpen ? onCloseBoard : onMobileBack}
@@ -469,7 +473,7 @@ export function TrackPage({ fillReading = false, mobileReportIntro, mobileChatCo
       >
         <div className={styles.doc}>
           {compactViewport && mobileReportIntro}
-          {compactViewport && panelContent !== undefined && <div className={styles.compactPanelContent}><PanelCard>{panelContent}</PanelCard></div>}
+          {compactViewport && (panelHeader !== undefined || panelContent !== undefined) && <div className={styles.compactPanelContent}><PanelCard>{panelHeader}{panelContent}</PanelCard></div>}
           {report}
         </div>
 
@@ -546,6 +550,7 @@ export function TrackPage({ fillReading = false, mobileReportIntro, mobileChatCo
           >
           <PanelCard className={inventoryStyles.workCard}>
             <ContextFrame>
+              {!compactViewport && panelHeader !== undefined && <div className={inventoryStyles.panelContext}>{panelHeader}</div>}
               {hasDesktopConversations && <ContextGroup title="Conversations"
                 actionVisibility="always" action={onStartConversation === undefined ? undefined : <ContextAction
                   label="New conversation" icon="plus" onClick={onStartConversation} />}>

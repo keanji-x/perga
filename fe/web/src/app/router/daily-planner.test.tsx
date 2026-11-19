@@ -71,8 +71,12 @@ it('opens Today Assistant in the center and returns from report changes with its
   renderDailyFixture();
   const assistant = await screen.findByRole('region', { name: 'Today Assistant' });
   const field = await within(assistant).findByRole('combobox', { name: 'Message' });
+  await waitFor(() => expect(assistant.getAttribute('data-nc-centered-footer')).toBe(''));
   await userEvent.click(field);
   await userEvent.type(field, 'Keep this daily draft');
+  expect(within(assistant).queryByText('聊聊你想做什么')).toBeNull();
+  expect(within(assistant).queryByText('从一个问题或想法开始。')).toBeNull();
+  expect(assistant.querySelector('[data-nc-thread-empty]')).toBeNull();
   await userEvent.click(screen.getByRole('button', { name: 'Report changes' }));
   await screen.findByRole('button', { name: 'Back to Today Assistant' });
   expect(screen.queryByRole('region', { name: 'Today Assistant' })).toBeNull();
@@ -99,6 +103,7 @@ it('sends from Today through the existing Planner endpoint and shows a refused s
   await userEvent.click(send);
   await waitFor(() => expect(requests.filter(request => request.path.endsWith('/messages'))).toHaveLength(1));
   await within(assistant).findByText(/^Not sent\./);
+  expect(within(assistant).getByRole('button', { name: 'Report changes' })).toBeTruthy();
   const input = requests.filter(request => request.path.endsWith('/messages'));
   expect(input).toHaveLength(1);
   expect(input[0].path).toBe('/api/v1/sessions/daily-planner/messages');
@@ -122,4 +127,99 @@ it('returns to the center conversation when selected from the right inventory', 
   await screen.findByRole('region', { name: 'Today Assistant' });
   expect(screen.queryByRole('button', { name: 'Back to Today Assistant' })).toBeNull();
   expect(screen.getByRole('button', { name: 'New conversation' })).toBeTruthy();
+});
+
+it('renders the Perga daily Report and Assistant without triage and never requests Supervisor or launchpad', async () => {
+  const { requests } = renderDailyFixture({ pergaMode: true, identity: { userId: 'local-owner', displayName: 'Owner', role: 'owner', sessionId: 'perga-owner' } });
+  await screen.findByRole('region', { name: 'Today Assistant' });
+  expect(screen.queryByRole('region', { name: 'Today triage' })).toBeNull();
+  expect(screen.queryByText(/Waiting on you/)).toBeNull();
+  expect(screen.queryByText('源文件夹模式 · 未隔离')).toBeNull();
+  expect(screen.queryByText('Daily Supervisor')).toBeNull();
+  expect(screen.queryByText('Report changes')).toBeNull();
+  expect(requests.some(request => request.path.startsWith('/api/today/daily'))).toBe(true);
+  expect(requests.some(request => /\/api\/today\/(supervisor|launchpad)/.test(request.path))).toBe(false);
+});
+
+it('keeps a historical Perga daily Report readable without triage or Supervisor', async () => {
+  const { requests } = renderDailyFixture({ pergaMode: true, initial: '/?day=2026-10-04' });
+  await screen.findByText('Prioritize the release.', { exact: false }, { timeout: 5_000 });
+  expect(screen.queryByRole('region', { name: 'Today triage' })).toBeNull();
+  expect(screen.queryByText('源文件夹模式 · 未隔离')).toBeNull();
+  expect(screen.queryByText('Daily Supervisor')).toBeNull();
+  expect(requests.some(request => request.path === '/api/today/daily?date=2026-10-04')).toBe(true);
+  expect(requests.some(request => /\/api\/today\/(supervisor|launchpad)/.test(request.path))).toBe(false);
+});
+
+
+it('preserves the isolation badge on regular Perga repo Tracks', async () => {
+  renderDailyFixture({ pergaMode: true, initial: '/track/project' });
+  await screen.findByText('Release is ready.', {}, { timeout: 5_000 });
+  expect(screen.getAllByText('源文件夹模式 · 未隔离').length).toBeGreaterThan(0);
+});
+
+it('keeps the perga Today masthead minimal and calendar selection local', async () => {
+  const { router, requests } = renderDailyFixture({ pergaMode: true });
+  const assistant = await screen.findByRole('region', { name: 'Today Assistant' });
+  const heading = await within(assistant).findByRole('heading', { name: '今天想推进什么？' });
+  expect(heading.querySelector('[data-nc-motion="creation"]')).toBeTruthy();
+  expect(within(assistant).queryByText('说说今天的重点，计划与进展会整理在右侧日报里。')).toBeNull();
+  expect(assistant.querySelector('[data-nc-thread-empty]')).toBeNull();
+  expect(screen.queryByText('Report changes')).toBeNull();
+  const calendar = await screen.findByRole('region', { name: 'Calendar' });
+  const panel = calendar.closest('[data-nc-desktop-panel]')!;
+  expect(panel).toBeTruthy();
+  expect(within(panel as HTMLElement).queryByText('Project evidence')).toBeNull();
+  expect(within(panel as HTMLElement).queryByText(/Active tracks/i)).toBeNull();
+  const today = within(calendar).getByRole('button', { name: '2026-10-04' });
+  expect(today.getAttribute('aria-pressed')).toBe('true');
+  expect(today.hasAttribute('data-nc-today')).toBe(true);
+  await userEvent.click(within(calendar).getByRole('button', { name: '2026-10-03' }));
+  expect(within(calendar).getByRole('button', { name: '2026-10-03' }).getAttribute('aria-pressed')).toBe('true');
+  expect(today.getAttribute('aria-pressed')).toBe('false');
+  expect(router.state.location.search).toEqual({});
+  expect(screen.getByRole('region', { name: 'Today Assistant' })).toBe(assistant);
+  expect(requests.filter(request => request.path.startsWith('/api/today/daily'))).toHaveLength(1);
+});
+
+it.each([false, true])('shows perga Conversations only with multiple conversations (extra=%s)', async extraPlanner => {
+  renderDailyFixture({ pergaMode: true, extraPlanner });
+  await screen.findByRole('region', { name: 'Today Assistant' });
+  await screen.findByText('Prioritize the release.', { exact: false });
+  if (extraPlanner) {
+    const conversations = await screen.findByRole('region', { name: 'Conversations' });
+    expect(within(conversations).getByRole('button', { name: 'Conversation Other conversation' })).toBeTruthy();
+    expect(within(conversations).getByRole('button', { name: 'Conversation Daily Planner conversation' })).toBeTruthy();
+  } else {
+    expect(screen.queryByRole('region', { name: 'Conversations' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'New conversation' })).toBeNull();
+  }
+});
+
+it.each(['', '   \n  ', '# 今日计划\n\nA populated daily report.'])('shows the perga Daily report module only for populated content (%s)', async reportBody => {
+  renderDailyFixture({ pergaMode: true, reportBody });
+  await screen.findByRole('region', { name: 'Today Assistant' });
+  if (reportBody.includes('A populated')) {
+    await screen.findByText('A populated daily report.');
+    expect(screen.getByRole('heading', { name: 'Daily report' })).toBeTruthy();
+  } else {
+    await waitFor(() => expect(document.querySelector('[data-nc-centered-footer]')).toBeTruthy());
+    expect(screen.queryByRole('heading', { name: 'Daily report' })).toBeNull();
+    await waitFor(() => expect(screen.queryByRole('region', { name: 'Track report' })?.getAttribute('aria-busy')).not.toBe('true'));
+    expect(screen.queryByText('进展会整理在这里')).toBeNull();
+    expect(screen.queryByRole('region', { name: 'Track report' })).toBeNull();
+    expect(screen.queryByRole('region', { name: '空白日报' })).toBeNull();
+  }
+});
+
+it('keeps the perga calendar available without a daily track and selects days without navigation', async () => {
+  const { router } = renderDailyFixture({ pergaMode: true, initial: '/?day=2026-10-03' });
+  await screen.findByText('No daily Track was created for this date.');
+  const calendar = await screen.findByRole('region', { name: 'Calendar' });
+  await userEvent.click(within(calendar).getByRole('button', { name: 'Next week' }));
+  const day = within(calendar).getAllByRole('button', { name: /^\d{4}-\d{2}-\d{2}$/ })[0];
+  await userEvent.click(day);
+  expect(day.getAttribute('aria-pressed')).toBe('true');
+  expect(router.state.location.search).toEqual({ day: '2026-10-03' });
+  expect(screen.getByText('No daily Track was created for this date.')).toBeTruthy();
 });

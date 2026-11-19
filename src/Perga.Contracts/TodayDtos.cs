@@ -1,0 +1,17 @@
+using System.Text.Json.Serialization;
+
+namespace Perga.Contracts;
+
+public sealed record DailyTrackDto(string Date,
+    [property: JsonPropertyName("time_zone")] string TimeZone,
+    [property: JsonPropertyName("track_id")] string TrackId);
+
+public sealed record DailyReportEditDto(string TrackId, string EditId, string SummaryBefore,
+    string SummaryAfter, string BodyBefore, string BodyAfter);
+public sealed record DailyReportEditEntryDto(long EventId, long At, DailyReportEditDto Edit);
+public sealed record DailyReportEditsPageDto(IReadOnlyList<DailyReportEditEntryDto> Edits, string? NextCursor);
+public sealed record DailyReportChangeDto(string TrackId, string TrackTitle, string AreaId, string AreaName,
+    int EditCount, long FirstEventId, long LastEventId, string SummaryBefore, string SummaryAfter,
+    string Patch, bool PatchTruncated);
+public sealed record DailyReportChangesPageDto(string Date, string Timezone, long ThroughEventId,
+    IReadOnlyList<DailyReportChangeDto> Changes, string? NextCursor);

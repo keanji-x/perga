@@ -1,3 +1,5 @@
+import { DailyCalendar } from '../../features/today/daily-calendar.tsx';
+import { CenteredComposerIntroduction } from '../../ui/drawer/centered-composer-introduction.tsx';
 import { EmptyState } from '../../ui/empty-state/public.tsx';
 import { Icon } from '../../ui/icon/public.tsx';
 import { useCompactViewport } from '../../ui/viewport/public.ts';
@@ -29,11 +31,12 @@ export type DailyCenterPresentation = Readonly<{
   presented: boolean;
   onOpenAssistant: () => void;
   footerPrefix: ReactNode;
+  emptyIntroduction?: ReactNode;
   render: (assistant: ReactNode) => ReactNode;
 }>;
 
-export function DailyTodayRoute({ transport, unauthorized, selectedDate, onOpenTrack, renderTrack }: Readonly<{
-  transport: ApiTransportPort; unauthorized: UnauthorizedChannel; selectedDate?: string;
+export function DailyTodayRoute({ transport, unauthorized, selectedDate, onOpenTrack, renderTrack, pergaMode = false }: Readonly<{
+  transport: ApiTransportPort; unauthorized: UnauthorizedChannel; selectedDate?: string; pergaMode?: boolean;
   onOpenTrack: (trackId: string) => void;
   renderTrack: (detail: TrackAggregateSnapshotDto, evidence: ReactNode, panelContent: ReactNode, intro: ReactNode, supervisor: ReactNode, center?: DailyCenterPresentation) => ReactNode;
 }>) {
@@ -52,7 +55,7 @@ export function DailyTodayRoute({ transport, unauthorized, selectedDate, onOpenT
     restoreGuide.current = false;
   }, [view]);
   const user = useCurrentUser();
-  const showSupervisor = user?.userId === DEPLOYMENT_OWNER_USER_ID;
+  const showSupervisor = !pergaMode && user?.userId === DEPLOYMENT_OWNER_USER_ID;
   const daily = useQuery({
     queryKey: ['daily-planner', selectedDate ?? 'today'],
     queryFn: async () => {
@@ -69,25 +72,26 @@ export function DailyTodayRoute({ transport, unauthorized, selectedDate, onOpenT
   });
   const trackId = daily.data?.track_id;
   const detail = useQuery({ ...trackDetailQueryOptions(transport, trackId ?? '', unauthorized), enabled: trackId !== undefined });
-  const supervisor = selectedDate === undefined && <DailySupervisor transport={transport} unauthorized={unauthorized} />;
+  const supervisor = !pergaMode && selectedDate === undefined && <DailySupervisor transport={transport} unauthorized={unauthorized} />;
   const withSupervisor = (content: ReactNode) => <>{supervisor}{content}</>;
   if (daily.isError) return withSupervisor(<ErrorBox message={readErrorText(daily.error, 'The daily Planner is unavailable.')} onRetry={() => { void daily.refetch(); }} />);
   if (daily.isPending) return withSupervisor(<p role="status">Loading daily Planner…</p>);
-  if (daily.data === null) return withSupervisor(selectedDate === undefined ? <p role="status">Preparing today’s Track…</p> : <EmptyState variant="panel" icon={<Icon name="file" />} title="No daily Track was created for this date." description="这一天还没有日报记录。" />);
+  if (daily.data === null) return withSupervisor(<>{pergaMode && <DailyCalendar key={selectedDate ?? 'today'} />}{selectedDate === undefined ? <p role="status">Preparing today’s Track…</p> : <EmptyState variant="panel" icon={<Icon name="file" />} title="No daily Track was created for this date." description="这一天还没有日报记录。" />}</>);
   if (detail.isError) return withSupervisor(<ErrorBox message={readErrorText(detail.error, 'The daily Track could not be loaded.')} onRetry={() => { void detail.refetch(); }} />);
   if (detail.data === undefined || detail.data.track.id !== trackId) return withSupervisor(<p role="status">Loading daily Track…</p>);
   const date = daily.data.date;
   return renderTrack({ ...detail.data, track: { ...detail.data.track, title: date } },
-    <DailyReportChanges key={date} isToday={selectedDate === undefined} date={shiftDailyDate(date, -1)}
+    pergaMode ? null : <DailyReportChanges key={date} isToday={selectedDate === undefined} date={shiftDailyDate(date, -1)}
       transport={transport} unauthorized={unauthorized} onOpenTrack={onOpenTrack} />,
-    null,
+    pergaMode ? <DailyCalendar key={date} today={selectedDate === undefined ? date : undefined} /> : null,
     <header className={styles.reportIntro}><h2>{selectedDate === undefined ? '今天的重点' : '当天的重点'}</h2><p>让工作更轻松，也更有条理。</p></header>,
     supervisor,
     selectedDate === undefined ? {
       title: 'Today Assistant',
       presented: view === 'assistant',
       onOpenAssistant: () => setView('assistant'),
-      footerPrefix: <nav className={styles.guide} aria-label="Today views">
+      emptyIntroduction: <CenteredComposerIntroduction title="今天想推进什么？" />,
+      footerPrefix: pergaMode ? null : <nav className={styles.guide} aria-label="Today views">
         <button ref={changesGuide} type="button" onClick={() => setView('changes')}><span>Report changes</span><Icon name="chevron-right" size="sm" /></button>
         {showSupervisor && <>
           <span className={styles.guideSep} aria-hidden="true">·</span>
@@ -165,7 +169,7 @@ function DailyReportChanges({ date, isToday, transport, unauthorized, onOpenTrac
     {changes.hasNextPage && <button type="button" disabled={changes.isFetchingNextPage} onClick={() => { void changes.fetchNextPage(); }}>Load more reports</button>}
   </>;
   if (standalone) return <><h2 className={styles.subviewTitle}>Report changes · {date}</h2>{content}</>;
-  return <ReportDetails title={compactViewport ? (isToday ? '昨天的更新' : '前一天的更新') : 'Report changes'} meta={date} layout="appendix" onToggle={setOpen}>
+  return <ReportDetails title={compactViewport ? (isToday ? '昨天的更新' : '前一天的更新') : 'Report changes'} meta={date} layout="appendix" variant="section" onToggle={setOpen}>
     {(close) => <>
       {open && <div className={styles.subviewHeader}>
         <button type="button" className={styles.backToToday} onClick={close}>

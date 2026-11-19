@@ -35,7 +35,7 @@ public sealed record WorkspacePreparation(WorkspaceProvisionRequest Request, str
 
 public sealed record TrackCreation(TrackDto Track, ReportDocument Report, string? TemplateSnapshot,
     AgentSessionDto Lead, IReadOnlyList<TaskDto> Tasks, SessionInputRequest? FirstInput,
-    WorkspacePreparation? Preparation, IReadOnlyList<EventEnvelopeDto> Events);
+    WorkspacePreparation? Preparation, IReadOnlyList<EventEnvelopeDto> Events, string? DailyDate = null, AreaDto? SystemArea = null);
 
 public sealed record WorkerDispatchIntent(string TrackId, string AuthorId, string RequestKey, string RequestHash, string TaskKey);
 public sealed record StoredWorkerDispatch(string RequestHash, string TaskId);

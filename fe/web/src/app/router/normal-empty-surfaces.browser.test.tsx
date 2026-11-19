@@ -68,16 +68,19 @@ it.each([1440, 390])('catalog main report and sidebar %i', async width => {
 it.each([1440, 390])('catalog Today and conversation %i', async width => {
   await page.viewport(width, 900);
   renderDailyFixture({ reportBody: '', emptyWorkspace: true });
-  const emptyTitle = width >= 960 ? '聊聊你想做什么' : '今天还没有记录';
-  await expect.element(page.getByRole('heading', { name: emptyTitle })).toBeVisible();
-  await shot('02-today-' + width, [emptyTitle]);
+  if (width >= 960) {
+    await expect.element(page.getByRole('combobox', { name: 'Message', exact: true })).toBeVisible();
+    expect(page.getByRole('heading', { name: '聊聊你想做什么' }).query()).toBeNull();
+  } else await expect.element(page.getByRole('heading', { name: '今天还没有记录' })).toBeVisible();
+  await shot('02-today-' + width, width >= 960 ? [] : ['今天还没有记录']);
   if (width === 1440) await page.getByRole('button', { name: /Conversation Daily Planner conversation/ }).click();
   else {
     await page.getByRole('button', { name: 'Open conversation history', exact: true }).click();
     await page.getByRole('button', { name: '2026-10-04 Daily Planner conversation', exact: true }).click();
   }
-  await expect.element(page.getByRole('heading', { name: '聊聊你想做什么' })).toBeVisible();
-  await shot('03-conversation-' + width, ["聊聊你想做什么"]);
+  if (width === 1440) await expect.element(page.getByRole('region', { name: 'Today Assistant', exact: true }).getByRole('combobox', { name: 'Message', exact: true })).toBeVisible();
+  else await expect.element(page.getByRole('heading', { name: '聊聊你想做什么' })).toBeVisible();
+  await shot('03-conversation-' + width, width === 1440 ? [] : ['聊聊你想做什么']);
 });
 it.each([1440,390])('catalog recipes and plugins %i', async width => {
   await page.viewport(width,900);
@@ -189,10 +192,11 @@ it('catalog confirmed empty desktop shortcut groups', async () => {
     preferences.setSidebarGroupExpanded(id,true);
   }
   renderDailyFixture({emptyWorkspace:true,reportBody:'',uiPreferences:preferences});
-  await expect.element(page.getByRole('heading',{name:'聊聊你想做什么',exact:true})).toBeVisible();
+  await expect.element(page.getByRole('combobox', { name: 'Message', exact: true })).toBeVisible();
+  expect(page.getByRole('heading', { name: '聊聊你想做什么', exact: true }).query()).toBeNull();
   expect(page.getByRole('group',{name:'Focus',exact:true}).query()).toBeNull();
   expect(page.getByRole('group',{name:'Pinned',exact:true}).query()).toBeNull();
-  await shot('34-desktop-empty-shortcuts', ["聊聊你想做什么"]);
+  await shot('34-desktop-empty-shortcuts', []);
 });
 
 it('catalog a surface without live previews', async () => {

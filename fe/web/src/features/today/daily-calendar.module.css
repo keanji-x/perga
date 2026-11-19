@@ -1,0 +1,135 @@
+@layer features {
+  .calendarModule { padding-block-start: var(--space-1); }
+  .viewControl { display: inline-flex; margin-inline-end: var(--space-1); }
+  .calendar {
+    display: flex;
+    flex-direction: column;
+    min-inline-size: 0;
+    font: var(--type-ui);
+    letter-spacing: var(--type-ui-tracking);
+    color: var(--text);
+  }
+  .toolbar {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    padding-block: var(--space-1);
+  }
+  .monthTitle {
+    flex: 1;
+    min-inline-size: 0;
+    color: var(--text-2);
+    font: var(--type-ui);
+    letter-spacing: var(--type-ui-tracking);
+  }
+  .todayButton {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-block-size: var(--control-h-sm);
+    padding-inline: var(--space-2);
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text-3);
+    font: var(--type-metadata);
+    letter-spacing: var(--type-metadata-tracking);
+    cursor: pointer;
+  }
+  .todayButton:hover,
+  .todayButton:focus-visible {
+    background: var(--overlay-hover);
+    color: var(--text);
+  }
+  .navigationButton {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: var(--control-h-sm);
+    min-width: var(--control-h-sm);
+    height: var(--control-h-sm);
+    padding: 0;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text-2);
+    cursor: pointer;
+  }
+  .navigationButton:hover,
+  .navigationButton:focus-visible {
+    background: var(--overlay-hover);
+    color: var(--text);
+  }
+  .weekdays {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: var(--space-half);
+    padding-block: var(--space-half);
+  }
+  .weekday {
+    text-align: center;
+    color: var(--text-3);
+    font: var(--type-metadata);
+    letter-spacing: var(--type-metadata-tracking);
+  }
+  .days {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: var(--space-half);
+  }
+  .dateLink {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: auto;
+    min-width: 0;
+    min-height: 0;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    cursor: pointer;
+  }
+  .dateBadge {
+    display: inline-flex;
+    justify-content: center;
+    align-items: center;
+    gap: var(--space-half);
+    min-width: 0;
+    width: calc(var(--control-h-lg) + var(--space-2));
+    max-width: 100%;
+    height: var(--control-h-lg);
+    padding-inline: var(--space-half);
+    border-radius: var(--radius-sm);
+  }
+  .dayNumber {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 0;
+    height: var(--row-h-sm);
+    color: var(--text-2);
+    font: var(--type-content);
+    letter-spacing: var(--type-content-tracking);
+  }
+  .todayNumber {
+    color: var(--accent);
+    font-weight: var(--weight-medium);
+  }
+  .selectedDate {
+    background: var(--overlay-active);
+    color: var(--text);
+  }
+  .selectedDate .dayNumber {
+    color: var(--text);
+    font-weight: var(--weight-medium);
+  }
+  .dateLink:hover .dateBadge {
+    background: var(--overlay-hover);
+  }
+  .dateLink:hover .selectedDate {
+    background: var(--overlay-active);
+  }
+}

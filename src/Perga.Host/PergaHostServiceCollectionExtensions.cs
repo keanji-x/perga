@@ -94,6 +94,8 @@ public static class PergaHostServiceCollectionExtensions
 
         services.TryAddSingleton<ITrackStore>(sp => sp.GetRequiredService<SqliteTrackStore>());
         services.TryAddSingleton<ISystemUpgradeStore>(sp => sp.GetRequiredService<SqliteTrackStore>());
+        services.TryAddSingleton<ITodayReadStore>(sp => sp.GetRequiredService<SqliteTrackStore>());
+        services.TryAddSingleton<TodayReportService>();
         services.TryAddSingleton<ITrackReadStore>(sp => sp.GetRequiredService<ITrackStore>());
 
         services.TryAddSingleton<IReportDocEngine, ReportDocEngine>();

@@ -40,6 +40,7 @@ foreach (var requestPath in new[] { string.Empty, "/next" })
 app.MapGet("/healthz", () => Results.Ok(new { status = "ok", service = "perga" }));
 app.MapPergaApiV1();
 app.MapPergaSystem();
+app.MapTodayEndpoints();
 app.MapPergaMcpEndpoints();
 
 app.MapFallback(async (HttpContext ctx) =>
