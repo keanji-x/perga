@@ -96,7 +96,8 @@ public sealed class IndependentSelectionReviewTests
             {
                 var target = SessionConfiguration.FromNullable(selection.Model, effort);
                 var outcome = await session.ConfigureAsync(target);
-                if (selection.Model != normal.Model && effort is not null)
+                if (selection.Model != normal.Model && effort is not null ||
+                    resumeId is not null && selection.Model == normal.Model && effort is null)
                 {
                     Assert.IsType<SessionConfigurationOutcome.Unsupported>(outcome);
                     continue;

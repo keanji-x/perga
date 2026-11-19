@@ -93,7 +93,7 @@ public sealed partial class TrackActor
         public async Task<bool> TrySettleSetupFailureCoreAsync(Exception ex, SessionTurnDto turn, AgentSessionDto runningSession)
         {
             var failed = turn with { Status = "failed", ErrorText = "Message could not be prepared for dispatch.", CompletedAtMs = actor.NowMs() };
-            var idle = runningSession with { Status = "idle", UpdatedAtMs = failed.CompletedAtMs.Value };
+            var idle = actor.RequireSessionCore(SessionId) with { Status = "idle", UpdatedAtMs = failed.CompletedAtMs.Value };
             var outcome = new SessionItemDto(0, SessionId, turn.Id, "turn_outcome",
                 JsonHelpers.ToElement(new { v = 1, status = "failed", error = failed.ErrorText }), idle.UpdatedAtMs);
             await actor.SettleDurableTurnCoreAsync(input, "rejected", failed, [outcome], idle).ConfigureAwait(false);
@@ -168,7 +168,7 @@ public sealed partial class TrackActor
             if (ex is KernelException { Code: KernelErrorCode.Conflict } && !RecordsSetupConflicts)
                 return false;
             var failed = turn with { Status = "failed", ErrorText = ex.Message, CompletedAtMs = Actor.NowMs() };
-            var idle = runningSession with { Status = "idle", UpdatedAtMs = failed.CompletedAtMs.Value };
+            var idle = Actor.RequireSessionCore(SessionId) with { Status = "idle", UpdatedAtMs = failed.CompletedAtMs.Value };
             await Actor._store.RecordTurnAndItemsAsync(failed, [], idle, CancellationToken.None).ConfigureAwait(false);
             Actor._sessions[SessionId] = idle;
             await OnTurnCreatedAsync(failed).ConfigureAwait(false);

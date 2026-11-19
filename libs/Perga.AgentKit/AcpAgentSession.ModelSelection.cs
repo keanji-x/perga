@@ -48,7 +48,8 @@ public sealed partial class AcpAgentSession
             return new SessionConfigurationOutcome.Unsupported(ConfigurationDimension.Effort, "The original default effort is unknown.");
         var targetModel = configuration.Model.ValueOrNull ?? _defaultModel;
         var usesThought = _modelCatalog.UsesThoughtLevel(targetModel);
-        if (configuration.Effort is SessionSelection.ProviderDefault && _isResumed && usesThought)
+        if (configuration.Effort is SessionSelection.ProviderDefault && _isResumed &&
+            (usesThought || !_modelCatalog.HasDefaultEffortEvidence(targetModel)))
             return new SessionConfigurationOutcome.Unsupported(ConfigurationDimension.Effort, "The original default effort is unknown after resume.");
         if (configuration.Effort is SessionSelection.Explicit thoughtEffort && usesThought &&
             !_modelCatalog.ThoughtLevel!.Values.Any(value => value.Id == thoughtEffort.Value))
@@ -131,7 +132,7 @@ public sealed partial class AcpAgentSession
         _permission = SessionSelection.FromNullable(spec.PermissionMode);
         var (rawModels, currentModelId) = ExtractAvailableModels(response);
         AvailableModels = rawModels.Select(m => m.ModelId).ToArray();
-        _modelCatalog = AcpModelCatalog.Build(rawModels, currentModelId, AcpSessionOptions.Read(response)?.Reasoning);
+        _modelCatalog = AcpModelCatalog.Build(rawModels, currentModelId, AcpSessionOptions.Read(response)?.Reasoning, currentSelectionIsDefault: !isResume);
         // A resumed current selection is not evidence of the original default.
         _defaultModel = isResume || currentModelId is null ? null : _modelCatalog.Models.FirstOrDefault(model => model.IsDefault)?.Model;
         _appliedThoughtLevel = _modelCatalog.ThoughtLevel?.Current;

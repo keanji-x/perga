@@ -2731,6 +2731,18 @@ public sealed partial class TrackActor : IAsyncDisposable
                 return existing;
             }
 
+            // Capture confirmed identity before configuration can partially mutate the provider
+            // or throw. Compaction may have registered it before any prompt persisted it.
+            if (existing.ConfigurationState is not null && existing.NativeThreadId is { } confirmedNativeId)
+            {
+                var current = RequireSessionCore(session.Id);
+                if (current.NativeThreadId is null)
+                {
+                    var identified = current with { NativeThreadId = confirmedNativeId, UpdatedAtMs = NowMs() };
+                    await PersistAndEmitSessionUpdatedCoreAsync(identified, identified.UpdatedAtMs, ct).ConfigureAwait(false);
+                }
+                session = session with { NativeThreadId = current.NativeThreadId ?? confirmedNativeId };
+            }
             SessionConfigurationOutcome outcome;
             try
             {
@@ -2756,17 +2768,6 @@ public sealed partial class TrackActor : IAsyncDisposable
                 throw;
             }
 
-            if (outcome is SessionConfigurationOutcome.RequiresReopen && existing.NativeThreadId is { } nativeId)
-            {
-                // Preserve a confirmed pre-prompt identity across a failed reopen and restart.
-                var current = RequireSessionCore(session.Id);
-                if (current.NativeThreadId is null)
-                {
-                    var identified = current with { NativeThreadId = nativeId, UpdatedAtMs = NowMs() };
-                    await PersistAndEmitSessionUpdatedCoreAsync(identified, identified.UpdatedAtMs, ct).ConfigureAwait(false);
-                }
-                session = session with { NativeThreadId = nativeId };
-            }
             _openAgentSessions.Remove(session.Id);
             _boundAgentConfigurations.Remove(session.Id);
             _openAgentSessionPermissionModes.Remove(session.Id);
@@ -2803,6 +2804,8 @@ public sealed partial class TrackActor : IAsyncDisposable
         { throw KernelException.PreconditionFailed(error.Message); }
         try
         {
+            if (spec.ResumeNativeThreadId is not null && opened.NativeThreadId != spec.ResumeNativeThreadId)
+                throw KernelException.PreconditionFailed("The provider did not restore the original session.");
             RequireConfirmedConfiguration(session, opened, opened.ConfigurationState);
             return opened;
         }

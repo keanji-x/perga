@@ -57,6 +57,7 @@ public sealed class ClaudeAgentSession : IAgentSession
     private readonly Task _pumpTask;
     private TurnStreamState? _currentTurn;
     private string? _nativeThreadId;
+    private readonly string? _resumeNativeThreadId;
     private string? _lastEmittedThreadId;
     private bool _supportsNativeCompact = true;
     private int _disposed;
@@ -72,6 +73,7 @@ public sealed class ClaudeAgentSession : IAgentSession
         _process = process;
         _mcpConfigFilePath = mcpConfigFilePath;
         _nativeThreadId = initialThreadId;
+        _resumeNativeThreadId = initialThreadId;
         _onDispose = onDispose;
         _pumpTask = Task.Run(PumpNdjsonStdoutAsync);
     }
@@ -188,6 +190,9 @@ public sealed class ClaudeAgentSession : IAgentSession
                 if (subprocess.HasExited || session._pumpTask.IsCompleted)
                     throw new SessionConfigurationException(new SessionConfigurationOutcome.Rejected(
                         ConfigurationFailureCode.OperationFailed, "Claude exited during initialization.", new(null, null, false)));
+                if (spec.ResumeNativeThreadId is not null && session.NativeThreadId != spec.ResumeNativeThreadId)
+                    throw new SessionConfigurationException(new SessionConfigurationOutcome.Rejected(
+                        ConfigurationFailureCode.InvalidAcknowledgement, "Claude did not restore the requested session identity.", new(null, null, false)));
                 session.ConfigurationState = new(SessionConfiguration.FromLaunch(spec), ContextUsageRevision: session.ContextUsageRevision,
                     Evidence: ConfigurationEvidence.LaunchAccepted);
                 return session;
@@ -730,6 +735,9 @@ public sealed class ClaudeAgentSession : IAgentSession
 
     private void BindSessionId(string sessionId, TurnStreamState? turnState)
     {
+        if (_resumeNativeThreadId is not null && sessionId != _resumeNativeThreadId)
+            throw new SessionConfigurationException(new SessionConfigurationOutcome.Rejected(
+                ConfigurationFailureCode.InvalidAcknowledgement, "Claude returned a different resumed session identity.", new(null, null, false)));
         Volatile.Write(ref _nativeThreadId, sessionId);
         if (turnState is not null && !string.Equals(_lastEmittedThreadId, sessionId, StringComparison.Ordinal))
         {

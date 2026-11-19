@@ -228,7 +228,7 @@ public sealed class AgentRuntime : IAgentRuntime
                 normalizedSpec,
                 env,
                 UnregisterSession,
-                ct, await DetectClaudeEffortSupportAsync(effectiveCmd, env, ct).ConfigureAwait(false), _options.HandshakeTimeout).ConfigureAwait(false);
+                ct, await DetectClaudeEffortSupportAsync(effectiveCmd, env, normalizedSpec.Cwd, normalizedSpec.Sandbox, normalizedSpec.OverlayMounts, ct).ConfigureAwait(false), _options.HandshakeTimeout).ConfigureAwait(false);
         }
         else if (provider.StartsWith("acp:", StringComparison.OrdinalIgnoreCase))
         {
@@ -308,21 +308,25 @@ public sealed class AgentRuntime : IAgentRuntime
     private void UnregisterSession(IAgentSession session) =>
         _activeSessions.TryRemove(session, out _);
 
-    private async Task<bool> DetectClaudeEffortSupportAsync(ProviderCommandOverride command, IReadOnlyDictionary<string, string> environment, CancellationToken ct)
+    private async Task<bool> DetectClaudeEffortSupportAsync(ProviderCommandOverride command, IReadOnlyDictionary<string, string> environment,
+        string cwd, OsSandboxMode sandbox, IReadOnlyList<OverlayMountSpec>? overlayMounts, CancellationToken ct)
     {
-        var key = JsonSerializer.Serialize(new { command.FileName, command.PrependArgs, Environment = environment.OrderBy(pair => pair.Key).ToArray() });
+        var invocation = _sandboxWrapper.Wrap(new CommandInvocation(command.FileName,
+            [.. command.PrependArgs ?? [], "--help"], cwd, environment), sandbox, overlayMounts);
+        var key = JsonSerializer.Serialize(new { invocation, sandbox, overlayMounts,
+            Environment = environment.OrderBy(pair => pair.Key).ToArray() });
         if (_claudeEffortSupport.TryGetValue(key, out var cached)) return cached;
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeout.CancelAfter(_options.ProbeTimeout);
-        var start = new ProcessStartInfo(command.FileName)
+        var start = new ProcessStartInfo(invocation.FileName)
         {
+            WorkingDirectory = invocation.WorkingDirectory,
             RedirectStandardOutput = true, RedirectStandardError = true, RedirectStandardInput = true,
             UseShellExecute = false, CreateNoWindow = true
         };
         start.Environment.Clear();
-        foreach (var pair in environment) start.Environment[pair.Key] = pair.Value;
-        foreach (var arg in command.PrependArgs ?? []) start.ArgumentList.Add(arg);
-        start.ArgumentList.Add("--help");
+        foreach (var pair in invocation.Environment) start.Environment[pair.Key] = pair.Value;
+        foreach (var arg in invocation.Arguments) start.ArgumentList.Add(arg);
         using var process = new Process { StartInfo = start };
         var started = false;
         try
@@ -565,7 +569,7 @@ public sealed class AgentRuntime : IAgentRuntime
             if (provider == "codex") configurationCapabilities = SessionConfigurationCapabilities.LaunchOnly;
             else if (provider == "claude")
             {
-                var supportsEffort = await DetectClaudeEffortSupportAsync(cmdSpec with { FileName = resolvedExe }, env, ct).ConfigureAwait(false);
+                var supportsEffort = await DetectClaudeEffortSupportAsync(cmdSpec with { FileName = resolvedExe }, env, Directory.GetCurrentDirectory(), OsSandboxMode.None, null, ct).ConfigureAwait(false);
                 configurationCapabilities = SessionConfigurationCapabilities.LaunchOnly with
                 {
                     Effort = SessionConfigurationCapabilities.LaunchDimension(supportsEffort ? ConfigurationSupport.Supported : ConfigurationSupport.Unsupported)

@@ -221,8 +221,11 @@ public sealed partial class TrackActor
             {
                 var session = RequireSessionCore(sessionId);
                 RequireResumeWorkspaceCore(session);
-                RequireConfirmedConfiguration(session with { Model = spec.Model, ReasoningEffort = spec.ReasoningEffort, PermissionMode = spec.PermissionMode },
-                    replacement, replacement.ConfigurationState);
+                var launchedSession = session with { Model = spec.Model, ReasoningEffort = spec.ReasoningEffort, PermissionMode = spec.PermissionMode };
+                if (!replacement.SupportsSessionResume || replacement.NativeThreadId != hold.NativeId)
+                    throw KernelException.PreconditionFailed("The provider did not restore the original session.");
+                var confirmation = replacement.ConfigurationState;
+                RequireConfirmedConfiguration(launchedSession, replacement, confirmation);
                 var updated = session with { Status = "idle", NativeThreadId = hold.NativeId, UpdatedAtMs = NowMs() };
                 var unknown = session.Status == "unknown"
                     ? await _store.SessionInputs.FindUnresolvedAsync(sessionId, CancellationToken.None).ConfigureAwait(false)
@@ -235,9 +238,11 @@ public sealed partial class TrackActor
 
                 _sessions[sessionId] = updated;
                 ReleaseSessionResumeCore(sessionId);
-                await RegisterOpenAgentSessionCoreAsync(
-                    updated with { Model = spec.Model, ReasoningEffort = spec.ReasoningEffort },
-                    replacement, spec.PermissionMode, CancellationToken.None)
+                // Bind the tuple actually launched; newer desired settings reconcile on the next turn.
+                // All identity/configuration validation precedes durable fence removal above.
+                await RegisterConfirmedOpenAgentSessionCoreAsync(
+                    launchedSession with { Status = updated.Status, NativeThreadId = updated.NativeThreadId },
+                    replacement, spec.PermissionMode, confirmation, CancellationToken.None)
                     .ConfigureAwait(false);
                 return RequireSessionCore(sessionId);
             }, CancellationToken.None).ConfigureAwait(false);

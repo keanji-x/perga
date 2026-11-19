@@ -71,9 +71,17 @@ public sealed partial class TrackActor
         string? permissionMode,
         CancellationToken ct)
     {
-        RequireConfirmedConfiguration(session, agentSession, agentSession.ConfigurationState);
+        var confirmation = agentSession.ConfigurationState;
+        RequireConfirmedConfiguration(session, agentSession, confirmation);
+        await RegisterConfirmedOpenAgentSessionCoreAsync(session, agentSession, permissionMode, confirmation, ct).ConfigureAwait(false);
+    }
+
+    // Call only after validating the complete launch tuple in this mailbox operation.
+    private async Task RegisterConfirmedOpenAgentSessionCoreAsync(
+        AgentSessionDto session, IAgentSession agentSession, string? permissionMode, ConfirmedConfiguration? confirmation, CancellationToken ct)
+    {
         _openAgentSessions[session.Id] = agentSession;
-        _boundAgentConfigurations[session.Id] = new(SessionConfiguration.FromNullable(session.Model, session.ReasoningEffort, permissionMode), agentSession.ConfigurationState);
+        _boundAgentConfigurations[session.Id] = new(SessionConfiguration.FromNullable(session.Model, session.ReasoningEffort, permissionMode), confirmation);
         _openAgentSessionPermissionModes[session.Id] = permissionMode;
 
         if (session.BoundAttemptId is not null)
