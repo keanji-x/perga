@@ -10,6 +10,7 @@ import {
   sessionTurnDtoSchema,
   toWireAgentProvider,
   type AgentSessionDto,
+  type SessionItemsPageDto,
 } from '../api/schemas.js';
 
 import { sessionCreationReceiptSchema, sessionInputReceiptSchema, type SessionInputReceipt } from '../api/perga-v1.js';
@@ -382,31 +383,34 @@ ApiOperation<HarnessItem[]> {
   };
 }
 
+/** Projects the shared run state from a session items page. */
+export function projectPlannerRun(cardId: string, page: SessionItemsPageDto): PlannerRun {
+  const running = page.activeTurn !== null && page.activeTurn !== undefined && page.activeTurn.status === 'running';
+  return {
+    card_id: cardId,
+    worker_session_id: page.session.id,
+    phase: running ? 'turn_running' : page.session.status === 'queued' ? 'issuing_turn' : 'idle',
+    pending: [],
+    pending_overflow: 0,
+    model: page.session.model ?? null,
+    reasoning_effort: page.session.reasoningEffort ?? null,
+    permission_mode: page.session.permissionMode ?? null,
+    blocked_reason: page.session.status === 'unknown' ? 'The previous message has an unknown outcome.' : null,
+    recovery: null,
+    attachments_supported: false,
+    manual_compact_supported: true,
+    compact_outcome: null,
+    token_usage: sessionContextUsage(page.session),
+    running_turn: running && page.activeTurn !== null && page.activeTurn !== undefined
+      ? { turn_id: page.activeTurn.id, elapsed_ms: Math.max(0, Date.now() - (page.activeTurn.startedAtMs ?? Date.now())) }
+      : null,
+  };
+}
+
 export function plannerRunOperation(cardId: string): ApiOperation<PlannerRun> {
   return {
     method: 'GET', path: `/api/v1/sessions/${encodeURIComponent(cardId)}/items?afterId=0&limit=1&view=planner-run`,
-    responseSchema: sessionItemsPageDtoSchema.transform((page): PlannerRun => {
-      const running = page.activeTurn !== null && page.activeTurn !== undefined && page.activeTurn.status === 'running';
-      return {
-        card_id: cardId,
-        worker_session_id: page.session.id,
-        phase: running ? 'turn_running' : page.session.status === 'queued' ? 'issuing_turn' : 'idle',
-        pending: [],
-        pending_overflow: 0,
-        model: page.session.model ?? null,
-        reasoning_effort: page.session.reasoningEffort ?? null,
-        permission_mode: page.session.permissionMode ?? null,
-        blocked_reason: page.session.status === 'unknown' ? 'The previous message has an unknown outcome.' : null,
-        recovery: null,
-        attachments_supported: false,
-        manual_compact_supported: true,
-        compact_outcome: null,
-        token_usage: sessionContextUsage(page.session),
-        running_turn: running && page.activeTurn !== null && page.activeTurn !== undefined
-          ? { turn_id: page.activeTurn.id, elapsed_ms: Math.max(0, Date.now() - (page.activeTurn.startedAtMs ?? Date.now())) }
-          : null,
-      };
-    }),
+    responseSchema: sessionItemsPageDtoSchema.transform(page => projectPlannerRun(cardId, page)),
   };
 }
 

@@ -16,6 +16,44 @@ namespace Perga.Host.IntegrationTests;
 
 public sealed class SessionModelTests
 {
+    [Theory]
+    [InlineData(null, false)]
+    [InlineData(null, true)]
+    [InlineData("chosen-model", false)]
+    [InlineData("chosen-model", true)]
+    public async Task ItemsReadbackKeepsEffortAfterModelPut(string? model, bool running)
+    {
+        await using var host = new PergaHostTestCluster();
+        var (trackId, sessionId) = await host.CreateTrackAsync();
+        var kernel = host.Services.GetRequiredService<IPergaKernel>();
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        host.AgentRuntime.SetTurnHandler(Stream);
+        async IAsyncEnumerable<UnifiedAgentEvent> Stream(HarnessLaunchSpec spec, TurnInput input,
+            [EnumeratorCancellation] CancellationToken ct)
+        {
+            started.TrySetResult();
+            await release.Task.WaitAsync(ct);
+            yield return new UnifiedAgentEvent.TurnCompleted(null);
+        }
+        try
+        {
+            if (running)
+            {
+                await kernel.AcceptMessageAsync(sessionId, new("hold turn", "effort-readback"), default);
+                await started.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            }
+            using var response = await host.Client.PutAsJsonAsync($"/api/v1/sessions/{sessionId}/model", new { model, reasoningEffort = "high" });
+            response.EnsureSuccessStatusCode();
+            var page = await host.Client.GetFromJsonAsync<SessionItemsPageDto>($"/api/v1/sessions/{sessionId}/items?view=run", PergaJsonDefaults.ApiOptions);
+            Assert.Equal(model, page!.Session.Model);
+            Assert.Equal("high", page.Session.ReasoningEffort);
+            Assert.Equal(running, page.ActiveTurn is not null);
+        }
+        finally { release.TrySetResult(); }
+        await kernel.WaitForTrackIdleAsync(trackId).WaitAsync(TimeSpan.FromSeconds(10));
+    }
+
     [Fact]
     public async Task NativeCompactWithoutUsageAfterModelSwitchPersistsResetAcrossRestart()
     {

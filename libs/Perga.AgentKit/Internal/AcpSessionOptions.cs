@@ -2,18 +2,20 @@ using System.Text.Json;
 
 namespace Perga.AgentKit.Internal;
 
-internal sealed record AcpWorkerOption(string Id, string Current, IReadOnlyList<WorkerModelOption> Values);
+internal sealed record AcpSelectValue(string Id, string Name);
 
-internal sealed record AcpWorkerOptions(AcpWorkerOption? Model, AcpWorkerOption? Reasoning)
+internal sealed record AcpSessionOption(string Id, string Current, IReadOnlyList<AcpSelectValue> Values);
+
+internal sealed record AcpSessionOptions(AcpSessionOption? Model, AcpSessionOption? Reasoning)
 {
-    public static AcpWorkerOptions? Read(JsonElement payload)
+    public static AcpSessionOptions? Read(JsonElement payload)
     {
         if (payload.ValueKind != JsonValueKind.Object || !payload.TryGetProperty("configOptions", out var options) ||
             options.ValueKind != JsonValueKind.Array)
             return null;
 
-        AcpWorkerOption? model = null;
-        AcpWorkerOption? reasoning = null;
+        AcpSessionOption? model = null;
+        AcpSessionOption? reasoning = null;
         foreach (var entry in options.EnumerateArray())
         {
             var category = Text(entry, "category");
@@ -25,14 +27,14 @@ internal sealed record AcpWorkerOptions(AcpWorkerOption? Model, AcpWorkerOption?
             var choices = values.EnumerateArray().SelectMany(ValuesOf)
                 .Select(value => (Id: Text(value, "value"), Name: Text(value, "name")))
                 .Where(value => !string.IsNullOrWhiteSpace(value.Id)).DistinctBy(value => value.Id, StringComparer.Ordinal)
-                .Select(value => new WorkerModelOption(value.Id!, value.Name ?? value.Id!, [])).ToArray();
+                .Select(value => new AcpSelectValue(value.Id!, value.Name ?? value.Id!)).ToArray();
             if (!choices.Any(choice => choice.Id == current))
                 continue;
-            var option = new AcpWorkerOption(id, current, choices);
+            var option = new AcpSessionOption(id, current, choices);
             if (category == "model") model ??= option;
             else reasoning ??= option;
         }
-        return new AcpWorkerOptions(model, reasoning);
+        return new AcpSessionOptions(model, reasoning);
     }
 
     private static IEnumerable<JsonElement> ValuesOf(JsonElement value)
@@ -46,12 +48,12 @@ internal sealed record AcpWorkerOptions(AcpWorkerOption? Model, AcpWorkerOption?
         value.ValueKind == JsonValueKind.Object && value.TryGetProperty(key, out var property) && property.ValueKind == JsonValueKind.String
             ? property.GetString() : null;
 
-    public WorkerProviderConfiguration? ToProviderConfiguration(AcpWorkerOptions? defaults)
+    public WorkerProviderConfiguration? ToProviderConfiguration(AcpSessionOptions? defaults)
     {
         if (Model is null && Reasoning is null) return null;
         var defaultModel = defaults?.Model?.Current;
         var defaultEffort = defaults?.Reasoning?.Current;
-        return new WorkerProviderConfiguration(Model?.Values ?? [],
+        return new WorkerProviderConfiguration(Model?.Values.Select(value => new WorkerModelOption(value.Id, value.Name, [])).ToArray() ?? [],
             Model?.Values.Any(value => value.Id == defaultModel) == true ? defaultModel : null,
             Reasoning?.Values.Any(value => value.Id == defaultEffort) == true ? defaultEffort : null,
             Reasoning?.Values.Select(value => value.Id).ToArray());
