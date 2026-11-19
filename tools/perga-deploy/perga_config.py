@@ -1,18 +1,16 @@
 """Read managed installation settings once for both deployment and launch."""
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 import json
 import os
 from pathlib import Path
+import tomllib
 from urllib.parse import urlsplit
 
 from perga_platform import DeployError, Http, identifier
 
 
 TOML_PATH = Path('config/perga.toml')
-LEGACY_PATH = Path('config.env')
 PROVIDERS = ('agy', 'codex', 'opencode', 'claude')
 
 
@@ -27,15 +25,6 @@ class InstallationConfig:
     codex_worker_home: str = ''
     proxy_url: str | None = None
     no_proxy: tuple[str, ...] = ()
-    legacy: bool = False
-
-
-def toml_reader():
-    try:
-        import tomllib
-    except ImportError:
-        raise DeployError('TOML installation configuration requires Python 3.11 or later') from None
-    return tomllib
 
 
 def table(value, name, allowed):
@@ -61,13 +50,12 @@ def absolute_path(value, name):
 
 
 def read_toml(path):
-    toml = toml_reader()
-    if path.stat().st_mode & 0o077:
-        raise DeployError('config/perga.toml must be owner-only (chmod 600)')
     with path.open('rb') as stream:
+        if os.fstat(stream.fileno()).st_mode & 0o077:
+            raise DeployError('config/perga.toml must be owner-only (chmod 600)')
         try:
-            values = toml.load(stream)
-        except (toml.TOMLDecodeError, UnicodeError):
+            values = tomllib.load(stream)
+        except (tomllib.TOMLDecodeError, UnicodeError):
             raise DeployError('invalid TOML in config/perga.toml') from None
     table(values, 'perga.toml', ('instance', 'providers', 'proxy'))
     instance = table(values.get('instance', {}), 'instance',
@@ -109,47 +97,22 @@ def read_toml(path):
     return config
 
 
-def read_legacy(root):
-    values = {}
-    expected = {'PERGA_DATA_DIR': str(root / 'data'),
-                'PERGA_STATIC_WEB_DIR': str(root / 'current/web'),
-                'PERGA_TEMPLATES_DIR': str(root / 'current/templates')}
-    allowed = expected.keys() | {'PERGA_INSTANCE_NAME', 'PERGA_HOST_URL', 'PERGA_RELEASE_URL_PREFIX',
-                                 'PERGA_ENABLE_OVERLAYFS', 'ASPNETCORE_URLS'}
-    for raw in (root / LEGACY_PATH).read_text().splitlines():
-        if not raw.strip() or raw.lstrip().startswith('#'):
-            continue
-        key, sep, value = raw.partition('=')
-        if not sep or key not in allowed or any(c in value for c in '\r\n\x00'):
-            raise DeployError('unsupported config.env entry: ' + key)
-        values[key] = value
-    if any(values.get(key) != value for key, value in expected.items()):
-        raise DeployError('config.env does not match managed paths')
-    host_url = values.get('PERGA_HOST_URL', '')
-    Http(host_url)
-    if values.get('ASPNETCORE_URLS') != host_url:
-        raise DeployError('Host listen URL and management URL must match')
-    overlayfs = legacy_overlayfs(values.get('PERGA_ENABLE_OVERLAYFS', '0'))
-    return InstallationConfig(identifier(values.get('PERGA_INSTANCE_NAME')), host_url, overlayfs,
-                              values.get('PERGA_RELEASE_URL_PREFIX', ''), legacy=True)
-
-
-def legacy_overlayfs(value):
-    if value not in ('0', '1'):
-        raise DeployError('PERGA_ENABLE_OVERLAYFS must be 0 or 1')
-    return value == '1'
-
-
 def load_config(root, name):
-    if (root / TOML_PATH).exists():
+    try:
         config = read_toml(root / TOML_PATH)
-    elif (root / LEGACY_PATH).exists():
-        config = read_legacy(root)
-    else:
-        return None
+    except FileNotFoundError:
+        raise DeployError('missing config/perga.toml for managed instance') from None
     if config.name != name:
         raise DeployError('configuration name does not match the managed instance')
     return config
+
+
+def has_provisioned_config(root, name, host_url):
+    if (root / TOML_PATH).exists():
+        load_config(root, name)
+        return True
+    Http(host_url)
+    return False
 
 
 def write_default_config(root, name, host_url):

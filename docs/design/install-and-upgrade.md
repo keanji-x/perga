@@ -26,8 +26,8 @@ launcher and release controller share the same parser. The launcher passes
 managed paths, provider executables and Worker home to the Host's existing
 configuration binder. The proxy section sets standard proxy variables in the
 launched process so provider CLIs can use them. Login files stay in the provider
-home directory. Existing `config.env` installations continue to start and upgrade
-with their current configuration. TOML takes precedence when both files exist.
+home directory. The managed launcher and controller require TOML. The installer
+creates it when provisioning a root without configuration.
 
 Default root is `~/.local/share/perga`; use `--root` and `--name` for multiple
 instances (for example a separately managed `perga-4240`). Never run the examples
@@ -105,7 +105,7 @@ After=<name>-term.service
 [Service]
 Type=simple
 WorkingDirectory=<root>
-ExecStart=/usr/bin/python3 <root>/bin/perga_host.py --name <name> --term-socket %t/<name>/term.sock --require-toml
+ExecStart=/usr/bin/python3 <root>/bin/perga_host.py --name <name> --term-socket %t/<name>/term.sock
 UMask=0077
 Restart=on-failure
 ```
@@ -159,33 +159,29 @@ Unset executables use existing CLI discovery. Explicit paths apply to provider
 probes and sessions and require a Host release with provider configuration support.
 Use the `agy` or `antigravity` executable name for Antigravity's permission modes.
 The proxy URL applies to HTTP and HTTPS for the Host and its provider processes.
-Loopback addresses always bypass the configured proxy. With no proxy section,
-the Host inherits the system service's proxy environment. The controller uses a
-direct connection to the local Host for management traffic. See
+Loopback addresses always bypass the configured proxy. Managed instances use a
+direct connection when the proxy section is absent. The controller always
+connects directly to the local Host for management traffic. See
 [shared Codex Worker home](codex-installation-login.md) for directory and login
 requirements. Restart the Host after changing instance settings.
 
 ### Move an existing managed installation to TOML
 
-Start with the same name and running Host URL. Create `config/perga.toml` with
-mode 0600 and move the applicable OverlayFS flag, proxy, workspace path, release
-URL prefix, provider paths and Worker home into it. From the updated Perga
-checkout, refresh the stable tools and service files using the existing root,
-name and unit directory:
+Create `config/perga.toml` with mode 0600 and use the existing instance name,
+loopback URL and any applicable settings from the example above. During a
+maintenance window, stop the Host, then refresh the stable tools and service
+files from the updated Perga checkout using the existing root, name and unit
+directory:
 
 ```sh
 tools/perga-deploy/perga-ctl --root /path/to/installation --name perga-4240 configure-services
 ```
 
 `configure-services` validates the current release and settings, updates the
-stable tool and unit files, and reloads systemd units without restarting the Host
-or bridge. Remove settings moved to TOML and any old `ExecStart` override from
-the installation's service drop-ins, reload systemd, and restart the Host in
-the maintenance window. Keep
-the old `config.env` for rollback. To return to it, move the TOML file out of the
-config directory, rerun `configure-services`, restore the original drop-in
-settings, reload systemd and restart the Host. Legacy units with only
-`config.env` continue to use the existing environment configuration.
+stable tool and unit files, and reloads systemd units. Remove settings moved to
+TOML and any old `ExecStart` override from the installation's service drop-ins,
+reload systemd, and start the Host. Keep the TOML file across Host release upgrades
+and rollbacks.
 
 ## Controller operations and source policy
 

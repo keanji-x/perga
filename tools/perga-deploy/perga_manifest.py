@@ -99,8 +99,7 @@ class ReleaseStaging:
                 unpack(args.from_tarball, dest)
             elif args.from_release:
                 url = args.from_release
-                config = load_config(self.root, self.name)
-                prefix = config.release_url_prefix if config else ''
+                prefix = load_config(self.root, self.name).release_url_prefix
                 parsed = urllib.parse.urlsplit(url)
                 if (not prefix.startswith('https://') or not prefix.endswith('/')
                         or not url.startswith(prefix) or parsed.scheme != 'https'

@@ -18,7 +18,7 @@ import time
 import uuid
 
 from perga_platform import DeployError, Http, atomic_json, identifier, read_json, run_command, sync_dir
-from perga_config import load_config, toml_reader
+from perga_config import has_provisioned_config, load_config, write_default_config
 from perga_manifest import COMPONENTS, ReleaseStaging, make_manifest, verify_release
 from perga_sqlite import DatabaseRecovery, schema_version, validate_database
 from perga_systemd import SystemdInstallation, launch_detached
@@ -55,24 +55,13 @@ class Controller(DatabaseRecovery, SystemdInstallation, ReleaseStaging):
         finally:
             os.close(fd)
 
-    def config(self):
-        return load_config(self.root, self.name)
-
     def http(self, method, path, body=None):
         transport = self.http_override or Http(self.validate_config().host_url,
                                                self.runtime / 'system-management-token')
         return transport(method, path, body)
 
     def validate_config(self):
-        config = self.config()
-        if config is None:
-            raise DeployError('missing managed installation configuration')
-        return config
-
-    def prepare_config(self, host_url):
-        if self.config() is None:
-            Http(host_url)
-            toml_reader()
+        return load_config(self.root, self.name)
 
     def configure_services(self, args):
         with self.lock():
@@ -120,12 +109,14 @@ class Controller(DatabaseRecovery, SystemdInstallation, ReleaseStaging):
                 raise DeployError('existing installation; use adopt or upgrade')
             if not re.fullmatch(r'/[A-Za-z0-9_./@+\-]+', str(self.root)):
                 raise DeployError('installation root contains unsafe systemd path characters')
-            self.prepare_config(args.host_url)
             for unit in (self.name + '.service', self.name + '-term.service'):
                 if (Path(args.unit_dir).expanduser() / unit).exists():
                     raise DeployError('unit already exists; use adopt with stopped services')
+            has_config = has_provisioned_config(self.root, self.name, args.host_url)
             with self.candidate(args) as (source, manifest):
                 self.stage(source, manifest)
+                if not has_config:
+                    write_default_config(self.root, self.name, args.host_url)
                 (self.root / 'data').mkdir(mode=0o700)
                 self.swap(manifest['releaseId'])
                 self.configure(args)
@@ -139,11 +130,11 @@ class Controller(DatabaseRecovery, SystemdInstallation, ReleaseStaging):
                 raise DeployError('flat installation must have an existing data directory')
             if not re.fullmatch(r'/[A-Za-z0-9_./@+\-]+', str(self.root)):
                 raise DeployError('installation root contains unsafe systemd path characters')
-            self.prepare_config(args.host_url)
             for term in (False, True):
                 result = self.systemctl(['is-active', self.name + ('-term.service' if term else '.service')])
                 if result.returncode == 0 or result.stdout.strip() not in ('inactive', 'failed', 'unknown'):
                     raise DeployError('adopt requires both instance services stopped')
+            has_config = has_provisioned_config(self.root, self.name, args.host_url)
             with tempfile.TemporaryDirectory(prefix='perga-adopt-') as tmp:
                 source = Path(tmp) / 'release'
                 source.mkdir()
@@ -172,6 +163,8 @@ class Controller(DatabaseRecovery, SystemdInstallation, ReleaseStaging):
                 manifest = make_manifest(source, 'adopted-' + uuid.uuid4().hex, schema_version(copied_db))
                 verify_release(source)
                 self.stage(source, manifest)
+                if not has_config:
+                    write_default_config(self.root, self.name, args.host_url)
                 self.swap(manifest['releaseId'])
                 self.configure(args)
             return self.status()

@@ -10,7 +10,6 @@ import uuid
 from perga_platform import (DeployError, command_env, read_json, run_command,
                             atomic_json, sync_dir)
 from perga_sqlite import schema_version
-from perga_config import LEGACY_PATH, write_default_config
 
 
 def replace_file(path, content, mode):
@@ -37,9 +36,6 @@ class SystemdInstallation:
             raise DeployError('installation root contains unsafe systemd path characters')
         unit_dir = Path(args.unit_dir).expanduser().absolute()
         unit_dir.mkdir(parents=True, exist_ok=True)
-        if self.config() is None:
-            write_default_config(self.root, self.name, args.host_url)
-        config = self.validate_config()
         binaries = self.root / 'bin'
         binaries.mkdir(exist_ok=True)
         tools = Path(__file__).resolve().parent
@@ -57,16 +53,10 @@ class SystemdInstallation:
             if source != target:
                 replace_file(target, source.read_bytes(), 0o755)
         common = '\nUMask=0077\nRestart=on-failure\n\n[Install]\nWantedBy=default.target\n'
-        legacy_environment = (f'EnvironmentFile={self.root / LEGACY_PATH}\n'
-                              'Environment=Perga__AutoManageTerminalBridge=false\n'
-                              f'Environment=PERGA_TERM_BRIDGE_URL=http+unix://%t/{self.name}/term.sock\n'
-                              if config.legacy else '')
-        require_toml = '' if config.legacy else ' --require-toml'
         host = (f'[Unit]\nDescription=Perga Host ({self.name})\nWants={self.name}-term.service\n'
                 f'After={self.name}-term.service\n\n[Service]\nType=simple\nWorkingDirectory={self.root}\n'
-                f'{legacy_environment}'
                 f'ExecStart=/usr/bin/python3 {binaries}/perga_host.py --name {self.name} '
-                f'--term-socket %t/{self.name}/term.sock{require_toml}' + common)
+                f'--term-socket %t/{self.name}/term.sock' + common)
         term = (f'[Unit]\nDescription=Perga terminal bridge ({self.name})\n\n[Service]\nType=simple\n'
                 f'RuntimeDirectory={self.name}\nRuntimeDirectoryMode=0700\n'
                 f'ExecStart={self.root}/current/termBridge/perga-term-bridge --listen-uds %t/{self.name}/term.sock' + common)
