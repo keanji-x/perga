@@ -66,7 +66,7 @@ public sealed partial class TrackActor
             throw KernelException.PolicyDenied("Template policy requires a gate for this task.");
         if (evaluation.Output is GuardDecision.AskHuman ask)
         {
-            var suspension = ApplyGuardDecisionCore(ask, _track.LeadSessionId, null, ct)!;
+            var suspension = ApplyGuardDecisionCore(ask, _track.LeadSessionId, null, _actorShutdownCts.Token)!;
             _pendingTaskDispatchApprovals.Add(task.Id);
             var generation = _policyGeneration;
             _ = TrackBackgroundJob(() => ResumeTaskDispatchApprovalAsync(task, generation, suspension));
@@ -101,11 +101,13 @@ public sealed partial class TrackActor
 
     private async Task ResumeTaskDispatchApprovalAsync(TaskDto task, string generation, PolicyApproval suspension)
     {
+        var pendingRemoved = false;
         try
         {
             var answer = await suspension.Decision.WaitAsync(_actorShutdownCts.Token).ConfigureAwait(false);
             await EnqueueAsync(async _ => {
                 _pendingTaskDispatchApprovals.Remove(task.Id);
+                pendingRemoved = true;
                 var current = _tasks.FirstOrDefault(t => t.Id == task.Id);
                 if (current is null || current.Status != TaskRunStatus.Pending) return;
                 if (current.Generation == task.Generation && _policyGeneration == generation && TaskDispatchFields(current) == TaskDispatchFields(task))
@@ -122,8 +124,27 @@ public sealed partial class TrackActor
                 await ScheduleEligibleTasksCoreAsync(_actorShutdownCts.Token).ConfigureAwait(false);
             }, _actorShutdownCts.Token).ConfigureAwait(false);
         }
-        catch (OperationCanceledException) when (_actorShutdownCts.IsCancellationRequested) { }
-        finally { ExpireApproval(suspension.Pending); }
+        catch (OperationCanceledException) { }
+        finally
+        {
+            ExpireApproval(suspension.Pending);
+            // A live approval can expire without a decision when the Track closes.
+            // Release its scheduling fence on the mailbox so reopening can ask again.
+            // A successful continuation already released it before scheduling, which
+            // may have installed a new approval for a changed task contract.
+            if (!pendingRemoved && !_actorShutdownCts.IsCancellationRequested)
+            {
+                try
+                {
+                    await EnqueueAsync(async _ => {
+                        _pendingTaskDispatchApprovals.Remove(task.Id);
+                        await ScheduleEligibleTasksCoreAsync(_actorShutdownCts.Token).ConfigureAwait(false);
+                    }, _actorShutdownCts.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (_actorShutdownCts.IsCancellationRequested) { }
+                catch (ObjectDisposedException) when (_actorShutdownCts.IsCancellationRequested) { }
+            }
+        }
     }
 
 }

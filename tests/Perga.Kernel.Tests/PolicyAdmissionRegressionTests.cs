@@ -346,6 +346,58 @@ public sealed class PolicyAdmissionRegressionTests
         Assert.Equal("gpt-5", worker.Model);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SchedulingAsk_CloseThenReopenRequestsFreshApproval(bool cancelSchedulingCaller)
+    {
+        await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
+        var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
+        var caller = Caller(snapshot);
+        var report = await ctx.Kernel.ReadReportAsync(caller.TrackId);
+        await ctx.Kernel.CommitReportAsync(caller.TrackId, caller.SessionId, new(report.Anchor, [
+            new BlockOp.UpsertBlockOp("blocker", ReportBlockKind.Task, null, TestJson.FromObject(new {
+                task_key = "blocker", ready = false, access = "read_only", goal_or_cmd = "Block" })),
+            new BlockOp.UpsertBlockOp("pending", ReportBlockKind.Task, null, TestJson.FromObject(new {
+                task_key = "pending", ready = true, access = "read_only", goal_or_cmd = "Inspect", depends_on = new[] { "blocker" } }))]));
+        await SetPolicy(ctx, caller, "export default {id:'ask',title:'Ask',before:a=>a.type==='task.dispatch'?AskHuman('Approve?',['Approve','Reject']):Allow()};");
+        var blocker = (await ctx.Kernel.ListTasksAsync(caller.TrackId)).Single(t => t.TaskKey == "blocker");
+        await ctx.Store.UpsertTaskAndAttemptAsync(blocker with { Status = TaskRunStatus.Done }, null, null, null, default);
+        await ctx.Kernel.Actors.RemoveAndDisposeAsync(caller.TrackId);
+
+        using var schedulingCaller = new CancellationTokenSource();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        await ctx.Kernel.RejectTaskAsync(caller.TrackId, caller.SessionId, "pending", "Retry", reQueue: true, ct: schedulingCaller.Token);
+        var first = Assert.Single((await ctx.Kernel.GetTrackAggregateAsync(caller.TrackId)).PendingApprovals);
+        var pending = (await ctx.Kernel.ListTasksAsync(caller.TrackId)).Single(t => t.TaskKey == "pending");
+        Assert.Equal(TaskRunStatus.Pending, pending.Status);
+        if (cancelSchedulingCaller)
+        {
+            schedulingCaller.Cancel();
+            Assert.Equal(first.Id, Assert.Single((await ctx.Kernel.GetTrackAggregateAsync(caller.TrackId)).PendingApprovals).Id);
+        }
+
+        await ctx.Kernel.PatchTrackAsync(caller.TrackId, new(Closed: true), timeout.Token);
+        await ctx.Kernel.WaitForTrackIdleAsync(caller.TrackId, timeout.Token);
+        Assert.Empty((await ctx.Kernel.GetTrackAggregateAsync(caller.TrackId)).PendingApprovals);
+        Assert.Equal(TaskRunStatus.Pending, (await ctx.Kernel.ListTasksAsync(caller.TrackId)).Single(t => t.Id == pending.Id).Status);
+        await ctx.Kernel.PatchTrackAsync(caller.TrackId, new(Closed: false), timeout.Token);
+        TrackAggregateSnapshot reopened;
+        do
+        {
+            await Task.Delay(10, timeout.Token);
+            reopened = await ctx.Kernel.GetTrackAggregateAsync(caller.TrackId, timeout.Token);
+        } while (reopened.PendingApprovals.Count == 0);
+        var fresh = Assert.Single(reopened.PendingApprovals);
+        Assert.NotEqual(first.Id, fresh.Id);
+        await ctx.Kernel.DecideApprovalAsync(caller.TrackId, fresh.ExecutionId, fresh.Id,
+            TestJson.FromObject(new { answers = new[] { "Approve" } }), timeout.Token);
+        await ctx.Kernel.WaitForTrackIdleAsync(caller.TrackId, timeout.Token);
+        Assert.Empty((await ctx.Kernel.GetTrackAggregateAsync(caller.TrackId)).PendingApprovals);
+        Assert.Single(await ctx.Kernel.ListSessionsAsync(caller.TrackId), session => session.BoundTaskId == pending.Id);
+        Assert.Equal(TaskRunStatus.Running, (await ctx.Kernel.ListTasksAsync(caller.TrackId)).Single(t => t.Id == pending.Id).Status);
+    }
+
     [Fact]
     public async Task UnsupportedRewrite_CannotTurnDryRunIntoMutation()
     {
