@@ -212,7 +212,7 @@ public static class KernelMcpDispatcher
         var origin = KernelMcpCatalog.IsCompletionOnly(toolName) && caller.BoundAttemptId is not null
             ? await kernel.Actors.GetOrActivate(caller.TrackId).CaptureWorkerCompletionOriginAsync(caller, ct).ConfigureAwait(false)
             : null;
-        var expectedPolicyGeneration = await kernel.GuardMcpToolCallAsync(caller.TrackId, caller.SessionId, "perga", toolName, args, ct)
+        var expectedPolicyGeneration = await kernel.GuardMcpToolCallAsync(caller.TrackId, caller.SessionId, "perga", toolName, args, ct, caller.ExecutionOrigin)
             .ConfigureAwait(false);
 
         switch (toolName)
@@ -227,7 +227,7 @@ public static class KernelMcpDispatcher
             {
                 var commitReq = ParseReportCommitArgs(args);
                 var includeDocument = KernelMcpReportSupport.ParseIncludeDocumentArg(args);
-                var res = await kernel.CommitReportAsync(caller.TrackId, caller.SessionId, commitReq, ct)
+                var res = await kernel.CommitReportAsync(caller.TrackId, caller.SessionId, commitReq, ct, caller.ExecutionOrigin)
                     .ConfigureAwait(false);
                 return KernelMcpReportSupport.FormatReportCommitResponse(res, includeDocument);
             }

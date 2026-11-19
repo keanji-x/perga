@@ -883,7 +883,7 @@ export function compactPlannerOperation(cardId: string): ApiOperation<{ started:
   };
 }
 
-export function interruptPlannerOperation(cardId: string, worker?: { attemptId: string; turnId: string }): ApiOperation<{ stopped: boolean }> {
+export function interruptPlannerOperation(cardId: string, worker?: { attemptId?: string; turnId: string }): ApiOperation<{ stopped: boolean }> {
   return {
     method: 'POST',
     path: `/api/v1/sessions/${encodeURIComponent(cardId)}/interrupt`,

@@ -10,7 +10,12 @@ public sealed record McpSessionPrincipal(
     bool IsLead,
     string? BoundTaskId,
     string? BoundAttemptId,
-    IReadOnlyList<string> EnabledPlugins);
+    IReadOnlyList<string> EnabledPlugins)
+{
+    public McpExecutionOrigin? ExecutionOrigin { get; init; }
+}
+
+public readonly record struct McpExecutionOrigin(string? TurnId);
 
 public sealed record McpSessionRegistration(
     McpSessionPrincipal Principal,

@@ -48,10 +48,10 @@ public sealed class PolicyGuardMailTerminalScheduleBootTests
             new PolicyEvalResult<GuardDecision>(state, new GuardDecision.AskHuman("Allow vcs_push?", ["Approve", "Reject"]));
 
         var guardTask = ctx.Kernel.GuardMcpToolCallAsync(trackId, leadId, "vcs", "vcs_publish_pr", TestJson.Parse("{}"));
-        AskDto? openAsk = null;
+        ApprovalDto? openAsk = null;
         for (var i = 0; i < 50 && openAsk is null; i++)
         {
-            openAsk = (await ctx.Kernel.GetTrackAggregateAsync(trackId)).OpenAsks.FirstOrDefault();
+            openAsk = (await ctx.Kernel.GetTrackAggregateAsync(trackId)).PendingApprovals.FirstOrDefault();
             if (openAsk is null)
             {
                 await Task.Delay(10);
@@ -61,15 +61,15 @@ public sealed class PolicyGuardMailTerminalScheduleBootTests
         Assert.NotNull(openAsk);
         Assert.False(guardTask.IsCompleted);
 
-        await ctx.Kernel.AnswerAskAsync(trackId, openAsk!.Id, TestJson.FromObject(new { answers = new[] { "Approve" } }));
+        await ctx.Kernel.DecideApprovalAsync(trackId, openAsk!.ExecutionId, openAsk!.Id, TestJson.FromObject(new { answers = new[] { "Approve" } }));
         await guardTask; // Completes cleanly!
 
         // Now verify human rejection throws PolicyDenied
         var rejectGuardTask = ctx.Kernel.GuardMcpToolCallAsync(trackId, leadId, "vcs", "vcs_pr_merge", TestJson.Parse("{}"));
-        AskDto? rejectAsk = null;
+        ApprovalDto? rejectAsk = null;
         for (var i = 0; i < 50 && rejectAsk is null; i++)
         {
-            rejectAsk = (await ctx.Kernel.GetTrackAggregateAsync(trackId)).OpenAsks.FirstOrDefault();
+            rejectAsk = (await ctx.Kernel.GetTrackAggregateAsync(trackId)).PendingApprovals.FirstOrDefault();
             if (rejectAsk is null)
             {
                 await Task.Delay(10);
@@ -77,7 +77,7 @@ public sealed class PolicyGuardMailTerminalScheduleBootTests
         }
 
         Assert.NotNull(rejectAsk);
-        await ctx.Kernel.AnswerAskAsync(trackId, rejectAsk!.Id, TestJson.FromObject(new { answers = new[] { "Reject" } }));
+        await ctx.Kernel.DecideApprovalAsync(trackId, rejectAsk!.ExecutionId, rejectAsk!.Id, TestJson.FromObject(new { answers = new[] { "Reject" } }));
         var humanRejectEx = await Assert.ThrowsAsync<KernelException>(() => rejectGuardTask);
         Assert.Equal(KernelErrorCode.PolicyDenied, humanRejectEx.Code);
     }

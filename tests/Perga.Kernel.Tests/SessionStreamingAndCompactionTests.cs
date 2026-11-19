@@ -449,11 +449,11 @@ public sealed class SessionStreamingAndCompactionTests
         var inFlightTurnTask = ctx.SendAndWaitForTurnAsync(leadId, new SendMessageRequest("Run guarded shell", "key-approval"));
 
         // Wait for ApprovalRequested to materialize as an OpenAsk on the track
-        AskDto? approvalAsk = null;
+        ApprovalDto? approvalAsk = null;
         for (var i = 0; i < 50 && approvalAsk is null; i++)
         {
             var agg = await ctx.Kernel.GetTrackAggregateAsync(trackId);
-            approvalAsk = agg.OpenAsks.FirstOrDefault();
+            approvalAsk = agg.PendingApprovals.FirstOrDefault();
             if (approvalAsk is null)
             {
                 await Task.Delay(10);
@@ -472,7 +472,7 @@ public sealed class SessionStreamingAndCompactionTests
         Assert.Contains("Use --release flag", activeFakeSession.SteeredMessages);
 
         // Answer the approval Ask -> unblocks RespondApprovalAsync on IAgentSession without extra duplicate wake turn!
-        await ctx.Kernel.AnswerAskAsync(trackId, approvalAsk!.Id, TestJson.FromObject(new { approved = true }));
+        await ctx.Kernel.DecideApprovalAsync(trackId, approvalAsk!.ExecutionId, approvalAsk!.Id, TestJson.FromObject(new { approved = true }));
         releaseTurn.TrySetResult();
 
         var finishedTurn = await inFlightTurnTask;
@@ -605,15 +605,16 @@ public sealed class SessionStreamingAndCompactionTests
             new("opt_reject_once", "Reject once", false)
         };
 
-        ctx.AgentRuntime.TurnScript = (_, _, ct) => StreamWithProviderOptions(providerOptions, ct);
+        var allowCompletion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        ctx.AgentRuntime.TurnScript = (_, _, ct) => StreamWithProviderOptions(providerOptions, allowCompletion.Task, ct);
 
         var turnTask = ctx.SendAndWaitForTurnAsync(leadId, new SendMessageRequest("Run command", "key-opts"));
 
-        AskDto? approvalAsk = null;
+        ApprovalDto? approvalAsk = null;
         for (var i = 0; i < 50 && approvalAsk is null; i++)
         {
             var agg = await ctx.Kernel.GetTrackAggregateAsync(track.Track.Id);
-            approvalAsk = agg.OpenAsks.FirstOrDefault();
+            approvalAsk = agg.PendingApprovals.FirstOrDefault();
             if (approvalAsk is null)
             {
                 await Task.Delay(10);
@@ -625,8 +626,9 @@ public sealed class SessionStreamingAndCompactionTests
         Assert.Equal(["Allow once", "Always allow", "Reject once"], question.Options);
 
         // User chooses index 1 ("Always allow")
-        await ctx.Kernel.AnswerAskAsync(track.Track.Id, approvalAsk.Id, TestJson.FromObject(new object[] { new { option = 1 } }));
+        await ctx.Kernel.DecideApprovalAsync(track.Track.Id, approvalAsk.ExecutionId, approvalAsk.Id, TestJson.FromObject(new object[] { new { option = 1 } }));
 
+        allowCompletion.TrySetResult();
         var finishedTurn = await turnTask;
         Assert.Equal("completed", finishedTurn.Status);
 
@@ -638,12 +640,13 @@ public sealed class SessionStreamingAndCompactionTests
     }
 
     private static async IAsyncEnumerable<UnifiedAgentEvent> StreamWithProviderOptions(
-        IReadOnlyList<ApprovalOption> options,
+        IReadOnlyList<ApprovalOption> options, Task allowCompletion,
         [EnumeratorCancellation] CancellationToken ct)
     {
         yield return new UnifiedAgentEvent.ApprovalRequested("req_opts", "run_command", TestJson.Parse("""{"cmd":"ls"}"""), options);
         await Task.Yield();
         yield return new UnifiedAgentEvent.TextDelta("Done");
+        await allowCompletion.WaitAsync(ct);
         yield return new UnifiedAgentEvent.TurnCompleted(null);
     }
 }

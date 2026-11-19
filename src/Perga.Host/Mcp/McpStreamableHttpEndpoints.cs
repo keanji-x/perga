@@ -5,6 +5,7 @@ using System.Threading.Channels;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.DependencyInjection;
 using Perga.Host.Http;
 using Perga.Host.Serialization;
 using Perga.Kernel;
@@ -268,6 +269,8 @@ public static class McpStreamableHttpEndpoints
 
             return;
         }
+
+        principal = ctx.RequestServices.GetRequiredService<IPergaKernel>().ObserveMcpExecution(principal);
 
         // POST: Single or batch JSON-RPC 2.0 Streamable HTTP
         JsonDocument doc;

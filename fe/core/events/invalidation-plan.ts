@@ -304,6 +304,13 @@ function policies(): PolicyMap {
       turnId,
     }] : []);
   }),
+  'approval.changed': plan((event) => result([
+    eventKeys.trackDetail(event.data.trackId),
+    eventKeys.trackLists(),
+    eventKeys.plannerRun(event.data.sessionId),
+    eventKeys.transcript(event.data.sessionId),
+  ])),
+  'approval.audit': plan(() => result([])),
   'ask.changed': plan((event) => result([
     eventKeys.trackDetail(event.data.track_id),
     eventKeys.trackLists(),

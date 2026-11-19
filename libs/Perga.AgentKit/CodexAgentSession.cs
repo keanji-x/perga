@@ -38,6 +38,8 @@ public sealed class CodexAgentSession : IAgentSession
         public Channel<UnifiedAgentEvent> Events { get; } = Channel.CreateUnbounded<UnifiedAgentEvent>(
             new UnboundedChannelOptions { SingleReader = true, SingleWriter = false });
 
+        public ConcurrentDictionary<string, byte> PendingApprovalIds { get; } = new(StringComparer.Ordinal);
+
         public TaskCompletionSource<string> TurnIdReady { get; private set; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -334,6 +336,10 @@ public sealed class CodexAgentSession : IAgentSession
         {
             Interlocked.CompareExchange(ref _currentTurn, null, turnState);
             turnState.CompleteQuietly();
+            foreach (var pendingId in turnState.PendingApprovalIds.Keys)
+            {
+                _pendingApprovals.TryRemove(pendingId, out _);
+            }
             _turnLock.Release();
         }
     }
@@ -347,7 +353,9 @@ public sealed class CodexAgentSession : IAgentSession
             return;
         }
 
-        turnState.CancelRequested = true;
+        lock (turnState)
+            turnState.CancelRequested = true;
+        await DeclinePendingApprovalsAsync(ct).ConfigureAwait(false);
         var threadId = NativeThreadId;
         if (string.IsNullOrWhiteSpace(threadId))
         {
@@ -368,6 +376,38 @@ public sealed class CodexAgentSession : IAgentSession
         catch (JsonRpcRemoteException)
         {
             // Turn may have already completed on server side.
+        }
+    }
+
+    private async Task DeclinePendingApprovalsAsync(CancellationToken ct)
+    {
+        foreach (var requestId in _pendingApprovals.Keys.ToArray())
+        {
+            if (!_pendingApprovals.TryRemove(requestId, out var pending))
+            {
+                continue;
+            }
+
+            await TrySendDeclinedApprovalAsync(pending.RawId, "Turn was interrupted.", ct).ConfigureAwait(false);
+        }
+    }
+
+    private async Task TrySendDeclinedApprovalAsync(JsonElement rawId, string reason, CancellationToken ct)
+    {
+        var payload = new Dictionary<string, object?>
+        {
+            ["decision"] = "decline",
+            ["approved"] = false,
+            ["reason"] = reason
+        };
+
+        try
+        {
+            await _rpc.SendResultResponseAsync(rawId, payload, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is IOException or ObjectDisposedException or InvalidOperationException)
+        {
+            // Subprocess pipe already closed during cancellation.
         }
     }
 
@@ -659,7 +699,7 @@ public sealed class CodexAgentSession : IAgentSession
 
         try
         {
-            await _rpc.SendRequestAsync("turn/start", turnParams, ct, response =>
+            await SendTurnStartAsync(turnState, () => _rpc.SendRequestAsync("turn/start", turnParams, ct, response =>
             {
                 var turnId = ExtractTurnId(response);
                 if (turnId is null)
@@ -701,7 +741,7 @@ public sealed class CodexAgentSession : IAgentSession
                 }
 
                 turnState.TryFinish(new UnifiedAgentEvent.TurnError(code, message, retryable, IsConclusive: true));
-            }).ConfigureAwait(false);
+            })).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -731,6 +771,18 @@ public sealed class CodexAgentSession : IAgentSession
         catch (Exception ex)
         {
             turnState.TryFinish(new UnifiedAgentEvent.TurnError("codex_transport_error", ex.Message, false));
+        }
+    }
+
+    private static Task<JsonElement> SendTurnStartAsync(TurnStreamState turn, Func<Task<JsonElement>> send)
+    {
+        lock (turn)
+        {
+            if (!turn.CancelRequested)
+                return send();
+            turn.TryFinish(new UnifiedAgentEvent.TurnError("turn_interrupted",
+                "Codex stopped before sending the prompt.", false, IsConclusive: true, BeforePrompt: true));
+            return Task.FromResult(default(JsonElement));
         }
     }
 
@@ -1111,14 +1163,24 @@ public sealed class CodexAgentSession : IAgentSession
 
     private void OnServerRequest(JsonElement rawId, string method, JsonElement parameters)
     {
-        var turnState = Volatile.Read(ref _currentTurn);
-        var requestId = JsonRpcStdioConnection.ExtractDisplayRequestId(rawId);
+        var requestId = $"permission_{Guid.NewGuid():N}";
 
         if (method.Contains("Approval", StringComparison.OrdinalIgnoreCase) ||
             method.Contains("approval", StringComparison.OrdinalIgnoreCase) ||
             method.Contains("permission", StringComparison.OrdinalIgnoreCase))
         {
             _pendingApprovals[requestId] = new PendingApproval(rawId, method);
+            var turnState = Volatile.Read(ref _currentTurn);
+            if (turnState is null || turnState.CancelRequested)
+            {
+                if (_pendingApprovals.TryRemove(requestId, out var cancelled))
+                {
+                    _ = TrySendDeclinedApprovalAsync(cancelled.RawId, "Turn was interrupted.", CancellationToken.None);
+                }
+
+                return;
+            }
+
             var toolName = TryGetString(parameters, "toolName")
                            ?? TryGetString(parameters, "tool")
                            ?? TryGetString(parameters, "command")
@@ -1127,8 +1189,15 @@ public sealed class CodexAgentSession : IAgentSession
                        ?? TryGetElement(parameters, "args")
                        ?? parameters.Clone();
 
-            turnState?.MarkProgressEmitted();
-            turnState?.Events.Writer.TryWrite(new UnifiedAgentEvent.ApprovalRequested(requestId, toolName, args));
+            turnState.PendingApprovalIds[requestId] = 0;
+            turnState.MarkProgressEmitted();
+            if (!turnState.Events.Writer.TryWrite(new UnifiedAgentEvent.ApprovalRequested(requestId, toolName, args)))
+            {
+                if (_pendingApprovals.TryRemove(requestId, out var cancelled))
+                {
+                    _ = TrySendDeclinedApprovalAsync(cancelled.RawId, "Turn was interrupted.", CancellationToken.None);
+                }
+            }
             return;
         }
 

@@ -652,7 +652,7 @@ public sealed class AcpProviderTests : IDisposable
             allowEvents.Add(evt);
             if (evt is UnifiedAgentEvent.ApprovalRequested req)
             {
-                Assert.Equal("acp_perm_99", req.RequestId);
+                Assert.StartsWith("permission_", req.RequestId, StringComparison.Ordinal);
                 Assert.Equal("write_file", req.ToolName);
                 Assert.NotNull(req.Options);
                 Assert.Equal(3, req.Options!.Count);
@@ -694,6 +694,39 @@ public sealed class AcpProviderTests : IDisposable
         }
 
         Assert.Contains(rejectEvents.OfType<UnifiedAgentEvent.TextDelta>(), t => t.Delta == "acp-selected:opt_reject_once");
+
+        // session/cancel during pending session/request_permission replies { outcome: { outcome: "cancelled" } }
+        var cancelPermEvents = new List<UnifiedAgentEvent>();
+        var permCancelSent = false;
+        await foreach (var evt in session.StreamTurnAsync(new TurnInput("REQUIRE_PERMISSION_CANCEL", "perm_cancel_1"), CancellationToken.None))
+        {
+            cancelPermEvents.Add(evt);
+            if (!permCancelSent && evt is UnifiedAgentEvent.ApprovalRequested)
+            {
+                permCancelSent = true;
+                await session.CancelTurnAsync(CancellationToken.None);
+            }
+        }
+
+        Assert.True(permCancelSent);
+        Assert.Single(cancelPermEvents.OfType<UnifiedAgentEvent.TurnInterrupted>());
+
+        // session/request_permission arriving after session/cancel auto-replies cancelled without emitting ApprovalRequested
+        var postCancelPermEvents = new List<UnifiedAgentEvent>();
+        var postCancelSent = false;
+        await foreach (var evt in session.StreamTurnAsync(new TurnInput("REQUIRE_PERMISSION_AFTER_CANCEL", "perm_after_cancel_1"), CancellationToken.None))
+        {
+            postCancelPermEvents.Add(evt);
+            if (!postCancelSent && evt is UnifiedAgentEvent.TextDelta)
+            {
+                postCancelSent = true;
+                await session.CancelTurnAsync(CancellationToken.None);
+            }
+        }
+
+        Assert.True(postCancelSent);
+        Assert.Empty(postCancelPermEvents.OfType<UnifiedAgentEvent.ApprovalRequested>());
+        Assert.Single(postCancelPermEvents.OfType<UnifiedAgentEvent.TurnInterrupted>());
 
         // session/cancel stops active prompt cleanly
         var cancelEvents = new List<UnifiedAgentEvent>();

@@ -176,6 +176,14 @@ public sealed record AskDto(
     string? SessionId = null,
     string? TurnId = null);
 
+public sealed record ApprovalDto(
+    string Id,
+    string ExecutionId,
+    string SessionId,
+    string? TurnId,
+    IReadOnlyList<AskQuestionDto> Questions,
+    long CreatedAtMs);
+
 public sealed record MailDto(
     string Id,
     string FromTrackId,

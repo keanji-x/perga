@@ -156,7 +156,7 @@ import { PendingRoute } from './pending-route.tsx';
 import { Banner } from '@astryxdesign/core/Banner';
 import { ErrorBox } from '../../ui/error-box/public.tsx';
 import { PlannerAskDrawer } from '../../features/planner/public.ts';
-import { openAsksOf, workerOpenAsks, type OpenAsk } from '../../../../core/domain/ask.ts';
+import { openAsksOf, pendingApprovalQuestions, type OpenAsk } from '../../../../core/domain/ask.ts';
 import { useCompactViewport } from '../../ui/viewport/public.ts';
 
 export const APP_BASEPATH = '/next';
@@ -720,8 +720,8 @@ function useConversationPane(
     if (open === null || options?.onSide === undefined || !sideSourceReady) return false;
     return options.onSide(open, store.turns, question);
   });
-  const workerOpen = worker?.openAsks;
-  const workerAsks = useMemo(() => workerOpen === undefined || shareAccess !== null ? NO_ASKS : workerOpenAsks(workerOpen), [workerOpen, shareAccess]);
+  const workerOpen = worker?.pendingApprovals;
+  const workerAsks = useMemo(() => workerOpen === undefined || shareAccess !== null ? NO_ASKS : pendingApprovalQuestions(workerOpen), [workerOpen, shareAccess]);
   const conversationAsks = worker == null ? plannerRow?.asks ?? NO_ASKS : workerAsks;
   /* Read field by field: the control is rebuilt each render, and the composer's memo keys on what it shows. */
   const roleValue = plannerRow?.role.value ?? null;
@@ -1391,7 +1391,10 @@ function TrackRouteBody({
   }, [registry, plannerCard, plannerOpenIntent]);
   const rows = useMemo(() => snapshot.sessions.map(session => ({ ...agentSessionDtoToConversation(session), trackTitle }))
     .toSorted((left, right) => Number(right.isLead) - Number(left.isLead)), [snapshot.sessions, trackTitle]);
-  const openAsks = useMemo(() => openAsksOf(track.attentionItems), [track.attentionItems]);
+  const openAsks = useMemo(() => [
+    ...pendingApprovalQuestions(snapshot.pendingApprovals ?? []),
+    ...openAsksOf(track.attentionItems),
+  ], [snapshot.pendingApprovals, track.attentionItems]);
   /* The runtime half of the TASKS panel, keyed `['track-report', trackId]`: the key
    * `invalidation-plan` refreshes on every `task.*` event and `track.report_edited`. */
   /* Read before the query: the poll's interval depends on the rows this report can produce. */
@@ -1478,12 +1481,10 @@ function TrackRouteBody({
       create: conversationMutations.create,
       planner: plannerCard === undefined ? null : {
         cardId: plannerCard.id, areaId: track.areaId, asks: openAsks,
-        answerAsk: (askId, answers) => trackMutations.answerAsk(
-          track.id,
-          askId,
-          answers,
-          typeof askId === 'string' ? openAsks.find((item) => item.askId === askId)?.questions : undefined,
-        ),
+        answerAsk: (askId, answers) => {
+          const ask = typeof askId === 'string' ? openAsks.find(item => item.askId === askId) : undefined;
+          return trackMutations.answerAsk(track.id, askId, answers, ask?.questions, ask?.executionId);
+        },
         role: plannerRole,
         commands: plannerCommands,
       },
@@ -1495,8 +1496,14 @@ function TrackRouteBody({
   useMobileConversationOwner({ track, conversations: rows, onArchive: conversationMutations.archive, onNew: chat.startConversation,
     selectedConversationId: chat.selectedConversationId, onClose: chat.close, onOpen: chat.openConversation, conversationOpen: chat.isOpen });
   const inputNotifications = useMemo(
-    () => trackNotifications(track.attentionItems),
-    [track.attentionItems],
+    (): readonly TrackInputNotification[] => [
+      ...(snapshot.pendingApprovals ?? []).map(approval => ({
+        key: approval.id, kind: 'approval' as const, text: approval.questions[0]?.question ?? 'Approval required',
+        atMs: approval.createdAtMs,
+      })),
+      ...trackNotifications(track.attentionItems),
+    ],
+    [snapshot.pendingApprovals, track.attentionItems],
   );
   /* Stable across renders that do not change the overlays, so a live table is
      not handed a new resolver identity on every keystroke elsewhere. */

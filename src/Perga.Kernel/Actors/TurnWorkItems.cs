@@ -51,7 +51,7 @@ public sealed partial class TrackActor
         Task OnTurnActivatedCoreAsync(AgentSessionDto runningSession, EventEnvelopeDto runningEvent, long now, CancellationToken ct);
         SessionTurnDto CreateUnstartedTurn();
         Task OnProviderDeliveredAsync(SessionTurnDto turn, UnifiedAgentEvent evt, string? nativeThreadId);
-        Task PersistSettlementCoreAsync(bool delivered, SessionTurnDto turn, IReadOnlyList<SessionItemDto> items,
+        Task PersistSettlementCoreAsync(bool delivered, bool rejectedBeforePrompt, SessionTurnDto turn, IReadOnlyList<SessionItemDto> items,
             AgentSessionDto session);
         Task OnTurnSettledAsync(TurnSettlement settlement);
 
@@ -122,9 +122,10 @@ public sealed partial class TrackActor
             _delivered = true;
         }
 
-        public Task PersistSettlementCoreAsync(bool delivered, SessionTurnDto turn, IReadOnlyList<SessionItemDto> items,
+        public Task PersistSettlementCoreAsync(bool delivered, bool rejectedBeforePrompt, SessionTurnDto turn, IReadOnlyList<SessionItemDto> items,
             AgentSessionDto session) =>
-            actor.SettleDurableTurnCoreAsync(input, delivered ? "delivered" : "unknown", turn, items, session);
+            actor.SettleDurableTurnCoreAsync(input, delivered ? "delivered" : rejectedBeforePrompt ? "rejected" : "unknown",
+                turn, items, session);
 
         public async Task OnTurnSettledAsync(TurnSettlement settlement) => await settlement.SettleAsync().ConfigureAwait(false);
 
@@ -198,7 +199,7 @@ public sealed partial class TrackActor
 
         public abstract Task OnProviderDeliveredAsync(SessionTurnDto turn, UnifiedAgentEvent evt, string? nativeThreadId);
 
-        public Task PersistSettlementCoreAsync(bool delivered, SessionTurnDto turn, IReadOnlyList<SessionItemDto> items,
+        public Task PersistSettlementCoreAsync(bool delivered, bool rejectedBeforePrompt, SessionTurnDto turn, IReadOnlyList<SessionItemDto> items,
             AgentSessionDto session) => Actor.CompleteWakeTurnCoreAsync(turn, items, session);
 
         public abstract Task OnTurnSettledAsync(TurnSettlement settlement);

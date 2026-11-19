@@ -369,7 +369,7 @@ public sealed class McpPluginRouter : IAsyncDisposable
                     _pluginId,
                     toolName,
                     normalizedArgs,
-                    ct).ConfigureAwait(false);
+                    ct, caller.ExecutionOrigin).ConfigureAwait(false);
 
                 var client = await _router.GetOrOpenClientAsync(_pluginId, ct).ConfigureAwait(false);
                 return await client.CallToolAsync(toolName, normalizedArgs, ct).ConfigureAwait(false);

@@ -409,7 +409,7 @@ public sealed class ApiV1RestIntegrationTests
         Assert.Contains("Supplement the running turn", steeredPrompts);
 
         // POST /api/v1/sessions/{sessionId}/interrupt -> cancels slow turn!
-        using var interruptResp = await client.PostAsync($"/api/v1/sessions/{subSession.Id}/interrupt", null);
+        using var interruptResp = await client.PostAsJsonAsync($"/api/v1/sessions/{subSession.Id}/interrupt", new { turnId = inFlight.TurnId });
         Assert.Equal(HttpStatusCode.OK, interruptResp.StatusCode);
 
         await cluster.Services.GetRequiredService<IPergaKernel>().WaitForTrackIdleAsync(trackId);

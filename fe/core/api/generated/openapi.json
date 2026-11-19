@@ -15566,17 +15566,19 @@
             "description": "Interrupted"
           },
           "409": {
-            "description": "The Worker attempt or turn changed."
+            "description": "The turn changed or the provider could not confirm that it stopped."
+          },
+          "400": {
+            "description": "A target turn is required."
           }
         },
         "requestBody": {
-          "description": "Required for a bound Worker. Both IDs identify the expected active turn.",
+          "description": "The observed turn is required. Bound Worker turns also require attemptId.",
           "content": {
             "application/json": {
               "schema": {
                 "type": "object",
                 "required": [
-                  "attemptId",
                   "turnId"
                 ],
                 "properties": {
@@ -15589,7 +15591,8 @@
                 }
               }
             }
-          }
+          },
+          "required": true
         }
       }
     },
@@ -15646,6 +15649,58 @@
                   "$ref": "#/components/schemas/AskDto"
                 }
               }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tracks/{trackId}/executions/{executionId}/approvals/{approvalId}/decision": {
+      "parameters": [
+        {
+          "name": "trackId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "executionId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "approvalId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApprovalDto"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The execution no longer accepts this approval decision."
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {}
             }
           }
         }
@@ -18411,7 +18466,10 @@
             "description": "Model slug for the planner's first and subsequent turns (for a `claude` Planner, a value of\nthe Claude CLI's model list, `GET /api/models?provider=claude`). Omitted or null follows\ninstallation defaults, as on the conversation model endpoint."
           },
           "permissionMode": {
-            "type": ["string", "null"],
+            "type": [
+              "string",
+              "null"
+            ],
             "description": "Provider permission mode ID from bootstrap permissionModes; omitted follows the provider default."
           },
           "planner_provider": {
@@ -18883,7 +18941,6 @@
         "required": [
           "card_id",
           "compact_outcome",
-
           "permission_mode",
           "recovery",
           "pending",
@@ -20787,7 +20844,6 @@
             "required": [
               "card_id",
               "compact_outcome",
-
               "permission_mode",
               "recovery",
               "pending",
@@ -25727,14 +25783,20 @@
             "minimum": 0
           },
           "windowTokens": {
-            "type": ["integer", "null"],
+            "type": [
+              "integer",
+              "null"
+            ],
             "minimum": 1
           },
           "observedAtMs": {
             "type": "integer"
           },
           "ratio": {
-            "type": ["number", "null"],
+            "type": [
+              "number",
+              "null"
+            ],
             "minimum": 0,
             "maximum": 1
           }
@@ -26250,7 +26312,8 @@
           "report",
           "tasks",
           "sessions",
-          "openAsks"
+          "openAsks",
+          "pendingApprovals"
         ],
         "properties": {
           "track": {
@@ -26290,6 +26353,12 @@
               "string",
               "null"
             ]
+          },
+          "pendingApprovals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ApprovalDto"
+            }
           }
         }
       },
@@ -26696,7 +26765,7 @@
           "attemptId",
           "phase",
           "nativeSteer",
-          "openAsks",
+          "pendingApprovals",
           "sequence",
           "reset",
           "events",
@@ -26732,12 +26801,6 @@
           },
           "nativeSteer": {
             "type": "boolean"
-          },
-          "openAsks": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/AskDto"
-            }
           },
           "sequence": {
             "type": "integer"
@@ -26790,6 +26853,12 @@
               "string",
               "null"
             ]
+          },
+          "pendingApprovals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ApprovalDto"
+            }
           }
         }
       },
@@ -27128,6 +27197,36 @@
                 "type": "null"
               }
             ]
+          }
+        }
+      },
+      "ApprovalDto": {
+        "type": "object",
+        "required": [
+          "id",
+          "executionId",
+          "sessionId",
+          "questions",
+          "createdAtMs"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "executionId": {
+            "type": "string"
+          },
+          "sessionId": {
+            "type": "string"
+          },
+          "turnId": {
+            "type": "string",
+            "nullable": true
+          },
+          "questions": {},
+          "createdAtMs": {
+            "type": "integer",
+            "format": "int64"
           }
         }
       }

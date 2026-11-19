@@ -31,8 +31,7 @@ public sealed partial class TrackActor
             : attempt.Paused ? "paused"
             : attempt.AttemptDto.Status.ToLowerInvariant();
 
-        var asks = active is null ? [] : active.OwnedAskIds
-            .Select(id => _asks.GetValueOrDefault(id)).OfType<AskDto>().Where(ask => ask.Status == AskStatus.Open).ToArray();
+        var approvals = active is null ? [] : ReadPendingApprovals(active.TurnDto.Id);
         var (sequence, reset, events, text, truncated) = active is null
             ? (0L, activityTurnId is not null, Array.Empty<WorkerActivityEvent>(), string.Empty, false)
             : active.Activity.Read(afterSequence, activityTurnId == active.TurnDto.Id);
@@ -41,7 +40,7 @@ public sealed partial class TrackActor
         var settings = await ReadWorkerSettingsCoreAsync(session, ct).ConfigureAwait(false);
         var configuration = GetWorkerProviderConfigurationCore(session.Id, attempt);
         return new WorkerActivityDto(task, attemptId, phase, active?.AgentSession.SupportsNativeSteer == true,
-            asks, sequence, reset, events, messages.Select(message => new WorkerMessageActivity(message.Id, message.AuthorId,
+            approvals, sequence, reset, events, messages.Select(message => new WorkerMessageActivity(message.Id, message.AuthorId,
                 message.Content, message.DeliveredTurnId ?? message.TurnId ?? message.TargetTurnId, message.Delivery, message.CreatedAtMs)).ToArray(), text, truncated,
             settings, active?.ProviderAccepted == true ? active.Settings : null, configuration?.Models.Count > 0,
             configuration?.GetReasoningEfforts(settings.Model) ?? [], attempt?.LastError, configuration,
@@ -249,49 +248,36 @@ public sealed partial class TrackActor
         }, ct).ConfigureAwait(false);
     }
 
-    public Task InterruptWorkerAsync(string sessionId, string attemptId, string turnId, string? callerSessionId, CancellationToken ct) =>
-        EnqueueAsync(async _ =>
+    public async Task InterruptWorkerAsync(string sessionId, string attemptId, string turnId, string? callerSessionId, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        var stop = await EnqueueAsync<Task>(async _ =>
         {
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
             RequireWorkerOperatorCore(callerSessionId);
             var (_, attempt) = RequireCurrentWorkerCore(sessionId, attemptId);
             if (!_scheduler.TryGetActive(sessionId, out var active) || active.TurnDto.Id != turnId)
                 throw KernelException.Conflict("The Worker turn changed. Refresh the session before interrupting.");
-            if (active.Interrupted)
-                return;
-            attempt.Paused = true;
-            _mcpBridge.RevokeSession(sessionId);
-            using var stopTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
-            await InterruptActiveTurnCoreAsync(active, stopTimeout.Token).ConfigureAwait(false);
-        }, ct);
+            ct.ThrowIfCancellationRequested();
+            return StopWorkerTurn(active, attempt);
+        }, ct).ConfigureAwait(false);
+        await stop.WaitAsync(ct).ConfigureAwait(false);
+    }
 
-    private static async Task InterruptActiveTurnCoreAsync(ActiveTurnState active, CancellationToken ct)
+    private Task StopWorkerTurn(ActiveTurnState active, ActiveAttemptState attempt)
     {
-        active.Interrupted = true;
-        try
+        lock (active.Control.Sync)
         {
-            await active.AgentSession.CancelTurnAsync(ct).ConfigureAwait(false);
-        }
-        finally
-        {
-            active.TurnCts.Cancel();
+            if (active.Control.Phase == ExecutionPhase.Ended)
+                return RequestTurnStop(active);
+            attempt.Paused = true;
+            _mcpBridge.RevokeSession(active.SessionId);
+            return RequestTurnStop(active);
         }
     }
 
     private async Task CloseInterruptedWorkerCoreAsync(ActiveTurnState turn, ActiveAttemptState attempt)
     {
-        foreach (var askId in turn.OwnedAskIds)
-        {
-            if (!_asks.TryGetValue(askId, out var ask) || ask.Status != AskStatus.Open)
-                continue;
-            var withdrawn = ask with { Status = AskStatus.Withdrawn };
-            var evt = new EventEnvelopeDto(null, _track.AreaId, TrackId, KernelEventKinds.AskChanged, JsonHelpers.ToElement(withdrawn), NowMs());
-            await _store.UpsertAskAsync(withdrawn, evt, CancellationToken.None).ConfigureAwait(false);
-            _asks[askId] = withdrawn;
-            if (_pendingAskWaiters.Remove(askId, out var waiter))
-                waiter.TrySetCanceled();
-            await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, evt, CancellationToken.None).ConfigureAwait(false);
-        }
         if (_openAgentSessions.Remove(turn.SessionId, out var agent))
         {
             try

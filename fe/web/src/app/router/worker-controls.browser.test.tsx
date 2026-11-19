@@ -19,7 +19,7 @@ it('shows Worker progress and approvals, preserves retry targets, and stops the 
   let queuedVisible = false;
   let staleSteers = 0;
   let currentTurn = 'turn-1';
-  const approval = { id: 'worker-ask', trackId: 'daily', status: 'open', delivery: 'wake', createdAtMs: 4,
+  const approval = { id: 'worker-ask', executionId: 'turn-1', turnId: 'turn-1', sessionId: id, createdAtMs: 4,
     questions: [{ question: 'Approve reading the report?', options: ['Approve', 'Deny'], isMultiSelect: false }] };
   let settings = { version: 0, model: null as string | null, reasoningEffort: null as string | null, approvalMode: 'ask' };
   const providerConfiguration = { defaultModel: 'gpt-5.4-mini', defaultReasoningEffort: 'low', models: [
@@ -47,11 +47,11 @@ it('shows Worker progress and approvals, preserves retry targets, and stops the 
           { sequence: 2, kind: 'session.tool_progress', payload: { callId: 'tool-1', phase: 'completed', output: 'Found five rows.' }, createdAtMs: 2 },
         ],
         messages: [{ id: 'old-message', author: 'lead', content: 'Read the weekly report.', delivery: 'delivered', createdAtMs: 2 }],
-        openAsks: approvalOpen ? [approval] : [],
+        pendingApprovals: approvalOpen ? [approval] : [],
         nextSettings: settings, activeSettings: settings, canChangeModel: true, reasoningEfforts: ['low'],
         providerConfiguration, approvalAuthorizationConfigured: true },
     });
-    if (request.path === '/api/v1/tracks/daily/asks/worker-ask/answer') {
+    if (request.path === '/api/v1/tracks/daily/executions/turn-1/approvals/worker-ask/decision') {
       approvalOpen = false;
       return ok({ ...approval, status: 'answered', answeredAtMs: 5 });
     }
@@ -89,7 +89,7 @@ it('shows Worker progress and approvals, preserves retry targets, and stops the 
     expect(screen.queryByRole('button', { name: /^Approvals:/ })).toBeNull();
     await screen.findByText('Approve reading the report?');
     fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
-    await waitFor(() => expect(view.requests.find(request => request.path === '/api/v1/tracks/daily/asks/worker-ask/answer')?.body).toEqual({
+    await waitFor(() => expect(view.requests.find(request => request.path === '/api/v1/tracks/daily/executions/turn-1/approvals/worker-ask/decision')?.body).toEqual({
       answers: [{ option: 0, value: 'Approve' }],
     }));
     await waitFor(() => expect(screen.queryByText('Approve reading the report?')).toBeNull());

@@ -1175,6 +1175,8 @@ export const wireEventSchema = z.discriminatedUnion('ev', [
   pergaSessionUpdatedSchema,
   pergaTurnCompletedSchema,
   pergaAskChangedSchema,
+  z.object({ ev: z.literal('approval.changed'), data: z.object({ trackId: z.string(), sessionId: z.string() }) }),
+  z.object({ ev: z.literal('approval.audit'), data: z.undefined() }),
   pergaMailReceivedSchema,
   pergaTerminalChangedSchema,
   pergaSessionTextDeltaSchema,
@@ -1260,6 +1262,10 @@ export function decodeWireEvent(input: unknown): WireEventDecodeResult {
   if (typeof input === 'object' && input !== null && 'kind' in input && !('ev' in input)) {
     const perga = decodePergaEventEnvelope(input);
     if (perga.status === 'failed') return perga;
+    if (perga.kind === 'approvals') return { status: 'ready', value: {
+      ev: 'approval.changed', data: { trackId: perga.trackId, sessionId: perga.sessionId },
+    } };
+    if (perga.kind === 'approval-audit') return { status: 'ready', value: { ev: 'approval.audit', data: undefined } };
     if (perga.kind === 'upgrade-status') return { status: 'ready', value: { ev: 'system.upgrade_status', data: perga.payload } };
     if (perga.kind === 'delta') {
       const delta: PergaStreamDelta = perga.delta;

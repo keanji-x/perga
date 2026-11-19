@@ -6,6 +6,35 @@ namespace Perga.Storage.Tests;
 
 public sealed class MainMigrationUpgradeTests
 {
+    [Fact]
+    public async Task ApprovalMigrationRetiresOpenHoldsAndPreservesWakeAndHistory()
+    {
+        var directory = Directory.CreateTempSubdirectory("perga-approval-upgrade-");
+        var path = Path.Combine(directory.FullName, "v15.db");
+        try
+        {
+            var migrations = SqliteMigrator.LoadEmbeddedMigrations();
+            await new SqliteMigrator(migrations.Where(migration => migration.Version <= 15).ToArray()).MigrateAsync(path);
+            await using var connection = new SqliteConnection($"Data Source={path};Pooling=False");
+            await connection.OpenAsync();
+            await connection.ExecuteAsync("""
+                INSERT INTO areas (id, name, color, created_at_ms, updated_at_ms) VALUES ('area', 'Area', '#000000', 1, 1);
+                INSERT INTO tracks (id, area_id, cwd, created_at_ms, updated_at_ms) VALUES ('track', 'area', '/tmp', 1, 1);
+                INSERT INTO asks (id, track_id, status, delivery, session_id, turn_id, questions_json, created_at_ms)
+                VALUES ('hold', 'track', 'open', 'hold', 'session', 'turn', '[]', 1),
+                       ('answered', 'track', 'answered', 'hold', 'session', 'turn', '[]', 1),
+                       ('wake', 'track', 'open', 'wake', NULL, NULL, '[]', 1);
+                """);
+            await new SqliteMigrator().MigrateAsync(path);
+            await new SqliteMigrator().MigrateAsync(path);
+            var rows = await connection.QueryAsync<(string Id, string Status, string? Session, string? Turn)>(
+                "SELECT id, status, session_id, turn_id FROM asks ORDER BY id;");
+            Assert.Equal(new[] { ("answered", "answered", "session", "turn"), ("hold", "withdrawn", "session", "turn"),
+                ("wake", "open", (string?)null, (string?)null) }, rows);
+        }
+        finally { directory.Delete(recursive: true); }
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -223,7 +252,7 @@ public sealed class MainMigrationUpgradeTests
             Assert.Null(await upgraded.ExecuteScalarAsync<string?>("SELECT reasoning_effort FROM agent_sessions WHERE id = 'session';"));
             Assert.Equal("Retained input", await upgraded.ExecuteScalarAsync<string>("SELECT content FROM session_messages WHERE id = 'input' AND request_key = 'original-key' AND request_hash = 'original-hash' AND delivery = 'queued';"));
             Assert.Equal("{\"retained\":true}", await upgraded.ExecuteScalarAsync<string>("SELECT intent_json FROM track_workspace_preparations WHERE track_id = 'track';"));
-            Assert.Equal(Enumerable.Range(1, 15), await upgraded.QueryAsync<int>("SELECT version FROM schema_migrations ORDER BY version;"));
+            Assert.Equal(Enumerable.Range(1, 16), await upgraded.QueryAsync<int>("SELECT version FROM schema_migrations ORDER BY version;"));
             foreach (var migration in original)
             {
                 Assert.Equal(migration.ChecksumSha256, await upgraded.ExecuteScalarAsync<string>(

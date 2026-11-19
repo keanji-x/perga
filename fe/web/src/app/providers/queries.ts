@@ -269,7 +269,7 @@ export function usePlannerMutations(transport: ApiTransportPort, cardId: string,
     /* Admitted at the press, as every chat write is: a stop that cannot leave the browser is not sent (#2068). */
     compact: () => Promise.resolve().then(() => admitTransport(transport))
       .then((admitted) => runOperation(admitted, compactPlannerOperation(cardId), unauthorized)).then(refreshAfter),
-    interrupt: (worker?: { attemptId: string; turnId: string }) => Promise.resolve().then(() => admitTransport(transport))
+    interrupt: (worker?: { attemptId?: string; turnId: string }) => Promise.resolve().then(() => admitTransport(transport))
       .then((admitted) => runOperation(admitted, interruptPlannerOperation(cardId, worker), unauthorized)).then(refreshAfter),
     sendWorker: (key: string, body: Parameters<typeof sendWorkerMessageOperation>[2]) =>
       Promise.resolve().then(() => admitTransport(transport))
@@ -277,9 +277,9 @@ export function usePlannerMutations(transport: ApiTransportPort, cardId: string,
     updateWorkerSettings: (settings: Parameters<typeof updateWorkerSettingsOperation>[1], approvalKey?: string) =>
       Promise.resolve().then(() => admitTransport(transport))
         .then(admitted => runOperation(admitted, updateWorkerSettingsOperation(cardId, settings, approvalKey), unauthorized)).then(refreshAfter),
-    answerWorkerAsk: (trackId: string, askId: AskId, answers: readonly AskAnswer[], questions: readonly AskQuestion[]) =>
+    answerWorkerAsk: (trackId: string, askId: AskId, answers: readonly AskAnswer[], questions: readonly AskQuestion[], executionId?: string) =>
       Promise.resolve().then(() => admitTransport(transport))
-        .then(admitted => runOperation(admitted, answerAskOperation(trackId, askId, answers, questions), unauthorized))
+        .then(admitted => runOperation(admitted, answerAskOperation(trackId, askId, answers, questions, executionId), unauthorized))
         .finally(() => {
           refreshAfter(undefined);
           void client.invalidateQueries({ queryKey: queryKeys.trackDetail(trackId) });
@@ -883,7 +883,7 @@ export type TrackMutations = Readonly<{
   /** Dismiss one notification item by its kernel key. A `404` rejects too: `DISMISS_FAILURES` reads it as done. */
   dismissActivityItem: (trackId: string, key: string) => Promise<void>;
   /** Answer one ask, one answer per question in order. A `409` rejects too: `ANSWER_ASK_FAILURES` reads it as done. */
-  answerAsk: (trackId: string, askId: AskId, answers: readonly AskAnswer[], questions?: readonly AskQuestion[]) => Promise<void>;
+  answerAsk: (trackId: string, askId: AskId, answers: readonly AskAnswer[], questions?: readonly AskQuestion[], executionId?: string) => Promise<void>;
   /** Update one report block by human CAS edit (`PUT /api/v1/tracks/{trackId}/report/blocks/{blockId}`). */
   updateReportBlock: (trackId: string, blockId: string, body: HumanReportBlockUpdateBody) => Promise<ReportReadResultDto>;
 }>;
@@ -1007,8 +1007,8 @@ export function useTrackMutations(transport: ApiTransportPort, unauthorized: Una
   /* An answer may apply a lifecycle action; refresh detail/lists even after an uncertain response.
    * The projector's overlay remains authoritative for removing the question itself. */
   const answerAsk = useRecoveryMutation(transport, {
-    mutationFn: ({ trackId, askId, answers, questions }: { trackId: string; askId: AskId; answers: readonly AskAnswer[]; questions?: readonly AskQuestion[] }, transport: ApiTransportPort) =>
-      runOperation(transport, answerAskOperation(trackId, askId, answers, questions), unauthorized),
+    mutationFn: ({ trackId, askId, answers, questions, executionId }: { trackId: string; askId: AskId; answers: readonly AskAnswer[]; questions?: readonly AskQuestion[]; executionId?: string }, transport: ApiTransportPort) =>
+      runOperation(transport, answerAskOperation(trackId, askId, answers, questions, executionId), unauthorized),
     onSettled: (_answer, _error, { trackId }) => {
       void client.invalidateQueries({ queryKey: queryKeys.trackDetail(trackId) });
       void client.invalidateQueries({ queryKey: queryKeys.trackLists() });
@@ -1041,7 +1041,7 @@ export function useTrackMutations(transport: ApiTransportPort, unauthorized: Una
       patchTrack(trackId, areaId, { pinned_at: pinned ? nowMs : null }),
     remove: async (trackId, areaId, signal) => { await remove.mutateAsync({ trackId, areaId, signal }); },
     dismissActivityItem: async (trackId, key) => { await dismissItem.mutateAsync({ trackId, key }); },
-    answerAsk: async (trackId, askId, answers, questions) => { await answerAsk.mutateAsync({ trackId, askId, answers, questions }); },
+    answerAsk: async (trackId, askId, answers, questions, executionId) => { await answerAsk.mutateAsync({ trackId, askId, answers, questions, executionId }); },
     updateReportBlock: async (trackId, blockId, body) => updateReportBlock.mutateAsync({ trackId, blockId, body }),
   };
 }

@@ -12,7 +12,10 @@ public sealed record TrackAggregateSnapshot(
     IReadOnlyList<AgentSessionDto> Sessions,
     IReadOnlyList<AskDto> OpenAsks,
     string? TemplateSnapshotSource,
-    string? WorkspacePreparation = null);
+    string? WorkspacePreparation = null)
+{
+    public IReadOnlyList<ApprovalDto> PendingApprovals { get; init; } = [];
+}
 
 public sealed record ResourceCreationKey(string Operation, string ScopeId, string Key, string Hash);
 
