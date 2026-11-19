@@ -172,14 +172,16 @@ function effortsFor<Provider extends string>(
   const models = catalog?.models ?? [];
   const followed = catalog?.default.model == null
     ? undefined
-    : models.find((model) => model.model === catalog.default.model);
+    : models.find((model) => model.model === catalog.default.model || model.resolved_model === catalog.default.model);
   const chosen = modelId === null
     ? followed
     : models.find((model) => model.model === modelId);
-  const efforts = (modelId === null ? catalog?.default.supported_reasoning_efforts : null)
-    ?? chosen?.supported_reasoning_efforts ?? [];
+  const defaultEfforts = catalog?.default.supported_reasoning_efforts;
+  const efforts = (modelId === null && defaultEfforts != null && defaultEfforts.length > 0
+    ? defaultEfforts
+    : chosen?.supported_reasoning_efforts) ?? [];
   const effortDefault = modelId === null
-    ? catalog?.default.reasoning_effort ?? null
+    ? catalog?.default.reasoning_effort ?? chosen?.default_reasoning_effort ?? null
     : chosen?.default_reasoning_effort ?? null;
   return { efforts, effortDefault };
 }
@@ -203,7 +205,10 @@ export function ModelPill<Provider extends string = AgentProvider>({
 }>) {
   const [open, setOpen] = useState(false);
   const [viewedProvider, setViewedProvider] = useState<Provider>(provider);
-  const [dragEffortIndex, setDragEffortIndex] = useState<number | null>(null);
+  const [draft, setDraft] = useState<Readonly<{ provider: Provider; selection: ModelSelection }>>({
+    provider,
+    selection,
+  });
   const hostRef = useRef<HTMLSpanElement | null>(null);
   const { onEscape, onOpenChange } = useEscapeFocus(open, setOpen, hostRef);
 
@@ -242,16 +247,20 @@ export function ModelPill<Provider extends string = AgentProvider>({
     ?? shown[0];
 
   const handleOpenChange = (nextOpen: boolean) => {
-    if (nextOpen) setViewedProvider(provider);
-    setDragEffortIndex(null);
+    if (nextOpen) {
+      setViewedProvider(provider);
+      setDraft({ provider, selection });
+    }
     onOpenChange(nextOpen);
   };
 
-  const viewedIsCurrent = viewedGroup !== undefined && viewedGroup.provider === provider;
-  const viewedModelId = viewedIsCurrent ? selection.model : null;
-  const viewedEffortValue = viewedIsCurrent ? selection.reasoning_effort : null;
+  const viewedIsDraft = viewedGroup !== undefined && viewedGroup.provider === draft.provider;
+  const viewedModelId = viewedIsDraft ? draft.selection.model : null;
+  const viewedEffortValue = viewedIsDraft ? draft.selection.reasoning_effort : null;
   const viewedEffortInfo = effortsFor(viewedGroup, viewedModelId);
   const viewedReason = viewedGroup ? catalogReason(viewedGroup) : { reason: null, refused: false, blocked: null };
+  const draftGroup = shown.find((group) => group.provider === draft.provider);
+  const draftBlocked = draftGroup === undefined || catalogReason(draftGroup).blocked !== null;
 
   const effortStops = viewedEffortInfo.efforts.map((entry) => ({
     value: entry.reasoning_effort,
@@ -260,16 +269,13 @@ export function ModelPill<Provider extends string = AgentProvider>({
   const defaultStopIndex = viewedEffortInfo.effortDefault === null
     ? 0
     : Math.max(0, effortStops.findIndex((stop) => stop.value === viewedEffortInfo.effortDefault));
-  const committedEffortIndex = viewedEffortValue === null
+  const sliderIndex = viewedEffortValue === null
     ? defaultStopIndex
     : Math.max(0, effortStops.findIndex((stop) => stop.value === viewedEffortValue));
-  const sliderIndex = dragEffortIndex !== null && dragEffortIndex < effortStops.length
-    ? dragEffortIndex
-    : committedEffortIndex;
   const currentStopLabel = effortStops.at(sliderIndex)?.label ?? FOLLOW_DEFAULT_LABEL;
   const displayedEffortLabel = viewedEffortInfo.efforts.length === 0
     ? 'N/A'
-    : dragEffortIndex === null && viewedEffortValue === null && viewedEffortInfo.effortDefault !== null
+    : viewedEffortValue === null && viewedEffortInfo.effortDefault !== null
       ? `${currentStopLabel} (${FOLLOW_DEFAULT_LABEL})`
       : currentStopLabel;
 
@@ -280,7 +286,7 @@ export function ModelPill<Provider extends string = AgentProvider>({
           {shown.map((group) => {
             const heading = providerLabel(group, group.provider);
             const isViewed = group.provider === viewedGroup.provider;
-            const isSelectedProvider = group.provider === provider;
+            const isSelectedProvider = group.provider === draft.provider;
             return (
               <button
                 key={group.provider}
@@ -290,7 +296,6 @@ export function ModelPill<Provider extends string = AgentProvider>({
                 data-nc-active={isViewed ? 'true' : 'false'}
                 className={styles.pickerRow}
                 onClick={() => {
-                  setDragEffortIndex(null);
                   setViewedProvider(group.provider);
                 }}
               >
@@ -305,10 +310,9 @@ export function ModelPill<Provider extends string = AgentProvider>({
         <div className={styles.modelColumn} role="group" aria-label="Models">
           <GroupChoices
             group={viewedGroup}
-            selection={viewedIsCurrent ? selection : null}
+            selection={viewedIsDraft ? draft.selection : null}
             onChange={(next) => {
-              setDragEffortIndex(null);
-              onChange(next, viewedGroup.provider);
+              setDraft({ provider: viewedGroup.provider, selection: next });
             }}
           />
         </div>
@@ -323,12 +327,34 @@ export function ModelPill<Provider extends string = AgentProvider>({
           stops={viewedEffortInfo.efforts.length > 0 ? effortStops : [{ value: null, label: 'N/A' }]}
           selectedIndex={viewedEffortInfo.efforts.length > 0 ? sliderIndex : 0}
           isDisabled={viewedEffortInfo.efforts.length === 0 || viewedReason.blocked !== null}
-          onPreviewIndex={setDragEffortIndex}
-          onCommitIndex={(idx) => {
-            setDragEffortIndex(null);
+          onChangeIndex={(idx) => {
             const stop = effortStops.at(idx);
             if (!stop) return;
-            onChange({ model: viewedModelId, reasoning_effort: stop.value }, viewedGroup.provider);
+            setDraft({
+              provider: viewedGroup.provider,
+              selection: { model: viewedModelId, reasoning_effort: stop.value },
+            });
+          }}
+        />
+      </div>
+      <Divider />
+      <div className={styles.pickerActions}>
+        <Button
+          label="Cancel"
+          variant="ghost"
+          size="sm"
+          onClick={() => {
+            setOpen(false);
+          }}
+        />
+        <Button
+          label="Save"
+          variant="primary"
+          size="sm"
+          isDisabled={draftBlocked}
+          onClick={() => {
+            onChange(draft.selection, draft.provider);
+            setOpen(false);
           }}
         />
       </div>
@@ -450,18 +476,14 @@ function ModelRow({
 }
 
 function EffortSlider({
-  stops, selectedIndex, isDisabled, onPreviewIndex, onCommitIndex,
+  stops, selectedIndex, isDisabled, onChangeIndex,
 }: Readonly<{
   stops: readonly Readonly<{ value: string | null; label: string }>[];
   selectedIndex: number;
   isDisabled: boolean;
-  onPreviewIndex: (index: number | null) => void;
-  onCommitIndex: (index: number) => void;
+  onChangeIndex: (index: number) => void;
 }>) {
-  const [dragIndex, setDragIndex] = useState<number | null>(null);
-  const pointerActiveRef = useRef(false);
   const segments = Math.max(1, stops.length - 1);
-  const value = dragIndex ?? selectedIndex;
 
   return (
     <RadixSlider.Root
@@ -469,22 +491,16 @@ function EffortSlider({
       min={0}
       max={segments}
       step={1}
-      value={[value]}
+      value={[selectedIndex]}
       disabled={isDisabled || stops.length <= 1}
       aria-label="Reasoning effort"
-      onPointerDown={() => {
-        pointerActiveRef.current = true;
-      }}
       onValueChange={([idx]) => {
-        if (idx === undefined || !pointerActiveRef.current) return;
-        setDragIndex(idx);
-        onPreviewIndex(idx);
+        if (idx === undefined) return;
+        onChangeIndex(idx);
       }}
       onValueCommit={([idx]) => {
-        pointerActiveRef.current = false;
-        setDragIndex(null);
         if (idx === undefined) return;
-        onCommitIndex(idx);
+        onChangeIndex(idx);
       }}
     >
       <RadixSlider.Track className={styles.radixSliderTrack}>
@@ -499,7 +515,7 @@ function EffortSlider({
             <span
               key={stop.value ?? idx}
               className={styles.radixSliderTick}
-              data-nc-filled={idx <= value ? 'true' : 'false'}
+              data-nc-filled={idx <= selectedIndex ? 'true' : 'false'}
               style={{ insetInlineStart: tickPos }}
             />
           );

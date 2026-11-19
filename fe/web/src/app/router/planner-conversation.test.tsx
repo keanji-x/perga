@@ -197,6 +197,7 @@ it('sends the chosen model to the server when the picker is used', async () => {
     fireEvent.click(within(drawer).getByRole('button', { name: /^Model:/ }));
     /* Bootstrap declares no models here, so "Default" is the one choice the menu can offer. */
     fireEvent.click(await screen.findByRole('radio', { name: /^Default/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     await waitFor(() => {
       const writes = requests.filter((request) => request.path.endsWith('/model'));
@@ -220,9 +221,9 @@ it('offers exactly the close, the resize edge, Send, the model picker, the role,
     const names = within(drawer)
       .getAllByRole('button', { hidden: true })
       .map((button) => button.getAttribute('aria-label') ?? button.textContent);
-    /* Bootstrap declares no models, so the trigger reads `Model: Default` and no effort control appears. */
+    /* Bootstrap declares no models, so the trigger reads `Model: Default` and no effort control appears; Cancel/Save live inside the closed popover. */
     expect([...names].sort()).toEqual([
-      'Attach an image', 'Close conversation', 'Model: Default', 'Role: Member', 'Send',
+      'Attach an image', 'Cancel', 'Close conversation', 'Model: Default', 'Role: Member', 'Save', 'Send',
     ]);
     /* One shell contract and one shared host edge serve the conversation layout. */
     expect(screen.getAllByRole('separator').map((edge) => edge.getAttribute('aria-label'))).toEqual(['Resize conversation']);
@@ -268,7 +269,7 @@ it('never posts to the planner reset endpoint, however the drawer is driven', as
 
     const controls = within(drawer)
       .getAllByRole('button', { hidden: true })
-      .filter((button) => button.getAttribute('aria-label') !== 'Close conversation');
+      .filter((button) => button.getAttribute('aria-label') !== 'Close conversation' && button.closest('[popover]') === null);
     for (const control of controls) fireEvent.click(control);
     fireEvent.keyDown(document, { key: 'Escape' });
     fireEvent.click(within(drawer).getByRole('button', { name: 'Close conversation' }));

@@ -61,6 +61,7 @@ it('keeps phone preferences compact while selecting model and effort in one menu
     }
     expect(document.activeElement).toBe(slider);
     await userEvent.keyboard('{End}');
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
     expect(onChange).toHaveBeenLastCalledWith({ model: 'test-model', reasoning_effort: 'high' });
     expect(screen.queryByRole('button', { name: /^Reasoning effort:/ })).toBeNull();
     expect(screen.getAllByRole('button')).toHaveLength(3); // Options, Model and Create track.

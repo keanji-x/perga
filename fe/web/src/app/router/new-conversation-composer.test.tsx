@@ -178,6 +178,7 @@ it('offers the registered managed backend and sends the selected provider', asyn
   await pressPlus();
   fireEvent.click(await screen.findByRole('button', { name: /Model:/ }));
   fireEvent.click(await screen.findByRole('radio', { name: 'sonnet' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Save' }));
   await typeInto('Use the selected backend');
   fireEvent.click(screen.getByRole('button', { name: 'Send' }));
   await waitFor(() => expect(requests.find(request => request.method === 'POST' && request.path.endsWith('/sessions'))?.body).toMatchObject({ provider: 'claude', model: 'sonnet', text: 'Use the selected backend' }));

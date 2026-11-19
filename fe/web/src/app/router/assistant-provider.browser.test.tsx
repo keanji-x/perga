@@ -27,8 +27,7 @@ it.each([1280, 390])('selects a dynamically registered backend through the keybo
   const slider = await page.getByRole('slider', { name: 'Reasoning effort' }).findElement();
   slider.focus();
   await userEvent.keyboard('{Home}{End}');
-  await userEvent.keyboard('{Escape}');
-  await expect.element(model).toHaveFocus();
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
   const field = page.getByRole('combobox', { name: 'Message' });
   await field.fill('Frozen first message');
   await userEvent.keyboard('{Enter}');
@@ -57,7 +56,7 @@ it('creates the declared Codex default despite auth/read and catalog unavailabil
   await page.getByRole('button', { name: /^Model:/ }).click();
   await expect.element(page.getByRole('radio', { name: /^Default/ })).toBeEnabled();
   await page.getByRole('radio', { name: /^Default/ }).click();
-  await userEvent.keyboard('{Escape}');
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
   const field = page.getByRole('combobox', { name: 'Message' });
   await field.fill('Follow the backend default'); await userEvent.keyboard('{Enter}');
   await expect.poll(() => fixture.requests.filter(request => request.method === 'POST' && request.path.endsWith('/sessions')).length).toBe(1);
@@ -71,7 +70,7 @@ it('renders, selects and sends a managed identifier independently of legacy UI l
   const model = page.getByRole('button', { name: /^Model:/ });
   await model.click();
   await page.getByRole('radio', { name: 'selected', exact: true }).click();
-  await userEvent.keyboard('{Escape}');
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
   await expect.element(model).toHaveAccessibleName(/^Model: (?:opencode|OpenCode) selected/);
   await page.getByRole('combobox', { name: 'Message' }).fill('Owner registered backend');
   await userEvent.keyboard('{Enter}');

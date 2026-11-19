@@ -6,7 +6,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { RouterProvider, createMemoryHistory } from '@tanstack/react-router';
 import { cleanup, render } from '@testing-library/react';
 import { afterEach, expect, it } from 'vitest';
-import { page, userEvent } from 'vitest/browser';
+import { page } from 'vitest/browser';
 import type { ApiRequest, ApiTransportPort, ApiTransportResponse } from '../../../../core/api/types.ts';
 import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { createAppRouter } from './public.tsx';
@@ -49,7 +49,7 @@ it.each([['claude', 'Claude', 1280], ['claude', 'Claude', 390], ['opencode', 'Op
   await openModelMenu('Model: Codex Default');
   await page.getByRole('group', { name: 'Providers' }).getByRole('radio', { name: label }).click();
   await page.getByRole('radio', { name: `${provider}-model`, exact: true }).click();
-  await userEvent.keyboard('{Escape}');
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
   await expect.element(page.getByRole('button', { name: `Model: ${label} ${provider}-model` })).toBeVisible();
   await page.getByRole('combobox', { name: 'What this track should do' }).fill('Plan the release');
   await page.getByRole('button', { name: 'Create track' }).click();
