@@ -505,11 +505,11 @@
    */
   /* An empty disabled editor loses its line box. Reserve the same line and
      vertical padding while a send is out so the pinned composer cannot shrink. */
-  .input [contenteditable] {
+  .composer:not(:where([data-nc-centered-footer] *)) .input [contenteditable] {
     min-block-size: calc(1lh + var(--space-2) * 2);
   }
 
-  [data-nc-embedded-reading] .input [contenteditable] {
+  [data-nc-embedded-reading]:not([data-nc-centered-footer]) .input [contenteditable] {
     min-block-size: calc(1.5lh + var(--space-2) * 2);
   }
 

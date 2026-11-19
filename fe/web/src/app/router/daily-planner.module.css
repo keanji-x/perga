@@ -1,4 +1,6 @@
 @layer features {
+  .calendarPanel { min-inline-size: 0; }
+  .reportPanel { --document-start: 0px; --document-measure: 100%; min-inline-size: 0; }
   .reportIntro { display: none; }
   .subviewHeader {
     display: flex;

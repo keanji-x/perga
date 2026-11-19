@@ -372,7 +372,7 @@ internal sealed class InMemoryTrackStore : ITrackStore
 
     public Task<string> CreateTrackAsync(TrackCreation creation, ResourceCreationKey? key, CancellationToken ct)
     {
-        var (track, report, templateSnapshot, lead, tasks, firstInput, preparation, events) = creation;
+        var (track, report, templateSnapshot, lead, tasks, firstInput, preparation, events, _, _) = creation;
         lock (_gate)
         {
             if (key is not null && FindCreationAsync(key, ct).Result is { } replay)

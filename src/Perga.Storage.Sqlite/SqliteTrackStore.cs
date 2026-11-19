@@ -148,6 +148,7 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                        created_at_ms AS CreatedAtMs,
                        updated_at_ms AS UpdatedAtMs
                 FROM areas
+                WHERE is_system = 0
                 ORDER BY sort_order ASC, created_at_ms ASC, id ASC;
                 """,
                 cancellationToken: ct)).ConfigureAwait(false);
@@ -289,7 +290,7 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
 
     public Task<string> CreateTrackAsync(TrackCreation creation, ResourceCreationKey? key, CancellationToken ct)
     {
-        var (track, initialReport, templateSnapshot, initialLeadSession, tasks, firstInput, preparation, events) = creation;
+        var (track, initialReport, templateSnapshot, initialLeadSession, tasks, firstInput, preparation, events, dailyDate, systemArea) = creation;
         EnsureInitialized();
 
         var leadSessionId = string.IsNullOrWhiteSpace(track.LeadSessionId)
@@ -306,6 +307,16 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
         return _writer.EnqueueAsync<string>(
             async (conn, tx, innerCt) =>
             {
+                if (dailyDate is not null)
+                {
+                    var existing = await conn.ExecuteScalarAsync<string?>(new CommandDefinition(
+                        "SELECT track_id FROM daily_tracks WHERE date = @Date;", new { Date = dailyDate }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
+                    if (existing is not null) return existing;
+                    ArgumentNullException.ThrowIfNull(systemArea);
+                    await UpsertAreaInternalAsync(conn, tx, systemArea, innerCt).ConfigureAwait(false);
+                    await conn.ExecuteAsync(new CommandDefinition("UPDATE areas SET is_system = 1 WHERE id = @Id;",
+                        new { systemArea.Id }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
+                }
                 var replay = await FindCreationInternalAsync(conn, tx, key, innerCt).ConfigureAwait(false);
                 if (replay is not null)
                     return replay;
@@ -392,6 +403,13 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                         transaction: tx,
                         cancellationToken: innerCt)).ConfigureAwait(false);
 
+                await conn.ExecuteAsync(new CommandDefinition(
+                    "UPDATE report_revisions SET summary = @Summary, leading_comment = @LeadingComment WHERE track_id = @Id AND doc_rev = @DocRev;",
+                    new { track.Id, initialReport.DocRev, initialReport.Summary, initialReport.LeadingComment }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
+                if (dailyDate is not null)
+                    await conn.ExecuteAsync(new CommandDefinition(
+                        "INSERT INTO daily_tracks (date, track_id, created_at_ms) VALUES (@Date, @Id, @CreatedAtMs);",
+                        new { Date = dailyDate, track.Id, track.CreatedAtMs }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
                 await UpsertSessionInternalAsync(conn, tx, initialLeadSession, innerCt).ConfigureAwait(false);
                 foreach (var task in tasks)
                     await UpsertTaskInternalAsync(conn, tx, task, innerCt).ConfigureAwait(false);
@@ -735,6 +753,10 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
         return _writer.EnqueueAsync(
             async (conn, tx, innerCt) =>
             {
+                var previous = await conn.QuerySingleAsync<TodayPreviousReport>(new CommandDefinition(
+                    "SELECT blocks_json AS Blocks, summary AS Summary, leading_comment AS Comment FROM reports WHERE track_id = @TrackId;",
+                    new { TrackId = trackId }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
+                var beforeBlocks = SqliteJsonUpcaster.CompressReportBlocksZstd(SqliteJsonUpcaster.DeserializeReportBlocks(previous.Blocks));
                 await conn.ExecuteAsync(
                     new CommandDefinition(
                         """
@@ -824,7 +846,10 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                         transaction: tx,
                         cancellationToken: innerCt)).ConfigureAwait(false);
 
-                await InsertEventInternalAsync(conn, tx, evt, innerCt).ConfigureAwait(false);
+                var reportEventId = await InsertEventInternalAsync(conn, tx, evt, innerCt).ConfigureAwait(false);
+                await conn.ExecuteAsync(new CommandDefinition(
+                    "UPDATE report_revisions SET event_id = @EventId, summary = @Summary, leading_comment = @LeadingComment, before_blocks_zstd = @BeforeBlocks, summary_before = @BeforeSummary, leading_comment_before = @BeforeComment WHERE track_id = @TrackId AND doc_rev = @DocRev;",
+                    new { EventId = reportEventId, TrackId = trackId, report.DocRev, report.Summary, report.LeadingComment, BeforeBlocks = beforeBlocks, BeforeSummary = previous.Summary, BeforeComment = previous.Comment }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
                 if (dispatch is not null)
                 {
                     var dispatched = syncedTasks.Single(task => task.TaskKey == dispatch.TaskKey);
@@ -1606,7 +1631,8 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
         EnsureInitialized();
         await using var conn = await OpenReadConnectionAsync(ct).ConfigureAwait(false);
         return await conn.ExecuteScalarAsync<long>(new CommandDefinition(
-            "SELECT COALESCE(MAX(id), 0) FROM events", cancellationToken: ct)).ConfigureAwait(false);
+            // AUTOINCREMENT retains the last committed identity after maintenance deletes rows.
+            "SELECT COALESCE((SELECT seq FROM sqlite_sequence WHERE name = 'events'), 0)", cancellationToken: ct)).ConfigureAwait(false);
     }
 
     public async Task<IReadOnlyList<EventEnvelopeDto>> ListEventsSinceAsync(

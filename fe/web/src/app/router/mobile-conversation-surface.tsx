@@ -15,10 +15,11 @@ export type EmbeddedConversationPresentation = Readonly<{
   active: boolean;
   host: HTMLDivElement | null;
   footerPrefix?: ReactNode;
+  emptyIntroduction?: ReactNode;
   label: string;
 }>;
 
-export function ConversationSurface({ embedded, mobileSheet, contextTitle, focusInput = false, ...props }: ComponentProps<typeof Drawer> & Readonly<{ embedded?: EmbeddedConversationPresentation; mobileSheet: boolean; contextTitle?: string; focusInput?: boolean }>) {
+export function ConversationSurface({ embedded, centerEmptyComposer = false, mobileSheet, contextTitle, focusInput = false, ...props }: ComponentProps<typeof Drawer> & Readonly<{ embedded?: EmbeddedConversationPresentation; centerEmptyComposer?: boolean; mobileSheet: boolean; contextTitle?: string; focusInput?: boolean }>) {
   const [editing, setEditing] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
   const previousOpen = useRef(props.open);
@@ -75,8 +76,8 @@ export function ConversationSurface({ embedded, mobileSheet, contextTitle, focus
   // Keep the embedded targets mounted through compact presentation: Sheet owns
   // moving the one footer and retaining its caret. Only the active host paints history.
   return <>
-    {embedded?.host != null && createPortal(<EmbeddedReadingHost id={props.id} label={embedded.label} hidden={!embedded.active}
-      footer={<>{embedded.footerPrefix}<div ref={setEmbeddedNode} /></>}>{embedded.active ? props.children : null}</EmbeddedReadingHost>, embedded.host)}
+    {embedded?.host != null && createPortal(<EmbeddedReadingHost centeredFooter={centerEmptyComposer} id={props.id} label={embedded.label} hidden={!embedded.active}
+      footer={<>{centerEmptyComposer && embedded.emptyIntroduction}<div ref={setEmbeddedNode} />{embedded.footerPrefix}</>}>{embedded.active ? props.children : null}</EmbeddedReadingHost>, embedded.host)}
     <Drawer {...props} open={!embedded?.active && !mobileSheet && props.open} companionVisible={!mobileSheet && props.companionVisible}
       footer={mobileSheet ? undefined : <div ref={setDesktopNode} />}>{mobileSheet || embedded?.active ? null : props.children}</Drawer>
     <Sheet enabled={mobileSheet} open={props.open} label={props.title || '对话'} frame={{ heightPx: sheetHeight, bottomInsetPx: visibleViewport.bottomInset }}

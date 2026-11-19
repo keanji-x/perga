@@ -2,9 +2,11 @@ import { fixtureSession, fixtureTrack, fixtureSnapshot } from './session-contrac
 import { sessionPage, sessionItem, sessionTurn } from './conversation-session-data.ts';
 import { withFontRoleProbe } from '../../../../tools/styles/font-role-fixture.ts';
 import '../../styles/entry.css';
-import { cleanup } from '@testing-library/react';
-import { afterEach, expect, it } from 'vitest';
+import { act, cleanup, render } from '@testing-library/react';
+import { afterEach, expect, it, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
+import { transcript } from '../../../../core/events/query-keys.ts';
+import { NewTrackForm } from '../../features/area/new-track/public.tsx';
 import { renderDailyFixture } from './daily-planner-fixture.tsx';
 
 afterEach(async () => { cleanup(); await page.viewport(1280, 800); });
@@ -99,7 +101,7 @@ it('keeps the daily report usable at phone width', async () => {
 it.each([1000, 768, 600])('keeps the composer inside its conversation card with a long transcript at height %s', async (height) => {
   await page.viewport(1440, height);
   const history = Array.from({ length: 30 }, (_, index) => sessionItem('daily-planner', index + 1, `Reply ${index + 1}.\n\n${'A detailed progress update with enough content to need scrolling. '.repeat(12)}`));
-  renderDailyFixture({ initial: '/?day=2026-10-04', reply: (request) => request.path.includes('/items?')
+  renderDailyFixture({ initial: '/?day=2026-10-04', reply: (request) => request.path.includes('/items?') && !request.path.includes('&view=')
     ? { status: 200, statusText: 'OK', body: sessionPage(fixtureSession('daily-planner', 'daily'), history) } : undefined });
   await page.getByText('Prioritize the release.', { exact: false }).findElement();
   await page.getByRole('button', { name: '讨论这项工作', exact: true }).click();
@@ -247,7 +249,7 @@ it.each([1024, 1440])('keeps the real Today conversation and draft in separate c
 it('scrolls real Planner history above the fixed Today composer across views', async () => {
   await page.viewport(1440, 600);
   const history = Array.from({ length: 20 }, (_, index) => sessionItem('daily-planner', index + 1, `Daily reply ${index + 1}.\n\n${'Plan the release using the current evidence. '.repeat(20)}`));
-  renderDailyFixture({ reply: request => request.path.includes('/items?')
+  renderDailyFixture({ reply: request => request.path.includes('/items?') && !request.path.includes('&view=')
     ? { status: 200, statusText: 'OK', body: sessionPage(fixtureSession('daily-planner', 'daily'), history) } : undefined });
   const assistant = page.getByRole('region', { name: 'Today Assistant', exact: true });
   await assistant.getByText('Daily reply 20.', { exact: false }).findElement();
@@ -269,7 +271,7 @@ it.each([false, true])('navigates loaded Today exchanges and restores the parked
     sessionItem('daily-planner', index * 2 + 1, `Today question ${index + 1}`, 'user', `turn-${index}`),
     sessionItem('daily-planner', index * 2 + 2, `Today reply ${index + 1}. ${'Read the release evidence carefully. '.repeat(30)}`, 'assistant_text', `turn-${index}`),
   ]).flat();
-  renderDailyFixture({ reply: request => request.path.includes('/items?') ? { status: 200, statusText: 'OK', body: sessionPage(fixtureSession('daily-planner', 'daily'), items) } : undefined });
+  renderDailyFixture({ reply: request => request.path.includes('/items?') && !request.path.includes('&view=') ? { status: 200, statusText: 'OK', body: sessionPage(fixtureSession('daily-planner', 'daily'), items) } : undefined });
   const assistant = page.getByRole('region', { name: 'Today Assistant', exact: true });
   const field = assistant.getByRole('combobox', { name: 'Message', exact: true });
   await field.fill('Keep my draft');
@@ -358,4 +360,205 @@ it('honors inventory and New conversation focus when leaving a Today subview', a
   await page.getByRole('button', { name: /Conversation Daily Planner conversation/ }).click();
   await expect.element(field).toHaveFocus();
   await expect.element(field).toHaveTextContent('Planner draft');
+});
+
+
+it('keeps perga Today minimal without triage or Report changes', async () => {
+  await page.viewport(1440, 900);
+  const { requests } = renderDailyFixture({ pergaMode: true, identity: { userId: 'local-owner', displayName: 'Owner', role: 'owner', sessionId: 'perga-owner' } });
+  await expect.element(page.getByRole('region', { name: 'Today Assistant' })).toBeVisible();
+  expect(page.getByRole('region', { name: 'Today triage' }).query()).toBeNull();
+  expect(page.getByText(/Waiting on you/).query()).toBeNull();
+  expect(page.getByText('源文件夹模式 · 未隔离', { exact: true }).query()).toBeNull();
+  expect(page.getByText('Report changes', { exact: true }).query()).toBeNull();
+  expect(page.getByText('Daily Supervisor', { exact: true }).query()).toBeNull();
+  expect(requests.some(request => /\/api\/today\/(supervisor|launchpad)/.test(request.path))).toBe(false);
+  expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(window.innerWidth);
+});
+
+it('keeps perga daily Report usable on mobile without triage or Supervisor', async () => {
+  await page.viewport(390, 844);
+  const { requests } = renderDailyFixture({ pergaMode: true, initial: '/?day=2026-10-04' });
+  await expect.element(page.getByText('Prioritize the release.', { exact: false })).toBeVisible();
+  await expect.element(page.getByRole('region', { name: 'Calendar', exact: true })).toBeVisible();
+  expect(page.getByText('前一天的更新', { exact: true }).query()).toBeNull();
+  expect(page.getByText('Report changes', { exact: true }).query()).toBeNull();
+  expect(page.getByRole('region', { name: 'Today triage' }).query()).toBeNull();
+  expect(page.getByText('源文件夹模式 · 未隔离', { exact: true }).query()).toBeNull();
+  expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(window.innerWidth);
+  expect(requests.some(request => /\/api\/today\/(supervisor|launchpad)/.test(request.path))).toBe(false);
+});
+
+
+it.each([900, 600])('optically centers the empty perga Today composer and pins it below loaded turns at height %s', async height => {
+  await page.viewport(1440, height);
+  // Compare against the real New Track surface under the same production tokens.
+  const referenceProps = { submitting: false, error: null, initialCwd: null,
+    listDirectory: vi.fn(() => Promise.resolve({ path: '/', parent: null, entries: [] })), onSubmit: vi.fn() };
+  const reference = render(<NewTrackForm {...referenceProps} />);
+  const referenceField = page.getByRole('textbox', { name: 'What this track should do', exact: true }).element() as HTMLElement;
+  const referenceBody = referenceField.closest('[data-density] > *')!;
+  referenceField.blur();
+  const referenceStyle = getComputedStyle(referenceField);
+  const referenceMin = referenceStyle.minBlockSize;
+  const referenceBorder = getComputedStyle(referenceBody).borderWidth;
+  const referencePadding = getComputedStyle(referenceBody).padding;
+  const referenceShadow = getComputedStyle(referenceBody).boxShadow;
+  const referenceWidth = reference.container.querySelector('[data-nc-new-track-message]')!.getBoundingClientRect().width;
+  const referenceSendRadius = getComputedStyle(page.getByRole('button', { name: 'Create track', exact: true }).element()).borderRadius;
+  referenceField.focus();
+  await expect.poll(() => getComputedStyle(referenceBody).boxShadow).toMatch(/\) 0px 0px 0px 2px inset$/);
+  const referenceFocus = getComputedStyle(referenceBody).boxShadow;
+  reference.rerender(<NewTrackForm {...referenceProps} submitting />);
+  expect(referenceField.getAttribute('contenteditable')).toBe('false');
+  await expect.poll(() => getComputedStyle(referenceBody).boxShadow).toBe('none');
+  reference.unmount();
+  let populated = false;
+  const fixture = renderDailyFixture({ pergaMode: true, reply: request => request.path.includes('/items?') && !request.path.includes('&view=')
+    ? { status: 200, statusText: 'OK', body: sessionPage(fixtureSession('daily-planner', 'daily'), populated ? [sessionItem('daily-planner', 1, 'Plan the release', 'user')] : []) }
+    : undefined });
+  const assistant = page.getByRole('region', { name: 'Today Assistant', exact: true });
+  const field = assistant.getByRole('combobox', { name: 'Message', exact: true });
+  await expect.element(field).toBeVisible();
+  await expect.poll(() => assistant.element().hasAttribute('data-nc-centered-footer')).toBe(true);
+  expect(assistant.getByText('聊聊你想做什么', { exact: true }).query()).toBeNull();
+  expect(assistant.getByText('从一个问题或想法开始。', { exact: true }).query()).toBeNull();
+  const host = assistant.element();
+  const footer = host.children[2]; // EmbeddedReadingHost's masthead and composer.
+  const box = host.getBoundingClientRect();
+  const footerBox = footer.getBoundingClientRect();
+  expect(host.querySelector('[data-nc-thread-empty]')).toBeNull();
+  const hostStyle = getComputedStyle(host);
+  const rem = parseFloat(getComputedStyle(document.documentElement).fontSize);
+  const space6 = parseFloat(hostStyle.getPropertyValue('--space-6'));
+  expect(parseFloat(hostStyle.paddingBottom)).toBeCloseTo(Math.min(Math.max(space6, height * 0.14), 9 * rem));
+  const opticalOffset = (parseFloat(hostStyle.paddingBottom) - parseFloat(hostStyle.paddingTop)) / 2;
+  expect(opticalOffset).toBeGreaterThan(20);
+  expect(Math.abs((footerBox.top + footerBox.bottom) / 2 - ((box.top + box.bottom) / 2 - opticalOffset))).toBeLessThan(2);
+  const editable = field.element() as HTMLElement;
+  const body = editable.closest('[data-density] > *')!;
+  editable.blur();
+  expect(getComputedStyle(body).borderWidth).toBe(referenceBorder);
+  expect(getComputedStyle(body).padding).toBe(referencePadding);
+  expect(getComputedStyle(body).boxShadow).toBe(referenceShadow);
+  expect(getComputedStyle(body).boxShadow).toBe('none');
+  expect(getComputedStyle(editable).minBlockSize).toBe(referenceMin);
+  expect(parseFloat(getComputedStyle(editable).minBlockSize)).toBeGreaterThanOrEqual(88);
+  expect(parseFloat(getComputedStyle(editable).minBlockSize)).toBeCloseTo(4 * parseFloat(getComputedStyle(editable).lineHeight));
+  expect(footerBox.width).toBeCloseTo(referenceWidth);
+  expect(footerBox.width).toBeCloseTo(parseFloat(getComputedStyle(host).getPropertyValue('--measure-doc')));
+  expect(getComputedStyle(host).alignItems).toBe('safe center');
+  expect(getComputedStyle(host).justifyContent).toBe('safe center');
+  expect(getComputedStyle(assistant.getByRole('button', { name: 'Send', exact: true }).element()).borderRadius).toBe(referenceSendRadius);
+  editable.focus();
+  await expect.poll(() => getComputedStyle(body).boxShadow).toBe(referenceFocus);
+  expect(referenceFocus).toContain('inset');
+  expect(referenceFocus).toContain('2px');
+  expect(getComputedStyle(body).outlineStyle).toBe('none');
+  expect(Math.abs((footerBox.left + footerBox.right) / 2 - (box.left + box.right) / 2)).toBeLessThan(2);
+  expect(assistant.getByText('Report changes').query()).toBeNull();
+  await expect.element(assistant.getByRole('heading', { name: '今天想推进什么？' })).toBeVisible();
+  editable.blur();
+  await expect.poll(() => getComputedStyle(body).boxShadow).toBe('none');
+  await page.screenshot({ path: `../../../../test-results/today-centered-composer-${height}.png` });
+  await field.fill('Keep this draft');
+  const editor = field.element();
+  populated = true;
+  await act(async () => { await fixture.client.invalidateQueries({ queryKey: transcript('daily-planner') }); });
+  await expect.element(assistant.getByText('Plan the release', { exact: true })).toBeVisible();
+  expect(host.hasAttribute('data-nc-centered-footer')).toBe(false);
+  expect(field.element()).toBe(editor);
+  await expect.element(field).toHaveTextContent('Keep this draft');
+  expect(assistant.getByText('Report changes').query()).toBeNull();
+  expect(assistant.getByRole('heading', { name: '今天想推进什么？' }).query()).toBeNull();
+  const send = assistant.getByRole('button', { name: 'Send', exact: true }).element().getBoundingClientRect();
+  expect(send.bottom).toBeLessThanOrEqual(box.bottom);
+  expect(send.top).toBeGreaterThan(box.top + box.height / 2);
+});
+
+it.each([900, 600])('shows the shared masthead above a clean perga composer and keeps the right card usable at height %s', async height => {
+  await page.viewport(1440, height);
+  renderDailyFixture({ pergaMode: true });
+  const assistant = page.getByRole('region', { name: 'Today Assistant', exact: true });
+  const heading = assistant.getByRole('heading', { name: '今天想推进什么？' });
+  await expect.element(heading).toBeVisible();
+  const logo = heading.element().querySelector<SVGSVGElement>('[data-nc-motion="creation"]')!;
+  await expect.element(logo).toBeVisible();
+  expect(assistant.getByText('说说今天的重点，计划与进展会整理在右侧日报里。').query()).toBeNull();
+  const field = assistant.getByRole('combobox', { name: 'Message', exact: true });
+  await expect.element(field).toBeVisible();
+  const body = field.element().closest('[data-density] > *')!;
+  expect(heading.element().getBoundingClientRect().bottom).toBeLessThan(body.getBoundingClientRect().top);
+  expect(heading.element().getBoundingClientRect().left).toBeCloseTo(body.getBoundingClientRect().left);
+  expect(getComputedStyle(body).boxShadow).toBe('none');
+  expect(parseFloat(getComputedStyle(field.element()).minBlockSize)).toBeCloseTo(4 * parseFloat(getComputedStyle(field.element()).lineHeight));
+  expect(assistant.getByText('Report changes').query()).toBeNull();
+  expect(assistant.getByText('聊聊你想做什么').query()).toBeNull();
+  const calendar = page.getByRole('region', { name: 'Calendar', exact: true });
+  await expect.element(calendar).toBeVisible();
+  const card = calendar.element().closest('[data-nc-desktop-panel]')!;
+  expect(calendar.element().getBoundingClientRect().left).toBeGreaterThan(assistant.element().getBoundingClientRect().right);
+  expect(page.getByText('Report changes', { exact: true }).query()).toBeNull();
+  expect(card.textContent).not.toMatch(/Active tracks/i);
+  expect(card.textContent).not.toContain('Project evidence');
+  await expect.element(page.getByRole('heading', { name: 'Daily report', exact: true })).toBeVisible();
+  await expect.element(page.getByText('Prioritize the release.', { exact: false })).toBeVisible();
+  expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(window.innerWidth);
+  await page.screenshot({ path: `../../../../test-results/today-v4-${height}.png` });
+});
+
+it.each([1440, 390])('keeps perga calendar selection in place without a daily track at width %s', async width => {
+  await page.viewport(width, 844);
+  const { router } = renderDailyFixture({ pergaMode: true, initial: '/?day=2026-10-03' });
+  await expect.element(page.getByText('No daily Track was created for this date.')).toBeVisible();
+  const calendar = page.getByRole('region', { name: 'Calendar', exact: true });
+  await expect.element(calendar).toBeVisible();
+  await page.getByRole('radio', { name: 'Month', exact: true }).click();
+  await expect.element(page.getByRole('radio', { name: 'Month', exact: true })).toBeChecked();
+  await calendar.getByRole('button', { name: 'Next month' }).click();
+  const days = calendar.element().querySelectorAll<HTMLButtonElement>('button[aria-pressed]');
+  const selected = days[4].getAttribute('aria-label')!;
+  await calendar.getByRole('button', { name: selected, exact: true }).click();
+  await expect.element(calendar.getByRole('button', { name: selected, exact: true })).toHaveAttribute('aria-pressed', 'true');
+  expect(router.state.location.search).toEqual({ day: '2026-10-03' });
+  await calendar.getByRole('button', { name: 'Today', exact: true }).click();
+  expect(calendar.element().querySelector('[data-nc-today]')?.getAttribute('aria-pressed')).toBe('true');
+  await page.getByRole('radio', { name: 'Week', exact: true }).click();
+  await expect.element(page.getByRole('radio', { name: 'Week', exact: true })).toBeChecked();
+  expect(calendar.element().querySelectorAll('button[aria-pressed]')).toHaveLength(7);
+  expect(router.state.location.search).toEqual({ day: '2026-10-03' });
+  await expect.element(page.getByText('No daily Track was created for this date.')).toBeVisible();
+});
+
+it.each([false, true])('shows perga Conversations only with multiple rows (extra=%s)', async extraPlanner => {
+  await page.viewport(1440, 900);
+  renderDailyFixture({ pergaMode: true, extraPlanner });
+  await expect.element(page.getByText('Prioritize the release.', { exact: false })).toBeVisible();
+  const conversations = page.getByRole('region', { name: 'Conversations', exact: true });
+  if (extraPlanner) {
+    await expect.element(conversations).toBeVisible();
+    await expect.element(conversations.getByRole('button', { name: 'Conversation Other conversation', exact: true })).toBeVisible();
+    await expect.element(conversations.getByRole('button', { name: 'Conversation Daily Planner conversation', exact: true })).toBeVisible();
+  } else {
+    expect(conversations.query()).toBeNull();
+    expect(page.getByRole('button', { name: 'New conversation', exact: true }).query()).toBeNull();
+  }
+});
+
+it.each(['', '   \n  ', '# 今日计划\n\nA populated daily report.'])('shows perga Daily report only when populated (%s)', async reportBody => {
+  await page.viewport(1440, 900);
+  renderDailyFixture({ pergaMode: true, reportBody });
+  await expect.element(page.getByRole('heading', { name: '今天想推进什么？', exact: true })).toBeVisible();
+  const report = page.getByRole('heading', { name: 'Daily report', exact: true });
+  if (reportBody.includes('A populated')) {
+    await expect.element(page.getByText('A populated daily report.')).toBeVisible();
+    await expect.element(report).toBeVisible();
+  } else {
+    await expect.poll(() => document.querySelector('[data-nc-centered-footer]') !== null).toBe(true);
+    await expect.poll(() => page.getByRole('region', { name: 'Track report' }).query()?.getAttribute('aria-busy')).not.toBe('true');
+    expect(report.query()).toBeNull();
+    expect(page.getByText('进展会整理在这里', { exact: true }).query()).toBeNull();
+    expect(page.getByRole('region', { name: 'Track report' }).query()).toBeNull();
+    expect(page.getByRole('region', { name: '空白日报' }).query()).toBeNull();
+  }
 });

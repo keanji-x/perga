@@ -39,6 +39,8 @@ public interface IPergaKernel : IAsyncDisposable
     Task<BootReconcileResult> ReconcileOnBootAsync(CancellationToken ct = default);
     Task<DbMaintenanceStatsDto> RunMaintenancePassAsync(CancellationToken ct = default);
 
+    Task<DailyTrackDto?> GetDailyTrackAsync(string? date, CancellationToken ct = default);
+
     // Areas
     Task<IReadOnlyList<AreaDto>> ListAreasAsync(CancellationToken ct = default);
     Task<AreaDto?> GetAreaAsync(string areaId, CancellationToken ct = default);
@@ -617,13 +619,16 @@ public sealed partial class PergaKernelService : IPergaKernel
         CancellationToken ct = default) =>
         _store.ListTracksAsync(areaId, includeClosed, ct);
 
-    public async Task<TrackAggregateSnapshot> CreateTrackAsync(CreateTrackRequest req, CancellationToken ct = default, string? requestKey = null)
+    public Task<TrackAggregateSnapshot> CreateTrackAsync(CreateTrackRequest req, CancellationToken ct = default, string? requestKey = null) =>
+        CreateTrackCoreAsync(req, ct, requestKey);
+
+    private async Task<TrackAggregateSnapshot> CreateTrackCoreAsync(CreateTrackRequest req, CancellationToken ct, string? requestKey, string? dailyDate = null, AreaDto? systemArea = null)
     {
         var key = CreateKey("track", req.AreaId, requestKey, req);
         if (key is not null && await _store.FindCreationAsync(key, ct).ConfigureAwait(false) is { } replay)
             return await ReadCreatedTrackAsync(replay, ct).ConfigureAwait(false);
 
-        var area = await _store.GetAreaAsync(req.AreaId, ct).ConfigureAwait(false)
+        var area = systemArea ?? await _store.GetAreaAsync(req.AreaId, ct).ConfigureAwait(false)
                    ?? throw KernelException.NotFound($"Area '{req.AreaId}' not found.");
 
         CompiledPolicy? policy = null;
@@ -675,7 +680,7 @@ public sealed partial class PergaKernelService : IPergaKernel
                 : initEval.NextState.Clone();
         }
 
-        var initialMarkdown = policy?.Manifest.InitialReportMarkdown ?? "# Overview\n\nTrack initialized.\n";
+        var initialMarkdown = dailyDate is not null ? string.Empty : policy?.Manifest.InitialReportMarkdown ?? "# Overview\n\nTrack initialized.\n";
         var initialReport = _reportEngine.Parse(initialMarkdown, docRev: 0, summary: string.Empty);
 
         var enabledPlugins = req.EnabledPlugins?.ToArray()
@@ -745,7 +750,7 @@ public sealed partial class PergaKernelService : IPergaKernel
 
         await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
         var id = await _store.CreateTrackAsync(
-            new(track, initialReport, policy?.JsSource, leadSession, initialTasks, null, preparation, events),
+            new(track, initialReport, policy?.JsSource, leadSession, initialTasks, null, preparation, events, dailyDate, systemArea),
             key, ct).ConfigureAwait(false);
         var snapshot = await ReadCreatedTrackAsync(id, CancellationToken.None).ConfigureAwait(false);
         if (id == track.Id)
