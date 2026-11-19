@@ -720,6 +720,7 @@ it('model select: says the change is unconfirmed', async () => {
       await openAssistant();
       fireEvent.click(within(drawerElement()).getByRole('button', { name: /^Model:/ }));
       fireEvent.click(await screen.findByRole('radio', { name: /^Default/ }));
+      fireEvent.click(screen.getByRole('button', { name: 'Save' }));
       expect((await screen.findByRole('alert')).textContent).toBe('The model change is unconfirmed.');
       expect(chatText()).not.toMatch(CONNECTIVITY);
     });
@@ -728,6 +729,7 @@ it('model select: says the model was not changed', async () => {
         const requests = await offlineAfterOpening(() => undefined);
         fireEvent.click(within(drawerElement()).getByRole('button', { name: /^Model:/ }));
         fireEvent.click(await screen.findByRole('radio', { name: /^Default/ }));
+        fireEvent.click(screen.getByRole('button', { name: 'Save' }));
         expect((await screen.findByRole('alert')).textContent).toBe('The model was not changed.');
         expect(requests.filter((request) => request.path.endsWith('/model'))).toEqual([]);
       });
@@ -1204,7 +1206,7 @@ it.each([false, true])('selects a model before the first conversation message an
   await openDraft();
   fireEvent.click(await screen.findByRole('button', { name: /^Model:/ }));
   fireEvent.click(await screen.findByRole('radio', { name: /^gpt-5/ }));
-  fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+  fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
   expect(creates(requests, CONVERSATIONS)).toHaveLength(0);
   await write('Use this model from the start');
@@ -1261,6 +1263,7 @@ it('keeps the first-message model fixed when a menu opened before sending is sel
   await waitFor(() => expect(modelPicker.hasAttribute('disabled') || modelPicker.getAttribute('aria-disabled') === 'true').toBe(false));
   fireEvent.click(modelPicker);
   fireEvent.click(await screen.findByRole('radio', { name: 'gpt-5' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Save' }));
   await write('Keep my choice');
   await waitFor(() => expect(creates(requests, CONVERSATIONS)).toHaveLength(1));
   try {

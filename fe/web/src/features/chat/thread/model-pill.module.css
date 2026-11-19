@@ -321,7 +321,24 @@
     background: var(--paper);
     border: 2px solid var(--accent);
     box-shadow: var(--shadow-float);
+    cursor: grab;
     transition: transform 120ms ease;
+  }
+
+  .radixSliderThumb:active {
+    cursor: grabbing;
+  }
+
+  .radixSliderRoot[data-disabled] .radixSliderThumb {
+    cursor: not-allowed;
+  }
+
+  .pickerActions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: var(--space-1);
+    padding: var(--space-half) var(--space-1) var(--space-half);
   }
 
   @media (hover: hover) {

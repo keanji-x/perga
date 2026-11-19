@@ -152,6 +152,8 @@ describe('ModelPill', () => {
 
     const models = within(menu).getByRole('group', { name: 'Models' });
     fireEvent.click(within(models).getByRole('radio', { name: /^Sonnet/ }));
+    expect(onChange).not.toHaveBeenCalled();
+    fireEvent.click(within(menu).getByRole('button', { name: 'Save' }));
     expect(onChange).toHaveBeenCalledWith({ model: 'sonnet', reasoning_effort: null }, 'claude');
   });
 
@@ -181,6 +183,9 @@ describe('ModelPill', () => {
     expect(slider.getAttribute('aria-valuetext')).toBe('medium');
 
     fireEvent.keyDown(slider, { key: 'ArrowRight' });
+    expect(within(menu).getByText('high')).toBeTruthy();
+    expect(onChange).not.toHaveBeenCalled();
+    fireEvent.click(within(menu).getByRole('button', { name: 'Save' }));
     expect(onChange).toHaveBeenLastCalledWith({ model: 'gpt-5', reasoning_effort: 'high' }, 'codex');
 
     rerender(
@@ -191,9 +196,12 @@ describe('ModelPill', () => {
         onChange={onChange}
       />,
     );
-    expect(slider.getAttribute('aria-valuetext')).toBe('low');
+    const menu2 = openMenu(/^Model:/);
+    const slider2 = within(menu2).getByRole('slider', { name: 'Reasoning effort' });
+    expect(slider2.getAttribute('aria-valuetext')).toBe('low');
 
-    fireEvent.keyDown(slider, { key: 'ArrowRight' });
+    fireEvent.keyDown(slider2, { key: 'ArrowRight' });
+    fireEvent.click(within(menu2).getByRole('button', { name: 'Save' }));
     expect(onChange).toHaveBeenLastCalledWith({ model: 'gpt-5', reasoning_effort: 'medium' }, 'codex');
 
     rerender(
@@ -204,8 +212,42 @@ describe('ModelPill', () => {
         onChange={onChange}
       />,
     );
-    fireEvent.keyDown(slider, { key: 'Home' });
+    const menu3 = openMenu(/^Model:/);
+    fireEvent.keyDown(within(menu3).getByRole('slider', { name: 'Reasoning effort' }), { key: 'Home' });
+    fireEvent.click(within(menu3).getByRole('button', { name: 'Save' }));
     expect(onChange).toHaveBeenLastCalledWith({ model: 'gpt-5', reasoning_effort: 'low' }, 'codex');
+  });
+
+  it('discards draft effort and model changes when Cancel is clicked', () => {
+    const onChange = vi.fn();
+    const multiEffortCatalog = catalog({
+      models: [model({
+        supported_reasoning_efforts: [
+          { reasoning_effort: 'low', description: null },
+          { reasoning_effort: 'medium', description: null },
+          { reasoning_effort: 'high', description: null },
+        ],
+        default_reasoning_effort: 'medium',
+      })],
+    });
+    render(
+      <ModelPill
+        provider="codex"
+        groups={[{ provider: 'codex', availability: null, catalog: multiEffortCatalog }]}
+        selection={{ model: 'gpt-5', reasoning_effort: 'low' }}
+        onChange={onChange}
+      />,
+    );
+    const menu = openMenu(/^Model:/);
+    const slider = within(menu).getByRole('slider', { name: 'Reasoning effort' });
+    fireEvent.keyDown(slider, { key: 'ArrowRight' });
+    expect(within(menu).getByText('medium')).toBeTruthy();
+
+    fireEvent.click(within(menu).getByRole('button', { name: 'Cancel' }));
+    expect(onChange).not.toHaveBeenCalled();
+
+    const reopened = openMenu(/^Model:/);
+    expect(within(reopened).getByRole('slider', { name: 'Reasoning effort' }).getAttribute('aria-valuetext')).toBe('low');
   });
 
   it('disables the effort slider when a model provides no supported_reasoning_efforts', () => {
@@ -261,6 +303,7 @@ describe('ModelPill', () => {
     const defaultRow = within(models).getByRole('radio', { name: /^Default/ });
     expect(isDisabled(defaultRow)).toBe(false);
     fireEvent.click(defaultRow);
+    fireEvent.click(within(menu).getByRole('button', { name: 'Save' }));
     expect(onChange).toHaveBeenLastCalledWith({ model: null, reasoning_effort: null }, 'codex');
   });
 
@@ -295,6 +338,7 @@ describe('ModelPill', () => {
     render(<ModelPill groups={[group]} provider="owner-backend" selection={FOLLOW_INSTALLATION_DEFAULT} onChange={onChange} />);
     const menu = openMenu(/^Model: owner-backend/);
     fireEvent.click(within(menu).getByRole('radio', { name: /^GPT-5/ }));
+    fireEvent.click(within(menu).getByRole('button', { name: 'Save' }));
     expect(onChange).toHaveBeenCalledWith({ model: 'gpt-5', reasoning_effort: null }, 'owner-backend');
   });
 
