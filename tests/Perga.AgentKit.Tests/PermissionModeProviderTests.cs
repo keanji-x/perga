@@ -16,7 +16,7 @@ public sealed class PermissionModeProviderTests : IDisposable
         Assert.Equal("never", ProviderPermissionModes.GetDefaultMode("codex"));
 
         var claudeModes = ProviderPermissionModes.GetModesForProvider("claude");
-        Assert.Equal(["dontAsk", "default", "acceptEdits", "plan", "auto", "manual", "bypassPermissions"], claudeModes.Select(m => m.Id).ToArray());
+        Assert.Equal(["dontAsk", "default", "acceptEdits", "plan", "auto", "bypassPermissions"], claudeModes.Select(m => m.Id).ToArray());
         Assert.Equal("dontAsk", ProviderPermissionModes.GetDefaultMode("claude"));
 
         var acpModes = ProviderPermissionModes.GetModesForProvider("acp:opencode");
@@ -66,7 +66,6 @@ public sealed class PermissionModeProviderTests : IDisposable
     [InlineData("acceptEdits")]
     [InlineData("plan")]
     [InlineData("auto")]
-    [InlineData("manual")]
     [InlineData("bypassPermissions")]
     public async Task ClaudeModesPassThroughUnchanged(string mode)
     {

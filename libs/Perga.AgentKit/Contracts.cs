@@ -118,5 +118,10 @@ public interface IAgentSession : IAsyncDisposable
 public interface IAgentRuntime : IAsyncDisposable
 {
     Task<IReadOnlyList<ProviderStatus>> ProbeProvidersAsync(CancellationToken ct);
+    // An empty catalogue means discovery is unavailable, not an authoritative rejection.
+    async Task<IReadOnlyList<PermissionModeOption>> ProbePermissionModesAsync(string provider, string? cwd, CancellationToken ct) =>
+        (await ProbeProvidersAsync(ct).ConfigureAwait(false))
+            .FirstOrDefault(status => string.Equals(status.Provider, provider, StringComparison.OrdinalIgnoreCase))?.PermissionModes ?? [];
+
     Task<IAgentSession> OpenSessionAsync(HarnessLaunchSpec spec, CancellationToken ct);
 }

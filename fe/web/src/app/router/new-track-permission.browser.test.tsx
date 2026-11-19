@@ -10,8 +10,10 @@ import { prepareReportDocument } from '../../features/report/document/preparatio
 import { ThemeProvider } from '../theme/public.tsx';
 import { createAppRouter } from './public.tsx';
 import { bootTestCardRuntime } from './test-card-runtime.ts';
+import { renderDailyFixture } from './daily-planner-fixture.tsx';
+import { WEB_COMPAT_VERSION } from '../providers/public.tsx';
 
-afterEach(async () => { cleanup(); await page.viewport(1280, 720); });
+afterEach(async () => { cleanup(); document.getElementById('root')?.remove(); await page.viewport(1280, 720); });
 
 function mount() {
   const creates: ApiRequest[] = [];
@@ -66,4 +68,36 @@ it('clears the mode on a provider switch and hides an empty provider list', asyn
   await page.getByRole('button', { name: 'Create track' }).click();
   await expect.poll(() => creates.length).toBe(1);
   expect(creates[0]?.body).not.toHaveProperty('permissionMode');
+});
+
+it.each([false, true])('renders ACP approvals for a null mode (assistant=%s)', async (assistant) => {
+  const id = assistant ? 'second-planner' : 'daily-planner';
+  const fixture = renderDailyFixture({ initial: '/track/daily?panel=conversations', extraPlanner: assistant,
+    plannerProvider: 'opencode', reply: request => {
+      if (request.path === '/api/v1/bootstrap') return { status: 200, statusText: 'OK', body: {
+        assistantProviders: true, conversationInitialInput: true, webCompatVersion: WEB_COMPAT_VERSION,
+        minWebCompatVersion: WEB_COMPAT_VERSION, syncEventVersion: 29, dbInstanceId: 'acp-null-mode',
+      } };
+      if (request.path === '/api/v1/bootstrap?scope=managed') return { status: 200, statusText: 'OK', body: {
+        version: 'test', providers: [{ provider: 'acp:opencode', available: true, models: [], permissionModes: [
+          { id: 'project-plan', label: 'Project plan', description: 'Workspace default', tone: 'neutral', isDefault: true },
+        ] }],
+      } };
+      if (assistant && request.path === '/api/v1/tracks/daily/sessions') return { status: 200, statusText: 'OK', body: [
+        { id, trackId: 'daily', title: 'Other conversation', kind: 'track-assistant', provider: 'opencode',
+          state: 'idle', updatedAt: 2, archivedAt: null, lastTurnCompletedAt: null },
+      ] };
+      if (request.path.startsWith(`/api/v1/sessions/${id}/items?`)) return { status: 200, statusText: 'OK', body: {
+        session: { id, trackId: 'daily', provider: 'acp:opencode', permissionMode: null,
+          isLead: !assistant, status: 'idle', createdAtMs: 1, updatedAtMs: 2 },
+        items: [], unknownInput: null, activeTurn: null, canSteer: true, queuedMessages: [],
+      } };
+      return undefined;
+    } });
+  try {
+    await page.getByRole('button', { name: assistant ? /Conversation Other conversation/ : /Conversation Daily Planner conversation/ }).click();
+    await expect.element(page.getByRole('button', { name: 'Approvals: Project plan' })).toBeVisible();
+    await page.getByRole('button', { name: 'Approvals: Project plan' }).click();
+    await expect.element(page.getByRole('menuitem', { name: /^Project plan/ })).toBeVisible();
+  } finally { fixture.client.clear(); }
 });

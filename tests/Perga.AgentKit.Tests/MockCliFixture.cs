@@ -917,7 +917,11 @@ for raw_line in sys.stdin:
                 send({"jsonrpc": "2.0", "id": msg_id, "result": {}})
         else:
             state["session_id"] = "acp_sess_001"
-            if os.environ.get("MOCK_ACP_WORKER_OPTIONS") == "1":
+            if os.environ.get("MOCK_ACP_PROJECT_MODES") == "1":
+                mode_file = os.path.join(params["cwd"], "permission-modes.json")
+                modes = json.load(open(mode_file)) if os.path.isfile(mode_file) else {}
+                send({"jsonrpc": "2.0", "id": msg_id, "result": {"sessionId": state["session_id"], **modes}})
+            elif os.environ.get("MOCK_ACP_WORKER_OPTIONS") == "1":
                 state["model"] = "small"
                 send({"jsonrpc": "2.0", "id": msg_id, "result": {"sessionId": state["session_id"], "configOptions": worker_config_options()}})
             elif "MOCK_ACP_MODELS" in os.environ:

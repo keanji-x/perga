@@ -23,6 +23,31 @@ public sealed class AcpProviderTests : IDisposable
             }
         });
 
+    [Fact]
+    public async Task PermissionModeProbeUsesWorkspaceAndNullLaunchKeepsWorkspaceDefault()
+    {
+        var log = Path.Combine(_fixture.RootDir, "workspace-modes.jsonl");
+        await using var runtime = CreateRuntime(new Dictionary<string, string>
+        {
+            ["MOCK_ACP_LOG"] = log,
+            ["MOCK_ACP_PROJECT_MODES"] = "1"
+        });
+        var payload = """{"modes":{"currentModeId":"project-plan","availableModes":[{"id":"project-plan","name":"Project plan"}]}}""";
+        File.WriteAllText(Path.Combine(_fixture.WorkspaceDir, "permission-modes.json"), payload);
+        var modes = await runtime.ProbePermissionModesAsync("acp:antigravity", _fixture.WorkspaceDir, CancellationToken.None);
+        Assert.Equal("project-plan", Assert.Single(modes).Id);
+        Assert.Empty(await runtime.ProbePermissionModesAsync("acp:antigravity", _fixture.RootDir, CancellationToken.None));
+        await using var session = await runtime.OpenSessionAsync(new HarnessLaunchSpec(
+            "acp:antigravity", null, _fixture.WorkspaceDir, null, null,
+            new Dictionary<string, McpServerConfig>()), CancellationToken.None);
+        Assert.Equal("project-plan", Assert.Single(((AcpAgentSession)session).AvailablePermissionModes).Id);
+        var calls = File.ReadAllLines(log).Select(line => JsonSerializer.Deserialize<JsonElement>(line)).ToArray();
+        var opens = calls.Where(call => call.GetProperty("method").GetString() == "session/new").ToArray();
+        Assert.Equal([_fixture.WorkspaceDir, _fixture.RootDir, _fixture.WorkspaceDir],
+            opens.Select(call => call.GetProperty("params").GetProperty("cwd").GetString()));
+        Assert.DoesNotContain(calls, call => call.GetProperty("method").GetString() is "session/set_mode" or "session/set_config_option");
+    }
+
     [Theory]
     [InlineData(0, null, false)]
     [InlineData(0, "restored", false)]

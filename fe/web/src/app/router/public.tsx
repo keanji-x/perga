@@ -791,6 +791,7 @@ function useConversationPane(
   }), [compact, store.compacting, store.manualCompactSupported, store.attachmentsSupported, store.contextUsage, store.historyReady, interrupt, store.model, store.modelCatalog, store.permissionMode, store.sendBlocked, store.sending, store.canQueueWhileRunning, store.providerRecoveryHoldsSend, setModel, setPermissionMode, store.stopping, store.working]);
   const effectivePermissionMode = composerView.permissionMode;
   const hasPermissionMetadata = steerCapabilities.data !== undefined && scopePermissionModes.length > 0;
+  const displayPermissionMode = effectivePermissionMode ?? (hasPermissionMetadata ? defaultPermissionModeFor(scopePermissionModes) : null);
   const { bar: editingBar } = edit;
   const replacing = edit.replacing || edit.queuedSaving;
   const editingQueue = edit.queued !== null;
@@ -876,12 +877,12 @@ function useConversationPane(
                   {worker != null && workerDelivery != null &&
                     <WorkerDeliveryControl {...workerDelivery} nativeSteer={worker.nativeSteer} />}
                   {/* Provider-declared approval mode for Lead and Assistant sessions; Workers use their own settings. */}
-                  {worker == null && effectivePermissionMode !== null && (
+                  {worker == null && displayPermissionMode !== null && (
                     <PermissionModePill
-                      mode={effectivePermissionMode}
+                      mode={displayPermissionMode}
                       options={hasPermissionMetadata
                         ? scopePermissionModes
-                        : [{ id: effectivePermissionMode, label: effectivePermissionMode, description: 'Provider approval options unavailable.', tone: 'neutral', isDefault: true }]}
+                        : [{ id: displayPermissionMode, label: displayPermissionMode, description: 'Provider approval options unavailable.', tone: 'neutral', isDefault: true }]}
                       onChange={composerView.setPermissionMode}
                       isDisabled={!composerView.historyReady || !hasPermissionMetadata}
                     />
@@ -896,7 +897,7 @@ function useConversationPane(
             />
   ), [existingId, compactComposer, panePresented, composerFocusFor, composerFocusRequest, changeComposer, composerView, draftOnly,
     paneCommands, composerStop, replacing, editingQueue, edit.queuedSaving, editingBar,
-    sendText, composerAttachments, mentionTrigger, scopeProvider, scopePermissionModes, hasPermissionMetadata, effectivePermissionMode, conversationAsks, answerAsk,
+    sendText, composerAttachments, mentionTrigger, scopeProvider, scopePermissionModes, hasPermissionMetadata, displayPermissionMode, conversationAsks, answerAsk,
     roleValue, roleDisabled, roleDisabledReason, roleChange, worker, updateWorkerSettings, workerDelivery]);
 
   const renderDrawer = (resizeGroup: PaneResizeGroup | null = null) => (

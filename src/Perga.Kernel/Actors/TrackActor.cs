@@ -768,7 +768,8 @@ public sealed partial class TrackActor : IAsyncDisposable
         var provider = string.IsNullOrWhiteSpace(req.Provider)
             ? GetDefaultProviderCore()
             : (TaskBlockSynchronizer.NormalizeProviderId(req.Provider) ?? req.Provider!.Trim());
-        var permissionMode = await RuntimePermissionModes.ResolveAsync(_agentRuntime, provider, req.PermissionMode, ct).ConfigureAwait(false);
+        var permissionMode = await RuntimePermissionModes.ResolveAsync(_agentRuntime, provider, req.PermissionMode, ct,
+            string.IsNullOrWhiteSpace(_track.Cwd) ? _workspacePreparation?.Request.SourcePath : _track.Cwd).ConfigureAwait(false);
 
         return new AgentSessionDto(
             Id: $"ses_{Guid.NewGuid():N}",
@@ -1062,7 +1063,8 @@ public sealed partial class TrackActor : IAsyncDisposable
 
             if (string.IsNullOrWhiteSpace(permissionMode))
                 throw KernelException.InvalidArgument("Permission mode is required.");
-            var trimmed = await RuntimePermissionModes.ResolveAsync(_agentRuntime, session.Provider, permissionMode, ct).ConfigureAwait(false);
+            var trimmed = await RuntimePermissionModes.ResolveAsync(_agentRuntime, session.Provider, permissionMode, ct,
+                string.IsNullOrWhiteSpace(_track.Cwd) ? _workspacePreparation?.Request.SourcePath : _track.Cwd).ConfigureAwait(false);
             if (string.Equals(session.PermissionMode, trimmed, StringComparison.Ordinal))
             {
                 return session;
@@ -3227,7 +3229,7 @@ public sealed partial class TrackActor : IAsyncDisposable
                 var seedPrompt = BuildEpochSeedSystemPrompt(compacted, latestReportMarkdown, handoverSummary);
 
                 // Seed fresh IAgentSession with ResumeNativeThreadId == null and SystemPrompt = Report + Handover Summary.
-                var desiredMode = await RuntimePermissionModes.ResolveAsync(_agentRuntime, compacted.Provider, compacted.PermissionMode, ct).ConfigureAwait(false);
+                var desiredMode = compacted.PermissionMode;
                 var freshAgentSession = await OpenFreshAgentSessionCoreAsync(compacted, seedPrompt, ct).ConfigureAwait(false);
                 _openAgentSessions[sessionId] = freshAgentSession;
                 _boundAgentModels[sessionId] = (compacted.Model, compacted.ReasoningEffort);
@@ -3253,7 +3255,7 @@ public sealed partial class TrackActor : IAsyncDisposable
         string? overrideSystemPrompt,
         CancellationToken ct)
     {
-        var desiredMode = await RuntimePermissionModes.ResolveAsync(_agentRuntime, session.Provider, session.PermissionMode, ct).ConfigureAwait(false);
+        var desiredMode = session.PermissionMode;
 
         if (_openAgentSessions.TryGetValue(session.Id, out var existing))
         {
@@ -3361,7 +3363,7 @@ public sealed partial class TrackActor : IAsyncDisposable
             ReasoningEffort: session.ReasoningEffort,
             StateKey: session.Id,
             ConfigureWorker: session.BoundAttemptId is not null,
-            PermissionMode: await RuntimePermissionModes.ResolveAsync(_agentRuntime, session.Provider, session.PermissionMode, ct).ConfigureAwait(false));
+            PermissionMode: session.PermissionMode);
     }
 
     private async Task DispatchLeadWakePromptIfNeededAsync(string triggerKind, string wakePrompt, CancellationToken ct, string? mailId = null, bool recovering = false)

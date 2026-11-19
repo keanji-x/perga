@@ -16,7 +16,7 @@ public sealed class TrackCreationTests
     private static readonly TimeSpan Deadline = TimeSpan.FromSeconds(10);
 
     [Theory]
-    [InlineData(null, "inspect", HttpStatusCode.OK)]
+    [InlineData(null, null, HttpStatusCode.OK)]
     [InlineData("act", "act", HttpStatusCode.OK)]
     [InlineData("unknown", null, HttpStatusCode.BadRequest)]
     public async Task TrackCreateUsesRuntimeModesBeforeBootstrap(string? selected, string? expected, HttpStatusCode status)
