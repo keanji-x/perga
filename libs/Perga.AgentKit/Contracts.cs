@@ -53,6 +53,11 @@ public sealed record TokenUsage(
     long CachedInputTokens,
     long? ContextWindowTokens);
 
+public sealed record ApprovalOption(
+    string OptionId,
+    string Label,
+    bool IsApproval);
+
 public abstract record UnifiedAgentEvent
 {
     public sealed record TurnAccepted(string? NativeTurnId) : UnifiedAgentEvent;
@@ -61,7 +66,11 @@ public abstract record UnifiedAgentEvent
     public sealed record ThinkingDelta(string Delta) : UnifiedAgentEvent;
     public sealed record ToolCallStarted(string CallId, string Name, JsonElement Args) : UnifiedAgentEvent;
     public sealed record ToolCallCompleted(string CallId, string Output, bool IsError) : UnifiedAgentEvent;
-    public sealed record ApprovalRequested(string RequestId, string ToolName, JsonElement Args) : UnifiedAgentEvent;
+    public sealed record ApprovalRequested(
+        string RequestId,
+        string ToolName,
+        JsonElement Args,
+        IReadOnlyList<ApprovalOption>? Options = null) : UnifiedAgentEvent;
     public sealed record TurnInterrupted : UnifiedAgentEvent;
     public sealed record TurnCompleted(TokenUsage? Usage) : UnifiedAgentEvent;
     public sealed record TurnError(string Code, string Message, bool IsRetryable, bool IsConclusive = false, bool BeforePrompt = false) : UnifiedAgentEvent;
@@ -111,6 +120,13 @@ public interface IAgentSession : IAsyncDisposable
     IAsyncEnumerable<UnifiedAgentEvent> StreamTurnAsync(TurnInput input, CancellationToken ct);
     Task CancelTurnAsync(CancellationToken ct);
     Task RespondApprovalAsync(string requestId, bool approved, string? reason = null, CancellationToken ct = default);
+    Task RespondApprovalAsync(
+        string requestId,
+        bool approved,
+        string? selectedOptionId,
+        string? reason = null,
+        CancellationToken ct = default) =>
+        RespondApprovalAsync(requestId, approved, reason, ct);
     Task<bool> TrySetModelAsync(string? model, string? reasoningEffort = null, CancellationToken ct = default);
     Task<SteerDelivery> SteerAsync(string turnCorrelationId, string message, CancellationToken ct);
 }

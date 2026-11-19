@@ -608,11 +608,33 @@ public sealed class AcpProviderTests : IDisposable
             {
                 Assert.Equal("acp_perm_99", req.RequestId);
                 Assert.Equal("write_file", req.ToolName);
+                Assert.NotNull(req.Options);
+                Assert.Equal(3, req.Options!.Count);
+                Assert.Equal(new ApprovalOption("opt_allow_once", "Allow once", true), req.Options[0]);
+                Assert.Equal(new ApprovalOption("opt_allow_always", "Always allow", true), req.Options[1]);
+                Assert.Equal(new ApprovalOption("opt_reject_once", "Reject once", false), req.Options[2]);
                 await session.RespondApprovalAsync(req.RequestId, approved: true, ct: CancellationToken.None);
             }
         }
 
         Assert.Contains(allowEvents.OfType<UnifiedAgentEvent.TextDelta>(), t => t.Delta == "acp-selected:opt_allow_once");
+
+        // Permission allow_always selects opt_allow_always when explicitly chosen
+        var alwaysEvents = new List<UnifiedAgentEvent>();
+        await foreach (var evt in session.StreamTurnAsync(new TurnInput("REQUIRE_PERMISSION", "perm_always"), CancellationToken.None))
+        {
+            alwaysEvents.Add(evt);
+            if (evt is UnifiedAgentEvent.ApprovalRequested req)
+            {
+                await session.RespondApprovalAsync(
+                    req.RequestId,
+                    approved: true,
+                    selectedOptionId: "opt_allow_always",
+                    ct: CancellationToken.None);
+            }
+        }
+
+        Assert.Contains(alwaysEvents.OfType<UnifiedAgentEvent.TextDelta>(), t => t.Delta == "acp-selected:opt_allow_always");
 
         // Permission reject selects reject_once optionId
         var rejectEvents = new List<UnifiedAgentEvent>();

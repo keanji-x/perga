@@ -768,6 +768,7 @@ def handle_prompt(req_id, params):
                 },
                 "options": [
                     {"optionId": "opt_allow_once", "kind": "allow_once", "name": "Allow once"},
+                    {"optionId": "opt_allow_always", "kind": "allow_always", "name": "Always allow"},
                     {"optionId": "opt_reject_once", "kind": "reject_once", "name": "Reject once"}
                 ]
             }
