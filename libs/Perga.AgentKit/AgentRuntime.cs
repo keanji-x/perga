@@ -241,6 +241,12 @@ public sealed class AgentRuntime : IAgentRuntime
                 args.Add("acp");
             }
 
+            if (string.Equals(provider.Trim(), "acp:antigravity", StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(normalizedSpec.PermissionMode?.Trim(), "bypassPermissions", StringComparison.Ordinal))
+            {
+                args.Add("--dangerously-skip-permissions");
+            }
+
             var env = BuildProcessEnvironment(cmdOverride.Env);
             var resolvedExe = FindExecutableOnPath(cmdOverride.FileName, env) ?? cmdOverride.FileName;
             var rawInvocation = new CommandInvocation(resolvedExe, args, fullCwd, env);

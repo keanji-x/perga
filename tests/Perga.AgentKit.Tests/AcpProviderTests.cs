@@ -139,6 +139,39 @@ public sealed class AcpProviderTests : IDisposable
         if (config) Assert.Equal(shape == 2 ? "mode" : "agent-mode", parameters.GetProperty("configId").GetString());
     }
 
+    [Fact]
+    public async Task AntigravityServerExposesBypassPermissionsAndPassesDangerouslySkipPermissions()
+    {
+        var log = Path.Combine(_fixture.RootDir, "antigravity-bypass.jsonl");
+        await using var runtime = CreateRuntime(new Dictionary<string, string>
+        {
+            ["MOCK_ACP_LOG"] = log,
+            ["MOCK_ACP_LOG_ARGV"] = "1",
+            ["MOCK_ACP_AGENT_NAME"] = "Antigravity ACP Server",
+            ["MOCK_ACP_MODELS"] = """{"modes":{"currentModeId":"default","availableModes":[{"id":"default","name":"Default"},{"id":"auto","name":"Auto"}]}}"""
+        });
+
+        var probed = await runtime.ProbePermissionModesAsync("acp:antigravity", _fixture.WorkspaceDir, OsSandboxMode.None, null, CancellationToken.None);
+        Assert.Equal(["default", "auto", "bypassPermissions"], probed.Select(m => m.Id));
+        var bypassOption = probed.Single(m => m.Id == "bypassPermissions");
+        Assert.Equal("Full access", bypassOption.Label);
+        Assert.Equal("danger", bypassOption.Tone);
+
+        File.Delete(log);
+
+        await using var session = await runtime.OpenSessionAsync(new HarnessLaunchSpec(
+            "acp:antigravity", null, _fixture.WorkspaceDir, null, null,
+            new Dictionary<string, McpServerConfig>(), PermissionMode: "bypassPermissions"), CancellationToken.None);
+
+        var entries = File.ReadAllLines(log).Select(line => JsonSerializer.Deserialize<JsonElement>(line)).ToArray();
+        var argvEntry = Assert.Single(entries, e => e.TryGetProperty("argv", out _));
+        var argv = argvEntry.GetProperty("argv").EnumerateArray().Select(x => x.GetString()).ToArray();
+        Assert.Contains("--dangerously-skip-permissions", argv);
+        Assert.DoesNotContain(entries, e =>
+            e.TryGetProperty("method", out var m) &&
+            (m.GetString() == "session/set_mode" || m.GetString() == "session/set_config_option"));
+    }
+
     [Theory]
     [InlineData("vendor/model-high", null, "vendor/model-high")]
     [InlineData("vendor/model-high", "high", "vendor/model-high")]

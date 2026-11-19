@@ -542,10 +542,10 @@ public sealed class SessionStreamingAndCompactionTests
     [Fact]
     public async Task ApprovalRequested_WithProviderOptions_ExposesAllOptionsAndForwardsSelectedOptionId()
     {
-        await using var ctx = await KernelTestContext.CreateAsync();
-        var area = await ctx.Kernel.CreateAreaAsync(new CreateAreaRequest("Approval Options Area", ctx.RepoRoot));
-        var track = await ctx.Kernel.CreateTrackAsync(new CreateTrackRequest(area.Id, "Approval Options Track"));
-        var leadId = track.LeadSessionId;
+        await using var ctx = new KernelTestContext();
+        var area = await ctx.Kernel.CreateAreaAsync(new CreateAreaRequest("Approval Options Area"));
+        var track = await ctx.Kernel.CreateTrackAsync(new CreateTrackRequest(AreaId: area.Id, Title: "Approval Options Track"));
+        var leadId = track.Track.LeadSessionId!;
 
         var providerOptions = new ApprovalOption[]
         {

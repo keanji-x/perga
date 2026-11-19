@@ -317,6 +317,9 @@ public sealed class AcpAgentSession : IAgentSession
         };
 
         var initResult = await _rpc.SendRequestAsync("initialize", initParams, ct).ConfigureAwait(false);
+        var isAntigravityServer = initResult.ValueKind == JsonValueKind.Object &&
+            initResult.TryGetProperty("agentInfo", out var agentInfo) &&
+            string.Equals(TryGetString(agentInfo, "name"), "Antigravity ACP Server", StringComparison.Ordinal);
         var supportsHttpMcp = AcpStdioHttpMcpBridge.SupportsHttpMcp(initResult);
         var agentCapabilities = initResult.ValueKind == JsonValueKind.Object &&
             initResult.TryGetProperty("agentCapabilities", out var capabilities) ? capabilities : default;
@@ -372,18 +375,36 @@ public sealed class AcpAgentSession : IAgentSession
         }
 
         var permissionModes = AcpPermissionModes.Read(response);
-        AvailablePermissionModes = permissionModes.Options;
-        if (!string.IsNullOrWhiteSpace(spec.PermissionMode))
+        var availableModes = permissionModes.Options;
+        if (isAntigravityServer && !availableModes.Any(m => string.Equals(m.Id, "bypassPermissions", StringComparison.Ordinal)))
+        {
+            availableModes =
+            [
+                .. availableModes,
+                new PermissionModeOption(
+                    "bypassPermissions",
+                    "Full access",
+                    "Auto-approves all tool permission requests without prompting.",
+                    "danger",
+                    IsDefault: false)
+            ];
+        }
+
+        AvailablePermissionModes = availableModes;
+        var requestedMode = spec.PermissionMode?.Trim();
+        var isAntigravityBypass = isAntigravityServer &&
+            string.Equals(requestedMode, "bypassPermissions", StringComparison.Ordinal);
+        if (!string.IsNullOrWhiteSpace(requestedMode) && !isAntigravityBypass)
         {
             var modeParams = new Dictionary<string, object?> { ["sessionId"] = resolvedSessionId };
             if (permissionModes.ConfigId is { } configId)
             {
                 modeParams["configId"] = configId;
-                modeParams["value"] = spec.PermissionMode.Trim();
+                modeParams["value"] = requestedMode;
             }
             else
             {
-                modeParams["modeId"] = spec.PermissionMode.Trim();
+                modeParams["modeId"] = requestedMode;
             }
             await _rpc.SendRequestAsync(
                 permissionModes.ConfigId is null ? "session/set_mode" : "session/set_config_option",
