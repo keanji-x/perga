@@ -25,9 +25,11 @@ public sealed partial class PergaKernelService
             throw KernelException.InvalidArgument("Schedule prompt must be a non-empty string.");
 
         var hasCron = !string.IsNullOrWhiteSpace(request.CronExpr);
-        var hasRunAt = request.RunAtMs.HasValue;
-        if (hasCron == hasRunAt)
-            throw KernelException.InvalidArgument("Specify exactly one of 'runAtMs' or 'cronExpr'.");
+        var hasRunAtMs = request.RunAtMs.HasValue;
+        var hasRunAtStr = !string.IsNullOrWhiteSpace(request.RunAt);
+        var scheduleTargets = (hasCron ? 1 : 0) + (hasRunAtMs ? 1 : 0) + (hasRunAtStr ? 1 : 0);
+        if (scheduleTargets != 1)
+            throw KernelException.InvalidArgument("Specify exactly one of 'runAt', 'runAtMs', or 'cronExpr'.");
 
         var scheduleId = string.IsNullOrWhiteSpace(request.Id)
             ? $"sch_{Guid.NewGuid():N}"
@@ -52,17 +54,18 @@ public sealed partial class PergaKernelService
         long nextFireAtMs;
         int? maxOccurrences;
 
-        if (hasRunAt)
+        if (!hasCron)
         {
-            if (request.RunAtMs!.Value < 0)
+            var resolvedRunAtMs = request.RunAtMs ?? TodayCalendar.ParseRunAtMs(request.RunAt!, requestedTz, _timeProvider);
+            if (resolvedRunAtMs < 0)
                 throw KernelException.InvalidArgument("runAtMs must be a nonnegative Unix timestamp in milliseconds.");
             if (request.MaxOccurrences.HasValue && request.MaxOccurrences.Value != 1)
                 throw KernelException.InvalidArgument("One-shot schedules only support maxOccurrences = 1.");
 
-            normalizedTz = NormalizeTimeZoneId(requestedTz);
+            normalizedTz = TodayCalendar.IanaId(TodayCalendar.ResolveZone(requestedTz));
             scheduleKind = TrackScheduleKinds.Once;
-            runAtMs = request.RunAtMs.Value;
-            nextFireAtMs = runAtMs.Value;
+            runAtMs = resolvedRunAtMs;
+            nextFireAtMs = resolvedRunAtMs;
             maxOccurrences = 1;
         }
         else
@@ -82,14 +85,14 @@ public sealed partial class PergaKernelService
             maxOccurrences = request.MaxOccurrences;
         }
 
-        var track = await _store.GetTrackAsync(trackId, ct).ConfigureAwait(false)
-            ?? throw KernelException.NotFound($"Track '{trackId}' was not found.");
-        if (track.ClosedAtMs is not null)
-            throw KernelException.Conflict($"Track '{trackId}' is closed.");
-
         var targetSessionId = string.IsNullOrWhiteSpace(request.TargetSessionId) ? null : request.TargetSessionId.Trim();
-        if (targetSessionId is not null && !string.Equals(targetSessionId, track.LeadSessionId, StringComparison.Ordinal))
-            throw KernelException.InvalidArgument("Schedule wakes can only target the Track's Lead session.");
+        if (targetSessionId is not null)
+        {
+            var track = await _store.GetTrackAsync(trackId, ct).ConfigureAwait(false)
+                ?? throw KernelException.NotFound($"Track '{trackId}' was not found.");
+            if (!string.Equals(targetSessionId, track.LeadSessionId, StringComparison.Ordinal))
+                throw KernelException.InvalidArgument("Schedule wakes can only target the Track's Lead session.");
+        }
 
         var dto = new TrackScheduleDto(
             Id: scheduleId,
@@ -135,20 +138,5 @@ public sealed partial class PergaKernelService
         var scheduleStore = _store.TrackSchedules
             ?? throw KernelException.PreconditionFailed("Track schedules are not enabled on this store.");
         return await scheduleStore.CancelAsync(trackId, scheduleId.Trim(), ct).ConfigureAwait(false);
-    }
-
-    private static string NormalizeTimeZoneId(string timezone)
-    {
-        if (string.Equals(timezone, "UTC", StringComparison.OrdinalIgnoreCase))
-            return "Etc/UTC";
-        try
-        {
-            var tz = TimeZoneInfo.FindSystemTimeZoneById(timezone);
-            return TodayCalendar.IanaId(tz);
-        }
-        catch (Exception ex) when (ex is TimeZoneNotFoundException or InvalidTimeZoneException)
-        {
-            throw KernelException.InvalidArgument($"Unknown timezone '{timezone}'.");
-        }
     }
 }

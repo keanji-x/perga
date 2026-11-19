@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.RegularExpressions;
 using Perga.Contracts;
 using Perga.Kernel.Ports;
 
@@ -43,41 +44,98 @@ public sealed partial class PergaKernelService
             .ToDictionary(p => p.Date, StringComparer.Ordinal);
         var (windowStartMs, _) = TodayCalendar.Bounds(startDate, zone);
         var (_, windowEndMs) = TodayCalendar.Bounds(endDate, zone);
-        var schedules = await store.ListActiveSchedulesInWindowAsync(windowStartMs, windowEndMs, ct).ConfigureAwait(false);
-        var scheduleCounts = new Dictionary<string, int>(StringComparer.Ordinal);
-        foreach (var item in schedules)
+        var rawSchedules = await store.ListActiveSchedulesInWindowAsync(windowStartMs, windowEndMs, ct).ConfigureAwait(false);
+        var schedules = rawSchedules.Select(item =>
         {
             var day = TimeZoneInfo.ConvertTime(DateTimeOffset.FromUnixTimeMilliseconds(item.NextFireAtMs), zone)
                 .ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-            scheduleCounts[day] = scheduleCounts.TryGetValue(day, out var current) ? current + 1 : 1;
-        }
+            return new TodayScheduleItemDto(
+                item.Id, day, item.TrackId, item.TrackTitle, item.Title,
+                item.ScheduleKind, item.CronExpr, item.Timezone, item.NextFireAtMs, item.State);
+        }).ToArray();
 
         var days = dates.Select(d =>
         {
             presence.TryGetValue(d, out var p);
-            scheduleCounts.TryGetValue(d, out var count);
-            return new TodayCalendarDayDto(d, p?.HasDailyTrack ?? false, p?.HasReport ?? false, count);
+            return new TodayCalendarDayDto(d, p?.HasDailyTrack ?? false, p?.HasReport ?? false);
         }).ToArray();
 
-        return new TodayCalendarDto(today, TodayCalendar.IanaId(zone), startDate, endDate, days);
-    }
-
-    public async Task<TodaySchedulesDto> GetTodaySchedulesAsync(string date, CancellationToken ct = default)
-    {
-        TodayCalendar.ParseDate(date);
-        var zone = TodayCalendar.Zone(_timeProvider);
-        var (startMs, endMs) = TodayCalendar.Bounds(date, zone);
-        var store = (ITodayReadStore)_store;
-        var schedules = await store.ListActiveSchedulesInWindowAsync(startMs, endMs, ct).ConfigureAwait(false);
-        return new TodaySchedulesDto(date, TodayCalendar.IanaId(zone), schedules);
+        return new TodayCalendarDto(today, TodayCalendar.IanaId(zone), startDate, endDate, days, schedules);
     }
 }
 
-public static class TodayCalendar
+public static partial class TodayCalendar
 {
+    [GeneratedRegex(@"(?:[Tt ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?)(?:[Zz]|[+-]\d{2}(?::?\d{2})?)$")]
+    private static partial Regex ExplicitIsoOffsetSuffix();
+
     public static TimeZoneInfo Zone(TimeProvider time) => time.LocalTimeZone;
-    public static string IanaId(TimeZoneInfo zone) => zone.HasIanaId ? zone.Id
-        : TimeZoneInfo.TryConvertWindowsIdToIanaId(zone.Id, out var id) ? id : "Etc/UTC";
+    public static string IanaId(TimeZoneInfo zone) =>
+        zone == TimeZoneInfo.Utc || string.Equals(zone.Id, "UTC", StringComparison.OrdinalIgnoreCase)
+            ? "Etc/UTC"
+            : zone.HasIanaId ? zone.Id
+            : TimeZoneInfo.TryConvertWindowsIdToIanaId(zone.Id, out var id) ? id : "Etc/UTC";
+
+    public static bool TryResolveZone(string? timezone, out TimeZoneInfo zone)
+    {
+        if (string.IsNullOrWhiteSpace(timezone))
+        {
+            zone = TimeZoneInfo.Utc;
+            return false;
+        }
+
+        var trimmed = timezone.Trim();
+        if (string.Equals(trimmed, "UTC", StringComparison.OrdinalIgnoreCase))
+        {
+            zone = TimeZoneInfo.Utc;
+            return true;
+        }
+
+        try
+        {
+            zone = TimeZoneInfo.FindSystemTimeZoneById(trimmed);
+            return true;
+        }
+        catch (Exception ex) when (ex is TimeZoneNotFoundException or InvalidTimeZoneException)
+        {
+            zone = TimeZoneInfo.Utc;
+            return false;
+        }
+    }
+
+    public static TimeZoneInfo ResolveZone(string timezone) =>
+        TryResolveZone(timezone, out var zone)
+            ? zone
+            : throw KernelException.InvalidArgument($"Unknown timezone '{timezone}'.");
+
+    public static long ParseRunAtMs(string rawRunAt, string? timezone, TimeProvider timeProvider)
+    {
+        var trimmed = rawRunAt.Trim();
+        if (trimmed.Length == 0)
+            throw KernelException.InvalidArgument("'runAt' must be a non-empty ISO-8601 timestamp string.");
+
+        if (ExplicitIsoOffsetSuffix().IsMatch(trimmed))
+        {
+            if (DateTimeOffset.TryParse(trimmed, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var dto))
+                return dto.ToUnixTimeMilliseconds();
+            throw KernelException.InvalidArgument($"Invalid 'runAt' timestamp '{rawRunAt}'. Expected ISO-8601 date/time.");
+        }
+
+        if (!DateTime.TryParse(trimmed, CultureInfo.InvariantCulture, DateTimeStyles.NoCurrentDateDefault, out var localDt) ||
+            localDt.Year < 1970)
+        {
+            throw KernelException.InvalidArgument($"Invalid 'runAt' timestamp '{rawRunAt}'. Expected ISO-8601 date/time.");
+        }
+
+        var tz = string.IsNullOrWhiteSpace(timezone) ? Zone(timeProvider) : ResolveZone(timezone);
+        var unspecified = DateTime.SpecifyKind(localDt, DateTimeKind.Unspecified);
+        if (tz.IsInvalidTime(unspecified))
+            throw KernelException.InvalidArgument($"Timestamp '{rawRunAt}' falls in an invalid local time gap in '{tz.Id}'.");
+        var offset = tz.IsAmbiguousTime(unspecified)
+            ? tz.GetAmbiguousTimeOffsets(unspecified).Max()
+            : tz.GetUtcOffset(unspecified);
+        return new DateTimeOffset(unspecified, offset).ToUnixTimeMilliseconds();
+    }
 
     public static DateOnly ParseDate(string date) => DateOnly.TryParseExact(date, "yyyy-MM-dd",
         CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed) && date.Length == 10

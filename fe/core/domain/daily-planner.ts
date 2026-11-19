@@ -32,21 +32,12 @@ export const todayCalendarDaySchema = z.object({
   date: z.string().refine(isDailyDate),
   has_daily_track: z.boolean(),
   has_report: z.boolean(),
-  schedule_count: z.number().int().nonnegative(),
 });
 export type TodayCalendarDay = z.infer<typeof todayCalendarDaySchema>;
 
-export const todayCalendarSchema = z.object({
-  today: z.string().refine(isDailyDate),
-  time_zone: z.string(),
-  start: z.string().refine(isDailyDate),
-  end: z.string().refine(isDailyDate),
-  days: z.array(todayCalendarDaySchema),
-});
-export type TodayCalendar = z.infer<typeof todayCalendarSchema>;
-
 export const todayScheduleItemSchema = z.object({
   id: z.string(),
+  date: z.string().refine(isDailyDate),
   track_id: z.string(),
   track_title: z.string(),
   title: z.string(),
@@ -58,26 +49,21 @@ export const todayScheduleItemSchema = z.object({
 });
 export type TodayScheduleItem = z.infer<typeof todayScheduleItemSchema>;
 
-export const todaySchedulesSchema = z.object({
-  date: z.string().refine(isDailyDate),
+export const todayCalendarSchema = z.object({
+  today: z.string().refine(isDailyDate),
   time_zone: z.string(),
+  start: z.string().refine(isDailyDate),
+  end: z.string().refine(isDailyDate),
+  days: z.array(todayCalendarDaySchema),
   schedules: z.array(todayScheduleItemSchema),
 });
-export type TodaySchedules = z.infer<typeof todaySchedulesSchema>;
+export type TodayCalendar = z.infer<typeof todayCalendarSchema>;
 
 export function todayCalendarOperation(start: string, end: string): ApiOperation<TodayCalendar> {
   return {
     method: 'GET',
     path: `/api/today/calendar?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`,
     responseSchema: todayCalendarSchema,
-  };
-}
-
-export function todaySchedulesOperation(date: string): ApiOperation<TodaySchedules> {
-  return {
-    method: 'GET',
-    path: `/api/today/schedules?date=${encodeURIComponent(date)}`,
-    responseSchema: todaySchedulesSchema,
   };
 }
 export function reportChangesOperation(date: string, page?: Readonly<{ cursor: string; through: number }>): ApiOperation<ReportChangesPage> {
@@ -94,6 +80,15 @@ export function shiftDailyDate(date: string, days: number): string {
   const value = new Date(`${date}T12:00:00Z`);
   value.setUTCDate(value.getUTCDate() + days);
   return value.toISOString().slice(0, 10);
+}
+
+export function localDailyDate(now: Date = new Date()): string {
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+}
+
+export function startOfDailyWeek(date: string): string {
+  const parsed = new Date(`${date}T12:00:00Z`);
+  return shiftDailyDate(date, -((parsed.getUTCDay() + 6) % 7));
 }
 
 export function isDailyDate(date: string): boolean {

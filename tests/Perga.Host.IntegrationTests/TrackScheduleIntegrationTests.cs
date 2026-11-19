@@ -42,7 +42,6 @@ public sealed class TrackScheduleIntegrationTests
             NativeThreadId: null,
             Epoch: 1,
             Status: "running",
-            ContextUsageRatio: 0,
             ArchivedAtMs: null,
             CreatedAtMs: nowMs,
             UpdatedAtMs: nowMs), null, default);
@@ -175,7 +174,7 @@ public sealed class TrackScheduleIntegrationTests
     }
 
     [Fact]
-    public async Task TodayCalendarAndSchedulesHttpEndpointsReturnPresenceCountsAndValidateInputs()
+    public async Task TodayCalendarHttpEndpointReturnsPresenceSchedulesAndValidatesInputs()
     {
         await using var host = new PergaHostTestCluster(configureHostOptions: opts =>
         {
@@ -222,21 +221,17 @@ public sealed class TrackScheduleIntegrationTests
         Assert.Equal(todayDate, days[0].GetProperty("date").GetString());
         Assert.True(days[0].GetProperty("has_daily_track").GetBoolean());
         Assert.True(days[0].GetProperty("has_report").GetBoolean());
-        Assert.Equal(0, days[0].GetProperty("schedule_count").GetInt32());
         Assert.Equal(targetLocalDate, days[1].GetProperty("date").GetString());
         Assert.False(days[1].GetProperty("has_daily_track").GetBoolean());
-        Assert.Equal(1, days[1].GetProperty("schedule_count").GetInt32());
 
-        var schedResp = await host.Client.GetAsync($"/api/today/schedules?date={targetLocalDate}");
-        schedResp.EnsureSuccessStatusCode();
-        using var schedDoc = JsonDocument.Parse(await schedResp.Content.ReadAsStringAsync());
-        var items = schedDoc.RootElement.GetProperty("schedules");
+        var items = calDoc.RootElement.GetProperty("schedules");
         Assert.Single(items.EnumerateArray());
+        Assert.Equal(targetLocalDate, items[0].GetProperty("date").GetString());
         Assert.Equal("Release check-in", items[0].GetProperty("title").GetString());
         Assert.Equal("Release Track", items[0].GetProperty("track_title").GetString());
 
         Assert.Equal(HttpStatusCode.BadRequest, (await host.Client.GetAsync("/api/today/calendar?start=2026-11-20&end=2026-11-19")).StatusCode);
         Assert.Equal(HttpStatusCode.BadRequest, (await host.Client.GetAsync("/api/today/calendar?start=2026-01-01&end=2026-04-01")).StatusCode);
-        Assert.Equal(HttpStatusCode.BadRequest, (await host.Client.GetAsync("/api/today/schedules?date=invalid")).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await host.Client.GetAsync("/api/today/calendar?start=invalid&end=2026-11-20")).StatusCode);
     }
 }

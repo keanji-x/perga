@@ -47,7 +47,7 @@ export function renderDailyFixture({ history, identity, routeProbe, withTranspor
       const params = new URL(request.path, 'http://fixture').searchParams;
       const start = params.get('start') ?? '2026-09-28';
       const end = params.get('end') ?? '2026-10-04';
-      const days: Array<{ date: string; has_daily_track: boolean; has_report: boolean; schedule_count: number }> = [];
+      const days: Array<{ date: string; has_daily_track: boolean; has_report: boolean }> = [];
       const cursor = new Date(`${start}T12:00:00Z`);
       const limit = new Date(`${end}T12:00:00Z`);
       while (cursor <= limit && days.length < 62) {
@@ -57,15 +57,10 @@ export function renderDailyFixture({ history, identity, routeProbe, withTranspor
           date: day,
           has_daily_track: hasDaily,
           has_report: hasDaily && (reportBody === undefined || reportBody.trim().length > 0),
-          schedule_count: 0,
         });
         cursor.setUTCDate(cursor.getUTCDate() + 1);
       }
-      return ok({ today: '2026-10-04', time_zone: 'Asia/Shanghai', start, end, days });
-    }
-    if (request.path.startsWith('/api/today/schedules')) {
-      const date = new URL(request.path, 'http://fixture').searchParams.get('date') ?? '2026-10-04';
-      return ok({ date, time_zone: 'Asia/Shanghai', schedules: [] });
+      return ok({ today: '2026-10-04', time_zone: 'Asia/Shanghai', start, end, days, schedules: [] });
     }
     if (request.path === '/api/v1/tracks/daily') return ok(fixtureSnapshot(track, sessions, report));
     if (request.path === '/api/v1/tracks/daily/sessions') return ok(sessions);

@@ -103,7 +103,7 @@ public sealed class CronosScheduleHostedService : BackgroundService
                         continue;
                     }
 
-                    if (!TryParseCron(spec.Cron, out var cronExpr))
+                    if (!CronosScheduleCronEvaluator.TryParseCron(spec.Cron, out var cronExpr))
                     {
                         _logger.LogWarning(
                             "Invalid cron expression '{Cron}' on schedule '{ScheduleId}' for track '{TrackId}'.",
@@ -113,7 +113,7 @@ public sealed class CronosScheduleHostedService : BackgroundService
                         continue;
                     }
 
-                    var tz = ResolveTimeZone(spec.Timezone);
+                    var tz = TodayCalendar.TryResolveZone(spec.Timezone, out var parsedTz) ? parsedTz : TimeZoneInfo.Utc;
                     var key = (track.TrackId, spec.Id);
                     var watermark = _watermarks.GetOrAdd(key, initialBaseline);
 
@@ -265,34 +265,5 @@ public sealed class CronosScheduleHostedService : BackgroundService
         }
 
         return [];
-    }
-
-    private static bool TryParseCron(string rawCron, out CronExpression expression)
-    {
-        var parts = rawCron.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        var format = parts.Length == 6 ? CronFormat.IncludeSeconds : CronFormat.Standard;
-        return CronExpression.TryParse(rawCron, format, out expression!);
-    }
-
-    private static TimeZoneInfo ResolveTimeZone(string? timezone)
-    {
-        if (string.IsNullOrWhiteSpace(timezone) ||
-            string.Equals(timezone, "UTC", StringComparison.OrdinalIgnoreCase))
-        {
-            return TimeZoneInfo.Utc;
-        }
-
-        try
-        {
-            return TimeZoneInfo.FindSystemTimeZoneById(timezone.Trim());
-        }
-        catch (TimeZoneNotFoundException)
-        {
-            return TimeZoneInfo.Utc;
-        }
-        catch (InvalidTimeZoneException)
-        {
-            return TimeZoneInfo.Utc;
-        }
     }
 }

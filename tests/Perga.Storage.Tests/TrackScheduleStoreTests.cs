@@ -186,4 +186,34 @@ public sealed class TrackScheduleStoreTests
         Assert.Null(await h.Store.TrackSchedules!.GetAsync("trk_1", "sch_old", default));
         Assert.NotNull(await h.Store.TrackSchedules!.GetAsync("trk_1", "sch_recent", default));
     }
+
+    [Fact]
+    public async Task TemplateChangePreservesDurableScheduleWakesAndRejectsCrossTrackId()
+    {
+        await using var h = await SeedAsync();
+        await h.Store.TrackSchedules!.UpsertAsync(OnceSchedule("sch_shared", runAtMs: 1_000, trackId: "trk_1"), default);
+        await h.Store.TrackSchedules!.FireDueAsync(1_100, _ => null, default);
+        await h.Store.TrackWakes.EnqueueAsync(TrackWakeRequests.Schedule("trk_1", "tpl_only"), default);
+
+        var track = await h.Store.GetTrackAsync("trk_1", default);
+        await h.Store.UpdateTrackTemplateAndEmitAsync(
+            track! with { TemplateId = "new_tpl", UpdatedAtMs = 2_000 },
+            "export default defineTemplate({ id: \"new_tpl\", title: \"New\" });",
+            StorageTestHarness.CreateEvent("track.updated", track.Id, track.AreaId),
+            default);
+
+        var wakes = await h.Store.TrackWakes.ListAsync("trk_1", default);
+        var durableWake = Assert.Single(wakes, w => w.CoalesceKey == TrackWakeRequests.ScheduleKey("sch_shared"));
+        var templateWake = Assert.Single(wakes, w => w.CoalesceKey == TrackWakeRequests.ScheduleKey("tpl_only"));
+        Assert.Equal(TrackWakeStates.Pending, durableWake.State);
+        Assert.Equal(TrackWakeStates.Dropped, templateWake.State);
+        Assert.Equal(TrackWakeReasons.TemplateChanged, templateWake.Reason);
+
+        var (track2, track2Report, track2Lead) = StorageTestHarness.CreateSeedTrack("trk_2", leadSessionId: "ses_lead_2");
+        await h.Store.CreateTrackAsync(track2, track2Report, null, track2Lead, default);
+
+        var conflict = await Assert.ThrowsAsync<KernelException>(() =>
+            h.Store.TrackSchedules!.UpsertAsync(OnceSchedule("sch_shared", runAtMs: 3_000, trackId: "trk_2"), default));
+        Assert.Equal(KernelErrorCode.Conflict, conflict.Code);
+    }
 }

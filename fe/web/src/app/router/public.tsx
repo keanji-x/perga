@@ -1779,8 +1779,8 @@ function TrackRouteBody({
       shareLinks={!isPergaTrack && shareAccess === null ? <TrackShareLinks trackId={track.id} areaId={track.areaId} shareable={shareable} transport={transport} unauthorized={unauthorized} /> : undefined}
       onShareTrack={shareable && openShare !== null ? origin => openShare({ scope: { kind: 'track', id: track.id }, title: track.title, origin }) : undefined}
       progressDisclosure={progressDisclosure}
-      panelHeader={pergaMode && panelContent !== undefined && panelContent !== null ? <div className={dailyStyles.calendarPanel}>{panelContent}</div> : undefined}
-      panelContent={pergaMode ? (centerActive ? <div className={dailyStyles.reportPanel}>{reportPresentation.visible?.preparation.kind !== 'empty' ? <PanelModule title="Daily report" icon="file">{reportRegion}</PanelModule> : reportRegion}</div> : undefined) : panelContent}
+      panelHeader={pergaMode && panelContent !== undefined ? <div className={dailyStyles.calendarPanel}>{panelContent}</div> : undefined}
+      panelContent={pergaMode ? (centerActive && reportPresentation.visible?.preparation.kind !== 'empty' ? <div className={dailyStyles.reportPanel}><PanelModule title="Daily report" icon="file">{reportRegion}</PanelModule></div> : undefined) : panelContent}
       mobileReportIntro={mobileReportIntro}
       mobilePanelObscured={(!centerActive && chat.isOpen) || sourceOpen}
       mobileHeaderActionsHost={mobileHeaderActionsHost}

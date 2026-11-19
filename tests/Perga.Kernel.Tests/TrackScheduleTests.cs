@@ -1,4 +1,6 @@
+using System.Text.Json;
 using Perga.Contracts;
+using Perga.Kernel.Mcp;
 using Perga.Kernel.Ports;
 using Perga.Kernel.Tests.Fakes;
 
@@ -72,11 +74,48 @@ public sealed class TrackScheduleTests
         await using var ctx = new KernelTestContext();
         await Assert.ThrowsAsync<KernelException>(() => ctx.Kernel.GetTodayCalendarAsync("2026-11-20", "2026-11-19"));
         await Assert.ThrowsAsync<KernelException>(() => ctx.Kernel.GetTodayCalendarAsync("2026-01-01", "2026-03-04"));
-        await Assert.ThrowsAsync<KernelException>(() => ctx.Kernel.GetTodaySchedulesAsync("2026-02-30"));
+        await Assert.ThrowsAsync<KernelException>(() => ctx.Kernel.GetTodayCalendarAsync("2026-02-30", "2026-03-01"));
 
         var calendar = await ctx.Kernel.GetTodayCalendarAsync("2026-11-16", "2026-11-18");
         Assert.Equal(3, calendar.Days.Count);
         Assert.Equal("2026-11-16", calendar.Days[0].Date);
         Assert.Equal("2026-11-18", calendar.Days[2].Date);
+        Assert.Empty(calendar.Schedules);
+    }
+
+    [Fact]
+    public async Task McpRunAtParsingHonorsTimeZoneExplicitSuffixAndArgTypes()
+    {
+        await using var ctx = new KernelTestContext();
+        var (_, snap) = await ctx.CreateDefaultTrackAsync();
+        var caller = new McpSessionPrincipal("tok_test", snap.Track.Id, snap.Track.LeadSessionId!, true, null, null, []);
+
+        // Date-only and space/lowercase-'t' offset-less runAt must honor explicit timezone.
+        var dateOnlyRes = await KernelMcpDispatcher.ExecuteGuardedAsync(ctx.Kernel, caller, KernelMcpToolNames.ScheduleSet,
+            JsonSerializer.SerializeToElement(new { title = "Date", prompt = "Go", runAt = "2026-11-20", timezone = "Asia/Shanghai" }));
+        Assert.Equal(DateTimeOffset.Parse("2026-11-20T00:00:00+08:00").ToUnixTimeMilliseconds(),
+            dateOnlyRes.GetProperty("runAtMs").GetInt64());
+
+        var lowerTRes = await KernelMcpDispatcher.ExecuteGuardedAsync(ctx.Kernel, caller, KernelMcpToolNames.ScheduleSet,
+            JsonSerializer.SerializeToElement(new { title = "LowerT", prompt = "Go", runAt = "2026-11-20t10:00:00", timezone = "Asia/Shanghai" }));
+        Assert.Equal(DateTimeOffset.Parse("2026-11-20T10:00:00+08:00").ToUnixTimeMilliseconds(),
+            lowerTRes.GetProperty("runAtMs").GetInt64());
+
+        // Lowercase trailing 'z' with whitespace keeps UTC instant even when display timezone differs.
+        var lowerZRes = await KernelMcpDispatcher.ExecuteGuardedAsync(ctx.Kernel, caller, KernelMcpToolNames.ScheduleSet,
+            JsonSerializer.SerializeToElement(new { title = "LowerZ", prompt = "Go", runAt = " 2026-11-20T10:00:00z ", timezone = "Asia/Shanghai" }));
+        Assert.Equal(DateTimeOffset.Parse("2026-11-20T10:00:00Z").ToUnixTimeMilliseconds(),
+            lowerZRes.GetProperty("runAtMs").GetInt64());
+
+        // Malformed optional parameter types fail fast instead of being ignored.
+        var exCron = await Assert.ThrowsAsync<KernelException>(() =>
+            KernelMcpDispatcher.ExecuteGuardedAsync(ctx.Kernel, caller, KernelMcpToolNames.ScheduleSet,
+                JsonSerializer.SerializeToElement(new { title = "Bad", prompt = "Go", runAtMs = 1_000_000, cron = 123 })));
+        Assert.Equal(KernelErrorCode.InvalidArgument, exCron.Code);
+
+        var exInclude = await Assert.ThrowsAsync<KernelException>(() =>
+            KernelMcpDispatcher.ExecuteGuardedAsync(ctx.Kernel, caller, KernelMcpToolNames.ScheduleLs,
+                JsonSerializer.SerializeToElement(new { includeTerminal = "yes" })));
+        Assert.Equal(KernelErrorCode.InvalidArgument, exInclude.Code);
     }
 }

@@ -1,84 +1,54 @@
 import { useEffect, useMemo } from 'react';
 import { SegmentedControl, SegmentedControlItem } from '@astryxdesign/core/SegmentedControl';
-import type { TodayCalendarDay, TodayScheduleItem } from '../../../../core/domain/daily-planner.ts';
+import { localDailyDate, shiftDailyDate, startOfDailyWeek, type TodayCalendarDay, type TodayScheduleItem } from '../../../../core/domain/daily-planner.ts';
 import { Icon } from '../../ui/icon/public.tsx';
 import { PanelModule } from '../../ui/panel-card/public.tsx';
 import { useState } from '../../ui/state/public.ts';
 import styles from './daily-calendar.module.css';
 
-type CalendarViewMode = 'week' | 'month';
+export type CalendarViewMode = 'week' | 'month';
 
 export type DailyCalendarProps = Readonly<{
   today?: string;
   selectedDate?: string;
+  mode?: CalendarViewMode;
+  onModeChange?: (mode: CalendarViewMode) => void;
   days?: readonly TodayCalendarDay[];
-  selectedSchedules?: readonly TodayScheduleItem[];
-  scheduleTimeZone?: string;
+  schedules?: readonly TodayScheduleItem[];
+  timeZone?: string;
+  errorNotice?: string;
   onSelectDate?: (date: string) => void;
   onVisibleRangeChange?: (range: Readonly<{ start: string; end: string }>) => void;
   onOpenTrack?: (trackId: string) => void;
 }>;
 
-function localDay(): string {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-}
-
-function parseLocalDate(isoDate: string): Date {
-  const [year, month, day] = isoDate.split('-').map(Number);
-  return new Date(year, month - 1, day);
-}
-
-function formatIsoDate(date: Date): string {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-}
-
-function addDays(isoDate: string, delta: number): string {
-  const date = parseLocalDate(isoDate);
-  date.setDate(date.getDate() + delta);
-  return formatIsoDate(date);
-}
-
-function startOfWeekMonday(isoDate: string): string {
-  const date = parseLocalDate(isoDate);
-  const mondayOffset = (date.getDay() + 6) % 7;
-  date.setDate(date.getDate() - mondayOffset);
-  return formatIsoDate(date);
-}
-
 function formatScheduleTime(ms: number, timeZone: string): string {
-  try {
-    return new Intl.DateTimeFormat('en-GB', {
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: false,
-      timeZone,
-    }).format(new Date(ms));
-  } catch {
-    return new Intl.DateTimeFormat('en-GB', {
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: false,
-      timeZone: 'UTC',
-    }).format(new Date(ms));
-  }
+  return new Intl.DateTimeFormat('en-GB', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    timeZone,
+  }).format(new Date(ms));
 }
 
 const WEEKDAY_LABELS = Object.freeze(['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] as const);
 
 /** Week/month calendar navigation with optional day indicators and scheduled wakes. */
 export function DailyCalendar({
-  today = localDay(),
+  today = localDailyDate(),
   selectedDate,
+  mode: controlledMode,
+  onModeChange,
   days,
-  selectedSchedules,
-  scheduleTimeZone,
+  schedules,
+  timeZone,
+  errorNotice,
   onSelectDate,
   onVisibleRangeChange,
   onOpenTrack,
 }: DailyCalendarProps) {
   const [internalSelected, setInternalSelected] = useState(selectedDate ?? today);
-  const [mode, setMode] = useState<CalendarViewMode>('week');
+  const [internalMode, setInternalMode] = useState<CalendarViewMode>('week');
   const [anchorDate, setAnchorDate] = useState(selectedDate ?? today);
   const [trackedSelectedProp, setTrackedSelectedProp] = useState(selectedDate);
 
@@ -87,13 +57,19 @@ export function DailyCalendar({
     setAnchorDate(selectedDate ?? today);
   }
 
+  const mode = controlledMode ?? internalMode;
+  const setMode = (next: CalendarViewMode) => {
+    if (controlledMode === undefined) setInternalMode(next);
+    onModeChange?.(next);
+  };
+
   const activeSelected = selectedDate ?? internalSelected;
   const anchorMonth = anchorDate.slice(0, 7);
   const [year, monthNumber] = anchorMonth.split('-').map(Number);
 
   const move = (delta: number) => {
     if (mode === 'week') {
-      setAnchorDate((current) => addDays(current, delta * 7));
+      setAnchorDate((current) => shiftDailyDate(current, delta * 7));
       return;
     }
     const next = new Date(Date.UTC(year, monthNumber - 1 + delta, 1));
@@ -106,7 +82,7 @@ export function DailyCalendar({
 
   const visibleDays: readonly string[] = useMemo(() => (
     mode === 'week'
-      ? Array.from({ length: 7 }, (_, index) => addDays(startOfWeekMonday(anchorDate), index))
+      ? Array.from({ length: 7 }, (_, index) => shiftDailyDate(startOfDailyWeek(anchorDate), index))
       : Array.from(
           { length: new Date(Date.UTC(year, monthNumber, 0)).getUTCDate() },
           (_, index) => `${anchorMonth}-${String(index + 1).padStart(2, '0')}`,
@@ -128,16 +104,30 @@ export function DailyCalendar({
     return map;
   }, [days]);
 
+  const schedulesByDate = useMemo(() => {
+    const map = new Map<string, TodayScheduleItem[]>();
+    if (schedules !== undefined) {
+      for (const item of schedules) {
+        const list = map.get(item.date);
+        if (list === undefined) map.set(item.date, [item]);
+        else list.push(item);
+      }
+    }
+    return map;
+  }, [schedules]);
+
+  const selectedDaySchedules = schedulesByDate.get(activeSelected) ?? [];
+
   const selectDay = (day: string) => {
     if (selectedDate === undefined) setInternalSelected(day);
     setAnchorDate(day);
-    onSelectDate?.(day);
+    if (day !== activeSelected) onSelectDate?.(day);
   };
 
   const monthTitle = new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' })
     .format(new Date(`${anchorMonth}-01T12:00:00Z`));
   const showTodayJump = activeSelected !== today || (mode === 'week'
-    ? startOfWeekMonday(anchorDate) !== startOfWeekMonday(today)
+    ? startOfDailyWeek(anchorDate) !== startOfDailyWeek(today)
     : anchorMonth !== today.slice(0, 7));
 
   return (
@@ -201,7 +191,7 @@ export function DailyCalendar({
             const info = daysByDate.get(day);
             const hasTrack = info?.has_daily_track === true;
             const hasReport = info?.has_report === true;
-            const scheduleCount = info?.schedule_count ?? 0;
+            const scheduleCount = schedulesByDate.get(day)?.length ?? 0;
             return (
               <button
                 key={day}
@@ -234,14 +224,18 @@ export function DailyCalendar({
           })}
         </div>
 
-        {selectedSchedules !== undefined && selectedSchedules.length > 0 && (
+        {errorNotice !== undefined && (
+          <p className={styles.calendarError} role="status">{errorNotice}</p>
+        )}
+
+        {selectedDaySchedules.length > 0 && (
           <section className={styles.agenda} aria-label="Scheduled wakes">
-            <h3 className={styles.agendaHeading}>Scheduled · {selectedSchedules.length}</h3>
+            <h3 className={styles.agendaHeading}>Scheduled · {selectedDaySchedules.length}</h3>
             <ul className={styles.agendaList}>
-              {selectedSchedules.map((item) => (
+              {selectedDaySchedules.map((item) => (
                 <li key={item.id} className={styles.agendaItem}>
                   <span className={styles.agendaTime}>
-                    {formatScheduleTime(item.next_fire_at_ms, scheduleTimeZone ?? item.timezone)}
+                    {formatScheduleTime(item.next_fire_at_ms, timeZone ?? item.timezone)}
                   </span>
                   <span className={styles.agendaBody}>
                     <span className={styles.agendaTitle}>{item.title}</span>

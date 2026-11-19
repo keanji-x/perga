@@ -37,7 +37,7 @@ public sealed partial class SqliteTrackStore : ITodayReadStore
         return rows.Select(r => new DailyTrackCalendarPresence(r.Date, r.HasDailyTrack != 0, r.HasReport != 0)).ToArray();
     }
 
-    public async Task<IReadOnlyList<TodayScheduleItemDto>> ListActiveSchedulesInWindowAsync(
+    public async Task<IReadOnlyList<TodayScheduleEntry>> ListActiveSchedulesInWindowAsync(
         long startMs, long endMs, CancellationToken ct)
     {
         EnsureInitialized();
@@ -56,7 +56,7 @@ public sealed partial class SqliteTrackStore : ITodayReadStore
               AND s.next_fire_at_ms < @EndMs
             ORDER BY s.next_fire_at_ms ASC, s.id ASC;
             """, new { StartMs = startMs, EndMs = endMs }, cancellationToken: ct)).ConfigureAwait(false);
-        return rows.Select(r => new TodayScheduleItemDto(
+        return rows.Select(r => new TodayScheduleEntry(
             r.Id, r.TrackId, r.TrackTitle, r.Title, r.ScheduleKind, r.CronExpr, r.Timezone, r.NextFireAtMs, r.State)).ToArray();
     }
 

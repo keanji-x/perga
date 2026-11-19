@@ -25,15 +25,12 @@ public sealed partial class SqliteTrackStore : ITrackScheduleStore
         EnsureInitialized();
         return _writer.EnqueueAsync(async (conn, tx, token) =>
         {
-            var closedAtMs = await conn.ExecuteScalarAsync<long?>(new CommandDefinition(
-                "SELECT closed_at_ms FROM tracks WHERE id=@TrackId;",
+            var trackRow = await conn.QuerySingleOrDefaultAsync<TrackClosedRow>(new CommandDefinition(
+                "SELECT closed_at_ms AS ClosedAtMs FROM tracks WHERE id=@TrackId;",
                 new { schedule.TrackId }, tx, cancellationToken: token)).ConfigureAwait(false);
-            var exists = await conn.ExecuteScalarAsync<bool>(new CommandDefinition(
-                "SELECT EXISTS(SELECT 1 FROM tracks WHERE id=@TrackId);",
-                new { schedule.TrackId }, tx, cancellationToken: token)).ConfigureAwait(false);
-            if (!exists)
+            if (trackRow is null)
                 throw KernelException.NotFound($"Track '{schedule.TrackId}' was not found.");
-            if (closedAtMs is not null)
+            if (trackRow.ClosedAtMs is not null)
                 throw KernelException.Conflict($"Cannot schedule wake on closed track '{schedule.TrackId}'.");
 
             var existingTrackId = await conn.ExecuteScalarAsync<string?>(new CommandDefinition(
@@ -216,6 +213,11 @@ public sealed partial class SqliteTrackStore : ITrackScheduleStore
         }, ct);
     }
 
+    private sealed class TrackClosedRow
+    {
+        public long? ClosedAtMs { get; set; }
+    }
+
     private sealed class TrackScheduleRow
     {
         public string Id { get; set; } = "";
@@ -230,8 +232,8 @@ public sealed partial class SqliteTrackStore : ITrackScheduleStore
         public long? RunAtMs { get; set; }
         public long? NextFireAtMs { get; set; }
         public long? LastFiredAtMs { get; set; }
-        public int? MaxOccurrences { get; set; }
-        public int FiredCount { get; set; }
+        public long? MaxOccurrences { get; set; }
+        public long FiredCount { get; set; }
         public string? CoalesceKey { get; set; }
         public string State { get; set; } = "";
         public long CreatedAtMs { get; set; }
@@ -240,6 +242,7 @@ public sealed partial class SqliteTrackStore : ITrackScheduleStore
         public TrackScheduleDto ToDto() => new(
             Id, TrackId, TargetSessionId, SourceKind, ScheduleKind, Title, Prompt,
             CronExpr, Timezone, RunAtMs, NextFireAtMs, LastFiredAtMs,
-            MaxOccurrences, FiredCount, CoalesceKey, State, CreatedAtMs, UpdatedAtMs);
+            MaxOccurrences.HasValue ? checked((int)MaxOccurrences.Value) : null,
+            checked((int)FiredCount), CoalesceKey, State, CreatedAtMs, UpdatedAtMs);
     }
 }

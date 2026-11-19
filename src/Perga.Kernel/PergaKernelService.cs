@@ -146,7 +146,6 @@ public interface IPergaKernel : IAsyncDisposable
     Task<IReadOnlyList<TrackScheduleDto>> ListTrackSchedulesAsync(string trackId, bool includeTerminal = false, CancellationToken ct = default);
     Task<bool> CancelTrackScheduleAsync(string trackId, string scheduleId, CancellationToken ct = default);
     Task<TodayCalendarDto> GetTodayCalendarAsync(string startDate, string endDate, CancellationToken ct = default);
-    Task<TodaySchedulesDto> GetTodaySchedulesAsync(string date, CancellationToken ct = default);
 
     // Synchronization helper for tests / shutdown
     Task WaitForTrackIdleAsync(string trackId, CancellationToken ct = default);

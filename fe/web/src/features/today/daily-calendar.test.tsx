@@ -53,12 +53,13 @@ it('renders day indicators, reports visible ranges, and lists scheduled wakes fo
       today="2026-10-04"
       selectedDate="2026-10-03"
       days={[
-        { date: '2026-10-03', has_daily_track: false, has_report: false, schedule_count: 1 },
-        { date: '2026-10-04', has_daily_track: true, has_report: true, schedule_count: 0 },
+        { date: '2026-10-03', has_daily_track: false, has_report: false },
+        { date: '2026-10-04', has_daily_track: true, has_report: true },
       ]}
-      selectedSchedules={[
+      schedules={[
         {
           id: 'sch_1',
+          date: '2026-10-03',
           track_id: 'trk_release',
           track_title: 'Release Track',
           title: 'Deploy check',
@@ -69,7 +70,7 @@ it('renders day indicators, reports visible ranges, and lists scheduled wakes fo
           state: 'active',
         },
       ]}
-      scheduleTimeZone="UTC"
+      timeZone="UTC"
       onSelectDate={onSelectDate}
       onVisibleRangeChange={onVisibleRangeChange}
       onOpenTrack={onOpenTrack}

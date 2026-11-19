@@ -144,17 +144,17 @@ internal sealed partial class InMemoryTrackStore : ITrackScheduleStore, ITodayRe
     public Task<IReadOnlyList<DailyTrackCalendarPresence>> ListDailyTrackPresenceAsync(IReadOnlyList<string> dates, CancellationToken ct) =>
         Task.FromResult<IReadOnlyList<DailyTrackCalendarPresence>>([]);
 
-    public Task<IReadOnlyList<TodayScheduleItemDto>> ListActiveSchedulesInWindowAsync(long startMs, long endMs, CancellationToken ct)
+    public Task<IReadOnlyList<TodayScheduleEntry>> ListActiveSchedulesInWindowAsync(long startMs, long endMs, CancellationToken ct)
     {
         lock (_gate)
         {
-            return Task.FromResult<IReadOnlyList<TodayScheduleItemDto>>(_trackSchedules
+            return Task.FromResult<IReadOnlyList<TodayScheduleEntry>>(_trackSchedules
                 .Where(s => s.State == TrackScheduleStates.Active &&
                             _tracks.TryGetValue(s.TrackId, out var t) && t.ClosedAtMs is null &&
                             s.NextFireAtMs is >= 0 && s.NextFireAtMs >= startMs && s.NextFireAtMs < endMs)
                 .OrderBy(s => s.NextFireAtMs)
                 .ThenBy(s => s.Id, StringComparer.Ordinal)
-                .Select(s => new TodayScheduleItemDto(
+                .Select(s => new TodayScheduleEntry(
                     s.Id,
                     s.TrackId,
                     _tracks[s.TrackId].Title,

@@ -704,7 +704,8 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                         UPDATE track_wakes SET state='{TrackWakeStates.Dropped}', reason=@Reason, updated_at_ms=@Now
                         WHERE track_id=@TrackId AND
                             ((@Closed=1 AND state IN ('{TrackWakeStates.Pending}','{TrackWakeStates.Delivering}')) OR
-                             (@Closed=0 AND state='{TrackWakeStates.Pending}' AND kind='{TrackWakeKinds.Schedule}'));
+                             (@Closed=0 AND state='{TrackWakeStates.Pending}' AND kind='{TrackWakeKinds.Schedule}'
+                              AND COALESCE(json_extract(payload_json, '$.durable'), 0) != 1));
                         """, new { TrackId = track.Id, Now = track.UpdatedAtMs, Closed = track.ClosedAtMs is not null,
                             Reason = track.ClosedAtMs is not null ? TrackWakeReasons.TrackClosed : TrackWakeReasons.TemplateChanged }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
 

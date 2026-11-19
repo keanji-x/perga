@@ -183,6 +183,7 @@
     display: flex;
     align-items: flex-start;
     gap: var(--space-2);
+    min-inline-size: 0;
     font: var(--type-ui);
     letter-spacing: var(--type-ui-tracking);
   }
@@ -197,6 +198,7 @@
   .agendaBody {
     display: flex;
     flex-direction: column;
+    flex: 1;
     min-inline-size: 0;
     gap: 2px;
   }
@@ -209,11 +211,17 @@
     flex-wrap: wrap;
     align-items: center;
     gap: var(--space-1);
+    min-inline-size: 0;
+    max-inline-size: 100%;
+    overflow-wrap: anywhere;
     color: var(--text-3);
     font: var(--type-metadata);
     letter-spacing: var(--type-metadata-tracking);
   }
   .agendaTrackButton {
+    min-inline-size: 0;
+    max-inline-size: 100%;
+    overflow-wrap: anywhere;
     padding: 0;
     border: 0;
     background: transparent;
@@ -232,5 +240,11 @@
     border-radius: var(--radius-sm);
     background: var(--surface-chip);
     color: var(--text-3);
+  }
+  .calendarError {
+    margin: var(--space-2) 0 0;
+    color: var(--text-3);
+    font: var(--type-metadata);
+    letter-spacing: var(--type-metadata-tracking);
   }
 }

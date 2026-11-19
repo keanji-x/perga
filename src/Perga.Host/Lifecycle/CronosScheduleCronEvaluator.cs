@@ -15,7 +15,7 @@ public sealed class CronosScheduleCronEvaluator : IScheduleCronEvaluator
             return false;
         }
 
-        if (!TryResolveTimeZoneStrict(timezone, out var tz))
+        if (!TodayCalendar.TryResolveZone(timezone, out var tz))
         {
             error = $"Unknown timezone '{timezone}'.";
             return false;
@@ -30,7 +30,7 @@ public sealed class CronosScheduleCronEvaluator : IScheduleCronEvaluator
     {
         if (!TryParseCron(cronExpression.Trim(), out var expr))
             return null;
-        if (!TryResolveTimeZoneStrict(timezone, out var tz))
+        if (!TodayCalendar.TryResolveZone(timezone, out var tz))
             return null;
 
         var afterUtc = DateTimeOffset.FromUnixTimeMilliseconds(Math.Max(0, afterMs)).UtcDateTime;
@@ -43,35 +43,8 @@ public sealed class CronosScheduleCronEvaluator : IScheduleCronEvaluator
 
     internal static bool TryParseCron(string rawCron, out CronExpression expression)
     {
-        var parts = rawCron.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var parts = rawCron.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
         var format = parts.Length == 6 ? CronFormat.IncludeSeconds : CronFormat.Standard;
         return CronExpression.TryParse(rawCron, format, out expression!);
-    }
-
-    internal static bool TryResolveTimeZoneStrict(string? timezone, out TimeZoneInfo zone)
-    {
-        if (string.IsNullOrWhiteSpace(timezone))
-        {
-            zone = TimeZoneInfo.Utc;
-            return false;
-        }
-
-        var trimmed = timezone.Trim();
-        if (string.Equals(trimmed, "UTC", StringComparison.OrdinalIgnoreCase))
-        {
-            zone = TimeZoneInfo.Utc;
-            return true;
-        }
-
-        try
-        {
-            zone = TimeZoneInfo.FindSystemTimeZoneById(trimmed);
-            return true;
-        }
-        catch (Exception ex) when (ex is TimeZoneNotFoundException or InvalidTimeZoneException)
-        {
-            zone = TimeZoneInfo.Utc;
-            return false;
-        }
     }
 }

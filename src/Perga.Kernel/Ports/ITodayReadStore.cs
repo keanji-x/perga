@@ -8,6 +8,17 @@ public sealed record DailyReportRevision(long EventId, long At, string TrackId, 
 
 public sealed record DailyTrackCalendarPresence(string Date, bool HasDailyTrack, bool HasReport);
 
+public sealed record TodayScheduleEntry(
+    string Id,
+    string TrackId,
+    string TrackTitle,
+    string Title,
+    string ScheduleKind,
+    string? CronExpr,
+    string Timezone,
+    long NextFireAtMs,
+    string State);
+
 public interface ITodayReadStore
 {
     Task<string?> GetDailyTrackIdAsync(string date, CancellationToken ct);
@@ -16,7 +27,7 @@ public interface ITodayReadStore
     Task<IReadOnlyList<DailyTrackCalendarPresence>> ListDailyTrackPresenceAsync(
         IReadOnlyList<string> dates, CancellationToken ct) =>
         Task.FromResult<IReadOnlyList<DailyTrackCalendarPresence>>([]);
-    Task<IReadOnlyList<TodayScheduleItemDto>> ListActiveSchedulesInWindowAsync(
+    Task<IReadOnlyList<TodayScheduleEntry>> ListActiveSchedulesInWindowAsync(
         long startMs, long endMs, CancellationToken ct) =>
-        Task.FromResult<IReadOnlyList<TodayScheduleItemDto>>([]);
+        Task.FromResult<IReadOnlyList<TodayScheduleEntry>>([]);
 }

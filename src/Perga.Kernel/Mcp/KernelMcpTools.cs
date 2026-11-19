@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Text.Json;
 using Perga.Contracts;
 using Perga.Kernel.Internal;
@@ -484,8 +483,15 @@ public static class KernelMcpDispatcher
 
             case KernelMcpToolNames.ScheduleLs:
             {
-                var includeTerminal = JsonHelpers.TryGetPropertyIgnoreCase(args, ["includeTerminal", "include_terminal"], out var inc) &&
-                                      inc.ValueKind == JsonValueKind.True;
+                var includeTerminal = false;
+                if (JsonHelpers.TryGetPropertyIgnoreCase(args, ["includeTerminal"], out var inc) &&
+                    inc.ValueKind != JsonValueKind.Null)
+                {
+                    if (inc.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+                        throw KernelException.InvalidArgument("'includeTerminal' must be a boolean.");
+                    includeTerminal = inc.GetBoolean();
+                }
+
                 var schedules = await kernel.ListTrackSchedulesAsync(caller.TrackId, includeTerminal, ct).ConfigureAwait(false);
                 return JsonHelpers.ToElement(new { schedules });
             }
@@ -499,7 +505,7 @@ public static class KernelMcpDispatcher
 
             case KernelMcpToolNames.ScheduleRm:
             {
-                var scheduleId = RequireStringArg(args, ["scheduleId", "schedule_id", "id"]);
+                var scheduleId = RequireStringArg(args, ["scheduleId"]);
                 var canceled = await kernel.CancelTrackScheduleAsync(caller.TrackId, scheduleId, ct).ConfigureAwait(false);
                 return JsonHelpers.ToElement(new { scheduleId, canceled });
             }
@@ -534,66 +540,35 @@ public static class KernelMcpDispatcher
         JsonHelpers.TryGetPropertyIgnoreCase(args, [name], out var value) && value.ValueKind == JsonValueKind.Number &&
         value.TryGetInt64(out var parsed) ? parsed : null;
 
+    private static string? OptionalTypedStringArg(JsonElement args, ReadOnlySpan<string> keys)
+    {
+        if (!JsonHelpers.TryGetPropertyIgnoreCase(args, keys, out var elem) || elem.ValueKind == JsonValueKind.Null)
+            return null;
+        if (elem.ValueKind != JsonValueKind.String)
+            throw KernelException.InvalidArgument($"'{keys[0]}' must be a string.");
+        return elem.GetString();
+    }
+
     private static SetTrackScheduleRequest ParseScheduleSetArgs(JsonElement args)
     {
-        var id = OptionalStringArg(args, ["id", "scheduleId", "schedule_id"]);
+        var id = OptionalTypedStringArg(args, ["id"]);
         var title = RequireStringArg(args, ["title"]);
         var prompt = RequireStringArg(args, ["prompt"]);
-        var cron = OptionalStringArg(args, ["cron", "cronExpr", "cron_expr"]);
-        var timezone = OptionalStringArg(args, ["timezone", "timeZone", "time_zone"]);
+        var cron = OptionalTypedStringArg(args, ["cron"]);
+        var timezone = OptionalTypedStringArg(args, ["timezone"]);
+        var runAt = OptionalTypedStringArg(args, ["runAt"]);
 
         long? runAtMs = null;
-        var hasRunAtMs = JsonHelpers.TryGetPropertyIgnoreCase(args, ["runAtMs", "run_at_ms"], out var msElem) &&
-                         msElem.ValueKind != JsonValueKind.Null;
-        var hasRunAtStr = JsonHelpers.TryGetPropertyIgnoreCase(args, ["runAt", "run_at"], out var strElem) &&
-                          strElem.ValueKind != JsonValueKind.Null;
-        if (hasRunAtMs && hasRunAtStr)
-            throw KernelException.InvalidArgument("Specify at most one of 'runAt' or 'runAtMs'.");
-
-        if (hasRunAtMs)
+        if (JsonHelpers.TryGetPropertyIgnoreCase(args, ["runAtMs"], out var msElem) &&
+            msElem.ValueKind != JsonValueKind.Null)
         {
             if (msElem.ValueKind != JsonValueKind.Number || !msElem.TryGetInt64(out var parsedMs))
                 throw KernelException.InvalidArgument("'runAtMs' must be an integer Unix millisecond timestamp.");
             runAtMs = parsedMs;
         }
-        else if (hasRunAtStr)
-        {
-            if (strElem.ValueKind == JsonValueKind.Number && strElem.TryGetInt64(out var parsedNum))
-            {
-                runAtMs = parsedNum;
-            }
-            else if (strElem.ValueKind == JsonValueKind.String && strElem.GetString() is { } rawRunAt)
-            {
-                if (DateTimeOffset.TryParse(rawRunAt, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var dto) &&
-                    (rawRunAt.EndsWith('Z') || rawRunAt.Contains('+', StringComparison.Ordinal) ||
-                     rawRunAt.LastIndexOf('-') > rawRunAt.IndexOf('T')))
-                {
-                    runAtMs = dto.ToUnixTimeMilliseconds();
-                }
-                else if (DateTime.TryParse(rawRunAt, CultureInfo.InvariantCulture, DateTimeStyles.None, out var localDt))
-                {
-                    var tz = string.IsNullOrWhiteSpace(timezone) ? TimeZoneInfo.Local : ResolveTimeZoneStrict(timezone.Trim());
-                    var unspecified = DateTime.SpecifyKind(localDt, DateTimeKind.Unspecified);
-                    if (tz.IsInvalidTime(unspecified))
-                        throw KernelException.InvalidArgument($"Timestamp '{rawRunAt}' falls in an invalid local time gap in '{tz.Id}'.");
-                    var offset = tz.IsAmbiguousTime(unspecified)
-                        ? tz.GetAmbiguousTimeOffsets(unspecified).Max()
-                        : tz.GetUtcOffset(unspecified);
-                    runAtMs = new DateTimeOffset(unspecified, offset).ToUnixTimeMilliseconds();
-                }
-                else
-                {
-                    throw KernelException.InvalidArgument($"Invalid 'runAt' timestamp '{rawRunAt}'. Expected ISO-8601 date/time.");
-                }
-            }
-            else
-            {
-                throw KernelException.InvalidArgument("'runAt' must be an ISO-8601 timestamp string.");
-            }
-        }
 
         int? maxOccurrences = null;
-        if (JsonHelpers.TryGetPropertyIgnoreCase(args, ["maxOccurrences", "max_occurrences"], out var maxElem) &&
+        if (JsonHelpers.TryGetPropertyIgnoreCase(args, ["maxOccurrences"], out var maxElem) &&
             maxElem.ValueKind != JsonValueKind.Null)
         {
             if (maxElem.ValueKind != JsonValueKind.Number || !maxElem.TryGetInt32(out var parsedMax) || parsedMax < 1)
@@ -609,21 +584,8 @@ public static class KernelMcpDispatcher
             RunAtMs: runAtMs,
             Timezone: timezone,
             MaxOccurrences: maxOccurrences,
-            SourceKind: TrackScheduleSources.Agent);
-    }
-
-    private static TimeZoneInfo ResolveTimeZoneStrict(string timezone)
-    {
-        if (string.Equals(timezone, "UTC", StringComparison.OrdinalIgnoreCase))
-            return TimeZoneInfo.Utc;
-        try
-        {
-            return TimeZoneInfo.FindSystemTimeZoneById(timezone);
-        }
-        catch (Exception ex) when (ex is TimeZoneNotFoundException or InvalidTimeZoneException)
-        {
-            throw KernelException.InvalidArgument($"Unknown timezone '{timezone}'.");
-        }
+            SourceKind: TrackScheduleSources.Agent,
+            RunAt: runAt);
     }
 
     private static ReportCommitRequest ParseReportCommitArgs(JsonElement args)

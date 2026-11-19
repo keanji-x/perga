@@ -19,18 +19,11 @@ public sealed record DailyReportChangesPageDto(string Date, string Timezone, lon
 public sealed record TodayCalendarDayDto(
     string Date,
     bool HasDailyTrack,
-    bool HasReport,
-    int ScheduleCount);
-
-public sealed record TodayCalendarDto(
-    string Today,
-    [property: JsonPropertyName("time_zone")] string TimeZone,
-    string Start,
-    string End,
-    IReadOnlyList<TodayCalendarDayDto> Days);
+    bool HasReport);
 
 public sealed record TodayScheduleItemDto(
     string Id,
+    string Date,
     string TrackId,
     string TrackTitle,
     string Title,
@@ -40,7 +33,10 @@ public sealed record TodayScheduleItemDto(
     long NextFireAtMs,
     string State);
 
-public sealed record TodaySchedulesDto(
-    string Date,
+public sealed record TodayCalendarDto(
+    string Today,
     [property: JsonPropertyName("time_zone")] string TimeZone,
+    string Start,
+    string End,
+    IReadOnlyList<TodayCalendarDayDto> Days,
     IReadOnlyList<TodayScheduleItemDto> Schedules);

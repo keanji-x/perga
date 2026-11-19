@@ -1,4 +1,4 @@
-import { DailyCalendar } from '../../features/today/daily-calendar.tsx';
+import { DailyCalendar, type CalendarViewMode } from '../../features/today/daily-calendar.tsx';
 import { CenteredComposerIntroduction } from '../../ui/drawer/centered-composer-introduction.tsx';
 import { EmptyState } from '../../ui/empty-state/public.tsx';
 import { Icon } from '../../ui/icon/public.tsx';
@@ -10,7 +10,7 @@ import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import type { TrackAggregateSnapshotDto } from '../../../../core/api/schemas.ts';
-import { dailyTrackOperation, isDailyDate, reportChangesOperation, reportEditsOperation, shiftDailyDate, supervisorSnapshotOperation, todayCalendarOperation, todaySchedulesOperation, type ReportChange } from '../../../../core/domain/daily-planner.ts';
+import { dailyTrackOperation, isDailyDate, localDailyDate, reportChangesOperation, reportEditsOperation, shiftDailyDate, startOfDailyWeek, supervisorSnapshotOperation, todayCalendarOperation, type ReportChange } from '../../../../core/domain/daily-planner.ts';
 import { PanelCard } from '../../ui/panel-card/public.tsx';
 import { DEPLOYMENT_OWNER_USER_ID } from '../../../../core/api/auth.ts';
 import { supervisorDetails, supervisorReport } from '../../../../core/domain/supervisor-view.ts';
@@ -36,19 +36,6 @@ export type DailyCenterPresentation = Readonly<{
   render: (assistant: ReactNode) => ReactNode;
 }>;
 
-function browserLocalDay(): string {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-}
-
-function initialCalendarRange(anchor: string): Readonly<{ start: string; end: string }> {
-  const [year, month, day] = anchor.split('-').map(Number);
-  const date = new Date(Date.UTC(year, month - 1, day));
-  const mondayOffset = (date.getUTCDay() + 6) % 7;
-  const start = shiftDailyDate(anchor, -mondayOffset);
-  return { start, end: shiftDailyDate(start, 6) };
-}
-
 export function DailyTodayRoute({ transport, unauthorized, selectedDate, onOpenTrack, onSelectDate, renderTrack, pergaMode = false }: Readonly<{
   transport: ApiTransportPort; unauthorized: UnauthorizedChannel; selectedDate?: string; pergaMode?: boolean;
   onOpenTrack: (trackId: string) => void;
@@ -71,16 +58,24 @@ export function DailyTodayRoute({ transport, unauthorized, selectedDate, onOpenT
   }, [view]);
   const user = useCurrentUser();
   const showSupervisor = !pergaMode && user?.userId === DEPLOYMENT_OWNER_USER_ID;
-  const validSelectedDate = selectedDate !== undefined && isDailyDate(selectedDate) ? selectedDate : undefined;
-  const [visibleRange, setVisibleRange] = useState(() => initialCalendarRange(validSelectedDate ?? browserLocalDay()));
+  const isDefaultToday = selectedDate === undefined;
+  const isInvalidDate = selectedDate !== undefined && !isDailyDate(selectedDate);
+  const validSelectedDate = isInvalidDate ? undefined : selectedDate;
+  const [calendarMode, setCalendarMode] = useState<CalendarViewMode>('week');
+  const [knownServerToday, setKnownServerToday] = useState<string | undefined>(undefined);
+  const [visibleRange, setVisibleRange] = useState(() => {
+    const start = startOfDailyWeek(validSelectedDate ?? localDailyDate());
+    return { start, end: shiftDailyDate(start, 6) };
+  });
   const handleRangeChange = useCallback((next: Readonly<{ start: string; end: string }>) => {
     setVisibleRange((current) => (current.start === next.start && current.end === next.end ? current : next));
   }, [setVisibleRange]);
   const daily = useQuery({
-    queryKey: ['daily-planner', selectedDate ?? 'today'],
+    queryKey: ['daily-planner', validSelectedDate ?? (isInvalidDate ? 'invalid' : 'today')],
+    enabled: !isInvalidDate,
     queryFn: async () => {
       try {
-        return await runOperation(transport, dailyTrackOperation(selectedDate), unauthorized);
+        return await runOperation(transport, dailyTrackOperation(validSelectedDate), unauthorized);
       } catch (error) {
         if (error instanceof ApiError && error.failure.kind === 'http' && error.failure.status === 404) {
           return null;
@@ -96,60 +91,65 @@ export function DailyTodayRoute({ transport, unauthorized, selectedDate, onOpenT
     queryFn: () => runOperation(transport, todayCalendarOperation(visibleRange.start, visibleRange.end), unauthorized),
     refetchInterval: 30_000,
   });
-  const serverToday = calendar.data?.today ?? (selectedDate === undefined ? daily.data?.date : undefined);
-  const activeCalendarDay = validSelectedDate ?? serverToday ?? browserLocalDay();
-  const daySchedules = useQuery({
-    queryKey: ['daily-schedules', activeCalendarDay],
-    enabled: pergaMode && isDailyDate(activeCalendarDay),
-    queryFn: () => runOperation(transport, todaySchedulesOperation(activeCalendarDay), unauthorized),
-    refetchInterval: 30_000,
-  });
+  const discoveredToday = calendar.data?.today ?? (isDefaultToday ? daily.data?.date : undefined);
+  if (discoveredToday !== undefined && discoveredToday !== knownServerToday) {
+    setKnownServerToday(discoveredToday);
+  }
+  const serverToday = discoveredToday ?? knownServerToday;
   const handleSelectDate = useCallback((day: string) => {
     if (onSelectDate === undefined) return;
-    onSelectDate(serverToday !== undefined && day === serverToday ? undefined : day);
-  }, [onSelectDate, serverToday]);
+    const nextDay = serverToday !== undefined && day === serverToday ? undefined : day;
+    if (nextDay === validSelectedDate && !isInvalidDate) return;
+    onSelectDate(nextDay);
+  }, [isInvalidDate, onSelectDate, serverToday, validSelectedDate]);
+  const calendarErrorNotice = calendar.isError
+    ? readErrorText(calendar.error, 'Calendar data could not be loaded.')
+    : undefined;
   const calendarNode = pergaMode ? (
     <DailyCalendar
       today={serverToday}
       selectedDate={validSelectedDate ?? serverToday}
+      mode={calendarMode}
+      onModeChange={setCalendarMode}
       days={calendar.data?.days}
-      selectedSchedules={daySchedules.data?.schedules}
-      scheduleTimeZone={daySchedules.data?.time_zone ?? calendar.data?.time_zone}
+      schedules={calendar.data?.schedules}
+      timeZone={calendar.data?.time_zone}
+      errorNotice={calendarErrorNotice}
       onSelectDate={onSelectDate === undefined ? undefined : handleSelectDate}
       onVisibleRangeChange={handleRangeChange}
       onOpenTrack={onOpenTrack}
     />
-  ) : null;
+  ) : undefined;
   const trackId = daily.data?.track_id;
   const detail = useQuery({ ...trackDetailQueryOptions(transport, trackId ?? '', unauthorized), enabled: trackId !== undefined });
-  const supervisor = !pergaMode && selectedDate === undefined && <DailySupervisor transport={transport} unauthorized={unauthorized} />;
-  const withSupervisor = (content: ReactNode) => <>{supervisor}{content}</>;
-  if (daily.isError) return withSupervisor(<ErrorBox message={readErrorText(daily.error, 'The daily Planner is unavailable.')} onRetry={() => { void daily.refetch(); }} />);
-  if (daily.isPending) return withSupervisor(<p role="status">Loading daily Planner…</p>);
+  const supervisor = !pergaMode && isDefaultToday && <DailySupervisor transport={transport} unauthorized={unauthorized} />;
+  const withCalendarShell = (content: ReactNode) => (
+    <>{supervisor}{calendarNode !== undefined ? (
+      <div className={styles.missingDayLayout}>
+        <div className={styles.missingDayMain}>{content}</div>
+        <aside className={styles.missingDayAside}><PanelCard>{calendarNode}</PanelCard></aside>
+      </div>
+    ) : content}</>
+  );
+  if (isInvalidDate) return withCalendarShell(<ErrorBox message={`Invalid date "${selectedDate}". Expected YYYY-MM-DD.`} onRetry={() => onSelectDate?.(undefined)} />);
+  if (daily.isError) return withCalendarShell(<ErrorBox message={readErrorText(daily.error, 'The daily Planner is unavailable.')} onRetry={() => { void daily.refetch(); }} />);
+  if (daily.isPending) return withCalendarShell(<p role="status">Loading daily Planner…</p>);
   if (daily.data === null) {
-    const emptyNotice = selectedDate === undefined
+    const emptyNotice = isDefaultToday
       ? <p role="status">Preparing today’s Track…</p>
       : <EmptyState variant="panel" icon={<Icon name="file" />} title="No daily Track was created for this date." description="这一天还没有日报记录。" />;
-    if (pergaMode) {
-      return withSupervisor(
-        <div className={styles.missingDayLayout}>
-          <div className={styles.missingDayMain}>{emptyNotice}</div>
-          <aside className={styles.missingDayAside}><PanelCard>{calendarNode}</PanelCard></aside>
-        </div>,
-      );
-    }
-    return withSupervisor(emptyNotice);
+    return withCalendarShell(emptyNotice);
   }
-  if (detail.isError) return withSupervisor(<ErrorBox message={readErrorText(detail.error, 'The daily Track could not be loaded.')} onRetry={() => { void detail.refetch(); }} />);
-  if (detail.data === undefined || detail.data.track.id !== trackId) return withSupervisor(<p role="status">Loading daily Track…</p>);
+  if (detail.isError) return withCalendarShell(<ErrorBox message={readErrorText(detail.error, 'The daily Track could not be loaded.')} onRetry={() => { void detail.refetch(); }} />);
+  if (detail.data === undefined || detail.data.track.id !== trackId) return withCalendarShell(<p role="status">Loading daily Track…</p>);
   const date = daily.data.date;
   return renderTrack({ ...detail.data, track: { ...detail.data.track, title: date } },
-    pergaMode ? null : <DailyReportChanges key={date} isToday={selectedDate === undefined} date={shiftDailyDate(date, -1)}
+    pergaMode ? null : <DailyReportChanges key={date} isToday={isDefaultToday} date={shiftDailyDate(date, -1)}
       transport={transport} unauthorized={unauthorized} onOpenTrack={onOpenTrack} />,
     calendarNode,
-    <header className={styles.reportIntro}><h2>{selectedDate === undefined ? '今天的重点' : '当天的重点'}</h2><p>让工作更轻松，也更有条理。</p></header>,
+    <header className={styles.reportIntro}><h2>{isDefaultToday ? '今天的重点' : '当天的重点'}</h2><p>让工作更轻松，也更有条理。</p></header>,
     supervisor,
-    selectedDate === undefined ? {
+    isDefaultToday ? {
       title: 'Today Assistant',
       presented: view === 'assistant',
       onOpenAssistant: () => setView('assistant'),

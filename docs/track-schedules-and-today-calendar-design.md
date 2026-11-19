@@ -19,22 +19,21 @@ Review Tier: **L2** (forward SQLite migration `0018_track_schedules.sql`, transa
 
 2. **Kernel (`Perga.Kernel`)**
    - Port `ITrackScheduleStore` + `IScheduleCronEvaluator` (isolating `Cronos` parsing in `Perga.Host` while allowing deterministic evaluation in Kernel tests).
-   - `PergaKernelService`: `SetTrackScheduleAsync`, `CancelTrackScheduleAsync`, `ListTrackSchedulesAsync`, `GetTodayCalendarAsync`, `GetTodaySchedulesAsync`.
+   - `PergaKernelService`: `SetTrackScheduleAsync`, `CancelTrackScheduleAsync`, `ListTrackSchedulesAsync`, `GetTodayCalendarAsync`.
    - `TrackActor.TrackWakes.cs`: `PrepareWakePromptAsync` honors `payload.Prompt` for dynamic `schedule` wakes while preserving `_policyVm.BuildScheduleWakePrompt` / `StaticWakePrompt` for template-declared schedules when `payload.Prompt` is empty.
-   - `KernelMcpTools`: exposes `perga_schedule_ls` (shared on Track), `perga_schedule_set` and `perga_schedule_rm` (governance-only, `BoundAttemptId == null`), with strict input validation (`cron` vs `runAt`, `timezone`, `maxOccurrences`, non-empty `title`/`prompt`).
+   - `KernelMcpTools`: exposes `perga_schedule_ls` (shared on Track), `perga_schedule_set` and `perga_schedule_rm` (governance-only, `BoundAttemptId == null`), with strict input validation (`cron` vs `runAt`/`runAtMs`, `timezone`, `maxOccurrences`, non-empty `title`/`prompt`).
 
 3. **Host (`Perga.Host`)**
-   - `CronosScheduleCronEvaluator` wraps `Cronos` (`Standard` 5-field & `IncludeSeconds` 6-field + IANA/system `TimeZoneInfo`).
+   - `CronosScheduleCronEvaluator` wraps `Cronos` (`Standard` 5-field & `IncludeSeconds` 6-field) using `TodayCalendar.TryResolveZone`.
    - `CronosScheduleHostedService`: preserves lightweight template schedule evaluation via `ITrackReadStore.ListOpenTrackScheduleSourcesAsync` and additionally fires durable `track_schedules` via `ITrackScheduleStore.FireDueAsync`, then calls `PokeLeadAsync` on affected tracks.
    - `TodayEndpoints`:
-     - `GET /api/today/calendar?start=YYYY-MM-DD&end=YYYY-MM-DD` (strict bounds, max 62 days): returns `{ today, time_zone, start, end, days: [{ date, has_daily_track, has_report, schedule_count }] }`.
-     - `GET /api/today/schedules?date=YYYY-MM-DD`: returns `{ date, time_zone, schedules: [{ id, track_id, track_title, title, schedule_kind, cron_expr, timezone, next_fire_at_ms, state }] }`.
+     - `GET /api/today/calendar?start=YYYY-MM-DD&end=YYYY-MM-DD` (strict bounds, max 62 days): returns `{ today, time_zone, start, end, days: [{ date, has_daily_track, has_report }], schedules: [{ id, date, track_id, track_title, title, schedule_kind, cron_expr, timezone, next_fire_at_ms, state }] }`.
 
 4. **Frontend (`fe`)**
-   - `fe/core/domain/daily-planner.ts`: schemas & operations for `/api/today/calendar` and `/api/today/schedules`.
+   - `fe/core/domain/daily-planner.ts`: schema & operation for `/api/today/calendar` plus shared UTC date helpers (`shiftDailyDate`, `startOfDailyWeek`, `localDailyDate`, `isDailyDate`).
    - `fe/web/src/app/router/navigation.ts` & `public.tsx`: `NavTarget` `today` carries optional `day?: string`, keeping `/` for server today and `/?day=YYYY-MM-DD` for other days.
-   - `fe/web/src/features/today/daily-calendar.tsx`: accepts optional `selectedDate`, `today`, `days`, `selectedSchedules`, `onSelectDate`, `onVisibleRangeChange`, `onOpenTrack` while remaining self-contained when mounted without props. Displays subtle per-day indicators (`has_daily_track`/`has_report`, `schedule_count`) and renders a compact `Scheduled` list beneath the grid only when the selected day has scheduled items.
-   - `fe/web/src/app/router/daily-planner.tsx`: wires `DailyCalendar` in `pergaMode` across loaded, missing-date (`daily.data === null`), and date-switching states, keeping `DailyCalendar` in `panelHeader` for consistent placement on `/` and `/?day=YYYY-MM-DD`.
+   - `fe/web/src/features/today/daily-calendar.tsx`: accepts optional `selectedDate`, `today`, `mode`, `onModeChange`, `days`, `schedules`, `timeZone`, `errorNotice`, `onSelectDate`, `onVisibleRangeChange`, `onOpenTrack`. Derives per-day schedule counts and selected-day agenda directly from `schedules` (single source of truth).
+   - `fe/web/src/app/router/daily-planner.tsx`: wires `DailyCalendar` in `pergaMode` across loaded, pending, error, invalid-date, and missing-date (`daily.data === null`) states while lifting `mode` so Week/Month survives route transitions.
 
 ## Verification Plan
 - **Storage tests**: `0014 -> 0015` atomic migration & rollback test; `ITrackScheduleStore` CRUD, `once`/`cron` `FireDueAsync` atomicity with `track_wakes`, catch-up-once after downtime, cancel dropping pending wakes, closed-track cancellation, and maintenance pruning.

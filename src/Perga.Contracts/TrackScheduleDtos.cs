@@ -30,4 +30,5 @@ public sealed record SetTrackScheduleRequest(
     int? MaxOccurrences = null,
     string? TargetSessionId = null,
     string? SourceKind = null,
-    string? CoalesceKey = null);
+    string? CoalesceKey = null,
+    string? RunAt = null);

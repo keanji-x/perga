@@ -517,7 +517,7 @@ it.each([1440, 390])('navigates between dates and displays day schedules on perg
         const params = new URL(request.path, 'http://fixture').searchParams;
         const start = params.get('start') ?? '2026-09-28';
         const end = params.get('end') ?? '2026-10-04';
-        const days: Array<{ date: string; has_daily_track: boolean; has_report: boolean; schedule_count: number }> = [];
+        const days: Array<{ date: string; has_daily_track: boolean; has_report: boolean }> = [];
         const cursor = new Date(`${start}T12:00:00Z`);
         const limit = new Date(`${end}T12:00:00Z`);
         while (cursor <= limit && days.length < 62) {
@@ -526,33 +526,22 @@ it.each([1440, 390])('navigates between dates and displays day schedules on perg
             date: day,
             has_daily_track: day === '2026-10-04',
             has_report: day === '2026-10-04',
-            schedule_count: day === '2026-10-03' ? 1 : 0,
           });
           cursor.setUTCDate(cursor.getUTCDate() + 1);
         }
-        return { status: 200, statusText: 'OK', body: { today: '2026-10-04', time_zone: 'Asia/Shanghai', start, end, days } };
-      }
-      if (request.path.startsWith('/api/today/schedules')) {
-        const date = new URL(request.path, 'http://fixture').searchParams.get('date') ?? '2026-10-04';
-        return {
-          status: 200,
-          statusText: 'OK',
-          body: {
-            date,
-            time_zone: 'UTC',
-            schedules: date === '2026-10-03' ? [{
-              id: 'sch_oct3',
-              track_id: 'project',
-              track_title: 'Project evidence',
-              title: 'Check release pipeline',
-              schedule_kind: 'once',
-              cron_expr: null,
-              timezone: 'UTC',
-              next_fire_at_ms: Date.parse('2026-10-03T14:30:00Z'),
-              state: 'active',
-            }] : [],
-          },
-        };
+        const schedules = start <= '2026-10-03' && end >= '2026-10-03' ? [{
+          id: 'sch_oct3',
+          date: '2026-10-03',
+          track_id: 'project',
+          track_title: 'Project evidence',
+          title: 'Check release pipeline',
+          schedule_kind: 'once',
+          cron_expr: null,
+          timezone: 'UTC',
+          next_fire_at_ms: Date.parse('2026-10-03T14:30:00Z'),
+          state: 'active',
+        }] : [];
+        return { status: 200, statusText: 'OK', body: { today: '2026-10-04', time_zone: 'UTC', start, end, days, schedules } };
       }
       return undefined;
     },
@@ -563,21 +552,29 @@ it.each([1440, 390])('navigates between dates and displays day schedules on perg
   await expect.element(calendar.getByRole('button', { name: '2026-10-04', exact: true })).toHaveAttribute('data-nc-has-track', '');
   await expect.element(calendar.getByRole('button', { name: '2026-10-03', exact: true })).toHaveAttribute('data-nc-schedule-count', '1');
 
-  // Switch to Month view and verify paging months fetches the new visible range without altering ?day=.
+  // Switch to Month view, page months without altering ?day=, and keep Month mode across date navigation + Back/Forward.
   await page.getByRole('radio', { name: 'Month', exact: true }).click();
   await expect.element(page.getByRole('radio', { name: 'Month', exact: true })).toBeChecked();
   await calendar.getByRole('button', { name: 'Next month' }).click();
   await expect.poll(() => requests.some(r => r.path === '/api/today/calendar?start=2026-11-01&end=2026-11-30')).toBe(true);
   expect(router.state.location.search).toEqual({ day: undefined });
 
-  // Jump back to Week view and click 2026-10-03 (no daily track, has 1 schedule).
+  // Return to October while staying in Month mode and click 2026-10-03 (no daily track, has 1 schedule).
   await calendar.getByRole('button', { name: 'Previous month' }).click();
-  await page.getByRole('radio', { name: 'Week', exact: true }).click();
   await calendar.getByRole('button', { name: '2026-10-03', exact: true }).click();
   await expect.poll(() => (router.state.location.search as Readonly<{ day?: string }>).day).toBe('2026-10-03');
   await expect.element(page.getByText('No daily Track was created for this date.')).toBeVisible();
+  await expect.element(page.getByRole('radio', { name: 'Month', exact: true })).toBeChecked();
   await expect.element(calendar.getByRole('button', { name: '2026-10-03', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect.element(calendar.getByText('Check release pipeline', { exact: true })).toBeVisible();
+
+  // Browser Back returns to '/', Forward returns to ?day=2026-10-03, and Today returns cleanly to '/'.
+  router.history.back();
+  await expect.poll(() => (router.state.location.search as Readonly<{ day?: string }>).day).toBeUndefined();
+  await expect.element(calendar.getByRole('button', { name: '2026-10-04', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  router.history.forward();
+  await expect.poll(() => (router.state.location.search as Readonly<{ day?: string }>).day).toBe('2026-10-03');
+  await expect.element(page.getByText('No daily Track was created for this date.')).toBeVisible();
 
   // Click Today to return to '/' and load today's Track.
   await calendar.getByRole('button', { name: 'Today', exact: true }).click();
