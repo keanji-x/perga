@@ -15,6 +15,25 @@ public sealed class TrackCreationTests
 {
     private static readonly TimeSpan Deadline = TimeSpan.FromSeconds(10);
 
+    [Theory]
+    [InlineData(null, "inspect", HttpStatusCode.OK)]
+    [InlineData("act", "act", HttpStatusCode.OK)]
+    [InlineData("unknown", null, HttpStatusCode.BadRequest)]
+    public async Task TrackCreateUsesRuntimeModesBeforeBootstrap(string? selected, string? expected, HttpStatusCode status)
+    {
+        await using var host = new PergaHostTestCluster();
+        host.AgentRuntime.AcpPermissionModes = [new("inspect", "Inspect", "", "neutral", true), new("act", "Act", "", "warning")];
+        var areaId = await CreateAreaAsync(host);
+        using var response = await PostAsync(host, "/api/v1/tracks", "acp-mode-create",
+            new { areaId, provider = "acp:antigravity", permissionMode = selected });
+        if (status == HttpStatusCode.BadRequest) { Assert.Equal(status, response.StatusCode); return; }
+        response.EnsureSuccessStatusCode();
+        var created = await ReadAsync(response);
+        var trackId = created.GetProperty("track").GetProperty("id").GetString()!;
+        var kernel = host.Services.GetRequiredService<IPergaKernel>();
+        Assert.Equal(expected, Assert.Single(await kernel.ListSessionsAsync(trackId)).PermissionMode);
+    }
+
     [Fact]
     public async Task AcceptedFirstInputKeepsModelAndEffortWhileWorkspaceWaits()
     {

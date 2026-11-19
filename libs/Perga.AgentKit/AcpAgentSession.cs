@@ -111,6 +111,8 @@ public sealed class AcpAgentSession : IAgentSession
         }
     }
 
+    public IReadOnlyList<PermissionModeOption> AvailablePermissionModes { get; private set; } = [];
+
     internal IReadOnlyList<string> AvailableModels { get; private set; } = [];
     internal IReadOnlyList<ProviderModelInfo> AvailableModelCatalog { get; private set; } = [];
 
@@ -358,16 +360,23 @@ public sealed class AcpAgentSession : IAgentSession
             throw new InvalidOperationException($"ACP '{method}' response did not contain a sessionId.");
         }
 
+        var permissionModes = AcpPermissionModes.Read(response);
+        AvailablePermissionModes = permissionModes.Options;
         if (!string.IsNullOrWhiteSpace(spec.PermissionMode))
         {
+            var modeParams = new Dictionary<string, object?> { ["sessionId"] = resolvedSessionId };
+            if (permissionModes.ConfigId is { } configId)
+            {
+                modeParams["configId"] = configId;
+                modeParams["value"] = spec.PermissionMode.Trim();
+            }
+            else
+            {
+                modeParams["modeId"] = spec.PermissionMode.Trim();
+            }
             await _rpc.SendRequestAsync(
-                "session/set_mode",
-                new Dictionary<string, object?>
-                {
-                    ["sessionId"] = resolvedSessionId,
-                    ["modeId"] = spec.PermissionMode.Trim()
-                },
-                ct).ConfigureAwait(false);
+                permissionModes.ConfigId is null ? "session/set_mode" : "session/set_config_option",
+                modeParams, ct).ConfigureAwait(false);
         }
 
         Volatile.Write(ref _nativeThreadId, resolvedSessionId);

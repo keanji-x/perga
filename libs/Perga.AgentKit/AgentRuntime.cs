@@ -455,14 +455,19 @@ public sealed class AgentRuntime : IAgentRuntime
             var version = ExtractVersionString(stdout) ?? ExtractVersionString(stderr) ?? "unknown";
             IReadOnlyList<string> models;
             IReadOnlyList<ProviderModelInfo> catalog;
-            if (cmdSpec.Models is not null)
+            if (provider.StartsWith("acp:", StringComparison.OrdinalIgnoreCase))
+            {
+                (models, catalog, permissionModes) = await ProbeAcpModelsAsync(provider, ct).ConfigureAwait(false);
+                if (cmdSpec.Models is not null)
+                {
+                    models = cmdSpec.Models;
+                    catalog = BuildSimpleModelCatalog(models);
+                }
+            }
+            else if (cmdSpec.Models is not null)
             {
                 models = cmdSpec.Models;
                 catalog = BuildSimpleModelCatalog(models);
-            }
-            else if (provider.StartsWith("acp:", StringComparison.OrdinalIgnoreCase))
-            {
-                (models, catalog) = await ProbeAcpModelsAsync(provider, ct).ConfigureAwait(false);
             }
             else if (string.Equals(provider, "codex", StringComparison.OrdinalIgnoreCase))
             {
@@ -505,23 +510,25 @@ public sealed class AgentRuntime : IAgentRuntime
         TimeSpan.FromMilliseconds(Math.Min(_options.ModelProbeTimeout.TotalMilliseconds,
             Math.Min(_options.ProbeTimeout.TotalMilliseconds, _options.HandshakeTimeout.TotalMilliseconds)));
 
-    private async Task<(IReadOnlyList<string> Models, IReadOnlyList<ProviderModelInfo> Catalog)> ProbeAcpModelsAsync(
+    private async Task<(IReadOnlyList<string> Models, IReadOnlyList<ProviderModelInfo> Catalog, IReadOnlyList<PermissionModeOption> Modes)> ProbeAcpModelsAsync(
         string provider,
         CancellationToken ct)
     {
         using var probeCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         probeCts.CancelAfter(GetModelProbeTimeout());
+        IReadOnlyList<PermissionModeOption> modes = [];
         try
         {
             await using var session = await OpenSessionAsync(new HarnessLaunchSpec(
                 provider, null, Path.GetTempPath(), null, null,
                 new Dictionary<string, McpServerConfig>()), probeCts.Token).ConfigureAwait(false);
             var acp = (AcpAgentSession)session;
+            modes = acp.AvailablePermissionModes;
             var catalog = acp.AvailableModelCatalog;
             var models = catalog.Count > 0 ? catalog.Select(m => m.Model).ToArray() : acp.AvailableModels;
             if (models.Count > 0)
             {
-                return (models, catalog);
+                return (models, catalog, modes);
             }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -538,11 +545,11 @@ public sealed class AgentRuntime : IAgentRuntime
             var cliModels = await ProbeOpenCodeCliModelsAsync(ct).ConfigureAwait(false);
             if (cliModels.Count > 0)
             {
-                return (cliModels, BuildSimpleModelCatalog(cliModels));
+                return (cliModels, BuildSimpleModelCatalog(cliModels), modes);
             }
         }
 
-        return ([], []);
+        return ([], [], modes);
     }
 
     private async Task<IReadOnlyList<string>> ProbeOpenCodeCliModelsAsync(CancellationToken ct)

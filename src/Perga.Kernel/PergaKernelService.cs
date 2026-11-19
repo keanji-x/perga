@@ -695,20 +695,8 @@ public sealed partial class PergaKernelService : IPergaKernel
 
         var leadProvider = string.IsNullOrWhiteSpace(req.Provider) ? _options.DefaultProvider
             : TaskBlockSynchronizer.NormalizeProviderId(req.Provider) ?? req.Provider.Trim();
-        string? leadPermissionMode;
-        if (!string.IsNullOrWhiteSpace(req.PermissionMode))
-        {
-            if (!ProviderPermissionModes.IsSupported(leadProvider, req.PermissionMode))
-            {
-                throw KernelException.InvalidArgument(
-                    $"Unsupported permission mode '{req.PermissionMode}' for provider '{leadProvider}'.");
-            }
-            leadPermissionMode = req.PermissionMode.Trim();
-        }
-        else
-        {
-            leadPermissionMode = ProviderPermissionModes.GetDefaultMode(leadProvider);
-        }
+        var leadPermissionMode = RuntimePermissionModes.Resolve(leadProvider, req.PermissionMode,
+            await GetCachedOrProbeProvidersAsync(false, ct).ConfigureAwait(false));
         var leadSession = new AgentSessionDto(
             Id: leadSessionId,
             TrackId: trackId,

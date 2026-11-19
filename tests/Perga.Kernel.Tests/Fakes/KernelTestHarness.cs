@@ -1403,11 +1403,10 @@ internal sealed class ScriptableFakeAgentRuntime : IAgentRuntime
 
     public Func<ScriptableFakeAgentSession, TurnInput, CancellationToken, IAsyncEnumerable<UnifiedAgentEvent>>? TurnScript { get; set; }
 
-    public Task<IReadOnlyList<ProviderStatus>> ProbeProvidersAsync(CancellationToken ct) =>
-        Task.FromResult<IReadOnlyList<ProviderStatus>>(
-        [
-            new ProviderStatus("codex", true, "1.0.0", null, ["gpt-5"])
-        ]);
+    public IReadOnlyList<ProviderStatus> Providers { get; set; } =
+        [new ProviderStatus("codex", true, "1.0.0", null, ["gpt-5"])];
+
+    public Task<IReadOnlyList<ProviderStatus>> ProbeProvidersAsync(CancellationToken ct) => Task.FromResult(Providers);
 
     public Task<IAgentSession> OpenSessionAsync(HarnessLaunchSpec spec, CancellationToken ct)
     {

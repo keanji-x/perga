@@ -382,6 +382,7 @@ export function plannerProviderOf(payload: unknown): AgentProvider {
 }
 
 export type NewTrackBody = Readonly<{
+  permissionMode?: string;
   admin?: boolean;
   area_id: string;
   /** The Planner's backend, stamped on its card and never changed. Required: the kernel refuses a create without it. */

@@ -8,6 +8,31 @@ namespace Perga.Kernel.Tests;
 
 public sealed class SessionStreamingAndCompactionTests
 {
+    [Fact]
+    public async Task RuntimePermissionModesApplyBeforeBootstrapToTracksSessionsAndLaunch()
+    {
+        await using var ctx = new KernelTestContext();
+        ctx.AgentRuntime.Providers = [new("acp:custom", true, "1", null, [], PermissionModes:
+            [new("inspect", "Inspect", "", "neutral"), new("act", "Act", "", "warning", IsDefault: true)])];
+        var area = await ctx.Kernel.CreateAreaAsync(new("Modes"));
+        var snap = await ctx.Kernel.CreateTrackAsync(new(AreaId: area.Id, Provider: "acp:custom"));
+        var lead = (await ctx.Kernel.ListSessionsAsync(snap.Track.Id)).Single();
+        Assert.Equal("act", lead.PermissionMode);
+        var sub = await ctx.Kernel.CreateSubagentSessionAsync(snap.Track.Id, new(Provider: "acp:custom", PermissionMode: "inspect"));
+        Assert.Equal("inspect", sub.PermissionMode);
+        var inherited = await ctx.Kernel.CreateSubagentSessionAsync(snap.Track.Id, new(Provider: "acp:custom"));
+        Assert.Equal("act", inherited.PermissionMode);
+        await ctx.Kernel.PatchSessionAsync(sub.Id, new(Provider: "codex"));
+        var switched = await ctx.Kernel.PatchSessionAsync(sub.Id, new(Provider: "acp:custom"));
+        Assert.Equal("act", switched.PermissionMode);
+        await ctx.Kernel.SetSessionPermissionModeAsync(lead.Id, "inspect");
+        await ctx.Kernel.SendMessageAsync(lead.Id, new("go", "mode-input"));
+        Assert.Equal("inspect", ctx.AgentRuntime.OpenedSessions.Last().LaunchSpec.PermissionMode);
+        await Assert.ThrowsAsync<KernelException>(() => ctx.Kernel.SetSessionPermissionModeAsync(lead.Id, "invented"));
+        await Assert.ThrowsAsync<KernelException>(() => ctx.Kernel.CreateTrackAsync(new(AreaId: area.Id, Provider: "acp:custom", PermissionMode: "invented")));
+        await Assert.ThrowsAsync<KernelException>(() => ctx.Kernel.CreateSubagentSessionAsync(snap.Track.Id, new(Provider: "acp:custom", PermissionMode: "invented")));
+    }
+
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
@@ -315,10 +340,15 @@ public sealed class SessionStreamingAndCompactionTests
         Assert.True(activeFakeSession.CancelCalled);
     }
 
-    [Fact]
-    public async Task TaskWorkerSession_ReceivesDefaultPermissionModeOnCreateAndLaunch()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task TaskWorkerSession_ReceivesDefaultPermissionModeOnCreateAndLaunch(bool dynamicModes)
     {
         await using var ctx = new KernelTestContext();
+        if (dynamicModes)
+            ctx.AgentRuntime.Providers = [new("codex", true, "1", null, [], PermissionModes:
+                [new("runtime-worker", "Worker", "", "neutral", true)])];
         var (_, snap) = await ctx.CreateDefaultTrackAsync();
         var trackId = snap.Track.Id;
         var leadId = snap.Track.LeadSessionId!;
@@ -345,11 +375,11 @@ public sealed class SessionStreamingAndCompactionTests
             }))]));
 
         var workerSession = await openedWorker.Task.WaitAsync(TimeSpan.FromSeconds(10));
-        Assert.Equal("never", workerSession.LaunchSpec.PermissionMode);
+        Assert.Equal(dynamicModes ? "runtime-worker" : "never", workerSession.LaunchSpec.PermissionMode);
 
         var sessions = await ctx.Kernel.ListSessionsAsync(trackId);
         var bound = Assert.Single(sessions, s => s.BoundTaskId is not null);
-        Assert.Equal("never", bound.PermissionMode);
+        Assert.Equal(dynamicModes ? "runtime-worker" : "never", bound.PermissionMode);
     }
 
     [Fact]

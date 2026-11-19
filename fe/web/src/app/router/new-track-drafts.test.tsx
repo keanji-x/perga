@@ -22,7 +22,7 @@ it.each([undefined, 'Already submitted'])('restores the creation request after r
     key,
     ...(firstMessage === undefined ? {} : { message: firstMessage }),
     body: {
-      area_id: area.id, planner_provider: 'claude', cwd: '/repo',
+      area_id: area.id, planner_provider: 'claude', cwd: '/repo', permissionMode: 'plan',
       theme: { fg: [0, 0, 0], bg: [255, 255, 255] },
     } as const,
   };
@@ -31,7 +31,7 @@ it.each([undefined, 'Already submitted'])('restores the creation request after r
 
   const reopened = renderHook(() => useNewTrackSession(area.id, area), { wrapper });
   expect(reopened.result.current.session).toMatchObject({
-    key, request, creating: false,
+    key, request, creating: false, permissionMode: 'plan',
     form: { message: firstMessage ?? '', cwd: request.body.cwd },
   });
   act(() => { reopened.result.current.store.forget(area.id); });
@@ -39,4 +39,16 @@ it.each([undefined, 'Already submitted'])('restores the creation request after r
   const next = renderHook(() => useNewTrackSession(area.id, area), { wrapper });
   expect(next.result.current.session?.request).toBeNull();
   expect(next.result.current.session?.key).not.toBe(key);
+});
+
+it('keeps a mode for same-provider model changes and clears it on provider change', () => {
+  const area: Area = { id: 'modes', name: 'Modes', color: '#112233', defaultCwd: null,
+    defaultTemplateId: null, kind: 'user', sort: 0, createdAt: 0, updatedAt: 0 };
+  const wrapper = ({ children }: { children: ReactNode }) => <NewTrackDraftProvider>{children}</NewTrackDraftProvider>;
+  const draft = renderHook(() => useNewTrackSession(area.id, area), { wrapper });
+  act(() => { draft.result.current.store.update(area.id, { permissionMode: 'provider-choice' }); });
+  act(() => { draft.result.current.store.update(area.id, { provider: 'codex', model: { model: 'other', reasoning_effort: null } }); });
+  expect(draft.result.current.session?.permissionMode).toBe('provider-choice');
+  act(() => { draft.result.current.store.update(area.id, { provider: 'opencode' }); });
+  expect(draft.result.current.session?.permissionMode).toBeNull();
 });

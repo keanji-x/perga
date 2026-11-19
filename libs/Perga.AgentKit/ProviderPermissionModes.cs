@@ -18,6 +18,9 @@ public static class ProviderPermissionModes
         new("dontAsk", "Never", "Auto-denies unapproved actions; never asks.", "neutral", IsDefault: true),
         new("default", "Ask me", "Pauses the turn to ask you.", "warning"),
         new("acceptEdits", "Accept edits", "Auto-approves edits; asks for commands.", "warning"),
+        new("plan", "Plan", "Plans without executing changes.", "neutral"),
+        new("auto", "Auto", "Provider automatically reviews permission requests.", "warning"),
+        new("manual", "Manual", "Asks before unapproved actions.", "warning"),
         new("bypassPermissions", "Full access", "No sandbox; never asks. Runs with your account's access.", "danger")
     ];
 

@@ -24,6 +24,50 @@ public sealed class AcpProviderTests : IDisposable
         });
 
     [Theory]
+    [InlineData(0, null, false)]
+    [InlineData(0, "restored", false)]
+    [InlineData(0, "restored", true)]
+    [InlineData(1, null, false)]
+    [InlineData(1, "restored", false)]
+    [InlineData(1, "restored", true)]
+    [InlineData(2, null, false)]
+    [InlineData(2, "restored", false)]
+    [InlineData(2, "restored", true)]
+    public async Task PermissionModesAreProbedAndAppliedOnNewLoadAndResume(int shape, string? resume, bool nativeResume)
+    {
+        var config = shape != 0;
+        var log = Path.Combine(_fixture.RootDir, "mode-calls.jsonl");
+        var payload = config
+            ? """{"configOptions":[{"id":"unrelated","category":"model","type":"select","options":[{"value":"wrong"}]},{"id":"agent-mode","category":"mode","type":"select","currentValue":"safe","options":[{"value":"safe","name":"Safe","description":"Read first"},{"group":"Other","options":[{"value":"execute","name":"Execute"}]}]}]}"""
+            : """{"modes":{"currentModeId":"safe","availableModes":[{"id":"safe","name":"Safe","description":"Read first"},{"id":"execute","name":"Execute"}]}}""";
+        if (shape == 2) payload = payload.Replace("agent-mode", "mode").Replace("\"category\":\"mode\",", "");
+        await using var runtime = CreateRuntime(new Dictionary<string, string>
+        {
+            ["MOCK_ACP_MODELS"] = payload,
+            ["MOCK_ACP_LOG"] = log,
+            ["MOCK_ACP_RESUME"] = nativeResume ? "1" : "0"
+        });
+        var statuses = await runtime.ProbeProvidersAsync(CancellationToken.None);
+        foreach (var status in statuses.Where(status => status.Provider.StartsWith("acp:")))
+        {
+            Assert.Equal(["safe", "execute"], status.PermissionModes!.Select(mode => mode.Id));
+            Assert.Equal("safe", Assert.Single(status.PermissionModes!, mode => mode.IsDefault).Id);
+            Assert.Equal("Read first", status.PermissionModes![0].Description);
+        }
+        await using var session = await runtime.OpenSessionAsync(new HarnessLaunchSpec(
+            "acp:antigravity", null, _fixture.WorkspaceDir, resume, null,
+            new Dictionary<string, McpServerConfig>(), PermissionMode: "execute"), CancellationToken.None);
+        Assert.Equal(["safe", "execute"], ((AcpAgentSession)session).AvailablePermissionModes.Select(mode => mode.Id));
+        var calls = File.ReadAllLines(log).Select(line => JsonSerializer.Deserialize<JsonElement>(line)).ToArray();
+        var selected = Assert.Single(calls, call => call.GetProperty("method").GetString() ==
+            (config ? "session/set_config_option" : "session/set_mode"));
+        var parameters = selected.GetProperty("params");
+        Assert.Equal(resume ?? "acp_sess_001", parameters.GetProperty("sessionId").GetString());
+        Assert.Equal("execute", parameters.GetProperty(config ? "value" : "modeId").GetString());
+        if (config) Assert.Equal(shape == 2 ? "mode" : "agent-mode", parameters.GetProperty("configId").GetString());
+    }
+
+    [Theory]
     [InlineData("vendor/model-high", null, "vendor/model-high")]
     [InlineData("vendor/model-high", "high", "vendor/model-high")]
     [InlineData("vendor/model-HIGH", "high", "vendor/model-HIGH")]
