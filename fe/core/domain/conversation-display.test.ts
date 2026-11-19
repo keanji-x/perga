@@ -242,7 +242,7 @@ it('adapts only a required typed current terminal fact, without inventing a disp
   expect(conversationRunMetadataSchema.safeParse({...metadata,input_contract:'historical'}).success).toBe(false);
   const run = {...metadata,card_id:'card',worker_session_id:'worker',phase:'turn_completed',
     model:null,reasoning_effort:null,permission_mode:null,blocked_reason:null,recovery:null,
-    manual_compact_supported:false,compact_outcome:null,context_usage_invalidated:false,running_turn:null};
+    manual_compact_supported:false,compact_outcome:null,running_turn:null};
   const schema = conversationRunOperation('card').responseSchema;
   expect(schema.safeParse(run).success).toBe(false);
   expect(schema.safeParse({...run,terminal_outcome:{...fact,worker_session_id:'other-worker'}}).success).toBe(false);
@@ -261,7 +261,7 @@ describe('system wake projection', () => {
     ['scheduler', undefined, 'system'],
   ])('renders %s with presentation %s as a System observation', (triggerKind, presentation, expected) => {
     const page = conversationItemsOperation('session', null).responseSchema.parse({
-      session: { id: 'session', trackId: 'track', provider: 'codex', createdAtMs: 1, updatedAtMs: 1 },
+      session: { id: 'session', trackId: 'track', provider: 'codex', contextUsage: null, createdAtMs: 1, updatedAtMs: 1 },
       unknownInput: null, items: [{ id: 1, sessionId: 'session', turnId: 'turn', kind: 'user',
         payload: { content: 'Wake notice', triggerKind, presentation }, createdAtMs: 2 }],
     });

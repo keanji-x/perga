@@ -81,10 +81,17 @@ public sealed partial class TrackActor
                 throw KernelException.Forbidden("Restoring Worker approval requests requires verified authorization from the installation owner.");
 
             var next = new WorkerSettings(checked(current.Version + 1), model, request.ReasoningEffort, request.ApprovalMode);
-            var evt = SessionUpdatedEvent(session);
+            var configurationChanged = (current.Model, current.ReasoningEffort) != (next.Model, next.ReasoningEffort);
+            var updatedSession = configurationChanged ? session with { ContextUsage = null, UpdatedAtMs = NowMs() } : null;
+            var evt = SessionUpdatedEvent(updatedSession ?? session);
             await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
             var author = restoringApproval ? "owner:verified" : callerSessionId ?? InstallationAuthor;
-            await _store.WorkerSettings!.WriteAsync(sessionId, next, author, evt, ct).ConfigureAwait(false);
+            await _store.WorkerSettings!.WriteAsync(sessionId, next, author, updatedSession, evt, ct).ConfigureAwait(false);
+            if (updatedSession is not null)
+            {
+                _sessions[sessionId] = updatedSession;
+                InvalidateContextBindingCore(sessionId);
+            }
             await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, evt, ct).ConfigureAwait(false);
             return next;
         }, ct);

@@ -187,7 +187,7 @@ public sealed class PolicyGuardMailTerminalScheduleBootTests
             "trk_boot_open", area.Id, null, null, "Open Interrupted Track", "/repo/open", "direct",
             emptyJson, "ses_open_lead", null, emptyJson, emptyJson, [], ClosedAtMs: null, PinnedAtMs: null, 0, 1000, 1000);
         var openLead = new AgentSessionDto(
-            "ses_open_lead", "trk_boot_open", true, null, null, "Lead", "codex", null, null, 1, "idle", 0, null, 1000, 1000);
+            "ses_open_lead", "trk_boot_open", true, null, null, "Lead", "codex", null, null, 1, "idle", null, 1000, 1000);
         var inFlightTask = new TaskDto(
             "tsk_inflight", "trk_boot_open", "b_1", "crashed-task", 1, "agent", null, AccessMode.ReadWrite, true, [],
             "Build", null, null, null, TaskRunStatus.Running, null, SemanticVerdict.None, null, "att_surviving", 1000, 1000);
@@ -213,7 +213,7 @@ public sealed class PolicyGuardMailTerminalScheduleBootTests
             "trk_boot_closed", area.Id, null, null, "Closed Track", "/repo/closed", "direct",
             emptyJson, "ses_closed_lead", null, emptyJson, emptyJson, [], ClosedAtMs: 2000, PinnedAtMs: null, 0, 1000, 2000);
         var closedLead = new AgentSessionDto(
-            "ses_closed_lead", "trk_boot_closed", true, null, null, "Lead", "codex", null, null, 1, "running", 0, null, 1000, 1000);
+            "ses_closed_lead", "trk_boot_closed", true, null, null, "Lead", "codex", null, null, 1, "running", null, 1000, 1000);
         ctx.Store.SeedDirectAggregate(
             closedTrack,
             new ReportDocument(0, "", "", []),

@@ -270,6 +270,19 @@ it('pins the server DTO outside the generated wire type roster', () => {
   expect(schema.required.sort()).toEqual(['body', 'id', 'title']);
 });
 
+it('publishes the nullable session measurement through the v1 response', () => {
+  const document = JSON.parse(readFileSync(new URL('../../core/api/generated/openapi.json', import.meta.url), 'utf8')) as {
+    components: { schemas: Record<string, { properties: Record<string, unknown>; required: string[] }> };
+  };
+  const { AgentSessionDto, SessionContextUsage } = document.components.schemas;
+  expect(AgentSessionDto.required).toContain('contextUsage');
+  expect(AgentSessionDto.properties.contextUsage).toEqual({
+    anyOf: [{ $ref: '#/components/schemas/SessionContextUsage' }, { type: 'null' }],
+  });
+  expect(AgentSessionDto.properties).not.toHaveProperty('contextUsageInvalidated');
+  expect(SessionContextUsage.required).toEqual(['usedTokens', 'windowTokens', 'observedAtMs', 'ratio']);
+});
+
 it('compact capability is required in the generated Planner run contract', () => {
   const document = JSON.parse(readFileSync(new URL('../../core/api/generated/openapi.json', import.meta.url), 'utf8')) as {
     components: { schemas: { GetPlannerRunResponse: { properties: Record<string, unknown>; required: string[] } } };
@@ -278,8 +291,6 @@ it('compact capability is required in the generated Planner run contract', () =>
   expect(schema.properties.manual_compact_supported).toMatchObject({ type: 'boolean' });
   expect(schema.required).toContain('manual_compact_supported');
   expect(schema.required).toContain('compact_outcome');
-  expect(schema.required).toContain('context_usage_invalidated');
-  expect(schema.properties.context_usage_invalidated).toMatchObject({ type: 'boolean' });
 });
 
 

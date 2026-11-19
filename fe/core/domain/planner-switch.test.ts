@@ -36,7 +36,7 @@ it('keeps unknown refusal text but never mistakes uncertain outcomes for refusal
 it.each([true, false])('v1 run controls reflect session capabilities regardless of lead role (%s)', (isLead) => {
   const page = { items: [], activeTurn: null, unknownInput: null,
     session: { id: 'session', trackId: 'track', isLead, provider: 'codex', model: 'model',
-      createdAtMs: 1, updatedAtMs: 2 } };
+      contextUsage: null, createdAtMs: 1, updatedAtMs: 2 } };
   for (const operation of [plannerRunOperation('session'), conversationRunOperation('session')]) {
     expect(operation.responseSchema.parse(page)).toMatchObject({
       model: 'model', permission_mode: null, attachments_supported: false, manual_compact_supported: true,

@@ -18883,7 +18883,7 @@
         "required": [
           "card_id",
           "compact_outcome",
-          "context_usage_invalidated",
+
           "permission_mode",
           "recovery",
           "pending",
@@ -18916,10 +18916,6 @@
                 "description": "Current runtime's manual maintenance result; submission alone is not success."
               }
             ]
-          },
-          "context_usage_invalidated": {
-            "type": "boolean",
-            "description": "A context replacement invalidated the previous occupancy; await a new trusted reading."
           },
           "manual_compact_supported": {
             "type": "boolean",
@@ -20791,7 +20787,7 @@
             "required": [
               "card_id",
               "compact_outcome",
-              "context_usage_invalidated",
+
               "permission_mode",
               "recovery",
               "pending",
@@ -20824,10 +20820,6 @@
                     "description": "Current runtime's manual maintenance result; submission alone is not success."
                   }
                 ]
-              },
-              "context_usage_invalidated": {
-                "type": "boolean",
-                "description": "A context replacement invalidated the previous occupancy; await a new trusted reading."
               },
               "manual_compact_supported": {
                 "type": "boolean",
@@ -25632,9 +25624,9 @@
           "provider",
           "epoch",
           "status",
-          "contextUsageRatio",
           "createdAtMs",
-          "updatedAtMs"
+          "updatedAtMs",
+          "contextUsage"
         ],
         "properties": {
           "id": {
@@ -25685,9 +25677,6 @@
           "status": {
             "type": "string"
           },
-          "contextUsageRatio": {
-            "type": "number"
-          },
           "archivedAtMs": {
             "type": [
               "integer",
@@ -25706,33 +25695,48 @@
               "null"
             ]
           },
-          "contextUsedTokens": {
-            "type": [
-              "integer",
-              "null"
+          "contextUsage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SessionContextUsage"
+              },
+              {
+                "type": "null"
+              }
             ]
-          },
-          "contextWindowTokens": {
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "contextUsageAtMs": {
-            "type": [
-              "integer",
-              "null"
-            ]
-          },
-          "contextUsageInvalidated": {
-            "type": "boolean",
-            "default": false
           },
           "permissionMode": {
             "type": [
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "SessionContextUsage": {
+        "type": "object",
+        "required": [
+          "usedTokens",
+          "windowTokens",
+          "observedAtMs",
+          "ratio"
+        ],
+        "properties": {
+          "usedTokens": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "windowTokens": {
+            "type": ["integer", "null"],
+            "minimum": 1
+          },
+          "observedAtMs": {
+            "type": "integer"
+          },
+          "ratio": {
+            "type": ["number", "null"],
+            "minimum": 0,
+            "maximum": 1
           }
         }
       },

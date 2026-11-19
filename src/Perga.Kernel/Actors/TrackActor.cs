@@ -791,7 +791,6 @@ public sealed partial class TrackActor : IAsyncDisposable
             NativeThreadId: null,
             Epoch: 1,
             Status: "idle",
-            ContextUsageRatio: 0.0,
             ArchivedAtMs: null,
             CreatedAtMs: now,
             UpdatedAtMs: now,
@@ -914,13 +913,21 @@ public sealed partial class TrackActor : IAsyncDisposable
             var reasoningEffort = string.IsNullOrWhiteSpace(req.ReasoningEffort)
                 ? null
                 : req.ReasoningEffort.Trim();
-            var modelChanged = session.Model != model;
+            var modelChanged = (session.Model, session.ReasoningEffort) != (model, reasoningEffort);
             var updated = session with
             {
                 Model = model, ReasoningEffort = reasoningEffort, UpdatedAtMs = NowMs(),
-                ContextUsageInvalidated = session.ContextUsageInvalidated || modelChanged
+                ContextUsage = modelChanged ? null : session.ContextUsage
             };
-            await PersistAndEmitSessionUpdatedCoreAsync(updated, updated.UpdatedAtMs, ct).ConfigureAwait(false);
+            try
+            {
+                await PersistAndEmitSessionUpdatedCoreAsync(updated, updated.UpdatedAtMs, ct).ConfigureAwait(false);
+            }
+            finally
+            {
+                if (modelChanged && ReferenceEquals(_sessions[sessionId], updated))
+                    InvalidateContextBindingCore(sessionId);
+            }
 
             // Never change the provider underneath an active turn. Its next reuse reconciles.
             if (!_scheduler.HasActive(sessionId) && !_scheduler.IsCompacting(sessionId) &&
@@ -2007,7 +2014,6 @@ public sealed partial class TrackActor : IAsyncDisposable
                 NativeThreadId: null,
                 Epoch: 1,
                 Status: "idle",
-                ContextUsageRatio: 0.0,
                 ArchivedAtMs: null,
                 CreatedAtMs: now,
                 UpdatedAtMs: now,
@@ -2493,20 +2499,22 @@ public sealed partial class TrackActor : IAsyncDisposable
         await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, sessionEvent, ct).ConfigureAwait(false);
     }
 
-    private async Task<AgentSessionDto> CompactSessionInternalAsync(string sessionId, CancellationToken ct, bool alreadyAdmitted = false)
+    private async Task<AgentSessionDto> CompactSessionInternalAsync(string sessionId, CancellationToken ct, bool automatic = false)
     {
-        using var dispatch = alreadyAdmitted ? null : await _options.DispatchAdmission.EnterAsync(ct).ConfigureAwait(false);
+        using var dispatch = automatic ? null : await _options.DispatchAdmission.EnterAsync(ct).ConfigureAwait(false);
         Interlocked.Increment(ref _inFlightExternalOps);
         var reserved = false;
         try
         {
-            var prep = await EnqueueAsync<(AgentSessionDto Session, IAgentSession OldAgentSession, int HandoverTurnIndex)>(async _ =>
+            var preparation = await EnqueueAsync<(IAgentSession OldAgentSession, LiveContextUsage ContextBinding, int HandoverTurnIndex)?>(async _ =>
             {
                 await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
                 var session = RequireSessionCore(sessionId);
                 if (session.BoundAttemptId is not null)
                     throw KernelException.Conflict("Worker sessions do not support a manual handover turn.");
                 RequireSessionDispatchAvailableCore(sessionId);
+                if (automatic && !(CurrentContextUsageRatioCore(session) >= _options.AutoCompactionThreshold))
+                    return null;
                 if (_scheduler.IsOccupied(session, allowFinishingDispatch: true))
                 {
                     throw KernelException.Conflict($"Cannot compact session '{sessionId}' while a turn is actively running.");
@@ -2518,8 +2526,11 @@ public sealed partial class TrackActor : IAsyncDisposable
                 _scheduler.StartCompacting(sessionId);
                 reserved = true;
                 var turnIdx = NextTurnIndexCore(sessionId);
-                return (session, oldAgentSession, turnIdx);
+                return (oldAgentSession, _liveContextUsage.GetOrCreateValue(oldAgentSession), turnIdx);
             }, CancellationToken.None).ConfigureAwait(false);
+
+            if (preparation is not { } prep)
+                return await EnqueueAsync(_ => Task.FromResult(RequireSessionCore(sessionId)), ct).ConfigureAwait(false);
 
             if (await prep.OldAgentSession.ResolveNativeCompactSupportAsync(ct).ConfigureAwait(false))
             {
@@ -2554,15 +2565,14 @@ public sealed partial class TrackActor : IAsyncDisposable
                         new(0, sessionId, compactTurnId, "assistant_text", JsonHelpers.ToElement(new { v = 1, text = compactSummary }), now)
                     };
 
-                    var compacted = nativeResult.Usage is { } usage
-                        ? ApplyContextUsage(current, usage, now, prep.Session.Model != current.Model)
-                        : current with
-                        {
-                            ContextUsageRatio = 0,
-                            ContextUsedTokens = 0,
-                            ContextUsageAtMs = null,
-                            ContextUsageInvalidated = false
-                        };
+                    var compacted = current;
+                    if (IsCurrentContextBindingCore(current, prep.OldAgentSession, prep.ContextBinding))
+                    {
+                        compacted = nativeResult.Usage is { } usage
+                            ? ApplyContextUsageCore(current, prep.OldAgentSession, prep.ContextBinding, nativeResult.ContextUsageRevision, usage, now)
+                            : current with { ContextUsage = null };
+                        compacted = ApplyTrailingContextUsageCore(compacted, prep.OldAgentSession, prep.ContextBinding, nativeResult.CompletedPromptId, now);
+                    }
                     compacted = compacted with
                     {
                         NativeThreadId = current.NativeThreadId ?? prep.OldAgentSession.NativeThreadId,
@@ -2609,7 +2619,7 @@ public sealed partial class TrackActor : IAsyncDisposable
             // 2. Dispose old IAgentSession instance.
             await prep.OldAgentSession.DisposeAsync().ConfigureAwait(false);
 
-            // 3 & 4. Update Epoch = Epoch + 1, NativeThreadId = null, ContextUsageRatio = 0.0 -> seed fresh IAgentSession with latest Report + handover summary!
+            // 3 & 4. Update Epoch = Epoch + 1, NativeThreadId = null, clear context usage -> seed fresh IAgentSession with latest Report + handover summary!
             return await EnqueueAsync(async _ =>
             {
                 _openAgentSessions.Remove(sessionId);
@@ -2641,11 +2651,7 @@ public sealed partial class TrackActor : IAsyncDisposable
                 {
                     Epoch = current.Epoch + 1,
                     NativeThreadId = null,
-                    ContextUsageRatio = 0.0,
-                    ContextUsedTokens = 0,
-                    ContextWindowTokens = null,
-                    ContextUsageAtMs = null,
-                    ContextUsageInvalidated = false,
+                    ContextUsage = null,
                     Status = "idle",
                     UpdatedAtMs = now
                 };
@@ -2713,6 +2719,7 @@ public sealed partial class TrackActor : IAsyncDisposable
 
             if (switched)
             {
+                InvalidateContextBindingCore(session.Id);
                 _boundAgentModels[session.Id] = (session.Model, session.ReasoningEffort);
                 return existing;
             }
@@ -3357,7 +3364,8 @@ public sealed partial class TrackActor : IAsyncDisposable
 
     private sealed class ActiveTurnState(
         string sessionId,
-        string? executionModel,
+        (string? Model, string? Effort) executionConfiguration,
+        LiveContextUsage contextBinding,
         SessionTurnDto turnDto,
         IAgentSession agentSession,
         CancellationTokenSource turnCts,
@@ -3371,11 +3379,10 @@ public sealed partial class TrackActor : IAsyncDisposable
         public HashSet<string> OwnedAskIds { get; } = new(StringComparer.Ordinal);
         public TurnActivity Activity { get; } = new();
         public WorkerSettings? Settings { get; init; }
-        // Frozen accepted inputs can execute a different model from the committed selection.
-        // Derive validity from that selection so failed writes cannot invalidate this turn,
-        // and a committed write remains authoritative even if its broadcast fails.
-        public string? ExecutionModel { get; } = executionModel;
-        public bool IsContextUsageInvalidated(AgentSessionDto session) => ExecutionModel != session.Model;
+        public LiveContextUsage ContextBinding { get; } = contextBinding;
+        // Frozen inputs can execute a configuration different from the committed selection.
+        public bool MatchesSessionConfiguration(AgentSessionDto session) =>
+            executionConfiguration == (session.Model, session.ReasoningEffort);
         public bool Interrupted { get; set; }
         public bool ProviderAccepted { get; set; }
         public TaskCompletionSource<bool> Settled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);

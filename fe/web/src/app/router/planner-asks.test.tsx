@@ -43,7 +43,7 @@ function setup() {
       if (request.path.includes('/items') && !request.path.includes('view=')) return ok(historicalConversationPage(conversationCardId(request.path), [], null));
       if (request.path.includes('view=run')) return ok(historicalConversationRun({
         card_id: conversationCardId(request.path), worker_session_id: 'runtime', phase: 'idle', model: null,
-        reasoning_effort: null, permission_mode: 'never', blocked_reason: null, manual_compact_supported: true, recovery: null, compact_outcome: null, context_usage_invalidated: false, running_turn: null,
+        reasoning_effort: null, permission_mode: 'never', blocked_reason: null, manual_compact_supported: true, recovery: null, compact_outcome: null, running_turn: null,
       }, 'idle', true));
       if (request.path === '/api/settings') return ok({});
       return ok([]);

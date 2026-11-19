@@ -588,11 +588,9 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                        native_thread_id AS NativeThreadId,
                        epoch AS Epoch,
                        status AS Status,
-                       context_usage_ratio AS ContextUsageRatio,
                        context_used_tokens AS ContextUsedTokens,
                        context_window_tokens AS ContextWindowTokens,
                        context_usage_at_ms AS ContextUsageAtMs,
-                       context_usage_invalidated AS ContextUsageInvalidated,
                        archived_at_ms AS ArchivedAtMs,
                        created_at_ms AS CreatedAtMs,
                        updated_at_ms AS UpdatedAtMs,
@@ -2029,13 +2027,13 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                 INSERT INTO agent_sessions (
                     id, track_id, bound_task_id, bound_attempt_id, title,
                     provider, model, reasoning_effort, native_thread_id, epoch, status,
-                    context_usage_ratio, context_used_tokens, context_window_tokens, context_usage_at_ms, context_usage_invalidated,
+                    context_used_tokens, context_window_tokens, context_usage_at_ms,
                     archived_at_ms, created_at_ms, updated_at_ms, permission_mode
                 )
                 VALUES (
                     @Id, @TrackId, @BoundTaskId, @BoundAttemptId, @Title,
                     @Provider, @Model, @ReasoningEffort, @NativeThreadId, @Epoch, @Status,
-                    @ContextUsageRatio, @ContextUsedTokens, @ContextWindowTokens, @ContextUsageAtMs, @ContextUsageInvalidated,
+                    @ContextUsedTokens, @ContextWindowTokens, @ContextUsageAtMs,
                     @ArchivedAtMs, @CreatedAtMs, @UpdatedAtMs, @PermissionMode
                 )
                 ON CONFLICT(id) DO UPDATE SET
@@ -2048,11 +2046,9 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                     native_thread_id = excluded.native_thread_id,
                     epoch = excluded.epoch,
                     status = excluded.status,
-                    context_usage_ratio = excluded.context_usage_ratio,
                     context_used_tokens = excluded.context_used_tokens,
                     context_window_tokens = excluded.context_window_tokens,
                     context_usage_at_ms = excluded.context_usage_at_ms,
-                    context_usage_invalidated = excluded.context_usage_invalidated,
                     archived_at_ms = excluded.archived_at_ms,
                     updated_at_ms = excluded.updated_at_ms,
                     permission_mode = excluded.permission_mode;
@@ -2070,11 +2066,9 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                     session.NativeThreadId,
                     session.Epoch,
                     session.Status,
-                    session.ContextUsageRatio,
-                    session.ContextUsedTokens,
-                    session.ContextWindowTokens,
-                    session.ContextUsageAtMs,
-                    session.ContextUsageInvalidated,
+                    ContextUsedTokens = session.ContextUsage?.UsedTokens,
+                    ContextWindowTokens = session.ContextUsage?.WindowTokens,
+                    ContextUsageAtMs = session.ContextUsage?.ObservedAtMs,
                     session.ArchivedAtMs,
                     session.CreatedAtMs,
                     session.UpdatedAtMs,
@@ -2222,11 +2216,9 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
             NativeThreadId: r.NativeThreadId,
             Epoch: (int)r.Epoch,
             Status: r.Status,
-            ContextUsageRatio: r.ContextUsageRatio,
-            ContextUsedTokens: r.ContextUsedTokens,
-            ContextWindowTokens: r.ContextWindowTokens,
-            ContextUsageAtMs: r.ContextUsageAtMs,
-            ContextUsageInvalidated: r.ContextUsageInvalidated,
+            ContextUsage: r.ContextUsedTokens is { } used && r.ContextUsageAtMs is { } observedAt
+                ? new SessionContextUsage(used, r.ContextWindowTokens, observedAt)
+                : null,
             ArchivedAtMs: r.ArchivedAtMs,
             CreatedAtMs: r.CreatedAtMs,
             UpdatedAtMs: r.UpdatedAtMs,
@@ -2430,11 +2422,9 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
         public string? NativeThreadId { get; init; }
         public long Epoch { get; init; }
         public string Status { get; init; } = "idle";
-        public double ContextUsageRatio { get; init; }
         public long? ContextUsedTokens { get; init; }
         public long? ContextWindowTokens { get; init; }
         public long? ContextUsageAtMs { get; init; }
-        public bool ContextUsageInvalidated { get; init; }
         public long? ArchivedAtMs { get; init; }
         public long CreatedAtMs { get; init; }
         public long UpdatedAtMs { get; init; }

@@ -38,7 +38,7 @@ public sealed partial class SqliteTrackStore : IWorkerSettingsStore
             """, new { SessionId = sessionId }, cancellationToken: ct)).ConfigureAwait(false);
     }
 
-    Task IWorkerSettingsStore.WriteAsync(string sessionId, WorkerSettings settings, string authorId, EventEnvelopeDto evt, CancellationToken ct) =>
+    Task IWorkerSettingsStore.WriteAsync(string sessionId, WorkerSettings settings, string authorId, AgentSessionDto? updatedSession, EventEnvelopeDto evt, CancellationToken ct) =>
         _writer.EnqueueAsync(async (conn, tx, innerCt) =>
         {
             await conn.ExecuteAsync(new CommandDefinition("""
@@ -48,6 +48,8 @@ public sealed partial class SqliteTrackStore : IWorkerSettingsStore
                 reasoning_effort = excluded.reasoning_effort, approval_mode = excluded.approval_mode, author_id = excluded.author_id;
             """, new { SessionId = sessionId, settings.Version, settings.Model, settings.ReasoningEffort, settings.ApprovalMode, AuthorId = authorId },
                 tx, cancellationToken: innerCt)).ConfigureAwait(false);
+            if (updatedSession is not null)
+                await UpsertSessionInternalAsync(conn, tx, updatedSession, innerCt).ConfigureAwait(false);
             await InsertEventInternalAsync(conn, tx, evt, innerCt).ConfigureAwait(false);
         }, ct);
 }

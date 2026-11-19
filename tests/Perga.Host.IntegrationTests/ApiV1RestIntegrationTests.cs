@@ -436,7 +436,7 @@ public sealed class ApiV1RestIntegrationTests
         Assert.Equal(HttpStatusCode.OK, compactResp.StatusCode);
         var compacted = (await compactResp.Content.ReadFromJsonAsync<AgentSessionDto>(PergaJsonDefaults.ApiOptions))!;
         Assert.Equal(2, compacted.Epoch);
-        Assert.Equal(0.0, compacted.ContextUsageRatio);
+        Assert.Null(compacted.ContextUsage);
 
         // 4. POST /api/v1/tracks/{trackId}/asks/{askId}/answer ({ answers: [...] } AND { answer: "..." })
         var kernel = cluster.Services.GetRequiredService<IPergaKernel>();

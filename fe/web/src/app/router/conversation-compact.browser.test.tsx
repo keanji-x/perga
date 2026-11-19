@@ -13,8 +13,7 @@ it.each(['claude', 'codex', 'opencode'] as const)('posts v1 compact separately f
   const fixture = renderSessionFixture({ initial: '/track/daily?panel=conversations', reply: request =>
     request.path === '/api/v1/sessions/daily-planner/compact' ? sessionReply(fixtureSession('daily-planner', 'daily')) : undefined });
   fixture.sessions[0].provider = provider;
-  fixture.sessions[0].contextUsedTokens = 120_320;
-  fixture.sessions[0].contextWindowTokens = 256_000;
+  fixture.sessions[0].contextUsage = { usedTokens: 120_320, windowTokens: 256_000, observedAtMs: 1, ratio: 0.47 };
   fixture.items.set('daily-planner', [sessionItem('daily-planner', 1, 'Earlier reply.')]);
   await page.getByRole('button', { name: /Conversation Daily Planner conversation/ }).click();
   await expect.element(page.getByText('Earlier reply.', { exact: true })).toBeVisible();

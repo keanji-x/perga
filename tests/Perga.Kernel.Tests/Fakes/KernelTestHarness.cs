@@ -574,8 +574,11 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
         }
     }
 
+    public Action<AgentSessionDto>? OnBeforeUpsertSession { get; set; }
+
     public Task UpsertSessionAsync(AgentSessionDto session, EventEnvelopeDto? evt, CancellationToken ct)
     {
+        OnBeforeUpsertSession?.Invoke(session);
         lock (_gate)
         {
             _sessions[session.Id] = session;
@@ -1383,13 +1386,20 @@ internal sealed class ScriptableFakeAgentSession : IAgentSession
     public HarnessLaunchSpec LaunchSpec { get; }
     public string? NativeThreadId { get; set; }
     public bool SupportsNativeSteer { get; set; } = true;
+    public bool CanReuseContextWindow => true;
     public bool SupportsNativeCompact { get; set; }
+    public bool SupportsSessionResume { get; set; }
+    public bool SupportsScopedClose { get; set; }
+    public Func<CancellationToken, Task<bool>>? CloseSessionHandler { get; set; }
+    public Task<bool> TryCloseSessionAsync(CancellationToken ct) =>
+        CloseSessionHandler is not null ? CloseSessionHandler(ct) : Task.FromResult(SupportsScopedClose);
     public Func<ScriptableFakeAgentSession, CancellationToken, ValueTask<bool>>? ResolveNativeCompactSupportHandler { get; set; }
     public Func<ScriptableFakeAgentSession, CancellationToken, Task<NativeCompactResult>>? CompactHandler { get; set; }
     public IdleContextUsage? PendingIdleUsage { get; set; }
     public int CompactCalls { get; private set; }
     public bool Disposed { get; private set; }
     public bool CancelCalled { get; private set; }
+    public Action? OnCancelTurn { get; set; }
     public ConcurrentQueue<string> SteeredMessages { get; } = new();
     public ConcurrentQueue<(string RequestId, bool Approved, string? Reason)> Approvals { get; } = new();
     public ConcurrentQueue<(string RequestId, bool Approved, string? SelectedOptionId, string? Reason)> DetailedApprovals { get; } = new();
@@ -1404,6 +1414,7 @@ internal sealed class ScriptableFakeAgentSession : IAgentSession
     public Task CancelTurnAsync(CancellationToken ct)
     {
         CancelCalled = true;
+        OnCancelTurn?.Invoke();
         return Task.CompletedTask;
     }
 
@@ -1430,17 +1441,17 @@ internal sealed class ScriptableFakeAgentSession : IAgentSession
             ? ResolveNativeCompactSupportHandler(this, ct)
             : ValueTask.FromResult(SupportsNativeCompact);
 
-    public IdleContextUsage? AttachIdleContextUsageHandler(Action<IdleContextUsage>? handler)
+    public IReadOnlyList<IdleContextUsage> AttachIdleContextUsageHandler(Action<IdleContextUsage>? handler)
     {
         _idleUsageHandler = handler;
         if (handler is null)
         {
-            return null;
+            return [];
         }
 
         var pending = PendingIdleUsage;
         PendingIdleUsage = null;
-        return pending;
+        return pending is null ? [] : [pending];
     }
 
     public void EmitIdleContextUsage(IdleContextUsage usage) => _idleUsageHandler?.Invoke(usage);
@@ -1475,6 +1486,7 @@ internal sealed class ScriptableFakeAgentRuntime : IAgentRuntime
 
     public ConcurrentQueue<ScriptableFakeAgentSession> OpenedSessions { get; } = new();
     public Action<HarnessLaunchSpec>? OnBeforeOpenSession { get; set; }
+    public Action<ScriptableFakeAgentSession>? OnOpenedSession { get; set; }
 
     public Func<ScriptableFakeAgentSession, TurnInput, CancellationToken, IAsyncEnumerable<UnifiedAgentEvent>>? TurnScript { get; set; }
 
@@ -1504,6 +1516,7 @@ internal sealed class ScriptableFakeAgentRuntime : IAgentRuntime
             threadId,
             (s, inp, token) => (TurnScript ?? DefaultTurnScript)(s, inp, token));
         OpenedSessions.Enqueue(session);
+        OnOpenedSession?.Invoke(session);
         return Task.FromResult<IAgentSession>(session);
     }
 

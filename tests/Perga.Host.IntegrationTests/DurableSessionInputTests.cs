@@ -65,8 +65,8 @@ public sealed class DurableSessionInputTests
                 {
                     await sampled.Task.WaitAsync(TimeSpan.FromSeconds(10));
                     var streaming = Assert.Single(await resumed.ListSessionsAsync(trackId));
-                    Assert.Equal(950, streaming.ContextUsedTokens);
-                    Assert.True(streaming.ContextUsageInvalidated);
+
+                    Assert.Null(streaming.ContextUsage);
                 }
                 finally { release.TrySetResult(); }
                 await idle.WaitAsync(TimeSpan.FromSeconds(10));
@@ -77,19 +77,19 @@ public sealed class DurableSessionInputTests
                 var desired = Assert.Single(await resumed.ListSessionsAsync(trackId));
                 Assert.Equal("B", desired.Model);
                 Assert.Equal("high", desired.ReasoningEffort);
-                Assert.Equal(990, desired.ContextUsedTokens);
-                Assert.True(desired.ContextUsageInvalidated);
+
+                Assert.Null(desired.ContextUsage);
                 Assert.Equal(initialEpoch, desired.Epoch);
             }
             await using var restarted = new PergaHostTestCluster(directory.FullName);
             var kernelAfterRestart = restarted.Services.GetRequiredService<IPergaKernel>();
             var persisted = Assert.Single(await kernelAfterRestart.ListSessionsAsync(trackId));
-            Assert.True(persisted.ContextUsageInvalidated);
-            Assert.Equal(990, persisted.ContextUsedTokens);
+            Assert.Null(persisted.ContextUsage);
+
             await kernelAfterRestart.AcceptMessageAsync(sessionId, new("use B", "current-model"), default);
             await kernelAfterRestart.WaitForTrackIdleAsync(trackId);
             Assert.Equal("B", Assert.Single(restarted.AgentRuntime.ExecutedTurns).Spec.Model);
-            Assert.False(Assert.Single(await kernelAfterRestart.ListSessionsAsync(trackId)).ContextUsageInvalidated);
+            Assert.NotNull(Assert.Single(await kernelAfterRestart.ListSessionsAsync(trackId)).ContextUsage);
         }
         finally { directory.Delete(recursive: true); }
     }

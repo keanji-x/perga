@@ -54,7 +54,6 @@ public sealed class TrackActorAndHydrationTests
             NativeThreadId: null,
             Epoch: 1,
             Status: "idle",
-            ContextUsageRatio: 0,
             ArchivedAtMs: null,
             CreatedAtMs: 1000,
             UpdatedAtMs: 1000);

@@ -208,7 +208,7 @@ public sealed class SqliteMaintenanceGcTests
 
         var subOld = new AgentSessionDto(
             "sess_sub_old", "trk_gc", false, "t_sub", "att_old_settled", "Worker Old",
-            "codex", null, null, Epoch: 1, "idle", 0.4, null, nowMs - 16L * DayMs, nowMs - 15L * DayMs);
+            "codex", null, null, Epoch: 1, "idle", null, nowMs - 16L * DayMs, nowMs - 15L * DayMs);
         await store.UpsertSessionAsync(subOld, null, ct);
         await store.RecordTurnAndItemsAsync(
             new SessionTurnDto("turn_sub_old", "sess_sub_old", 1, Epoch: 1, "wake", StorageTestHarness.Json("{}"), "completed", null, null, nowMs - 16L * DayMs, nowMs - 15L * DayMs),
@@ -222,7 +222,7 @@ public sealed class SqliteMaintenanceGcTests
         // C. An unbound session with a newer or still running turn may discard diagnostics from its old completed turn.
         var subFree = new AgentSessionDto(
             "sess_sub_free", "trk_gc", false, null, null, "Free Helper",
-            "codex", null, null, Epoch: 1, "running", 0.2, null, nowMs - 16L * DayMs, nowMs - 15L * DayMs);
+            "codex", null, null, Epoch: 1, "running", null, nowMs - 16L * DayMs, nowMs - 15L * DayMs);
         await store.UpsertSessionAsync(subFree, null, ct);
         await store.RecordTurnAndItemsAsync(
             new SessionTurnDto("turn_sub_free", "sess_sub_free", 1, Epoch: 1, "user", StorageTestHarness.Json("{}"), "completed", null, null, nowMs - 16L * DayMs, nowMs - 15L * DayMs),

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace Perga.Contracts;
 
@@ -41,6 +42,17 @@ public sealed record TrackDto(
     long CreatedAtMs,
     long UpdatedAtMs);
 
+public sealed record SessionContextUsage(
+    long UsedTokens,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] long? WindowTokens,
+    long ObservedAtMs)
+{
+    [JsonIgnore(Condition = JsonIgnoreCondition.Never)]
+    public double? Ratio => WindowTokens is > 0
+        ? Math.Clamp((double)UsedTokens / WindowTokens.Value, 0.0, 1.0)
+        : null;
+}
+
 public sealed record AgentSessionDto(
     string Id,
     string TrackId,
@@ -53,16 +65,12 @@ public sealed record AgentSessionDto(
     string? NativeThreadId,
     int Epoch,
     string Status,
-    double ContextUsageRatio,
     long? ArchivedAtMs,
     long CreatedAtMs,
     long UpdatedAtMs,
     string? ReasoningEffort = null,
     string? PermissionMode = null,
-    long? ContextUsedTokens = null,
-    long? ContextWindowTokens = null,
-    long? ContextUsageAtMs = null,
-    bool ContextUsageInvalidated = false);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] SessionContextUsage? ContextUsage = null);
 
 public sealed record SessionTurnDto(
     string Id,

@@ -15,7 +15,9 @@ public sealed class MainMigrationUpgradeTests
         var path = Path.Combine(directory.FullName, "v12.db");
         try
         {
-            var original = SqliteMigrator.LoadEmbeddedMigrations().Where(m => m.Version <= 12).ToArray();
+            var migrations = SqliteMigrator.LoadEmbeddedMigrations();
+            var original = migrations.Where(m => m.Version <= 12).ToArray();
+            var v13 = new SqliteMigrator(migrations.Where(m => m.Version <= 13).ToArray());
             await new SqliteMigrator(original).MigrateAsync(path);
             await using var connection = new SqliteConnection($"Data Source={path};Pooling=False");
             await connection.OpenAsync();
@@ -28,13 +30,13 @@ public sealed class MainMigrationUpgradeTests
             if (failUpgrade)
             {
                 await connection.ExecuteAsync("CREATE TRIGGER reject_v13 BEFORE INSERT ON schema_migrations WHEN NEW.version = 13 BEGIN SELECT RAISE(ABORT, 'injected receipt failure'); END;");
-                await Assert.ThrowsAsync<SqliteException>(() => new SqliteMigrator().MigrateAsync(path));
+                await Assert.ThrowsAsync<SqliteException>(() => v13.MigrateAsync(path));
                 Assert.Equal(12, await connection.ExecuteScalarAsync<long>("SELECT MAX(version) FROM schema_migrations;"));
                 Assert.Equal(0, await connection.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM pragma_table_info('agent_sessions') WHERE name LIKE 'context_%' AND name != 'context_usage_ratio';"));
                 await connection.ExecuteAsync("DROP TRIGGER reject_v13;");
             }
-            await new SqliteMigrator().MigrateAsync(path);
-            await new SqliteMigrator().MigrateAsync(path);
+            await v13.MigrateAsync(path);
+            await v13.MigrateAsync(path);
             Assert.Equal(0.25, await connection.ExecuteScalarAsync<double>("SELECT context_usage_ratio FROM agent_sessions WHERE id = 'session';"));
             foreach (var column in new[] { "context_used_tokens", "context_window_tokens", "context_usage_at_ms" })
                 Assert.Null(await connection.ExecuteScalarAsync<long?>($"SELECT {column} FROM agent_sessions WHERE id = 'session';"));
@@ -42,6 +44,45 @@ public sealed class MainMigrationUpgradeTests
             foreach (var migration in original)
                 Assert.Equal(migration.ChecksumSha256, await connection.ExecuteScalarAsync<string>(
                     "SELECT checksum_sha256 FROM schema_migrations WHERE version = @Version AND name = @Name;", migration));
+        }
+        finally { SqliteConnection.ClearAllPools(); directory.Delete(recursive: true); }
+    }
+
+    [Fact]
+    public async Task ContextMeasurementMigrationClearsOnlyTheOldSessionGauge()
+    {
+        var directory = Directory.CreateTempSubdirectory("perga-context-snapshot-");
+        var path = Path.Combine(directory.FullName, "v14.db");
+        try
+        {
+            var original = SqliteMigrator.LoadEmbeddedMigrations().Where(m => m.Version <= 14).ToArray();
+            await new SqliteMigrator(original).MigrateAsync(path);
+            await using var connection = new SqliteConnection($"Data Source={path};Pooling=False");
+            await connection.OpenAsync();
+            await connection.ExecuteAsync("""
+                INSERT INTO areas (id, name, color, created_at_ms, updated_at_ms) VALUES ('area', 'Area', '#000000', 1, 1);
+                INSERT INTO tracks (id, area_id, cwd, created_at_ms, updated_at_ms) VALUES ('track', 'area', '/tmp', 1, 1);
+                INSERT INTO agent_sessions (id, track_id, provider, model, native_thread_id, created_at_ms, updated_at_ms,
+                    context_usage_ratio, context_used_tokens, context_window_tokens, context_usage_at_ms, context_usage_invalidated)
+                VALUES ('session', 'track', 'codex', 'model', 'thread', 1, 2, 0.25, 250, 1000, 2, 1);
+                INSERT INTO session_turns (id, session_id, turn_index, trigger_kind, status, usage_json)
+                VALUES ('turn', 'session', 1, 'user', 'completed', '{"inputTokens":250}');
+                INSERT INTO events (id, track_id, kind, payload_json, created_at_ms)
+                VALUES (17, 'track', 'session.updated', '{"id":"session","model":"model","contextUsageRatio":0.25,"contextUsedTokens":250}', 2);
+                """);
+
+            await new SqliteMigrator().MigrateAsync(path);
+            await new SqliteMigrator().MigrateAsync(path);
+            Assert.Equal("thread", await connection.ExecuteScalarAsync<string>("SELECT native_thread_id FROM agent_sessions WHERE id = 'session';"));
+            Assert.Equal(250, await connection.ExecuteScalarAsync<int>("SELECT json_extract(usage_json, '$.inputTokens') FROM session_turns WHERE id = 'turn';"));
+            Assert.Equal("{\"id\":\"session\",\"model\":\"model\",\"contextUsage\":null}",
+                await connection.ExecuteScalarAsync<string>("SELECT payload_json FROM events WHERE id = 17;"));
+            Assert.Equal(new[] { "context_usage_at_ms", "context_used_tokens", "context_window_tokens" },
+                await connection.QueryAsync<string>("SELECT name FROM pragma_table_info('agent_sessions') WHERE name LIKE 'context_%' ORDER BY name;"));
+            Assert.Equal(1, await connection.ExecuteScalarAsync<int>("""
+                SELECT COUNT(*) FROM agent_sessions WHERE id = 'session' AND context_used_tokens IS NULL
+                    AND context_window_tokens IS NULL AND context_usage_at_ms IS NULL;
+                """));
         }
         finally { SqliteConnection.ClearAllPools(); directory.Delete(recursive: true); }
     }
@@ -182,7 +223,7 @@ public sealed class MainMigrationUpgradeTests
             Assert.Null(await upgraded.ExecuteScalarAsync<string?>("SELECT reasoning_effort FROM agent_sessions WHERE id = 'session';"));
             Assert.Equal("Retained input", await upgraded.ExecuteScalarAsync<string>("SELECT content FROM session_messages WHERE id = 'input' AND request_key = 'original-key' AND request_hash = 'original-hash' AND delivery = 'queued';"));
             Assert.Equal("{\"retained\":true}", await upgraded.ExecuteScalarAsync<string>("SELECT intent_json FROM track_workspace_preparations WHERE track_id = 'track';"));
-            Assert.Equal(Enumerable.Range(1, 14), await upgraded.QueryAsync<int>("SELECT version FROM schema_migrations ORDER BY version;"));
+            Assert.Equal(Enumerable.Range(1, 15), await upgraded.QueryAsync<int>("SELECT version FROM schema_migrations ORDER BY version;"));
             foreach (var migration in original)
             {
                 Assert.Equal(migration.ChecksumSha256, await upgraded.ExecuteScalarAsync<string>(

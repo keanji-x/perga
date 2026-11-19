@@ -812,16 +812,14 @@ public sealed class AcpProviderTests : IDisposable
 
         var idleTcs = new TaskCompletionSource<IdleContextUsage>(TaskCreationOptions.RunContinuationsAsynchronously);
         var pending = session.AttachIdleContextUsageHandler(u => idleTcs.TrySetResult(u));
-        if (pending is not null)
-        {
-            idleTcs.TrySetResult(pending);
-        }
+        foreach (var usage in pending)
+            idleTcs.TrySetResult(usage);
 
         Assert.True(await session.ResolveNativeCompactSupportAsync(CancellationToken.None));
         var idleUsage = await idleTcs.Task.WaitAsync(TimeSpan.FromSeconds(3));
         Assert.Equal(0, idleUsage.Usage.EffectiveUsedTokens);
         Assert.Equal(1_048_576, idleUsage.Usage.ContextWindowTokens);
-        Assert.Equal("gemini-4-carbon-high", idleUsage.Model);
+        Assert.Equal(session.ContextUsageRevision, idleUsage.ContextUsageRevision);
         Assert.Equal("acp_sess_resumed", idleUsage.NativeThreadId);
 
         var compacted = await session.CompactAsync(CancellationToken.None);
@@ -884,12 +882,9 @@ public sealed class AcpProviderTests : IDisposable
 
             switchedTcs.TrySetResult(u);
         });
-        if (pending is not null)
+        lock (received)
         {
-            lock (received)
-            {
-                received.Add(pending);
-            }
+            received.AddRange(pending);
         }
 
         // Wait briefly to confirm invalid post-session usage was not recorded.
@@ -901,9 +896,254 @@ public sealed class AcpProviderTests : IDisposable
 
         Assert.True(await session.TrySetModelAsync("gemini-4-carbon-high"));
         var switched = await switchedTcs.Task.WaitAsync(TimeSpan.FromSeconds(3));
-        Assert.Equal("gemini-4-carbon-high", switched.Model);
+        Assert.Equal(session.ContextUsageRevision, switched.ContextUsageRevision);
         Assert.Equal(100, switched.Usage.EffectiveUsedTokens);
         Assert.Equal(200_000, switched.Usage.ContextWindowTokens);
+    }
+
+    [Theory]
+    [InlineData("{\"used\": 0, \"size\": 0}")]
+    [InlineData("{\"used\": 0, \"size\": -1}")]
+    [InlineData("{\"used\": 0, \"size\": null}")]
+    [InlineData("{\"used\": 0, \"size\": \"1000\"}")]
+    [InlineData("{\"used\": 0, \"size\": 9223372036854775808}")]
+    public async Task AcpIdleUsageUpdate_RejectsInvalidExplicitWindowAfterValidReading(string invalidSecondPayload)
+    {
+        await using var runtime = CreateRuntime(new Dictionary<string, string>
+        {
+            ["MOCK_ACP_POST_SESSION_USAGE"] = $"[{{\"used\": 100, \"size\": 1000}}, {invalidSecondPayload}]"
+        });
+
+        await using var session = await runtime.OpenSessionAsync(new HarnessLaunchSpec(
+            "acp:antigravity",
+            null,
+            _fixture.WorkspaceDir,
+            null,
+            null,
+            MockCliFixture.CreateSampleMcpServers()), CancellationToken.None);
+
+        var received = new List<IdleContextUsage>();
+        var pending = session.AttachIdleContextUsageHandler(u =>
+        {
+            lock (received)
+            {
+                received.Add(u);
+            }
+        });
+        lock (received)
+        {
+            received.AddRange(pending);
+        }
+
+        await Task.Delay(80);
+        lock (received)
+        {
+            var only = Assert.Single(received);
+            Assert.Equal(100, only.Usage.EffectiveUsedTokens);
+            Assert.Equal(1000, only.Usage.ContextWindowTokens);
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AcpIdleUsageUpdate_PreservesImmediateUsageWhenSessionResponseMatchesRequestedModel(bool resume)
+    {
+        var modelsJson = "{\"models\":{\"currentModelId\":\"model-a\",\"availableModels\":[{\"modelId\":\"model-a\",\"name\":\"Model A\"},{\"modelId\":\"model-b\",\"name\":\"Model B\"}]}}";
+        await using var runtime = CreateRuntime(new Dictionary<string, string>
+        {
+            ["MOCK_ACP_RESUME"] = "1",
+            ["MOCK_ACP_MODELS"] = modelsJson,
+            ["MOCK_ACP_POST_SESSION_DELAY_MS"] = "0",
+            ["MOCK_ACP_POST_SESSION_USAGE"] = "{\"used\": 123, \"size\": 1000}"
+        });
+
+        await using var session = await runtime.OpenSessionAsync(new HarnessLaunchSpec(
+            "acp:antigravity",
+            "model-a",
+            _fixture.WorkspaceDir,
+            resume ? "acp_sess_model_match" : null,
+            null,
+            MockCliFixture.CreateSampleMcpServers()), CancellationToken.None);
+
+        var received = new List<IdleContextUsage>();
+        var pending = session.AttachIdleContextUsageHandler(u =>
+        {
+            lock (received)
+            {
+                received.Add(u);
+            }
+        });
+        lock (received)
+        {
+            received.AddRange(pending);
+        }
+
+        var item = Assert.Single(received);
+        Assert.Equal(session.ContextUsageRevision, item.ContextUsageRevision);
+        Assert.Equal(123, item.Usage.EffectiveUsedTokens);
+        Assert.Equal(1000, item.Usage.ContextWindowTokens);
+    }
+
+    [Fact]
+    public async Task AcpIdleUsageUpdate_DiscardsImmediatePreSwitchUsageWhenSessionResponseReportsDifferentModel()
+    {
+        var modelsJson = "{\"models\":{\"currentModelId\":\"model-a\",\"availableModels\":[{\"modelId\":\"model-a\",\"name\":\"Model A\"},{\"modelId\":\"model-b\",\"name\":\"Model B\"}]}}";
+        await using var runtime = CreateRuntime(new Dictionary<string, string>
+        {
+            ["MOCK_ACP_RESUME"] = "1",
+            ["MOCK_ACP_MODELS"] = modelsJson,
+            ["MOCK_ACP_POST_SESSION_DELAY_MS"] = "0",
+            ["MOCK_ACP_POST_SESSION_USAGE"] = "{\"used\": 999, \"size\": 500000}"
+        });
+
+        await using var session = await runtime.OpenSessionAsync(new HarnessLaunchSpec(
+            "acp:antigravity",
+            "model-b",
+            _fixture.WorkspaceDir,
+            "acp_sess_model_mismatch",
+            null,
+            MockCliFixture.CreateSampleMcpServers()), CancellationToken.None);
+
+        var received = new List<IdleContextUsage>();
+        var pending = session.AttachIdleContextUsageHandler(u =>
+        {
+            lock (received)
+            {
+                received.Add(u);
+            }
+        });
+        lock (received)
+        {
+            received.AddRange(pending);
+        }
+
+        Assert.Empty(received);
+    }
+
+    [Fact]
+    public async Task AcpNativeCompact_GraceWaitHonorsCancellationAndDisconnect()
+    {
+        await using var cancelRuntime = CreateRuntime(new Dictionary<string, string>());
+        await using var cancelSession = await cancelRuntime.OpenSessionAsync(new HarnessLaunchSpec(
+            "acp:antigravity",
+            null,
+            _fixture.WorkspaceDir,
+            null,
+            null,
+            MockCliFixture.CreateSampleMcpServers()), CancellationToken.None);
+        using var cts = new CancellationTokenSource(50);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => cancelSession.ResolveNativeCompactSupportAsync(cts.Token).AsTask());
+
+        await using var exitRuntime = CreateRuntime(new Dictionary<string, string>
+        {
+            ["MOCK_ACP_EXIT_AFTER_SESSION_MS"] = "40"
+        });
+        await using var exitSession = await exitRuntime.OpenSessionAsync(new HarnessLaunchSpec(
+            "acp:antigravity",
+            null,
+            _fixture.WorkspaceDir,
+            null,
+            null,
+            MockCliFixture.CreateSampleMcpServers()), CancellationToken.None);
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        Assert.False(await exitSession.ResolveNativeCompactSupportAsync(CancellationToken.None));
+        sw.Stop();
+        Assert.True(sw.Elapsed < TimeSpan.FromMilliseconds(1500), $"Expected disconnect to wake early, took {sw.Elapsed}.");
+    }
+
+    [Fact]
+    public async Task AcpIdleUsageUpdate_ResumeWithoutCurrentModelId_DiscardsUnconfirmedUsage()
+    {
+        await using var runtime = CreateRuntime(new Dictionary<string, string>
+        {
+            ["MOCK_ACP_RESUME"] = "1",
+            ["MOCK_ACP_POST_SESSION_USAGE"] = """{"used": 123, "size": 1000}"""
+        });
+        await using var session = await runtime.OpenSessionAsync(new HarnessLaunchSpec(
+            "acp:antigravity", "model-a", _fixture.WorkspaceDir, "acp_sess_resume_no_models", null,
+            MockCliFixture.CreateSampleMcpServers()), CancellationToken.None);
+
+        Assert.Empty(session.AttachIdleContextUsageHandler(_ => { }));
+        Assert.NotNull(session.ContextUsageRevision);
+    }
+
+    [Fact]
+    public async Task AcpTurnUsage_ChangesBindingWhenEffortSelectsAnotherProviderModelId()
+    {
+        await using var runtime = CreateRuntime(new Dictionary<string, string>
+        {
+            ["MOCK_ACP_STRICT_MODELS"] = "1",
+            ["MOCK_ACP_MODELS"] = """
+                {"models":{"currentModelId":"vendor/model-low","availableModels":[{"modelId":"vendor/model-low"},{"modelId":"vendor/model-high"}]}}
+                """
+        });
+        await using var session = await runtime.OpenSessionAsync(new HarnessLaunchSpec(
+            "acp:antigravity", "vendor/model", _fixture.WorkspaceDir, null, null,
+            MockCliFixture.CreateSampleMcpServers(), ReasoningEffort: "low"), CancellationToken.None);
+
+        var first = await DrainTurnAsync(session, new TurnInput("CONTEXT_ACP_USED", "first"));
+        var original = Assert.Single(first.OfType<UnifiedAgentEvent.TurnCompleted>());
+        Assert.Equal(1_048_576, original.Usage!.ContextWindowTokens);
+        Assert.True(await session.TrySetModelAsync("vendor/model", "high"));
+        var second = await DrainTurnAsync(session, new TurnInput("ACP_NO_SIZE_USAGE", "second"));
+        var completed = Assert.Single(second.OfType<UnifiedAgentEvent.TurnCompleted>());
+        Assert.Null(completed.Usage!.ContextWindowTokens);
+        Assert.NotEqual(original.ContextUsageRevision, completed.ContextUsageRevision);
+        Assert.Equal(session.ContextUsageRevision, completed.ContextUsageRevision);
+    }
+
+    [Fact]
+    public async Task AcpTurnUsage_ReportsCompactResponseWindowWithoutFillingLaterTurn()
+    {
+        await using var runtime = CreateRuntime(new Dictionary<string, string>
+        {
+            ["MOCK_ACP_ADVERTISE_COMPACT"] = "1",
+            ["MOCK_ACP_COMPACT_USAGE"] = "response",
+            ["MOCK_ACP_PROMPT_WINDOW"] = "1000"
+        });
+        await using var session = await runtime.OpenSessionAsync(new HarnessLaunchSpec(
+            "acp:antigravity", null, _fixture.WorkspaceDir, null, null,
+            MockCliFixture.CreateSampleMcpServers()), CancellationToken.None);
+        var first = await DrainTurnAsync(session, new TurnInput("CONTEXT_ACP_USED", "first"));
+        var original = Assert.Single(first.OfType<UnifiedAgentEvent.TurnCompleted>());
+        Assert.Equal(1000, original.Usage!.ContextWindowTokens);
+
+        var compacted = await session.CompactAsync(CancellationToken.None);
+        Assert.Equal(1_048_576, compacted.Usage!.ContextWindowTokens);
+        var next = await DrainTurnAsync(session, new TurnInput("ACP_NO_SIZE_USAGE", "next"));
+        var completed = Assert.Single(next.OfType<UnifiedAgentEvent.TurnCompleted>());
+        Assert.Null(completed.Usage!.ContextWindowTokens);
+        Assert.Equal(compacted.ContextUsageRevision, completed.ContextUsageRevision);
+    }
+
+    [Fact]
+    public async Task AcpTurnUsage_ChangesBindingWhenWorkerAppliesNewModel()
+    {
+        var log = Path.Combine(_fixture.RootDir, "review-worker.jsonl");
+        await using var runtime = CreateRuntime(new Dictionary<string, string>
+        {
+            ["MOCK_ACP_WORKER_OPTIONS"] = "1",
+            ["MOCK_ACP_LOG"] = log
+        });
+        await using var session = await runtime.OpenSessionAsync(new HarnessLaunchSpec(
+            "acp:opencode", null, _fixture.WorkspaceDir, null, null,
+            MockCliFixture.CreateSampleMcpServers(), ConfigureWorker: true), CancellationToken.None);
+        var first = await DrainTurnAsync(session, new TurnInput("CONTEXT_ACP_USED", "first", "small", "normal"));
+        var original = Assert.Single(first.OfType<UnifiedAgentEvent.TurnCompleted>());
+        Assert.Equal(1_048_576, original.Usage!.ContextWindowTokens);
+
+        var next = await DrainTurnAsync(session, new TurnInput("ACP_NO_SIZE_USAGE", "next", "large", "deep"));
+        var completed = Assert.Single(next.OfType<UnifiedAgentEvent.TurnCompleted>());
+        Assert.Contains(File.ReadLines(log).Select(line => JsonSerializer.Deserialize<JsonElement>(line)), entry =>
+            entry.GetProperty("method").GetString() == "session/set_config_option" &&
+            entry.GetProperty("params").GetProperty("configId").GetString() == "worker-model" &&
+            entry.GetProperty("params").GetProperty("value").GetString() == "large");
+        Assert.Null(completed.Usage!.ContextWindowTokens);
+        Assert.NotEqual(original.ContextUsageRevision, completed.ContextUsageRevision);
+        Assert.Equal(session.ContextUsageRevision, completed.ContextUsageRevision);
     }
 
     private static async Task<List<UnifiedAgentEvent>> DrainTurnAsync(IAgentSession session, TurnInput input)

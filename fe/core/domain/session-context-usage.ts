@@ -1,11 +1,9 @@
 import type { AgentSessionDto } from '../api/perga-v1.js';
 
-/** Preserve measured occupancy and derive a percentage only from a valid window. */
+/** Format the server's latest measurement for the context indicator. */
 export function sessionContextUsage(session: AgentSessionDto) {
-  if (session.contextUsedTokens == null) return null;
-  const used = session.contextUsedTokens;
-  const window = session.contextWindowTokens ?? null;
-  return { used_tokens: used, context_window: window,
-    percent: window != null && window > 0 && used >= 0 && used <= window ? Math.round(used / window * 100) : null,
-    at_ms: session.contextUsageAtMs ?? null };
+  const usage = session.contextUsage;
+  if (usage == null) return null;
+  return { used_tokens: usage.usedTokens, context_window: usage.windowTokens,
+    percent: usage.ratio == null ? null : Math.round(usage.ratio * 100), at_ms: usage.observedAtMs };
 }

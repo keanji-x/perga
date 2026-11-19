@@ -68,6 +68,7 @@ public sealed partial class TrackActor
                         await actor._eventHub.EnsureInitializedFromStoreAsync(actor._store, ct).ConfigureAwait(false);
                         if (!await actor._store.SessionInputs.ClaimAsync(input, runningSession, runningEvent, ct).ConfigureAwait(false))
                             return (null, effectivePrompt);
+                        actor._sessions[session.Id] = runningSession;
                         session = session with { Provider = input.Provider, Model = input.Model, ReasoningEffort = input.ReasoningEffort };
                     }
 
@@ -86,7 +87,7 @@ public sealed partial class TrackActor
                                 SessionId: session.Id,
                                 IsLead: session.IsLead,
                                 BoundAttemptId: session.BoundAttemptId,
-                                ContextUsageRatio: session.ContextUsageRatio,
+                                ContextUsageRatio: actor.CurrentContextUsageRatioCore(runningSession) ?? 0,
                                 Inputs: actor._track.TemplateInputs);
                             var eval = actor._policyVm.BuildTurnContext(actor._policy, turnCtx, actor._track.TemplateState);
                             await actor.UpdateTemplateStateIfChangedCoreAsync(eval.NextState, ct).ConfigureAwait(false);
@@ -98,6 +99,7 @@ public sealed partial class TrackActor
 
                         agentSession = await actor.GetOrOpenAgentSessionCoreAsync(session, overrideSystemPrompt: null, ct)
                             .ConfigureAwait(false);
+                        runningSession = runningSession with { ContextUsage = actor.RequireSessionCore(session.Id).ContextUsage };
                         if (workerSettings is not null)
                             workerSettings = actor.ResolveWorkerTurnSettingsCore(session, workerSettings);
                     }
@@ -135,7 +137,8 @@ public sealed partial class TrackActor
 
                     actor._sessions[session.Id] = runningSession;
                     var turnCts = CancellationTokenSource.CreateLinkedTokenSource(ct, actor._actorShutdownCts.Token);
-                    var activeState = new ActiveTurnState(session.Id, session.Model, turnDto, agentSession, turnCts, true) { Settings = workerSettings };
+                    var activeState = new ActiveTurnState(session.Id, (session.Model, session.ReasoningEffort),
+                        actor._liveContextUsage.GetOrCreateValue(agentSession), turnDto, agentSession, turnCts, true) { Settings = workerSettings };
                     actor._scheduler.SetActive(session.Id, activeState);
                     pendingCleanup = activeState;
                     if (wakeReservation is not null)
@@ -155,6 +158,8 @@ public sealed partial class TrackActor
                 var textAccum = new StringBuilder();
                 var thinkingAccum = new StringBuilder();
                 TokenUsage? finalUsage = null;
+                long? finalUsageRevision = null;
+                long? completedPromptId = null;
                 string? boundThreadId = null;
                 string? errorText = null;
                 var turnStatus = "completed";
@@ -314,16 +319,21 @@ public sealed partial class TrackActor
                                 await actor.EnqueueAsync(async _ =>
                                 {
                                     var current = actor.RequireSessionCore(sessionId);
-                                    var updated = ApplyContextUsage(current, contextUsage.Usage, evtNow,
-                                        activeTurn.IsContextUsageInvalidated(current));
-                                    await actor.PersistAndEmitSessionUpdatedCoreAsync(updated, evtNow, CancellationToken.None)
-                                        .ConfigureAwait(false);
+                                    if (!activeTurn.MatchesSessionConfiguration(current))
+                                        return;
+                                    var updated = actor.ApplyContextUsageCore(current, activeTurn.AgentSession, activeTurn.ContextBinding,
+                                        contextUsage.ContextUsageRevision, contextUsage.Usage, evtNow);
+                                    if (!ReferenceEquals(updated, current))
+                                        await actor.PersistAndEmitSessionUpdatedCoreAsync(updated, evtNow, CancellationToken.None)
+                                            .ConfigureAwait(false);
                                 }, CancellationToken.None).ConfigureAwait(false);
                                 break;
 
                             case UnifiedAgentEvent.TurnCompleted tc:
                                 conclusive = true;
                                 finalUsage = tc.Usage;
+                                finalUsageRevision = tc.ContextUsageRevision;
+                                completedPromptId = tc.CompletedPromptId;
                                 break;
 
                             case UnifiedAgentEvent.TurnInterrupted:
@@ -423,9 +433,13 @@ public sealed partial class TrackActor
                             await actor.CloseInterruptedWorkerCoreAsync(activeTurn, pausedAttempt).ConfigureAwait(false);
                         }
 
-                        if (finalUsage is { } usage)
-                            currentSession = ApplyContextUsage(currentSession, usage, endNow,
-                                activeTurn.IsContextUsageInvalidated(currentSession));
+                        if (activeTurn.MatchesSessionConfiguration(currentSession))
+                        {
+                            if (finalUsage is { } usage)
+                                currentSession = actor.ApplyContextUsageCore(currentSession, activeTurn.AgentSession, activeTurn.ContextBinding,
+                                    finalUsageRevision, usage, endNow);
+                            currentSession = actor.ApplyTrailingContextUsageCore(currentSession, activeTurn.AgentSession, activeTurn.ContextBinding, completedPromptId, endNow);
+                        }
 
                         var updatedSession = currentSession with
                         {
@@ -465,8 +479,7 @@ public sealed partial class TrackActor
                         activeTurn.Settled.TrySetResult(conclusive);
                         var autoCompact = !actor._scheduler.HasResumeHold(sessionId) && actor._sessions[sessionId].BoundAttemptId is null &&
                                           actor._sessions[sessionId].Status == "idle" && turnStatus == "completed" &&
-                                          !updatedSession.ContextUsageInvalidated &&
-                                          updatedSession.ContextUsageRatio >= actor._options.AutoCompactionThreshold;
+                                          actor.CurrentContextUsageRatioCore(updatedSession) >= actor._options.AutoCompactionThreshold;
 
                         return (completedTurn, autoCompact);
                     }, CancellationToken.None).ConfigureAwait(false);
@@ -481,7 +494,7 @@ public sealed partial class TrackActor
                 {
                     try
                     {
-                        await actor.CompactSessionInternalAsync(sessionId, CancellationToken.None, alreadyAdmitted: true).ConfigureAwait(false);
+                        await actor.CompactSessionInternalAsync(sessionId, CancellationToken.None, automatic: true).ConfigureAwait(false);
                     }
                     catch (KernelException ex) when (ex.Code == KernelErrorCode.Conflict)
                     {

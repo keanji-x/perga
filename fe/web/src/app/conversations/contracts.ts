@@ -99,7 +99,6 @@ export type ConversationStore = Readonly<{
   compact: () => void;
   compacting: boolean;
   compactOutcome: import('../../../../core/domain/conversation.ts').CompactOutcome | null;
-  contextUsageInvalidated: boolean;
   retryHistory: () => void;
   retryRun: () => void;
   /** False means newest reconciliation still owns the query; no input was spent. */

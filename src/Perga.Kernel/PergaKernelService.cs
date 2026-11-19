@@ -732,7 +732,6 @@ public sealed partial class PergaKernelService : IPergaKernel
             NativeThreadId: null,
             Epoch: 1,
             Status: "idle",
-            ContextUsageRatio: 0.0,
             ArchivedAtMs: null,
             CreatedAtMs: now,
             UpdatedAtMs: now,

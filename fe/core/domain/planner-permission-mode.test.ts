@@ -6,7 +6,7 @@ import { setPlannerPermissionModeOperation } from './planner-permission-mode.js'
 
 const RUN = {
   card_id: 'card-1', worker_session_id: null, phase: null, model: null, reasoning_effort: null,
-  blocked_reason: null, manual_compact_supported: true, recovery: null, compact_outcome: null, context_usage_invalidated: false, running_turn: null,
+  blocked_reason: null, manual_compact_supported: true, recovery: null, compact_outcome: null, running_turn: null,
 };
 
 describe('session permission mode', () => {
@@ -17,7 +17,7 @@ describe('session permission mode', () => {
     });
     expect(op.responseSchema.parse({
       id: 'ses/1', trackId: 'trk_1', isLead: false, provider: 'claude',
-      epoch: 1, status: 'idle', contextUsageRatio: 0, createdAtMs: 1, updatedAtMs: 2,
+      epoch: 1, status: 'idle', contextUsage: null, createdAtMs: 1, updatedAtMs: 2,
       permissionMode: 'acceptEdits',
     })).toEqual({ card_id: 'ses/1', permission_mode: 'acceptEdits' });
   });
@@ -33,7 +33,7 @@ describe('session permission mode', () => {
       ...basePage,
       session: {
         id: 'ses_1', trackId: 'trk_1', isLead: true, provider: 'claude',
-        epoch: 1, status: 'idle', contextUsageRatio: 0, createdAtMs: 1, updatedAtMs: 2,
+        epoch: 1, status: 'idle', contextUsage: null, createdAtMs: 1, updatedAtMs: 2,
         permissionMode: 'bypassPermissions',
       },
     });
@@ -43,7 +43,7 @@ describe('session permission mode', () => {
       ...basePage,
       session: {
         id: 'ses_2', trackId: 'trk_1', isLead: false, provider: 'codex',
-        epoch: 1, status: 'idle', contextUsageRatio: 0, createdAtMs: 1, updatedAtMs: 2,
+        epoch: 1, status: 'idle', contextUsage: null, createdAtMs: 1, updatedAtMs: 2,
         permissionMode: 'ask',
       },
     });
@@ -53,7 +53,7 @@ describe('session permission mode', () => {
       ...basePage,
       session: {
         id: 'ses_3', trackId: 'trk_1', isLead: false, boundTaskId: 'tsk_1', provider: 'codex',
-        epoch: 1, status: 'idle', contextUsageRatio: 0, createdAtMs: 1, updatedAtMs: 2,
+        epoch: 1, status: 'idle', contextUsage: null, createdAtMs: 1, updatedAtMs: 2,
         permissionMode: 'full',
       },
     });

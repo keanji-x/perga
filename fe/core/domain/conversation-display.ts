@@ -467,7 +467,6 @@ export function conversationRunOperation(card: string): ApiOperation<PlannerRun 
         attachments_supported: false,
         manual_compact_supported: page.worker == null,
         compact_outcome: null,
-        context_usage_invalidated: page.session.contextUsageInvalidated,
         token_usage: sessionContextUsage(page.session),
         running_turn: running && page.activeTurn !== null && page.activeTurn !== undefined
           ? { turn_id: page.activeTurn.id, elapsed_ms: Math.max(0, Date.now() - (page.activeTurn.startedAtMs ?? Date.now())) }

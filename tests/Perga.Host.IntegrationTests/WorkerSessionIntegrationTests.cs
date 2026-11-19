@@ -87,6 +87,43 @@ public sealed class WorkerSessionIntegrationTests
     }
 
     [Fact]
+    public async Task WorkerModelChangeClearsThePreviousWindow()
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        var ct = timeout.Token;
+        await using var host = new PergaHostTestCluster();
+        var kernel = host.Services.GetRequiredService<IPergaKernel>();
+        var (trackId, _) = await host.CreateTrackAsync();
+        host.AgentRuntime.SetTurnHandler(Stream);
+        var dispatched = await kernel.DispatchWorkerAsync(trackId, new("Measure context"), "worker-context", null, ct);
+        await kernel.WaitForTrackIdleAsync(trackId, ct);
+        var worker = Assert.Single(await kernel.ListSessionsAsync(trackId, ct), session => session.BoundTaskId == dispatched.Task.Id);
+        var attemptId = worker.BoundAttemptId!;
+        Assert.Equal(1000, worker.ContextUsage?.WindowTokens);
+        using var patch = await host.Client.PatchAsJsonAsync($"/api/v1/sessions/{worker.Id}/settings",
+            new UpdateWorkerSettingsRequest(attemptId, 0, "gpt-5.4-mini", "low", "ask"), ct);
+        patch.EnsureSuccessStatusCode();
+        var cleared = await kernel.GetSessionItemsAsync(worker.Id, ct: ct);
+        Assert.Null(cleared.Session.ContextUsage);
+
+        await kernel.SendWorkerMessageAsync(worker.Id, new(attemptId, "After model switch", "after-model-switch"), null, ct);
+        await kernel.WaitForTrackIdleAsync(trackId, ct);
+        var updated = await kernel.GetSessionItemsAsync(worker.Id, ct: ct);
+        var usage = Assert.IsType<SessionContextUsage>(updated.Session.ContextUsage);
+        Assert.Equal(900, usage.UsedTokens);
+        Assert.Null(usage.WindowTokens);
+        Assert.Null(usage.Ratio);
+
+        static async IAsyncEnumerable<UnifiedAgentEvent> Stream(HarnessLaunchSpec spec, TurnInput input,
+            [EnumeratorCancellation] CancellationToken ct)
+        {
+            await Task.Yield();
+            var switched = input.Model == "gpt-5.4-mini";
+            yield return new UnifiedAgentEvent.TurnCompleted(new TokenUsage(switched ? 900 : 150, 0, 0, switched ? null : 1000));
+        }
+    }
+
+    [Fact]
     public async Task ExplicitQueueOnANativeWorkerWaitsAndReplaysTheSameReceipt()
     {
         await using var host = new PergaHostTestCluster();
