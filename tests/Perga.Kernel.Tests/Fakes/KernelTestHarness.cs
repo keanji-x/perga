@@ -1350,6 +1350,7 @@ internal sealed class ScriptableFakeAgentSession : IAgentSession
     public bool CancelCalled { get; private set; }
     public ConcurrentQueue<string> SteeredMessages { get; } = new();
     public ConcurrentQueue<(string RequestId, bool Approved, string? Reason)> Approvals { get; } = new();
+    public ConcurrentQueue<(string RequestId, bool Approved, string? SelectedOptionId, string? Reason)> DetailedApprovals { get; } = new();
     public ConcurrentQueue<TurnInput> RecordedInputs { get; } = new();
 
     public IAsyncEnumerable<UnifiedAgentEvent> StreamTurnAsync(TurnInput input, CancellationToken ct)
@@ -1364,9 +1365,13 @@ internal sealed class ScriptableFakeAgentSession : IAgentSession
         return Task.CompletedTask;
     }
 
-    public Task RespondApprovalAsync(string requestId, bool approved, string? reason = null, CancellationToken ct = default)
+    public Task RespondApprovalAsync(string requestId, bool approved, string? reason = null, CancellationToken ct = default) =>
+        RespondApprovalAsync(requestId, approved, selectedOptionId: null, reason, ct);
+
+    public Task RespondApprovalAsync(string requestId, bool approved, string? selectedOptionId, string? reason = null, CancellationToken ct = default)
     {
         Approvals.Enqueue((requestId, approved, reason));
+        DetailedApprovals.Enqueue((requestId, approved, selectedOptionId, reason));
         return Task.CompletedTask;
     }
 

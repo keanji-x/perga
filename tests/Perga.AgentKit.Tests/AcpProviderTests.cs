@@ -139,6 +139,52 @@ public sealed class AcpProviderTests : IDisposable
         if (config) Assert.Equal(shape == 2 ? "mode" : "agent-mode", parameters.GetProperty("configId").GetString());
     }
 
+    [Fact]
+    public async Task AntigravityExecutableExposesBypassPermissionsAndPassesDangerouslySkipPermissions()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var agyWrapper = Path.Combine(_fixture.RootDir, "agy");
+        File.WriteAllText(agyWrapper, $"""
+            #!/bin/sh
+            exec "{_fixture.MockAcpPath}" "$@"
+            """);
+        File.SetUnixFileMode(agyWrapper, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+
+        var log = Path.Combine(_fixture.RootDir, "antigravity-bypass.jsonl");
+        await using var runtime = new AgentRuntime(new AgentRuntimeOptions
+        {
+            ProviderOverrides = new Dictionary<string, ProviderCommandOverride>
+            {
+                ["acp:antigravity"] = new(agyWrapper, Env: new Dictionary<string, string>
+                {
+                    ["MOCK_ACP_LOG"] = log,
+                    ["MOCK_ACP_LOG_ARGV"] = "1",
+                    ["MOCK_ACP_MODELS"] = """{"modes":{"currentModeId":"default","availableModes":[{"id":"default","name":"Default"},{"id":"auto","name":"Auto"}]}}"""
+                })
+            }
+        });
+
+        var probed = await runtime.ProbePermissionModesAsync("acp:antigravity", _fixture.WorkspaceDir, OsSandboxMode.None, null, CancellationToken.None);
+        Assert.Equal(["default", "auto", "bypassPermissions"], probed.Select(m => m.Id));
+        var bypassOption = probed.Single(m => m.Id == "bypassPermissions");
+        Assert.Equal("Full access", bypassOption.Label);
+        Assert.Equal("danger", bypassOption.Tone);
+
+        File.Delete(log);
+
+        await using var session = await runtime.OpenSessionAsync(new HarnessLaunchSpec(
+            "acp:antigravity", null, _fixture.WorkspaceDir, null, null,
+            new Dictionary<string, McpServerConfig>(), PermissionMode: "bypassPermissions"), CancellationToken.None);
+
+        var entries = File.ReadAllLines(log).Select(line => JsonSerializer.Deserialize<JsonElement>(line)).ToArray();
+        var argvEntry = Assert.Single(entries, e => e.TryGetProperty("argv", out _));
+        var argv = argvEntry.GetProperty("argv").EnumerateArray().Select(x => x.GetString()).ToArray();
+        Assert.Contains("--dangerously-skip-permissions", argv);
+        Assert.DoesNotContain(entries, e =>
+            e.TryGetProperty("method", out var m) &&
+            (m.GetString() == "session/set_mode" || m.GetString() == "session/set_config_option"));
+    }
+
     [Theory]
     [InlineData("vendor/model-high", null, "vendor/model-high")]
     [InlineData("vendor/model-high", "high", "vendor/model-high")]
@@ -608,11 +654,33 @@ public sealed class AcpProviderTests : IDisposable
             {
                 Assert.Equal("acp_perm_99", req.RequestId);
                 Assert.Equal("write_file", req.ToolName);
+                Assert.NotNull(req.Options);
+                Assert.Equal(3, req.Options!.Count);
+                Assert.Equal(new ApprovalOption("opt_allow_once", "Allow once", true), req.Options[0]);
+                Assert.Equal(new ApprovalOption("opt_allow_always", "Always allow", true), req.Options[1]);
+                Assert.Equal(new ApprovalOption("opt_reject_once", "Reject once", false), req.Options[2]);
                 await session.RespondApprovalAsync(req.RequestId, approved: true, ct: CancellationToken.None);
             }
         }
 
         Assert.Contains(allowEvents.OfType<UnifiedAgentEvent.TextDelta>(), t => t.Delta == "acp-selected:opt_allow_once");
+
+        // Permission allow_always selects opt_allow_always when explicitly chosen
+        var alwaysEvents = new List<UnifiedAgentEvent>();
+        await foreach (var evt in session.StreamTurnAsync(new TurnInput("REQUIRE_PERMISSION", "perm_always"), CancellationToken.None))
+        {
+            alwaysEvents.Add(evt);
+            if (evt is UnifiedAgentEvent.ApprovalRequested req)
+            {
+                await session.RespondApprovalAsync(
+                    req.RequestId,
+                    approved: true,
+                    selectedOptionId: "opt_allow_always",
+                    ct: CancellationToken.None);
+            }
+        }
+
+        Assert.Contains(alwaysEvents.OfType<UnifiedAgentEvent.TextDelta>(), t => t.Delta == "acp-selected:opt_allow_always");
 
         // Permission reject selects reject_once optionId
         var rejectEvents = new List<UnifiedAgentEvent>();

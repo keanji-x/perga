@@ -355,8 +355,7 @@ public sealed class OsSandboxWrapperTests : IDisposable
             "shell_environment_policy",
             "Edit(//",
             "--allowedTools",
-            "--disallowedTools",
-            "--dangerously-skip-permissions"
+            "--disallowedTools"
         };
 
         foreach (var file in csFiles)

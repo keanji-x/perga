@@ -13,7 +13,8 @@ public sealed class AcpAgentSession : IAgentSession
     private sealed record PendingAcpPermission(
         JsonElement RawId,
         string AllowOptionId,
-        string RejectOptionId);
+        string RejectOptionId,
+        IReadOnlySet<string> ValidOptionIds);
 
     private sealed class TurnStreamState
     {
@@ -162,7 +163,9 @@ public sealed class AcpAgentSession : IAgentSession
         HarnessLaunchSpec spec,
         TimeSpan handshakeTimeout,
         Action<IAgentSession>? onDispose,
-        CancellationToken ct)
+        CancellationToken ct,
+        IReadOnlyList<PermissionModeOption>? extraPermissionModes = null,
+        bool skipSetPermissionMode = false)
     {
         var process = StdioSubprocess.Start(wrappedCommand);
         var session = new AcpAgentSession(process, wrappedCommand.Environment, spec.ResumeNativeThreadId, handshakeTimeout, onDispose);
@@ -170,7 +173,11 @@ public sealed class AcpAgentSession : IAgentSession
         {
             using var handshakeCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             handshakeCts.CancelAfter(handshakeTimeout);
-            await session.InitializeAndBindSessionAsync(spec, handshakeCts.Token).ConfigureAwait(false);
+            await session.InitializeAndBindSessionAsync(
+                spec,
+                extraPermissionModes,
+                skipSetPermissionMode,
+                handshakeCts.Token).ConfigureAwait(false);
             return session;
         }
         catch
@@ -234,9 +241,17 @@ public sealed class AcpAgentSession : IAgentSession
         await _rpc.SendNotificationAsync("session/cancel", cancelParams, ct).ConfigureAwait(false);
     }
 
+    public Task RespondApprovalAsync(
+        string requestId,
+        bool approved,
+        string? reason = null,
+        CancellationToken ct = default) =>
+        RespondApprovalAsync(requestId, approved, selectedOptionId: null, reason, ct);
+
     public async Task RespondApprovalAsync(
         string requestId,
         bool approved,
+        string? selectedOptionId,
         string? reason = null,
         CancellationToken ct = default)
     {
@@ -248,13 +263,15 @@ public sealed class AcpAgentSession : IAgentSession
             throw new InvalidOperationException($"No pending ACP permission request with id '{requestId}'.");
         }
 
-        var selectedOptionId = approved ? pending.AllowOptionId : pending.RejectOptionId;
+        var optionId = !string.IsNullOrWhiteSpace(selectedOptionId) && pending.ValidOptionIds.Contains(selectedOptionId)
+            ? selectedOptionId
+            : approved ? pending.AllowOptionId : pending.RejectOptionId;
         var resultPayload = new Dictionary<string, object?>
         {
             ["outcome"] = new Dictionary<string, object?>
             {
                 ["outcome"] = "selected",
-                ["optionId"] = selectedOptionId
+                ["optionId"] = optionId
             },
             ["approved"] = approved,
             ["reason"] = reason
@@ -284,7 +301,11 @@ public sealed class AcpAgentSession : IAgentSession
         capabilities.ValueKind == JsonValueKind.Object &&
         capabilities.TryGetProperty(name, out var capability) && capability.ValueKind == JsonValueKind.Object;
 
-    private async Task InitializeAndBindSessionAsync(HarnessLaunchSpec spec, CancellationToken ct)
+    private async Task InitializeAndBindSessionAsync(
+        HarnessLaunchSpec spec,
+        IReadOnlyList<PermissionModeOption>? extraPermissionModes,
+        bool skipSetPermissionMode,
+        CancellationToken ct)
     {
         var initParams = new Dictionary<string, object?>
         {
@@ -361,18 +382,33 @@ public sealed class AcpAgentSession : IAgentSession
         }
 
         var permissionModes = AcpPermissionModes.Read(response);
-        AvailablePermissionModes = permissionModes.Options;
-        if (!string.IsNullOrWhiteSpace(spec.PermissionMode))
+        var availableModes = permissionModes.Options;
+        if (extraPermissionModes is { Count: > 0 })
+        {
+            var merged = new List<PermissionModeOption>(availableModes);
+            foreach (var extra in extraPermissionModes)
+            {
+                if (!merged.Any(m => string.Equals(m.Id, extra.Id, StringComparison.Ordinal)))
+                {
+                    merged.Add(extra);
+                }
+            }
+            availableModes = merged;
+        }
+
+        AvailablePermissionModes = availableModes;
+        var requestedMode = spec.PermissionMode?.Trim();
+        if (!skipSetPermissionMode && !string.IsNullOrWhiteSpace(requestedMode))
         {
             var modeParams = new Dictionary<string, object?> { ["sessionId"] = resolvedSessionId };
             if (permissionModes.ConfigId is { } configId)
             {
                 modeParams["configId"] = configId;
-                modeParams["value"] = spec.PermissionMode.Trim();
+                modeParams["value"] = requestedMode;
             }
             else
             {
-                modeParams["modeId"] = spec.PermissionMode.Trim();
+                modeParams["modeId"] = requestedMode;
             }
             await _rpc.SendRequestAsync(
                 permissionModes.ConfigId is null ? "session/set_mode" : "session/set_config_option",
@@ -733,8 +769,9 @@ public sealed class AcpAgentSession : IAgentSession
         }
 
         var requestId = JsonRpcStdioConnection.ExtractDisplayRequestId(rawId);
-        var (allowOptionId, rejectOptionId) = ExtractPermissionOptionIds(parameters);
-        _pendingPermissions[requestId] = new PendingAcpPermission(rawId, allowOptionId, rejectOptionId);
+        var (options, allowOptionId, rejectOptionId) = ExtractPermissionOptions(parameters);
+        var validOptionIds = options.Select(o => o.OptionId).ToHashSet(StringComparer.Ordinal);
+        _pendingPermissions[requestId] = new PendingAcpPermission(rawId, allowOptionId, rejectOptionId, validOptionIds);
 
         var toolName = "permission";
         JsonElement args = JsonRpcStdioConnection.CreateEmptyJsonObject();
@@ -765,7 +802,11 @@ public sealed class AcpAgentSession : IAgentSession
         }
 
         var turnState = Volatile.Read(ref _currentTurn);
-        turnState?.Events.Writer.TryWrite(new UnifiedAgentEvent.ApprovalRequested(requestId, toolName, args));
+        turnState?.Events.Writer.TryWrite(new UnifiedAgentEvent.ApprovalRequested(
+            requestId,
+            toolName,
+            args,
+            options.Count > 0 ? options : null));
     }
 
     private void OnDisconnected(Exception? ex)
@@ -788,8 +829,10 @@ public sealed class AcpAgentSession : IAgentSession
             IsRetryable: false));
     }
 
-    private static (string AllowOptionId, string RejectOptionId) ExtractPermissionOptionIds(JsonElement parameters)
+    private static (IReadOnlyList<ApprovalOption> Options, string AllowOptionId, string RejectOptionId) ExtractPermissionOptions(JsonElement parameters)
     {
+        var options = new List<ApprovalOption>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
         var allowId = "allow_once";
         var rejectId = "reject_once";
         var foundAllow = false;
@@ -807,24 +850,29 @@ public sealed class AcpAgentSession : IAgentSession
                 }
 
                 var optionId = TryGetString(opt, "optionId") ?? TryGetString(opt, "id");
-                if (string.IsNullOrWhiteSpace(optionId))
+                if (string.IsNullOrWhiteSpace(optionId) || !seen.Add(optionId))
                 {
                     continue;
                 }
 
                 var kind = TryGetString(opt, "kind") ?? optionId;
-                if (!foundAllow &&
-                    (kind.StartsWith("allow", StringComparison.OrdinalIgnoreCase) ||
-                     optionId.Contains("allow", StringComparison.OrdinalIgnoreCase)))
+                var label = TryGetString(opt, "name") ?? TryGetString(opt, "label") ?? optionId;
+                var isReject = kind.StartsWith("reject", StringComparison.OrdinalIgnoreCase) ||
+                               kind.StartsWith("deny", StringComparison.OrdinalIgnoreCase) ||
+                               optionId.Contains("reject", StringComparison.OrdinalIgnoreCase) ||
+                               optionId.Contains("deny", StringComparison.OrdinalIgnoreCase);
+                var isAllow = !isReject &&
+                              (kind.StartsWith("allow", StringComparison.OrdinalIgnoreCase) ||
+                               optionId.Contains("allow", StringComparison.OrdinalIgnoreCase));
+
+                options.Add(new ApprovalOption(optionId, label, isAllow));
+
+                if (!foundAllow && isAllow)
                 {
                     allowId = optionId;
                     foundAllow = true;
                 }
-                else if (!foundReject &&
-                         (kind.StartsWith("reject", StringComparison.OrdinalIgnoreCase) ||
-                          kind.StartsWith("deny", StringComparison.OrdinalIgnoreCase) ||
-                          optionId.Contains("reject", StringComparison.OrdinalIgnoreCase) ||
-                          optionId.Contains("deny", StringComparison.OrdinalIgnoreCase)))
+                else if (!foundReject && isReject)
                 {
                     rejectId = optionId;
                     foundReject = true;
@@ -832,7 +880,7 @@ public sealed class AcpAgentSession : IAgentSession
             }
         }
 
-        return (allowId, rejectId);
+        return (options, allowId, rejectId);
     }
 
     private static string ExtractChunkText(JsonElement update)

@@ -538,4 +538,61 @@ public sealed class SessionStreamingAndCompactionTests
         yield return new UnifiedAgentEvent.TextDelta("Completed approved command.");
         yield return new UnifiedAgentEvent.TurnCompleted(new TokenUsage(200, 50, 0, 100_000));
     }
+
+    [Fact]
+    public async Task ApprovalRequested_WithProviderOptions_ExposesAllOptionsAndForwardsSelectedOptionId()
+    {
+        await using var ctx = new KernelTestContext();
+        var area = await ctx.Kernel.CreateAreaAsync(new CreateAreaRequest("Approval Options Area"));
+        var track = await ctx.Kernel.CreateTrackAsync(new CreateTrackRequest(AreaId: area.Id, Title: "Approval Options Track"));
+        var leadId = track.Track.LeadSessionId!;
+
+        var providerOptions = new ApprovalOption[]
+        {
+            new("opt_allow_once", "Allow once", true),
+            new("opt_allow_always", "Always allow", true),
+            new("opt_reject_once", "Reject once", false)
+        };
+
+        ctx.AgentRuntime.TurnScript = (_, _, ct) => StreamWithProviderOptions(providerOptions, ct);
+
+        var turnTask = ctx.Kernel.SendMessageAsync(leadId, new SendMessageRequest("Run command", "key-opts"));
+
+        AskDto? approvalAsk = null;
+        for (var i = 0; i < 50 && approvalAsk is null; i++)
+        {
+            var agg = await ctx.Kernel.GetTrackAggregateAsync(track.Track.Id);
+            approvalAsk = agg.OpenAsks.FirstOrDefault();
+            if (approvalAsk is null)
+            {
+                await Task.Delay(10);
+            }
+        }
+
+        Assert.NotNull(approvalAsk);
+        var question = Assert.Single(approvalAsk!.Questions);
+        Assert.Equal(["Allow once", "Always allow", "Reject once"], question.Options);
+
+        // User chooses index 1 ("Always allow")
+        await ctx.Kernel.AnswerAskAsync(track.Track.Id, approvalAsk.Id, TestJson.FromObject(new object[] { new { option = 1 } }));
+
+        var finishedTurn = await turnTask;
+        Assert.Equal("completed", finishedTurn.Status);
+
+        var activeFakeSession = ctx.AgentRuntime.OpenedSessions.Last();
+        Assert.Single(activeFakeSession.DetailedApprovals, a =>
+            a.RequestId == "req_opts" &&
+            a.Approved &&
+            a.SelectedOptionId == "opt_allow_always");
+    }
+
+    private static async IAsyncEnumerable<UnifiedAgentEvent> StreamWithProviderOptions(
+        IReadOnlyList<ApprovalOption> options,
+        [EnumeratorCancellation] CancellationToken ct)
+    {
+        yield return new UnifiedAgentEvent.ApprovalRequested("req_opts", "run_command", TestJson.Parse("""{"cmd":"ls"}"""), options);
+        await Task.Yield();
+        yield return new UnifiedAgentEvent.TextDelta("Done");
+        yield return new UnifiedAgentEvent.TurnCompleted(null);
+    }
 }

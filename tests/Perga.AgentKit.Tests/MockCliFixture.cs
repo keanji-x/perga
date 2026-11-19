@@ -768,6 +768,7 @@ def handle_prompt(req_id, params):
                 },
                 "options": [
                     {"optionId": "opt_allow_once", "kind": "allow_once", "name": "Allow once"},
+                    {"optionId": "opt_allow_always", "kind": "allow_always", "name": "Always allow"},
                     {"optionId": "opt_reject_once", "kind": "reject_once", "name": "Reject once"}
                 ]
             }
@@ -887,6 +888,9 @@ for raw_line in sys.stdin:
             log.write(json.dumps(msg) + "\n")
     if method == "initialize":
         mcp_caps = {"http": True} if os.environ.get("MOCK_ACP_HTTP_MCP") == "1" else {}
+        if os.environ.get("MOCK_ACP_LOG") and os.environ.get("MOCK_ACP_LOG_ARGV") == "1":
+            with open(os.environ["MOCK_ACP_LOG"], "a") as log:
+                log.write(json.dumps({"argv": sys.argv[1:]}) + "\n")
         send({
             "jsonrpc": "2.0",
             "id": msg_id,

@@ -2872,7 +2872,10 @@ public sealed partial class TrackActor : IAsyncDisposable
                                     "The Worker approval mode denies this request.", activeTurn.TurnCts.Token).ConfigureAwait(false);
                                 break;
                             }
-                            var options = new[] { "Approve", "Deny" };
+                            var providerOptions = approval.Options is { Count: > 0 } opts ? opts : null;
+                            var options = providerOptions is not null
+                                ? providerOptions.Select(o => o.Label).ToArray()
+                                : new[] { "Approve", "Deny" };
                             var suspension = await EnqueueAsync(async _ =>
                             {
                                 var susp = await CreateAskSuspensionCoreAsync(
@@ -2891,10 +2894,23 @@ public sealed partial class TrackActor : IAsyncDisposable
                             }
 
                             var humanAns = await suspension.WaiterTask.WaitAsync(activeTurn.TurnCts.Token).ConfigureAwait(false);
-                            var approved = AskAnswerEvaluator.IsApproved(humanAns, options);
+                            string? selectedOptionId = null;
+                            bool approved;
+                            if (providerOptions is not null &&
+                                AskAnswerEvaluator.TryGetSelectedOptionIndex(humanAns, options, out var selectedIndex))
+                            {
+                                var chosen = providerOptions[selectedIndex];
+                                selectedOptionId = chosen.OptionId;
+                                approved = chosen.IsApproval;
+                            }
+                            else
+                            {
+                                approved = AskAnswerEvaluator.IsApproved(humanAns, options);
+                            }
                             await activeTurn.AgentSession.RespondApprovalAsync(
                                 approval.RequestId,
                                 approved,
+                                selectedOptionId,
                                 approved ? null : "Denied by user.",
                                 activeTurn.TurnCts.Token).ConfigureAwait(false);
                             break;

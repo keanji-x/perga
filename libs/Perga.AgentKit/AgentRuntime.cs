@@ -243,6 +243,14 @@ public sealed class AgentRuntime : IAgentRuntime
 
             var env = BuildProcessEnvironment(cmdOverride.Env);
             var resolvedExe = FindExecutableOnPath(cmdOverride.FileName, env) ?? cmdOverride.FileName;
+            var isAntigravity = IsAntigravityExecutable(resolvedExe);
+            var isAntigravityBypass = isAntigravity &&
+                string.Equals(normalizedSpec.PermissionMode?.Trim(), "bypassPermissions", StringComparison.Ordinal);
+            if (isAntigravityBypass)
+            {
+                args.Add("--dangerously-skip-permissions");
+            }
+
             var rawInvocation = new CommandInvocation(resolvedExe, args, fullCwd, env);
             var wrapped = _sandboxWrapper.Wrap(rawInvocation, normalizedSpec.Sandbox, normalizedSpec.OverlayMounts);
             session = await AcpAgentSession.OpenAsync(
@@ -250,7 +258,9 @@ public sealed class AgentRuntime : IAgentRuntime
                 normalizedSpec,
                 _options.HandshakeTimeout,
                 UnregisterSession,
-                ct).ConfigureAwait(false);
+                ct,
+                extraPermissionModes: isAntigravity ? [AntigravityBypassMode] : null,
+                skipSetPermissionMode: isAntigravityBypass).ConfigureAwait(false);
         }
         else
         {
@@ -340,6 +350,20 @@ public sealed class AgentRuntime : IAgentRuntime
         }
 
         return (new ProviderCommandOverride(acpTarget), AppendAcpSubcommand: false);
+    }
+
+    private static readonly PermissionModeOption AntigravityBypassMode = new(
+        "bypassPermissions",
+        "Full access",
+        "Auto-approves all tool permission requests without prompting.",
+        "danger",
+        IsDefault: false);
+
+    private static bool IsAntigravityExecutable(string executablePath)
+    {
+        var name = Path.GetFileNameWithoutExtension(executablePath);
+        return string.Equals(name, "agy", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(name, "antigravity", StringComparison.OrdinalIgnoreCase);
     }
 
     private async Task<ProviderStatus> ProbeSingleProviderAsync(string provider, CancellationToken ct)

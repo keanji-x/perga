@@ -70,6 +70,106 @@ public static class AskAnswerEvaluator
         "是的"
     };
 
+    public static bool TryGetSelectedOptionIndex(
+        JsonElement answer,
+        IReadOnlyList<string> options,
+        out int selectedIndex)
+    {
+        selectedIndex = -1;
+        if (options.Count == 0)
+        {
+            return false;
+        }
+
+        switch (answer.ValueKind)
+        {
+            case JsonValueKind.Number:
+                if (answer.TryGetInt32(out var idx) && idx >= 0 && idx < options.Count)
+                {
+                    selectedIndex = idx;
+                    return true;
+                }
+                return false;
+
+            case JsonValueKind.String:
+                var raw = (answer.GetString() ?? string.Empty).Trim();
+                if (raw.Length == 0)
+                {
+                    return false;
+                }
+                for (var i = 0; i < options.Count; i++)
+                {
+                    if (string.Equals(options[i].Trim(), raw, StringComparison.OrdinalIgnoreCase))
+                    {
+                        selectedIndex = i;
+                        return true;
+                    }
+                }
+                return false;
+
+            case JsonValueKind.Array:
+                foreach (var elem in answer.EnumerateArray())
+                {
+                    return TryGetSelectedOptionIndex(elem, options, out selectedIndex);
+                }
+                return false;
+
+            case JsonValueKind.Object:
+                int? index = null;
+                string? echoText = null;
+                foreach (var property in answer.EnumerateObject())
+                {
+                    var name = property.Name.ToLowerInvariant();
+                    switch (name)
+                    {
+                        case "option" or "optionindex" or "index":
+                            if (index is not null || !TryReadIndex(property.Value, out var parsed))
+                            {
+                                return false;
+                            }
+                            index = parsed;
+                            break;
+                        case "value" or "text" or "label":
+                            if (property.Value.ValueKind == JsonValueKind.String)
+                            {
+                                echoText = property.Value.GetString();
+                            }
+                            break;
+                        case "answers" or "answer" or "selected" or "choice":
+                            return answer.EnumerateObject().Count() == 1 &&
+                                   TryGetSelectedOptionIndex(property.Value, options, out selectedIndex);
+                    }
+                }
+
+                if (index is { } chosen && chosen >= 0 && chosen < options.Count)
+                {
+                    if (echoText is not null &&
+                        !string.Equals(echoText.Trim(), options[chosen].Trim(), StringComparison.OrdinalIgnoreCase))
+                    {
+                        return false;
+                    }
+                    selectedIndex = chosen;
+                    return true;
+                }
+
+                if (echoText is not null)
+                {
+                    for (var i = 0; i < options.Count; i++)
+                    {
+                        if (string.Equals(options[i].Trim(), echoText.Trim(), StringComparison.OrdinalIgnoreCase))
+                        {
+                            selectedIndex = i;
+                            return true;
+                        }
+                    }
+                }
+                return false;
+
+            default:
+                return false;
+        }
+    }
+
     public static bool IsApproved(JsonElement answer, IReadOnlyList<string> options)
     {
         if (answer.ValueKind == JsonValueKind.True)
