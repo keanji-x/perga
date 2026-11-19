@@ -59,6 +59,8 @@ public sealed class AcpAgentSession : IAgentSession
     private string? _nativeThreadId;
     private string? _lastEmittedThreadId;
     private string? _pendingSystemPrompt;
+    private TokenUsage? _latestUsage;
+    private bool _supportsNativeCompact;
     private int _disposed;
 
     private AcpAgentSession(
@@ -82,6 +84,7 @@ public sealed class AcpAgentSession : IAgentSession
     public string? NativeThreadId => Volatile.Read(ref _nativeThreadId);
 
     public bool SupportsNativeSteer => false;
+    public bool SupportsNativeCompact => Volatile.Read(ref _supportsNativeCompact);
     private bool _configureWorker;
     private string? _workerLaunchModel;
     private string? _legacyWorkerModel;
@@ -177,6 +180,68 @@ public sealed class AcpAgentSession : IAgentSession
         {
             await session.DisposeAsync().ConfigureAwait(false);
             throw;
+        }
+    }
+
+    public async Task<NativeCompactResult> CompactAsync(CancellationToken ct)
+    {
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        if (!SupportsNativeCompact)
+        {
+            throw new NotSupportedException("This ACP session does not advertise /compact.");
+        }
+
+        await _turnLock.WaitAsync(ct).ConfigureAwait(false);
+        var turnState = new TurnStreamState();
+        Volatile.Write(ref _currentTurn, turnState);
+        var summary = new StringBuilder();
+        TokenUsage? usage = null;
+
+        try
+        {
+            var sessionId = NativeThreadId ?? throw new InvalidOperationException("ACP session has no bound NativeThreadId.");
+            var promptParams = new Dictionary<string, object?>
+            {
+                ["sessionId"] = sessionId,
+                ["correlationId"] = $"compact_{Guid.NewGuid():N}",
+                ["prompt"] = new object[]
+                {
+                    new Dictionary<string, object?>
+                    {
+                        ["type"] = "text",
+                        ["text"] = "/compact"
+                    }
+                }
+            };
+
+            _ = RunRawPromptRpcAsync(promptParams, turnState, ct);
+
+            await foreach (var evt in turnState.Events.Reader.ReadAllAsync(ct).ConfigureAwait(false))
+            {
+                switch (evt)
+                {
+                    case UnifiedAgentEvent.TextDelta td:
+                        summary.Append(td.Delta);
+                        break;
+                    case UnifiedAgentEvent.TurnCompleted tc:
+                        usage = tc.Usage;
+                        break;
+                    case UnifiedAgentEvent.TurnError te:
+                        throw new InvalidOperationException(te.Message);
+                    case UnifiedAgentEvent.TurnInterrupted:
+                        throw new OperationCanceledException("ACP compaction was interrupted.", ct);
+                }
+            }
+
+            usage ??= Volatile.Read(ref _latestUsage);
+            var summaryText = summary.ToString().Trim();
+            return new NativeCompactResult(usage, string.IsNullOrEmpty(summaryText) ? "Context compacted." : summaryText);
+        }
+        finally
+        {
+            Interlocked.CompareExchange(ref _currentTurn, null, turnState);
+            turnState.CompleteQuietly();
+            _turnLock.Release();
         }
     }
 
@@ -521,6 +586,14 @@ public sealed class AcpAgentSession : IAgentSession
             }
         };
 
+        await RunRawPromptRpcAsync(promptParams, turnState, ct).ConfigureAwait(false);
+    }
+
+    private async Task RunRawPromptRpcAsync(
+        Dictionary<string, object?> promptParams,
+        TurnStreamState turnState,
+        CancellationToken ct)
+    {
         try
         {
             var result = await _rpc.SendRequestAsync("session/prompt", promptParams, ct).ConfigureAwait(false);
@@ -624,12 +697,49 @@ public sealed class AcpAgentSession : IAgentSession
             TryGetString(update, "sessionUpdate") == "config_option_update" && AcpWorkerOptions.Read(update) is { } options)
             Volatile.Write(ref _workerOptions, options);
 
+        var updateKind = TryGetString(update, "sessionUpdate")
+                         ?? TryGetString(update, "type")
+                         ?? TryGetString(update, "kind");
+
+        if (string.Equals(updateKind, "available_commands_update", StringComparison.Ordinal))
+        {
+            if (update.TryGetProperty("availableCommands", out var cmds) && cmds.ValueKind == JsonValueKind.Array)
+            {
+                var hasCompact = false;
+                foreach (var cmd in cmds.EnumerateArray())
+                {
+                    if (string.Equals(TryGetString(cmd, "name"), "compact", StringComparison.OrdinalIgnoreCase))
+                    {
+                        hasCompact = true;
+                        break;
+                    }
+                }
+
+                Volatile.Write(ref _supportsNativeCompact, hasCompact);
+            }
+
+            return;
+        }
+
+        if (string.Equals(updateKind, "usage_update", StringComparison.Ordinal))
+        {
+            var usage = TryParseAcpUsage(update);
+            if (usage is not null)
+            {
+                Volatile.Write(ref _latestUsage, usage);
+                if (Volatile.Read(ref _currentTurn) is { } activeTurn)
+                {
+                    activeTurn.LatestUsage = usage;
+                }
+            }
+
+            return;
+        }
+
         var turnState = Volatile.Read(ref _currentTurn);
         if (turnState is null) return;
 
-        var kind = TryGetString(update, "sessionUpdate")
-                   ?? TryGetString(update, "type")
-                   ?? TryGetString(update, "kind");
+        var kind = updateKind;
 
         switch (kind)
         {
@@ -945,7 +1055,9 @@ public sealed class AcpAgentSession : IAgentSession
             ? usageObj
             : container;
 
-        var input = TryGetLong(source, "inputTokens") ?? TryGetLong(source, "input_tokens");
+        var input = TryGetLong(source, "inputTokens")
+                    ?? TryGetLong(source, "input_tokens")
+                    ?? TryGetLong(source, "used");
         var output = TryGetLong(source, "outputTokens") ?? TryGetLong(source, "output_tokens");
         if (input is null && output is null)
         {

@@ -95,18 +95,25 @@ public sealed record ProviderStatus(
     IReadOnlyList<ProviderModelInfo>? ModelCatalog = null,
     IReadOnlyList<PermissionModeOption>? PermissionModes = null);
 
+public sealed record NativeCompactResult(
+    TokenUsage? Usage = null,
+    string? Summary = null);
+
 public enum SteerDelivery { Accepted, Declined, Unconfirmed }
 
 public interface IAgentSession : IAsyncDisposable
 {
     string? NativeThreadId { get; }
     bool SupportsNativeSteer { get; }
+    bool SupportsNativeCompact => false;
     WorkerProviderConfiguration? WorkerConfiguration => null;
     bool ShutdownConfirmed => true;
     bool SupportsSessionResume => false;
     bool RequiresTerminalStop => false;
     bool SupportsScopedClose => false;
     Task<bool> TryCloseSessionAsync(CancellationToken ct) => Task.FromResult(false);
+    Task<NativeCompactResult> CompactAsync(CancellationToken ct) =>
+        throw new NotSupportedException("This agent session does not support native compaction.");
 
     IAsyncEnumerable<UnifiedAgentEvent> StreamTurnAsync(TurnInput input, CancellationToken ct);
     Task CancelTurnAsync(CancellationToken ct);

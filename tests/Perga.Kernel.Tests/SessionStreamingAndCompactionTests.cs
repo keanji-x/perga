@@ -352,6 +352,43 @@ public sealed class SessionStreamingAndCompactionTests
         Assert.Contains("HANDOVER_SUMMARY_EPOCH_2", epoch3Session.LaunchSpec.SystemPrompt);
     }
 
+    [Fact]
+    public async Task NativeCompaction_ManualAndAutoAt80Percent_PreservesNativeThreadEpochAndUpdatesUsage()
+    {
+        await using var ctx = new KernelTestContext();
+        var (_, snap) = await ctx.CreateDefaultTrackAsync();
+        var trackId = snap.Track.Id;
+        var leadId = snap.Track.LeadSessionId!;
+
+        ctx.AgentRuntime.TurnScript = (session, _, ct) =>
+        {
+            session.SupportsNativeCompact = true;
+            session.CompactHandler = (_, _) => Task.FromResult(
+                new NativeCompactResult(new TokenUsage(20_000, 0, 0, 100_000), "Native compact summary."));
+            return StreamScriptedTurn(session, new TurnInput("Analyze repo", "idem"), 1, ct);
+        };
+
+        var turn1 = await ctx.Kernel.SendMessageAsync(leadId, new SendMessageRequest("Analyze repo", "idem-native-auto"));
+        Assert.Equal("completed", turn1.Status);
+
+        var sessionsAfterAuto = await ctx.Kernel.ListSessionsAsync(trackId);
+        var leadAfterAuto = sessionsAfterAuto.Single(s => s.Id == leadId);
+        Assert.Equal(1, leadAfterAuto.Epoch);
+        Assert.Equal("thr_epoch_1", leadAfterAuto.NativeThreadId);
+        Assert.Equal(0.2, leadAfterAuto.ContextUsageRatio, precision: 4);
+
+        var opened = ctx.AgentRuntime.OpenedSessions.ToArray();
+        Assert.Single(opened);
+        Assert.False(opened[0].Disposed);
+        Assert.Equal(1, opened[0].CompactCalls);
+
+        var manual = await ctx.Kernel.CompactSessionAsync(leadId);
+        Assert.Equal(1, manual.Epoch);
+        Assert.Equal("thr_epoch_1", manual.NativeThreadId);
+        Assert.Equal(0.2, manual.ContextUsageRatio, precision: 4);
+        Assert.Equal(2, opened[0].CompactCalls);
+    }
+
     private static async IAsyncEnumerable<UnifiedAgentEvent> StreamScriptedTurn(
         ScriptableFakeAgentSession session,
         TurnInput input,

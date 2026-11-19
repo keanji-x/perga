@@ -153,6 +153,13 @@ public sealed class ClaudeProviderTests : IDisposable
         var err = Assert.Single(errEvents.OfType<UnifiedAgentEvent.TurnError>());
         Assert.Equal("error_max_turns", err.Code);
         Assert.Contains("Maximum turns", err.Message, StringComparison.Ordinal);
+
+        Assert.True(session.SupportsNativeCompact);
+        var compact = await session.CompactAsync(CancellationToken.None);
+        Assert.Equal("Compacted.", compact.Summary);
+        Assert.NotNull(compact.Usage);
+        Assert.Equal(500, compact.Usage!.InputTokens);
+        Assert.Equal(200_000, compact.Usage.ContextWindowTokens);
     }
 
     private static async Task<List<UnifiedAgentEvent>> DrainTurnAsync(IAgentSession session, TurnInput input)

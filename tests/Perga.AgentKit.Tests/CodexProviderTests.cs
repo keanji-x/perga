@@ -358,6 +358,21 @@ public sealed class CodexProviderTests : IDisposable
         Assert.DoesNotContain(events, item => item is UnifiedAgentEvent.TurnError);
     }
 
+    [Fact]
+    public async Task NativeCompact_UsesThreadCompactStartAndReturnsUpdatedUsage()
+    {
+        await using var runtime = CreateRuntime();
+        var spec = new HarnessLaunchSpec("codex", null, _fixture.WorkspaceDir, null, null,
+            MockCliFixture.CreateSampleMcpServers());
+        await using var session = await runtime.OpenSessionAsync(spec, CancellationToken.None);
+
+        Assert.True(session.SupportsNativeCompact);
+        var result = await session.CompactAsync(CancellationToken.None);
+        Assert.NotNull(result.Usage);
+        Assert.Equal(1_200, result.Usage!.InputTokens);
+        Assert.Equal(100_000, result.Usage.ContextWindowTokens);
+    }
+
     private static async Task<List<UnifiedAgentEvent>> DrainTurnAsync(IAgentSession session, TurnInput input)
     {
         var list = new List<UnifiedAgentEvent>();

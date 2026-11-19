@@ -453,6 +453,22 @@ for raw_line in sys.stdin:
         send({"jsonrpc": "2.0", "id": msg_id, "result": {"turn": {"id": turn_id, "status": "inProgress"}}})
         t = threading.Thread(target=run_turn, args=(turn_id, prompt_text, corr_id, turn_model), daemon=True)
         t.start()
+    elif method == "thread/compact/start":
+        compact_turn_id = f"turn_compact_{state['turn_counter'] + 1}"
+        state["turn_counter"] += 1
+        send({"jsonrpc": "2.0", "id": msg_id, "result": {}})
+        send({"jsonrpc": "2.0", "method": "thread/tokenUsage/updated", "params": {
+            "threadId": state["thread_id"],
+            "turnId": compact_turn_id,
+            "tokenUsage": {
+                "last": {"inputTokens": 1200, "outputTokens": 0, "cachedInputTokens": 0},
+                "modelContextWindow": 100000
+            }
+        }})
+        send({"jsonrpc": "2.0", "method": "turn/completed", "params": {
+            "threadId": state["thread_id"],
+            "turn": {"id": compact_turn_id, "status": "completed"}
+        }})
     elif method == "turn/steer":
         inputs = params.get("input") or []
         state["steer_text"] = inputs[0].get("text", "") if inputs else ""
@@ -532,7 +548,24 @@ def process_user_turn(user_msg):
     content = (user_msg.get("message") or {}).get("content", "")
 
     if turn_index == 1:
-        emit({"type": "system", "subtype": "init", "session_id": session_id})
+        emit({"type": "system", "subtype": "init", "session_id": session_id, "slash_commands": ["compact", "clear"]})
+
+    if content == "/compact":
+        emit({
+            "type": "assistant",
+            "session_id": session_id,
+            "message": {"role": "assistant", "content": [{"type": "text", "text": "Compacted."}]}
+        })
+        emit({
+            "type": "result",
+            "subtype": "success",
+            "local_command": "compact",
+            "is_error": False,
+            "session_id": session_id,
+            "modelUsage": {"claude-sonnet": {"contextWindow": 200000}},
+            "usage": {"input_tokens": 500, "output_tokens": 0, "cache_read_input_tokens": 0}
+        })
+        return
 
     if "TRIGGER_ERROR" in content:
         emit({
@@ -723,6 +756,18 @@ def handle_prompt(req_id, params):
     t_idx = state["turn_idx"]
     prompt_blocks = params.get("prompt") or []
     prompt_text = prompt_blocks[0].get("text", "") if prompt_blocks else ""
+
+    if prompt_text == "/compact":
+        send({
+            "jsonrpc": "2.0",
+            "method": "session/update",
+            "params": {
+                "sessionId": state["session_id"],
+                "update": {"sessionUpdate": "usage_update", "used": 2048, "size": 1048576}
+            }
+        })
+        send({"jsonrpc": "2.0", "id": req_id, "result": {"stopReason": "end_turn"}})
+        return
 
     if "TRIGGER_RPC_ERROR" in prompt_text:
         send({
@@ -961,6 +1006,20 @@ for raw_line in sys.stdin:
                         }
                     }
                 })
+        if os.environ.get("MOCK_ACP_ADVERTISE_COMPACT") == "1":
+            send({
+                "jsonrpc": "2.0",
+                "method": "session/update",
+                "params": {
+                    "sessionId": state["session_id"],
+                    "update": {
+                        "sessionUpdate": "available_commands_update",
+                        "availableCommands": [
+                            {"name": "compact", "description": "Compact the conversation"}
+                        ]
+                    }
+                }
+            })
     elif method == "session/close":
         if params.get("sessionId") == state["session_id"]:
             result = {"success": False} if os.environ.get("MOCK_ACP_INVALID_CLOSE") == "1" else {}
