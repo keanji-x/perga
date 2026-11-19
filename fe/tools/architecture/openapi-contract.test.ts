@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { systemUpgradeReceiptSchema } from '../../core/api/perga-v1.ts';
 import { compileTemplateInputs } from '../../core/domain/template-input.ts';
 import { describe, expect, it } from 'vitest';
 
@@ -347,4 +348,13 @@ it('compiles shipped Perga .perga.js template input schemas cleanly', () => {
       requirePrReview: true,
     });
   }
+});
+
+it('preserves fractional Unix seconds in upgrade receipts', () => {
+  const document = JSON.parse(readFileSync(new URL('../../core/api/generated/openapi.json', import.meta.url), 'utf8')) as JsonObject;
+  expect(resolveRef(document, '#/components/schemas/SystemUpgradeReceipt/properties/finishedAt')).toMatchObject({ type: 'number' });
+  const finishedAt = 1795080000.125;
+  expect(systemUpgradeReceiptSchema.parse({ jobId: 'fractional', oldReleaseId: null,
+    newReleaseId: 'new', status: 'succeeded', error: null, rollbackError: null,
+    notifyTrackId: null, finishedAt, changed: [] }).finishedAt).toBe(finishedAt);
 });

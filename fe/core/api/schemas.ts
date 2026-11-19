@@ -4,6 +4,7 @@ import { z } from 'zod';
 
 import type { ApiDecodeFailure } from './types.js';
 import {
+  systemUpgradeStatusPayloadSchema,
   agentSessionDtoSchema,
   askDtoSchema,
   decodePergaEventEnvelope,
@@ -1108,6 +1109,7 @@ export const pergaSessionToolProgressSchema = z.object({
 
 /** Keep this 1:1 with Perga `/api/v1/events` and historical event kinds. */
 export const wireEventSchema = z.discriminatedUnion('ev', [
+  z.object({ ev: z.literal('system.upgrade_status'), data: systemUpgradeStatusPayloadSchema }),
   areaUpdatedSchema,
   areaDeletedSchema,
   trackUpdatedSchema,
@@ -1258,6 +1260,7 @@ export function decodeWireEvent(input: unknown): WireEventDecodeResult {
   if (typeof input === 'object' && input !== null && 'kind' in input && !('ev' in input)) {
     const perga = decodePergaEventEnvelope(input);
     if (perga.status === 'failed') return perga;
+    if (perga.kind === 'upgrade-status') return { status: 'ready', value: { ev: 'system.upgrade_status', data: perga.payload } };
     if (perga.kind === 'delta') {
       const delta: PergaStreamDelta = perga.delta;
       if (delta.kind === 'session.text_delta') {

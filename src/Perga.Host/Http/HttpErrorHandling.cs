@@ -90,6 +90,7 @@ public static class HttpErrorHandling
             KernelErrorCode.Gone => (StatusCodes.Status410Gone, "gone"),
             KernelErrorCode.NotFound => (StatusCodes.Status404NotFound, "not_found"),
             KernelErrorCode.InvalidArgument => (StatusCodes.Status400BadRequest, "invalid_argument"),
+            KernelErrorCode.SystemUpgradeLeadRequired => (StatusCodes.Status403Forbidden, "system_upgrade_lead_required"),
             KernelErrorCode.Forbidden => (StatusCodes.Status403Forbidden, "forbidden"),
             KernelErrorCode.PolicyDenied => (StatusCodes.Status403Forbidden, "policy_denied"),
             KernelErrorCode.Conflict => (StatusCodes.Status409Conflict, "conflict"),

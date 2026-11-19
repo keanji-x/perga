@@ -71,6 +71,7 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
     public IReadOnlyCollection<RecordedTurnExecution> ExecutedTurns => _executedTurns.ToArray();
     public bool FailPermissionDiscovery { get; set; }
     public IReadOnlyList<PermissionModeOption>? AcpPermissionModes { get; set; }
+    public Func<CancellationToken, Task<IReadOnlyList<PermissionModeOption>>>? PermissionProbeHandler { get; set; }
 
     public int ProbeCount => Volatile.Read(ref _probeCount);
     public int ForceRefreshProbeCount => Volatile.Read(ref _forceRefreshProbeCount);
@@ -89,6 +90,7 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
     public Task<IReadOnlyList<PermissionModeOption>> ProbePermissionModesAsync(
         string provider, string? cwd, OsSandboxMode sandbox, IReadOnlyList<OverlayMountSpec>? overlayMounts, CancellationToken ct)
     {
+        if (PermissionProbeHandler is { } handler) return handler(ct);
         if (FailPermissionDiscovery) throw new IOException("Discovery unavailable");
         return Task.FromResult(AcpPermissionModes ?? (IReadOnlyList<PermissionModeOption>)[]);
     }
@@ -346,6 +348,8 @@ public sealed class PergaHostTestCluster : IAsyncDisposable
         {
             AllowAutoRedirect = false
         });
+        var management = Factory.Services.GetRequiredService<Perga.Host.Http.SystemManagementAuthorization>();
+        Client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", File.ReadAllText(management.TokenFilePath).Trim());
     }
 
     public string DataDir { get; }

@@ -1,3 +1,4 @@
+import { useSystemUpgrade } from '../providers/system-upgrade.tsx';
 // One Settings visit: a desktop dialog or a mobile route page, mounted above the
 // shell's keyed route stage so section routes keep one surface. The URL selects the section.
 
@@ -159,6 +160,7 @@ export function SettingsOverlay({ transport, unauthorized, pergaMode = false }: 
 function SectionPane({ section, transport, unauthorized, pergaMode = false }: SettingsOverlayProps & {
   section: SettingsSection;
 }) {
+  const system = useSystemUpgrade();
   switch (section) {
     case 'appearance': return <AppearancePaneHost />;
     case 'plugins': return <PluginsPaneHost transport={transport} unauthorized={unauthorized} />;
@@ -166,7 +168,7 @@ function SectionPane({ section, transport, unauthorized, pergaMode = false }: Se
       ? <PergaPlannersPaneHost transport={transport} unauthorized={unauthorized} />
       : <PlannersPaneHost transport={transport} unauthorized={unauthorized} />;
     case 'mail': return <MailPaneHost transport={transport} unauthorized={unauthorized} />;
-    case 'about': return <AboutPane />;
+    case 'about': return <AboutPane system={system} />;
     case 'network': return <NetworkPaneHost transport={transport} unauthorized={unauthorized} />;
   }
 }

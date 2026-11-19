@@ -1,3 +1,5 @@
+import { SystemUpgradeProvider } from '../providers/connection-status.tsx';
+import { SystemUpgradeMonitor } from '../providers/system-upgrade.tsx';
 import { parseShareBasePath, shareAccessOperation } from '../../../../core/domain/share.ts';
 import type { ShareScope } from '../../../../core/api/generated/wire.ts';
 import { ApiError } from '../../../../core/domain/failure-class.ts';
@@ -59,18 +61,19 @@ export function ProductionApp({ transport, unauthorized, client, runtime, cursor
     read: (target, signal) => runOperation(transport, githubPreviewOperation(target, signal), unauthorized),
   }), [transport, unauthorized]);
   const authRouter = <AuthenticatedRouter router={router} shareLinkId={shareLinkId} unauthorized={unauthorized} />;
-  const content = pergaMode ? authRouter : <GitHubPreviewProvider port={previewPort}>{authRouter}</GitHubPreviewProvider>;
-  if (__NC_BUNDLED__) return <StrictMode><DepthFeedback /><RecoveryGate transport={transport} unauthorized={unauthorized} client={client}
+  const monitoredRouter = <>{pergaMode && shareLinkId === undefined && <SystemUpgradeMonitor transport={transport} unauthorized={unauthorized} />}{authRouter}</>;
+  const content = pergaMode ? monitoredRouter : <GitHubPreviewProvider port={previewPort}>{monitoredRouter}</GitHubPreviewProvider>;
+  if (__NC_BUNDLED__) return <StrictMode><SystemUpgradeProvider><DepthFeedback /><RecoveryGate transport={transport} unauthorized={unauthorized} client={client}
     runtime={runtime} cursorStore={cursorStore} renderLogin={() => renderLogin(() => {})} renderEventBridge={renderEventBridge} recovery={recovery}>
     {content}
-  </RecoveryGate></StrictMode>;
-  return <StrictMode><DepthFeedback /><SessionGate transport={transport} unauthorized={unauthorized} client={client}
+  </RecoveryGate></SystemUpgradeProvider></StrictMode>;
+  return <StrictMode><SystemUpgradeProvider><DepthFeedback /><SessionGate transport={transport} unauthorized={unauthorized} client={client}
     runtime={runtime} cursorStore={cursorStore}
     renderLogin={renderLogin} renderError={renderError}>
     <AppProviders client={client} runtime={runtime} cursorStore={cursorStore} renderEventBridge={renderEventBridge}>
       {content}
     </AppProviders>
-  </SessionGate></StrictMode>;
+  </SessionGate></SystemUpgradeProvider></StrictMode>;
 }
 
 export function mountProductionApp(root: HTMLElement, browserInput: Readonly<{

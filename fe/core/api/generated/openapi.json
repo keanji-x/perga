@@ -16188,6 +16188,94 @@
           }
         }
       }
+    },
+    "/api/v1/system/info": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "operationId": "system_info",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SystemInfoDto"
+                }
+              }
+            },
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/system/drain": {
+      "post": {
+        "tags": [
+          "system"
+        ],
+        "operationId": "system_drain",
+        "responses": {
+          "202": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SystemDrainResponse"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SystemDrainRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/system/reload": {
+      "post": {
+        "tags": [
+          "system"
+        ],
+        "operationId": "system_reload",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SystemReloadResponse"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SystemReloadRequest"
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -26832,6 +26920,188 @@
             "items": {
               "$ref": "#/components/schemas/ProviderModelEffortDto"
             }
+          }
+        }
+      },
+      "SystemInfoDto": {
+        "type": "object",
+        "required": [
+          "releaseId",
+          "webBuildId",
+          "hostBuildId",
+          "bridgeBuildId",
+          "schemaVersion",
+          "draining",
+          "activeDispatches"
+        ],
+        "properties": {
+          "releaseId": {
+            "type": "string"
+          },
+          "webBuildId": {
+            "type": "string"
+          },
+          "hostBuildId": {
+            "type": "string"
+          },
+          "bridgeBuildId": {
+            "type": "string"
+          },
+          "schemaVersion": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "draining": {
+            "type": "boolean"
+          },
+          "activeDispatches": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "SystemDrainRequest": {
+        "type": "object",
+        "required": [
+          "draining"
+        ],
+        "properties": {
+          "draining": {
+            "type": "boolean"
+          }
+        }
+      },
+      "SystemDrainResponse": {
+        "type": "object",
+        "required": [
+          "draining",
+          "activeDispatches"
+        ],
+        "properties": {
+          "draining": {
+            "type": "boolean"
+          },
+          "activeDispatches": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "SystemReloadRequest": {
+        "type": "object",
+        "required": [
+          "releaseId",
+          "webBuildId"
+        ],
+        "properties": {
+          "releaseId": {
+            "type": "string"
+          },
+          "webBuildId": {
+            "type": "string"
+          }
+        }
+      },
+      "SystemReloadResponse": {
+        "type": "object",
+        "required": [
+          "releaseId",
+          "webBuildId"
+        ],
+        "properties": {
+          "releaseId": {
+            "type": "string"
+          },
+          "webBuildId": {
+            "type": "string"
+          }
+        }
+      },
+      "SystemUpgradeReceipt": {
+        "type": "object",
+        "required": [
+          "jobId",
+          "oldReleaseId",
+          "newReleaseId",
+          "status",
+          "error",
+          "rollbackError",
+          "notifyTrackId",
+          "finishedAt",
+          "changed"
+        ],
+        "properties": {
+          "jobId": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "oldReleaseId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "newReleaseId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "rollbackError": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "notifyTrackId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "finishedAt": {
+            "type": "number"
+          },
+          "changed": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "SystemUpgradeStatusPayload": {
+        "type": "object",
+        "description": "Transient system.upgrade_status WebSocket event payload. Receipts are observed when published; system/info does not include historical receipts.",
+        "required": [
+          "draining",
+          "activeDispatches"
+        ],
+        "properties": {
+          "draining": {
+            "type": "boolean"
+          },
+          "activeDispatches": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "receipt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SystemUpgradeReceipt"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         }
       }

@@ -269,7 +269,8 @@ export type EnrollmentRedeemed = { enrollmentId: string, attemptId: string, sess
  * The full set of WS event envelopes the kernel emits on `/api/events`. ts-rs requires every
  * payload type referenced here to also derive `TS`.
  */
-export type Event = { "ev": "area.updated", "data": Area } | { "ev": "area.deleted", "data": { id: AreaId, } } | { "ev": "track.updated", "data": TrackUpdatedPayload } | { "ev": "track.deleted", "data": { id: TrackId, area_id: AreaId, } } | { "ev": "card.added", "data": Card } | { "ev": "card.updated", "data": Card } | { "ev": "card.deleted", "data": { id: CardId, track_id: TrackId, } } | { "ev": "worker_session.started", "data": { worker_session_id: string, card_id: string, kind: WorkerSessionKind, agent_provider: AgentProvider | null, status: WorkerSessionState, } } | { "ev": "worker_session.status_changed", "data": { worker_session_id: string, card_id: string, old_status: WorkerSessionState, new_status: WorkerSessionState, } } | { "ev": "worker_session.superseded", "data": { old_worker_session_id: string, new_worker_session_id: string, card_id: string, } } | { "ev": "harness.item.added", "data": { worker_session_id: string, card_id: CardId, track_id: TrackId, item_db_id: number, item_uuid: string | null, item_type: string | null, turn_id: string | null, method: string, } } | { "ev": "harness.phase.changed", "data": { worker_session_id: string, card_id: CardId, track_id: TrackId, old_phase: HarnessPhaseTag, new_phase: HarnessPhaseTag, } } | { "ev": "harness.transcript.cleared", "data": { worker_session_id: string, card_id: CardId, track_id: TrackId, 
+export type Event = { ev: 'system.upgrade_status'; data: SystemUpgradeStatusPayload }
+| { "ev": "area.updated", "data": Area } | { "ev": "area.deleted", "data": { id: AreaId, } } | { "ev": "track.updated", "data": TrackUpdatedPayload } | { "ev": "track.deleted", "data": { id: TrackId, area_id: AreaId, } } | { "ev": "card.added", "data": Card } | { "ev": "card.updated", "data": Card } | { "ev": "card.deleted", "data": { id: CardId, track_id: TrackId, } } | { "ev": "worker_session.started", "data": { worker_session_id: string, card_id: string, kind: WorkerSessionKind, agent_provider: AgentProvider | null, status: WorkerSessionState, } } | { "ev": "worker_session.status_changed", "data": { worker_session_id: string, card_id: string, old_status: WorkerSessionState, new_status: WorkerSessionState, } } | { "ev": "worker_session.superseded", "data": { old_worker_session_id: string, new_worker_session_id: string, card_id: string, } } | { "ev": "harness.item.added", "data": { worker_session_id: string, card_id: CardId, track_id: TrackId, item_db_id: number, item_uuid: string | null, item_type: string | null, turn_id: string | null, method: string, } } | { "ev": "harness.phase.changed", "data": { worker_session_id: string, card_id: CardId, track_id: TrackId, old_phase: HarnessPhaseTag, new_phase: HarnessPhaseTag, } } | { "ev": "harness.transcript.cleared", "data": { worker_session_id: string, card_id: CardId, track_id: TrackId,
 /**
  * Number of `harness_items` rows deleted by this reset; `None` on unmeasured historical rows.
  */
@@ -385,9 +386,12 @@ target?: VerifyTarget, } } | { "ev": "task.regate_requested", "data": { attempt_
  */
 export type EventScope = { "kind": "System" } | { "kind": "Area", "id": { area: AreaId, } } | { "kind": "Track", "id": { track: TrackId, area: AreaId, } } | { "kind": "Card", "id": { card: CardId, track: TrackId, area: AreaId, } };
 
-/**
- * The event transport replaces the Track payload while retaining every other event variant.
- */
+/** Phase 2 Perga.Contracts system upgrade wire types. */
+export type SystemUpgradeReceipt = { jobId: string; oldReleaseId: string | null; newReleaseId: string | null; status: string; error: string | null; rollbackError: string | null; notifyTrackId: string | null; finishedAt: number; changed: string[] };
+
+export type SystemUpgradeStatusPayload = { draining: boolean; activeDispatches: number; receipt?: SystemUpgradeReceipt | null };
+
+/** The event transport replaces the Track payload while retaining every other event variant. */
 export type EventWire = Exclude<Event, { ev: 'track.updated' }> | (Extract<Event, { ev: 'track.updated' }> & { data: TrackWire });
 
 /**
@@ -1250,3 +1254,8 @@ export type VcsDiffFileDto = import('../perga-v1.js').VcsDiffFileDto;
 export type DiffSummaryDto = import('../perga-v1.js').DiffSummaryDto;
 export type TrackOverlayItemDto = import('../perga-v1.js').TrackOverlayItemDto;
 export type OverlaysListDto = import('../perga-v1.js').OverlaysListDto;
+
+/** Perga.Contracts system management responses (Phase 2). */
+export type SystemInfoDto = { releaseId: string; webBuildId: string; hostBuildId: string; bridgeBuildId: string; schemaVersion: number; draining: boolean; activeDispatches: number };
+export type SystemDrainResponse = { draining: boolean; activeDispatches: number };
+export type SystemReloadResponse = { releaseId: string; webBuildId: string };

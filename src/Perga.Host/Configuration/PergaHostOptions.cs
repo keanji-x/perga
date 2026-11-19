@@ -6,6 +6,11 @@ public sealed class PergaHostOptions
 {
     public const string SectionName = "Perga";
 
+    public string? InstallationRoot { get; set; }
+    public string InstallationName { get; set; } = "perga";
+    public string? BridgeBuildId { get; set; }
+    public string? SystemManagementTokenSha256 { get; set; }
+    public Dictionary<string, SystemUpgrade.UpgradeSourceOptions> UpgradeSources { get; set; } = new(StringComparer.Ordinal);
     public string Version { get; set; } = "1.0.0";
     public string? DataDir { get; set; }
     public string? DbPath { get; set; }
@@ -92,6 +97,12 @@ public sealed class PergaHostOptions
             opts.McpBaseUri = Environment.GetEnvironmentVariable("PERGA_MCP_BASE_URI");
         }
 
+        opts.InstallationRoot ??= Environment.GetEnvironmentVariable("PERGA_INSTALL_ROOT");
+        if (opts.InstallationRoot is null && opts.StaticWebRootDirectory is { } web &&
+            Path.GetFileName(Path.GetDirectoryName(Path.GetFullPath(web))) == "current")
+            opts.InstallationRoot = Path.GetDirectoryName(Path.GetDirectoryName(Path.GetFullPath(web))!);
+        opts.InstallationName = section["InstallationName"] ?? Environment.GetEnvironmentVariable("PERGA_INSTANCE_NAME") ?? "perga";
+        opts.BridgeBuildId ??= Environment.GetEnvironmentVariable("PERGA_TERM_BRIDGE_BUILD_ID");
         return opts;
     }
 

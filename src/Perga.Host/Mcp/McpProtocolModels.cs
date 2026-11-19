@@ -75,6 +75,9 @@ public static class McpToolResultFormatter
                     },
                     PergaJsonDefaults.ApiOptions)),
 
+            KernelException { Code: KernelErrorCode.SystemUpgradeLeadRequired } denied => Error(
+                JsonSerializer.Serialize(new { code = "system_upgrade_lead_required", error = denied.Message }, PergaJsonDefaults.ApiOptions)),
+
             KernelException { Code: KernelErrorCode.WorkerTurnChanged } stale => Error(
                 JsonSerializer.Serialize(new { code = "worker_turn_changed", error = stale.Message }, PergaJsonDefaults.ApiOptions)),
 

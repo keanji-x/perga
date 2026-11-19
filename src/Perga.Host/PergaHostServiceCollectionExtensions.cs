@@ -8,6 +8,8 @@ using Perga.Host.Lifecycle;
 using Perga.Host.Mcp;
 using Perga.Host.Terminals;
 using Perga.Host.Workspaces;
+using Perga.Host.SystemUpgrade;
+using Perga.Kernel.Templates;
 using Perga.Kernel;
 using Perga.Kernel.Ports;
 using Perga.PolicyVm;
@@ -91,6 +93,7 @@ public static class PergaHostServiceCollectionExtensions
         });
 
         services.TryAddSingleton<ITrackStore>(sp => sp.GetRequiredService<SqliteTrackStore>());
+        services.TryAddSingleton<ISystemUpgradeStore>(sp => sp.GetRequiredService<SqliteTrackStore>());
         services.TryAddSingleton<ITrackReadStore>(sp => sp.GetRequiredService<ITrackStore>());
 
         services.TryAddSingleton<IReportDocEngine, ReportDocEngine>();
@@ -134,6 +137,13 @@ public static class PergaHostServiceCollectionExtensions
         services.TryAddSingleton(sp => new Perga.Host.Http.WorkerApprovalAuthorization(
             sp.GetRequiredService<PergaHostOptions>().WorkerApprovalAuthorizationSha256));
 
+        services.TryAddSingleton<Perga.Host.Http.SystemManagementAuthorization>();
+        services.TryAddSingleton<ReleaseSnapshotManager>();
+        services.TryAddSingleton<ITemplateCatalog>(sp => sp.GetRequiredService<ReleaseSnapshotManager>());
+        services.TryAddSingleton<IUpgradeProcessRunner, UpgradeProcessRunner>();
+        services.TryAddSingleton<ISystemUpgradeController, SystemUpgradeController>();
+        services.TryAddSingleton<ISystemUpgradeReceiptSource, UpgradeReceiptSource>();
+
         services.TryAddSingleton<IPergaKernel>(sp =>
         {
             var opts = sp.GetRequiredService<PergaHostOptions>();
@@ -172,7 +182,9 @@ public static class PergaHostServiceCollectionExtensions
                 templateCatalog: templateCatalog,
                 mcpSessionBridge: bridge,
                 commandRunner: sp.GetService<IShellCommandRunner>(),
-                timeProvider: sp.GetRequiredService<TimeProvider>());
+                timeProvider: sp.GetRequiredService<TimeProvider>(),
+                systemUpgradeController: sp.GetRequiredService<ISystemUpgradeController>(),
+                upgradeReceiptSource: sp.GetRequiredService<ISystemUpgradeReceiptSource>());
         });
 
         services.TryAddSingleton<KernelMcpBackend>();
@@ -184,6 +196,8 @@ public static class PergaHostServiceCollectionExtensions
         services.AddSingleton<PergaBootHostedService>();
         services.AddHostedService(sp => sp.GetRequiredService<PergaBootHostedService>());
 
+        services.AddHostedService<UpgradeReceiptHostedService>();
+
         services.AddSingleton<CronosScheduleHostedService>();
         services.AddHostedService(sp => sp.GetRequiredService<CronosScheduleHostedService>());
 
@@ -193,7 +207,7 @@ public static class PergaHostServiceCollectionExtensions
         return services;
     }
 
-    private static Perga.Kernel.Templates.ITemplateCatalog CreateResilientTemplateCatalog(
+    internal static Perga.Kernel.Templates.ITemplateCatalog CreateResilientTemplateCatalog(
         IPolicyVm policyVm,
         string? templatesDirectory)
     {
