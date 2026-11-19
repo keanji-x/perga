@@ -2070,7 +2070,8 @@ public sealed partial class TrackActor : IAsyncDisposable
             Blocks: _report.Blocks,
             Tasks: _tasks.ToArray(),
             Anchor: new ReadAnchor(_report.DocRev, knownRevs, WholeDocumentRead: true),
-            Diagnostics: syncOutcome.Diagnostics);
+            Diagnostics: syncOutcome.Diagnostics,
+            Changes: commitResult.Changes);
     }
 
     internal Task TriggerSchedulerAsync(CancellationToken ct = default)

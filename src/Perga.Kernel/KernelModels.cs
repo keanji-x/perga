@@ -74,7 +74,8 @@ public sealed record ReportReadResult(
     IReadOnlyList<ReportBlock> Blocks,
     IReadOnlyList<TaskDto> Tasks,
     ReadAnchor Anchor,
-    IReadOnlyList<ReportDiagnosticDto> Diagnostics);
+    IReadOnlyList<ReportDiagnosticDto> Diagnostics,
+    [property: JsonIgnore] IReadOnlyList<BlockChangeRecord>? Changes = null);
 
 public sealed record ReportCommitRequest(
     ReadAnchor Anchor,
