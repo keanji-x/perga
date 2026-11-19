@@ -60,6 +60,8 @@ public sealed class ClaudeAgentSession : IAgentSession
     private string? _lastEmittedThreadId;
     private bool _supportsNativeCompact = true;
     private int _disposed;
+    private readonly string _initializeRequestId = $"init_{Guid.NewGuid():N}";
+    private readonly TaskCompletionSource _initialized = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     private ClaudeAgentSession(
         StdioSubprocess process,
@@ -78,9 +80,11 @@ public sealed class ClaudeAgentSession : IAgentSession
 
     public bool SupportsNativeSteer => false;
     public bool CanReuseContextWindow => true;
+    public long? ContextUsageRevision => 0;
     public bool SupportsNativeCompact => Volatile.Read(ref _supportsNativeCompact);
     public bool ShutdownConfirmed => _process.ShutdownConfirmed;
     public bool RequiresTerminalStop => true;
+    public bool SupportsSessionResume => true;
 
     public string McpConfigFilePath => _mcpConfigFilePath;
 
@@ -90,8 +94,13 @@ public sealed class ClaudeAgentSession : IAgentSession
         HarnessLaunchSpec spec,
         IReadOnlyDictionary<string, string> baseEnvironment,
         Action<IAgentSession>? onDispose,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool supportsEffort = false,
+        TimeSpan? handshakeTimeout = null)
     {
+        if (!supportsEffort && !string.IsNullOrWhiteSpace(spec.ReasoningEffort))
+            throw new SessionConfigurationException(new SessionConfigurationOutcome.Unsupported(
+                ConfigurationDimension.Effort, "The resolved Claude command does not advertise --effort."));
         var tempJsonPath = Path.Combine(
             Path.GetTempPath(),
             $"perga-claude-mcp-{Guid.NewGuid():N}.json");
@@ -128,6 +137,12 @@ public sealed class ClaudeAgentSession : IAgentSession
                 cliArgs.Add(spec.Model);
             }
 
+            if (!string.IsNullOrWhiteSpace(spec.ReasoningEffort))
+            {
+                cliArgs.Add("--effort");
+                cliArgs.Add(spec.ReasoningEffort);
+            }
+
             if (!string.IsNullOrWhiteSpace(spec.SystemPrompt))
             {
                 cliArgs.Add("--append-system-prompt");
@@ -153,11 +168,42 @@ public sealed class ClaudeAgentSession : IAgentSession
                 auxiliaryReadOnlyFiles: [tempJsonPath]);
 
             var subprocess = StdioSubprocess.Start(wrappedInvocation);
-            return new ClaudeAgentSession(
+            var session = new ClaudeAgentSession(
                 subprocess,
                 tempJsonPath,
                 spec.ResumeNativeThreadId,
-                onDispose);
+                onDispose)
+            {
+                _supportsEffort = supportsEffort
+            };
+            try
+            {
+                await subprocess.WriteLineAsync(JsonSerializer.Serialize(new
+                {
+                    type = "control_request",
+                    request_id = session._initializeRequestId,
+                    request = new { subtype = "initialize" }
+                }), ct).ConfigureAwait(false);
+                await session._initialized.Task.WaitAsync(handshakeTimeout ?? TimeSpan.FromSeconds(15), ct).ConfigureAwait(false);
+                if (subprocess.HasExited || session._pumpTask.IsCompleted)
+                    throw new SessionConfigurationException(new SessionConfigurationOutcome.Rejected(
+                        ConfigurationFailureCode.OperationFailed, "Claude exited during initialization.", new(null, null, false)));
+                session.ConfigurationState = new(SessionConfiguration.FromLaunch(spec), ContextUsageRevision: session.ContextUsageRevision,
+                    Evidence: ConfigurationEvidence.LaunchAccepted);
+                return session;
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                await session.DisposeAsync().ConfigureAwait(false);
+                throw;
+            }
+            catch (Exception error)
+            {
+                await session.DisposeAsync().ConfigureAwait(false);
+                if (error is SessionConfigurationException) throw;
+                throw new SessionConfigurationException(new SessionConfigurationOutcome.Rejected(
+                    ConfigurationFailureCode.OperationFailed, error.Message, new(null, null, false)));
+            }
         }
         catch
         {
@@ -350,7 +396,29 @@ public sealed class ClaudeAgentSession : IAgentSession
         await _process.WriteLineAsync(jsonLine, ct).ConfigureAwait(false);
     }
 
-    public Task<bool> TrySetModelAsync(string? model, string? reasoningEffort = null, CancellationToken ct = default) => Task.FromResult(false);
+    private bool _supportsEffort;
+    public SessionConfigurationCapabilities ConfigurationCapabilities => SessionConfigurationCapabilities.LaunchOnly with
+    {
+        Effort = SessionConfigurationCapabilities.LaunchDimension(_supportsEffort ? ConfigurationSupport.Supported : ConfigurationSupport.Unsupported)
+    };
+    public ConfirmedConfiguration? ConfigurationState { get; private set; }
+    public Task<SessionConfigurationOutcome> ConfigureAsync(SessionConfiguration configuration, CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        if (_process.HasExited)
+        {
+            ConfigurationState = null;
+            return Task.FromResult<SessionConfigurationOutcome>(new SessionConfigurationOutcome.Rejected(
+                ConfigurationFailureCode.OperationFailed, "Claude process has exited.", new(null, null, false)));
+        }
+        if (!_supportsEffort && configuration.Effort is SessionSelection.Explicit)
+            return Task.FromResult<SessionConfigurationOutcome>(new SessionConfigurationOutcome.Unsupported(
+                ConfigurationDimension.Effort, "The resolved Claude command does not advertise --effort."));
+        return Task.FromResult<SessionConfigurationOutcome>(ConfigurationState?.Selection == configuration
+            ? new SessionConfigurationOutcome.Applied(ConfigurationState)
+            : new SessionConfigurationOutcome.RequiresReopen("Claude configuration requires a new process."));
+    }
 
     public Task<SteerDelivery> SteerAsync(string turnCorrelationId, string message, CancellationToken ct) =>
         Task.FromResult(SteerDelivery.Declined);
@@ -442,6 +510,10 @@ public sealed class ClaudeAgentSession : IAgentSession
             return;
         }
 
+        ConfigurationState = null;
+        _initialized.TrySetException(new SessionConfigurationException(new SessionConfigurationOutcome.Rejected(
+            ConfigurationFailureCode.OperationFailed,
+            pumpFailure?.Message ?? $"Claude startup/stream closed: {_process.GetStderrSummary()}", new(null, null, false))));
         var turnState = Volatile.Read(ref _currentTurn);
         if (turnState is null)
         {
@@ -487,6 +559,15 @@ public sealed class ClaudeAgentSession : IAgentSession
 
         switch (type)
         {
+            case "control_response":
+                if (root.TryGetProperty("response", out var response) &&
+                    response.ValueKind == JsonValueKind.Object && TryGetString(response, "request_id") == _initializeRequestId)
+                {
+                    if (TryGetString(response, "subtype") == "success") _initialized.TrySetResult();
+                    else _initialized.TrySetException(new SessionConfigurationException(new SessionConfigurationOutcome.Rejected(
+                        ConfigurationFailureCode.InvalidAcknowledgement, "Claude rejected initialization.", new(null, null, false))));
+                }
+                break;
             case "system":
             {
                 var sysSubtype = TryGetString(root, "subtype");

@@ -197,6 +197,7 @@ public sealed class CodexAgentSession : IAgentSession
             using var handshakeCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             handshakeCts.CancelAfter(handshakeTimeout);
             await session.InitializeAndBindThreadAsync(spec, sandboxApiKey, handshakeCts.Token).ConfigureAwait(false);
+            session.ConfigurationState = new(SessionConfiguration.FromLaunch(spec), ContextUsageRevision: 0, Evidence: ConfigurationEvidence.LaunchAccepted);
             return session;
         }
         catch
@@ -442,7 +443,16 @@ public sealed class CodexAgentSession : IAgentSession
         return () => _rpc.SendResultResponseAsync(pending.RawId, payload, ct);
     }
 
-    public Task<bool> TrySetModelAsync(string? model, string? reasoningEffort = null, CancellationToken ct = default) => Task.FromResult(false);
+    public SessionConfigurationCapabilities ConfigurationCapabilities => SessionConfigurationCapabilities.LaunchOnly;
+    public ConfirmedConfiguration? ConfigurationState { get; private set; }
+    public Task<SessionConfigurationOutcome> ConfigureAsync(SessionConfiguration configuration, CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        return Task.FromResult<SessionConfigurationOutcome>(ConfigurationState?.Selection == configuration
+            ? new SessionConfigurationOutcome.Applied(ConfigurationState)
+            : new SessionConfigurationOutcome.RequiresReopen("Codex ordinary configuration is applied at thread start/resume."));
+    }
 
     public async Task<SteerDelivery> SteerAsync(string turnCorrelationId, string message, CancellationToken ct)
     {
@@ -616,6 +626,9 @@ public sealed class CodexAgentSession : IAgentSession
             throw new InvalidOperationException($"Codex '{method}' response did not contain a thread id.");
         }
 
+        if (spec.ResumeNativeThreadId is not null && resolvedThreadId != spec.ResumeNativeThreadId)
+            throw new SessionConfigurationException(new SessionConfigurationOutcome.Rejected(
+                ConfigurationFailureCode.InvalidAcknowledgement, "Codex did not restore the original thread.", new(null, null, false)));
         Volatile.Write(ref _nativeThreadId, resolvedThreadId);
         _configureWorker = spec.ConfigureWorker;
         if (_configureWorker)
@@ -665,7 +678,7 @@ public sealed class CodexAgentSession : IAgentSession
         CancellationToken ct)
     {
         var cachedFallback = Volatile.Read(ref _fallbackModel);
-        var allowFallback = input.Model is null && _configuredModel is null && cachedFallback is null;
+        var allowFallback = input.Model is null && input.ReasoningEffort is null && _reasoningEffort is null && _configuredModel is null && cachedFallback is null;
         return ExecuteTurnStartAsync(threadId, input, input.Model ?? cachedFallback, turnState, allowFallback, ct);
     }
 
@@ -847,7 +860,7 @@ public sealed class CodexAgentSession : IAgentSession
     private bool CanTriggerModelFallback(TurnStreamState turnState, string code, string message) =>
         !turnState.IsCompact &&
         (!_configureWorker || turnState.Input is { Model: null, ReasoningEffort: null }) &&
-        _configuredModel is null &&
+        _configuredModel is null && _reasoningEffort is null && turnState.Input.ReasoningEffort is null &&
         Volatile.Read(ref _fallbackModel) is null &&
         !turnState.CancelRequested &&
         !turnState.HasEmittedProgress &&

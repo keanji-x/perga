@@ -71,8 +71,9 @@ public sealed partial class TrackActor
         string? permissionMode,
         CancellationToken ct)
     {
+        RequireConfirmedConfiguration(session, agentSession, agentSession.ConfigurationState);
         _openAgentSessions[session.Id] = agentSession;
-        _boundAgentModels[session.Id] = (session.Model, session.ReasoningEffort);
+        _boundAgentConfigurations[session.Id] = new(SessionConfiguration.FromNullable(session.Model, session.ReasoningEffort, permissionMode), agentSession.ConfigurationState);
         _openAgentSessionPermissionModes[session.Id] = permissionMode;
 
         if (session.BoundAttemptId is not null)
@@ -173,8 +174,9 @@ public sealed partial class TrackActor
             return false;
         }
 
-        if (!_boundAgentModels.TryGetValue(sessionId, out var bound) ||
-            bound != (current.Model, current.ReasoningEffort))
+        if (!_boundAgentConfigurations.TryGetValue(sessionId, out var bound) ||
+            bound.Selection != SessionConfiguration.FromNullable(current.Model, current.ReasoningEffort, current.PermissionMode) ||
+            bound.Confirmation is null || bound.Confirmation != expectedSession.ConfigurationState)
         {
             return false;
         }

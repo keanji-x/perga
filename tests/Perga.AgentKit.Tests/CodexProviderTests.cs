@@ -18,6 +18,50 @@ public sealed class CodexProviderTests : IDisposable
         });
 
     [Theory]
+    [InlineData(null)]
+    [InlineData("saved-codex")]
+    public async Task CompleteConfigurationIsAcceptedAtLaunchAndOrdinaryLiveChangesRequireReopen(string? resumeId)
+    {
+        var log = Path.Combine(_fixture.RootDir, "codex-launch-selection.jsonl");
+        await using var runtime = new AgentRuntime(new AgentRuntimeOptions
+        {
+            ProviderOverrides = new Dictionary<string, ProviderCommandOverride>
+            { ["codex"] = new(_fixture.MockCodexPath, Env: new Dictionary<string, string> { ["MOCK_CODEX_LOG"] = log }) }
+        });
+        var spec = new HarnessLaunchSpec("codex", null, _fixture.WorkspaceDir, resumeId, null,
+            new Dictionary<string, McpServerConfig>(), ReasoningEffort: "high");
+        await using var session = await runtime.OpenSessionAsync(spec, default);
+        Assert.Equal(SessionConfiguration.FromLaunch(spec), session.ConfigurationState?.Selection);
+        Assert.Equal(ConfigurationEvidence.LaunchAccepted, session.ConfigurationState?.Evidence);
+        Assert.Equal(ConfigurationSupport.Unsupported, session.ConfigurationCapabilities.Model.LiveChange);
+        Assert.IsType<SessionConfigurationOutcome.RequiresReopen>(await session.ConfigureAsync(SessionConfiguration.FromNullable("next", "low")));
+        var thread = Assert.Single(File.ReadAllLines(log).Select(line => JsonSerializer.Deserialize<JsonElement>(line)),
+            call => call.GetProperty("method").GetString() == (resumeId is null ? "thread/start" : "thread/resume"));
+        Assert.Equal("high", thread.GetProperty("params").GetProperty("effort").GetString());
+        if (resumeId is not null) Assert.Equal(resumeId, session.NativeThreadId);
+    }
+
+    [Fact]
+    public async Task ExplicitLaunchEffortPreventsDefaultModelFallback()
+    {
+        var log = Path.Combine(_fixture.RootDir, "codex-no-fallback.jsonl");
+        await using var runtime = new AgentRuntime(new AgentRuntimeOptions
+        {
+            ProviderOverrides = new Dictionary<string, ProviderCommandOverride>
+            { ["codex"] = new(_fixture.MockCodexPath, Env: new Dictionary<string, string>
+                { ["MOCK_CODEX_LOG"] = log, ["MOCK_CODEX_STALE_DEFAULT_MODEL"] = "stale" }) }
+        });
+        await using var session = await runtime.OpenSessionAsync(new HarnessLaunchSpec("codex", null, _fixture.WorkspaceDir, null,
+            null, new Dictionary<string, McpServerConfig>(), ReasoningEffort: "high"), default);
+        var events = await DrainTurnAsync(session, new("must fail", "no-fallback"));
+        Assert.Single(events.OfType<UnifiedAgentEvent.TurnError>());
+        Assert.Empty(events.OfType<UnifiedAgentEvent.TurnCompleted>());
+        var calls = File.ReadAllLines(log).Select(line => JsonSerializer.Deserialize<JsonElement>(line)).ToArray();
+        Assert.Single(calls, call => call.GetProperty("method").GetString() == "turn/start");
+        Assert.DoesNotContain(calls, call => call.GetProperty("method").GetString() == "model/list");
+    }
+
+    [Theory]
     [InlineData(null, "high")]
     [InlineData("A", "low")]
     [InlineData("B", null)]

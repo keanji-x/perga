@@ -192,7 +192,7 @@ public sealed partial class TrackActor
                 if (session.Status == "running")
                     throw KernelException.PreconditionFailed("The previous turn outcome could not be recorded.");
                 _openAgentSessions.Remove(sessionId);
-                _boundAgentModels.Remove(sessionId);
+                _boundAgentConfigurations.Remove(sessionId);
                 _openAgentSessionPermissionModes.Remove(sessionId);
                 rebinding = true;
                 _mcpBridge.RevokeSession(sessionId);
@@ -221,6 +221,8 @@ public sealed partial class TrackActor
             {
                 var session = RequireSessionCore(sessionId);
                 RequireResumeWorkspaceCore(session);
+                RequireConfirmedConfiguration(session with { Model = spec.Model, ReasoningEffort = spec.ReasoningEffort, PermissionMode = spec.PermissionMode },
+                    replacement, replacement.ConfigurationState);
                 var updated = session with { Status = "idle", NativeThreadId = hold.NativeId, UpdatedAtMs = NowMs() };
                 var unknown = session.Status == "unknown"
                     ? await _store.SessionInputs.FindUnresolvedAsync(sessionId, CancellationToken.None).ConfigureAwait(false)

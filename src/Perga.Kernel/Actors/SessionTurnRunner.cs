@@ -142,6 +142,7 @@ public sealed partial class TrackActor
                 : $"<policy_context>\n{policyAdmission.Context}\n</policy_context>\n\n{prompt}";
             var agentSession = await actor.GetOrOpenAgentSessionCoreAsync(session, overrideSystemPrompt: null, ct)
                 .ConfigureAwait(false);
+            RequireConfirmedConfiguration(session, agentSession, agentSession.ConfigurationState);
             return new PreparedDispatch(agentSession, effectivePrompt);
         }
 

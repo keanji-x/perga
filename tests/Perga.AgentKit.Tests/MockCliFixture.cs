@@ -559,6 +559,8 @@ parser.add_argument("--output-format")
 parser.add_argument("--mcp-config")
 parser.add_argument("--resume", default=None)
 parser.add_argument("--model", default=None)
+if os.environ.get("MOCK_CLAUDE_NO_EFFORT") != "1":
+    parser.add_argument("--effort", choices=["low", "medium", "high", "xhigh", "max"], default=None)
 parser.add_argument("--permission-mode", default=None)
 parser.add_argument("--append-system-prompt", dest="system_prompt", default=None)
 args = parser.parse_args()
@@ -819,6 +821,8 @@ while True:
         approval_payload.clear()
         approval_payload.update(frame)
         approval_event.set()
+    elif ftype == "control_request":
+        emit({"type": "control_response", "response": {"subtype": "success", "request_id": frame.get("request_id"), "response": {}}})
     elif ftype == "user":
         t = threading.Thread(target=process_user_turn, args=(frame,), daemon=True)
         t.start()
@@ -1331,6 +1335,11 @@ for raw_line in sys.stdin:
                     }
                 })
     elif method == "session/set_config_option":
+        if params.get("configId") == "worker-thought" and os.environ.get("MOCK_ACP_THOUGHT_DELAY_MS"):
+            time.sleep(int(os.environ["MOCK_ACP_THOUGHT_DELAY_MS"]) / 1000)
+        if params.get("configId") == "worker-thought" and os.environ.get("MOCK_ACP_THOUGHT_RESULT"):
+            send({"jsonrpc": "2.0", "id": msg_id, "result": json.loads(os.environ["MOCK_ACP_THOUGHT_RESULT"])})
+            continue
         code = int(os.environ.get("MOCK_ACP_MODEL_ERROR", "0"))
         if code and params.get("configId") == "model":
             send({"jsonrpc": "2.0", "id": msg_id, "error": {"code": code, "message": "model switch failed"}})

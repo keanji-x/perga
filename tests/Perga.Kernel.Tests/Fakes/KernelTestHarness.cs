@@ -1362,6 +1362,7 @@ internal sealed class ScriptableFakeAgentSession : IAgentSession
         Func<ScriptableFakeAgentSession, TurnInput, CancellationToken, IAsyncEnumerable<UnifiedAgentEvent>> turnHandler)
     {
         LaunchSpec = launchSpec;
+        ConfigurationState = new(SessionConfiguration.FromLaunch(launchSpec));
         NativeThreadId = initialNativeThreadId;
         _turnHandler = turnHandler;
     }
@@ -1415,10 +1416,23 @@ internal sealed class ScriptableFakeAgentSession : IAgentSession
 
     public bool SupportsModelSwitch { get; set; }
     public ConcurrentQueue<string?> ModelSwitches { get; } = new();
-    public Task<bool> TrySetModelAsync(string? model, string? reasoningEffort = null, CancellationToken ct = default)
+    public SessionConfigurationCapabilities ConfigurationCapabilities => SessionConfigurationCapabilities.LaunchOnly with
     {
-        ModelSwitches.Enqueue(model);
-        return Task.FromResult(SupportsModelSwitch);
+        Model = SessionConfigurationCapabilities.LaunchDimension() with { LiveChange = SupportsModelSwitch ? ConfigurationSupport.Supported : ConfigurationSupport.Unsupported },
+        Effort = SessionConfigurationCapabilities.LaunchDimension() with { LiveChange = SupportsModelSwitch ? ConfigurationSupport.Supported : ConfigurationSupport.Unsupported }
+    };
+    public ConfirmedConfiguration? ConfigurationState { get; set; }
+    public Func<SessionConfiguration, SessionConfigurationOutcome>? ConfigureHandler { get; set; }
+    public ConcurrentQueue<SessionConfiguration> Configurations { get; } = new();
+    public Task<SessionConfigurationOutcome> ConfigureAsync(SessionConfiguration configuration, CancellationToken ct = default)
+    {
+        Configurations.Enqueue(configuration);
+        ModelSwitches.Enqueue(configuration.Model.ValueOrNull);
+        var outcome = ConfigureHandler?.Invoke(configuration) ?? (SupportsModelSwitch || ConfigurationState?.Selection == configuration
+            ? (SessionConfigurationOutcome)new SessionConfigurationOutcome.Applied(new(configuration))
+            : new SessionConfigurationOutcome.RequiresReopen("Scripted launch-only configuration."));
+        ConfigurationState = outcome is SessionConfigurationOutcome.Applied applied ? applied.Configuration : null;
+        return Task.FromResult(outcome);
     }
 
     public ValueTask<bool> ResolveNativeCompactSupportAsync(CancellationToken ct) =>

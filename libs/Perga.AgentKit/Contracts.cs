@@ -118,7 +118,8 @@ public sealed record ProviderStatus(
     string? Reason,
     IReadOnlyList<string> Models,
     IReadOnlyList<ProviderModelInfo>? ModelCatalog = null,
-    IReadOnlyList<PermissionModeOption>? PermissionModes = null);
+    IReadOnlyList<PermissionModeOption>? PermissionModes = null,
+    [property: System.Text.Json.Serialization.JsonIgnore] SessionConfigurationCapabilities? ConfigurationCapabilities = null);
 
 public sealed record NativeCompactResult(
     TokenUsage? Usage = null,
@@ -170,7 +171,9 @@ public interface IAgentSession : IAsyncDisposable
     Func<Task>? TryClaimApprovalResponse(
         string requestId, bool approved, string? selectedOptionId, string? reason, CancellationToken ct) =>
         () => RespondApprovalAsync(requestId, approved, selectedOptionId, reason, ct);
-    Task<bool> TrySetModelAsync(string? model, string? reasoningEffort = null, CancellationToken ct = default);
+    SessionConfigurationCapabilities ConfigurationCapabilities { get; }
+    ConfirmedConfiguration? ConfigurationState { get; }
+    Task<SessionConfigurationOutcome> ConfigureAsync(SessionConfiguration configuration, CancellationToken ct = default);
     Task<SteerDelivery> SteerAsync(string turnCorrelationId, string message, CancellationToken ct);
 }
 

@@ -69,6 +69,10 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
     public ConcurrentQueue<(string RequestId, bool Approved)> ApprovalResponses { get; } = new();
 
     public bool SupportsSteering { get; set; } = true;
+    public Func<SessionConfiguration, SessionConfigurationOutcome>? ConfigureHandler { get; set; }
+    public Func<HarnessLaunchSpec, ConfirmedConfiguration?>? LaunchConfirmationHandler { get; set; }
+    public ConcurrentQueue<string?> DisposedSessions { get; } = new();
+    public ConcurrentQueue<SessionConfiguration> Configurations { get; } = new();
     public bool SupportsModelSwitch { get; set; }
     public Func<CancellationToken, Task<NativeCompactResult>>? CompactHandler { get; set; }
 
@@ -159,13 +163,15 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
     private sealed class ScriptableAgentSession : IAgentSession
     {
         private readonly ScriptableAgentRuntime _owner;
-        private readonly HarnessLaunchSpec _spec;
+        private HarnessLaunchSpec _spec;
         private CancellationTokenSource? _activeTurnCts;
 
         public ScriptableAgentSession(ScriptableAgentRuntime owner, HarnessLaunchSpec spec)
         {
             _owner = owner;
             _spec = spec;
+            ConfigurationState = owner.LaunchConfirmationHandler is { } confirm
+                ? confirm(spec) : new(SessionConfiguration.FromLaunch(spec));
             NativeThreadId = spec.ResumeNativeThreadId ?? $"thr_{Guid.NewGuid():N}";
         }
 
@@ -236,7 +242,24 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
             };
         }
 
-        public Task<bool> TrySetModelAsync(string? model, string? reasoningEffort = null, CancellationToken ct = default) => Task.FromResult(_owner.SupportsModelSwitch);
+        public SessionConfigurationCapabilities ConfigurationCapabilities => SessionConfigurationCapabilities.LaunchOnly with
+        {
+            Model = SessionConfigurationCapabilities.LaunchDimension() with { LiveChange = _owner.SupportsModelSwitch ? ConfigurationSupport.Supported : ConfigurationSupport.Unsupported },
+            Effort = SessionConfigurationCapabilities.LaunchDimension() with { LiveChange = _owner.SupportsModelSwitch ? ConfigurationSupport.Supported : ConfigurationSupport.Unsupported }
+        };
+        public ConfirmedConfiguration? ConfigurationState { get; private set; }
+        public Task<SessionConfigurationOutcome> ConfigureAsync(SessionConfiguration configuration, CancellationToken ct = default)
+        {
+            _owner.Configurations.Enqueue(configuration);
+            var outcome = _owner.ConfigureHandler?.Invoke(configuration) ?? (_owner.SupportsModelSwitch || ConfigurationState?.Selection == configuration
+                ? (SessionConfigurationOutcome)new SessionConfigurationOutcome.Applied(new(configuration))
+                : new SessionConfigurationOutcome.RequiresReopen("Scripted launch-only configuration."));
+            ConfigurationState = outcome is SessionConfigurationOutcome.Applied applied ? applied.Configuration : null;
+            if (ConfigurationState is { } state)
+                _spec = _spec with { Model = state.Selection.Model.ValueOrNull, ReasoningEffort = state.Selection.Effort.ValueOrNull,
+                    PermissionMode = state.Selection.Permission.ValueOrNull };
+            return Task.FromResult(outcome);
+        }
 
         public async Task<SteerDelivery> SteerAsync(string turnCorrelationId, string message, CancellationToken ct)
         {
@@ -244,7 +267,11 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
             return accepted ? SteerDelivery.Accepted : SteerDelivery.Declined;
         }
 
-        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+        public ValueTask DisposeAsync()
+        {
+            _owner.DisposedSessions.Enqueue(NativeThreadId);
+            return ValueTask.CompletedTask;
+        }
     }
 }
 

@@ -9,6 +9,125 @@ namespace Perga.Kernel.Tests;
 public sealed class SessionStreamingAndCompactionTests
 {
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task QueuedInputConfigurationFailureSettlesWithoutDispatchOrReopen(bool unsupported)
+    {
+        await using var ctx = new KernelTestContext();
+        var (_, snap) = await ctx.CreateDefaultTrackAsync();
+        var id = snap.Track.LeadSessionId!;
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        ctx.AgentRuntime.TurnScript = Stream;
+        async IAsyncEnumerable<UnifiedAgentEvent> Stream(ScriptableFakeAgentSession session, TurnInput input,
+            [EnumeratorCancellation] CancellationToken ct)
+        {
+            entered.TrySetResult();
+            await release.Task.WaitAsync(ct);
+            yield return new UnifiedAgentEvent.TurnCompleted(null);
+        }
+        await ctx.Kernel.AcceptMessageAsync(id, new("hold", "configuration-hold"), default);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var original = Assert.Single(ctx.AgentRuntime.OpenedSessions);
+        original.ConfigureHandler = _ => unsupported
+            ? new SessionConfigurationOutcome.Unsupported(ConfigurationDimension.Effort, "unavailable")
+            : new SessionConfigurationOutcome.Rejected(ConfigurationFailureCode.InvalidAcknowledgement, "partial failure", new("B", null, false));
+        try
+        {
+            await ctx.Kernel.UpdateSessionModelAsync(id, new("B", "high"));
+            Assert.Empty(original.Configurations);
+            await ctx.Kernel.AcceptMessageAsync(id, new("blocked", "configuration-queued", QueueIfBusy: true), default);
+        }
+        finally { release.TrySetResult(); }
+        await ctx.Kernel.WaitForTrackIdleAsync(snap.Track.Id).WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Single(ctx.AgentRuntime.OpenedSessions);
+        Assert.Equal("hold", Assert.Single(original.RecordedInputs).Prompt);
+        Assert.True(original.Disposed);
+        var failed = ctx.Store.GetTurnsForSession(id).Last();
+        Assert.Equal("failed", failed.Status);
+        var desired = (await ctx.Kernel.ListSessionsAsync(snap.Track.Id)).Single();
+        Assert.Equal("B", desired.Model);
+        Assert.Equal("high", desired.ReasoningEffort);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task PermissionReopenCarriesDefaultModelAndExplicitEffortWithOriginalIdentity(bool afterCompaction)
+    {
+        await using var ctx = new KernelTestContext();
+        ctx.AgentRuntime.Providers = [new("acp:custom", true, "1", null, [], PermissionModes:
+            [new("plan", "Plan", "", IsDefault: true), new("execute", "Execute", "")])];
+        var area = await ctx.Kernel.CreateAreaAsync(new("Configuration modes"));
+        var snap = await ctx.Kernel.CreateTrackAsync(new(AreaId: area.Id, Provider: "acp:custom", PermissionMode: "plan"));
+        var id = snap.Track.LeadSessionId!;
+        await ctx.Kernel.UpdateSessionModelAsync(id, new(null, "high"));
+        await ctx.SendAndWaitForTurnAsync(id, new("first", "mode-effort-first"));
+        var original = Assert.Single(ctx.AgentRuntime.OpenedSessions);
+        if (afterCompaction)
+        {
+            await ctx.Kernel.CompactSessionAsync(id);
+            original = ctx.AgentRuntime.OpenedSessions.Last();
+            Assert.Null((await ctx.Kernel.ListSessionsAsync(snap.Track.Id)).Single().NativeThreadId);
+        }
+        var opens = ctx.AgentRuntime.OpenedSessions.Count;
+        await ctx.Kernel.SetSessionPermissionModeAsync(id, "execute");
+        await ctx.SendAndWaitForTurnAsync(id, new("next", "mode-effort-next"));
+        Assert.Equal(opens + 1, ctx.AgentRuntime.OpenedSessions.Count);
+        var replacement = ctx.AgentRuntime.OpenedSessions.Last();
+        Assert.True(original.Disposed);
+        Assert.Null(replacement.LaunchSpec.Model);
+        Assert.Equal("high", replacement.LaunchSpec.ReasoningEffort);
+        Assert.Equal("execute", replacement.LaunchSpec.PermissionMode);
+        Assert.Equal(original.NativeThreadId, replacement.LaunchSpec.ResumeNativeThreadId);
+        Assert.Empty(original.Configurations);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ConfigurationFailureDoesNotReopenOrDispatchAndKeepsDesiredSelection(bool unsupported)
+    {
+        await using var ctx = new KernelTestContext();
+        var (_, snap) = await ctx.CreateDefaultTrackAsync();
+        var id = snap.Track.LeadSessionId!;
+        await ctx.SendAndWaitForTurnAsync(id, new("first", "configuration-first"));
+        var original = Assert.Single(ctx.AgentRuntime.OpenedSessions);
+        original.ConfigureHandler = _ => unsupported
+            ? new SessionConfigurationOutcome.Unsupported(ConfigurationDimension.Effort, "effort unavailable")
+            : new SessionConfigurationOutcome.Rejected(ConfigurationFailureCode.InvalidAcknowledgement, "effort rejected",
+                new("new-model", null, false));
+        var inputs = original.RecordedInputs.Count;
+        var error = await Assert.ThrowsAsync<KernelException>(() => ctx.Kernel.UpdateSessionModelAsync(id, new("new-model", "high")));
+        Assert.Equal(unsupported ? KernelErrorCode.InvalidArgument : KernelErrorCode.PreconditionFailed, error.Code);
+        Assert.Single(ctx.AgentRuntime.OpenedSessions);
+        Assert.True(original.Disposed);
+        Assert.Equal(inputs, original.RecordedInputs.Count);
+        var desired = (await ctx.Kernel.ListSessionsAsync(snap.Track.Id)).Single(session => session.Id == id);
+        Assert.Equal("new-model", desired.Model);
+        Assert.Equal("high", desired.ReasoningEffort);
+        Assert.Null(desired.ContextUsage);
+        Assert.Equal(SessionConfiguration.FromNullable("new-model", "high", desired.PermissionMode), Assert.Single(original.Configurations));
+    }
+
+    [Fact]
+    public async Task UnconfirmedLaunchCannotDispatch()
+    {
+        await using var ctx = new KernelTestContext();
+        var (_, snap) = await ctx.CreateDefaultTrackAsync();
+        var id = snap.Track.LeadSessionId!;
+        ctx.AgentRuntime.OnOpenedSession = session => session.ConfigurationState = null;
+        await ctx.Kernel.AcceptMessageAsync(id, new("must not dispatch", "unconfirmed-launch"), default);
+        await ctx.Kernel.WaitForTrackIdleAsync(snap.Track.Id).WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.NotEmpty(ctx.AgentRuntime.OpenedSessions);
+        Assert.All(ctx.AgentRuntime.OpenedSessions, session =>
+        {
+            Assert.Empty(session.RecordedInputs);
+            Assert.True(session.Disposed);
+        });
+    }
+
+    [Theory]
     [InlineData(0)]
     [InlineData(1)]
     [InlineData(2)]
@@ -186,14 +305,22 @@ public sealed class SessionStreamingAndCompactionTests
         Assert.Single(original.ModelSwitches);
     }
 
-    [Fact]
-    public async Task FailedReopenKeepsDesiredModelAndNextTurnRetries()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task FailedReopenKeepsDesiredModelAndNextTurnRetries(bool afterCompaction)
     {
         await using var ctx = new KernelTestContext();
         var (_, snap) = await ctx.CreateDefaultTrackAsync();
         var id = snap.Track.LeadSessionId!;
         await ctx.SendAndWaitForTurnAsync(id, new SendMessageRequest("first", "first"));
         var original = Assert.Single(ctx.AgentRuntime.OpenedSessions);
+        if (afterCompaction)
+        {
+            await ctx.Kernel.CompactSessionAsync(id);
+            original = ctx.AgentRuntime.OpenedSessions.Last();
+        }
+        var opens = ctx.AgentRuntime.OpenedSessions.Count;
         ctx.AgentRuntime.OnBeforeOpenSession = _ => throw new InvalidOperationException("provider unavailable");
         await Assert.ThrowsAsync<InvalidOperationException>(() => ctx.Kernel.UpdateSessionModelAsync(id, new UpdateSessionModelRequest("retry-model")));
         Assert.True(original.Disposed);
@@ -201,7 +328,8 @@ public sealed class SessionStreamingAndCompactionTests
         ctx.AgentRuntime.OnBeforeOpenSession = null;
         await ctx.SendAndWaitForTurnAsync(id, new SendMessageRequest("retry", "retry"));
         Assert.Equal("retry-model", ctx.AgentRuntime.OpenedSessions.Last().LaunchSpec.Model);
-        Assert.Equal(2, ctx.AgentRuntime.OpenedSessions.Count);
+        Assert.Equal(original.NativeThreadId, ctx.AgentRuntime.OpenedSessions.Last().LaunchSpec.ResumeNativeThreadId);
+        Assert.Equal(opens + 1, ctx.AgentRuntime.OpenedSessions.Count);
     }
 
     [Theory]

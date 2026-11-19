@@ -16,6 +16,59 @@ namespace Perga.Host.IntegrationTests;
 
 public sealed class SessionModelTests
 {
+    [Fact]
+    public async Task DesiredDefaultModelAndEffortSurviveRejectedConfigurationAndHostRestart()
+    {
+        var data = Directory.CreateTempSubdirectory("perga-rejected-configuration-");
+        try
+        {
+            string trackId;
+            string sessionId;
+            await using (var host = new PergaHostTestCluster(data.FullName))
+            {
+                (trackId, sessionId) = await host.CreateTrackAsync();
+                var kernel = host.Services.GetRequiredService<IPergaKernel>();
+                await kernel.AcceptMessageAsync(sessionId, new("warm", "rejected-config-restart"), default);
+                await kernel.WaitForTrackIdleAsync(trackId);
+                host.AgentRuntime.ConfigureHandler = _ => new SessionConfigurationOutcome.Rejected(
+                    ConfigurationFailureCode.InvalidAcknowledgement, "effort rejected", new(null, null, false));
+                using var response = await host.Client.PutAsJsonAsync($"/api/v1/sessions/{sessionId}/model", new { model = "  ", reasoningEffort = " high " });
+                Assert.False(response.IsSuccessStatusCode);
+            }
+            await using var restarted = new PergaHostTestCluster(data.FullName);
+            var restored = Assert.Single(await restarted.Services.GetRequiredService<IPergaKernel>().ListSessionsAsync(trackId));
+            Assert.Equal(sessionId, restored.Id);
+            Assert.Null(restored.Model);
+            Assert.Equal("high", restored.ReasoningEffort);
+            Assert.Empty(restarted.AgentRuntime.ExecutedTurns);
+        }
+        finally { data.Delete(recursive: true); }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ConfigurationFailurePreservesDesiredWriteWithoutReopenOrPrompt(bool unsupported)
+    {
+        await using var host = new PergaHostTestCluster();
+        var (trackId, sessionId) = await host.CreateTrackAsync();
+        var kernel = host.Services.GetRequiredService<IPergaKernel>();
+        await kernel.AcceptMessageAsync(sessionId, new("warm", "configuration-warm"), default);
+        await kernel.WaitForTrackIdleAsync(trackId);
+        var opens = host.AgentRuntime.OpenedSessions.Count;
+        var prompts = host.AgentRuntime.ExecutedTurns.Count;
+        host.AgentRuntime.ConfigureHandler = _ => unsupported
+            ? new SessionConfigurationOutcome.Unsupported(ConfigurationDimension.Effort, "effort unavailable")
+            : new SessionConfigurationOutcome.Rejected(ConfigurationFailureCode.InvalidAcknowledgement, "effort rejected", new(null, null, false));
+        using var response = await host.Client.PutAsJsonAsync($"/api/v1/sessions/{sessionId}/model", new { model = (string?)null, reasoningEffort = "high" });
+        Assert.False(response.IsSuccessStatusCode);
+        var desired = Assert.Single(await kernel.ListSessionsAsync(trackId));
+        Assert.Null(desired.Model);
+        Assert.Equal("high", desired.ReasoningEffort);
+        Assert.Equal(opens, host.AgentRuntime.OpenedSessions.Count);
+        Assert.Equal(prompts, host.AgentRuntime.ExecutedTurns.Count);
+    }
+
     [Theory]
     [InlineData(null, false)]
     [InlineData(null, true)]
