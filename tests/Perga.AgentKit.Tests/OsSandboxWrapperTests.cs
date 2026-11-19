@@ -351,7 +351,6 @@ public sealed class OsSandboxWrapperTests : IDisposable
 
         var forbiddenSubstrings = new[]
         {
-            "/compact",
             "shell_environment_policy",
             "Edit(//",
             "--allowedTools",

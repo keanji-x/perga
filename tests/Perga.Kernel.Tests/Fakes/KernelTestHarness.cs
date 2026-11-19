@@ -1346,6 +1346,9 @@ internal sealed class ScriptableFakeAgentSession : IAgentSession
     public HarnessLaunchSpec LaunchSpec { get; }
     public string? NativeThreadId { get; set; }
     public bool SupportsNativeSteer { get; set; } = true;
+    public bool SupportsNativeCompact { get; set; }
+    public Func<ScriptableFakeAgentSession, CancellationToken, Task<NativeCompactResult>>? CompactHandler { get; set; }
+    public int CompactCalls { get; private set; }
     public bool Disposed { get; private set; }
     public bool CancelCalled { get; private set; }
     public ConcurrentQueue<string> SteeredMessages { get; } = new();
@@ -1381,6 +1384,14 @@ internal sealed class ScriptableFakeAgentSession : IAgentSession
     {
         ModelSwitches.Enqueue(model);
         return Task.FromResult(SupportsModelSwitch);
+    }
+
+    public Task<NativeCompactResult> CompactAsync(CancellationToken ct)
+    {
+        CompactCalls++;
+        return CompactHandler is not null
+            ? CompactHandler(this, ct)
+            : Task.FromResult(new NativeCompactResult(null, "Context compacted."));
     }
 
     public Task<SteerDelivery> SteerAsync(string turnCorrelationId, string message, CancellationToken ct)

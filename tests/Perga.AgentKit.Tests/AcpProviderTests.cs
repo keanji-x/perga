@@ -717,6 +717,44 @@ public sealed class AcpProviderTests : IDisposable
         Assert.True(rpcErr.IsRetryable);
     }
 
+    [Fact]
+    public async Task AcpNativeCompact_UsesAvailableCommandsAndUsageUpdate()
+    {
+        await using var runtime = new AgentRuntime(new AgentRuntimeOptions
+        {
+            ProviderOverrides = new Dictionary<string, ProviderCommandOverride>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["acp:antigravity"] = new ProviderCommandOverride(
+                    "python3",
+                    PrependArgs: [_fixture.MockAcpPath],
+                    Env: new Dictionary<string, string> { ["MOCK_ACP_ADVERTISE_COMPACT"] = "1" })
+            }
+        });
+
+        var spec = new HarnessLaunchSpec(
+            "acp:antigravity",
+            null,
+            _fixture.WorkspaceDir,
+            null,
+            null,
+            MockCliFixture.CreateSampleMcpServers());
+
+        await using var session = await runtime.OpenSessionAsync(spec, CancellationToken.None);
+
+        // Give the background notification reader a brief moment to process available_commands_update.
+        var deadline = DateTime.UtcNow.AddSeconds(3);
+        while (!session.SupportsNativeCompact && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(20);
+        }
+
+        Assert.True(session.SupportsNativeCompact);
+        var result = await session.CompactAsync(CancellationToken.None);
+        Assert.NotNull(result.Usage);
+        Assert.Equal(2048, result.Usage!.InputTokens);
+        Assert.Equal(1_048_576, result.Usage.ContextWindowTokens);
+    }
+
     private static async Task<List<UnifiedAgentEvent>> DrainTurnAsync(IAgentSession session, TurnInput input)
     {
         var list = new List<UnifiedAgentEvent>();

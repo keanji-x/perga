@@ -55,6 +55,7 @@ public sealed class ClaudeAgentSession : IAgentSession
     private TurnStreamState? _currentTurn;
     private string? _nativeThreadId;
     private string? _lastEmittedThreadId;
+    private bool _supportsNativeCompact = true;
     private int _disposed;
 
     private ClaudeAgentSession(
@@ -73,6 +74,7 @@ public sealed class ClaudeAgentSession : IAgentSession
     public string? NativeThreadId => Volatile.Read(ref _nativeThreadId);
 
     public bool SupportsNativeSteer => false;
+    public bool SupportsNativeCompact => Volatile.Read(ref _supportsNativeCompact);
     public bool ShutdownConfirmed => _process.ShutdownConfirmed;
     public bool RequiresTerminalStop => true;
 
@@ -158,6 +160,20 @@ public sealed class ClaudeAgentSession : IAgentSession
             TryDeleteTempFile(tempJsonPath);
             throw;
         }
+    }
+
+    public async Task<NativeCompactResult> CompactAsync(CancellationToken ct)
+    {
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        if (!SupportsNativeCompact)
+        {
+            throw new NotSupportedException("Claude session does not advertise /compact.");
+        }
+
+        return await NativeCompactHelper.DrainAsync(
+            StreamTurnAsync(new TurnInput("/compact", $"compact_{Guid.NewGuid():N}"), ct),
+            "Claude compaction was interrupted.",
+            ct).ConfigureAwait(false);
     }
 
     public async IAsyncEnumerable<UnifiedAgentEvent> StreamTurnAsync(
@@ -423,8 +439,28 @@ public sealed class ClaudeAgentSession : IAgentSession
         switch (type)
         {
             case "system":
-                // session_id already handled above.
+            {
+                var sysSubtype = TryGetString(root, "subtype");
+                if (string.Equals(sysSubtype, "init", StringComparison.OrdinalIgnoreCase) &&
+                    root.TryGetProperty("slash_commands", out var slashCmds) &&
+                    slashCmds.ValueKind == JsonValueKind.Array)
+                {
+                    var hasCompact = false;
+                    foreach (var cmd in slashCmds.EnumerateArray())
+                    {
+                        if (cmd.ValueKind == JsonValueKind.String &&
+                            string.Equals(cmd.GetString(), "compact", StringComparison.OrdinalIgnoreCase))
+                        {
+                            hasCompact = true;
+                            break;
+                        }
+                    }
+
+                    Volatile.Write(ref _supportsNativeCompact, hasCompact);
+                }
+
                 break;
+            }
 
             case "stream_event":
             {

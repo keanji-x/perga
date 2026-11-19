@@ -3212,7 +3212,66 @@ public sealed partial class TrackActor : IAsyncDisposable
                 return (session, oldAgentSession, turnIdx);
             }, CancellationToken.None).ConfigureAwait(false);
 
-            // 1. Request structured handover summary turn on current IAgentSession (NEVER native CLI /compact!).
+            if (prep.OldAgentSession.SupportsNativeCompact)
+            {
+                var compactTurnId = $"trn_{prep.HandoverTurnIndex:D6}_{Guid.NewGuid():N}";
+                var nativeStartedAt = NowMs();
+                var nativeResult = await prep.OldAgentSession.CompactAsync(ct).ConfigureAwait(false);
+                var compactSummary = string.IsNullOrWhiteSpace(nativeResult.Summary)
+                    ? "Context compacted."
+                    : nativeResult.Summary.Trim();
+
+                return await EnqueueAsync(async _ =>
+                {
+                    var current = RequireSessionCore(sessionId);
+                    var now = NowMs();
+
+                    var nextRatio = 0.0;
+                    if (nativeResult.Usage is { ContextWindowTokens: > 0 } usage)
+                    {
+                        nextRatio = Math.Clamp(
+                            (double)(usage.InputTokens + usage.OutputTokens) / usage.ContextWindowTokens.Value,
+                            0.0,
+                            1.0);
+                    }
+
+                    var compactTurn = new SessionTurnDto(
+                        Id: compactTurnId,
+                        SessionId: sessionId,
+                        TurnIndex: prep.HandoverTurnIndex,
+                        Epoch: current.Epoch,
+                        TriggerKind: "system",
+                        Input: JsonHelpers.ToElement(new { prompt = "/compact", kind = "native_compact" }),
+                        Status: "completed",
+                        Usage: nativeResult.Usage is null ? null : JsonHelpers.ToElement(nativeResult.Usage),
+                        ErrorText: null,
+                        StartedAtMs: nativeStartedAt,
+                        CompletedAtMs: now);
+
+                    var compactItems = new List<SessionItemDto>
+                    {
+                        new(0, sessionId, compactTurnId, "user", JsonHelpers.ToElement(new { v = 1, content = "/compact" }), nativeStartedAt),
+                        new(0, sessionId, compactTurnId, "assistant_text", JsonHelpers.ToElement(new { v = 1, text = compactSummary }), now)
+                    };
+
+                    var compacted = current with
+                    {
+                        NativeThreadId = current.NativeThreadId ?? prep.OldAgentSession.NativeThreadId,
+                        ContextUsageRatio = nextRatio,
+                        Status = "idle",
+                        UpdatedAtMs = now
+                    };
+                    _sessions[sessionId] = compacted;
+
+                    await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
+                    await _store.RecordTurnAndItemsAsync(compactTurn, compactItems, compacted, ct).ConfigureAwait(false);
+                    await PersistAndEmitSessionUpdatedCoreAsync(compacted, now, ct).ConfigureAwait(false);
+
+                    return compacted;
+                }, ct).ConfigureAwait(false);
+            }
+
+            // Fallback: Request structured handover summary turn on current IAgentSession and bump Epoch.
             const string handoverPrompt =
                 "Epoch handover requested. Summarize concisely in structured sections: " +
                 "(1) Current Progress, (2) Key Paths & Artifacts, (3) Verified Conclusions, and (4) Immediate Next Steps.";

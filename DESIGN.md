@@ -581,7 +581,7 @@ declare global {
 ### 2.4 `namespace Perga.AgentKit`（三条铁律解毒多 Harness 兼容库）
 
 **三条工程铁律（写死在 `Perga.AgentKit` 实现中）**：
-1. **严禁调用任何 CLI 原生 `/compact` 命令或私有 compaction RPC**：上下文压缩由 `Perga.Kernel` 通过 Epoch 换页完成。
+1. **上下文压缩优先走底层原生能力，Epoch 换页兜底**：当底层 `IAgentSession` 支持原生 compact（如 Codex `thread/compact/start`、Claude `"/compact"`、ACP `available_commands_update` 声明 `compact`）时原地压缩并保留 `NativeThreadId` 与 `Epoch`；不支持时由 `Perga.Kernel` 通过 Epoch 换页完成。
 2. **严禁拼接 CLI 私有路径/权限 DSL 字符串**（如 Claude `Edit(//path/**)` 或 Codex `shell_environment_policy`）：统一外置给 `OsSandboxWrapper`（Linux 使用 `/usr/bin/bwrap`，macOS 使用 `sandbox-exec`）隔离工作目录边界，保留 CLI 自身完整性。一期在当前宿主机 `bwrap 0.8.0` 下直接绑定传入的 `Cwd`（即解析后的 `AttemptWorkspaceLease.EffectiveCwd`），同时通过 `OverlayMounts` 字段预留升级到 `bwrap >= 0.9` 时按进程直注 `--overlay-src / --overlay` 层的能力。
 3. **锁死最小 4 原语表面**：Antigravity / OpenCode 原生走 ACP JSON-RPC 2.0（`initialize` -> `session/new` / `session/load` -> `session/prompt` -> `session/cancel` -> `session/request_permission`）；Claude 走 `--print --verbose --input-format stream-json --output-format stream-json --mcp-config <tempJson>`（或 `claude-agent-acp`）；Codex 走 `codex app-server` JSON-RPC 2.0（`thread/start` / `thread/resume` / `turn/start` / `turn/steer` / `turn/interrupt`）。
 
@@ -939,12 +939,14 @@ public interface ITerminalBridgeClient : IAsyncDisposable
    - 废除传统 `Planner` / `Assistant` / `Worker` 三重角色包袱，全 Track 统一为同一 `AgentSession`（仅由两个正交属性刻画）：
      - **`Lead`（主理代表：`Track.LeadSessionId == session.Id` / `IsLead == true`）**：默认代表指针，接收外部 `Mail` 到达唤醒、后台 `Task` 完结/失败唤醒、UI 上提交的 `Ask` 回答与外部 `Report` 修改唤醒；可通过 `SetLeadSessionAsync` 随时切换主理会话。
      - **`Subagent`（协作者：`IsLead == false`）**：分为 **自由协作（`BoundAttemptId == null`）** 与 **契约协作（`BoundAttemptId != null`，由 `TaskGraphScheduler` 按 Task 派发）**；两者在前端共享同一会话流式查看与实时 Steer 纠偏能力，均可读写 `ReportDoc`（乐观锁防盲写）与调用 `perga_terminal_open/read`；唯一硬边界由内核在 `/mcp/kernel` 统一看守——绑定了在途 `BoundAttemptId` 的 `Subagent` 拥有 `perga_task_done / fail`，并被禁止改动 `task` 块或调用 `perga_task_accept/reject/cancel` 自我判过。
-3. **宿主自管 Epoch 换页压缩（Host-Owned Epoch Handover Compaction）**：
+3. **原生压缩优先与 Epoch 换页兜底（Native Compaction + Epoch Handover Fallback）**：
    - 当 `ContextUsageRatio >= 0.80` 或用户触发 `CompactSessionAsync`：
-     1. 向当前底层 `IAgentSession` 发送一条普通对话 Turn，要求输出结构化交接摘要（当前进展、关键路径、已验证结论、下一步）；
-     2. 关闭旧底层 `IAgentSession` 实例；
-     3. 在数据库更新该 `AgentSession` 的 `Epoch = Epoch + 1`、`NativeThreadId = null`、`ContextUsageRatio = 0.0`；
-     4. 用「最新 Report 全文 + 交接摘要」作为系统种子打开全新底层 `IAgentSession` 并绑定新 `NativeThreadId`（前端 `SessionId` 与历史消息流水保持连贯不断）。
+     - 若底层 `IAgentSession.SupportsNativeCompact == true`，原地调用 `CompactAsync` 并保留 `NativeThreadId`、进程与 `Epoch`，按返回的 `Usage` 更新 `ContextUsageRatio`（无 `Usage` 则归零）；
+     - 否则回退到宿主自管 Epoch 换页：
+       1. 向当前底层 `IAgentSession` 发送一条普通对话 Turn，要求输出结构化交接摘要（当前进展、关键路径、已验证结论、下一步）；
+       2. 关闭旧底层 `IAgentSession` 实例；
+       3. 在数据库更新该 `AgentSession` 的 `Epoch = Epoch + 1`、`NativeThreadId = null`、`ContextUsageRatio = 0.0`；
+       4. 用「最新 Report 全文 + 交接摘要」作为系统种子打开全新底层 `IAgentSession` 并绑定新 `NativeThreadId`（前端 `SessionId` 与历史消息流水保持连贯不断）。
 4. **`TaskGraphScheduler` 租约感知调度与 `afterWorkerDoneCmd`**：
    - `ComputeSchedulable(tasks, bool allowParallelWriteLeases = false)`：筛选 `ready == true`、所有 `depends_on` 任务处于 `Done`、非 `Draft`/`Running`/`Verifying`/`Done`/`Failed`/`Canceled` 的任务；当 `driver.SupportsParallelIsolatedWriteLeases == false`（一期默认）时，存在在途 `ReadWrite` 任务则返回空，存在在途 `ReadOnly` 任务仅放行 `ReadOnly`，无在途则按优先级与创建时间放行 `ReadOnly` 集合或单个最高优 `ReadWrite`；未来若挂载了支持独立 per-attempt CoW `upperdir` 的 `OverlayFS` 驱动（`SupportsParallelIsolatedWriteLeases == true`），调度器无需改动即可并发放行多个相互隔离的投机写 Attempt。
    - **Attempt 租约与统一钩子槽 `afterWorkerDoneCmd`**：派发 Attempt 前先向 `IWorkspaceDriver.AcquireAttemptLeaseAsync` 申请 `AttemptWorkspaceLease`（并将快照持久化至 `task_attempts.workspace_lease_json`）；契约 `Subagent` 会话、`afterWorkerDoneCmd` 与 `GateSpec` 门禁均在 `lease.EffectiveCwd`（以及透传映射到 `HarnessLaunchSpec.OverlayMounts` 的层配置）内执行。`perga_task_done` 后若 `CompiledTemplateManifest.AfterWorkerDoneCmd` 非空，在 `lease.EffectiveCwd` 下运行该命令并解析 `stdout` **最后一行非空合法 JSON** 并入 `task_attempts.meta_json` 后传给 `PolicyVm.OnTaskSettled`；最终门禁通过调 `SettleAttemptLeaseAsync(lease, AttemptLeaseDisposition.Promote)`，门禁失败/取消/Fail 调 `SettleAttemptLeaseAsync(lease, AttemptLeaseDisposition.Discard)`（秒级 O(1) 抛弃脏层）。
