@@ -13,11 +13,12 @@ it.each(['claude', 'codex', 'opencode'] as const)('posts v1 compact separately f
   const fixture = renderSessionFixture({ initial: '/track/daily?panel=conversations', reply: request =>
     request.path === '/api/v1/sessions/daily-planner/compact' ? sessionReply(fixtureSession('daily-planner', 'daily')) : undefined });
   fixture.sessions[0].provider = provider;
-  fixture.sessions[0].contextUsageRatio = 0.47;
+  fixture.sessions[0].contextUsedTokens = 120_320;
+  fixture.sessions[0].contextWindowTokens = 256_000;
   fixture.items.set('daily-planner', [sessionItem('daily-planner', 1, 'Earlier reply.')]);
   await page.getByRole('button', { name: /Conversation Daily Planner conversation/ }).click();
   await expect.element(page.getByText('Earlier reply.', { exact: true })).toBeVisible();
-  await expect.element(page.getByRole('img', { name: /94k of 200k/ })).toBeVisible();
+  await expect.element(page.getByRole('img', { name: /120k of 256k/ })).toBeVisible();
   await page.getByRole('combobox', { name: 'Message' }).fill('/compact');
   await expect.element(page.getByRole('option', { name: /^compact/ })).toBeVisible();
   await userEvent.keyboard('{Enter}');

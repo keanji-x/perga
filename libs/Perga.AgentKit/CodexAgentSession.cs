@@ -688,7 +688,7 @@ public sealed class CodexAgentSession : IAgentSession
                 if (turnState.IsTurnIgnored(turnId) || turn.ValueKind != JsonValueKind.Object)
                     return;
 
-                turnState.LatestUsage = TryParseUsage(turn) ?? TryParseUsage(response) ?? turnState.LatestUsage;
+                turnState.LatestUsage = MergeUsage(TryParseUsage(turn) ?? TryParseUsage(response), turnState.LatestUsage);
                 if (!failed) return;
 
                 var (code, message, retryable) = ExtractCodexError(turn);
@@ -1007,7 +1007,9 @@ public sealed class CodexAgentSession : IAgentSession
                 var usage = TryParseUsage(parameters);
                 if (usage is not null)
                 {
+                    usage = MergeUsage(usage, turnState.LatestUsage)!;
                     turnState.LatestUsage = usage;
+                    turnState.Events.Writer.TryWrite(new UnifiedAgentEvent.ContextUsageUpdated(usage));
                 }
 
                 break;
@@ -1055,6 +1057,8 @@ public sealed class CodexAgentSession : IAgentSession
                     status ??= TryGetString(turnObj, "status");
                     usage = TryParseUsage(turnObj) ?? usage;
                 }
+
+                usage = MergeUsage(usage, turnState.LatestUsage);
 
                 if (status is not ("failed" or "completed" or "interrupted" or "cancelled" or "canceled"))
                     break;
@@ -1309,6 +1313,12 @@ public sealed class CodexAgentSession : IAgentSession
         return null;
     }
 
+    private static TokenUsage? MergeUsage(TokenUsage? usage, TokenUsage? latest) =>
+        usage is null ? latest : usage with
+        {
+            ContextWindowTokens = usage.ContextWindowTokens ?? latest?.ContextWindowTokens
+        };
+
     private static TokenUsage? TryParseUsage(JsonElement container)
     {
         if (container.ValueKind != JsonValueKind.Object)
@@ -1326,12 +1336,7 @@ public sealed class CodexAgentSession : IAgentSession
                 return BuildTokenUsageFromObject(lastUsage, contextWindow);
             }
 
-            if (tokenUsage.TryGetProperty("total", out var totalUsage) && totalUsage.ValueKind == JsonValueKind.Object)
-            {
-                return BuildTokenUsageFromObject(totalUsage, contextWindow);
-            }
-
-            return BuildTokenUsageFromObject(tokenUsage, contextWindow);
+            return null;
         }
 
         if (container.TryGetProperty("usage", out var usageObj) &&
@@ -1359,7 +1364,8 @@ public sealed class CodexAgentSession : IAgentSession
         var window = TryGetLong(obj, "contextWindowTokens")
                      ?? TryGetLong(obj, "modelContextWindow")
                      ?? fallbackWindow;
-        return new TokenUsage(input ?? 0L, output ?? 0L, cached, window);
+        return new TokenUsage(input ?? 0L, output ?? 0L, cached, window,
+            TryGetLong(obj, "totalTokens") ?? TryGetLong(obj, "total_tokens"));
     }
 
     private static (string Code, string Message, bool Retryable) ExtractCodexRpcExceptionError(JsonRpcRemoteException rpcEx)

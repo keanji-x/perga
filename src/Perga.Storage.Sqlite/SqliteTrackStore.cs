@@ -578,6 +578,10 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                        epoch AS Epoch,
                        status AS Status,
                        context_usage_ratio AS ContextUsageRatio,
+                       context_used_tokens AS ContextUsedTokens,
+                       context_window_tokens AS ContextWindowTokens,
+                       context_usage_at_ms AS ContextUsageAtMs,
+                       context_usage_invalidated AS ContextUsageInvalidated,
                        archived_at_ms AS ArchivedAtMs,
                        created_at_ms AS CreatedAtMs,
                        updated_at_ms AS UpdatedAtMs,
@@ -1992,12 +1996,14 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                 INSERT INTO agent_sessions (
                     id, track_id, bound_task_id, bound_attempt_id, title,
                     provider, model, reasoning_effort, native_thread_id, epoch, status,
-                    context_usage_ratio, archived_at_ms, created_at_ms, updated_at_ms, permission_mode
+                    context_usage_ratio, context_used_tokens, context_window_tokens, context_usage_at_ms, context_usage_invalidated,
+                    archived_at_ms, created_at_ms, updated_at_ms, permission_mode
                 )
                 VALUES (
                     @Id, @TrackId, @BoundTaskId, @BoundAttemptId, @Title,
                     @Provider, @Model, @ReasoningEffort, @NativeThreadId, @Epoch, @Status,
-                    @ContextUsageRatio, @ArchivedAtMs, @CreatedAtMs, @UpdatedAtMs, @PermissionMode
+                    @ContextUsageRatio, @ContextUsedTokens, @ContextWindowTokens, @ContextUsageAtMs, @ContextUsageInvalidated,
+                    @ArchivedAtMs, @CreatedAtMs, @UpdatedAtMs, @PermissionMode
                 )
                 ON CONFLICT(id) DO UPDATE SET
                     bound_task_id = excluded.bound_task_id,
@@ -2010,6 +2016,10 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                     epoch = excluded.epoch,
                     status = excluded.status,
                     context_usage_ratio = excluded.context_usage_ratio,
+                    context_used_tokens = excluded.context_used_tokens,
+                    context_window_tokens = excluded.context_window_tokens,
+                    context_usage_at_ms = excluded.context_usage_at_ms,
+                    context_usage_invalidated = excluded.context_usage_invalidated,
                     archived_at_ms = excluded.archived_at_ms,
                     updated_at_ms = excluded.updated_at_ms,
                     permission_mode = excluded.permission_mode;
@@ -2028,6 +2038,10 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                     session.Epoch,
                     session.Status,
                     session.ContextUsageRatio,
+                    session.ContextUsedTokens,
+                    session.ContextWindowTokens,
+                    session.ContextUsageAtMs,
+                    session.ContextUsageInvalidated,
                     session.ArchivedAtMs,
                     session.CreatedAtMs,
                     session.UpdatedAtMs,
@@ -2176,6 +2190,10 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
             Epoch: (int)r.Epoch,
             Status: r.Status,
             ContextUsageRatio: r.ContextUsageRatio,
+            ContextUsedTokens: r.ContextUsedTokens,
+            ContextWindowTokens: r.ContextWindowTokens,
+            ContextUsageAtMs: r.ContextUsageAtMs,
+            ContextUsageInvalidated: r.ContextUsageInvalidated,
             ArchivedAtMs: r.ArchivedAtMs,
             CreatedAtMs: r.CreatedAtMs,
             UpdatedAtMs: r.UpdatedAtMs,
@@ -2372,6 +2390,10 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
         public long Epoch { get; init; }
         public string Status { get; init; } = "idle";
         public double ContextUsageRatio { get; init; }
+        public long? ContextUsedTokens { get; init; }
+        public long? ContextWindowTokens { get; init; }
+        public long? ContextUsageAtMs { get; init; }
+        public bool ContextUsageInvalidated { get; init; }
         public long? ArchivedAtMs { get; init; }
         public long CreatedAtMs { get; init; }
         public long UpdatedAtMs { get; init; }

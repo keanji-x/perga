@@ -66,6 +66,8 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
     public ConcurrentQueue<(string RequestId, bool Approved)> ApprovalResponses { get; } = new();
 
     public bool SupportsSteering { get; set; } = true;
+    public bool SupportsModelSwitch { get; set; }
+    public Func<CancellationToken, Task<NativeCompactResult>>? CompactHandler { get; set; }
 
     public IReadOnlyCollection<RecordedSessionOpen> OpenedSessions => _openedSessions.ToArray();
     public IReadOnlyCollection<RecordedTurnExecution> ExecutedTurns => _executedTurns.ToArray();
@@ -166,6 +168,8 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
 
         public string? NativeThreadId { get; }
         public bool SupportsNativeSteer => _owner.SupportsSteering;
+        public bool SupportsNativeCompact => _owner.CompactHandler is not null;
+        public Task<NativeCompactResult> CompactAsync(CancellationToken ct) => _owner.CompactHandler!(ct);
         public WorkerProviderConfiguration? WorkerConfiguration => _spec.ConfigureWorker && _spec.Provider == "codex"
             ? new([
                 new WorkerModelOption("gpt-5.4", "GPT 5.4", ["low", "high"], "low"),
@@ -213,7 +217,7 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
             return Task.CompletedTask;
         }
 
-        public Task<bool> TrySetModelAsync(string? model, string? reasoningEffort = null, CancellationToken ct = default) => Task.FromResult(false);
+        public Task<bool> TrySetModelAsync(string? model, string? reasoningEffort = null, CancellationToken ct = default) => Task.FromResult(_owner.SupportsModelSwitch);
 
         public async Task<SteerDelivery> SteerAsync(string turnCorrelationId, string message, CancellationToken ct)
         {

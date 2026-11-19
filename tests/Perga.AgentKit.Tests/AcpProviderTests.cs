@@ -755,6 +755,40 @@ public sealed class AcpProviderTests : IDisposable
         Assert.Equal(1_048_576, result.Usage.ContextWindowTokens);
     }
 
+    [Theory]
+    [InlineData(false, false, "none")]
+    [InlineData(true, false, "none")]
+    [InlineData(true, true, "none")]
+    [InlineData(true, false, "notification")]
+    [InlineData(true, false, "response")]
+    public async Task AcpNativeCompact_OnlyReturnsUsageFromCompaction(bool switchModel, bool configFallback, string usageMode)
+    {
+        await using var runtime = CreateRuntime(new Dictionary<string, string>
+        {
+            ["MOCK_ACP_ADVERTISE_COMPACT"] = "1",
+            ["MOCK_ACP_NO_SET_MODEL"] = configFallback ? "1" : "0",
+            ["MOCK_ACP_COMPACT_USAGE"] = usageMode
+        });
+        await using var session = await runtime.OpenSessionAsync(new HarnessLaunchSpec(
+            "acp:antigravity", null, _fixture.WorkspaceDir, null, null,
+            MockCliFixture.CreateSampleMcpServers()), CancellationToken.None);
+        var sampled = await DrainTurnAsync(session, new TurnInput("CONTEXT_ACP_USED", "sample"));
+        Assert.NotNull(Assert.Single(sampled.OfType<UnifiedAgentEvent.TurnCompleted>()).Usage);
+        if (switchModel)
+            Assert.True(await session.TrySetModelAsync("next-model"));
+
+        Assert.True(session.SupportsNativeCompact);
+        var compacted = await session.CompactAsync(CancellationToken.None);
+        if (usageMode == "none")
+            Assert.Null(compacted.Usage);
+        else
+        {
+            Assert.NotNull(compacted.Usage);
+            Assert.Equal(2048, compacted.Usage.InputTokens);
+            Assert.Equal(1_048_576, compacted.Usage.ContextWindowTokens);
+        }
+    }
+
     private static async Task<List<UnifiedAgentEvent>> DrainTurnAsync(IAgentSession session, TurnInput input)
     {
         var list = new List<UnifiedAgentEvent>();

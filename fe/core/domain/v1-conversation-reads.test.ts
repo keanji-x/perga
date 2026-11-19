@@ -3,7 +3,7 @@ import { harnessItemsOperation, plannerRunOperation } from './conversation.js';
 import { buildConversationTranscript, conversationItemsOperation, conversationRunOperation } from './conversation-display.js';
 
 const session = Object.freeze({ id: 'session', trackId: 'track', isLead: true, provider: 'codex', model: 'model',
-  nativeThreadId: 'thread', epoch: 1, status: 'idle', contextUsageRatio: 0.25, archivedAtMs: null, createdAtMs: 1, updatedAtMs: 2 });
+  nativeThreadId: 'thread', epoch: 1, status: 'idle', contextUsedTokens: 64_000, contextWindowTokens: 256_000, contextUsageAtMs: 7, archivedAtMs: null, createdAtMs: 1, updatedAtMs: 2 });
 const page = Object.freeze({ session, activeTurn: null, unknownInput: null, items: [
   { id: 1, sessionId: session.id, turnId: 'turn', kind: 'assistant_text', payload: { text: 'Actual v1 reply' }, createdAtMs: 2 },
 ] });
@@ -35,5 +35,21 @@ it('projects idle, queued, running and unknown states from SessionItemsPageDto o
     expect(operation.responseSchema.parse(running)).toMatchObject({ phase: 'turn_running', running_turn: { turn_id: 'turn' } });
     const legacyRun = operation.responseSchema.parse(page);
     expect(operation.responseSchema.safeParse(legacyRun).success).toBe(false);
+  }
+});
+
+
+it('projects real context usage without inventing a window or hiding overflow', () => {
+  for (const operation of [plannerRunOperation(session.id), conversationRunOperation(session.id)]) {
+    for (const [used, window, percent] of [[123, 1000, 12], [0, 1000, 0], [1000, 1000, 100], [1200, 1000, null], [123, null, null], [123, 0, null]] as const) {
+      expect(operation.responseSchema.parse({ ...page, session: { ...session,
+        contextUsedTokens: used, contextWindowTokens: window, contextUsageAtMs: 7, contextUsageInvalidated: true,
+      } })).toMatchObject({ context_usage_invalidated: true,
+        token_usage: { used_tokens: used, context_window: window, percent, at_ms: 7 } });
+    }
+    expect(operation.responseSchema.parse({ ...page, session: { ...session, contextUsedTokens: 0, contextWindowTokens: 1000, contextUsageAtMs: null } }).token_usage).toEqual({ used_tokens: 0, context_window: 1000, percent: 0, at_ms: null });
+    for (const contextUsedTokens of [null, undefined]) {
+      expect(operation.responseSchema.parse({ ...page, session: { ...session, contextUsedTokens, contextUsageRatio: 0.25 } }).token_usage).toBeNull();
+    }
   }
 });

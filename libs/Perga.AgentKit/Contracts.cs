@@ -51,7 +51,22 @@ public sealed record TokenUsage(
     long InputTokens,
     long OutputTokens,
     long CachedInputTokens,
-    long? ContextWindowTokens);
+    long? ContextWindowTokens,
+    long? UsedTokens = null)
+{
+    // CachedInputTokens is a subset of InputTokens unless a provider supplies
+    // an explicit snapshot that accounts for its different cache semantics.
+    public long EffectiveUsedTokens => UsedTokens ?? InputTokens + OutputTokens;
+
+    public void Deconstruct(out long inputTokens, out long outputTokens,
+        out long cachedInputTokens, out long? contextWindowTokens)
+    {
+        inputTokens = InputTokens;
+        outputTokens = OutputTokens;
+        cachedInputTokens = CachedInputTokens;
+        contextWindowTokens = ContextWindowTokens;
+    }
+}
 
 public sealed record ApprovalOption(
     string OptionId,
@@ -72,6 +87,7 @@ public abstract record UnifiedAgentEvent
         JsonElement Args,
         IReadOnlyList<ApprovalOption>? Options = null) : UnifiedAgentEvent;
     public sealed record TurnInterrupted : UnifiedAgentEvent;
+    public sealed record ContextUsageUpdated(TokenUsage Usage) : UnifiedAgentEvent;
     public sealed record TurnCompleted(TokenUsage? Usage) : UnifiedAgentEvent;
     public sealed record TurnError(string Code, string Message, bool IsRetryable, bool IsConclusive = false, bool BeforePrompt = false) : UnifiedAgentEvent;
 }

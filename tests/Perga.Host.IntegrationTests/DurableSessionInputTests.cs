@@ -30,11 +30,13 @@ public sealed class DurableSessionInputTests
             string trackId;
             string sessionId;
             SessionInputReceipt receipt;
+            int initialEpoch;
             await using (var host = new PergaHostTestCluster(directory.FullName))
             {
                 (trackId, sessionId) = await host.CreateTrackAsync();
                 var kernel = host.Services.GetRequiredService<IPergaKernel>();
                 var selected = await kernel.UpdateSessionModelAsync(sessionId, new("A", effort));
+                initialEpoch = selected.Epoch;
                 var store = host.Services.GetRequiredService<ITrackStore>();
                 // Commit the production acceptance transaction, then stop before dispatch.
                 receipt = (await store.SessionInputs.AcceptAsync(selected with { Status = "queued" },
@@ -44,16 +46,49 @@ public sealed class DurableSessionInputTests
                 using var update = await host.Client.PutAsJsonAsync($"/api/v1/sessions/{sessionId}/model", new { model = "B", reasoningEffort = "high" });
                 update.EnsureSuccessStatusCode();
             }
-            await using var reopened = new PergaHostTestCluster(directory.FullName);
-            var resumed = reopened.Services.GetRequiredService<IPergaKernel>();
-            await resumed.WaitForTrackIdleAsync(trackId).WaitAsync(TimeSpan.FromSeconds(10));
-            var execution = Assert.Single(reopened.AgentRuntime.ExecutedTurns);
-            Assert.Equal(receipt.TurnId, execution.Input.CorrelationId);
-            Assert.Equal("A", execution.Spec.Model);
-            Assert.Equal(effort, execution.Spec.ReasoningEffort);
-            var desired = Assert.Single(await resumed.ListSessionsAsync(trackId));
-            Assert.Equal("B", desired.Model);
-            Assert.Equal("high", desired.ReasoningEffort);
+            await using (var reopened = new PergaHostTestCluster(directory.FullName))
+            {
+                var sampled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                reopened.AgentRuntime.SetTurnHandler(Stream);
+                async IAsyncEnumerable<UnifiedAgentEvent> Stream(HarnessLaunchSpec spec, TurnInput input,
+                    [EnumeratorCancellation] CancellationToken ct)
+                {
+                    yield return new UnifiedAgentEvent.ContextUsageUpdated(new TokenUsage(10, 5, 0, 1000, UsedTokens: 950));
+                    sampled.TrySetResult();
+                    await release.Task.WaitAsync(ct);
+                    yield return new UnifiedAgentEvent.TurnCompleted(new TokenUsage(10, 5, 0, 1000, UsedTokens: 990));
+                }
+                var resumed = reopened.Services.GetRequiredService<IPergaKernel>();
+                var idle = resumed.WaitForTrackIdleAsync(trackId);
+                try
+                {
+                    await sampled.Task.WaitAsync(TimeSpan.FromSeconds(10));
+                    var streaming = Assert.Single(await resumed.ListSessionsAsync(trackId));
+                    Assert.Equal(950, streaming.ContextUsedTokens);
+                    Assert.True(streaming.ContextUsageInvalidated);
+                }
+                finally { release.TrySetResult(); }
+                await idle.WaitAsync(TimeSpan.FromSeconds(10));
+                var execution = Assert.Single(reopened.AgentRuntime.ExecutedTurns);
+                Assert.Equal(receipt.TurnId, execution.Input.CorrelationId);
+                Assert.Equal("A", execution.Spec.Model);
+                Assert.Equal(effort, execution.Spec.ReasoningEffort);
+                var desired = Assert.Single(await resumed.ListSessionsAsync(trackId));
+                Assert.Equal("B", desired.Model);
+                Assert.Equal("high", desired.ReasoningEffort);
+                Assert.Equal(990, desired.ContextUsedTokens);
+                Assert.True(desired.ContextUsageInvalidated);
+                Assert.Equal(initialEpoch, desired.Epoch);
+            }
+            await using var restarted = new PergaHostTestCluster(directory.FullName);
+            var kernelAfterRestart = restarted.Services.GetRequiredService<IPergaKernel>();
+            var persisted = Assert.Single(await kernelAfterRestart.ListSessionsAsync(trackId));
+            Assert.True(persisted.ContextUsageInvalidated);
+            Assert.Equal(990, persisted.ContextUsedTokens);
+            await kernelAfterRestart.SendMessageAsync(sessionId, new("use B", "current-model"));
+            Assert.Equal("B", Assert.Single(restarted.AgentRuntime.ExecutedTurns).Spec.Model);
+            Assert.False(Assert.Single(await kernelAfterRestart.ListSessionsAsync(trackId)).ContextUsageInvalidated);
         }
         finally { directory.Delete(recursive: true); }
     }

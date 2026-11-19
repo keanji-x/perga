@@ -1,5 +1,5 @@
-// How full this conversation's context is, beside the send button. Drawn from the kernel's
-// `percent` only: the prompt-and-tools floor is taken off both sides, so `used / window` is a different, wrong number.
+// How full this conversation's context is, beside the send button. The frontend derives
+// `percent` from measured session token counts when the context window is valid.
 
 import { useRef } from 'react';
 import { useSpringTarget } from '../../../ui/motion/target.ts';
@@ -31,7 +31,7 @@ export function contextRingState(usage: PlannerRunTokenUsage | null): ContextRin
       window: usage.context_window,
     };
   }
-  /* Of the kernel's reasons to withhold a percentage, only the overshoot is one a reader can act on. */
+  /* Of the reasons a reading has no percentage, only the overshoot is one a reader can act on. */
   if (usage.context_window !== null && usage.used_tokens > usage.context_window) {
     return { kind: 'over', used: usage.used_tokens, window: usage.context_window };
   }
@@ -50,7 +50,7 @@ export function ContextRing({ usage }: { usage: PlannerRunTokenUsage | null }) {
   if (state.kind === 'none') return null;
 
   const over = state.kind === 'over';
-  /* The over-window state draws no arc: the kernel withholds `percent` rather than clamping, and a full ring here would undo that. */
+  /* The over-window state draws no arc: the frontend leaves `percent` null rather than clamping, and a full ring here would undo that. */
   const percent = over ? 0 : Math.min(100, Math.max(0, state.percent));
   const label = ringLabel(state);
 

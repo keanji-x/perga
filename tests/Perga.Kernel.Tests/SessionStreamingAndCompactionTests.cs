@@ -352,8 +352,10 @@ public sealed class SessionStreamingAndCompactionTests
         Assert.Contains("HANDOVER_SUMMARY_EPOCH_2", epoch3Session.LaunchSpec.SystemPrompt);
     }
 
-    [Fact]
-    public async Task NativeCompaction_ManualAndAutoAt80Percent_PreservesNativeThreadEpochAndUpdatesUsage()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task NativeCompaction_ManualAndAutoAt80Percent_PreservesNativeThreadEpochAndUpdatesUsage(bool reportsUsage)
     {
         await using var ctx = new KernelTestContext();
         var (_, snap) = await ctx.CreateDefaultTrackAsync();
@@ -364,7 +366,7 @@ public sealed class SessionStreamingAndCompactionTests
         {
             session.SupportsNativeCompact = true;
             session.CompactHandler = (_, _) => Task.FromResult(
-                new NativeCompactResult(new TokenUsage(20_000, 0, 0, 100_000), "Native compact summary."));
+                new NativeCompactResult(reportsUsage ? new TokenUsage(10_000, 0, 0, 100_000, UsedTokens: 20_000) : null, "Native compact summary."));
             return StreamScriptedTurn(session, new TurnInput("Analyze repo", "idem"), 1, ct);
         };
 
@@ -375,7 +377,11 @@ public sealed class SessionStreamingAndCompactionTests
         var leadAfterAuto = sessionsAfterAuto.Single(s => s.Id == leadId);
         Assert.Equal(1, leadAfterAuto.Epoch);
         Assert.Equal("thr_epoch_1", leadAfterAuto.NativeThreadId);
-        Assert.Equal(0.2, leadAfterAuto.ContextUsageRatio, precision: 4);
+        Assert.Equal(reportsUsage ? 0.2 : 0, leadAfterAuto.ContextUsageRatio, precision: 4);
+        Assert.Equal(reportsUsage ? 20_000L : 0L, leadAfterAuto.ContextUsedTokens);
+        Assert.Equal(reportsUsage, leadAfterAuto.ContextUsageAtMs is not null);
+        Assert.Equal(100_000, leadAfterAuto.ContextWindowTokens);
+        Assert.False(leadAfterAuto.ContextUsageInvalidated);
 
         var opened = ctx.AgentRuntime.OpenedSessions.ToArray();
         Assert.Single(opened);
@@ -385,7 +391,10 @@ public sealed class SessionStreamingAndCompactionTests
         var manual = await ctx.Kernel.CompactSessionAsync(leadId);
         Assert.Equal(1, manual.Epoch);
         Assert.Equal("thr_epoch_1", manual.NativeThreadId);
-        Assert.Equal(0.2, manual.ContextUsageRatio, precision: 4);
+        Assert.Equal(reportsUsage ? 0.2 : 0, manual.ContextUsageRatio, precision: 4);
+        Assert.Equal(reportsUsage ? 20_000L : 0L, manual.ContextUsedTokens);
+        Assert.Equal(reportsUsage, manual.ContextUsageAtMs is not null);
+        Assert.False(manual.ContextUsageInvalidated);
         Assert.Equal(2, opened[0].CompactCalls);
     }
 

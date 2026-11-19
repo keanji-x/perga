@@ -1,4 +1,5 @@
 /** One typed read contract over the existing transcript resource. Display identities are not native turns. */
+import { sessionContextUsage } from './session-context-usage.js';
 import { z } from 'zod';
 import { DEPLOYMENT_OWNER_USER_ID } from '../api/auth.js';
 import type { ApiOperation } from '../api/types.js';
@@ -446,7 +447,6 @@ export function conversationRunOperation(card: string): ApiOperation<PlannerRun 
     path: `/api/v1/sessions/${encodeURIComponent(card)}/items?afterId=0&limit=1&view=run`,
     responseSchema: sessionItemsPageDtoSchema.transform((page): PlannerRun & z.infer<typeof conversationRunMetadataSchema> => {
       const running = page.activeTurn !== null && page.activeTurn !== undefined && page.activeTurn.status === 'running';
-      const ratio = Math.max(0, Math.min(1, page.session.contextUsageRatio));
       return {
         card_id: card,
         worker_session_id: page.session.id,
@@ -466,15 +466,8 @@ export function conversationRunOperation(card: string): ApiOperation<PlannerRun 
         attachments_supported: false,
         manual_compact_supported: page.worker == null,
         compact_outcome: null,
-        context_usage_invalidated: false,
-        token_usage: ratio > 0
-          ? {
-            used_tokens: Math.round(ratio * 200_000),
-            context_window: 200_000,
-            percent: Math.round(ratio * 100),
-            at_ms: page.session.updatedAtMs,
-          }
-          : null,
+        context_usage_invalidated: page.session.contextUsageInvalidated,
+        token_usage: sessionContextUsage(page.session),
         running_turn: running && page.activeTurn !== null && page.activeTurn !== undefined
           ? { turn_id: page.activeTurn.id, elapsed_ms: Math.max(0, Date.now() - (page.activeTurn.startedAtMs ?? Date.now())) }
           : null,

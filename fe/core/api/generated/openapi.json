@@ -25706,6 +25706,28 @@
               "null"
             ]
           },
+          "contextUsedTokens": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "contextWindowTokens": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "contextUsageAtMs": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "contextUsageInvalidated": {
+            "type": "boolean",
+            "default": false
+          },
           "permissionMode": {
             "type": [
               "string",

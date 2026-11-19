@@ -58,7 +58,11 @@ public sealed record AgentSessionDto(
     long CreatedAtMs,
     long UpdatedAtMs,
     string? ReasoningEffort = null,
-    string? PermissionMode = null);
+    string? PermissionMode = null,
+    long? ContextUsedTokens = null,
+    long? ContextWindowTokens = null,
+    long? ContextUsageAtMs = null,
+    bool ContextUsageInvalidated = false);
 
 public sealed record SessionTurnDto(
     string Id,

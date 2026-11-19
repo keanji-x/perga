@@ -39,7 +39,8 @@ it('compact POST started and idle phase never imply success', async () => {
 
 it('compact refusal surfaces an error and keeps the old valid reading', async () => {
   const fixture = renderCompactFixture('claude', true, { status: 409, statusText: 'Conflict', body: { error: 'Wait for pending messages and edits to finish before compacting.' } });
-  fixture.run.session.contextUsageRatio = 0.47;
+  fixture.run.session.contextUsedTokens = 120_320;
+  fixture.run.session.contextWindowTokens = 256_000;
   await userEvent.click(await screen.findByRole('button', { name: /Conversation Daily Planner conversation/ }));
   await screen.findByText('Earlier reply.');
   await userEvent.type(screen.getByRole('combobox', { name: 'Message' }), '/compact');
@@ -49,4 +50,5 @@ it('compact refusal surfaces an error and keeps the old valid reading', async ()
   await screen.findByText('Wait for pending messages and edits to finish before compacting.');
   expect(screen.queryByText('已压缩')).toBeNull();
   expect(screen.queryByText('用量待更新')).toBeNull();
+  expect(screen.getByRole('img', { name: '120k of 256k in context' }).getAttribute('data-nc-context-ring')).toBe('47');
 });
