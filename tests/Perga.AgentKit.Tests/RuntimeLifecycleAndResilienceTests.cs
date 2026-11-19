@@ -73,6 +73,10 @@ public sealed class RuntimeLifecycleAndResilienceTests : IDisposable
             for raw in sys.stdin:
                 if not raw.strip():
                     continue
+                frame = json.loads(raw)
+                if frame.get("type") == "control_request":
+                    print(json.dumps({"type": "control_response", "response": {"subtype": "success", "request_id": frame["request_id"], "response": {}}}), flush=True)
+                    continue
                 sys.stdout.write(json.dumps({"type": "system", "subtype": "init", "session_id": "crash_sess"}) + "\n")
                 sys.stdout.flush()
                 sys.stderr.write("boom: simulated segmentation/crash in claude child\n")

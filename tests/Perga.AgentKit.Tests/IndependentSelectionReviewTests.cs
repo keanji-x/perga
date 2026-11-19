@@ -28,10 +28,10 @@ public sealed class IndependentSelectionReviewTests
         await using var session = await runtime.OpenSessionAsync(new HarnessLaunchSpec(
             "acp:custom", "vendor/model-high", fixture.WorkspaceDir, resumeId, null,
             new Dictionary<string, McpServerConfig>()), CancellationToken.None);
-        Assert.True(await session.TrySetModelAsync("vendor/model-high"));
+        Assert.IsType<SessionConfigurationOutcome.Applied>(await session.ConfigureAsync(SessionConfiguration.FromNullable("vendor/model-high")));
         var calls = File.ReadAllLines(log).Select(line => JsonSerializer.Deserialize<JsonElement>(line))
             .Where(call => call.GetProperty("method").GetString() == "session/set_model").ToArray();
-        Assert.Equal(2, calls.Length);
+        Assert.Single(calls);
         Assert.All(calls, call => Assert.Equal("vendor/model-high", call.GetProperty("params").GetProperty("modelId").GetString()));
     }
 
@@ -88,24 +88,30 @@ public sealed class IndependentSelectionReviewTests
         await using var session = await runtime.OpenSessionAsync(new HarnessLaunchSpec(
             "acp:opencode", normal.Model, fixture.WorkspaceDir, resumeId, null,
             new Dictionary<string, McpServerConfig>(), ReasoningEffort: "high"), CancellationToken.None);
+        var expected = new List<string> { "vendor/model-high" };
+        var previous = SessionConfiguration.FromNullable(normal.Model, "high");
         foreach (var selection in catalog)
         {
-            Assert.True(await session.TrySetModelAsync(selection.Model));
-            Assert.True(await session.TrySetModelAsync(selection.Model, "high"));
+            foreach (var effort in new string?[] { null, "high" })
+            {
+                var target = SessionConfiguration.FromNullable(selection.Model, effort);
+                var outcome = await session.ConfigureAsync(target);
+                if (selection.Model != normal.Model && effort is not null ||
+                    resumeId is not null && selection.Model == normal.Model && effort is null)
+                {
+                    Assert.IsType<SessionConfigurationOutcome.Unsupported>(outcome);
+                    continue;
+                }
+                Assert.IsType<SessionConfigurationOutcome.Applied>(outcome);
+                if (target != previous)
+                    expected.Add(selection.Model == normal.Model ? "vendor/model-high" : selection.Model);
+                previous = target;
+            }
         }
-        // The advertised ID retains its identity even with an effort matching the other group.
-        Assert.True(await session.TrySetModelAsync("vendor/model-high", "low"));
+        Assert.IsType<SessionConfigurationOutcome.Unsupported>(await session.ConfigureAsync(SessionConfiguration.FromNullable("vendor/model-high", "low")));
         var actual = File.ReadAllLines(log).Select(line => JsonSerializer.Deserialize<JsonElement>(line))
             .Where(call => call.GetProperty("method").GetString() == "session/set_model")
             .Select(call => call.GetProperty("params").GetProperty("modelId").GetString()).ToArray();
-        var expected = new List<string> { "vendor/model-high" };
-        foreach (var selection in catalog)
-        {
-            var rawId = selection.Model == normal.Model ? "vendor/model-high" : selection.Model;
-            expected.Add(rawId);
-            expected.Add(rawId);
-        }
-        expected.Add("vendor/model-high");
         Assert.Equal(expected, actual);
     }
 }

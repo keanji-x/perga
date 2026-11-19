@@ -71,8 +71,17 @@ public sealed partial class TrackActor
         HarnessLaunchSpec launchSpec,
         CancellationToken ct)
     {
+        var confirmation = agentSession.ConfigurationState;
+        RequireConfirmedConfiguration(session, agentSession, confirmation);
+        await RegisterConfirmedOpenAgentSessionCoreAsync(session, agentSession, launchSpec, confirmation, ct).ConfigureAwait(false);
+    }
+
+    // Call only after validating the complete launch tuple in this mailbox operation.
+    private async Task RegisterConfirmedOpenAgentSessionCoreAsync(
+        AgentSessionDto session, IAgentSession agentSession, HarnessLaunchSpec launchSpec, ConfirmedConfiguration? confirmation, CancellationToken ct)
+    {
         _openSessionHandles[session.Id] = new(agentSession, launchSpec,
-            new(session.Model, session.ReasoningEffort, launchSpec.PermissionMode));
+            SessionConfiguration.FromLaunch(launchSpec), confirmation);
 
         if (session.BoundAttemptId is not null)
         {
@@ -172,7 +181,8 @@ public sealed partial class TrackActor
             return false;
         }
 
-        if ((openSession.Settings.Model, openSession.Settings.ReasoningEffort) != (current.Model, current.ReasoningEffort))
+        if (openSession.Selection != SessionConfiguration.FromNullable(current.Model, current.ReasoningEffort, current.PermissionMode) ||
+            openSession.Confirmation is null || openSession.Confirmation != expectedSession.ConfigurationState)
         {
             return false;
         }

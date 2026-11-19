@@ -15,14 +15,14 @@ public sealed class NativeSettingsReconciliationTests
                 [provider] = new(provider == "codex" ? fixture.MockCodexPath : fixture.MockClaudePath)
             }
         });
-        var settings = new SessionRuntimeSettings("test-model", "high", permissionMode);
+        var settings = SessionConfiguration.FromNullable("test-model", "high", permissionMode);
         await using var session = await runtime.OpenSessionAsync(new HarnessLaunchSpec(
-            provider, settings.Model, fixture.WorkspaceDir, null, null, new Dictionary<string, McpServerConfig>(),
-            ReasoningEffort: settings.ReasoningEffort, PermissionMode: settings.PermissionMode), default);
-        Assert.True(await session.TryReconcileSettingsAsync(settings, default));
-        Assert.False(await session.TryReconcileSettingsAsync(settings with { Model = "other" }, default));
-        Assert.False(await session.TryReconcileSettingsAsync(settings with { ReasoningEffort = "low" }, default));
-        Assert.False(await session.TryReconcileSettingsAsync(settings with { PermissionMode = null }, default));
-        Assert.True(await session.TryReconcileSettingsAsync(settings, default));
+            provider, settings.Model.ValueOrNull, fixture.WorkspaceDir, null, null, new Dictionary<string, McpServerConfig>(),
+            ReasoningEffort: settings.Effort.ValueOrNull, PermissionMode: settings.Permission.ValueOrNull), default);
+        Assert.IsType<SessionConfigurationOutcome.Applied>(await session.ConfigureAsync(settings, default));
+        Assert.IsType<SessionConfigurationOutcome.RequiresReopen>(await session.ConfigureAsync(settings with { Model = new SessionSelection.Explicit("other") }, default));
+        Assert.IsType<SessionConfigurationOutcome.RequiresReopen>(await session.ConfigureAsync(settings with { Effort = new SessionSelection.Explicit("low") }, default));
+        Assert.IsType<SessionConfigurationOutcome.RequiresReopen>(await session.ConfigureAsync(settings with { Permission = new SessionSelection.ProviderDefault() }, default));
+        Assert.IsType<SessionConfigurationOutcome.Applied>(await session.ConfigureAsync(settings, default));
     }
 }

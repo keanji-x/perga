@@ -50,7 +50,7 @@ public sealed partial class TrackActor : IAsyncDisposable
     private readonly Dictionary<string, AskDto> _asks = new(StringComparer.Ordinal);
     private readonly Dictionary<string, TerminalDto> _terminals = new(StringComparer.Ordinal);
     private readonly Dictionary<string, int> _nextTurnIndexBySession = new(StringComparer.Ordinal);
-    private sealed record OpenSessionHandle(IAgentSession Agent, HarnessLaunchSpec LaunchSpec, SessionRuntimeSettings Settings);
+    private sealed record OpenSessionHandle(IAgentSession Agent, HarnessLaunchSpec LaunchSpec, SessionConfiguration Selection, ConfirmedConfiguration? Confirmation);
     private readonly Dictionary<string, OpenSessionHandle> _openSessionHandles = new(StringComparer.Ordinal);
     private readonly SessionTurnScheduler _scheduler;
     private readonly SessionTurnRunner _turnRunner;
@@ -1045,8 +1045,11 @@ public sealed partial class TrackActor : IAsyncDisposable
                 return session;
             }
 
+            var idle = !_scheduler.HasActive(sessionId) && !_scheduler.IsCompacting(sessionId) && !_scheduler.HasResumeHold(sessionId);
+            _openSessionHandles.TryGetValue(sessionId, out var cached);
             var next = session with
             {
+                NativeThreadId = session.NativeThreadId ?? (idle && cached?.Agent.ConfigurationState is not null ? cached.Agent.NativeThreadId : null),
                 PermissionMode = trimmed,
                 UpdatedAtMs = NowMs()
             };
@@ -2680,27 +2683,58 @@ public sealed partial class TrackActor : IAsyncDisposable
         string? overrideSystemPrompt,
         CancellationToken ct)
     {
-        var desired = new SessionRuntimeSettings(session.Model, session.ReasoningEffort, session.PermissionMode);
+        var desired = SessionConfiguration.FromNullable(session.Model, session.ReasoningEffort, session.PermissionMode);
         if (_openSessionHandles.TryGetValue(session.Id, out var handle))
         {
+            // Capture confirmed identity before configuration can partially mutate the provider
+            // or throw. Compaction may have registered it before any prompt persisted it.
+            if (handle.Agent.ConfigurationState is not null && handle.Agent.NativeThreadId is { } confirmedNativeId)
+            {
+                var current = RequireSessionCore(session.Id);
+                if (current.NativeThreadId is null)
+                {
+                    var identified = current with { NativeThreadId = confirmedNativeId, UpdatedAtMs = NowMs() };
+                    await PersistAndEmitSessionUpdatedCoreAsync(identified, identified.UpdatedAtMs, ct).ConfigureAwait(false);
+                }
+                session = session with { NativeThreadId = current.NativeThreadId ?? confirmedNativeId };
+            }
+            SessionConfigurationOutcome outcome;
             try
             {
-                if (await handle.Agent.TryReconcileSettingsAsync(desired, ct).ConfigureAwait(false))
+                outcome = await handle.Agent.ConfigureAsync(desired, ct).ConfigureAwait(false);
+                if (outcome is SessionConfigurationOutcome.Applied applied)
                 {
-                    if (handle.Settings.Model != desired.Model || handle.Settings.ReasoningEffort != desired.ReasoningEffort)
+                    RequireConfirmedConfiguration(session, handle.Agent, applied.Configuration);
+                    if (handle.Confirmation != applied.Configuration)
                         InvalidateContextBindingCore(session.Id);
-                    _openSessionHandles[session.Id] = handle with { Settings = desired };
+                    _openSessionHandles[session.Id] = handle with { Selection = applied.Configuration.Selection, Confirmation = applied.Configuration };
                     return handle.Agent;
                 }
             }
             catch
             {
                 _openSessionHandles.Remove(session.Id);
+                InvalidateContextBindingCore(session.Id);
+                handle.Agent.AttachIdleContextUsageHandler(null);
                 await handle.Agent.DisposeAsync().ConfigureAwait(false);
                 throw;
             }
+
             _openSessionHandles.Remove(session.Id);
+            InvalidateContextBindingCore(session.Id);
+            handle.Agent.AttachIdleContextUsageHandler(null);
             await handle.Agent.DisposeAsync().ConfigureAwait(false);
+            switch (outcome)
+            {
+                case SessionConfigurationOutcome.RequiresReopen:
+                    break;
+                case SessionConfigurationOutcome.Unsupported unsupported:
+                    throw KernelException.InvalidArgument(unsupported.Reason);
+                case SessionConfigurationOutcome.Rejected rejected:
+                    throw KernelException.PreconditionFailed(rejected.Reason);
+                default:
+                    throw KernelException.PreconditionFailed("The provider returned an unknown configuration outcome.");
+            }
         }
 
         var opened = await OpenFreshAgentSessionCoreAsync(session, overrideSystemPrompt, ct).ConfigureAwait(false);
@@ -2714,7 +2748,32 @@ public sealed partial class TrackActor : IAsyncDisposable
         CancellationToken ct)
     {
         var spec = await BuildAgentLaunchSpecCoreAsync(session, overrideSystemPrompt, ct).ConfigureAwait(false);
-        return (await _agentRuntime.OpenSessionAsync(spec, ct).ConfigureAwait(false), spec);
+        IAgentSession opened;
+        try { opened = await _agentRuntime.OpenSessionAsync(spec, ct).ConfigureAwait(false); }
+        catch (SessionConfigurationException error)
+        { throw KernelException.PreconditionFailed(error.Message); }
+        try
+        {
+            if (spec.ResumeNativeThreadId is not null && opened.NativeThreadId != spec.ResumeNativeThreadId)
+                throw KernelException.PreconditionFailed("The provider did not restore the original session.");
+            RequireConfirmedConfiguration(session, opened, opened.ConfigurationState);
+            return (opened, spec);
+        }
+        catch
+        {
+            await opened.DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    private static void RequireConfirmedConfiguration(AgentSessionDto session, IAgentSession agent, ConfirmedConfiguration? confirmed)
+    {
+        // Workers have a separate, versioned per-turn selection/readback contract.
+        if (session.BoundAttemptId is not null) return;
+        var requested = SessionConfiguration.FromNullable(session.Model, session.ReasoningEffort, session.PermissionMode);
+        if (confirmed?.Selection != requested || confirmed != agent.ConfigurationState ||
+            confirmed?.ContextUsageRevision is { } revision && revision != agent.ContextUsageRevision)
+            throw KernelException.PreconditionFailed("The provider did not confirm the complete session configuration.");
     }
 
     private async Task<HarnessLaunchSpec> BuildAgentLaunchSpecCoreAsync(

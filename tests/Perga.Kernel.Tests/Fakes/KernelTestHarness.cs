@@ -1355,7 +1355,6 @@ internal sealed class ConfigurableFakePolicyVm : IPolicyVm
 internal sealed class ScriptableFakeAgentSession : IAgentSession
 {
     private readonly Func<ScriptableFakeAgentSession, TurnInput, CancellationToken, IAsyncEnumerable<UnifiedAgentEvent>> _turnHandler;
-    private SessionRuntimeSettings _appliedSettings;
 
     public ScriptableFakeAgentSession(
         HarnessLaunchSpec launchSpec,
@@ -1363,7 +1362,7 @@ internal sealed class ScriptableFakeAgentSession : IAgentSession
         Func<ScriptableFakeAgentSession, TurnInput, CancellationToken, IAsyncEnumerable<UnifiedAgentEvent>> turnHandler)
     {
         LaunchSpec = launchSpec;
-        _appliedSettings = new(launchSpec.Model, launchSpec.ReasoningEffort, launchSpec.PermissionMode);
+        ConfigurationState = new(SessionConfiguration.FromLaunch(launchSpec));
         NativeThreadId = initialNativeThreadId;
         _turnHandler = turnHandler;
     }
@@ -1418,23 +1417,26 @@ internal sealed class ScriptableFakeAgentSession : IAgentSession
 
     public bool SupportsModelSwitch { get; set; }
     public ConcurrentQueue<string?> ModelSwitches { get; } = new();
-    public Func<SessionRuntimeSettings, CancellationToken, Task<bool>>? ReconcileSettingsHandler { get; set; }
-    public ConcurrentQueue<SessionRuntimeSettings> ReconciledSettings { get; } = new();
-    public async Task<bool> TryReconcileSettingsAsync(SessionRuntimeSettings settings, CancellationToken ct)
+    public SessionConfigurationCapabilities ConfigurationCapabilities => SessionConfigurationCapabilities.LaunchOnly with
     {
-        if (settings == _appliedSettings) return true;
-        ReconciledSettings.Enqueue(settings);
-        var applied = ReconcileSettingsHandler is { } handler ? await handler(settings, ct)
-            : settings.PermissionMode == _appliedSettings.PermissionMode &&
-                await TrySetModelAsync(settings.Model, settings.ReasoningEffort, ct);
-        if (applied) _appliedSettings = settings;
-        return applied;
-    }
-
-    public Task<bool> TrySetModelAsync(string? model, string? reasoningEffort = null, CancellationToken ct = default)
+        Model = SessionConfigurationCapabilities.LaunchDimension() with { LiveChange = SupportsModelSwitch ? ConfigurationSupport.Supported : ConfigurationSupport.Unsupported },
+        Effort = SessionConfigurationCapabilities.LaunchDimension() with { LiveChange = SupportsModelSwitch ? ConfigurationSupport.Supported : ConfigurationSupport.Unsupported }
+    };
+    public ConfirmedConfiguration? ConfigurationState { get; set; }
+    public Func<SessionConfiguration, SessionConfigurationOutcome>? ConfigureHandler { get; set; }
+    public ConcurrentQueue<SessionConfiguration> Configurations { get; } = new();
+    public Task<SessionConfigurationOutcome> ConfigureAsync(SessionConfiguration configuration, CancellationToken ct = default)
     {
-        ModelSwitches.Enqueue(model);
-        return Task.FromResult(SupportsModelSwitch);
+        if (ConfigurationState?.Selection == configuration)
+            return Task.FromResult<SessionConfigurationOutcome>(new SessionConfigurationOutcome.Applied(ConfigurationState));
+        Configurations.Enqueue(configuration);
+        if (ConfigurationState?.Selection.Permission == configuration.Permission)
+            ModelSwitches.Enqueue(configuration.Model.ValueOrNull);
+        var outcome = ConfigureHandler?.Invoke(configuration) ?? ((SupportsModelSwitch && ConfigurationState?.Selection.Permission == configuration.Permission) || ConfigurationState?.Selection == configuration
+            ? (SessionConfigurationOutcome)new SessionConfigurationOutcome.Applied(new(configuration))
+            : new SessionConfigurationOutcome.RequiresReopen("Scripted launch-only configuration."));
+        ConfigurationState = outcome is SessionConfigurationOutcome.Applied applied ? applied.Configuration : null;
+        return Task.FromResult(outcome);
     }
 
     public ValueTask<bool> ResolveNativeCompactSupportAsync(CancellationToken ct) =>

@@ -41,6 +41,7 @@ public sealed class AcpPermissionSwitchTests
         var area = await ctx.Kernel.CreateAreaAsync(new("Removed modes", DefaultCwd: fixture.WorkspaceDir));
         var snap = await ctx.Kernel.CreateTrackAsync(new(AreaId: area.Id, Provider: "acp:opencode", PermissionMode: "act"));
         var id = snap.Track.LeadSessionId!;
+        await ctx.Kernel.UpdateSessionModelAsync(id, new("test-model"));
         Assert.Equal("completed", (await ctx.SendAndWaitForTurnAsync(id, new("first", "first"))).Status);
         using var process = System.Diagnostics.Process.GetProcessById(int.Parse(File.ReadAllText(pidFile)));
         if (operation == "message")
@@ -141,10 +142,10 @@ public sealed class AcpPermissionSwitchTests
         await ctx.SendAndWaitForTurnAsync(id, new("first", "first"));
         var original = Assert.Single(ctx.AgentRuntime.OpenedSessions);
         original.AvailablePermissionModes = Modes;
-        original.ReconcileSettingsHandler = (_, _) => Task.FromResult(true);
+        original.ConfigureHandler = configuration => new SessionConfigurationOutcome.Applied(new(configuration));
         original.SupportsNativeCompact = true;
         await ctx.Kernel.SetSessionPermissionModeAsync(id, "act");
-        Assert.Empty(original.ReconciledSettings);
+        Assert.Empty(original.Configurations);
         if (operation == "compact") await ctx.Kernel.CompactSessionAsync(id);
         else if (operation == "wake")
         {
@@ -153,9 +154,9 @@ public sealed class AcpPermissionSwitchTests
             await ctx.Kernel.WaitForTrackIdleAsync(snap.Track.Id).WaitAsync(TimeSpan.FromSeconds(10));
         }
         else await ctx.SendAndWaitForTurnAsync(id, new("next", "next"));
-        Assert.Equal("act", Assert.Single(original.ReconciledSettings).PermissionMode);
+        Assert.Equal("act", Assert.Single(original.Configurations).Permission.ValueOrNull);
         await ctx.SendAndWaitForTurnAsync(id, new("again", "again"));
-        Assert.Single(original.ReconciledSettings);
+        Assert.Single(original.Configurations);
         Assert.Single(ctx.AgentRuntime.OpenedSessions);
         Assert.False(original.Disposed);
     }
@@ -192,7 +193,7 @@ public sealed class AcpPermissionSwitchTests
         await ctx.SendAndWaitForTurnAsync(id, new("first", "first"));
         var original = Assert.Single(ctx.AgentRuntime.OpenedSessions);
         original.AvailablePermissionModes = Modes;
-        original.ReconcileSettingsHandler = (_, _) => throws ? throw new ArgumentException("invalid mode") : Task.FromResult(false);
+        original.ConfigureHandler = _ => throws ? throw new ArgumentException("invalid mode") : new SessionConfigurationOutcome.RequiresReopen("mode");
         await ctx.Kernel.SetSessionPermissionModeAsync(id, "act");
         ctx.AgentRuntime.OnBeforeOpenSession = _ => throw new IOException("open failed");
         Assert.Equal("failed", (await ctx.SendAndWaitForTurnAsync(id, new("failure", "failure"))).Status);
@@ -233,7 +234,7 @@ public sealed class AcpPermissionSwitchTests
         if (!active) await first;
         var original = Assert.Single(ctx.AgentRuntime.OpenedSessions);
         original.AvailablePermissionModes = Modes;
-        if (reconcile) original.ReconcileSettingsHandler = (_, _) => Task.FromResult(true);
+        if (reconcile) original.ConfigureHandler = configuration => new SessionConfigurationOutcome.Applied(new(configuration));
         var probes = ctx.AgentRuntime.ProviderProbeCalls;
         try
         {
@@ -258,7 +259,7 @@ public sealed class AcpPermissionSwitchTests
         var next = ctx.AgentRuntime.OpenedSessions.Last();
         if (reconcile)
         {
-            Assert.Equal("act", Assert.Single(original.ReconciledSettings).PermissionMode);
+            Assert.Equal("act", Assert.Single(original.Configurations).Permission.ValueOrNull);
             Assert.Equal(active ? 3 : 2, original.RecordedInputs.Count);
         }
         else
