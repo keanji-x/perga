@@ -3,6 +3,7 @@ using System.Text.Json;
 using Dapper;
 using Microsoft.Data.Sqlite;
 using Perga.Contracts;
+using Perga.Kernel.Events;
 using Perga.Kernel.Ports;
 using Perga.ReportDoc;
 
@@ -1862,6 +1863,58 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                         transaction: tx,
                         cancellationToken: innerCt)).ConfigureAwait(false);
 
+                var orphanedHoldAsks = (await conn.QueryAsync<AskRow>(
+                    new CommandDefinition(
+                        """
+                        SELECT a.id AS Id,
+                               a.track_id AS TrackId,
+                               t.area_id AS AreaId,
+                               a.status AS Status,
+                               a.questions_json AS QuestionsJson,
+                               a.answer_json AS AnswerJson,
+                               a.created_at_ms AS CreatedAtMs,
+                               a.answered_at_ms AS AnsweredAtMs,
+                               a.delivery AS Delivery,
+                               a.session_id AS SessionId,
+                               a.turn_id AS TurnId
+                        FROM asks a
+                        JOIN tracks t ON t.id = a.track_id
+                        WHERE LOWER(a.status) = 'open' AND LOWER(a.delivery) = 'hold'
+                        ORDER BY a.created_at_ms ASC, a.id ASC;
+                        """,
+                        transaction: tx,
+                        cancellationToken: innerCt)).ConfigureAwait(false)).ToList();
+
+                if (orphanedHoldAsks.Count > 0)
+                {
+                    await conn.ExecuteAsync(
+                        new CommandDefinition(
+                            """
+                            UPDATE asks
+                            SET status = 'withdrawn'
+                            WHERE LOWER(status) = 'open' AND LOWER(delivery) = 'hold';
+                            """,
+                            transaction: tx,
+                            cancellationToken: innerCt)).ConfigureAwait(false);
+
+                    foreach (var askRow in orphanedHoldAsks)
+                    {
+                        var withdrawn = MapAsk(askRow) with { Status = AskStatus.Withdrawn };
+                        var payload = JsonSerializer.SerializeToElement(withdrawn, SqliteJsonUpcaster.FlexibleJsonOptions);
+                        await InsertEventInternalAsync(
+                            conn,
+                            tx,
+                            new EventEnvelopeDto(
+                                EventId: null,
+                                AreaId: askRow.AreaId,
+                                TrackId: withdrawn.TrackId,
+                                Kind: KernelEventKinds.AskChanged,
+                                Payload: payload,
+                                CreatedAtMs: nowMs),
+                            innerCt).ConfigureAwait(false);
+                    }
+                }
+
                 return affectedTrackIds;
             },
             ct);
@@ -2429,6 +2482,7 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
 
     private sealed class AskRow
     {
+        public string? AreaId { get; init; }
         public string Delivery { get; init; } = string.Empty;
         public string? SessionId { get; init; }
         public string? TurnId { get; init; }

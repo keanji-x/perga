@@ -83,6 +83,7 @@ public interface ITrackReadStore
     Task<IReadOnlyList<EventEnvelopeDto>> ListEventsSinceAsync(long sinceEventId, string? trackId = null, int limit = 500, CancellationToken ct = default);
     Task<IReadOnlyList<TrackOverlayDto>> ListTrackOverlaysAsync(bool includeClosed = false, CancellationToken ct = default);
     Task<string?> FindTrackIdBySessionAsync(string sessionId, CancellationToken ct);
+    Task<AskDto?> GetAskAsync(string askId, CancellationToken ct = default);
 }
 
 public interface ITrackStore : ITrackReadStore

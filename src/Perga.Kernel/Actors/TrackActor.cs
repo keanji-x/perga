@@ -423,7 +423,7 @@ public sealed partial class TrackActor : IAsyncDisposable
             foreach (var turn in _activeTurns.Values.ToArray())
             {
                 turn.Interrupted = true;
-                turn.TurnCts.Cancel();
+                turn.TryCancelTurn();
                 try
                 {
                     await turn.AgentSession.CancelTurnAsync(ct).ConfigureAwait(false);
@@ -1044,20 +1044,22 @@ public sealed partial class TrackActor : IAsyncDisposable
                 return;
             }
 
-            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct, _actorShutdownCts.Token);
+            ct.ThrowIfCancellationRequested();
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(_actorShutdownCts.Token);
             deadline.CancelAfter(ProviderStopGrace);
             active.Interrupted = true;
+            await WithdrawOwnedHoldAsksCoreAsync(active).ConfigureAwait(false);
             try
             {
                 await active.AgentSession.CancelTurnAsync(deadline.Token).WaitAsync(deadline.Token).ConfigureAwait(false);
             }
-            catch (OperationCanceledException) when (!ct.IsCancellationRequested && !_actorShutdownCts.IsCancellationRequested)
+            catch (OperationCanceledException) when (!_actorShutdownCts.IsCancellationRequested)
             {
                 throw KernelException.PreconditionFailed("The provider did not answer the stop request.");
             }
 
             if (!active.AgentSession.RequiresTerminalStop && !_sessionResumeHolds.ContainsKey(sessionId))
-                active.TurnCts.Cancel();
+                active.TryCancelTurn();
         }, ct);
 
     public async Task<AgentSessionDto> CompactSessionAsync(string sessionId, CancellationToken ct = default)
@@ -1347,7 +1349,20 @@ public sealed partial class TrackActor : IAsyncDisposable
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
             if (!_asks.TryGetValue(askId, out var existingAsk))
             {
-                throw KernelException.NotFound($"Ask '{askId}' not found on track '{TrackId}'.");
+                var persistedAsk = await _store.GetAskAsync(askId, ct).ConfigureAwait(false);
+                if (persistedAsk is not null && string.Equals(persistedAsk.TrackId, TrackId, StringComparison.Ordinal))
+                {
+                    if (persistedAsk.Status != AskStatus.Open)
+                    {
+                        throw KernelException.Conflict($"Ask '{askId}' is already '{persistedAsk.Status}'.");
+                    }
+
+                    existingAsk = persistedAsk;
+                }
+                else
+                {
+                    throw KernelException.NotFound($"Ask '{askId}' not found on track '{TrackId}'.");
+                }
             }
 
             if (existingAsk.Status != AskStatus.Open)
@@ -1361,7 +1376,7 @@ public sealed partial class TrackActor : IAsyncDisposable
                  existingAsk.SessionId is null ||
                  (existingAsk.TurnId is not null &&
                   (!_activeTurns.TryGetValue(existingAsk.SessionId, out var owner) || owner.TurnDto.Id != existingAsk.TurnId ||
-                   owner.Interrupted || owner.TurnCts.IsCancellationRequested))))
+                   owner.Interrupted || owner.ApprovalWaitCts.IsCancellationRequested || owner.TurnCts.IsCancellationRequested))))
                 throw KernelException.Conflict("This approval request is no longer pending. Check the current turn before trying again.");
 
             var now = NowMs();
@@ -2900,24 +2915,51 @@ public sealed partial class TrackActor : IAsyncDisposable
                         case UnifiedAgentEvent.ApprovalRequested approval:
                             if (activeTurn.Settings?.ApprovalMode == "deny")
                             {
-                                await activeTurn.AgentSession.RespondApprovalAsync(approval.RequestId, false,
-                                    "The Worker approval mode denies this request.", activeTurn.TurnCts.Token).ConfigureAwait(false);
+                                try
+                                {
+                                    await activeTurn.AgentSession.RespondApprovalAsync(approval.RequestId, false,
+                                        "The Worker approval mode denies this request.", activeTurn.TurnCts.Token).ConfigureAwait(false);
+                                }
+                                catch (Exception ex) when (
+                                    ex is InvalidOperationException or IOException or ObjectDisposedException &&
+                                    (activeTurn.Interrupted || activeTurn.ApprovalWaitCts.IsCancellationRequested))
+                                {
+                                    // Provider cancellation already settled or closed the approval channel.
+                                }
                                 break;
                             }
                             var providerOptions = approval.Options is { Count: > 0 } opts ? opts : null;
                             var options = providerOptions is not null
                                 ? providerOptions.Select(o => o.Label).ToArray()
                                 : new[] { "Approve", "Deny" };
-                            var suspension = await EnqueueAsync(async _ =>
+                            var suspension = await EnqueueAsync<PendingAskSuspension?>(async _ =>
                             {
-                                var susp = await CreateAskSuspensionCoreAsync(
+                                if (activeTurn.Interrupted || activeTurn.ApprovalWaitCts.IsCancellationRequested)
+                                    return null;
+                                return await CreateAskSuspensionCoreAsync(
                                     $"Approve tool '{approval.ToolName}'?",
                                     options,
                                     sessionId,
-                                    activeTurn.TurnCts.Token).ConfigureAwait(false);
-                                activeTurn.OwnedAskIds.Add(susp.Ask.Id);
-                                return susp;
+                                    activeTurn.ApprovalWaitCts.Token).ConfigureAwait(false);
                             }, activeTurn.TurnCts.Token).ConfigureAwait(false);
+
+                            if (suspension is null)
+                            {
+                                try
+                                {
+                                    await activeTurn.AgentSession.RespondApprovalAsync(
+                                        approval.RequestId,
+                                        approved: false,
+                                        selectedOptionId: null,
+                                        reason: "Turn interrupted.",
+                                        activeTurn.TurnCts.Token).ConfigureAwait(false);
+                                }
+                                catch (Exception ex) when (ex is InvalidOperationException or IOException or ObjectDisposedException)
+                                {
+                                    // Provider CancelTurnAsync already drained/settled or closed this approval request.
+                                }
+                                break;
+                            }
 
                             if (suspension.ShouldWakeLead)
                             {
@@ -2925,7 +2967,24 @@ public sealed partial class TrackActor : IAsyncDisposable
                                     .ConfigureAwait(false);
                             }
 
-                            var humanAns = await suspension.WaiterTask.WaitAsync(activeTurn.TurnCts.Token).ConfigureAwait(false);
+                            JsonElement humanAns;
+                            try
+                            {
+                                humanAns = await suspension.WaiterTask.WaitAsync(activeTurn.ApprovalWaitCts.Token).ConfigureAwait(false);
+                            }
+                            catch (OperationCanceledException) when (!activeTurn.TurnCts.IsCancellationRequested)
+                            {
+                                // Approval wait was canceled due to turn interruption/stop observation;
+                                // keep draining StreamTurnAsync to observe the provider's terminal stop event.
+                                break;
+                            }
+
+                            if (activeTurn.Interrupted || activeTurn.ApprovalWaitCts.IsCancellationRequested)
+                            {
+                                // Interrupt/recovery was accepted concurrently with the user answer; never authorize after stop.
+                                break;
+                            }
+
                             string? selectedOptionId = null;
                             bool approved;
                             if (providerOptions is not null &&
@@ -2939,12 +2998,21 @@ public sealed partial class TrackActor : IAsyncDisposable
                             {
                                 approved = AskAnswerEvaluator.IsApproved(humanAns, options);
                             }
-                            await activeTurn.AgentSession.RespondApprovalAsync(
-                                approval.RequestId,
-                                approved,
-                                selectedOptionId,
-                                approved ? null : "Denied by user.",
-                                activeTurn.TurnCts.Token).ConfigureAwait(false);
+                            try
+                            {
+                                await activeTurn.AgentSession.RespondApprovalAsync(
+                                    approval.RequestId,
+                                    approved,
+                                    selectedOptionId,
+                                    approved ? null : "Denied by user.",
+                                    activeTurn.TurnCts.Token).ConfigureAwait(false);
+                            }
+                            catch (Exception ex) when (
+                                ex is InvalidOperationException or IOException or ObjectDisposedException &&
+                                (activeTurn.Interrupted || activeTurn.ApprovalWaitCts.IsCancellationRequested))
+                            {
+                                // Interrupt raced with user answering and already drained or closed the pending provider approval.
+                            }
                             break;
 
                         case UnifiedAgentEvent.ContextUsageUpdated contextUsage:
@@ -3057,6 +3125,7 @@ public sealed partial class TrackActor : IAsyncDisposable
             var finalizeOutcome = await EnqueueAsync<(SessionTurnDto CompletedTurn, bool ShouldAutoCompact)>(async _ =>
             {
                 var currentSession = RequireSessionCore(sessionId);
+                await WithdrawOwnedHoldAsksCoreAsync(activeTurn).ConfigureAwait(false);
                 if (currentSession.BoundAttemptId is { } boundAttemptId && activeTurn.Interrupted &&
                     _activeAttempts.TryGetValue(boundAttemptId, out var pausedAttempt) && pausedAttempt.Paused)
                 {
@@ -3144,6 +3213,7 @@ public sealed partial class TrackActor : IAsyncDisposable
                             if (_activeTurns.TryGetValue(sessionId, out var current) && ReferenceEquals(current, active))
                             {
                                 _activeTurns.Remove(sessionId);
+                                await WithdrawOwnedHoldAsksCoreAsync(active).ConfigureAwait(false);
                                 if (input is null)
                                 {
                                     var idle = RequireSessionCore(sessionId) with { Status = "idle", UpdatedAtMs = NowMs() };
@@ -3158,6 +3228,7 @@ public sealed partial class TrackActor : IAsyncDisposable
                 finally
                 {
                     active.Settled.TrySetResult(false);
+                    active.ApprovalWaitCts.Dispose();
                     active.TurnCts.Dispose();
                 }
             }
@@ -3656,6 +3727,9 @@ public sealed partial class TrackActor : IAsyncDisposable
         AskDelivery delivery = AskDelivery.Wake)
     {
         var now = NowMs();
+        var owner = callerSessionId is not null && _activeTurns.TryGetValue(callerSessionId, out var activeOwner)
+            ? activeOwner
+            : null;
         var ask = new AskDto(
             Id: $"ask_{Guid.NewGuid():N}",
             TrackId: TrackId,
@@ -3666,7 +3740,7 @@ public sealed partial class TrackActor : IAsyncDisposable
             AnsweredAtMs: null,
             Delivery: delivery,
             SessionId: callerSessionId,
-            TurnId: callerSessionId is not null && _activeTurns.TryGetValue(callerSessionId, out var owner) ? owner.TurnDto.Id : null);
+            TurnId: owner?.TurnDto.Id);
 
         if (delivery == AskDelivery.Hold && callerSessionId is null)
             throw KernelException.Forbidden("An approval requires a session.");
@@ -3680,13 +3754,20 @@ public sealed partial class TrackActor : IAsyncDisposable
             CreatedAtMs: now);
         await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
         await _store.UpsertAskAsync(ask, evt, ct).ConfigureAwait(false);
-        await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, evt, ct).ConfigureAwait(false);
 
+        // Once committed in SQLite, register local cache, waiter, and turn ownership before event catch-up
+        // so a broadcast error cannot strand a durable open hold ask without a waiter or withdrawal owner.
         _asks[ask.Id] = ask;
         _pendingAskWaiters[ask.Id] = tcs;
+        if (delivery == AskDelivery.Hold && owner is not null)
+        {
+            owner.OwnedAskIds.Add(ask.Id);
+        }
         // Request cancellation expires approval authority even if the ask stays visible.
         if (ct.CanBeCanceled)
             _ = ct.Register(() => tcs.TrySetCanceled(ct));
+
+        await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, evt, CancellationToken.None).ConfigureAwait(false);
 
         var options = questions[0].Options.Count > 0 ? questions[0].Options : ["Approve", "Deny"];
         var callerIsLead = callerSessionId is not null &&
@@ -3695,6 +3776,60 @@ public sealed partial class TrackActor : IAsyncDisposable
         // If a non-lead session initiated an ask, notify Lead only if desired? No, Ask is for human UI; Lead wakes when answered!
         _ = callerIsLead;
         return new PendingAskSuspension(ask, options, tcs.Task, ShouldWakeLead: false, LeadWakePrompt: null);
+    }
+
+    private async Task WithdrawOwnedHoldAsksCoreAsync(ActiveTurnState turn)
+    {
+        turn.TryCancelApprovalWait();
+
+        foreach (var askId in turn.OwnedAskIds.ToArray())
+        {
+            if (!_asks.TryGetValue(askId, out var ask) ||
+                ask.Delivery != AskDelivery.Hold)
+            {
+                continue;
+            }
+
+            if (_pendingAskWaiters.Remove(askId, out var waiter))
+                waiter.TrySetCanceled();
+
+            if (ask.Status != AskStatus.Open)
+                continue;
+
+            var withdrawn = ask with { Status = AskStatus.Withdrawn };
+            var evt = new EventEnvelopeDto(
+                EventId: null,
+                AreaId: _track.AreaId,
+                TrackId: TrackId,
+                Kind: KernelEventKinds.AskChanged,
+                Payload: JsonHelpers.ToElement(withdrawn),
+                CreatedAtMs: NowMs());
+            try
+            {
+                await _eventHub.EnsureInitializedFromStoreAsync(_store, CancellationToken.None).ConfigureAwait(false);
+                await _store.UpsertAskAsync(withdrawn, evt, CancellationToken.None).ConfigureAwait(false);
+                _asks[askId] = withdrawn;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Trace.TraceWarning(
+                    "Failed to persist withdrawal for hold ask '{0}' on track '{1}': {2}",
+                    askId, TrackId, ex.Message);
+                continue;
+            }
+
+            try
+            {
+                await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, evt, CancellationToken.None).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                // The withdrawal and its event are already durable in SQLite for catch-up; never block turn teardown/cancel.
+                System.Diagnostics.Trace.TraceWarning(
+                    "Failed to broadcast withdrawal for hold ask '{0}' on track '{1}': {2}",
+                    askId, TrackId, ex.Message);
+            }
+        }
     }
 
     private static void RequireAttemptsOutsideVerification(IEnumerable<ActiveAttemptState> attempts)
@@ -3717,7 +3852,7 @@ public sealed partial class TrackActor : IAsyncDisposable
         if (active.SessionId is not null && _activeTurns.TryGetValue(active.SessionId, out var runningTurn))
         {
             runningTurn.Interrupted = true;
-            runningTurn.TurnCts.Cancel();
+            runningTurn.TryCancelTurn();
             try
             {
                 await runningTurn.AgentSession.CancelTurnAsync(ct).ConfigureAwait(false);
@@ -4175,6 +4310,7 @@ public sealed partial class TrackActor : IAsyncDisposable
         public SessionTurnDto TurnDto { get; } = turnDto;
         public IAgentSession AgentSession { get; } = agentSession;
         public CancellationTokenSource TurnCts { get; } = turnCts;
+        public CancellationTokenSource ApprovalWaitCts { get; } = CancellationTokenSource.CreateLinkedTokenSource(turnCts.Token);
         public HashSet<string> OwnedAskIds { get; } = new(StringComparer.Ordinal);
         public TurnActivity Activity { get; } = new();
         public WorkerSettings? Settings { get; init; }
@@ -4183,9 +4319,23 @@ public sealed partial class TrackActor : IAsyncDisposable
         // and a committed write remains authoritative even if its broadcast fails.
         public string? ExecutionModel { get; } = executionModel;
         public bool IsContextUsageInvalidated(AgentSessionDto session) => ExecutionModel != session.Model;
-        public bool Interrupted { get; set; }
-        public bool ProviderAccepted { get; set; }
+        private volatile bool _interrupted;
+        private volatile bool _providerAccepted;
+        public bool Interrupted { get => _interrupted; set => _interrupted = value; }
+        public bool ProviderAccepted { get => _providerAccepted; set => _providerAccepted = value; }
         public TaskCompletionSource<bool> Settled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public void TryCancelApprovalWait()
+        {
+            try { ApprovalWaitCts.Cancel(); }
+            catch (ObjectDisposedException) { }
+        }
+
+        public void TryCancelTurn()
+        {
+            try { TurnCts.Cancel(); }
+            catch (ObjectDisposedException) { }
+        }
     }
 
     private sealed class ActiveAttemptState(

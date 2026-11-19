@@ -19,6 +19,7 @@ public sealed class ClaudeAgentSession : IAgentSession
             new UnboundedChannelOptions { SingleReader = true, SingleWriter = false });
 
         public HashSet<string> StartedToolIds { get; } = new(StringComparer.Ordinal);
+        public ConcurrentDictionary<string, byte> PendingApprovalIds { get; } = new(StringComparer.Ordinal);
         public TokenUsage? LatestAssistantUsage;
         public bool SawStreamedText;
         public bool SawStreamedThinking;
@@ -233,23 +234,38 @@ public sealed class ClaudeAgentSession : IAgentSession
         {
             Interlocked.CompareExchange(ref _currentTurn, null, turnState);
             turnState.CompleteQuietly();
+            foreach (var pendingId in turnState.PendingApprovalIds.Keys)
+            {
+                _pendingApprovals.TryRemove(pendingId, out _);
+            }
             _turnLock.Release();
         }
     }
 
-    public Task CancelTurnAsync(CancellationToken ct)
+    public async Task CancelTurnAsync(CancellationToken ct)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         ct.ThrowIfCancellationRequested();
 
         var turnState = Volatile.Read(ref _currentTurn);
-        if (turnState is not null)
+        if (turnState is null)
         {
-            turnState.CancelRequested = true;
+            return;
+        }
+
+        turnState.CancelRequested = true;
+
+        foreach (var requestId in _pendingApprovals.Keys.ToArray())
+        {
+            if (!_pendingApprovals.TryRemove(requestId, out var pending))
+            {
+                continue;
+            }
+
+            await TryWriteApprovalResponseAsync(pending, approved: false, reason: "Turn was interrupted.", ct).ConfigureAwait(false);
         }
 
         _process.SendInterruptSignal();
-        return Task.CompletedTask;
     }
 
     public async Task RespondApprovalAsync(
@@ -266,6 +282,31 @@ public sealed class ClaudeAgentSession : IAgentSession
             throw new InvalidOperationException($"No pending Claude approval request with id '{requestId}'.");
         }
 
+        await WriteApprovalResponseAsync(pending, approved, reason, ct).ConfigureAwait(false);
+    }
+
+    private async Task TryWriteApprovalResponseAsync(
+        PendingClaudeApproval pending,
+        bool approved,
+        string? reason,
+        CancellationToken ct)
+    {
+        try
+        {
+            await WriteApprovalResponseAsync(pending, approved, reason, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is IOException or ObjectDisposedException or InvalidOperationException)
+        {
+            // Subprocess pipe already closed during cancellation.
+        }
+    }
+
+    private async Task WriteApprovalResponseAsync(
+        PendingClaudeApproval pending,
+        bool approved,
+        string? reason,
+        CancellationToken ct)
+    {
         var innerResponse = new Dictionary<string, object?>
         {
             ["behavior"] = approved ? "allow" : "deny",
@@ -787,7 +828,25 @@ public sealed class ClaudeAgentSession : IAgentSession
                 : JsonRpcStdioConnection.CreateEmptyJsonObject();
 
         _pendingApprovals[requestId] = new PendingClaudeApproval(requestId, inputElement);
-        turnState?.Events.Writer.TryWrite(new UnifiedAgentEvent.ApprovalRequested(requestId, toolName, inputElement));
+        var currentTurn = Volatile.Read(ref _currentTurn);
+        if (currentTurn is null || currentTurn.CancelRequested)
+        {
+            if (_pendingApprovals.TryRemove(requestId, out var cancelled))
+            {
+                _ = TryWriteApprovalResponseAsync(cancelled, approved: false, reason: "Turn was interrupted.", CancellationToken.None);
+            }
+
+            return;
+        }
+
+        currentTurn.PendingApprovalIds[requestId] = 0;
+        if (!currentTurn.Events.Writer.TryWrite(new UnifiedAgentEvent.ApprovalRequested(requestId, toolName, inputElement)))
+        {
+            if (_pendingApprovals.TryRemove(requestId, out var cancelled))
+            {
+                _ = TryWriteApprovalResponseAsync(cancelled, approved: false, reason: "Turn was interrupted.", CancellationToken.None);
+            }
+        }
     }
 
     private void HandleResultFrame(JsonElement root, TurnStreamState turnState)

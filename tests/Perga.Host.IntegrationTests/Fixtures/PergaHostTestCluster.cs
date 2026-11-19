@@ -67,6 +67,7 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
 
     public bool SupportsSteering { get; set; } = true;
     public bool SupportsModelSwitch { get; set; }
+    public bool RequiresTerminalStop { get; set; }
     public Func<CancellationToken, Task<NativeCompactResult>>? CompactHandler { get; set; }
 
     public IReadOnlyCollection<RecordedSessionOpen> OpenedSessions => _openedSessions.ToArray();
@@ -177,6 +178,7 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
             ], "gpt-5.4", "low")
             : null;
         public bool SupportsSessionResume => true;
+        public bool RequiresTerminalStop => _owner.RequiresTerminalStop;
         public bool SupportsScopedClose => _owner.CloseHandler is not null;
 
         public Task<bool> TryCloseSessionAsync(CancellationToken ct) =>

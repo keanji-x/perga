@@ -254,37 +254,28 @@ public sealed partial class TrackActor
                 return;
             attempt.Paused = true;
             _mcpBridge.RevokeSession(sessionId);
-            using var stopTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+            using var stopTimeout = CancellationTokenSource.CreateLinkedTokenSource(_actorShutdownCts.Token);
+            stopTimeout.CancelAfter(TimeSpan.FromSeconds(3));
             await InterruptActiveTurnCoreAsync(active, stopTimeout.Token).ConfigureAwait(false);
         }, ct);
 
     private static async Task InterruptActiveTurnCoreAsync(ActiveTurnState active, CancellationToken ct)
     {
         active.Interrupted = true;
+        active.TryCancelApprovalWait();
         try
         {
             await active.AgentSession.CancelTurnAsync(ct).ConfigureAwait(false);
         }
         finally
         {
-            active.TurnCts.Cancel();
+            active.TryCancelTurn();
         }
     }
 
     private async Task CloseInterruptedWorkerCoreAsync(ActiveTurnState turn, ActiveAttemptState attempt)
     {
-        foreach (var askId in turn.OwnedAskIds)
-        {
-            if (!_asks.TryGetValue(askId, out var ask) || ask.Status != AskStatus.Open)
-                continue;
-            var withdrawn = ask with { Status = AskStatus.Withdrawn };
-            var evt = new EventEnvelopeDto(null, _track.AreaId, TrackId, KernelEventKinds.AskChanged, JsonHelpers.ToElement(withdrawn), NowMs());
-            await _store.UpsertAskAsync(withdrawn, evt, CancellationToken.None).ConfigureAwait(false);
-            _asks[askId] = withdrawn;
-            if (_pendingAskWaiters.Remove(askId, out var waiter))
-                waiter.TrySetCanceled();
-            await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, evt, CancellationToken.None).ConfigureAwait(false);
-        }
+        await WithdrawOwnedHoldAsksCoreAsync(turn).ConfigureAwait(false);
         if (_openAgentSessions.Remove(turn.SessionId, out var agent))
         {
             try

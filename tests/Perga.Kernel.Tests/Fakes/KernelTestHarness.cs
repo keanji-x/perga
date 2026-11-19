@@ -708,6 +708,14 @@ internal sealed class InMemoryTrackStore : ITrackStore
         }
     }
 
+    public Task<AskDto?> GetAskAsync(string askId, CancellationToken ct = default)
+    {
+        lock (_gate)
+        {
+            return Task.FromResult(_asks.TryGetValue(askId, out var ask) ? ask : null);
+        }
+    }
+
     private readonly HashSet<string> _pendingMailWakes = [];
 
     public Task AcknowledgeMailWakeAsync(string mailId, CancellationToken ct)

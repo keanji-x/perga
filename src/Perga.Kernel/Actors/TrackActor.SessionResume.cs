@@ -125,10 +125,15 @@ public sealed partial class TrackActor
             if (string.IsNullOrWhiteSpace(hold.NativeId))
                 throw KernelException.PreconditionFailed("The provider has not returned a session ID to resume.");
 
+            var quiescent = hold.Quiescent;
+            if (!quiescent && active is not null)
+            {
+                active.Interrupted = true;
+                await WithdrawOwnedHoldAsksCoreAsync(active).ConfigureAwait(false);
+            }
             hold.Busy = true;
             NotifyQueueChangedCore(sessionId);
             var completion = new TaskCompletionSource<AgentSessionDto>(TaskCreationOptions.RunContinuationsAsynchronously);
-            var quiescent = hold.Quiescent;
             _ = actor.TrackBackgroundJob(async () =>
             {
                 try
@@ -181,7 +186,7 @@ public sealed partial class TrackActor
                 if (active is not null && _activeTurns.TryGetValue(sessionId, out var current) && ReferenceEquals(current, active))
                 {
                     active.Interrupted = true;
-                    active.TurnCts.Cancel();
+                    active.TryCancelTurn();
                 }
             }, ct).ConfigureAwait(false);
             if (active is not null)
