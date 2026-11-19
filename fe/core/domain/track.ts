@@ -917,6 +917,7 @@ export const TRACK_CREATE_FAILURES: FailureTable<TrackCreateFailure> = Object.fr
     Object.freeze({ code: 'idempotency_key_exhausted', is: 'exhausted' as const }),
     Object.freeze({ code: 'idempotency_key_invalid', is: 'exhausted' as const }),
     Object.freeze({ code: 'idempotency_key_reused', is: 'key-reused' as const }),
+    Object.freeze({ status: Object.freeze([409]), code: 'precondition_failed', is: 'rejected' as const }),
     Object.freeze({ status: Object.freeze([408, 409]), is: 'unconfirmed' as const }),
     Object.freeze({ status: Object.freeze({ from: 400, to: 499 }), is: 'rejected' as const }),
   ]),

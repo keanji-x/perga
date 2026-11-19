@@ -20,7 +20,7 @@ internal static class RuntimePermissionModes
         return selected;
     }
 
-    internal static async Task<string?> ResolveAsync(IAgentRuntime runtime, string provider, string? requested, CancellationToken ct, string? cwd = null)
+    internal static async Task<string?> ResolveAsync(IAgentRuntime runtime, string provider, string? requested, CancellationToken ct, OsSandboxMode sandbox, IReadOnlyList<OverlayMountSpec>? overlayMounts, string? cwd = null)
     {
         if (provider.StartsWith("acp:", StringComparison.OrdinalIgnoreCase) && string.IsNullOrWhiteSpace(requested)) return null;
         IReadOnlyList<ProviderStatus> statuses;
@@ -28,7 +28,7 @@ internal static class RuntimePermissionModes
         {
             if (provider.StartsWith("acp:", StringComparison.OrdinalIgnoreCase))
             {
-                var modes = await runtime.ProbePermissionModesAsync(provider, cwd, ct).ConfigureAwait(false);
+                var modes = await runtime.ProbePermissionModesAsync(provider, cwd, sandbox, overlayMounts, ct).ConfigureAwait(false);
                 statuses = [new ProviderStatus(provider, true, null, null, [], PermissionModes: modes)];
             }
             else statuses = await runtime.ProbeProvidersAsync(ct).ConfigureAwait(false);

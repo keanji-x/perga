@@ -695,7 +695,7 @@ public sealed partial class PergaKernelService : IPergaKernel
 
         var leadProvider = string.IsNullOrWhiteSpace(req.Provider) ? _options.DefaultProvider
             : TaskBlockSynchronizer.NormalizeProviderId(req.Provider) ?? req.Provider.Trim();
-        var leadPermissionMode = await RuntimePermissionModes.ResolveAsync(_agentRuntime, leadProvider, req.PermissionMode, ct, source).ConfigureAwait(false);
+        var leadPermissionMode = await RuntimePermissionModes.ResolveAsync(_agentRuntime, leadProvider, req.PermissionMode, ct, _options.LeadSandboxMode, null, source).ConfigureAwait(false);
         var leadSession = new AgentSessionDto(
             Id: leadSessionId,
             TrackId: trackId,

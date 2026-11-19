@@ -16,6 +16,26 @@ public sealed class TrackCreationTests
     private static readonly TimeSpan Deadline = TimeSpan.FromSeconds(10);
 
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task FailedOrEmptyAcpDiscoveryReturnsPreconditionFailedWithoutCreatingTrack(bool throws)
+    {
+        await using var host = new PergaHostTestCluster();
+        host.AgentRuntime.FailPermissionDiscovery = throws;
+        host.AgentRuntime.AcpPermissionModes = [];
+        var areaId = await CreateAreaAsync(host);
+        using var response = await PostAsync(host, "/api/v1/tracks", "unavailable-acp-modes",
+            new { areaId, provider = "acp:antigravity", permissionMode = "plan" });
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        using var failure = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal("precondition_failed", failure.RootElement.GetProperty("code").GetString());
+        Assert.Contains("Retry discovery", failure.RootElement.GetProperty("error").GetString());
+        using var tracks = await host.Client.GetAsync($"/api/v1/areas/{areaId}/tracks");
+        Assert.Empty((await ReadAsync(tracks)).EnumerateArray());
+        Assert.Empty(host.AgentRuntime.OpenedSessions);
+    }
+
+    [Theory]
     [InlineData(null, null, HttpStatusCode.OK)]
     [InlineData("act", "act", HttpStatusCode.OK)]
     [InlineData("unknown", null, HttpStatusCode.BadRequest)]

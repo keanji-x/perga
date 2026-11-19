@@ -8,6 +8,61 @@ namespace Perga.Kernel.Tests;
 
 public sealed class SessionStreamingAndCompactionTests
 {
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(2)]
+    public async Task PermissionDiscoveryUsesOwningSandboxAndMountedOverlaysEvenWhenValidationFails(int failure)
+    {
+        await using var ctx = new KernelTestContext(new KernelOptions
+        {
+            LeadSandboxMode = OsSandboxMode.ReadOnlyBwrap,
+            FreeSubagentSandboxMode = OsSandboxMode.WorkspaceWriteBwrap,
+            ActorEvictionSweepInterval = TimeSpan.Zero
+        });
+        ctx.DirectDriver.OverlayLayersToInject = [new(["/lower"], "/upper", "/work", "/merged")];
+        ctx.AgentRuntime.PermissionModeProbe = (_, _) => [new("plan", "Plan", "", "neutral", true)];
+        var area = await ctx.Kernel.CreateAreaAsync(new("Isolation"));
+        var snap = await ctx.Kernel.CreateTrackAsync(new(AreaId: area.Id, Provider: "acp:custom", PermissionMode: "plan"));
+        var creation = Assert.Single(ctx.AgentRuntime.PermissionModeProbeIsolation);
+        Assert.Equal(OsSandboxMode.ReadOnlyBwrap, creation.Sandbox);
+        Assert.Null(creation.Overlays); // Source validation precedes workspace preparation.
+        await ctx.Kernel.WaitForTrackIdleAsync(snap.Track.Id);
+        var sub = await ctx.Kernel.CreateSubagentSessionAsync(snap.Track.Id, new(Provider: "acp:custom", PermissionMode: "plan"));
+        Assert.Equal(OsSandboxMode.WorkspaceWriteBwrap, ctx.AgentRuntime.PermissionModeProbeIsolation.Last().Sandbox);
+        Assert.Equal("/merged", Assert.Single(ctx.AgentRuntime.PermissionModeProbeIsolation.Last().Overlays!).TargetPath);
+        foreach (var (id, sandbox) in new[] { (snap.Track.LeadSessionId!, OsSandboxMode.ReadOnlyBwrap), (sub.Id, OsSandboxMode.WorkspaceWriteBwrap) })
+        {
+            await ctx.Kernel.SetSessionPermissionModeAsync(id, "plan");
+            var probe = ctx.AgentRuntime.PermissionModeProbeIsolation.Last();
+            Assert.Equal(sandbox, probe.Sandbox);
+            Assert.Equal("/merged", Assert.Single(probe.Overlays!).TargetPath);
+        }
+        ctx.AgentRuntime.PermissionModeProbe = (_, _) => failure switch
+        {
+            1 => throw new IOException("offline"),
+            2 => [],
+            _ => [new("plan", "Plan", "", "neutral", true)]
+        };
+        foreach (var (id, sandbox) in new[] { (snap.Track.LeadSessionId!, OsSandboxMode.ReadOnlyBwrap), (sub.Id, OsSandboxMode.WorkspaceWriteBwrap) })
+        {
+            var error = await Assert.ThrowsAsync<KernelException>(() => ctx.Kernel.SetSessionPermissionModeAsync(id, "invalid"));
+            Assert.Equal(failure != 0 ? KernelErrorCode.PreconditionFailed : KernelErrorCode.InvalidArgument, error.Code);
+            var probe = ctx.AgentRuntime.PermissionModeProbeIsolation.Last();
+            Assert.Equal(sandbox, probe.Sandbox);
+            Assert.Equal("/merged", Assert.Single(probe.Overlays!).TargetPath);
+            Assert.Equal("plan", (await ctx.Kernel.ListSessionsAsync(snap.Track.Id)).Single(session => session.Id == id).PermissionMode);
+        }
+        var failedSub = await Assert.ThrowsAsync<KernelException>(() => ctx.Kernel.CreateSubagentSessionAsync(snap.Track.Id, new(Provider: "acp:custom", PermissionMode: "invalid")));
+        Assert.Equal(failure != 0 ? KernelErrorCode.PreconditionFailed : KernelErrorCode.InvalidArgument, failedSub.Code);
+        var failedSubProbe = ctx.AgentRuntime.PermissionModeProbeIsolation.Last();
+        Assert.Equal(OsSandboxMode.WorkspaceWriteBwrap, failedSubProbe.Sandbox);
+        Assert.Equal("/merged", Assert.Single(failedSubProbe.Overlays!).TargetPath);
+        var failedCreate = await Assert.ThrowsAsync<KernelException>(() => ctx.Kernel.CreateTrackAsync(new(AreaId: area.Id, Provider: "acp:custom", PermissionMode: "invalid")));
+        Assert.Equal(failure != 0 ? KernelErrorCode.PreconditionFailed : KernelErrorCode.InvalidArgument, failedCreate.Code);
+        Assert.Equal(OsSandboxMode.ReadOnlyBwrap, ctx.AgentRuntime.PermissionModeProbeIsolation.Last().Sandbox);
+    }
+
     [Fact]
     public async Task RuntimePermissionModesApplyBeforeBootstrapToTracksSessionsAndLaunch()
     {

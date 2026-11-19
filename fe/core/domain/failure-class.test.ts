@@ -22,6 +22,7 @@ import {
   PLUGIN_CONFIG_FAILURES, PLUGIN_CONFIG_RESET_OFFERS, PLUGIN_INSTALL_FAILURES, PLUGIN_INSTALL_RETRY_FAILURES,
   PLUGIN_RELOAD_BEFORE_STOP, PLUGIN_RELOAD_FAILURES, PLUGIN_TOGGLE_FAILURES, PLUGIN_UNINSTALL_FAILURES,
 } from './plugins.js';
+import { PLANNER_PERMISSION_MODE_FAILURES } from './planner-permission-mode.js';
 import { SETTINGS_FAILURES } from './settings.js';
 import { PROBE_FAILURES } from './read-failure.js';
 import { CARD_CREATE_FAILURES, TRACK_CREATE_FAILURES, TRACK_PATCH_FAILURES } from './track.js';
@@ -102,7 +103,12 @@ const cases: ReadonlyArray<readonly [string, FailureTable<string>, ReadonlyArray
     [http(500, 'internal'), 'unknown'], [http(503, 'service_unavailable'), 'unknown'],
     [transport, 'unknown'], [decode, 'unknown'], [null, 'unknown'],
   ]],
+  ['PUT /sessions/permission-mode', PLANNER_PERMISSION_MODE_FAILURES, [
+    [http(409, 'precondition_failed'), 'refused'], [http(409, 'conflict'), 'unknown'],
+    [http(500), 'unknown'], [transport, 'unknown'],
+  ]],
   ['POST /tracks', TRACK_CREATE_FAILURES, [
+    [http(409, 'precondition_failed'), 'rejected'],
     [http(409, 'idempotency_key_exhausted'), 'exhausted'],
     /* A key bound to another create, or to one the server can no longer compare: final. */
     [http(409, 'idempotency_key_reused'), 'key-reused'],

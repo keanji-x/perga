@@ -142,7 +142,7 @@ public sealed class AgentRuntime : IAgentRuntime
     }
 
     public async Task<IReadOnlyList<PermissionModeOption>> ProbePermissionModesAsync(
-        string provider, string? cwd, CancellationToken ct)
+        string provider, string? cwd, OsSandboxMode sandbox, IReadOnlyList<OverlayMountSpec>? overlayMounts, CancellationToken ct)
     {
         if (!provider.StartsWith("acp:", StringComparison.OrdinalIgnoreCase))
             return ProviderPermissionModes.GetModesForProvider(provider);
@@ -153,7 +153,7 @@ public sealed class AgentRuntime : IAgentRuntime
         probeCts.CancelAfter(GetModelProbeTimeout());
         await using var session = await OpenSessionAsync(new HarnessLaunchSpec(
             provider, null, cwd ?? Path.GetTempPath(), null, null,
-            new Dictionary<string, McpServerConfig>()), probeCts.Token).ConfigureAwait(false);
+            new Dictionary<string, McpServerConfig>(), Sandbox: sandbox, OverlayMounts: overlayMounts), probeCts.Token).ConfigureAwait(false);
         return ((AcpAgentSession)session).AvailablePermissionModes;
     }
 

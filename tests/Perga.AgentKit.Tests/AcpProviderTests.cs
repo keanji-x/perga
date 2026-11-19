@@ -23,6 +23,53 @@ public sealed class AcpProviderTests : IDisposable
             }
         });
 
+    [Theory]
+    [InlineData(OsSandboxMode.ReadOnlyBwrap)]
+    [InlineData(OsSandboxMode.WorkspaceWriteBwrap)]
+    public async Task PermissionDiscoveryPassesSandboxAndOverlaysToProcessLaunch(OsSandboxMode sandbox)
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var wrapper = Path.Combine(_fixture.RootDir, "record-bwrap");
+        var log = Path.Combine(_fixture.RootDir, "sandbox-args");
+        File.WriteAllText(wrapper, """
+            #!/bin/sh
+            printf '%s\n' "$@" > "$SANDBOX_LOG"
+            while [ "$1" != "--" ]; do shift; done
+            shift
+            exec "$@"
+            """);
+        File.SetUnixFileMode(wrapper, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        var lower = Path.Combine(_fixture.RootDir, "lower");
+        Directory.CreateDirectory(lower);
+        await using var runtime = new AgentRuntime(new AgentRuntimeOptions
+        {
+            Sandbox = new OsSandboxOptions
+            {
+                PlatformOverride = System.Runtime.InteropServices.OSPlatform.Linux,
+                BwrapExecutablePath = wrapper,
+                BwrapVersionOverride = new Version(0, 10, 0)
+            },
+            ProviderOverrides = new Dictionary<string, ProviderCommandOverride>
+            {
+                ["acp:antigravity"] = new(_fixture.MockAcpPath, Env: new Dictionary<string, string>
+                {
+                    ["SANDBOX_LOG"] = log,
+                    ["MOCK_ACP_MODELS"] = """{"modes":{"currentModeId":"plan","availableModes":[{"id":"plan","name":"Plan"}]}}"""
+                })
+            }
+        });
+        var modes = await runtime.ProbePermissionModesAsync("acp:antigravity", _fixture.WorkspaceDir,
+            sandbox, [new([lower], null, null, _fixture.WorkspaceDir)], CancellationToken.None);
+        Assert.Equal("plan", Assert.Single(modes).Id);
+        var args = File.ReadAllLines(log);
+        Assert.Contains("--overlay-src", args);
+        Assert.Contains(lower, args);
+        Assert.Contains(_fixture.WorkspaceDir, args);
+        var workspaceBind = Enumerable.Range(0, args.Length - 2).Single(index =>
+            args[index + 1] == _fixture.WorkspaceDir && args[index + 2] == _fixture.WorkspaceDir);
+        Assert.Equal(sandbox == OsSandboxMode.ReadOnlyBwrap ? "--ro-bind" : "--bind", args[workspaceBind]);
+    }
+
     [Fact]
     public async Task PermissionModeProbeUsesWorkspaceAndNullLaunchKeepsWorkspaceDefault()
     {
@@ -34,9 +81,9 @@ public sealed class AcpProviderTests : IDisposable
         });
         var payload = """{"modes":{"currentModeId":"project-plan","availableModes":[{"id":"project-plan","name":"Project plan"}]}}""";
         File.WriteAllText(Path.Combine(_fixture.WorkspaceDir, "permission-modes.json"), payload);
-        var modes = await runtime.ProbePermissionModesAsync("acp:antigravity", _fixture.WorkspaceDir, CancellationToken.None);
+        var modes = await runtime.ProbePermissionModesAsync("acp:antigravity", _fixture.WorkspaceDir, OsSandboxMode.None, null, CancellationToken.None);
         Assert.Equal("project-plan", Assert.Single(modes).Id);
-        Assert.Empty(await runtime.ProbePermissionModesAsync("acp:antigravity", _fixture.RootDir, CancellationToken.None));
+        Assert.Empty(await runtime.ProbePermissionModesAsync("acp:antigravity", _fixture.RootDir, OsSandboxMode.None, null, CancellationToken.None));
         await using var session = await runtime.OpenSessionAsync(new HarnessLaunchSpec(
             "acp:antigravity", null, _fixture.WorkspaceDir, null, null,
             new Dictionary<string, McpServerConfig>()), CancellationToken.None);

@@ -15,10 +15,10 @@ import { WEB_COMPAT_VERSION } from '../providers/public.tsx';
 
 afterEach(async () => { cleanup(); document.getElementById('root')?.remove(); await page.viewport(1280, 720); });
 
-function mount() {
+function mount(refuseDiscovery = false) {
   const creates: ApiRequest[] = [];
   const bootstrap = { version: 'test', providers: [
-    { provider: 'codex', available: true, models: ['gpt-test'], permissionModes: [
+    { provider: refuseDiscovery ? 'acp:opencode' : 'codex', available: true, models: ['gpt-test'], permissionModes: [
       { id: 'inspect-live', label: 'Inspect live', description: 'From server', tone: 'neutral', isDefault: true },
       { id: 'act-live', label: 'Act live', description: 'From server', tone: 'warning', isDefault: false },
     ] },
@@ -27,6 +27,8 @@ function mount() {
   const transport: ApiTransportPort = { send(request) {
     if (request.method === 'POST' && request.path === '/api/v1/tracks') {
       creates.push(request);
+      if (refuseDiscovery) return Promise.resolve({ status: 409, statusText: 'Conflict',
+        body: { code: 'precondition_failed', error: 'Permission modes are unavailable. Retry discovery.' } });
       return new Promise(() => undefined);
     }
     const body = request.path === '/api/v1/areas'
@@ -53,6 +55,25 @@ it.each([1280, 390])('sends a backend mode selected on the new-track page (%ipx)
   await expect.poll(() => creates.length).toBe(1);
   expect(creates[0]?.body).toMatchObject({ permissionMode: 'act-live' });
   expect(document.documentElement.scrollWidth).toBe(width);
+});
+
+it('unlocks the picker and shows the reason after a first discovery refusal', async () => {
+  const { creates } = mount(true);
+  await page.getByRole('button', { name: /^Model:/ }).click();
+  await page.getByRole('group', { name: 'Providers' }).getByRole('radio', { name: 'OpenCode', exact: true }).click();
+  await page.getByRole('group', { name: 'Models' }).getByRole('radio', { name: 'gpt-test', exact: true }).click();
+  await userEvent.keyboard('{Escape}');
+  await page.getByRole('button', { name: 'Approvals: Inspect live' }).click();
+  await page.getByRole('menuitem', { name: /^Act live/ }).click();
+  await page.getByRole('combobox', { name: 'What this track should do' }).fill('Discover modes');
+  await page.getByRole('button', { name: 'Create track' }).click();
+  await expect.element(page.getByText('Permission modes are unavailable. Retry discovery.', { exact: false })).toBeVisible();
+  await expect.element(page.getByRole('button', { name: 'Approvals: Act live' })).toBeEnabled();
+  await page.getByRole('button', { name: 'Approvals: Act live' }).click();
+  await page.getByRole('menuitem', { name: /^Inspect live/ }).click();
+  await page.getByRole('button', { name: 'Create track' }).click();
+  await expect.poll(() => creates.length).toBe(2);
+  expect(creates[1]?.body).toMatchObject({ permissionMode: 'inspect-live' });
 });
 
 it('clears the mode on a provider switch and hides an empty provider list', async () => {

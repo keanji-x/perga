@@ -118,8 +118,9 @@ public interface IAgentSession : IAsyncDisposable
 public interface IAgentRuntime : IAsyncDisposable
 {
     Task<IReadOnlyList<ProviderStatus>> ProbeProvidersAsync(CancellationToken ct);
+    // Workspace probes require the owning session's effective isolation, even if discovery fails.
     // An empty catalogue means discovery is unavailable, not an authoritative rejection.
-    async Task<IReadOnlyList<PermissionModeOption>> ProbePermissionModesAsync(string provider, string? cwd, CancellationToken ct) =>
+    async Task<IReadOnlyList<PermissionModeOption>> ProbePermissionModesAsync(string provider, string? cwd, OsSandboxMode sandbox, IReadOnlyList<OverlayMountSpec>? overlayMounts, CancellationToken ct) =>
         (await ProbeProvidersAsync(ct).ConfigureAwait(false))
             .FirstOrDefault(status => string.Equals(status.Provider, provider, StringComparison.OrdinalIgnoreCase))?.PermissionModes ?? [];
 

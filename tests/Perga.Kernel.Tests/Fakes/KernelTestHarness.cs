@@ -1407,11 +1407,13 @@ internal sealed class ScriptableFakeAgentRuntime : IAgentRuntime
         [new ProviderStatus("codex", true, "1.0.0", null, ["gpt-5"])];
 
     public Func<string, string?, IReadOnlyList<PermissionModeOption>>? PermissionModeProbe { get; set; }
+    public List<(OsSandboxMode Sandbox, IReadOnlyList<OverlayMountSpec>? Overlays)> PermissionModeProbeIsolation { get; } = [];
     public int PermissionModeProbeCalls { get; private set; }
 
-    public Task<IReadOnlyList<PermissionModeOption>> ProbePermissionModesAsync(string provider, string? cwd, CancellationToken ct)
+    public Task<IReadOnlyList<PermissionModeOption>> ProbePermissionModesAsync(string provider, string? cwd, OsSandboxMode sandbox, IReadOnlyList<OverlayMountSpec>? overlayMounts, CancellationToken ct)
     {
         PermissionModeProbeCalls++;
+        PermissionModeProbeIsolation.Add((sandbox, overlayMounts));
         return Task.FromResult(PermissionModeProbe is { } probe ? probe(provider, cwd)
             : Providers.FirstOrDefault(status => status.Provider == provider)?.PermissionModes ?? []);
     }

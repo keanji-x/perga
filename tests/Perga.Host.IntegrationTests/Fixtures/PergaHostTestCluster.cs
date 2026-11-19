@@ -69,6 +69,7 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
 
     public IReadOnlyCollection<RecordedSessionOpen> OpenedSessions => _openedSessions.ToArray();
     public IReadOnlyCollection<RecordedTurnExecution> ExecutedTurns => _executedTurns.ToArray();
+    public bool FailPermissionDiscovery { get; set; }
     public IReadOnlyList<PermissionModeOption>? AcpPermissionModes { get; set; }
 
     public int ProbeCount => Volatile.Read(ref _probeCount);
@@ -83,6 +84,13 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
     public void SetSteerHandler(Func<string, Task<bool>> handler)
     {
         _steerHandler = handler;
+    }
+
+    public Task<IReadOnlyList<PermissionModeOption>> ProbePermissionModesAsync(
+        string provider, string? cwd, OsSandboxMode sandbox, IReadOnlyList<OverlayMountSpec>? overlayMounts, CancellationToken ct)
+    {
+        if (FailPermissionDiscovery) throw new IOException("Discovery unavailable");
+        return Task.FromResult(AcpPermissionModes ?? (IReadOnlyList<PermissionModeOption>)[]);
     }
 
     public Task<IReadOnlyList<ProviderStatus>> ProbeProvidersAsync(CancellationToken ct)

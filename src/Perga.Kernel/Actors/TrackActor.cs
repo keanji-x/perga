@@ -762,14 +762,29 @@ public sealed partial class TrackActor : IAsyncDisposable
         }, ct);
     }
 
+    private async Task<string?> ResolveSessionPermissionModeCoreAsync(
+        string provider, string? requested, bool isLead, CancellationToken ct)
+    {
+        var cwd = string.IsNullOrWhiteSpace(_track.Cwd) ? _workspacePreparation?.Request.SourcePath : _track.Cwd;
+        IReadOnlyList<OverlayMountSpec>? overlays = null;
+        if (provider.StartsWith("acp:", StringComparison.OrdinalIgnoreCase)
+            && !string.IsNullOrWhiteSpace(requested) && !string.IsNullOrWhiteSpace(_track.Cwd))
+        {
+            var mounted = await EnsureWorkspaceMountedCoreAsync(ct).ConfigureAwait(false);
+            cwd = mounted.MergedCwd;
+            overlays = MapOverlayLayers(mounted.ProcessOverlayLayers);
+        }
+        return await RuntimePermissionModes.ResolveAsync(_agentRuntime, provider, requested, ct,
+            isLead ? _options.LeadSandboxMode : _options.FreeSubagentSandboxMode, overlays, cwd).ConfigureAwait(false);
+    }
+
     private async Task<AgentSessionDto> NewSubagentSessionCoreAsync(CreateSessionRequest req, CancellationToken ct)
     {
         var now = NowMs();
         var provider = string.IsNullOrWhiteSpace(req.Provider)
             ? GetDefaultProviderCore()
             : (TaskBlockSynchronizer.NormalizeProviderId(req.Provider) ?? req.Provider!.Trim());
-        var permissionMode = await RuntimePermissionModes.ResolveAsync(_agentRuntime, provider, req.PermissionMode, ct,
-            string.IsNullOrWhiteSpace(_track.Cwd) ? _workspacePreparation?.Request.SourcePath : _track.Cwd).ConfigureAwait(false);
+        var permissionMode = await ResolveSessionPermissionModeCoreAsync(provider, req.PermissionMode, isLead: false, ct).ConfigureAwait(false);
 
         return new AgentSessionDto(
             Id: $"ses_{Guid.NewGuid():N}",
@@ -847,7 +862,7 @@ public sealed partial class TrackActor : IAsyncDisposable
                 : existing.ArchivedAtMs;
             var nextNativeThreadId = providerChanged ? null : existing.NativeThreadId;
             var nextPermissionMode = providerChanged
-                ? await RuntimePermissionModes.ResolveAsync(_agentRuntime, nextProvider, null, ct).ConfigureAwait(false)
+                ? await ResolveSessionPermissionModeCoreAsync(nextProvider, null, existing.IsLead, ct).ConfigureAwait(false)
                 : existing.PermissionMode;
 
             var updated = existing with
@@ -1063,8 +1078,7 @@ public sealed partial class TrackActor : IAsyncDisposable
 
             if (string.IsNullOrWhiteSpace(permissionMode))
                 throw KernelException.InvalidArgument("Permission mode is required.");
-            var trimmed = await RuntimePermissionModes.ResolveAsync(_agentRuntime, session.Provider, permissionMode, ct,
-                string.IsNullOrWhiteSpace(_track.Cwd) ? _workspacePreparation?.Request.SourcePath : _track.Cwd).ConfigureAwait(false);
+            var trimmed = await ResolveSessionPermissionModeCoreAsync(session.Provider, permissionMode, session.IsLead, ct).ConfigureAwait(false);
             if (string.Equals(session.PermissionMode, trimmed, StringComparison.Ordinal))
             {
                 return session;
@@ -2119,7 +2133,7 @@ public sealed partial class TrackActor : IAsyncDisposable
             ArchivedAtMs: null,
             CreatedAtMs: now,
             UpdatedAtMs: now,
-            PermissionMode: await RuntimePermissionModes.ResolveAsync(_agentRuntime, workerProvider, null, ct).ConfigureAwait(false));
+            PermissionMode: await RuntimePermissionModes.ResolveAsync(_agentRuntime, workerProvider, null, ct, task.Access == AccessMode.ReadOnly ? _options.ReadOnlyTaskSandboxMode : _options.ReadWriteTaskSandboxMode, null).ConfigureAwait(false));
 
         var runningTask = task with { Status = TaskRunStatus.Running, StatusDetail = "Allocating workspace.",
             LatestAttemptId = attemptId, UpdatedAtMs = now };
