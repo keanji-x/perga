@@ -14,7 +14,7 @@ import { Icon as AstryxIcon } from '@astryxdesign/core/Icon';
 import { Popover } from '@astryxdesign/core/Popover';
 import { Text } from '@astryxdesign/core/Text';
 import { VisuallyHidden } from '@astryxdesign/core/VisuallyHidden';
-import { useRef, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
+import { useCallback, useEffect, useRef, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
 
 import type { AgentProvider } from '../../../../../core/api/generated/wire.ts';
 import type { PermissionModeOptionDto } from '../../../../../core/api/perga-v1.ts';
@@ -95,18 +95,49 @@ function visibleModelGroups<Provider extends string>(groups: readonly ModelGroup
     && (!legacyPresentation(group.provider)?.hiddenUntilKnown || (group.availability !== null && group.catalog !== null))));
 }
 
-/**
- * Escape closes an open menu and returns focus to its trigger. A host Dialog's document listener would otherwise take
- * Escape first and the trigger would not get its focus back.
- */
-function closeOnEscape(open: boolean, setOpen: (open: boolean) => void, host: RefObject<HTMLSpanElement | null>) {
-  return (event: KeyboardEvent<HTMLSpanElement>) => {
-    if (event.key !== 'Escape' || !open) return;
+/** Keep Escape inside a host Dialog, then restore focus only while it still belongs to this pill. */
+function useEscapeFocus(open: boolean, setOpen: (open: boolean) => void, host: RefObject<HTMLSpanElement | null>) {
+  const pendingFrame = useRef<number | null>(null);
+  const cancelRestore = useCallback(() => {
+    if (pendingFrame.current === null) return;
+    cancelAnimationFrame(pendingFrame.current);
+    pendingFrame.current = null;
+  }, []);
+
+  useEffect(() => cancelRestore, [cancelRestore]);
+  useEffect(() => {
+    if (open) cancelRestore();
+  }, [open, cancelRestore]);
+
+  const onOpenChange = (next: boolean) => {
+    // Controlled Astryx layers acknowledge a close again from onHide. Keep that
+    // acknowledgement from cancelling the restore for the same Escape.
+    if (next !== open) cancelRestore();
+    setOpen(next);
+  };
+  const onEscape = (event: KeyboardEvent<HTMLSpanElement>) => {
+    if (event.key !== 'Escape') return;
+    cancelRestore();
+    if (!open) return;
     event.preventDefault();
     event.stopPropagation();
+    const popup = event.target instanceof Element
+      ? event.target.closest('[role="dialog"], [role="menu"]')
+      : null;
+    // Escape can start on the trigger inside a host Dialog. That parent
+    // dialog is outside the pill and must not expand our focus boundary.
+    const closingPopup = popup?.contains(event.currentTarget) ? null : popup;
     setOpen(false);
-    requestAnimationFrame(() => host.current?.querySelector('button')?.focus());
+    pendingFrame.current = requestAnimationFrame(() => {
+      pendingFrame.current = null;
+      const active = document.activeElement;
+      if (active === null || active === document.body || active === document.documentElement
+        || host.current?.contains(active) || closingPopup?.contains(active)) {
+        host.current?.querySelector('button')?.focus();
+      }
+    });
   };
+  return { onEscape, onOpenChange };
 }
 
 /** The name of the default a catalog says is followed (for Claude, the model its CLI default resolves to), or `null` when it cannot say. */
@@ -174,6 +205,7 @@ export function ModelPill<Provider extends string = AgentProvider>({
   const [viewedProvider, setViewedProvider] = useState<Provider>(provider);
   const [dragEffortIndex, setDragEffortIndex] = useState<number | null>(null);
   const hostRef = useRef<HTMLSpanElement | null>(null);
+  const { onEscape, onOpenChange } = useEscapeFocus(open, setOpen, hostRef);
 
   const shown = visibleModelGroups(groups, provider);
   const grouped = shown.length > 1 || shown.some(group => group.selectionProblem !== undefined);
@@ -212,7 +244,7 @@ export function ModelPill<Provider extends string = AgentProvider>({
   const handleOpenChange = (nextOpen: boolean) => {
     if (nextOpen) setViewedProvider(provider);
     setDragEffortIndex(null);
-    setOpen(nextOpen);
+    onOpenChange(nextOpen);
   };
 
   const viewedIsCurrent = viewedGroup !== undefined && viewedGroup.provider === provider;
@@ -305,7 +337,7 @@ export function ModelPill<Provider extends string = AgentProvider>({
 
   return (
     <HStack gap={1} align="center" wrap="wrap" className={styles.group}>
-      <span ref={hostRef} className={styles.host} onKeyDownCapture={closeOnEscape(open, setOpen, hostRef)}>
+      <span ref={hostRef} className={styles.host} onKeyDownCapture={onEscape}>
         <Popover
           placement={placement}
           alignment="start"
@@ -562,17 +594,18 @@ function SettingPill<Value extends string>({
 }>) {
   const [open, setOpen] = useState(false);
   const hostRef = useRef<HTMLSpanElement | null>(null);
+  const { onEscape, onOpenChange } = useEscapeFocus(open, setOpen, hostRef);
   const current = options[value];
   const tone = current.tone ?? 'neutral';
   const label = `${name}: ${current.label}`;
   return (
-    <span ref={hostRef} className={styles.host} onKeyDownCapture={closeOnEscape(open, setOpen, hostRef)}>
+    <span ref={hostRef} className={styles.host} onKeyDownCapture={onEscape}>
       <DropdownMenu
         placement={placement}
         alignment={alignment}
         /* An `aria-disabled` trigger still passes ArrowDown to the menu, so a disabled one is held shut here. */
         isMenuOpen={open && !isDisabled}
-        onOpenChange={(next) => { setOpen(next && !isDisabled); }}
+        onOpenChange={(next) => { onOpenChange(next && !isDisabled); }}
         hasChevron={false}
         button={{
           label,

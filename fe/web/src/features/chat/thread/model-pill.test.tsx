@@ -9,9 +9,9 @@ import {
   modelCatalogOperation,
   type ModelCatalog,
 } from '../../../../../core/domain/conversation.ts';
-import { ModelPill, type ModelGroup } from './model-pill.tsx';
+import { ModelPill, PlannerRolePill, type ModelGroup } from './model-pill.tsx';
 
-afterEach(cleanup);
+afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 function model(overrides: Partial<ModelCatalog['models'][number]> = {}): ModelCatalog['models'][number] {
   return {
@@ -406,5 +406,106 @@ describe('ModelPill', () => {
     );
     expect(trigger(/^Model:/).textContent).toBe('Default');
     expect(trigger(/^Model:/).getAttribute('aria-label')).toBe('Model: Default');
+  });
+});
+
+// Hold the production Escape frame so focus can move before it runs.
+describe.each(['model', 'setting'] as const)('%s pill Escape focus', (kind) => {
+  function setup() {
+    const view = render(<div role="dialog" aria-label="Host dialog">
+      {kind === 'model'
+        ? <ModelPill provider="codex" groups={both()} selection={FOLLOW_INSTALLATION_DEFAULT} onChange={vi.fn()} />
+        : <PlannerRolePill value="member" onChange={vi.fn()} />}
+      <input aria-label="Next control" />
+    </div>);
+    const button = trigger(kind === 'model' ? /^Model:/ : /^Role:/);
+    fireEvent.click(button);
+    const popup = kind === 'model'
+      ? screen.getByRole('dialog', { name: 'Select model and reasoning effort' })
+      : screen.getByRole('menu');
+    const frames = new Map<number, FrameRequestCallback>();
+    let sequence = 0;
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation(callback => {
+      frames.set(++sequence, callback);
+      return sequence;
+    });
+    const cancel = vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(id => { frames.delete(id); });
+    const escape = () => fireEvent.keyDown(popup, { key: 'Escape' });
+    const flush = () => {
+      for (const [id, callback] of frames) {
+        frames.delete(id);
+        callback(0);
+      }
+    };
+    return { ...view, button, popup, frames, cancel, escape, flush };
+  }
+
+  it('preserves focus moved outside the pill before the Escape frame runs', () => {
+    const { escape, flush } = setup();
+    escape();
+    const next = screen.getByRole('textbox', { name: 'Next control' });
+    next.focus();
+    flush();
+    expect(document.activeElement).toBe(next);
+  });
+
+  it('preserves focus moved elsewhere in a host dialog after Escape on the trigger', () => {
+    const { button, flush } = setup();
+    fireEvent.keyDown(button, { key: 'Escape' });
+    const next = screen.getByRole('textbox', { name: 'Next control' });
+    next.focus();
+    flush();
+    expect(document.activeElement).toBe(next);
+  });
+
+  it('restores trigger focus when focus remains on the body', () => {
+    const { button, escape, flush } = setup();
+    escape();
+    (document.activeElement as HTMLElement).blur();
+    expect(document.activeElement).toBe(document.body);
+    flush();
+    expect(document.activeElement).toBe(button);
+  });
+
+  it('restores trigger focus when focus remains in the closing popup', () => {
+    const { button, popup, escape, flush } = setup();
+    escape();
+    // Astryx retains the closing content for its exit transition.
+    const option = popup.querySelector<HTMLElement>('[role="radio"], [role="menuitem"]');
+    expect(option).not.toBeNull();
+    option!.focus();
+    flush();
+    expect(document.activeElement).toBe(button);
+  });
+
+  it('cancels the pending Escape frame on unmount', () => {
+    const { escape, unmount, frames, cancel } = setup();
+    escape();
+    const pending = [...frames.keys()];
+    expect(pending).toHaveLength(1);
+    unmount();
+    expect(cancel).toHaveBeenCalledWith(pending[0]);
+    expect(frames.size).toBe(0);
+  });
+
+  it('cancels the pending Escape frame on reopen', () => {
+    const { button, escape, frames, cancel } = setup();
+    escape();
+    const pending = [...frames.keys()];
+    expect(pending).toHaveLength(1);
+    fireEvent.click(button);
+    expect(cancel).toHaveBeenCalledWith(pending[0]);
+    expect(frames.has(pending[0])).toBe(false);
+    expect(button.getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('cancels a pending restore on a subsequent Escape', () => {
+    const { button, escape, frames, cancel } = setup();
+    escape();
+    const pending = [...frames.keys()];
+    expect(pending).toHaveLength(1);
+    fireEvent.keyDown(button, { key: 'Escape' });
+    expect(cancel).toHaveBeenCalledWith(pending[0]);
+    expect(frames.size).toBe(0);
   });
 });

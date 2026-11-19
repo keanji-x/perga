@@ -90,6 +90,7 @@ async function pick(trigger: string, group: 'Codex' | 'Claude', item: string | R
   const models = screen.getByRole('group', { name: 'Models' });
   await userEvent.click(within(models).getByRole('radio', { name: item }));
   await userEvent.keyboard('{Escape}');
+  await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Select model and reasoning effort' })).toBeNull());
 }
 
 function harness(options: {
@@ -253,6 +254,7 @@ describe('New track model selection', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Model: Default' }));
     await userEvent.click(await screen.findByRole('radio', { name: 'gpt-5' }));
     await userEvent.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Select model and reasoning effort' })).toBeNull());
     await userEvent.click(screen.getByLabelText(TASK_LABEL));
     await userEvent.paste('Use these settings from the first turn');
     await userEvent.click(screen.getByRole('button', { name: 'Go to Today' }));
@@ -281,6 +283,7 @@ describe('New track model selection', () => {
     await userEvent.click(await screen.findByRole('radio', { name: 'gpt-5' }));
     await userEvent.click(screen.getByRole('radio', { name: 'Default' }));
     await userEvent.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Select model and reasoning effort' })).toBeNull());
     await userEvent.type(screen.getByLabelText(TASK_LABEL), 'Follow the default');
     await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
     await waitFor(() => expect(createdTrackRequests(sent)).toHaveLength(1));
@@ -321,6 +324,7 @@ describe('New track model selection', () => {
     expect(defaultChoice.getAttribute('aria-disabled') === 'true' || defaultChoice.hasAttribute('disabled')).toBe(false);
     await userEvent.click(defaultChoice);
     await userEvent.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Select model and reasoning effort' })).toBeNull());
     await userEvent.type(screen.getByLabelText(TASK_LABEL), 'Plan while Claude is down');
     await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
     await waitFor(() => expect(createdTrackRequests(sent)).toHaveLength(1));
@@ -1362,7 +1366,9 @@ it.each([
   expect(sent.some(request => request.path === '/api/v1/templates')).toBe(false);
   await userEvent.type(composer, '@:');
   await screen.findByRole('option', { name: 'Deploy' });
-  await userEvent.keyboard('{Escape}{Control>}a{/Control}{Backspace}');
+  await userEvent.keyboard('{Escape}');
+  await waitFor(() => expect(screen.queryByRole('listbox')).toBeNull());
+  await userEvent.keyboard('{Control>}a{/Control}{Backspace}');
   await userEvent.type(composer, message);
   await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
   await waitFor(() => expect(createdTrackBodies(sent)).toHaveLength(1));
