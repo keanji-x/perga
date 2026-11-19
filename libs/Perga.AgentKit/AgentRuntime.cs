@@ -24,6 +24,7 @@ public sealed class AgentRuntime : IAgentRuntime
 
     private readonly AgentRuntimeOptions _options;
     private readonly OsSandboxWrapper _sandboxWrapper;
+    private readonly string? _codexWorkerHome;
     private readonly ConcurrentDictionary<IAgentSession, byte> _activeSessions = new();
     private readonly SemaphoreSlim _probeLock = new(1, 1);
     private IReadOnlyList<ProviderStatus>? _cachedProbeStatuses;
@@ -40,6 +41,7 @@ public sealed class AgentRuntime : IAgentRuntime
         ArgumentNullException.ThrowIfNull(options);
         _options = options;
         _sandboxWrapper = new OsSandboxWrapper(options.Sandbox);
+        _codexWorkerHome = ResolveCodexWorkerHome(options);
     }
 
     public OsSandboxWrapper SandboxWrapper => _sandboxWrapper;
@@ -796,8 +798,24 @@ public sealed class AgentRuntime : IAgentRuntime
 
     private string? PrepareCodexSandboxState(HarnessLaunchSpec spec, Dictionary<string, string> env)
     {
-        if (!OperatingSystem.IsLinux() || spec.Sandbox == OsSandboxMode.None ||
-            _options.SandboxStateRootDirectory is not { } root || spec.StateKey is not { } key)
+        if (!OperatingSystem.IsLinux() || spec.Sandbox == OsSandboxMode.None)
+            return null;
+
+        if (spec.ConfigureWorker && _codexWorkerHome is { } home)
+        {
+            var workspace = ResolvePhysicalDirectory(spec.Cwd);
+            if (ContainsPath(home, workspace) || ContainsPath(workspace, home))
+                throw new InvalidOperationException("The shared Codex Worker home must be separate from the workspace.");
+
+            env["CODEX_HOME"] = home;
+            // These account overrides must not replace the selected file login.
+            env["OPENAI_API_KEY"] = string.Empty;
+            env["CODEX_API_KEY"] = string.Empty;
+            env["CODEX_ACCESS_TOKEN"] = string.Empty;
+            return home;
+        }
+
+        if (_options.SandboxStateRootDirectory is not { } root || spec.StateKey is not { } key)
             return null;
 
         var digest = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(key)));
@@ -817,6 +835,50 @@ public sealed class AgentRuntime : IAgentRuntime
 
         env["CODEX_HOME"] = directory;
         return directory;
+    }
+
+    private static string? ResolveCodexWorkerHome(AgentRuntimeOptions options)
+    {
+        if (string.IsNullOrWhiteSpace(options.CodexWorkerHomeDirectory))
+            return null;
+        if (!OperatingSystem.IsLinux() || !Path.IsPathFullyQualified(options.CodexWorkerHomeDirectory) ||
+            !string.IsNullOrWhiteSpace(options.CodexSandboxApiKey))
+            throw new InvalidOperationException(
+                "The shared Codex Worker home requires Linux, an absolute path, and no separate sandbox API key.");
+
+        var directory = new DirectoryInfo(Path.GetFullPath(options.CodexWorkerHomeDirectory));
+        const UnixFileMode privateAccess = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute;
+        if (!directory.Exists || directory.LinkTarget is not null ||
+            File.GetUnixFileMode(directory.FullName) != privateAccess)
+            throw new IOException("The shared Codex Worker home must be an existing owner-only directory.");
+        return ResolvePhysicalDirectory(directory.FullName);
+    }
+
+    private static string ResolvePhysicalDirectory(string path, int remainingLinks = 40)
+    {
+        var current = Path.GetPathRoot(path)!;
+        foreach (var part in path[current.Length..].Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries))
+        {
+            var directory = new DirectoryInfo(Path.Combine(current, part));
+            if (directory.ResolveLinkTarget(returnFinalTarget: false) is { } target)
+            {
+                if (remainingLinks == 0)
+                    throw new IOException("The Codex Worker directory has too many symbolic links.");
+                current = ResolvePhysicalDirectory(target.FullName, remainingLinks - 1);
+            }
+            else
+            {
+                current = directory.FullName;
+            }
+        }
+        return Path.TrimEndingDirectorySeparator(current);
+    }
+
+    private static bool ContainsPath(string root, string candidate)
+    {
+        var relative = Path.GetRelativePath(root, candidate);
+        return relative != ".." && !relative.StartsWith("../", StringComparison.Ordinal) &&
+            !Path.IsPathRooted(relative);
     }
 
     private static void CopyCodexStateSeed(string source, string directory, string name)

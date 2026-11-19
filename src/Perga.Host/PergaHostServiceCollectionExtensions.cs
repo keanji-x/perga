@@ -104,6 +104,7 @@ public static class PergaHostServiceCollectionExtensions
         {
             SandboxStateRootDirectory = Path.Combine(sp.GetRequiredService<ResolvedHostStoragePaths>().DataDir, "provider-state"),
             CodexSandboxApiKey = sp.GetRequiredService<PergaHostOptions>().CodexSandboxApiKey,
+            CodexWorkerHomeDirectory = sp.GetRequiredService<PergaHostOptions>().CodexWorkerHomeDirectory,
         }));
         services.TryAddSingleton<VcsService>();
         services.TryAddSingleton<IVcsService>(sp => sp.GetRequiredService<VcsService>());
