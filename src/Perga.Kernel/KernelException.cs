@@ -12,7 +12,8 @@ public enum KernelErrorCode
     IdempotencyKeyInvalid,
     IdempotencyKeyReused,
     IdempotencyKeyExhausted,
-    WorkerTurnChanged
+    WorkerTurnChanged,
+    SystemUpgradeLeadRequired
 }
 
 public sealed class KernelException : Exception

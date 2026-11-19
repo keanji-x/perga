@@ -1,0 +1,26 @@
+@layer features {
+  .banner {
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    padding: var(--space-2) var(--space-4);
+    border-block-end: 1px solid var(--hairline);
+    background: var(--paper);
+    color: var(--text);
+    font-size: var(--font-step-1-size);
+    max-block-size: 30dvh;
+    overflow: auto;
+    overflow-wrap: anywhere;
+  }
+  .banner p { margin: 0; }
+  .actions { display: flex; gap: var(--space-2); flex: none; }
+  .actions button {
+    padding: var(--space-2);
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+  }
+  .actions button:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+}

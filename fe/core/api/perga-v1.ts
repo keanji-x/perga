@@ -5,6 +5,34 @@ import { z } from 'zod';
 
 import type { ApiDecodeFailure } from './types.js';
 
+export const systemInfoDtoSchema = z.object({
+  releaseId: z.string(),
+  webBuildId: z.string(),
+  hostBuildId: z.string(),
+  bridgeBuildId: z.string(),
+  schemaVersion: z.number().int().nonnegative(),
+  draining: z.boolean(),
+  activeDispatches: z.number().int().nonnegative(),
+});
+export type SystemInfoDto = z.infer<typeof systemInfoDtoSchema>;
+export const systemDrainRequestSchema = z.object({ draining: z.boolean() });
+export const systemDrainResponseSchema = z.object({
+  draining: z.boolean(), activeDispatches: z.number().int().nonnegative(),
+});
+export const systemReloadRequestSchema = z.object({ releaseId: z.string(), webBuildId: z.string() });
+export const systemUpgradeReceiptSchema = z.object({
+  jobId: z.string(), oldReleaseId: z.string().nullable(), newReleaseId: z.string().nullable(),
+  status: z.string(), error: z.string().nullable(), rollbackError: z.string().nullable(),
+  notifyTrackId: z.string().nullable(), finishedAt: z.number(), changed: z.array(z.string()),
+});
+export type SystemUpgradeReceipt = z.infer<typeof systemUpgradeReceiptSchema>;
+export const systemUpgradeStatusPayloadSchema = z.object({
+  draining: z.boolean(), activeDispatches: z.number().int().nonnegative(),
+  receipt: systemUpgradeReceiptSchema.nullish(),
+});
+
+export type SystemUpgradeStatusPayload = z.infer<typeof systemUpgradeStatusPayloadSchema>;
+
 export const accessModeSchema = z.enum(['read_only', 'read_write']);
 export type AccessMode = z.infer<typeof accessModeSchema>;
 
@@ -558,6 +586,7 @@ export const pergaPersistentEventKindSchema = z.enum([
 export type PergaPersistentEventKind = z.infer<typeof pergaPersistentEventKindSchema>;
 
 export const pergaTransientEventKindSchema = z.enum([
+  'system.upgrade_status',
   'session.text_delta',
   'session.thinking_delta',
   'session.tool_progress',
@@ -619,6 +648,7 @@ export type PergaPersistentEvent =
   | Readonly<{ kind: 'terminal.changed'; eventId: number; areaId: string | null; trackId: string | null; payload: TerminalDto; createdAtMs: number }>;
 
 export type PergaEventDecodeResult =
+  | Readonly<{ status: 'ready'; kind: 'upgrade-status'; payload: SystemUpgradeStatusPayload }>
   | Readonly<{ status: 'ready'; kind: 'persistent'; event: PergaPersistentEvent }>
   | Readonly<{ status: 'ready'; kind: 'delta'; delta: PergaStreamDelta }>
   | Readonly<{ status: 'failed'; error: ApiDecodeFailure }>;
@@ -641,6 +671,11 @@ export function decodePergaEventEnvelope(input: unknown): PergaEventDecodeResult
     };
   }
   const { eventId, areaId, trackId, kind, payload, createdAtMs } = base.data;
+  if (kind === 'system.upgrade_status') {
+    const parsed = systemUpgradeStatusPayloadSchema.safeParse(payload);
+    if (!parsed.success) return { status: 'failed', error: { kind: 'decode', message: 'Invalid system.upgrade_status payload', cause: parsed.error } };
+    return { status: 'ready', kind: 'upgrade-status', payload: parsed.data };
+  }
   if (kind === 'session.text_delta') {
     const parsed = sessionTextDeltaPayloadSchema.safeParse(payload);
     if (!parsed.success) return { status: 'failed', error: { kind: 'decode', message: 'Invalid session.text_delta payload', cause: parsed.error } };

@@ -28,7 +28,8 @@ public static class KernelEventKinds
     {
         SessionTextDelta,
         SessionThinkingDelta,
-        SessionToolProgress
+        SessionToolProgress,
+        "system.upgrade_status"
     };
 
     private static readonly HashSet<string> PersistentKinds = new(StringComparer.Ordinal)
@@ -43,7 +44,8 @@ public static class KernelEventKinds
         TurnCompleted,
         AskChanged,
         MailReceived,
-        TerminalChanged
+        TerminalChanged,
+        "system.upgrade_result"
     };
 
     public static bool IsTransient(string kind) => TransientKinds.Contains(kind);

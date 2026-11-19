@@ -38,8 +38,8 @@ public sealed class SqliteMigratorTests
         {
             var dbPath = Path.Combine(tempDir, "fresh.db");
             var migrator = new SqliteMigrator();
-            Assert.Equal(Enumerable.Range(1, 10), migrator.Migrations.Select(m => m.Version));
-            Assert.Equal("0010_ask_delivery.sql", migrator.Migrations[^1].Name);
+            Assert.Equal(Enumerable.Range(1, 11), migrator.Migrations.Select(m => m.Version));
+            Assert.Equal("0011_system_upgrade_receipts.sql", migrator.Migrations[^1].Name);
             await migrator.MigrateAsync(dbPath);
 
             // Idempotent re-run on already-initialized v1 database must not create a spurious backup.
@@ -54,7 +54,7 @@ public sealed class SqliteMigratorTests
             }.ToString());
             await conn.OpenAsync();
 
-            Assert.Equal(10L, await conn.ExecuteScalarAsync<long>("SELECT MAX(version) FROM schema_migrations;"));
+            Assert.Equal(11L, await conn.ExecuteScalarAsync<long>("SELECT MAX(version) FROM schema_migrations;"));
             Assert.Equal(2L, await conn.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM pragma_table_info('agent_sessions') WHERE name IN ('reasoning_effort', 'permission_mode');"));
             var autoVacuum = await conn.ExecuteScalarAsync<long>("PRAGMA auto_vacuum;");
             var journalMode = await conn.ExecuteScalarAsync<string>("PRAGMA journal_mode;");
@@ -91,6 +91,7 @@ public sealed class SqliteMigratorTests
                 "worker_messages",
                 "worker_settings",
                 "session_messages",
+                "system_upgrade_receipts",
                 "session_message_steers"
             ];
 

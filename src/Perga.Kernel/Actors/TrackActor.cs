@@ -765,10 +765,15 @@ public sealed partial class TrackActor : IAsyncDisposable
     private async Task<string?> ResolveSessionPermissionModeCoreAsync(
         string provider, string? requested, bool isLead, CancellationToken ct)
     {
+        var probesAcp = provider.StartsWith("acp:", StringComparison.OrdinalIgnoreCase)
+            && !string.IsNullOrWhiteSpace(requested);
+        // Never wait for Drain inside the actor queue; account for the entire probe.
+        using var admission = probesAcp
+            ? _options.DispatchAdmission.TryEnter() ?? throw KernelException.Conflict("Cannot probe permission modes while draining.")
+            : null;
         var cwd = string.IsNullOrWhiteSpace(_track.Cwd) ? _workspacePreparation?.Request.SourcePath : _track.Cwd;
         IReadOnlyList<OverlayMountSpec>? overlays = null;
-        if (provider.StartsWith("acp:", StringComparison.OrdinalIgnoreCase)
-            && !string.IsNullOrWhiteSpace(requested) && !string.IsNullOrWhiteSpace(_track.Cwd))
+        if (probesAcp && !string.IsNullOrWhiteSpace(_track.Cwd))
         {
             var mounted = await EnsureWorkspaceMountedCoreAsync(ct).ConfigureAwait(false);
             cwd = mounted.MergedCwd;
@@ -1005,8 +1010,13 @@ public sealed partial class TrackActor : IAsyncDisposable
             if (!_activeTurns.ContainsKey(sessionId) && !_compactingSessions.Contains(sessionId) &&
                 !_sessionResumeHolds.ContainsKey(sessionId) && _openAgentSessions.ContainsKey(sessionId))
             {
-                using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, _actorShutdownCts.Token);
-                await GetOrOpenAgentSessionCoreAsync(updated, overrideSystemPrompt: null, linkedCts.Token).ConfigureAwait(false);
+                // Persist even during Drain; the next admitted turn reconciles the cache.
+                using var admission = _options.DispatchAdmission.TryEnter();
+                if (admission is not null)
+                {
+                    using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, _actorShutdownCts.Token);
+                    await GetOrOpenAgentSessionCoreAsync(updated, overrideSystemPrompt: null, linkedCts.Token).ConfigureAwait(false);
+                }
             }
 
             return updated;
@@ -1470,10 +1480,10 @@ public sealed partial class TrackActor : IAsyncDisposable
             await WakeForMailAsync(mail, _actorShutdownCts.Token).ConfigureAwait(false);
     }
 
-    internal Task WakeForMailAsync(MailDto mail, CancellationToken ct, bool recovering = false) =>
-        DispatchLeadWakePromptIfNeededAsync("wake",
+    internal Task WakeForMailAsync(MailDto mail, CancellationToken ct, bool recovering = false, bool waitForSettlement = false) =>
+        DispatchLeadWakePromptIfNeededAsync(mail.FromTrackId == "system:upgrade" ? "system" : "wake",
             $"New cross-track mail '{mail.Id}' from track '{mail.FromTrackId}': {mail.Summary}\n\n{mail.Body}",
-            ct, mail.Id, recovering);
+            ct, mail.Id, recovering, waitForSettlement);
 
     public Task<IReadOnlyList<MailDto>> ListMailsAsync(bool unreadOnly = false, CancellationToken ct = default)
     {
@@ -2085,7 +2095,7 @@ public sealed partial class TrackActor : IAsyncDisposable
 
     private async Task ScheduleEligibleTasksCoreAsync(CancellationToken ct)
     {
-        if (_deletingTrack || _track.ClosedAtMs is not null || !WorkspaceReady)
+        if (_options.DispatchAdmission.Draining || _deletingTrack || _track.ClosedAtMs is not null || !WorkspaceReady)
         {
             return;
         }
@@ -2111,86 +2121,101 @@ public sealed partial class TrackActor : IAsyncDisposable
         MountedWorkspace mounted,
         CancellationToken ct)
     {
-        var now = NowMs();
-        var attemptId = $"att_{Guid.NewGuid():N}";
-        var isCommandTask = string.Equals(task.Kind, "command", StringComparison.OrdinalIgnoreCase) ||
-                            string.Equals(task.Kind, "cmd", StringComparison.OrdinalIgnoreCase) ||
-                            string.Equals(task.Kind, "shell", StringComparison.OrdinalIgnoreCase) ||
-                            string.Equals(task.Kind, "terminal", StringComparison.OrdinalIgnoreCase);
-        var workerProvider = string.IsNullOrWhiteSpace(task.Provider) ? GetDefaultProviderCore() : task.Provider!;
-        var subagent = isCommandTask ? null : new AgentSessionDto(
-            Id: $"ses_{Guid.NewGuid():N}",
-            TrackId: TrackId,
-            IsLead: false,
-            BoundTaskId: task.Id,
-            BoundAttemptId: attemptId,
-            Title: $"Task: {task.TaskKey}",
-            Provider: workerProvider,
-            Model: ResolveTaskWorkerModelCore(task),
-            NativeThreadId: null,
-            Epoch: 1,
-            Status: "idle",
-            ContextUsageRatio: 0.0,
-            ArchivedAtMs: null,
-            CreatedAtMs: now,
-            UpdatedAtMs: now,
-            PermissionMode: await RuntimePermissionModes.ResolveAsync(_agentRuntime, workerProvider, null, ct, task.Access == AccessMode.ReadOnly ? _options.ReadOnlyTaskSandboxMode : _options.ReadWriteTaskSandboxMode, null).ConfigureAwait(false));
+        var admission = _options.DispatchAdmission.TryEnter();
+        if (admission is null) return true;
+        var transferred = false;
 
-        var runningTask = task with { Status = TaskRunStatus.Running, StatusDetail = "Allocating workspace.",
-            LatestAttemptId = attemptId, UpdatedAtMs = now };
-        var reservation = new TaskAttemptDto(attemptId, task.Id, TrackId, null, "running", null,
-            JsonHelpers.EmptyObject, null, null, now, null);
-
-        await _store.UpsertTaskAndAttemptAsync(runningTask, reservation, null, null, ct).ConfigureAwait(false);
-        ReplaceTaskInMemoryCore(runningTask);
-        AttemptWorkspaceLease? lease = null;
-        TaskAttemptDto attempt;
-        var sessionEvent = subagent is null ? null : SessionUpdatedEvent(subagent);
         try
         {
-            lease = await driver.AcquireAttemptLeaseAsync(mounted, attemptId, task.Access == AccessMode.ReadWrite, ct)
-                .ConfigureAwait(false);
-            attempt = reservation with { SessionId = subagent?.Id, WorkspaceLease = JsonHelpers.ToElement(lease) };
-            runningTask = runningTask with { StatusDetail = null };
-            var taskEvent = CreateTaskUpdatedEventCore(now);
-            await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
-            await _store.UpsertTaskAndAttemptAsync(runningTask, attempt, null, taskEvent, ct, subagent, sessionEvent).ConfigureAwait(false);
-        }
-        catch (Exception ex) when (!ct.IsCancellationRequested)
-        {
-            if (lease is not null)
-                await driver.SettleAttemptLeaseAsync(lease, AttemptLeaseDisposition.Discard, CancellationToken.None).ConfigureAwait(false);
-            var failed = runningTask with { Status = TaskRunStatus.Failed, StatusDetail = ex.Message, UpdatedAtMs = NowMs() };
-            await PersistAndEmitTaskUpdatedCoreAsync(failed, reservation with { Status = "failed", FinishedAtMs = failed.UpdatedAtMs },
-                null, failed.UpdatedAtMs, CancellationToken.None).ConfigureAwait(false);
-            ReplaceTaskInMemoryCore(failed);
-            return false;
-        }
+            var now = NowMs();
+            var attemptId = $"att_{Guid.NewGuid():N}";
+            var isCommandTask = string.Equals(task.Kind, "command", StringComparison.OrdinalIgnoreCase) ||
+                                string.Equals(task.Kind, "cmd", StringComparison.OrdinalIgnoreCase) ||
+                                string.Equals(task.Kind, "shell", StringComparison.OrdinalIgnoreCase) ||
+                                string.Equals(task.Kind, "terminal", StringComparison.OrdinalIgnoreCase);
+            var workerProvider = string.IsNullOrWhiteSpace(task.Provider) ? GetDefaultProviderCore() : task.Provider!;
+            var subagent = isCommandTask ? null : new AgentSessionDto(
+                Id: $"ses_{Guid.NewGuid():N}",
+                TrackId: TrackId,
+                IsLead: false,
+                BoundTaskId: task.Id,
+                BoundAttemptId: attemptId,
+                Title: $"Task: {task.TaskKey}",
+                Provider: workerProvider,
+                Model: ResolveTaskWorkerModelCore(task),
+                NativeThreadId: null,
+                Epoch: 1,
+                Status: "idle",
+                ContextUsageRatio: 0.0,
+                ArchivedAtMs: null,
+                CreatedAtMs: now,
+                UpdatedAtMs: now,
+                PermissionMode: await RuntimePermissionModes.ResolveAsync(_agentRuntime, workerProvider, null, ct, task.Access == AccessMode.ReadOnly ? _options.ReadOnlyTaskSandboxMode : _options.ReadWriteTaskSandboxMode, null).ConfigureAwait(false));
 
-        ReplaceTaskInMemoryCore(runningTask);
-        if (subagent is not null)
-        {
-            _sessions[subagent.Id] = subagent;
-            _nextTurnIndexBySession[subagent.Id] = 0;
-        }
+            var runningTask = task with { Status = TaskRunStatus.Running, StatusDetail = "Allocating workspace.",
+                LatestAttemptId = attemptId, UpdatedAtMs = now };
+            var reservation = new TaskAttemptDto(attemptId, task.Id, TrackId, null, "running", null,
+                JsonHelpers.EmptyObject, null, null, now, null);
 
-        var attemptCts = CancellationTokenSource.CreateLinkedTokenSource(_actorShutdownCts.Token);
-        _activeAttempts[attemptId] = new ActiveAttemptState(attemptId, task.Id, subagent?.Id, driver, lease, attempt, attemptCts);
-        Volatile.Write(ref _activeAttemptCount, _activeAttempts.Count);
-        var attemptToken = attemptCts.Token;
-        if (subagent is null)
-            _ = TrackBackgroundJob(() => RunCommandTaskAttemptInBackgroundAsync(attemptId, runningTask, lease, attemptToken));
-        else
-        {
-            var prompt = BuildContractSubagentPrompt(runningTask);
-            var startupReservation = Guid.NewGuid();
-            _reservedWakeSessions.Add(subagent.Id, startupReservation);
-            _ = TrackBackgroundJob(() => RunSubagentTaskAttemptInBackgroundAsync(attemptId, subagent.Id, prompt, startupReservation, attemptToken));
-        }
+            await _store.UpsertTaskAndAttemptAsync(runningTask, reservation, null, null, ct).ConfigureAwait(false);
+            ReplaceTaskInMemoryCore(runningTask);
+            AttemptWorkspaceLease? lease = null;
+            TaskAttemptDto attempt;
+            var sessionEvent = subagent is null ? null : SessionUpdatedEvent(subagent);
+            try
+            {
+                lease = await driver.AcquireAttemptLeaseAsync(mounted, attemptId, task.Access == AccessMode.ReadWrite, ct)
+                    .ConfigureAwait(false);
+                attempt = reservation with { SessionId = subagent?.Id, WorkspaceLease = JsonHelpers.ToElement(lease) };
+                runningTask = runningTask with { StatusDetail = null };
+                var taskEvent = CreateTaskUpdatedEventCore(now);
+                await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
+                await _store.UpsertTaskAndAttemptAsync(runningTask, attempt, null, taskEvent, ct, subagent, sessionEvent).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (!ct.IsCancellationRequested)
+            {
+                if (lease is not null)
+                    await driver.SettleAttemptLeaseAsync(lease, AttemptLeaseDisposition.Discard, CancellationToken.None).ConfigureAwait(false);
+                var failed = runningTask with { Status = TaskRunStatus.Failed, StatusDetail = ex.Message, UpdatedAtMs = NowMs() };
+                await PersistAndEmitTaskUpdatedCoreAsync(failed, reservation with { Status = "failed", FinishedAtMs = failed.UpdatedAtMs },
+                    null, failed.UpdatedAtMs, CancellationToken.None).ConfigureAwait(false);
+                ReplaceTaskInMemoryCore(failed);
+                return false;
+            }
 
-        var evt = sessionEvent ?? CreateTaskUpdatedEventCore(now);
-        await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, evt, CancellationToken.None).ConfigureAwait(false);
-        return true;
+            ReplaceTaskInMemoryCore(runningTask);
+            if (subagent is not null)
+            {
+                _sessions[subagent.Id] = subagent;
+                _nextTurnIndexBySession[subagent.Id] = 0;
+            }
+
+            var attemptCts = CancellationTokenSource.CreateLinkedTokenSource(_actorShutdownCts.Token);
+            _activeAttempts[attemptId] = new ActiveAttemptState(attemptId, task.Id, subagent?.Id, driver, lease, attempt, attemptCts);
+            Volatile.Write(ref _activeAttemptCount, _activeAttempts.Count);
+            var attemptToken = attemptCts.Token;
+            if (subagent is null)
+                _ = TrackBackgroundJob(async () =>
+                {
+                    using (admission) await RunCommandTaskAttemptInBackgroundAsync(attemptId, runningTask, lease, attemptToken).ConfigureAwait(false);
+                });
+            else
+            {
+                var prompt = BuildContractSubagentPrompt(runningTask);
+                var startupReservation = Guid.NewGuid();
+                _reservedWakeSessions.Add(subagent.Id, startupReservation);
+                _ = TrackBackgroundJob(async () =>
+                {
+                    using (admission) await RunSubagentTaskAttemptInBackgroundAsync(attemptId, subagent.Id, prompt, startupReservation, attemptToken).ConfigureAwait(false);
+                });
+            }
+
+            transferred = true;
+            var evt = sessionEvent ?? CreateTaskUpdatedEventCore(now);
+            await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, evt, CancellationToken.None).ConfigureAwait(false);
+            return true;
+        }
+        finally { if (!transferred) admission.Dispose(); }
     }
 
     private const int TaskOutputTailChars = 4096;
@@ -2259,7 +2284,7 @@ public sealed partial class TrackActor : IAsyncDisposable
     {
         try
         {
-            var turn = await ExecuteSessionTurnPipelineAsync(subagentSessionId, "wake", prompt, ct, wakeReservation: reservation).ConfigureAwait(false);
+            var turn = await ExecuteSessionTurnPipelineAsync(subagentSessionId, "wake", prompt, ct, wakeReservation: reservation, alreadyAdmitted: true).ConfigureAwait(false);
             if (string.Equals(turn.Status, "failed", StringComparison.OrdinalIgnoreCase))
             {
                 var stillActive = await EnqueueAsync(_ => Task.FromResult(_activeAttempts.ContainsKey(attemptId)), CancellationToken.None)
@@ -2596,10 +2621,12 @@ public sealed partial class TrackActor : IAsyncDisposable
         string prompt,
         CancellationToken ct,
         PersistedSessionInput? input = null, Guid? wakeReservation = null, string? mailId = null,
-        SessionMessage? workerInput = null)
+        SessionMessage? workerInput = null, bool alreadyAdmitted = false)
     {
         if (input is null)
             await WaitForWorkspacePreparationAsync(ct).ConfigureAwait(false);
+        // Admission precedes the durable claim, preserving accepted inputs through Drain/restart.
+        using var dispatch = alreadyAdmitted ? null : await _options.DispatchAdmission.EnterAsync(ct).ConfigureAwait(false);
         Interlocked.Increment(ref _inFlightExternalOps);
         ActiveTurnState? pendingCleanup = null;
         var recordUserAtStart = input is null;
@@ -2615,7 +2642,7 @@ public sealed partial class TrackActor : IAsyncDisposable
 
             if (needsPreCompact)
             {
-                await CompactSessionInternalAsync(sessionId, ct).ConfigureAwait(false);
+                await CompactSessionInternalAsync(sessionId, ct, alreadyAdmitted: true).ConfigureAwait(false);
             }
 
             var turnSetup = await EnqueueAsync<(ActiveTurnState? ActiveState, string EffectivePrompt, SessionTurnDto? FailedWake)>(async _ =>
@@ -3079,7 +3106,7 @@ public sealed partial class TrackActor : IAsyncDisposable
             {
                 try
                 {
-                    await CompactSessionInternalAsync(sessionId, CancellationToken.None).ConfigureAwait(false);
+                    await CompactSessionInternalAsync(sessionId, CancellationToken.None, alreadyAdmitted: true).ConfigureAwait(false);
                 }
                 catch (KernelException ex) when (ex.Code == KernelErrorCode.Conflict)
                 {
@@ -3156,8 +3183,9 @@ public sealed partial class TrackActor : IAsyncDisposable
         await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, sessionEvent, ct).ConfigureAwait(false);
     }
 
-    private async Task<AgentSessionDto> CompactSessionInternalAsync(string sessionId, CancellationToken ct)
+    private async Task<AgentSessionDto> CompactSessionInternalAsync(string sessionId, CancellationToken ct, bool alreadyAdmitted = false)
     {
+        using var dispatch = alreadyAdmitted ? null : await _options.DispatchAdmission.EnterAsync(ct).ConfigureAwait(false);
         Interlocked.Increment(ref _inFlightExternalOps);
         var reserved = false;
         try
@@ -3397,8 +3425,10 @@ public sealed partial class TrackActor : IAsyncDisposable
             PermissionMode: session.PermissionMode);
     }
 
-    private async Task DispatchLeadWakePromptIfNeededAsync(string triggerKind, string wakePrompt, CancellationToken ct, string? mailId = null, bool recovering = false)
+    private async Task DispatchLeadWakePromptIfNeededAsync(string triggerKind, string wakePrompt, CancellationToken ct, string? mailId = null, bool recovering = false, bool waitForSettlement = false)
     {
+        // Boot recovery only schedules; receipt dispatchers opt in to settlement tracking.
+        var completion = waitForSettlement ? new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously) : null;
         var check = await EnqueueAsync<(string? LeadSessionId, Guid? Reservation)>(async _ =>
         {
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
@@ -3419,7 +3449,7 @@ public sealed partial class TrackActor : IAsyncDisposable
                 _compactingSessions.Contains(leadId) || _reservedWakeSessions.ContainsKey(leadId) ||
                 _sessionResumeHolds.ContainsKey(leadId))
             {
-                EnqueuePendingWakeCore(leadId, triggerKind, wakePrompt, mailId);
+                EnqueuePendingWakeCore(leadId, triggerKind, wakePrompt, mailId, completion);
                 return (leadId, null);
             }
 
@@ -3429,14 +3459,17 @@ public sealed partial class TrackActor : IAsyncDisposable
             return (leadId, reservation);
         }, CancellationToken.None).ConfigureAwait(false);
 
-        if (check.LeadSessionId is null || check.Reservation is not { } reservation)
+        if (check.LeadSessionId is null) return;
+        if (check.Reservation is not { } reservation)
         {
+            if (completion is not null) await completion.Task.ConfigureAwait(false);
             return;
         }
 
         if (recovering || _options.DispatchWakesInBackground)
         {
-            _ = TrackBackgroundJob(() => RunReservedWakeAsync(check.LeadSessionId, triggerKind, wakePrompt, reservation, _actorShutdownCts.Token, mailId));
+            _ = TrackBackgroundJob(() => RunReservedWakeAsync(check.LeadSessionId, triggerKind, wakePrompt, reservation, _actorShutdownCts.Token, mailId, completion));
+            if (completion is not null) await completion.Task.ConfigureAwait(false);
         }
         else
         {
@@ -3444,11 +3477,29 @@ public sealed partial class TrackActor : IAsyncDisposable
         }
     }
 
-    private async Task RunReservedWakeAsync(string sessionId, string kind, string prompt, Guid reservation, CancellationToken ct, string? mailId)
+    private async Task RunReservedWakeAsync(string sessionId, string kind, string prompt, Guid reservation,
+        CancellationToken ct, string? mailId, TaskCompletionSource? completion = null)
     {
         try
         {
-            await ExecuteSessionTurnPipelineAsync(sessionId, kind, prompt, ct, wakeReservation: reservation, mailId: mailId).ConfigureAwait(false);
+            await RunReservedWakeCoreAsync(sessionId, kind, prompt, reservation, ct, mailId).ConfigureAwait(false);
+            completion?.TrySetResult();
+        }
+        catch (Exception ex)
+        {
+            completion?.TrySetException(ex);
+            throw;
+        }
+    }
+
+    private async Task RunReservedWakeCoreAsync(string sessionId, string kind, string prompt, Guid reservation, CancellationToken ct, string? mailId)
+    {
+        try
+        {
+            var turn = await ExecuteSessionTurnPipelineAsync(sessionId, kind, prompt, ct, wakeReservation: reservation, mailId: mailId).ConfigureAwait(false);
+            if (mailId?.StartsWith("system-upgrade:", StringComparison.Ordinal) == true &&
+                turn.Status is "failed" or "unknown" && _store is ISystemUpgradeStore upgrades)
+                await upgrades.MarkUpgradeNotificationFailedAsync(mailId, turn.ErrorText ?? turn.Status, CancellationToken.None).ConfigureAwait(false);
         }
         finally
         {
@@ -3464,9 +3515,9 @@ public sealed partial class TrackActor : IAsyncDisposable
         }
     }
 
-    private sealed record PendingWake(string TriggerKind, string Prompt, string? MailId);
+    private sealed record PendingWake(string TriggerKind, string Prompt, string? MailId, TaskCompletionSource? Completion);
 
-    private void EnqueuePendingWakeCore(string sessionId, string triggerKind, string prompt, string? mailId = null)
+    private void EnqueuePendingWakeCore(string sessionId, string triggerKind, string prompt, string? mailId = null, TaskCompletionSource? completion = null)
     {
         if (!_pendingWakes.TryGetValue(sessionId, out var queue))
         {
@@ -3476,7 +3527,7 @@ public sealed partial class TrackActor : IAsyncDisposable
 
         if (mailId is not null)
             Interlocked.Increment(ref _queuedMailWakes);
-        queue.Enqueue(new PendingWake(triggerKind, prompt, mailId));
+        queue.Enqueue(new PendingWake(triggerKind, prompt, mailId, completion));
     }
 
     private async Task SwitchLeadSessionCoreAsync(string newLeadSessionId, long now, CancellationToken ct)

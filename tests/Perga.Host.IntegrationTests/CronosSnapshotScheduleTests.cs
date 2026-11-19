@@ -35,6 +35,10 @@ public sealed class CronosSnapshotScheduleTests
         Assert.Empty(kernel.Templates.TryGetPolicy("clashing")!.Manifest.Schedules);
         var scheduler = cluster.Services.GetRequiredService<CronosScheduleHostedService>();
         cluster.TimeProvider.Advance(TimeSpan.FromMinutes(2));
+        kernel.DispatchAdmission.SetDraining(true);
+        Assert.Equal(0, await scheduler.EvaluateDueSchedulesOnceAsync());
+        Assert.Empty(cluster.AgentRuntime.ExecutedTurns);
+        kernel.DispatchAdmission.SetDraining(false);
         Assert.Equal(1, await scheduler.EvaluateDueSchedulesOnceAsync());
         Assert.Contains(cluster.AgentRuntime.ExecutedTurns,
             turn => turn.Input.Prompt.Contains("SNAPSHOT_PULSE", StringComparison.Ordinal));

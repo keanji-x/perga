@@ -1,3 +1,4 @@
+import { SystemUpgradeBannerHost } from './system-upgrade-banner.tsx';
 import type { ShareScope } from '../../../../core/api/generated/wire.ts';
 import { useShareManagementDialog, type ShareSelection } from '../providers/share-management.tsx';
 import { LayerDismissal } from '../../ui/dialog/public.tsx';
@@ -580,6 +581,7 @@ export function AppShell({
       </div>
       </div>
       }<main ref={drawerWidth.mainRef} className={styles.main} style={drawerWidth.style} inert={mobileDialogActive} aria-hidden={mobileDialogActive ? true : undefined}>
+        {shareScope === null && <SystemUpgradeBannerHost />}
         {/* One flex item. Routes compose ErrorBox + page + Drawer as siblings;
             `:first-child` on `.main` would flex the banner, not the page. */}
         <div key={currentPath} className={styles.stage} hidden={narrowRail && settingsOpen}>

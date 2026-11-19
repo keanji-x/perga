@@ -281,6 +281,7 @@ function policies(): PolicyMap {
       ? [eventKeys.trackDetail(event.data.track_id), eventKeys.taskAttemptsPrefix(event.data.track_id)]
       : []),
   ])),
+  'system.upgrade_status': noop('The upgrade store consumes system status independently of query caches.'),
   'session.updated': plan((event) => {
     const sessionId = event.data.session?.id;
     return result([

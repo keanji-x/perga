@@ -4,6 +4,7 @@ namespace Perga.Kernel;
 
 public sealed record KernelOptions
 {
+    public SystemUpgrade.DispatchAdmission DispatchAdmission { get; init; } = new();
     public string Version { get; init; } = "1.0.0";
     public string? TemplatesDirectory { get; init; }
     public string WorkspacesRootDirectory { get; init; } = Path.Combine(Path.GetTempPath(), "perga-workspaces");

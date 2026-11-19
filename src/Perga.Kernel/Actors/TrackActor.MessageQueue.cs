@@ -57,7 +57,7 @@ public sealed partial class TrackActor
         var reservation = Guid.NewGuid();
         _reservedWakeSessions.Add(sessionId, reservation);
         _ = TrackBackgroundJob(() => RunReservedWakeAsync(sessionId, wake.TriggerKind, wake.Prompt, reservation,
-            _actorShutdownCts.Token, wake.MailId));
+            _actorShutdownCts.Token, wake.MailId, wake.Completion));
     }
 
     internal Task RecoverQueuedMessagesAsync(string sessionId, CancellationToken ct) =>

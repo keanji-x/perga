@@ -24,6 +24,9 @@ public interface IPergaKernel : IAsyncDisposable
     IMcpSessionBridge McpSessionBridge { get; }
     TrackActorRegistry Actors { get; }
     IBootReconciler BootReconciler { get; }
+    SystemUpgrade.DispatchAdmission DispatchAdmission { get; }
+    SystemUpgrade.UpgradeReceiptConsumer UpgradeReceipts { get; }
+    Task<JsonElement> InvokeSystemUpgradeAsync(McpSessionPrincipal caller, string operation, JsonElement arguments, CancellationToken ct);
 
     // System & Bootstrap
     Task<BootstrapDto> GetBootstrapAsync(CancellationToken ct = default);
@@ -140,6 +143,7 @@ public sealed partial class PergaKernelService : IPergaKernel
     private const int BinarySniffBytes = 8 * 1024;
     private static readonly string ProcessDbInstanceId = Guid.NewGuid().ToString("N");
 
+    private readonly ISystemUpgradeController? _systemUpgradeController;
     private readonly ITrackStore _store;
     private readonly IReportDocEngine _reportEngine;
     private readonly IPolicyVm _policyVm;
@@ -171,16 +175,20 @@ public sealed partial class PergaKernelService : IPergaKernel
         IMcpSessionBridge? mcpSessionBridge = null,
         IShellCommandRunner? commandRunner = null,
         EventHub? eventHub = null,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        ISystemUpgradeController? systemUpgradeController = null,
+        ISystemUpgradeReceiptSource? upgradeReceiptSource = null)
     {
         _store = store ?? throw new ArgumentNullException(nameof(store));
         _reportEngine = reportEngine ?? throw new ArgumentNullException(nameof(reportEngine));
         _policyVm = policyVm ?? throw new ArgumentNullException(nameof(policyVm));
-        _agentRuntime = agentRuntime ?? throw new ArgumentNullException(nameof(agentRuntime));
+        ArgumentNullException.ThrowIfNull(agentRuntime);
         _workspaceDrivers = workspaceDrivers ?? throw new ArgumentNullException(nameof(workspaceDrivers));
         _vcsService = vcsService ?? throw new ArgumentNullException(nameof(vcsService));
         _terminalClient = terminalClient ?? throw new ArgumentNullException(nameof(terminalClient));
         _options = options ?? new KernelOptions();
+        _agentRuntime = agentRuntime;
+        _systemUpgradeController = systemUpgradeController;
         _timeProvider = timeProvider ?? TimeProvider.System;
         _commandRunner = commandRunner ?? new ProcessShellCommandRunner();
         _eventHub = eventHub ?? new EventHub();
@@ -200,7 +208,10 @@ public sealed partial class PergaKernelService : IPergaKernel
             _eventHub,
             _options,
             _timeProvider);
-        BootReconciler = new BootReconciler(_store, _workspaceDrivers, Actors);
+        UpgradeReceipts = new SystemUpgrade.UpgradeReceiptConsumer(_store, upgradeReceiptSource, Actors, _eventHub, DispatchAdmission);
+        BootReconciler = new BootReconciler(_store, _workspaceDrivers, Actors, UpgradeReceipts);
+        DispatchAdmission.Changed += PublishUpgradeStatus;
+        DispatchAdmission.Resumed += ResumeSchedulers;
     }
 
     public IKernelEventBus EventBus => _eventHub;
@@ -208,6 +219,8 @@ public sealed partial class PergaKernelService : IPergaKernel
     public IMcpSessionBridge McpSessionBridge { get; }
     public TrackActorRegistry Actors { get; }
     public IBootReconciler BootReconciler { get; }
+    public SystemUpgrade.DispatchAdmission DispatchAdmission => _options.DispatchAdmission;
+    public SystemUpgrade.UpgradeReceiptConsumer UpgradeReceipts { get; }
 
     // ------------------- System & Bootstrap -------------------
 
@@ -695,7 +708,13 @@ public sealed partial class PergaKernelService : IPergaKernel
 
         var leadProvider = string.IsNullOrWhiteSpace(req.Provider) ? _options.DefaultProvider
             : TaskBlockSynchronizer.NormalizeProviderId(req.Provider) ?? req.Provider.Trim();
-        var leadPermissionMode = await RuntimePermissionModes.ResolveAsync(_agentRuntime, leadProvider, req.PermissionMode, ct, _options.LeadSandboxMode, null, source).ConfigureAwait(false);
+        string? leadPermissionMode;
+        using (var admission = leadProvider.StartsWith("acp:", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(req.PermissionMode)
+            ? DispatchAdmission.TryEnter() ?? throw KernelException.Conflict("Cannot probe permission modes while draining.")
+            : null)
+        {
+            leadPermissionMode = await RuntimePermissionModes.ResolveAsync(_agentRuntime, leadProvider, req.PermissionMode, ct, _options.LeadSandboxMode, null, source).ConfigureAwait(false);
+        }
         var leadSession = new AgentSessionDto(
             Id: leadSessionId,
             TrackId: trackId,
@@ -1399,6 +1418,8 @@ public sealed partial class PergaKernelService : IPergaKernel
 
         _disposed = true;
         await Actors.DisposeAsync().ConfigureAwait(false);
+        DispatchAdmission.Changed -= PublishUpgradeStatus;
+        DispatchAdmission.Resumed -= ResumeSchedulers;
         _eventHub.Dispose();
         _providerProbeLock.Dispose();
     }

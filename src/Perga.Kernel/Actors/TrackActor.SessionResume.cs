@@ -208,6 +208,7 @@ public sealed partial class TrackActor
                 await old.DisposeAsync().AsTask().WaitAsync(ct).ConfigureAwait(false);
             try
             {
+                using var launch = await _options.DispatchAdmission.EnterAsync(ct).ConfigureAwait(false);
                 replacement = await _agentRuntime.OpenSessionAsync(spec, ct).ConfigureAwait(false);
             }
             catch (Exception error) when (error is not (OperationCanceledException or NotSupportedException))

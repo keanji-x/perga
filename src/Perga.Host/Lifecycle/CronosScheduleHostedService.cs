@@ -49,6 +49,7 @@ public sealed class CronosScheduleHostedService : BackgroundService
         await _evalLock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
+            if (_kernel.DispatchAdmission.Draining) return 0;
             var nowUtc = _timeProvider.GetUtcNow();
             var openTracks = await _kernel.ListTracksAsync(areaId: null, includeClosed: false, ct)
                 .ConfigureAwait(false);
@@ -106,6 +107,7 @@ public sealed class CronosScheduleHostedService : BackgroundService
                     var nextOccurrence = cronExpr.GetNextOccurrence(watermark.UtcDateTime, tz, inclusive: false);
                     if (nextOccurrence.HasValue && nextOccurrence.Value <= nowUtc.UtcDateTime)
                     {
+                        if (_kernel.DispatchAdmission.Draining) return fired;
                         _watermarks[key] = nowUtc;
                         try
                         {

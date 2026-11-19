@@ -59,20 +59,25 @@ export function ServerCompatGate({ children: routeContent, runtime, client, rend
 }) {
   const [busted, setBusted] = useState(false);
   const [previousInstanceId] = useState(() => safeRead(runtime, DB_INSTANCE_ID_KEY));
+  const [previousDatabaseId] = useState(() => safeRead(runtime, DATABASE_ID_KEY));
   const query = useQuery({ queryKey: ['server-version'], queryFn: () => runtime.fetchVersion(), staleTime: 0, gcTime: 0, retry: retryUnless401, refetchInterval: false }, client);
 
+  // Perga's dbInstanceId is a process boot identity, used by the event cursor.
+  // Only its stable databaseId denotes a database switch requiring cache replacement.
+  const pergaV1 = query.data?.pergaV1 === true;
+  const identity = pergaV1 ? query.data?.databaseId : query.data?.dbInstanceId;
+  const previousIdentity = pergaV1 ? previousDatabaseId : previousInstanceId;
+  const identityKey = pergaV1 ? DATABASE_ID_KEY : DB_INSTANCE_ID_KEY;
   useEffect(() => {
-    const id = query.data?.dbInstanceId;
-    if (!id) return;
-    const previous = previousInstanceId;
-    if (previous && previous !== id) {
+    if (!identity) return;
+    if (previousIdentity && previousIdentity !== identity) {
       client.clear(); cursorStore.clear(); safeDelete(runtime);
-      safeWrite(runtime, DB_INSTANCE_ID_KEY, id); setBusted(true); runtime.reload(); return;
+      safeWrite(runtime, identityKey, identity); setBusted(true); runtime.reload(); return;
     }
-    if (!previous) safeWrite(runtime, DB_INSTANCE_ID_KEY, id);
-  }, [client, cursorStore, previousInstanceId, query.data?.dbInstanceId, runtime]);
+    if (!previousIdentity) safeWrite(runtime, identityKey, identity);
+  }, [client, cursorStore, identity, identityKey, previousIdentity, runtime]);
 
-  /* The database's STABLE id, remembered like the instance id but with none of the cache busting. */
+  /* Remember the stable database scope for per-database preferences. */
   const databaseId = query.data?.databaseId;
   useEffect(() => {
     if (databaseId === undefined) return;
@@ -87,7 +92,7 @@ export function ServerCompatGate({ children: routeContent, runtime, client, rend
 
   const id = query.data?.dbInstanceId;
   const verdict = id === undefined ? 'pending'
-    : previousInstanceId !== null && previousInstanceId !== id ? 'switched' : 'same';
+    : identity !== undefined && previousIdentity !== null && previousIdentity !== identity ? 'switched' : 'same';
   // The database scope is the database identity, never the per-boot instance id; a kernel without one leaves it null.
   const databaseScope = verdict === 'same' && databaseId !== undefined ? databaseId : null;
   const children = <DatabaseScopeProvider id={databaseScope}>{routeContent}</DatabaseScopeProvider>;

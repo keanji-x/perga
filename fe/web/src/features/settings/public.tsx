@@ -1,3 +1,5 @@
+import type { SystemUpgradeState } from '../../../../core/domain/system-upgrade.ts';
+import { upgradeReceiptSummary } from '../../../../core/domain/system-upgrade.ts';
 // Settings — workspace preferences, and the one row grammar every pane uses.
 // A row is either something you set (`control`) or somewhere you go (`onOpen`), never both.
 
@@ -375,12 +377,21 @@ function asThemeMode(value: string): ThemeMode {
   return value === 'light' || value === 'dark' ? value : 'system';
 }
 
-export function AboutPane() {
+export function AboutPane({ system }: Readonly<{ system?: SystemUpgradeState | null }> = {}) {
   return (
     <SettingsPane category="about" title="About" lede="What this build is. Read-only.">
       <SettingsList>
         <SettingRow title="Version" control={<span className={styles.aboutValue}>{__NC_VERSION__}</span>} />
         <SettingRow title="Build" control={<span className={styles.aboutValue}>{__NC_BUILD__}</span>} />
+        {system && <>
+          <SettingRow title="releaseId" control={<span className={styles.aboutValue}>{system.info?.releaseId ?? 'Loading…'}</span>} />
+          <SettingRow title="webBuildId" control={<span className={styles.aboutValue}>{system.info?.webBuildId ?? 'Loading…'}</span>} />
+          <SettingRow title="hostBuildId" control={<span className={styles.aboutValue}>{system.info?.hostBuildId ?? 'Loading…'}</span>} />
+          <SettingRow title="schemaVersion" control={<span className={styles.aboutValue}>{system.info ? String(system.info.schemaVersion) : 'Loading…'}</span>} />
+          <SettingRow title="draining" control={<span className={styles.aboutValue}>{String(system.draining)}</span>} />
+          <SettingRow title="activeDispatches" control={<span className={styles.aboutValue}>{String(system.activeDispatches)}</span>} />
+          {system.receipt && <SettingRow title="Latest upgrade receipt" control={<span className={styles.aboutValue}>{upgradeReceiptSummary(system.receipt)}</span>} />}
+        </>}
       </SettingsList>
     </SettingsPane>
   );

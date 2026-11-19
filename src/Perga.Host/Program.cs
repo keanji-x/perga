@@ -5,6 +5,7 @@ using Perga.Host.Configuration;
 using Perga.Host.Http;
 using Perga.Host.Mcp;
 using Perga.Host.Serialization;
+using Perga.Host.SystemUpgrade;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -19,42 +20,26 @@ app.UseWebSockets(new WebSocketOptions
     KeepAliveInterval = TimeSpan.FromSeconds(30)
 });
 
-var hostOptions = app.Services.GetRequiredService<PergaHostOptions>();
-string? staticIndexHtmlPath = null;
-
-if (!string.IsNullOrWhiteSpace(hostOptions.StaticWebRootDirectory) &&
-    Directory.Exists(hostOptions.StaticWebRootDirectory))
+_ = app.Services.GetRequiredService<SystemManagementAuthorization>();
+var releases = app.Services.GetRequiredService<ReleaseSnapshotManager>();
+var contentTypeProvider = new FileExtensionContentTypeProvider();
+contentTypeProvider.Mappings[".webmanifest"] = "application/manifest+json";
+foreach (var requestPath in new[] { string.Empty, "/next" })
 {
-    var fullStaticDir = Path.GetFullPath(hostOptions.StaticWebRootDirectory);
-    var fileProvider = new PhysicalFileProvider(fullStaticDir);
-    var contentTypeProvider = new FileExtensionContentTypeProvider();
-    contentTypeProvider.Mappings[".webmanifest"] = "application/manifest+json";
-
-    foreach (var requestPath in new[] { string.Empty, "/next" })
+    app.UseDefaultFiles(new DefaultFilesOptions { FileProvider = releases, RequestPath = requestPath });
+    app.UseStaticFiles(new StaticFileOptions
     {
-        app.UseDefaultFiles(new DefaultFilesOptions
+        FileProvider = releases, RequestPath = requestPath, ContentTypeProvider = contentTypeProvider,
+        OnPrepareResponse = ctx =>
         {
-            FileProvider = fileProvider,
-            RequestPath = requestPath
-        });
-
-        app.UseStaticFiles(new StaticFileOptions
-        {
-            FileProvider = fileProvider,
-            RequestPath = requestPath,
-            ContentTypeProvider = contentTypeProvider
-        });
-    }
-
-    var candidateIndex = Path.Combine(fullStaticDir, "index.html");
-    if (File.Exists(candidateIndex))
-    {
-        staticIndexHtmlPath = candidateIndex;
-    }
+            if (ctx.File.Name.EndsWith(".html", StringComparison.OrdinalIgnoreCase)) ctx.Context.Response.Headers.CacheControl = "no-cache";
+        }
+    });
 }
 
 app.MapGet("/healthz", () => Results.Ok(new { status = "ok", service = "perga" }));
 app.MapPergaApiV1();
+app.MapPergaSystem();
 app.MapPergaMcpEndpoints();
 
 app.MapFallback(async (HttpContext ctx) =>
@@ -67,11 +52,11 @@ app.MapFallback(async (HttpContext ctx) =>
         path.StartsWith("/mcp/", StringComparison.OrdinalIgnoreCase);
 
     if (!isApiOrMcp &&
-        staticIndexHtmlPath is not null &&
-        File.Exists(staticIndexHtmlPath) &&
+        releases.GetFileInfo("index.html") is { Exists: true, PhysicalPath: not null } index &&
         (HttpMethods.IsGet(ctx.Request.Method) || HttpMethods.IsHead(ctx.Request.Method)))
     {
-        await Results.File(staticIndexHtmlPath, "text/html; charset=utf-8").ExecuteAsync(ctx).ConfigureAwait(false);
+        ctx.Response.Headers.CacheControl = "no-cache";
+        await Results.File(index.PhysicalPath, "text/html; charset=utf-8").ExecuteAsync(ctx).ConfigureAwait(false);
         return;
     }
 

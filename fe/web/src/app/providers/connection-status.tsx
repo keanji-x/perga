@@ -1,3 +1,4 @@
+import { SystemUpgradeStore } from '../../../../core/domain/system-upgrade.ts';
 import { createContext, useContext, type ReactNode } from 'react';
 import type { ConnectionState } from '../../systems/events/event-stream.ts';
 import { useState } from '../../ui/state/public.ts';
@@ -16,3 +17,11 @@ export function LiveConnectionProvider({ children }: Readonly<{ children: ReactN
     state === 'connecting' ? '正在连接' : '连接已断开', detail: '' };
   return <StreamContext.Provider value={setState}><ConnectionStatusScope value={status}>{children}</ConnectionStatusScope></StreamContext.Provider>;
 }
+
+/** Upgrade observations share the authenticated app lifetime with connection observations. */
+const UpgradeContext = createContext<SystemUpgradeStore | null>(null);
+export function SystemUpgradeProvider({ children }: Readonly<{ children: ReactNode }>) {
+  const [store] = useState(() => new SystemUpgradeStore());
+  return <UpgradeContext.Provider value={store}>{children}</UpgradeContext.Provider>;
+}
+export function useSystemUpgradeStore() { return useContext(UpgradeContext); }

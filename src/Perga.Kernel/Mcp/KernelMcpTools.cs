@@ -9,6 +9,10 @@ namespace Perga.Kernel.Mcp;
 
 public static class KernelMcpToolNames
 {
+    public const string SystemUpgradeCheck = "perga_system_upgrade_check";
+    public const string SystemUpgradeApply = "perga_system_upgrade_apply";
+    public const string SystemUpgradeRollback = "perga_system_upgrade_rollback";
+
     // Shared across all sessions (Lead, free Subagent, contract Subagent)
     public const string ReportRead = "perga_report_read";
     public const string ReportCommit = "perga_report_commit";
@@ -45,6 +49,7 @@ public static class KernelMcpToolNames
 
     public static readonly IReadOnlyList<string> All =
     [
+        SystemUpgradeCheck, SystemUpgradeApply, SystemUpgradeRollback,
         ReportRead,
         ReportCommit,
         TaskLs,
@@ -114,7 +119,8 @@ public static class KernelMcpCatalog
     public static bool IsWorkerOperatorOnly(string toolName) => toolName is
         KernelMcpToolNames.SessionRead or KernelMcpToolNames.SessionSend or KernelMcpToolNames.SessionWithdraw or
         KernelMcpToolNames.SessionSteerQueued or KernelMcpToolNames.SessionInterrupt or
-        KernelMcpToolNames.SessionUpdateSettings or KernelMcpToolNames.TaskDispatch;
+        KernelMcpToolNames.SessionUpdateSettings or KernelMcpToolNames.TaskDispatch or
+        KernelMcpToolNames.SystemUpgradeCheck or KernelMcpToolNames.SystemUpgradeApply or KernelMcpToolNames.SystemUpgradeRollback;
 
     private static IReadOnlyList<McpToolDescriptor> BuildDescriptors()
     {
@@ -122,6 +128,12 @@ public static class KernelMcpCatalog
 
         return
         [
+            new(KernelMcpToolNames.SystemUpgradeCheck, "Check an installation-owner configured upgrade source (Lead only).",
+                Schema("""{"type":"object","additionalProperties":false,"properties":{"sourceId":{"type":"string"}}}""")),
+            new(KernelMcpToolNames.SystemUpgradeApply, "Schedule a detached upgrade from a configured source ID and return immediately (Lead only).",
+                Schema("""{"type":"object","additionalProperties":false,"required":["sourceId"],"properties":{"sourceId":{"type":"string"}}}""")),
+            new(KernelMcpToolNames.SystemUpgradeRollback, "Schedule detached rollback to the previous release (Lead only).",
+                Schema("""{"type":"object","additionalProperties":false,"properties":{}}""")),
             new(KernelMcpToolNames.ReportRead, "Read the current track report document, block revisions, and read anchor. Supports optional format ('full'|'blocks'|'markdown'|'outline'), sectionH1/blockIds scoping, and includeContract for perga-block authoring specs.",
                 Schema(KernelMcpReportSupport.ReportReadSchemaJson)),
             new(KernelMcpToolNames.ReportCommit, "Atomically apply block operations (replace_section, upsert, delete, move) to the track report using a ReadAnchor. Returns a compact commit receipt by default; set includeDocument=true for full renderedMarkdown and blocks.",
@@ -192,6 +204,11 @@ public static class KernelMcpDispatcher
         CancellationToken ct = default)
     {
         var args = arguments.ValueKind == JsonValueKind.Undefined ? JsonHelpers.EmptyObject : arguments;
+        if (toolName is KernelMcpToolNames.SystemUpgradeCheck or KernelMcpToolNames.SystemUpgradeApply or KernelMcpToolNames.SystemUpgradeRollback)
+        {
+            return await kernel.InvokeSystemUpgradeAsync(caller,
+                toolName == KernelMcpToolNames.SystemUpgradeCheck ? "check" : toolName == KernelMcpToolNames.SystemUpgradeApply ? "apply" : "rollback", args, ct).ConfigureAwait(false);
+        }
         var origin = KernelMcpCatalog.IsCompletionOnly(toolName) && caller.BoundAttemptId is not null
             ? await kernel.Actors.GetOrActivate(caller.TrackId).CaptureWorkerCompletionOriginAsync(caller, ct).ConfigureAwait(false)
             : null;

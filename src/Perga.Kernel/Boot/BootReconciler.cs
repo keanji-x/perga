@@ -13,6 +13,7 @@ public interface IBootReconciler
 
 public sealed class BootReconciler : IBootReconciler
 {
+    private readonly SystemUpgrade.UpgradeReceiptConsumer? _upgrades;
     private readonly ITrackStore _store;
     private readonly IWorkspaceDriverRegistry _workspaceDrivers;
     private readonly TrackActorRegistry _actorRegistry;
@@ -20,8 +21,10 @@ public sealed class BootReconciler : IBootReconciler
     public BootReconciler(
         ITrackStore store,
         IWorkspaceDriverRegistry workspaceDrivers,
-        TrackActorRegistry actorRegistry)
+        TrackActorRegistry actorRegistry,
+        SystemUpgrade.UpgradeReceiptConsumer? upgrades = null)
     {
+        _upgrades = upgrades;
         _store = store ?? throw new ArgumentNullException(nameof(store));
         _workspaceDrivers = workspaceDrivers ?? throw new ArgumentNullException(nameof(workspaceDrivers));
         _actorRegistry = actorRegistry ?? throw new ArgumentNullException(nameof(actorRegistry));
@@ -97,7 +100,14 @@ public sealed class BootReconciler : IBootReconciler
             foreach (var (trackId, sessionId) in await messages.ListRecoverableQueuesAsync(ct).ConfigureAwait(false))
                 await _actorRegistry.GetOrActivate(trackId).RecoverQueuedMessagesAsync(sessionId, ct).ConfigureAwait(false);
 
-        foreach (var mail in pendingMail)
+        if (_upgrades is not null)
+        {
+            try { await _upgrades.ImportAsync(ct).ConfigureAwait(false); }
+            catch (Exception ex) when (!ct.IsCancellationRequested)
+            { System.Diagnostics.Trace.TraceWarning("Upgrade receipt import will retry in background: {0}", ex.Message); }
+        }
+
+        foreach (var mail in pendingMail.Where(m => m.FromTrackId != "system:upgrade"))
             await _actorRegistry.GetOrActivate(mail.ToTrackId).WakeForMailAsync(mail, ct, recovering: true).ConfigureAwait(false);
 
         foreach (var trackId in await _store.ListPendingWorkerDispatchTracksAsync(ct).ConfigureAwait(false))

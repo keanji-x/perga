@@ -1,3 +1,4 @@
+import { useSystemUpgradeStore } from '../providers/connection-status.tsx';
 // The React glue that owns exactly one configured event stream: mounted inside `ServerCompatGate`,
 // the only `start()` caller in the tree; `configure()` is side-effect free.
 
@@ -26,6 +27,7 @@ export type EventBridgeProps = Readonly<{
 
 /** Renders an inert marker so a contract test can assert where in the tree the bridge sits. */
 export function EventBridge({ client, stream, syncEventVersion, dbInstanceId, cursor, context }: EventBridgeProps) {
+  const upgradeStore = useSystemUpgradeStore();
   const publishConnectionState = usePublishConnectionState();
   useEffect(() => {
     if (publishConnectionState === null) return;
@@ -61,6 +63,9 @@ export function EventBridge({ client, stream, syncEventVersion, dbInstanceId, cu
     }
     const unsubscribe = stream.onFrame((frame) => {
       const current = latest.current;
+      if (frame.type === 'event' && frame.event.ev === 'system.upgrade_status' && frame.meta.eventVersion <= syncEventVersion) {
+        upgradeStore?.acceptStatus(frame.event.data);
+      }
       const reduction = reduceEventFrame(state, frame, current.context ?? trackLookupContext(current.client));
       state = reduction.state;
       for (const effect of reduction.effects) {
@@ -80,7 +85,7 @@ export function EventBridge({ client, stream, syncEventVersion, dbInstanceId, cu
       unsubscribe();
       configured.stop();
     };
-  }, [stream, syncEventVersion]);
+  }, [stream, syncEventVersion, upgradeStore]);
 
   return <span data-nc-event-bridge="" hidden />;
 }

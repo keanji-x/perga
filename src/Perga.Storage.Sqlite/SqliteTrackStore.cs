@@ -1428,7 +1428,13 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
         _writer.EnqueueAsync(async (conn, tx, token) =>
         {
             await conn.ExecuteAsync(new CommandDefinition(
-                "UPDATE mails SET wake_pending = 0 WHERE id = @mailId;",
+                """
+                UPDATE mails SET wake_pending = 0 WHERE id = @mailId;
+                UPDATE system_upgrade_receipts SET notification_status = CASE
+                    WHEN EXISTS (SELECT 1 FROM mails m JOIN tracks t ON t.id = m.to_track_id
+                        WHERE m.id = @mailId AND t.closed_at_ms IS NULL) THEN 'notified' ELSE 'target_unavailable' END
+                    WHERE 'system-upgrade:' || job_id = @mailId;
+                """,
                 new { mailId }, tx, cancellationToken: token)).ConfigureAwait(false);
         }, ct);
 
