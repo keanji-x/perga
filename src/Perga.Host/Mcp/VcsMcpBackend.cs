@@ -70,7 +70,7 @@ public sealed class VcsMcpBackend : IMcpToolBackend
 
         try
         {
-            await _kernel.GuardMcpToolCallAsync(caller.TrackId, caller.SessionId, "vcs", toolName, args, ct)
+            await _kernel.GuardMcpToolCallAsync(caller.TrackId, caller.SessionId, "vcs", toolName, args, ct, caller.ExecutionOrigin)
                 .ConfigureAwait(false);
 
             var workspaceCwd = await ResolveCallerWorkspaceCwdAsync(caller, ct).ConfigureAwait(false);

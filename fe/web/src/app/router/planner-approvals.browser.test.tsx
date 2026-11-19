@@ -33,3 +33,32 @@ it.each([1280, 390])('answers a v1 open ask in the lead conversation at %ipx', a
   expect(page.getByRole('button', { name: /^Approvals:/ }).query()).toBeNull();
   expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(width);
 });
+
+it('answers a live approval through its execution and approval identities', async () => {
+  await page.viewport(1280, 844);
+  let answered = false;
+  const decisionPath = '/api/v1/tracks/daily/executions/turn-7/approvals/apr-1/decision';
+  const approval = {
+    id: 'apr-1', executionId: 'turn-7', sessionId: 'daily-planner', turnId: 'turn-7', createdAtMs: 1,
+    questions: [{ question: 'Allow publishing this report?', options: ['Approve', 'Deny'] }],
+  };
+  const fixture = renderSessionFixture({ initial: '/track/daily?panel=conversations', reply: request => {
+    if (request.path === decisionPath) {
+      answered = true;
+      return sessionReply(approval);
+    }
+    if (request.path === '/api/v1/tracks/daily') return sessionReply({
+      ...fixtureSnapshot(fixtureTrack('daily', { leadSessionId: 'daily-planner' }),
+        [fixtureSession('daily-planner', 'daily', { isLead: true, title: 'Daily Planner conversation' })]),
+      pendingApprovals: answered ? [] : [approval],
+    });
+    return undefined;
+  } });
+  await page.getByRole('button', { name: /Conversation Daily Planner conversation/ }).click();
+  const drawer = page.getByRole('group', { name: 'The Planner asks' });
+  await expect.element(drawer.getByText('Turn paused, waiting for your approval')).toBeVisible();
+  await drawer.getByRole('button', { name: 'Approve', exact: true }).click();
+  await expect.poll(() => fixture.requests.find(request => request.path === decisionPath)?.body)
+    .toEqual({ answers: [{ option: 0, value: 'Approve' }] });
+  await expect.element(drawer).not.toBeInTheDocument();
+});

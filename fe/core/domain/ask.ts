@@ -3,7 +3,7 @@
 
 import { z } from 'zod';
 import { askDtoSchema, askQuestionSchema } from '../api/schemas.js';
-import { askQuestionDtoSchema, type AskDto } from '../api/perga-v1.js';
+import { approvalDtoSchema, askQuestionDtoSchema, type ApprovalDto } from '../api/perga-v1.js';
 import type { AskAction, AskAnswer } from '../api/generated/wire.js';
 import type { ApiOperation } from '../api/types.js';
 import type { ActivityItem, AskDelivery, AskId, AskQuestion } from './activity.js';
@@ -13,7 +13,7 @@ import { writeClassOf, writeFailureText, type FailureTable, type WriteClass, typ
  * One open ask as the questions drawer shows it: the answer route's id, its questions in order, and
  * where the answer goes.
  */
-export type OpenAsk = Readonly<{ askId: AskId; questions: readonly AskQuestion[]; delivery: AskDelivery; action?: AskAction }>;
+export type OpenAsk = Readonly<{ askId: AskId; questions: readonly AskQuestion[]; delivery: AskDelivery; executionId?: string; action?: AskAction }>;
 
 function compareAskIds(left: AskId, right: AskId): number {
   if (typeof left === 'number' && typeof right === 'number') return left - right;
@@ -52,12 +52,11 @@ export function normalizeAskQuestions(raw: unknown): readonly z.infer<typeof ask
   });
 }
 
-export function workerOpenAsks(asks: readonly AskDto[]): readonly OpenAsk[] {
-  return asks.flatMap(ask => {
-    if (ask.status !== 'open') return [];
-    const questions = normalizeAskQuestions(ask.questions);
-    return questions.length === 0 ? [] : [{ askId: ask.id, delivery: 'hold', questions }];
-  });
+export function pendingApprovalQuestions(approvals: readonly ApprovalDto[]): readonly OpenAsk[] {
+  return approvals.map(approval => ({
+    askId: approval.id, executionId: approval.executionId, delivery: 'hold',
+    questions: approval.questions.map(question => ({ title: question.question, options: question.options })),
+  }));
 }
 
 /**
@@ -119,6 +118,7 @@ export function answerAskOperation(
   askId: AskId,
   answers: readonly AskAnswer[],
   questions?: readonly AskQuestion[],
+  executionId?: string,
 ): ApiOperation<undefined> {
   const mappedAnswers = questions === undefined
     ? [...answers]
@@ -129,9 +129,11 @@ export function answerAskOperation(
     });
   return {
     method: 'POST',
-    path: `/api/v1/tracks/${encodeURIComponent(trackId)}/asks/${encodeURIComponent(String(askId))}/answer`,
+    path: executionId === undefined
+      ? `/api/v1/tracks/${encodeURIComponent(trackId)}/asks/${encodeURIComponent(String(askId))}/answer`
+      : `/api/v1/tracks/${encodeURIComponent(trackId)}/executions/${encodeURIComponent(executionId)}/approvals/${encodeURIComponent(String(askId))}/decision`,
     body: { answers: mappedAnswers },
-    responseSchema: z.union([askDtoSchema.transform(() => undefined), z.undefined()]),
+    responseSchema: z.union([(executionId === undefined ? askDtoSchema : approvalDtoSchema).transform(() => undefined), z.undefined()]),
   };
 }
 

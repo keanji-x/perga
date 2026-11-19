@@ -179,8 +179,7 @@ public sealed partial class TrackActor
                 await MarkSessionResumeQuiescentCoreAsync(sessionId, hold, CancellationToken.None).ConfigureAwait(false);
                 if (active is not null && _scheduler.TryGetActive(sessionId, out var current) && ReferenceEquals(current, active))
                 {
-                    active.Interrupted = true;
-                    active.TurnCts.Cancel();
+                    AbortTurn(active);
                 }
             }, ct).ConfigureAwait(false);
             if (active is not null)
@@ -228,7 +227,7 @@ public sealed partial class TrackActor
                 var unknown = session.Status == "unknown"
                     ? await _store.SessionInputs.FindUnresolvedAsync(sessionId, CancellationToken.None).ConfigureAwait(false)
                     : null;
-                if (session.Status == "unknown" && unknown?.Receipt.TurnId != hold.TurnId)
+                if (unknown is not null && unknown.Receipt.TurnId != hold.TurnId)
                     throw KernelException.Conflict("The unsettled input no longer matches this recovery.");
                 var evt = SessionUpdatedEvent(updated);
                 await _eventHub.EnsureInitializedFromStoreAsync(_store, CancellationToken.None).ConfigureAwait(false);
@@ -279,22 +278,30 @@ public sealed partial class TrackActor
         }
     }
 
-    private static async Task<bool> TryObserveProviderStopAsync(ActiveTurnState active, CancellationToken ct)
+    private static bool HasStopEvidence(ActiveTurnState active)
+    {
+        lock (active.Control.Sync)
+            return active.StoppedBeforeDispatch ||
+                active.Control.StopDispatch is not { IsCompleted: false } && !active.UnconfirmedCancel &&
+                active.ObservationEnded.Task is { IsCompletedSuccessfully: true, Result: true };
+    }
+
+    private async Task<bool> TryObserveProviderStopAsync(ActiveTurnState active, CancellationToken ct)
     {
         using var grace = CancellationTokenSource.CreateLinkedTokenSource(ct);
         grace.CancelAfter(ProviderStopGrace);
         try
         {
-            await active.AgentSession.CancelTurnAsync(grace.Token).WaitAsync(grace.Token).ConfigureAwait(false);
-            return await active.Settled.Task.WaitAsync(grace.Token).ConfigureAwait(false);
+            await RequestTurnStop(active, observeTerminal: true).WaitAsync(grace.Token).ConfigureAwait(false);
+            return HasStopEvidence(active);
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
-            return active.Settled.Task is { IsCompletedSuccessfully: true, Result: true };
+            return HasStopEvidence(active);
         }
-        catch (Exception error) when (error is IOException or InvalidOperationException)
+        catch (Exception error) when (error is IOException or InvalidOperationException or KernelException)
         {
-            return active.Settled.Task is { IsCompletedSuccessfully: true, Result: true };
+            return HasStopEvidence(active);
         }
     }
 }

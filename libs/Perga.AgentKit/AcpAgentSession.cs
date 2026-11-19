@@ -23,6 +23,7 @@ public sealed class AcpAgentSession : IAgentSession
         public Channel<UnifiedAgentEvent> Events { get; } = Channel.CreateUnbounded<UnifiedAgentEvent>(
             new UnboundedChannelOptions { SingleReader = true, SingleWriter = false });
 
+        public ConcurrentDictionary<string, byte> PendingPermissionIds { get; } = new(StringComparer.Ordinal);
         public HashSet<string> StartedToolIds { get; } = new(StringComparer.Ordinal);
         public TokenUsage? LatestUsage;
         public long ContextUsageRevision;
@@ -342,6 +343,10 @@ public sealed class AcpAgentSession : IAgentSession
         {
             Interlocked.CompareExchange(ref _currentTurn, null, turnState);
             turnState.CompleteQuietly();
+            foreach (var pendingId in turnState.PendingPermissionIds.Keys)
+            {
+                _pendingPermissions.TryRemove(pendingId, out _);
+            }
             _turnLock.Release();
         }
     }
@@ -377,6 +382,10 @@ public sealed class AcpAgentSession : IAgentSession
         {
             Interlocked.CompareExchange(ref _currentTurn, null, turnState);
             turnState.CompleteQuietly();
+            foreach (var pendingId in turnState.PendingPermissionIds.Keys)
+            {
+                _pendingPermissions.TryRemove(pendingId, out _);
+            }
             _turnLock.Release();
         }
     }
@@ -391,13 +400,48 @@ public sealed class AcpAgentSession : IAgentSession
             return;
         }
 
-        turnState.CancelRequested = true;
+        lock (turnState)
+            turnState.CancelRequested = true;
+        await CancelPendingPermissionsAsync(ct).ConfigureAwait(false);
         var cancelParams = new Dictionary<string, object?>
         {
             ["sessionId"] = sessionId
         };
 
         await _rpc.SendNotificationAsync("session/cancel", cancelParams, ct).ConfigureAwait(false);
+    }
+
+    private async Task CancelPendingPermissionsAsync(CancellationToken ct)
+    {
+        foreach (var requestId in _pendingPermissions.Keys.ToArray())
+        {
+            if (!_pendingPermissions.TryRemove(requestId, out var pending))
+            {
+                continue;
+            }
+
+            await TrySendCancelledPermissionAsync(pending.RawId, ct).ConfigureAwait(false);
+        }
+    }
+
+    private async Task TrySendCancelledPermissionAsync(JsonElement rawId, CancellationToken ct)
+    {
+        var cancelledPayload = new Dictionary<string, object?>
+        {
+            ["outcome"] = new Dictionary<string, object?>
+            {
+                ["outcome"] = "cancelled"
+            }
+        };
+
+        try
+        {
+            await _rpc.SendResultResponseAsync(rawId, cancelledPayload, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is IOException or ObjectDisposedException or InvalidOperationException)
+        {
+            // Subprocess pipe already closed during cancellation.
+        }
     }
 
     public Task RespondApprovalAsync(
@@ -787,8 +831,19 @@ public sealed class AcpAgentSession : IAgentSession
             Interlocked.Exchange(ref turnState.ContextUsageRevision, revision ?? 0);
             Volatile.Write(ref _lastCompletedContextPrompt, null);
             var prompt = new CompletedContextPrompt(Interlocked.Increment(ref _nextContextPromptId), revision);
-            await _rpc.SendRequestAsync("session/prompt", promptParams, ct,
-                result => CompleteRawPrompt(result, turnState, prompt)).ConfigureAwait(false);
+            Task<JsonElement> promptRequest;
+            lock (turnState)
+            {
+                if (turnState.CancelRequested)
+                {
+                    turnState.TryFinish(new UnifiedAgentEvent.TurnError("turn_interrupted",
+                        "ACP stopped before sending the prompt.", false, IsConclusive: true, BeforePrompt: true));
+                    return;
+                }
+                promptRequest = _rpc.SendRequestAsync("session/prompt", promptParams, ct,
+                    result => CompleteRawPrompt(result, turnState, prompt));
+            }
+            await promptRequest.ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -1086,10 +1141,21 @@ public sealed class AcpAgentSession : IAgentSession
             return;
         }
 
-        var requestId = JsonRpcStdioConnection.ExtractDisplayRequestId(rawId);
+        var requestId = $"permission_{Guid.NewGuid():N}";
         var (options, allowOptionId, rejectOptionId) = ExtractPermissionOptions(parameters);
         var validOptionIds = options.Select(o => o.OptionId).ToHashSet(StringComparer.Ordinal);
         _pendingPermissions[requestId] = new PendingAcpPermission(rawId, allowOptionId, rejectOptionId, validOptionIds);
+
+        var turnState = Volatile.Read(ref _currentTurn);
+        if (turnState is null || turnState.CancelRequested)
+        {
+            if (_pendingPermissions.TryRemove(requestId, out var cancelled))
+            {
+                _ = TrySendCancelledPermissionAsync(cancelled.RawId, CancellationToken.None);
+            }
+
+            return;
+        }
 
         var toolName = "permission";
         JsonElement args = JsonRpcStdioConnection.CreateEmptyJsonObject();
@@ -1119,12 +1185,18 @@ public sealed class AcpAgentSession : IAgentSession
             }
         }
 
-        var turnState = Volatile.Read(ref _currentTurn);
-        turnState?.Events.Writer.TryWrite(new UnifiedAgentEvent.ApprovalRequested(
-            requestId,
-            toolName,
-            args,
-            options.Count > 0 ? options : null));
+        turnState.PendingPermissionIds[requestId] = 0;
+        if (!turnState.Events.Writer.TryWrite(new UnifiedAgentEvent.ApprovalRequested(
+                requestId,
+                toolName,
+                args,
+                options.Count > 0 ? options : null)))
+        {
+            if (_pendingPermissions.TryRemove(requestId, out var cancelled))
+            {
+                _ = TrySendCancelledPermissionAsync(cancelled.RawId, CancellationToken.None);
+            }
+        }
     }
 
     private void OnDisconnected(Exception? ex)

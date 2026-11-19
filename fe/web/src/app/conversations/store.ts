@@ -199,7 +199,8 @@ export function useConversationStore(
     transcriptKey: transcriptQuery.queryKey, transcriptReads, items, worker,
   });
   const working = !executionHeld && !stalled && (phase === 'issuing_turn' || phase === 'compacting' || phase === 'turn_running');
-  const canStop = resumeState !== 'resuming' && working && (!pergaInputProtocol || phase === 'turn_running');
+  const stopTurnId = run.data?.running_turn?.turn_id ?? run.data?.native_turn_id;
+  const canStop = resumeState !== 'resuming' && working && stopTurnId != null && (!pergaInputProtocol || phase === 'turn_running');
   const stop = useConversationStop({
     cardId, canStop,
     responseEnded: run.error === null && (canonical && !pergaInputProtocol
@@ -208,8 +209,11 @@ export function useConversationStore(
     newestRowId: items.reduce((latest, row) => Math.max(latest, row.id), 0),
     completedRowId: items.reduce<number | null>((latest, row) => transcriptRowToTurnOutcome(row) === null
       ? latest : Math.max(latest ?? 0, row.id), null),
-    requestStop: () => mutations.interrupt(worker === null || workerTurn === undefined ? undefined
-      : { attemptId: worker.attemptId, turnId: workerTurn }),
+    requestStop: () => {
+      if (worker !== null && workerTurn !== undefined)
+        return mutations.interrupt({ attemptId: worker.attemptId, turnId: workerTurn });
+      return stopTurnId == null ? Promise.reject(new NotSentError()) : mutations.interrupt({ turnId: stopTurnId });
+    },
   });
   const restart = useConversationRestart({ cardId, enabled: run.data?.input_contract === 'historical' || recovery?.action === 'abandon_session' || recovery?.action === 'recover_session', recovery, restart: () => mutations.restart(recovery) });
   const landedTranscript = transcriptReads.startOf(history.data);
@@ -415,7 +419,7 @@ export function useConversationStore(
     worker,
     updateWorkerSettings: mutations.updateWorkerSettings,
     answerWorkerAsk: (ask, answers) => trackId === undefined ? Promise.reject(new NotSentError())
-      : mutations.answerWorkerAsk(trackId, ask.askId, answers, ask.questions),
+      : mutations.answerWorkerAsk(trackId, ask.askId, answers, ask.questions, ask.executionId),
     workerDelivery: worker?.phase !== 'running' || workerTurn === undefined ? null : {
       mode: workerMode,
       select: mode => setDeliveryChoice({ cardId, turnId: workerTurn, mode }),

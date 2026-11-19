@@ -140,7 +140,7 @@ public sealed class ClaudeProviderTests : IDisposable
             allowEvents.Add(evt);
             if (evt is UnifiedAgentEvent.ApprovalRequested req)
             {
-                Assert.Equal("claude_perm_1", req.RequestId);
+                Assert.StartsWith("permission_", req.RequestId, StringComparison.Ordinal);
                 Assert.Equal("Bash", req.ToolName);
                 await session.RespondApprovalAsync(req.RequestId, approved: true, ct: CancellationToken.None);
             }
@@ -162,6 +162,22 @@ public sealed class ClaudeProviderTests : IDisposable
 
         var denyText = string.Concat(denyEvents.OfType<UnifiedAgentEvent.TextDelta>().Select(t => t.Delta));
         Assert.Contains("claude-approval:deny|updatedInput=False|msg=blocked by policy", denyText, StringComparison.Ordinal);
+
+        // CancelTurnAsync during pending approval denies the pending control_request so the turn settles cleanly
+        var cancelApprovalEvents = new List<UnifiedAgentEvent>();
+        var cancelApprovalSent = false;
+        await foreach (var evt in session.StreamTurnAsync(new TurnInput("REQUIRE_APPROVAL_CANCEL", "c_cancel_approval"), CancellationToken.None))
+        {
+            cancelApprovalEvents.Add(evt);
+            if (!cancelApprovalSent && evt is UnifiedAgentEvent.ApprovalRequested)
+            {
+                cancelApprovalSent = true;
+                await session.CancelTurnAsync(CancellationToken.None);
+            }
+        }
+
+        Assert.True(cancelApprovalSent);
+        Assert.Single(cancelApprovalEvents.OfType<UnifiedAgentEvent.TurnInterrupted>());
 
         // CancelTurnAsync sends SIGINT and finishes turn cleanly while keeping session usable!
         var sigintEvents = new List<UnifiedAgentEvent>();

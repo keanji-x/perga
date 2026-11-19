@@ -61,9 +61,15 @@ public sealed partial class TrackActor
             }
             finally
             {
-                if (activated is { } active)
-                    await CleanUpAbandonedTurnAsync(work, active).ConfigureAwait(false);
-                Interlocked.Decrement(ref actor._inFlightExternalOps);
+                try
+                {
+                    if (activated is { } active)
+                        await CleanUpAbandonedTurnAsync(work, active).ConfigureAwait(false);
+                }
+                finally
+                {
+                    Interlocked.Decrement(ref actor._inFlightExternalOps);
+                }
             }
         }
 
@@ -159,7 +165,7 @@ public sealed partial class TrackActor
             try
             {
                 var input = new TurnInput(effectivePrompt, active.TurnDto.Id, active.Settings?.Model, active.Settings?.ReasoningEffort);
-                await foreach (var evt in active.AgentSession.StreamTurnAsync(input, active.TurnCts.Token).ConfigureAwait(false))
+                await foreach (var evt in actor.ObserveTurnAsync(active, input, active.TurnCts.Token).ConfigureAwait(false))
                     await HandleEventAsync(work, active, outcome, evt).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (active.Interrupted || actor._actorShutdownCts.IsCancellationRequested)
@@ -178,13 +184,30 @@ public sealed partial class TrackActor
                 outcome.ErrorText = ex.Message;
             }
 
-            if (active.Interrupted && outcome.Status == "completed")
+            try
+            {
+                await actor.SealTurn(active).ConfigureAwait(false);
+            }
+            catch (KernelException) when (active.Interrupted)
+            {
+                // The Stop caller sees the failure. Settlement records available evidence.
+            }
+
+            if (active.UnconfirmedCancel)
+                outcome.Conclusive = false;
+            if (active.StoppedBeforeDispatch)
+            {
+                outcome.Conclusive = true;
+                outcome.RejectedBeforePrompt = true;
+            }
+
+            if (active.Interrupted && (outcome.Status == "completed" || outcome.RejectedBeforePrompt))
             {
                 outcome.Status = "interrupted";
                 outcome.ErrorText = "Turn interrupted.";
             }
 
-            if (work.IsDurable && !outcome.Conclusive)
+            if ((work.IsDurable || active.Interrupted && active.Settings is null) && !outcome.Conclusive)
             {
                 outcome.Status = "unknown";
                 outcome.ErrorText ??= "Provider outcome could not be confirmed.";
@@ -241,7 +264,7 @@ public sealed partial class TrackActor
                     break;
 
                 case UnifiedAgentEvent.ApprovalRequested approval:
-                    await AnswerApprovalAsync(active, approval).ConfigureAwait(false);
+                    actor.AdmitProviderApproval(active, approval);
                     break;
 
                 case UnifiedAgentEvent.ContextUsageUpdated contextUsage:
@@ -302,52 +325,6 @@ public sealed partial class TrackActor
                     actor.NotifyQueueChangedCore(active.SessionId);
                 return Task.CompletedTask;
             }, actor._actorShutdownCts.Token).ConfigureAwait(false);
-        }
-
-        private async Task AnswerApprovalAsync(ActiveTurnState active, UnifiedAgentEvent.ApprovalRequested approval)
-        {
-            if (active.Settings?.ApprovalMode == "deny")
-            {
-                await active.AgentSession.RespondApprovalAsync(approval.RequestId, false,
-                    "The Worker approval mode denies this request.", active.TurnCts.Token).ConfigureAwait(false);
-                return;
-            }
-
-            var providerOptions = approval.Options is { Count: > 0 } opts ? opts : null;
-            var options = providerOptions is not null
-                ? providerOptions.Select(o => o.Label).ToArray()
-                : new[] { "Approve", "Deny" };
-            var suspension = await actor.EnqueueAsync(async _ =>
-            {
-                var susp = await actor.CreateAskSuspensionCoreAsync(
-                    $"Approve tool '{approval.ToolName}'?",
-                    options,
-                    active.SessionId,
-                    active.TurnCts.Token).ConfigureAwait(false);
-                active.OwnedAskIds.Add(susp.Ask.Id);
-                return susp;
-            }, active.TurnCts.Token).ConfigureAwait(false);
-
-            var humanAns = await suspension.WaiterTask.WaitAsync(active.TurnCts.Token).ConfigureAwait(false);
-            string? selectedOptionId = null;
-            bool approved;
-            if (providerOptions is not null &&
-                AskAnswerEvaluator.TryGetSelectedOptionIndex(humanAns, options, out var selectedIndex))
-            {
-                var chosen = providerOptions[selectedIndex];
-                selectedOptionId = chosen.OptionId;
-                approved = chosen.IsApproval;
-            }
-            else
-            {
-                approved = AskAnswerEvaluator.IsApproved(humanAns, options);
-            }
-            await active.AgentSession.RespondApprovalAsync(
-                approval.RequestId,
-                approved,
-                selectedOptionId,
-                approved ? null : "Denied by user.",
-                active.TurnCts.Token).ConfigureAwait(false);
         }
 
         private async Task FlushThinkingChunkAsync(ActiveTurnState active, TurnOutcome outcome, long now)
@@ -428,7 +405,6 @@ public sealed partial class TrackActor
                     outcome.CompletedPromptId, endNow);
             }
 
-            // Only a durable input can settle as unknown.
             var updatedSession = currentSession with
             {
                 NativeThreadId = outcome.BoundThreadId ?? active.AgentSession.NativeThreadId ?? currentSession.NativeThreadId,
@@ -445,8 +421,9 @@ public sealed partial class TrackActor
                 CompletedAtMs = outcome.Status == "unknown" ? null : endNow
             };
 
-            await UpdateResumeHoldCoreAsync(work, outcome.Conclusive, completedTurn.Id, updatedSession).ConfigureAwait(false);
-            await work.PersistSettlementCoreAsync(outcome.Delivered, completedTurn, items, updatedSession).ConfigureAwait(false);
+            await UpdateResumeHoldCoreAsync(work, active, outcome.Conclusive, updatedSession).ConfigureAwait(false);
+            await work.PersistSettlementCoreAsync(outcome.Delivered, outcome.RejectedBeforePrompt, completedTurn, items, updatedSession)
+                .ConfigureAwait(false);
 
             actor._scheduler.RemoveActive(sessionId);
             active.Settled.TrySetResult(outcome.Conclusive);
@@ -459,10 +436,12 @@ public sealed partial class TrackActor
 
         // An inconclusive queued follow-up holds the session for resume. A conclusive outcome quiesces the hold
         // this turn created.
-        private async Task UpdateResumeHoldCoreAsync(ITurnWorkItem work, bool conclusive, string turnId, AgentSessionDto updatedSession)
+        private async Task UpdateResumeHoldCoreAsync(ITurnWorkItem work, ActiveTurnState active, bool conclusive, AgentSessionDto updatedSession)
         {
             var sessionId = updatedSession.Id;
-            if (!conclusive && work.HoldsResumeWhenInconclusive && !actor._scheduler.HasResumeHold(sessionId))
+            var turnId = active.TurnDto.Id;
+            if (!conclusive && (work.HoldsResumeWhenInconclusive || active.Interrupted && active.Settings is null) &&
+                !actor._scheduler.HasResumeHold(sessionId))
                 await actor.CreateSessionResumeHoldCoreAsync(sessionId, turnId,
                     updatedSession.NativeThreadId ?? string.Empty, CancellationToken.None).ConfigureAwait(false);
 
@@ -486,6 +465,7 @@ public sealed partial class TrackActor
         // active turn, which means the turn never settled.
         private async Task CleanUpAbandonedTurnAsync(ITurnWorkItem work, ActiveTurnState active)
         {
+            _ = actor.SealTurn(active);
             try
             {
                 if (!actor._actorShutdownCts.IsCancellationRequested)
@@ -493,6 +473,22 @@ public sealed partial class TrackActor
                     {
                         if (!actor._scheduler.TryGetActive(active.SessionId, out var current) || !ReferenceEquals(current, active))
                             return;
+                        if (active.Interrupted && active.Settings is null && !HasStopEvidence(active))
+                        {
+                            var session = actor.RequireSessionCore(active.SessionId);
+                            if (!actor._scheduler.HasResumeHold(active.SessionId))
+                                await actor.CreateSessionResumeHoldCoreAsync(active.SessionId, active.TurnDto.Id,
+                                    active.AgentSession.NativeThreadId ?? session.NativeThreadId ?? string.Empty,
+                                    CancellationToken.None).ConfigureAwait(false);
+                            if (!work.IsDurable)
+                            {
+                                var unknown = session with { Status = "unknown", UpdatedAtMs = actor.NowMs() };
+                                await actor.PersistAndEmitSessionUpdatedCoreAsync(unknown, unknown.UpdatedAtMs, CancellationToken.None)
+                                    .ConfigureAwait(false);
+                            }
+                            actor._scheduler.RemoveActive(active.SessionId);
+                            return;
+                        }
                         actor._scheduler.RemoveActive(active.SessionId);
                         await work.OnTurnAbandonedCoreAsync().ConfigureAwait(false);
                     }, CancellationToken.None).ConfigureAwait(false);

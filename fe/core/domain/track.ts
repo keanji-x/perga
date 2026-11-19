@@ -676,7 +676,7 @@ export function snapshotActivityOverlays(snapshot: TrackAggregateSnapshotDto): O
     .map(askDtoToActivityItem);
   const working = snapshot.tasks.some((task) => task.status === 'running' || task.status === 'verifying')
     || snapshot.sessions.some((session) => session.status === 'running');
-  const attention = openAskItems.length > 0
+  const attention = openAskItems.length > 0 || (snapshot.pendingApprovals?.length ?? 0) > 0
     ? 'input'
     : snapshot.tasks.some((task) => task.status === 'failed')
       ? 'failed'

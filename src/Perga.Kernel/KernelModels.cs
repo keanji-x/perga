@@ -143,7 +143,7 @@ public sealed record WorkerActivityEvent(long Sequence, string Kind, JsonElement
 
 public sealed record WorkerActivityDto(
     TaskDto Task, string AttemptId, string Phase, bool NativeSteer,
-    IReadOnlyList<AskDto> OpenAsks, long Sequence, bool Reset,
+    IReadOnlyList<ApprovalDto> PendingApprovals, long Sequence, bool Reset,
     IReadOnlyList<WorkerActivityEvent> Events, IReadOnlyList<WorkerMessageActivity> Messages,
     string Text, bool TextTruncated, WorkerSettings NextSettings, WorkerSettings? ActiveSettings,
     bool CanChangeModel, IReadOnlyList<string> ReasoningEfforts, string? LastError,
@@ -221,7 +221,10 @@ public sealed record TrackStatusDto(
     IReadOnlyList<TaskDto> Tasks,
     IReadOnlyList<AskDto> OpenAsks,
     IReadOnlyList<TerminalDto> Terminals,
-    int UnreadMailCount);
+    int UnreadMailCount)
+{
+    public IReadOnlyList<ApprovalDto> PendingApprovals { get; init; } = [];
+}
 
 public sealed record BootReconcileResult(
     IReadOnlyList<string> AffectedTrackIds,

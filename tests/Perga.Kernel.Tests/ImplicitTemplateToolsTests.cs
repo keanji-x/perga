@@ -114,10 +114,10 @@ public sealed class ImplicitTemplateToolsTests
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var suspended = KernelMcpDispatcher.ExecuteGuardedAsync(ctx.Kernel, caller,
             KernelMcpToolNames.TrackSet, TestJson.FromObject(new { source = Source, inputs = new { suspend = true } }), timeout.Token);
-        AskDto? ask = null;
+        ApprovalDto? ask = null;
         while (ask is null)
         {
-            ask = (await ctx.Kernel.GetTrackAggregateAsync(snap.Track.Id, timeout.Token)).OpenAsks.FirstOrDefault();
+            ask = (await ctx.Kernel.GetTrackAggregateAsync(snap.Track.Id, timeout.Token)).PendingApprovals.FirstOrDefault();
             if (ask is null) await Task.Delay(10, timeout.Token);
         }
         Assert.False(suspended.IsCompleted);
@@ -125,7 +125,7 @@ public sealed class ImplicitTemplateToolsTests
             .Track.TemplateState.GetProperty("requests").GetInt32());
         await Call(ctx, caller, KernelMcpToolNames.TrackSet, new { source = replacement });
         var events = ctx.Store.PersistedEvents.Count(e => e.Kind == "track.updated");
-        await ctx.Kernel.AnswerAskAsync(snap.Track.Id, ask.Id,
+        await ctx.Kernel.DecideApprovalAsync(snap.Track.Id, ask.ExecutionId, ask.Id,
             TestJson.FromObject(new { answers = new[] { "Approve" } }), timeout.Token);
         var ex = await Assert.ThrowsAsync<KernelException>(() => suspended);
         Assert.Equal(KernelErrorCode.PolicyDenied, ex.Code);

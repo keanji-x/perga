@@ -1,4 +1,5 @@
 using Perga.Contracts;
+using Perga.Kernel.Ports;
 using Perga.Kernel.Tests.Fakes;
 using Perga.PolicyVm;
 using Perga.ReportDoc;
@@ -204,16 +205,22 @@ public sealed class BoundAttemptFenceAndGovernanceTests
         ctx.PolicyVm.OnGuardReportCommit = (_, _, state) =>
             new PolicyEvalResult<GuardDecision>(state, new GuardDecision.AskHuman("Approve report edit?", ["Approve", "Deny"]));
 
+        var expired = await Assert.ThrowsAsync<KernelException>(() => ctx.Kernel.CommitReportAsync(trackId, leadId,
+            new ReportCommitRequest(r0.Anchor, [new BlockOp.UpsertBlockOp(null, ReportBlockKind.Prose, "Stale request", null)]),
+            origin: new McpExecutionOrigin("expired-turn")));
+        Assert.Equal(KernelErrorCode.Conflict, expired.Code);
+        Assert.Empty((await ctx.Kernel.GetTrackAggregateAsync(trackId)).PendingApprovals);
+
         var suspendedCommitTask = ctx.Kernel.CommitReportAsync(trackId, leadId, new ReportCommitRequest(
             r0.Anchor,
             [new BlockOp.UpsertBlockOp(null, ReportBlockKind.Prose, "Human-gated text", null)]));
 
         // Wait until OpenAsk appears on the track
-        AskDto? openAsk = null;
+        ApprovalDto? openAsk = null;
         for (var i = 0; i < 50 && openAsk is null; i++)
         {
             var agg = await ctx.Kernel.GetTrackAggregateAsync(trackId);
-            openAsk = agg.OpenAsks.FirstOrDefault();
+            openAsk = agg.PendingApprovals.FirstOrDefault();
             if (openAsk is null)
             {
                 await Task.Delay(10);
@@ -223,7 +230,7 @@ public sealed class BoundAttemptFenceAndGovernanceTests
         Assert.NotNull(openAsk);
         Assert.False(suspendedCommitTask.IsCompleted);
 
-        await ctx.Kernel.AnswerAskAsync(trackId, openAsk!.Id, TestJson.FromObject(new { answers = new[] { "Approve" } }));
+        await ctx.Kernel.DecideApprovalAsync(trackId, openAsk!.ExecutionId, openAsk!.Id, TestJson.FromObject(new { answers = new[] { "Approve" } }));
         var approvedCommit = await suspendedCommitTask;
         Assert.Equal(1, approvedCommit.DocRev);
     }

@@ -293,7 +293,7 @@ public sealed class McpPluginsPolicyGuardAndLifecycleIntegrationTests
             Assert.True(denyKernelErr);
             Assert.Contains("Policy blocked perga:perga_task_ls", denyKernelText, StringComparison.Ordinal);
 
-            // 6. Test PolicyVm.GuardToolCall -> AskHuman live HTTP suspension + WS ask.changed + /asks/{askId}/answer!
+            // 6. Test PolicyVm.GuardToolCall -> AskHuman live HTTP suspension + WS approval.changed and the decision route!
             using var eventsWs = await cluster.ConnectEventsWebSocketAsync($"?since=0&trackId={trackId}", ct);
             while (true)
             {
@@ -304,7 +304,7 @@ public sealed class McpPluginsPolicyGuardAndLifecycleIntegrationTests
                 }
             }
 
-            // 6A. Approved AskHuman -> suspends HTTP call, pushes AskDto on WS, resumes & executes upstream on Approve!
+            // 6A. Approved AskHuman -> suspends HTTP call, publishes an approval invalidation, resumes & executes upstream on Approve!
             var suspendedApproveTask = McpKernelAndVcsIntegrationTests.CallToolAsync(
                 cluster,
                 "/mcp/p/http-quote",
@@ -313,22 +313,20 @@ public sealed class McpPluginsPolicyGuardAndLifecycleIntegrationTests
                 new { ticker = "MSFT", mode = "ask" },
                 ct);
 
-            string? askIdApprove = null;
-            while (askIdApprove is null)
+            ApprovalDto approvalApprove;
+            while (true)
             {
                 using var wsEvt = await PergaHostTestCluster.ReceiveTextJsonFrameAsync(eventsWs, ct);
-                if (wsEvt.RootElement.GetProperty("kind").GetString() == KernelEventKinds.AskChanged)
-                {
-                    var askPayload = wsEvt.RootElement.GetProperty("payload");
-                    if (askPayload.GetProperty("status").GetString() == "open")
-                    {
-                        Assert.Equal("hold", askPayload.GetProperty("delivery").GetString());
-                        Assert.Equal(snap.RootElement.GetProperty("track").GetProperty("leadSessionId").GetString(),
-                            askPayload.GetProperty("sessionId").GetString());
-                        Assert.False(askPayload.TryGetProperty("turnId", out _));
-                        askIdApprove = askPayload.GetProperty("id").GetString();
-                    }
-                }
+                if (wsEvt.RootElement.GetProperty("kind").GetString() != KernelEventKinds.ApprovalsChanged)
+                    continue;
+                var view = await client.GetFromJsonAsync<TrackAggregateSnapshot>(
+                    $"/api/v1/tracks/{trackId}", PergaJsonDefaults.ApiOptions, ct);
+                var pending = view!.PendingApprovals.SingleOrDefault();
+                if (pending is null)
+                    continue;
+                approvalApprove = pending;
+                Assert.Null(pending.TurnId);
+                break;
             }
 
             // Confirm the MCP HTTP request is genuinely still suspended before human answers!
@@ -336,7 +334,7 @@ public sealed class McpPluginsPolicyGuardAndLifecycleIntegrationTests
             Assert.Single(httpUpstreamCalls);
 
             using var approveResp = await client.PostAsJsonAsync(
-                $"/api/v1/tracks/{trackId}/asks/{askIdApprove}/answer",
+                $"/api/v1/tracks/{trackId}/executions/{approvalApprove.ExecutionId}/approvals/{approvalApprove.Id}/decision",
                 new { answers = new[] { "Approve" } },
                 ct);
             approveResp.EnsureSuccessStatusCode();
@@ -355,22 +353,24 @@ public sealed class McpPluginsPolicyGuardAndLifecycleIntegrationTests
                 new { ticker = "TSLA", mode = "ask" },
                 ct);
 
-            string? askIdReject = null;
-            while (askIdReject is null)
+            ApprovalDto approvalReject;
+            while (true)
             {
                 using var wsEvt = await PergaHostTestCluster.ReceiveTextJsonFrameAsync(eventsWs, ct);
-                if (wsEvt.RootElement.GetProperty("kind").GetString() == KernelEventKinds.AskChanged)
-                {
-                    var askPayload = wsEvt.RootElement.GetProperty("payload");
-                    if (askPayload.GetProperty("status").GetString() == "open")
-                    {
-                        askIdReject = askPayload.GetProperty("id").GetString();
-                    }
-                }
+                if (wsEvt.RootElement.GetProperty("kind").GetString() != KernelEventKinds.ApprovalsChanged)
+                    continue;
+                var view = await client.GetFromJsonAsync<TrackAggregateSnapshot>(
+                    $"/api/v1/tracks/{trackId}", PergaJsonDefaults.ApiOptions, ct);
+                var pending = view!.PendingApprovals.SingleOrDefault();
+                if (pending is null)
+                    continue;
+                approvalReject = pending;
+                Assert.Null(pending.TurnId);
+                break;
             }
 
             using var rejectResp = await client.PostAsJsonAsync(
-                $"/api/v1/tracks/{trackId}/asks/{askIdReject}/answer",
+                $"/api/v1/tracks/{trackId}/executions/{approvalReject.ExecutionId}/approvals/{approvalReject.Id}/decision",
                 new { answers = new[] { "Reject" } },
                 ct);
             rejectResp.EnsureSuccessStatusCode();

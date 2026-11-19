@@ -398,7 +398,7 @@ export const workerActivitySchema = z.object({
   attemptId: z.string(),
   phase: z.string(),
   nativeSteer: z.boolean(),
-  openAsks: z.array(z.lazy(() => askDtoSchema)),
+  pendingApprovals: z.array(z.lazy(() => approvalDtoSchema)).optional(),
   sequence: z.number(),
   reset: z.boolean(),
   text: z.string(),
@@ -443,6 +443,16 @@ export const askQuestionDtoSchema = z.object({
   isMultiSelect: z.boolean().nullish().transform((v) => v ?? false),
 });
 export type AskQuestionDto = z.infer<typeof askQuestionDtoSchema>;
+
+export const approvalDtoSchema = z.object({
+  id: z.string(),
+  executionId: z.string(),
+  sessionId: z.string(),
+  turnId: z.string().nullish(),
+  questions: z.array(askQuestionDtoSchema),
+  createdAtMs: z.number(),
+});
+export type ApprovalDto = z.infer<typeof approvalDtoSchema>;
 
 export const askDtoSchema = z.object({
   delivery: z.enum(['wake', 'hold']),
@@ -491,6 +501,7 @@ export const trackAggregateSnapshotDtoSchema = z.object({
   tasks: z.array(taskDtoSchema).default([]),
   sessions: z.array(agentSessionDtoSchema).default([]),
   openAsks: z.array(askDtoSchema).default([]),
+  pendingApprovals: z.array(approvalDtoSchema).optional(),
   templateSnapshotSource: z.string().nullish(),
   workspacePreparation: z.enum(['pending', 'failed', 'unknown']).nullish(),
 });
@@ -585,6 +596,8 @@ export const pergaPersistentEventKindSchema = z.enum([
   'session.updated',
   'turn.completed',
   'ask.changed',
+  'approval.decided',
+  'approval.delivery',
   'mail.received',
   'terminal.changed',
 ]);
@@ -595,6 +608,7 @@ export const pergaTransientEventKindSchema = z.enum([
   'session.text_delta',
   'session.thinking_delta',
   'session.tool_progress',
+  'approval.changed',
 ]);
 export type PergaTransientEventKind = z.infer<typeof pergaTransientEventKindSchema>;
 
@@ -653,6 +667,8 @@ export type PergaPersistentEvent =
   | Readonly<{ kind: 'terminal.changed'; eventId: number; areaId: string | null; trackId: string | null; payload: TerminalDto; createdAtMs: number }>;
 
 export type PergaEventDecodeResult =
+  | Readonly<{ status: 'ready'; kind: 'approvals'; trackId: string; sessionId: string }>
+  | Readonly<{ status: 'ready'; kind: 'approval-audit' }>
   | Readonly<{ status: 'ready'; kind: 'upgrade-status'; payload: SystemUpgradeStatusPayload }>
   | Readonly<{ status: 'ready'; kind: 'persistent'; event: PergaPersistentEvent }>
   | Readonly<{ status: 'ready'; kind: 'delta'; delta: PergaStreamDelta }>
@@ -676,6 +692,12 @@ export function decodePergaEventEnvelope(input: unknown): PergaEventDecodeResult
     };
   }
   const { eventId, areaId, trackId, kind, payload, createdAtMs } = base.data;
+  if (kind === 'approval.changed') {
+    const parsed = z.object({ sessionId: z.string() }).safeParse(payload);
+    if (trackId == null || !parsed.success) return { status: 'failed', error: { kind: 'decode', message: 'Invalid approval change' } };
+    return { status: 'ready', kind: 'approvals', trackId, sessionId: parsed.data.sessionId };
+  }
+  if (kind === 'approval.decided' || kind === 'approval.delivery') return { status: 'ready', kind: 'approval-audit' };
   if (kind === 'system.upgrade_status') {
     const parsed = systemUpgradeStatusPayloadSchema.safeParse(payload);
     if (!parsed.success) return { status: 'failed', error: { kind: 'decode', message: 'Invalid system.upgrade_status payload', cause: parsed.error } };

@@ -58,6 +58,8 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
     private readonly ConcurrentQueue<RecordedTurnExecution> _executedTurns = new();
     private Func<HarnessLaunchSpec, TurnInput, CancellationToken, IAsyncEnumerable<UnifiedAgentEvent>>? _turnHandler;
     private Func<string, Task<bool>>? _steerHandler;
+    public Action? ApprovalHandler { get; set; }
+    public bool RequiresTerminalStop { get; set; }
     public Func<CancellationToken, Task>? CancelHandler { get; set; }
     public Func<CancellationToken, Task<bool>>? CloseHandler { get; set; }
     private int _probeCount;
@@ -202,6 +204,8 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
             }
         }
 
+        public bool RequiresTerminalStop => _owner.RequiresTerminalStop;
+
         public Task CancelTurnAsync(CancellationToken ct)
         {
             if (_owner.CancelHandler is { } handler)
@@ -213,6 +217,7 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
         public Task RespondApprovalAsync(string requestId, bool approved, string? reason = null, CancellationToken ct = default)
         {
             _owner.ApprovalResponses.Enqueue((requestId, approved));
+            _owner.ApprovalHandler?.Invoke();
             _ = reason;
             _ = ct;
             return Task.CompletedTask;

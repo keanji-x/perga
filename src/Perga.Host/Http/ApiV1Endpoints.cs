@@ -20,7 +20,7 @@ public sealed record SendMessageHttpBody(
     bool AllowQueue = false,
     WorkerMessageMode? Mode = null);
 
-public sealed record InterruptWorkerHttpBody(string AttemptId, string TurnId);
+public sealed record InterruptTurnHttpBody(string? AttemptId, string TurnId);
 
 public sealed record ResumeProviderSessionHttpBody(string TurnId);
 
@@ -400,9 +400,11 @@ public static class ApiV1Endpoints
 
         v1.MapPost("/sessions/{sessionId}/interrupt", async (string sessionId, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
         {
-            var target = await ReadOptionalJsonBodyAsync<InterruptWorkerHttpBody?>(ctx, () => null, ct).ConfigureAwait(false);
-            if (target is null)
-                await kernel.InterruptSessionAsync(sessionId, ct).ConfigureAwait(false);
+            var target = await ReadOptionalJsonBodyAsync<InterruptTurnHttpBody?>(ctx, () => null, ct).ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(target?.TurnId))
+                return HttpErrorHandling.BadRequest("invalid_argument", "A target turn is required.");
+            if (target.AttemptId is null)
+                await kernel.InterruptSessionAsync(sessionId, ct, target.TurnId).ConfigureAwait(false);
             else
                 await kernel.InterruptWorkerAsync(sessionId, target.AttemptId, target.TurnId, caller: null, ct).ConfigureAwait(false);
             return Results.Json(new { ok = true }, PergaJsonDefaults.ApiOptions);
@@ -448,6 +450,16 @@ public static class ApiV1Endpoints
 
             var answered = await kernel.AnswerAskAsync(trackId, askId, root.Clone(), ct).ConfigureAwait(false);
             return Results.Json(answered, PergaJsonDefaults.ApiOptions);
+        });
+
+        v1.MapPost("/tracks/{trackId}/executions/{executionId}/approvals/{approvalId}/decision", async (
+            string trackId, string executionId, string approvalId, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
+        {
+            using var doc = await JsonDocument.ParseAsync(ctx.Request.Body, cancellationToken: ct).ConfigureAwait(false);
+            if (doc.RootElement.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+                return HttpErrorHandling.BadRequest("invalid_argument", "An approval decision is required.");
+            var approval = await kernel.DecideApprovalAsync(trackId, executionId, approvalId, doc.RootElement, ct).ConfigureAwait(false);
+            return Results.Json(approval, PergaJsonDefaults.ApiOptions);
         });
 
         // ------------------- Terminals -------------------

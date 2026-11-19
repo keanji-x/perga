@@ -8,7 +8,7 @@ namespace Perga.Kernel.Actors;
 public sealed partial class TrackActor
 {
     public async Task<WorkerDispatchReceipt> DispatchWorkerAsync(
-        DispatchWorkerRequest request, string? requestKey, string? callerSessionId, CancellationToken ct)
+        DispatchWorkerRequest request, string? requestKey, string? callerSessionId, CancellationToken ct, McpExecutionOrigin? origin = null)
     {
         if (string.IsNullOrWhiteSpace(request.Goal))
             throw KernelException.InvalidArgument("Worker dispatch requires a non-empty goal.");
@@ -37,7 +37,7 @@ public sealed partial class TrackActor
             }
         }
         var committed = await CommitReportInternalAsync(callerSessionId is null ? EditActorKind.Human : null, callerSessionId,
-            report => BuildWorkerDispatchReportCommitCore(report, request, taskKey), ct, intent).ConfigureAwait(false);
+            report => BuildWorkerDispatchReportCommitCore(report, request, taskKey), ct, intent, origin).ConfigureAwait(false);
         var task = committed.Tasks.Single(item => item.TaskKey == taskKey);
         return await EnqueueAsync(_ => Task.FromResult(new WorkerDispatchReceipt(task,
             task.LatestAttemptId is null ? null : _sessions.Values.FirstOrDefault(session => session.BoundAttemptId == task.LatestAttemptId)?.Id, key)), ct)

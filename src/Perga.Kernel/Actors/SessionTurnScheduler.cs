@@ -12,7 +12,7 @@ public sealed partial class TrackActor
     {
         private sealed class SessionState
         {
-            public ActiveTurnState? Active;
+            public volatile ActiveTurnState? Active;
             public Guid? Reservation;
             public bool Compacting;
             public (string InputId, Task Attempt)? Steering;

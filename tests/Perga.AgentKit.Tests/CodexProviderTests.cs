@@ -161,7 +161,7 @@ public sealed class CodexProviderTests : IDisposable
             approvedEvents.Add(evt);
             if (evt is UnifiedAgentEvent.ApprovalRequested req)
             {
-                Assert.Equal("701", req.RequestId);
+                Assert.StartsWith("permission_", req.RequestId, StringComparison.Ordinal);
                 Assert.Equal("commandExecution", req.ToolName);
                 await session.RespondApprovalAsync(req.RequestId, approved: true, ct: CancellationToken.None);
             }
@@ -178,7 +178,7 @@ public sealed class CodexProviderTests : IDisposable
             declinedEvents.Add(evt);
             if (evt is UnifiedAgentEvent.ApprovalRequested req)
             {
-                Assert.Equal("codex_req_1", req.RequestId);
+                Assert.StartsWith("permission_", req.RequestId, StringComparison.Ordinal);
                 await session.RespondApprovalAsync(req.RequestId, approved: false, reason: "unsafe command", ct: CancellationToken.None);
             }
         }
@@ -186,6 +186,22 @@ public sealed class CodexProviderTests : IDisposable
         var declinedTool = Assert.Single(declinedEvents.OfType<UnifiedAgentEvent.ToolCallCompleted>());
         Assert.True(declinedTool.IsError);
         Assert.Contains("decision=decline;reason=unsafe command", declinedTool.Output, StringComparison.Ordinal);
+
+        // Turn 3: CancelTurnAsync during pending approval declines the pending RPC and finishes interrupted
+        var cancelApprovalEvents = new List<UnifiedAgentEvent>();
+        var cancelSent = false;
+        await foreach (var evt in session.StreamTurnAsync(new TurnInput("REQUIRE_APPROVAL_CANCEL", "corr_app_cancel"), CancellationToken.None))
+        {
+            cancelApprovalEvents.Add(evt);
+            if (!cancelSent && evt is UnifiedAgentEvent.ApprovalRequested)
+            {
+                cancelSent = true;
+                await session.CancelTurnAsync(CancellationToken.None);
+            }
+        }
+
+        Assert.True(cancelSent);
+        Assert.Single(cancelApprovalEvents.OfType<UnifiedAgentEvent.TurnInterrupted>());
     }
 
     [Fact]

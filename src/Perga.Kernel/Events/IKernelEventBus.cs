@@ -15,6 +15,9 @@ public static class KernelEventKinds
     public const string TaskUpdated = "task.updated";
     public const string SessionUpdated = "session.updated";
     public const string TurnCompleted = "turn.completed";
+    public const string ApprovalDecided = "approval.decided";
+    public const string ApprovalDelivery = "approval.delivery";
+    public const string ApprovalsChanged = "approval.changed";
     public const string AskChanged = "ask.changed";
     public const string MailReceived = "mail.received";
     public const string TerminalChanged = "terminal.changed";
@@ -26,6 +29,7 @@ public static class KernelEventKinds
 
     private static readonly HashSet<string> TransientKinds = new(StringComparer.Ordinal)
     {
+        ApprovalsChanged,
         SessionTextDelta,
         SessionThinkingDelta,
         SessionToolProgress,
@@ -43,6 +47,8 @@ public static class KernelEventKinds
         SessionUpdated,
         TurnCompleted,
         AskChanged,
+        ApprovalDecided,
+        ApprovalDelivery,
         MailReceived,
         TerminalChanged,
         "system.upgrade_result"

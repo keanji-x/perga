@@ -260,6 +260,36 @@ def run_turn(turn_id, prompt, correlation_id, turn_model=None):
         })
         return
 
+    if "REQUIRE_APPROVAL_CANCEL" in prompt:
+        state["approval_event"].clear()
+        state["approval_result"] = None
+        send({
+            "jsonrpc": "2.0",
+            "id": "codex_cancel_req_1",
+            "method": "item/commandExecution/requestApproval",
+            "params": {
+                "itemId": "cmd_cancel_1",
+                "toolName": "commandExecution",
+                "arguments": {"command": "git status"}
+            }
+        })
+        responded = state["approval_event"].wait(timeout=5.0)
+        res = state["approval_result"] or {}
+        decision = res.get("decision", "none")
+        send({
+            "jsonrpc": "2.0",
+            "method": "turn/completed",
+            "params": {
+                "threadId": state["thread_id"],
+                "turn": {
+                    "id": turn_id,
+                    "status": "interrupted" if responded and decision == "decline" else "failed",
+                    "error": None if responded and decision == "decline" else {"code": "missing_decline", "message": f"responded={responded};decision={decision}"}
+                }
+            }
+        })
+        return
+
     if "REQUIRE_APPROVAL" in prompt:
         state["approval_event"].clear()
         state["approval_result"] = None
@@ -624,6 +654,30 @@ def process_user_turn(user_msg):
         })
         return
 
+    if "REQUIRE_APPROVAL_CANCEL" in content:
+        approval_event.clear()
+        emit({
+            "type": "control_request",
+            "request_id": "claude_cancel_perm_1",
+            "session_id": session_id,
+            "request": {
+                "subtype": "can_use_tool",
+                "tool_name": "Bash",
+                "input": {"command": "echo cancel"}
+            }
+        })
+        responded = approval_event.wait(timeout=5.0)
+        resp_body = ((approval_payload.get("response") or {}).get("response") or {})
+        behavior = resp_body.get("behavior", "none")
+        emit({
+            "type": "result",
+            "subtype": "interrupted" if responded and behavior == "deny" else "error",
+            "is_error": not (responded and behavior == "deny"),
+            "session_id": session_id,
+            "error": "" if responded and behavior == "deny" else f"responded={responded};behavior={behavior}"
+        })
+        return
+
     if "REQUIRE_APPROVAL" in content:
         approval_event.clear()
         emit({
@@ -853,6 +907,89 @@ def handle_prompt(req_id, params):
             "id": req_id,
             "result": {"stopReason": "cancelled"}
         })
+        return
+
+    if "REQUIRE_PERMISSION_AFTER_CANCEL" in prompt_text:
+        state["perm_event"].clear()
+        state["perm_result"] = None
+        send({
+            "jsonrpc": "2.0",
+            "method": "session/update",
+            "params": {
+                "sessionId": state["session_id"],
+                "update": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": "waiting-before-perm"}}
+            }
+        })
+        state["cancel_event"].wait(timeout=5.0)
+        send({
+            "jsonrpc": "2.0",
+            "id": "acp_perm_after_cancel_1",
+            "method": "session/request_permission",
+            "params": {
+                "sessionId": state["session_id"],
+                "toolCall": {
+                    "toolCallId": "tc_perm_after_cancel_1",
+                    "name": "run_command",
+                    "rawInput": {"CommandLine": "sleep 10"}
+                },
+                "options": [
+                    {"optionId": "opt_allow_once", "kind": "allow_once", "name": "Allow"},
+                    {"optionId": "opt_reject_once", "kind": "reject_once", "name": "Deny"}
+                ]
+            }
+        })
+        responded = state["perm_event"].wait(timeout=5.0)
+        res = state["perm_result"] or {}
+        outcome_kind = (res.get("outcome") or {}).get("outcome", "none")
+        if responded and outcome_kind == "cancelled":
+            send({
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "result": {"stopReason": "cancelled"}
+            })
+        else:
+            send({
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "result": {"error": {"code": "missing_post_cancel_outcome", "message": f"responded={responded};outcome={outcome_kind}"}}
+            })
+        return
+
+    if "REQUIRE_PERMISSION_CANCEL" in prompt_text:
+        state["perm_event"].clear()
+        state["perm_result"] = None
+        send({
+            "jsonrpc": "2.0",
+            "id": "acp_perm_cancel_1",
+            "method": "session/request_permission",
+            "params": {
+                "sessionId": state["session_id"],
+                "toolCall": {
+                    "toolCallId": "tc_perm_cancel_1",
+                    "name": "run_command",
+                    "rawInput": {"CommandLine": "sleep 10"}
+                },
+                "options": [
+                    {"optionId": "opt_allow_once", "kind": "allow_once", "name": "Allow"},
+                    {"optionId": "opt_reject_once", "kind": "reject_once", "name": "Deny"}
+                ]
+            }
+        })
+        responded = state["perm_event"].wait(timeout=5.0)
+        res = state["perm_result"] or {}
+        outcome_kind = (res.get("outcome") or {}).get("outcome", "none")
+        if responded and outcome_kind == "cancelled":
+            send({
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "result": {"stopReason": "cancelled"}
+            })
+        else:
+            send({
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "result": {"error": {"code": "missing_cancel_outcome", "message": f"responded={responded};outcome={outcome_kind}"}}
+            })
         return
 
     if "REQUIRE_PERMISSION" in prompt_text:
