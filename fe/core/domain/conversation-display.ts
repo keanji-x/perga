@@ -2,17 +2,13 @@
 import { z } from 'zod';
 import { DEPLOYMENT_OWNER_USER_ID } from '../api/auth.js';
 import type { ApiOperation } from '../api/types.js';
-import { sessionInputReceiptSchema, workerActivitySchema } from '../api/perga-v1.js';
 import {
-  agentProviderSchema,
   conversationCursorSchema,
-  sessionItemsPageDtoSchema, providerSessionResumeSchema,
-  workerSessionStateSchema,
+  sessionItemsPageDtoSchema,
   type SessionItemsPageDto,
 } from '../api/schemas.js';
-import type { ConversationTerminalOutcome, ConversationCursor, ConversationDisplayItem, ConversationPage, ConversationPendingInput, ConversationActiveInput, ConversationSubmissionDelivery, HarnessItem as TranscriptRow } from '../api/generated/wire.js';
-import { plannerPermissionModeSchema } from './planner-permission-mode.js';
-import { projectPlannerRun, messageStatusSchema, SYSTEM_PRESENTATION_LABELS, systemInputPresentationSchema, buildTranscript, retireFollowedThoughts, harnessTimeoutEvidenceSchema, harnessItemSchema as transcriptRowSchema, HARNESS_ITEMS_PAGE_LIMIT as TRANSCRIPT_PAGE_LIMIT, type PlannerRun, type TranscriptEntry } from './conversation.js';
+import type { ConversationCursor, ConversationDisplayItem, ConversationPage, ConversationActiveInput, ConversationSubmissionDelivery, HarnessItem as TranscriptRow } from '../api/generated/wire.js';
+import { messageStatusSchema, SYSTEM_PRESENTATION_LABELS, systemInputPresentationSchema, buildTranscript, retireFollowedThoughts, harnessItemSchema as transcriptRowSchema, HARNESS_ITEMS_PAGE_LIMIT as TRANSCRIPT_PAGE_LIMIT, type TranscriptEntry } from './conversation.js';
 
 /** Native acknowledgement can arrive at END. Defer intervention for the exact
  * tracked execution without changing its delivery fact; other held inputs remain visible. */
@@ -44,12 +40,6 @@ export function retryConversationInputOperation(card: string, args: import('../a
       && result.attempt_id === args.attempt_id && result.revision === (BigInt(args.revision)+1n).toString(),
     'Retry receipt does not match its original CAS request') };
 }
-const availabilitySchema = z.discriminatedUnion('kind', [
-  z.object({kind:z.literal('available')}).strict(),
-  z.object({kind:z.literal('unavailable'),reason:z.enum(['already_kept','already_resolved','not_held','prior_invocation_not_recorded',
-    'invocation_not_fully_frozen','attachments_not_frozen','erased_or_withdrawn','unsupported_binding','unsupported_source'])}).strict(),
-]);
-
 const attachment = z.object({ id: z.string(), size: z.number(), url: z.string(), contentType:z.string() });
 const importedProvenance = z.object({kind:z.literal('unknown_legacy'),original_row_id:z.number().int().positive(),
   worker_session_id:z.string(),card_id:z.string(),track_id:z.string(),thread_id:z.string(),
@@ -385,90 +375,33 @@ export function buildConversationTranscript(items: readonly ConversationDisplayI
 
 /** Current response metadata has no transcript author, item identity or pagination position. */
 export type CurrentConversationOutcome = Omit<import('./conversation.js').ConversationTurnOutcome, 'id' | 'author' | 'imported'>;
-const terminalOutcomeSchema: z.ZodType<ConversationTerminalOutcome> = z.object({
-  worker_session_id:z.string().min(1), card_id:z.string().min(1), track_id:z.string().min(1),
-  thread_id:z.string().min(1), turn_id:z.string().min(1), status:z.enum(['completed','interrupted','failed']),
-  created_at_ms:z.number(), duration_ms:z.number().nonnegative().nullable(),
-}).strict();
-export function currentConversationOutcome(fact:ConversationTerminalOutcome | null):CurrentConversationOutcome | null {
-  return fact === null ? null : {turnId:fact.turn_id,status:fact.status,atMs:fact.created_at_ms,
-    elapsedMs:fact.duration_ms};
-}
+export type ConversationRun = SessionItemsPageDto;
 
-export const conversationRunMetadataSchema = z.object({
-  worker: workerActivitySchema.nullish(),
-  unknown_session_input: sessionInputReceiptSchema.nullish(),
-  input_contract:z.enum(['canonical','historical']),
-  runtime_state:workerSessionStateSchema.nullable(),
-  history_replacement_supported:z.boolean(),
-  terminal_timeout:harnessTimeoutEvidenceSchema.nullable(),
-  terminal_outcome:terminalOutcomeSchema.nullable(),
-  pending_inputs:z.array(z.discriminatedUnion('kind',[
-    z.object({kind:z.literal('explicit_successor'),retry_intent_id:z.string().min(1),queue_position:z.number().int().nonnegative(),queued_at_ms:z.number()}).strict(),
-    z.object({kind:z.literal('human'),message_id:z.string(),revision:z.number().int().positive(),
-      queue_position:z.number().int().nonnegative(),queued_at_ms:z.number()}).strict(),
-    z.object({kind:z.literal('system'),observation_id:z.string(),
-      queue_position:z.number().int().nonnegative(),queued_at_ms:z.number()}).strict(),
-  ])),
-  active_input:z.object({ current_execution_id:z.string().nullable(),submissions:z.array(z.object({
-    carrier_id:z.string().min(1),logical_turn_id:z.string().min(1),submission_id:z.string().min(1),ordinal:z.number().int().nonnegative(),
-    attempt:z.object({
-      attempt_id:z.string().min(1),revision:decimalU64,
-      target:z.object({provider:agentProviderSchema,thread_id:z.string().min(1),
-        native_session_id:z.string().nullable(),local_turn_id:z.string().nullable(),native_turn_id:z.string().nullable(),rpc_request_id:decimalU64.nullable()}).strict(),
-      delivery:z.enum(['crossing_unknown','unknown','not_dispatched','accepted']),
-      invocation:z.discriminatedUnion('kind',[
-        z.object({kind:z.literal('recorded'),configuration:z.object({model:z.string().nullable(),effort:z.string().nullable(),permission:plannerPermissionModeSchema}).strict()}).strict(),
-        z.object({kind:z.literal('prior_invocation_not_recorded')}).strict(),
-      ]),
-      resolution:z.discriminatedUnion('kind',[
-        z.object({kind:z.literal('keep'),result:keepResultSchema}).strict(),
-        z.object({kind:z.literal('retry'),result:retryResultSchema}).strict(),
-      ]).nullable(),
-      actions:z.object({keep:availabilitySchema,retry:availabilitySchema}).strict(),
-    }).strict().nullable(),
-  }).strict()) }).strict().nullable(),
-  native_turn_id:z.string().nullable(),
-  can_steer_queued:z.boolean().optional(),
-  queue_handoff_ids:z.array(z.string()).optional(),
-  provider_resume:providerSessionResumeSchema.nullish(),
-}).refine(run=>run.input_contract !== 'canonical' || run.runtime_state !== null,
-  'Canonical runs require their actual current runtime state').refine(run=>run.input_contract !== 'historical' || run.terminal_outcome === null,
-  'Historical runs do not carry a current canonical terminal outcome');
-
-/** Queue references retain their actual kind and version, independently of the loaded body page. */
-export function orderedPendingInputs(inputs: readonly ConversationPendingInput[]): readonly ConversationPendingInput[] {
-  return [...inputs].sort((left,right)=>left.queue_position-right.queue_position);
-}
-
-export function conversationRunOperation(card: string): ApiOperation<PlannerRun & z.infer<typeof conversationRunMetadataSchema>> {
+export function conversationRunOperation(sessionId: string): ApiOperation<ConversationRun> {
   return {
     method: 'GET',
-    path: `/api/v1/sessions/${encodeURIComponent(card)}/items?afterId=0&limit=1&view=run`,
-    responseSchema: sessionItemsPageDtoSchema.transform((page): PlannerRun & z.infer<typeof conversationRunMetadataSchema> => {
-      const run = projectPlannerRun(card, page);
-      const running = run.running_turn !== null;
-      return {
-        ...run,
-        phase: page.worker?.phase === 'interrupting' ? 'issuing_interrupt' : run.phase,
-        worker: page.worker,
-        pending: page.queuedMessages?.map(message => ({
-          entry_id: message.id, text: message.text, rev: 1, queued_at_ms: message.queuedAtMs, state: message.state,
-        })) ?? [],
-        ...(page.queueHandoffIds === undefined ? {} : { queue_handoff_ids: page.queueHandoffIds }),
-        ...(page.canSteer === undefined ? {} : { can_steer_queued: page.canSteer }),
-        manual_compact_supported: page.worker == null,
-        unknown_session_input: page.unknownInput,
-        ...(page.resume == null ? {} : { provider_resume: page.resume }),
-        input_contract: 'canonical',
-        runtime_state: running ? 'running' : 'idle',
-        history_replacement_supported: false,
-        terminal_timeout: null,
-        terminal_outcome: null,
-        pending_inputs: [],
-        active_input: null,
-        native_turn_id: run.running_turn?.turn_id ?? null,
-      };
-    }),
+    path: `/api/v1/sessions/${encodeURIComponent(sessionId)}/items?afterId=0&limit=1&view=run`,
+    responseSchema: sessionItemsPageDtoSchema,
   };
+}
+
+export function conversationRunPhase(run: ConversationRun): import('../api/generated/wire.js').HarnessPhaseTag {
+  return run.worker?.phase === 'interrupting' ? 'issuing_interrupt'
+    : run.activeTurn?.status === 'running' ? 'turn_running'
+    : run.session.status === 'queued' ? 'issuing_turn' : 'idle';
+}
+
+export function conversationRunningTurn(run: ConversationRun, now: number): import('./conversation.js').PlannerRunningTurn | null {
+  const turn = run.activeTurn;
+  return turn?.status === 'running'
+    ? { turn_id: turn.id, elapsed_ms: Math.max(0, now - (turn.startedAtMs ?? now)) } : null;
+}
+
+export function conversationBlockedReason(run: ConversationRun): string | null {
+  return run.session.status === 'unknown' ? 'The previous message has an unknown outcome.' : null;
+}
+
+export function conversationPendingQueue(run: ConversationRun): readonly import('./conversation.js').PendingQueueEntry[] {
+  return run.queuedMessages?.map(message => ({ entry_id: message.id, text: message.text,
+    rev: 1, queued_at_ms: message.queuedAtMs, state: message.state })) ?? [];
 }

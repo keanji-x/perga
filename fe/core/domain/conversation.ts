@@ -1,7 +1,5 @@
-import { sessionContextUsage } from './session-context-usage.js';
 import { z } from 'zod';
 import { activityContent } from './conversation-activity-content.js';
-import type { RunRecovery } from './conversation-restart.js';
 import {
   agentSessionDtoSchema,
   bootstrapDtoSchema,
@@ -10,7 +8,6 @@ import {
   sessionTurnDtoSchema,
   toWireAgentProvider,
   type AgentSessionDto,
-  type SessionItemsPageDto,
 } from '../api/schemas.js';
 
 import { sessionCreationReceiptSchema, sessionInputReceiptSchema, type SessionInputReceipt } from '../api/perga-v1.js';
@@ -27,7 +24,6 @@ import {
   MAIL_SEND_TOOL,
 } from '../keys/mcp-tools.js';
 import { classifyFailure, failureReason, refusedText, type FailureTable, type WriteFailure, type WriteText } from './failure-class.js';
-import { type PlannerPermissionMode } from './planner-permission-mode.js';
 import { sha256Hex } from './sha256.js';
 
 /** A frozen discussion source; does not name a provider session. */
@@ -240,7 +236,7 @@ export function kernelQueuesInput(phase: HarnessPhaseTag | null): boolean {
 
 /**
  * One addressable message waiting in the harness pending queue. `rev` is the compare-and-swap
- * token; entries written before ids existed cannot appear here and are counted by `pending_overflow`.
+ * token.
  */
 export const messageStatusSchema = z.enum(['queued', 'sending', 'processing', 'completed', 'failed', 'unconfirmed']);
 export type MessageStatus = z.infer<typeof messageStatusSchema>;
@@ -262,50 +258,6 @@ export type PendingQueueEntry = Readonly<{
   rev: number;
   queued_at_ms: number;
   state?: 'waiting' | 'steering' | 'sending' | 'processing' | 'unconfirmed';
-}>;
-
-export type CompactOutcome = Readonly<{
-  operation_id: string;
-  thread_id: string;
-  turn_id: string | null;
-  status: 'started' | 'completed' | 'interrupted' | 'failed' | 'unconfirmed' | 'refused';
-}>;
-
-export type PlannerRun = Readonly<{
-  card_id: string;
-  worker_session_id?: string | null;
-  phase?: HarnessPhaseTag | null;
-  /** The addressable page of the pending queue, in queue order. */
-  pending: readonly PendingQueueEntry[];
-  /**
-   * How many queued user messages this page does not show; a count, not a list, because the kernel
-   * has no id to name them by.
-   */
-  pending_overflow: number;
-  /** The conversation's model selection; `null` follows the default. */
-  model: string | null;
-  reasoning_effort: string | null;
-  /** Whether the Planner may pause a turn to ask before acting outside its sandbox; `null` exactly when the card is not a Planner. */
-  permission_mode: PlannerPermissionMode | null;
-  /**
-   * Why the queue is not draining, or `null`; render as one standing notice. `null` is not evidence
-   * that anything succeeded.
-   */
-  blocked_reason: string | null;
-  /** Explicit server-owned recovery; phase never implies an action. */
-  recovery: RunRecovery | null;
-  /**
-   * Whether this card can take image attachments; defaulted to false, which is absent exactly when
-   * the server is older than the feature.
-   */
-  attachments_supported: boolean;
-  /** Whether the bound Planner backend implements manual context compaction. */
-  manual_compact_supported: boolean;
-  compact_outcome: CompactOutcome | null;
-  /** How full the model's context is, or `null` when the harness has never reported it. */
-  token_usage: PlannerRunTokenUsage | null;
-  /** The turn the harness is running; non-null exactly when `phase` is `turn_running`. */
-  running_turn: PlannerRunningTurn | null;
 }>;
 
 /**
@@ -380,37 +332,6 @@ ApiOperation<HarnessItem[]> {
         return [];
       });
     }),
-  };
-}
-
-/** Projects the shared run state from a session items page. */
-export function projectPlannerRun(cardId: string, page: SessionItemsPageDto): PlannerRun {
-  const running = page.activeTurn !== null && page.activeTurn !== undefined && page.activeTurn.status === 'running';
-  return {
-    card_id: cardId,
-    worker_session_id: page.session.id,
-    phase: running ? 'turn_running' : page.session.status === 'queued' ? 'issuing_turn' : 'idle',
-    pending: [],
-    pending_overflow: 0,
-    model: page.session.model ?? null,
-    reasoning_effort: page.session.reasoningEffort ?? null,
-    permission_mode: page.session.permissionMode ?? null,
-    blocked_reason: page.session.status === 'unknown' ? 'The previous message has an unknown outcome.' : null,
-    recovery: null,
-    attachments_supported: false,
-    manual_compact_supported: true,
-    compact_outcome: null,
-    token_usage: sessionContextUsage(page.session),
-    running_turn: running && page.activeTurn !== null && page.activeTurn !== undefined
-      ? { turn_id: page.activeTurn.id, elapsed_ms: Math.max(0, Date.now() - (page.activeTurn.startedAtMs ?? Date.now())) }
-      : null,
-  };
-}
-
-export function plannerRunOperation(cardId: string): ApiOperation<PlannerRun> {
-  return {
-    method: 'GET', path: `/api/v1/sessions/${encodeURIComponent(cardId)}/items?afterId=0&limit=1&view=planner-run`,
-    responseSchema: sessionItemsPageDtoSchema.transform(page => projectPlannerRun(cardId, page)),
   };
 }
 

@@ -1,3 +1,4 @@
+import { sessionContextUsage } from '../domain/session-context-usage.js';
 import { describe, expect, it } from 'vitest';
 
 import { bootstrapOperation, DEPLOYMENT_OWNER_USER_ID, loginOperation, whoamiOperation } from './auth.js';
@@ -532,8 +533,8 @@ describe('Perga /api/v1 protocol contracts', () => {
     ]);
 
     const run = conversationRunOperation('ses_lead').responseSchema.parse(pageDto);
-    expect(run.token_usage).toEqual({ used_tokens: 166_400, context_window: 256_000, percent: 65, at_ms: 1250 });
-    expect(run.manual_compact_supported).toBe(true);
+    expect(sessionContextUsage(run.session)).toEqual({ used_tokens: 166_400, context_window: 256_000, percent: 65, at_ms: 1250 });
+    expect(run.worker == null).toBe(true);
 
     const acpConversations = [
       { ...pageDto.session, id: 'ses_acp1', isLead: false, provider: 'acp:opencode', title: 'ACP Assistant' },
@@ -752,7 +753,7 @@ describe('Perga /api/v1 protocol contracts', () => {
         status: 'idle', contextUsage: null, archivedAtMs: null, createdAtMs: 90, updatedAtMs: 130,
       },
     });
-    expect(run.permission_mode).toBeNull();
+    expect(run.session.permissionMode ?? null).toBeNull();
 
     const setModelOp = setPlannerModelOperation('ses_lead', { model: null, reasoning_effort: null });
     expect(setModelOp).toMatchObject({

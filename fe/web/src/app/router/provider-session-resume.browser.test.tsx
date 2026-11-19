@@ -14,7 +14,7 @@ it('holds sends until the post-resume read confirms the provider state', async (
   let finishRead = () => {};
   const heldRead = new Promise<void>(resolve => { finishRead = resolve; });
   const activeSession = { id: sessionId, trackId: 'daily', provider: 'codex', isLead: true,
-    status: 'running', createdAtMs: 1, updatedAtMs: 2 };
+    status: 'running', contextUsage: null, createdAtMs: 1, updatedAtMs: 2 };
   const fixture = renderDailyFixture({
     initial: '/track/daily?panel=conversations',
     reply: async request => {
