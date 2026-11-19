@@ -11,6 +11,7 @@ using Perga.VcsKit;
 
 namespace Perga.Host.IntegrationTests;
 
+[Collection("Template policy sandbox")]
 public sealed class TrackCreationTests
 {
     private static readonly TimeSpan Deadline = TimeSpan.FromSeconds(10);

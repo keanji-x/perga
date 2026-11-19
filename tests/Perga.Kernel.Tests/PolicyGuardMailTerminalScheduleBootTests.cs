@@ -27,7 +27,7 @@ public sealed class PolicyGuardMailTerminalScheduleBootTests
         var leadId = snap.Track.LeadSessionId!;
 
         // 1. Allow
-        ctx.PolicyVm.OnGuardToolCall = (_, _, state) =>
+        ctx.PolicyVm.OnBefore = (_, action, _, state) =>
             new PolicyEvalResult<GuardDecision>(state, new GuardDecision.Allow());
         await ctx.Kernel.GuardMcpToolCallAsync(trackId, leadId, "vcs", "vcs_status", TestJson.Parse("{}"));
 
@@ -37,14 +37,14 @@ public sealed class PolicyGuardMailTerminalScheduleBootTests
         Assert.Equal(KernelErrorCode.Forbidden, disabledEx.Code);
 
         // 3. Policy Deny
-        ctx.PolicyVm.OnGuardToolCall = (_, call, state) =>
-            new PolicyEvalResult<GuardDecision>(state, new GuardDecision.Deny($"Blocked tool {call.ToolName}"));
+        ctx.PolicyVm.OnBefore = (_, action, call, state) =>
+            new PolicyEvalResult<GuardDecision>(state, new GuardDecision.Deny($"Blocked tool {call.GetProperty("toolName").GetString()}"));
         var denyEx = await Assert.ThrowsAsync<KernelException>(() =>
             ctx.Kernel.GuardMcpToolCallAsync(trackId, leadId, "vcs", "vcs_pr_merge", TestJson.Parse("{}")));
         Assert.Equal(KernelErrorCode.PolicyDenied, denyEx.Code);
 
         // 4. Policy AskHuman -> suspends until human approves -> allows; if human denies -> throws PolicyDenied!
-        ctx.PolicyVm.OnGuardToolCall = (_, _, state) =>
+        ctx.PolicyVm.OnBefore = (_, action, _, state) =>
             new PolicyEvalResult<GuardDecision>(state, new GuardDecision.AskHuman("Allow vcs_push?", ["Approve", "Reject"]));
 
         var guardTask = ctx.Kernel.GuardMcpToolCallAsync(trackId, leadId, "vcs", "vcs_publish_pr", TestJson.Parse("{}"));
@@ -165,9 +165,9 @@ public sealed class PolicyGuardMailTerminalScheduleBootTests
         Assert.Equal(turnsBeforeHumanEdit + 1, ctx.Store.GetTurnsForSession(leadId).Count);
 
         // 4. Verify the catalog exposes Worker controls only to Lead.
-        Assert.Equal(31, KernelMcpToolNames.All.Count);
+        Assert.Equal(32, KernelMcpToolNames.All.Count);
         Assert.Contains(KernelMcpCatalog.GetToolsForSession(boundAttemptId: null, isLead: true), tool => tool.Name == KernelMcpToolNames.SessionSend);
-        Assert.Equal(19, KernelMcpCatalog.GetToolsForSession(boundAttemptId: null).Count);     // 10 shared + 6 governance
+        Assert.Equal(20, KernelMcpCatalog.GetToolsForSession(boundAttemptId: null).Count);     // 10 shared + 6 governance
         Assert.Equal(12, KernelMcpCatalog.GetToolsForSession(boundAttemptId: "att_1").Count); // 10 shared + 2 completion
 
         var reg = ctx.Kernel.McpSessionBridge.RegisterSession(trackId, leadId, isLead: true, null, null, ["market"]);

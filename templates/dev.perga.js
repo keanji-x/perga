@@ -59,23 +59,15 @@ const devTemplate = {
     ciVerified: false,
     prPublished: false
   }),
-  initialMarkdown: [
-    "# Objective",
-    "",
-    "State the engineering problem, target user impact, and non-goals.",
-    "",
-    "# Architecture & Plan",
-    "",
-    "Outline module boundaries, invariants, and verification strategy.",
-    "",
-    "# Tasks",
-    "",
-    "Declare executable read-only investigation and read-write implementation tasks here.",
-    "",
-    "# Verification & Delivery",
-    "",
-    "Record test evidence, Jujutsu/Git revision IDs, and rollout notes."
-  ].join("\n"),
+  headerView: (ctx) => ({
+    badges: [{ label: ctx.inputs.riskLevel + " risk", tone: ctx.inputs.riskLevel === "high" ? "warn" : "neutral" }],
+    notice: ctx.state.iteration === 0 ? { text: "Implementation and verification pending.", tone: "info" } : undefined,
+    metrics: [
+      { label: "Completed tasks", value: String(ctx.state.completedTasks.length) },
+      { label: "CI", value: ctx.state.ciVerified ? "Verified" : "Pending", tone: ctx.state.ciVerified ? "success" : "warn" }
+    ],
+    rules: [{ label: "Delivery", text: "Read-write tasks require a gate. Verify CI before merging." }]
+  }),
   workspace: {
     driver: "vcs-workspace",
     lowerCacheDirs: ["node_modules", "target", ".nuget"],
@@ -93,61 +85,16 @@ const devTemplate = {
         omitIfEmpty: true,
         editableBy: ["human", "lead", "subagent", "system"]
       }
-    ],
-    customValidate: (_ctx, info) => {
-      if (info.nextMarkdown.trim().length === 0) {
-        return Deny("Engineering report cannot be empty.");
-      }
-      if (
-        info.touchedSections.includes("Objective") &&
-        !/#\s+Objective\b/i.test(info.nextMarkdown)
-      ) {
-        return Deny("The '# Objective' section header must remain present in the report.");
-      }
-      return Allow();
-    }
+    ]
   },
   tasks: {
     dispatch: { section: "Tasks", access: "read_write", gateInput: "testCmd" },
     requireGateForReadWrite: true,
     afterWorkerDoneCmd:
-      "jj log -r @ --no-graph -T '{\"changeId\":\"' ++ change_id.short() ++ '\",\"commitId\":\"' ++ commit_id.short() ++ '\"}' 2>/dev/null || echo '{}'",
-    onSettled: (ctx, event) => {
-      ctx.state.iteration += 1;
-
-      if (typeof event.meta?.changeId === "string" && event.meta.changeId.length > 0) {
-        ctx.state.latestChangeId = event.meta.changeId;
-      }
-      if (typeof event.meta?.opId === "string" && event.meta.opId.length > 0) {
-        ctx.state.rollbackOpId = event.meta.opId;
-      }
-
-      if (event.attemptStatus === "done") {
-        if (!ctx.state.completedTasks.includes(event.taskKey)) {
-          ctx.state.completedTasks.push(event.taskKey);
-        }
-        const gatePassed =
-          event.gateVerdict === undefined ||
-          event.gateVerdict === null ||
-          event.gateVerdict.passed !== false;
-        if (event.accessMode === "read_write" && gatePassed) {
-          ctx.state.ciVerified = true;
-        }
-        return `Task '${event.taskKey}' completed (change=${ctx.state.latestChangeId ?? "n/a"}, verified=${ctx.state.ciVerified}).`;
-      }
-
-      if (event.attemptStatus === "failed") {
-        ctx.state.failedAttempts += 1;
-        if (event.accessMode === "read_write") {
-          ctx.state.ciVerified = false;
-        }
-        return `Task '${event.taskKey}' failed (attempt failures=${ctx.state.failedAttempts}). Inspect gate diagnostics before re-dispatching.`;
-      }
-
-      return `Task '${event.taskKey}' settled with status '${event.attemptStatus}'.`;
-    }
+      "jj log -r @ --no-graph -T '{\"changeId\":\"' ++ change_id.short() ++ '\",\"commitId\":\"' ++ commit_id.short() ++ '\"}' 2>/dev/null || echo '{}'"
   },
-  buildTurnContext: (ctx, session) => {
+  turnContext: (ctx) => {
+    const session = ctx.session;
     const roleLabel = session.isLead
       ? "Lead"
       : session.boundAttemptId
@@ -164,7 +111,57 @@ const devTemplate = {
     }
     return lines.join("\n");
   },
-  guardToolCall: (ctx, call) => {
+  after: (event, ctx) => {
+    if (event.type !== "task.settled") return;
+    ctx.state.iteration += 1;
+
+    if (typeof event.meta?.changeId === "string" && event.meta.changeId.length > 0) {
+      ctx.state.latestChangeId = event.meta.changeId;
+    }
+    if (typeof event.meta?.opId === "string" && event.meta.opId.length > 0) {
+      ctx.state.rollbackOpId = event.meta.opId;
+    }
+
+    if (event.attemptStatus === "done") {
+      if (!ctx.state.completedTasks.includes(event.taskKey)) {
+        ctx.state.completedTasks.push(event.taskKey);
+      }
+      const gatePassed =
+        event.gateVerdict === undefined ||
+        event.gateVerdict === null ||
+        event.gateVerdict.passed !== false;
+      if (event.accessMode === "read_write" && gatePassed) {
+        ctx.state.ciVerified = true;
+      }
+      return `Task '${event.taskKey}' completed (change=${ctx.state.latestChangeId ?? "n/a"}, verified=${ctx.state.ciVerified}).`;
+    }
+
+    if (event.attemptStatus === "failed") {
+      ctx.state.failedAttempts += 1;
+      if (event.accessMode === "read_write") {
+        ctx.state.ciVerified = false;
+      }
+      return `Task '${event.taskKey}' failed (attempt failures=${ctx.state.failedAttempts}). Inspect gate diagnostics before re-dispatching.`;
+    }
+
+    return `Task '${event.taskKey}' settled with status '${event.attemptStatus}'.`;
+  },
+  before: (action, ctx) => {
+    if (action.type === "report.commit") {
+      const info = action;
+      if (info.nextMarkdown.trim().length === 0) {
+        return Deny("Engineering report cannot be empty.");
+      }
+      if (
+        info.touchedSections.includes("Objective") &&
+        !/#\s+Objective\b/i.test(info.nextMarkdown)
+      ) {
+        return Deny("The '# Objective' section header must remain present in the report.");
+      }
+      return Allow();
+    }
+    if (!action.type.startsWith("tool.")) return Allow();
+    const call = action;
     if (call.mcpServer === "vcs" && call.toolName === "vcs_pr_merge") {
       if (!ctx.state.ciVerified) {
         return Deny(

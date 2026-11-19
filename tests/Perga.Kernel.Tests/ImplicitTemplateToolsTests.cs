@@ -7,13 +7,14 @@ using Perga.PolicyVm;
 
 namespace Perga.Kernel.Tests;
 
+[Collection("Template policy sandbox")]
 public sealed class ImplicitTemplateToolsTests
 {
     private const string Source = """
         export default defineTemplate({ id: "authored", title: "Authored",
           plugins: ["search", "new-plugin", "search"],
           initialState: inputs => ({ marker: inputs.marker }),
-          guardToolCall: () => Deny("authored policy active") });
+          before: () => Deny("authored policy active") });
         """;
 
     private static McpSessionPrincipal Caller(TrackAggregateSnapshot snap) =>
@@ -100,7 +101,7 @@ public sealed class ImplicitTemplateToolsTests
         const string asking = """
             export default defineTemplate({ id:'asking', title:'Asking',
               initialState: () => ({ requests: 0 }),
-              guardToolCall: (ctx, call) => {
+              before: (call, ctx) => {
                 ctx.state.requests++;
                 return call.arguments.inputs?.suspend
                   ? AskHuman('Approve replacement?', ['Approve', 'Reject']) : Allow();
@@ -108,7 +109,7 @@ public sealed class ImplicitTemplateToolsTests
             """;
         const string replacement = """
             export default defineTemplate({ id:'replacement', title:'Replacement',
-              guardToolCall: () => Deny('Replacement policy blocks calls') });
+              before: () => Deny('Replacement policy blocks calls') });
             """;
         await Call(ctx, caller, KernelMcpToolNames.TrackSet, new { source = asking });
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -143,7 +144,7 @@ public sealed class ImplicitTemplateToolsTests
         await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
         var (_, snap) = await ctx.CreateDefaultTrackAsync();
         const string allowing = """
-            export default defineTemplate({ id:'allowing', title:'Allowing', guardToolCall: () => Allow() });
+            export default defineTemplate({ id:'allowing', title:'Allowing', before: () => Allow() });
             """;
         var caller = Caller(snap);
         if (alreadyTemplated)
@@ -200,7 +201,7 @@ public sealed class ImplicitTemplateToolsTests
         await Call(ctx, Caller(snap), KernelMcpToolNames.TrackSet, new { source = """
             export default defineTemplate({ id:'denying', title:'Denying',
               initialState: () => ({ denied: 0 }),
-              guardToolCall: ctx => { ctx.state.denied++; return Deny('blocked'); } });
+              before: (action, ctx) => { ctx.state.denied++; return Deny('blocked'); } });
             """ });
         var ex = await Assert.ThrowsAsync<KernelException>(() => Call(ctx, Caller(snap),
             KernelMcpToolNames.TrackSet, new { source = Source }));
@@ -239,7 +240,7 @@ public sealed class ImplicitTemplateToolsTests
         var (_, snap) = await ctx.CreateDefaultTrackAsync();
         const string original = """
             export default defineTemplate({ id:'original', title:'Original',
-              guardToolCall: ctx => { ctx.state.calls = (ctx.state.calls || 0) + 1; return Allow(); } });
+              before: (action, ctx) => { ctx.state.calls = (ctx.state.calls || 0) + 1; return Allow(); } });
             """;
         await Call(ctx, Caller(snap), KernelMcpToolNames.TrackSet, new { source = original });
         var before = await ctx.Kernel.GetTrackAggregateAsync(snap.Track.Id);

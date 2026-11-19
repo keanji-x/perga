@@ -52,6 +52,11 @@ export const trackWireSchema = z.object({
   admin_granted_at: z.number().nullable().default(null),
   created_at: z.number(),
   updated_at: z.number(),
+  templateId: trackDtoSchema.shape.templateId,
+  templateTitle: trackDtoSchema.shape.templateTitle,
+  templateInputs: trackDtoSchema.shape.templateInputs.optional(),
+  templateHeaderView: trackDtoSchema.shape.templateHeaderView,
+  templateSchedules: trackDtoSchema.shape.templateSchedules,
 });
 export type TrackWire = z.infer<typeof trackWireSchema>;
 
@@ -98,6 +103,12 @@ export type Track = Readonly<{
   closedAt: number | null;
   createdAt: number;
   updatedAt: number;
+  /** Historical snapshots may omit presentation metadata; toTrack supplies neutral defaults. */
+  templateId?: TrackWire['templateId'];
+  templateTitle?: TrackWire['templateTitle'];
+  templateInputs?: TrackWire['templateInputs'];
+  templateHeaderView?: TrackWire['templateHeaderView'];
+  templateSchedules?: TrackWire['templateSchedules'];
 }> & TrackActivity;
 
 export function toTrack(wire: TrackWire, activity: TrackActivity = NEUTRAL_ACTIVITY): Track {
@@ -113,6 +124,11 @@ export function toTrack(wire: TrackWire, activity: TrackActivity = NEUTRAL_ACTIV
     closedAt: wire.closed_at,
     createdAt: wire.created_at,
     updatedAt: wire.updated_at,
+    templateId: wire.templateId ?? null,
+    templateTitle: wire.templateTitle ?? null,
+    templateInputs: wire.templateInputs ?? {},
+    templateHeaderView: wire.templateHeaderView ?? null,
+    templateSchedules: wire.templateSchedules ?? [],
     ...activity,
   };
 }
@@ -620,6 +636,11 @@ export function trackDtoToWire(dto: TrackDto): TrackWire {
     admin_granted_at: null,
     created_at: dto.createdAtMs,
     updated_at: dto.updatedAtMs,
+    templateId: dto.templateId ?? null,
+    templateTitle: dto.templateTitle ?? null,
+    templateInputs: dto.templateInputs ?? {},
+    templateHeaderView: dto.templateHeaderView ?? null,
+    templateSchedules: dto.templateSchedules ?? [],
   };
 }
 

@@ -155,6 +155,17 @@ export const bootstrapDtoSchema = z.object({
 });
 export type BootstrapDto = z.infer<typeof bootstrapDtoSchema>;
 
+const templateToneSchema = z.enum(['neutral', 'accent', 'success', 'warn', 'error']);
+export const templateHeaderViewDtoSchema = z.object({
+  badges: z.array(z.object({ label: z.string(), tone: templateToneSchema.nullish() })).nullish(),
+  notice: z.object({ text: z.string(), tone: z.enum(['info', 'warn', 'error']).nullish() }).nullish(),
+  metrics: z.array(z.object({
+    label: z.string(), value: z.string(), delta: z.string().nullish(), tone: templateToneSchema.nullish(),
+    sub: z.string().nullish(), spark: z.array(z.number()).nullish(),
+  })).nullish(),
+  rules: z.array(z.object({ label: z.string(), text: z.string() })).nullish(),
+});
+
 export const trackDtoSchema = z.object({
   id: z.string(),
   areaId: z.string(),
@@ -168,6 +179,9 @@ export const trackDtoSchema = z.object({
   templateId: z.string().nullish(),
   templateInputs: z.unknown().default({}),
   templateState: z.unknown().default({}),
+  templateTitle: z.string().nullish(),
+  templateHeaderView: templateHeaderViewDtoSchema.nullish(),
+  templateSchedules: z.array(z.object({ id: z.string(), cron: z.string(), timezone: z.string() })).nullish(),
   enabledPlugins: z.array(z.string()).default([]),
   closedAtMs: z.number().nullish(),
   pinnedAtMs: z.number().nullish(),
@@ -216,6 +230,7 @@ export const taskDtoSchema = z.object({
   generation: z.number().int().default(1),
   kind: z.string(),
   provider: z.string().nullish(),
+  role: z.string().nullish(),
   access: accessModeSchema.optional(),
   accessMode: accessModeSchema.optional(),
   ready: z.boolean().default(false),

@@ -1,4 +1,5 @@
 import type { TrackAggregateSnapshotDto } from '../../../../core/api/schemas.ts';
+import { TemplateProtocolBar } from '../../features/report/template-protocol/public.tsx';
 import { ShareScopeProvider, useShareScope } from '../shell/public.tsx';
 import { terminalPresentation } from '../../../../core/domain/terminal-presentation.ts';
 import type { ShareScope } from '../../../../core/api/generated/wire.ts';
@@ -1717,7 +1718,9 @@ function TrackRouteBody({
     go({ name: 'track', trackId: track.id, blockId, from: routeFrom });
   };
 
-  const reportRegion = pergaMode && centerActive && reportPresentation.visible?.preparation.kind === 'empty' ? null : (
+  const reportRegion = <>
+    <TemplateProtocolBar track={track} />
+    {pergaMode && centerActive && reportPresentation.visible?.preparation.kind === 'empty' ? null : (
         <TrackReportRegion
         presentation={reportPresentation}
         trackId={track.id}
@@ -1764,7 +1767,8 @@ function TrackRouteBody({
         outlineEmpty={reportEmpty}
         empty={reportEmpty === undefined ? <ReportEmpty /> : reportEmpty}
       >{reportEvidence}</TrackReportRegion>
-  );
+    )}
+  </>;
   return (
     <>
     <TrackStage>

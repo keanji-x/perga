@@ -30,6 +30,77 @@ public sealed class PolicyVmTests
         return doc.RootElement.Clone();
     }
 
+    [Theory]
+    [InlineData("dev.perga.js")]
+    [InlineData("investment-research.perga.js")]
+    [InlineData("long-term-goal.perga.js")]
+    public void BuiltInTemplatesStartEmptyWithUsefulHeaders(string name)
+    {
+        var policy = _vm.Compile(File.ReadAllText(ResolveTemplatePath(name)));
+        var inputs = ParseJson("{}");
+        var state = _vm.InitState(policy, inputs).Output;
+        Assert.Equal("", policy.Manifest.InitialReportMarkdown);
+        var view = _vm.EvaluateHeaderView(policy, new("track", inputs), state);
+        Assert.NotNull(view);
+        Assert.NotEmpty(view.Badges!);
+        Assert.NotEmpty(view.Metrics!);
+        Assert.NotEmpty(view.Rules!);
+        Assert.NotNull(view.Notice);
+    }
+
+    [Fact]
+    public void HeaderViewUsesEffectiveInputsAndCurrentStateWithoutCountCapsOrStateWrites()
+    {
+        var policy = _vm.Compile("""
+            export default defineTemplate({
+              id: "view", title: "View", inputs: { unit: { type: "string", default: "steps" } },
+              headerView(ctx) {
+                const value = String(ctx.state.count) + " " + ctx.inputs.unit;
+                ctx.state.count++;
+                return {
+                  badges: Array.from({length: 8}, () => ({label: ctx.trackId, tone: "accent"})),
+                  notice: {text: "Ready", tone: "info"},
+                  metrics: Array.from({length: 9}, () => ({label: "Count", value, delta: "+1", tone: "success", sub: "Today", spark: [1, 2, 3]})),
+                  rules: [{label: "Rule", text: "Keep evidence"}]
+                };
+              }
+            });
+            """);
+        var state = ParseJson("{\"count\":5}");
+        var view = _vm.EvaluateHeaderView(policy, new("track", ParseJson("{}")), state);
+        Assert.NotNull(view);
+        Assert.Equal(8, view.Badges!.Count);
+        Assert.All(view.Badges, badge => Assert.Equal("track", badge.Label));
+        Assert.Equal(9, view.Metrics!.Count);
+        Assert.Equal("5 steps", view.Metrics[0].Value);
+        Assert.Equal(new double[] { 1, 2, 3 }, view.Metrics[0].Spark);
+        Assert.Equal("Keep evidence", Assert.Single(view.Rules!).Text);
+        Assert.Equal(5, state.GetProperty("count").GetInt32());
+        Assert.Equal("5 steps", _vm.EvaluateHeaderView(policy, new("track", ParseJson("{}")), state)!.Metrics![0].Value);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("headerView: 42,")]
+    [InlineData("headerView() { throw new Error('broken'); },")]
+    [InlineData("headerView() { while (true) {} },")]
+    [InlineData("headerView() { return null; },")]
+    [InlineData("headerView() { return []; },")]
+    [InlineData("headerView() { return 'wrong'; },")]
+    [InlineData("headerView() { return {badges: 'wrong'}; },")]
+    [InlineData("headerView() { return {badges: [null]}; },")]
+    [InlineData("headerView() { return {badges: [{label: 'x', tone: 'purple'}]}; },")]
+    [InlineData("headerView() { return {notice: {text: 'x', tone: 'success'}}; },")]
+    [InlineData("headerView() { return {metrics: [{label: 'x', value: 5}]}; },")]
+    [InlineData("headerView() { return {metrics: [{label: 'x', value: '5', spark: [null]}]}; },")]
+    [InlineData("headerView() { return {rules: [{label: 'missing text'}]}; },")]
+    [InlineData("headerView() { const v = {}; v.badges = v; return v; },")]
+    public void HeaderViewFailsSoft(string hook)
+    {
+        var policy = _vm.Compile("export default defineTemplate({id: 'view', title: 'View', " + hook + "});");
+        Assert.Null(_vm.EvaluateHeaderView(policy, new("track", ParseJson("{}")), ParseJson("{}")));
+    }
+
     [Fact]
     public void BuiltInDevTemplate_CompilesAndExecutesFullLifecycleAcrossHooks()
     {
@@ -53,34 +124,36 @@ public sealed class PolicyVmTests
         Assert.False(state.GetProperty("ciVerified").GetBoolean());
 
         // Turn context includes role, upstream branch, and handover notice at high context usage
-        var turnRes = _vm.BuildTurnContext(
+        var turnRes = _vm.PrepareTurn(
             compiled,
             new PolicyTurnContext("trk_dev", "ses_lead", IsLead: true, BoundAttemptId: null, ContextUsageRatio: 0.82, Inputs: inputs),
             state);
-        Assert.Contains("release/1.0", turnRes.Output);
-        Assert.Contains("Epoch handover", turnRes.Output);
+        Assert.Contains("release/1.0", turnRes.Output.Context);
+        Assert.Contains("Epoch handover", turnRes.Output.Context);
 
-        // GuardToolCall: vcs_pr_merge is denied before read_write gate verification
-        var prematureMerge = _vm.GuardToolCall(
-            compiled,
-            new PolicyToolCallContext("trk_dev", "ses_lead", true, null, "vcs", "vcs_pr_merge", ParseJson("""{"prNumber":12}"""), inputs),
-            state);
+        // Before tool: vcs_pr_merge is denied before read_write gate verification
+        var prematureMerge = _vm.Before(compiled, "tool.vcs_pr_merge", "trk_dev",
+            JsonSerializer.SerializeToElement(new {
+                sessionId = "ses_lead",
+                isLead = true,
+                boundAttemptId = (object?)null,
+                mcpServer = "vcs",
+                toolName = "vcs_pr_merge",
+                arguments = ParseJson("""{"prNumber":12}""")
+            }), inputs, state);
         var denyMerge = Assert.IsType<GuardDecision.Deny>(prematureMerge.Output);
         Assert.Contains("ciVerified=false", denyMerge.Reason);
 
-        // OnTaskSettled: read_write task passes gate and records JJ changeId + opId
-        var settled = _vm.OnTaskSettled(
-            compiled,
-            new PolicyTaskSettledContext(
-                TrackId: "trk_dev",
-                TaskKey: "impl-core",
-                AccessMode: "read_write",
-                AttemptStatus: "done",
-                WorkerResult: ParseJson("""{"summary":"Implemented engine"}"""),
-                AttemptMeta: ParseJson("""{"changeId":"kxyz1234","opId":"op_9988"}"""),
-                GateVerdict: ParseJson("""{"passed":true}"""),
-                Inputs: inputs),
-            state);
+        // After task.settled: read_write task passes gate and records JJ changeId + opId
+        var settled = _vm.After(compiled, "task.settled", "trk_dev",
+            JsonSerializer.SerializeToElement(new {
+                taskKey = "impl-core",
+                accessMode = "read_write",
+                attemptStatus = "done",
+                workerResult = ParseJson("""{"summary":"Implemented engine"}"""),
+                meta = ParseJson("""{"changeId":"kxyz1234","opId":"op_9988"}"""),
+                gateVerdict = ParseJson("""{"passed":true}""")
+            }), inputs, state);
         state = settled.NextState;
 
         Assert.Equal(1, state.GetProperty("iteration").GetInt32());
@@ -89,21 +162,31 @@ public sealed class PolicyVmTests
         Assert.True(state.GetProperty("ciVerified").GetBoolean());
         Assert.Contains("impl-core", settled.Output);
 
-        // GuardToolCall: high-risk vcs_publish_pr triggers AskHuman and mutates prPublished=true
-        var publishRes = _vm.GuardToolCall(
-            compiled,
-            new PolicyToolCallContext("trk_dev", "ses_lead", true, null, "vcs", "vcs_publish_pr", ParseJson("{}"), inputs),
-            state);
+        // Before tool: high-risk vcs_publish_pr triggers AskHuman and mutates prPublished=true
+        var publishRes = _vm.Before(compiled, "tool.vcs_publish_pr", "trk_dev",
+            JsonSerializer.SerializeToElement(new {
+                sessionId = "ses_lead",
+                isLead = true,
+                boundAttemptId = (object?)null,
+                mcpServer = "vcs",
+                toolName = "vcs_publish_pr",
+                arguments = ParseJson("{}")
+            }), inputs, state);
         state = publishRes.NextState;
         var askPublish = Assert.IsType<GuardDecision.AskHuman>(publishRes.Output);
         Assert.Contains("release/1.0", askPublish.Title);
         Assert.True(state.GetProperty("prPublished").GetBoolean());
 
-        // GuardToolCall: now that ciVerified=true and requirePrReview=true (default), vcs_pr_merge returns AskHuman
-        var mergeAsk = _vm.GuardToolCall(
-            compiled,
-            new PolicyToolCallContext("trk_dev", "ses_lead", true, null, "vcs", "vcs_pr_merge", ParseJson("""{"prNumber":12}"""), inputs),
-            state);
+        // Before tool: now that ciVerified=true and requirePrReview=true (default), vcs_pr_merge returns AskHuman
+        var mergeAsk = _vm.Before(compiled, "tool.vcs_pr_merge", "trk_dev",
+            JsonSerializer.SerializeToElement(new {
+                sessionId = "ses_lead",
+                isLead = true,
+                boundAttemptId = (object?)null,
+                mcpServer = "vcs",
+                toolName = "vcs_pr_merge",
+                arguments = ParseJson("""{"prNumber":12}""")
+            }), inputs, state);
         var askDecision = Assert.IsType<GuardDecision.AskHuman>(mergeAsk.Output);
         Assert.Equal(2, askDecision.Options.Count);
 
@@ -142,35 +225,42 @@ public sealed class PolicyVmTests
         // 3 consecutive failures trip pausedForHuman circuit breaker
         for (var i = 1; i <= 3; i++)
         {
-            var failRes = _vm.OnTaskSettled(
-                compiled,
-                new PolicyTaskSettledContext(
-                    "trk_ltg",
-                    $"milestone-{i}",
-                    "read_write",
-                    "failed",
-                    null,
-                    ParseJson("{}"),
-                    null,
-                    inputs),
-                state);
+            var failRes = _vm.After(compiled, "task.settled", "trk_ltg",
+                JsonSerializer.SerializeToElement(new {
+                    taskKey = $"milestone-{i}",
+                    accessMode = "read_write",
+                    attemptStatus = "failed",
+                    workerResult = (object?)null,
+                    meta = ParseJson("{}"),
+                    gateVerdict = (object?)null
+                }), inputs, state);
             state = failRes.NextState;
         }
 
         Assert.True(state.GetProperty("pausedForHuman").GetBoolean());
 
         // Cross-track mail blocked while pausedForHuman is active
-        var mailGuard = _vm.GuardToolCall(
-            compiled,
-            new PolicyToolCallContext("trk_ltg", "ses_1", true, null, "perga", "perga_mail_send", ParseJson("{}"), inputs),
-            state);
+        var mailGuard = _vm.Before(compiled, "tool.perga_mail_send", "trk_ltg",
+            JsonSerializer.SerializeToElement(new {
+                sessionId = "ses_1",
+                isLead = true,
+                boundAttemptId = (object?)null,
+                mcpServer = "perga",
+                toolName = "perga_mail_send",
+                arguments = ParseJson("{}")
+            }), inputs, state);
         Assert.IsType<GuardDecision.Deny>(mailGuard.Output);
 
         // Closing track asks human confirmation
-        var closeGuard = _vm.GuardToolCall(
-            compiled,
-            new PolicyToolCallContext("trk_ltg", "ses_1", true, null, "perga", "perga_track_close", ParseJson("{}"), inputs),
-            state);
+        var closeGuard = _vm.Before(compiled, "tool.perga_track_close", "trk_ltg",
+            JsonSerializer.SerializeToElement(new {
+                sessionId = "ses_1",
+                isLead = true,
+                boundAttemptId = (object?)null,
+                mcpServer = "perga",
+                toolName = "perga_track_close",
+                arguments = ParseJson("{}")
+            }), inputs, state);
         Assert.IsType<GuardDecision.AskHuman>(closeGuard.Output);
     }
 
@@ -189,123 +279,87 @@ public sealed class PolicyVmTests
         var state = _vm.InitState(compiled, disabledOrdersInputs).NextState;
 
         // Read-only paper-trading positions query allowed even when allowPaperOrders=false
-        var readPos = _vm.GuardToolCall(
-            compiled,
-            new PolicyToolCallContext("trk_inv", "ses_1", true, null, "paper-trading", "portfolio_positions", ParseJson("{}"), disabledOrdersInputs),
-            state);
+        var readPos = _vm.Before(compiled, "tool.portfolio_positions", "trk_inv",
+            JsonSerializer.SerializeToElement(new {
+                sessionId = "ses_1",
+                isLead = true,
+                boundAttemptId = (object?)null,
+                mcpServer = "paper-trading",
+                toolName = "portfolio_positions",
+                arguments = ParseJson("{}")
+            }), disabledOrdersInputs, state);
         Assert.IsType<GuardDecision.Allow>(readPos.Output);
 
         // Order placement denied when allowPaperOrders=false
-        var deniedOrder = _vm.GuardToolCall(
-            compiled,
-            new PolicyToolCallContext("trk_inv", "ses_1", true, null, "paper-trading", "submit_order", ParseJson("""{"qty":100}"""), disabledOrdersInputs),
-            state);
+        var deniedOrder = _vm.Before(compiled, "tool.submit_order", "trk_inv",
+            JsonSerializer.SerializeToElement(new {
+                sessionId = "ses_1",
+                isLead = true,
+                boundAttemptId = (object?)null,
+                mcpServer = "paper-trading",
+                toolName = "submit_order",
+                arguments = ParseJson("""{"qty":100}""")
+            }), disabledOrdersInputs, state);
         Assert.IsType<GuardDecision.Deny>(deniedOrder.Output);
 
         // Enable allowPaperOrders=true, settle a research task with verifiedSources + convictionScore
         var enabledInputs = ParseJson("""{"tickerOrTheme":"600519.SH","allowPaperOrders":true}""");
-        var settled = _vm.OnTaskSettled(
-            compiled,
-            new PolicyTaskSettledContext(
-                "trk_inv",
-                "dcf-model",
-                "read_only",
-                "done",
-                ParseJson("""{"verifiedSources":4,"convictionScore":82}"""),
-                ParseJson("{}"),
-                null,
-                enabledInputs),
-            state);
+        var settled = _vm.After(compiled, "task.settled", "trk_inv",
+            JsonSerializer.SerializeToElement(new {
+                taskKey = "dcf-model",
+                accessMode = "read_only",
+                attemptStatus = "done",
+                workerResult = ParseJson("""{"verifiedSources":4,"convictionScore":82}"""),
+                meta = ParseJson("{}"),
+                gateVerdict = (object?)null
+            }), enabledInputs, state);
         state = settled.NextState;
         Assert.Equal(4, state.GetProperty("dataSourcesVerified").GetInt32());
         Assert.Equal(82, state.GetProperty("convictionScore").GetInt32());
 
         // Order placement now asks human approval and increments paperOrdersSubmitted
-        var askOrder = _vm.GuardToolCall(
-            compiled,
-            new PolicyToolCallContext("trk_inv", "ses_1", true, null, "paper-trading", "submit_order", ParseJson("""{"qty":100}"""), enabledInputs),
-            state);
+        var askOrder = _vm.Before(compiled, "tool.submit_order", "trk_inv",
+            JsonSerializer.SerializeToElement(new {
+                sessionId = "ses_1",
+                isLead = true,
+                boundAttemptId = (object?)null,
+                mcpServer = "paper-trading",
+                toolName = "submit_order",
+                arguments = ParseJson("""{"qty":100}""")
+            }), enabledInputs, state);
         Assert.IsType<GuardDecision.AskHuman>(askOrder.Output);
         Assert.Equal(1, askOrder.NextState.GetProperty("paperOrdersSubmitted").GetInt32());
 
-        // Report customValidate blocks TODO:UNVERIFIED in Executive Thesis
-        var invalidThesis = _vm.GuardReportCommit(
-            compiled,
-            new PolicyReportCommitContext(
-                "trk_inv",
-                "lead",
-                "# Executive Thesis\n\nInitial",
-                "# Executive Thesis\n\nTarget EV/EBITDA: TODO:UNVERIFIED",
-                ["Executive Thesis"],
-                60,
-                enabledInputs),
-            state);
+        // Before report.commit blocks TODO:UNVERIFIED in Executive Thesis
+        var invalidThesis = _vm.Before(compiled, "report.commit", "trk_inv",
+            JsonSerializer.SerializeToElement(new {
+                editorRole = "lead",
+                prevMarkdown = "# Executive Thesis\n\nInitial",
+                nextMarkdown = "# Executive Thesis\n\nTarget EV/EBITDA: TODO:UNVERIFIED",
+                touchedSections = new string[] {"Executive Thesis"},
+                nextProseChars = 60
+            }), enabledInputs, state);
         Assert.IsType<GuardDecision.Deny>(invalidThesis.Output);
     }
 
     [Fact]
-    public void GuardReportCommit_EnforcesMaxProseChars_CaseInsensitiveEditableBy_AndStateMutatingCustomValidate()
+    public void BeforeReport_CanDenyAskAndUpdateState()
     {
-        const string policyJs = """
-            export default defineTemplate({
-              id: "report-guard-test",
-              title: "Report Guard Test",
-              initialState: () => ({ validations: 0 }),
-              report: {
-                maxProseChars: 100,
-                sections: [
-                  { h1: "Executive Summary", editableBy: ["human", "lead"] },
-                  { h1: "Worker Notes", editableBy: ["human", "lead", "subagent"] }
-                ],
-                customValidate: (ctx, info) => {
-                  ctx.state.validations += 1;
-                  if (info.nextMarkdown.includes("FORBIDDEN")) {
-                    return Deny("Contains forbidden marker.");
-                  }
-                  if (info.nextMarkdown.includes("NEEDS_SIGN_OFF")) {
-                    return AskHuman("Approve sensitive report edit?", ["Approve", "Reject"]);
-                  }
-                  return Allow();
-                }
-              }
-            });
-            """;
-
-        var compiled = _vm.Compile(policyJs);
-        var emptyInputs = ParseJson("{}");
-        var state = _vm.InitState(compiled, emptyInputs).NextState;
-
-        // 1. Exceeding MaxProseChars denied
-        var overLimit = _vm.GuardReportCommit(
-            compiled,
-            new PolicyReportCommitContext("t1", "lead", "", "long", ["Executive Summary"], NextProseChars: 101, emptyInputs),
-            state);
-        Assert.IsType<GuardDecision.Deny>(overLimit.Output);
-
-        // 2. EditableBy enforced case-insensitively (SUBAGENT rejected on Executive Summary, allowed on Worker Notes)
-        var unauthorizedRole = _vm.GuardReportCommit(
-            compiled,
-            new PolicyReportCommitContext("t1", "SUBAGENT", "", "ok", ["# executive summary"], NextProseChars: 20, emptyInputs),
-            state);
-        var roleDeny = Assert.IsType<GuardDecision.Deny>(unauthorizedRole.Output);
-        Assert.Contains("Executive Summary", roleDeny.Reason);
-
-        var authorizedUpperLead = _vm.GuardReportCommit(
-            compiled,
-            new PolicyReportCommitContext("t1", "LEAD", "", "Clean update", ["EXECUTIVE SUMMARY"], NextProseChars: 20, emptyInputs),
-            state);
-        Assert.IsType<GuardDecision.Allow>(authorizedUpperLead.Output);
-        Assert.Equal(1, authorizedUpperLead.NextState.GetProperty("validations").GetInt32());
-
-        // 3. customValidate AskHuman + state propagation
-        var signOffRes = _vm.GuardReportCommit(
-            compiled,
-            new PolicyReportCommitContext("t1", "subagent", "", "NEEDS_SIGN_OFF", ["Worker Notes"], NextProseChars: 20, emptyInputs),
-            authorizedUpperLead.NextState);
-        var ask = Assert.IsType<GuardDecision.AskHuman>(signOffRes.Output);
-        Assert.Equal("Approve sensitive report edit?", ask.Title);
-        Assert.Equal(["Approve", "Reject"], ask.Options);
-        Assert.Equal(2, signOffRes.NextState.GetProperty("validations").GetInt32());
+        var policy = _vm.Compile("""
+            export default {id:'report',title:'Report',before(a,ctx) {
+              if(a.type !== 'report.commit') return Allow();
+              ctx.state.validations=(ctx.state.validations||0)+1;
+              if(a.nextMarkdown.includes('FORBIDDEN')) return Deny('Contains forbidden marker.');
+              if(a.nextMarkdown.includes('SIGN_OFF')) return AskHuman('Approve edit?',['Approve','Reject']);
+              return Allow();
+            }};
+            """);
+        var result = _vm.Before(policy,"report.commit","track",ParseJson("""{"nextMarkdown":"FORBIDDEN"}"""),ParseJson("{}"),ParseJson("{}"));
+        Assert.IsType<GuardDecision.Deny>(result.Output);
+        Assert.Equal(1,result.NextState.GetProperty("validations").GetInt32());
+        var ask = _vm.Before(policy,"report.commit","track",ParseJson("""{"nextMarkdown":"SIGN_OFF"}"""),ParseJson("{}"),result.NextState);
+        Assert.IsType<GuardDecision.AskHuman>(ask.Output);
+        Assert.Equal(2,ask.NextState.GetProperty("validations").GetInt32());
     }
 
     [Fact]
@@ -316,17 +370,22 @@ public sealed class PolicyVmTests
             export default defineTemplate({
               id: "loop",
               title: "Loop",
-              guardToolCall: () => {
+              before: () => {
                 while (true) {}
               }
             });
             """);
 
         var loopEx = Assert.Throws<InvalidOperationException>(() =>
-            _vm.GuardToolCall(
-                loopPolicy,
-                new PolicyToolCallContext("t1", "s1", true, null, "perga", "perga_task_ls", ParseJson("{}"), ParseJson("{}")),
-                ParseJson("{}")));
+            _vm.Before(loopPolicy, "tool.perga_task_ls", "t1",
+                JsonSerializer.SerializeToElement(new {
+                    sessionId = "s1",
+                    isLead = true,
+                    boundAttemptId = (object?)null,
+                    mcpServer = "perga",
+                    toolName = "perga_task_ls",
+                    arguments = ParseJson("{}")
+                }), ParseJson("{}"), ParseJson("{}")));
         Assert.Contains("sandbox", loopEx.Message, StringComparison.OrdinalIgnoreCase);
 
         // 2. Statement budget (> 10,000 statements) rejected during Compile
@@ -425,7 +484,7 @@ public sealed class PolicyVmTests
               inputs: {
                 envName: { type: "string", default: "staging" }
               },
-              guardToolCall: (ctx, call) => {
+              before: (call, ctx) => {
                 if (call.toolName === "ask_no_opts") {
                   return AskHuman(`Confirm on ${ctx.inputs.envName}?`);
                 }
@@ -443,18 +502,28 @@ public sealed class PolicyVmTests
         var emptyInputs = ParseJson("{}");
         var state = _vm.InitState(compiled, emptyInputs).NextState;
 
-        var askNoOpts = _vm.GuardToolCall(
-            compiled,
-            new PolicyToolCallContext("t1", "s1", true, null, "perga", "ask_no_opts", emptyInputs, emptyInputs),
-            state);
+        var askNoOpts = _vm.Before(compiled, "tool.ask_no_opts", "t1",
+            JsonSerializer.SerializeToElement(new {
+                sessionId = "s1",
+                isLead = true,
+                boundAttemptId = (object?)null,
+                mcpServer = "perga",
+                toolName = "ask_no_opts",
+                arguments = emptyInputs
+            }), emptyInputs, state);
         var ask = Assert.IsType<GuardDecision.AskHuman>(askNoOpts.Output);
         Assert.Equal("Confirm on staging?", ask.Title);
         Assert.Empty(ask.Options);
 
-        var denyRes = _vm.GuardToolCall(
-            compiled,
-            new PolicyToolCallContext("t1", "s1", true, null, "perga", "deny_tool", emptyInputs, emptyInputs),
-            state);
+        var denyRes = _vm.Before(compiled, "tool.deny_tool", "t1",
+            JsonSerializer.SerializeToElement(new {
+                sessionId = "s1",
+                isLead = true,
+                boundAttemptId = (object?)null,
+                mcpServer = "perga",
+                toolName = "deny_tool",
+                arguments = emptyInputs
+            }), emptyInputs, state);
         var deny = Assert.IsType<GuardDecision.Deny>(denyRes.Output);
         Assert.Equal("Blocked on staging", deny.Reason);
 

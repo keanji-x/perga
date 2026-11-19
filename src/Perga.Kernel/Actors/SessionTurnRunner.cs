@@ -5,7 +5,6 @@ using Perga.Contracts;
 using Perga.Kernel.Events;
 using Perga.Kernel.Internal;
 using Perga.Kernel.Ports;
-using Perga.PolicyVm;
 
 namespace Perga.Kernel.Actors;
 
@@ -45,7 +44,8 @@ public sealed partial class TrackActor
             ActiveTurnState? activated = null;
             try
             {
-                if (await StartTurnAsync(work, prompt, active => activated = active, ct).ConfigureAwait(false) is not { } start)
+                var policyAdmission = await actor.PreparePolicyTurnAdmissionAsync(work.SessionId, ct).ConfigureAwait(false);
+                if (await StartTurnAsync(work, prompt, policyAdmission, active => activated = active, ct).ConfigureAwait(false) is not { } start)
                     return work.CreateUnstartedTurn();
 
                 var outcome = await StreamTurnAsync(work, start.Active, start.EffectivePrompt, ct).ConfigureAwait(false);
@@ -76,7 +76,7 @@ public sealed partial class TrackActor
         // Claims the session, records the running turn and makes it the session's active turn, all in one actor step.
         // Returns null when the work item left the turn unstarted. The active turn is reported to onActivated as
         // soon as the scheduler sees it, so it is cleaned up even if announcing it fails.
-        private Task<TurnStart?> StartTurnAsync(ITurnWorkItem work, string prompt, Action<ActiveTurnState> onActivated,
+        private Task<TurnStart?> StartTurnAsync(ITurnWorkItem work, string prompt, TurnPolicyAdmission policyAdmission, Action<ActiveTurnState> onActivated,
             CancellationToken ct) => actor.EnqueueAsync<TurnStart?>(async _ =>
         {
             await actor.EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
@@ -99,7 +99,7 @@ public sealed partial class TrackActor
             PreparedDispatch prepared;
             try
             {
-                prepared = await PrepareDispatchCoreAsync(work, executionSession, runningSession, prompt, ct).ConfigureAwait(false);
+                prepared = await PrepareDispatchCoreAsync(work, executionSession, prompt, policyAdmission, ct).ConfigureAwait(false);
                 runningSession = runningSession with { ContextUsage = actor.RequireSessionCore(sessionId).ContextUsage };
                 if (workerSettings is not null)
                     workerSettings = actor.ResolveWorkerTurnSettingsCore(executionSession, workerSettings);
@@ -128,34 +128,21 @@ public sealed partial class TrackActor
         }, actor._actorShutdownCts.Token);
 
         private async Task<PreparedDispatch> PrepareDispatchCoreAsync(ITurnWorkItem work, AgentSessionDto session,
-            AgentSessionDto runningSession, string prompt, CancellationToken ct)
+            string prompt, TurnPolicyAdmission policyAdmission, CancellationToken ct)
         {
             if (session.BoundAttemptId is { } workerAttemptId && actor.RequireCurrentWorkerCore(session.Id, workerAttemptId).Attempt.Paused)
                 throw KernelException.Conflict("The Worker is paused.");
             if (work.IsQueuedMessage)
                 actor.RequireDispatchWorkspace(session);
 
-            var effectivePrompt = await ApplyPolicyContextCoreAsync(session, runningSession, prompt, ct).ConfigureAwait(false);
+            if (policyAdmission.Failure is { } failure) throw failure;
+            if (actor._policyGeneration != policyAdmission.Generation)
+                throw KernelException.PolicyDenied("Active policy changed during turn authorization.");
+            var effectivePrompt = string.IsNullOrWhiteSpace(policyAdmission.Context) ? prompt
+                : $"<policy_context>\n{policyAdmission.Context}\n</policy_context>\n\n{prompt}";
             var agentSession = await actor.GetOrOpenAgentSessionCoreAsync(session, overrideSystemPrompt: null, ct)
                 .ConfigureAwait(false);
             return new PreparedDispatch(agentSession, effectivePrompt);
-        }
-
-        private async Task<string> ApplyPolicyContextCoreAsync(AgentSessionDto session, AgentSessionDto runningSession, string prompt,
-            CancellationToken ct)
-        {
-            if (actor._policy is null)
-                return prompt;
-            var turnCtx = new PolicyTurnContext(
-                TrackId: actor.TrackId,
-                SessionId: session.Id,
-                IsLead: session.IsLead,
-                BoundAttemptId: session.BoundAttemptId,
-                ContextUsageRatio: actor.CurrentContextUsageRatioCore(runningSession) ?? 0,
-                Inputs: actor._track.TemplateInputs);
-            var eval = actor._policyVm.BuildTurnContext(actor._policy, turnCtx, actor._track.TemplateState);
-            await actor.UpdateTemplateStateIfChangedCoreAsync(eval.NextState, ct).ConfigureAwait(false);
-            return string.IsNullOrWhiteSpace(eval.Output) ? prompt : $"<policy_context>\n{eval.Output}\n</policy_context>\n\n{prompt}";
         }
 
         private async Task<TurnOutcome> StreamTurnAsync(ITurnWorkItem work, ActiveTurnState active, string effectivePrompt,
@@ -425,6 +412,10 @@ public sealed partial class TrackActor
             await work.PersistSettlementCoreAsync(outcome.Delivered, outcome.RejectedBeforePrompt, completedTurn, items, updatedSession)
                 .ConfigureAwait(false);
 
+            await actor.AfterPolicyEventCoreAsync("turn.after", JsonHelpers.ToElement(new {
+                sessionId, turnId = completedTurn.Id, status = outcome.Status,
+                isLead = currentSession.IsLead, boundAttemptId = currentSession.BoundAttemptId
+            }), CancellationToken.None).ConfigureAwait(false);
             actor._scheduler.RemoveActive(sessionId);
             active.Settled.TrySetResult(outcome.Conclusive);
             var settledSession = actor._sessions[sessionId];

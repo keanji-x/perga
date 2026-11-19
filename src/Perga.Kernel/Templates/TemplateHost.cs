@@ -75,7 +75,12 @@ public class TemplateHost : ITemplateCatalog
         }
 
         var hash = ComputeSha256Hex(templateSnapshotSource);
-        return _snapshotCacheByHash.GetOrAdd(hash, _ => _policyVm.Compile(templateSnapshotSource));
+        return _snapshotCacheByHash.GetOrAdd(hash, _ =>
+        {
+            var policy = _policyVm.Compile(templateSnapshotSource);
+            return policy.Manifest.Extends is { } baseId
+                ? _policyVm.Compile(global::Perga.PolicyVm.PolicyVm.Inherit(GetRequiredPolicy(baseId), templateSnapshotSource)) : policy;
+        });
     }
 
     public CompiledPolicy RegisterTemplate(string jsModuleSource)
@@ -86,6 +91,8 @@ public class TemplateHost : ITemplateCatalog
         }
 
         var compiled = _policyVm.Compile(jsModuleSource);
+        if (compiled.Manifest.Extends is { } baseId)
+            compiled = _policyVm.Compile(global::Perga.PolicyVm.PolicyVm.Inherit(GetRequiredPolicy(baseId), jsModuleSource));
         _policiesById[compiled.TemplateId] = compiled;
         _snapshotCacheByHash[ComputeSha256Hex(jsModuleSource)] = compiled;
         return compiled;
@@ -98,16 +105,30 @@ public class TemplateHost : ITemplateCatalog
             return 0;
         }
 
-        var files = Directory.GetFiles(directoryPath, "*.perga.js", SearchOption.TopDirectoryOnly)
+        var files = Directory.GetFiles(directoryPath, "*", SearchOption.TopDirectoryOnly)
+            .Where(f => f.EndsWith(".perga.js", StringComparison.Ordinal) || f.EndsWith(".json", StringComparison.Ordinal))
             .OrderBy(f => f, StringComparer.Ordinal)
             .ToArray();
 
+        var pending = files.Select(file => File.ReadAllText(file, Encoding.UTF8))
+            .Select(source => (Source: source, Policy: _policyVm.Compile(source))).ToList();
         var count = 0;
-        foreach (var file in files)
+        while (pending.Count > 0)
         {
-            var source = File.ReadAllText(file, Encoding.UTF8);
-            RegisterTemplate(source);
-            count++;
+            var progressed = false;
+            foreach (var entry in pending.ToArray())
+            {
+                var definition = entry.Policy;
+                if (definition.Manifest.Extends is { } baseId && TryGetPolicy(baseId) is null) continue;
+                var compiled = definition.Manifest.Extends is { } parentId
+                    ? _policyVm.Compile(global::Perga.PolicyVm.PolicyVm.Inherit(GetRequiredPolicy(parentId), entry.Source)) : definition;
+                _policiesById[compiled.TemplateId] = compiled;
+                _snapshotCacheByHash[ComputeSha256Hex(compiled.JsSource)] = compiled;
+                pending.Remove(entry);
+                count++;
+                progressed = true;
+            }
+            if (!progressed) throw new InvalidOperationException("Template inheritance contains a cycle or an unavailable base.");
         }
 
         return count;

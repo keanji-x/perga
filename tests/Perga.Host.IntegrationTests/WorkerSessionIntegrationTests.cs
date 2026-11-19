@@ -299,6 +299,7 @@ public sealed class WorkerSessionIntegrationTests
         var repo = AppContext.BaseDirectory;
         var area = await kernel.CreateAreaAsync(new CreateAreaRequest("Development dispatch", DefaultCwd: repo), ct);
         var track = (await kernel.CreateTrackAsync(new CreateTrackRequest(area.Id, Cwd: repo, WorkspaceDriver: "direct", TemplateId: "dev"), ct)).Track;
+        Assert.Empty((await kernel.ReadReportAsync(track.Id, ct: ct)).Blocks);
         using var response = await host.Client.PostAsJsonAsync($"/api/v1/tracks/{track.Id}/tasks/dispatch", new { goal = "Check the test setup" }, ct);
         Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
         var receipt = (await response.Content.ReadFromJsonAsync<WorkerDispatchReceipt>(PergaJsonDefaults.ApiOptions, ct))!;

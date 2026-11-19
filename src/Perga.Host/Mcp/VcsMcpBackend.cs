@@ -58,7 +58,17 @@ public sealed class VcsMcpBackend : IMcpToolBackend
         return Task.FromResult(ToolDescriptors);
     }
 
-    public async Task<McpCallToolResult> CallToolAsync(
+    public async Task<McpCallToolResult> CallToolAsync(McpSessionPrincipal caller, string toolName,
+        JsonElement arguments, CancellationToken ct)
+    {
+        var result = await CallToolCoreAsync(caller, toolName, arguments, ct).ConfigureAwait(false);
+        if (!result.IsError)
+            await _kernel.Actors.GetOrActivate(caller.TrackId).AfterPolicyEventAsync("tool." + toolName,
+                JsonSerializer.SerializeToElement(new { mcpServer = "vcs", arguments, result }), ct).ConfigureAwait(false);
+        return result;
+    }
+
+    private async Task<McpCallToolResult> CallToolCoreAsync(
         McpSessionPrincipal caller,
         string toolName,
         JsonElement arguments,

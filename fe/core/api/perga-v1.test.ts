@@ -6,6 +6,7 @@ import {
   decodePergaEventEnvelope,
   trackAggregateSnapshotDtoSchema,
   agentSessionDtoSchema,
+  trackDtoSchema,
 } from './perga-v1.js';
 import { decodeWireEvent } from './schemas.js';
 import { decodeEventFrame } from '../events/protocol.js';
@@ -74,6 +75,23 @@ import {
 import { parsePergaMarkdownBlocks } from '../markdown/public.js';
 
 describe('Perga /api/v1 protocol contracts', () => {
+  it('preserves template presentation metadata without badge or metric count caps', () => {
+    const header = {
+      badges: Array.from({ length: 8 }, () => ({ label: 'Research', tone: 'accent' })),
+      notice: { text: 'Pending', tone: 'info' },
+      metrics: Array.from({ length: 9 }, () => ({ label: 'Sources', value: '7', spark: [1, 4, 7] })),
+      rules: [{ label: 'Evidence', text: 'Verify sources' }],
+    };
+    const schedules = [{ id: 'daily', cron: '0 9 * * *', timezone: 'UTC' }];
+    const track = trackDtoSchema.parse({
+      id: 'track', areaId: 'area', createdAtMs: 0, updatedAtMs: 0,
+      templateTitle: 'Research', templateHeaderView: header, templateSchedules: schedules,
+    });
+    expect(track.templateTitle).toBe('Research');
+    expect(track.templateHeaderView).toEqual(header);
+    expect(track.templateSchedules).toEqual(schedules);
+  });
+
   it('decodes historical mail and preserves the parent ID of a reply', () => {
     const envelope = { eventId: 8, areaId: 'area', trackId: 'receiver', kind: 'mail.received', createdAtMs: 1 };
     const mail = { id: 'mail', fromTrackId: 'sender', toTrackId: 'receiver', summary: 'Reply', body: 'Details', createdAtMs: 1 };

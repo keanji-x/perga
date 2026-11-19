@@ -7,12 +7,13 @@ import {
   sortAreaTracksByRecent, trackRecentAt, limitAreaTracks, railAreaTracks, AREA_TRACK_LIMIT,
   trackActivityState, updateTrackOperation,
   NEUTRAL_ACTIVITY, UNTITLED_TRACK_LABEL, trackDisplayTitle, trackWireSchema, tracksInAreaOperation,
-  userVisibleTracks, trackOverlayPayload,
+  trackDtoToWire, userVisibleTracks, trackOverlayPayload,
   trackDetailOperation, terminalDtoToCardWire, type Track, type OverlayWire,
 } from './track.js';
 import { terminalPresentation } from './terminal-presentation.js';
 import type { Area } from './area.js';
 import { overlaySchema } from '../api/schemas.js';
+import { trackDtoSchema, decodeWireEvent } from '../api/schemas.js';
 import { performApiRequest } from '../api/client.js';
 
 const baseWire = { workspace: { isolation: 'none' as const, kind: 'attached' as const, path: '', frozen_at: null },
@@ -24,6 +25,7 @@ function track(overrides: Partial<Track>): Track {
   return {
     id: 'w', areaId: 'c', title: 't', sort: 1, cwd: '/tmp', isolation: 'none', agentCwd: '/tmp',
     pinnedAt: null, closedAt: null, createdAt: 0, updatedAt: 0,
+    templateId: null, templateTitle: null, templateInputs: {}, templateHeaderView: null, templateSchedules: [],
     ...NEUTRAL_ACTIVITY,
     ...overrides,
   };
@@ -645,4 +647,28 @@ describe('trackOverlayPayload', () => {
 it.each([null, 'attempt-1'])('makes a v1 terminal consumable by the Track workbench (attempt=%s)', attemptId => {
   const card = terminalDtoToCardWire({ id: 'terminal-1', trackId: 'w1', attemptId, title: 'Shell', cwd: '/tmp', status: 'exited', createdAtMs: 1 });
   expect(terminalPresentation(card)).toEqual({ source: attemptId === null ? 'unrecorded' : 'task', in_workbench: true });
+});
+
+describe('template report projection', () => {
+  const template = {
+    templateId: 'dev', templateTitle: 'Dev', templateInputs: { repository: 'perga' },
+    templateHeaderView: { badges: [{ label: 'Ready', tone: 'success' }], rules: [{ label: 'Review', text: 'Check tests' }] },
+    templateSchedules: [{ id: 'daily', cron: '0 9 * * *', timezone: 'Asia/Shanghai' }],
+  };
+  const dto = () => trackDtoSchema.parse({ id: 'w1', areaId: 'c1', createdAtMs: 1, updatedAtMs: 2, ...template });
+
+  it('preserves every template field through the production HTTP projection', () => {
+    expect(toTrack(trackDtoToWire(dto()))).toMatchObject(template);
+  });
+
+  it('preserves every template field on track.updated events', () => {
+    const event = decodeWireEvent({ eventId: 1, createdAtMs: 2, kind: 'track.updated', payload: dto() });
+    expect(event).toMatchObject({ status: 'ready', value: { data: template } });
+  });
+
+  it('defaults omitted template fields for historical rows', () => {
+    expect(toTrack(trackWireSchema.parse(baseWire))).toMatchObject({
+      templateId: null, templateTitle: null, templateInputs: {}, templateHeaderView: null, templateSchedules: [],
+    });
+  });
 });

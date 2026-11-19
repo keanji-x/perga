@@ -552,6 +552,7 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                        generation AS Generation,
                        kind AS Kind,
                        provider AS Provider,
+                       role AS Role,
                        access_mode AS AccessMode,
                        ready AS Ready,
                        depends_on_json AS DependsOnJson,
@@ -634,10 +635,10 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
     public Task UpdateTrackAndEmitAsync(TrackDto track, EventEnvelopeDto? evt, CancellationToken ct) =>
         UpdateTrackCoreAsync(track, null, evt, ct);
 
-    public Task UpdateTrackTemplateAndEmitAsync(TrackDto track, string templateSnapshot, EventEnvelopeDto evt, CancellationToken ct) =>
-        UpdateTrackCoreAsync(track, templateSnapshot, evt, ct);
+    public Task UpdateTrackTemplateAndEmitAsync(TrackDto track, string? templateSnapshot, EventEnvelopeDto evt, CancellationToken ct) =>
+        UpdateTrackCoreAsync(track, templateSnapshot, evt, ct, replaceTemplateSnapshot: true);
 
-    private Task UpdateTrackCoreAsync(TrackDto track, string? templateSnapshot, EventEnvelopeDto? evt, CancellationToken ct)
+    private Task UpdateTrackCoreAsync(TrackDto track, string? templateSnapshot, EventEnvelopeDto? evt, CancellationToken ct, bool replaceTemplateSnapshot = false)
     {
         ArgumentNullException.ThrowIfNull(track);
         EnsureInitialized();
@@ -662,7 +663,7 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                             workspace_driver = @WorkspaceDriver,
                             workspace_spec_json = @WorkspaceSpecJson,
                             lead_session_id = @LeadSessionId,
-                            template_snapshot = CASE WHEN @TemplateSnapshot IS NULL THEN template_snapshot ELSE @TemplateSnapshot END,
+                            template_snapshot = CASE WHEN @ReplaceTemplateSnapshot = 1 THEN @TemplateSnapshot ELSE template_snapshot END,
                             template_id = @TemplateId,
                             template_inputs_json = @TemplateInputsJson,
                             template_state_json = @TemplateStateJson,
@@ -686,6 +687,7 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                             track.LeadSessionId,
                             track.TemplateId,
                             TemplateSnapshot = templateSnapshot,
+                            ReplaceTemplateSnapshot = replaceTemplateSnapshot ? 1 : 0,
                             TemplateInputsJson = templateInputsJson,
                             TemplateStateJson = templateStateJson,
                             EnabledPluginsJson = enabledPluginsJson,
@@ -1956,13 +1958,13 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
             new CommandDefinition(
                 """
                 INSERT INTO tasks (
-                    id, track_id, block_id, task_key, generation, kind, provider,
+                    id, track_id, block_id, task_key, generation, kind, provider, role,
                     access_mode, ready, depends_on_json, goal_or_cmd, context_json,
                     acceptance, gate_json, status, status_detail, semantic_verdict,
                     semantic_note, latest_attempt_id, created_at_ms, updated_at_ms
                 )
                 VALUES (
-                    @Id, @TrackId, @BlockId, @TaskKey, @Generation, @Kind, @Provider,
+                    @Id, @TrackId, @BlockId, @TaskKey, @Generation, @Kind, @Provider, @Role,
                     @AccessMode, @Ready, @DependsOnJson, @GoalOrCmd, @ContextJson,
                     @Acceptance, @GateJson, @Status, @StatusDetail, @SemanticVerdict,
                     @SemanticNote, @LatestAttemptId, @CreatedAtMs, @UpdatedAtMs
@@ -1973,6 +1975,7 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                     generation = excluded.generation,
                     kind = excluded.kind,
                     provider = excluded.provider,
+                    role = excluded.role,
                     access_mode = excluded.access_mode,
                     ready = excluded.ready,
                     depends_on_json = excluded.depends_on_json,
@@ -1996,6 +1999,7 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                     task.Generation,
                     task.Kind,
                     task.Provider,
+                    task.Role,
                     AccessMode = SqliteJsonUpcaster.FormatAccessMode(task.Access),
                     Ready = task.Ready ? 1 : 0,
                     DependsOnJson = SqliteJsonUpcaster.SerializeStringList(task.DependsOn),
@@ -2173,6 +2177,7 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
             Generation: (int)r.Generation,
             Kind: r.Kind,
             Provider: r.Provider,
+            Role: r.Role,
             Access: SqliteJsonUpcaster.ParseAccessMode(r.AccessMode),
             Ready: r.Ready != 0,
             DependsOn: SqliteJsonUpcaster.DeserializeStringList(r.DependsOnJson),
@@ -2378,6 +2383,7 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
         public long Generation { get; init; }
         public string Kind { get; init; } = string.Empty;
         public string? Provider { get; init; }
+        public string? Role { get; init; }
         public string AccessMode { get; init; } = "read_write";
         public long Ready { get; init; }
         public string DependsOnJson { get; init; } = "[]";

@@ -33,6 +33,7 @@ public static class KernelMcpToolNames
     public const string TrackRename = "perga_track_rename";
     public const string TemplateLs = "perga_template_ls";
     public const string TemplateCat = "perga_template_cat";
+    public const string TemplateUpdateInputs = "perga_template_update_inputs";
     public const string TrackSet = "perga_track_set";
     public const string TrackClose = "perga_track_close";
 
@@ -68,6 +69,7 @@ public static class KernelMcpToolNames
         TrackClose,
         TemplateLs,
         TemplateCat,
+        TemplateUpdateInputs,
         TrackSet,
         TaskDone,
         TaskFail,
@@ -110,6 +112,7 @@ public static class KernelMcpCatalog
         KernelMcpToolNames.TrackClose or
         KernelMcpToolNames.TemplateLs or
         KernelMcpToolNames.TemplateCat or
+        KernelMcpToolNames.TemplateUpdateInputs or
         KernelMcpToolNames.TrackSet;
 
     public static bool IsCompletionOnly(string toolName) => toolName is
@@ -164,12 +167,14 @@ public static class KernelMcpCatalog
                 Schema("""{"type":"object","required":["summary","body"],"properties":{"replyToMailId":{"type":"string"},"toTrackId":{"type":"string"},"summary":{"type":"string"},"body":{"type":"string"}}}""")),
             new(KernelMcpToolNames.TrackRename, "Rename the current track (governance only).",
                 Schema("""{"type":"object","required":["title"],"properties":{"title":{"type":"string"}}}""")),
-            new(KernelMcpToolNames.TemplateLs, "List available compiled template manifests (governance only).",
+            new(KernelMcpToolNames.TemplateLs, "List concise template summaries (governance only).",
                 Schema("""{"type":"object","properties":{}}""")),
-            new(KernelMcpToolNames.TemplateCat, "Inspect a template manifest and .perga.js source; omit templateId or use __contract__ for the authoring contract (governance only).",
+            new(KernelMcpToolNames.TemplateCat, "Inspect a template manifest and source; use __current__ for the active snapshot, inputs, state and headerView; omit templateId or use __contract__ for the authoring contract (governance only).",
                 Schema("""{"type":"object","properties":{"templateId":{"type":"string"}}}""")),
-            new(KernelMcpToolNames.TrackSet, "Apply a template to this open track using exactly one of templateId or custom .perga.js source, plus optional inputs (governance only).",
-                Schema("""{"type":"object","oneOf":[{"required":["templateId"],"not":{"required":["source"]}},{"required":["source"],"not":{"required":["templateId"]}}],"properties":{"templateId":{"type":"string","minLength":1},"source":{"type":"string","minLength":1},"inputs":{"type":"object"}}}""")),
+            new(KernelMcpToolNames.TemplateUpdateInputs, "Merge inputs into the active template, preserving state (governance only).",
+                Schema("""{"type":"object","required":["inputs"],"properties":{"inputs":{"type":"object"}}}""")),
+            new(KernelMcpToolNames.TrackSet, "Apply a templateId or JSON/.perga.js source with inputs. Use dryRun to preview or clear to detach while keeping the report (governance only).",
+                Schema("""{"type":"object","properties":{"templateId":{"type":"string","minLength":1},"source":{"type":"string","minLength":1},"inputs":{"type":"object"},"dryRun":{"type":"boolean"},"clear":{"type":"boolean"}}}""")),
             new(KernelMcpToolNames.TrackClose, "Close the current track and cancel active attempts (governance only).",
                 Schema("""{"type":"object","properties":{}}""")),
             new(KernelMcpToolNames.TaskDone, "Submit completed work for the bound task attempt and trigger gate verification (contract subagent only).",
@@ -189,7 +194,7 @@ public static class KernelMcpCatalog
             new(KernelMcpToolNames.SessionUpdateSettings, "Set a Worker's configuration for the next turn. Read the latest providerConfiguration and settings first. Use null for a reported provider default. Restoring approval requests after deny requires installation owner authorization through the human HTTP interface.",
                 Schema("""{"type":"object","required":["sessionId","attemptId","version","model","reasoningEffort","approvalMode"],"properties":{"sessionId":{"type":"string"},"attemptId":{"type":"string"},"version":{"type":"integer","minimum":0},"model":{"type":["string","null"]},"reasoningEffort":{"type":["string","null"]},"approvalMode":{"enum":["ask","deny"]}}}""")),
             new(KernelMcpToolNames.TaskDispatch, "Dispatch a Worker on the current Track. Only the goal is required. Reuse an optional requestKey to retry safely.",
-                Schema("""{"type":"object","required":["goal"],"properties":{"goal":{"type":"string"},"requestKey":{"type":"string"},"access":{"enum":["read_only","read_write"]},"acceptance":{"type":"string"},"dependsOn":{"type":"array","items":{"type":"string"}},"gate":{"type":"string"},"provider":{"type":"string"},"model":{"type":"string"}}}"""))
+                Schema("""{"type":"object","required":["goal"],"properties":{"goal":{"type":"string"},"requestKey":{"type":"string"},"access":{"enum":["read_only","read_write"]},"acceptance":{"type":"string"},"dependsOn":{"type":"array","items":{"type":"string"}},"gate":{"type":"string"},"provider":{"type":"string"},"model":{"type":"string"},"role":{"type":"string"}}}"""))
         ];
     }
 }
@@ -215,6 +220,16 @@ public static class KernelMcpDispatcher
         var expectedPolicyGeneration = await kernel.GuardMcpToolCallAsync(caller.TrackId, caller.SessionId, "perga", toolName, args, ct, caller.ExecutionOrigin)
             .ConfigureAwait(false);
 
+        var result = await ExecuteAuthorizedAsync(kernel, caller, toolName, args, expectedPolicyGeneration, origin, ct).ConfigureAwait(false);
+        if (!(toolName == KernelMcpToolNames.TrackSet && args.TryGetProperty("dryRun", out var dry) && dry.ValueKind == JsonValueKind.True))
+            await kernel.Actors.GetOrActivate(caller.TrackId).AfterPolicyEventAsync("tool." + toolName,
+                JsonHelpers.ToElement(new { arguments = args, result }), ct).ConfigureAwait(false);
+        return result;
+    }
+
+    private static async Task<JsonElement> ExecuteAuthorizedAsync(IPergaKernel kernel, McpSessionPrincipal caller,
+        string toolName, JsonElement args, string expectedPolicyGeneration, WorkerCompletionOrigin? origin, CancellationToken ct)
+    {
         switch (toolName)
         {
             case KernelMcpToolNames.ReportRead:
@@ -418,18 +433,32 @@ public static class KernelMcpDispatcher
             }
 
             case KernelMcpToolNames.TemplateLs:
-                return JsonHelpers.ToElement(kernel.ListTemplates());
+                return JsonHelpers.ToElement(kernel.ListTemplates().Select(m => new { id = m.Id, title = m.Title,
+                    description = m.Description, inputKeys = m.InputsSchema.EnumerateObject().Select(p => p.Name).ToArray(),
+                    plugins = m.DefaultPlugins, hasSchedules = m.Schedules.Count > 0, hasHeaderView = m.HasHeaderView }));
 
             case KernelMcpToolNames.TemplateCat:
-                return kernel.InspectTemplate(TemplateStringArg(args, "templateId"));
+                return TemplateStringArg(args, "templateId") == "__current__"
+                    ? await kernel.InspectCurrentTemplateAsync(caller.TrackId, caller.SessionId, ct).ConfigureAwait(false)
+                    : kernel.InspectTemplate(TemplateStringArg(args, "templateId"));
+
+            case KernelMcpToolNames.TemplateUpdateInputs:
+                return JsonHelpers.ToElement(await kernel.UpdateTemplateInputsAsync(caller.TrackId, caller.SessionId,
+                    args.GetProperty("inputs"), expectedPolicyGeneration, ct).ConfigureAwait(false));
 
             case KernelMcpToolNames.TrackSet:
             {
                 var templateId = TemplateStringArg(args, "templateId");
                 var source = TemplateStringArg(args, "source");
                 JsonElement? inputs = JsonHelpers.TryGetPropertyIgnoreCase(args, ["inputs"], out var value) ? value.Clone() : null;
-                return JsonHelpers.ToElement(await kernel.SetTrackTemplateAsync(caller.TrackId, caller.SessionId,
-                    templateId, source, expectedPolicyGeneration, inputs, ct).ConfigureAwait(false));
+                var result = await kernel.SetTrackTemplateWithOptionsAsync(caller.TrackId, caller.SessionId,
+                    templateId, source, expectedPolicyGeneration, inputs,
+                    args.TryGetProperty("dryRun", out var dry) && dry.GetBoolean(),
+                    args.TryGetProperty("clear", out var clear) && clear.GetBoolean(), ct).ConfigureAwait(false);
+                var response = System.Text.Json.Nodes.JsonNode.Parse(JsonHelpers.ToElement(result.Track).GetRawText())!.AsObject();
+                response["dryRun"] = result.DryRun;
+                response["warnings"] = System.Text.Json.Nodes.JsonNode.Parse(JsonHelpers.ToElement(result.Warnings).GetRawText());
+                return JsonHelpers.ParseClone(response.ToJsonString());
             }
 
             case KernelMcpToolNames.TrackClose:

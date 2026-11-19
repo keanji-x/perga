@@ -50,27 +50,18 @@ const longTermGoalTemplate = {
     lastSettledTask: null,
     pausedForHuman: false
   }),
-  initialMarkdown: [
-    "# North Star",
-    "",
-    "Define the long-horizon objective, measurable success criteria, and target timeline.",
-    "",
-    "# Milestones",
-    "",
-    "Break the objective into verifiable incremental milestones.",
-    "",
-    "# Active Tasks",
-    "",
-    "Maintain current sprint tasks and subagent assignments.",
-    "",
-    "# Progress Log",
-    "",
-    "Record dated check-in summaries, metrics deltas, and key learnings.",
-    "",
-    "# Risks & Blockers",
-    "",
-    "Document open risks, external dependencies, and mitigation options."
-  ].join("\n"),
+  headerView: (ctx) => ({
+    badges: [{ label: ctx.inputs.cadence + " check-in", tone: "accent" }],
+    notice: ctx.state.pausedForHuman
+      ? { text: "Autonomous dispatch paused after repeated failures. Human guidance needed.", tone: "warn" }
+      : ctx.state.checkInCount === 0 ? { text: "Awaiting the first progress check-in.", tone: "info" } : undefined,
+    metrics: [
+      { label: "Check-ins", value: String(ctx.state.checkInCount) },
+      { label: "Completed milestones", value: String(ctx.state.milestonesCompleted) },
+      { label: "Consecutive failures", value: String(ctx.state.consecutiveFailures) }
+    ],
+    rules: [{ label: "Progress", text: "Log measurable progress at each check-in. Three consecutive failures pause autonomous dispatch." }]
+  }),
   workspace: {
     driver: "direct"
   },
@@ -89,8 +80,42 @@ const longTermGoalTemplate = {
         omitIfEmpty: true,
         editableBy: ["human", "lead", "subagent"]
       }
-    ],
-    customValidate: (_ctx, info) => {
+    ]
+  },
+  tasks: {
+    requireGateForReadWrite: false
+  },
+  turnContext: (ctx) => {
+    const metric = ctx.inputs.targetMetric ?? "unspecified";
+    return [
+      `[Long-Term Goal] Cadence: ${ctx.inputs.cadence} | Target Metric: ${metric} | Auto-Dispatch: ${ctx.inputs.autoDispatchTasks}`,
+      `[Progress] Check-ins: ${ctx.state.checkInCount} | Completed Tasks: ${ctx.state.milestonesCompleted} | Consecutive Failures: ${ctx.state.consecutiveFailures} | Paused: ${ctx.state.pausedForHuman}`
+    ].join("\n");
+  },
+  after: (event, ctx) => {
+    if (event.type !== "task.settled") return;
+    ctx.state.lastSettledTask = event.taskKey;
+
+    if (event.attemptStatus === "done") {
+      ctx.state.milestonesCompleted += 1;
+      ctx.state.consecutiveFailures = 0;
+      return `Milestone task '${event.taskKey}' succeeded (completed=${ctx.state.milestonesCompleted}). Update '# Progress Log' and evaluate next milestone.`;
+    }
+
+    if (event.attemptStatus === "failed") {
+      ctx.state.consecutiveFailures += 1;
+      if (ctx.state.consecutiveFailures >= 3) {
+        ctx.state.pausedForHuman = true;
+        return `Task '${event.taskKey}' failed (${ctx.state.consecutiveFailures} consecutive failures). Autonomous dispatch paused; request human guidance.`;
+      }
+      return `Task '${event.taskKey}' failed (${ctx.state.consecutiveFailures}/3 before circuit breaker).`;
+    }
+
+    return `Task '${event.taskKey}' settled as '${event.attemptStatus}'.`;
+  },
+  before: (action, ctx) => {
+    if (action.type === "report.commit") {
+      const info = action;
       if (
         info.touchedSections.includes("North Star") &&
         info.editorRole.toLowerCase() !== "human" &&
@@ -103,38 +128,8 @@ const longTermGoalTemplate = {
       }
       return Allow();
     }
-  },
-  tasks: {
-    requireGateForReadWrite: false,
-    onSettled: (ctx, event) => {
-      ctx.state.lastSettledTask = event.taskKey;
-
-      if (event.attemptStatus === "done") {
-        ctx.state.milestonesCompleted += 1;
-        ctx.state.consecutiveFailures = 0;
-        return `Milestone task '${event.taskKey}' succeeded (completed=${ctx.state.milestonesCompleted}). Update '# Progress Log' and evaluate next milestone.`;
-      }
-
-      if (event.attemptStatus === "failed") {
-        ctx.state.consecutiveFailures += 1;
-        if (ctx.state.consecutiveFailures >= 3) {
-          ctx.state.pausedForHuman = true;
-          return `Task '${event.taskKey}' failed (${ctx.state.consecutiveFailures} consecutive failures). Autonomous dispatch paused; request human guidance.`;
-        }
-        return `Task '${event.taskKey}' failed (${ctx.state.consecutiveFailures}/3 before circuit breaker).`;
-      }
-
-      return `Task '${event.taskKey}' settled as '${event.attemptStatus}'.`;
-    }
-  },
-  buildTurnContext: (ctx, _session) => {
-    const metric = ctx.inputs.targetMetric ?? "unspecified";
-    return [
-      `[Long-Term Goal] Cadence: ${ctx.inputs.cadence} | Target Metric: ${metric} | Auto-Dispatch: ${ctx.inputs.autoDispatchTasks}`,
-      `[Progress] Check-ins: ${ctx.state.checkInCount} | Completed Tasks: ${ctx.state.milestonesCompleted} | Consecutive Failures: ${ctx.state.consecutiveFailures} | Paused: ${ctx.state.pausedForHuman}`
-    ].join("\n");
-  },
-  guardToolCall: (ctx, call) => {
+    if (!action.type.startsWith("tool.")) return Allow();
+    const call = action;
     if (ctx.state.pausedForHuman && call.mcpServer === "perga" && call.toolName === "perga_mail_send") {
       return Deny("Track is paused after repeated task failures; resolve blockers with the user before sending cross-track mail.");
     }

@@ -167,9 +167,9 @@ public sealed class AttemptExecutionAndGateTests
         Assert.Contains("All tests passed!", firstGateStep.GetProperty("stdout").GetString());
         Assert.Contains("All tests passed!", firstGateStep.GetProperty("outputTail").GetString());
 
-        Assert.True(ctx.PolicyVm.RecordedSettledContexts.TryDequeue(out var settledCtx));
-        Assert.Equal("done", settledCtx!.AttemptStatus);
-        Assert.Equal("kkmpptxz", settledCtx.AttemptMeta.GetProperty("changeId").GetString());
+        Assert.True(ctx.PolicyVm.RecordedSettledEvents.TryDequeue(out var settledCtx));
+        Assert.Equal("done", settledCtx.GetProperty("attemptStatus").GetString());
+        Assert.Equal("kkmpptxz", settledCtx.GetProperty("meta").GetProperty("changeId").GetString());
 
         // Verify lease settled with Promote!
         Assert.Contains(ctx.DirectDriver.SettleLeaseCalls,

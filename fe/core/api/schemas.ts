@@ -14,6 +14,7 @@ import {
   sessionToolProgressPayloadSchema,
   sessionTurnDtoSchema,
   terminalDtoSchema,
+  trackDtoSchema,
   type PergaStreamDelta,
 } from './perga-v1.js';
 
@@ -76,6 +77,11 @@ const trackObjectSchema = z.object({
   admin_granted_at: z.number().nullable().default(null),
   /** Defaulted to `""` for legacy replay payloads; production rows always carry an absolute path. */
   cwd: z.string().default(''),
+  templateId: trackDtoSchema.shape.templateId,
+  templateTitle: trackDtoSchema.shape.templateTitle,
+  templateInputs: trackDtoSchema.shape.templateInputs.optional(),
+  templateHeaderView: trackDtoSchema.shape.templateHeaderView,
+  templateSchedules: trackDtoSchema.shape.templateSchedules,
   template_id: z.string().nullable().default(null),
   plugin_scope: z.string().nullable().default(null),
   purpose: z.string().nullable().default(null),
@@ -1352,6 +1358,11 @@ export function decodeWireEvent(input: unknown): WireEventDecodeResult {
               closed_at: t.closedAtMs ?? null,
               admin_granted_at: null,
               cwd: t.cwd,
+              templateId: t.templateId ?? null,
+              templateTitle: t.templateTitle ?? null,
+              templateInputs: t.templateInputs ?? {},
+              templateHeaderView: t.templateHeaderView ?? null,
+              templateSchedules: t.templateSchedules ?? [],
               template_id: t.templateId ?? null,
               plugin_scope: null,
               purpose: null,

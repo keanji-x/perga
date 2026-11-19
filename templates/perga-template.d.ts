@@ -1,3 +1,14 @@
+/** A pure JSON object may contain the declarative fields of this definition.
+ * Function hooks require an ES module: export default defineTemplate({...}). */
+export type Tone = "neutral" | "accent" | "success" | "warn" | "error";
+
+export interface TemplateHeaderView {
+  badges?: Array<{ label: string; tone?: Tone }>;
+  notice?: { text: string; tone?: "info" | "warn" | "error" };
+  metrics?: Array<{ label: string; value: string; delta?: string; tone?: Tone; sub?: string; spark?: number[] }>;
+  rules?: Array<{ label: string; text: string }>;
+}
+
 export type GuardDecision =
   | { kind: "allow" }
   | { kind: "deny"; reason: string }
@@ -19,10 +30,16 @@ export interface PergaTemplateDefinition<TState = Record<string, any>, TInputs =
   id: string;
   title: string;
   description?: string;
+  /** Catalog base; snapshots freeze its complete source. Child keyed declarations take precedence. */
+  extends?: string;
+  /** Child hooks replace the inherited slot; omitted hooks inherit. */
+  before?: (action: { type: string; role?: string; access?: string; provider?: string; model?: string; arguments?: Record<string, any>; [key: string]: any }, ctx: TemplateContext<TState, TInputs>) => GuardDecision;
+  /** Events include task.settled, report.commit, turn.after, and tool.<name>. */
+  after?: (event: { type: string; [key: string]: any }, ctx: TemplateContext<TState, TInputs>) => string | void;
   plugins?: string[];
   inputs?: Record<string, { type: "string" | "number" | "boolean" | "enum"; values?: string[]; default?: any; optional?: boolean; label?: string }>;
   initialState?: (inputs: TInputs) => TState;
-  initialMarkdown?: string;
+  headerView?: (ctx: TemplateContext<TState, TInputs>) => TemplateHeaderView;
   workspace?: {
     driver?: string;
     lowerCacheDirs?: string[];
@@ -32,41 +49,21 @@ export interface PergaTemplateDefinition<TState = Record<string, any>, TInputs =
   report?: {
     maxProseChars?: number;
     sections?: SectionSpec[];
-    customValidate?: (ctx: TemplateContext<TState, TInputs>, info: {
-      editorRole: string;
-      prevMarkdown: string;
-      nextMarkdown: string;
-      touchedSections: string[];
-      nextProseChars: number;
-    }) => GuardDecision;
   };
   tasks?: {
     dispatch?: { section?: string; access?: "read_only" | "read_write"; gateInput?: string };
+    /** First matching defaults fill omitted fields. enforce denies explicit conflicts.
+     * provider/model support ${inputs.key}, including input schema defaults. */
+    routing?: Array<{ when: { role?: string; access?: "read_only" | "read_write" }; provider?: string; model?: string; enforce?: boolean }>;
     requireGateForReadWrite?: boolean;
     afterWorkerDoneCmd?: string;
-    onSettled?: (ctx: TemplateContext<TState, TInputs>, event: {
-      taskKey: string;
-      accessMode: "read_only" | "read_write";
-      attemptStatus: string;
-      workerResult?: any;
-      meta: Record<string, any>;
-      gateVerdict?: any;
-    }) => string | void;
   };
-  buildTurnContext?: (ctx: TemplateContext<TState, TInputs>, session: {
+  turnContext?: (ctx: TemplateContext<TState, TInputs> & { session: {
     sessionId: string;
     isLead: boolean;
     boundAttemptId?: string;
     contextUsageRatio: number;
-  }) => string | void;
-  guardToolCall?: (ctx: TemplateContext<TState, TInputs>, call: {
-    sessionId: string;
-    isLead: boolean;
-    boundAttemptId?: string;
-    mcpServer: string;
-    toolName: string;
-    arguments: Record<string, any>;
-  }) => GuardDecision;
+  } }) => string | void;
   schedules?: Array<{
     id: string;
     cron: string;

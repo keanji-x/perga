@@ -38,16 +38,34 @@ public sealed record CompiledTemplateManifest(
     string? AfterWorkerDoneCmd,
     IReadOnlyList<ScheduleSpec> Schedules,
     string InitialReportMarkdown,
-    WorkerDispatchDefaults? WorkerDispatch = null);
+    IReadOnlyList<TaskRoutingRule> Routing,
+    WorkerDispatchDefaults? WorkerDispatch = null,
+    string? Extends = null,
+    bool HasHeaderView = false);
 
 public sealed record CompiledPolicy(
     string TemplateId,
     string JsSource,
     CompiledTemplateManifest Manifest);
 
+public sealed record PolicyTurnPreparation(string? Context, GuardDecision Decision);
+
 public sealed record PolicyEvalResult<T>(
     JsonElement NextState,
     T Output);
+
+public sealed record TemplateHeaderBadge(string Label, string? Tone = null);
+public sealed record TemplateHeaderNotice(string Text, string? Tone = null);
+public sealed record TemplateHeaderMetric(string Label, string Value, string? Delta = null,
+    string? Tone = null, string? Sub = null, IReadOnlyList<double>? Spark = null);
+public sealed record TemplateHeaderRule(string Label, string Text);
+public sealed record TemplateHeaderView(
+    IReadOnlyList<TemplateHeaderBadge>? Badges = null,
+    TemplateHeaderNotice? Notice = null,
+    IReadOnlyList<TemplateHeaderMetric>? Metrics = null,
+    IReadOnlyList<TemplateHeaderRule>? Rules = null);
+
+public sealed record PolicyHeaderViewContext(string TrackId, JsonElement Inputs);
 
 public sealed record PolicyTurnContext(
     string TrackId,
@@ -57,42 +75,20 @@ public sealed record PolicyTurnContext(
     double ContextUsageRatio,
     JsonElement Inputs);
 
-public sealed record PolicyReportCommitContext(
-    string TrackId,
-    string EditorRole,     // "human" | "lead" | "subagent" | "system"
-    string PrevMarkdown,
-    string NextMarkdown,
-    IReadOnlyList<string> TouchedSections,
-    int NextProseChars,
-    JsonElement Inputs);
+public sealed record TaskRoutingWhen(string? Role, string? Access);
+public sealed record TaskRoutingRule(TaskRoutingWhen When, string? Provider, string? Model, bool Enforce);
 
-public sealed record PolicyToolCallContext(
-    string TrackId,
-    string SessionId,
-    bool IsLead,
-    string? BoundAttemptId,
-    string McpServer,      // "perga" | "vcs" | "<pluginId>"
-    string ToolName,
-    JsonElement Arguments,
-    JsonElement Inputs);
-
-public sealed record PolicyTaskSettledContext(
-    string TrackId,
-    string TaskKey,
-    string AccessMode,     // "read_only" | "read_write"
-    string AttemptStatus,  // "done" | "failed" | "canceled"
-    JsonElement? WorkerResult,
-    JsonElement AttemptMeta,
-    JsonElement? GateVerdict,
-    JsonElement Inputs);
+public sealed record PolicyTaskRoute(string? Provider, string? Model, string? Denial = null);
 
 public interface IPolicyVm
 {
     CompiledPolicy Compile(string jsModuleSource);
+    PolicyEvalResult<GuardDecision> Before(CompiledPolicy policy, string action, string trackId, JsonElement data, JsonElement inputs, JsonElement state);
+    PolicyEvalResult<string?> After(CompiledPolicy policy, string eventName, string trackId, JsonElement data, JsonElement inputs, JsonElement state);
+    TemplateHeaderView? EvaluateHeaderView(CompiledPolicy policy, PolicyHeaderViewContext ctx, JsonElement state);
     PolicyEvalResult<JsonElement> InitState(CompiledPolicy policy, JsonElement inputs);
-    PolicyEvalResult<string?> BuildTurnContext(CompiledPolicy policy, PolicyTurnContext ctx, JsonElement state);
-    PolicyEvalResult<GuardDecision> GuardReportCommit(CompiledPolicy policy, PolicyReportCommitContext ctx, JsonElement state);
-    PolicyEvalResult<GuardDecision> GuardToolCall(CompiledPolicy policy, PolicyToolCallContext ctx, JsonElement state);
-    PolicyEvalResult<string?> OnTaskSettled(CompiledPolicy policy, PolicyTaskSettledContext ctx, JsonElement state);
+    PolicyEvalResult<PolicyTurnPreparation> PrepareTurn(CompiledPolicy policy, PolicyTurnContext ctx, JsonElement state);
+    PolicyTaskRoute RouteTaskDispatch(CompiledPolicy policy, string? role, string access, string? provider, string? model, JsonElement inputs);
+    IReadOnlyList<PolicyTaskRoute> ResolveRoutingTargets(CompiledPolicy policy, JsonElement inputs);
     PolicyEvalResult<string?> BuildScheduleWakePrompt(CompiledPolicy policy, string scheduleId, JsonElement inputs, JsonElement state);
 }

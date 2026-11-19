@@ -22,6 +22,18 @@ public sealed record AreaDto(
     long CreatedAtMs,
     long UpdatedAtMs);
 
+public sealed record TemplateHeaderBadgeDto(string Label, string? Tone = null);
+public sealed record TemplateHeaderNoticeDto(string Text, string? Tone = null);
+public sealed record TemplateHeaderMetricDto(string Label, string Value, string? Delta = null,
+    string? Tone = null, string? Sub = null, IReadOnlyList<double>? Spark = null);
+public sealed record TemplateHeaderRuleDto(string Label, string Text);
+public sealed record TemplateHeaderViewDto(
+    IReadOnlyList<TemplateHeaderBadgeDto>? Badges = null,
+    TemplateHeaderNoticeDto? Notice = null,
+    IReadOnlyList<TemplateHeaderMetricDto>? Metrics = null,
+    IReadOnlyList<TemplateHeaderRuleDto>? Rules = null);
+public sealed record TemplateScheduleDto(string Id, string Cron, string Timezone);
+
 public sealed record TrackDto(
     string Id,
     string AreaId,
@@ -40,7 +52,10 @@ public sealed record TrackDto(
     long? PinnedAtMs,
     double SortOrder,
     long CreatedAtMs,
-    long UpdatedAtMs);
+    long UpdatedAtMs,
+    string? TemplateTitle = null,
+    TemplateHeaderViewDto? TemplateHeaderView = null,
+    IReadOnlyList<TemplateScheduleDto>? TemplateSchedules = null);
 
 public sealed record SessionContextUsage(
     long UsedTokens,
@@ -144,7 +159,8 @@ public sealed record TaskDto(
     string? SemanticNote,
     string? LatestAttemptId,
     long CreatedAtMs,
-    long UpdatedAtMs);
+    long UpdatedAtMs,
+    string? Role = null);
 
 public sealed record TaskAttemptDto(
     string AttemptId,

@@ -267,7 +267,7 @@ public static class PergaHostServiceCollectionExtensions
                 export default defineTemplate({
                   id: "_perga_jit_warmup",
                   title: "Warmup",
-                  guardToolCall() { return Allow(); },
+                  before() { return Allow(); },
                   schedules: [{ id: "w", cron: "* * * * *", wakePrompt: () => "ok" }]
                 });
                 """;

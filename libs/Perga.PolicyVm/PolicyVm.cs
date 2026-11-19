@@ -8,9 +8,8 @@ using Jint.Runtime;
 
 namespace Perga.PolicyVm;
 
-public sealed class PolicyVm : IPolicyVm
+public sealed partial class PolicyVm : IPolicyVm
 {
-    private const string EntryModuleSpecifier = "template.perga.js";
     private const long MaxMemoryBytes = 16L * 1024 * 1024;
     private const int MaxStatementBudget = 10_000;
     private const int CompileTimeoutMs = 500;
@@ -65,9 +64,10 @@ public sealed class PolicyVm : IPolicyVm
             var inputsSchema = ExtractInputsSchema(engine, def);
             var initialMarkdown = ReadOptionalString(def, "initialMarkdown", "template.initialMarkdown") ?? string.Empty;
 
+            EnsureOptionalFunction(def, "before", "template.before");
+            EnsureOptionalFunction(def, "after", "template.after");
             EnsureOptionalFunction(def, "initialState", "template.initialState");
-            EnsureOptionalFunction(def, "buildTurnContext", "template.buildTurnContext");
-            EnsureOptionalFunction(def, "guardToolCall", "template.guardToolCall");
+            EnsureOptionalFunction(def, "turnContext", "template.turnContext");
 
             // Workspace spec
             string? workspaceDriver = null;
@@ -93,7 +93,6 @@ public sealed class PolicyVm : IPolicyVm
                     throw new InvalidOperationException("template.report.maxProseChars must be positive when specified.");
                 }
 
-                EnsureOptionalFunction(reportObj, "customValidate", "template.report.customValidate");
                 sections = ParseSectionRules(reportObj);
             }
 
@@ -105,7 +104,6 @@ public sealed class PolicyVm : IPolicyVm
             {
                 requireGateForReadWrite = ReadOptionalBool(tasksObj, "requireGateForReadWrite", "template.tasks.requireGateForReadWrite") ?? false;
                 afterWorkerDoneCmd = ReadOptionalString(tasksObj, "afterWorkerDoneCmd", "template.tasks.afterWorkerDoneCmd");
-                EnsureOptionalFunction(tasksObj, "onSettled", "template.tasks.onSettled");
                 if (TryGetOptionalObject(tasksObj, "dispatch", "template.tasks.dispatch", out var dispatch))
                 {
                     var access = ReadOptionalString(dispatch, "access", "template.tasks.dispatch.access");
@@ -136,7 +134,10 @@ public sealed class PolicyVm : IPolicyVm
                 AfterWorkerDoneCmd: afterWorkerDoneCmd,
                 Schedules: schedules,
                 InitialReportMarkdown: initialMarkdown,
-                WorkerDispatch: workerDispatch);
+                WorkerDispatch: workerDispatch,
+                Extends: ReadOptionalString(def, "extends", "template.extends"),
+                HasHeaderView: !def.Get("headerView").IsUndefined(),
+                Routing: ReadRoutingRules(engine, def));
 
             return new CompiledPolicy(id, jsModuleSource, manifest);
         }, CompileTimeoutMs);
@@ -170,17 +171,27 @@ public sealed class PolicyVm : IPolicyVm
         });
     }
 
-    public PolicyEvalResult<string?> BuildTurnContext(CompiledPolicy policy, PolicyTurnContext ctx, JsonElement state)
+    public PolicyEvalResult<PolicyTurnPreparation> PrepareTurn(CompiledPolicy policy, PolicyTurnContext ctx, JsonElement state)
+    {
+        var context = EvaluateTurnContext(policy, ctx, state);
+        var before = Before(policy, "turn.before", ctx.TrackId, System.Text.Json.JsonSerializer.SerializeToElement(new {
+            sessionId = ctx.SessionId, isLead = ctx.IsLead, boundAttemptId = ctx.BoundAttemptId,
+            contextUsageRatio = ctx.ContextUsageRatio, context = context.Output
+        }), ctx.Inputs, context.NextState);
+        return new(before.NextState, new(context.Output, before.Output));
+    }
+
+    private PolicyEvalResult<string?> EvaluateTurnContext(CompiledPolicy policy, PolicyTurnContext ctx, JsonElement state)
     {
         ArgumentNullException.ThrowIfNull(policy);
         ArgumentNullException.ThrowIfNull(ctx);
 
-        return ExecuteSandboxed("BuildTurnContext", () =>
+        return ExecuteSandboxed("TurnContext", () =>
         {
             using var engine = CreateSandboxedEngine();
             var def = LoadDefaultTemplateObject(engine, policy.JsSource);
 
-            var hookVal = def.Get("buildTurnContext");
+            var hookVal = def.Get("turnContext");
             if (hookVal.IsUndefined() || hookVal.IsNull())
             {
                 return new PolicyEvalResult<string?>(NormalizeStateJson(state), null);
@@ -188,7 +199,7 @@ public sealed class PolicyVm : IPolicyVm
 
             if (hookVal is not Function hookFn)
             {
-                throw new InvalidOperationException("template.buildTurnContext must be a function.");
+                throw new InvalidOperationException("template.turnContext must be a function.");
             }
 
             var templateCtx = BuildTemplateContextObject(engine, def, ctx.TrackId, ctx.Inputs, state);
@@ -205,197 +216,11 @@ public sealed class PolicyVm : IPolicyVm
                 sessionInst.Delete("boundAttemptId");
             }
 
-            var result = engine.Call(hookFn, def, [templateCtx, sessionObj]);
+            ((ObjectInstance)templateCtx).Set("session", sessionObj);
+            var result = engine.Call(hookFn, def, [templateCtx]);
             var nextState = ExtractContextState(engine, templateCtx);
-            var text = ExtractOptionalStringResult(result, "buildTurnContext");
+            var text = ExtractOptionalStringResult(result, "turnContext");
             return new PolicyEvalResult<string?>(nextState, text);
-        });
-    }
-
-    public PolicyEvalResult<GuardDecision> GuardReportCommit(
-        CompiledPolicy policy,
-        PolicyReportCommitContext ctx,
-        JsonElement state)
-    {
-        ArgumentNullException.ThrowIfNull(policy);
-        ArgumentNullException.ThrowIfNull(ctx);
-
-        var preservedState = NormalizeStateJson(state);
-
-        // 1. Static MaxProseChars limit
-        if (policy.Manifest.MaxProseChars is { } maxProse && ctx.NextProseChars > maxProse)
-        {
-            return new PolicyEvalResult<GuardDecision>(
-                preservedState,
-                new GuardDecision.Deny(
-                    $"Report prose length ({ctx.NextProseChars} chars) exceeds template limit ({maxProse} chars)."));
-        }
-
-        // 2. Static SectionRule.EditableBy enforcement (case-insensitive)
-        if (policy.Manifest.Sections.Count > 0 && ctx.TouchedSections.Count > 0)
-        {
-            foreach (var touched in ctx.TouchedSections)
-            {
-                var normalizedTouched = NormalizeHeading(touched);
-                var matchingRule = policy.Manifest.Sections.FirstOrDefault(r =>
-                    string.Equals(NormalizeHeading(r.H1), normalizedTouched, StringComparison.OrdinalIgnoreCase));
-
-                if (matchingRule?.EditableBy is { } allowedRoles)
-                {
-                    var isAllowed = allowedRoles.Any(role =>
-                        string.Equals(role, ctx.EditorRole, StringComparison.OrdinalIgnoreCase));
-                    if (!isAllowed)
-                    {
-                        var allowedText = allowedRoles.Count > 0 ? string.Join(", ", allowedRoles) : "none";
-                        return new PolicyEvalResult<GuardDecision>(
-                            preservedState,
-                            new GuardDecision.Deny(
-                                $"Section '{matchingRule.H1}' cannot be edited by role '{ctx.EditorRole}' (editableBy: {allowedText})."));
-                    }
-                }
-            }
-        }
-
-        // 3. Dynamic JS report.customValidate(ctx, info)
-        return ExecuteSandboxed("GuardReportCommit", () =>
-        {
-            using var engine = CreateSandboxedEngine();
-            var def = LoadDefaultTemplateObject(engine, policy.JsSource);
-
-            if (!TryGetOptionalObject(def, "report", "template.report", out var reportObj))
-            {
-                return new PolicyEvalResult<GuardDecision>(preservedState, new GuardDecision.Allow());
-            }
-
-            var customValidateVal = reportObj.Get("customValidate");
-            if (customValidateVal.IsUndefined() || customValidateVal.IsNull())
-            {
-                return new PolicyEvalResult<GuardDecision>(preservedState, new GuardDecision.Allow());
-            }
-
-            if (customValidateVal is not Function customValidateFn)
-            {
-                throw new InvalidOperationException("template.report.customValidate must be a function.");
-            }
-
-            var templateCtx = BuildTemplateContextObject(engine, def, ctx.TrackId, ctx.Inputs, state);
-            var infoObj = ParseJsJson(engine, System.Text.Json.JsonSerializer.Serialize(new Dictionary<string, object?>
-            {
-                ["editorRole"] = ctx.EditorRole,
-                ["prevMarkdown"] = ctx.PrevMarkdown,
-                ["nextMarkdown"] = ctx.NextMarkdown,
-                ["touchedSections"] = ctx.TouchedSections,
-                ["nextProseChars"] = ctx.NextProseChars
-            }));
-
-            var decisionVal = engine.Call(customValidateFn, reportObj, [templateCtx, infoObj]);
-            var decision = ParseGuardDecision(decisionVal, "report.customValidate");
-            var nextState = ExtractContextState(engine, templateCtx);
-            return new PolicyEvalResult<GuardDecision>(nextState, decision);
-        });
-    }
-
-    public PolicyEvalResult<GuardDecision> GuardToolCall(
-        CompiledPolicy policy,
-        PolicyToolCallContext ctx,
-        JsonElement state)
-    {
-        ArgumentNullException.ThrowIfNull(policy);
-        ArgumentNullException.ThrowIfNull(ctx);
-
-        return ExecuteSandboxed("GuardToolCall", () =>
-        {
-            using var engine = CreateSandboxedEngine();
-            var def = LoadDefaultTemplateObject(engine, policy.JsSource);
-
-            var hookVal = def.Get("guardToolCall");
-            if (hookVal.IsUndefined() || hookVal.IsNull())
-            {
-                return new PolicyEvalResult<GuardDecision>(NormalizeStateJson(state), new GuardDecision.Allow());
-            }
-
-            if (hookVal is not Function hookFn)
-            {
-                throw new InvalidOperationException("template.guardToolCall must be a function.");
-            }
-
-            var templateCtx = BuildTemplateContextObject(engine, def, ctx.TrackId, ctx.Inputs, state);
-            var argsRawJson = ctx.Arguments.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null
-                ? "{}"
-                : ctx.Arguments.GetRawText();
-
-            var callObj = new JsObject(engine);
-            callObj.Set("sessionId", ctx.SessionId);
-            callObj.Set("isLead", ctx.IsLead);
-            if (ctx.BoundAttemptId is not null)
-            {
-                callObj.Set("boundAttemptId", ctx.BoundAttemptId);
-            }
-
-            callObj.Set("mcpServer", ctx.McpServer);
-            callObj.Set("toolName", ctx.ToolName);
-            callObj.Set("arguments", ParseJsJson(engine, argsRawJson));
-
-            var decisionVal = engine.Call(hookFn, def, [templateCtx, callObj]);
-            var decision = ParseGuardDecision(decisionVal, "guardToolCall");
-            var nextState = ExtractContextState(engine, templateCtx);
-            return new PolicyEvalResult<GuardDecision>(nextState, decision);
-        });
-    }
-
-    public PolicyEvalResult<string?> OnTaskSettled(
-        CompiledPolicy policy,
-        PolicyTaskSettledContext ctx,
-        JsonElement state)
-    {
-        ArgumentNullException.ThrowIfNull(policy);
-        ArgumentNullException.ThrowIfNull(ctx);
-
-        return ExecuteSandboxed("OnTaskSettled", () =>
-        {
-            using var engine = CreateSandboxedEngine();
-            var def = LoadDefaultTemplateObject(engine, policy.JsSource);
-
-            if (!TryGetOptionalObject(def, "tasks", "template.tasks", out var tasksObj))
-            {
-                return new PolicyEvalResult<string?>(NormalizeStateJson(state), null);
-            }
-
-            var onSettledVal = tasksObj.Get("onSettled");
-            if (onSettledVal.IsUndefined() || onSettledVal.IsNull())
-            {
-                return new PolicyEvalResult<string?>(NormalizeStateJson(state), null);
-            }
-
-            if (onSettledVal is not Function onSettledFn)
-            {
-                throw new InvalidOperationException("template.tasks.onSettled must be a function.");
-            }
-
-            var templateCtx = BuildTemplateContextObject(engine, def, ctx.TrackId, ctx.Inputs, state);
-            var metaJson = ctx.AttemptMeta.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null
-                ? "{}"
-                : ctx.AttemptMeta.GetRawText();
-
-            var eventObj = new JsObject(engine);
-            eventObj.Set("taskKey", ctx.TaskKey);
-            eventObj.Set("accessMode", ctx.AccessMode);
-            eventObj.Set("attemptStatus", ctx.AttemptStatus);
-            if (ctx.WorkerResult is { ValueKind: not JsonValueKind.Undefined } wr)
-            {
-                eventObj.Set("workerResult", ParseJsJson(engine, wr.GetRawText()));
-            }
-
-            eventObj.Set("meta", ParseJsJson(engine, metaJson));
-            if (ctx.GateVerdict is { ValueKind: not JsonValueKind.Undefined } gv)
-            {
-                eventObj.Set("gateVerdict", ParseJsJson(engine, gv.GetRawText()));
-            }
-
-            var result = engine.Call(onSettledFn, tasksObj, [templateCtx, eventObj]);
-            var nextState = ExtractContextState(engine, templateCtx);
-            var wakeNote = ExtractOptionalStringResult(result, "tasks.onSettled");
-            return new PolicyEvalResult<string?>(nextState, wakeNote);
         });
     }
 
@@ -483,9 +308,7 @@ public sealed class PolicyVm : IPolicyVm
 
     private static ObjectInstance LoadDefaultTemplateObject(Engine engine, string jsModuleSource)
     {
-        engine.Modules.Add(EntryModuleSpecifier, jsModuleSource);
-        var moduleNs = engine.Modules.Import(EntryModuleSpecifier);
-        var defaultExport = moduleNs.Get("default");
+        var defaultExport = LoadDefinition(engine, jsModuleSource);
         if (defaultExport.IsUndefined() || defaultExport.IsNull() || defaultExport is not ObjectInstance obj || defaultExport.IsArray())
         {
             throw new InvalidOperationException(
@@ -727,7 +550,7 @@ public sealed class PolicyVm : IPolicyVm
         return list;
     }
 
-    private static GuardDecision ParseGuardDecision(JsValue value, string hookName)
+    private static GuardDecision ParseGuardDecision(Engine engine, JsValue value, string hookName)
     {
         if (value is not ObjectInstance obj || value.IsArray())
         {
@@ -735,6 +558,7 @@ public sealed class PolicyVm : IPolicyVm
                 $"{hookName} must return a GuardDecision object (use Allow(), Deny(reason), or AskHuman(title, options?)).");
         }
 
+        if (!obj.Get("patch").IsUndefined()) throw new InvalidOperationException("GuardDecision does not support patches.");
         var kind = ReadRequiredNonEmptyString(obj, "kind", $"{hookName}.result.kind");
         return kind switch
         {
@@ -935,14 +759,4 @@ public sealed class PolicyVm : IPolicyVm
         return result;
     }
 
-    private static string NormalizeHeading(string h1)
-    {
-        var trimmed = (h1 ?? string.Empty).Trim();
-        if (trimmed.StartsWith('#'))
-        {
-            trimmed = trimmed.TrimStart('#').Trim();
-        }
-
-        return trimmed;
-    }
 }
