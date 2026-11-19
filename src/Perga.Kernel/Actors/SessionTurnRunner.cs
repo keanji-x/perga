@@ -119,7 +119,7 @@ public sealed partial class TrackActor
 
             actor._sessions[sessionId] = runningSession;
             var turnCts = CancellationTokenSource.CreateLinkedTokenSource(ct, actor._actorShutdownCts.Token);
-            var active = new ActiveTurnState(sessionId, (executionSession.Model, executionSession.ReasoningEffort),
+            var active = new ActiveTurnState(sessionId, SessionConfiguration.FromNullable(executionSession.Model, executionSession.ReasoningEffort, executionSession.PermissionMode),
                 actor._liveContextUsage.GetOrCreateValue(prepared.AgentSession), turn, prepared.AgentSession, turnCts, true)
             {
                 Settings = workerSettings
@@ -428,7 +428,7 @@ public sealed partial class TrackActor
             var settledSession = actor._sessions[sessionId];
             var autoCompact = !actor._scheduler.HasResumeHold(sessionId) && settledSession.BoundAttemptId is null &&
                               settledSession.Status == "idle" && outcome.Status == "completed" &&
-                              actor.CurrentContextUsageRatioCore(updatedSession) >= actor._options.AutoCompactionThreshold;
+                              actor.CurrentContextUsageRatioCore(settledSession) >= actor._options.AutoCompactionThreshold;
             return (completedTurn, autoCompact);
         }
 

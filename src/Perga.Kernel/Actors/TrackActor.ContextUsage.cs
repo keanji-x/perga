@@ -17,9 +17,15 @@ public sealed partial class TrackActor
         public IdleContextUsage? TrailingWithWindow { get; set; }
     }
 
+    private static bool HasCurrentContextConfigurationCore(AgentSessionDto session, OpenSessionHandle open) =>
+        session.BoundAttemptId is not null ||
+        (open.Selection == SessionConfiguration.FromNullable(session.Model, session.ReasoningEffort, session.PermissionMode) &&
+         open.Confirmation is not null && open.Confirmation == open.Agent.ConfigurationState);
+
     private bool IsCurrentContextBindingCore(
         AgentSessionDto session, IAgentSession provider, LiveContextUsage state) =>
         _openSessionHandles.TryGetValue(session.Id, out var open) && ReferenceEquals(provider, open.Agent) &&
+        HasCurrentContextConfigurationCore(session, open) &&
         _liveContextUsage.TryGetValue(provider, out var current) && ReferenceEquals(state, current);
 
     private AgentSessionDto ApplyContextUsageCore(
@@ -60,6 +66,7 @@ public sealed partial class TrackActor
 
     private double? CurrentContextUsageRatioCore(AgentSessionDto session) =>
         _openSessionHandles.TryGetValue(session.Id, out var provider) &&
+        HasCurrentContextConfigurationCore(session, provider) &&
         _liveContextUsage.TryGetValue(provider.Agent, out var state) &&
         state.Revision == provider.Agent.ContextUsageRevision && ReferenceEquals(session.ContextUsage, state.Latest)
             ? state.Latest?.Ratio
@@ -181,8 +188,7 @@ public sealed partial class TrackActor
             return false;
         }
 
-        if (openSession.Selection != SessionConfiguration.FromNullable(current.Model, current.ReasoningEffort, current.PermissionMode) ||
-            openSession.Confirmation is null || openSession.Confirmation != expectedSession.ConfigurationState)
+        if (!HasCurrentContextConfigurationCore(current, openSession))
         {
             return false;
         }

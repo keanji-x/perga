@@ -3373,7 +3373,7 @@ public sealed partial class TrackActor : IAsyncDisposable
 
     private sealed class ActiveTurnState(
         string sessionId,
-        (string? Model, string? Effort) executionConfiguration,
+        SessionConfiguration executionConfiguration,
         LiveContextUsage contextBinding,
         SessionTurnDto turnDto,
         IAgentSession agentSession,
@@ -3391,7 +3391,7 @@ public sealed partial class TrackActor : IAsyncDisposable
         public LiveContextUsage ContextBinding { get; } = contextBinding;
         // Frozen inputs can execute a configuration different from the committed selection.
         public bool MatchesSessionConfiguration(AgentSessionDto session) =>
-            executionConfiguration == (session.Model, session.ReasoningEffort);
+            executionConfiguration == SessionConfiguration.FromNullable(session.Model, session.ReasoningEffort, session.PermissionMode);
         public bool Interrupted
         {
             get { lock (Control.Sync) return Control.StopRequested; }
