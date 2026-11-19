@@ -329,10 +329,6 @@
     cursor: grabbing;
   }
 
-  .radixSliderRoot[data-disabled] .radixSliderThumb {
-    cursor: not-allowed;
-  }
-
   .pickerActions {
     display: flex;
     align-items: center;
@@ -350,5 +346,9 @@
   .radixSliderThumb:focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: 2px;
+  }
+
+  .radixSliderRoot[data-disabled] .radixSliderThumb {
+    cursor: not-allowed;
   }
 }
