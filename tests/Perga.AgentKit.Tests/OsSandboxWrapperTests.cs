@@ -253,6 +253,59 @@ public sealed class OsSandboxWrapperTests : IDisposable
     }
 
     [Fact]
+    public async Task OptedInCodexWorkersUseOneWritableHome()
+    {
+        if (!OperatingSystem.IsLinux())
+            return;
+
+        var home = Path.Combine(_fixture.RootDir, "shared-codex-home");
+        Directory.CreateDirectory(home, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        var stateRoot = Path.Combine(_fixture.RootDir, "provider-state");
+        await using var runtime = new AgentRuntime(new AgentRuntimeOptions
+        {
+            SandboxStateRootDirectory = stateRoot,
+            CodexWorkerHomeDirectory = home,
+            ProviderOverrides = new Dictionary<string, ProviderCommandOverride>
+            {
+                ["codex"] = new(_fixture.MockCodexPath, Env: new Dictionary<string, string>
+                {
+                    ["PERGA_TEST_BWRAP_CAPTURE"] = _fixture.BwrapCapturedArgsPath,
+                    ["PERGA_TEST_CODEX_REQUIRE_PRIVATE_STATE"] = "1",
+                })
+            },
+            Sandbox = new OsSandboxOptions
+            {
+                BwrapExecutablePath = _fixture.MockBwrapPath
+            }
+        });
+        var spec = new HarnessLaunchSpec("codex", "gpt-5.4", _fixture.WorkspaceDir,
+            null, null, MockCliFixture.CreateSampleMcpServers(), Sandbox: OsSandboxMode.ReadOnlyBwrap,
+            StateKey: "one", ConfigureWorker: true);
+        await using var first = await runtime.OpenSessionAsync(spec, CancellationToken.None);
+        Assert.True(File.Exists(Path.Combine(home, "mock-state")));
+        File.Delete(Path.Combine(home, "mock-state"));
+        await using var second = await runtime.OpenSessionAsync(spec with { StateKey = "two" }, CancellationToken.None);
+        Assert.True(File.Exists(Path.Combine(home, "mock-state")));
+        Assert.False(Directory.Exists(stateRoot));
+
+        var captured = JsonSerializer.Deserialize<string[]>(await File.ReadAllTextAsync(_fixture.BwrapCapturedArgsPath))!;
+        AssertContainsPair(captured, "--bind", home, home);
+        Assert.True(IndexOfSequence(captured, "--ro-bind", _fixture.WorkspaceDir, _fixture.WorkspaceDir) >= 0);
+
+        await using var freeSession = await runtime.OpenSessionAsync(
+            spec with { StateKey = "other", ConfigureWorker = false }, CancellationToken.None);
+        Assert.Single(Directory.GetFiles(stateRoot, "mock-state", SearchOption.AllDirectories));
+        var freeArgs = JsonSerializer.Deserialize<string[]>(await File.ReadAllTextAsync(_fixture.BwrapCapturedArgsPath))!;
+        Assert.True(IndexOfSequence(freeArgs, "--bind", home, home) < 0);
+
+        var alias = Path.Combine(_fixture.RootDir, "shared-home-alias");
+        Directory.CreateSymbolicLink(alias, home);
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            runtime.OpenSessionAsync(spec with { Cwd = alias }, CancellationToken.None));
+        Assert.Contains("must be separate from the workspace", error.Message);
+    }
+
+    [Fact]
     public async Task SandboxExecution_EndToEndThroughAgentRuntimeAndLiveHostBwrapWhenPermitted()
     {
         var hostHome = Path.Combine(_fixture.RootDir, "host-home");

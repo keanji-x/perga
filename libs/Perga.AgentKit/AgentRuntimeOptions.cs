@@ -30,6 +30,8 @@ public sealed record AgentRuntimeOptions
 
     public string? CodexSandboxApiKey { get; init; }
 
+    public string? CodexWorkerHomeDirectory { get; init; }
+
     public TimeSpan ProbeTimeout { get; init; } = TimeSpan.FromSeconds(5);
 
     public TimeSpan ModelProbeTimeout { get; init; } = TimeSpan.FromSeconds(3);

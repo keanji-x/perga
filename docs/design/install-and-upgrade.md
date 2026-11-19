@@ -21,6 +21,14 @@ the Planner arranges the two independent reviews.
 
 ## Installation layout
 
+Managed instances keep operator settings in `config/perga.toml`. The Python
+launcher and release controller share the same parser. The launcher passes
+managed paths, provider executables and Worker home to the Host's existing
+configuration binder. The proxy section sets standard proxy variables in the
+launched process so provider CLIs can use them. Login files stay in the provider
+home directory. The managed launcher and controller require TOML. The installer
+creates it when provisioning a root without configuration.
+
 Default root is `~/.local/share/perga`; use `--root` and `--name` for multiple
 instances (for example a separately managed `perga-4240`). Never run the examples
 against an existing live instance without an explicit maintenance window.
@@ -31,7 +39,7 @@ against an existing live instance without an explicit maintenance window.
     perga.db
     perga.db.bak-v{N}            # online SQLite snapshot before schema upgrade
     perga.db.failed-<timestamp>  # failed database and matching -wal/-shm files
-  config.env                    # mode 0600; parsed data, never sourced as shell
+  config/perga.toml              # stable instance configuration, mode 0600
   bin/perga-ctl, bin/*.py     # stable controller and Host launchers
   releases/<id>/
     manifest.json
@@ -97,10 +105,7 @@ After=<name>-term.service
 [Service]
 Type=simple
 WorkingDirectory=<root>
-EnvironmentFile=<root>/config.env
-Environment=PERGA_TERM_BRIDGE_URL=http+unix://%t/<name>/term.sock
-Environment=Perga__AutoManageTerminalBridge=false
-ExecStart=/usr/bin/python3 <root>/bin/perga_host.py
+ExecStart=/usr/bin/python3 <root>/bin/perga_host.py --name <name> --term-socket %t/<name>/term.sock
 UMask=0077
 Restart=on-failure
 ```
@@ -111,18 +116,72 @@ kills that bridge. A running bridge keeps the old executable
 mapping across `current` swaps, preserving terminal sessions. A changed bridge
 requires `--restart-term-bridge`, explicitly accepting terminal loss; `--force`
 does not grant that permission. Upgrade stops Host before changing bridge.
-Set `PERGA_ENABLE_OVERLAYFS=1` to enable the [OverlayFS launcher](../track-overlayfs.md#managed-installations).
+Set `instance.overlayfs = true` to enable the [OverlayFS launcher](../track-overlayfs.md#managed-installations).
 In that mode, the Host-managed bridge shares the workspace mount namespace
 and its terminals end when the Host stops.
 Use `loginctl enable-linger` separately if services must survive logout; the
 installer never changes host-wide linger policy.
 
-`config.env` contains installation name, loopback HTTP URL, absolute stable data
-path, current web/templates paths, and optional HTTPS release URL prefix. Existing
-adoption config is retained; it must match the managed data/path contract.
-Provision provider credentials separately in a private systemd drop-in. The
-controller only accepts its documented configuration keys; it never executes env values. Unit configuration
-loads the file with systemd's EnvironmentFile parser.
+## Instance settings
+
+Managed TOML configuration requires Python 3.11 or later, including
+`/usr/bin/python3` used by the user service. The installer writes the required
+`instance.name` and `instance.host_url`. Other sections and keys are optional.
+The DB, web and template paths are derived from the installation root.
+
+```toml
+[instance]
+name = "perga-4240"
+host_url = "http://127.0.0.1:4240"
+overlayfs = true
+# workspaces_dir = "/absolute/path/to/workspaces"
+# release_url_prefix = "https://releases.example.com/perga/"
+
+[providers.agy]
+executable = "/absolute/path/to/agy"
+
+[providers.codex]
+executable = "/absolute/path/to/codex"
+# worker_home = "/absolute/path/to/private/codex-home"
+
+[providers.opencode]
+executable = "/absolute/path/to/opencode"
+
+[providers.claude]
+executable = "/absolute/path/to/claude"
+
+[proxy]
+url = "http://127.0.0.1:2080"
+# no_proxy = ["internal.example.com"]
+```
+
+Unset executables use existing CLI discovery. Explicit paths apply to provider
+probes and sessions and require a Host release with provider configuration support.
+Use the `agy` or `antigravity` executable name for Antigravity's permission modes.
+The proxy URL applies to HTTP and HTTPS for the Host and its provider processes.
+Loopback addresses always bypass the configured proxy. Managed instances use a
+direct connection when the proxy section is absent. The controller always
+connects directly to the local Host for management traffic. See
+[shared Codex Worker home](codex-installation-login.md) for directory and login
+requirements. Restart the Host after changing instance settings.
+
+### Move an existing managed installation to TOML
+
+Create `config/perga.toml` with mode 0600 and use the existing instance name,
+loopback URL and any applicable settings from the example above. During a
+maintenance window, stop the Host, then refresh the stable tools and service
+files from the updated Perga checkout using the existing root, name and unit
+directory:
+
+```sh
+tools/perga-deploy/perga-ctl --root /path/to/installation --name perga-4240 configure-services
+```
+
+`configure-services` validates the current release and settings, updates the
+stable tool and unit files, and reloads systemd units. Remove settings moved to
+TOML and any old `ExecStart` override from the installation's service drop-ins,
+reload systemd, and start the Host. Keep the TOML file across Host release upgrades
+and rollbacks.
 
 ## Controller operations and source policy
 
@@ -168,7 +227,7 @@ artifact; `--from-repo` builds a trusted local source tree in a temporary copy
 (`dotnet publish`, `npm ci && npm run build`, `cargo build --release --locked`).
 Build tools are prerequisites, not Python dependencies. The generated manifest
 uses SQL migration filenames for schemaVersion. `--from-release` is an HTTPS
-archive URL under the exact configured `PERGA_RELEASE_URL_PREFIX`, with redirects
+archive URL under the exact configured `instance.release_url_prefix`, with redirects
 rejected. Provision that allowlist out of band; no default arbitrary download
 origin. No remote shell, arbitrary systemctl command, or user-provided build
 command is accepted. Local builds execute trusted build scripts and must not be
