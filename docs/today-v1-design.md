@@ -11,7 +11,7 @@ reads never create anything. Workspace preparation follows the existing lifecycl
 The Host adapts strict date and cursor inputs and returns the existing snake-case
 Today wire contract. Calendar boundaries use the server's IANA local timezone.
 
-Migration 0011 adds the system flag, daily mapping, and nullable revision metadata
+Migration 0012 (`0012_daily_tracks.sql`) adds the system flag, daily mapping, and nullable revision metadata
 (event identity, summary, leading comment and the preceding document). Released migrations stay frozen.
 New report saves record metadata with the report event in the same transaction.
 Before snapshots survive pruning of the preceding revision and event rows.
