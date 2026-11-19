@@ -294,7 +294,7 @@ public sealed class SystemUpgradeTests
         using var infoResponse = await host.Client.GetAsync("/api/v1/system/info");
         Assert.Equal("no-store", infoResponse.Headers.CacheControl!.ToString());
         var info = (await infoResponse.Content.ReadFromJsonAsync<SystemInfoDto>(PergaJsonDefaults.ApiOptions))!;
-        Assert.Equal(17, info.SchemaVersion);
+        Assert.Equal(18, info.SchemaVersion);
         Assert.False(info.Draining);
         using var draining = await host.Client.PostAsJsonAsync("/api/v1/system/drain", new { draining = true });
         Assert.Equal(HttpStatusCode.Accepted, draining.StatusCode);
