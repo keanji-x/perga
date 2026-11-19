@@ -106,9 +106,9 @@ public sealed partial class TrackActor
             current.BoundAttemptId is not null ||
             current.Epoch != expectedEpoch ||
             !string.Equals(current.Status, "idle", StringComparison.Ordinal) ||
-            _activeTurns.ContainsKey(sessionId) ||
-            _compactingSessions.Contains(sessionId) ||
-            _sessionResumeHolds.ContainsKey(sessionId) ||
+            _scheduler.HasActive(sessionId) ||
+            _scheduler.IsCompacting(sessionId) ||
+            _scheduler.HasResumeHold(sessionId) ||
             !_openAgentSessions.TryGetValue(sessionId, out var openSession) ||
             !ReferenceEquals(openSession, expectedSession))
         {

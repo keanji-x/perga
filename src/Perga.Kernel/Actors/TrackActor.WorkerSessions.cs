@@ -156,13 +156,13 @@ public sealed partial class TrackActor
             if (replay is not null)
             {
                 RequireMatchingHash(replay.RequestHash, hash);
-                if (replay.Delivery == "dispatching" && _steering.TryGetValue(sessionId, out var inFlight) &&
+                if (replay.Delivery == "dispatching" && _scheduler.TryGetSteering(sessionId, out var inFlight) &&
                     inFlight.InputId == replay.Id && inFlight.Attempt is Task<WorkerMessageReceipt> sent)
                     return sent;
                 return Task.FromResult(ToWorkerMessageReceipt(replay));
             }
 
-            _activeTurns.TryGetValue(sessionId, out var active);
+            _scheduler.TryGetActive(sessionId, out var active);
             if (request.TurnId is not null && (active?.TurnDto.Id != request.TurnId || active.Interrupted))
                 throw new KernelException(request.Mode == WorkerMessageMode.Steer ? KernelErrorCode.WorkerTurnChanged : KernelErrorCode.Conflict,
                     "The Worker turn changed. Refresh the session before steering.");
@@ -170,7 +170,7 @@ public sealed partial class TrackActor
             if (attempt.InterruptionUnconfirmed)
                 throw KernelException.Conflict("The previous Worker interruption could not be confirmed.");
             var explicitQueue = request.Mode == WorkerMessageMode.Queue;
-            if (!explicitQueue && request.TurnId is null && (active is not null || _reservedWakeSessions.ContainsKey(sessionId)))
+            if (!explicitQueue && request.TurnId is null && (active is not null || _scheduler.HasReservation(sessionId)))
                 throw KernelException.Conflict("A Worker turn is already running or starting. Target a turn to steer it.");
 
             var native = !explicitQueue && active?.AgentSession.SupportsNativeSteer == true;
@@ -187,13 +187,13 @@ public sealed partial class TrackActor
                 if (active is null && !explicitQueue)
                     attempt.Paused = false;
                 NotifyQueueChangedCore(sessionId);
-                await SchedulePendingWakeCoreAsync(sessionId).ConfigureAwait(false);
+                await PokeSessionCoreAsync(sessionId).ConfigureAwait(false);
                 return Task.FromResult(ToWorkerMessageReceipt(message));
             }
 
-            _steering.TryGetValue(sessionId, out var previous);
+            _scheduler.TryGetSteering(sessionId, out var previous);
             var send = RunWorkerSteerAsync(message, active!, previous.Attempt, _timeProvider.GetTimestamp());
-            _steering[sessionId] = (message.Id, send);
+            _scheduler.SetSteering(sessionId, (message.Id, send));
             _ = TrackBackgroundJob(() => send);
             return send;
         }, ct).ConfigureAwait(false);
@@ -235,9 +235,9 @@ public sealed partial class TrackActor
             }
             finally
             {
-                if (_steering.TryGetValue(message.SessionId, out var latest) && latest.InputId == message.Id)
-                    _steering.Remove(message.SessionId);
-                await SchedulePendingWakeCoreAsync(message.SessionId).ConfigureAwait(false);
+                if (_scheduler.TryGetSteering(message.SessionId, out var latest) && latest.InputId == message.Id)
+                    _scheduler.EndSteering(message.SessionId);
+                await PokeSessionCoreAsync(message.SessionId).ConfigureAwait(false);
             }
         }, ct).ConfigureAwait(false);
     }
@@ -248,7 +248,7 @@ public sealed partial class TrackActor
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
             RequireWorkerOperatorCore(callerSessionId);
             var (_, attempt) = RequireCurrentWorkerCore(sessionId, attemptId);
-            if (!_activeTurns.TryGetValue(sessionId, out var active) || active.TurnDto.Id != turnId)
+            if (!_scheduler.TryGetActive(sessionId, out var active) || active.TurnDto.Id != turnId)
                 throw KernelException.Conflict("The Worker turn changed. Refresh the session before interrupting.");
             if (active.Interrupted)
                 return;
@@ -304,7 +304,7 @@ public sealed partial class TrackActor
         {
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
             var session = RequireBoundAttemptSessionCore(caller.SessionId, "Worker completion");
-            if (!_activeTurns.TryGetValue(session.Id, out var active) || active.Interrupted ||
+            if (!_scheduler.TryGetActive(session.Id, out var active) || active.Interrupted ||
                 _mcpBridge.ResolveToken(caller.Token)?.SessionId != session.Id)
                 throw KernelException.Conflict("The Worker turn no longer accepts completion.");
             return new WorkerCompletionOrigin(caller.Token, active.TurnDto.Id);
@@ -316,7 +316,7 @@ public sealed partial class TrackActor
             throw KernelException.Conflict("The Worker attempt no longer accepts completion from this turn.");
         if (origin is not null &&
             (attempt.SessionId is not { } sessionId || _mcpBridge.ResolveToken(origin.Token)?.SessionId != sessionId ||
-             !_activeTurns.TryGetValue(sessionId, out var turn) || turn.Interrupted || turn.TurnDto.Id != origin.TurnId))
+             !_scheduler.TryGetActive(sessionId, out var turn) || turn.Interrupted || turn.TurnDto.Id != origin.TurnId))
             throw KernelException.Conflict("The Worker turn no longer accepts completion.");
     }
 
@@ -327,17 +327,16 @@ public sealed partial class TrackActor
                 CancellationToken.None).ConfigureAwait(false))
             return;
         var reservation = Guid.NewGuid();
-        _reservedWakeSessions.Add(sessionId, reservation);
+        _scheduler.Reserve(sessionId, reservation);
         _ = TrackBackgroundJob(async () =>
         {
             var shouldContinue = false;
             string? error = null;
             try
             {
-                var turn = await ExecuteSessionTurnPipelineAsync(sessionId, "user", next.Content,
-                    attempt.Cts.Token, wakeReservation: reservation, workerInput: next).ConfigureAwait(false);
-                shouldContinue = turn.Status == "completed";
-                if (turn.Status is "failed" or "unknown")
+                var turn = await _turnRunner.RunAsync(new WorkerMessageWorkItem(this, next, attempt, reservation), attempt.Cts.Token).ConfigureAwait(false);
+                shouldContinue = turn?.Status == "completed";
+                if (turn?.Status is "failed" or "unknown")
                     error = turn.ErrorText;
             }
             catch (OperationCanceledException) when (attempt.Cts.IsCancellationRequested || _actorShutdownCts.IsCancellationRequested)
@@ -358,11 +357,11 @@ public sealed partial class TrackActor
                 if (!_actorShutdownCts.IsCancellationRequested)
                     await EnqueueAsync(async _ =>
                     {
-                        if (_reservedWakeSessions.TryGetValue(sessionId, out var held) && held == reservation)
-                            _reservedWakeSessions.Remove(sessionId);
+                        if (_scheduler.TryGetReservation(sessionId, out var held) && held == reservation)
+                            _scheduler.ReleaseReservation(sessionId);
                         attempt.LastError = error;
                         if (shouldContinue)
-                            await SchedulePendingWakeCoreAsync(sessionId).ConfigureAwait(false);
+                            await PokeSessionCoreAsync(sessionId).ConfigureAwait(false);
                     }, CancellationToken.None).ConfigureAwait(false);
             }
         });

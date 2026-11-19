@@ -3,6 +3,7 @@ using System.Text.Json.Nodes;
 using Dapper;
 using Microsoft.Data.Sqlite;
 using Perga.Contracts;
+using Perga.Kernel.Ports;
 
 namespace Perga.Storage.Sqlite;
 
@@ -23,6 +24,7 @@ public sealed partial class SqliteTrackStore
     {
         EnsureInitialized();
 
+        await PruneTrackWakesAsync(nowMs, ct).ConfigureAwait(false);
         var prunedEvents = await PruneEventsAsync(nowMs, ct).ConfigureAwait(false);
         var thinnedRevisions = await RunMaintenanceBatchesAsync(
             () => ThinReportRevisionsAsync(nowMs, ct), MaintenanceBatchSize).ConfigureAwait(false);
@@ -102,6 +104,28 @@ public sealed partial class SqliteTrackStore
                     new { Cutoff = cutoff, BatchSize = EventPruneBatchSize }, tx, cancellationToken: innerCt))
                     .ConfigureAwait(false), ct),
             EventPruneBatchSize).ConfigureAwait(false);
+    }
+
+    public async Task<int> PruneTrackWakesAsync(long nowMs, CancellationToken ct)
+    {
+        await _writer.EnqueueAsync(async (conn, tx, token) =>
+        {
+            await conn.ExecuteAsync(new CommandDefinition($"""
+                UPDATE track_wakes SET state='{TrackWakeStates.Dropped}', reason='{TrackWakeReasons.MaintenanceExpired}', updated_at_ms=@Now
+                WHERE (state IN ('{TrackWakeStates.Pending}','{TrackWakeStates.Delivering}') AND EXISTS (
+                    SELECT 1 FROM tracks t WHERE t.id=track_id AND t.closed_at_ms IS NOT NULL))
+                   OR (state='{TrackWakeStates.Delivering}' AND updated_at_ms < @Stale);
+                """, new { Now = nowMs, Stale = nowMs - 14 * DayMs }, tx, cancellationToken: token)).ConfigureAwait(false);
+        }, ct).ConfigureAwait(false);
+        return await RunMaintenanceBatchesAsync(() => _writer.EnqueueAsync<int>(async (conn, tx, token) =>
+            await conn.ExecuteAsync(new CommandDefinition($"""
+                DELETE FROM track_wakes WHERE ordinal IN (
+                    SELECT ordinal FROM (
+                        SELECT ordinal, updated_at_ms, row_number() OVER (ORDER BY updated_at_ms DESC, ordinal DESC) AS position
+                        FROM track_wakes WHERE state IN ('{TrackWakeStates.Done}','{TrackWakeStates.Dropped}')
+                    ) WHERE updated_at_ms < @Cutoff OR position > 50000 ORDER BY ordinal LIMIT 1000
+                );
+                """, new { Cutoff = nowMs - 7 * DayMs }, tx, cancellationToken: token)).ConfigureAwait(false), ct), 1000).ConfigureAwait(false);
     }
 
     private Task<int> ThinReportRevisionsAsync(long nowMs, CancellationToken ct) =>

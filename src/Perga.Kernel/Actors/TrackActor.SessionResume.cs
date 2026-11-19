@@ -8,7 +8,6 @@ public sealed partial class TrackActor
 {
     private static readonly TimeSpan ProviderStopGrace = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan SessionResumeTimeout = TimeSpan.FromSeconds(20);
-    private readonly Dictionary<string, SessionResumeHold> _sessionResumeHolds = new(StringComparer.Ordinal);
     private int _sessionResumeHoldCount;
 
     private sealed class SessionResumeHold(string turnId, string nativeId)
@@ -21,7 +20,7 @@ public sealed partial class TrackActor
 
     private ProviderSessionResumeDto? ReadSessionResumeCore(AgentSessionDto session, ActiveTurnState? active, SessionInputReceipt? unknown)
     {
-        if (_sessionResumeHolds.TryGetValue(session.Id, out var hold))
+        if (_scheduler.TryGetResumeHold(session.Id, out var hold))
             return new(hold.TurnId, hold.Busy ? "resuming" : "paused",
                 !hold.Busy && hold.Quiescent && unknown?.TurnId == hold.TurnId);
         if (session.BoundAttemptId is not null || session.BoundTaskId is not null ||
@@ -37,13 +36,13 @@ public sealed partial class TrackActor
 
     private void RequireSessionDispatchAvailableCore(string sessionId)
     {
-        if (_sessionResumeHolds.ContainsKey(sessionId))
+        if (_scheduler.HasResumeHold(sessionId))
             throw KernelException.PreconditionFailed("Resume the provider session before sending more input.");
     }
 
     private void ReleaseSessionResumeCore(string sessionId)
     {
-        if (_sessionResumeHolds.Remove(sessionId))
+        if (_scheduler.ReleaseResumeHold(sessionId))
             Interlocked.Decrement(ref _sessionResumeHoldCount);
     }
 
@@ -51,7 +50,7 @@ public sealed partial class TrackActor
     {
         foreach (var fence in fences)
         {
-            if (_sessionResumeHolds.TryAdd(fence.SessionId, new(fence.TurnId, fence.NativeId) { Quiescent = fence.Quiescent }))
+            if (_scheduler.TryHoldResume(fence.SessionId, new(fence.TurnId, fence.NativeId) { Quiescent = fence.Quiescent }))
                 Interlocked.Increment(ref _sessionResumeHoldCount);
         }
     }
@@ -61,7 +60,7 @@ public sealed partial class TrackActor
     {
         var hold = new SessionResumeHold(turnId, nativeId);
         await _store.SaveSessionResumeFenceAsync(new(sessionId, turnId, nativeId, false), ct).ConfigureAwait(false);
-        _sessionResumeHolds.Add(sessionId, hold);
+        _scheduler.HoldResume(sessionId, hold);
         Interlocked.Increment(ref _sessionResumeHoldCount);
         return hold;
     }
@@ -95,15 +94,15 @@ public sealed partial class TrackActor
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
             var session = RequireSessionCore(sessionId);
             RequireResumeWorkspaceCore(session);
-            if (_compactingSessions.Contains(sessionId) || _reservedWakeSessions.ContainsKey(sessionId) ||
-                _steering.ContainsKey(sessionId))
+            if (_scheduler.IsCompacting(sessionId) || _scheduler.HasReservation(sessionId) ||
+                _scheduler.IsSteering(sessionId))
                 throw KernelException.Conflict("Wait for the current session operation before resuming.");
 
-            _sessionResumeHolds.TryGetValue(sessionId, out var hold);
+            _scheduler.TryGetResumeHold(sessionId, out var hold);
             if (hold is { Busy: true } || (hold is not null && hold.TurnId != turnId))
                 throw KernelException.Conflict("The session already has a recovery for a different or pending operation.");
 
-            _activeTurns.TryGetValue(sessionId, out var active);
+            _scheduler.TryGetActive(sessionId, out var active);
             _openAgentSessions.TryGetValue(sessionId, out var old);
             if (active is not null && active.TurnDto.Id != turnId)
                 throw KernelException.Conflict("The observed provider turn is no longer current.");
@@ -178,7 +177,7 @@ public sealed partial class TrackActor
             await EnqueueAsync(async _ =>
             {
                 await MarkSessionResumeQuiescentCoreAsync(sessionId, hold, CancellationToken.None).ConfigureAwait(false);
-                if (active is not null && _activeTurns.TryGetValue(sessionId, out var current) && ReferenceEquals(current, active))
+                if (active is not null && _scheduler.TryGetActive(sessionId, out var current) && ReferenceEquals(current, active))
                 {
                     active.Interrupted = true;
                     active.TurnCts.Cancel();
@@ -191,7 +190,7 @@ public sealed partial class TrackActor
             {
                 var session = RequireSessionCore(sessionId);
                 RequireResumeWorkspaceCore(session);
-                if (_activeTurns.ContainsKey(sessionId))
+                if (_scheduler.HasActive(sessionId))
                     throw KernelException.Conflict("The previous provider turn has not settled.");
                 if (session.Status == "running")
                     throw KernelException.PreconditionFailed("The previous turn outcome could not be recorded.");
@@ -268,7 +267,7 @@ public sealed partial class TrackActor
                         if (success)
                         {
                             ReleaseSessionResumeCore(sessionId);
-                            await SchedulePendingWakeCoreAsync(sessionId).ConfigureAwait(false);
+                            await PokeSessionCoreAsync(sessionId).ConfigureAwait(false);
                         }
                         else if (rebinding)
                             _mcpBridge.RevokeSession(sessionId);

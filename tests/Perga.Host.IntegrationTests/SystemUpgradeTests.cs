@@ -109,6 +109,60 @@ public sealed class SystemUpgradeTests
     }
 
     [Fact]
+    public async Task ReceiptImportReturnsBeforeProviderSettlesWithInlineWakesConfigured()
+    {
+        var source = new MutableReceipt();
+        await using var host = new PergaHostTestCluster(configureExtraServices: services =>
+            services.AddSingleton<ISystemUpgradeReceiptSource>(source));
+        var (track, _) = await host.CreateTrackAsync();
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        host.AgentRuntime.SetTurnHandler(Wait);
+        async IAsyncEnumerable<UnifiedAgentEvent> Wait(HarnessLaunchSpec spec, TurnInput input, [EnumeratorCancellation] CancellationToken ct)
+        {
+            started.TrySetResult();
+            await release.Task.WaitAsync(ct);
+            yield return new UnifiedAgentEvent.TurnCompleted(null);
+        }
+        var kernel = host.Services.GetRequiredService<IPergaKernel>();
+        source.Value = new("nonblocking-receipt", "old", "new", "succeeded", null, null, track, 1234, []);
+        var importing = kernel.UpgradeReceipts.ImportAsync(default);
+        try
+        {
+            await started.Task.WaitAsync(Deadline);
+            await importing.WaitAsync(TimeSpan.FromSeconds(1));
+            Assert.Equal(1, kernel.DispatchAdmission.ActiveDispatches);
+        }
+        finally
+        {
+            release.TrySetResult();
+            await importing.WaitAsync(Deadline);
+            await kernel.WaitForTrackIdleAsync(track).WaitAsync(Deadline);
+        }
+        Assert.Single(host.AgentRuntime.ExecutedTurns);
+    }
+
+    [Fact]
+    public async Task ReceiptImportRepairsAcknowledgementAfterWakeDeliveryCommitted()
+    {
+        var source = new MutableReceipt();
+        await using var host = new PergaHostTestCluster(configureExtraServices: services =>
+            services.AddSingleton<ISystemUpgradeReceiptSource>(source));
+        var (track, lead) = await host.CreateTrackAsync();
+        var store = host.Services.GetRequiredService<ITrackStore>();
+        var upgrades = host.Services.GetRequiredService<ISystemUpgradeStore>();
+        var receipt = new SystemUpgradeReceipt("projection-receipt", "old", "new", "succeeded", null, null, track, 1234, []);
+        await upgrades.ConsumeUpgradeReceiptAsync(receipt, default);
+        var batch = await store.TrackWakes.ClaimBatchAsync(track, lead, 32, default);
+        await store.TrackWakes.MarkDoneAsync(batch, "delivered", "delivered-turn", default);
+        await host.Services.GetRequiredService<IPergaKernel>().UpgradeReceipts.ImportAsync(default);
+        await using var db = Open(host.DataDir);
+        Assert.Equal("notified", await db.ExecuteScalarAsync<string>("SELECT notification_status FROM system_upgrade_receipts WHERE job_id='projection-receipt';"));
+        Assert.Equal(0, await db.ExecuteScalarAsync<int>("SELECT wake_pending FROM mails WHERE id='system-upgrade:projection-receipt';"));
+        Assert.Empty(host.AgentRuntime.ExecutedTurns);
+    }
+
+    [Fact]
     public async Task ReceiptWakeRetriesAfterStreamFailsBeforeAcknowledgement()
     {
         var source = new MutableReceipt();
@@ -140,6 +194,97 @@ public sealed class SystemUpgradeTests
     }
 
     [Fact]
+    public async Task ReceiptStaysNotifiedWhenTurnFailsAfterDelivery()
+    {
+        var source = new MutableReceipt();
+        await using var host = new PergaHostTestCluster(configureExtraServices: services =>
+            services.AddSingleton<ISystemUpgradeReceiptSource>(source));
+        var (track, _) = await host.CreateTrackAsync();
+        var calls = 0;
+        host.AgentRuntime.SetTurnHandler(FailAfterDelivery);
+        async IAsyncEnumerable<UnifiedAgentEvent> FailAfterDelivery(HarnessLaunchSpec spec, TurnInput input, [EnumeratorCancellation] CancellationToken ct)
+        {
+            Interlocked.Increment(ref calls);
+            yield return new UnifiedAgentEvent.TextDelta("delivered");
+            await Task.Yield();
+            throw new IOException("after acknowledgement");
+        }
+        var kernel = host.Services.GetRequiredService<IPergaKernel>();
+        source.Value = new("delivered-then-failed", "old", "new", "succeeded", null, null, track, 1234, []);
+        await kernel.UpgradeReceipts.ImportAsync(default);
+        await kernel.WaitForTrackIdleAsync(track).WaitAsync(Deadline);
+        await using var db = Open(host.DataDir);
+        Assert.Equal("done", await db.ExecuteScalarAsync<string>("SELECT state FROM track_wakes WHERE coalesce_key = 'mail:system-upgrade:delivered-then-failed';"));
+        Assert.Equal("notified", await db.ExecuteScalarAsync<string>("SELECT notification_status FROM system_upgrade_receipts WHERE job_id = 'delivered-then-failed';"));
+        // A later import must neither redeliver the wake nor regress the projection.
+        await kernel.UpgradeReceipts.ImportAsync(default);
+        await kernel.WaitForTrackIdleAsync(track).WaitAsync(Deadline);
+        Assert.Equal("notified", await db.ExecuteScalarAsync<string>("SELECT notification_status FROM system_upgrade_receipts WHERE job_id = 'delivered-then-failed';"));
+        Assert.Equal(0, await db.ExecuteScalarAsync<int>("SELECT wake_pending FROM mails WHERE id = 'system-upgrade:delivered-then-failed';"));
+        Assert.Equal(1, Volatile.Read(ref calls));
+    }
+
+    [Fact]
+    public async Task ClosingTrackAfterNotificationKeepsReceiptNotified()
+    {
+        await using var host = new PergaHostTestCluster(configureExtraServices: services =>
+            services.AddSingleton<ISystemUpgradeReceiptSource>(new MutableReceipt()));
+        var (track, lead) = await host.CreateTrackAsync();
+        var store = host.Services.GetRequiredService<ITrackStore>();
+        var upgrades = host.Services.GetRequiredService<ISystemUpgradeStore>();
+        var kernel = host.Services.GetRequiredService<IPergaKernel>();
+        await upgrades.ConsumeUpgradeReceiptAsync(new("notified-before-close", "old", "new", "succeeded", null, null, track, 1234, []), default);
+        var batch = await store.TrackWakes.ClaimBatchAsync(track, lead, 32, default);
+        await store.TrackWakes.MarkDoneAsync(batch, "delivered", "delivered-turn", default);
+        await upgrades.AcknowledgeUpgradeNotificationAsync("system-upgrade:notified-before-close", default);
+        // A receipt that was never delivered still becomes unavailable once its track closes.
+        await upgrades.ConsumeUpgradeReceiptAsync(new("queued-before-close", "old", "new", "succeeded", null, null, track, 1235, []), default);
+        await using var db = Open(host.DataDir);
+        Assert.Equal("notified", await db.ExecuteScalarAsync<string>("SELECT notification_status FROM system_upgrade_receipts WHERE job_id = 'notified-before-close';"));
+        Assert.Equal("queued", await db.ExecuteScalarAsync<string>("SELECT notification_status FROM system_upgrade_receipts WHERE job_id = 'queued-before-close';"));
+
+        await kernel.CloseTrackAsync(track, lead).WaitAsync(Deadline);
+        await kernel.UpgradeReceipts.ImportAsync(default);
+
+        Assert.Equal("notified", await db.ExecuteScalarAsync<string>("SELECT notification_status FROM system_upgrade_receipts WHERE job_id = 'notified-before-close';"));
+        Assert.Equal("target_unavailable", await db.ExecuteScalarAsync<string>("SELECT notification_status FROM system_upgrade_receipts WHERE job_id = 'queued-before-close';"));
+        Assert.Equal(0, await db.ExecuteScalarAsync<int>("SELECT SUM(wake_pending) FROM mails;"));
+    }
+
+    [Fact]
+    public async Task DeletingTrackMarksUndeliveredReceiptsUnavailableAndKeepsNotified()
+    {
+        await using var host = new PergaHostTestCluster(configureExtraServices: services =>
+            services.AddSingleton<ISystemUpgradeReceiptSource>(new MutableReceipt()));
+        var (track, lead) = await host.CreateTrackAsync();
+        var store = host.Services.GetRequiredService<ITrackStore>();
+        var upgrades = host.Services.GetRequiredService<ISystemUpgradeStore>();
+        var kernel = host.Services.GetRequiredService<IPergaKernel>();
+        await upgrades.ConsumeUpgradeReceiptAsync(new("notified-before-delete", "old", "new", "succeeded", null, null, track, 1234, []), default);
+        var batch = await store.TrackWakes.ClaimBatchAsync(track, lead, 32, default);
+        await store.TrackWakes.MarkDoneAsync(batch, "delivered", "delivered-turn", default);
+        await upgrades.AcknowledgeUpgradeNotificationAsync("system-upgrade:notified-before-delete", default);
+        await upgrades.ConsumeUpgradeReceiptAsync(new("queued-before-delete", "old", "new", "succeeded", null, null, track, 1235, []), default);
+        await upgrades.ConsumeUpgradeReceiptAsync(new("failed-before-delete", "old", "new", "succeeded", null, null, track, 1236, []), default);
+        await upgrades.MarkUpgradeNotificationFailedAsync("system-upgrade:failed-before-delete", "stream broke", default);
+        await using var db = Open(host.DataDir);
+        Assert.Equal("notified", await db.ExecuteScalarAsync<string>("SELECT notification_status FROM system_upgrade_receipts WHERE job_id = 'notified-before-delete';"));
+        Assert.Equal("queued", await db.ExecuteScalarAsync<string>("SELECT notification_status FROM system_upgrade_receipts WHERE job_id = 'queued-before-delete';"));
+        Assert.StartsWith("delivery_failed:", await db.ExecuteScalarAsync<string>("SELECT notification_status FROM system_upgrade_receipts WHERE job_id = 'failed-before-delete';"));
+
+        await kernel.DeleteTrackAsync(track).WaitAsync(Deadline);
+        // Track deletion cascades away the notification mails and wakes.
+        Assert.Equal(0, await db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM mails WHERE id LIKE 'system-upgrade:%';"));
+        Assert.Equal(0, await db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM track_wakes WHERE coalesce_key LIKE 'mail:system-upgrade:%';"));
+        await kernel.UpgradeReceipts.ImportAsync(default);
+
+        Assert.Equal("notified", await db.ExecuteScalarAsync<string>("SELECT notification_status FROM system_upgrade_receipts WHERE job_id = 'notified-before-delete';"));
+        Assert.Equal("target_unavailable", await db.ExecuteScalarAsync<string>("SELECT notification_status FROM system_upgrade_receipts WHERE job_id = 'queued-before-delete';"));
+        Assert.Equal("target_unavailable", await db.ExecuteScalarAsync<string>("SELECT notification_status FROM system_upgrade_receipts WHERE job_id = 'failed-before-delete';"));
+        Assert.Empty(host.AgentRuntime.ExecutedTurns);
+    }
+
+    [Fact]
     public async Task InfoDrainAndResumePreserveAcceptedMessages()
     {
         await using var host = new PergaHostTestCluster();
@@ -149,7 +294,7 @@ public sealed class SystemUpgradeTests
         using var infoResponse = await host.Client.GetAsync("/api/v1/system/info");
         Assert.Equal("no-store", infoResponse.Headers.CacheControl!.ToString());
         var info = (await infoResponse.Content.ReadFromJsonAsync<SystemInfoDto>(PergaJsonDefaults.ApiOptions))!;
-        Assert.Equal(13, info.SchemaVersion);
+        Assert.Equal(14, info.SchemaVersion);
         Assert.False(info.Draining);
         using var draining = await host.Client.PostAsJsonAsync("/api/v1/system/drain", new { draining = true });
         Assert.Equal(HttpStatusCode.Accepted, draining.StatusCode);
@@ -423,6 +568,11 @@ public sealed class SystemUpgradeTests
         await Assert.ThrowsAnyAsync<Exception>(() => store.ConsumeUpgradeReceiptAsync(receipt, default));
         Assert.Equal(0, await db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM system_upgrade_receipts;"));
         await db.ExecuteAsync("DROP TRIGGER fail_upgrade_mail;");
+        await db.ExecuteAsync("CREATE TRIGGER fail_upgrade_wake BEFORE INSERT ON track_wakes BEGIN SELECT RAISE(ABORT, 'injected wake failure'); END;");
+        await Assert.ThrowsAnyAsync<Exception>(() => store.ConsumeUpgradeReceiptAsync(receipt, default));
+        Assert.Equal(0, await db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM system_upgrade_receipts;"));
+        Assert.Equal(0, await db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM mails;"));
+        await db.ExecuteAsync("DROP TRIGGER fail_upgrade_wake;");
         Assert.True(await store.ConsumeUpgradeReceiptAsync(receipt, default));
         Assert.False(await store.ConsumeUpgradeReceiptAsync(receipt, default));
         Assert.Single(await host.Services.GetRequiredService<IPergaKernel>().ListMailsAsync(track));

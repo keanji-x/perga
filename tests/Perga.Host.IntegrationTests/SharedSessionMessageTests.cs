@@ -107,7 +107,7 @@ public sealed class SharedSessionMessageTests
             await using var reopened = new PergaHostTestCluster(directory.FullName);
             var kernel = reopened.Services.GetRequiredService<IPergaKernel>();
             await kernel.WaitForTrackIdleAsync(trackId);
-            Assert.Equal(["first-waiting", "second-waiting"], reopened.AgentRuntime.ExecutedTurns.Select(execution => execution.Input.Prompt));
+            Assert.Equal(["first-waiting\n\nsecond-waiting"], reopened.AgentRuntime.ExecutedTurns.Select(execution => execution.Input.Prompt));
             foreach (var (key, expected) in new[] { ("declared-uncertain", "unknown"), ("withdraw-me", "withdrawn"),
                          ("first-waiting", "delivered"), ("second-waiting", "delivered") })
             {
@@ -227,14 +227,19 @@ public sealed class SharedSessionMessageTests
             Assert.Equal(1, steers);
             endFirst.TrySetResult();
             var secondTurn = await second.Task.WaitAsync(ct);
-            Assert.Equal("accepted", (await SteerAsync(secondTurn)).Delivery);
+            // Both waiting messages were promoted into the second turn. A fresh
+            // queued message can still be steered while that batch is running.
             Assert.Equal("queued", (await SteerAsync(firstTurn)).Delivery);
+            using var fresh = await SendAsync(host.Client, sessionId, "fresh", new { content = "fresh", queueIfBusy = true });
+            var freshMessage = (await fresh.Content.ReadFromJsonAsync<QueuedMessageReceipt>(PergaJsonDefaults.ApiOptions, ct))!;
+            path = $"/api/v1/sessions/{sessionId}/messages/queue/{freshMessage.InputId}/steer";
+            Assert.Equal("accepted", (await SteerAsync(secondTurn)).Delivery);
             Assert.Equal("accepted", (await SteerAsync(secondTurn)).Delivery);
             Assert.Equal(2, steers);
 
             var page = await kernel.GetSessionItemsAsync(sessionId, ct: ct);
             Assert.DoesNotContain(page.QueuedMessages, entry => entry.Id == message.InputId);
-            var item = Assert.Single(page.Items, entry => entry.Kind == "user" && entry.Payload.GetProperty("inputId").GetString() == message.InputId);
+            var item = Assert.Single(page.Items, entry => entry.Kind == "user" && entry.Payload.GetProperty("inputId").GetString() == freshMessage.InputId);
             Assert.Equal(secondTurn, item.TurnId);
             Assert.Equal("delivered", item.InputDelivery);
             Assert.True(item.Payload.GetProperty("steered").GetBoolean());
@@ -246,7 +251,7 @@ public sealed class SharedSessionMessageTests
         }
 
         await kernel.WaitForTrackIdleAsync(trackId, ct);
-        Assert.Equal(["first", "second"], host.AgentRuntime.ExecutedTurns.Select(execution => execution.Input.Prompt));
+        Assert.Equal(["first", "second\n\ncontent"], host.AgentRuntime.ExecutedTurns.Select(execution => execution.Input.Prompt));
 
         async IAsyncEnumerable<UnifiedAgentEvent> Stream(HarnessLaunchSpec _, TurnInput input,
             [EnumeratorCancellation] CancellationToken token)
@@ -257,7 +262,7 @@ public sealed class SharedSessionMessageTests
                 first.TrySetResult(input.CorrelationId);
                 await endFirst.Task.WaitAsync(token);
             }
-            else if (input.Prompt == "second")
+            else if (input.Prompt == "second\n\ncontent")
             {
                 second.TrySetResult(input.CorrelationId);
                 await endSecond.Task.WaitAsync(token);

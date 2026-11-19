@@ -225,7 +225,7 @@ public sealed class UserJourneyAuditFixesTests
             StreamMidTurnCheckpoint(midTurnReached, allowFinish.Task, ct);
 
         using var callerCts = new CancellationTokenSource();
-        var firstCallTask = ctx.Kernel.SendMessageAsync(
+        var firstCallTask = ctx.SendAndWaitForTurnAsync(
             leadId,
             new SendMessageRequest("Build incremental items", "idem-decoupled"),
             callerCts.Token);
@@ -246,7 +246,7 @@ public sealed class UserJourneyAuditFixesTests
         Assert.Contains(midPage.Items, i => i.Kind == "tool_result");
 
         // 3. Re-attaching with the same IdempotencyKey joins the running turn without spawning a second turn!
-        var reattachedTask = ctx.Kernel.SendMessageAsync(
+        var reattachedTask = ctx.SendAndWaitForTurnAsync(
             leadId,
             new SendMessageRequest("Build incremental items", "idem-decoupled"));
 
@@ -261,7 +261,7 @@ public sealed class UserJourneyAuditFixesTests
 
         // 4. Failed turn persists kind: "turn_outcome" with exact error text!
         ctx.AgentRuntime.TurnScript = (_, _, _) => StreamFailingTurn("model_not_found: invalid-model-x");
-        var failedTurn = await ctx.Kernel.SendMessageAsync(
+        var failedTurn = await ctx.SendAndWaitForTurnAsync(
             leadId,
             new SendMessageRequest("Trigger provider failure", "idem-fail-outcome"));
         Assert.Equal("failed", failedTurn.Status);
@@ -278,7 +278,7 @@ public sealed class UserJourneyAuditFixesTests
         var startedInterruptTurn = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         ctx.AgentRuntime.TurnScript = (_, _, ct) => StreamBlockingTurn(startedInterruptTurn, blockForever.Task, ct);
 
-        var interruptTurnTask = ctx.Kernel.SendMessageAsync(
+        var interruptTurnTask = ctx.SendAndWaitForTurnAsync(
             leadId,
             new SendMessageRequest("Long turn to interrupt", "idem-interrupt-outcome"));
         await startedInterruptTurn.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -322,7 +322,13 @@ public sealed class UserJourneyAuditFixesTests
     {
         yield return new UnifiedAgentEvent.ThinkingDelta("Working...");
         started.TrySetResult();
-        await blocker.WaitAsync(ct);
+        try { await blocker.WaitAsync(ct); }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+        if (ct.IsCancellationRequested)
+        {
+            yield return new UnifiedAgentEvent.TurnInterrupted();
+            yield break;
+        }
         yield return new UnifiedAgentEvent.TurnCompleted(null);
     }
 }

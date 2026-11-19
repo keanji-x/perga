@@ -18,53 +18,22 @@ public sealed partial class TrackActor
         return (queue, await Messages.ListHandoffsAsync(sessionId, ct).ConfigureAwait(false));
     }
 
-    private async Task SchedulePendingWakeCoreAsync(string sessionId, bool allowWorker = true)
+    internal Task ResumeSchedulingAsync(CancellationToken ct = default) => EnqueueAsync(async _ =>
     {
-        if (!WorkspaceReady || _track.ClosedAtMs is not null || _sessionResumeHolds.ContainsKey(sessionId) ||
-            _activeTurns.ContainsKey(sessionId) || _steering.ContainsKey(sessionId) || _compactingSessions.Contains(sessionId) || _reservedWakeSessions.ContainsKey(sessionId) ||
-            !_sessions.TryGetValue(sessionId, out var session) || HoldsDurableSlot(session))
-            return;
+        await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
+        await ScheduleEligibleTasksCoreAsync(ct).ConfigureAwait(false);
+        foreach (var sessionId in _sessions.Keys.ToArray())
+            await PokeSessionCoreAsync(sessionId).ConfigureAwait(false);
+    }, ct);
 
-        ActiveAttemptState? attempt = null;
-        if (session.BoundAttemptId is { } attemptId &&
-            (!allowWorker || !_activeAttempts.TryGetValue(attemptId, out attempt) || attempt.Paused || attempt.Settling ||
-                attempt.InterruptionUnconfirmed || !string.Equals(attempt.AttemptDto.Status, "running", StringComparison.OrdinalIgnoreCase) ||
-                RequireTaskCore(attempt.TaskId).LatestAttemptId != attemptId))
-            return;
-
-        if (_store.SessionMessages is not null &&
-            await Messages.NextAsync(sessionId, session.BoundAttemptId, CancellationToken.None).ConfigureAwait(false) is { } next)
-        {
-            if (attempt is not null)
-                await ScheduleWorkerMessageCoreAsync(next, attempt).ConfigureAwait(false);
-            else
-            {
-                var queued = session with { Status = "queued", UpdatedAtMs = NowMs() };
-                var evt = SessionUpdatedEvent(queued);
-                await _eventHub.EnsureInitializedFromStoreAsync(_store, CancellationToken.None).ConfigureAwait(false);
-                var input = await _store.SessionInputs.PromoteQueuedAsync(queued, next, evt, CancellationToken.None).ConfigureAwait(false);
-                if (input is not null)
-                {
-                    RegisterAcceptedInput(queued, input);
-                    await PublishInputEventAsync(evt).ConfigureAwait(false);
-                }
-            }
-            return;
-        }
-
-        if (!_pendingWakes.TryGetValue(sessionId, out var wakes) || !wakes.TryDequeue(out var wake)) return;
-        if (wake.MailId is not null) Interlocked.Decrement(ref _queuedMailWakes);
-        var reservation = Guid.NewGuid();
-        _reservedWakeSessions.Add(sessionId, reservation);
-        _ = TrackBackgroundJob(() => RunReservedWakeAsync(sessionId, wake.TriggerKind, wake.Prompt, reservation,
-            _actorShutdownCts.Token, wake.MailId, wake.Completion));
-    }
+    private async Task PokeSessionCoreAsync(string sessionId, bool allowWorker = true) =>
+        await _scheduler.PokeAsync(sessionId, allowWorker).ConfigureAwait(false);
 
     internal Task RecoverQueuedMessagesAsync(string sessionId, CancellationToken ct) =>
         EnqueueAsync(async _ =>
         {
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
-            await SchedulePendingWakeCoreAsync(sessionId).ConfigureAwait(false);
+            await PokeSessionCoreAsync(sessionId).ConfigureAwait(false);
         }, ct);
 
     private static SessionItemDto WithMessageStatus(SessionItemDto item, ActiveTurnState? running)
@@ -124,6 +93,6 @@ public sealed partial class TrackActor
                 throw KernelException.Conflict("Only waiting messages can be withdrawn.");
 
             NotifyQueueChangedCore(sessionId);
-            await SchedulePendingWakeCoreAsync(sessionId, allowWorker: false).ConfigureAwait(false);
+            await PokeSessionCoreAsync(sessionId, allowWorker: false).ConfigureAwait(false);
         }, ct);
 }

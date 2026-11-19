@@ -9,7 +9,6 @@ public sealed partial class TrackActor
 {
     private static readonly TimeSpan SteeringTimeout = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan SteeringRequestTimeout = TimeSpan.FromSeconds(15);
-    private readonly Dictionary<string, (string InputId, Task Attempt)> _steering = new(StringComparer.Ordinal);
 
     internal Task<SteeringResult> SteerMessageAsync(string sessionId, string turnId, string content, CancellationToken ct, string? requestKey = null)
     {
@@ -64,7 +63,7 @@ public sealed partial class TrackActor
                     {
                         if (content is not null && message.TargetTurnId != turnId)
                             throw KernelException.Conflict("A steering request is bound to its original turn.");
-                        if (prior == "dispatching" && _steering.TryGetValue(sessionId, out var runningSteer) && runningSteer.InputId == inputId &&
+                        if (prior == "dispatching" && _scheduler.TryGetSteering(sessionId, out var runningSteer) && runningSteer.InputId == inputId &&
                             runningSteer.Attempt is Task<SteeringResult> runningResult)
                             return runningResult;
                         return Task.FromResult(ToSteeringResult(message.Id, prior));
@@ -79,7 +78,7 @@ public sealed partial class TrackActor
                 if (session.Status == "unknown")
                     throw KernelException.Conflict("Resolve the current turn before sending another message.");
 
-                if (!_activeTurns.TryGetValue(sessionId, out var running) || running.TurnDto.Id != turnId || running.Interrupted)
+                if (!_scheduler.TryGetActive(sessionId, out var running) || running.TurnDto.Id != turnId || running.Interrupted)
                 {
                     if (content is not null && !await _store.HasSessionTurnAsync(sessionId, turnId, admissionToken).ConfigureAwait(false))
                         throw KernelException.NotFound("The target turn was not found in this session.");
@@ -101,9 +100,9 @@ public sealed partial class TrackActor
                     NotifyQueueChangedCore(sessionId);
                 }
 
-                _steering.TryGetValue(sessionId, out var previous);
+                _scheduler.TryGetSteering(sessionId, out var previous);
                 var next = RunSteeringAsync(previous.Attempt, prepared, turnId, queued: content is null, startedAt);
-                _steering[sessionId] = (inputId, next);
+                _scheduler.SetSteering(sessionId, (inputId, next));
                 _ = actor.TrackBackgroundJob(() => next);
                 return next;
             }, admissionToken).ConfigureAwait(false);
@@ -167,9 +166,9 @@ public sealed partial class TrackActor
             }
             finally
             {
-                if (_steering.TryGetValue(message.SessionId, out var latest) && latest.InputId == message.Id)
-                    _steering.Remove(message.SessionId);
-                await SchedulePendingWakeCoreAsync(message.SessionId).ConfigureAwait(false);
+                if (_scheduler.TryGetSteering(message.SessionId, out var latest) && latest.InputId == message.Id)
+                    _scheduler.EndSteering(message.SessionId);
+                await PokeSessionCoreAsync(message.SessionId).ConfigureAwait(false);
             }
             return ToSteeringResult(message.Id, result);
         }, ct).ConfigureAwait(false);
@@ -231,7 +230,7 @@ public sealed partial class TrackActor
                     return Task.FromResult<ActiveTurnState?>(null);
                 }
             }
-            _activeTurns.TryGetValue(message.SessionId, out var current);
+            _scheduler.TryGetActive(message.SessionId, out var current);
             return Task.FromResult(current is not null && current.TurnDto.Id == turnId && !current.Interrupted ? current : null);
         }, ct).ConfigureAwait(false);
         var remaining = SteeringRequestTimeout - _timeProvider.GetElapsedTime(startedAt);

@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Text.Json;
 using Perga.Contracts;
 using Perga.Kernel.Events;
@@ -9,9 +8,6 @@ namespace Perga.Kernel.Actors;
 
 public sealed partial class TrackActor
 {
-    private readonly ConcurrentDictionary<string, byte> _dispatchingInputs = new(StringComparer.Ordinal);
-    private readonly HashSet<string> _compactingSessions = new(StringComparer.Ordinal);
-
     public async Task<MessageAcceptance> AcceptMessageAsync(
         string sessionId, SendMessageRequest request, CancellationToken ct)
     {
@@ -39,7 +35,7 @@ public sealed partial class TrackActor
                     return new(null, null, true, new(sessionId, prior.Id, Delivery: prior.Delivery));
                 if (prior.Kind == "steer" && prior.TargetTurnId is { } targetId)
                 {
-                    var turn = _activeTurns.TryGetValue(sessionId, out var current) && current.TurnDto.Id == targetId
+                    var turn = _scheduler.TryGetActive(sessionId, out var current) && current.TurnDto.Id == targetId
                         ? current.TurnDto : (await _store.ListSessionTurnsAsync(sessionId, ct).ConfigureAwait(false))
                             .SingleOrDefault(turn => turn.Id == targetId);
                     return new(null, turn ?? throw KernelException.Conflict("The target turn is no longer available."), true);
@@ -48,12 +44,9 @@ public sealed partial class TrackActor
             }
 
             RequireSessionDispatchAvailableCore(sessionId);
-            if (request.SteerIfRunning && _activeTurns.TryGetValue(sessionId, out var active))
+            if (request.SteerIfRunning && _scheduler.TryGetActive(sessionId, out var active))
                 return new(null, active.TurnDto, false);
-            if (_idempotencyTurns.ContainsKey((sessionId, request.IdempotencyKey)))
-                throw KernelException.Conflict("This request key was already used by a live turn.");
-            if (_activeTurns.ContainsKey(sessionId) || _compactingSessions.Contains(sessionId) || _reservedWakeSessions.ContainsKey(sessionId) || HoldsDurableSlot(session) ||
-                _steering.ContainsKey(sessionId) || await Messages.NextAsync(sessionId, null, ct).ConfigureAwait(false) is not null)
+            if (_scheduler.IsOccupied(session) || await _scheduler.HasQueuedMessageAsync(session, ct).ConfigureAwait(false))
             {
                 if (!request.QueueIfBusy || session.Status == "unknown")
                     throw KernelException.Conflict($"Session '{sessionId}' already has an active or unresolved turn.");
@@ -63,7 +56,7 @@ public sealed partial class TrackActor
                 var message = new SessionMessage($"inp_{Guid.NewGuid():N}", sessionId, null, InstallationAuthor,
                     request.IdempotencyKey, hash, null, null, request.Content, "queued", NowMs(), "queue");
                 await Messages.InsertAsync(message, ct).ConfigureAwait(false);
-                await SchedulePendingWakeCoreAsync(sessionId).ConfigureAwait(false);
+                await PokeSessionCoreAsync(sessionId).ConfigureAwait(false);
                 NotifyQueueChangedCore(sessionId);
                 return new(null, null, false, new(sessionId, message.Id, Delivery: message.Delivery));
             }
@@ -144,7 +137,7 @@ public sealed partial class TrackActor
             if (input.Receipt.TurnStatus != "unknown" || session.Status != "unknown")
                 throw KernelException.Conflict("Only an unresolved unknown input can be abandoned.");
 
-            _sessionResumeHolds.TryGetValue(sessionId, out var resume);
+            _scheduler.TryGetResumeHold(sessionId, out var resume);
             if (resume is not null && (resume.Busy || !resume.Quiescent || resume.TurnId != input.Receipt.TurnId))
                 throw KernelException.PreconditionFailed("Confirm that the previous provider execution has stopped before replacing its session.");
 
@@ -167,7 +160,7 @@ public sealed partial class TrackActor
 
             _sessions[sessionId] = updated;
             ReleaseSessionResumeCore(sessionId);
-            await SchedulePendingWakeCoreAsync(sessionId).ConfigureAwait(false);
+            await PokeSessionCoreAsync(sessionId).ConfigureAwait(false);
             NotifyQueueChangedCore(sessionId);
             return input.Receipt with { ResolvedAtMs = updated.UpdatedAtMs };
         }, ct);
@@ -184,16 +177,18 @@ public sealed partial class TrackActor
         TrackBackgroundJob(async () =>
         {
             await WaitForWorkspacePreparationAsync(_actorShutdownCts.Token).ConfigureAwait(false);
-            if (!_dispatchingInputs.TryAdd(input.Receipt.InputId, 0))
+            if (!_scheduler.TryDispatch(input.Receipt.SessionId, input.Receipt.InputId))
                 return;
             try
             {
-                await ExecuteSessionTurnPipelineAsync(input.Receipt.SessionId, "user", input.Content,
-                    _actorShutdownCts.Token, input).ConfigureAwait(false);
+                await _turnRunner.RunAsync(new SessionInputBatchWorkItem(this, input), _actorShutdownCts.Token).ConfigureAwait(false);
             }
             finally
             {
-                _dispatchingInputs.TryRemove(input.Receipt.InputId, out _);
+                _scheduler.EndDispatch(input.Receipt.SessionId, input.Receipt.InputId);
+                if (!_actorShutdownCts.IsCancellationRequested)
+                    await EnqueueAsync(async _ => await PokeSessionCoreAsync(input.Receipt.SessionId).ConfigureAwait(false),
+                        CancellationToken.None).ConfigureAwait(false);
             }
         });
     }
@@ -202,7 +197,7 @@ public sealed partial class TrackActor
     {
         if (input.Receipt.DeliveryState == "accepted")
             DispatchAcceptedInput(input);
-        else if (input.Receipt.TurnStatus == "running" && !_dispatchingInputs.ContainsKey(input.Receipt.InputId))
+        else if (input.Receipt.TurnStatus == "running" && !_scheduler.IsDispatching(input.Receipt.SessionId, input.Receipt.InputId))
         {
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
             return await RecoverDispatchCoreAsync(input).ConfigureAwait(false);
@@ -221,8 +216,6 @@ public sealed partial class TrackActor
         await SettleDurableTurnCoreAsync(input, delivery, turn, [], session).ConfigureAwait(false);
         return input.Receipt with { DeliveryState = delivery, TurnStatus = "unknown" };
     }
-
-    private static bool HoldsDurableSlot(AgentSessionDto session) => session.Status is "queued" or "running" or "unknown";
 
     private EventEnvelopeDto SessionUpdatedEvent(AgentSessionDto session) =>
         new(null, _track.AreaId, TrackId, KernelEventKinds.SessionUpdated,
@@ -258,7 +251,7 @@ public sealed partial class TrackActor
                 throw;
         }
         _sessions[session.Id] = session;
-        _activeTurns.Remove(session.Id);
+        _scheduler.RemoveActive(session.Id);
         await PublishInputEventAsync(turnEvent).ConfigureAwait(false);
     }
 

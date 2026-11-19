@@ -25,7 +25,7 @@ public sealed class SessionContextUsageTests
             yield return new UnifiedAgentEvent.TurnCompleted(null);
         }
 
-        await ctx.Kernel.SendMessageAsync(id, new("sample", "before-switch"));
+        await ctx.SendAndWaitForTurnAsync(id, new("sample", "before-switch"));
         var sampled = Assert.Single(await ctx.Kernel.ListSessionsAsync(snap.Track.Id));
         Assert.Equal(250, sampled.ContextUsedTokens);
         Assert.NotNull(sampled.ContextUsageAtMs);
@@ -74,7 +74,7 @@ public sealed class SessionContextUsageTests
             await release.Task.WaitAsync(ct);
             yield return new UnifiedAgentEvent.TurnCompleted(noFinalUsage ? null : new TokenUsage(10, 5, 0, 1000, UsedTokens: 400));
         }
-        var turn = ctx.Kernel.SendMessageAsync(id, new("go", "usage"));
+        var turn = ctx.SendAndWaitForTurnAsync(id, new("go", "usage"));
         try
         {
             await sampled.Task.WaitAsync(TimeSpan.FromSeconds(10));
@@ -102,7 +102,7 @@ public sealed class SessionContextUsageTests
             e.Payload.GetProperty("id").GetString() == id && e.Payload.GetProperty("contextUsageInvalidated").GetBoolean());
 
         // A new turn on the selected model validates the new measurement.
-        await ctx.Kernel.SendMessageAsync(id, new("next", "usage-next"));
+        await ctx.SendAndWaitForTurnAsync(id, new("next", "usage-next"));
         Assert.False((await ctx.Kernel.ListSessionsAsync(snap.Track.Id)).Single(s => s.Id == id).ContextUsageInvalidated);
         var compacted = await ctx.Kernel.CompactSessionAsync(id);
         Assert.Equal(0, compacted.ContextUsedTokens);
@@ -133,7 +133,7 @@ public sealed class SessionContextUsageTests
             yield return new UnifiedAgentEvent.TurnCompleted(new TokenUsage(500, 50, 0, 1_048_576, UsedTokens: 550));
         }
 
-        await ctx.Kernel.SendMessageAsync(id, new("hello", "delayed-compact-1"));
+        await ctx.SendAndWaitForTurnAsync(id, new("hello", "delayed-compact-1"));
 
         var compacted = await ctx.Kernel.CompactSessionAsync(id);
         Assert.Equal(1, compacted.Epoch);
@@ -164,7 +164,7 @@ public sealed class SessionContextUsageTests
             yield return new UnifiedAgentEvent.TurnCompleted(new TokenUsage(90_000, 10_000, 0, 512_000, UsedTokens: 100_000));
         }
 
-        await ctx.Kernel.SendMessageAsync(id, new("hello", "handover-idle-1"));
+        await ctx.SendAndWaitForTurnAsync(id, new("hello", "handover-idle-1"));
 
         var originalSession = Assert.Single(ctx.AgentRuntime.OpenedSessions);
         var oldEpochCompacted = await ctx.Kernel.CompactSessionAsync(id);
@@ -223,7 +223,7 @@ public sealed class SessionContextUsageTests
             yield return new UnifiedAgentEvent.TurnCompleted(new TokenUsage(100, 10, 0, 1_000_000, UsedTokens: 110));
         }
 
-        await ctx.Kernel.SendMessageAsync(id, new("turn-1", "idle-model-1"));
+        await ctx.SendAndWaitForTurnAsync(id, new("turn-1", "idle-model-1"));
         var opened = Assert.Single(ctx.AgentRuntime.OpenedSessions);
 
         // Wrong threadId is ignored.

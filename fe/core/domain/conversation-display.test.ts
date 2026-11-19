@@ -1,5 +1,5 @@
 import { describe,it,expect } from 'vitest';
-import { conversationRunOperation, currentConversationOutcome, heldConversationInputs, keepConversationInputOperation, retryConversationInputOperation, buildConversationTranscript, conversationPageSchema, conversationRunMetadataSchema, orderedPendingInputs, removedHumanIds } from './conversation-display.js';
+import { conversationItemsOperation, conversationRunOperation, currentConversationOutcome, heldConversationInputs, keepConversationInputOperation, retryConversationInputOperation, buildConversationTranscript, conversationPageSchema, conversationRunMetadataSchema, orderedPendingInputs, removedHumanIds } from './conversation-display.js';
 import { outboxFactsWithRemovedInputs, matchSendOps, reportedInputSource, type SendOp } from './conversation-outbox.js';
 import type { ConversationDisplayItem, HarnessItem as HistoricalRow } from '../api/generated/wire.js';
 import { isConversationMessage, SYSTEM_PRESENTATION_LABELS } from './conversation.js';
@@ -248,4 +248,24 @@ it('adapts only a required typed current terminal fact, without inventing a disp
   expect(schema.safeParse({...run,terminal_outcome:{...fact,worker_session_id:'other-worker'}}).success).toBe(false);
   expect(schema.safeParse({...run,terminal_outcome:{...fact,card_id:'other-card'}}).success).toBe(false);
   expect(schema.safeParse({...run,native_turn_id:'other-turn'}).success).toBe(false);
+});
+
+
+describe('system wake projection', () => {
+  it.each([
+    ['system', undefined, 'system'],
+    ['system', 'system_mail', 'system_mail'],
+    ['system', 'user', 'system'],
+    ['system', 'invalid', 'system'],
+    ['wake', 'system_report_edited', 'system_report_edited'],
+    ['scheduler', undefined, 'system'],
+  ])('renders %s with presentation %s as a System observation', (triggerKind, presentation, expected) => {
+    const page = conversationItemsOperation('session', null).responseSchema.parse({
+      session: { id: 'session', trackId: 'track', provider: 'codex', createdAtMs: 1, updatedAtMs: 1 },
+      unknownInput: null, items: [{ id: 1, sessionId: 'session', turnId: 'turn', kind: 'user',
+        payload: { content: 'Wake notice', triggerKind, presentation }, createdAtMs: 2 }],
+    });
+    expect(page.items[0].source).toEqual({ kind: 'system', observation_id: '1', presentation: expected,
+      text: 'Wake notice', created_at_ms: 2 });
+  });
 });

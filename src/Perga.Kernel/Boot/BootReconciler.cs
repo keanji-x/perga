@@ -32,8 +32,7 @@ public sealed class BootReconciler : IBootReconciler
 
     public async Task<BootReconcileResult> ReconcileAsync(CancellationToken ct = default)
     {
-        // Snapshot before any recovered session can send new mail through live delivery.
-        var pendingMail = await _store.ListPendingMailWakesAsync(ct).ConfigureAwait(false);
+        // Phase 1 converges persistence before activating any actor.
         var preparingTracks = await _store.RecoverWorkspacePreparationsAsync(ct).ConfigureAwait(false);
         var queuedInputs = await _store.RecoverSessionInputsAsync(ct).ConfigureAwait(false);
         var affectedTrackIds = new HashSet<string>(StringComparer.Ordinal);
@@ -68,47 +67,45 @@ public sealed class BootReconciler : IBootReconciler
             affectedTrackIds.Add(trackId);
         }
 
-        // 3. Wake affected open tracks' LeadSessionId so Lead can inspect interrupted work and resume.
-        var orderedAffected = affectedTrackIds.OrderBy(id => id, StringComparer.Ordinal).ToArray();
-        var wokenCount = 0;
-
-        foreach (var trackId in orderedAffected)
+        if (_upgrades is not null)
         {
-            var track = await _store.GetTrackAsync(trackId, ct).ConfigureAwait(false);
-            if (track is null || track.ClosedAtMs is not null || string.IsNullOrEmpty(track.LeadSessionId))
-            {
-                continue;
-            }
-
-            // Ensure any cached actor reloads fresh post-reconcile snapshot from store.
-            await _actorRegistry.RemoveAndDisposeAsync(trackId).ConfigureAwait(false);
-            var actor = _actorRegistry.GetOrActivate(trackId);
-            await actor.WakeLeadAsync(
-                triggerKind: "system",
-                wakePrompt: "System boot reconciliation completed: previous in-flight session turns and task attempts were marked interrupted and temporary workspace leases were discarded. Review track status and decide next steps.",
-                ct: ct).ConfigureAwait(false);
-            wokenCount++;
+            try { await _upgrades.ImportAsync(ct, dispatch: false).ConfigureAwait(false); }
+            catch (Exception ex) when (!ct.IsCancellationRequested)
+            { System.Diagnostics.Trace.TraceWarning("Upgrade receipt import will retry in background: {0}", ex.Message); }
         }
 
+        var recoveredWakeTracks = await _store.TrackWakes.RecoverOnBootAsync(ct).ConfigureAwait(false);
+        var queues = _store.SessionMessages is { } messages
+            ? await messages.ListRecoverableQueuesAsync(ct).ConfigureAwait(false) : [];
+        var pendingWakeTracks = await _store.TrackWakes.ListPendingTracksAsync(ct).ConfigureAwait(false);
+        var orderedAffected = affectedTrackIds.OrderBy(id => id, StringComparer.Ordinal).ToArray();
+        var modifiedTracks = affectedTrackIds.Concat(preparingTracks).Concat(recoveredWakeTracks)
+            .Concat(queuedInputs.Select(q => q.TrackId)).Concat(queues.Select(q => q.TrackId)).Concat(pendingWakeTracks).Distinct();
+        foreach (var trackId in modifiedTracks)
+            await _actorRegistry.RemoveAndDisposeAsync(trackId).ConfigureAwait(false);
+
+        // Phase 2 activates consumers after every durable recovery write has completed.
+        var wokenCount = 0;
         foreach (var trackId in preparingTracks)
             await _actorRegistry.GetOrActivate(trackId).WarmWorkspaceAsync(ct).ConfigureAwait(false);
 
         foreach (var (trackId, input) in queuedInputs)
             _actorRegistry.GetOrActivate(trackId).DispatchAcceptedInput(input);
 
-        if (_store.SessionMessages is { } messages)
-            foreach (var (trackId, sessionId) in await messages.ListRecoverableQueuesAsync(ct).ConfigureAwait(false))
-                await _actorRegistry.GetOrActivate(trackId).RecoverQueuedMessagesAsync(sessionId, ct).ConfigureAwait(false);
-
-        if (_upgrades is not null)
+        var leadTracks = new HashSet<string>(pendingWakeTracks, StringComparer.Ordinal);
+        foreach (var (trackId, sessionId) in queues)
         {
-            try { await _upgrades.ImportAsync(ct).ConfigureAwait(false); }
-            catch (Exception ex) when (!ct.IsCancellationRequested)
-            { System.Diagnostics.Trace.TraceWarning("Upgrade receipt import will retry in background: {0}", ex.Message); }
+            var track = await _store.GetTrackAsync(trackId, ct).ConfigureAwait(false);
+            if (track?.LeadSessionId == sessionId) leadTracks.Add(trackId);
+            else await _actorRegistry.GetOrActivate(trackId).RecoverQueuedMessagesAsync(sessionId, ct).ConfigureAwait(false);
         }
-
-        foreach (var mail in pendingMail.Where(m => m.FromTrackId != "system:upgrade"))
-            await _actorRegistry.GetOrActivate(mail.ToTrackId).WakeForMailAsync(mail, ct, recovering: true).ConfigureAwait(false);
+        foreach (var trackId in leadTracks.Order(StringComparer.Ordinal))
+        {
+            var track = await _store.GetTrackAsync(trackId, ct).ConfigureAwait(false);
+            if (track is null || track.ClosedAtMs is not null || track.LeadSessionId is null) continue;
+            await _actorRegistry.GetOrActivate(trackId).PokeLeadAsync(ct).ConfigureAwait(false);
+            wokenCount++;
+        }
 
         foreach (var trackId in await _store.ListPendingWorkerDispatchTracksAsync(ct).ConfigureAwait(false))
         {

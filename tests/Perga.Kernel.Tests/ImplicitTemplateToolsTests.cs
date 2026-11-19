@@ -309,7 +309,7 @@ public sealed class ImplicitTemplateToolsTests
     {
         await using var ctx = new KernelTestContext();
         var (_, snap) = await ctx.CreateDefaultTrackAsync();
-        await ctx.Kernel.SendMessageAsync(snap.Track.LeadSessionId!, new SendMessageRequest("hello", "hint"));
+        await ctx.SendAndWaitForTurnAsync(snap.Track.LeadSessionId!, new SendMessageRequest("hello", "hint"));
         var prompt = Assert.Single(ctx.AgentRuntime.OpenedSessions).LaunchSpec.SystemPrompt;
         Assert.Contains("Templates are optional and implicit", prompt);
         Assert.Contains("perga_template_ls", prompt);

@@ -10,9 +10,8 @@ public sealed class UpgradeReceiptConsumer(ITrackStore store, ISystemUpgradeRece
     TrackActorRegistry actors, EventHub? events = null, DispatchAdmission? admission = null)
 {
     private readonly SemaphoreSlim _mutex = new(1, 1);
-    private readonly HashSet<string> _dispatching = new(StringComparer.Ordinal);
 
-    public async Task ImportAsync(CancellationToken ct)
+    public async Task ImportAsync(CancellationToken ct, bool dispatch = true)
     {
         if (source is null || store is not ISystemUpgradeStore upgrades)
         {
@@ -42,37 +41,10 @@ public sealed class UpgradeReceiptConsumer(ITrackStore store, ISystemUpgradeRece
                 // A malformed or temporarily unreadable receipt must not block older durable wakes.
                 System.Diagnostics.Trace.TraceWarning("Upgrade receipt import: {0}", ex.Message);
             }
-            var pending = await store.ListPendingMailWakesAsync(ct).ConfigureAwait(false);
-            _dispatching.IntersectWith(pending.Select(m => m.Id));
-            foreach (var mail in pending)
-            {
-                if (mail.FromTrackId != "system:upgrade" || !_dispatching.Add(mail.Id))
-                {
-                    continue;
-                }
-                // Never await a provider turn from boot or the watcher. Durable wake_pending
-                // survives a crash, and the actor acknowledges only after the wake settles.
-                _ = Task.Run(async () =>
-                {
-                    try
-                    {
-                        await actors.GetOrActivate(mail.ToTrackId).WakeForMailAsync(mail, ct, recovering: true, waitForSettlement: true).ConfigureAwait(false);
-                    }
-                    catch (Exception ex)
-                    {
-                        System.Diagnostics.Trace.TraceWarning("Upgrade wake {0}: {1}", mail.Id, ex.Message);
-                        await upgrades.MarkUpgradeNotificationFailedAsync(mail.Id, ex.Message, CancellationToken.None).ConfigureAwait(false);
-                    }
-                    finally
-                    {
-                        await _mutex.WaitAsync(CancellationToken.None).ConfigureAwait(false);
-                        try
-                        {
-                            _dispatching.Remove(mail.Id); } finally { _mutex.Release();
-                        }
-                    }
-                }, CancellationToken.None);
-            }
+            var pendingTracks = await upgrades.PrepareUpgradeNotificationRetriesAsync(ct).ConfigureAwait(false);
+            if (dispatch)
+                foreach (var trackId in pendingTracks)
+                    await actors.GetOrActivate(trackId).PokeLeadAsync(ct, allowInline: false).ConfigureAwait(false);
         }
         finally
         {

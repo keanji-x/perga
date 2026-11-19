@@ -17,5 +17,7 @@ public interface ISystemUpgradeStore
     Task<int> GetSchemaVersionAsync(CancellationToken ct);
     // Atomically consume the job and enqueue its durable system wake.
     Task<bool> ConsumeUpgradeReceiptAsync(SystemUpgradeReceipt receipt, CancellationToken ct);
+    Task<IReadOnlyList<string>> PrepareUpgradeNotificationRetriesAsync(CancellationToken ct);
+    Task AcknowledgeUpgradeNotificationAsync(string mailId, CancellationToken ct);
     Task MarkUpgradeNotificationFailedAsync(string mailId, string error, CancellationToken ct);
 }
