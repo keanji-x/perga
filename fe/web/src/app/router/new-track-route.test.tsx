@@ -1,4 +1,7 @@
-import { historicalConversationPage, conversationCardId, historicalConversationRun } from './conversation-read-data.ts';
+import type { SessionItemDto } from '../../../../core/api/perga-v1.ts';
+import { sessionPage, sessionItem } from './conversation-session-data.ts';
+import { fixtureSnapshot, fixtureSession, fixtureTrack } from './session-contract-fixture.ts';
+import { conversationCardId } from './conversation-read-data.ts';
 import { prepareReportDocument } from '../../features/report/document/preparation.ts';
 // @vitest-environment jsdom
 // The new-track page: `/area/{id}/new`, reached from each Area group's `+`.
@@ -65,11 +68,7 @@ const LISTING = {
 };
 
 /* The kernel returns an empty title; the planner agent names the track later through `neige_track_rename`. */
-const TRACK_ROW = { workspace: { isolation: 'none' as const, kind: 'attached' as const, path: '/srv/managed', frozen_at: null },
-  id: 'w-new', area_id: 'c1', title: '', sort: 0, pinned_at: null,
-  cwd: '/srv/managed', template_id: null, plugin_scope: null,
-  purpose: null, template_input: null, closed_at: null, created_at: 1, updated_at: 1,
-};
+const TRACK_ROW = fixtureTrack('w-new', { areaId: 'c1', title: '', cwd: '/srv/managed', sortOrder: 0, closedAtMs: null, createdAtMs: 1, updatedAtMs: 1 });
 
 /** The 409 `POST /api/tracks` answers a folder clash with — no `error` key. */
 const CONFLICT = {
@@ -126,7 +125,7 @@ function harness(options: {
   /** Where the browser starts, under the basepath; deep-linking is the only entry that reaches a stale area id. */
   path?: string;
   /** Rows the planner card's item read answers with; defaults to `[]`, what the kernel answers before the queue drains. */
-  plannerItems?: readonly unknown[];
+  plannerItems?: readonly SessionItemDto[];
 } = {}) {
   const sent: ApiRequest[] = [];
   let trackCreateIndex = 0;
@@ -162,20 +161,14 @@ function harness(options: {
       /* What `routes/agent_providers.rs` answers (#1817): Codex ready; Claude ready, unavailable with a
          reason, or `not_configured` on a server without the Claude Planner. */
       if (request.path === '/api/v1/bootstrap?scope=providers' || request.path === '/api/v1/bootstrap?scope=managed') {
-        const claude = options.claudePlanner !== true
-          ? { status: 'not_configured', reason: 'calm-server was started without --claude-planner-config' }
-          : options.claudeUnavailable === undefined
-            ? { status: 'ready', reason: null }
-            : { status: 'unavailable', reason: options.claudeUnavailable };
-        return Promise.resolve({ status: 200, statusText: 'OK', body: [
-          options.codexUnavailable === undefined
-            ? { provider: 'codex', status: 'ready', reason: null, authentication_method: null, authentication_notice: null, checked_at_ms: 1 }
-            : { provider: 'codex', status: 'unavailable', reason: options.codexUnavailable, authentication_method: null, authentication_notice: null, checked_at_ms: 1 },
-          { provider: 'claude', ...claude, authentication_method: null, authentication_notice: null, checked_at_ms: 1 },
-        ].map((availability) => request.path.includes('scope=managed')
-          ? { availability, accepts_unavailable_blank_track: true, capabilities: { managed_conversation: true,
-            steer: false, images: true, manual_compact: true, history_replacement: true, requires_ready_availability: true } }
-          : availability) });
+        return Promise.resolve({ status: 200, statusText: 'OK', body: {
+          version: 'test', templates: [], areas: [], providers: [
+            { provider: 'codex', available: options.codexUnavailable === undefined,
+              reason: options.codexUnavailable ?? null, version: 'test', models: [] },
+            ...(options.claudePlanner === true ? [{ provider: 'claude', available: options.claudeUnavailable === undefined,
+              reason: options.claudeUnavailable ?? null, version: 'test', models: [] }] : []),
+          ],
+        } });
       }
       /* What `routes/models.rs` answers for a Claude Planner (#1822): the Claude CLI's list on a server
          whose Claude is ready, `unavailable` with no catalog on one without Claude Planners. */
@@ -204,16 +197,7 @@ function harness(options: {
         const detail = {
           status: 200,
           statusText: 'OK',
-          body: {
-            track: { ...TRACK_ROW },
-            planner_revision: 0, can_reopen: false, can_admin: false, can_close: true,
-            cards: [{
-              id: 'card-planner', track_id: 'w-new', kind: 'codex', title: 'Planner',
-              payload: { planner_harness: true, planner_provider: options.plannerProvider ?? 'codex' },
-              sort: 0, created_at: 1, updated_at: 1,
-            }],
-            overlays: [],
-          },
+          body: fixtureSnapshot({ ...TRACK_ROW }, [fixtureSession('card-planner', TRACK_ROW.id, { title: 'Planner', isLead: true, provider: options.plannerProvider ?? 'codex' })]),
         } satisfies ApiTransportResponse;
         /* Held open on request, so a test can land the cards after the navigation. */
         return options.heldDetail
@@ -221,13 +205,10 @@ function harness(options: {
           : Promise.resolve(detail);
       }
       if (request.method === 'GET' && request.path === '/api/v1/sessions/card-planner/items?afterId=0&limit=1&view=run') {
-        return Promise.resolve({ status: 200, statusText: 'OK', body: historicalConversationRun({
-          card_id: 'card-planner', worker_session_id: 'runtime', phase: 'idle',
-          model: null, reasoning_effort: null, permission_mode: 'never', blocked_reason: null, manual_compact_supported: true, recovery: null, compact_outcome: null, context_usage_invalidated: false, running_turn: null,
-        }, 'idle', true) });
+        return Promise.resolve({ status: 200, statusText: 'OK', body: sessionPage(fixtureSession('card-planner', TRACK_ROW.id)) });
       }
       if (request.method === 'GET' && request.path.includes('/items') && !request.path.includes('view=')) {
-        return Promise.resolve({ status: 200, statusText: 'OK', body: historicalConversationPage(conversationCardId(request.path), [...(options.plannerItems ?? [])], null) });
+        return Promise.resolve({ status: 200, statusText: 'OK', body: sessionPage(fixtureSession(conversationCardId(request.path), TRACK_ROW.id), [...(options.plannerItems ?? [])]) });
       }
       if (request.path === '/api/v1/areas' && options.areasFail) {
         return Promise.resolve({ status: 500, statusText: 'Server Error', body: { error: 'areas are unreadable' } });
@@ -1116,19 +1097,10 @@ describe('the sentence is delivered by the create, and the track opens on it', (
 
   /* The kernel writes the sentence to the transcript when the queue drains it, so the
        planner card's item read answers with it; nothing is minted on the client. */
-  it('shows the sentence that made the track from the row the kernel writes at drain', async () => {
+  it('shows the sentence that made the track from its persisted v1 input', async () => {
     const { sent } = harness({
 
-      plannerItems: [{
-        id: 1, worker_session_id: 'r', card_id: 'card-planner', track_id: 'w-new', thread_id: 't',
-        turn_id: null, turn_error_text: null, item_uuid: 'entry-0001', item_type: 'userMessage', method: 'item/completed',
-        params: JSON.stringify({
-          item: { id: 'entry-0001', clientId: 'entry-0001', type: 'userMessage', content: [{ type: 'text', text: 'User says:\nRead it' }] },
-          _projection: true,
-        }),
-        input_segments: [{ presentation: 'user', text: 'User says:\nRead it', attachments: [] }],
-        created_at_ms: 1,
-      }],
+      plannerItems: [sessionItem('card-planner', 1, 'Read it', 'user')],
     });
     await userEvent.click(await screen.findByRole('button', { name: 'New track in Reading' }));
     await findComposer();
@@ -1139,7 +1111,7 @@ describe('the sentence is delivered by the create, and the track opens on it', (
     await waitFor(() => expect(window.location.pathname).toBe(`${APP_BASEPATH}/track/w-new`));
     const drawer = await screen.findByRole('complementary', { name: 'Planner' });
     await waitFor(() => expect(
-      [...drawer.querySelectorAll('[data-nc-turn="unknown"]')].map((turn) => turn.textContent),
+      [...drawer.querySelectorAll('[data-nc-turn="human"]')].map((turn) => turn.textContent),
     ).toEqual(['Read it']));
     expect(drawer.querySelector('[data-nc-thread-empty]')).toBeNull();
     const items = sent.filter((request) => request.path.includes('/items') && !request.path.includes('view='));

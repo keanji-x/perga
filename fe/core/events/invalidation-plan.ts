@@ -73,23 +73,20 @@ export const TRACK_FILES_DERIVED_KINDS = Object.freeze([
  * Keyed by track; the bare prefix only when the track cannot be resolved (a key with no
  * active observer only marks entries stale, so that fallback is cheap).
  */
-function trackConversations(trackId: string | null): QueryKey {
-  return trackId === null ? eventKeys.trackConversationsPrefix() : eventKeys.trackConversations(trackId);
+function trackSnapshots(trackId: string | null): QueryKey {
+  return trackId === null ? eventKeys.trackDetailPrefix() : eventKeys.trackDetail(trackId);
 }
 
 /**
- * The list's `state` comes from `worker_sessions.state` and its `updated_at` from every harness
- * snapshot persist; `track.updated` is deliberately NOT a caller (a close ends sessions via
- * `worker_session.superseded`, already here). The caller set is pinned from both sides in the test.
+ * Runtime updates refresh the aggregate that owns session identity and metadata.
  */
 function conversationLists(trackId: string | null): readonly QueryKey[] {
-  return [trackConversations(trackId)];
+  return [trackSnapshots(trackId)];
 }
 
-/** Reads of input-derived titles: Planner metadata lives in track detail, Assistant metadata
- * in the conversation list. A detached store has no track scope and must not fan out globally. */
+/** Session metadata lives in the aggregate. Detached stores do not fan out globally. */
 export function conversationInputMetadata(trackId: string | null): readonly QueryKey[] {
-  return trackId === null ? [] : [eventKeys.trackDetail(trackId), eventKeys.trackConversations(trackId)];
+  return trackId === null ? [] : [eventKeys.trackDetail(trackId)];
 }
 
 function derivedTrackId(data: unknown, context: InvalidationContext): string | null {
@@ -125,7 +122,6 @@ function runtimePlan(cardId: string, context: InvalidationContext): Invalidation
     eventKeys.overlaysByKind('card'),
     ...taskVerdicts(trackId),
     ...conversationLists(trackId),
-    trackId === null ? eventKeys.initialInputPrefix() : eventKeys.initialInput(trackId, cardId),
   ]);
 }
 
@@ -153,7 +149,7 @@ function policies(): PolicyMap {
       eventKeys.tracksInArea(event.data.area_id), eventKeys.overlaysByKind('track'),
       eventKeys.trackReportPrefix(),
     ],
-    [eventKeys.trackDetail(event.data.id), eventKeys.trackReport(event.data.id), eventKeys.initialInputTrack(event.data.id)],
+    [eventKeys.trackDetail(event.data.id), eventKeys.trackReport(event.data.id)],
   )),
   'card.added': plan((event) => result([
     eventKeys.trackDetail(event.data.track_id),
@@ -163,18 +159,17 @@ function policies(): PolicyMap {
        showing the previous model and sends under it; the mutation's own invalidation repairs only its tab. */
   'card.updated': plan((event) => result([
     eventKeys.trackDetail(event.data.track_id),
-    eventKeys.plannerRun(event.data.id), eventKeys.initialInput(event.data.track_id, event.data.id),
+    eventKeys.plannerRun(event.data.id),
     ...conversationLists(event.data.track_id),
   ])),
-  /* The accepted-input observation lease belongs to this card; deleted cards cannot retain it. */
   'card.deleted': plan((event) => result([
     eventKeys.trackDetail(event.data.track_id), eventKeys.trackReportPrefix(),
-  ], [eventKeys.initialInput(event.data.track_id, event.data.id)])),
+  ])),
   'worker_session.started': plan((event, context) => runtimePlan(event.data.card_id, context)),
   'worker_session.status_changed': plan((event, context) => runtimePlan(event.data.card_id, context)),
   'worker_session.superseded': plan((event, context) => runtimePlan(event.data.card_id, context)),
   'harness.item.added': plan((event) => result([
-    eventKeys.transcript(event.data.card_id), eventKeys.initialInput(event.data.track_id, event.data.card_id),
+    eventKeys.transcript(event.data.card_id),
     // The row is already persisted; only user input can change the first-input title.
     ...(event.data.method === 'item/completed' && isUserMessage(event.data.item_type) ? conversationInputMetadata(event.data.track_id) : []),
   ])),
@@ -185,27 +180,27 @@ function policies(): PolicyMap {
   /* `harness-items` is here because the phase event IS the delivery signal for the per-turn
    * outcome row: the kernel writes it before the snapshot commit and emits no `harness.item.added`. */
   'harness.phase.changed': plan((event) => result([
-    eventKeys.initialInput(event.data.track_id, event.data.card_id), eventKeys.plannerRun(event.data.card_id), eventKeys.transcript(event.data.card_id),
+    eventKeys.plannerRun(event.data.card_id), eventKeys.transcript(event.data.card_id),
     ...(event.data.new_phase === 'turn_completed' ? [eventKeys.modelCatalogForCard(event.data.card_id)] : []),
     ...conversationInputMetadata(event.data.track_id),
   ])),
   'harness.transcript.cleared': plan((event) => result([
-    eventKeys.initialInput(event.data.track_id, event.data.card_id), eventKeys.transcript(event.data.card_id), eventKeys.plannerRun(event.data.card_id),
+    eventKeys.transcript(event.data.card_id), eventKeys.plannerRun(event.data.card_id),
     ...conversationInputMetadata(event.data.track_id),
   ], [], [{ key: eventKeys.transcript(event.data.card_id), mode: 'reset-query' }])),
   /* An Edit's replace deletes the turn's rows and may move the phase; it invalidates what a phase change does. */
   'harness.transcript.rewound': plan((event) => result([
-    eventKeys.initialInput(event.data.track_id, event.data.card_id), eventKeys.plannerRun(event.data.card_id), eventKeys.transcript(event.data.card_id),
+    eventKeys.plannerRun(event.data.card_id), eventKeys.transcript(event.data.card_id),
     ...conversationInputMetadata(event.data.track_id),
   ], [], [{ key: eventKeys.transcript(event.data.card_id), mode: 'reset-query' }])),
   'harness.user_message.enqueued': plan((event) => result([
-    eventKeys.initialInput(event.data.track_id, event.data.card_id), eventKeys.transcript(event.data.card_id), eventKeys.plannerRun(event.data.card_id),
+    eventKeys.transcript(event.data.card_id), eventKeys.plannerRun(event.data.card_id),
     ...conversationInputMetadata(event.data.track_id),
   ])),
   /* `harness-items` is here for `steered` (the kernel writes its transcript row once codex has
    * taken it) and `restored` (whose completion sweep deletes that row again). */
   'harness.queue.changed': plan((event) => result([
-    eventKeys.initialInput(event.data.track_id, event.data.card_id), eventKeys.plannerRun(event.data.card_id), eventKeys.transcript(event.data.card_id),
+    eventKeys.plannerRun(event.data.card_id), eventKeys.transcript(event.data.card_id),
     ...conversationInputMetadata(event.data.track_id),
   ], [], event.data.change === 'restored'
     ? [{ key: eventKeys.transcript(event.data.card_id), mode: 'reset-query' }] : [])),
@@ -289,8 +284,7 @@ function policies(): PolicyMap {
   'session.updated': plan((event) => {
     const sessionId = event.data.session?.id;
     return result([
-      ...(event.data.track_id ? [eventKeys.trackDetail(event.data.track_id)] : []),
-      trackConversations(event.data.track_id ?? null),
+      trackSnapshots(event.data.track_id ?? null),
       ...(sessionId ? [eventKeys.plannerRun(sessionId), eventKeys.transcript(sessionId)] : []),
     ]);
   }),
@@ -300,9 +294,8 @@ function policies(): PolicyMap {
     const trackId = event.data.track_id ?? (sessionId ? context.findTrackOwningCard(sessionId) : null);
     return result([
       ...(sessionId ? [eventKeys.plannerRun(sessionId), eventKeys.transcript(sessionId)] : []),
-      ...(trackId === null ? [eventKeys.trackConversationsPrefix()] : [
+      ...(trackId === null ? [eventKeys.trackDetailPrefix()] : [
         eventKeys.trackDetail(trackId),
-        eventKeys.trackConversations(trackId),
       ]),
     ], [], sessionId && turnId ? [{
       key: eventKeys.sessionLive(sessionId),
@@ -316,7 +309,6 @@ function policies(): PolicyMap {
   ])),
   'mail.received': plan((event) => result([
     eventKeys.trackDetail(event.data.track_id),
-    eventKeys.trackConversations(event.data.track_id),
   ])),
   'terminal.changed': plan((event) => result([
     eventKeys.trackDetail(event.data.track_id),

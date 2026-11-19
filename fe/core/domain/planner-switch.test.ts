@@ -1,15 +1,17 @@
 import { expect, it } from 'vitest';
-import { plannerSwitchOperation, plannerSwitchResponseSchema, plannerSwitchFailure, PLANNER_SWITCH_COPY, PLANNER_SWITCH_UNCONFIRMED } from './planner-switch.js';
+import { plannerRunOperation } from './conversation.js';
+import { conversationRunOperation } from './conversation-display.js';
+import { plannerSwitchOperation, plannerSwitchFailure, PLANNER_SWITCH_COPY, PLANNER_SWITCH_UNCONFIRMED } from './planner-switch.js';
 
-it('declares one CAS operation and requires the receipt revision', () => {
-  const body = { target_assistant_card_id: 'a', expected_planner_card_id: 'p', expected_revision: 7 };
-  expect(plannerSwitchOperation('a/b', body)).toMatchObject({
-    method: 'PATCH',
-    path: '/api/v1/tracks/a%2Fb',
-    body: { leadSessionId: 'a' },
+it('patches the lead session and decodes the real Track receipt without a synthetic role revision', () => {
+  const operation = plannerSwitchOperation('a/b', 'session-new');
+  expect(operation).toMatchObject({
+    method: 'PATCH', path: '/api/v1/tracks/a%2Fb', body: { leadSessionId: 'session-new' },
   });
-  expect(plannerSwitchResponseSchema.safeParse({ track_id: 't', planner_card_id: 'a', demoted_card_id: 'p' }).success).toBe(false);
-  expect(plannerSwitchResponseSchema.safeParse({ track_id: 't', planner_card_id: 'a', demoted_card_id: 'p', planner_revision: 8 }).success).toBe(true);
+  expect(operation.responseSchema.parse({ id: 'a/b', areaId: 'area', leadSessionId: 'session-new',
+    createdAtMs: 1, updatedAtMs: 2 })).toMatchObject({ id: 'a/b', leadSessionId: 'session-new' });
+  expect(operation.responseSchema.safeParse({ track_id: 'a/b', planner_card_id: 'session-new',
+    demoted_card_id: 'session-old', planner_revision: 8 }).success).toBe(false);
 });
 
 it('classifies all eleven protocol refusals with paired copy and blocking card', () => {
@@ -28,5 +30,16 @@ it('keeps unknown refusal text but never mistakes uncertain outcomes for refusal
   for (const failure of [null, { kind: 'transport', message: 'lost' }, { kind: 'decode', message: 'invalid' },
     { kind: 'http', status: 500, code: 'planner_changed', message: 'server' }] as const) {
     expect(plannerSwitchFailure(failure)).toEqual({ message: PLANNER_SWITCH_UNCONFIRMED.en, cardId: null, unconfirmed: true });
+  }
+});
+
+it.each([true, false])('v1 run controls reflect session capabilities regardless of lead role (%s)', (isLead) => {
+  const page = { items: [], activeTurn: null, unknownInput: null,
+    session: { id: 'session', trackId: 'track', isLead, provider: 'codex', model: 'model',
+      createdAtMs: 1, updatedAtMs: 2 } };
+  for (const operation of [plannerRunOperation('session'), conversationRunOperation('session')]) {
+    expect(operation.responseSchema.parse(page)).toMatchObject({
+      model: 'model', permission_mode: null, attachments_supported: false, manual_compact_supported: true,
+    });
   }
 });

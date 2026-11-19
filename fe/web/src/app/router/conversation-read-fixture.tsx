@@ -1,4 +1,5 @@
-import { historicalConversationPage, conversationCardId, historicalConversationRun } from './conversation-read-data.ts';
+import { fixtureSession } from './session-contract-fixture.ts';
+import { sessionPage, sessionTurn } from './conversation-session-data.ts';
 // Fault injection at the production router transport, shared by DOM and browser checks.
 import type { ApiTransportResponse } from '../../../../core/api/types.ts';
 import { renderDailyFixture } from './daily-planner-fixture.tsx';
@@ -7,20 +8,16 @@ export function renderConversationReadFixture(initialFailure = true) {
   let unavailable = initialFailure;
   let historyUnavailable = false;
   let runGate: Promise<void> | null = null;
-  const run = { card_id: 'daily-planner', worker_session_id: 'runtime', phase: 'turn_running',
-    model: null, reasoning_effort: null, permission_mode: 'never', blocked_reason: null, manual_compact_supported: true, recovery: null, compact_outcome: null, context_usage_invalidated: false, running_turn: null };
+  const session = fixtureSession('daily-planner', 'daily', { status: 'running' });
+  const run = sessionPage(session, [], sessionTurn(session.id));
   const failure: ApiTransportResponse = { status: 503, statusText: 'Unavailable',
     body: { error: 'internal', message: 'private transport diagnostic' } };
   const fixture = renderDailyFixture({ initial: '/track/daily?panel=conversations', reply: async (request) => {
     if (request.path.includes('&view=run')) {
       await runGate;
-      return unavailable ? failure : { status: 200, statusText: 'OK', body: historicalConversationRun(run, 'idle', true) };
+      return unavailable ? failure : { status: 200, statusText: 'OK', body: run };
     }
-    if (request.path.includes('/items?') && !request.path.includes('&view=')) return historyUnavailable ? failure : { status: 200, statusText: 'OK', body: historicalConversationPage(conversationCardId(request.path), [{
-      id: 1, worker_session_id: 'runtime', card_id: 'daily-planner', track_id: 'daily', thread_id: 'thread',
-      turn_id: null, turn_error_text: null, item_uuid: null, item_type: 'agentMessage', method: 'item/completed',
-      params: JSON.stringify({ item: { text: 'Retained reply.' } }), created_at_ms: 1,
-    }], null) };
+    if (request.path.includes('/items?') && !request.path.includes('&view=')) return historyUnavailable ? failure : { status: 200, statusText: 'OK', body: sessionPage(session, [{ id: 1, sessionId: session.id, turnId: 'turn', kind: 'assistant_text', payload: { text: 'Retained reply.' }, createdAtMs: 1 }]) };
     return undefined;
   } });
   return { ...fixture, pauseRun: () => {

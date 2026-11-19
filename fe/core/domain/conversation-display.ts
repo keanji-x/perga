@@ -12,7 +12,7 @@ import {
 } from '../api/schemas.js';
 import type { ConversationTerminalOutcome, ConversationCursor, ConversationDisplayItem, ConversationPage, ConversationPendingInput, ConversationActiveInput, ConversationSubmissionDelivery, HarnessItem as TranscriptRow } from '../api/generated/wire.js';
 import { plannerPermissionModeSchema } from './planner-permission-mode.js';
-import { messageStatusSchema, SYSTEM_PRESENTATION_LABELS, systemInputPresentationSchema, buildTranscript, retireFollowedThoughts, harnessTimeoutEvidenceSchema, harnessItemSchema as transcriptRowSchema, HARNESS_ITEMS_PAGE_LIMIT as TRANSCRIPT_PAGE_LIMIT, legacyPlannerRunSchema, type PlannerRun, type TranscriptEntry } from './conversation.js';
+import { messageStatusSchema, SYSTEM_PRESENTATION_LABELS, systemInputPresentationSchema, buildTranscript, retireFollowedThoughts, harnessTimeoutEvidenceSchema, harnessItemSchema as transcriptRowSchema, HARNESS_ITEMS_PAGE_LIMIT as TRANSCRIPT_PAGE_LIMIT, type PlannerRun, type TranscriptEntry } from './conversation.js';
 
 /** Native acknowledgement can arrive at END. Defer intervention for the exact
  * tracked execution without changing its delivery fact; other held inputs remain visible. */
@@ -328,21 +328,7 @@ export function conversationItemsOperation(card: string, cursor: ConversationCur
   return {
     method: 'GET',
     path: `/api/v1/sessions/${encodeURIComponent(card)}/items?afterId=0&limit=500&latest=true${cursorSuffix}`,
-    responseSchema: z.union([
-      sessionItemsPageDtoSchema.transform((page) => sessionItemsPageDtoToConversationPage(card, page, cursor)),
-      conversationPageSchema.refine(page => page.items.every(item => item.cursor.card_id === card
-        && item.cursor.source === page.source
-        && (item.source.kind !== 'imported_item' || (item.source.provenance.card_id === card
-          && item.source.item.card_id === card && item.source.provenance.original_row_id === item.source.item.id
-          && item.cursor.position > item.source.provenance.import_boundary_sequence))
-        && (item.source.kind !== 'removed' || item.source.identity.kind !== 'imported'
-          || (item.source.identity.provenance.card_id === card
-            && item.cursor.position > item.source.identity.provenance.import_boundary_sequence))
-        && (page.source === 'historical_raw'
-          ? item.source.kind === 'historical_raw' : item.source.kind !== 'historical_raw'))
-        && (page.next_cursor === null || (page.next_cursor.card_id === card && page.next_cursor.source === page.source)),
-        'Conversation cursor/source scope mismatch'),
-    ]),
+    responseSchema: sessionItemsPageDtoSchema.transform(page => sessionItemsPageDtoToConversationPage(card, page, cursor)),
   };
 }
 
@@ -458,58 +444,51 @@ export function conversationRunOperation(card: string): ApiOperation<PlannerRun 
   return {
     method: 'GET',
     path: `/api/v1/sessions/${encodeURIComponent(card)}/items?afterId=0&limit=1&view=run`,
-    responseSchema: z.union([
-      sessionItemsPageDtoSchema.transform((page): PlannerRun & z.infer<typeof conversationRunMetadataSchema> => {
-        const running = page.activeTurn !== null && page.activeTurn !== undefined && page.activeTurn.status === 'running';
-        const ratio = Math.max(0, Math.min(1, page.session.contextUsageRatio));
-        return {
-          card_id: card,
-          worker_session_id: page.session.id,
-          phase: page.worker?.phase === 'interrupting' ? 'issuing_interrupt' : running ? 'turn_running' : page.session.status === 'queued' ? 'issuing_turn' : 'idle',
-          worker: page.worker,
-          pending: page.queuedMessages?.map(message => ({
-            entry_id: message.id, text: message.text, rev: 1, queued_at_ms: message.queuedAtMs, state: message.state,
-          })) ?? [],
-          pending_overflow: 0,
-          ...(page.queueHandoffIds === undefined ? {} : { queue_handoff_ids: page.queueHandoffIds }),
-          ...(page.canSteer === undefined ? {} : { can_steer_queued: page.canSteer }),
-          model: page.session.model ?? null,
-          reasoning_effort: null,
-          permission_mode: page.session.permissionMode ?? null,
-          blocked_reason: page.session.status === 'unknown' ? 'The previous message has an unknown outcome.' : null,
-          recovery: null,
-          attachments_supported: false,
-          manual_compact_supported: page.worker == null,
-          compact_outcome: null,
-          context_usage_invalidated: false,
-          token_usage: ratio > 0
-            ? {
-              used_tokens: Math.round(ratio * 200_000),
-              context_window: 200_000,
-              percent: Math.round(ratio * 100),
-              at_ms: page.session.updatedAtMs,
-            }
-            : null,
-          running_turn: running && page.activeTurn !== null && page.activeTurn !== undefined
-            ? { turn_id: page.activeTurn.id, elapsed_ms: Math.max(0, Date.now() - (page.activeTurn.startedAtMs ?? Date.now())) }
-            : null,
-          unknown_session_input: page.unknownInput,
-          ...(page.resume == null ? {} : { provider_resume: page.resume }),
-          input_contract: 'canonical',
-          runtime_state: running ? 'running' : 'idle',
-          history_replacement_supported: false,
-          terminal_timeout: null,
-          terminal_outcome: null,
-          pending_inputs: [],
-          active_input: null,
-          native_turn_id: running && page.activeTurn !== null && page.activeTurn !== undefined ? page.activeTurn.id : null,
-        };
-      }),
-      legacyPlannerRunSchema.and(conversationRunMetadataSchema).refine(run => run.terminal_outcome === null
-        || (run.input_contract === 'canonical' && run.card_id === card && run.terminal_outcome.card_id === card
-          && run.terminal_outcome.worker_session_id === run.worker_session_id
-          && (run.native_turn_id === null || run.native_turn_id === run.terminal_outcome.turn_id)),
-        'Current terminal outcome scope mismatch'),
-    ]),
+    responseSchema: sessionItemsPageDtoSchema.transform((page): PlannerRun & z.infer<typeof conversationRunMetadataSchema> => {
+      const running = page.activeTurn !== null && page.activeTurn !== undefined && page.activeTurn.status === 'running';
+      const ratio = Math.max(0, Math.min(1, page.session.contextUsageRatio));
+      return {
+        card_id: card,
+        worker_session_id: page.session.id,
+        phase: page.worker?.phase === 'interrupting' ? 'issuing_interrupt' : running ? 'turn_running' : page.session.status === 'queued' ? 'issuing_turn' : 'idle',
+        worker: page.worker,
+        pending: page.queuedMessages?.map(message => ({
+          entry_id: message.id, text: message.text, rev: 1, queued_at_ms: message.queuedAtMs, state: message.state,
+        })) ?? [],
+        pending_overflow: 0,
+        ...(page.queueHandoffIds === undefined ? {} : { queue_handoff_ids: page.queueHandoffIds }),
+        ...(page.canSteer === undefined ? {} : { can_steer_queued: page.canSteer }),
+        model: page.session.model ?? null,
+        reasoning_effort: null,
+        permission_mode: page.session.permissionMode ?? null,
+        blocked_reason: page.session.status === 'unknown' ? 'The previous message has an unknown outcome.' : null,
+        recovery: null,
+        attachments_supported: false,
+        manual_compact_supported: page.worker == null,
+        compact_outcome: null,
+        context_usage_invalidated: false,
+        token_usage: ratio > 0
+          ? {
+            used_tokens: Math.round(ratio * 200_000),
+            context_window: 200_000,
+            percent: Math.round(ratio * 100),
+            at_ms: page.session.updatedAtMs,
+          }
+          : null,
+        running_turn: running && page.activeTurn !== null && page.activeTurn !== undefined
+          ? { turn_id: page.activeTurn.id, elapsed_ms: Math.max(0, Date.now() - (page.activeTurn.startedAtMs ?? Date.now())) }
+          : null,
+        unknown_session_input: page.unknownInput,
+        ...(page.resume == null ? {} : { provider_resume: page.resume }),
+        input_contract: 'canonical',
+        runtime_state: running ? 'running' : 'idle',
+        history_replacement_supported: false,
+        terminal_timeout: null,
+        terminal_outcome: null,
+        pending_inputs: [],
+        active_input: null,
+        native_turn_id: running && page.activeTurn !== null && page.activeTurn !== undefined ? page.activeTurn.id : null,
+      };
+    }),
   };
 }

@@ -38,9 +38,6 @@ export type ConversationStore = Readonly<{
   sendBlocked: boolean;
   /** Existing outbox reconciliation gate, with read errors left to their explicit retry surface. */
   awaitingConversationUpdate: boolean;
-  initialInputChecking: boolean;
-  initialInputError: string | null;
-  retryInitialInput: () => void;
   /** The addressable page of the harness pending queue. */
   pendingQueue: readonly PendingQueueEntry[];
   /** Canonical pending facts in queue order; bodies belong only to the display page, with no V1 CAS address. */
@@ -149,14 +146,12 @@ export type PlannerConversationScope = Readonly<{
   cardTitle: string | null;
   updatedAt: number;
   kind?: ConversationKind;
+  isLead?: boolean;
   state?: ConversationState | null;
 }>;
 
-/** First-message creation, its deterministic identity and its recovery read. */
+/** First-message creation and authoritative session/input receipt replay. */
 export type ConversationCreationSource = Readonly<{
-  derivedCardId: (idempotencyKey: string) => string;
   create: (text: string, idempotencyKey: string, provider: AgentProvider, selection: ModelSelection, side: SideConversation | undefined,
     answered: (result: CreatedConversation) => void, permissionMode?: string | null) => Promise<CreatedConversation>;
-  inspect: (cardId: string, idempotencyKey: string) => Promise<import('../../../../core/api/generated/wire.ts').ConversationInitialInputObservation>;
-  refresh: (beforePublish: (rows: readonly Conversation[]) => void) => Promise<readonly Conversation[]>;
 }>;

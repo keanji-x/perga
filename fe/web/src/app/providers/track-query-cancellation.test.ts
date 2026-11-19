@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import {
-  areaListQueryOptions, tracksInAreaQueryOptions, plannerRunQueryOptions, trackBacklinksQueryOptions, trackConversationsQueryOptions,
+  areaListQueryOptions, tracksInAreaQueryOptions, plannerRunQueryOptions, trackBacklinksQueryOptions,
   trackDetailQueryOptions, trackTaskVerdictsQueryOptions,
 } from './queries.ts';
 import { retireAreaQueries } from './area-query-lifecycle.ts';
@@ -12,7 +12,7 @@ import { createFetchTransport } from './transport.ts';
 afterEach(() => { vi.unstubAllGlobals(); });
 
 describe('track query HTTP cancellation', () => {
-  it.each(['areas', 'tracks', 'detail', 'conversations', 'backlinks', 'tasks', 'planner'] as const)(
+  it.each(['areas', 'tracks', 'detail', 'backlinks', 'tasks', 'planner'] as const)(
     'aborts the obsolete %s HTTP request before starting its replacement', async (kind) => {
       const signals: AbortSignal[] = [];
       vi.stubGlobal('fetch', (_path: string, init: RequestInit) => {
@@ -28,7 +28,6 @@ describe('track query HTTP cancellation', () => {
       const options = kind === 'areas' ? areaListQueryOptions(transport, unauthorized)
         : kind === 'tracks' ? tracksInAreaQueryOptions(transport, 'a1', unauthorized)
         : kind === 'detail' ? trackDetailQueryOptions(transport, 't1', unauthorized)
-        : kind === 'conversations' ? trackConversationsQueryOptions(transport, 't1', unauthorized)
           : kind === 'backlinks' ? trackBacklinksQueryOptions(transport, 't1', unauthorized)
             : kind === 'tasks' ? trackTaskVerdictsQueryOptions(transport, 't1', unauthorized, null)
               : plannerRunQueryOptions(transport, 'c1', unauthorized);

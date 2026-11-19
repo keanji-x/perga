@@ -27,7 +27,7 @@ it('keeps execution details and related entries in one card with single-line row
     tasks: [task('Review layout', 'running', 'worker'), task('Finished review', 'done', null)],
     onOpenTask: openTask, onOpenCard: openCard, onDeleteCard: deleteCard,
     conversationList: <ChatList context cards={{}} showTrack={false} onOpen={openChat} conversations={[
-      { id: 'planner', provider: 'codex', trackId: 'w1', title: 'Planner', kind: 'track-assistant', state: 'idle', updatedAt: 1 },
+      { id: 'planner', provider: 'codex', trackId: 'w1', title: 'Planner', isLead: false, kind: 'agent', state: 'idle', updatedAt: 1 },
     ]} />,
     recentFiles: <RecentFiles inline paths={['docs/notes.md']} onOpen={openFile} />,
     backlinks: <ReportBacklinks inline trackId="w1" onOpen={openSource} backlinks={{
@@ -139,7 +139,7 @@ it('uses the existing unknown-kind fallback and preserves selection while focusi
   await page.viewport(1400, 900);
   renderPage({ cards: [card({ id: 'plugin', kind: 'future-tool', title: 'Custom tool' })],
     conversationContextList: <ChatList context cards={{}} showTrack={false} activeId="planner" onOpen={vi.fn()} conversations={[
-      { id: 'planner', provider: 'codex', trackId: 'w1', title: 'Planner', kind: 'track-assistant', state: 'idle', updatedAt: 1 },
+      { id: 'planner', provider: 'codex', trackId: 'w1', title: 'Planner', isLead: false, kind: 'agent', state: 'idle', updatedAt: 1 },
     ]} />,
   });
   expect(document.querySelector('[data-nc-row="tool:plugin"] svg')!.classList.contains('lucide-file')).toBe(true);
@@ -161,7 +161,7 @@ it('pins conversations first with a persistent creation action and does not repe
   renderPage({ onStartConversation: create,
     tasks: [task('Review result', 'needs_input', null)],
     conversationContextList: <ChatList context cards={{ planner: 'input' }} showTrack={false} onOpen={vi.fn()} conversations={[
-      { id: 'planner', provider: 'codex', trackId: 'w1', title: 'Planner', kind: 'track-assistant', state: 'running', updatedAt: 1 },
+      { id: 'planner', provider: 'codex', trackId: 'w1', title: 'Planner', isLead: false, kind: 'agent', state: 'running', updatedAt: 1 },
     ]} />,
   });
   const root = document.querySelector<HTMLElement>('[data-nc-desktop-panel]')!;
@@ -262,7 +262,7 @@ it('keeps Planner-managed execution folded without presenting worker failure as 
     cards: [card({ id: 'worker', title: 'Layout worker', runtime: { worker_session_id: 'session', kind: 'terminal', status: 'failed' } })],
     track: track({ cards: { worker: 'failed' } }),
     conversationContextList: <ChatList context cards={{}} showTrack={false} onOpen={vi.fn()} conversations={[
-      { id: 'planner', provider: 'codex', trackId: 'w1', title: 'Planner', kind: 'track-assistant', state: 'idle', updatedAt: 1 },
+      { id: 'planner', provider: 'codex', trackId: 'w1', title: 'Planner', isLead: false, kind: 'agent', state: 'idle', updatedAt: 1 },
     ]} />,
   });
   const root = document.querySelector<HTMLElement>('[data-nc-desktop-panel]')!;
@@ -308,7 +308,7 @@ it('bounds long conversation and progress lists independently while retaining he
     tasks: Array.from({ length: 30 }, (_, index) => task(`Work ${index}`, 'running', `worker-${index}`)),
     conversationContextList: <ChatList context cards={{}} showTrack={false} onOpen={openChat} conversations={
       Array.from({ length: 30 }, (_, index) => ({ id: `chat-${index}`, provider: 'codex' as const, trackId: 'w1',
-        title: `Discussion ${index}`, kind: 'track-assistant' as const, state: 'idle' as const, updatedAt: index }))
+        title: `Discussion ${index}`, isLead: false, kind: 'agent' as const, state: 'idle' as const, updatedAt: index }))
     } />,
   });
   const root = document.querySelector<HTMLElement>('[data-nc-desktop-panel]')!;
@@ -380,7 +380,7 @@ it('right-aligns text states and centers conversation indicators on the same sys
     conversationContextList: <ChatList context showTrack={false} onOpen={vi.fn()}
       cards={{ running: 'working' }} unreadIds={new Set(['unread'])} awaitingInputIds={new Set(['question'])}
       conversations={['running', 'unread', 'question', 'quiet'].map(id => ({ id, provider: 'codex', trackId: 'w1', title: id,
-        kind: 'track-assistant', state: 'running', updatedAt: 1 }))} />,
+        isLead: false, kind: 'agent', state: 'running', updatedAt: 1 }))} />,
   });
   const root = document.querySelector<HTMLElement>('[data-nc-desktop-panel]')!;
   const plus = page.getByRole('button', { name: 'New conversation', exact: true }).element();

@@ -5,6 +5,7 @@ import {
   bootstrapDtoSchema,
   decodePergaEventEnvelope,
   trackAggregateSnapshotDtoSchema,
+  agentSessionDtoSchema,
 } from './perga-v1.js';
 import { decodeWireEvent } from './schemas.js';
 import { decodeEventFrame } from '../events/protocol.js';
@@ -25,9 +26,9 @@ import {
   interruptPlannerOperation,
   modelCatalogOperation,
   setPlannerModelOperation,
-  sendPlannerInputOperation,
   setConversationArchiveOperation,
-  trackConversationsOperation,
+  sendPlannerInputOperation,
+  agentSessionDtoToConversation,
 } from '../domain/conversation.js';
 import { buildConversationTranscript, conversationItemsOperation, conversationRunOperation } from '../domain/conversation-display.js';
 import { matchSendOps, type SendOp } from '../domain/conversation-outbox.js';
@@ -39,9 +40,10 @@ import {
   trackWorkspaceRawFileUrl,
 } from '../domain/fs.js';
 import { selectedReadyTemplateId } from '../domain/mentions.js';
+import { trackDtoToWire, snapshotActivityOverlays } from '../domain/track.js';
 import { plannerSwitchOperation } from '../domain/planner-switch.js';
 import {
-  readTrackReport,
+  readReportDocument,
   readTrackReportOperation,
   trackTaskVerdictsOperation,
   updateTrackReportBlockOperation,
@@ -358,37 +360,29 @@ describe('Perga /api/v1 protocol contracts', () => {
     const detailOp = trackDetailOperation('trk_1');
     expect(detailOp.path).toBe('/api/v1/tracks/trk_1');
     const detail = detailOp.responseSchema.parse(snapshotRaw);
-    expect(detail.track.workspace).toEqual({
+    expect(trackDtoToWire(detail.track).workspace).toEqual({
       isolation: 'worktree',
       kind: 'attached',
       path: '/repo',
       frozen_at: null,
       worktree: '/repo/.worktrees/trk_1',
     });
-    expect(detail.cards.map((c) => c.kind)).toEqual(['track-report', 'codex', 'file-viewer']);
-    expect(detail.cards[1]?.payload).toMatchObject({ planner_harness: true, planner_provider: 'codex', is_lead: true });
-    expect(detail.cards[2]?.id).toBe('files-trk_1');
+    expect(detail.report.docRev).toBe(4);
+    expect(detail.report.blocks.map(block => [block.id, block.rev])).toEqual([['b_prose1', 2], ['b_task1', 1]]);
+    expect(detail.report.blocks.map(block => block.kind)).toEqual(['prose', 'task']);
+    const acpDetail = detailOp.responseSchema.parse({ ...snapshotRaw,
+      sessions: [{ ...snapshotRaw.sessions[0], provider: 'acp:antigravity' }] });
+    expect(agentSessionDtoToConversation(acpDetail.sessions[0]))
+      .toMatchObject({ kind: 'agent', isLead: true, provider: 'antigravity' });
 
-    const acpSnapshot = {
-      ...snapshotRaw,
-      sessions: [{ ...snapshotRaw.sessions[0], provider: 'acp:antigravity' }],
-    };
-    const acpDetail = detailOp.responseSchema.parse(acpSnapshot);
-    expect(acpDetail.cards[1]?.payload).toMatchObject({ planner_provider: 'antigravity' });
-
-    const report = readTrackReport(detail.cards);
-    expect(report?.docRev).toBe(4);
-    expect(report?.blockRevs).toEqual({ b_prose1: 2, b_task1: 1 });
-    expect(report?.blocks?.map((b) => b.kind)).toEqual(['prose', 'task']);
-
-    const activity = trackActivitiesFrom(detail.overlays).get('trk_1');
+    const activity = trackActivitiesFrom(snapshotActivityOverlays(detail)).get('trk_1');
     expect(activity?.working).toBe(true);
     expect(activity?.attention).toBe('input');
     const asks = openAsksOf(activity?.attentionItems ?? []);
     expect(asks[0]).toMatchObject({ askId: 'ask_abc123', delivery: 'wake' });
     const holdAsk = { ...snapshotRaw.openAsks[0], delivery: 'hold', sessionId: 'lead_1', turnId: 'turn_1' };
     const heldDetail = detailOp.responseSchema.parse({ ...snapshotRaw, openAsks: [holdAsk] });
-    const heldActivity = trackActivitiesFrom(heldDetail.overlays).get('trk_1');
+    const heldActivity = trackActivitiesFrom(snapshotActivityOverlays(heldDetail)).get('trk_1');
     expect(openAsksOf(heldActivity?.attentionItems ?? [])[0]).toMatchObject({ askId: 'ask_abc123', delivery: 'hold' });
     const holdEvent = { eventId: 44, kind: 'ask.changed', areaId: 'area_1', trackId: 'trk_1', payload: holdAsk, createdAtMs: 2300 };
     expect(decodeWireEvent(holdEvent)).toMatchObject({ status: 'ready', value: {
@@ -438,11 +432,7 @@ describe('Perga /api/v1 protocol contracts', () => {
     expect(updateTrackOperation('trk_1', { closed: true }).path).toBe('/api/v1/tracks/trk_1');
     expect(deleteTrackOperation('trk_1').path).toBe('/api/v1/tracks/trk_1');
 
-    const switchOp = plannerSwitchOperation('trk_1', {
-      target_assistant_card_id: 'ses_sub1',
-      expected_planner_card_id: 'ses_lead',
-      expected_revision: 4,
-    });
+    const switchOp = plannerSwitchOperation('trk_1', 'ses_sub1');
     expect(switchOp).toMatchObject({
       method: 'PATCH',
       path: '/api/v1/tracks/trk_1',
@@ -527,11 +517,10 @@ describe('Perga /api/v1 protocol contracts', () => {
     expect(run.token_usage?.percent).toBe(65);
     expect(run.manual_compact_supported).toBe(true);
 
-    expect(trackConversationsOperation('trk_1').path).toBe('/api/v1/tracks/trk_1/sessions');
-    const acpConversations = trackConversationsOperation('trk_1').responseSchema.parse([
+    const acpConversations = [
       { ...pageDto.session, id: 'ses_acp1', isLead: false, provider: 'acp:opencode', title: 'ACP Assistant' },
       { ...pageDto.session, id: 'ses_acp2', isLead: false, provider: 'acp:antigravity', title: 'AGY Assistant' },
-    ]);
+    ].map(session => agentSessionDtoToConversation(agentSessionDtoSchema.parse(session)));
     expect(acpConversations.map((c) => c.provider)).toEqual(['opencode', 'antigravity']);
 
     const createClaudeConv = createTrackConversationOperation('trk_1', 'Investigate bug', 'idem-s1', 'claude', { model: null, reasoning_effort: null });
@@ -876,17 +865,7 @@ describe('Perga /api/v1 protocol contracts', () => {
       tasks: [],
       diagnostics: [],
     });
-    const parsedAgyReport = readTrackReport([{
-      id: 'report-trk_1',
-      track_id: 'trk_1',
-      kind: 'track-report',
-      title: 'Report',
-      sort: 0,
-      deletable: false,
-      created_at: 1,
-      updated_at: 1,
-      payload: { rev: agyReport.docRev, body: '', blocks: agyReport.blocks },
-    }]);
+    const parsedAgyReport = readReportDocument({ ...agyReport, leadingComment: '' });
     expect(parsedAgyReport?.blocks).toMatchObject([
       { id: 'b_agy', kind: 'task', payload: { key: 'audit-agy', kind: 'antigravity', goal: 'Run ACP verification', depends_on: ['prep'], ready: true } },
       { id: 'b_oc', kind: 'task', payload: { key: 'audit-oc', kind: 'opencode', goal: 'Inspect workspace', ready: false } },

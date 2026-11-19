@@ -1,3 +1,4 @@
+import { fixtureTrack, fixtureSession, fixtureSnapshot } from './session-contract-fixture.ts';
 import '../../styles/entry.css';
 import { cleanup } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -44,49 +45,43 @@ it('closes history before opening a new conversation and Settings', async () => 
 
 it('reads only current Track conversations and excludes sibling and other workspace histories', async () => {
   await page.viewport(390, 844);
-  const track = { workspace: { isolation: 'none' as const, kind: 'attached' as const, path: '/tmp', frozen_at: null }, id: 'project', area_id: 'project-area', title: 'Project evidence', sort: 0, cwd: '/tmp',
-    pinned_at: null, closed_at: null, created_at: 1, updated_at: 2 };
+  const track = fixtureTrack('project', { areaId: 'project-area', title: 'Project evidence' });
   const sibling = { ...track, id: 'sibling', title: 'Sibling report' };
-  const foreign = { ...track, id: 'foreign', area_id: 'other-area', title: 'Other report' };
+  const foreign = { ...track, id: 'foreign', areaId: 'other-area', title: 'Other report' };
   const { requests } = renderDailyFixture({ initial: '/track/project', reply: (request) => {
-    if (request.path === '/api/areas') return ok([
-      { id: 'project-area', name: 'Project', kind: 'user', color: '#6574cd', sort: 0, created_at: 1, updated_at: 1 },
-      { id: 'other-area', name: 'Other', kind: 'user', color: '#6574cd', sort: 1, created_at: 1, updated_at: 1 },
+    if (request.path === '/api/v1/areas') return ok([
+      { id: 'project-area', name: 'Project', kind: 'user', color: '#6574cd', sortOrder: 0, createdAtMs: 1, updatedAtMs: 1 },
+      { id: 'other-area', name: 'Other', kind: 'user', color: '#6574cd', sortOrder: 1, createdAtMs: 1, updatedAtMs: 1 },
     ]);
-    if (request.path === '/api/areas/project-area/tracks') return ok([track, sibling]);
-    if (request.path === '/api/areas/other-area/tracks') return ok([foreign]);
-    if (request.path === '/api/tracks/sibling') return ok({ track: sibling, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true, cards: [], overlays: [] });
-    if (request.path === '/api/tracks/project/conversations') return ok([
-      { id: 'first-chat', trackId: 'project', title: 'Older chat', kind: 'track-assistant', provider: 'codex', state: null, updatedAt: 10, archivedAt: null, lastTurnCompletedAt: null },
-    ]);
-    if (request.path === '/api/tracks/sibling/conversations') return ok([
-      { id: 'second-chat', trackId: 'sibling', title: 'Newest chat', kind: 'track-assistant', provider: 'codex', state: null, updatedAt: 20, archivedAt: null, lastTurnCompletedAt: null },
+    if (request.path === '/api/v1/areas/project-area/tracks?includeClosed=true') return ok([track, sibling]);
+    if (request.path === '/api/v1/areas/other-area/tracks?includeClosed=true') return ok([foreign]);
+    if (request.path === '/api/v1/tracks/sibling') return ok(fixtureSnapshot(sibling));
+    if (request.path === '/api/v1/tracks/project') return ok(fixtureSnapshot(track, [fixtureSession('first-chat', 'project', { title: 'Older chat' })]));
+    if (request.path === '/api/v1/tracks/sibling/sessions') return ok([
+      fixtureSession('second-chat', 'sibling', { title: 'Newest chat' }),
     ]);
     return undefined;
   } });
   await page.getByRole('textbox', { name: 'Chat message', exact: true }).findElement();
-  await expect.poll(() => requests.some((request) => request.path === '/api/areas/project-area/tracks')).toBe(true);
+  await expect.poll(() => requests.some((request) => request.path === '/api/v1/areas/project-area/tracks?includeClosed=true')).toBe(true);
   await page.getByRole('button', { name: 'Open conversation history', exact: true }).click();
   await expect.element(page.getByRole('button', { name: 'Older chat Project evidence', exact: true })).toBeVisible();
   expect(page.getByRole('button', { name: 'Newest chat Sibling report', exact: true }).query()).toBeNull();
-  expect(requests.some((request) => request.path === '/api/tracks/sibling/conversations')).toBe(false);
-  expect(requests.some((request) => request.path === '/api/tracks/foreign/conversations')).toBe(false);
-  expect(requests.some((request) => request.path === '/api/tracks/foreign')).toBe(false);
+  expect(requests.some((request) => request.path === '/api/v1/tracks/sibling/sessions')).toBe(false);
+  expect(requests.some((request) => request.path === '/api/v1/tracks/foreign/sessions')).toBe(false);
+  expect(requests.some((request) => request.path === '/api/v1/tracks/foreign')).toBe(false);
 
 });
 
-it('keeps history failures distinct from an empty workspace and can retry', async () => {
+it('shows the v1 aggregate read failure and retries the current Track', async () => {
   await page.viewport(390, 844);
   let fail = true;
-  renderDailyFixture({ emptyWorkspace: true, reply: (request) => request.path === '/api/tracks/daily/conversations' && fail
-    ? { status: 500, statusText: 'Error', body: { error: 'unavailable' } } : undefined });
-  await page.getByRole('textbox', { name: 'Chat message', exact: true }).findElement();
-  await page.getByRole('button', { name: 'Open conversation history', exact: true }).click();
+  renderDailyFixture({ initial: '/track/project', reply: request => request.path === '/api/v1/tracks/project' && fail
+    ? { status: 500, statusText: 'Error', body: { error: 'History unavailable' } } : undefined });
   await expect.element(page.getByRole('alert')).toBeVisible();
-  expect(page.getByText('当前 Track 还没有对话。', { exact: true }).query()).toBeNull();
   fail = false;
-  await page.getByRole('button', { name: '重试', exact: true }).click();
-  await expect.poll(() => page.getByRole('alert').query()).toBeNull();
+  await page.getByRole('button', { name: /Retry|重试/ }).click();
+  await expect.element(page.getByRole('textbox', { name: 'Chat message', exact: true })).toBeVisible();
 });
 
 
@@ -102,7 +97,7 @@ it('keeps the closed report composer stable while its conversation is read', asy
     let commits = 0;
     const { requests } = renderDailyFixture({ emptyWorkspace: true, onCommit: () => { commits += 1; } });
     await page.getByRole('textbox', { name: 'Chat message', exact: true }).findElement();
-    await expect.poll(() => requests.some((request) => request.path.includes('/planner/run?contract=conversation_v1'))).toBe(true);
+    await expect.poll(() => requests.some((request) => request.path.includes('/items?afterId=0&limit=1&view=run'))).toBe(true);
     page.getByRole('textbox', { name: 'Chat message', exact: true }).element().focus();
     await page.getByRole('button', { name: 'Close conversation', exact: true }).click();
     await page.getByRole('textbox', { name: 'Chat message', exact: true }).findElement();
@@ -118,28 +113,26 @@ it('keeps the closed report composer stable while its conversation is read', asy
 it.each([320, 390])('switches four sidebar views using current history and real workspace groups at %ipx', async (width) => {
   await page.viewport(width, 844);
   const receipts = createReadReceiptsKernel({ receipts: [{ kind: 'track', targetId: 'unread', readThroughMs: 0, manualUnread: true }] });
-  const current = { workspace: { isolation: 'none' as const, kind: 'attached' as const, path: '/tmp', frozen_at: null }, id: 'project', area_id: 'project-area', title: 'Project evidence', sort: 0, cwd: '/tmp', pinned_at: null, closed_at: null, created_at: 1, updated_at: 2 };
-  const pinned = { ...current, id: 'pinned', area_id: 'other-area', title: 'Pinned report', pinned_at: 20 };
-  const unread = { ...current, id: 'unread', area_id: 'other-area', title: 'Unread report' };
-  const failed = { ...current, id: 'failed', area_id: 'other-area', title: 'Failed report' };
+  const current = fixtureTrack('project', { areaId: 'project-area', title: 'Project evidence' });
+  const pinned = { ...current, id: 'pinned', areaId: 'other-area', title: 'Pinned report', pinnedAtMs: 20 };
+  const unread = { ...current, id: 'unread', areaId: 'other-area', title: 'Unread report' };
+  const failed = { ...current, id: 'failed', areaId: 'other-area', title: 'Failed report' };
   const working = { ...current, id: 'working', title: 'Working report' };
-  const overlays = [
-    { id: 'input', plugin_id: 'kernel', entity_kind: 'track', entity_id: current.id, kind: 'activity', payload: { schemaVersion: 4, working: false, attention: 'input', activity_at_ms: null, items: [], cards: [] }, updated_at: 3 },
-    { id: 'failure', plugin_id: 'kernel', entity_kind: 'track', entity_id: failed.id, kind: 'activity', payload: { schemaVersion: 4, working: false, attention: 'failed', activity_at_ms: null, items: [], cards: [] }, updated_at: 3 },
-    { id: 'running', plugin_id: 'kernel', entity_kind: 'track', entity_id: working.id, kind: 'activity', payload: { schemaVersion: 4, working: true, attention: 'none', activity_at_ms: null, items: [], cards: [] }, updated_at: 3 },
-  ];
+  const overlays = { tracks: [
+    { trackId: current.id, areaId: current.areaId, isWorking: false, openAskCount: 1, hasFailedTask: false, unreadMailCount: 0, updatedAtMs: 3 },
+    { trackId: failed.id, areaId: failed.areaId, isWorking: false, openAskCount: 0, hasFailedTask: true, unreadMailCount: 0, updatedAtMs: 3 },
+    { trackId: working.id, areaId: working.areaId, isWorking: true, openAskCount: 0, hasFailedTask: false, unreadMailCount: 0, updatedAtMs: 3 },
+  ] };
   const { router, requests } = renderDailyFixture({ initial: '/track/project', receipts, reply: (request) => {
-    if (request.path === '/api/areas') return ok([
-      { id: 'project-area', name: 'Project', kind: 'user', color: '#6574cd', sort: 0, created_at: 1, updated_at: 1 },
-      { id: 'other-area', name: 'Other', kind: 'user', color: '#6574cd', sort: 1, created_at: 1, updated_at: 1 },
+    if (request.path === '/api/v1/areas') return ok([
+      { id: 'project-area', name: 'Project', kind: 'user', color: '#6574cd', sortOrder: 0, createdAtMs: 1, updatedAtMs: 1 },
+      { id: 'other-area', name: 'Other', kind: 'user', color: '#6574cd', sortOrder: 1, createdAtMs: 1, updatedAtMs: 1 },
     ]);
-    if (request.path === '/api/areas/project-area/tracks') return ok([current, working]);
-    if (request.path === '/api/areas/other-area/tracks') return ok([pinned, unread, failed]);
-    if (request.path.startsWith('/api/overlays?')) return ok(overlays);
-    if (request.path === '/api/tracks/project/conversations') return ok([
-      { id: 'current-chat', trackId: 'project', title: 'Current history', kind: 'track-assistant', provider: 'codex', state: null, updatedAt: 10, archivedAt: null, lastTurnCompletedAt: null },
-    ]);
-    if (request.path === '/api/tracks/pinned') return ok({ track: pinned, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true, cards: [], overlays: [] });
+    if (request.path === '/api/v1/areas/project-area/tracks?includeClosed=true') return ok([current, working]);
+    if (request.path === '/api/v1/areas/other-area/tracks?includeClosed=true') return ok([pinned, unread, failed]);
+    if (request.path.startsWith('/api/v1/overlays?')) return ok(overlays);
+    if (request.path === '/api/v1/tracks/project') return ok(fixtureSnapshot(current, [fixtureSession('current-chat', 'project', { title: 'Current history' })]));
+    if (request.path === '/api/v1/tracks/pinned') return ok(fixtureSnapshot(pinned));
     return undefined;
   } });
   await page.getByRole('button', { name: 'Open conversation history', exact: true }).click();
@@ -156,7 +149,7 @@ it.each([320, 390])('switches four sidebar views using current history and real 
   await expect.element(page.getByRole('button', { name: 'Failed report, needs attention', exact: true })).toBeVisible();
   expect(page.getByRole('button', { name: 'Working report, working', exact: true }).query()).toBeNull();
   expect(page.getByRole('button', { name: 'Unread report', exact: true }).query()).toBeNull();
-  expect(requests.some((request) => request.path === '/api/tracks/unread/conversations')).toBe(false);
+  expect(requests.some((request) => request.path === '/api/v1/tracks/unread/sessions')).toBe(false);
   await page.getByRole('button', { name: '已置顶', exact: true }).click();
   await page.getByRole('button', { name: 'Pinned report', exact: true }).click();
   await expect.poll(() => router.state.location.pathname).toBe('/track/pinned');
@@ -168,8 +161,8 @@ it.each([320, 390])('switches four sidebar views using current history and real 
 
 it('opens a pinned current report by closing its existing chat without sending its draft', async () => {
   await page.viewport(390, 844);
-  const track = { workspace: { isolation: 'none' as const, kind: 'attached' as const, path: '/tmp', frozen_at: null }, id: 'project', area_id: 'project-area', title: 'Project evidence', sort: 0, cwd: '/tmp', pinned_at: 20, closed_at: null, created_at: 1, updated_at: 2 };
-  const { requests } = renderDailyFixture({ initial: '/track/project', reply: request => request.path === '/api/areas/project-area/tracks' ? ok([track]) : undefined });
+  const track = fixtureTrack('project', { areaId: 'project-area', title: 'Project evidence', pinnedAtMs: 20 });
+  const { requests } = renderDailyFixture({ initial: '/track/project', reply: request => request.path === '/api/v1/areas/project-area/tracks?includeClosed=true' ? ok([track]) : undefined });
   await page.getByRole('textbox', { name: 'Chat message', exact: true }).click();
   await page.getByRole('combobox', { name: 'Message', exact: true }).fill('Keep this draft');
   await page.getByRole('button', { name: 'Open conversation history', exact: true }).click();
@@ -184,7 +177,7 @@ it('opens a pinned current report by closing its existing chat without sending i
 it('keeps activity read failures distinct from an empty unhandled list and can retry', async () => {
   await page.viewport(390, 844);
   let failed = true;
-  renderDailyFixture({ reply: request => request.path.startsWith('/api/overlays?') && failed
+  renderDailyFixture({ reply: request => request.path.startsWith('/api/v1/overlays?') && failed
     ? { status: 500, statusText: 'Error', body: { error: 'Activity unavailable' } } : undefined });
   await page.getByRole('button', { name: 'Open conversation history', exact: true }).click();
   await page.getByRole('button', { name: '未处理', exact: true }).click();

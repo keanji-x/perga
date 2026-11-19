@@ -1,3 +1,4 @@
+import { fixtureSnapshot, fixtureTrack } from './session-contract-fixture.ts';
 import { prepareReportDocument } from '../../features/report/document/preparation.ts';
 // @vitest-environment jsdom
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -18,10 +19,7 @@ const unauthorized = createUnauthorizedChannel({ enqueue: (task) => task() });
 it('requires the shared confirmation before deleting a sidebar track', async () => {
   const requests: ApiRequest[] = [];
   let deleted = false;
-  const track = { workspace: { isolation: 'none' as const, kind: 'attached' as const, path: '/tmp', frozen_at: null },
-    id: 'w1', area_id: 'c1', title: 'Risky', sort: 1, cwd: '/tmp',
-    pinned_at: null, closed_at: null, created_at: Date.now() - 1000, updated_at: Date.now(),
-  };
+  const track = fixtureTrack('w1', { areaId: 'c1', title: 'Risky', cwd: '/tmp', sortOrder: 1, closedAtMs: null, createdAtMs: Date.now() - 1000, updatedAtMs: Date.now() });
   const transport: ApiTransportPort = { send(request): Promise<ApiTransportResponse> {
     requests.push(request);
     if (request.path === '/api/v1/areas') return Promise.resolve({ status: 200, statusText: 'OK', body: [
@@ -50,8 +48,7 @@ it('requires the shared confirmation before deleting a sidebar track', async () 
 
 it('does not navigate on a delete success that arrives after cancellation', async () => {
   let resolveDelete!: (response: ApiTransportResponse) => void;
-  const track = { workspace: { isolation: 'none' as const, kind: 'attached' as const, path: '/tmp', frozen_at: null }, id: 'w1', area_id: 'c1', title: 'Risky', sort: 1, cwd: '/tmp',
-    pinned_at: null, closed_at: null, created_at: 1, updated_at: 1 };
+  const track = fixtureTrack('w1', { areaId: 'c1', title: 'Risky', cwd: '/tmp', sortOrder: 1, closedAtMs: null, createdAtMs: 1, updatedAtMs: 1 });
   const transport: ApiTransportPort = { send(request): Promise<ApiTransportResponse> {
     if (request.method === 'DELETE') return new Promise((resolve) => { resolveDelete = resolve; });
     if (request.path === '/api/v1/areas') return Promise.resolve({ status: 200, statusText: 'OK', body: [
@@ -59,7 +56,7 @@ it('does not navigate on a delete success that arrives after cancellation', asyn
     ] });
     if (request.path === '/api/v1/areas/c1/tracks?includeClosed=true') return Promise.resolve({ status: 200, statusText: 'OK', body: [track] });
     if (request.path === '/api/v1/tracks/w1') return Promise.resolve({
-      status: 200, statusText: 'OK', body: { track, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true, cards: [], overlays: [] },
+      status: 200, statusText: 'OK', body: fixtureSnapshot(track, []),
     });
     if (request.path === '/api/settings') return Promise.resolve({ status: 200, statusText: 'OK', body: {} });
     return Promise.resolve({ status: 200, statusText: 'OK', body: [] });
@@ -110,8 +107,7 @@ it('does not navigate on an area delete success that arrives after cancellation'
 it('round-trips an encoded track id through useGo, TanStack history, and useRouteParam', async () => {
   const requests: ApiRequest[] = [];
   const trackId = 'a/b %';
-  const track = { workspace: { isolation: 'none' as const, kind: 'attached' as const, path: '/tmp', frozen_at: null }, id: trackId, area_id: 'c1', title: 'Encoded track', sort: 1, cwd: '/tmp',
-    pinned_at: null, closed_at: null, created_at: 1, updated_at: 1 };
+  const track = fixtureTrack(trackId, { areaId: 'c1', title: 'Encoded track', cwd: '/tmp', sortOrder: 1, closedAtMs: null, createdAtMs: 1, updatedAtMs: 1 });
   const transport: ApiTransportPort = { send(request): Promise<ApiTransportResponse> {
     requests.push(request);
     if (request.path === '/api/v1/areas') return Promise.resolve({ status: 200, statusText: 'OK', body: [
@@ -119,7 +115,7 @@ it('round-trips an encoded track id through useGo, TanStack history, and useRout
     ] });
     if (request.path === '/api/v1/areas/c1/tracks?includeClosed=true') return Promise.resolve({ status: 200, statusText: 'OK', body: [track] });
     if (request.path.includes('/api/v1/tracks/')) return Promise.resolve({
-      status: 200, statusText: 'OK', body: { track, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true, cards: [], overlays: [] },
+      status: 200, statusText: 'OK', body: fixtureSnapshot(track, []),
     });
     return Promise.resolve({ status: 200, statusText: 'OK', body: [] });
   } };

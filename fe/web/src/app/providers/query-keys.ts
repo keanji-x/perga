@@ -1,24 +1,22 @@
 import {
-  initialInputPrefix, initialInputTrack, initialInput, areas,
+  areas,
   trackLists, tracksInArea, trackDetail, trackBacklinksPrefix,
   trackBacklinks, trackReport, trackReportPrefix, overlaysByKind,
   plugins, pluginDataPrefix, trackTemplates,
   transcriptPrefix, transcript as harnessItems, plannerRun, modelCatalog, modelCatalogForCard,
-  modelCatalogPrefix, trackConversations, trackConversationsPrefix,
+  modelCatalogPrefix, trackDetailPrefix,
   sessionLive, trackTerminals, taskAttemptsPrefix,
 } from '../../../../core/events/query-keys.ts';
 
 // Key shapes match the legacy app so a cache dump reads the same in both.
 export const queryKeys = Object.freeze({
-  initialInputPrefix,
-  initialInputTrack,
-  initialInput,
   serverVersion: () => ['server-version'] as const,
   areas,
   areaFolders: (areaId: string) => ['area-folders', areaId] as const,
   trackLists,
   tracksInArea,
   trackDetail,
+  trackTools: (trackId: string) => [...trackDetail(trackId), 'tools'] as const,
   trackBacklinksPrefix,
   trackBacklinks,
   /* The track's registered previews (#1780). Registrations emit no event; `trackPreviewsQueryOptions` polls. */
@@ -70,12 +68,11 @@ export const queryKeys = Object.freeze({
   /** `GET /api/agent-providers` (#1817). No event reaches it: the server's own 30 s cache is its freshness. */
   agentProviders: () => ['agent-providers'] as const,
   /** One track's conversation list, keyed by its track. */
-  trackConversations,
+  trackDetailPrefix,
   /**
    * The prefix for events that cannot name a track: the `runtime.*` kinds carry only a `card_id`, and a
    * card in a track nobody has open resolves to null. A fallback, not the house shape.
    */
-  trackConversationsPrefix,
   sessionLive,
   trackTerminals,
   taskAttemptsPrefix,

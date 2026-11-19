@@ -1,7 +1,7 @@
 import { createStorageKey } from '../../../../core/keys/storage.ts';
 import type { TranscriptEntry, Conversation } from '../../../../core/domain/conversation.ts';
+import { DEPLOYMENT_OWNER_USER_ID } from '../../../../core/api/auth.ts';
 import { isOptimisticConversationTurn, TOO_MANY_IMAGES } from '../../../../core/domain/conversation.ts';
-import { receiptMatchesSubmission } from '../../../../core/domain/conversation-initial-input.ts';
 import { beginSendOp, withConfirmedSends, type ConversationOutboxOp } from '../../../../core/domain/conversation-outbox.ts';
 import { EMPTY_COMPOSER, isSameComposer, tookEveryImage, withRefill, type ComposerContent } from '../../../../core/domain/conversation-composer.ts';
 import { NO_UPLOAD, type UploadState } from '../../features/planner/attachments.tsx';
@@ -178,15 +178,13 @@ export function createConversationOwner(submittedStorage?: () => Storage) {
     },
     acceptDraft: (from, result, submitted) => {
       if (!slotHolds(state.drafts[from.scopeId], from)) return false;
-      let next = state;
-      if (result.initialInput?.kind === 'known') {
-        const { receipt } = result.initialInput;
-        if (!receiptMatchesSubmission(receipt, submitted)) throw new Error('The first-message receipt does not match the submitted message.');
-        const ops = state.outboxes[result.conversation.id] ?? NO_SENDS;
-        next = withOutbox(next, result.conversation.id, ops.some(op => op.key === from.key) ? ops
-          : [...ops, { phase: 'initial-accepted', localWrite: null, inputFact: null, sourceWitness: null, key: from.key,
-            trackId: result.conversation.trackId, receipt, submitted }]);
-      }
+      const ops = state.outboxes[result.conversation.id] ?? NO_SENDS;
+      // The creation ACK names the input; only session history can take over its bubble.
+      const next = withOutbox(state, result.conversation.id, ops.some(op => op.key === from.key) ? ops
+        : [...ops, { key: from.key, phase: 'confirmed', queueRevision: null, fromComposer: false, replaces: null,
+          echo: { id: `initial-${from.key}`, author: 'you', text: submitted.text, atMs: submitted.atMs,
+            serverHighWaterBefore: 0, queued: false, entryId: result.sessionInput.inputId,
+            authorUserId: DEPLOYMENT_OWNER_USER_ID } }]);
       commit({ ...next, drafts: moveDraft(next.drafts, { kind: 'adopt', from, conversationId: result.conversation.id }) });
       return true;
     },

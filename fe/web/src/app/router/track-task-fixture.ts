@@ -1,3 +1,4 @@
+import { fixtureSnapshot, fixtureTrack } from './session-contract-fixture.ts';
 import type { ApiRequest, ApiTransportPort, ApiTransportResponse } from '../../../../core/api/types.ts';
 import type { TaskAttempt, TaskRecoveryView } from '../../../../core/domain/task-recovery.ts';
 import { withReadReceipts } from '../providers/read-receipts-fixture.tsx';
@@ -11,9 +12,8 @@ export function createTrackTaskFixture() {
     created_at_ms: 1788600000000, finished_at_ms: 1788600060000 };
   const history: TaskRecoveryView = { key: taskKey, current: first, attempts: [first] };
   const requests: ApiRequest[] = [];
-  const area = { id: 'c1', name: 'Work', color: '#123456', sort: 1, kind: 'user', created_at: 1, updated_at: 1 };
-  const track = { workspace: { isolation: 'none' as const, kind: 'attached' as const, path: '/tmp', frozen_at: null }, id: 'w1', area_id: 'c1', title: 'The calculation', sort: 1, cwd: '/tmp',
-    pinned_at: null, closed_at: null, created_at: 1, updated_at: 2 };
+  const area = { id: 'c1', name: 'Work', color: '#123456', sortOrder: 1, kind: 'user', createdAtMs: 1, updatedAtMs: 1 };
+  const track = fixtureTrack('w1', { areaId: 'c1', title: 'The calculation', cwd: '/tmp', sortOrder: 1, closedAtMs: null, createdAtMs: 1, updatedAtMs: 2 });
   const declaration = { id: 'calculation-task', rev: 1, kind: 'task', payload: {
     key: taskKey, kind: 'codex', declared_by: 'user', ready: true, goal,
   } };
@@ -25,7 +25,7 @@ export function createTrackTaskFixture() {
     if (request.method !== 'GET') throw new Error(`Unexpected write: ${request.method} ${request.path}`);
     if (request.path === '/api/v1/areas') return Promise.resolve(ok([area]));
     if (request.path === '/api/v1/areas/c1/tracks?includeClosed=true') return Promise.resolve(ok([track]));
-    if (request.path === '/api/v1/tracks/w1') return Promise.resolve(ok({ track, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true, cards: [reportCard], overlays: [] }));
+    if (request.path === '/api/v1/tracks/w1') return Promise.resolve(ok(fixtureSnapshot(track, [], { docRev: reportCard.payload.docRev, summary: reportCard.payload.summary, leadingComment: '', blocks: reportCard.payload.blocks.map(block => ({ ...block, markdown: '' })) })));
     if (request.path === '/api/v1/tracks/w1/report') return Promise.resolve(ok({ ...reportCard.payload, taskDiagnostics: [
       { blockId: declaration.id, key: taskKey, schedulable: true, status: first.status,
         statusDetail: first.status_detail, workerCardId: null, diagnostics: [] },

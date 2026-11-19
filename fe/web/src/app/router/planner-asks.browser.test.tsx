@@ -1,5 +1,6 @@
-import type { AskAction, AskQuestion } from '../../../../core/api/generated/wire.ts';
-import { historicalConversationPage, conversationCardId, historicalConversationRun } from './conversation-read-data.ts';
+import type { AskQuestion } from '../../../../core/api/generated/wire.ts';
+import { fixtureTrack, fixtureSession, fixtureSnapshot } from './session-contract-fixture.ts';
+import { sessionPage, sessionItem } from './conversation-session-data.ts';
 import { prepareReportDocument } from '../../features/report/document/preparation.ts';
 import '../../styles/entry.css';
 // #2209 U3 in a real browser: a two-question ask above the Planner composer, answered and gone.
@@ -19,10 +20,8 @@ afterEach(async () => {
   await page.viewport(1280, 720);
 });
 
-const TRACK = { workspace: { isolation: 'none' as const, kind: 'attached' as const, path: '/tmp', frozen_at: null }, id: 'asks-track', area_id: 'area', title: 'Release 2.0', sort: 1, cwd: '/tmp',
-  pinned_at: null, closed_at: null, created_at: 1, updated_at: 2 };
-const PLANNER = { id: 'planner', track_id: TRACK.id, kind: 'codex', title: 'Planner', sort: 1,
-  payload: { planner_harness: true }, deletable: false, created_at: 1, updated_at: 2 };
+const TRACK = fixtureTrack('asks-track', { areaId: 'area', title: 'Release 2.0', leadSessionId: 'planner' });
+const PLANNER = fixtureSession('planner', TRACK.id, { title: 'Planner', isLead: true });
 const ASK = {
   source: 'ask', key: 'ask:7', text: 'Which branch should I release from? / Anything to tell the reviewers?', at_ms: 5, ask_id: 7,
   questions: [
@@ -31,9 +30,6 @@ const ASK = {
   ],
   delivery: 'wake',
 };
-
-/* A 1×1 PNG, so the attached image's thumbnail draws without a server behind it. */
-const PIXEL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
 
 /** An ask of `count` questions of `count` options each, `long` making every option the server's 200 characters. */
 function largeAsk(count: number, long: boolean) {
@@ -49,31 +45,22 @@ function largeAsk(count: number, long: boolean) {
   return { ...ASK, key: 'ask:7', text: `${count} questions`, questions };
 }
 
-function setup(theme: 'light' | 'dark', ask: Omit<typeof ASK, 'questions'> & { questions: AskQuestion[]; action?: AskAction } = ASK, reopen = false) {
+function setup(theme: 'light' | 'dark', ask: Omit<typeof ASK, 'questions'> & { questions: AskQuestion[] } = ASK) {
   const requests: ApiRequest[] = [];
-  let currentTrack = reopen ? { ...TRACK, closed_at: 42 } : TRACK;
+
   const transport: ApiTransportPort = { async send(request) {
     await Promise.resolve();
     requests.push(request);
     let body: unknown = [];
     let status = 200;
-    if (request.path === '/api/areas') body = [{ id: 'area', name: 'Work', color: '#123456', sort: 1, kind: 'user', created_at: 1, updated_at: 1 }];
-    if (request.path === '/api/areas/area/tracks') body = [currentTrack];
+    if (request.path === '/api/v1/areas') body = [{ id: 'area', name: 'Work', color: '#123456', sortOrder: 1, kind: 'user', createdAtMs: 1, updatedAtMs: 1 }];
+    if (request.path === '/api/v1/areas/area/tracks?includeClosed=true') body = [TRACK];
     if (request.path === '/api/settings') body = {};
-    if (request.path === `/api/tracks/${TRACK.id}`) body = { track: currentTrack, planner_revision: 0, can_reopen: currentTrack.closed_at !== null, can_admin: false, can_close: currentTrack.closed_at === null, cards: [PLANNER],
-      overlays: [{ id: 'activity', plugin_id: 'kernel', entity_kind: 'track', entity_id: TRACK.id, kind: 'activity', updated_at: 5,
-        payload: { schemaVersion: 4, working: false, attention: 'input', activity_at_ms: 5, items: [reopen ? { ...ask, action: { kind: 'reopen_track', closed_at: 42 }, questions: [{ title: 'Continue this closed track?', options: ['Reopen and continue', 'Keep closed'] }] } : ask], cards: [] } }] };
-    if (request.path.includes('/planner/run?contract=conversation_v1')) body = historicalConversationRun({ card_id: PLANNER.id, worker_session_id: 'session', phase: 'idle',
-      model: null, reasoning_effort: null, permission_mode: 'never', blocked_reason: null, manual_compact_supported: true, recovery: null, compact_outcome: null, context_usage_invalidated: false, running_turn: null, attachments_supported: true }, 'idle', true);
-    if (request.path.endsWith('/harness/live')) body = { turn_id: null, items: [] };
-    if (request.path.includes('/harness/items')) body = historicalConversationPage(conversationCardId(request.path), [{ id: 1, worker_session_id: 'session', card_id: PLANNER.id,
-      track_id: TRACK.id, thread_id: 'thread', turn_id: null, turn_error_text: null, item_uuid: null, item_type: 'agentMessage',
-      method: 'item/completed', created_at_ms: 1,
-      params: JSON.stringify({ item: { id: 'reply', type: 'agentMessage', text: 'The release checklist is green. Two things before I tag it.' } }) }], null);
-    if (request.path === `/api/tracks/${TRACK.id}/asks/7/answer`) { body = undefined; status = 204; if (reopen) currentTrack = { ...currentTrack, closed_at: null }; }
-    if (request.path === `/api/cards/${PLANNER.id}/planner/attachments`) {
-      body = { attachmentId: 'image-1.png', contentType: 'image/png', size: 68, url: PIXEL }; status = 201;
-    }
+    if (request.path === `/api/v1/tracks/${TRACK.id}`) body = {
+      ...fixtureSnapshot(TRACK, [PLANNER]), openAsks: [{ id: '7', trackId: TRACK.id, status: 'open', delivery: 'wake', questions: ask.questions, createdAtMs: 5 }],
+    };
+    if (request.path.includes('/items?')) body = sessionPage(PLANNER, [sessionItem(PLANNER.id, 1, 'The release checklist is green. Two things before I tag it.')]);
+    if (request.path === `/api/v1/tracks/${TRACK.id}/asks/7/answer`) { body = undefined; status = 204; }
     return { status, statusText: status === 204 ? 'No Content' : status === 201 ? 'Created' : 'OK', body };
   } };
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -113,8 +100,8 @@ it.each([
   await expect.poll(() => requests.filter(request => request.path.endsWith('/answer')).length).toBe(1);
   const answer = requests.find(request => request.path.endsWith('/answer'));
   expect(answer?.method).toBe('POST');
-  expect(answer?.path).toBe(`/api/tracks/${TRACK.id}/asks/7/answer`);
-  expect(answer?.body).toEqual({ answers: [{ option: 1 }, { text: 'Tag it after the docs land.' }] });
+  expect(answer?.path).toBe(`/api/v1/tracks/${TRACK.id}/asks/7/answer`);
+  expect(answer?.body).toEqual({ answers: [{ option: 1, value: 'release/2.0' }, { text: 'Tag it after the docs land.', value: 'Tag it after the docs land.' }] });
   await expect.element(ask).not.toBeInTheDocument();
   await expect.element(page.getByRole('combobox', { name: 'Message' })).toBeVisible();
 });
@@ -137,73 +124,14 @@ it.each([1280, 390])('answers custom questions with Enter inside the real conver
   await notes.fill('Wait for CI');
   await userEvent.keyboard('{Enter}');
   await expect.poll(() => requests.filter(request => request.path.endsWith('/answer')).length).toBe(1);
-  expect(requests.filter(request => request.path.endsWith('/planner/input'))).toHaveLength(0);
+  expect(requests.filter(request => request.path.endsWith('/messages'))).toHaveLength(0);
   expect(requests.find(request => request.path.endsWith('/answer'))).toMatchObject({
     method: 'POST',
-    path: `/api/tracks/${TRACK.id}/asks/7/answer`,
+    path: `/api/v1/tracks/${TRACK.id}/asks/7/answer`,
     body: { answers: [{ text: 'hotfix' }, { text: 'Wait for CI' }] },
   });
   await expect.element(ask).not.toBeInTheDocument();
   await expect.element(message).toHaveTextContent('Keep this message draft');
-});
-
-it('answers with Enter while keeping an image-only message draft unsent', async () => {
-  await page.viewport(1280, 844);
-  const { requests } = setup('light');
-  await page.getByRole('button', { name: /Conversation Planner/ }).click();
-  const picker = document.querySelector<HTMLInputElement>('[data-nc-attach] input[type="file"]')!;
-  await userEvent.upload(picker, new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'shot.png', { type: 'image/png' }));
-  const image = page.getByRole('button', { name: 'Remove Image 1', exact: true });
-  await expect.element(image).toBeVisible();
-  const ask = page.getByRole('group', { name: 'The Planner asks' });
-  await ask.getByRole('button', { name: 'Other…' }).click();
-  const branch = ask.getByRole('textbox', { name: 'Which branch should I release from?' });
-  await branch.fill('hotfix');
-  await branch.click();
-  await userEvent.keyboard('{Enter}');
-  const notes = ask.getByRole('textbox', { name: 'Anything to tell the reviewers?' });
-  await expect.element(notes).toHaveFocus();
-  await notes.fill('Wait for CI');
-  await userEvent.keyboard('{Enter}');
-  await expect.poll(() => requests.find(request => request.path.endsWith('/answer'))?.body).toEqual({
-    answers: [{ text: 'hotfix' }, { text: 'Wait for CI' }],
-  });
-  expect(requests.filter(request => request.path.endsWith('/planner/input'))).toHaveLength(0);
-  await expect.element(image).toBeVisible();
-});
-
-it('keeps attachments in the composer with questions in their own Astryx drawer', async () => {
-  await page.viewport(1280, 800);
-  setup('light');
-  await page.getByRole('button', { name: /Conversation Planner/ }).click();
-  const ask = page.getByRole('group', { name: 'The Planner asks' });
-  await expect.element(ask).toBeVisible();
-  const picker = document.querySelector<HTMLInputElement>('[data-nc-attach] input[type="file"]')!;
-  await userEvent.upload(picker, new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'shot.png', { type: 'image/png' }));
-  await expect.poll(() => document.querySelectorAll('[data-nc-attachments] img').length).toBe(1);
-  const strip = document.querySelector<HTMLElement>('[data-nc-attachments]')!;
-  expect(strip.closest('[data-nc-composer]')).not.toBeNull();
-  expect((await ask.findElement()).closest('[data-nc-composer]')).not.toBeNull();
-});
-
-it.each(['drop', 'paste'] as const)('attaches a clipboard or dragged image through %s in the real conversation', async (source) => {
-  await page.viewport(1280, 800);
-  const { requests } = setup('light');
-  await page.getByRole('button', { name: /Conversation Planner/ }).click();
-  const field = await page.getByRole('combobox', { name: 'Message' }).findElement();
-  await page.getByRole('combobox', { name: 'Message' }).click();
-  const transfer = new DataTransfer();
-  transfer.items.add(new File([await (await fetch(PIXEL)).arrayBuffer()], 'screenshot.png', { type: 'image/png' }));
-  const event = source === 'drop'
-    ? new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: transfer })
-    : new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: transfer });
-  field.dispatchEvent(event);
-  expect(event.defaultPrevented).toBe(true);
-  await expect.poll(() => requests.filter(request => request.path.endsWith('/planner/attachments')).length).toBe(1);
-  await expect.element(page.getByRole('button', { name: 'Remove Image 1', exact: true })).toBeVisible();
-  await expect.poll(() => document.querySelector<HTMLImageElement>('[data-nc-attachments] img')?.naturalWidth).toBe(1);
-  expect(requests.find(request => request.path.endsWith('/planner/attachments'))?.headers?.['content-type']).toBe('image/png');
-  expect(field.textContent).toBe('');
 });
 
 it.each([
@@ -226,7 +154,7 @@ it.each([
   }
   await expect.poll(() => requests.filter(request => request.path.endsWith('/answer')).length).toBe(1);
   const answer = requests.find(request => request.path.endsWith('/answer'));
-  expect(answer?.body).toEqual({ answers: largeAsk(count, long).questions.map(() => ({ option: 0 })) });
+  expect(answer?.body).toEqual({ answers: largeAsk(count, long).questions.map(question => ({ option: 0, value: question.options[0] })) });
   await expect.element(ask).not.toBeInTheDocument();
 });
 
@@ -250,38 +178,9 @@ it('retains an unanswered ask and its question across responsive surfaces', asyn
   await ask.getByRole('button', { name: 'Answer' }).click();
   await expect.poll(() => requests.filter(request => request.path.endsWith('/answer')).length).toBe(1);
   expect(requests.find(request => request.path.endsWith('/answer'))?.body).toEqual({
-    answers: [{ option: 1 }, { text: 'Keep the selected branch and this note.' }],
+    answers: [{ option: 1, value: 'release/2.0' }, { text: 'Keep the selected branch and this note.', value: 'Keep the selected branch and this note.' }],
   });
 });
-
-it.each([1280, 390])('restores a closed track by clicking its existing AI question at %ipx', async (width) => {
-  await page.viewport(width, 844);
-  const { requests } = setup('light', ASK, true);
-  await page.getByRole('button', { name: /Conversation Planner/ }).click();
-  const option = page.getByRole('button', { name: 'Reopen and continue' });
-  await expect.element(option).toBeVisible();
-  await expect.element(page.getByRole('textbox', { name: 'Continue this closed track?' })).not.toBeInTheDocument();
-  await page.screenshot({ path: `../../../../test-results/reopen-current-${width}.png` });
-  await option.click();
-  await expect.poll(() => requests.find(request => request.path.endsWith('/answer'))?.body).toEqual({ answers: [{ option: 0 }] });
-  await expect.element(page.getByRole('status', { name: 'Track closed' })).not.toBeInTheDocument();
-});
-
-it('renders grant_admin choices and posts the grant click only to the ask answer route', async () => {
-  const grantAsk = { ...ASK, action: { kind: 'grant_admin' as const },
-    questions: [{ title: 'Manage Tracks?', options: ['Grant admin', 'Not now'] }] };
-  const { requests } = setup('light', grantAsk);
-  await page.getByRole('button', { name: /Conversation Planner/ }).click();
-  await expect.element(page.getByRole('heading', { name: 'Manage Tracks?' })).toBeVisible();
-  await expect.element(page.getByRole('button', { name: 'Not now' })).toBeVisible();
-  await page.getByRole('button', { name: 'Grant admin' }).click();
-  await expect.poll(() => requests.filter(request => request.path.endsWith('/asks/7/answer')).length).toBe(1);
-  const answer = requests.find(request => request.path.endsWith('/asks/7/answer'));
-  expect(answer?.path).toBe(`/api/tracks/${TRACK.id}/asks/7/answer`);
-  expect(requests.some(request => request.method === 'PATCH')).toBe(false);
-  expect(answer?.body).toEqual({ answers: [{ option: 0 }] });
-});
-
 
 it('marks a real pending question on its Planner conversation even without a per-card input verdict', async () => {
   await page.viewport(1400, 900);
@@ -298,7 +197,6 @@ it.each([1280, 390])('shows the complete frozen approval detail at width %i', as
   await page.viewport(width, 844);
   const detail = `${'完整验收条件'.repeat(500)} LAST CRITERION <img src=x onerror=alert(1)>`;
   const { requests } = setup('light', { ...ASK, text: '批准此 KR 的验收标准？',
-    action: { kind: 'objective_approval_v2', objective: 'kr', standard_hash: 'hash' },
     questions: [{ title: '批准此 KR 的验收标准？', detail, options: ['批准', '不批准'] }],
   });
   await page.getByRole('button', { name: /Conversation Planner/ }).click();
@@ -310,7 +208,7 @@ it.each([1280, 390])('shows the complete frozen approval detail at width %i', as
   await page.screenshot({ path: `../../../../test-results/objective-approval-${width}.png` });
   await ask.getByRole('button', { name: '批准', exact: true }).click();
   await expect.poll(() => requests.filter(request => request.path.endsWith('/answer')).length).toBe(1);
-  expect(requests.find(request => request.path.endsWith('/answer'))?.body).toEqual({ answers: [{ option: 0 }] });
+  expect(requests.find(request => request.path.endsWith('/answer'))?.body).toEqual({ answers: [{ option: 0, value: '批准' }] });
 });
 
 it.each([[1280, 0], [390, 0], [1280, 1], [390, 1]] as const)(
@@ -318,8 +216,7 @@ it.each([[1280, 0], [390, 0], [1280, 1], [390, 1]] as const)(
     await page.viewport(width, 844);
     const choices = ['允许此 Track 使用', '本次不更改'];
     const { requests } = setup('light', { ...ASK, text: 'Calendar authorization',
-      action: { kind: 'track_plugin_access', plugin_id: 'calendar', enabled: true, manifest_sha256: 'digest', expected_revision: 0 },
-      questions: [{ title: '允许此 Track 使用 Calendar？', detail: '可管理本 Track 的日程，定时日程可唤醒此 Track。', options: choices }],
+        questions: [{ title: '允许此 Track 使用 Calendar？', detail: '可管理本 Track 的日程，定时日程可唤醒此 Track。', options: choices }],
     });
     await page.getByRole('button', { name: /Conversation Planner/ }).click();
     const ask = page.getByRole('group', { name: 'The Planner asks' });
@@ -331,7 +228,7 @@ it.each([[1280, 0], [390, 0], [1280, 1], [390, 1]] as const)(
     await page.screenshot({ path: `../../../../test-results/track-plugin-authorization-${width}-${option}.png` });
     await ask.getByRole('button', { name: choices[option], exact: true }).click();
     await expect.poll(() => requests.find(request => request.path.endsWith('/answer'))?.body)
-      .toEqual({ answers: [{ option }] });
+      .toEqual({ answers: [{ option, value: choices[option] }] });
     await expect.element(ask).not.toBeInTheDocument();
   },
 );

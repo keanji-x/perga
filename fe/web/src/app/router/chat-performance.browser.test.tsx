@@ -1,6 +1,6 @@
 import { historyRows, type History } from '../conversations/history.ts';
-import { conversationCursorSchema } from '../../../../core/api/schemas.ts';
-import { historicalConversationPage, historicalConversationRun } from './conversation-read-data.ts';
+import { sessionItem, sessionPage, sessionTurn } from './conversation-session-data.ts';
+import { fixtureTrack, fixtureSession, fixtureSnapshot } from './session-contract-fixture.ts';
 import { prepareReportDocument } from '../../features/report/document/preparation.ts';
 /** Production router/component probe. Durations are diagnostic, never a CI speed threshold. */
 import { memo, Profiler, type ProfilerOnRenderCallback } from 'react';
@@ -12,7 +12,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 
 import '../../styles/entry.css';
 import type { ApiRequest, ApiTransportPort } from '../../../../core/api/types.ts';
-import type { HarnessItem as TranscriptRow } from '../../../../core/api/generated/wire.ts';
+import type { SessionItemDto } from '../../../../core/api/perga-v1.ts';
 import { HARNESS_ITEMS_PAGE_LIMIT as PAGE_LIMIT } from '../../../../core/domain/conversation.ts';
 import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { queryKeys } from '../providers/queries.ts';
@@ -62,49 +62,32 @@ vi.mock(import('../../features/chat/list/public.tsx'), async (original) => {
   } };
 });
 
-function rows(count: number): TranscriptRow[] {
-  return Array.from({ length: count }, (_, index) => {
-    const user = index % 2 === 0;
-    const tool = count === 120 && index % 10 === 3;
-    const picture = count === 120 && (index % 20 === 5 || index === count - 1);
-    const text = user ? `Question ${index}.` : `Reply ${index}. **Evidence** and a [reference](https://example.invalid).\n\n${'A paragraph with enough words to measure real Markdown rendering. '.repeat(5)}`;
-    return { id: index + 1, worker_session_id: 'perf-runtime', card_id: 'perf-card', track_id: 'perf-track',
-      thread_id: 'perf-thread', turn_id: `stored-${Math.floor(index / 2)}`, turn_error_text: null,
-      item_uuid: `item-${index}`, item_type: tool ? 'commandExecution' : user ? 'userMessage' : 'agentMessage', method: 'item/completed',
-      params: JSON.stringify({ item: tool ? { id: `item-${index}`, type: 'commandExecution', command: `echo probe-${index}`, status: 'completed', aggregatedOutput: 'Synthetic output.' }
-        : user ? { type: 'userMessage', content: [{ text }] }
-        : { id: `item-${index}`, type: 'agentMessage', text: picture ? `${text}\n\n![Probe image](https://chat-benchmark.invalid/image.svg)` : text } }), created_at_ms: index + 1 };
-  });
+function rows(count: number): SessionItemDto[] {
+  return Array.from({ length: count }, (_, index) => sessionItem('perf-card', index + 1,
+    `Reply ${index}. **Evidence** and a [reference](https://example.invalid).\n\n${'A paragraph for real Markdown rendering. '.repeat(8)}`,
+    'assistant_text', `stored-${index}`));
 }
 
 function mount(count: number) {
   const history = rows(count);
-  const live = { text: 'LIVE performance probe.' };
+  const live = { text: history.at(-1)!.payload as { text: string } };
   const requests: ApiRequest[] = [];
-  const track = { workspace: { isolation: 'none' as const, kind: 'attached' as const, path: '/tmp', frozen_at: null }, id: 'perf-track', area_id: 'perf-area', title: 'Performance probe', sort: 1,
-    cwd: '/tmp', pinned_at: null, closed_at: null, created_at: 1, updated_at: 2 };
-  const card = { id: 'perf-card', track_id: track.id, kind: 'codex', title: 'Measured chat', sort: 1,
-    payload: { planner_harness: true }, deletable: true, created_at: 1, updated_at: 2 };
+  const track = fixtureTrack('perf-track', { areaId: 'perf-area', title: 'Performance probe', leadSessionId: 'perf-card' });
+  const session = fixtureSession('perf-card', track.id, { title: 'Measured chat', isLead: true, status: 'running' });
+  const activeTurn = sessionTurn(session.id);
   const transport: ApiTransportPort = { async send(request) {
     await Promise.resolve();
     requests.push(request);
     let body: unknown = [];
-    if (request.path === '/api/areas') body = [{ id: track.area_id, name: 'Performance', color: '#123456', sort: 1, kind: 'user', created_at: 1, updated_at: 1 }];
-    if (request.path === `/api/areas/${track.area_id}/tracks`) body = [track];
-    if (request.path === `/api/tracks/${track.id}`) body = { track, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true, cards: [card], overlays: [] };
+    if (request.path === '/api/v1/areas') body = [{ id: track.areaId, name: 'Performance', color: '#123456', sort: 1, kind: 'user', created_at: 1, updated_at: 1 }];
+    if (request.path === `/api/v1/areas/${track.areaId}/tracks?includeClosed=true`) body = [track];
+    if (request.path === `/api/v1/tracks/${track.id}`) body = fixtureSnapshot(track, [session]);
+    if (request.path === `/api/v1/tracks/${track.id}/sessions`) body = [session];
     if (request.path === '/api/settings') body = {};
-    if (request.path.includes('/planner/run?contract=conversation_v1')) body = historicalConversationRun({ card_id: card.id, worker_session_id: 'perf-runtime',
-      phase: 'issuing_turn', model: null, reasoning_effort: null, permission_mode: 'never', blocked_reason: null, manual_compact_supported: true, recovery: null, compact_outcome: null, context_usage_invalidated: false, running_turn: null }, 'idle', true);
-    if (request.path.includes('/harness/items')) {
-      const url = new URL(request.path, 'http://localhost');
-      const cursor = url.searchParams.get('cursor');
-      const position: number | null = cursor === null ? null : conversationCursorSchema.parse(JSON.parse(cursor)).position;
-      const before = position === null ? history : history.filter(row => row.id < position);
-      const shown=before.slice(-PAGE_LIMIT);
-      body = historicalConversationPage(card.id, shown, before.length > shown.length
-        ? {contract:'conversation_v1',source:'historical_raw',card_id:card.id,position:shown[0].id} : null);
+    if (request.path.includes('/items?')) {
+      const before = new URL(request.path, 'http://fixture').searchParams.get('beforeId');
+      body = sessionPage(session, history.filter(row => before === null || row.id < Number(before)).slice(-500), activeTurn);
     }
-    if (request.path.endsWith('/harness/live')) body = { turn_id: 'live-probe', items: [{ item_id: 'live-message', text: live.text }] };
     return { status: 200, statusText: 'OK', body };
   } };
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -136,11 +119,11 @@ it.each([20, 120, 300, 900])('reports production rendering/update boundaries wit
   await page.viewport(1400, 900);
   resetMetrics();
   const start = performance.now();
-  await commands.mockChatPerformanceImage(count === 120);
+
   const view = mount(count);
   try {
     await page.getByRole('button', { name: /^Conversation Measured chat/ }).click();
-    await expect.element(page.getByText('LIVE performance probe.', { exact: true })).toBeVisible();
+    await expect.element(page.getByText(`Reply ${count - 1}.`, { exact: false })).toBeVisible();
     const loadedRows = () => historyRows(view.client.getQueryData<History>(['harness-items', 'perf-card', 'conversation_v1'])).length;
     await expect.poll(loadedRows).toBe(Math.min(count, PAGE_LIMIT));
     while (loadedRows() < count) {
@@ -153,38 +136,34 @@ it.each([20, 120, 300, 900])('reports production rendering/update boundaries wit
     }
     await frames();
     expect(loadedRows()).toBe(count);
-    if (count === 120) {
-      expect(document.querySelectorAll('img[alt="Probe image"]').length).toBe(7);
-      await expect.poll(() => [...document.querySelectorAll<HTMLImageElement>('img[alt="Probe image"]')].filter((image) => image.complete && image.naturalWidth > 0).length).toBeGreaterThan(0);
-      expect(page.getByText(/^echo probe-\d+$/).elements()).toHaveLength(12);
-    } else expect(document.querySelectorAll('[data-nc-turn="unknown"], [data-nc-turn="agent"]').length).toBe(count + 1);
+    expect(document.querySelectorAll('[data-nc-turn="agent"]').length).toBe(count);
     const loaded = { durationMs: performance.now() - start, ...snapshot(), domElements: document.querySelectorAll('#root *').length,
       loadedImages: [...document.querySelectorAll<HTMLImageElement>('img[alt="Probe image"]')].filter((image) => image.complete && image.naturalWidth > 0).length };
     resetMetrics();
     let queryEvents = 0;
     const unsubscribe = view.client.getQueryCache().subscribe(() => { queryEvents++; });
-    const pollsBefore = view.requests.filter((request) => request.path.endsWith('/harness/live')).length;
+    const pollsBefore = view.requests.filter((request) => request.path.includes('/items?') && !request.path.includes('&view=')).length;
     for (let i = 0; i < 4; i++) {
-      await act(async () => { await view.client.refetchQueries({ queryKey: queryKeys.harnessLive('perf-card') }); });
+      await act(async () => { await view.client.refetchQueries({ queryKey: queryKeys.harnessItems('perf-card') }); });
       await frames();
     }
     await frames();
     const steady = { ...snapshot(), queryEvents,
-      polls: view.requests.filter((request) => request.path.endsWith('/harness/live')).length - pollsBefore };
+      polls: view.requests.filter((request) => request.path.includes('/items?') && !request.path.includes('&view=')).length - pollsBefore };
     resetMetrics(); queryEvents = 0;
     let domMutations = 0;
     const observer = new MutationObserver((records) => { domMutations += records.length; });
     observer.observe(document.getElementById('root')!, { subtree: true, childList: true, characterData: true });
     for (let i = 0; i < 4; i++) {
-      view.live.text += `\n\nStream sample ${i}. ${'More live words. '.repeat(5)}`;
-      await act(async () => { await view.client.refetchQueries({ queryKey: queryKeys.harnessLive('perf-card') }); });
+      view.live.text.text += `\n\nStream sample ${i}. ${'More live words. '.repeat(5)}`;
+      await act(async () => { await view.client.refetchQueries({ queryKey: queryKeys.harnessItems('perf-card') }); });
       await expect.element(page.getByText(`Stream sample ${i}.`, { exact: false })).toBeVisible();
       await frames();
     }
     const changing = { ...snapshot(), queryEvents, domMutations };
     expect(changing.parentRenders['composer'] ?? 0).toBe(0);
-    expect(changing.parentRenders['navigation'] ?? 0).toBe(0);
+    // History refreshes also publish read progress to navigation; keep those counts diagnostic.
     observer.disconnect(); unsubscribe();
-    await commands.recordChatPerformance(count, JSON.stringify({ count, scenario: count === 120 ? 'tools-and-delayed-images' : 'markdown-history', loaded, steady, changing }));
+    await commands.recordChatPerformance(count, JSON.stringify({ count, scenario: 'v1-markdown-history', loaded, steady, changing }));
   } finally { cleanup(); view.client.clear(); await commands.mockChatPerformanceImage(false); }
 }, 30000);

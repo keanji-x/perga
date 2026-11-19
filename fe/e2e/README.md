@@ -1,26 +1,16 @@
 # Frontend end-to-end tests
 
-These tests require the real backend stack at `http://127.0.0.1:4041` and Node.js 22. Start the
-stack outside this command, then run `npm run e2e` from `fe/`; Playwright starts the Vite frontend
-on port 5180. Override the backend with `FE_API_PROXY_TARGET` or the frontend port with
-`FE_DEV_PORT` when necessary.
+Run `npm run e2e` from `fe/` against a Perga Host at `http://127.0.0.1:4041`.
+Playwright starts Vite on port 5180. Override the Host with `FE_API_PROXY_TARGET`
+and the frontend port with `FE_DEV_PORT`.
 
-The stack needs a codex app-server it can actually talk to: `track-conversation-create.spec.ts`
-requires `POST /api/tracks/{id}/conversations` to return 201, and without one the request dies in
-the adapter's daemon preflight — before the card, session and MCP token are minted, so the failure
-tells you nothing about whether the mint is correct. Point `CALM_CODEX_HOST_BIN` at the
-`osc-probe-child` fixture, which answers the handshake (`initialize` / `thread/start` /
-`turn/start`) and nothing else:
+Seeds and assertions use `/api/v1` and the schemas in `core/api/perga-v1.ts`.
+Track creation returns an aggregate snapshot; conversation creation returns a
+session creation receipt. Message reads use session items, and sends use
+`content` with an `Idempotency-Key` header. Tests clean up their Areas.
 
-```sh
-cargo build --release -p calm-server --bin osc-probe-child
-# in the stack's .env
-CALM_CODEX_HOST_BIN=<repo>/target/release/osc-probe-child
-CALM_CODEX_CODE_MODE_HOST_BIN=/bin/true
-```
-
-This is what `ci.yml`'s `fe e2e` job does. The probe never invokes deferred
-tools, so `/bin/true` is only an executable placeholder for the companion
-mount required by `make up`. Pointing `CALM_CODEX_HOST_BIN` itself at
-`/bin/true` still brings the stack up, but the conversation-create test will
-fail against it.
+Conversation execution cases require a controlled provider that completes turns
+and supports the scripted `fake-reply:` messages. Run them
+in a dedicated test deployment, never against a shared provider installation.
+Retired settings, plugin installation, attachment, archive, raw report append,
+and conversation run-conflict compatibility cases have been removed.

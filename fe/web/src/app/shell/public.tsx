@@ -228,7 +228,7 @@ export function AppShell({
   const isUnread = useCallback((track: Track) => readUnread('track', track.id, track.activityAt), [readUnread]);
   const trackGroups = useMemo(() => sidebarTrackGroups(workspace.tracks, workspace.areas, isUnread),
     [workspace.tracks, workspace.areas, isUnread]);
-  const history = useMobileHistoryData(transport, unauthorized, historyTracks, conversationScope?.conversations ?? [], narrowRail && historyOpen);
+  const history = useMobileHistoryData(transport, unauthorized, historyTracks, narrowRail && historyOpen);
   const visibleViewport = useVisibleViewport(narrowRail);
   const mobileSectionKind = mobileSection?.kind;
   const [mobileHeaderActionsHost, setMobileHeaderActionsHost] = useState<HTMLDivElement | null>(null);

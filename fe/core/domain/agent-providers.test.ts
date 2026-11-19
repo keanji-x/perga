@@ -1,52 +1,35 @@
 import { expect, it } from 'vitest';
-import { managedProviderProblem, managedProvidersOperation, providerAvailabilitySchema } from './agent-providers.js';
+import { agentProvidersOperation, managedProviderProblem, managedProvidersOperation } from './agent-providers.js';
 
-const READY = Object.freeze({
-  availability: { provider: 'claude' as const, status: 'ready' as const, reason: null, checked_at_ms: 1, authentication_method: null, authentication_notice: null },
-  accepts_unavailable_blank_track: true, capabilities: { managed_conversation: true, steer: false, images: true, manual_compact: true, history_replacement: true, requires_ready_availability: true },
-});
+const bootstrap = Object.freeze({ version: 'test', providers: [
+  { provider: 'claude', available: true, version: '1.0', reason: null, models: [] },
+  { provider: 'codex', available: false, version: null, reason: 'Sign in first', models: [] },
+  { provider: 'acp:opencode', available: true, version: '2.0', reason: null, models: [] },
+  { provider: 'unregistered', available: true, version: null, reason: null, models: [] },
+], templates: [], areas: [] });
 
-it('preserves the selected authentication method and rejects missing or malformed declarations', () => {
-  const answer = { ...READY.availability, provider: 'grok', authentication_method: 'xai.api_key' };
-  expect(providerAvailabilitySchema.parse(answer)).toEqual(answer);
-  const missing: Partial<typeof answer> = { ...answer };
-  delete missing.authentication_method;
-  expect(providerAvailabilitySchema.safeParse(missing).success).toBe(false);
-  expect(providerAvailabilitySchema.safeParse({ ...answer, authentication_method: 1 }).success).toBe(false);
-  expect(providerAvailabilitySchema.parse({ ...answer, authentication_method: null }).authentication_method).toBeNull();
-});
-
-it('decodes registered managed capabilities and preserves availability notices', () => {
+it('reads only v1 bootstrap and normalizes registered provider identifiers', () => {
   const operation = managedProvidersOperation(true);
   expect(operation.path).toBe('/api/v1/bootstrap?scope=managed&refresh=true');
-  expect(operation.responseSchema.parse([READY])).toEqual([READY]);
-  expect(managedProviderProblem([READY], 'claude')).toBeNull();
-  const unavailable = { ...READY, availability: { ...READY.availability, status: 'unavailable', reason: 'Sign in first', authentication_method: null, authentication_notice: { kind: 'sign_in_required', text: 'Authenticate on this server', revision: 'r1' } } };
-  const answers = operation.responseSchema.parse([unavailable]);
-  expect(answers[0].availability.authentication_notice?.text).toBe('Authenticate on this server');
-  expect(managedProviderProblem(answers, 'claude')).toBe('Sign in first');
-});
-
-it('rejects unknown or incomplete capabilities without supplying a backend', () => {
-  const schema = managedProvidersOperation(false).responseSchema;
-  expect(schema.safeParse([{ ...READY, capabilities: { managed_conversation: true } }]).success).toBe(false);
-  expect(schema.safeParse([{ ...READY, availability: { ...READY.availability, provider: 'unknown' } }]).success).toBe(false);
+  const answers = operation.responseSchema.parse(bootstrap);
+  expect(answers.map(({ availability }) => availability.provider)).toEqual(['claude', 'codex', 'opencode']);
+  expect(answers[0].availability).toMatchObject({ status: 'ready', authentication_method: '1.0', authentication_notice: null });
+  expect(answers[1].availability).toMatchObject({ status: 'unavailable', reason: 'Sign in first' });
+  expect(managedProviderProblem(answers, 'codex')).toBeNull();
+  expect(managedProviderProblem(answers, 'grok')).toMatch(/unavailable/);
   expect(managedProviderProblem(undefined, 'codex')).toMatch(/unavailable/);
-  expect(managedProviderProblem([READY], 'codex')).toMatch(/unavailable/);
-  expect(managedProviderProblem([{ ...READY, capabilities: { ...READY.capabilities, managed_conversation: false } }], 'claude')).toMatch(/does not support/);
 });
 
-
-it('uses backend-declared admission even when account status is unavailable', () => {
-  const unavailable = { ...READY, capabilities: { ...READY.capabilities, requires_ready_availability: false }, availability: { ...READY.availability, provider: 'codex' as const, status: 'unavailable' as const, reason: 'Daemon is restarting' } };
-  expect(managedProviderProblem(managedProvidersOperation(false).responseSchema.parse([unavailable]), 'codex')).toBeNull();
+it('rejects old availability arrays and managed_conversation responses', () => {
+  const answers = managedProvidersOperation(false).responseSchema.parse(bootstrap);
+  expect(managedProvidersOperation(false).responseSchema.safeParse(answers).success).toBe(false);
+  expect(agentProvidersOperation(false).responseSchema.safeParse(answers.map(answer => answer.availability)).success).toBe(false);
+  expect(managedProvidersOperation(false).responseSchema.safeParse({ managed_conversation: answers }).success).toBe(false);
 });
 
-
-it('requires steer as a boolean without a default', () => {
-  const schema = managedProvidersOperation(false).responseSchema;
-  const missing: Partial<typeof READY.capabilities> = { ...READY.capabilities };
-  delete missing.steer;
-  expect(schema.safeParse([{ ...READY, capabilities: missing }]).success).toBe(false);
-  expect(schema.safeParse([{ ...READY, capabilities: { ...READY.capabilities, steer: 'true' } }]).success).toBe(false);
+it('rejects malformed v1 provider status and requires the bootstrap version', () => {
+  for (const operation of [managedProvidersOperation(false), agentProvidersOperation(false)]) {
+    expect(operation.responseSchema.safeParse({ providers: bootstrap.providers }).success).toBe(false);
+    expect(operation.responseSchema.safeParse({ ...bootstrap, providers: [{ provider: 'codex', available: 'yes' }] }).success).toBe(false);
+  }
 });

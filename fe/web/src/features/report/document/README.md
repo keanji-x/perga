@@ -19,12 +19,11 @@ contract. Changes to another card or Track metadata do not invalidate the report
 The cache adds no strong card inventory, TTL, application IDs or DOM keep-alive.
 It cannot cap memory still owned by reachable query data.
 
-`source(cards)` exposes a stable cheap canonical input for an immutable report
-card. It does not parse Markdown. `peek(source)` reads completed preparation only;
+`documentSource(document)` exposes a stable cheap canonical input for an immutable report
+document. It does not parse Markdown. `peek(source)` reads completed preparation only;
 `prepare(source, execute, signal)` runs an injected `ReportPreparationPort` on a
 miss and caches success only while its lease remains active. Missing/invalid reports
-reuse canonical empty preparation. The synchronous `read(cards)` entry remains for
-existing standalone consumers. There is no in-flight queue or strong source inventory.
+reuse canonical empty preparation. There is no in-flight queue or strong source inventory.
 
 `useReportPreparation` memoizes a typed cache/executor adapter for the generic
 `systems/content-preparation` lease lifecycle. It returns data candidates with

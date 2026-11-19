@@ -1,4 +1,4 @@
-import { initialReceiptFor } from './initial-input-fixture.ts';
+import { fixtureSnapshot, fixtureSession, fixtureTrack, fixtureCreation } from './session-contract-fixture.ts';
 import { prepareReportDocument } from '../../features/report/document/preparation.ts';
 // @vitest-environment jsdom
 import { WEB_COMPAT_VERSION } from '../providers/public.tsx';
@@ -10,7 +10,6 @@ import { afterEach, expect, it, vi } from 'vitest';
 
 import type { ApiRequest, ApiTransportPort, ApiTransportResponse } from '../../../../core/api/types.ts';
 import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
-import { trackConversationCardId } from '../../../../core/domain/conversation.ts';
 import { ThemeProvider } from '../theme/public.tsx';
 import { createAppRouter } from './public.tsx';
 import { bootTestCardRuntime } from './test-card-runtime.ts';
@@ -24,10 +23,7 @@ afterEach(() => {
 const unauthorized = createUnauthorizedChannel({ enqueue: (task) => task() });
 const ok = (body: unknown): ApiTransportResponse => ({ status: 200, statusText: 'OK', body });
 const AREA = { id: 'c1', name: 'Work', color: '#000', sort: 1, kind: 'user', created_at: 1, updated_at: 1 };
-const track = (id: string, title: string, sort: number) => ({
-  workspace: { isolation: 'worktree', kind: 'attached', path: '/tmp', frozen_at: null, worktree: `/tmp/.worktrees/${id}` },
-  id, area_id: 'c1', title, sort, cwd: '/tmp', pinned_at: null, closed_at: null, created_at: 1, updated_at: 2,
-});
+const track = (id: string, title: string, sort: number) => (fixtureTrack(id, { areaId: 'c1', title: title, cwd: '/tmp', sortOrder: sort, closedAtMs: null, createdAtMs: 1, updatedAtMs: 2 }));
 const TRACKS = [track('w1', 'Track one', 1), track('w2', 'Track two', 2)];
 
 /** The whole router over a fake kernel whose create mints the row the key derives, and lists it afterwards. */
@@ -41,33 +37,27 @@ function renderApp(managed = false, createdTitle: string | null = null) {
     addListener: vi.fn(), removeListener: vi.fn(), dispatchEvent: vi.fn(),
   })));
   const requests: ApiRequest[] = [];
-  const minted = new Map<string, unknown[]>();
+  const minted = new Map<string, ReturnType<typeof fixtureSession>[]>();
   const transport: ApiTransportPort = {
     send(request) {
       requests.push(request);
       if (request.path === '/api/v1/bootstrap') return Promise.resolve(ok({ webCompatVersion: WEB_COMPAT_VERSION, minWebCompatVersion: WEB_COMPAT_VERSION, syncEventVersion: 20, dbInstanceId: 'test', assistantProviders: true, conversationInitialInput: true, conversationCreateModel: true }));
-      if (request.path.startsWith('/api/v1/bootstrap?scope=managed')) return Promise.resolve(ok([{
-        availability: { provider: managed ? 'claude' : 'codex', status: 'ready', reason: null, checked_at_ms: 1, authentication_method: null, authentication_notice: null },
-        accepts_unavailable_blank_track: true, capabilities: { managed_conversation: true, steer: !managed, images: true, manual_compact: true, history_replacement: true, requires_ready_availability: false },
-      }]));
-      if (managed && request.path === '/api/v1/bootstrap?provider=claude') return Promise.resolve(ok({ version: 'test', providers: [{ provider: 'claude', available: true, models: ['sonnet'] }] }));
+      if (request.path.startsWith('/api/v1/bootstrap?scope=managed')) return Promise.resolve(ok({ version: 'test', providers: [{ provider: managed ? 'claude' : 'codex', available: true, version: null, reason: null, models: [] }], templates: [], areas: [] }));
+      if (managed && request.path === '/api/v1/bootstrap?provider=claude') return Promise.resolve(ok({ version: 'test', providers: [{ provider: 'claude', available: true, models: ['sonnet'] }], templates: [], areas: [] }));
       const conversations = /^\/api\/v1\/tracks\/(\w+)\/sessions$/.exec(request.path);
       if (conversations !== null) {
         const trackId = conversations[1];
         const rows = minted.get(trackId) ?? [];
         if (request.method !== 'POST') return Promise.resolve(ok(rows));
-        const row = {
-          id: trackConversationCardId(trackId, request.headers?.['Idempotency-Key'] ?? ''),
-          trackId, title: createdTitle, kind: 'track-assistant', provider: 'codex', state: null, updatedAt: 99, archivedAt: null, lastTurnCompletedAt: null,
-        };
+        const row = fixtureSession('server-session-' + trackId, trackId, { title: createdTitle, provider: managed ? 'claude' : 'codex' });
         minted.set(trackId, [...rows, row]);
-        return Promise.resolve({ status: 201, statusText: 'Created', body: { ...row, initialInput: { kind: 'known', receipt: initialReceiptFor(request, 'first-entry', 0) } } });
+        return Promise.resolve({ status: 201, statusText: 'Created', body: fixtureCreation(row) });
       }
       if (request.path === '/api/v1/areas') return Promise.resolve(ok([AREA]));
       if (request.path === '/api/v1/areas/c1/tracks?includeClosed=true') return Promise.resolve(ok(TRACKS));
       const detail = TRACKS.find((candidate) => request.path === `/api/v1/tracks/${candidate.id}`);
       if (detail !== undefined) {
-        return Promise.resolve(ok({ track: detail, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true, cards: [], overlays: [] }));
+        return Promise.resolve(ok(fixtureSnapshot(detail, minted.get(detail.id) ?? [])));
       }
       if (request.path === '/api/settings') return Promise.resolve(ok({}));
       return Promise.resolve(ok([]));

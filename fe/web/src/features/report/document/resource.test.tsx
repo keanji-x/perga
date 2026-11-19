@@ -1,15 +1,14 @@
 import { act, cleanup, renderHook } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { TrackReport } from '../../../../../core/domain/report.ts';
-import type { CardWire } from '../../../../../core/domain/track.ts';
+import type { ReportDocumentDto } from '../../../../../core/api/schemas.ts';
 import { createReportPreparationCache, prepareReportDocument, type PreparedReport, type ReportPreparationPort } from './preparation.ts';
 import { useReportPreparation } from './resource.ts';
 
-function card(title: string): CardWire {
-  return { id: 'report', track_id: 'track', kind: 'track-report', title: null, sort: 0,
-    payload: { schemaVersion: 3, docRev: 1, summary: '', body: '', blocks: [
-      { id: 'one', kind: 'prose', rev: 1, payload: { markdown: `# ${title}\n\nEvidence for ${title}.` } },
-    ] }, deletable: false, created_at: 1, updated_at: 1 };
+function document(markdown = '# Stored report\n\nEvidence.'): ReportDocumentDto {
+  return { docRev: 1, summary: '', leadingComment: '', blocks: [
+    { id: 'one', kind: 'prose', rev: 1, markdown: `# ${markdown}\n\nEvidence for ${markdown}.`, payload: null },
+  ] };
 }
 
 function controlled() {
@@ -26,7 +25,7 @@ function controlled() {
 afterEach(cleanup);
 
 it('does not execute while disabled and exposes a completed cache hit immediately', async () => {
-  const cache = createReportPreparationCache(); const wire = card('Cached'); const source = cache.source([wire]);
+  const cache = createReportPreparationCache(); const wire = document('Cached'); const source = cache.documentSource(wire);
   const work = controlled();
   const view = renderHook(({ enabled }) => useReportPreparation('track', source, cache, work.execute, enabled), {
     initialProps: { enabled: false },
@@ -44,7 +43,7 @@ it('does not execute while disabled and exposes a completed cache hit immediatel
 });
 
 it('retains only a same-selection model and atomically replaces it with the cloned new revision', async () => {
-  const cache = createReportPreparationCache(); const first = cache.source([card('First')]); const next = cache.source([card('Next')]);
+  const cache = createReportPreparationCache(); const first = cache.documentSource(document('First')); const next = cache.documentSource(document('Next'));
   const work = controlled();
   const view = renderHook(({ source }) => useReportPreparation('track', source, cache, work.execute, true), {
     initialProps: { source: first },
@@ -61,7 +60,7 @@ it('retains only a same-selection model and atomically replaces it with the clon
 });
 
 it('rejects A1 and B results after an A→B→A visit even when execution ignores abort', async () => {
-  const cache = createReportPreparationCache(); const a = cache.source([card('A')]); const b = cache.source([card('B')]);
+  const cache = createReportPreparationCache(); const a = cache.documentSource(document('A')); const b = cache.documentSource(document('B'));
   const work = controlled();
   const view = renderHook(({ key, source }) => useReportPreparation(key, source, cache, work.execute, true), {
     initialProps: { key: 'a', source: a },
@@ -79,7 +78,7 @@ it('rejects A1 and B results after an A→B→A visit even when execution ignore
 });
 
 it('aborts replaced sources and disabled preparation without exposing stale failures', async () => {
-  const cache = createReportPreparationCache(); const first = cache.source([card('Old')]); const next = cache.source([card('New')]);
+  const cache = createReportPreparationCache(); const first = cache.documentSource(document('Old')); const next = cache.documentSource(document('New'));
   const work = controlled();
   const view = renderHook(({ source, enabled }) => useReportPreparation('track', source, cache, work.execute, enabled), {
     initialProps: { source: first, enabled: true },
@@ -99,7 +98,7 @@ it('aborts replaced sources and disabled preparation without exposing stale fail
 });
 
 it('retains a candidate revision on failure and retries only its current lease', async () => {
-  const cache = createReportPreparationCache(); const first = cache.source([card('Seen')]); const next = cache.source([card('Retry')]);
+  const cache = createReportPreparationCache(); const first = cache.documentSource(document('Seen')); const next = cache.documentSource(document('Retry'));
   const work = controlled();
   const view = renderHook(({ source }) => useReportPreparation('track', source, cache, work.execute, true), {
     initialProps: { source: first },
@@ -120,7 +119,7 @@ it('retains a candidate revision on failure and retries only its current lease',
 });
 
 it('releases StrictMode and unmounted executions and starts independent resource instances', async () => {
-  const cache = createReportPreparationCache(); const source = cache.source([card('Strict')]); const work = controlled();
+  const cache = createReportPreparationCache(); const source = cache.documentSource(document('Strict')); const work = controlled();
   const view = renderHook(() => useReportPreparation('track', source, cache, work.execute, true), {
     reactStrictMode: true,
   });
@@ -140,7 +139,7 @@ it('releases StrictMode and unmounted executions and starts independent resource
 });
 
 it('never retains a previous cache scope or selection model during the new render', async () => {
-  const cache = createReportPreparationCache(); const source = cache.source([card('Private')]); const work = controlled();
+  const cache = createReportPreparationCache(); const source = cache.documentSource(document('Private')); const work = controlled();
   const view = renderHook(({ key, owner }) => useReportPreparation(key, source, owner, work.execute, true), {
     initialProps: { key: 'a', owner: cache },
   });
@@ -150,7 +149,7 @@ it('never retains a previous cache scope or selection model during the new rende
 });
 
 it('memoizes the cache/executor adapter across unchanged renders and keeps empty success explicit', async () => {
-  const cache = createReportPreparationCache(); const source = cache.source([card('Stable')]); const work = controlled();
+  const cache = createReportPreparationCache(); const source = cache.documentSource(document('Stable')); const work = controlled();
   const view = renderHook(({ enabled }) => useReportPreparation('track', source, cache, work.execute, enabled), {
     initialProps: { enabled: true },
   });
@@ -162,7 +161,7 @@ it('memoizes the cache/executor adapter across unchanged renders and keeps empty
   view.rerender({ enabled: true });
   expect(view.result.current.candidate).toEqual(candidate);
   expect(work.jobs).toHaveLength(1);
-  const empty = cache.source([]);
+  const empty = cache.documentSource({ ...document(), blocks: [] });
   const emptyView = renderHook(() => useReportPreparation('empty', empty, cache, work.execute, false));
   expect(emptyView.result.current).toMatchObject({ status: 'ready', candidate: { source: empty, preparation: { kind: 'empty', report: null } } });
   expect(work.jobs).toHaveLength(1);

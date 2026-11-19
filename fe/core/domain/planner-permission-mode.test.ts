@@ -22,15 +22,6 @@ describe('session permission mode', () => {
     })).toEqual({ card_id: 'ses/1', permission_mode: 'acceptEdits' });
   });
 
-  it('reads the run\'s mode as required: a mode, `null` when unset or task-bound, never absent', () => {
-    const { responseSchema } = plannerRunOperation('card-1');
-    expect(responseSchema.parse({ ...RUN, permission_mode: 'ask' }).permission_mode).toBe('ask');
-    expect(responseSchema.parse({ ...RUN, permission_mode: 'full' }).permission_mode).toBe('full');
-    expect(responseSchema.parse({ ...RUN, permission_mode: null }).permission_mode).toBeNull();
-    expect(responseSchema.safeParse(RUN).success).toBe(false);
-    expect(responseSchema.safeParse({ ...RUN, permission_mode: '' }).success).toBe(false);
-  });
-
   it('production conversationRunOperation preserves Lead, Assistant, and task-bound session permissionMode', () => {
     const { responseSchema } = conversationRunOperation('ses_1');
     const basePage = {
@@ -67,5 +58,9 @@ describe('session permission mode', () => {
       },
     });
     expect(taskBound.permission_mode).toBe('full');
+  });
+
+  it('rejects the retired planner run response', () => {
+    expect(plannerRunOperation('card-1').responseSchema.safeParse({ ...RUN, permission_mode: 'ask' }).success).toBe(false);
   });
 });

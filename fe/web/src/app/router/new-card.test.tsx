@@ -1,3 +1,4 @@
+import { fixtureSnapshot, fixtureTrack } from './session-contract-fixture.ts';
 import { prepareReportDocument } from '../../features/report/document/preparation.ts';
 // @vitest-environment jsdom
 
@@ -17,10 +18,7 @@ import { withReadReceipts } from '../providers/read-receipts-fixture.tsx';
 
 const unauthorized = createUnauthorizedChannel({ enqueue: (task) => task() });
 const AREA = { id: 'c1', name: 'Work', color: '#000', sort: 1, kind: 'user', created_at: 1, updated_at: 1 };
-const TRACK = { workspace: { isolation: 'none' as const, kind: 'attached' as const, path: '/tmp', frozen_at: null },
-  id: 'w1', area_id: 'c1', title: 'Test track', sort: 1, cwd: '/tmp',
-  pinned_at: null, closed_at: null, created_at: 1, updated_at: 2,
-};
+const TRACK = fixtureTrack('w1', { areaId: 'c1', title: 'Test track', cwd: '/tmp', sortOrder: 1, closedAtMs: null, createdAtMs: 1, updatedAtMs: 2 });
 
 function ok(body: unknown): ApiTransportResponse {
   return { status: 200, statusText: 'OK', body };
@@ -40,8 +38,9 @@ function setup({ createFails = false, deferCreate = false, answers = [] as reado
       requests.push(request);
       if (request.path === '/api/v1/areas') return Promise.resolve(ok([AREA]));
       if (request.path === '/api/v1/areas/c1/tracks?includeClosed=true') return Promise.resolve(ok([TRACK]));
+      if (request.path === '/api/v1/tracks/w1/terminals' && request.method === 'GET') return Promise.resolve(ok([...cards]));
       if (request.path === '/api/v1/tracks/w1') {
-        return Promise.resolve(ok({ track: TRACK, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true, cards: [...cards], overlays: [] }));
+        return Promise.resolve(ok(fixtureSnapshot(TRACK, [])));
       }
       if (request.path === '/api/v1/tracks/w1/report') return Promise.resolve(ok({ taskDiagnostics: [] }));
       if (request.path.startsWith('/api/fs/listdir')) {

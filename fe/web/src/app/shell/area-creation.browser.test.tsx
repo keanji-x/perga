@@ -26,14 +26,14 @@ describe('creating an Area after navigation changes', () => {
       let creating = false;
       let areaReads = 0;
       receipts.reply = async (request) => {
-        if (request.path === '/api/areas' && request.method === 'POST') {
+        if (request.path === '/api/v1/areas' && request.method === 'POST') {
           creating = true;
           await createHeld;
         }
         return reply(request);
       };
       const router = setup('/track/w1', AREA.name, (request) => {
-        if (request.path === '/api/areas' && request.method === 'GET') areaReads++;
+        if (request.path === '/api/v1/areas' && request.method === 'GET') areaReads++;
       }, receipts, history);
       try {
         await page.getByRole('button', { name: 'Switch track, Responsive mobile UI', exact: true }).click();
@@ -72,18 +72,15 @@ describe('creating an Area before its list is available', () => {
     const receipts = createReadReceiptsKernel();
     const reply = receipts.reply;
     let reads = 0;
-    const created = { ...AREA, id: 'c3', name: 'Research', default_template_id: 'saved', default_cwd: '/srv/research' };
+    const created = { ...AREA, id: 'c3', name: 'Research', defaultCwd: '/srv/research' };
     receipts.reply = async (request) => {
-      if (request.path === '/api/areas' && request.method === 'GET') {
+      if (request.path === '/api/v1/areas' && request.method === 'GET') {
         reads++;
         await readsHeld;
         return { status: 200, statusText: 'OK', body: [AREA, created] };
       }
-      if (request.path === '/api/areas' && request.method === 'POST') {
+      if (request.path === '/api/v1/areas' && request.method === 'POST') {
         return { status: 201, statusText: 'Created', body: created };
-      }
-      if (request.path === '/api/track-templates') {
-        return { status: 200, statusText: 'OK', body: [{ id: 'saved', title: 'Saved workflow', description: null, tasks: [], availability: { status: 'ready' } }] };
       }
       return reply(request);
     };
@@ -103,7 +100,7 @@ describe('creating an Area before its list is available', () => {
       await expect.element(page.getByRole('button', { name: 'Create track', exact: true })).toBeDisabled();
       await page.getByRole('button', { name: 'Track options' }).click();
       await expect.element(page.getByRole('button', { name: 'Repo: research (/srv/research)' })).toBeVisible();
-      // A saved Area template default does not expose a proactive template picker.
+      // Area creation does not expose a proactive template picker.
       await expect.element(page.getByRole('button', { name: /^Template:/ })).not.toBeInTheDocument();
       await page.getByRole('button', { name: 'Track options' }).click();
       releaseReads();
@@ -123,7 +120,7 @@ describe('creating an Area before its list is available', () => {
     const receipts = createReadReceiptsKernel();
     const reply = receipts.reply;
     receipts.reply = async (request) => {
-      if (request.path === '/api/areas' && request.method === 'GET') {
+      if (request.path === '/api/v1/areas' && request.method === 'GET') {
         await readsHeld;
         if (failList) return { status: 500, statusText: 'Error', body: { error: 'unavailable', code: 'internal' } };
       }
@@ -144,7 +141,7 @@ describe('creating an Area before its list is available', () => {
       await composer.fill('Keep my research plan after retry');
       await userEvent.keyboard('{Enter}');
       await expect.element(page.getByRole('button', { name: 'Create track', exact: true })).toBeDisabled();
-      expect(requests.some(request => request.path === '/api/tracks' && request.method === 'POST')).toBe(false);
+      expect(requests.some(request => request.path === '/api/v1/tracks' && request.method === 'POST')).toBe(false);
       failList = false;
       await page.getByRole('button', { name: 'Open workspace' }).click();
       await page.getByRole('button', { name: 'Retry', exact: true }).click();

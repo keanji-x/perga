@@ -333,7 +333,8 @@ describe('shared test-harness dependencies reach the entries that need them', ()
   });
 
   // Negative control against widening selection_paths to production modules generally.
-  it.each(['web/src/app/router/other.ts', 'web/src/systems/cards/builtins/other.ts'])(
+  it.each(['web/src/app/router/other.ts', 'web/src/systems/cards/builtins/other.ts',
+    'web/src/systems/cards/builtins/planner.ts', 'web/src/systems/cards/builtins/assistant.ts'])(
     'the neighbouring production path %s still selects nothing', (path) => {
       expect(select(path)).toEqual([]);
     });

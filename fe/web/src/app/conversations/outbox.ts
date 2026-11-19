@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react';
-import { onlineManager, useQueryClient, type QueryClient } from '@tanstack/react-query';
+import { onlineManager } from '@tanstack/react-query';
 
 import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import type { PlannerAttachment } from '../../../../core/api/generated/wire.ts';
@@ -9,25 +9,15 @@ import {
 } from '../../../../core/domain/conversation.ts';
 import { KeyedSendFailure, retryUnknownSend, SEND_RETRIES } from '../../../../core/domain/conversation-delivery.ts';
 import {
-  queueDisplayAccounting, acknowledgeQueueMutation, initialInputNeedsObservation, withInitialInputSources, outboxFactsWithRemovedInputs, synchronizeQueuedSends, withOutboxLiveReplies, settleSendOp, wasUnknown, withConfirmedSends, withoutQueuedEntry, type LandedReads, type ReplacedTurn, type SendOp, type ConversationOutboxOp, type ObservedInitialInput, type ReportedInput, type QueueDisplayAccounting,
+  queueDisplayAccounting, outboxFactsWithRemovedInputs, synchronizeQueuedSends, withOutboxLiveReplies, settleSendOp, wasUnknown, withConfirmedSends, withoutQueuedEntry, type LandedReads, type ReplacedTurn, type SendOp, type ConversationOutboxOp, type QueueDisplayAccounting,
 } from '../../../../core/domain/conversation-outbox.ts';
 import { recoveryDelay } from '../../../../core/domain/recovery/access.ts';
 import { ApiError, NotSentError } from '../../../../core/domain/failure-class.ts';
-import { queryKeys } from '../providers/queries.ts';
 import { admitTransport } from '../providers/recovery-mutation.ts';
 import { mintIdempotencyKey } from '../providers/idempotency-key.ts';
 import { useState } from '../../ui/state/public.ts';
 import { useConversationSendOps, useConversationSpentRows, useConversationCommands, type RememberedConversation } from './public.tsx';
 import { numberReads } from './read-order.ts';
-
-/** End only the exact creation lease whose existing outbox owner no longer needs observation. */
-function releaseSettledInitialQueries(client: QueryClient, cardId: string, ops: readonly ConversationOutboxOp[]) {
-  for (const op of ops) {
-    if (op.phase === 'initial-accepted' && !initialInputNeedsObservation(op)) {
-      client.removeQueries({ queryKey: [...queryKeys.initialInput(op.trackId, cardId), op.key, op.receipt.entryId], exact: true });
-    }
-  }
-}
 
 type RunQueryOptions<T> = Readonly<{ queryFn: (context: { signal: AbortSignal }) => Promise<T> }>;
 
@@ -74,7 +64,7 @@ function rememberSent(
  */
 export function useConversationOutbox({
   cardId, transport, send, serverEntries, serverTurns, liveReplies, queuedEntries, stalled, landed,
-  queuesInput, queueIfBusy, highWater, pressed, initialInput, reportedInput, removedMessages, viewerId,
+  queuesInput, queueIfBusy, highWater, pressed, removedMessages, viewerId,
 }: {
   removedMessages: ReadonlySet<string>;
   viewerId: string | null;
@@ -96,31 +86,25 @@ export function useConversationOutbox({
   highWater: number;
   /** A send of the conversation shown went out. */
   pressed: () => void;
-  initialInput: ReadonlyMap<string, ObservedInitialInput>;
-  /** Real served queue/validated read or hint facts, kept distinct from the projected queue. */
-  reportedInput: readonly ReportedInput[];
 }) {
   const registry = useConversationCommands();
-  const client = useQueryClient();
   const { editOutbox, retireSends, beginSend, nextRead, updateExisting } = registry;
   const ops = useConversationSendOps(cardId === '' ? null : cardId);
   const spent = useConversationSpentRows(cardId === '' ? null : cardId);
   const queuedEntryIds = useMemo(() => new Set(queuedEntries.map(entry => entry.entry_id)), [queuedEntries]);
-  const observedOps = useMemo(() => synchronizeQueuedSends(ops, { displayed: queuedEntries, reported: reportedInput }), [ops, queuedEntries, reportedInput]);
+  const observedOps = useMemo(() => synchronizeQueuedSends(ops, { displayed: queuedEntries }), [ops, queuedEntries]);
   /** The card shown now; a send's own `cardId` is the one it was pressed in. */
   const shownCardId = useRef(cardId);
   shownCardId.current = cardId;
   const facts = useMemo(
-    () => outboxFactsWithRemovedInputs({ cardId, serverEntries, serverTurns, queuedEntryIds, stalled, ops: observedOps, spent, landed, initialInput }, removedMessages),
-    [cardId, serverEntries, serverTurns, queuedEntryIds, stalled, observedOps, spent, landed, initialInput, removedMessages],
+    () => outboxFactsWithRemovedInputs({ cardId, serverEntries, serverTurns, queuedEntryIds, stalled, ops: observedOps, spent, landed }, removedMessages),
+    [cardId, serverEntries, serverTurns, queuedEntryIds, stalled, observedOps, spent, landed, removedMessages],
   );
-  const sourcedOps = useMemo(() => withInitialInputSources(observedOps, facts.entries), [observedOps, facts.entries]);
   const accountQueueDisplay = useCallback((entries: readonly TranscriptEntry[], suppressed: QueueDisplayAccounting['suppressed']) =>
-    queueDisplayAccounting(entries, sourcedOps, suppressed), [sourcedOps]);
+    queueDisplayAccounting(entries, observedOps, suppressed), [observedOps]);
   useEffect(() => {
-    if (sourcedOps !== ops) editOutbox(cardId, current => withInitialInputSources(synchronizeQueuedSends(current, { displayed: queuedEntries, reported: reportedInput }), facts.entries));
-    releaseSettledInitialQueries(client, cardId, sourcedOps);
-  }, [cardId, client, editOutbox, sourcedOps, ops, queuedEntries, reportedInput, facts.entries]);
+    if (observedOps !== ops) editOutbox(cardId, current => synchronizeQueuedSends(current, { displayed: queuedEntries }));
+  }, [cardId, editOutbox, observedOps, ops, queuedEntries]);
   const view = useMemo(() => withOutboxLiveReplies(facts, liveReplies), [facts, liveReplies]);
   const { retire } = view;
   /* Retiring by key is safe only because a `confirmed` or `replayed` op, the only ones retired, never changes phase
@@ -128,16 +112,11 @@ export function useConversationOutbox({
   useEffect(() => {
     if (retire.length === 0) return;
     retireSends(cardId, retire);
-    for (const { key } of retire) {
-      const initial = ops.find((op) => op.key === key && op.phase === 'initial-accepted');
-      if (initial?.phase === 'initial-accepted') client.removeQueries({ queryKey: [...queryKeys.initialInput(initial.trackId, cardId), key] });
-    }
-  }, [cardId, client, ops, retireSends, retire]);
+  }, [cardId, retireSends, retire]);
 
   const acknowledgeQueuedWrite = (result: PlannerInputMutation, edited: readonly PendingQueueEntry[] = []) => {
-    const written = editOutbox(cardId, current => acknowledgeQueueMutation(synchronizeQueuedSends(
-      result.text === null ? withoutQueuedEntry(current, result.entry_id) : current, { displayed: edited, reported: [] }), result));
-    releaseSettledInitialQueries(client, cardId, written);
+    editOutbox(cardId, current => synchronizeQueuedSends(
+      result.text === null ? withoutQueuedEntry(current, result.entry_id) : current, { displayed: edited }));
   };
 
   /** Words and images back in the composer of the card they were sent from, whichever conversation is shown: the one
@@ -295,7 +274,6 @@ export function useConversationOutbox({
       if (dismissed?.fromComposer === true) releaseComposerImages(cardId, dismissed.echo.attachments ?? []);
     },
     /** A queued entry this client deleted: the confirmed send that claimed it will never be shown by a read. */
-    observeQueuedInput: (fact: ReportedInput) => { editOutbox(cardId, current => synchronizeQueuedSends(current, { displayed: [], reported: [fact] })); },
     forgetQueuedEntry: acknowledgeQueuedWrite,
     acknowledgeQueuedEdit: (entry: PendingQueueEntry, saved: PlannerInputMutation & { text: string }) => acknowledgeQueuedWrite(saved, [{ ...entry, text: saved.text, rev: saved.rev }]),
   };

@@ -62,8 +62,7 @@ export function WorkerDispatchControl({ trackId, transport, unauthorized }: {
       setOpened(false);
       setAccepted(true);
       void Promise.all([client.invalidateQueries({ queryKey: queryKeys.trackReport(trackId) }),
-        client.invalidateQueries({ queryKey: queryKeys.trackDetail(trackId) }),
-        client.invalidateQueries({ queryKey: queryKeys.trackConversations(trackId) })]);
+        client.invalidateQueries({ queryKey: queryKeys.trackDetail(trackId) })]);
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : 'Could not dispatch the Worker.');
     } finally { setBusy(false); }

@@ -1,3 +1,4 @@
+import { fixtureSnapshot, fixtureSession, fixtureTrack } from './session-contract-fixture.ts';
 import { prepareReportDocument } from '../../features/report/document/preparation.ts';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { RouterProvider, createMemoryHistory } from '@tanstack/react-router';
@@ -37,8 +38,7 @@ function setup(mode: 'awaiting' | 'dispatched' | 'event-advance' | 'dependency' 
   };
   let initiallyEmpty = mode === 'empty';
   const area = { id: 'c1', name: 'Work', color: '#123456', sort: 1, kind: 'user', created_at: 1, updated_at: 1 };
-  const track = { workspace: { isolation: 'none' as const, kind: 'attached' as const, path: '/tmp', frozen_at: null }, id: 'w1', area_id: 'c1', title: 'Continuing work', sort: 1, cwd: '/tmp',
-    pinned_at: null, closed_at: null, created_at: 1, updated_at: 2 };
+  const track = fixtureTrack('w1', { areaId: 'c1', title: 'Continuing work', cwd: '/tmp', sortOrder: 1, closedAtMs: null, createdAtMs: 1, updatedAtMs: 2 });
   const card = { id: 'report', track_id: 'w1', title: null, kind: 'track-report', sort: 1, deletable: false,
     created_at: 1, updated_at: 2, payload: { schemaVersion: 3, docRev: 1, summary: '', body: '', blocks: [
       { id: 'b-task', rev: 1, kind: 'task', payload: {
@@ -49,14 +49,13 @@ function setup(mode: 'awaiting' | 'dispatched' | 'event-advance' | 'dependency' 
   if (mode === 'dependency') card.payload.blocks.push({ id: 'b-dependency', rev: 1, kind: 'task', payload: {
     key: 'b', kind: 'codex', declared_by: 'user', ready: true, goal: 'Prepare the input for c.', depends_on: [],
   } });
-  const worker = { ...card, id: 'old-worker', kind: 'codex', title: 'Previous worker', deletable: true, payload: {} };
   const ok = (body: unknown): ApiTransportResponse => ({ status: 200, statusText: 'OK', body });
   const transport: ApiTransportPort = { send(request) {
     return Promise.resolve().then(() => {
     requests.push(request);
     if (request.path === '/api/v1/areas') return ok([area]);
     if (request.path === '/api/v1/areas/c1/tracks?includeClosed=true') return ok([track]);
-    if (request.path === '/api/v1/tracks/w1') return ok({ track, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true, cards: [card, worker, { ...worker, id: 'new-worker', title: 'Current worker' }], overlays: [] });
+    if (request.path === '/api/v1/tracks/w1') return ok(fixtureSnapshot(track, [fixtureSession('old-worker', track.id, { title: 'Previous worker' }), fixtureSession('new-worker', track.id, { title: 'Current worker' })], { docRev: card.payload.docRev, summary: card.payload.summary, leadingComment: '', blocks: card.payload.blocks.map(block => ({ ...block, markdown: '' })) }));
     if (request.path === '/api/v1/tracks/w1/report' && initiallyEmpty) return ok({ taskDiagnostics: [
       { blockId: 'b-task', key: taskKey, schedulable: false, status: null, statusDetail: null, workerCardId: null, diagnostics: [] },
     ] });
@@ -109,7 +108,7 @@ it('retains the current allocation when there is no projected execution row', as
   await userEvent.click(screen.getByText('Attempt history (2)'));
   await userEvent.click(screen.getByText('Attempt 1 · Failed'));
   expect(screen.getByText('gate-red')).toBeTruthy();
-  expect(screen.getByRole('button', { name: 'Open attempt 1' })).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Open attempt 1' })).toBeNull();
 });
 
 it('describes dispatch as preparation before the worker starts', async () => {
@@ -119,7 +118,7 @@ it('describes dispatch as preparation before the worker starts', async () => {
 });
 
 it('refreshes collapsed current execution through task events without reopening history', async () => {
-  const { open, advance, router } = setup('event-advance');
+  const { open, advance } = setup('event-advance');
   await open();
   await screen.findByText('Current attempt 1 · Failed');
   const disclosure = document.querySelector<HTMLDetailsElement>('[data-nc-task-state]')!;
@@ -131,8 +130,7 @@ it('refreshes collapsed current execution through task events without reopening 
   await userEvent.click(screen.getByRole('button', { name: 'Progress' }));
   const progressTask = document.querySelector('[data-nc-module="work"] [data-nc-row="task:b-task"]')!;
   expect(progressTask.textContent).toContain('Running');
-  await userEvent.click(screen.getByTitle('Open the worker card for b'));
-  await waitFor(() => expect(router.state.location.href).toContain('card=new-worker'));
+  expect(screen.queryByTitle('Open the worker card for b')).toBeNull();
   await act(() => { advance('done'); return Promise.resolve(); });
   await waitFor(() => expect(disclosure.querySelector('summary')!.textContent).toContain('Completed'));
   await waitFor(() => expect(progressTask.textContent).toContain('Finished'));
@@ -164,9 +162,7 @@ it('refreshes previously admitted execution after revisiting with Reference stil
   expect(document.querySelector<HTMLDetailsElement>('[data-nc-report-reference]')?.open).toBe(false);
   expect(document.querySelector('[data-nc-task-state]')).toBeNull();
   expect(fixture.requests.filter(request => request.path.endsWith('/attempts')).length).toBeGreaterThan(reads);
-  await userEvent.click(screen.getByRole('button', { name: 'Actions for b' }));
-  await userEvent.click(await screen.findByRole('menuitem', { name: 'View execution' }));
-  await waitFor(() => expect(fixture.router.state.location.href).toContain('card=new-worker'));
+  expect(screen.queryByRole('menuitem', { name: 'View execution' })).toBeNull();
 });
 
 it('keeps the current failed dependency explanation after loading pending task history', async () => {

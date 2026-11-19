@@ -46,7 +46,7 @@ function draw(selected = false) {
     <div style={{ inlineSize: 300 }}><PanelCard>{paintDesktopPanel(makeDesktopPainter({ progressDisclosure: { open: true, onOpenChange: vi.fn() }, taskSummary: '2',
       cardEntries: <ChatList activeId={selected ? 'chat-0' : null} showTrack={false} onOpen={vi.fn()} cards={{}}
         conversations={['Chat first', 'Chat second'].map((title, i) => ({ provider: 'codex' as const, id: `chat-${i}`, trackId: 'track-0', title,
-          kind: 'track-assistant', state: 'idle', updatedAt: 1 }))} />,
+          isLead: false, kind: 'agent', state: 'idle', updatedAt: 1 }))} />,
     }), { ...view, rowModules: view.desktop.rowModules })}</PanelCard></div>
   </div>));
   return { tracks };

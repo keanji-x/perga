@@ -1,8 +1,12 @@
-import { latestHistory, observedWindow } from '../conversations/history.ts';
-import { historicalConversationPage, conversationCardId, historicalConversationRun } from './conversation-read-data.ts';
-import { initialReceiptFor } from './initial-input-fixture.ts';
+import { DEPLOYMENT_OWNER_USER_ID } from '../../../../core/api/auth.ts';
+import { CurrentUserScope } from '../auth/current-user.tsx';
+import { sessionItemsPageDtoToConversationPage } from '../../../../core/domain/conversation-display.ts';
+import { fixtureBootstrap, fixtureTrack, fixtureSession, fixtureSnapshot, fixtureCreation } from './session-contract-fixture.ts';
+import type { AgentSessionDto, SessionItemDto } from '../../../../core/api/perga-v1.ts';
+import { latestHistory } from '../conversations/history.ts';
+import { conversationCardId } from './conversation-read-data.ts';
+import { sessionPage, sessionItem, sessionInput } from './conversation-session-data.ts';
 import { prepareReportDocument } from '../../features/report/document/preparation.ts';
-import { WEB_COMPAT_VERSION } from '../providers/public.tsx';
 import { useConversationStore } from '../conversations/store.ts';
 import * as conversationStores from '../conversations/store.ts';
 // @vitest-environment jsdom
@@ -15,20 +19,16 @@ import { createRecoveryTransports } from '../../systems/recovery/transport.ts';
 import { onlineManager, QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { RouterProvider } from '@tanstack/react-router';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useEffect, useLayoutEffect } from 'react';
 
-import type { HarnessQueueEntryRef } from '../../../../core/api/generated/wire.ts';
 import type { ApiRequest, ApiTransportPort, ApiTransportResponse } from '../../../../core/api/types.ts';
 import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
-import { invalidationPlanFor } from '../../../../core/events/invalidation-plan.ts';
-import { applyEventEffects } from '../events/query-invalidation-adapter.ts';
 import { queryKeys } from '../providers/queries.ts';
 import type { Conversation, TranscriptEntry } from '../../../../core/domain/conversation.ts';
 import {
-  CONVERSATION_CREATE_TEXT, conversationCreateUnknownText, MAX_ATTACHMENTS_PER_MESSAGE, trackConversationCardId,
+  CONVERSATION_CREATE_TEXT, trackConversationCardId,
 } from '../../../../core/domain/conversation.ts';
 import { ConversationProvider, useConversationCommands, useConversationComposerText, useConversationRememberedTurns, useConversationSendOps, useConversationSpentRows, useRememberedConversations } from '../conversations/public.tsx';
 import { createUiPreferences, type UiPreferenceStorage } from '../providers/ui-preferences.tsx';
@@ -47,60 +47,21 @@ vi.mock('../../../../core/domain/recovery/access.ts', async (importOriginal) => 
 /** Text in the drawer outside its desktop header, which paints the conversation's name (often its first message). */
 const TRANSCRIPT_TEXT = { ignore: 'script, style, [data-nc-drawer] > header *, [aria-hidden="true"] *' };
 
-const AREA = { id: 'c1', name: 'Work', color: '#000', sort: 1, kind: 'user', created_at: 1, updated_at: 1 };
-const TRACK = { workspace: { isolation: 'none' as const, kind: 'attached' as const, path: '/tmp', frozen_at: null }, id: 'w1', area_id: 'c1', title: 'Test track', sort: 1, cwd: '/tmp', pinned_at: null, closed_at: null, created_at: 1, updated_at: 2 };
-/* A track with no planner card. */
-const BARE_TRACK = { ...TRACK, id: 'w2', title: 'Bare track', sort: 2 };
-const PLANNER_CARD = { id: 'card-planner', track_id: 'w1', kind: 'codex', title: 'Planner chat', sort: 1, payload: { planner_harness: true }, deletable: true, created_at: 1, updated_at: 2 };
-/* The card an assistant conversation is: a codex card carrying the marker the
-   kernel persists (`plain_chat.rs::card_is_track_assistant`). */
-const ASSISTANT_CARD = { ...PLANNER_CARD, id: 'conv-assistant-1', title: null, payload: { harness_profile: 'assistant' }, sort: 2, updated_at: 30 };
-/* A worker card, so the CARDS panel has one thing to list. */
-const WORKER_CARD = { ...PLANNER_CARD, id: 'card-worker', title: 'Worker', payload: {}, sort: 3, updated_at: 4 };
-/* The kernel's `kernel/track/activity` overlay: `items` are what the aside lists,
- * `cards` the per-card verdicts every row and card head reads. */
-type ActivityItemWire =
-  | { source: 'ask'; key: string; text: string; at_ms: number; ask_id: number; questions: { title: string; options: string[] }[]; delivery: 'wake' | 'hold' }
-  | { source: 'planner_down' | 'planner_turn_timeout'; key: string; text: string; at_ms: number };
-type ActivityCardWire = { card_id: string; state: 'working' | 'input' | 'failed' };
-const trackActivityOverlay = (payload: Partial<{
-  working: boolean; attention: 'none' | 'input' | 'failed'; activity_at_ms: number | null;
-  items: ActivityItemWire[]; cards: ActivityCardWire[];
-}> = {}, trackId = 'w1') => ({
-  id: `activity-${trackId}`, plugin_id: 'kernel', entity_kind: 'track', entity_id: trackId, kind: 'activity',
-  payload: { schemaVersion: 4, working: false, attention: 'none', activity_at_ms: null, items: [], cards: [], ...payload },
-  updated_at: 3,
-});
-/** The Planner's ask, in its words, as the projector lists it. */
-const askItem = (text: string, atMs: number): ActivityItemWire =>
-  ({ source: 'ask', key: `ask:${atMs}`, text, at_ms: atMs, ask_id: atMs, questions: [{ title: text, options: [] }], delivery: 'wake' });
-/** The Planner stopped: its failure reason, as the projector lists it. */
-const plannerDownItem = (text: string, atMs: number): ActivityItemWire =>
-  ({ source: 'planner_down', key: `planner_down:${atMs}`, text, at_ms: atMs });
-/** The retired per-card status row (`kernel/card/status`): nothing reads it any more. */
-const cardStatusOverlay = (cardId: string, state: 'AwaitingInput' | 'Errored', updatedAt: number) => ({
-  id: `status-${cardId}`, plugin_id: 'kernel', entity_kind: 'card', entity_id: cardId,
-  kind: 'status', payload: { state }, updated_at: updatedAt,
-});
-
+const AREA = { id: 'c1', name: 'Work', color: '#000', sortOrder: 1, createdAtMs: 1, updatedAtMs: 1 };
+const TRACK = fixtureTrack('w1', { areaId: 'c1', title: 'Test track', leadSessionId: 'card-planner' });
+const BARE_TRACK = fixtureTrack('w2', { areaId: 'c1', title: 'Bare track', sortOrder: 2 });
+const PLANNER_CARD = fixtureSession('card-planner', TRACK.id, { title: 'Planner chat', isLead: true });
+const ASSISTANT_CARD = fixtureSession('conv-assistant-1', TRACK.id, { updatedAtMs: 30 });
 const unauthorized = createUnauthorizedChannel({ enqueue: (task) => task() });
 
 const CONVERSATIONS = '/api/v1/tracks/w1/sessions';
 const BARE_CONVERSATIONS = '/api/v1/tracks/w2/sessions';
 const isHistoryPath = (path: string) => path.includes('/items?') && !path.includes('view=');
 
-type Row = {
-  id: string; trackId: string; title: string | null; kind: string; provider: 'codex';
-  state: string | null; updatedAt: number; archivedAt: number | null; lastTurnCompletedAt: number | null;
-};
-
+type Row = AgentSessionDto;
 function assistantRow(overrides: Partial<Row> = {}): Row {
-  return {
-    id: ASSISTANT_CARD.id, trackId: 'w1', title: null, kind: 'track-assistant', provider: 'codex',
-    state: 'idle', updatedAt: 30, archivedAt: null, lastTurnCompletedAt: null, ...overrides,
-  };
+  return { ...ASSISTANT_CARD, ...overrides };
 }
-
 /* Read receipts need a database scope; without `ServerCompatGate` it is seeded
  * from the stored database identity. Under a null scope nothing is unread. */
 /** The kernel's read receipts from a baseline of 0: every completion is unread until it is read. */
@@ -108,40 +69,8 @@ function receiptKernel(): ReadReceiptsKernel {
   return createReadReceiptsKernel({ baselineMs: 0 });
 }
 
-/** One persisted transcript row. An agent message has `text`, a user message has `content` parts; a row spelled the other way silently yields no turn. */
-function harnessMessage(id: number, itemType: string, item: unknown) {
-  return {
-    id, worker_session_id: 'r', card_id: ASSISTANT_CARD.id, track_id: 'w1', thread_id: 't',
-    turn_id: null, turn_error_text: null, item_uuid: null, item_type: itemType, method: 'item/completed',
-    params: JSON.stringify({ item, completedAtMs: id }), created_at_ms: id,
-  };
-}
-
-/** The row the kernel writes for a drained user message BEFORE codex echoes it: a completed `userMessage` with no turn yet, keyed by the queue entry id. */
-function projectionRow(id: number, ref: HarnessQueueEntryRef, text: string) {
-  const clientId = ref.id;
-  return {
-    ...harnessMessage(id, 'userMessage', {
-      id: clientId, clientId, type: 'userMessage', content: [{ type: 'text', text: `User says:\n${text}` }],
-    }),
-    item_uuid: clientId,
-    params: JSON.stringify({
-      item: { id: clientId, clientId, type: 'userMessage', content: [{ type: 'text', text: `User says:\n${text}` }] },
-      _projection: true,
-    }),
-    input_segments: [{ presentation: 'user', text: `User says:\n${text}`, attachments: [],
-      origin: { observation: 'user', event_id: null, queue_entry: ref } }],
-  };
-}
-
-/** The same row after codex's completed echo upgraded it in place: same `id`,
- *  now with a turn and codex's own item id; segments untouched. */
-function upgradedRow(row: ReturnType<typeof projectionRow>, turnId: string, itemUuid: string) {
-  const params = JSON.parse(row.params) as { item: { content: unknown } };
-  return {
-    ...row, turn_id: turnId, item_uuid: itemUuid,
-    params: JSON.stringify({ completedAtMs: row.id, item: { id: itemUuid, clientId: row.item_uuid, type: 'userMessage', content: params.item.content } }),
-  };
+function historyPage(card: string, rows: SessionItemDto[]) {
+  return sessionPage(fixtureSession(card, TRACK.id), rows);
 }
 
 /** The card a `/api/cards/{id}/…` request is about. */
@@ -155,12 +84,13 @@ function ok(body: unknown): ApiTransportResponse {
 }
 
 /* The shapes are schema-checked by the transport; an off-schema body is refused before any test can observe anything. */
-const inputAccepted = () => ok({ card_id: ASSISTANT_CARD.id, worker_session_id: 'r' });
-const inputAcceptedWithEntry = (entryId: string, cardId: string = ASSISTANT_CARD.id) => ok({ card_id: cardId, worker_session_id: 'r', entry_id: entryId });
-const runIdle = () => ok(historicalConversationRun({ card_id: ASSISTANT_CARD.id, worker_session_id: 'r', phase: 'idle', model: null, reasoning_effort: null, permission_mode: null, blocked_reason: null, manual_compact_supported: true, recovery: null, compact_outcome: null, context_usage_invalidated: false, running_turn: null }, 'idle', true));
+const inputAccepted = () => ok(sessionInput(ASSISTANT_CARD.id));
+const inputAcceptedWithEntry = (entryId: string, cardId = ASSISTANT_CARD.id) => ok(sessionInput(cardId, entryId));
+const runIdle = () => ok(sessionPage(ASSISTANT_CARD));
 
 function created(body: Row, request: ApiRequest): ApiTransportResponse {
-  return { status: 201, statusText: 'Created', body: { ...body, initialInput: { kind: 'known', receipt: initialReceiptFor(request, 'entry-0001', 0) } } };
+  expect(request.headers?.['Idempotency-Key']).toBeTruthy();
+  return { status: 201, statusText: 'Created', body: fixtureCreation(body) };
 }
 
 function failure(status: number, code: string, error: string): ApiTransportResponse {
@@ -187,39 +117,18 @@ function setup(reply?: Reply, storage?: UiPreferenceStorage, recovery?: Recovery
         const response = await reply(request);
         if (response) return response;
       }
-      if (request.path === '/api/v1/bootstrap') return ok({ webCompatVersion: WEB_COMPAT_VERSION, minWebCompatVersion: WEB_COMPAT_VERSION, syncEventVersion: 20, dbInstanceId: 'test', assistantProviders: true, conversationInitialInput: true, conversationCreateModel: true, conversationSide: true });
-      if (request.path.startsWith('/api/v1/bootstrap?scope=managed')) return ok([{
-        availability: { provider: 'codex', status: 'ready', reason: null, checked_at_ms: 1, authentication_method: null, authentication_notice: null },
-        accepts_unavailable_blank_track: true, capabilities: { managed_conversation: true, steer: true, images: true, manual_compact: true, history_replacement: true, requires_ready_availability: false },
-      }]);
+      if (request.path.startsWith('/api/v1/bootstrap') && !request.path.includes('scope=whoami')) return ok(fixtureBootstrap());
       if (request.path === '/api/v1/areas') return ok([AREA]);
       if (request.path === '/api/v1/areas/c1/tracks?includeClosed=true') return ok([TRACK, BARE_TRACK]);
       if (request.path === '/api/overlays?entity_kind=track') return ok([]);
-      if (request.path === '/api/v1/tracks/w1') {
-        return ok({
-          track: TRACK, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true,
-          cards: [PLANNER_CARD, ASSISTANT_CARD, WORKER_CARD], overlays: [],
-        });
-      }
-      if (request.path === '/api/v1/tracks/w2') return ok({
-        track: BARE_TRACK, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true, cards: [], overlays: [],
-      });
-      if (request.path === CONVERSATIONS) return ok([assistantRow()]);
-      if (request.path === BARE_CONVERSATIONS) return ok([]);
-      if (request.path.endsWith('/initial-input')) {
-        const post = requests.find(candidate => candidate.method === 'POST' && candidate.path.endsWith('/sessions')
-          && candidate.headers?.['Idempotency-Key'] === request.headers?.['Idempotency-Key']);
-        if (post === undefined) throw new Error('No creation journal for this key');
-        const receipt = initialReceiptFor(post, 'entry-0001', 0);
-        return ok({ kind: 'queued', receipt, runtimeId: 'runtime', entryId: receipt.entryId, rev: 0,
-          text: (post.body as { text: string }).text, textSha256: receipt.textSha256 });
-      }
-      if (isHistoryPath(request.path)) return ok(historicalConversationPage(conversationCardId(request.path), [], null));
+      if (request.path === '/api/v1/tracks/w1') return ok(fixtureSnapshot(TRACK, [PLANNER_CARD, assistantRow()]));
+      if (request.path === '/api/v1/tracks/w2') return ok(fixtureSnapshot(BARE_TRACK));
+      if (isHistoryPath(request.path)) return ok(historyPage(conversationCardId(request.path), []));
       /* Both card endpoints echo the card in the path, as the kernel does; a fixed id
          would be a trap for the first case that reads the field. */
-      if (request.path.includes('view=run')) return ok(historicalConversationRun({ card_id: pathCardId(request.path), worker_session_id: 'r', phase: 'idle', model: null, reasoning_effort: null, permission_mode: pathCardId(request.path) === PLANNER_CARD.id ? 'never' : null, blocked_reason: null, manual_compact_supported: true, recovery: null, compact_outcome: null, context_usage_invalidated: false, running_turn: null }, 'idle', true));
+      if (request.path.includes('view=run')) return ok(sessionPage(fixtureSession(pathCardId(request.path), TRACK.id)));
       /* An off-schema body is refused by the transport and the optimistic echo rolled back. */
-      if (request.path.endsWith('/messages')) return ok({ card_id: pathCardId(request.path), worker_session_id: 'r' });
+      if (request.path.endsWith('/messages')) return ok(sessionInput(pathCardId(request.path)));
       if (request.path === '/api/settings') return ok({});
       return ok([]);
     },
@@ -243,11 +152,9 @@ const creates = (requests: readonly ApiRequest[], path: string) =>
 
 /* The row the POST would mint: the panel looks for the id derived from
  * `(trackId, key)`, not for "a row that was not there before". */
-const derivedRow = (trackId: string, request: ApiRequest): Row => ({
-  id: trackConversationCardId(trackId, request.headers?.['Idempotency-Key'] ?? ''),
-  trackId, title: null, kind: 'track-assistant', provider: 'codex', state: null, updatedAt: 99,
-  archivedAt: null, lastTurnCompletedAt: null,
-});
+const derivedRow = (trackId: string, request: ApiRequest): Row => fixtureSession(
+  trackConversationCardId(trackId, request.headers?.['Idempotency-Key'] ?? ''), trackId, { updatedAtMs: 99 },
+);
 
 /* The open drawer, reached by the control only it has: an adopted assistant row
    is named `Assistant`, so the name cannot stand in. */
@@ -259,7 +166,6 @@ function drawerElement(): HTMLElement {
 }
 
 /* Scoped to the drawer: the list row behind it carries the same marker. */
-const drawerWorkingMark = () => drawerElement().querySelector('[data-nc-activity="working"]');
 
 async function openDraft() {
   fireEvent.click(await screen.findByRole('button', { name: 'New conversation' }));
@@ -320,8 +226,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe('track conversations', () => {
-  it.each(['/track/w1', '/track/w2'])('keeps compact dock text updates below both pane controllers in %s', async route => {
+it.each(['/track/w1', '/track/w2'])('keeps compact dock text updates below both pane controllers in %s', async route => {
     window.history.pushState({}, '', `${APP_BASEPATH}${route}`);
     vi.stubGlobal('matchMedia', vi.fn((media: string) => ({
       matches: media === RAIL_COLLAPSE_QUERY || media === '(prefers-reduced-motion: reduce)', media, onchange: null,
@@ -341,7 +246,7 @@ describe('track conversations', () => {
     } finally { controller.mockRestore(); }
   });
 
-  it('keeps ordinary existing and new composer edits below both pane controllers', async () => {
+it('keeps ordinary existing and new composer edits below both pane controllers', async () => {
     const controller = vi.spyOn(conversationStores, 'useConversationStore');
     try {
       setup();
@@ -365,7 +270,7 @@ describe('track conversations', () => {
     } finally { controller.mockRestore(); }
   });
 
-  it('restores each track conversation drawer after switching tracks', async () => {
+it('restores each track conversation drawer after switching tracks', async () => {
     const { router } = setup();
     fireEvent.click(await screen.findByRole('button', { name: 'Conversation Planner chat' }));
     await screen.findByRole('complementary', { name: 'Planner chat' });
@@ -379,182 +284,16 @@ describe('track conversations', () => {
     expect(screen.queryByRole('complementary', { name: 'Planner chat' })).toBeNull();
   });
 
-  it('lists the track\'s assistant conversations beside the planner one', async () => {
+it('lists the track\'s assistant conversations beside the planner one', async () => {
     setup();
     await screen.findByRole('button', { name: 'Conversation Planner chat' });
     await screen.findByRole('button', { name: 'Conversation Assistant' });
   });
 
-  it('both notification kinds show the kernel\'s words and a row click opens the Planner composer', async () => {
-    const mount = () => setup((request) => request.path === '/api/v1/tracks/w1'
-      ? ok({
-          track: TRACK, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true,
-          cards: [PLANNER_CARD, ASSISTANT_CARD, WORKER_CARD],
-          overlays: [trackActivityOverlay({ attention: 'failed', items: [
-            plannerDownItem('400: The gpt-6-astra model requires a newer version of Codex.', 5),
-            askItem('Merge **PR #1811** now, or hold it?', 4),
-          ] })],
-        })
-      : undefined);
-    mount();
-    const notice = await screen.findByRole('region', { name: 'Notifications' });
-    const rows = within(notice).getAllByRole('listitem');
-    expect(rows.map((row) => row.getAttribute('data-nc-notification-state'))).toEqual(['planner-down', 'ask']);
-    expect(within(rows[0]).getByText("Planner can't continue")).toBeTruthy();
-    expect(within(rows[0]).getByText('400: The gpt-6-astra model requires a newer version of Codex.')).toBeTruthy();
-    expect(within(rows[1]).getByText('Needs your answer')).toBeTruthy();
-    expect(within(rows[1]).getByText('PR #1811').tagName).toBe('STRONG');
-    expect(within(rows[1]).getByText('PR #1811').parentElement?.textContent).toBe('Merge PR #1811 now, or hold it?');
-    /* Each row's click, on a fresh mount: the Planner's composer opens focused and the aside compacts beside it. */
-    for (const [index, [state, name]] of ([['planner-down', /^Open the Planner: /], ['ask', /^Answer the Planner: /]] as const).entries()) {
-      if (index > 0) {
-        cleanup();
-        window.history.pushState({}, '', `${APP_BASEPATH}/track/w1`);
-        mount();
-      }
-      const row = within(await screen.findByRole('region', { name: 'Notifications' })).getAllByRole('listitem')
-        .find((candidate) => candidate.getAttribute('data-nc-notification-state') === state);
-      fireEvent.click(within(row!).getByRole('button', { name }));
-      expect(await screen.findByRole('complementary', { name: 'Planner chat' })).toBeTruthy();
-      await waitFor(() => expect(screen.getByRole('combobox', { name: 'Message' })).toBe(document.activeElement));
-      expect(screen.getByRole('region', { name: 'Notifications' })
-        .getAttribute('data-nc-notification-mode')).toBe('compact');
-      expect(screen.getByRole('region', { name: 'Notifications' }).querySelector('strong')).toBeNull();
-      expect(window.location.search).not.toContain('card=');
-    }
-  });
-
-  it('opens and dismisses a timeout while attention is none and the Planner is idle', async () => {
-    const text = 'Turn timed out at 2026-10-14 12:00 UTC after 30 minutes.';
+it('uses fresh server metadata for both unopened conversations without eager history', async () => {
     const { requests } = setup((request) => {
-      if (request.path === '/api/tracks/w1/activity/dismissals') return { status: 204, statusText: 'No Content', body: undefined };
-      if (request.path === '/api/v1/tracks/w1') return ok({ track: TRACK, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true,
-        cards: [PLANNER_CARD], overlays: [trackActivityOverlay({ attention: 'none', items: [
-          { source: 'planner_turn_timeout', key: 'planner_turn_timeout:9', text, at_ms: 5 },
-        ] })] });
-      return undefined;
-    });
-    const notice = await screen.findByRole('region', { name: 'Notifications' });
-    expect(within(notice).getByText('Planner turn timed out')).toBeTruthy();
-    expect(within(notice).getByText(text)).toBeTruthy();
-    expect(within(notice).queryByText('Needs your answer')).toBeNull();
-    fireEvent.click(within(notice).getByRole('button', { name: /^Dismiss: Planner turn timed out:/ }));
-    await waitFor(() => expect(requests.find((request) => request.path.endsWith('/activity/dismissals'))?.body)
-      .toEqual({ key: 'planner_turn_timeout:9' }));
-    fireEvent.click(within(notice).getByRole('button', { name: /^Open the Planner:/ }));
-    expect(await screen.findByRole('complementary', { name: 'Planner chat' })).toBeTruthy();
-  });
-
-  it('Dismiss posts the item key', async () => {
-    let dismissed = false;
-    const { client, requests } = setup((request) => {
-      if (request.path === '/api/tracks/w1/activity/dismissals') {
-        dismissed = true;
-        return { status: 204, statusText: 'No Content', body: undefined };
-      }
-      return request.path === '/api/v1/tracks/w1'
-        ? ok({
-            track: TRACK, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true,
-            cards: [PLANNER_CARD, ASSISTANT_CARD, WORKER_CARD],
-            overlays: [trackActivityOverlay({ attention: 'failed', items: [
-              plannerDownItem('unexpected status 403 Forbidden', 5),
-              ...(dismissed ? [] : [askItem('Merge PR #1811 now, or hold it?', 4)]),
-            ] })],
-          })
-        : undefined;
-    });
-    const askRow = within(await screen.findByRole('region', { name: 'Notifications' })).getAllByRole('listitem')
-      .find((row) => row.getAttribute('data-nc-notification-state') === 'ask');
-    fireEvent.click(within(askRow!).getByRole('button', { name: /^Dismiss: Needs your answer: / }));
-    await waitFor(() => expect(dismissed).toBe(true));
-    expect(requests.filter((request) => request.path === '/api/tracks/w1/activity/dismissals'))
-      .toEqual([expect.objectContaining({ method: 'POST', body: { key: 'ask:4' } })]);
-    /* No optimistic removal: the row stays until the projector's `overlay.set` refreshes the track. */
-    const notice = screen.getByRole('region', { name: 'Notifications' });
-    expect(within(notice).getAllByRole('listitem')).toHaveLength(2);
-    await act(() => {
-      const plan = invalidationPlanFor({ ev: 'overlay.set', data: {
-        id: 'activity-w1', plugin_id: 'kernel', entity_kind: 'track', entity_id: 'w1', kind: 'activity',
-        payload: {}, updated_at: 4,
-      } });
-      applyEventEffects(client, [{ type: 'write-through', writes: plan.writeThrough }, { type: 'invalidate', keys: plan.invalidate }]);
-      return Promise.resolve();
-    });
-    await waitFor(() => expect(within(screen.getByRole('region', { name: 'Notifications' }))
-      .getAllByRole('listitem').map((row) => row.getAttribute('data-nc-notification-state'))).toEqual(['planner-down']));
-    expect(screen.queryByRole('alert')).toBeNull();
-  });
-
-  it('counts an ask and planner down as two notifications', async () => {
-    setup((request) => request.path === '/api/v1/tracks/w1'
-      ? ok({
-          track: TRACK, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true,
-          cards: [PLANNER_CARD, ASSISTANT_CARD, WORKER_CARD],
-          overlays: [trackActivityOverlay({ attention: 'failed',
-            items: [plannerDownItem('boom', 5), askItem('Which region?', 4)],
-            cards: [{ card_id: PLANNER_CARD.id, state: 'failed' }] })],
-        })
-      : undefined);
-
-    const notice = await screen.findByRole('region', { name: 'Notifications' });
-    expect(within(notice).getByText('Waiting on you').nextElementSibling?.textContent).toBe('2');
-    fireEvent.click(within(notice).getByRole('button', { name: 'Collapse notifications' }));
-    expect(await screen.findByRole('button', { name: 'Open 2 notifications' })).toBeTruthy();
-  });
-
-  it('ignores a retired kernel/card/status row and a plugin-authored activity row', async () => {
-    setup((request) => request.path === '/api/v1/tracks/w1'
-      ? ok({
-          track: TRACK, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true,
-          cards: [PLANNER_CARD, ASSISTANT_CARD, WORKER_CARD],
-          overlays: [
-            cardStatusOverlay(WORKER_CARD.id, 'AwaitingInput', 5),
-            { ...trackActivityOverlay({ attention: 'input', items: [askItem('Which region?', 4)] }),
-              plugin_id: 'third-party' },
-          ],
-        })
-      : undefined);
-
-    await screen.findByRole('button', { name: 'Rename track' });
-    expect(screen.queryByRole('region', { name: 'Notifications' })).toBeNull();
-  });
-
-  it('refreshes first pending metadata locally at the same phase without WS', async () => {
-    let pending = [{ entry_id: 'first', text: 'Original', rev: 0, queued_at_ms: 1 }];
-    const { client, requests } = setup(request => {
-      if (request.path === '/api/v1/tracks/w1') return ok({
-        track: TRACK, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true,
-        cards: [{ ...PLANNER_CARD, title: pending[0]?.text ?? null }, ASSISTANT_CARD], overlays: [],
-      });
-      if (request.path.includes('view=run')) return ok({ ...runIdle().body as object,
-        card_id: pathCardId(request.path), pending, pending_overflow: 0 });
-      if (request.method === 'PATCH') {
-        pending = [{ ...pending[0], text: 'Edited', rev: 1 }];
-        return ok({ ...pending[0], card_id: PLANNER_CARD.id });
-      }
-      return undefined;
-    });
-    fireEvent.click(await screen.findByRole('button', { name: 'Conversation Original' }));
-    await waitFor(() => {
-      const edit = screen.getByRole<HTMLButtonElement>('button', { name: 'Edit queued message' });
-      expect(edit.disabled || edit.getAttribute('aria-disabled') === 'true').toBe(false);
-    });
-    fireEvent.click(screen.getByRole('button', { name: 'Edit queued message' }));
-    await typeInto(messageField(), 'Edited');
-    fireEvent.click(screen.getByRole('button', { name: 'Save queued message' }));
-    await waitFor(() => expect(client.getQueryData([...queryKeys.plannerRun(PLANNER_CARD.id), 'conversation_v1'])).toMatchObject({ phase: 'idle', pending: [{ text: 'Edited' }] }));
-    await screen.findByRole('complementary', { name: 'Edited' });
-    expect(requests.filter(request => isHistoryPath(request.path)).every(request => request.path.includes(PLANNER_CARD.id))).toBe(true);
-  });
-
-  it('uses fresh server metadata for both unopened conversations without eager history', async () => {
-    const { requests } = setup((request) => {
-      if (request.path === '/api/v1/tracks/w1') return ok({
-        track: TRACK, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true,
-        cards: [{ ...PLANNER_CARD, title: 'Original planner input' }, ASSISTANT_CARD], overlays: [],
-      });
-      if (request.path === CONVERSATIONS) return ok([assistantRow({ title: 'Original assistant input' })]);
-      if (isHistoryPath(request.path)) return ok(historicalConversationPage(conversationCardId(request.path), [harnessMessage(900, 'userMessage', { content: [{ text: 'Latest page input' }] })], null));
+      if (request.path === '/api/v1/tracks/w1') return ok(fixtureSnapshot(TRACK, [{ ...PLANNER_CARD, title: 'Original planner input' }, assistantRow({ title: 'Original assistant input' })]));
+      if (isHistoryPath(request.path)) return ok(historyPage(conversationCardId(request.path), [sessionItem(ASSISTANT_CARD.id, 900, 'Latest page input', 'user')]));
       return undefined;
     });
     await screen.findByRole('button', { name: 'Conversation Original planner input' });
@@ -568,13 +307,13 @@ describe('track conversations', () => {
     await screen.findByRole('button', { name: 'Conversation Original assistant input' });
   });
 
-  it('keeps the name derived from confirmed turns after the drawer closes', async () => {
+it('keeps the name derived from confirmed turns after the drawer closes', async () => {
     let historyAvailable = true;
-    const { client } = setup((request) => request.path === CONVERSATIONS
-      ? ok([assistantRow({ title: 'Named from history' })])
+    const { client } = setup((request) => request.path === '/api/v1/tracks/w1'
+      ? ok(fixtureSnapshot(TRACK, [PLANNER_CARD, ...[assistantRow({ title: 'Named from history' })]]))
       : isHistoryPath(request.path)
       ? historyAvailable
-        ? ok(historicalConversationPage(conversationCardId(request.path), [harnessMessage(1, 'userMessage', { content: [{ text: 'Named from history' }] })], null))
+        ? ok(historyPage(conversationCardId(request.path), [sessionItem(ASSISTANT_CARD.id, 1, 'Named from history', 'user')]))
         : new Promise(() => undefined)
       : undefined);
     fireEvent.click(await screen.findByRole('button', { name: 'Conversation Named from history' }));
@@ -588,59 +327,15 @@ describe('track conversations', () => {
     expect(await screen.findByRole('complementary', { name: 'Named from history' })).toBeTruthy();
   });
 
-  it('does not reconcile an identical follow-up against an older pending history read', async () => {
-    let historyReads = 0;
-    let holdReopen = false;
-    let releaseOld!: (response: ApiTransportResponse) => void;
-    const oldRead = new Promise<ApiTransportResponse>((resolve) => { releaseOld = resolve; });
-    const first = harnessMessage(1, 'userMessage', { content: [{ text: 'repeat me' }] });
-    const { client, requests } = setup((request) => {
-      if (request.path === CONVERSATIONS) return ok([assistantRow({ title: 'repeat me' })]);
-      if (isHistoryPath(request.path)) {
-        historyReads += 1;
-        if (historyReads === 1) return oldRead;
-        if (holdReopen) return new Promise(() => undefined);
-        /* The pre-send baseline and the immediate post-send refresh may both
-           still contain only the first, identical message. */
-        return ok(historicalConversationPage(conversationCardId(request.path), [first], null));
-      }
-      if (request.path.endsWith('/messages')) return inputAccepted();
-      if (request.path.includes('view=run')) return runIdle();
-      return undefined;
-    });
-
-    fireEvent.click(await screen.findByRole('button', { name: 'Conversation repeat me' }));
-    await screen.findByRole('complementary', { name: 'repeat me' });
-    expect(messageField().getAttribute('contenteditable')).toBe('false');
-    expect(screen.getByText('Loading conversation…')).toBeTruthy();
-    expect(requests.some((request) => request.path.endsWith('/messages'))).toBe(false);
-
-    await act(async () => { releaseOld(ok(historicalConversationPage(ASSISTANT_CARD.id, [first], null))); await oldRead; });
-    await waitFor(() => expect(messageField().getAttribute('contenteditable')).toBe('true'));
-    await write('repeat me');
-    await waitFor(() => expect(requests.some((request) => request.path.endsWith('/messages'))).toBe(true));
-
-    await waitFor(() => expect(historyReads).toBe(2));
-    const drawer = await screen.findByRole('complementary', { name: 'repeat me' });
-    await waitFor(() => expect(within(drawer).getAllByText('repeat me', TRANSCRIPT_TEXT)).toHaveLength(2));
-
-    fireEvent.click(screen.getByRole('button', { name: 'Close conversation' }));
-    holdReopen = true;
-    client.removeQueries({ queryKey: cachedHistoryKey(client, ASSISTANT_CARD.id) });
-    fireEvent.click(await screen.findByRole('button', { name: /Conversation repeat me/ }));
-    const reopened = await screen.findByRole('complementary', { name: 'repeat me' });
-    expect(within(reopened).getAllByText('repeat me', TRANSCRIPT_TEXT)).toHaveLength(2);
-  });
-
-  it('keeps history failures out of the send channel and offers a retry', async () => {
+it('keeps history failures out of the send channel and offers a retry', async () => {
     let reads = 0;
-    const first = harnessMessage(1, 'userMessage', { content: [{ text: 'first message' }] });
+    const first = sessionItem(ASSISTANT_CARD.id, 1, 'first message', 'user');
     const { requests } = setup((request) => {
       if (isHistoryPath(request.path)) {
         reads += 1;
         return reads === 1
           ? { status: 503, statusText: 'Service Unavailable', body: { error: 'history unavailable' } }
-          : ok(historicalConversationPage(conversationCardId(request.path), [first], null));
+          : ok(historyPage(conversationCardId(request.path), [first]));
       }
       return undefined;
     });
@@ -658,35 +353,7 @@ describe('track conversations', () => {
     expect(reads).toBe(2);
   });
 
-  /* #2175 M1a: both reads failing is one notice with one Reload conversation, which reads both again. */
-  it('folds a failed history read and a failed run read into one notice whose Reload conversation re-reads both', async () => {
-    let failing = true;
-    const { requests } = setup((request) => {
-      if (!failing) return undefined;
-      if (isHistoryPath(request.path)) return failure(503, 'unavailable', 'history unavailable');
-      if (request.path.includes('view=run')) return failure(503, 'unavailable', 'run unavailable');
-      return undefined;
-    });
-    const reads = (suffix: string) => requests.filter((request) => request.path.includes(suffix)).length;
-    fireEvent.click(await screen.findByRole('button', { name: 'Conversation Assistant' }));
-    await waitFor(() => {
-      const text = within(drawerElement()).getAllByRole('alert').map((alert) => alert.textContent).join(' | ');
-      expect(text).toContain('The conversation history could not be loaded.');
-      expect(text).toContain('The conversation’s status could not be loaded.');
-    });
-    expect(within(drawerElement()).getAllByRole('alert')).toHaveLength(1);
-    expect(within(drawerElement()).getAllByRole('button', { name: 'Reload conversation' })).toHaveLength(1);
-
-    const before = { history: requests.filter((request) => isHistoryPath(request.path)).length, run: reads('view=run') };
-    failing = false;
-    fireEvent.click(within(drawerElement()).getByRole('button', { name: 'Reload conversation' }));
-    await waitFor(() => expect(within(drawerElement()).queryByRole('alert')).toBeNull());
-    expect(requests.filter((request) => isHistoryPath(request.path)).length).toBeGreaterThan(before.history);
-    expect(reads('view=run')).toBeGreaterThan(before.run);
-    await waitFor(() => expect(messageField().getAttribute('contenteditable')).toBe('true'));
-  });
-
-  it('hands a send failure to the same conversation after its drawer remounts', async () => {
+it('hands a send failure to the same conversation after its drawer remounts', async () => {
     let release!: () => void;
     const held = new Promise<void>((resolve) => { release = resolve; });
     const { requests } = setup(async (request) => {
@@ -712,9 +379,7 @@ describe('track conversations', () => {
     expect(screen.queryByText('Delivery is unconfirmed.')).toBeNull();
   });
 
-  /* `planner_harness_runtime_superseded` means nothing was stored and the same text
-   * reaches the successor; the draft is restored, and the retry proves it is usable. */
-  it('keeps the message in the composer when the runtime was superseded, and re-sends it', async () => {
+it('keeps the message in the composer when the runtime was superseded, and re-sends it', async () => {
     let refuse = true;
     const { requests } = setup((request) => {
       if (!request.path.endsWith('/messages')) return undefined;
@@ -729,7 +394,7 @@ describe('track conversations', () => {
           },
         };
       }
-      return ok({ card_id: pathCardId(request.path), worker_session_id: 'r' });
+      return ok(sessionInput(pathCardId(request.path)));
     });
 
     fireEvent.click(await screen.findByRole('button', { name: 'Conversation Assistant' }));
@@ -750,9 +415,7 @@ describe('track conversations', () => {
     await waitFor(() => expect(messageField().textContent).toBe(''));
   });
 
-  /* `planner_harness_dormant` is answered before anything is written, so the
-   * sentence is unspent and must not leave the field. */
-  it('keeps the message in the composer when the harness is dormant', async () => {
+it('keeps the message in the composer when the harness is dormant', async () => {
     setup((request) => request.path.endsWith('/messages')
       ? {
         status: 409,
@@ -773,222 +436,7 @@ describe('track conversations', () => {
       expect(messageField().textContent).toBe('the sentence a dormant harness must not eat'));
   });
 
-  describe('a fresh session (#2192)', () => {
-    const DORMANT = failure(409, 'planner_harness_dormant', "This conversation's session can't be resumed; start a fresh session (history is kept)");
-    const posts = (requests: readonly ApiRequest[], suffix: string) =>
-      requests.filter((request) => request.method === 'POST' && request.path.endsWith(suffix));
-    /** The card is dormant until a restart is answered; `restartAnswer` answers each restart, `wedged` pauses the run. */
-    function mountRecovery({ restartAnswer = () => ok({ card_id: ASSISTANT_CARD.id, terminal_id: '', new_thread_id: 't2' }),
-      wedged = false, runAnswer }: {
-      restartAnswer?: () => ApiTransportResponse | Promise<ApiTransportResponse>;
-      wedged?: boolean;
-      /** Answers a run read before the defaults do; `undefined` falls through to them. */
-      runAnswer?: () => Promise<ApiTransportResponse> | undefined;
-    } = {}) {
-      let restarted = false;
-      const mounted = setup(async (request) => {
-        if (request.path.endsWith('/planner/restart')) {
-          const answer = await restartAnswer();
-          restarted = answer.status === 200;
-          return answer;
-        }
-        if (request.path.includes('view=run') && request.path.includes(ASSISTANT_CARD.id)) {
-          const held = runAnswer?.();
-          if (held !== undefined) return held;
-        }
-        if (request.path.includes('view=run') && wedged && !restarted) {
-          return ok(historicalConversationRun({ card_id: pathCardId(request.path), worker_session_id: 'r', phase: 'wedged', model: null, reasoning_effort: null,
-            permission_mode: pathCardId(request.path) === PLANNER_CARD.id ? 'never' : null, blocked_reason: 'The stop request timed out before the model confirmed that this turn had stopped.', manual_compact_supported: true, recovery: { cause: 'wedged', action: 'restart_session' }, compact_outcome: null, context_usage_invalidated: false, running_turn: null }, 'idle', true));
-        }
-        if (request.path.endsWith('/messages') && !restarted) return DORMANT;
-        return undefined;
-      });
-      return mounted;
-    }
-    async function openAssistant() {
-      fireEvent.click(await screen.findByRole('button', { name: 'Conversation Assistant' }));
-      await screen.findByRole('complementary', { name: 'Assistant' });
-    }
-    const restartButton = () => within(drawerElement()).getByRole('button', { name: 'Start a fresh session, keep history' });
-
-    it('offers it for a dormant send, keeps the words, and lets the next Send through', async () => {
-      const { requests } = mountRecovery();
-      await openAssistant();
-      await waitFor(() => expect(messageField().getAttribute('contenteditable')).toBe('true'));
-      await write('the words a dormant session must not eat');
-
-      const alert = await screen.findByRole('alert');
-      expect(alert.textContent).toContain('Not sent. This conversation’s session can’t be resumed. Your history is kept and your message is still below.');
-      /* The class's own words, never the server's, and none of them offers to erase the history. */
-      expect(alert.textContent).not.toMatch(/reset/i);
-      expect(alert.textContent).not.toContain('start a fresh session (history is kept)');
-      await waitFor(() => expect(messageField().textContent).toBe('the words a dormant session must not eat'));
-
-      const runReads = requests.filter((request) => request.path.includes('view=run')).length;
-      await act(async () => { fireEvent.click(restartButton()); await Promise.resolve(); });
-      const started = await within(drawerElement())
-        .findByText('Fresh session started. Earlier messages stay here, but the assistant won’t remember them unless you mention them.');
-      expect(started.closest('[role="status"]')).not.toBeNull();
-      expect(posts(requests, '/planner/restart')).toHaveLength(1);
-      expect(posts(requests, '/planner/reset')).toHaveLength(0);
-      /* The run state was read again after the restart, and nothing was sent on the reader's behalf. */
-      expect(requests.filter((request) => request.path.includes('view=run')).length).toBeGreaterThan(runReads);
-      expect(posts(requests, '/messages')).toHaveLength(1);
-      expect(screen.queryByRole('alert')).toBeNull();
-      expect(within(drawerElement()).queryByRole('button', { name: 'Start a fresh session, keep history' })).toBeNull();
-      expect(messageField().textContent).toBe('the words a dormant session must not eat');
-
-      await submit();
-      await waitFor(() => expect(posts(requests, '/messages')).toHaveLength(2));
-      expect(posts(requests, '/messages')[1].body).toMatchObject({ text: 'the words a dormant session must not eat' });
-      await waitFor(() => expect(messageField().textContent).toBe(''));
-      await waitFor(() => expect(within(drawerElement()).queryByText(/Fresh session started/)).toBeNull());
-      expect(posts(requests, '/planner/reset')).toHaveLength(0);
-    });
-
-    it('says why a restart failed, and keeps the offer and the words', async () => {
-      const { requests } = mountRecovery({ restartAnswer: () => failure(409, 'conflict', 'Claude is not configured') });
-      await openAssistant();
-      await waitFor(() => expect(messageField().getAttribute('contenteditable')).toBe('true'));
-      await write('kept through a failed restart');
-      await screen.findByRole('alert');
-
-      await act(async () => { fireEvent.click(restartButton()); await Promise.resolve(); });
-      await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('Claude is not configured'));
-      expect(screen.getByRole('alert').textContent).toContain('Your history is kept and your message is still below.');
-      expect(restartButton()).toBeTruthy();
-      expect(messageField().textContent).toBe('kept through a failed restart');
-      expect(posts(requests, '/planner/restart')).toHaveLength(1);
-      expect(posts(requests, '/messages')).toHaveLength(1);
-      expect(posts(requests, '/planner/reset')).toHaveLength(0);
-    });
-
-    /* The lease is the registry's: a remount must not offer a second restart while the first is out, since each one
-       replaces the session the one before it started. */
-    it('keeps a restart that is still out busy across a remount, and posts it once', async () => {
-      let answer!: (response: ApiTransportResponse) => void;
-      const held = new Promise<ApiTransportResponse>((resolve) => { answer = resolve; });
-      const { requests, router } = mountRecovery({ wedged: true, restartAnswer: () => held });
-      await openAssistant();
-      await within(drawerElement()).findByText(/session is stuck/);
-      await act(async () => { fireEvent.click(restartButton()); await Promise.resolve(); });
-      await waitFor(() => expect(posts(requests, '/planner/restart')).toHaveLength(1));
-      expect(restartButton().hasAttribute('disabled')).toBe(true);
-
-      /* Another track's route, then back: the conversation's store mounts afresh. */
-      await act(async () => { await router.navigate({ to: '/track/w2' }); });
-      await screen.findByRole('button', { name: 'New conversation' });
-      await waitFor(() => expect(screen.queryAllByRole('button', { name: /^Conversation / })).toHaveLength(0));
-      await act(async () => { await router.navigate({ to: '/track/w1' }); });
-      fireEvent.click(await screen.findByRole('button', { name: /Conversation Assistant/ }));
-      await screen.findByRole('complementary', { name: 'Assistant' });
-      await within(drawerElement()).findByText(/session is stuck/);
-      expect(restartButton().hasAttribute('disabled')).toBe(true);
-      await act(async () => { fireEvent.click(restartButton()); await Promise.resolve(); });
-      expect(posts(requests, '/planner/restart')).toHaveLength(1);
-
-      await act(async () => { answer(ok({ card_id: ASSISTANT_CARD.id, terminal_id: '', new_thread_id: 't2' })); await held; });
-      await within(drawerElement()).findByText(/Fresh session started/);
-      expect(posts(requests, '/planner/restart')).toHaveLength(1);
-    });
-
-    it('keeps a dormant refusal visible without offering Fresh until the input contract is known', async () => {
-      const firstRead = new Promise<ApiTransportResponse>(() => undefined);
-      const { requests } = mountRecovery({ runAnswer: () => firstRead });
-      await openAssistant();
-      await waitFor(() => expect(messageField().getAttribute('contenteditable')).toBe('true'));
-      await write('keep this while the contract is unknown');
-      expect((await screen.findByRole('alert')).textContent).toContain('Not sent.');
-      expect(messageField().textContent).toBe('keep this while the contract is unknown');
-      expect(within(drawerElement()).queryByRole('button', { name: 'Start a fresh session' })).toBeNull();
-      expect(posts(requests, '/planner/restart')).toHaveLength(0);
-      expect(posts(requests, '/messages')).toHaveLength(1);
-    });
-
-    it.each(['abandon', 'recover'] as const)('uses canonical %s without enabling historical editing or resending input', async action => {
-      let abandoned = false;
-      const expected = { carrier_id: 'original-worker', submission_id: 'original-input', attempt_id: 'original-attempt', revision: '9007199254740993' };
-      const { requests } = setup((request) => {
-        if (request.path.endsWith(`/conversation/${action}`)) {
-          abandoned = true;
-          return ok({ card_id: ASSISTANT_CARD.id, old_carrier_id: expected.carrier_id, carrier_id: 'fresh-worker' });
-        }
-        if (request.path.includes(ASSISTANT_CARD.id) && request.path.includes('view=run')) {
-          return ok({ card_id: ASSISTANT_CARD.id, worker_session_id: abandoned ? 'fresh-worker' : expected.carrier_id,
-            phase: abandoned ? 'idle' : 'turn_running', model: null, reasoning_effort: null, permission_mode: null,
-            blocked_reason: abandoned ? null : 'Outcome unknown', manual_compact_supported: false,
-            recovery: abandoned ? null : { cause: action === 'recover' ? 'terminal_provider_error' : 'unknown_outcome', action: action === 'recover' ? 'recover_session' : 'abandon_session', request: expected },
-            compact_outcome: null, context_usage_invalidated: false, running_turn: null, pending: [], pending_overflow: 0,
-            attachments_supported: false, history_replacement_supported: false, terminal_outcome:null,terminal_timeout: null,
-            input_contract: 'canonical', runtime_state: abandoned ? 'idle' : 'running', pending_inputs: [], active_input: null, native_turn_id: null });
-        }
-        return undefined;
-      });
-      await openAssistant();
-      await screen.findByRole('button', { name: 'Start a fresh session, keep history' });
-      await act(async () => { fireEvent.click(restartButton()); await Promise.resolve(); });
-      await screen.findByText('Fresh session started. Earlier messages stay here, but the assistant won’t remember them unless you mention them.');
-      expect(posts(requests, `/conversation/${action}`).map(request => request.body)).toEqual([expected]);
-      expect(posts(requests, '/planner/restart')).toHaveLength(0);
-      expect(posts(requests, '/messages')).toHaveLength(0);
-      expect(screen.queryByRole('button', { name: 'Edit message' })).toBeNull();
-    });
-
-    /* With the historical contract already declared, TanStack can hand an invalidation
-       an older refetch still in flight. The restart must stand on a later read. */
-    it('settles a restart on a run read started after its answer, not one still out from before', async () => {
-      let reads = 0;
-      const firstRead = new Promise<ApiTransportResponse>(() => undefined);
-      const { requests, client } = mountRecovery({ runAnswer: () => {
-        reads += 1;
-        return reads === 2 ? firstRead : undefined;
-      } });
-      await openAssistant();
-      await waitFor(() => expect(client.getQueryData([...queryKeys.plannerRun(ASSISTANT_CARD.id), 'conversation_v1']))
-        .toMatchObject({ input_contract: 'historical' }));
-      await act(async () => {
-        void client.invalidateQueries({ queryKey: queryKeys.plannerRun(ASSISTANT_CARD.id) });
-        await Promise.resolve();
-      });
-      const runReads = () => requests.filter((request) => (request.path.includes(`/sessions/${ASSISTANT_CARD.id}/items`) && request.path.includes('view=run'))).length;
-      await waitFor(() => expect(runReads()).toBe(2));
-      await waitFor(() => expect(messageField().getAttribute('contenteditable')).toBe('true'));
-      await write('sent while the earlier refetch is out');
-      await screen.findByRole('alert');
-      expect(runReads()).toBe(2);
-
-      await act(async () => { fireEvent.click(restartButton()); await Promise.resolve(); });
-      await within(drawerElement()).findByText(/Fresh session started/);
-      expect(runReads()).toBe(3);
-      expect(posts(requests, '/planner/restart')).toHaveLength(1);
-      expect(posts(requests, '/messages')).toHaveLength(1);
-    });
-
-    it('offers it while the conversation is paused, and Send works once it started', async () => {
-      const { requests } = mountRecovery({ wedged: true });
-      await openAssistant();
-      const strip = await within(drawerElement()).findByText('This conversation’s session is stuck. History stays here; a fresh model session starts without that context.');
-      /* A standing condition, not something that just happened. */
-      expect(strip.closest('[role="status"]')).not.toBeNull();
-      expect(messageField().getAttribute('contenteditable')).toBe('false');
-
-      await act(async () => { fireEvent.click(restartButton()); await Promise.resolve(); });
-      await waitFor(() => expect(messageField().getAttribute('contenteditable')).toBe('true'));
-      await within(drawerElement()).findByText(/Fresh session started/);
-      expect(within(drawerElement()).queryByText(/session is stuck/)).toBeNull();
-      expect(posts(requests, '/planner/restart')).toHaveLength(1);
-      expect(posts(requests, '/messages')).toHaveLength(0);
-
-      await write('after the pause');
-      await waitFor(() => expect(posts(requests, '/messages')).toHaveLength(1));
-      await waitFor(() => expect(messageField().textContent).toBe(''));
-      expect(posts(requests, '/planner/reset')).toHaveLength(0);
-    });
-  });
-
-  /* `POST /planner/input` carries no `Idempotency-Key`, so a 503 cannot say whether
-   * the text was stored; only a refusal the server names licenses the restore. */
-  it('leaves the field empty when the send failed without saying the text was refused', async () => {
+it('leaves the field empty when the send failed without saying the text was refused', async () => {
     setup((request) => request.path.endsWith('/messages')
       ? { status: 503, statusText: 'Service Unavailable', body: { code: 'unavailable', error: 'busy' } }
       : undefined);
@@ -1003,9 +451,7 @@ describe('track conversations', () => {
     expect(messageField().textContent).toBe('');
   });
 
-  /* A refusal gives the words back to the composer of the conversation they were sent from (#2068), never to the
-   * one shown when it lands. */
-  it('does not put a refused sentence into the conversation the reader walked to', async () => {
+it('does not put a refused sentence into the conversation the reader walked to', async () => {
     const held = new Map<string, () => void>();
     setup(async (request) => {
       if (!request.path.endsWith('/messages')) return undefined;
@@ -1042,8 +488,7 @@ describe('track conversations', () => {
     expect(screen.queryByRole('alert')).toBeNull();
   });
 
-  /* #2068: a refusal is settled by giving the words back; the thread keeps nothing of it that a later press could drop. */
-  it('[F4] keeps a typed refusal in the composer alone, across reopening and a newer draft', async () => {
+it('[F4] keeps a typed refusal in the composer alone, across reopening and a newer draft', async () => {
     let refuse = true;
     const { requests } = setup((request) => request.path.endsWith('/messages') && refuse
       ? failure(409, 'planner_harness_runtime_superseded', 'Your message was not stored') : undefined);
@@ -1069,83 +514,7 @@ describe('track conversations', () => {
       .toEqual([expect.objectContaining({ text: 'Original typed refusal' }), expect.objectContaining({ text: 'A newer unsent draft' })]);
   });
 
-  it('[F4] retains a rejected message across reopen and retries its exact text once', async () => {
-    let attempts = 0;
-    const text = 'Keep this rejected sentence';
-    const { requests } = setup((request) => {
-      if (request.path.endsWith('/messages')) {
-        attempts += 1;
-        return attempts === 1 ? failure(429, 'rate_limited', 'Wait a moment') : inputAcceptedWithEntry('retry-entry');
-      }
-      if (isHistoryPath(request.path)) return ok(historicalConversationPage(conversationCardId(request.path), attempts > 1
-        ? [projectionRow(1, { id: 'retry-entry', rev: 0 }, text)] : [], null));
-      return undefined;
-    });
-    fireEvent.click(await screen.findByRole('button', { name: 'Conversation Assistant' }));
-    await waitFor(() => expect(messageField().getAttribute('contenteditable')).toBe('true'));
-    await write(text);
-    expect((await screen.findByRole('alert')).textContent).toContain('Wait a moment');
-    expect(within(drawerElement()).getByText(text, TRANSCRIPT_TEXT)).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Close conversation' }));
-    fireEvent.click(await screen.findByRole('button', { name: /Conversation Assistant/ }));
-    expect(within(drawerElement()).getByText(text, TRANSCRIPT_TEXT)).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
-    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
-    await waitFor(() => expect(messageField().getAttribute('contenteditable')).toBe('true'));
-    expect(requests.filter((request) => request.path.endsWith('/messages')).map((request) => request.body))
-      .toEqual([expect.objectContaining({ text }), expect.objectContaining({ text })]);
-    expect(within(drawerElement()).getAllByText(text, TRANSCRIPT_TEXT)).toHaveLength(1);
-  });
-
-  it.each(['rejected', 'unknown'] as const)(
-    '[F4] never labels the %s working-turn submission as queued, including after reopen', async (outcome) => {
-      const text = `Keep ${outcome} queued attempt`;
-      const { requests } = setup((request) => {
-        if (request.path.includes('view=run')) return ok(historicalConversationRun({ card_id: ASSISTANT_CARD.id, worker_session_id: 'r', phase: 'turn_running', model: null, reasoning_effort: null, permission_mode: null, blocked_reason: null, manual_compact_supported: true, recovery: null, compact_outcome: null, context_usage_invalidated: false, running_turn: null }, 'idle', true));
-        if (request.path.endsWith('/messages')) {
-          if (outcome === 'unknown') throw new Error('response dropped');
-          return failure(429, 'rate_limited', 'Wait a moment');
-        }
-        return undefined;
-      });
-      fireEvent.click(await screen.findByRole('button', { name: 'Conversation Assistant' }));
-      await screen.findByRole('button', { name: 'Stop' });
-      await typeInto(messageField(), text);
-      await submit();
-      await screen.findByRole('alert');
-      expect(within(drawerElement()).getByText(text, TRANSCRIPT_TEXT)).toBeTruthy();
-      expect(document.querySelector('[data-nc-queued]')).toBeNull();
-      expect(document.querySelector('[data-nc-queued-note]')).toBeNull();
-      expect(requests.filter((request) => request.path.endsWith('/messages')))
-        .toHaveLength(outcome === 'unknown' ? SEND_RETRIES + 1 : 1);
-      fireEvent.click(screen.getByRole('button', { name: 'Close conversation' }));
-      fireEvent.click(await screen.findByRole('button', { name: /Conversation Assistant/ }));
-      expect(within(drawerElement()).getByText(text, TRANSCRIPT_TEXT)).toBeTruthy();
-      expect(document.querySelector('[data-nc-queued-note]')).toBeNull();
-    },
-  );
-
-  it('[F4] marks a working-turn message queued only after its POST is acknowledged', async () => {
-    let resolve!: (response: ApiTransportResponse) => void;
-    const held = new Promise<ApiTransportResponse>((answer) => { resolve = answer; });
-    const { requests } = setup((request) => {
-      if (request.path.includes('view=run')) return ok(historicalConversationRun({ card_id: ASSISTANT_CARD.id, worker_session_id: 'r', phase: 'turn_running', model: null, reasoning_effort: null, permission_mode: null, blocked_reason: null, manual_compact_supported: true, recovery: null, compact_outcome: null, context_usage_invalidated: false, running_turn: null }, 'idle', true));
-      if (request.path.endsWith('/messages')) return held;
-      return undefined;
-    });
-    fireEvent.click(await screen.findByRole('button', { name: 'Conversation Assistant' }));
-    await screen.findByRole('button', { name: 'Stop' });
-    await typeInto(messageField(), 'Waiting for the server');
-    await submit();
-    await waitFor(() => expect(requests.filter((request) => request.path.endsWith('/messages'))).toHaveLength(1));
-    expect(within(drawerElement()).getByText('Waiting for the server', TRANSCRIPT_TEXT)).toBeTruthy();
-    expect(document.querySelector('[data-nc-queued-note]')).toBeNull();
-    await act(async () => { resolve(inputAccepted()); await held; });
-    await screen.findByText('等待处理…');
-    expect(messageField().getAttribute('contenteditable')).toBe('true');
-  });
-
-  it('[F4] edits a rejected message without replaying it before an explicit send', async () => {
+it('[F4] edits a rejected message without replaying it before an explicit send', async () => {
     const { requests } = setup((request) => request.path.endsWith('/messages')
       ? failure(429, 'rate_limited', 'Wait a moment') : undefined);
     fireEvent.click(await screen.findByRole('button', { name: 'Conversation Assistant' }));
@@ -1163,45 +532,7 @@ describe('track conversations', () => {
       .toEqual([expect.objectContaining({ text: 'Original rejected message' }), expect.objectContaining({ text: 'Revised request' })]);
   });
 
-  it.each(['transport', '503', 'decode'] as const)(
-    '[F5] retries a %s failure under its key, then offers Try again without asking', async (mode) => {
-      const text = 'repeat the same request';
-      let failing = true;
-      let rows: (ReturnType<typeof harnessMessage> | ReturnType<typeof projectionRow>)[] = [];
-      const { requests } = setup((request) => {
-        if (isHistoryPath(request.path)) return ok(historicalConversationPage(conversationCardId(request.path), rows, null));
-        if (request.path.endsWith('/messages')) {
-          /* Stored, and drained into the transcript the refresh after the 200 reads. */
-          if (!failing) { rows = [projectionRow(1, { id: 'retry-entry', rev: 0 }, text)]; return inputAcceptedWithEntry('retry-entry'); }
-          if (mode === 'transport') throw new Error('response dropped');
-          return mode === '503' ? failure(503, 'unavailable', 'upstream unavailable') : ok({});
-        }
-        return undefined;
-      });
-      const inputs = () => requests.filter((request) => request.path.endsWith('/messages'));
-      fireEvent.click(await screen.findByRole('button', { name: 'Conversation Assistant' }));
-      await waitFor(() => expect(messageField().getAttribute('contenteditable')).toBe('true'));
-      await write(text);
-      expect((await screen.findByRole('alert')).textContent).toContain('Delivery is unconfirmed');
-      expect(inputs()).toHaveLength(SEND_RETRIES + 1);
-      const key = inputs()[0]?.headers?.['Idempotency-Key'];
-      expect(key).toBeTruthy();
-      expect(inputs().every((request) => request.headers?.['Idempotency-Key'] === key)).toBe(true);
-      /* An edited message would be a new send under a new key while the first may have arrived. */
-      expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
-      expect(messageField().getAttribute('contenteditable')).toBe('false');
-
-      failing = false;
-      fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
-      await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
-      expect(screen.queryByRole('dialog')).toBeNull();
-      expect(inputs()).toHaveLength(SEND_RETRIES + 2);
-      expect(inputs().at(-1)?.headers?.['Idempotency-Key']).toBe(key);
-      expect(within(drawerElement()).getAllByText(text, TRANSCRIPT_TEXT)).toHaveLength(1);
-    },
-  );
-
-  it.each([
+it.each([
     [401, 'session_expired'], [403, 'forbidden'], [429, 'rate_limited'],
   ] as const)('[F5] keeps a dropped answer unknown when the retry is answered %s', async (status, code) => {
     const text = `Lost, then ${status}`;
@@ -1230,7 +561,7 @@ describe('track conversations', () => {
     await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
   });
 
-  it.each([
+it.each([
     [401, 'session_expired'], [403, 'forbidden'], [429, 'rate_limited'], [409, 'planner_harness_dormant'],
   ] as const)('[F5] keeps a spent unknown send unknown when its Try again is answered %s %s', async (status, code) => {
     const text = `Spent, then ${code}`;
@@ -1262,15 +593,15 @@ describe('track conversations', () => {
     expect(inputs().at(-1)?.headers?.['Idempotency-Key']).toBe(key);
   });
 
-  it('[F5] reconciles a resumed send whose first attempt was stored and drained, also after reopening', async () => {
+it('[F5] reconciles a resumed send whose first attempt was stored and drained, also after reopening', async () => {
     const text = 'Stored before the answer was lost';
-    const earlier = harnessMessage(1, 'agentMessage', { text: 'Earlier answer' });
+    const earlier = sessionItem(ASSISTANT_CARD.id, 1, 'Earlier answer');
     let rows = [earlier];
     let accept = false;
     let title: string | null = null;
     const { client } = setup((request) => {
-      if (request.path === CONVERSATIONS) return ok([assistantRow({ title })]);
-      if (isHistoryPath(request.path)) return ok(historicalConversationPage(conversationCardId(request.path), rows, null));
+      if (request.path === '/api/v1/tracks/w1') return ok(fixtureSnapshot(TRACK, [PLANNER_CARD, ...[assistantRow({ title })]]));
+      if (isHistoryPath(request.path)) return ok(historyPage(conversationCardId(request.path), rows));
       if (!request.path.endsWith('/messages')) return undefined;
       if (!accept) throw new Error('response dropped');
       return inputAccepted();
@@ -1282,7 +613,7 @@ describe('track conversations', () => {
     await screen.findByRole('alert');
     /* The kernel had stored it after all; the queue drained into the transcript. */
     title = text;
-    rows = [earlier, harnessMessage(2, 'userMessage', { content: [{ text }] }), harnessMessage(3, 'agentMessage', { text: 'Reply to it' })];
+    rows = [earlier, sessionItem(ASSISTANT_CARD.id, 2, text, 'user'), sessionItem(ASSISTANT_CARD.id, 3, 'Reply to it')];
     await act(async () => { await client.invalidateQueries({ queryKey: cachedHistoryKey(client, ASSISTANT_CARD.id) }); });
     await screen.findByText('Reply to it');
 
@@ -1292,7 +623,7 @@ describe('track conversations', () => {
     await waitFor(() => expect(within(drawerElement()).getAllByText(text, TRANSCRIPT_TEXT)).toHaveLength(1));
     await waitFor(() => expect(messageField().getAttribute('contenteditable')).toBe('true'));
 
-    await waitFor(() => expect(client.getQueryData(['track-conversations', 'w1'])).toMatchObject([{ title: text }]));
+    await waitFor(() => expect(client.getQueryData<import('../../../../core/api/perga-v1.ts').TrackAggregateSnapshotDto>(queryKeys.trackDetail('w1'))?.sessions.filter(session => !session.isLead)).toMatchObject([{ title: text }]));
     fireEvent.click(screen.getByRole('button', { name: 'Close conversation' }));
     fireEvent.click(await screen.findByRole('button', { name: /Conversation Stored before/ }));
     await screen.findByText('Reply to it');
@@ -1300,276 +631,7 @@ describe('track conversations', () => {
     await waitFor(() => expect(messageField().getAttribute('contenteditable')).toBe('true'));
   });
 
-  /* The server holds the op's entry, or not: what a replayed 200 claims is not trusted for a once-unknown op. */
-  function unknownOpServer(phase: 'turn_running' | 'idle', text: string) {
-    const entry = { entry_id: 'entry-9', text, rev: 0, queued_at_ms: 5 };
-    const state = { queued: true, accept: false };
-    const view = setup((request) => {
-      if (request.path.includes('view=run')) {
-        return ok(historicalConversationRun({ card_id: ASSISTANT_CARD.id, worker_session_id: 'r', phase, model: null, reasoning_effort: null,
-          permission_mode: null, blocked_reason: null, manual_compact_supported: true, recovery: null, compact_outcome: null, context_usage_invalidated: false, running_turn: null, pending: state.queued ? [entry] : [], pending_overflow: 0 }, 'idle', true));
-      }
-      if (!request.path.endsWith('/messages')) return undefined;
-      if (!state.accept) throw new Error('response dropped');
-      return ok({ card_id: ASSISTANT_CARD.id, worker_session_id: 'r', entry_id: entry.entry_id });
-    });
-    return { ...view, state };
-  }
-
-  async function sendUntilSpent(text: string) {
-    fireEvent.click(await screen.findByRole('button', { name: 'Conversation Assistant' }));
-    await waitFor(() => expect(messageField().getAttribute('contenteditable')).toBe('true'));
-    await write(text);
-    expect((await screen.findByRole('alert')).textContent).toContain('Delivery is unconfirmed');
-  }
-
-  it.each(['turn_running', 'idle'] as const)(
-    '[F5] shows nothing for a resumed send whose stored entry was deleted (%s at the press)', async (phase) => {
-      const text = `Deleted before Try again, ${phase}`;
-      const { client, state } = unknownOpServer(phase, text);
-      await sendUntilSpent(text);
-      /* Another tab deleted the queued entry; the server still replays its id under the key. */
-      state.queued = false;
-      await act(async () => { await client.invalidateQueries(); });
-      state.accept = true;
-      fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
-      await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
-      await waitFor(() => expect(within(drawerElement()).queryAllByText(text, TRANSCRIPT_TEXT)).toHaveLength(0));
-      await waitFor(() => expect(messageField().getAttribute('contenteditable')).toBe('true'));
-
-      fireEvent.click(screen.getByRole('button', { name: 'Close conversation' }));
-      fireEvent.click(await screen.findByRole('button', { name: /Conversation (Assistant|Deleted before)/ }));
-      await waitFor(() => expect(messageField().getAttribute('contenteditable')).toBe('true'));
-      expect(within(drawerElement()).queryAllByText(text, TRANSCRIPT_TEXT)).toHaveLength(0);
-    },
-  );
-
-  it('[F5] shows a resumed send once, from the queue, while its stored entry is still queued', async () => {
-    const text = 'Still queued at Try again';
-    const { state } = unknownOpServer('turn_running', text);
-    await sendUntilSpent(text);
-    state.accept = true;
-    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
-    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
-    await waitFor(() => expect(document.querySelector('[data-nc-pending-entry="entry-9"]')?.textContent).toContain(text));
-    const queued = document.querySelector('[data-nc-pending-entry="entry-9"]')!;
-    expect(queued.closest('[data-nc-entry]')).toBeNull();
-    expect(queued.closest('[data-nc-composer]')).toBeNull();
-    expect(queued.querySelector('[data-nc-pending-entry-text]')?.textContent).toBe(text);
-    await waitFor(() => expect(within(drawerElement()).getAllByText(text, TRANSCRIPT_TEXT)).toHaveLength(1));
-    expect(messageField().getAttribute('contenteditable')).toBe('true');
-  });
-
-  it('[#2068] dismisses a spent unknown send without putting its words or images back; a read then shows it if it was stored', async () => {
-    const text = 'Dismissed, maybe delivered';
-    let rows: (ReturnType<typeof harnessMessage> | ReturnType<typeof projectionRow>)[] = [];
-    let dropping = true;
-    const { client, requests } = setup((request) => {
-      if (isHistoryPath(request.path)) return ok(historicalConversationPage(conversationCardId(request.path), rows, null));
-      if (request.path.includes('view=run')) {
-        return ok(historicalConversationRun({ card_id: pathCardId(request.path), worker_session_id: 'r', phase: 'idle', model: null, reasoning_effort: null,
-          permission_mode: pathCardId(request.path) === PLANNER_CARD.id ? 'never' : null, blocked_reason: null, attachments_supported: true, manual_compact_supported: true, recovery: null, compact_outcome: null, context_usage_invalidated: false, running_turn: null }, 'idle', true));
-      }
-      if (request.path.endsWith('/planner/attachments')) {
-        return ok({ attachmentId: ATTACHMENT_ID, contentType: 'image/png', size: 4,
-          url: `/api/cards/${pathCardId(request.path)}/planner/attachments/${ATTACHMENT_ID}` });
-      }
-      if (request.path.endsWith('/messages') && dropping) throw new Error('response dropped');
-      return undefined;
-    });
-    const inputs = () => requests.filter((request) => request.path.endsWith('/messages'));
-    fireEvent.click(await screen.findByRole('button', { name: 'Conversation Assistant' }));
-    await waitFor(() => expect(messageField().getAttribute('contenteditable')).toBe('true'));
-    await attachAnImage();
-    await waitFor(() => expect(composerImages()).toHaveLength(1));
-    await write(text);
-    expect((await screen.findByRole('alert')).textContent).toContain('Delivery is unconfirmed');
-    expect(inputBodies(requests)[0]).toEqual({ text, attachments: [ATTACHMENT_ID] });
-    expect(messageField().getAttribute('contenteditable')).toBe('false');
-    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
-    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
-    expect(within(drawerElement()).queryAllByText(text, TRANSCRIPT_TEXT)).toHaveLength(0);
-    expect(messageField().getAttribute('contenteditable')).toBe('true');
-    expect(messageField().textContent).toBe('');
-    /* Its image may be bound to a stored message: it leaves the composer with the send, as a delivery takes it. */
-    expect(composerImages()).toEqual([]);
-    expect(inputs()).toHaveLength(SEND_RETRIES + 1);
-    /* It had been stored after all: the next read shows it, once. */
-    rows = [harnessMessage(1, 'userMessage', { content: [{ text }] })];
-    await act(async () => { await client.invalidateQueries({ queryKey: cachedHistoryKey(client, ASSISTANT_CARD.id) }); });
-    await waitFor(() => expect(within(drawerElement()).getAllByText(text, TRANSCRIPT_TEXT)).toHaveLength(1));
-    expect(inputs()).toHaveLength(SEND_RETRIES + 1);
-    /* The next, unrelated message carries nothing of the dismissed one. */
-    dropping = false;
-    await write('Something else');
-    await waitFor(() => expect(inputs()).toHaveLength(SEND_RETRIES + 2));
-    expect(inputBodies(requests).at(-1)).toEqual({ text: 'Something else' });
-  });
-
-  it('[#2068] keeps an unconfirmed send distinct from unattributed history until its retry settles', async () => {
-    const text = 'Drained while unconfirmed';
-    let rows: (ReturnType<typeof harnessMessage> | ReturnType<typeof projectionRow>)[] = [];
-    let accept = false;
-    const { client } = setup((request) => {
-      if (isHistoryPath(request.path)) return ok(historicalConversationPage(conversationCardId(request.path), rows, null));
-      if (!request.path.endsWith('/messages')) return undefined;
-      if (!accept) throw new Error('response dropped');
-      return inputAccepted();
-    });
-    await sendUntilSpent(text);
-    rows = [harnessMessage(1, 'userMessage', { content: [{ text }] })];
-    await act(async () => { await client.invalidateQueries({ queryKey: cachedHistoryKey(client, ASSISTANT_CARD.id) }); });
-    // An equal historical body has no submission identity or Human author.
-    // It cannot settle or hide the current person's unconfirmed send.
-    await waitFor(() => expect(within(drawerElement()).getAllByText(text, TRANSCRIPT_TEXT)).toHaveLength(2));
-    expect(drawerElement().querySelectorAll('[data-nc-turn="unknown"]')).toHaveLength(1);
-    expect(drawerElement().querySelectorAll('[data-nc-turn="you"]')).toHaveLength(1);
-    expect(screen.getByRole('alert').textContent).toContain('Delivery is unconfirmed');
-    accept = true;
-    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
-    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
-    await waitFor(() => expect(messageField().getAttribute('contenteditable')).toBe('true'));
-    expect(within(drawerElement()).getAllByText(text, TRANSCRIPT_TEXT)).toHaveLength(1);
-  });
-
-  it('[#2068] keeps a send answered after an unknown attempt shown until a read started after its answer lands', async () => {
-    const text = 'Answered on the second attempt';
-    let attempts = 0;
-    let rows: (ReturnType<typeof harnessMessage> | ReturnType<typeof projectionRow>)[] = [];
-    /* Reads and the second attempt are answered by hand, so which read started before the 200 is decided here. */
-    const held: { input?: () => void; history?: () => void } = {};
-    let holdHistory = false;
-    const { client } = setup(async (request) => {
-      if (isHistoryPath(request.path)) {
-        /* What the server holds when the read starts. */
-        const read = rows;
-        if (holdHistory) await new Promise<void>((release) => { held.history = release; });
-        return ok(historicalConversationPage(conversationCardId(request.path), read, null));
-      }
-      if (!request.path.endsWith('/messages')) return undefined;
-      attempts += 1;
-      if (attempts === 1) throw new Error('response dropped');
-      await new Promise<void>((release) => { held.input = release; });
-      rows = [harnessMessage(1, 'userMessage', { content: [{ text }] })];
-      return inputAccepted();
-    });
-    fireEvent.click(await screen.findByRole('button', { name: 'Conversation Assistant' }));
-    await waitFor(() => expect(messageField().getAttribute('contenteditable')).toBe('true'));
-    await write(text);
-    await waitFor(() => expect(held.input).toBeDefined());
-    /* A transcript read that starts before the answer and lands after it, with the message not yet in it. */
-    holdHistory = true;
-    const historyKey = cachedHistoryKey(client, ASSISTANT_CARD.id);
-    void client.invalidateQueries({ queryKey: historyKey });
-    await waitFor(() => expect(held.history).toBeDefined());
-    const early = held.history;
-    /* Closed, so the answer's refresh starts no new read; it cancels the early one, and the data from before the
-       answer is what the drawer reopens on. */
-    fireEvent.click(screen.getByRole('button', { name: 'Close conversation' }));
-    await act(async () => { held.input?.(); await Promise.resolve(); });
-    held.history = undefined;
-    await act(async () => { early?.(); await new Promise((resolve) => setTimeout(resolve, 0)); });
-    expect(client.getQueryState(historyKey)?.status).toBe('success');
-    /* Reopened while its own read is still out: the early read cannot stand for the answer, so the message stays. */
-    fireEvent.click(await screen.findByRole('button', { name: /^Conversation (Assistant|Answered on)/ }));
-    await waitFor(() => expect(held.history).toBeDefined());
-    expect(within(drawerElement()).getAllByText(text, TRANSCRIPT_TEXT)).toHaveLength(1);
-    expect(messageField().getAttribute('contenteditable')).toBe('false');
-    holdHistory = false;
-    await act(async () => { held.history?.(); await new Promise((resolve) => setTimeout(resolve, 0)); });
-    await waitFor(() => expect(messageField().getAttribute('contenteditable')).toBe('true'));
-    expect(within(drawerElement()).getAllByText(text, TRANSCRIPT_TEXT)).toHaveLength(1);
-  });
-
-  it('[#2043] keeps the composer closed while a send is out, even once a read shows its message', async () => {
-    const text = 'Stored before its answer came';
-    let rows: (ReturnType<typeof harnessMessage> | ReturnType<typeof projectionRow>)[] = [];
-    let answer!: () => void;
-    const answered = new Promise<void>((done) => { answer = done; });
-    const { client, requests } = setup(async (request) => {
-      if (isHistoryPath(request.path)) return ok(historicalConversationPage(conversationCardId(request.path), rows, null));
-      if (!request.path.endsWith('/messages')) return undefined;
-      await answered;
-      return inputAcceptedWithEntry('outstanding-entry');
-    });
-    const inputs = () => requests.filter((request) => request.path.endsWith('/messages'));
-    fireEvent.click(await screen.findByRole('button', { name: 'Conversation Assistant' }));
-    await waitFor(() => expect(messageField().getAttribute('contenteditable')).toBe('true'));
-    await write(text);
-    await waitFor(() => expect(inputs()).toHaveLength(1));
-    /* An event-driven read shows the stored message while its answer is still out. */
-    rows = [projectionRow(1, { id: 'outstanding-entry', rev: 0 }, text)];
-    await act(async () => { await client.invalidateQueries({ queryKey: cachedHistoryKey(client, ASSISTANT_CARD.id) }); });
-    /* Before the ACK, equal text and an unknown author cannot identify this send. */
-    await waitFor(() => expect(within(drawerElement()).getAllByText(text, TRANSCRIPT_TEXT)).toHaveLength(2));
-    expect(messageField().getAttribute('contenteditable')).toBe('false');
-    await typeInto(messageField(), 'A second message');
-    await submit();
-    expect(messageField().textContent).toBe('A second message');
-    expect(inputs()).toHaveLength(1);
-    await act(async () => { answer(); await answered; });
-    await waitFor(() => expect(messageField().getAttribute('contenteditable')).toBe('true'));
-    expect(messageField().textContent).toBe('A second message');
-    expect(inputs()).toHaveLength(1);
-    expect(within(drawerElement()).getAllByText(text, TRANSCRIPT_TEXT)).toHaveLength(1);
-  });
-
-  it('[#2068] retires a replayed send by a run read started after its answer, not by a first read still out before it', async () => {
-    const text = 'Replayed for an entry deleted meanwhile';
-    let attempts = 0;
-    let runReads = 0;
-    const { requests } = setup(async (request) => {
-      if (request.path.includes('view=run')) {
-        runReads += 1;
-        /* The first run read never lands: the query layer would hand it back in place of the read the answer asks for. */
-        if (runReads === 1) await new Promise<void>(() => undefined);
-        return undefined;
-      }
-      if (!request.path.endsWith('/messages')) return undefined;
-      attempts += 1;
-      if (attempts === 1) throw new Error('response dropped');
-      return inputAccepted();
-    });
-    fireEvent.click(await screen.findByRole('button', { name: 'Conversation Assistant' }));
-    await waitFor(() => expect(messageField().getAttribute('contenteditable')).toBe('true'));
-    await write(text);
-    await waitFor(() => expect(requests.filter((request) => request.path.endsWith('/messages'))).toHaveLength(2));
-    /* No read shows it (the entry was disposed of), so only reads started after the answer retire it. */
-    await waitFor(() => expect(within(drawerElement()).queryAllByText(text, TRANSCRIPT_TEXT)).toHaveLength(0));
-    await waitFor(() => expect(messageField().getAttribute('contenteditable')).toBe('true'));
-  });
-
-  /* #2068 item 10: a replayed send waits for a run read started after its answer. While that read fails, the composer
-     stays closed, so the failure is said with Reload status instead of leaving nothing to press. */
-  it('[#2068] offers Reload status while a replayed send waits on a run read that failed', async () => {
-    const text = 'Replayed while the run read fails';
-    let attempts = 0;
-    let runFails = false;
-    const { requests } = setup((request) => {
-      if (request.path.includes('view=run') && runFails) return failure(503, 'unavailable', 'Run read unavailable');
-      if (!request.path.endsWith('/messages')) return undefined;
-      attempts += 1;
-      if (attempts === 1) throw new Error('response dropped');
-      runFails = true;
-      return inputAccepted();
-    });
-    const runReads = () => requests.filter((request) => request.path.includes('view=run')).length;
-    fireEvent.click(await screen.findByRole('button', { name: 'Conversation Assistant' }));
-    await waitFor(() => expect(messageField().getAttribute('contenteditable')).toBe('true'));
-    await write(text);
-    await waitFor(() => expect(attempts).toBe(2));
-    const alert = await within(drawerElement()).findByRole('alert');
-    expect(alert.textContent).toContain('The conversation’s status could not be loaded.');
-    expect(messageField().getAttribute('contenteditable')).toBe('false');
-    const before = runReads();
-    runFails = false;
-    fireEvent.click(within(drawerElement()).getByRole('button', { name: 'Reload status' }));
-    await waitFor(() => expect(runReads()).toBeGreaterThan(before));
-    await waitFor(() => expect(within(drawerElement()).queryByRole('alert')).toBeNull());
-    await waitFor(() => expect(messageField().getAttribute('contenteditable')).toBe('true'));
-  });
-
-  it('[#2068] keeps a composer draft when Try again resends a rejected message', async () => {
+it('[#2068] keeps a composer draft when Try again resends a rejected message', async () => {
     let attempts = 0;
     const { requests } = setup((request) => {
       if (!request.path.endsWith('/messages')) return undefined;
@@ -1587,7 +649,7 @@ describe('track conversations', () => {
     expect(messageField().textContent).toBe('A draft in progress');
   });
 
-  it('[F5] leaves the footer as it was when Try again is pressed offline in the bundled build', async () => {
+it('[F5] leaves the footer as it was when Try again is pressed offline in the bundled build', async () => {
     vi.stubGlobal('__NC_BUNDLED__', true);
     const access = new RecoveryAccess(); access.change('connected');
     const { requests } = setup((request) => {
@@ -1605,7 +667,7 @@ describe('track conversations', () => {
     expect(inputs()).toHaveLength(SEND_RETRIES + 1);
   });
 
-  it('[F5] says only that delivery is unconfirmed when the retries ran out offline (bundled build)', async () => {
+it('[F5] says only that delivery is unconfirmed when the retries ran out offline (bundled build)', async () => {
     vi.stubGlobal('__NC_BUNDLED__', true);
     const access = new RecoveryAccess(); access.change('connected');
     const { requests } = setup((request) => {
@@ -1621,34 +683,7 @@ describe('track conversations', () => {
     expect(requests.filter((request) => request.path.endsWith('/messages'))).toHaveLength(1);
   });
 
-  it('[F4] sends a dropped answer again under its key, with no question and one message', async () => {
-    let attempts = 0;
-    const text = 'Keep the dropped request';
-    let rows: (ReturnType<typeof harnessMessage> | ReturnType<typeof projectionRow>)[] = [];
-    const { requests } = setup((request) => {
-      if (isHistoryPath(request.path)) return ok(historicalConversationPage(conversationCardId(request.path), rows, null));
-      if (!request.path.endsWith('/messages')) return undefined;
-      attempts += 1;
-      /* The first attempt was stored; only its answer was lost. */
-      rows = [harnessMessage(1, 'userMessage', { content: [{ text }] })];
-      if (attempts === 1) throw new Error('response dropped');
-      return inputAccepted();
-    });
-    fireEvent.click(await screen.findByRole('button', { name: 'Conversation Assistant' }));
-    await waitFor(() => expect(messageField().getAttribute('contenteditable')).toBe('true'));
-    await write(text);
-    await waitFor(() => expect(attempts).toBe(2));
-    await act(async () => { await new Promise((resolve) => { setTimeout(resolve, 0); }); });
-    expect(screen.queryByRole('alert')).toBeNull();
-    expect(screen.queryByRole('dialog')).toBeNull();
-    const inputs = requests.filter((request) => request.path.endsWith('/messages'));
-    expect(inputs.map((request) => request.body)).toEqual([expect.objectContaining({ text }), expect.objectContaining({ text })]);
-    expect(inputs[0]?.headers?.['Idempotency-Key']).toBeTruthy();
-    expect(inputs[1]?.headers?.['Idempotency-Key']).toBe(inputs[0]?.headers?.['Idempotency-Key']);
-    expect(within(drawerElement()).getAllByText(text, TRANSCRIPT_TEXT)).toHaveLength(1);
-  });
-
-  it('[F4] refuses a send pressed while offline in the bundled build, sends nothing and keeps the words', async () => {
+it('[F4] refuses a send pressed while offline in the bundled build, sends nothing and keeps the words', async () => {
     vi.stubGlobal('__NC_BUNDLED__', true);
     const access = new RecoveryAccess(); access.change('connected');
     const { requests } = setup(undefined, undefined, access);
@@ -1662,105 +697,14 @@ describe('track conversations', () => {
     expect(requests.filter((request) => request.path.endsWith('/messages'))).toHaveLength(0);
   });
 
-  /* A retry must carry the images the failed message was shown with; the defect
-   * was in what the retry put on the wire. */
-  const ATTACHMENT_ID = '0189bc3f-2b1a-4c7d-9e4f-1a2b3c4d5e6f.png';
-
-  function withAttachments(onInput: (attempt: number) => ApiTransportResponse | undefined, supported = true) {
-    let attempts = 0;
-    return setup((request) => {
-      if (request.path.includes('view=run')) {
-        return ok(historicalConversationRun({
-          card_id: pathCardId(request.path), worker_session_id: 'r', phase: 'idle', model: null, reasoning_effort: null,
-          permission_mode: pathCardId(request.path) === PLANNER_CARD.id ? 'never' : null, blocked_reason: null, attachments_supported: supported, manual_compact_supported: true, recovery: null, compact_outcome: null, context_usage_invalidated: false, running_turn: null,
-        }, 'idle', true));
-      }
-      if (request.path.endsWith('/planner/attachments')) {
-        return ok({
-          attachmentId: ATTACHMENT_ID, contentType: 'image/png', size: 4,
-          url: `/api/cards/${pathCardId(request.path)}/planner/attachments/${ATTACHMENT_ID}`,
-        });
-      }
-      if (request.path.endsWith('/messages')) {
-        attempts += 1;
-        return onInput(attempts);
-      }
-      return undefined;
-    });
-  }
-
-  async function attachAnImage() {
-    /* The hidden input behind the attach button; the `IconButton` carries the accessible name. */
-    const picker = document.querySelector<HTMLInputElement>('input[type="file"]');
-    if (picker === null) throw new Error('no file input rendered');
-    const file = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'shot.png', { type: 'image/png' });
-    await act(async () => {
-      fireEvent.change(picker, { target: { files: [file] } });
-      await Promise.resolve();
-    });
-  }
-
-  it.each(['drop', 'paste'] as const)('uploads an image from %s and sends its attachment id', async (source) => {
-    const { requests } = withAttachments(() => undefined);
-    fireEvent.click(await screen.findByRole('button', { name: 'Conversation Assistant' }));
-    await waitFor(() => expect(messageField().getAttribute('contenteditable')).toBe('true'));
-    const file = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'shot.png', { type: 'image/png' });
-    await act(async () => {
-      if (source === 'drop') fireEvent.drop(messageField(), { dataTransfer: { files: [file], types: ['Files'] } });
-      else fireEvent.paste(messageField(), { clipboardData: { files: [file], getData: () => '' } });
-      await Promise.resolve();
-    });
-    await waitFor(() => expect(requests.filter(request => request.path.endsWith('/planner/attachments'))).toHaveLength(1));
-    await waitFor(() => expect(document.querySelectorAll('[data-nc-attachments] img')).toHaveLength(1));
-    await write('Look at this screenshot');
-    await waitFor(() => expect(inputBodies(requests)).toHaveLength(1));
-    expect(inputBodies(requests)[0]).toMatchObject({ attachments: [ATTACHMENT_ID] });
-  });
-
-  it.each(['drop', 'paste'] as const)('does not upload from %s when attachments are unavailable', async (source) => {
-    const { requests } = withAttachments(() => undefined, false);
-    fireEvent.click(await screen.findByRole('button', { name: 'Conversation Assistant' }));
-    await waitFor(() => expect(messageField().getAttribute('contenteditable')).toBe('true'));
-    const file = new File(['image'], 'shot.png', { type: 'image/png' });
-    await act(async () => {
-      if (source === 'drop') fireEvent.drop(messageField(), { dataTransfer: { files: [file], types: ['Files'] } });
-      else fireEvent.paste(messageField(), { clipboardData: { files: [file], getData: () => '' } });
-      await Promise.resolve();
-    });
-    expect(requests.filter(request => request.path.endsWith('/planner/attachments'))).toHaveLength(0);
-    expect(document.querySelector('[data-nc-attachments]')).toBeNull();
-  });
-
-  function inputBodies(requests: readonly ApiRequest[]) {
-    return requests.filter((request) => request.path.endsWith('/messages'))
-      .map((request) => Object.fromEntries(
-        Object.entries(request.body as Record<string, unknown>)
-          .filter(([key]) => key !== 'content' && key !== 'steerIfRunning'),
-      ));
-  }
-
-  /* #2043 step 5: every chat write reads its failure through its route's table. A lost answer gets a fixed state at
-     the object and is never narrated there; the connection is the global recovery indicator's to speak of. */
-  describe('[#2043] a chat write whose answer is lost', () => {
-    const CONNECTIVITY = /Transport request failed|timed out|back online|连接恢复/;
-    const timedOut = (): never => { throw new DOMException('Request timed out.', 'TimeoutError'); };
-    const dropped = (): never => { throw new Error('response dropped'); };
-    const chatText = () => drawerElement().textContent;
-    const running = () => ok(historicalConversationRun({ card_id: ASSISTANT_CARD.id, worker_session_id: 'r', phase: 'turn_running', model: null,
-      reasoning_effort: null, permission_mode: null, blocked_reason: null, attachments_supported: true, manual_compact_supported: true, recovery: null, compact_outcome: null, context_usage_invalidated: false, running_turn: null }, 'idle', true));
-    async function openAssistant() {
-      fireEvent.click(await screen.findByRole('button', { name: 'Conversation Assistant' }));
-      await waitFor(() => expect(messageField().getAttribute('contenteditable')).toBe('true'));
-    }
-
-    it('send: says only that delivery is unconfirmed', async () => {
+it('send: says only that delivery is unconfirmed', async () => {
       setup((request) => request.path.endsWith('/messages') ? timedOut() : undefined);
       await sendUntilSpent('Lost on the way');
       expect(within(screen.getByRole('alert')).getByText('Delivery is unconfirmed.')).toBeTruthy();
       expect(chatText()).not.toMatch(CONNECTIVITY);
     });
 
-    it('Try again offline (bundled build): keeps the unconfirmed footer as it was', async () => {
+it('Try again offline (bundled build): keeps the unconfirmed footer as it was', async () => {
       vi.stubGlobal('__NC_BUNDLED__', true);
       const access = new RecoveryAccess(); access.change('connected');
       setup((request) => request.path.endsWith('/messages') ? dropped() : undefined, undefined, access);
@@ -1771,7 +715,7 @@ describe('track conversations', () => {
       expect(chatText()).not.toMatch(CONNECTIVITY);
     });
 
-    it('model select: says the change is unconfirmed', async () => {
+it('model select: says the change is unconfirmed', async () => {
       setup((request) => request.path.endsWith('/model') ? timedOut() : undefined);
       await openAssistant();
       fireEvent.click(within(drawerElement()).getByRole('button', { name: /^Model:/ }));
@@ -1780,41 +724,7 @@ describe('track conversations', () => {
       expect(chatText()).not.toMatch(CONNECTIVITY);
     });
 
-    it('Stop: shows Stop unconfirmed, never Stop failed', async () => {
-      setup((request) => request.path.includes('view=run') ? running()
-        : request.path.endsWith('/interrupt') ? dropped() : undefined);
-      fireEvent.click(await screen.findByRole('button', { name: /Conversation Assistant/ }));
-      fireEvent.click(await screen.findByRole('button', { name: 'Stop' }));
-      fireEvent.click(await screen.findByRole('button', { name: 'Stop unconfirmed', expanded: false }));
-      /* #2068 item 29: the detail also covers a stop request whose answer was lost and that may never have arrived. */
-      expect(screen.getByText('The stop may not have taken effect: the response may still be running or may already have ended.',
-        { exact: true })).toBeTruthy();
-      expect(screen.queryByText('Stop failed')).toBeNull();
-      expect(chatText()).not.toMatch(CONNECTIVITY);
-    });
-
-    it('image upload: says the image could not be uploaded', async () => {
-      setup((request) => request.path.includes('view=run') ? ok(historicalConversationRun({ ...running().body as object, phase: 'idle' }, 'idle', true))
-        : request.path.endsWith('/planner/attachments') ? timedOut() : undefined);
-      await openAssistant();
-      await attachAnImage();
-      expect(await within(drawerElement()).findByText('The image could not be uploaded.')).toBeTruthy();
-      expect(chatText()).not.toMatch(CONNECTIVITY);
-    });
-
-    /* #2068 item 27: a write refused where it is admitted never left the browser, so it reads as not done, never as
-       unconfirmed; why it could not go out is the global recovery indicator's to say. */
-    describe('[#2068] refused at admission (bundled build, offline)', () => {
-      async function offlineAfterOpening(reply: Reply) {
-        vi.stubGlobal('__NC_BUNDLED__', true);
-        const access = new RecoveryAccess(); access.change('connected');
-        const { requests } = setup(reply, undefined, access);
-        await openAssistant();
-        act(() => { access.change('offline'); });
-        return requests;
-      }
-
-      it('model select: says the model was not changed', async () => {
+it('model select: says the model was not changed', async () => {
         const requests = await offlineAfterOpening(() => undefined);
         fireEvent.click(within(drawerElement()).getByRole('button', { name: /^Model:/ }));
         fireEvent.click(await screen.findByRole('radio', { name: /^Default/ }));
@@ -1822,489 +732,9 @@ describe('track conversations', () => {
         expect(requests.filter((request) => request.path.endsWith('/model'))).toEqual([]);
       });
 
-      it('Stop: says the response was not stopped', async () => {
-        const requests = await offlineAfterOpening((request) => request.path.includes('view=run') ? running() : undefined);
-        fireEvent.click(await screen.findByRole('button', { name: 'Stop' }));
-        fireEvent.click(await screen.findByRole('button', { name: 'Stop failed', expanded: false }));
-        expect(screen.getByText('The response was not stopped.', { exact: true })).toBeTruthy();
-        expect(requests.filter((request) => request.path.endsWith('/interrupt'))).toEqual([]);
-      });
-
-      it('image upload: says the image was not uploaded', async () => {
-        const requests = await offlineAfterOpening((request) => request.path.includes('view=run')
-          ? ok(historicalConversationRun({ ...running().body as object, phase: 'idle' }, 'idle', true)) : undefined);
-        await attachAnImage();
-        expect(await within(drawerElement()).findByText('The image was not uploaded.')).toBeTruthy();
-        expect(requests.filter((request) => request.path.endsWith('/planner/attachments'))).toEqual([]);
-      });
-    });
-  });
-
-  it('[#1505] re-sends the image the failed message was shown with, not just its words', async () => {
-    const text = 'look at this';
-    const { requests } = withAttachments((attempt) => attempt === 1
-      ? failure(429, 'rate_limited', 'Wait a moment')
-      : ok({ card_id: ASSISTANT_CARD.id, worker_session_id: 'r' }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Conversation Assistant' }));
-    await waitFor(() => expect(messageField().getAttribute('contenteditable')).toBe('true'));
-    await attachAnImage();
-    await write(text);
-
-    // The failure is shown WITH the thumbnail.
-    await screen.findByRole('alert');
-    expect(drawerElement().querySelector('[data-nc-turn-attachments] img')?.getAttribute('src'))
-      .toBe(`/api/cards/${ASSISTANT_CARD.id}/planner/attachments/${ATTACHMENT_ID}`);
-
-    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
-    await waitFor(() => expect(inputBodies(requests)).toHaveLength(2));
-    expect(inputBodies(requests)).toEqual([
-      { text, attachments: [ATTACHMENT_ID] },
-      { text, attachments: [ATTACHMENT_ID] },
-    ]);
-  });
-
-  it('[#1505] retrying an image-only message does not post the one body the server refuses', async () => {
-    const { requests } = withAttachments((attempt) => attempt === 1
-      ? failure(429, 'rate_limited', 'Wait a moment')
-      : ok({ card_id: ASSISTANT_CARD.id, worker_session_id: 'r' }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Conversation Assistant' }));
-    await waitFor(() => expect(messageField().getAttribute('contenteditable')).toBe('true'));
-    await attachAnImage();
-
-    // The vendor send button is unavailable on an empty draft; this is the control the composer grows for that case.
-    const send = drawerElement().querySelector('[data-nc-send-attachment]');
-    expect(send).toBeTruthy();
-    await act(async () => {
-      fireEvent.click(send as HTMLElement);
-      await Promise.resolve();
-    });
-    await screen.findByRole('alert');
-
-    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
-    await waitFor(() => expect(inputBodies(requests)).toHaveLength(2));
-    /* `{ text: '' }` alone is the body `validate_planner_input` refuses, and
-         `sendBlocked` stays true while a failure is outstanding. */
-    expect(inputBodies(requests)[1]).toEqual({ text: '', attachments: [ATTACHMENT_ID] });
-  });
-
-  it('regenerates the original prompt and images once without clearing an unsent draft', async () => {
-    const image = { id: ATTACHMENT_ID, contentType: 'image/png', size: 4,
-      url: `/api/cards/${ASSISTANT_CARD.id}/planner/attachments/${ATTACHMENT_ID}` };
-    const draftImageId = '0189bc3f-2b1a-4c7d-9e4f-1a2b3c4d5e70.png';
-    const user = { ...harnessMessage(91, 'userMessage', { content: [{ text: 'Original prompt' }] }),
-      input_segments: [{ presentation: 'user', text: 'User says:\nOriginal prompt', attachments: [image] }] };
-    const reply = harnessMessage(92, 'agentMessage', { text: 'Original answer' });
-    const terminal = { ...harnessMessage(93, '', {}), item_type: null, turn_id: 'turn', method: 'turn/completed',
-      params: JSON.stringify({ id: 'turn', status: 'completed', error: null }) };
-    let resolve!: (response: ApiTransportResponse) => void;
-    const held = new Promise<ApiTransportResponse>((done) => { resolve = done; });
-    const { requests } = setup((request) => {
-      if (isHistoryPath(request.path)) return ok(historicalConversationPage(conversationCardId(request.path), [user, reply, terminal], null));
-      if (request.path.includes('view=run')) return ok(historicalConversationRun({ card_id: ASSISTANT_CARD.id, worker_session_id: 'r', phase: 'idle', model: null,
-        reasoning_effort: null, permission_mode: null, blocked_reason: null, attachments_supported: true, manual_compact_supported: true, recovery: null, compact_outcome: null, context_usage_invalidated: false, running_turn: null }, 'idle', true));
-      if (request.path.endsWith('/planner/attachments')) return ok({ attachmentId: draftImageId, contentType: 'image/png', size: 4,
-        url: `/api/cards/${ASSISTANT_CARD.id}/planner/attachments/${draftImageId}` });
-      if (request.path.endsWith('/messages')) return held;
-      return undefined;
-    });
-    fireEvent.click(await screen.findByRole('button', { name: /Conversation Assistant/ }));
-    await screen.findByRole('button', { name: 'Regenerate response' });
-    await typeInto(messageField(), 'Keep my separate draft');
-    await attachAnImage();
-    await waitFor(() => expect(Array.from(drawerElement().querySelectorAll('[data-nc-attachments] img')).some((image) => image.getAttribute('src')?.endsWith(draftImageId))).toBe(true));
-    fireEvent.click(screen.getByRole('button', { name: 'Regenerate response' }));
-    await waitFor(() => expect(inputBodies(requests)).toEqual([{ text: 'Original prompt', attachments: [ATTACHMENT_ID] }]));
-    fireEvent.click(screen.getByRole('button', { name: /Regenerate response/ }));
-    expect(inputBodies(requests)).toHaveLength(1);
-    expect(messageField().textContent).toBe('Keep my separate draft');
-    expect(screen.getByText('Original answer', { exact: true })).toBeTruthy();
-    await act(async () => { resolve(inputAccepted()); await held; });
-    expect(messageField().textContent).toBe('Keep my separate draft');
-    expect(inputBodies(requests)).toHaveLength(1);
-    expect(Array.from(drawerElement().querySelectorAll('[data-nc-attachments] img')).some((image) => image.getAttribute('src')?.endsWith(draftImageId))).toBe(true);
-  });
-
-  /* #2131 S7: Regenerate is a send. Its failure is the outbox's, read through SEND_FAILURES, never the action's own text. */
-  it('regenerate whose answer is lost: says only that delivery is unconfirmed', async () => {
-    const user = harnessMessage(91, 'userMessage', { content: [{ text: 'Original prompt' }] });
-    const terminal = { ...harnessMessage(93, '', {}), item_type: null, turn_id: 'turn', method: 'turn/completed',
-      params: JSON.stringify({ id: 'turn', status: 'completed', error: null }) };
-    setup((request) => {
-      if (isHistoryPath(request.path)) return ok(historicalConversationPage(conversationCardId(request.path), [user, harnessMessage(92, 'agentMessage', { text: 'Answer' }), terminal], null));
-      if (request.path.endsWith('/messages')) throw new Error('socket hang up');
-      return undefined;
-    });
-    fireEvent.click(await screen.findByRole('button', { name: /Conversation Assistant/ }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Regenerate response' }));
-    const alert = await screen.findByRole('alert');
-    await waitFor(() => expect(within(alert).getByText('Delivery is unconfirmed.')).toBeTruthy());
-    expect(drawerElement().textContent).not.toMatch(/Transport request failed|socket hang up|timed out|connection/i);
-  });
-
-  /* Edit (#1923): the turn's message comes back to the composer, and Send replaces the turn in one keyed request
-     (#2043): `POST …/planner/input` naming `replaces_turn`, which the server answers as one commit. */
-  const REWIND_IMAGE = { id: ATTACHMENT_ID, contentType: 'image/png', size: 4,
-    url: `/api/cards/${ASSISTANT_CARD.id}/planner/attachments/${ATTACHMENT_ID}` };
-  const REWIND_INPUT = [{ presentation: 'user', text: 'User says:\nOriginal prompt', attachments: [REWIND_IMAGE] }];
-  /** Whether a request is a send that replaces a turn; the server removes the turn only when it answers 200. */
-  const replacesTurn = (request: ApiRequest) => request.path.endsWith('/messages')
-    && typeof (request.body as { replaces_turn?: unknown } | undefined)?.replaces_turn === 'string';
-  const rewindRequests = (requests: readonly ApiRequest[]) => requests.filter((request) => request.path.endsWith('/planner/rewind'));
-  const notReplaceable = () => failure(409, 'planner_turn_not_replaceable', 'This turn cannot be edited; nothing was changed');
-  const composerImages = () => Array.from(drawerElement().querySelectorAll('[data-nc-attachments] img'))
-    .map((image) => image.getAttribute('src'));
-
-  /** One stored turn of the assistant conversation: its prompt (with images), reply and outcome. */
-  const turnRows = (turnId: string, first: number, prompt: string, answer: string,
-    images: readonly (typeof REWIND_IMAGE)[] = [], ref: HarnessQueueEntryRef | null = null) => [
-    { ...harnessMessage(first, 'userMessage', { content: [{ text: prompt }] }), turn_id: turnId,
-      input_segments: [{ presentation: 'user', text: `User says:\n${prompt}`, attachments: images,
-        origin: { observation: 'user_message', event_id: null, queue_entry: ref } }] },
-    { ...harnessMessage(first + 1, 'agentMessage', { text: answer }), turn_id: turnId },
-    { ...harnessMessage(first + 2, '', {}), item_type: null, turn_id: turnId, method: 'turn/completed',
-      params: JSON.stringify({ id: turnId, status: 'completed', error: null }) },
-  ];
-  /** A conversation whose stored rows the case scripts read by read, answering run as an idle harness. */
-  function scriptedSetup(rows: () => readonly unknown[], extra: Reply = () => undefined) {
-    return setup(async (request) => {
-      const answered = await extra(request);
-      if (answered !== undefined) return answered;
-      if (isHistoryPath(request.path)) return ok(historicalConversationPage(conversationCardId(request.path), pathCardId(request.path) === ASSISTANT_CARD.id ? rows() : [], null));
-      if (request.path.includes('view=run')) return ok(historicalConversationRun({ card_id: pathCardId(request.path), worker_session_id: 'r',
-        phase: 'idle', model: null, reasoning_effort: null, permission_mode: pathCardId(request.path) === PLANNER_CARD.id ? 'never' : null, blocked_reason: null, attachments_supported: true, manual_compact_supported: true, recovery: null, compact_outcome: null, context_usage_invalidated: false, running_turn: null }, 'idle', true));
-      if (request.path.endsWith('/planner/attachments')) return ok({ attachmentId: DRAFT_IMAGE_ID, contentType: 'image/png', size: 4,
-        url: `/api/cards/${pathCardId(request.path)}/planner/attachments/${DRAFT_IMAGE_ID}` });
-      return undefined;
-    });
-  }
-  const DRAFT_IMAGE_ID = '0189bc3f-2b1a-4c7d-9e4f-1a2b3c4d5e70.png';
-
-  /** The assistant conversation's one turn until a replace is answered 200, then nothing, as the server would page it. */
-  function editSetup(input: () => ApiTransportResponse | undefined | Promise<ApiTransportResponse | undefined> = () => undefined,
-    run: Record<string, unknown> = {}, uploadGate: () => Promise<void> = () => Promise.resolve()) {
-    let removed = false;
-    const user = { ...harnessMessage(91, 'userMessage', { content: [{ text: 'Original prompt' }] }), turn_id: 'turn',
-      input_segments: REWIND_INPUT };
-    const reply = { ...harnessMessage(92, 'agentMessage', { text: 'Original answer' }), turn_id: 'turn' };
-    const terminal = { ...harnessMessage(93, '', {}), item_type: null, turn_id: 'turn', method: 'turn/completed',
-      params: JSON.stringify({ id: 'turn', status: 'completed', error: null }) };
-    return setup(async (request) => {
-      if (isHistoryPath(request.path)) {
-        if (pathCardId(request.path) !== ASSISTANT_CARD.id) return ok(historicalConversationPage(conversationCardId(request.path), [], null));
-        return ok(historicalConversationPage(conversationCardId(request.path), removed ? [] : [user, reply, terminal], null));
-      }
-      if (request.path.includes('view=run')) {
-        return ok(historicalConversationRun({ card_id: pathCardId(request.path), worker_session_id: 'r', phase: 'idle', model: null,
-          reasoning_effort: null, permission_mode: pathCardId(request.path) === PLANNER_CARD.id ? 'never' : null, blocked_reason: null, attachments_supported: true, manual_compact_supported: true, recovery: null, compact_outcome: null, context_usage_invalidated: false, running_turn: null, ...run }, 'idle', true));
-      }
-      if (request.path.endsWith('/planner/attachments')) {
-        await uploadGate();
-        const draftImageId = '0189bc3f-2b1a-4c7d-9e4f-1a2b3c4d5e70.png';
-        return ok({ attachmentId: draftImageId, contentType: 'image/png', size: 4,
-          url: `/api/cards/${pathCardId(request.path)}/planner/attachments/${draftImageId}` });
-      }
-      if (request.path.endsWith('/messages')) {
-        const response = await input() ?? inputAccepted();
-        if (response.status === 200 && replacesTurn(request)) removed = true;
-        return response;
-      }
-      return undefined;
-    });
-  }
-
-  async function openEditableAssistant(name: string | RegExp = /Conversation Assistant/) {
-    fireEvent.click(await screen.findByRole('button', { name }));
-    await screen.findByRole('button', { name: 'Edit message' });
-  }
-
-  it('keeps response-edit availability reactive across whitespace and nonempty composer boundaries', async () => {
-    twoTurnSetup();
-    await openEditableAssistant();
-    await typeInto(messageField(), ' \n ');
-    expect(screen.getByRole('button', { name: 'Edit message' })).toBeTruthy();
-    await typeInto(messageField(), 'A draft');
-    expect(screen.queryByRole('button', { name: 'Edit message' })).toBeNull();
-    await clearField();
-    expect(screen.getByRole('button', { name: 'Edit message' })).toBeTruthy();
-  });
-
-  /** A send the case answers by hand, so what the press does is seen before any answer. */
-  function heldAnswer() {
-    let settle!: (response: ApiTransportResponse) => void;
-    const held = new Promise<ApiTransportResponse>((done) => { settle = done; });
-    return {
-      reply: () => held,
-      answer: async (response: ApiTransportResponse) => { await act(async () => { settle(response); await held; }); },
-    };
-  }
-  const settleFor = (ms: number) => act(async () => { await new Promise((done) => setTimeout(done, ms)); });
-  const editBar = () => drawerElement().querySelector<HTMLElement>('[data-nc-edit-bar]');
-  const markedMessages = () => Array.from(drawerElement().querySelectorAll('[data-nc-turn="unknown"][data-nc-editing]')).map((said) => said.textContent);
-  const markedImages = () => Array.from(drawerElement().querySelectorAll('[data-nc-turn-attachments][data-nc-editing] img')).map((image) => image.getAttribute('src'));
-  const REFUSED_NOTE = 'Your message is back in the composer; sending adds a new one.';
-  /** An earlier turn, then the one to edit (with its image), until a replace is answered 200. */
-  function twoTurnSetup(input: () => ApiTransportResponse | Promise<ApiTransportResponse> = inputAccepted, metadataTitle?: string) {
-    let stage: 'before' | 'replaced' = 'before';
-    const earlier = turnRows('turn-0', 81, 'Earlier prompt', 'Earlier answer');
-    return scriptedSetup(() => stage === 'before'
-      ? [...earlier, ...turnRows('turn', 91, 'Original prompt', 'Original answer', [REWIND_IMAGE])] : earlier,
-    async (request) => {
-      if (request.path === CONVERSATIONS && metadataTitle !== undefined) return ok([assistantRow({ title: metadataTitle })]);
-      if (!request.path.endsWith('/messages')) return undefined;
-      const response = await input();
-      if (response.status === 200 && replacesTurn(request)) stage = 'replaced';
-      return response;
-    });
-  }
-
-  it('enters edit mode at the click without asking the server; the turn stays, marked, and nothing acts on it', async () => {
-    const { requests } = twoTurnSetup();
-    await openEditableAssistant();
-    const before = requests.length;
-    fireEvent.click(screen.getByRole('button', { name: 'Edit message' }));
-    expect(messageField().textContent).toBe('Original prompt');
-    expect(composerImages()).toEqual([REWIND_IMAGE.url]);
-    expect(editBar()?.textContent).toContain('Editing message');
-    expect(editBar()?.textContent).toContain('Original prompt');
-    expect(screen.getByText('Original answer', { exact: true })).toBeTruthy();
-    expect(markedMessages()).toEqual(['Original prompt']);
-    expect(markedImages()).toEqual([REWIND_IMAGE.url]);
-    expect(screen.getByRole('button', { name: 'Replace message' })).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Send' })).toBeNull();
-    expect(messageField().getAttribute('contenteditable')).toBe('true');
-    await waitFor(() => expect(document.activeElement).toBe(messageField()));
-    for (const name of ['Edit message (not available now)', 'Regenerate response (not available now)', 'Copy response (not available yet)']) {
-      fireEvent.click(screen.getByRole('button', { name }));
-    }
-    await settleFor(20);
-    expect(requests.slice(before).filter((request) => request.method === 'POST')).toEqual([]);
-  });
-
-  it.each([
-    ['✕ empties an untouched composer', false, () => fireEvent.click(screen.getByRole('button', { name: 'Cancel edit' }))],
-    ['Esc empties an untouched composer', false, () => fireEvent.keyDown(messageField(), { key: 'Escape' })],
-    ['✕ keeps what the reader changed', true, () => fireEvent.click(screen.getByRole('button', { name: 'Cancel edit' }))],
-  ] as const)('leaves edit mode without a request: %s', async (_, change, cancel) => {
-    const { requests } = twoTurnSetup();
-    await openEditableAssistant();
-    const before = requests.length;
-    fireEvent.click(screen.getByRole('button', { name: 'Edit message' }));
-    if (change) await typeInto(messageField(), 'Revised prompt');
-    cancel();
-    expect(editBar()).toBeNull();
-    expect(markedMessages()).toEqual([]);
-    expect(markedImages()).toEqual([]);
-    expect(screen.getByRole('complementary', { name: /^(Assistant|Earlier prompt)$/ })).toBeTruthy();
-    if (change) {
-      expect(messageField().textContent).toBe('Revised prompt');
-      expect(composerImages()).toEqual([REWIND_IMAGE.url]);
-    } else {
-      await waitFor(() => expect(messageField().textContent).toBe(''));
-      expect(drawerElement().querySelector('[data-nc-attachments]')).toBeNull();
-      expect(screen.getByRole('button', { name: 'Edit message' })).toBeTruthy();
-    }
-    await settleFor(20);
-    expect(requests.slice(before).filter((request) => request.method === 'POST')).toEqual([]);
-  });
-
-  it('replaces the message on Send with one keyed request: a spinner, the turn kept and marked until its answer', async () => {
-    const answer = heldAnswer();
-    const { requests } = twoTurnSetup(answer.reply, 'Earlier prompt');
-    await openEditableAssistant(/Conversation Earlier prompt/);
-    fireEvent.click(screen.getByRole('button', { name: 'Edit message' }));
-    await typeInto(messageField(), 'Revised prompt');
-    await submit();
-    await waitFor(() => expect(inputBodies(requests))
-      .toEqual([{ text: 'Revised prompt', attachments: [ATTACHMENT_ID], replaces_turn: 'turn' }]));
-    expect(requests.find(replacesTurn)?.headers?.['Idempotency-Key']).toMatch(/.+/);
-    expect(rewindRequests(requests)).toEqual([]);
-    expect(screen.getByRole('button', { name: 'Send' }).hasAttribute('disabled')).toBe(true);
-    expect(screen.getByRole('group', { name: 'Message composer' }).getAttribute('aria-busy')).toBe('true');
-    expect(messageField().getAttribute('contenteditable')).toBe('false');
-    /* Only the server knows whether the turn can go: it stays, marked, and nothing pretends the new message is in. */
-    expect(screen.getByText('Original answer', { exact: true })).toBeTruthy();
-    expect(markedMessages()).toEqual(['Original prompt']);
-    expect(screen.queryByText('Revised prompt', { exact: true })).toBeNull();
-    /* The words live in the send now: no edit bar, so no ✕ can drop them (#2041). */
-    expect(editBar()).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Cancel edit' })).toBeNull();
-    await answer.answer(inputAccepted());
-    await waitFor(() => expect(screen.queryByText('Original answer', { exact: true })).toBeNull());
-    expect(screen.getByText('Revised prompt', { exact: true })).toBeTruthy();
-    await settleFor(20);
-    expect(inputBodies(requests)).toHaveLength(1);
-    expect(rewindRequests(requests)).toEqual([]);
-    expect(screen.getByRole('group', { name: 'Message composer' }).getAttribute('aria-busy')).not.toBe('true');
-  });
-
-  it('sends outside edit mode with no turn to replace', async () => {
-    const { requests } = twoTurnSetup();
-    await openEditableAssistant();
-    await typeInto(messageField(), 'A new message');
-    await submit();
-    await waitFor(() => expect(inputBodies(requests)).toEqual([{ text: 'A new message' }]));
-    await settleFor(20);
-    expect(screen.getByText('Original answer', { exact: true })).toBeTruthy();
-  });
-
-  it('sends a replace whose answer was lost again under the same key, and hides the turn only on its 200', async () => {
-    let attempts = 0;
-    const { requests } = twoTurnSetup(() => {
-      attempts += 1;
-      return attempts === 1 ? failure(502, 'bad_gateway', 'Upstream unavailable') : inputAccepted();
-    });
-    await openEditableAssistant();
-    fireEvent.click(screen.getByRole('button', { name: 'Edit message' }));
-    await submit();
-    await waitFor(() => expect(inputBodies(requests)).toHaveLength(2));
-    const sent = requests.filter(replacesTurn);
-    expect(sent.map((request) => request.body)).toEqual([
-      expect.objectContaining({ text: 'Original prompt', attachments: [ATTACHMENT_ID], replaces_turn: 'turn' }),
-      expect.objectContaining({ text: 'Original prompt', attachments: [ATTACHMENT_ID], replaces_turn: 'turn' }),
-    ]);
-    expect(sent[1].headers?.['Idempotency-Key']).toBe(sent[0].headers?.['Idempotency-Key']);
-    await waitFor(() => expect(screen.queryByText('Original answer', { exact: true })).toBeNull());
-    expect(screen.getByText('Earlier answer', { exact: true })).toBeTruthy();
-    expect(rewindRequests(requests)).toEqual([]);
-  });
-
-  it('never removes the turn when the replace is refused: edit mode ends, the composer keeps the message, a notice says why', async () => {
-    const { requests } = twoTurnSetup(notReplaceable);
-    await openEditableAssistant();
-    fireEvent.click(screen.getByRole('button', { name: 'Edit message' }));
-    await submit();
-    await screen.findByText('Edit failed: This turn cannot be edited; nothing was changed');
-    expect(screen.getByText(REFUSED_NOTE)).toBeTruthy();
-    /* One line for the refusal: the send footer does not repeat it. */
-    expect(screen.queryByText(/^Not sent\./)).toBeNull();
-    expect(editBar()).toBeNull();
-    await waitFor(() => expect(messageField().textContent).toBe('Original prompt'));
-    expect(composerImages()).toEqual([REWIND_IMAGE.url]);
-    expect(screen.getByText('Original answer', { exact: true })).toBeTruthy();
-    expect(markedMessages()).toEqual([]);
-    await settleFor(20);
-    expect(inputBodies(requests)).toEqual([{ text: 'Original prompt', attachments: [ATTACHMENT_ID], replaces_turn: 'turn' }]);
-    /* Cleared by the next send, which is an ordinary new message. */
-    await submit();
-    await waitFor(() => expect(inputBodies(requests)).toHaveLength(2));
-    expect(inputBodies(requests)[1]).toEqual({ text: 'Original prompt', attachments: [ATTACHMENT_ID] });
-    expect(screen.queryByText('Edit failed: This turn cannot be edited; nothing was changed')).toBeNull();
-  });
-
-  it('leaves nothing of a refused replace but its words: emptied, the thread is the server’s and the turn editable again', async () => {
-    const { requests } = twoTurnSetup(notReplaceable);
-    await openEditableAssistant();
-    fireEvent.click(screen.getByRole('button', { name: 'Edit message' }));
-    await submit();
-    await screen.findByText('Edit failed: This turn cannot be edited; nothing was changed');
-    await waitFor(() => expect(messageField().textContent).toBe('Original prompt'));
-    await clearField();
-    removeComposerImage();
-    await waitFor(() => expect(drawerElement().querySelector('[data-nc-attachments]')).toBeNull());
-    await settleFor(20);
-    /* No echo of the refused send: the thread is the two stored turns, and the edited one is still the latest. */
-    expect(Array.from(drawerElement().querySelectorAll('[data-nc-turn="unknown"]')).map((said) => said.textContent))
-      .toEqual(['Earlier prompt', 'Original prompt']);
-    expect(screen.getByText('Original answer', { exact: true })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Edit message' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Regenerate response' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Copy response' })).toBeTruthy();
-    /* The notice no longer says the words are in the composer, which they are not. */
-    expect(screen.getByText('Edit failed: This turn cannot be edited; nothing was changed')).toBeTruthy();
-    expect(screen.queryByText(REFUSED_NOTE)).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
-    expect(inputBodies(requests)).toHaveLength(1);
-    /* And it can be edited again, which clears the notice. */
-    fireEvent.click(screen.getByRole('button', { name: 'Edit message' }));
-    expect(messageField().textContent).toBe('Original prompt');
-    expect(screen.queryByText('Edit failed: This turn cannot be edited; nothing was changed')).toBeNull();
-  });
-
-  it('[#2041] keeps a replace whose answer stays lost as an unconfirmed send: Try again replays it under its key', async () => {
-    let lost = true;
-    const { requests } = twoTurnSetup(() => lost ? failure(502, 'bad_gateway', 'Upstream unavailable') : inputAccepted());
-    await openEditableAssistant();
-    fireEvent.click(screen.getByRole('button', { name: 'Edit message' }));
-    await submit();
-    expect((await screen.findByRole('alert')).textContent).toContain('Delivery is unconfirmed');
-    expect(inputBodies(requests)).toHaveLength(SEND_RETRIES + 1);
-    /* The only copy of the words is the unconfirmed send: no edit mode, no ✕, and the composer is not refilled. */
-    expect(editBar()).toBeNull();
-    expect(messageField().textContent).toBe('');
-    expect(screen.getByText('Original answer', { exact: true })).toBeTruthy();
-    const key = requests.filter(replacesTurn)[0].headers?.['Idempotency-Key'];
-    lost = false;
-    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
-    await waitFor(() => expect(inputBodies(requests)).toHaveLength(SEND_RETRIES + 2));
-    const retried = requests.filter(replacesTurn).at(-1);
-    expect(retried?.body).toEqual(expect.objectContaining({ text: 'Original prompt', attachments: [ATTACHMENT_ID], replaces_turn: 'turn' }));
-    expect(retried?.headers?.['Idempotency-Key']).toBe(key);
-    await waitFor(() => expect(screen.queryByText('Original answer', { exact: true })).toBeNull());
-    expect(rewindRequests(requests)).toEqual([]);
-  });
-
-  it('keeps the composer when edit mode is cancelled while an image is still uploading', async () => {
-    let finish!: () => void;
-    const finished = new Promise<void>((done) => { finish = done; });
-    editSetup(undefined, {}, () => finished);
-    await openEditableAssistant();
-    fireEvent.click(screen.getByRole('button', { name: 'Edit message' }));
-    await attachAnImage();
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel edit' }));
-    expect(editBar()).toBeNull();
-    expect(messageField().textContent).toBe('Original prompt');
-    await act(async () => { finish(); await finished; });
-    await waitFor(() => expect(composerImages().map((src) => src?.split('/').pop())).toEqual([ATTACHMENT_ID, DRAFT_IMAGE_ID]));
-    expect(messageField().textContent).toBe('Original prompt');
-  });
-
-  it('leaves edit mode, keeping the composer, once a newer turn arrives', async () => {
-    let newer = false;
-    const earlier = turnRows('turn', 91, 'Original prompt', 'Original answer', [REWIND_IMAGE]);
-    const { client } = scriptedSetup(() => newer ? [...earlier, ...turnRows('turn-2', 101, 'From elsewhere', 'Newer answer')] : earlier);
-    await openEditableAssistant();
-    fireEvent.click(screen.getByRole('button', { name: 'Edit message' }));
-    await typeInto(messageField(), 'Revised prompt');
-    newer = true;
-    await act(async () => { await client.invalidateQueries(); });
-    await screen.findByText('Newer answer', { exact: true });
-    await screen.findByText('This message can no longer be replaced; sending adds a new one.');
-    expect(editBar()).toBeNull();
-    expect(messageField().textContent).toBe('Revised prompt');
-    expect(composerImages()).toEqual([REWIND_IMAGE.url]);
-  });
-
-  it('keeps edit mode with its conversation across a switch, touching nothing in the other one', async () => {
-    editSetup();
-    await openEditableAssistant();
-    fireEvent.click(screen.getByRole('button', { name: 'Edit message' }));
-    await pickPlanner();
-    await waitFor(() => expect(messageField().textContent).toBe(''));
-    expect(drawerElement().querySelector('[data-nc-attachments]')).toBeNull();
-    expect(editBar()).toBeNull();
-    expect(screen.getByRole('button', { name: 'Send' })).toBeTruthy();
-    await pickAssistant();
-    await waitFor(() => expect(messageField().textContent).toBe('Original prompt'));
-    expect(composerImages()).toEqual([REWIND_IMAGE.url]);
-    expect(editBar()?.textContent).toContain('Original prompt');
-  });
-
-  it('keeps edit mode when its conversation is shown again after another one sent a message', async () => {
-    editSetup();
-    await openEditableAssistant();
-    fireEvent.click(screen.getByRole('button', { name: 'Edit message' }));
-    await pickPlanner();
-    await typeInto(messageField(), 'Planner words');
-    await submit();
-    await pickAssistant();
-    await settleFor(50);
-    expect(editBar()?.textContent).toContain('Original prompt');
-    expect(screen.queryByText('This message can no longer be replaced; sending adds a new one.')).toBeNull();
-  });
-
-  it('never carries a delivered message the server has not shown yet into the next conversation', async () => {
-    editSetup();
-    await openEditableAssistant();
+it('never carries a delivered message the server has not shown yet into the next conversation', async () => {
+    storedSetup();
+    await openAssistantWithHistory();
     await typeInto(messageField(), 'Delivered words');
     await submit();
     await settleFor(50);
@@ -2314,143 +744,25 @@ describe('track conversations', () => {
     expect(messageField().getAttribute('contenteditable')).toBe('true');
   });
 
-  it('sends a replacement pressed before a switch to its own conversation, and draws nothing in the one shown', async () => {
-    const answer = heldAnswer();
-    const { requests } = editSetup(answer.reply);
-    await openEditableAssistant();
-    fireEvent.click(screen.getByRole('button', { name: 'Edit message' }));
-    await submit();
-    await pickPlanner();
-    await waitFor(() => expect(messageField().getAttribute('contenteditable')).toBe('true'));
-    expect(screen.getByRole('group', { name: 'Message composer' }).getAttribute('aria-busy')).not.toBe('true');
-    await answer.answer(inputAccepted());
-    await waitFor(() => expect(requests.filter((request) => request.path.endsWith('/messages'))
-      .map((request) => [pathCardId(request.path), request.body]))
-      .toEqual([[ASSISTANT_CARD.id, expect.objectContaining({ text: 'Original prompt', attachments: [ATTACHMENT_ID], replaces_turn: 'turn' })]]));
-    await settleFor(20);
-    expect(messageField().getAttribute('contenteditable')).toBe('true');
-    expect(drawerElement().querySelector('[data-nc-turn="you"]')).toBeNull();
-    expect(messageField().textContent).toBe('');
-  });
-
-  const pickAssistant = async () => {
-    fireEvent.click(screen.getByRole('button', { name: /^Conversation (Assistant|Original prompt)/ }));
-    await screen.findByRole('complementary', { name: /^(Assistant|Original prompt)$/ });
-  };
-  const reopenAssistant = async () => {
-    fireEvent.click(screen.getByRole('button', { name: 'Close conversation' }));
-    await pickAssistant();
-  };
-  const clearField = async () => {
-    messageField().textContent = '';
-    await act(async () => { fireEvent.input(messageField()); await Promise.resolve(); });
-  };
-  async function editIntoComposer(requests: readonly ApiRequest[]) {
-    await openEditableAssistant();
-    fireEvent.click(screen.getByRole('button', { name: 'Edit message' }));
-    expect(messageField().textContent).toBe('Original prompt');
-    expect(composerImages()).toEqual([REWIND_IMAGE.url]);
-    expect(inputBodies(requests)).toEqual([]);
-  }
-  const removeComposerImage = () => fireEvent.click(within(drawerElement().querySelector<HTMLElement>('[data-nc-attachments]')!)
-    .getByRole('button', { name: /remove/i }));
-
-  it('keeps the edited message through closing and reopening its conversation', async () => {
-    const { requests } = editSetup();
-    await editIntoComposer(requests);
-    await reopenAssistant();
-    await waitFor(() => expect(messageField().textContent).toBe('Original prompt'));
-    expect(composerImages()).toEqual([REWIND_IMAGE.url]);
-  });
-
-  it('carries the reader’s changes to the edited message, and never the message itself, across a switch', async () => {
-    const { requests } = editSetup();
-    await editIntoComposer(requests);
-    await typeInto(messageField(), 'Revised prompt');
-    fireEvent.click(screen.getByRole('button', { name: 'Conversation Planner chat' }));
-    await screen.findByRole('complementary', { name: 'Planner chat' });
-    await waitFor(() => expect(messageField().textContent).toBe(''));
-    expect(drawerElement().querySelector('[data-nc-attachments]')).toBeNull();
-    await pickAssistant();
-    await waitFor(() => expect(messageField().textContent).toBe('Revised prompt'));
-    expect(composerImages()).toEqual([REWIND_IMAGE.url]);
-  });
-
-  const pickPlanner = async () => {
-    fireEvent.click(screen.getByRole('button', { name: 'Conversation Planner chat' }));
-    await screen.findByRole('complementary', { name: 'Planner chat' });
-  };
-  const DRAFT_IMAGE_SUFFIX = '0189bc3f-2b1a-4c7d-9e4f-1a2b3c4d5e70.png';
-
-  it('gives each conversation its own composer: nothing carries across a switch, both survive it', async () => {
-    const { requests } = editSetup();
-    await editIntoComposer(requests);
-    await pickPlanner();
-    await waitFor(() => expect(messageField().textContent).toBe(''));
-    expect(drawerElement().querySelector('[data-nc-attachments]')).toBeNull();
-    await typeInto(messageField(), 'Words for the planner');
-    await pickAssistant();
-    await waitFor(() => expect(messageField().textContent).toBe('Original prompt'));
-    expect(composerImages()).toEqual([REWIND_IMAGE.url]);
-    await pickPlanner();
-    await waitFor(() => expect(messageField().textContent).toBe('Words for the planner'));
-    expect(drawerElement().querySelector('[data-nc-attachments]')).toBeNull();
-  });
-
-  it('keeps a typed draft through closing and reopening its conversation', async () => {
-    editSetup();
-    await openEditableAssistant();
+it('keeps a typed draft through closing and reopening its conversation', async () => {
+    storedSetup();
+    await openAssistantWithHistory();
     await typeInto(messageField(), 'Half a thought');
     await reopenAssistant();
     await waitFor(() => expect(messageField().textContent).toBe('Half a thought'));
     /* The draft withholds Edit: nothing is ever merged into it. */
-    expect(screen.getByRole('button', { name: 'Edit message (not available now)' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /^Edit message/ })).toBeNull();
   });
 
-  it('does not bring an edited message back after its failed send is tried again', async () => {
-    let attempts = 0;
-    const { requests } = editSetup(() => {
-      attempts += 1;
-      return attempts === 1 ? failure(429, 'rate_limited', 'Not this time') : undefined;
-    });
-    await editIntoComposer(requests);
-    await submit();
-    fireEvent.click(await screen.findByRole('button', { name: 'Try again' }));
-    await waitFor(() => expect(inputBodies(requests)).toHaveLength(2));
-    expect(inputBodies(requests)[1]).toEqual({ text: 'Original prompt', attachments: [ATTACHMENT_ID], replaces_turn: 'turn' });
-    await reopenAssistant();
-    await act(async () => { await Promise.resolve(); });
-    expect(messageField().textContent).toBe('');
-    expect(drawerElement().querySelector('[data-nc-attachments]')).toBeNull();
-  });
-
-  it('does not bring an edited message back when the reader switches away before its send is answered', async () => {
+it('lets another conversation be written while one conversation’s send is out', async () => {
     let answer!: () => void;
     const answered = new Promise<void>((done) => { answer = done; });
-    const { requests } = editSetup(async () => { await answered; return undefined; });
-    await editIntoComposer(requests);
-    await submit();
-    await waitFor(() => expect(inputBodies(requests)).toHaveLength(1));
-    await pickPlanner();
-    await act(async () => { answer(); await answered; });
-    await typeInto(messageField(), 'Planner words while A sends');
-    await pickAssistant();
-    await act(async () => { await Promise.resolve(); });
-    expect(messageField().textContent).toBe('');
-    expect(drawerElement().querySelector('[data-nc-attachments]')).toBeNull();
-    await pickPlanner();
-    await waitFor(() => expect(messageField().textContent).toBe('Planner words while A sends'));
-  });
-
-  it('lets another conversation be written while one conversation’s send is out', async () => {
-    let answer!: () => void;
-    const answered = new Promise<void>((done) => { answer = done; });
-    const { requests } = scriptedSetup(() => turnRows('turn', 91, 'Original prompt', 'Original answer', [REWIND_IMAGE]), async request => {
-      if (request.path === CONVERSATIONS) return ok([assistantRow({ title: 'Original prompt' })]);
+    const { requests } = scriptedSetup(() => storedTurn(), async request => {
+      if (request.path === '/api/v1/tracks/w1') return ok(fixtureSnapshot(TRACK, [PLANNER_CARD, ...[assistantRow({ title: 'Original prompt' })]]));
       if (request.path.endsWith('/messages')) { await answered; return inputAccepted(); }
       return undefined;
     });
-    await openEditableAssistant(/Conversation Original prompt/);
+    await openAssistantWithHistory(/Conversation Original prompt/);
     await typeInto(messageField(), 'Sent from the assistant');
     await submit();
     await waitFor(() => expect(inputBodies(requests)).toHaveLength(1));
@@ -2464,330 +776,14 @@ describe('track conversations', () => {
     await act(async () => { answer(); await answered; });
   });
 
-  it('[#2041] leaves the next conversation’s queue free while the last one’s delete is out', async () => {
-    let answer!: () => void;
-    const answered = new Promise<void>((done) => { answer = done; });
-    setup(async (request) => {
-      const card = pathCardId(request.path);
-      if (request.path.includes('view=run')) {
-        return ok(historicalConversationRun({ card_id: card, worker_session_id: 'r', phase: 'turn_running', model: null, reasoning_effort: null, permission_mode: card === PLANNER_CARD.id ? 'never' : null, blocked_reason: null,
-          manual_compact_supported: true, recovery: null, compact_outcome: null, context_usage_invalidated: false, running_turn: null, pending: [{ entry_id: `entry-${card}`, text: `queued in ${card}`, rev: 1, queued_at_ms: 5 }], pending_overflow: 0 }, 'idle', true));
-      }
-      if (request.method === 'DELETE' && request.path.includes('/planner/input/')) {
-        await answered;
-        return ok({ card_id: card, entry_id: `entry-${card}`, rev: 2, text: null });
-      }
-      return undefined;
-    });
-    const entryOf = (card: string) => Array.from(document.querySelectorAll<HTMLElement>('[data-nc-pending-entry]'))
-      .find((entry) => entry.dataset.ncPendingEntry === `entry-${card}`);
-    const deleteIn = (card: string) => within(entryOf(card)!).getByRole('button', { name: 'Delete this message' });
-    fireEvent.click(await screen.findByRole('button', { name: /Conversation Assistant/ }));
-    await waitFor(() => expect(entryOf(ASSISTANT_CARD.id)).toBeDefined());
-    await waitFor(() => expect(deleteIn(ASSISTANT_CARD.id).getAttribute('aria-disabled') === 'true').toBe(false));
-    fireEvent.click(deleteIn(ASSISTANT_CARD.id));
-    await waitFor(() => expect(deleteIn(ASSISTANT_CARD.id).getAttribute('aria-disabled') === 'true').toBe(true));
-    await pickPlanner();
-    await waitFor(() => expect(entryOf(PLANNER_CARD.id)).toBeDefined());
-    await waitFor(() => expect(deleteIn(PLANNER_CARD.id).getAttribute('aria-disabled') === 'true').toBe(false));
-    await act(async () => { answer(); await answered; });
-  });
-
-  /* #2068 item 15: the queue strip remounts on the way back, and the delete still out is its conversation's, not the
-     strip's: the entry it is deleting offers no second delete until it is answered. */
-  it('[#2068] keeps a conversation’s queue locked across a round trip while its delete is out', async () => {
-    let answer!: () => void;
-    const answered = new Promise<void>((done) => { answer = done; });
-    const { requests } = setup(async (request) => {
-      const card = pathCardId(request.path);
-      if (request.path.includes('view=run')) {
-        return ok(historicalConversationRun({ card_id: card, worker_session_id: 'r', phase: 'turn_running', model: null, reasoning_effort: null, permission_mode: card === PLANNER_CARD.id ? 'never' : null, blocked_reason: null,
-          manual_compact_supported: true, recovery: null, compact_outcome: null, context_usage_invalidated: false, running_turn: null, pending: [{ entry_id: `entry-${card}`, text: `queued in ${card}`, rev: 1, queued_at_ms: 5 }], pending_overflow: 0 }, 'idle', true));
-      }
-      if (request.method === 'DELETE' && request.path.includes('/planner/input/')) {
-        await answered;
-        return ok({ card_id: card, entry_id: `entry-${card}`, rev: 2, text: null });
-      }
-      return undefined;
-    });
-    const deletes = () => requests.filter((request) => request.method === 'DELETE');
-    const entryOf = (card: string) => Array.from(document.querySelectorAll<HTMLElement>('[data-nc-pending-entry]'))
-      .find((entry) => entry.dataset.ncPendingEntry === `entry-${card}`);
-    const deleteIn = (card: string) => within(entryOf(card)!).getByRole('button', { name: 'Delete this message' });
-    fireEvent.click(await screen.findByRole('button', { name: /Conversation Assistant/ }));
-    await waitFor(() => expect(entryOf(ASSISTANT_CARD.id)).toBeDefined());
-    await waitFor(() => expect(deleteIn(ASSISTANT_CARD.id).getAttribute('aria-disabled') === 'true').toBe(false));
-    fireEvent.click(deleteIn(ASSISTANT_CARD.id));
-    await waitFor(() => expect(deletes()).toHaveLength(1));
-    await pickPlanner();
-    await waitFor(() => expect(entryOf(PLANNER_CARD.id)).toBeDefined());
-    await pickAssistant();
-    await waitFor(() => expect(entryOf(ASSISTANT_CARD.id)).toBeDefined());
-    expect(deleteIn(ASSISTANT_CARD.id).getAttribute('aria-disabled') === 'true').toBe(true);
-    fireEvent.click(deleteIn(ASSISTANT_CARD.id));
-    await act(async () => { answer(); await answered; });
-    expect(deletes()).toHaveLength(1);
-  });
-
-  it('puts an image whose upload finishes after a switch into the conversation it was picked in', async () => {
-    let finish!: () => void;
-    const finished = new Promise<void>((done) => { finish = done; });
-    editSetup(undefined, {}, () => finished);
-    await openEditableAssistant();
-    await attachAnImage();
-    await pickPlanner();
-    await act(async () => { finish(); await finished; });
-    await act(async () => { await Promise.resolve(); });
-    expect(drawerElement().querySelector('[data-nc-attachments] img')).toBeNull();
-    await pickAssistant();
-    await waitFor(() => expect(composerImages().some((src) => src?.endsWith(DRAFT_IMAGE_SUFFIX))).toBe(true));
-  });
-
-  it('keeps the images of a rejected send for the footer’s Edit', async () => {
-    const { requests } = editSetup(() => failure(429, 'rate_limited', 'Not this time'));
-    await editIntoComposer(requests);
-    await submit();
-    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
-    await waitFor(() => expect(messageField().textContent).toBe('Original prompt'));
-    expect(composerImages()).toEqual([REWIND_IMAGE.url]);
-  });
-
-  it('keeps the images of a refused send in the composer', async () => {
-    const { requests } = editSetup(() => failure(409, 'planner_harness_dormant', 'No live session.'));
-    await editIntoComposer(requests);
-    await submit();
-    await waitFor(() => expect(inputBodies(requests)).toHaveLength(1));
-    await waitFor(() => expect(messageField().textContent).toBe('Original prompt'));
-    expect(composerImages()).toEqual([REWIND_IMAGE.url]);
-  });
-
-  it('clears a delivered message’s images from the conversation it was sent from, not the one shown', async () => {
-    let answer!: () => void;
-    const answered = new Promise<void>((done) => { answer = done; });
-    const { requests } = editSetup(async () => { await answered; return undefined; });
-    await editIntoComposer(requests);
-    await submit();
-    await waitFor(() => expect(inputBodies(requests)).toHaveLength(1));
-    await pickPlanner();
-    await waitFor(() => expect(messageField().getAttribute('contenteditable')).toBe('true'));
-    await attachAnImage();
-    await waitFor(() => expect(composerImages().some((src) => src?.endsWith(DRAFT_IMAGE_SUFFIX))).toBe(true));
-    await act(async () => { answer(); await answered; });
-    await act(async () => { await Promise.resolve(); });
-    expect(composerImages().some((src) => src?.endsWith(DRAFT_IMAGE_SUFFIX))).toBe(true);
-    await pickAssistant();
-    await act(async () => { await Promise.resolve(); });
-    expect(drawerElement().querySelector('[data-nc-attachments]')).toBeNull();
-  });
-
-  it('keeps a replaced turn hidden, and every action withheld, until a transcript read without it lands', async () => {
-    let stage: 'before' | 'replaced' = 'before';
-    let failReads = true;
-    const earlier = turnRows('turn-0', 81, 'Earlier prompt', 'Earlier answer');
-    const { requests } = setup((request) => {
-      if (isHistoryPath(request.path) && pathCardId(request.path) === ASSISTANT_CARD.id) {
-        if (stage === 'before') return ok(historicalConversationPage(conversationCardId(request.path), [...earlier, ...turnRows('turn', 91, 'Original prompt', 'Original answer')], null));
-        if (failReads) return failure(503, 'unavailable', 'Transcript unavailable');
-        return ok(historicalConversationPage(conversationCardId(request.path), [...earlier, ...turnRows('turn-2', 101, 'Original prompt', 'Replacement answer', [], { id: 'replacement-entry', rev: 0 })], null));
-      }
-      if (request.path.includes('view=run')) return ok(historicalConversationRun({ card_id: pathCardId(request.path), worker_session_id: 'r',
-        phase: 'idle', model: null, reasoning_effort: null, permission_mode: pathCardId(request.path) === PLANNER_CARD.id ? 'never' : null, blocked_reason: null, attachments_supported: true, manual_compact_supported: true, recovery: null, compact_outcome: null, context_usage_invalidated: false, running_turn: null }, 'idle', true));
-      if (request.path.endsWith('/messages')) { stage = 'replaced'; return inputAcceptedWithEntry('replacement-entry'); }
-      return undefined;
-    });
-    await openEditableAssistant();
-    fireEvent.click(screen.getByRole('button', { name: 'Edit message' }));
-    await submit();
-    await waitFor(() => expect(inputBodies(requests)).toEqual([{ text: 'Original prompt', replaces_turn: 'turn' }]));
-    /* The re-read failed: the cached transcript still holds the replaced turn, which stays hidden. */
-    await screen.findByRole('button', { name: 'Reload history' });
-    expect(screen.queryByText('Original answer', { exact: true })).toBeNull();
-    expect(screen.getByText('Earlier answer', { exact: true })).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Copy response' })).toBeNull();
-    failReads = false;
-    fireEvent.click(screen.getByRole('button', { name: 'Reload history' }));
-    await screen.findByText('Replacement answer', { exact: true });
-    expect(screen.queryByText('Original answer', { exact: true })).toBeNull();
-    expect(await screen.findByRole('button', { name: 'Copy response' })).toBeTruthy();
-  });
-
-  it('keeps an upload in flight busy across a remount, offering no Edit until it lands', async () => {
-    let finish!: () => void;
-    const finished = new Promise<void>((done) => { finish = done; });
-    const { router } = editSetup(undefined, {}, () => finished);
-    await openEditableAssistant();
-    await attachAnImage();
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Edit message (not available now)' })).toBeTruthy());
-    await act(() => router.navigate({ to: '/track/w2' }));
-    await act(() => router.navigate({ to: '/track/w1' }));
-    await screen.findByRole('complementary', { name: /^(Assistant|Original prompt)$/ });
-    await screen.findByText('Original answer', { exact: true });
-    await act(async () => { await new Promise((done) => setTimeout(done, 20)); });
-    expect(screen.getByRole('button', { name: 'Edit message (not available now)' })).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Edit message' })).toBeNull();
-    await act(async () => { finish(); await finished; });
-    await waitFor(() => expect(composerImages().some((src) => src?.endsWith(DRAFT_IMAGE_SUFFIX))).toBe(true));
-  });
-
-  it('leaves the composer’s images alone when a delivered Regenerate sends the same images', async () => {
-    const { requests } = editSetup();
-    await editIntoComposer(requests);
-    await typeInto(messageField(), 'Revised prompt');
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel edit' }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Regenerate response' }));
-    await waitFor(() => expect(inputBodies(requests)).toEqual([{ text: 'Original prompt', attachments: [ATTACHMENT_ID] }]));
-    await act(async () => { await new Promise((done) => setTimeout(done, 20)); });
-    expect(messageField().textContent).toBe('Revised prompt');
-    expect(composerImages()).toEqual([REWIND_IMAGE.url]);
-  });
-
-  it('puts a failed Regenerate’s words and images back beside the composer’s own image', async () => {
-    const { requests } = editSetup(() => failure(429, 'rate_limited', 'Not this time'));
-    await openEditableAssistant();
-    await attachAnImage();
-    await waitFor(() => expect(composerImages().some((src) => src?.endsWith(DRAFT_IMAGE_ID))).toBe(true));
-    fireEvent.click(screen.getByRole('button', { name: 'Regenerate response' }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
-    await waitFor(() => expect(messageField().textContent).toBe('Original prompt'));
-    expect(composerImages().map((src) => src?.split('/').pop())).toEqual([DRAFT_IMAGE_ID, ATTACHMENT_ID]);
-    expect(inputBodies(requests)).toHaveLength(1);
-  });
-
-  it('puts a failed send’s words back with its image once', async () => {
-    editSetup(() => failure(429, 'rate_limited', 'Not this time'));
-    await openEditableAssistant();
-    await attachAnImage();
-    await waitFor(() => expect(composerImages().some((src) => src?.endsWith(DRAFT_IMAGE_ID))).toBe(true));
-    await typeInto(messageField(), 'Look at this');
-    await submit();
-    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
-    await waitFor(() => expect(messageField().textContent).toBe('Look at this'));
-    expect(composerImages().map((src) => src?.split('/').pop())).toEqual([DRAFT_IMAGE_ID]);
-  });
-
-  it('acts again on a later turn that reuses the removed turn’s id', async () => {
-    let stage: 'before' | 'replaced' = 'before';
-    const { requests } = scriptedSetup(() => stage === 'before' ? turnRows('turn', 91, 'Original prompt', 'Original answer', [REWIND_IMAGE])
-      : turnRows('turn', 101, 'Original prompt', 'A new answer', [REWIND_IMAGE], { id: 'replacement-entry', rev: 0 }), (request) => {
-      if (request.path.endsWith('/messages')) { stage = 'replaced'; return inputAcceptedWithEntry('replacement-entry'); }
-      return undefined;
-    });
-    await editIntoComposer(requests);
-    await submit();
-    await screen.findByText('A new answer', { exact: true });
-    expect(await screen.findByRole('button', { name: 'Regenerate response' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Copy response' })).toBeTruthy();
-  });
-
-  it('retires the edited message once it is delivered', async () => {
-    const { requests } = editSetup();
-    await editIntoComposer(requests);
-    await submit();
-    await waitFor(() => expect(inputBodies(requests))
-      .toEqual([{ text: 'Original prompt', attachments: [ATTACHMENT_ID], replaces_turn: 'turn' }]));
-    await waitFor(() => expect(drawerElement().querySelector('[data-nc-attachments]')).toBeNull());
-    await reopenAssistant();
-    await act(async () => { await Promise.resolve(); });
-    expect(messageField().textContent).toBe('');
-    expect(drawerElement().querySelector('[data-nc-attachments]')).toBeNull();
-  });
-
-  it('keeps a text-only edited message whose send is refused', async () => {
-    const { requests } = scriptedSetup(() => turnRows('turn', 91, 'Words only', 'Original answer'), (request) => {
-      if (request.path.endsWith('/messages')) return failure(409, 'planner_harness_dormant', 'No live session.');
-      return undefined;
-    });
-    await openEditableAssistant();
-    fireEvent.click(screen.getByRole('button', { name: 'Edit message' }));
-    expect(messageField().textContent).toBe('Words only');
-    expect(drawerElement().querySelector('[data-nc-attachments]')).toBeNull();
-    await submit();
-    await waitFor(() => expect(inputBodies(requests)).toEqual([{ text: 'Words only', replaces_turn: 'turn' }]));
-    await waitFor(() => expect(messageField().textContent).toBe('Words only'));
-    /* Refused, so the turn stays and the row is still named after it. */
-    fireEvent.click(screen.getByRole('button', { name: 'Close conversation' }));
-    fireEvent.click(screen.getByRole('button', { name: /^Conversation (Assistant|Words only)/ }));
-    await waitFor(() => expect(messageField().textContent).toBe('Words only'));
-  });
-
-  it('retires the edited message when the reader empties the composer', async () => {
-    const { requests } = editSetup();
-    await editIntoComposer(requests);
-    await clearField();
-    removeComposerImage();
-    await waitFor(() => expect(drawerElement().querySelector('[data-nc-attachments]')).toBeNull());
-    await reopenAssistant();
-    await act(async () => { await Promise.resolve(); });
-    expect(messageField().textContent).toBe('');
-    expect(drawerElement().querySelector('[data-nc-attachments]')).toBeNull();
-    expect(inputBodies(requests)).toEqual([]);
-  });
-
-  /* #2068 item 19: an answer that refuses the body itself can never be sent as it is, so it is settled as a refusal:
-     its words and images go back to the composer with the server's reason, and nothing offers a Try again. */
-  it.each([400, 403, 404, 413, 422])('[#2068] gives a send refused %s back to the composer with its reason, offering no Try again', async (status) => {
-    const text = 'look at these';
-    const { requests } = withAttachments(() => failure(status, 'bad_request', 'The server will never take this.'));
-    fireEvent.click(await screen.findByRole('button', { name: 'Conversation Assistant' }));
-    await waitFor(() => expect(messageField().getAttribute('contenteditable')).toBe('true'));
-    await attachAnImage();
-    await write(text);
-    expect((await screen.findByRole('alert')).textContent).toBe('Not sent. The server will never take this.');
-    await waitFor(() => expect(messageField().textContent).toBe(text));
-    expect(composerImages()).toEqual([REWIND_IMAGE.url]);
-    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
-    /* The words are the composer's alone: no copy of a message the server never took is drawn. */
-    expect(drawerElement().querySelector('[data-nc-turn="you"]')).toBeNull();
-    expect(inputBodies(requests)).toEqual([{ text, attachments: [ATTACHMENT_ID] }]);
-  });
-
-  it('[#2068] puts at most the images a message carries in the composer for an Edit, saying the rest were not attached', async () => {
-    const images = Array.from({ length: MAX_ATTACHMENTS_PER_MESSAGE + 1 }, (_, index) => ({
-      ...REWIND_IMAGE, id: `image-${index}.png`, url: `/api/cards/${ASSISTANT_CARD.id}/planner/attachments/image-${index}.png`,
-    }));
-    const { requests } = scriptedSetup(() => turnRows('turn', 91, 'Original prompt', 'Original answer', images));
-    await openEditableAssistant();
-    fireEvent.click(screen.getByRole('button', { name: 'Edit message' }));
-    expect(composerImages()).toEqual(images.slice(0, MAX_ATTACHMENTS_PER_MESSAGE).map((image) => image.url));
-    expect(within(drawerElement()).getByText('That image was not attached').parentElement?.textContent)
-      .toContain(`A message can carry at most ${MAX_ATTACHMENTS_PER_MESSAGE} images.`);
-    await submit();
-    await waitFor(() => expect(inputBodies(requests)).toHaveLength(1));
-    expect(inputBodies(requests)[0]).toEqual({ text: 'Original prompt', replaces_turn: 'turn',
-      attachments: images.slice(0, MAX_ATTACHMENTS_PER_MESSAGE).map((image) => image.id) });
-  });
-
-  /* #2068 item 31: a refusal's images are added to what the composer already holds, and the cap is the merge's: the
-     images it could not take are said, never dropped silently. */
-  it('[#2068] says which images a refused Regenerate could not put back beside the composer’s own', async () => {
-    const images = Array.from({ length: MAX_ATTACHMENTS_PER_MESSAGE }, (_, index) => ({
-      ...REWIND_IMAGE, id: `image-${index}.png`, url: `/api/cards/${ASSISTANT_CARD.id}/planner/attachments/image-${index}.png`,
-    }));
-    const { requests } = scriptedSetup(() => turnRows('turn', 91, 'Original prompt', 'Original answer', images), (request) =>
-      request.path.endsWith('/messages') ? failure(400, 'bad_request', 'The server will never take this.') : undefined);
-    await openEditableAssistant();
-    await attachAnImage();
-    await waitFor(() => expect(composerImages().map((src) => src?.split('/').pop())).toEqual([DRAFT_IMAGE_ID]));
-    fireEvent.click(screen.getByRole('button', { name: 'Regenerate response' }));
-    await waitFor(() => expect(inputBodies(requests)).toHaveLength(1));
-    await waitFor(() => expect(messageField().textContent).toBe('Original prompt'));
-    expect(composerImages().map((src) => src?.split('/').pop()))
-      .toEqual([DRAFT_IMAGE_ID, ...images.slice(0, MAX_ATTACHMENTS_PER_MESSAGE - 1).map((image) => image.id)]);
-    expect(within(drawerElement()).getByText('That image was not attached').parentElement?.textContent)
-      .toContain(`A message can carry at most ${MAX_ATTACHMENTS_PER_MESSAGE} images.`);
-  });
-
-  /* #2068 items 13 and 22: a refusal gives the words back through the registry, to the composer of the conversation
-     the send was pressed in, whichever conversation is shown when it lands. */
-  it('[#2068] gives a refused send its words back in its own conversation when the refusal lands while another is shown', async () => {
+it('[#2068] gives a refused send its words back in its own conversation when the refusal lands while another is shown', async () => {
     let release!: () => void;
     const held = new Promise<void>((done) => { release = done; });
-    const { requests } = editSetup(async () => {
+    const { requests } = storedSetup(async () => {
       await held;
       return failure(409, 'planner_harness_runtime_superseded', 'Your message was not stored; send it again.');
     });
-    await openEditableAssistant();
+    await openAssistantWithHistory();
     await typeInto(messageField(), 'Words the server refused');
     await submit();
     await waitFor(() => expect(inputBodies(requests)).toHaveLength(1));
@@ -2803,298 +799,10 @@ describe('track conversations', () => {
     /* The next press sends the words again as a new message, and nothing of the refused one is left to drop. */
     await submit();
     await waitFor(() => expect(inputBodies(requests)).toHaveLength(2));
-    expect(inputBodies(requests)[1]).toEqual({ text: 'Words the server refused' });
+    expect(inputBodies(requests)[1]).toEqual({ content: 'Words the server refused', text: 'Words the server refused', steerIfRunning: false });
   });
 
-  /* #2068 item 25: a replace that failed is drawn as what it is, the turn's replacement, so its words do not read as a
-     second copy and Try again plainly replaces the marked turn. */
-  it.each([
-    ['rejected', () => failure(429, 'rate_limited', 'Wait a moment'), 'Not sent. Wait a moment'],
-    ['unknown', () => failure(502, 'bad_gateway', 'Upstream unavailable'), 'Delivery is unconfirmed.'],
-  ] as const)('[#2068] marks a %s replace as the replacement of the turn it names', async (_, answer, footer) => {
-    twoTurnSetup(answer);
-    await openEditableAssistant();
-    fireEvent.click(screen.getByRole('button', { name: 'Edit message' }));
-    await typeInto(messageField(), 'Revised prompt');
-    await submit();
-    expect((await screen.findByRole('alert')).textContent).toContain(footer);
-    expect(screen.getByRole('button', { name: 'Try again' })).toBeTruthy();
-    expect(markedMessages()).toEqual(['Original prompt']);
-    expect(Array.from(drawerElement().querySelectorAll('[data-nc-turn="you"][data-nc-replacement]'))
-      .map((said) => said.textContent)).toEqual(['Revised prompt']);
-    expect(within(drawerElement()).getByText('Replaces the marked message above')).toBeTruthy();
-  });
-
-  /* #2068 item 8: a stored row stands for one send over its lifetime. Once it retired one, a later send with the same
-     words that was never stored must stay drawn, or Dismiss would drop words the server never held. */
-  it('[#2068] never lets the row that retired one send hide a later equal send that was never stored', async () => {
-    const text = 'the same words twice';
-    const state = { queued: false, drained: false, inputs: 0 };
-    const { client } = setup((request) => {
-      if (request.path.includes('view=run')) {
-        return ok(historicalConversationRun({ card_id: ASSISTANT_CARD.id, worker_session_id: 'r', phase: state.drained ? 'idle' : 'turn_running',
-          model: null, reasoning_effort: null, permission_mode: null, blocked_reason: null, manual_compact_supported: true, recovery: null, compact_outcome: null, context_usage_invalidated: false, running_turn: null,
-          pending: state.queued && !state.drained ? [{ entry_id: 'entry-a', text, rev: 0, queued_at_ms: 5 }] : [],
-          pending_overflow: 0 }, 'idle', true));
-      }
-      if (isHistoryPath(request.path)) return ok(historicalConversationPage(conversationCardId(request.path), state.drained ? [projectionRow(1, { id: 'entry-a', rev: 0 }, text)] : [], null));
-      if (!request.path.endsWith('/messages')) return undefined;
-      state.inputs += 1;
-      if (state.inputs > 1) throw new Error('response dropped');
-      state.queued = true;
-      return ok({ card_id: ASSISTANT_CARD.id, worker_session_id: 'r', entry_id: 'entry-a' });
-    });
-    fireEvent.click(await screen.findByRole('button', { name: 'Conversation Assistant' }));
-    await screen.findByRole('button', { name: 'Stop' });
-    /* 1. A is confirmed and queued. */
-    await typeInto(messageField(), text);
-    await submit();
-    await waitFor(() => expect(document.querySelector('[data-nc-pending-entry="entry-a"]')?.textContent).toContain(text));
-    /* 2. B, the same words, is pressed after it; its answers are all lost, and it was never stored. */
-    await waitFor(() => expect(messageField().getAttribute('contenteditable')).toBe('true'));
-    await typeInto(messageField(), text);
-    await submit();
-    expect((await screen.findByRole('alert')).textContent).toContain('Delivery is unconfirmed');
-    /* 3. A drains: its row retires A. */
-    state.drained = true;
-    await act(async () => { await client.invalidateQueries(); });
-    await waitFor(() => expect(document.querySelector('[data-nc-pending-entry="entry-a"]')).toBeNull());
-    await settleFor(20);
-    /* 4. That row is A's: B stays drawn beside it, with its footer. */
-    expect(within(drawerElement()).getAllByText(text, TRANSCRIPT_TEXT)).toHaveLength(2);
-    expect(screen.getByRole('alert').textContent).toContain('Delivery is unconfirmed');
-  });
-
-  it.each(['interrupted', 'failed'] as const)('shows one current paused status over a recorded %s result', async (status) => {
-    const terminal = { ...harnessMessage(99, '', {}), item_type: null,
-      turn_id: 'previous-turn', method: 'turn/completed', turn_error_text: 'Previous outcome reason.',
-      params: JSON.stringify({ id: 'previous-turn', status, error: null }) };
-    const reason = 'The stop request timed out before the model confirmed that this turn had stopped.';
-    const { requests } = setup((request) => {
-      if (isHistoryPath(request.path)) return ok(historicalConversationPage(conversationCardId(request.path), [terminal], null));
-      if (request.path.includes('view=run')) return ok(historicalConversationRun({ card_id: ASSISTANT_CARD.id,
-        worker_session_id: 'r', phase: 'wedged', model: null, reasoning_effort: null, permission_mode: null, blocked_reason: reason, manual_compact_supported: true, recovery: { cause: 'wedged', action: 'restart_session' }, compact_outcome: null, context_usage_invalidated: false, running_turn: null }, 'idle', true));
-      return undefined;
-    });
-    fireEvent.click(await screen.findByRole('button', { name: /Conversation Assistant/ }));
-    await screen.findByRole('button', { name: 'Paused' });
-    const thread = drawerElement().querySelector<HTMLElement>('[data-nc-thread]')!;
-    expect(within(drawerElement()).getAllByRole('status', { name: 'Current response status' })).toHaveLength(1);
-    expect(thread.querySelector('[data-nc-turn-outcome]')).toBeNull();
-    expect(screen.queryByText('Previous outcome reason.')).toBeNull();
-    expect(messageField().getAttribute('contenteditable')).toBe('false');
-    expect(inputBodies(requests)).toHaveLength(0);
-  });
-
-  it.each(['interrupted', 'failed'] as const)('continues a settled %s only through an explicit composer send', async (status) => {
-    const terminal = { ...harnessMessage(99, '', {}), item_type: null,
-      turn_id: 'previous-turn', method: 'turn/completed',
-      params: JSON.stringify({ id: 'previous-turn', status, error: null }) };
-    const { requests } = setup((request) => {
-      if (isHistoryPath(request.path)) return ok(historicalConversationPage(conversationCardId(request.path), [terminal], null));
-      if (request.path.endsWith('/messages')) return inputAccepted();
-      return undefined;
-    });
-    fireEvent.click(await screen.findByRole('button', { name: /Conversation Assistant/ }));
-    await screen.findByText('Send a message to continue.', { exact: true });
-    expect(inputBodies(requests)).toHaveLength(0);
-    await typeInto(messageField(), 'Continue from the partial answer');
-    expect(inputBodies(requests)).toHaveLength(0);
-    await submit();
-    await waitFor(() => expect(inputBodies(requests)).toEqual([{ text: 'Continue from the partial answer' }]));
-    expect(screen.queryByText('Send a message to continue.', { exact: true })).toBeNull();
-  });
-
-  it('keeps a true receipt as a pending stop until the runtime and transcript confirm completion', async () => {
-    let phase = 'turn_running';
-    const terminal = { ...harnessMessage(99, '', {}), item_type: null,
-      turn_id: 'stopped-turn', method: 'turn/completed',
-      params: JSON.stringify({ id: 'stopped-turn', status: 'interrupted', error: null }) };
-    let rows: Array<ReturnType<typeof harnessMessage> | typeof terminal> = [];
-    let resolve!: (response: ApiTransportResponse) => void;
-    const pending = new Promise<ApiTransportResponse>((done) => { resolve = done; });
-    const { client, requests } = setup((request) => {
-      if (request.path.includes('view=run')) return ok(historicalConversationRun({ card_id: ASSISTANT_CARD.id,
-        worker_session_id: 'r', phase, model: null, reasoning_effort: null, permission_mode: null, blocked_reason: null, manual_compact_supported: true, recovery: phase === 'wedged' ? { cause: 'wedged', action: 'restart_session' } : null, compact_outcome: null, context_usage_invalidated: false, running_turn: null }, 'idle', true));
-      if (isHistoryPath(request.path)) return ok(historicalConversationPage(conversationCardId(request.path), rows, null));
-      if (request.path.endsWith('/interrupt')) return pending;
-      return undefined;
-    });
-    fireEvent.click(await screen.findByRole('button', { name: /Conversation Assistant/ }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Stop' }));
-    await screen.findByRole('button', { name: 'Requesting stop', expanded: false });
-    fireEvent.click(screen.getByRole('button', { name: 'Stop' }));
-    expect(document.querySelector('[data-nc-turn-outcome]')).toBeNull();
-    expect(requests.filter((request) => request.path.endsWith('/interrupt'))).toHaveLength(1);
-    phase = 'issuing_interrupt';
-    await act(async () => { resolve(ok({ card_id: ASSISTANT_CARD.id, worker_session_id: 'r', stopped: true })); await pending; });
-    await screen.findByRole('button', { name: 'Stopping', expanded: false });
-    expect(document.querySelector('[data-nc-turn-outcome]')).toBeNull();
-    phase = 'turn_completed';
-    rows = [terminal];
-    await act(async () => { await client.invalidateQueries({ queryKey: ['planner-run', ASSISTANT_CARD.id] });
-      await client.invalidateQueries({ queryKey: ['harness-items', ASSISTANT_CARD.id] }); });
-    await screen.findByRole('button', { name: /^Interrupted/ });
-    expect(screen.queryByRole('button', { name: 'Stopping' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull();
-  });
-
-  it.each(['load earlier', 'roll latest page'] as const)('keeps an accepted stop pending when history pages %s', async (change) => {
-    const current = Array.from({ length: 60 }, (_, index) => harnessMessage(100 + index, 'agentMessage', { content: [{ text: 'Still working' }] }));
-    const historical = { ...harnessMessage(10, '', {}), item_type: null,
-      turn_id: 'previous-turn', method: 'turn/completed',
-      params: JSON.stringify({ id: 'previous-turn', status: 'completed', error: null }) };
-    const { client, requests } = setup((request) => {
-      if (request.path.includes('view=run')) return ok(historicalConversationRun({ card_id: ASSISTANT_CARD.id,
-        worker_session_id: 'r', phase: 'turn_running', model: null, reasoning_effort: null, permission_mode: null, blocked_reason: null, manual_compact_supported: true, recovery: null, compact_outcome: null, context_usage_invalidated: false, running_turn: null }, 'idle', true));
-      if (isHistoryPath(request.path)) return ok(historicalConversationPage(ASSISTANT_CARD.id, change === 'load earlier' ? current : [historical, ...current.slice(0, 59)], null));
-      if (request.path.endsWith('/interrupt')) return ok({ card_id: ASSISTANT_CARD.id, worker_session_id: 'r', stopped: true });
-      return undefined;
-    });
-    fireEvent.click(await screen.findByRole('button', { name: /Conversation Assistant/ }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Stop' }));
-    await screen.findByRole('button', { name: 'Stopping', expanded: false });
-    const key = cachedHistoryKey(client, ASSISTANT_CARD.id);
-    await act(async () => { client.setQueryData(key, { latest: observedWindow(historicalConversationPage(ASSISTANT_CARD.id, current, {contract:'conversation_v1', source:'historical_raw', card_id:ASSISTANT_CARD.id, position:100}), { kind: 'latest' }),
-      retained: change === 'load earlier' ? [observedWindow(historicalConversationPage(ASSISTANT_CARD.id, [historical], null), { kind: 'before', cursor: {contract:'conversation_v1',source:'historical_raw',card_id:ASSISTANT_CARD.id,position:100} })] : [] }); await new Promise((resolve) => setTimeout(resolve, 0)); });
-    expect(screen.getByRole('button', { name: 'Stopping', expanded: false })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Stop' }));
-    expect(requests.filter((request) => request.path.endsWith('/interrupt'))).toHaveLength(1);
-  });
-
-  it.each(['issuing_turn', 'turn_running'])('shows an unconfirmed stop receipt without inventing a terminal result (%s)', async (phase) => {
-    const { requests } = setup((request) => {
-      if (request.path.includes('view=run')) return ok(historicalConversationRun({ card_id: ASSISTANT_CARD.id,
-        worker_session_id: 'r', phase, model: null, reasoning_effort: null, permission_mode: null, blocked_reason: null, manual_compact_supported: true, recovery: phase === 'wedged' ? { cause: 'wedged', action: 'restart_session' } : null, compact_outcome: null, context_usage_invalidated: false, running_turn: null }, 'idle', true));
-      if (request.path.endsWith('/interrupt')) return ok({ card_id: ASSISTANT_CARD.id, worker_session_id: 'r', stopped: false });
-      return undefined;
-    });
-    fireEvent.click(await screen.findByRole('button', { name: /Conversation Assistant/ }));
-    await screen.findByRole('button', { name: 'Stop' });
-    await typeInto(messageField(), 'Keep the stop draft');
-    fireEvent.click(screen.getByRole('button', { name: 'Stop' }));
-    const notice = await screen.findByRole('button', { name: 'Stop unconfirmed', expanded: false });
-    fireEvent.click(notice);
-    expect(screen.getByText('The stop may not have taken effect: the response may still be running or may already have ended.', { exact: true })).toBeTruthy();
-    expect(messageField().textContent).toBe('Keep the stop draft');
-    expect(document.querySelector('[data-nc-turn-outcome]')).toBeNull();
-    expect(screen.queryByRole('alert')).toBeNull();
-    expect(requests.filter((request) => request.path.endsWith('/interrupt'))).toHaveLength(1);
-    expect(requests.filter((request) => request.path.endsWith('/messages'))).toHaveLength(0);
-  });
-
-  it('shows a refused stop request through the native status row and permits a manual retry', async () => {
-    let stops = 0;
-    setup((request) => {
-      if (request.path.includes('view=run')) return ok(historicalConversationRun({ card_id: ASSISTANT_CARD.id,
-        worker_session_id: 'r', phase: 'turn_running', model: null, reasoning_effort: null, permission_mode: null, blocked_reason: null, manual_compact_supported: true, recovery: null, compact_outcome: null, context_usage_invalidated: false, running_turn: null }, 'idle', true));
-      if (request.path.endsWith('/interrupt')) {
-        stops += 1;
-        return stops === 1 ? failure(409, 'planner_harness_dormant', 'No live planner harness session.')
-          : ok({ card_id: ASSISTANT_CARD.id, worker_session_id: 'r', stopped: false });
-      }
-      return undefined;
-    });
-    fireEvent.click(await screen.findByRole('button', { name: /Conversation Assistant/ }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Stop' }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Stop failed', expanded: false }));
-    expect(screen.getByText('No live planner harness session.', { exact: true })).toBeTruthy();
-    expect(screen.queryByRole('alert')).toBeNull();
-    expect(document.querySelector('[data-nc-turn-outcome]')).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Stop' }));
-    await screen.findByRole('button', { name: 'Stop unconfirmed', expanded: true });
-    expect(stops).toBe(2);
-  });
-
-  it('shows the unconfirmed stop reason once and blocks further sends', async () => {
-    const reason = 'The stop request timed out before the model confirmed that this turn had stopped.';
-    const { requests } = setup((request) => request.path.includes('view=run')
-      ? ok(historicalConversationRun({ card_id: ASSISTANT_CARD.id, worker_session_id: 'r', phase: 'wedged', model: null,
-        reasoning_effort: null, permission_mode: null, blocked_reason: reason, manual_compact_supported: true, recovery: { cause: 'wedged', action: 'restart_session' }, compact_outcome: null, context_usage_invalidated: false, running_turn: null }, 'idle', true)) : undefined);
-    fireEvent.click(await screen.findByRole('button', { name: /Conversation Assistant/ }));
-    const disclosure = await screen.findByRole('button', { name: 'Paused', expanded: false });
-    fireEvent.click(disclosure);
-    expect(screen.getAllByText(reason, { exact: true })).toHaveLength(1);
-    expect(screen.queryByRole('alert')).toBeNull();
-    /* The notice's own rule, not the drawer's resize edge. */
-    expect(screen.getAllByRole('separator').filter((separator) => separator.getAttribute('aria-label') !== 'Resize conversation')).toHaveLength(1);
-    expect(messageField().getAttribute('contenteditable')).toBe('false');
-    expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull();
-    fireEvent.keyDown(messageField(), { key: 'Enter' });
-    expect(requests.filter((request) => request.path.endsWith('/messages'))).toHaveLength(0);
-    expect(screen.queryByRole('button', { name: 'Start a new conversation' })).toBeNull();
-  });
-
-  it('[F6] replaces stale Working with a stuck explanation and preserves the unsent draft', async () => {
-    let phase = 'turn_running';
-    const { client, requests } = setup((request) => {
-      if (request.path === CONVERSATIONS) return ok([assistantRow({ state: 'turn_pending' })]);
-      if (request.path.includes('view=run')) return ok(historicalConversationRun({ card_id: ASSISTANT_CARD.id, worker_session_id: 'r', phase, model: null, reasoning_effort: null, permission_mode: null, blocked_reason: null, manual_compact_supported: true, recovery: phase === 'wedged' ? { cause: 'wedged', action: 'restart_session' } : null, compact_outcome: null, context_usage_invalidated: false, running_turn: null }, 'idle', true));
-      return undefined;
-    });
-    fireEvent.click(await screen.findByRole('button', { name: /Conversation Assistant/ }));
-    await waitFor(() => expect(messageField().getAttribute('contenteditable')).toBe('true'));
-    await typeInto(messageField(), 'Draft written before the stall');
-    phase = 'wedged';
-    await act(async () => { await client.invalidateQueries({ queryKey: ['planner-run', ASSISTANT_CARD.id] }); });
-    expect(await screen.findByRole('button', { name: 'Paused', expanded: false })).toBeTruthy();
-    expect(screen.getByText('This conversation is stuck.', { exact: true })).toBeTruthy();
-    expect(drawerWorkingMark()).toBeNull();
-    expect(messageField().textContent).toBe('Draft written before the stall');
-    expect(messageField().getAttribute('contenteditable')).toBe('false');
-    expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull();
-    fireEvent.keyDown(messageField(), { key: 'Enter' });
-    expect(messageField().textContent).toBe('Draft written before the stall');
-    expect(requests.filter((request) => request.path.endsWith('/messages'))).toHaveLength(0);
-    expect(screen.queryByRole('button', { name: 'Start a new conversation' })).toBeNull();
-  });
-
-  it('[F6] stops promising queued delivery after the harness becomes wedged', async () => {
-    let phase = 'turn_running';
-    const { client, requests } = setup((request) => request.path.includes('view=run')
-      ? ok(historicalConversationRun({ card_id: ASSISTANT_CARD.id, worker_session_id: 'r', phase, model: null, reasoning_effort: null, permission_mode: null, blocked_reason: null, manual_compact_supported: true, recovery: phase === 'wedged' ? { cause: 'wedged', action: 'restart_session' } : null, compact_outcome: null, context_usage_invalidated: false, running_turn: null }, 'idle', true)) : undefined);
-    fireEvent.click(await screen.findByRole('button', { name: 'Conversation Assistant' }));
-    await screen.findByRole('button', { name: 'Stop' });
-    await typeInto(messageField(), 'Queued before the stall');
-    await submit();
-    await screen.findByText('等待处理…');
-    phase = 'wedged';
-    await act(async () => { await client.invalidateQueries({ queryKey: ['planner-run', ASSISTANT_CARD.id] }); });
-    expect(await screen.findByRole('button', { name: 'Paused', expanded: false })).toBeTruthy();
-    expect(screen.getByText('This conversation is stuck.', { exact: true })).toBeTruthy();
-    expect(within(drawerElement()).getByText('Queued before the stall', TRANSCRIPT_TEXT)).toBeTruthy();
-    expect(document.querySelector('[data-nc-queued-note]')).toBeNull();
-    expect(messageField().getAttribute('contenteditable')).toBe('false');
-    expect(requests.filter((request) => request.path.endsWith('/messages'))).toHaveLength(1);
-  });
-
-  it('[F6] keeps dispatch distinct from Working when the runtime wedges during an unanswered send', async () => {
-    let phase = 'idle';
-    let release!: (value: ApiTransportResponse) => void;
-    const held = new Promise<ApiTransportResponse>((resolve) => { release = resolve; });
-    const { client } = setup((request) => {
-      if (request.path.endsWith('/messages')) return held;
-      if (request.path.includes('view=run')) return ok(historicalConversationRun({ card_id: ASSISTANT_CARD.id, worker_session_id: 'r', phase, model: null, reasoning_effort: null, permission_mode: null, blocked_reason: null, manual_compact_supported: true, recovery: phase === 'wedged' ? { cause: 'wedged', action: 'restart_session' } : null, compact_outcome: null, context_usage_invalidated: false, running_turn: null }, 'idle', true));
-      return undefined;
-    });
-    fireEvent.click(await screen.findByRole('button', { name: 'Conversation Assistant' }));
-    await waitFor(() => expect(messageField().getAttribute('contenteditable')).toBe('true'));
-    await write('Keep the pending message');
-    expect(drawerWorkingMark()).toBeNull();
-    expect(screen.getByText('Sending…')).toBeTruthy();
-    phase = 'wedged';
-    await act(async () => { await client.invalidateQueries({ queryKey: ['planner-run', ASSISTANT_CARD.id] }); });
-    expect(await screen.findByRole('button', { name: 'Paused', expanded: false })).toBeTruthy();
-    expect(screen.getByText('This conversation is stuck.', { exact: true })).toBeTruthy();
-    expect(drawerWorkingMark()).toBeNull();
-    expect(within(drawerElement()).getByText('Keep the pending message', TRANSCRIPT_TEXT)).toBeTruthy();
-    await act(async () => { release(inputAccepted()); await held; });
-    expect(drawerWorkingMark()).toBeNull();
-  });
-
-  /* The POST is what is asserted, not the drawer: a `+` that opened a draft nothing
-   * could be sent from would satisfy any assertion about the button. */
-  it('[G4] starts a conversation on a track that has no planner card', async () => {
+it('[G4] starts a conversation on a track that has no planner card', async () => {
     /* Stateful on purpose: a real server lists the row it just minted, and the create
            invalidates this very list. */
     const minted: Row[] = [];
@@ -3104,7 +812,7 @@ describe('track conversations', () => {
         minted.push(row);
         return created(row, request);
       }
-      return request.path === BARE_CONVERSATIONS ? ok([...minted]) : undefined;
+      return request.path === '/api/v1/tracks/w2' ? ok(fixtureSnapshot(BARE_TRACK, [...minted])) : undefined;
     });
     await act(async () => { await router.navigate({ to: '/track/w2' }); });
     await screen.findByRole('button', { name: 'New conversation' });
@@ -3125,10 +833,7 @@ describe('track conversations', () => {
     expect(requests.filter((request) => request.path.endsWith('/messages'))).toEqual([]);
   });
 
-  /* The server may have committed the first POST before its 500 reached us;
-   * retrying under a fresh key would create a second conversation. Two tracks, so
-   * a root-level slot would trade the remount bug for a scope-switch bug. */
-  it('keeps each failed draft key across track route remounts', async () => {
+it('keeps each failed draft key across track route remounts', async () => {
     const attempts = new Map<string, number>();
     const { requests, router } = setup((request) => {
       if (request.method !== 'POST'
@@ -3178,15 +883,13 @@ describe('track conversations', () => {
       .toBe(bareFirst?.headers?.['Idempotency-Key']);
   }, 10_000);
 
-  /* If only `{ key, sentText }` survives a remount, the new route believes creation
-   * is idle and lets both requests create a row. */
-  it('keeps an in-flight draft locked across a route remount', async () => {
+it('keeps an in-flight draft locked across a route remount', async () => {
     let releaseFirst!: (response: ApiTransportResponse) => void;
     const firstCreate = new Promise<ApiTransportResponse>((resolve) => { releaseFirst = resolve; });
     let landed: Row | null = null;
     const { requests, router } = setup((request) => {
-      if (request.path === CONVERSATIONS && request.method === 'GET' && landed !== null) {
-        return ok([assistantRow(), landed]);
+      if (request.path === '/api/v1/tracks/w1' && request.method === 'GET' && landed !== null) {
+        return ok(fixtureSnapshot(TRACK, [PLANNER_CARD, ...[assistantRow(), landed]]));
       }
       if (request.path !== CONVERSATIONS || request.method !== 'POST') return undefined;
       return creates(requests, CONVERSATIONS).length === 1
@@ -3220,7 +923,7 @@ describe('track conversations', () => {
     expect(creates(requests, CONVERSATIONS)).toHaveLength(1);
   });
 
-  it('unlocks the fresh key after an exhausted attempt is rekeyed', async () => {
+it('unlocks the fresh key after an exhausted attempt is rekeyed', async () => {
     const { requests } = setup((request) => {
       if (request.path !== CONVERSATIONS || request.method !== 'POST') return undefined;
       return creates(requests, CONVERSATIONS).length === 1
@@ -3241,9 +944,7 @@ describe('track conversations', () => {
       .not.toBe(exhausted?.headers?.['Idempotency-Key']);
   });
 
-  /* #2068: a key bound to another first message can never be answered for this one, so the only way
-   * forward is a new conversation under a new key; a Try again under the reused key is not offered. */
-  it('offers no retry after a key-reused answer, only a new conversation', async () => {
+it('offers no retry after a key-reused answer, only a new conversation', async () => {
     const { requests } = setup((request) => {
       if (request.path !== CONVERSATIONS || request.method !== 'POST') return undefined;
       return creates(requests, CONVERSATIONS).length === 1
@@ -3264,10 +965,7 @@ describe('track conversations', () => {
       .not.toBe(reused?.headers?.['Idempotency-Key']);
   });
 
-  /* #2175 (S7): the new conversation's create is refused by its mutation's own guard after the press passed its
-     checks. Nothing went out under the fresh key, so the draft is "not started", never unconfirmed, and its Try again
-     sends under that fresh key. */
-  it('[#2175] says a new conversation was not started when its create is refused before it is sent', async () => {
+it('[#2175] says a new conversation was not started when its create is refused before it is sent', async () => {
     const { client, requests } = setup((request) => {
       if (request.path !== CONVERSATIONS || request.method !== 'POST') return undefined;
       return creates(requests, CONVERSATIONS).length === 1
@@ -3296,10 +994,7 @@ describe('track conversations', () => {
     expect(fresh?.headers?.['Idempotency-Key']).not.toBe(reused?.headers?.['Idempotency-Key']);
   });
 
-  /* At most one echo is ever unanswered: clearing the send state unconditionally
-   * on a conversation switch would re-open a composer whose own message is still
-   * in flight. The second POST is what this asserts. */
-  it('[G5] lets no stale request re-open a composer whose own message is still in flight', async () => {
+it('[G5] lets no stale request re-open a composer whose own message is still in flight', async () => {
     const held = new Map<string, () => void>();
     const release = (cardId: string) => held.get(cardId)?.();
     const { requests } = setup(async (request) => {
@@ -3338,128 +1033,7 @@ describe('track conversations', () => {
     expect(screen.queryByText(/busy|Could not send/)).toBeNull();
   });
 
-  /* An assistant card is headless; `codex` is scanned first and would otherwise
-   * claim the card and put an empty terminal in this panel. */
-  it('keeps assistant cards out of the CARDS panel, listing only the worker', async () => {
-    setup();
-    /* Workbench contains the independent worker; Progress contains only task executions. */
-    const list = await waitFor(() => {
-      const found = document.querySelector('[data-nc-card-inventory]');
-      if (found === null) throw new Error('card inventory has not rendered');
-      return found as HTMLElement;
-    });
-    const labels = within(list).getAllByRole('listitem').map((row) => row.textContent ?? '');
-    /* Title then kernel kind; the assistant card is absent entirely. */
-    expect(labels).toEqual(['Workercodex']);
-  });
-
-  /* The kernel writes the first sentence to the transcript when the queue drains;
-   * codex's echo upgrades the same row (same `id`), so the line renders once. */
-  it('shows the first sentence from the transcript row the kernel writes at drain, once, through the echo', async () => {
-    const minted: Row[] = [];
-    let persisted: Record<string, unknown>[] = [];
-    const { client, requests } = setup((request) => {
-      if (request.method === 'POST' && request.path === CONVERSATIONS) {
-        const row = derivedRow('w1', request);
-        minted.push(row);
-        /* The kernel writes the projection row before answering codex; the first item
-                   read after the 201 already has it. */
-        persisted = [projectionRow(1, { id: 'entry-0001', rev: 0 }, 'start this thread')];
-        return created(row, request);
-      }
-      if (request.path.endsWith('/initial-input')) {
-        const receipt = initialReceiptFor(creates(requests, CONVERSATIONS)[0], 'entry-0001', 0);
-        return typeof persisted[0]?.turn_id === 'string'
-          ? ok({ kind: 'projected', entryRev: 0, runtimeId: 'r', itemId: 1, segmentIndex: 0, receipt })
-          : ok({ kind: 'unavailable', reason: 'runtime-unavailable', receipt });
-      }
-      if (request.path === CONVERSATIONS) return ok([assistantRow(), ...minted]);
-      if (isHistoryPath(request.path)) return ok(historicalConversationPage(conversationCardId(request.path), [...persisted], null));
-      if (request.path.includes('view=run')) return runIdle();
-      return undefined;
-    });
-    await screen.findByRole('button', { name: 'Conversation Planner chat' });
-    await openDraft();
-    await write('start this thread');
-    await waitFor(() => expect(creates(requests, CONVERSATIONS)).toHaveLength(1));
-    /* The draft is gone: this is the mounted thread, not the composer's show-back,
-           which carries the same attribute. */
-    await waitFor(() => expect(screen.queryByRole('complementary', { name: 'Untitled' })).toBeNull());
-    const drawer = drawerElement();
-    await waitFor(() => expect(
-      [...drawer.querySelectorAll('[data-nc-turn="unknown"]')].map((turn) => turn.textContent),
-    ).toEqual(['start this thread']));
-    expect(drawer.querySelector('[data-nc-thread-empty]')).toBeNull();
-    await waitFor(() => expect(drawer.querySelector('[data-nc-thread]')).not.toBeNull());
-    const before = drawer.querySelector('[data-nc-turn="unknown"]');
-
-    /* codex echoes: the kernel upgrades the row in place. */
-    persisted = [upgradedRow(projectionRow(1, { id: 'entry-0001', rev: 0 }, 'start this thread'), 'turn-1', 'item-codex-1')];
-    await act(async () => {
-      await client.invalidateQueries({ queryKey: cachedHistoryKey(client, minted[0].id) });
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    });
-    await waitFor(() => expect(
-      [...drawer.querySelectorAll('[data-nc-turn="unknown"]')].map((turn) => turn.textContent),
-    ).toEqual(['start this thread']));
-    /* Same DOM node: the line is keyed by the row's `id`, which the upgrade keeps. */
-    expect(drawer.querySelector('[data-nc-turn="unknown"]')).toBe(before);
-  });
-
-  /* The reader cancels the accepted first queue entry, then explicitly sends the same words again. */
-  it('leaves the composer open when the first sentence is retyped and one row lands', async () => {
-    const minted: Row[] = [];
-    let pending = true;
-    let persisted: (ReturnType<typeof harnessMessage> | ReturnType<typeof projectionRow>)[] = [];
-    const { requests } = setup((request) => {
-      if (request.method === 'POST' && request.path === CONVERSATIONS) {
-        const row = derivedRow('w1', request);
-        minted.push(row);
-        return created(row, request);
-      }
-      if (request.path.endsWith('/initial-input')) return ok({ kind: 'unavailable', reason: 'runtime-unavailable',
-        receipt: initialReceiptFor(creates(requests, CONVERSATIONS)[0], 'entry-0001', 0) });
-      if (request.path === CONVERSATIONS) return ok([assistantRow(), ...minted]);
-      if (isHistoryPath(request.path)) return ok(historicalConversationPage(conversationCardId(request.path), [...persisted], null));
-      if (request.path.endsWith('/messages')) return inputAcceptedWithEntry('retyped-entry', pathCardId(request.path));
-      if (request.method === 'DELETE' && request.path.endsWith('/planner/input/entry-0001')) {
-        pending = false;
-        return ok({ card_id: pathCardId(request.path), entry_id: 'entry-0001', rev: 1, text: null });
-      }
-      if (request.path.includes('view=run')) return ok(historicalConversationRun({ card_id: pathCardId(request.path), worker_session_id: 'r', phase: 'idle',
-        model: null, reasoning_effort: null, permission_mode: null, blocked_reason: null, manual_compact_supported: true,
-        recovery: null, compact_outcome: null, context_usage_invalidated: false, running_turn: null,
-        pending: pending ? [{ entry_id: 'entry-0001', text: 'hi', rev: 0, queued_at_ms: 1 }] : [], pending_overflow: 0 }, 'idle', true));
-      return undefined;
-    });
-    await screen.findByRole('button', { name: 'Conversation Planner chat' });
-    await openDraft();
-    await write('hi');
-    await waitFor(() => expect(creates(requests, CONVERSATIONS)).toHaveLength(1));
-    await waitFor(() => expect(screen.queryByRole('complementary', { name: 'Untitled' })).toBeNull());
-    const drawer = drawerElement();
-    await waitFor(() => {
-      const remove = within(drawer).getByRole<HTMLButtonElement>('button', { name: 'Delete this message' });
-      expect(remove.disabled || remove.getAttribute('aria-disabled') === 'true').toBe(false);
-    });
-    fireEvent.click(within(drawer).getByRole('button', { name: 'Delete this message' }));
-    await waitFor(() => expect(drawer.querySelectorAll('[data-nc-turn="you"]')).toHaveLength(0));
-
-    /* Cancellation was acknowledged; sending the words again is a new explicit input. */
-    await waitFor(() => expect(messageField().getAttribute('contenteditable')).toBe('true'));
-    persisted = [{ ...projectionRow(1, { id: 'retyped-entry', rev: 0 }, 'hi'), card_id: minted[0].id }];
-    await write('hi');
-    await waitFor(() => expect(requests.some((request) => request.path.endsWith('/messages'))).toBe(true));
-
-    /* The row retires the send's echo, and the composer comes back. */
-    await waitFor(() => expect(messageField().getAttribute('contenteditable')).toBe('true'));
-    expect([...drawer.querySelectorAll('[data-nc-thread] [data-nc-entry] [data-nc-turn="unknown"]')].map((turn) => turn.textContent))
-      .toEqual(['hi']);
-    expect(within(drawer).getAllByText('hi', TRANSCRIPT_TEXT)).toHaveLength(1);
-  });
-
-  /* An unknown transcript is not an empty one. */
-  it('does not paint the empty state while the first page is still loading', async () => {
+it('does not paint the empty state while the first page is still loading', async () => {
     setup((request) => isHistoryPath(request.path)
       ? new Promise(() => undefined)
       : undefined);
@@ -3469,7 +1043,7 @@ describe('track conversations', () => {
     expect(drawer.querySelector('[data-nc-thread-empty]')).toBeNull();
   });
 
-  it('keeps the draft and reports the reason when the create is refused', async () => {
+it('keeps the draft and reports the reason when the create is refused', async () => {
     setup((request) => request.method === 'POST' && request.path === CONVERSATIONS
       ? failure(400, 'invalid_request', 'That message was refused.')
       : undefined);
@@ -3480,22 +1054,7 @@ describe('track conversations', () => {
     expect(screen.getByRole('complementary', { name: 'Untitled' })).toBeTruthy();
   });
 
-  /* #2131 S7: a create's failure reads through its table. A lost answer is the create's fixed unconfirmed state, a press
-     that sent nothing its refusal; neither shows transport text or speaks of the connection, which is the global
-     indicator's. The draft keeps its words and its Try again. */
-  describe('[#2131 S7] a conversation create that fails', () => {
-    const RAW_OR_CONNECTIVITY = /Transport request failed|timed out|schema|offline|reconnect|connection|Nothing was sent|连接/i;
-    /** The draft's footer says exactly `text`, beside its remedy, and nothing raw. */
-    const says = async (text: string) => {
-      await waitFor(() => expect(within(screen.getByRole('alert')).getByText(text, { exact: true })).toBeTruthy());
-      expect(screen.getByRole('alert').textContent).not.toMatch(RAW_OR_CONNECTIVITY);
-    };
-    const lostCreate = (request: ApiRequest) => {
-      if (request.method === 'POST' && request.path === CONVERSATIONS) throw new Error('socket hang up');
-      return undefined;
-    };
-
-    it('a lost answer: says the create is unconfirmed and keeps the words and Try again', async () => {
+it('a lost answer: says the create is unconfirmed and keeps the words and Try again', async () => {
       setup(lostCreate);
       await screen.findByRole('button', { name: 'Conversation Planner chat' });
       await openDraft();
@@ -3505,46 +1064,7 @@ describe('track conversations', () => {
       expect(screen.getByText('words whose answer is lost')).toBeTruthy();
     });
 
-    /* #2175: the look for the first attempt's row failing is the same unknown outcome, in the same words. */
-    it('changed words after a lost answer whose look-back fails: unconfirmed, with nothing sent under a new key', async () => {
-      const { requests } = setup((request) => {
-        if (request.path !== CONVERSATIONS) return undefined;
-        if (request.method === 'POST') throw new Error('socket hang up');
-        return creates(requests, CONVERSATIONS).length > 0 ? failure(503, 'unavailable', 'List unavailable') : undefined;
-      });
-      await screen.findByRole('button', { name: 'Conversation Planner chat' });
-      await openDraft();
-      await write('words whose answer is lost');
-      await screen.findByRole('button', { name: 'Try again' });
-      await write('changed words');
-      await says(CONVERSATION_CREATE_TEXT.unknown);
-      expect(screen.getByRole('button', { name: 'Try again' })).toBeTruthy();
-      expect(creates(requests, CONVERSATIONS)).toHaveLength(1);
-    });
-
-    /* #2175 (review of #2226): the same unknown outcome after a "Send as a new conversation" press names that press,
-       the only remedy the footer offers there. */
-    it('a new conversation whose look-back fails: unconfirmed, offering the new conversation again', async () => {
-      let listFails = false;
-      const { requests } = setup((request) => {
-        if (request.path !== CONVERSATIONS) return undefined;
-        if (request.method === 'POST') return failure(409, 'idempotency_key_reused', 'this key was already used for another first message');
-        return listFails ? failure(503, 'unavailable', 'List unavailable') : undefined;
-      });
-      await screen.findByRole('button', { name: 'Conversation Planner chat' });
-      await openDraft();
-      await write('a key that is spent');
-      const sendAsNew = await screen.findByRole('button', { name: 'Send as a new conversation' });
-      await waitFor(() => expect(sendAsNew.hasAttribute('disabled')).toBe(false));
-      listFails = true;
-      fireEvent.click(sendAsNew);
-      await says(conversationCreateUnknownText('new-conversation'));
-      expect(screen.getByRole('button', { name: 'Send as a new conversation' })).toBeTruthy();
-      expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
-      expect(creates(requests, CONVERSATIONS)).toHaveLength(1);
-    });
-
-    it('offline at the press: says the conversation was not started, and sends nothing', async () => {
+it('offline at the press: says the conversation was not started, and sends nothing', async () => {
       const { requests } = setup();
       await screen.findByRole('button', { name: 'Conversation Planner chat' });
       await openDraft();
@@ -3557,7 +1077,7 @@ describe('track conversations', () => {
       } finally { onlineManager.setOnline(true); }
     });
 
-    it('offline after a lost answer: stays unconfirmed, since the first attempt may have started it', async () => {
+it('offline after a lost answer: stays unconfirmed, since the first attempt may have started it', async () => {
       const { requests } = setup(lostCreate);
       await screen.findByRole('button', { name: 'Conversation Planner chat' });
       await openDraft();
@@ -3571,7 +1091,7 @@ describe('track conversations', () => {
       } finally { onlineManager.setOnline(true); }
     });
 
-    it('not admitted at the press (bundled recovery not connected): refused, with nothing sent', async () => {
+it('not admitted at the press (bundled recovery not connected): refused, with nothing sent', async () => {
       const access = new RecoveryAccess(); access.change('connected');
       const { requests } = setup(undefined, undefined, access);
       await screen.findByRole('button', { name: 'Conversation Planner chat' });
@@ -3582,7 +1102,7 @@ describe('track conversations', () => {
       expect(creates(requests, CONVERSATIONS)).toHaveLength(0);
     });
 
-    it('the recovery state changes while the create is out: unconfirmed, never "connection changed"', async () => {
+it('the recovery state changes while the create is out: unconfirmed, never "connection changed"', async () => {
       const access = new RecoveryAccess(); access.change('connected');
       let answer!: (response: ApiTransportResponse) => void;
       const { requests } = setup((request) => request.method === 'POST' && request.path === CONVERSATIONS
@@ -3596,20 +1116,346 @@ describe('track conversations', () => {
       await says(CONVERSATION_CREATE_TEXT.unknown);
       expect(screen.getByRole('button', { name: 'Try again' })).toBeTruthy();
     });
+
+it.each(['429', 'transport'])('[F5] keeps a %s failure and its distinct echo when an unacknowledged send meets an old equal Unknown message', async (mode) => {
+  const text = 'repeat this instruction';
+  const first = sessionItem(ASSISTANT_CARD.id, 1, 'Earlier different instruction', 'user');
+  const oldEqual = sessionItem(ASSISTANT_CARD.id, 2, text, 'user');
+  let rows = [first];
+  const { client, requests } = setup((request) => {
+    if (isHistoryPath(request.path)) return ok(historyPage(conversationCardId(request.path), rows));
+    if (request.path.endsWith('/messages')) {
+      if (mode === 'transport') throw new Error('Connection lost before request reached server');
+      return failure(429, 'rate_limited', 'Request rejected before acceptance');
+    }
+    return undefined;
   });
+  fireEvent.click(await screen.findByRole('button', { name: 'Conversation Assistant' }));
+  await waitFor(() => expect(messageField().getAttribute('contenteditable')).toBe('true'));
+  await write(text);
+  expect((await screen.findByRole('alert')).textContent).toContain(mode === '429' ? 'Not sent' : 'Delivery is unconfirmed');
+  // The original read was stale; a refresh reveals a pre-existing equal row.
+  // Its server timestamp is 2, earlier than this request's Date.now().
+  rows = [first, oldEqual, sessionItem(ASSISTANT_CARD.id, 3, 'Previously completed response')];
+  await act(async () => { await client.invalidateQueries({ queryKey: cachedHistoryKey(client, ASSISTANT_CARD.id) }); });
+  const sent = mode === '429' ? 1 : SEND_RETRIES + 1;
+  expect(requests.filter((request) => request.path.endsWith('/messages'))).toHaveLength(sent);
+  await screen.findByText('Previously completed response');
+  expect(screen.getByRole('alert').textContent).toContain(mode === '429' ? 'Not sent' : 'Delivery is unconfirmed');
+  expect(screen.getByRole('button', { name: 'Try again' })).toBeTruthy();
+  /* Neither failure has an acknowledged entry ID. An old equal Unknown message cannot identify it.
+     Keep both and retain Try again under the original key. */
+  expect(within(drawerElement()).getAllByText(text, TRANSCRIPT_TEXT)).toHaveLength(2);
+  expect(requests.filter((request) => request.path.endsWith('/messages'))).toHaveLength(sent);
 });
 
-/* What may enter the session registry, driven through the store itself. The
- * drawer is modelled by `scope`: `useConversationPanel` computes it from the open
- * row, so closing the drawer is handing this store a null scope while it stays mounted. */
+it('restores the open conversation after visiting another Track and remembers an explicit close', async () => {
+  const { router } = setup();
+  fireEvent.click(await screen.findByRole('button', { name: 'Conversation Assistant' }));
+  await screen.findByRole('button', { name: 'Close conversation' });
+  await act(async () => { await router.navigate({ to: '/track/$trackId', params: { trackId: 'w2' } }); });
+  await screen.findAllByRole('heading', { name: 'Bare track', level: 1 });
+  expect(screen.queryByRole('button', { name: 'Close conversation' })).toBeNull();
+  await act(async () => { await router.navigate({ to: '/track/$trackId', params: { trackId: 'w1' } }); });
+  fireEvent.click(await screen.findByRole('button', { name: 'Close conversation' }));
+  await act(async () => { await router.navigate({ to: '/track/$trackId', params: { trackId: 'w2' } }); });
+  await screen.findAllByRole('heading', { name: 'Bare track', level: 1 });
+  await act(async () => { await router.navigate({ to: '/track/$trackId', params: { trackId: 'w1' } }); });
+  await screen.findByRole('button', { name: 'Conversation Assistant' });
+  expect(screen.queryByRole('button', { name: 'Close conversation' })).toBeNull();
+});
+
+it('restores conversation selection across a fresh router without persisting its contents', async () => {
+  const values = new Map<string, string>();
+  const storage = { getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => { values.set(key, value); } };
+  const first = setup(undefined, storage);
+  fireEvent.click(await screen.findByRole('button', { name: 'Conversation Assistant' }));
+  await screen.findByRole('button', { name: 'Close conversation' });
+  cleanup();
+  first.client.clear();
+  setup(undefined, storage);
+  expect(await screen.findByRole('complementary', { name: 'Assistant' })).toBeTruthy();
+  const saved = [...values.values()].map(value => JSON.parse(value) as string);
+  expect(saved).toContain(ASSISTANT_CARD.id);
+  expect(saved.every(value => value === ASSISTANT_CARD.id || /^\d+$/.test(value))).toBe(true);
+});
+
+it('does not fetch a stored conversation absent from the current Track rows', async () => {
+  const values = new Map<string, string>();
+  const storage = { getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => { values.set(key, value); } };
+  createUiPreferences(storage).setConversation('w1', 'foreign-or-deleted-card');
+  const { requests } = setup(undefined, storage);
+  await screen.findByRole('button', { name: 'Conversation Assistant' });
+  expect(screen.queryByRole('button', { name: 'Close conversation' })).toBeNull();
+  expect(requests.some((request) => request.path.includes('foreign-or-deleted-card'))).toBe(false);
+});
+
+it.each([false, true])('selects a model before the first conversation message and sends it atomically (bundled=%s)', async bundled => {
+  vi.stubGlobal('__NC_BUNDLED__', bundled);
+  const access = new RecoveryAccess(); access.change('connected');
+  const { requests } = setup(request => {
+    if (request.path === '/api/v1/bootstrap') return ok(fixtureBootstrap());
+    if (request.path === '/api/v1/bootstrap?provider=codex') return ok(fixtureBootstrap(['codex'], ['gpt-5']));
+    if (request.method === 'POST' && request.path === CONVERSATIONS) return created(derivedRow('w1', request), request);
+    return undefined;
+  }, undefined, bundled ? access : undefined);
+  await openDraft();
+  fireEvent.click(await screen.findByRole('button', { name: /^Model:/ }));
+  fireEvent.click(await screen.findByRole('radio', { name: /^gpt-5/ }));
+  fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+
+  expect(creates(requests, CONVERSATIONS)).toHaveLength(0);
+  await write('Use this model from the start');
+  await waitFor(() => expect(creates(requests, CONVERSATIONS)).toHaveLength(1));
+  expect(creates(requests, CONVERSATIONS)[0].body).toMatchObject({ text: 'Use this model from the start', provider: 'codex', model: 'gpt-5' });
+  expect(requests.filter(request => request.method === 'PUT' && request.path.endsWith('/model'))).toEqual([]);
+});
+
+it('uses a spinner while a closed conversation runs, a blue unread dot on completion, and no dot after reading', async () => {
+  /* Unread follows `lastTurnCompletedAt`: `updatedAt` also moves when a message is
+       queued. Working follows the kernel's per-card verdict, not the row's session state. */
+  let rows = [assistantRow({ updatedAtMs: 30 })];
+  const { client } = setup(request => {
+    if (request.method === 'GET' && request.path === '/api/v1/tracks/w1') return ok(fixtureSnapshot(TRACK, [PLANNER_CARD, ...rows]));
+    return undefined;
+  }, undefined, undefined, receiptKernel());
+  const refetch = () => act(async () => {
+    await client.invalidateQueries({ queryKey: queryKeys.trackDetail('w1') });
+    await client.invalidateQueries({ queryKey: ['track', 'w1'] });
+  });
+  const indicator = () => screen.getByRole('button', { name: /^Conversation Assistant(?:,|$)/ }).closest('li')?.querySelector('[data-nc-activity]');
+  await screen.findByRole('button', { name: /^Conversation Assistant(?:,|$)/ });
+  expect(indicator()?.getAttribute('data-nc-activity')).toBe('unread');
+  fireEvent.click(screen.getByRole('button', { name: /^Conversation Assistant(?:,|$)/ }));
+  await waitFor(() => expect(indicator()).toBeNull());
+  fireEvent.click(screen.getByRole('button', { name: 'Close conversation' }));
+  rows = [{ ...assistantRow(), status: 'running', updatedAtMs: 30 }];
+  await refetch();
+  await waitFor(() => expect(screen.getByRole('button', { name: /^Conversation Assistant/ }).closest('li')
+    ?.querySelector('[data-nc-activity]')?.getAttribute('data-nc-activity')).toBe('working'));
+  // A newer `updatedAt` alone (the reader queued something) is not unread…
+  rows = [{ ...assistantRow(), status: 'idle', updatedAtMs: 30 }];
+  await refetch();
+  await waitFor(() => expect(indicator()).toBeNull());
+  // …a newer completion is.
+  rows = [{ ...assistantRow(), status: 'idle', updatedAtMs: 50 }];
+  await refetch();
+  await waitFor(() => expect(indicator()?.getAttribute('data-nc-activity')).toBe('unread'));
+  fireEvent.click(screen.getByRole('button', { name: /^Conversation Assistant(?:,|$)/ }));
+  await waitFor(() => expect(indicator()).toBeNull());
+});
+
+it('keeps the first-message model fixed when a menu opened before sending is selected late', async () => {
+  let settle!: (response: ApiTransportResponse) => void;
+  const pending = new Promise<ApiTransportResponse>(resolve => { settle = resolve; });
+  const { requests } = setup(request => {
+    if (request.path === '/api/v1/bootstrap') return ok(fixtureBootstrap());
+    if (request.path === '/api/v1/bootstrap?provider=codex') return ok(fixtureBootstrap(['codex'], ['gpt-5']));
+    if (request.method === 'POST' && request.path === CONVERSATIONS) return pending;
+    return undefined;
+  });
+  await openDraft();
+  const modelPicker = await screen.findByRole('button', { name: /^Model:/ });
+  await waitFor(() => expect(modelPicker.hasAttribute('disabled') || modelPicker.getAttribute('aria-disabled') === 'true').toBe(false));
+  fireEvent.click(modelPicker);
+  fireEvent.click(await screen.findByRole('radio', { name: 'gpt-5' }));
+  await write('Keep my choice');
+  await waitFor(() => expect(creates(requests, CONVERSATIONS)).toHaveLength(1));
+  try {
+    fireEvent.click(screen.getByRole('radio', { name: /^Default/, hidden: true }));
+    expect(screen.getByRole('button', { name: /^Model:/ }).getAttribute('aria-label')).toMatch(/^Model: (?:codex|Codex) gpt-5$/);
+  } finally {
+    await act(async () => { settle(failure(500, 'internal', 'Try again')); await pending; });
+  }
+});
+
+it('keeps new replies unread while reopening cached history is still loading', async () => {
+  let rows = [assistantRow({ updatedAtMs: 30 })];
+  let holdHistory = false;
+  let release!: (response: ApiTransportResponse) => void;
+  const pending = new Promise<ApiTransportResponse>(resolve => { release = resolve; });
+  const { client, requests } = setup(request => {
+    if (request.method === 'GET' && request.path === '/api/v1/tracks/w1') return ok(fixtureSnapshot(TRACK, [PLANNER_CARD, ...rows]));
+    if (isHistoryPath(request.path)) return holdHistory ? pending
+      : ok(historyPage(conversationCardId(request.path), [sessionItem(ASSISTANT_CARD.id, 20, 'Previously read answer.')]));
+    return undefined;
+  }, undefined, undefined, receiptKernel());
+  const row = () => screen.getByRole('button', { name: /^Conversation Assistant(?:,|$)/ });
+  const unread = () => row().closest('li')?.querySelector('[data-nc-activity="unread"]');
+  fireEvent.click(await screen.findByRole('button', { name: 'Conversation Assistant' }));
+  await waitFor(() => expect(unread()).toBeNull());
+  fireEvent.click(screen.getByRole('button', { name: 'Close conversation' }));
+  rows = [{ ...assistantRow(), updatedAtMs: 50 }];
+  await act(async () => { await client.invalidateQueries({ queryKey: queryKeys.trackDetail('w1') }); });
+  await waitFor(() => expect(unread()).toBeTruthy());
+  const previousReads = requests.filter(request => isHistoryPath(request.path)).length;
+  holdHistory = true;
+  await act(async () => { await client.invalidateQueries({ queryKey: cachedHistoryKey(client, ASSISTANT_CARD.id) }); });
+  fireEvent.click(row());
+  try {
+    await waitFor(() => expect(requests.filter(request => isHistoryPath(request.path)).length).toBeGreaterThan(previousReads));
+    expect(unread()).toBeTruthy();
+  } finally {
+    await act(async () => { release(ok(historyPage(ASSISTANT_CARD.id, [sessionItem(ASSISTANT_CARD.id, 45, 'New completed answer.')]))); await pending; });
+  }
+  await waitFor(() => expect(unread()).toBeNull());
+});
+
+it('keeps a nonempty conversation read after closing when activity is newer than the last reply', async () => {
+  setup(request => {
+    if (request.path === '/api/v1/tracks/w1') return ok(fixtureSnapshot(TRACK, [PLANNER_CARD, ...[assistantRow({ title: 'Review receipt', updatedAtMs: 50 })]]));
+    if (isHistoryPath(request.path)) return ok(historyPage(conversationCardId(request.path), [sessionItem(ASSISTANT_CARD.id, 20, 'Read this completed answer.')]));
+    return undefined;
+  });
+  const row = () => screen.getByRole('button', { name: /^Conversation Review receipt(?:,|$)/ });
+  const unread = () => row().closest('li')?.querySelector('[data-nc-activity="unread"]');
+  fireEvent.click(await screen.findByRole('button', { name: /^Conversation Review receipt(?:,|$)/ }));
+  await screen.findByText('Read this completed answer.');
+  await waitFor(() => expect(unread()).toBeNull());
+  fireEvent.click(screen.getByRole('button', { name: 'Close conversation' }));
+  await waitFor(() => expect(unread()).toBeNull());
+});
+
+it('sends /compact to the selected conversation compaction endpoint without a chat input', async () => {
+  const { requests } = setup((request) => request.path.endsWith('/compact')
+    ? ok(ASSISTANT_CARD) : undefined);
+  fireEvent.click(await screen.findByRole('button', { name: 'Conversation Assistant' }));
+  await screen.findByRole('complementary', { name: 'Assistant' });
+  await waitFor(() => expect(messageField().getAttribute('contenteditable')).toBe('true'));
+  await completeAndSubmit('compact');
+  await waitFor(() => expect(creates(requests, `/api/v1/sessions/${ASSISTANT_CARD.id}/compact`)).toHaveLength(1));
+  expect(creates(requests, `/api/v1/sessions/${ASSISTANT_CARD.id}/messages`)).toHaveLength(0);
+});
+
+it('compacts each selected conversation while another compaction request is pending', async () => {
+  const a = assistantRow({ title: 'Compact A' });
+  const b = assistantRow({ id: 'conv-assistant-2', title: 'Compact B' });
+  const answers = new Map<string, (response: ApiTransportResponse) => void>();
+  const { requests } = setup((request) => {
+    if (request.path === '/api/v1/tracks/w1') return ok(fixtureSnapshot(TRACK, [PLANNER_CARD, ...[a, b]]));
+    if (request.path.endsWith('/compact')) {
+      return new Promise<ApiTransportResponse>((resolve) => { answers.set(pathCardId(request.path), resolve); });
+    }
+    return undefined;
+  });
+  fireEvent.click(await screen.findByRole('button', { name: 'Conversation Compact A' }));
+  await screen.findByRole('complementary', { name: 'Compact A' });
+  await waitFor(() => expect(messageField().getAttribute('contenteditable')).toBe('true'));
+  await completeAndSubmit('compact');
+  await waitFor(() => expect(creates(requests, `/api/v1/sessions/${a.id}/compact`)).toHaveLength(1));
+  fireEvent.click(screen.getByRole('button', { name: 'Close conversation' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Conversation Compact B' }));
+  await screen.findByRole('complementary', { name: 'Compact B' });
+  await waitFor(() => expect(messageField().getAttribute('contenteditable')).toBe('true'));
+  await completeAndSubmit('compact');
+  await waitFor(() => expect(creates(requests, `/api/v1/sessions/${b.id}/compact`)).toHaveLength(1));
+  act(() => { answers.get(a.id)?.(ok(a)); });
+  await screen.findByText('Compacting conversation context…');
+  act(() => { answers.get(b.id)?.(ok(b)); });
+  await waitFor(() => expect(screen.queryByText('Compacting conversation context…')).toBeNull());
+});
+
+it('retires pending metadata after agent-only history on open and close', async () => {
+  let title: string | null = 'First pending';
+  const { client } = setup(request => {
+    if (request.path === '/api/v1/tracks/w1') return ok(fixtureSnapshot(TRACK, [PLANNER_CARD, ...[assistantRow({ title })]]));
+    if (isHistoryPath(request.path)) return ok(historyPage(conversationCardId(request.path), [sessionItem(ASSISTANT_CARD.id, 1, 'Reply to a system-only turn')]));
+    return undefined;
+  });
+  fireEvent.click(await screen.findByRole('button', { name: 'Conversation First pending' }));
+  await screen.findByText('Reply to a system-only turn');
+  fireEvent.click(screen.getByRole('button', { name: 'Close conversation' }));
+  await screen.findByRole('button', { name: 'Conversation First pending' });
+  title = null;
+  await act(async () => { await client.invalidateQueries({ queryKey: queryKeys.trackDetail('w1') }); });
+  expect(client.getQueryData<import('../../../../core/api/perga-v1.ts').TrackAggregateSnapshotDto>(queryKeys.trackDetail('w1'))?.sessions.filter(session => !session.isLead)).toMatchObject([{ title: null }]);
+  fireEvent.click(await screen.findByRole('button', { name: 'Conversation Assistant' }));
+  await screen.findByRole('complementary', { name: 'Assistant' });
+  fireEvent.click(screen.getByRole('button', { name: 'Close conversation' }));
+  await screen.findByRole('button', { name: 'Conversation Assistant' });
+});
+
+it('keeps first confirmed server metadata through close and a cold history read', async () => {
+  let confirmed = false;
+  let holdHistory = false;
+  const { client } = setup(request => {
+    if (request.path === '/api/v1/tracks/w1') return ok(fixtureSnapshot(TRACK, [PLANNER_CARD, ...[assistantRow({ title: confirmed ? 'First confirmed sentence' : null })]]));
+    if (isHistoryPath(request.path)) return holdHistory ? new Promise(() => undefined)
+      : ok(historyPage(conversationCardId(request.path), confirmed ? [sessionItem(ASSISTANT_CARD.id, 1, 'First confirmed sentence', 'user')] : []));
+    if (request.path.endsWith('/messages')) {
+      confirmed = true;
+      return ok(sessionInput(ASSISTANT_CARD.id));
+    }
+    return undefined;
+  });
+  fireEvent.click(await screen.findByRole('button', { name: 'Conversation Assistant' }));
+  await waitFor(() => expect(messageField().getAttribute('contenteditable')).toBe('true'));
+  await write('First confirmed sentence');
+  await waitFor(() => expect(client.getQueryData<import('../../../../core/api/perga-v1.ts').TrackAggregateSnapshotDto>(queryKeys.trackDetail('w1'))?.sessions.filter(session => !session.isLead)).toMatchObject([{ title: 'First confirmed sentence' }]));
+  fireEvent.click(screen.getByRole('button', { name: 'Close conversation' }));
+  const named = await screen.findByRole('button', { name: 'Conversation First confirmed sentence' });
+  holdHistory = true;
+  client.removeQueries({ queryKey: cachedHistoryKey(client, ASSISTANT_CARD.id) });
+  fireEvent.click(named);
+  await screen.findByRole('complementary', { name: 'First confirmed sentence' });
+});
+
+async function openAssistant() {
+  fireEvent.click(await screen.findByRole('button', { name: 'Conversation Assistant' }));
+  await waitFor(() => expect(messageField().getAttribute('contenteditable')).toBe('true'));
+}
+async function sendUntilSpent(text: string) {
+  await openAssistant();
+  await write(text);
+  expect((await screen.findByRole('alert')).textContent).toContain('Delivery is unconfirmed');
+}
+const CONNECTIVITY = /Transport request failed|timed out|back online|连接恢复/;
+const timedOut = (): never => { throw new DOMException('Request timed out.', 'TimeoutError'); };
+const dropped = (): never => { throw new Error('response dropped'); };
+const chatText = () => drawerElement().textContent;
+async function offlineAfterOpening(reply: Reply) {
+  vi.stubGlobal('__NC_BUNDLED__', true);
+  const access = new RecoveryAccess(); access.change('connected');
+  const { requests } = setup(reply, undefined, access);
+  await openAssistant();
+  act(() => { access.change('offline'); });
+  return requests;
+}
+const RAW_OR_CONNECTIVITY = /Transport request failed|timed out|schema|offline|reconnect|connection|Nothing was sent|连接/i;
+const says = async (text: string) => {
+  await waitFor(() => expect(within(screen.getByRole('alert')).getByText(text, { exact: true })).toBeTruthy());
+  expect(screen.getByRole('alert').textContent).not.toMatch(RAW_OR_CONNECTIVITY);
+};
+const lostCreate = (request: ApiRequest) => {
+  if (request.method === 'POST' && request.path === CONVERSATIONS) throw new Error('socket hang up');
+  return undefined;
+};
+function storedTurn() {
+  return [sessionItem(ASSISTANT_CARD.id, 91, 'Original prompt', 'user'), sessionItem(ASSISTANT_CARD.id, 92, 'Original answer')];
+}
+function storedSetup(input: () => ApiTransportResponse | undefined | Promise<ApiTransportResponse | undefined> = () => undefined) {
+  return scriptedSetup(storedTurn, request => request.path.endsWith('/messages') ? input() : undefined);
+}
+function scriptedSetup(rows: () => SessionItemDto[], extra: Reply) {
+  return setup(async request => await extra(request) ?? (isHistoryPath(request.path)
+    ? ok(historyPage(pathCardId(request.path), pathCardId(request.path) === ASSISTANT_CARD.id ? rows() : [])) : undefined));
+}
+async function openAssistantWithHistory(name: string | RegExp = /Conversation Assistant/) {
+  fireEvent.click(await screen.findByRole('button', { name }));
+  await screen.findByText('Original answer');
+}
+
+
 describe('registry write-through', () => {
   const SCOPE = {
     id: 'w1', provider: 'codex' as const, title: 'Test track', cardId: ASSISTANT_CARD.id, cardTitle: null,
-    updatedAt: 30, kind: 'track-assistant' as const, state: 'idle' as const,
+    updatedAt: 30, kind: 'agent' as const, isLead: false, state: 'idle' as const,
   };
   const ROWS: readonly Conversation[] = [{ provider: 'codex' as const,
     id: ASSISTANT_CARD.id, trackId: 'w1', trackTitle: 'Test track', title: null,
-    kind: 'track-assistant', state: 'idle', updatedAt: 30,
+    kind: 'agent', isLead: false, state: 'idle', updatedAt: 30,
   }];
 
   /** One mounted store over one registry. `rows` is the track's server list, so the batch remember runs for real. */
@@ -3637,10 +1483,10 @@ describe('registry write-through', () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false, structuralSharing: false } } });
     const view = (scope: typeof SCOPE | null) => (
       <QueryClientProvider client={client}>
-        <ConversationProvider>
+        <CurrentUserScope value={{ userId: DEPLOYMENT_OWNER_USER_ID, displayName: 'Owner', role: 'owner', sessionId: 'test' }}><ConversationProvider>
           <RegistryProbe />
           <StoreProbe scope={scope} />
-        </ConversationProvider>
+        </ConversationProvider></CurrentUserScope>
       </QueryClientProvider>
     );
     const { rerender } = render(view(SCOPE));
@@ -3659,11 +1505,11 @@ describe('registry write-through', () => {
         await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
       },
       /** A history read landing, written where a landed history lives. */
-      deliverHistory: async (rows: Parameters<typeof historicalConversationPage>[1]) => {
+      deliverHistory: async (rows: SessionItemDto[]) => {
         await act(async () => {
           client.setQueryData(
             cachedHistoryKey(client, ASSISTANT_CARD.id),
-            latestHistory(undefined, historicalConversationPage(ASSISTANT_CARD.id, rows, null)),
+            latestHistory(undefined, sessionItemsPageDtoToConversationPage(ASSISTANT_CARD.id, historyPage(ASSISTANT_CARD.id, rows), null)),
           );
           await Promise.resolve();
         });
@@ -3679,7 +1525,7 @@ describe('registry write-through', () => {
     const transport: ApiTransportPort = {
       send: (request) => request.path.endsWith('/messages') ? Promise.reject(new Error('response dropped'))
         : Promise.resolve(request.path.includes('view=run') ? runIdle()
-          : isHistoryPath(request.path) ? ok(historicalConversationPage(conversationCardId(request.path), [], null)) : ok([])),
+          : isHistoryPath(request.path) ? ok(historyPage(conversationCardId(request.path), [])) : ok([])),
     };
     let store!: ReturnType<typeof useConversationStore>;
     let composerText = '';
@@ -3690,7 +1536,7 @@ describe('registry write-through', () => {
       return null;
     }
     const client = new QueryClient({ defaultOptions: { queries: { retry: false, structuralSharing: false } } });
-    render(<QueryClientProvider client={client}><ConversationProvider><Probe /></ConversationProvider></QueryClientProvider>);
+    render(<QueryClientProvider client={client}><CurrentUserScope value={{ userId: DEPLOYMENT_OWNER_USER_ID, displayName: 'Owner', role: 'owner', sessionId: 'test' }}><ConversationProvider><Probe /></ConversationProvider></CurrentUserScope></QueryClientProvider>);
     await waitFor(() => expect(store.historyReady).toBe(true));
     await act(async () => { void store.send(ASSISTANT_CARD.id, 'maybe stored', [], true, null); await Promise.resolve(); });
     await waitFor(() => expect(store.failedSend?.delivery).toBe('unknown'));
@@ -3708,8 +1554,8 @@ describe('registry write-through', () => {
       async send(request) {
         if (request.path.endsWith('/messages')) { await answered; return inputAccepted(); }
         if (request.path.endsWith('/model')) return failure(500, 'internal', 'model store unavailable');
-        if (request.path.includes('view=run')) return ok({ ...runIdle().body as object, card_id: pathCardId(request.path) });
-        return ok([]);
+        if (request.path.includes('view=run')) return ok(sessionPage(fixtureSession(pathCardId(request.path), TRACK.id)));
+        return request.path.includes('/items?') ? ok(sessionPage(fixtureSession(pathCardId(request.path), TRACK.id))) : ok([]);
       },
     };
     const PLANNER_SCOPE = { ...SCOPE, cardId: PLANNER_CARD.id };
@@ -3726,7 +1572,7 @@ describe('registry write-through', () => {
     }
     const client = new QueryClient({ defaultOptions: { queries: { retry: false, structuralSharing: false } } });
     const view = (scope: typeof SCOPE) => (
-      <QueryClientProvider client={client}><ConversationProvider><StoreProbe scope={scope} /></ConversationProvider></QueryClientProvider>
+      <QueryClientProvider client={client}><CurrentUserScope value={{ userId: DEPLOYMENT_OWNER_USER_ID, displayName: 'Owner', role: 'owner', sessionId: 'test' }}><ConversationProvider><StoreProbe scope={scope} /></ConversationProvider></CurrentUserScope></QueryClientProvider>
     );
     const { rerender } = render(view(SCOPE));
     await act(async () => { void latest?.send(ASSISTANT_CARD.id, 'still out', [], true, null); await Promise.resolve(); });
@@ -3747,8 +1593,8 @@ describe('registry write-through', () => {
     const transport: ApiTransportPort = {
       async send(request) {
         if (request.path.endsWith('/model')) { await refused; return failure(400, 'bad_request', 'Claude is not ready'); }
-        if (request.path.includes('view=run')) return ok({ ...runIdle().body as object, card_id: pathCardId(request.path) });
-        return ok([]);
+        if (request.path.includes('view=run')) return ok(sessionPage(fixtureSession(pathCardId(request.path), TRACK.id)));
+        return request.path.includes('/items?') ? ok(sessionPage(fixtureSession(pathCardId(request.path), TRACK.id))) : ok([]);
       },
     };
     const errors: (string | null)[] = [];
@@ -3761,7 +1607,7 @@ describe('registry write-through', () => {
     }
     const client = new QueryClient({ defaultOptions: { queries: { retry: false, structuralSharing: false } } });
     const view = (scope: typeof SCOPE) => (
-      <QueryClientProvider client={client}><ConversationProvider><StoreProbe scope={scope} /></ConversationProvider></QueryClientProvider>
+      <QueryClientProvider client={client}><CurrentUserScope value={{ userId: DEPLOYMENT_OWNER_USER_ID, displayName: 'Owner', role: 'owner', sessionId: 'test' }}><ConversationProvider><StoreProbe scope={scope} /></ConversationProvider></CurrentUserScope></QueryClientProvider>
     );
     const { rerender } = render(view(SCOPE));
     await act(async () => { latest?.setModel({ model: 'gpt-x', reasoning_effort: null }); await Promise.resolve(); });
@@ -3803,7 +1649,7 @@ describe('registry write-through', () => {
           return { status: 503, statusText: 'Service Unavailable', body: { code: 'unavailable', error: 'busy' } };
         }
         if (request.path.includes('view=run')) return runIdle();
-        return ok([]);
+        return request.path.includes('/items?') ? ok(sessionPage(fixtureSession(pathCardId(request.path), TRACK.id))) : ok([]);
       },
     };
     const store = mountStore(transport);
@@ -3838,16 +1684,16 @@ describe('registry write-through', () => {
           return inputAcceptedWithEntry('refresh-entry');
         }
         if (request.path.includes('view=run')) return runIdle();
-        if (isHistoryPath(request.path)) return ok(historicalConversationPage(conversationCardId(request.path), [], null));
-        return ok([]);
+        if (isHistoryPath(request.path)) return ok(historyPage(conversationCardId(request.path), []));
+        return request.path.includes('/items?') ? ok(sessionPage(fixtureSession(pathCardId(request.path), TRACK.id))) : ok([]);
       },
     };
     const store = mountStore(transport);
     await store.send('what does this repo do?');
     /* The history refresh lands while the POST that started it is still out. */
     await store.deliverHistory([
-      projectionRow(1, { id: 'refresh-entry', rev: 0 }, 'what does this repo do?'),
-      harnessMessage(2, 'agentMessage', { text: 'it runs tracks' }),
+      { ...sessionItem(ASSISTANT_CARD.id, 1, 'what does this repo do?', 'user'), payload: { content: 'what does this repo do?', inputId: 'refresh-entry' } },
+      sessionItem(ASSISTANT_CARD.id, 2, 'it runs tracks'),
     ]);
     await waitFor(() => { expect(store.turns()).toHaveLength(2); });
 
@@ -3868,14 +1714,14 @@ describe('registry write-through', () => {
       async send(request) {
         /* The server's copy of the first `ping`, and only ever that one. */
         if (isHistoryPath(request.path)) {
-          return ok(historicalConversationPage(conversationCardId(request.path), [harnessMessage(1, 'userMessage', { content: [{ text: 'ping' }] })], null));
+          return ok(historyPage(conversationCardId(request.path), [sessionItem(ASSISTANT_CARD.id, 1, 'ping', 'user')]));
         }
         if (request.path.endsWith('/messages')) {
           await inputSettled;
           return inputAccepted();
         }
         if (request.path.includes('view=run')) return runIdle();
-        return ok([]);
+        return request.path.includes('/items?') ? ok(sessionPage(fixtureSession(pathCardId(request.path), TRACK.id))) : ok([]);
       },
     };
     const store = mountStore(transport);
@@ -3894,7 +1740,7 @@ describe('registry write-through', () => {
   it('[G5] serializes same-card sends across a remount and keeps both identical turns', async () => {
     /* Every send is held, so both are still out when their stores unmount. */
     const holds: (() => void)[] = [];
-    let historyRows: readonly unknown[] = [];
+    let historyRows: SessionItemDto[] = [];
     const transport: ApiTransportPort = {
       async send(request) {
         if (request.path.endsWith('/messages')) {
@@ -3903,8 +1749,8 @@ describe('registry write-through', () => {
           return inputAcceptedWithEntry(entryId);
         }
         if (request.path.includes('view=run')) return runIdle();
-        if (isHistoryPath(request.path)) return ok(historicalConversationPage(conversationCardId(request.path), historyRows, null));
-        return ok([]);
+        if (isHistoryPath(request.path)) return ok(historyPage(conversationCardId(request.path), historyRows));
+        return request.path.includes('/items?') ? ok(sessionPage(fixtureSession(pathCardId(request.path), TRACK.id))) : ok([]);
       },
     };
     let latestSend: (text: string) => void = () => undefined;
@@ -3936,10 +1782,10 @@ describe('registry write-through', () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false, structuralSharing: false } } });
     const view = (instance: string | null) => (
       <QueryClientProvider client={client}>
-        <ConversationProvider>
+        <CurrentUserScope value={{ userId: DEPLOYMENT_OWNER_USER_ID, displayName: 'Owner', role: 'owner', sessionId: 'test' }}><ConversationProvider>
           <RegistryProbe />
           {instance === null ? null : <StoreProbe key={instance} />}
-        </ConversationProvider>
+        </ConversationProvider></CurrentUserScope>
       </QueryClientProvider>
     );
     const { rerender } = render(view('first-mount'));
@@ -3957,7 +1803,7 @@ describe('registry write-through', () => {
 
     /* The first POST lands while the second store is mounted; only after it settles
            may the new store start its same-text send. */
-    historyRows = [projectionRow(1, { id: 'serial-entry-1', rev: 0 }, 'ping')];
+    historyRows = [{ ...sessionItem(ASSISTANT_CARD.id, 1, 'ping', 'user'), payload: { content: 'ping', inputId: 'serial-entry-1' } }];
     await act(async () => { holds[0]?.(); await Promise.resolve(); });
     await waitFor(() => {
       latestSend('ping');
@@ -3979,682 +1825,18 @@ describe('registry write-through', () => {
   });
 });
 
-it.each(['429', 'transport'])('[F5] keeps a %s failure and its distinct echo when an unacknowledged send meets an old equal Unknown message', async (mode) => {
-  const text = 'repeat this instruction';
-  const first = harnessMessage(1, 'userMessage', { content: [{ text: 'Earlier different instruction' }] });
-  const oldEqual = harnessMessage(2, 'userMessage', { content: [{ text }] });
-  let rows = [first];
-  const { client, requests } = setup((request) => {
-    if (isHistoryPath(request.path)) return ok(historicalConversationPage(conversationCardId(request.path), rows, null));
-    if (request.path.endsWith('/messages')) {
-      if (mode === 'transport') throw new Error('Connection lost before request reached server');
-      return failure(429, 'rate_limited', 'Request rejected before acceptance');
-    }
-    return undefined;
-  });
-  fireEvent.click(await screen.findByRole('button', { name: 'Conversation Assistant' }));
-  await waitFor(() => expect(messageField().getAttribute('contenteditable')).toBe('true'));
-  await write(text);
-  expect((await screen.findByRole('alert')).textContent).toContain(mode === '429' ? 'Not sent' : 'Delivery is unconfirmed');
-  // The original read was stale; a refresh reveals a pre-existing equal row.
-  // Its server timestamp is 2, earlier than this request's Date.now().
-  rows = [first, oldEqual, harnessMessage(3, 'agentMessage', { text: 'Previously completed response' })];
-  await act(async () => { await client.invalidateQueries({ queryKey: cachedHistoryKey(client, ASSISTANT_CARD.id) }); });
-  const sent = mode === '429' ? 1 : SEND_RETRIES + 1;
-  expect(requests.filter((request) => request.path.endsWith('/messages'))).toHaveLength(sent);
-  await screen.findByText('Previously completed response');
-  expect(screen.getByRole('alert').textContent).toContain(mode === '429' ? 'Not sent' : 'Delivery is unconfirmed');
-  expect(screen.getByRole('button', { name: 'Try again' })).toBeTruthy();
-  /* Neither failure has an acknowledged entry ID. An old equal Unknown message cannot identify it.
-     Keep both and retain Try again under the original key. */
-  expect(within(drawerElement()).getAllByText(text, TRANSCRIPT_TEXT)).toHaveLength(2);
-  expect(requests.filter((request) => request.path.endsWith('/messages'))).toHaveLength(sent);
-});
 
-
-it('restores the open conversation after visiting another Track and remembers an explicit close', async () => {
-  const { router } = setup();
-  fireEvent.click(await screen.findByRole('button', { name: 'Conversation Assistant' }));
-  await screen.findByRole('button', { name: 'Close conversation' });
-  await act(async () => { await router.navigate({ to: '/track/$trackId', params: { trackId: 'w2' } }); });
-  await screen.findAllByRole('heading', { name: 'Bare track', level: 1 });
-  expect(screen.queryByRole('button', { name: 'Close conversation' })).toBeNull();
-  await act(async () => { await router.navigate({ to: '/track/$trackId', params: { trackId: 'w1' } }); });
-  fireEvent.click(await screen.findByRole('button', { name: 'Close conversation' }));
-  await act(async () => { await router.navigate({ to: '/track/$trackId', params: { trackId: 'w2' } }); });
-  await screen.findAllByRole('heading', { name: 'Bare track', level: 1 });
-  await act(async () => { await router.navigate({ to: '/track/$trackId', params: { trackId: 'w1' } }); });
-  await screen.findByRole('button', { name: 'Conversation Assistant' });
-  expect(screen.queryByRole('button', { name: 'Close conversation' })).toBeNull();
-});
-
-
-it('restores conversation selection across a fresh router without persisting its contents', async () => {
-  const values = new Map<string, string>();
-  const storage = { getItem: (key: string) => values.get(key) ?? null,
-    setItem: (key: string, value: string) => { values.set(key, value); } };
-  const first = setup(undefined, storage);
-  fireEvent.click(await screen.findByRole('button', { name: 'Conversation Assistant' }));
-  await screen.findByRole('button', { name: 'Close conversation' });
-  cleanup();
-  first.client.clear();
-  setup(undefined, storage);
-  expect(await screen.findByRole('complementary', { name: 'Assistant' })).toBeTruthy();
-  const saved = [...values.values()].map(value => JSON.parse(value) as string);
-  expect(saved).toContain(ASSISTANT_CARD.id);
-  expect(saved.every(value => value === ASSISTANT_CARD.id || /^\d+$/.test(value))).toBe(true);
-});
-
-it('does not fetch a stored conversation absent from the current Track rows', async () => {
-  const values = new Map<string, string>();
-  const storage = { getItem: (key: string) => values.get(key) ?? null,
-    setItem: (key: string, value: string) => { values.set(key, value); } };
-  createUiPreferences(storage).setConversation('w1', 'foreign-or-deleted-card');
-  const { requests } = setup(undefined, storage);
-  await screen.findByRole('button', { name: 'Conversation Assistant' });
-  expect(screen.queryByRole('button', { name: 'Close conversation' })).toBeNull();
-  expect(requests.some((request) => request.path.includes('foreign-or-deleted-card'))).toBe(false);
-});
-
-it.each([false, true])('selects a model before the first conversation message and sends it atomically (bundled=%s)', async bundled => {
-  vi.stubGlobal('__NC_BUNDLED__', bundled);
-  const access = new RecoveryAccess(); access.change('connected');
-  const { requests } = setup(request => {
-    if (request.path === '/api/v1/bootstrap') return ok({ webCompatVersion: WEB_COMPAT_VERSION, minWebCompatVersion: WEB_COMPAT_VERSION,
-      syncEventVersion: 20, dbInstanceId: 'test', assistantProviders: true, conversationInitialInput: true, conversationCreateModel: true });
-    if (request.path === '/api/v1/bootstrap?provider=codex') return ok({
-      version: 'test', providers: [{ provider: 'codex', available: true, models: ['gpt-5'] }],
-    });
-    if (request.method === 'POST' && request.path === CONVERSATIONS) return created(derivedRow('w1', request), request);
-    return undefined;
-  }, undefined, bundled ? access : undefined);
-  await openDraft();
-  fireEvent.click(await screen.findByRole('button', { name: /^Model:/ }));
-  fireEvent.click(await screen.findByRole('radio', { name: 'gpt-5' }));
-  screen.getByRole('slider', { name: 'Reasoning effort' }).focus();
-  await userEvent.keyboard('{Home}{End}');
-  expect(creates(requests, CONVERSATIONS)).toHaveLength(0);
-  await write('Use this model from the start');
-  await waitFor(() => expect(creates(requests, CONVERSATIONS)).toHaveLength(1));
-  expect(creates(requests, CONVERSATIONS)[0].body).toMatchObject({ text: 'Use this model from the start', provider: 'codex', model: 'gpt-5' });
-  expect(requests.filter(request => request.method === 'PUT' && request.path.endsWith('/model'))).toEqual([]);
-});
-
-it('keeps first-message selection disabled on an older server that would ignore it', async () => {
-  setup(request => request.path === '/api/v1/bootstrap'
-    ? ok({ webCompatVersion: 28, minWebCompatVersion: 28, syncEventVersion: 20, dbInstanceId: 'old' })
-    : undefined);
-  await openDraft();
-  const model = await screen.findByRole('button', { name: /^Model:/ });
-  expect(model.hasAttribute('disabled') || model.getAttribute('aria-disabled') === 'true').toBe(true);
-  fireEvent.click(model);
-  expect(screen.queryByRole('radio', { name: /^Default/ })).toBeNull();
-});
-
-it('uses a spinner while a closed conversation runs, a blue unread dot on completion, and no dot after reading', async () => {
-  /* Unread follows `lastTurnCompletedAt`: `updatedAt` also moves when a message is
-       queued. Working follows the kernel's per-card verdict, not the row's session state. */
-  let rows = [assistantRow({ lastTurnCompletedAt: 30 })];
-  let cards: ActivityCardWire[] = [];
-  const { client } = setup(request => {
-    if (request.method === 'GET' && request.path === CONVERSATIONS) return ok(rows);
-    if (request.path === '/api/v1/tracks/w1') return ok({ track: TRACK, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true,
-      cards: [PLANNER_CARD, ASSISTANT_CARD, WORKER_CARD], overlays: [trackActivityOverlay({ working: cards.length > 0, cards })] });
-    return undefined;
-  }, undefined, undefined, receiptKernel());
-  const refetch = () => act(async () => {
-    await client.invalidateQueries({ queryKey: ['track-conversations', 'w1'] });
-    await client.invalidateQueries({ queryKey: ['track', 'w1'] });
-  });
-  const indicator = () => screen.getByRole('button', { name: /^Conversation Assistant(?:,|$)/ }).closest('li')?.querySelector('[data-nc-activity]');
-  await screen.findByRole('button', { name: /^Conversation Assistant(?:,|$)/ });
-  expect(indicator()?.getAttribute('data-nc-activity')).toBe('unread');
-  fireEvent.click(screen.getByRole('button', { name: /^Conversation Assistant(?:,|$)/ }));
-  await waitFor(() => expect(indicator()).toBeNull());
+const inputBodies = (requests: readonly ApiRequest[]) => requests.filter(request => request.path.endsWith('/messages')).map(request => request.body);
+const settleFor = (ms: number) => act(async () => { await new Promise(resolve => setTimeout(resolve, ms)); });
+async function pickPlanner() {
+  fireEvent.click(screen.getByRole('button', { name: /^Conversation Planner chat/ }));
+  await screen.findByRole('complementary', { name: 'Planner chat' });
+}
+async function pickAssistant() {
+  fireEvent.click(screen.getByRole('button', { name: /^Conversation (Assistant|Original prompt)/ }));
+  await screen.findByRole('complementary', { name: /^(Assistant|Original prompt)$/ });
+}
+async function reopenAssistant() {
   fireEvent.click(screen.getByRole('button', { name: 'Close conversation' }));
-  rows = [{ ...assistantRow(), state: 'turn_pending', updatedAt: 40, lastTurnCompletedAt: 30 }];
-  cards = [{ card_id: ASSISTANT_CARD.id, state: 'working' }];
-  await refetch();
-  await waitFor(() => expect(screen.getByRole('button', { name: /^Conversation Assistant/ }).closest('li')
-    ?.querySelector('[data-nc-activity]')?.getAttribute('data-nc-activity')).toBe('working'));
-  // A newer `updatedAt` alone (the reader queued something) is not unread…
-  rows = [{ ...assistantRow(), state: 'idle', updatedAt: 45, lastTurnCompletedAt: 30 }];
-  cards = [];
-  await refetch();
-  await waitFor(() => expect(indicator()).toBeNull());
-  // …a newer completion is.
-  rows = [{ ...assistantRow(), state: 'idle', updatedAt: 50, lastTurnCompletedAt: 50 }];
-  await refetch();
-  await waitFor(() => expect(indicator()?.getAttribute('data-nc-activity')).toBe('unread'));
-  fireEvent.click(screen.getByRole('button', { name: /^Conversation Assistant(?:,|$)/ }));
-  await waitFor(() => expect(indicator()).toBeNull());
-});
-
-it('keeps the first-message model fixed when a menu opened before sending is selected late', async () => {
-  let settle!: (response: ApiTransportResponse) => void;
-  const pending = new Promise<ApiTransportResponse>(resolve => { settle = resolve; });
-  const { requests } = setup(request => {
-    if (request.path === '/api/v1/bootstrap') return ok({ webCompatVersion: WEB_COMPAT_VERSION, minWebCompatVersion: WEB_COMPAT_VERSION,
-      syncEventVersion: 20, dbInstanceId: 'test', assistantProviders: true, conversationInitialInput: true, conversationCreateModel: true });
-    if (request.path === '/api/v1/bootstrap?provider=codex') return ok({
-      version: 'test', providers: [{ provider: 'codex', available: true, models: ['chosen-model'] }],
-    });
-    if (request.method === 'POST' && request.path === CONVERSATIONS) return pending;
-    return undefined;
-  });
-  await openDraft();
-  const modelPicker = await screen.findByRole('button', { name: /^Model:/ });
-  await waitFor(() => expect(modelPicker.hasAttribute('disabled') || modelPicker.getAttribute('aria-disabled') === 'true').toBe(false));
-  fireEvent.click(modelPicker);
-  fireEvent.click(await screen.findByRole('radio', { name: 'chosen-model' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Model: codex chosen-model' }));
-  await write('Keep my choice');
-  await waitFor(() => expect(creates(requests, CONVERSATIONS)).toHaveLength(1));
-  try {
-    fireEvent.click(screen.getByRole('radio', { name: /^Default/, hidden: true }));
-    expect(screen.getByRole('button', { name: /^Model:/ }).getAttribute('aria-label')).toBe('Model: codex chosen-model');
-  } finally {
-    await act(async () => { settle(failure(500, 'internal', 'Try again')); await pending; });
-  }
-});
-
-it('keeps new replies unread while reopening cached history is still loading', async () => {
-  let rows = [assistantRow({ lastTurnCompletedAt: 30 })];
-  let holdHistory = false;
-  let release!: (response: ApiTransportResponse) => void;
-  const pending = new Promise<ApiTransportResponse>(resolve => { release = resolve; });
-  const { client, requests } = setup(request => {
-    if (request.method === 'GET' && request.path === CONVERSATIONS) return ok(rows);
-    if (isHistoryPath(request.path)) return holdHistory ? pending
-      : ok(historicalConversationPage(conversationCardId(request.path), [harnessMessage(20, 'agentMessage', { type: 'agentMessage', text: 'Previously read answer.' })], null));
-    return undefined;
-  }, undefined, undefined, receiptKernel());
-  const row = () => screen.getByRole('button', { name: /^Conversation Assistant(?:,|$)/ });
-  const unread = () => row().closest('li')?.querySelector('[data-nc-activity="unread"]');
-  fireEvent.click(await screen.findByRole('button', { name: 'Conversation Assistant' }));
-  await waitFor(() => expect(unread()).toBeNull());
-  fireEvent.click(screen.getByRole('button', { name: 'Close conversation' }));
-  rows = [{ ...assistantRow(), updatedAt: 50, lastTurnCompletedAt: 50 }];
-  await act(async () => { await client.invalidateQueries({ queryKey: ['track-conversations', 'w1'] }); });
-  await waitFor(() => expect(unread()).toBeTruthy());
-  const previousReads = requests.filter(request => isHistoryPath(request.path)).length;
-  holdHistory = true;
-  await act(async () => { await client.invalidateQueries({ queryKey: cachedHistoryKey(client, ASSISTANT_CARD.id) }); });
-  fireEvent.click(row());
-  try {
-    await waitFor(() => expect(requests.filter(request => isHistoryPath(request.path)).length).toBeGreaterThan(previousReads));
-    expect(unread()).toBeTruthy();
-  } finally {
-    await act(async () => { release(ok(historicalConversationPage(ASSISTANT_CARD.id, [harnessMessage(45, 'agentMessage', { type: 'agentMessage', text: 'New completed answer.' })], null))); await pending; });
-  }
-  await waitFor(() => expect(unread()).toBeNull());
-});
-
-it('keeps a nonempty conversation read after closing when activity is newer than the last reply', async () => {
-  setup(request => {
-    if (request.path === CONVERSATIONS) return ok([assistantRow({ title: 'Review receipt', updatedAt: 50 })]);
-    if (isHistoryPath(request.path)) return ok(historicalConversationPage(conversationCardId(request.path), [harnessMessage(20, 'agentMessage', { type: 'agentMessage', text: 'Read this completed answer.' })], null));
-    return undefined;
-  });
-  const row = () => screen.getByRole('button', { name: /^Conversation Review receipt(?:,|$)/ });
-  const unread = () => row().closest('li')?.querySelector('[data-nc-activity="unread"]');
-  fireEvent.click(await screen.findByRole('button', { name: /^Conversation Review receipt(?:,|$)/ }));
-  await screen.findByText('Read this completed answer.');
-  await waitFor(() => expect(unread()).toBeNull());
-  fireEvent.click(screen.getByRole('button', { name: 'Close conversation' }));
-  await waitFor(() => expect(unread()).toBeNull());
-});
-
-it('shows a closed Planner working and preserves unread completion until its history is read', async () => {
-  let status = 'turn_pending';
-  let activityAt = 50;
-  /* Working is the kernel's verdict in the activity overlay; `status` is the
-       session reading no indicator reads. */
-  let cards: ActivityCardWire[] = [{ card_id: PLANNER_CARD.id, state: 'working' }];
-  /* `CardRuntimeView.last_turn_completed_ms`: absent while the first turn is still running. */
-  let lastTurnCompletedMs: number | undefined;
-  const { client } = setup(request => {
-    if (request.path === '/api/v1/tracks/w1') return ok({ track: TRACK, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true,
-      cards: [{ ...PLANNER_CARD, runtime: { worker_session_id: 'planner-live', kind: 'shared-spec', status, updated_at_ms: activityAt,
-        ...(lastTurnCompletedMs === undefined ? {} : { last_turn_completed_ms: lastTurnCompletedMs }) } }],
-      overlays: [trackActivityOverlay({ working: cards.length > 0, activity_at_ms: lastTurnCompletedMs ?? null, cards })] });
-    if ((request.path.startsWith('/api/v1/sessions/card-planner/items') && !request.path.includes('view='))) return ok(historicalConversationPage(conversationCardId(request.path), [
-      harnessMessage(40, 'agentMessage', { type: 'agentMessage', text: 'Completed planner answer.' }),
-    ], null));
-    return undefined;
-  }, undefined, undefined, receiptKernel());
-  const row = () => screen.getByRole('button', { name: /^Conversation Planner chat(?:,|$)/ });
-  const indicator = () => row().closest('li')?.querySelector('[data-nc-activity]')?.getAttribute('data-nc-activity');
-  await screen.findByRole('button', { name: /^Conversation Planner chat(?:,|$)/ });
-  expect(indicator()).toBe('working');
-  status = 'idle'; activityAt = 60; lastTurnCompletedMs = 60; cards = [];
-  await act(() => {
-    const plan = invalidationPlanFor({ ev: 'harness.phase.changed', data: {
-      worker_session_id: 'planner-live', card_id: 'card-planner', track_id: 'w1',
-      old_phase: 'turn_running', new_phase: 'turn_completed',
-    } });
-    applyEventEffects(client, [{ type: 'write-through', writes: plan.writeThrough }, { type: 'invalidate', keys: plan.invalidate }]);
-    return Promise.resolve();
-  });
-  await waitFor(() => expect(indicator()).toBe('unread'));
-  fireEvent.click(row());
-  await screen.findByText('Completed planner answer.');
-  await waitFor(() => expect(indicator()).toBeUndefined());
-  fireEvent.click(screen.getByRole('button', { name: 'Close conversation' }));
-  expect(indicator()).toBeUndefined();
-  const completed = () => act(() => {
-    const plan = invalidationPlanFor({ ev: 'harness.phase.changed', data: {
-      worker_session_id: 'planner-live', card_id: 'card-planner', track_id: 'w1',
-      old_phase: 'turn_running', new_phase: 'turn_completed',
-    } });
-    applyEventEffects(client, [{ type: 'write-through', writes: plan.writeThrough }, { type: 'invalidate', keys: plan.invalidate }]);
-    return Promise.resolve();
-  });
-  // The session's `updated_at_ms` moving on its own (the reader queued a
-  // message, say) is not a completion and does not relight the row…
-  activityAt = 70;
-  await completed();
-  const cachedActivityAt = () => client.getQueryData<{ cards: { runtime?: { updated_at_ms?: number } }[] }>(['track', 'w1'])
-    ?.cards[0]?.runtime?.updated_at_ms;
-  await waitFor(() => expect(cachedActivityAt()).toBe(70));
-  expect(indicator()).toBeUndefined();
-  // …a newer `last_turn_completed_ms` does.
-  activityAt = 80; lastTurnCompletedMs = 80;
-  await completed();
-  await waitFor(() => expect(indicator()).toBe('unread'));
-});
-
-/* Both kinds of row take their dot from `activity.cards`; `state` / `runtime.status`
- * is the session reading the harness leaves at `turn_pending` long after a turn ended. */
-it('conversation rows read activity.cards, not session state', async () => {
-  let cards: ActivityCardWire[] = [];
-  const { client } = setup(request => {
-    if (request.method === 'GET' && request.path === CONVERSATIONS) return ok([assistantRow({ state: 'turn_pending' })]);
-    if (request.path === '/api/v1/tracks/w1') return ok({ track: TRACK, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true,
-      cards: [PLANNER_CARD, ASSISTANT_CARD, WORKER_CARD], overlays: [trackActivityOverlay({ cards })] });
-    return undefined;
-  }, undefined, undefined, receiptKernel());
-  const row = () => screen.getByRole('button', { name: /^Conversation Assistant(?:,|$)/ });
-  const indicator = () => row().closest('li')?.querySelector('[data-nc-activity]')?.getAttribute('data-nc-activity');
-  await screen.findByRole('button', { name: /^Conversation Assistant(?:,|$)/ });
-  expect(indicator()).toBeUndefined();
-  expect(row().getAttribute('aria-label')).toBe('Conversation Assistant');
-  expect(row().hasAttribute('aria-describedby')).toBe(false);
-
-  cards = [{ card_id: ASSISTANT_CARD.id, state: 'working' }];
-  await act(async () => { await client.invalidateQueries({ queryKey: ['track', 'w1'] }); });
-  await waitFor(() => expect(indicator()).toBe('working'));
-  expect(row().getAttribute('aria-label')).toBe('Conversation Assistant, working');
-  expect(row().hasAttribute('aria-describedby')).toBe(false);
-
-  cards = [{ card_id: ASSISTANT_CARD.id, state: 'failed' }];
-  await act(async () => { await client.invalidateQueries({ queryKey: ['track', 'w1'] }); });
-  await waitFor(() => expect(indicator()).toBe('failed'));
-  expect(row().getAttribute('aria-label')).toBe('Conversation Assistant');
-  expect(document.getElementById(row().getAttribute('aria-describedby') ?? '')?.textContent).toBe('Needs attention');
-
-  cards = [{ card_id: ASSISTANT_CARD.id, state: 'input' }];
-  await act(async () => { await client.invalidateQueries({ queryKey: ['track', 'w1'] }); });
-  await waitFor(() => expect(indicator()).toBe('attention'));
-  expect(document.getElementById(row().getAttribute('aria-describedby') ?? '')?.textContent).toBe('Needs input');
-});
-
-it('the injected planner row reads activity.cards and last_turn_completed_ms', async () => {
-  let cards: ActivityCardWire[] = [];
-  let updatedAtMs = 50;
-  let lastTurnCompletedMs: number | undefined;
-  const { client } = setup(request => {
-    if (request.path === '/api/v1/tracks/w1') return ok({ track: TRACK, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true,
-      cards: [{ ...PLANNER_CARD, runtime: { worker_session_id: 'planner-live', kind: 'codex', status: 'turn_pending',
-        updated_at_ms: updatedAtMs, ...(lastTurnCompletedMs === undefined ? {} : { last_turn_completed_ms: lastTurnCompletedMs }) } }],
-      overlays: [trackActivityOverlay({ cards })] });
-    if ((request.path.startsWith('/api/v1/sessions/card-planner/items') && !request.path.includes('view='))) return ok(historicalConversationPage(conversationCardId(request.path), [
-      harnessMessage(40, 'agentMessage', { type: 'agentMessage', text: 'Completed planner answer.' }),
-    ], null));
-    return undefined;
-  }, undefined, undefined, receiptKernel());
-  const row = () => screen.getByRole('button', { name: /^Conversation Planner chat(?:,|$)/ });
-  const indicator = () => row().closest('li')?.querySelector('[data-nc-activity]')?.getAttribute('data-nc-activity');
-  const refetch = () => act(async () => { await client.invalidateQueries({ queryKey: ['track', 'w1'] }); });
-  await screen.findByRole('button', { name: /^Conversation Planner chat(?:,|$)/ });
-  // `runtime.status: 'turn_pending'` with no verdict is not working.
-  expect(indicator()).toBeUndefined();
-  expect(row().getAttribute('aria-label')).toBe('Conversation Planner chat');
-
-  cards = [{ card_id: PLANNER_CARD.id, state: 'working' }];
-  await refetch();
-  await waitFor(() => expect(indicator()).toBe('working'));
-  expect(row().getAttribute('aria-label')).toBe('Conversation Planner chat, working');
-
-  // Read it once, so the receipt has a point to compare against…
-  cards = [];
-  lastTurnCompletedMs = 50;
-  await refetch();
-  await waitFor(() => expect(indicator()).toBe('unread'));
-  fireEvent.click(row());
-  await screen.findByText('Completed planner answer.');
-  await waitFor(() => expect(indicator()).toBeUndefined());
-  fireEvent.click(screen.getByRole('button', { name: 'Close conversation' }));
-  // …then `updated_at_ms` moving on its own is not unread…
-  updatedAtMs = 70;
-  await refetch();
-  await waitFor(() => expect(client.getQueryData<{ cards: { runtime?: { updated_at_ms?: number } }[] }>(['track', 'w1'])
-    ?.cards[0]?.runtime?.updated_at_ms).toBe(70));
-  expect(indicator()).toBeUndefined();
-  // …and a newer completion is.
-  lastTurnCompletedMs = 80;
-  await refetch();
-  await waitFor(() => expect(indicator()).toBe('unread'));
-
-  cards = [{ card_id: PLANNER_CARD.id, state: 'failed' }];
-  await refetch();
-  await waitFor(() => expect(indicator()).toBe('failed'));
-  expect(row().getAttribute('aria-label')).toBe('Conversation Planner chat');
-  expect(document.getElementById(row().getAttribute('aria-describedby') ?? '')?.textContent).toBe('Planner · Needs attention');
-});
-
-it('an edited conversation retry cannot cross recovery after its reconciliation read completed', async () => {
-  vi.stubGlobal('__NC_BUNDLED__', true);
-  const access = new RecoveryAccess(); access.change('connected');
-  const { requests, client } = setup(request => request.method === 'POST' && request.path === CONVERSATIONS
-    ? failure(500, 'internal', 'unconfirmed first write') : undefined, undefined, access);
-  await screen.findByRole('button', { name: 'Conversation Planner chat' });
-  await openDraft(); await write('original words');
-  await screen.findByRole('button', { name: 'Try again' });
-  let reconciled = false;
-  const unsubscribe = client.getQueryCache().subscribe(event => {
-    if (event.type !== 'updated' || event.action.type !== 'success') return;
-    const [family] = event.query.queryKey as readonly unknown[];
-    if (family !== 'track-conversations') return;
-    // The production refresh publishes only after its synchronous receipt import.
-    // Invalidate recovery at that real read/publication boundary, before the caller continues.
-    reconciled = true;
-    access.invalidate('recovering'); access.change('connected');
-  });
-  try {
-    await write('edited words');
-    await waitFor(() => expect(reconciled).toBe(true));
-    await screen.findByRole('button', { name: 'Try again' });
-    expect(creates(requests, CONVERSATIONS)).toHaveLength(1);
-  } finally { unsubscribe(); }
-});
-
-
-const sideVersion = () => ok({ assistantProviders: true, conversationInitialInput: true, conversationSide: true, webCompatVersion: WEB_COMPAT_VERSION, minWebCompatVersion: WEB_COMPAT_VERSION, syncEventVersion: 1, dbInstanceId: 'side-db' });
-
-describe('side conversations', () => {
-  it('keeps the parent open, creates an independent child with a text snapshot and reopens it', async () => {
-    let child: Row & { sourceCardId: string } | null = null;
-    const { requests } = setup((request) => {
-      if (request.path === '/api/v1/bootstrap') return sideVersion();
-      if (request.path === CONVERSATIONS && request.method === 'POST') {
-        child = { ...derivedRow('w1', request), sourceCardId: ASSISTANT_CARD.id };
-        return created(child, request);
-      }
-      if (request.path === CONVERSATIONS) return ok([assistantRow(), ...(child === null ? [] : [child])]);
-      if ((request.path.startsWith(`/api/v1/sessions/${ASSISTANT_CARD.id}/items`) && !request.path.includes('view='))) return ok(historicalConversationPage(conversationCardId(request.path), [
-        harnessMessage(1, 'agentMessage', { id: 'reply', type: 'agentMessage', text: 'Parent explanation' }),
-      ], null));
-      return undefined;
-    });
-    fireEvent.click(await screen.findByRole('button', { name: 'Conversation Assistant' }));
-    await screen.findByText('Parent explanation');
-    await write('/side Why this design?');
-    const branch = await screen.findByRole('region', { name: 'Side conversation · Codex' });
-    await waitFor(() => expect(creates(requests, CONVERSATIONS)).toHaveLength(1));
-    expect(creates(requests, CONVERSATIONS)[0].body).toMatchObject({ text: 'Why this design?',
-      side: { source_card_id: ASSISTANT_CARD.id, context: 'Assistant: Parent explanation' } });
-    expect(screen.getByRole('complementary', { name: 'Assistant' })).toBeTruthy();
-    await waitFor(() => expect(within(branch).getByRole('combobox', { name: 'Message' }).getAttribute('contenteditable')).toBe('true'));
-    const field = within(branch).getByRole('combobox', { name: 'Message' });
-    await typeInto(field, 'Follow-up');
-    fireEvent.keyDown(field, { key: 'Enter' });
-    await waitFor(() => expect(requests.some((request) => request.method === 'POST'
-      && request.path === `/api/v1/sessions/${child!.id}/messages`)).toBe(true));
-    expect(requests.filter((request) => request.method === 'POST'
-      && request.path === `/api/v1/sessions/${ASSISTANT_CARD.id}/messages`)).toEqual([]);
-    fireEvent.click(within(branch).getByRole('button', { name: 'Close side conversation' }));
-    await waitFor(() => expect(screen.queryByRole('region', { name: 'Side conversation · Codex' })).toBeNull());
-    await completeAndSubmit('side');
-    await screen.findByRole('region', { name: 'Side conversation · Codex' });
-    expect(creates(requests, CONVERSATIONS)).toHaveLength(1);
-  });
-
-  it('keeps an unsent side draft separate from the parent composer', async () => {
-    setup((request) => request.path === '/api/v1/bootstrap' ? sideVersion() : undefined);
-    fireEvent.click(await screen.findByRole('button', { name: 'Conversation Assistant' }));
-    await waitFor(() => expect(messageField().getAttribute('contenteditable')).toBe('true'));
-    await waitFor(() => expect(drawerElement().querySelector('[data-nc-thread]')).not.toBeNull());
-    await completeAndSubmit('side');
-    const branch = await screen.findByRole('region', { name: 'Side conversation · Codex' });
-    const field = within(branch).getByRole('combobox', { name: 'Message' });
-    await typeInto(field, 'Unsent side words');
-    fireEvent.click(within(branch).getByRole('button', { name: 'Close side conversation' }));
-    await waitFor(() => expect(screen.queryByRole('region', { name: 'Side conversation · Codex' })).toBeNull());
-    expect(messageField().textContent).toBe('');
-    await completeAndSubmit('side');
-    const reopened = await screen.findByRole('region', { name: 'Side conversation · Codex' });
-    expect(within(reopened).getByRole('combobox', { name: 'Message' }).textContent).toBe('Unsent side words');
-  });
-});
-
-
-it('refuses side creation on an older server without sending the command to the parent', async () => {
-  const { requests } = setup((request) => request.path === '/api/v1/bootstrap'
-    ? ok({ webCompatVersion: 1, minWebCompatVersion: 1, syncEventVersion: 1, dbInstanceId: 'old-db' }) : undefined);
-  fireEvent.click(await screen.findByRole('button', { name: 'Conversation Assistant' }));
-  await waitFor(() => expect(messageField().getAttribute('contenteditable')).toBe('true'));
-  await write('/side Keep this question');
-  await screen.findByText('Side conversations require a server that reports support. Update or reconnect, then try again.');
-  expect(messageField().textContent).toBe('/side Keep this question');
-  expect(creates(requests, CONVERSATIONS)).toEqual([]);
-  expect(requests.filter((request) => request.method === 'POST' && request.path.endsWith('/messages'))).toEqual([]);
-});
-
-it('adopts a side conversation whose create reply was lost in its own draft slot', async () => {
-  let child: Row & { sourceCardId: string } | null = null;
-  const { requests } = setup((request) => {
-    if (request.path === '/api/v1/bootstrap') return sideVersion();
-    if (request.path === CONVERSATIONS && request.method === 'POST') {
-      child = { ...derivedRow('w1', request), sourceCardId: ASSISTANT_CARD.id };
-      return failure(500, 'internal', 'reply lost');
-    }
-    if (request.path === CONVERSATIONS) return ok([assistantRow(), ...(child === null ? [] : [child])]);
-    return undefined;
-  });
-  fireEvent.click(await screen.findByRole('button', { name: 'Conversation Assistant' }));
-  await waitFor(() => expect(messageField().getAttribute('contenteditable')).toBe('true'));
-  await write('/side Did it arrive?');
-  const branch = await screen.findByRole('region', { name: 'Side conversation · Codex' });
-  await waitFor(() => expect(within(branch).getByRole('combobox', { name: 'Message' }).getAttribute('contenteditable')).toBe('true'));
-  expect(creates(requests, CONVERSATIONS)).toHaveLength(1);
-  expect(screen.getByRole('complementary', { name: 'Assistant' })).toBeTruthy();
-  expect(within(branch).queryByText('reply lost')).toBeNull();
-});
-
-it.each(['parent', 'side'] as const)('interrupts only the focused %s pane when parent and side turns both run', async (focused) => {
-  const child = { ...assistantRow({ id: 'child-running', title: 'Running side', updatedAt: 40 }), sourceCardId: ASSISTANT_CARD.id };
-  const { requests } = setup((request) => {
-    if (request.path === '/api/v1/bootstrap') return sideVersion();
-    if (request.path === CONVERSATIONS) return ok([assistantRow(), child]);
-    if (request.path.includes('view=run')) return ok(historicalConversationRun({ card_id: pathCardId(request.path), worker_session_id: 'r',
-      phase: 'turn_running', model: null, reasoning_effort: null, permission_mode: pathCardId(request.path) === PLANNER_CARD.id ? 'never' : null, blocked_reason: null, manual_compact_supported: true, recovery: null, compact_outcome: null, context_usage_invalidated: false, running_turn: null }, 'idle', true));
-    if (request.path.endsWith('/interrupt')) return ok({ card_id: pathCardId(request.path), worker_session_id: 'r', stopped: true });
-    return undefined;
-  });
-  fireEvent.click(await screen.findByRole('button', { name: 'Conversation Assistant' }));
-  await waitFor(() => expect(messageField().getAttribute('contenteditable')).toBe('true'));
-  await waitFor(() => expect(drawerElement().querySelector('[data-nc-thread]')).not.toBeNull());
-  await completeAndSubmit('side');
-  const branch = await screen.findByRole('region', { name: 'Side conversation · Codex' });
-  const field = within(focused === 'side' ? branch : screen.getByRole('complementary', { name: 'Assistant' }))
-    .getByRole('combobox', { name: 'Message' });
-  await waitFor(() => expect(within(branch).getByRole('button', { name: 'Stop' })).toBeTruthy());
-  await waitFor(() => expect(within(screen.getByRole('complementary', { name: 'Assistant' })).getByRole('button', { name: 'Stop' })).toBeTruthy());
-  field.focus();
-  fireEvent.keyDown(field, { key: 'Escape' });
-  await waitFor(() => expect(requests.filter((request) => request.path.endsWith('/interrupt'))).toHaveLength(1));
-  const stoppedCard = focused === 'side' ? 'child-running' : ASSISTANT_CARD.id;
-  expect(requests.find((request) => request.path.endsWith('/interrupt'))?.path).toBe(`/api/v1/sessions/${stoppedCard}/interrupt`);
-  expect(screen.getByRole('complementary', { name: 'Assistant' })).toBeTruthy();
-});
-
-
-it('does not offer an ordinary /new draft in the side-only slot', async () => {
-  setup((request) => request.path === '/api/v1/bootstrap' ? sideVersion() : undefined);
-  fireEvent.click(await screen.findByRole('button', { name: 'Conversation Assistant' }));
-  await waitFor(() => expect(messageField().getAttribute('contenteditable')).toBe('true'));
-  await waitFor(() => expect(drawerElement().querySelector('[data-nc-thread]')).not.toBeNull());
-  await completeAndSubmit('side');
-  const branch = await screen.findByRole('region', { name: 'Side conversation · Codex' });
-  await typeInto(within(branch).getByRole('combobox', { name: 'Message' }), '/');
-  expect(screen.queryByRole('option', { name: /^new/ })).toBeNull();
-  expect(branch.isConnected).toBe(true);
-});
-
-it('consumes automatic side submission once before an exhausted retry key changes', async () => {
-  let child: Row & { sourceCardId: string } | null = null;
-  const { requests } = setup((request) => {
-    if (request.path === '/api/v1/bootstrap') return sideVersion();
-    if (request.path === CONVERSATIONS && request.method === 'POST') {
-      if (creates(requests, CONVERSATIONS).length === 1) return failure(409, 'idempotency_key_exhausted', 'key exhausted');
-      child = { ...derivedRow('w1', request), sourceCardId: ASSISTANT_CARD.id };
-      return created(child, request);
-    }
-    if (request.path === CONVERSATIONS) return ok([assistantRow(), ...(child === null ? [] : [child])]);
-    return undefined;
-  });
-  fireEvent.click(await screen.findByRole('button', { name: 'Conversation Assistant' }));
-  await waitFor(() => expect(messageField().getAttribute('contenteditable')).toBe('true'));
-  await write('/side Retry deliberately');
-  const retry = await screen.findByRole('button', { name: 'Try again' });
-  await act(async () => { await Promise.resolve(); });
-  expect(creates(requests, CONVERSATIONS)).toHaveLength(1);
-  fireEvent.click(retry);
-  await waitFor(() => expect(creates(requests, CONVERSATIONS)).toHaveLength(2));
-  expect(creates(requests, CONVERSATIONS)[1].body).toEqual(creates(requests, CONVERSATIONS)[0].body);
-});
-
-it('sends /compact to the selected conversation compaction endpoint without a chat input', async () => {
-  const { requests } = setup((request) => request.path.endsWith('/compact')
-    ? ok({ card_id: ASSISTANT_CARD.id, worker_session_id: 'r', started: true }) : undefined);
-  fireEvent.click(await screen.findByRole('button', { name: 'Conversation Assistant' }));
-  await screen.findByRole('complementary', { name: 'Assistant' });
-  await waitFor(() => expect(messageField().getAttribute('contenteditable')).toBe('true'));
-  await completeAndSubmit('compact');
-  await waitFor(() => expect(creates(requests, `/api/v1/sessions/${ASSISTANT_CARD.id}/compact`)).toHaveLength(1));
-  expect(creates(requests, `/api/v1/sessions/${ASSISTANT_CARD.id}/messages`)).toHaveLength(0);
-});
-
-it('compacts each selected conversation while another compaction request is pending', async () => {
-  const a = assistantRow({ title: 'Compact A' });
-  const b = assistantRow({ id: 'conv-assistant-2', title: 'Compact B' });
-  const answers = new Map<string, (response: ApiTransportResponse) => void>();
-  const { requests } = setup((request) => {
-    if (request.path === CONVERSATIONS) return ok([a, b]);
-    if (request.path.endsWith('/compact')) {
-      return new Promise<ApiTransportResponse>((resolve) => { answers.set(pathCardId(request.path), resolve); });
-    }
-    return undefined;
-  });
-  fireEvent.click(await screen.findByRole('button', { name: 'Conversation Compact A' }));
-  await screen.findByRole('complementary', { name: 'Compact A' });
-  await waitFor(() => expect(messageField().getAttribute('contenteditable')).toBe('true'));
-  await completeAndSubmit('compact');
-  await waitFor(() => expect(creates(requests, `/api/v1/sessions/${a.id}/compact`)).toHaveLength(1));
-  fireEvent.click(screen.getByRole('button', { name: 'Close conversation' }));
-  fireEvent.click(await screen.findByRole('button', { name: 'Conversation Compact B' }));
-  await screen.findByRole('complementary', { name: 'Compact B' });
-  await waitFor(() => expect(messageField().getAttribute('contenteditable')).toBe('true'));
-  await completeAndSubmit('compact');
-  await waitFor(() => expect(creates(requests, `/api/v1/sessions/${b.id}/compact`)).toHaveLength(1));
-  act(() => { answers.get(a.id)?.(ok({ card_id: a.id, worker_session_id: 'r-a', started: true })); });
-  await screen.findByText('Compacting conversation context…');
-  act(() => { answers.get(b.id)?.(ok({ card_id: b.id, worker_session_id: 'r-b', started: true })); });
-  await waitFor(() => expect(screen.queryByText('Compacting conversation context…')).toBeNull());
-});
-
-it('retires pending metadata after agent-only history on open and close', async () => {
-  let title: string | null = 'First pending';
-  const { client } = setup(request => {
-    if (request.path === CONVERSATIONS) return ok([assistantRow({ title })]);
-    if (isHistoryPath(request.path)) return ok(historicalConversationPage(conversationCardId(request.path), [harnessMessage(1, 'agentMessage', { text: 'Reply to a system-only turn' })], null));
-    return undefined;
-  });
-  fireEvent.click(await screen.findByRole('button', { name: 'Conversation First pending' }));
-  await screen.findByText('Reply to a system-only turn');
-  fireEvent.click(screen.getByRole('button', { name: 'Close conversation' }));
-  await screen.findByRole('button', { name: 'Conversation First pending' });
-  title = null;
-  await act(async () => { await client.invalidateQueries({ queryKey: ['track-conversations', 'w1'] }); });
-  expect(client.getQueryData(['track-conversations', 'w1'])).toMatchObject([{ title: null }]);
-  fireEvent.click(await screen.findByRole('button', { name: 'Conversation Assistant' }));
-  await screen.findByRole('complementary', { name: 'Assistant' });
-  fireEvent.click(screen.getByRole('button', { name: 'Close conversation' }));
-  await screen.findByRole('button', { name: 'Conversation Assistant' });
-});
-
-it.each(['reset', 'replace'] as const)('honors null metadata after confirmed input %s even while history is stale', async (change) => {
-  let title: string | null = 'Confirmed first input';
-  const { client } = setup(request => {
-    if (request.path === CONVERSATIONS) return ok([assistantRow({ title })]);
-    if (isHistoryPath(request.path)) return ok(historicalConversationPage(conversationCardId(request.path), [harnessMessage(1, 'userMessage', { content: [{ text: 'Confirmed first input' }] })], null));
-    return undefined;
-  });
-  fireEvent.click(await screen.findByRole('button', { name: 'Conversation Confirmed first input' }));
-  await screen.findByRole('complementary', { name: 'Confirmed first input' });
-  title = null;
-  const data = { worker_session_id: 'r', card_id: ASSISTANT_CARD.id, track_id: 'w1' };
-  const plan = invalidationPlanFor(change === 'reset'
-    ? { ev: 'harness.transcript.cleared', data: { ...data, cleared_item_count: 1, cleared_params_bytes: 20, card_age_ms_at_clear: 1 } }
-    : { ev: 'harness.transcript.rewound', data: { ...data, turn_id: 'old-turn', removed_item_count: 1 } });
-  act(() => { applyEventEffects(client, [{ type: 'write-through', writes: plan.writeThrough }, { type: 'invalidate', keys: plan.invalidate }]); });
-  await screen.findByRole('complementary', { name: 'Assistant' });
-  fireEvent.click(screen.getByRole('button', { name: 'Close conversation' }));
-  await screen.findByRole('button', { name: 'Conversation Assistant' });
-});
-
-it('keeps attachment-only metadata unnamed and manual titles authoritative on open and close', async () => {
-  let title: string | null = null;
-  const { client } = setup(request => {
-    if (request.path === CONVERSATIONS) return ok([assistantRow({ title })]);
-    if (isHistoryPath(request.path)) return ok(historicalConversationPage(conversationCardId(request.path), [
-      { ...harnessMessage(1, 'userMessage', {}), input_segments: [{ presentation: 'user', text: '', attachments: [{ id: 'a.png', contentType: 'image/png', size: 3, url: '/api/cards/conv-assistant-1/planner/attachments/a.png' }] }] },
-      harnessMessage(2, 'userMessage', { content: [{ text: 'Later text must not name the conversation' }] }),
-    ], null));
-    return undefined;
-  });
-  fireEvent.click(await screen.findByRole('button', { name: 'Conversation Assistant' }));
-  await screen.findAllByText('Later text must not name the conversation', TRANSCRIPT_TEXT);
-  await screen.findByRole('complementary', { name: 'Assistant' });
-  title = 'Manual title';
-  await act(async () => { await client.invalidateQueries({ queryKey: ['track-conversations', 'w1'] }); });
-  await screen.findByRole('complementary', { name: 'Manual title' });
-  fireEvent.click(screen.getByRole('button', { name: 'Close conversation' }));
-  await screen.findByRole('button', { name: 'Conversation Manual title' });
-});
-
-it('keeps first confirmed server metadata through close and a cold history read', async () => {
-  let confirmed = false;
-  let holdHistory = false;
-  const { client } = setup(request => {
-    if (request.path === CONVERSATIONS) return ok([assistantRow({ title: confirmed ? 'First confirmed sentence' : null })]);
-    if (isHistoryPath(request.path)) return holdHistory ? new Promise(() => undefined)
-      : ok(historicalConversationPage(conversationCardId(request.path), confirmed ? [harnessMessage(1, 'userMessage', { content: [{ text: 'First confirmed sentence' }] })] : [], null));
-    if (request.path.endsWith('/messages')) {
-      confirmed = true;
-      return ok({ card_id: ASSISTANT_CARD.id, worker_session_id: 'r' });
-    }
-    return undefined;
-  });
-  fireEvent.click(await screen.findByRole('button', { name: 'Conversation Assistant' }));
-  await waitFor(() => expect(messageField().getAttribute('contenteditable')).toBe('true'));
-  await write('First confirmed sentence');
-  await waitFor(() => expect(client.getQueryData(['track-conversations', 'w1'])).toMatchObject([{ title: 'First confirmed sentence' }]));
-  fireEvent.click(screen.getByRole('button', { name: 'Close conversation' }));
-  const named = await screen.findByRole('button', { name: 'Conversation First confirmed sentence' });
-  holdHistory = true;
-  client.removeQueries({ queryKey: cachedHistoryKey(client, ASSISTANT_CARD.id) });
-  fireEvent.click(named);
-  await screen.findByRole('complementary', { name: 'First confirmed sentence' });
-});
+  await pickAssistant();
+}

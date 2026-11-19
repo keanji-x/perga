@@ -1,3 +1,4 @@
+import { fixtureSnapshot, fixtureSession, fixtureTrack } from './session-contract-fixture.ts';
 import { historicalConversationPage, conversationCardId, historicalConversationRun } from './conversation-read-data.ts';
 import { prepareReportDocument } from '../../features/report/document/preparation.ts';
 // @vitest-environment jsdom
@@ -14,29 +15,19 @@ import { APP_BASEPATH, createAppRouter } from './public.tsx';
 import { bootTestCardRuntime } from './test-card-runtime.ts';
 
 const AREA = { id: 'c1', name: 'Work', color: '#000', sort: 1, kind: 'user', created_at: 1, updated_at: 1 };
-const TRACK = { workspace: { isolation: 'none' as const, kind: 'attached' as const, path: '/tmp', frozen_at: null }, id: 'w1', area_id: 'c1', title: 'Release', sort: 1, cwd: '/tmp', pinned_at: null, closed_at: null, created_at: 1, updated_at: 2 };
+const TRACK = fixtureTrack('w1', { areaId: 'c1', title: 'Release', cwd: '/tmp', sortOrder: 1, closedAtMs: null, createdAtMs: 1, updatedAtMs: 2 });
 const PLANNER = { id: 'planner-1', track_id: 'w1', kind: 'codex', title: 'Planner chat', sort: 1, payload: { planner_harness: true }, deletable: false, created_at: 1, updated_at: 2 };
-const ASSISTANT = { id: 'assistant-1', trackId: 'w1', title: 'Side chat', kind: 'track-assistant', provider: 'codex', state: 'idle', updatedAt: 2, archivedAt: null, lastTurnCompletedAt: null };
-const ASK = {
-  source: 'ask', key: 'ask:41', text: 'Which branch? / Notes?', at_ms: 5, ask_id: 41,
-  questions: [{ title: 'Which branch?', options: ['main', 'release'] }, { title: 'Notes?', options: [] }],
-  delivery: 'wake',
-};
-const activity = (items: readonly unknown[]) => ({
-  id: 'activity-w1', plugin_id: 'kernel', entity_kind: 'track', entity_id: TRACK.id, kind: 'activity',
-  payload: { schemaVersion: 4, working: false, attention: items.length > 0 ? 'input' : 'none', activity_at_ms: 5, items, cards: [] },
-  updated_at: 5,
-});
+const ASSISTANT = fixtureSession('assistant-1', 'w1', { title: 'Side chat' });
+const ASK = { id: '41', trackId: 'w1', status: 'open', delivery: 'wake', createdAtMs: 5,
+  questions: [{ question: 'Which branch?', options: ['main', 'release'], isMultiSelect: false }, { question: 'Notes?', options: [], isMultiSelect: false }] };
 const unauthorized = createUnauthorizedChannel({ enqueue: (task) => task() });
 
 function ok(body: unknown, status = 200): ApiTransportResponse {
   return { status, statusText: status === 204 ? 'No Content' : 'OK', body };
 }
 
-function setup({ reopen = false, refusal = false } = {}) {
-  let currentTrack = reopen ? { ...TRACK, closed_at: 42 } : TRACK;
-  const currentAsk = reopen ? { ...ASK, action: { kind: 'reopen_track', closed_at: 42 },
-    questions: [{ title: 'Continue this closed track?', options: ['Reopen and continue', 'Keep closed'] }] } : ASK;
+function setup() {
+  const currentTrack = TRACK;
   const requests: ApiRequest[] = [];
   const transport: ApiTransportPort = {
     async send(request) {
@@ -44,16 +35,11 @@ function setup({ reopen = false, refusal = false } = {}) {
       await Promise.resolve();
       if (request.path === '/api/v1/areas') return ok([AREA]);
       if (request.path === '/api/v1/areas/c1/tracks?includeClosed=true') return ok([currentTrack]);
-      /* The overlay still lists the ask after the answer: the projector's `overlay.set` has not landed yet. */
       if (request.path === '/api/v1/tracks/w1') return ok({
-        track: currentTrack, planner_revision: 0, can_reopen: currentTrack.closed_at !== null, can_admin: false, can_close: currentTrack.closed_at === null, cards: [PLANNER], overlays: [activity([currentAsk])],
+        ...fixtureSnapshot(currentTrack, [fixtureSession(PLANNER.id, TRACK.id, { title: PLANNER.title, isLead: true }), ASSISTANT]),
+        openAsks: [ASK],
       });
-      if (request.path === '/api/v1/tracks/w1/sessions') return ok([ASSISTANT]);
-      if (request.path === '/api/v1/tracks/w1/asks/41/answer') {
-        if (refusal) return { status: 400, statusText: 'Bad Request', body: { code: 'bad_request', error: 'The closure changed.' } };
-        if (reopen && (request.body as { answers: { option: number }[] }).answers[0].option === 0) currentTrack = { ...currentTrack, closed_at: null };
-        return ok(undefined, 204);
-      }
+      if (request.path === '/api/v1/tracks/w1/asks/41/answer') return ok(undefined, 204);
       if (request.path.includes('/items') && !request.path.includes('view=')) return ok(historicalConversationPage(conversationCardId(request.path), [], null));
       if (request.path.includes('view=run')) return ok(historicalConversationRun({
         card_id: conversationCardId(request.path), worker_session_id: 'runtime', phase: 'idle', model: null,
@@ -87,7 +73,7 @@ async function open(name: string) {
   return screen.findByRole('complementary', { name });
 }
 
-it('answers the open ask from the Planner composer and hides it before the overlay catches up', async () => {
+it('answers the open ask from the Planner composer and hides it before the aggregate catches up', async () => {
   const { requests } = setup();
   const drawer = await open('Planner chat');
   const ask = await within(drawer).findByRole('group', { name: 'The Planner asks' });
@@ -98,7 +84,7 @@ it('answers the open ask from the Planner composer and hides it before the overl
   const answer = requests.find((request) => request.path.endsWith('/answer'));
   expect(answer?.method).toBe('POST');
   expect(answer?.path).toBe('/api/v1/tracks/w1/asks/41/answer');
-  expect(answer?.body).toEqual({ answers: [{ option: 1 }, { text: 'Tag it 2.0' }] });
+  expect(answer?.body).toEqual({ answers: [{ option: 1, value: 'release' }, { text: 'Tag it 2.0', value: 'Tag it 2.0' }] });
   await waitFor(() => expect(within(drawer).queryByRole('group', { name: 'The Planner asks' })).toBeNull());
   /* The composer itself stays. */
   expect(within(drawer).getByRole('combobox', { name: 'Message' })).toBeTruthy();
@@ -109,26 +95,4 @@ it('asks nothing in a conversation that is not the Planner’s', async () => {
   const drawer = await open('Side chat');
   await within(drawer).findByRole('combobox', { name: 'Message' });
   expect(within(drawer).queryByRole('group', { name: 'The Planner asks' })).toBeNull();
-});
-
-
-it('reopens by clicking the canonical choice in the existing Planner drawer and refreshes authoritative lifecycle detail', async () => {
-  const { requests } = setup({ reopen: true });
-  const drawer = await open('Planner chat');
-  const ask = await within(drawer).findByRole('group', { name: 'The Planner asks' });
-  expect(screen.queryByRole('button', { name: /^Dismiss:/ })).toBeNull();
-  expect(within(ask).queryByRole('textbox', { name: 'Continue this closed track?' })).toBeNull();
-  fireEvent.click(within(ask).getByRole('button', { name: 'Reopen and continue' }));
-  await waitFor(() => expect(requests.find(request => request.path.endsWith('/answer'))?.body).toEqual({ answers: [{ option: 0 }] }));
-  await waitFor(() => expect(screen.queryAllByRole('status', { name: 'Track closed' })).toHaveLength(0));
-  expect(requests.filter(request => request.path === '/api/v1/tracks/w1' && request.method === 'GET').length).toBeGreaterThan(1);
-});
-
-it('keeps the canonical choices after a stale lifecycle refusal instead of locally settling the ask', async () => {
-  setup({ reopen: true, refusal: true });
-  const drawer = await open('Planner chat');
-  const ask = await within(drawer).findByRole('group', { name: 'The Planner asks' });
-  fireEvent.click(within(ask).getByRole('button', { name: 'Reopen and continue' }));
-  expect((await within(drawer).findByRole('alert')).textContent).toContain('closure changed');
-  expect(within(drawer).getByRole('button', { name: 'Keep closed' })).toBeTruthy();
 });

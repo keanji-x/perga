@@ -1,13 +1,12 @@
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
-import type { Conversation } from '../../../../core/domain/conversation.ts';
 import { queryKeys } from '../providers/queries.ts';
 import { openTerminalCommand, terminalCommandInput, setupWorkbench, terminalCard } from './terminal-workbench-fixture.tsx';
 
 afterEach(() => { cleanup(); document.getElementById('root')?.remove(); vi.restoreAllMocks(); });
 
-it.each(['main', 'draft', 'side'] as const)('dispatches /terminal from the %s pane to the latest committed card list and pending intent', async pane => {
+it.each(['main', 'draft'] as const)('dispatches /terminal from the %s pane to the latest committed card list and pending intent', async pane => {
   const fixture = setupWorkbench({ defer: true, failure: 'definite' });
   await userEvent.click(await screen.findByRole('button', { name: pane === 'draft' ? /^New conversation$/u : 'Conversation Main discussion' }));
   const command = async (input: HTMLElement, text: string) => {
@@ -15,24 +14,17 @@ it.each(['main', 'draft', 'side'] as const)('dispatches /terminal from the %s pa
     input.textContent = text; fireEvent.input(input);
     fireEvent.keyDown(input, { key: 'Enter', code: 'Enter' });
   };
-  if (pane === 'side') {
-    await waitFor(() => expect(document.querySelector('[data-nc-thread]')).not.toBeNull());
-    await command(await screen.findByRole('combobox', { name: 'Message' }), '/side');
-    await screen.findByRole('region', { name: 'Side conversation · Codex' });
-  }
-  const input = pane === 'side'
-    ? within(screen.getByRole('region', { name: 'Side conversation · Codex' })).getByRole('combobox', { name: 'Message' })
-    : await screen.findByRole('combobox', { name: 'Message' });
+  const input = await screen.findByRole('combobox', { name: 'Message' });
   if (pane === 'main') {
-    fixture.live.text = 'Streamed before terminal intent';
+    fixture.savedReply.text = 'Saved before terminal intent';
     await act(async () => { await fixture.client.refetchQueries({ queryKey: queryKeys.plannerRun('parent') }); });
-    await act(async () => { await fixture.client.refetchQueries({ queryKey: queryKeys.harnessLive('parent') }); });
-    await screen.findByText('Streamed before terminal intent');
+    await act(async () => { await fixture.client.refetchQueries({ queryKey: queryKeys.harnessItems('parent') }); });
+    await screen.findByText('Saved before terminal intent');
   }
   // The composer was already committed with an empty card list. A new list
   // must change the event implementation without freezing that initial intent.
   fixture.cards.push(terminalCard('arrived', { source: 'manual', in_workbench: true }));
-  await act(async () => { await fixture.client.invalidateQueries({ queryKey: queryKeys.trackDetail('workbench') }); });
+  await act(async () => { await fixture.client.invalidateQueries({ queryKey: queryKeys.trackTools('workbench') }); });
   // Query invalidation resolves before its observer notification commits.
   // Wait for the real inventory projection, independently of composer typing.
   await screen.findByRole('button', { name: /^arrived/ });
@@ -42,7 +34,7 @@ it.each(['main', 'draft', 'side'] as const)('dispatches /terminal from the %s pa
   expect(fixture.posts()).toHaveLength(0);
   await userEvent.click(screen.getByRole('button', { name: 'Hide terminal' }));
   fixture.cards.length = 0;
-  await act(async () => { await fixture.client.invalidateQueries({ queryKey: queryKeys.trackDetail('workbench') }); });
+  await act(async () => { await fixture.client.invalidateQueries({ queryKey: queryKeys.trackTools('workbench') }); });
   await waitFor(() => expect(screen.queryByRole('button', { name: /^arrived/ })).toBeNull());
   await command(input, '/terminal'); await command(input, '/terminal');
   await waitFor(() => expect(fixture.posts()).toHaveLength(1));
@@ -296,7 +288,7 @@ it('retains visible list-refresh fallbacks without attaching hidden unvisited te
   await terminalCommandInput();
   await openTerminalCommand();
   fixture.cards.splice(0, 1);
-  await act(async () => { await fixture.client.invalidateQueries({ queryKey: queryKeys.trackDetail('workbench') }); });
+  await act(async () => { await fixture.client.invalidateQueries({ queryKey: queryKeys.trackTools('workbench') }); });
   await waitFor(() => expect(document.querySelector('[data-nc-card-dock]:not([hidden])')?.getAttribute('data-nc-card-id')).toBe('second'));
   const second = document.querySelector('[data-nc-card-dock][data-nc-card-id="second"]');
   expect(second).not.toBeNull();
@@ -304,7 +296,7 @@ it('retains visible list-refresh fallbacks without attaching hidden unvisited te
   expect(document.querySelector('[data-nc-card-dock][data-nc-card-id="second"]')).toBe(second);
   expect(mount).toHaveBeenCalledTimes(2);
   fixture.cards.splice(0, 1);
-  await act(async () => { await fixture.client.invalidateQueries({ queryKey: queryKeys.trackDetail('workbench') }); });
+  await act(async () => { await fixture.client.invalidateQueries({ queryKey: queryKeys.trackTools('workbench') }); });
   await waitFor(() => expect(document.querySelector('[data-nc-card-dock][data-nc-card-id="second"]')).toBeNull());
   expect(document.querySelector('[data-nc-card-dock][data-nc-card-id="third"]')).toBeNull();
   expect(mount).toHaveBeenCalledTimes(2);
@@ -341,12 +333,12 @@ it.each(['starting', 'exited'] as const)('cold-opens a %s terminal from its URL 
   let release!: () => void;
   const secondaryReads = new Promise<void>(resolve => { release = resolve; });
   const fixture = setupWorkbench({ initialCard: 'cold', secondaryReads, cards: [{ ...terminalCard('cold', { source: 'manual', in_workbench: true }),
-    runtime: { worker_session_id: 'run-1', kind: 'terminal', status },
+    payload: { terminal_presentation: { source: 'manual', in_workbench: true } }, runtime: { worker_session_id: 'run-1', kind: 'terminal', status },
   }] });
   try {
     await screen.findByText(status === 'exited' ? 'Session exited.' : 'Starting terminal…');
     expect(fixture.router.state.location.search).toHaveProperty('card', 'cold');
-    expect(fixture.client.getQueryData(queryKeys.trackConversations('workbench'))).toBeUndefined();
+    expect(fixture.requests.some(request => request.path === '/api/v1/tracks/workbench/sessions')).toBe(false);
     await userEvent.click(screen.getByRole('button', { name: 'Hide terminal' }));
     await waitFor(() => expect(fixture.router.state.location.search).not.toHaveProperty('card'));
     await act(async () => { release(); await Promise.resolve(); });
@@ -382,51 +374,6 @@ it('omits dock deletion for kernel-owned cards while keeping hide available', as
   expect(document.querySelector('[data-nc-card-dock]')).toBe(dock);
   expect(fixture.requests.some(request => request.method === 'DELETE')).toBe(false);
 });
-
-it('does not acknowledge a side reply while Discussion is hidden by Terminal', async () => {
-  vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
-  const fixture = setupWorkbench({ cards: [terminalCard('shell', { source: 'manual', in_workbench: true })] });
-  await screen.findByRole('button', { name: 'Conversation Main discussion' });
-  const parent = fixture.client.getQueryData<Conversation[]>(queryKeys.trackConversations('workbench'))![0];
-  const side = { ...parent, id: 'side', title: 'Side discussion', sourceCardId: 'parent', lastTurnCompletedAt: 10 };
-  const receipts = (id: string) => fixture.requests.filter(request => request.path === `/api/read-receipts/conversation/${id}/read`).map(request => request.body);
-  act(() => { fixture.client.setQueryData(queryKeys.trackConversations('workbench'), [parent, side]); });
-  fireEvent.click(screen.getByRole('button', { name: 'Conversation Main discussion' }));
-  const input = await screen.findByRole('combobox', { name: 'Message' });
-  await waitFor(() => expect(input.getAttribute('contenteditable')).toBe('true'));
-  await waitFor(() => expect(document.querySelector('[data-nc-thread]')).not.toBeNull());
-  input.textContent = '/side'; fireEvent.input(input); fireEvent.keyDown(input, { key: 'Enter', code: 'Enter' });
-  await waitFor(() => expect(receipts('side')).toEqual([{ readThroughMs: 10 }]));
-  const retained = document.getElementById('conversation-side');
-  const sideInput = within(retained!).getByRole('combobox', { name: 'Message' });
-  await waitFor(() => expect(sideInput.getAttribute('contenteditable')).toBe('true'));
-  sideInput.textContent = 'keep this side draft'; fireEvent.input(sideInput);
-  await openTerminalCommand();
-  await screen.findByRole('button', { name: 'Hide terminal' });
-  await waitFor(() => expect(document.querySelector('[data-nc-terminal-card]')).not.toBeNull());
-  const host = document.querySelector('[data-nc-terminal-card]');
-  expect(retained?.closest('[hidden]')).not.toBeNull();
-  // The main receipt proves the same query observer update has committed. Cache
-  // publication alone can precede a render and is not a hidden-side assertion.
-  for (const at of [20, 30]) {
-    act(() => { fixture.client.setQueryData(queryKeys.trackConversations('workbench'),
-      [{ ...parent, lastTurnCompletedAt: at }, { ...side, lastTurnCompletedAt: at }]); });
-    await waitFor(() => expect(receipts('parent')).toContainEqual({ readThroughMs: at }));
-    const visibleReceipts = receipts('parent').length;
-    act(() => { document.dispatchEvent(new Event('visibilitychange')); });
-    await waitFor(() => expect(receipts('parent')).toHaveLength(visibleReceipts + 1));
-    expect(receipts('side')).toEqual([{ readThroughMs: 10 }]);
-  }
-  fireEvent.click(screen.getByRole('button', { name: 'Discussion' }));
-  await waitFor(() => expect(receipts('side')).toEqual([{ readThroughMs: 10 }, { readThroughMs: 30 }]));
-  expect(document.getElementById('conversation-side')).toBe(retained);
-  expect(document.querySelector('[data-nc-terminal-card]')).toBe(host);
-  expect(sideInput.textContent).toBe('keep this side draft');
-  fireEvent.click(screen.getByRole('button', { name: 'Discussion' }));
-  expect(receipts('side')).toHaveLength(2);
-  expect(fixture.requests.filter(request => request.method === 'POST' && !request.path.startsWith('/api/read-receipts/'))).toEqual([]);
-});
-
 
 it('keeps Agent terminals temporary and creates a manual terminal for an unqualified command', async () => {
   const fixture = setupWorkbench({ cards: [terminalCard('agent-shell', { source: 'agent', in_workbench: false })] });

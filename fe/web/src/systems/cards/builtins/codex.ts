@@ -1,6 +1,4 @@
 import type { CardComponentProps, CardEntry, KernelCardInput } from '../registry.js';
-import { isAssistantHarnessPayload } from './assistant.ts';
-import { isPlannerHarnessPayload } from './planner.ts';
 import { TerminalCardView } from './terminal-card.tsx';
 import { terminalSessionFromCard, cwdFromPayload, type TerminalCard } from './terminal.ts';
 
@@ -56,10 +54,7 @@ export const CODEX_CARD_ENTRY = Object.freeze({
   }),
   fromKernel: (card: KernelCardInput): CodexCard | null => (
     card.kind === 'codex'
-      && !isPlannerHarnessPayload(card.payload)
       && !isPlainChatPayload(card.payload)
-      /* `codex` is scanned before `assistant`, so without this clause this entry would claim every track-assistant card and the headless `ASSISTANT_CARD_ENTRY` would never be reached. */
-      && !isAssistantHarnessPayload(card.payload)
       ? Object.freeze({
         type: 'codex',
         id: card.id,

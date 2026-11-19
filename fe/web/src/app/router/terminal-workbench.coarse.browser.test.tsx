@@ -42,7 +42,7 @@ it('preserves the ordinary phone terminal card input and confirmed deletion path
   act(() => sockets[0].open());
   const input = await screen.findByRole('textbox', { name: 'Terminal input' });
   input.focus(); await userEvent.keyboard('pwd');
-  expect(sockets[0].sent.some(frame => frame[0] === 1)).toBe(true);
+  expect(sockets[0].sent.some(frame => frame[0] === 0x01)).toBe(true);
   expect(document.querySelectorAll('[data-nc-terminal-card]')).toHaveLength(1);
   await page.getByRole('button', { name: 'Delete card phone' }).click();
   const dialog = screen.getByRole('dialog', { name: 'Delete this card?' });

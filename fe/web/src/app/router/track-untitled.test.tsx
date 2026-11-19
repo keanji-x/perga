@@ -1,4 +1,6 @@
-import { historicalConversationRun, historicalConversationPage, conversationCardId } from './conversation-read-data.ts';
+import { fixtureSnapshot, fixtureSession, fixtureTrack, fixtureBootstrap } from './session-contract-fixture.ts';
+import { conversationCardId } from './conversation-read-data.ts';
+import { sessionInput, sessionPage } from './conversation-session-data.ts';
 import { prepareReportDocument } from '../../features/report/document/preparation.ts';
 // @vitest-environment jsdom
 // A track that starts with no name and no words in it: creating lands in the planner
@@ -18,22 +20,16 @@ import { bootTestCardRuntime } from './test-card-runtime.ts';
 
 const unauthorized = createUnauthorizedChannel({ enqueue: (task) => task() });
 
-const AREA = { id: 'c1', name: 'Work', color: '#000', sort: 1, kind: 'user', created_at: 1, updated_at: 1 };
+const AREA = { id: 'c1', name: 'Work', color: '#000', sortOrder: 1, kind: 'user', createdAtMs: 1, updatedAtMs: 1 };
 /* `title: ''` is what the kernel stores when the POST omits the key. */
-const TRACK = { workspace: { isolation: 'none' as const, kind: 'attached' as const, path: '/tmp', frozen_at: null },
-  id: 'w1', area_id: 'c1', title: '', sort: 1, cwd: '/tmp',
-  pinned_at: null, closed_at: null, created_at: 1, updated_at: 2,
-};
+const TRACK = fixtureTrack('w1', { areaId: 'c1', title: '', cwd: '/tmp', sortOrder: 1, closedAtMs: null, createdAtMs: 1, updatedAtMs: 2 });
 /* A named track, so the PATCH case has something to clear. */
 const NAMED_TRACK = { ...TRACK, title: 'Test track' };
 /* The track a *second* create answers with, so the intent can be stated while the
    reader is standing on some other track, which is still mounted. */
-const OTHER_TRACK = { ...TRACK, id: 'w2', sort: 2, created_at: 3, updated_at: 3 };
-const PLANNER_CARD = {
-  id: 'card-planner', track_id: 'w1', kind: 'codex', title: 'Planner chat', sort: 1,
-  payload: { planner_harness: true }, deletable: true, created_at: 1, updated_at: 2,
-};
-const OTHER_PLANNER_CARD = { ...PLANNER_CARD, id: 'card-planner-w2', track_id: 'w2' };
+const OTHER_TRACK = { ...TRACK, id: 'w2', sortOrder: 2, createdAtMs: 3, updatedAtMs: 3 };
+const PLANNER_SESSION = fixtureSession('card-planner', 'w1', { title: 'Planner chat', isLead: true });
+const OTHER_PLANNER_SESSION = { ...PLANNER_SESSION, id: 'card-planner-w2', trackId: 'w2' };
 
 function ok(body: unknown): ApiTransportResponse {
   return { status: 200, statusText: 'OK', body };
@@ -41,11 +37,11 @@ function ok(body: unknown): ApiTransportResponse {
 
 type Options = {
   track?: typeof TRACK;
-  cards?: readonly unknown[];
+  sessions?: readonly ReturnType<typeof fixtureSession>[];
   /** What `POST /api/tracks` answers with. Defaults to the track already listed,
    *  which is the single-track shape most of these cases want. */
   created?: typeof TRACK;
-  createdCards?: readonly unknown[];
+  createdSessions?: readonly ReturnType<typeof fixtureSession>[];
   /** Start with the created track's detail failing, so the route body never mounts;
    *  flipped back through the returned `gate`. */
   createdDetailFails?: boolean;
@@ -53,15 +49,14 @@ type Options = {
 
 function setup(options: Options = {}) {
   const track = options.track ?? TRACK;
-  const cards = options.cards ?? [PLANNER_CARD];
+  const sessions = options.sessions ?? [PLANNER_SESSION];
   const created = options.created ?? track;
-  const createdCards = options.createdCards ?? cards;
+  const createdSessions = options.createdSessions ?? sessions;
   const gate = { createdDetailFails: options.createdDetailFails ?? false };
-  const details = new Map<string, { track: typeof TRACK; cards: readonly unknown[] }>([
-    [track.id, { track, cards }],
-    [created.id, { track: created, cards: createdCards }],
+  const details = new Map<string, { track: typeof TRACK; sessions: readonly ReturnType<typeof fixtureSession>[] }>([
+    [track.id, { track, sessions }],
+    [created.id, { track: created, sessions: createdSessions }],
   ]);
-  let postedMessage = false;
   const requests: ApiRequest[] = [];
   const values = new Map<string, string>();
   const transport: ApiTransportPort = {
@@ -84,29 +79,13 @@ function setup(options: Options = {}) {
         if (detail.track.id === created.id && created.id !== track.id && gate.createdDetailFails) {
           return Promise.resolve({ status: 500, statusText: 'Server Error', body: {} });
         }
-        return Promise.resolve(ok({
-          track: detail.track, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true, cards: detail.cards, overlays: [],
-        }));
+        return Promise.resolve(ok(fixtureSnapshot(detail.track, [...detail.sessions])));
       }
-      if (request.path.includes('view=run')) {
-        return Promise.resolve(ok(historicalConversationRun({ card_id: conversationCardId(request.path), worker_session_id: 'r', phase: 'idle', manual_compact_supported: true, recovery: null, compact_outcome: null, context_usage_invalidated: false }, 'idle', true)));
+      if (request.path.startsWith('/api/v1/bootstrap')) return Promise.resolve(ok(fixtureBootstrap()));
+      if (request.method === 'POST' && request.path.endsWith('/messages')) {
+        return Promise.resolve(ok(sessionInput(conversationCardId(request.path))));
       }
-      if (request.method === 'POST' && (request.path.endsWith('/messages') || request.path.endsWith('/planner/input'))) {
-        postedMessage = true;
-        const cardId = conversationCardId(request.path);
-        return Promise.resolve(ok({ card_id: cardId, worker_session_id: cardId, entry_id: 'entry-1' }));
-      }
-      if (request.path.includes('/items') && !request.path.includes('view=')) {
-        const items = postedMessage ? [{
-          id: 1, worker_session_id: 'r', card_id: conversationCardId(request.path), track_id: created.id, thread_id: 't',
-          turn_id: null, turn_error_text: null, item_uuid: 'entry-1', item_type: 'userMessage', method: 'item/completed',
-          params: JSON.stringify({ item: { id: 'entry-1', type: 'userMessage', content: [{ type: 'text', text: 'Read it' }] } }),
-          input_segments: [{ presentation: 'user', text: 'Read it', attachments: [] }],
-          created_at_ms: 1,
-        }] : [];
-        return Promise.resolve(ok(historicalConversationPage(conversationCardId(request.path), items, null)));
-      }
-      if (request.path === '/api/settings') return Promise.resolve(ok({}));
+      if (request.path.includes('/items?')) return Promise.resolve(ok(sessionPage(fixtureSession(conversationCardId(request.path), 'w1'))));
       return Promise.resolve(ok([]));
     },
   };
@@ -130,9 +109,9 @@ function setup(options: Options = {}) {
     router,
     gate,
     /** Change what the next read of a track's detail answers with. */
-    setCardsOf: (trackId: string, next: readonly unknown[]) => {
+    setSessionsOf: (trackId: string, next: readonly ReturnType<typeof fixtureSession>[]) => {
       const detail = details.get(trackId);
-      if (detail !== undefined) details.set(trackId, { track: detail.track, cards: next });
+      if (detail !== undefined) details.set(trackId, { track: detail.track, sessions: next });
     },
     client,
   };
@@ -191,7 +170,7 @@ describe('creating a track lands in its planner conversation', () => {
   /* The rail's per-area `+` is rendered above the route outlet, so the track being
    * left is still mounted when the intent is stated. */
   it('opens the planner conversation of the new track when the create started on another track', async () => {
-    const { router } = setup({ created: OTHER_TRACK, createdCards: [OTHER_PLANNER_CARD] });
+    const { router } = setup({ created: OTHER_TRACK, createdSessions: [OTHER_PLANNER_SESSION] });
     await goToTrack(router, 'w1');
     await screen.findByRole('button', { name: 'Rename track' });
 
@@ -208,7 +187,7 @@ describe('creating a track lands in its planner conversation', () => {
    * a later visit is a new history entry and the mark is not on it. */
   it('does not open on a later visit when the landing never reached the track', async () => {
     const { router, gate } = setup({
-      created: OTHER_TRACK, createdCards: [OTHER_PLANNER_CARD], createdDetailFails: true,
+      created: OTHER_TRACK, createdSessions: [OTHER_PLANNER_SESSION], createdDetailFails: true,
     });
     await createATrack();
     await screen.findByRole('button', { name: 'Retry' });
@@ -227,7 +206,7 @@ describe('creating a track lands in its planner conversation', () => {
    * mark belongs to the entry and expires only by being redeemed. */
   it('opens the conversation when Back returns to the entry whose landing had failed', async () => {
     const { router, gate } = setup({
-      created: OTHER_TRACK, createdCards: [OTHER_PLANNER_CARD], createdDetailFails: true,
+      created: OTHER_TRACK, createdSessions: [OTHER_PLANNER_SESSION], createdDetailFails: true,
     });
     await createATrack();
     await screen.findByRole('button', { name: 'Retry' });
@@ -268,12 +247,12 @@ describe('creating a track lands in its planner conversation', () => {
    * mark does: the card arrives on a later read of the same entry, and the drawer
    * must still be shut. */
   it('opens nothing, and arms nothing, when the track has no planner card', async () => {
-    const { client, setCardsOf } = setup({ cards: [] });
+    const { client, setSessionsOf } = setup({ sessions: [] });
     await createATrack();
     await screen.findByRole('button', { name: 'Rename track' });
     expect(screen.queryByRole('complementary', { name: 'Planner chat' })).toBeNull();
 
-    setCardsOf('w1', [PLANNER_CARD]);
+    setSessionsOf('w1', [PLANNER_SESSION]);
     await act(async () => { await client.invalidateQueries(); });
     /* The row for the planner card is proof the second read landed, and the only
            place `Planner chat` may appear. */

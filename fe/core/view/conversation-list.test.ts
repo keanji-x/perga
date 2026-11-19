@@ -3,7 +3,7 @@ import type { Conversation } from '../domain/conversation.js';
 import { deriveConversationList } from './conversation-list.js';
 
 const conversation = (id: string): Conversation => ({ id, provider: 'codex', trackId: 'work', title: id,
-  kind: 'track-assistant', state: 'running', updatedAt: 1 });
+  kind: 'agent', isLead: false, state: 'running', updatedAt: 1 });
 
 it('keeps questions, failures and unread distinct from idle session state', () => {
   const rows = deriveConversationList({ conversations: ['input', 'failed', 'unread', 'idle'].map(conversation),

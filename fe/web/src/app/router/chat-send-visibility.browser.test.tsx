@@ -1,26 +1,20 @@
-import { humanPresentation, nativePresentation, presentationPage } from './conversation-read-data.ts';
+import { renderSessionFixture } from './conversation-session-fixture.tsx';
+import { sessionItem, sessionPage } from './conversation-session-data.ts';
+import { fixtureSession } from './session-contract-fixture.ts';
 import '../../styles/entry.css';
 import { act, cleanup } from '@testing-library/react';
 import { afterEach, expect, it } from 'vitest';
 import { commands, page, userEvent } from 'vitest/browser';
-import type { HarnessItem as TranscriptRow } from '../../../../core/api/generated/wire.ts';
+import type { SessionItemDto } from '../../../../core/api/perga-v1.ts';
 import type { ApiTransportResponse } from '../../../../core/api/types.ts';
 import { queryKeys } from '../providers/queries.ts';
-import { renderDailyFixture } from './daily-planner-fixture.tsx';
 
-const history: readonly TranscriptRow[] = Array.from({ length: 16 }, (_, index) => ({
-  id: index + 1, worker_session_id: 'runtime', card_id: 'daily-planner', track_id: 'daily',
-  thread_id: 'thread', turn_id: `turn-${Math.floor(index / 2)}`, turn_error_text: null,
-  item_uuid: `item-${index}`, item_type: index % 2 === 0 ? 'userMessage' : 'agentMessage', method: 'item/completed',
-  params: JSON.stringify({ item: index % 2 === 0 ? { type: 'userMessage', content: [{ text: `Question ${index / 2}` }] }
-    : { type: 'agentMessage', text: 'A reply with enough lines to make the conversation scroll. '.repeat(12) } }),
-  created_at_ms: index + 1,
-}));
-function conversationPage(rows: readonly TranscriptRow[]) {
-  return presentationPage(rows.map((row, index) => index % 2 === 0
-    ? humanPresentation('daily-planner', row.id, `question-${index / 2}`,
-      { user_id: 'visibility-user', display_name: 'Visibility User' }, `Question ${index / 2}`, row.created_at_ms)
-    : nativePresentation('daily-planner', row)));
+
+const history = Object.freeze(Array.from({ length: 16 }, (_, index) => sessionItem('daily-planner', index + 1,
+  index % 2 === 0 ? `Question ${index / 2}` : 'A reply with enough lines to make the conversation scroll. '.repeat(12),
+  index % 2 === 0 ? 'user' : 'assistant_text', `turn-${Math.floor(index / 2)}`)));
+function conversationPage(rows: readonly SessionItemDto[]) {
+  return sessionPage(fixtureSession('daily-planner', 'daily'), [...rows]);
 }
 const pane = () => document.querySelector<HTMLElement>('[data-nc-drawer-scroll]')!;
 const remaining = () => pane().scrollHeight - pane().scrollTop - pane().clientHeight;
@@ -40,17 +34,10 @@ it.each([
   let finish: (response: ApiTransportResponse) => void = () => {};
   const held = new Promise<ApiTransportResponse>((resolve) => { finish = resolve; });
   let rows = history;
-  const { client, requests } = renderDailyFixture({ initial, identity: { userId: 'visibility-user', displayName: 'Visibility User', role: 'owner', sessionId: 'visibility-session' }, reply: (request) => {
+  const { client, requests } = renderSessionFixture({ initial, identity: { userId: 'local-owner', displayName: 'Visibility User', role: 'owner', sessionId: 'visibility-session' }, reply: (request) => {
     const url = new URL(request.path, 'http://fixture');
-    if (url.pathname.endsWith('/planner/run') && url.searchParams.get('contract') === 'conversation_v1') return { status: 200, statusText: 'OK', body: {
-      card_id: 'daily-planner', worker_session_id: 'runtime', phase: 'idle', model: null, reasoning_effort: null,
-      permission_mode: 'never', blocked_reason: null, pending: [], pending_overflow: 0, recovery: null, manual_compact_supported: false,
-      compact_outcome: null, context_usage_invalidated: false, running_turn: null,
-      input_contract: 'canonical', runtime_state: 'idle', history_replacement_supported: false, terminal_outcome:null,terminal_timeout: null,
-      pending_inputs: [], active_input: null, native_turn_id: null,
-    } };
-    if (url.pathname.endsWith('/harness/items') && url.searchParams.get('contract') === 'conversation_v1') return { status: 200, statusText: 'OK', body: conversationPage(rows) };
-    if (request.path.endsWith('/planner/input')) return held;
+    if (url.pathname.endsWith('/items') && !url.searchParams.has('view')) return { status: 200, statusText: 'OK', body: conversationPage(rows) };
+    if (request.path.endsWith('/messages')) return held;
     return undefined;
   } });
   if (initial !== '/') await page.getByRole('button', { name: /Conversation Daily Planner conversation/ }).click();
@@ -70,7 +57,7 @@ it.each([
   await userEvent.keyboard('My fresh local message.');
   try {
     await page.getByRole('button', { name: 'Send', exact: true }).click();
-    await expect.poll(() => requests.filter((request) => request.path.endsWith('/planner/input')).length).toBe(1);
+    await expect.poll(() => requests.filter((request) => request.path.endsWith('/messages')).length).toBe(1);
     await expect.poll(() => document.querySelectorAll('[data-nc-turn="you"]').length).toBe(9);
     await frames();
     const message = page.getByText('My fresh local message.', { exact: true }).element().getBoundingClientRect();
@@ -83,7 +70,7 @@ it.each([
     await expect.poll(() => pane().scrollTop).toBe(before - 120);
     const parked = pane().scrollTop;
     rows = history.map((row, index) => index !== history.length - 1 ? row : {
-      ...row, params: JSON.stringify({ item: { type: 'agentMessage', text: 'Background reply growth. '.repeat(100) } }),
+      ...row, payload: { text: 'Background reply growth. '.repeat(100) },
     });
     await act(async () => { await client.refetchQueries({ queryKey: queryKeys.harnessItems('daily-planner') }); });
     await frames();
@@ -103,17 +90,10 @@ it('keeps the reading place when an existing send is retried under its same key'
   const held = new Promise<ApiTransportResponse>((resolve) => { finish = resolve; });
   let attempts = 0;
   const rejected: ApiTransportResponse = { status: 429, statusText: 'Too Many Requests', body: { code: 'rate_limited', error: 'Wait before retrying.' } };
-  const { requests } = renderDailyFixture({ initial: '/track/daily', identity: { userId: 'visibility-user', displayName: 'Visibility User', role: 'owner', sessionId: 'visibility-session' }, reply: (request) => {
+  const { requests } = renderSessionFixture({ initial: '/track/daily', identity: { userId: 'local-owner', displayName: 'Visibility User', role: 'owner', sessionId: 'visibility-session' }, reply: (request) => {
     const url = new URL(request.path, 'http://fixture');
-    if (url.pathname.endsWith('/planner/run') && url.searchParams.get('contract') === 'conversation_v1') return { status: 200, statusText: 'OK', body: {
-      card_id: 'daily-planner', worker_session_id: 'runtime', phase: 'idle', model: null, reasoning_effort: null,
-      permission_mode: 'never', blocked_reason: null, pending: [], pending_overflow: 0, recovery: null, manual_compact_supported: false,
-      compact_outcome: null, context_usage_invalidated: false, running_turn: null,
-      input_contract: 'canonical', runtime_state: 'idle', history_replacement_supported: false, terminal_outcome:null,terminal_timeout: null,
-      pending_inputs: [], active_input: null, native_turn_id: null,
-    } };
-    if (url.pathname.endsWith('/harness/items') && url.searchParams.get('contract') === 'conversation_v1') return { status: 200, statusText: 'OK', body: conversationPage(history) };
-    if (request.path.endsWith('/planner/input')) return ++attempts === 1 ? rejected : held;
+    if (url.pathname.endsWith('/items') && !url.searchParams.has('view')) return { status: 200, statusText: 'OK', body: conversationPage(history) };
+    if (request.path.endsWith('/messages')) return ++attempts === 1 ? rejected : held;
     return undefined;
   } });
   await page.getByRole('button', { name: /Conversation Daily Planner conversation/ }).click();
@@ -131,7 +111,7 @@ it('keeps the reading place when an existing send is retried under its same key'
     await page.getByRole('button', { name: 'Try again', exact: true }).click();
     await expect.poll(() => attempts).toBe(2);
     await frames();
-    const posts = requests.filter((request) => request.path.endsWith('/planner/input'));
+    const posts = requests.filter((request) => request.path.endsWith('/messages'));
     const key = posts[0].headers?.['Idempotency-Key'];
     expect(key).toBeTruthy();
     expect(posts[1].headers?.['Idempotency-Key']).toBe(key);

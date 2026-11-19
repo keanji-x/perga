@@ -1,3 +1,4 @@
+import { trackAggregateSnapshotDtoSchema } from '../core/api/perga-v1.ts';
 import { expect, test, type Page } from '@playwright/test';
 
 import { createArea, createTrack } from './helpers/seed.js';
@@ -13,7 +14,7 @@ function captureBrowserErrors(page: Page): string[] {
 
 test.beforeEach(() => { createdAreaIds.length = 0; });
 test.afterEach(async ({ request }) => {
-  for (const id of createdAreaIds) await request.delete(`/api/areas/${id}`);
+  for (const id of createdAreaIds) await request.delete(`/api/v1/areas/${id}`);
   createdAreaIds.length = 0;
 });
 
@@ -23,7 +24,7 @@ test('reopens a closed track from Track actions', async ({ page, request }) => {
   createdAreaIds.push(area.id);
   const track = await createTrack(request, area.id, 'Reopen me');
 
-  const closed = await request.patch(`/api/tracks/${track.id}`, {
+  const closed = await request.patch(`/api/v1/tracks/${track.id}`, {
     data: { closed: true },
   });
   expect(closed.ok()).toBe(true);
@@ -35,10 +36,10 @@ test('reopens a closed track from Track actions', async ({ page, request }) => {
 
   await expect(page.getByRole('status', { name: 'Track closed' })).toHaveCount(0);
   await expect.poll(async () => {
-    const response = await request.get(`/api/tracks/${track.id}`);
-    const detail = await response.json() as { track: { closed_at: number | null } };
+    const response = await request.get(`/api/v1/tracks/${track.id}`);
+    const detail = trackAggregateSnapshotDtoSchema.parse(await response.json());
     return detail.track;
-  }).toEqual(expect.objectContaining({ closed_at: null }));
+  }).toEqual(expect.objectContaining({ closedAtMs: null }));
   expect(errors).toEqual([]);
 });
 
@@ -56,8 +57,8 @@ test('closes an open track from Track actions; the rail keeps it while open and 
 
   await expect(page.getByRole('status', { name: 'Track closed' })).toBeVisible();
   await expect.poll(async () => {
-    const response = await request.get(`/api/tracks/${track.id}`);
-    return (await response.json() as { track: { closed_at: number | null } }).track.closed_at;
+    const response = await request.get(`/api/v1/tracks/${track.id}`);
+    return (trackAggregateSnapshotDtoSchema.parse(await response.json())).track.closedAtMs;
   }).not.toBeNull();
   // Open in the view, so the rail keeps the closed row.
   await expect(railRow).toBeVisible();

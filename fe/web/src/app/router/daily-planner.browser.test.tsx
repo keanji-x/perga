@@ -1,11 +1,11 @@
-import { historicalConversationRun, historicalConversationPage, conversationCardId, humanPresentation, nativePresentation, presentationPage } from './conversation-read-data.ts';
+import { fixtureSession, fixtureTrack, fixtureSnapshot } from './session-contract-fixture.ts';
+import { sessionPage, sessionItem, sessionTurn } from './conversation-session-data.ts';
 import { withFontRoleProbe } from '../../../../tools/styles/font-role-fixture.ts';
 import '../../styles/entry.css';
-import { act, cleanup, fireEvent } from '@testing-library/react';
+import { cleanup } from '@testing-library/react';
 import { afterEach, expect, it } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
-import { transcript } from '../../../../core/events/query-keys.ts';
-import { renderDailyFixture, renderWorkingDailySideFixture } from './daily-planner-fixture.tsx';
+import { renderDailyFixture } from './daily-planner-fixture.tsx';
 
 afterEach(async () => { cleanup(); await page.viewport(1280, 800); });
 
@@ -98,14 +98,9 @@ it('keeps the daily report usable at phone width', async () => {
 
 it.each([1000, 768, 600])('keeps the composer inside its conversation card with a long transcript at height %s', async (height) => {
   await page.viewport(1440, height);
-  const history = Array.from({ length: 30 }, (_, index) => ({
-    id: index + 1, worker_session_id: 'runtime', card_id: 'daily-planner', track_id: 'daily', thread_id: 'thread',
-    turn_id: null, turn_error_text: null, item_uuid: null, item_type: 'agentMessage', method: 'item/completed',
-    params: JSON.stringify({ item: { text: `Reply ${index + 1}.\n\n${'A detailed progress update with enough content to need scrolling. '.repeat(12)}` } }),
-    created_at_ms: index + 1,
-  }));
-  renderDailyFixture({ initial: '/?day=2026-10-04', reply: (request) => request.path.includes('/harness/items')
-    ? { status: 200, statusText: 'OK', body: historicalConversationPage(conversationCardId(request.path), history, null) } : undefined });
+  const history = Array.from({ length: 30 }, (_, index) => sessionItem('daily-planner', index + 1, `Reply ${index + 1}.\n\n${'A detailed progress update with enough content to need scrolling. '.repeat(12)}`));
+  renderDailyFixture({ initial: '/?day=2026-10-04', reply: (request) => request.path.includes('/items?')
+    ? { status: 200, statusText: 'OK', body: sessionPage(fixtureSession('daily-planner', 'daily'), history) } : undefined });
   await page.getByText('Prioritize the release.', { exact: false }).findElement();
   await page.getByRole('button', { name: '讨论这项工作', exact: true }).click();
   const drawer = page.getByRole('complementary', { name: 'Daily Planner conversation' });
@@ -137,89 +132,6 @@ it.each([1000, 768, 600])('keeps the composer inside its conversation card with 
   await page.screenshot({ path: `../../../../test-results/today-long-conversation-${height}.png` });
 });
 
-
-it.each([['/?day=2026-10-04', 1000], ['/?day=2026-10-04', 768], ['/?day=2026-10-04', 600], ['/', 600]] as const)('keeps both conversation composers reachable with a side draft on %s at height %s', async (initial, height) => {
-  await page.viewport(1440, height);
-  const fixture = renderDailyFixture({ initial, reply: (request) => request.path === '/api/version' ? { status: 200, statusText: 'OK', body: {
-    areaCreateIdempotency: true, conversationCreateModel: true, conversationSide: true, kernelVersion: '0.1.0',
-    apiVersion: '23', syncEventVersion: 26, mcpProtocolVersion: '2024-11-05', pluginMcpProtocolVersion: '2025-11-25',
-    webCompatVersion: 44, minWebCompatVersion: 44, supervisorControlVersion: 1, buildSha: 'fixture',
-    dbInstanceId: 'fixture-instance', databaseId: 'fixture-database',
-  } } : undefined });
-  if (initial !== '/') await page.getByText('Prioritize the release.', { exact: false }).findElement();
-  if (initial !== '/') await page.getByRole('button', { name: '讨论这项工作', exact: true }).click();
-  const main = initial === '/' ? page.getByRole('region', { name: 'Today Assistant', exact: true }) : page.getByRole('complementary', { name: 'Daily Planner conversation' });
-  await expect.element(main.getByText('聊聊你想做什么', { exact: true })).toBeVisible();
-  await main.getByRole('combobox', { name: 'Message', exact: true }).fill('/side');
-  await userEvent.keyboard('{Enter}');
-  const side = page.getByRole('region', { name: 'Side conversation · Codex' });
-  await expect.poll(() => main.getByRole('combobox', { name: 'Message', exact: true }).element().textContent).toBe('/side ');
-  await expect.element(side).not.toBeInTheDocument();
-  expect(fixture.requests.filter(request => ['POST', 'PATCH', 'PUT', 'DELETE'].includes(request.method))).toHaveLength(0);
-  await userEvent.keyboard('{Enter}');
-  await expect.element(side).toBeVisible();
-  const stack = side.element().closest('[data-nc-drawer-stack]')!;
-  const clip = stack.closest('main')!;
-  for (const pane of [main, side]) {
-    const field = pane.getByRole('combobox', { name: 'Message', exact: true });
-    const send = pane.getByRole('button', { name: 'Send', exact: true });
-    await expect.element(field).toBeVisible();
-    await expect.poll(() => send.element().getBoundingClientRect().bottom <= clip.getBoundingClientRect().bottom).toBe(true);
-    expect(field.element().getBoundingClientRect().top).toBeGreaterThanOrEqual(pane.element().getBoundingClientRect().top);
-    expect(send.element().getBoundingClientRect().bottom).toBeLessThanOrEqual(Math.min(pane.element().getBoundingClientRect().bottom, height));
-  }
-  await side.getByRole('combobox', { name: 'Message', exact: true }).fill('A reachable side draft.');
-  await expect.element(side.getByRole('combobox', { name: 'Message', exact: true })).toHaveTextContent('A reachable side draft.');
-  await side.getByRole('button', { name: 'Close side conversation', exact: true }).click();
-  await expect.element(main.getByRole('combobox', { name: 'Message', exact: true })).toBeVisible();
-});
-
-
-it.each([768, 600])('keeps both inputs inside their cards when the parent footer grows at height %s', async (height) => {
-  await page.viewport(1440, height);
-  let wedged = false;
-  const fixture = renderDailyFixture({ initial: '/?day=2026-10-04', reply: (request) => {
-    if (request.path === '/api/version') return { status: 200, statusText: 'OK', body: {
-      areaCreateIdempotency: true, conversationCreateModel: true, conversationSide: true, kernelVersion: '0.1.0',
-      apiVersion: '23', syncEventVersion: 26, mcpProtocolVersion: '2024-11-05', pluginMcpProtocolVersion: '2025-11-25',
-      webCompatVersion: 44, minWebCompatVersion: 44, supervisorControlVersion: 1, buildSha: 'fixture',
-      dbInstanceId: 'fixture-instance', databaseId: 'fixture-database',
-    } };
-    if (request.path.includes('/planner/run?contract=conversation_v1')) return { status: 200, statusText: 'OK', body: historicalConversationRun({
-      card_id: 'daily-planner', worker_session_id: 'runtime', phase: wedged ? 'wedged' : 'idle', model: null,
-      reasoning_effort: null, permission_mode: 'never', blocked_reason: wedged ? 'The stop request timed out before the model confirmed that this turn had stopped.' : null,
-      pending_queue: [], manual_compact_supported: true, recovery: wedged ? { cause: 'wedged', action: 'restart_session' } : null, compact_outcome: null, context_usage_invalidated: false, running_turn: null, final_reply: null,
-    }, 'idle', true) };
-    return undefined;
-  } });
-  await page.getByText('Prioritize the release.', { exact: false }).findElement();
-  await page.getByRole('button', { name: '讨论这项工作', exact: true }).click();
-  const main = page.getByRole('complementary', { name: 'Daily Planner conversation' });
-  await expect.element(main.getByText('聊聊你想做什么', { exact: true })).toBeVisible();
-  await main.getByRole('combobox', { name: 'Message', exact: true }).fill('/side');
-  await userEvent.keyboard('{Enter}');
-  const side = page.getByRole('region', { name: 'Side conversation · Codex' });
-  await expect.poll(() => main.getByRole('combobox', { name: 'Message', exact: true }).element().textContent).toBe('/side ');
-  await expect.element(side).not.toBeInTheDocument();
-  expect(fixture.requests.filter(request => ['POST', 'PATCH', 'PUT', 'DELETE'].includes(request.method))).toHaveLength(0);
-  await userEvent.keyboard('{Enter}');
-  await expect.element(side).toBeVisible();
-  await main.getByRole('combobox', { name: 'Message', exact: true }).fill(Array.from({ length: 12 }, (_, index) => `Draft ${index + 1}`).join('\n'));
-  await side.getByRole('combobox', { name: 'Message', exact: true }).fill(Array.from({ length: 12 }, (_, index) => `Side draft ${index + 1}`).join('\n'));
-  wedged = true;
-  await fixture.client.invalidateQueries({ queryKey: ['planner-run'] });
-  await expect.element(main.getByText(/^This conversation’s session is stuck\./)).toBeVisible();
-  for (const pane of [main, side]) {
-    const field = pane.getByRole('combobox', { name: 'Message', exact: true });
-    const send = pane.getByRole('button', { name: 'Send', exact: true });
-    await expect.element(field).toBeVisible();
-    await expect.poll(() => send.element().getBoundingClientRect().bottom <= pane.element().getBoundingClientRect().bottom).toBe(true);
-    expect(field.element().getBoundingClientRect().top).toBeGreaterThanOrEqual(pane.element().getBoundingClientRect().top);
-    expect(send.element().getBoundingClientRect().bottom).toBeLessThanOrEqual(height);
-  }
-  await page.getByRole('button', { name: 'Close side conversation' }).click();
-  await page.getByRole('button', { name: 'Close conversation' }).click();
-});
 
 it.each([1024, 1440])('aligns reading and chat headers independently of sidebar navigation sections at %ipx', async (width) => {
   await page.viewport(width, 900);
@@ -328,20 +240,15 @@ it.each([1024, 1440])('keeps the real Today conversation and draft in separate c
   await page.screenshot({ path: `../../../../test-results/v10-today-changes-${width}.png` });
   await page.getByRole('button', { name: 'Back to Today Assistant', exact: true }).click();
   await expect.element(field).toHaveTextContent('Help me plan today');
-  expect(requests.some(request => request.path.includes('/planner/run?contract=conversation_v1'))).toBe(true);
+  expect(requests.some(request => request.path.includes('/items?afterId=0&limit=1&view=run'))).toBe(true);
   expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(window.innerWidth);
 });
 
 it('scrolls real Planner history above the fixed Today composer across views', async () => {
   await page.viewport(1440, 600);
-  const history = Array.from({ length: 20 }, (_, index) => ({
-    id: index + 1, worker_session_id: 'runtime', card_id: 'daily-planner', track_id: 'daily', thread_id: 'thread',
-    turn_id: null, turn_error_text: null, item_uuid: null, item_type: 'agentMessage', method: 'item/completed',
-    params: JSON.stringify({ item: { text: `Daily reply ${index + 1}.\n\n${'Plan the release using the current evidence. '.repeat(20)}` } }),
-    created_at_ms: index + 1,
-  }));
-  renderDailyFixture({ reply: request => request.path.includes('/harness/items')
-    ? { status: 200, statusText: 'OK', body: historicalConversationPage(conversationCardId(request.path), history, null) } : undefined });
+  const history = Array.from({ length: 20 }, (_, index) => sessionItem('daily-planner', index + 1, `Daily reply ${index + 1}.\n\n${'Plan the release using the current evidence. '.repeat(20)}`));
+  renderDailyFixture({ reply: request => request.path.includes('/items?')
+    ? { status: 200, statusText: 'OK', body: sessionPage(fixtureSession('daily-planner', 'daily'), history) } : undefined });
   const assistant = page.getByRole('region', { name: 'Today Assistant', exact: true });
   await assistant.getByText('Daily reply 20.', { exact: false }).findElement();
   const scroll = assistant.element().querySelector<HTMLElement>('[data-nc-drawer-scroll]')!;
@@ -359,12 +266,10 @@ it('scrolls real Planner history above the fixed Today composer across views', a
 it.each([false, true])('navigates loaded Today exchanges and restores the parked reading position (selected: %s)', async selected => {
   await page.viewport(1440, 700);
   const items = Array.from({ length: 8 }, (_, index) => [
-    humanPresentation('daily-planner', index * 2 + 1, `question-${index}`, { user_id: 'reader', display_name: 'Reader' }, `Today question ${index + 1}`, index * 2 + 1),
-    nativePresentation('daily-planner', { id: index * 2 + 2, worker_session_id: 'runtime', card_id: 'daily-planner', track_id: 'daily', thread_id: 'thread',
-      turn_id: `turn-${index}`, turn_error_text: null, item_uuid: `reply-${index}`, item_type: 'agentMessage', method: 'item/completed',
-      params: JSON.stringify({ item: { type: 'agentMessage', text: `Today reply ${index + 1}. ${'Read the release evidence carefully. '.repeat(30)}` } }), created_at_ms: index * 2 + 2 }),
+    sessionItem('daily-planner', index * 2 + 1, `Today question ${index + 1}`, 'user', `turn-${index}`),
+    sessionItem('daily-planner', index * 2 + 2, `Today reply ${index + 1}. ${'Read the release evidence carefully. '.repeat(30)}`, 'assistant_text', `turn-${index}`),
   ]).flat();
-  renderDailyFixture({ reply: request => request.path.includes('/harness/items') ? { status: 200, statusText: 'OK', body: presentationPage(items) } : undefined });
+  renderDailyFixture({ reply: request => request.path.includes('/items?') ? { status: 200, statusText: 'OK', body: sessionPage(fixtureSession('daily-planner', 'daily'), items) } : undefined });
   const assistant = page.getByRole('region', { name: 'Today Assistant', exact: true });
   const field = assistant.getByRole('combobox', { name: 'Message', exact: true });
   await field.fill('Keep my draft');
@@ -396,12 +301,9 @@ it.each([false, true])('navigates loaded Today exchanges and restores the parked
 
 it.each([false, true])('focuses every explicit Today Reply without replacing the editor (from subview: %s)', async subview => {
   await page.viewport(1440, 800);
-  renderDailyFixture({ reply: request => request.path === '/api/tracks/daily' ? { status: 200, statusText: 'OK', body: {
-    track: { id: 'daily', area_id: 'daily-area', title: 'Daily', sort: 0, cwd: '/tmp', workspace: { isolation: 'managed', kind: 'managed', path: '/tmp', frozen_at: null }, pinned_at: null, closed_at: null, created_at: 1, updated_at: 2 },
-    planner_revision: 0, can_reopen: false, can_admin: false, can_close: false,
-    cards: [{ id: 'daily-planner', track_id: 'daily', kind: 'codex', title: 'Daily Planner conversation', sort: 1, payload: { planner_harness: true }, deletable: false, created_at: 1, updated_at: 2 }],
-    overlays: [{ id: 'activity', plugin_id: 'kernel', entity_kind: 'track', entity_id: 'daily', kind: 'activity', updated_at: 5,
-      payload: { schemaVersion: 4, working: false, attention: 'input', activity_at_ms: 5, cards: [], items: [{ source: 'ask', key: 'ask:7', text: 'Choose the release branch', at_ms: 5, ask_id: 7, questions: [{ title: 'Release branch?', options: ['main'] }], delivery: 'wake' }] } }],
+  renderDailyFixture({ reply: request => request.path === '/api/v1/tracks/daily' ? { status: 200, statusText: 'OK', body: {
+    ...fixtureSnapshot(fixtureTrack('daily', { leadSessionId: 'daily-planner' }), [fixtureSession('daily-planner', 'daily', { title: 'Daily Planner conversation', isLead: true })]),
+    openAsks: [{ id: '7', trackId: 'daily', status: 'open', delivery: 'wake', createdAtMs: 5, questions: [{ title: 'Choose the release branch', options: ['main'] }] }],
   } } : undefined });
   const field = page.getByRole('combobox', { name: 'Message', exact: true });
   await field.fill('An unfinished sentence');
@@ -422,9 +324,8 @@ it.each([false, true])('focuses every explicit Today Reply without replacing the
 it('interrupts the working Today conversation from the transcript with Escape', async () => {
   await page.viewport(1440, 800);
   const { requests } = renderDailyFixture({ reply: request => {
-    if (request.path.includes('/planner/run?contract=conversation_v1')) return { status: 200, statusText: 'OK', body: historicalConversationRun({ card_id: 'daily-planner', worker_session_id: 'runtime', phase: 'turn_running', model: null, reasoning_effort: null, permission_mode: 'never', blocked_reason: null, pending_queue: [], manual_compact_supported: true, recovery: null, compact_outcome: null, context_usage_invalidated: false, running_turn: null, final_reply: null }, 'running', true) };
-    if (request.path.includes('/harness/items')) return { status: 200, statusText: 'OK', body: historicalConversationPage(conversationCardId(request.path), [{ id: 1, worker_session_id: 'runtime', card_id: 'daily-planner', track_id: 'daily', thread_id: 'thread', turn_id: null, turn_error_text: null, item_uuid: 'reply', item_type: 'agentMessage', method: 'item/completed', params: JSON.stringify({ item: { type: 'agentMessage', text: 'Working on the [Release evidence](mailto:release@example.test).' } }), created_at_ms: 1 }], null) };
-    if (request.path.endsWith('/planner/interrupt')) return { status: 200, statusText: 'OK', body: { card_id: 'daily-planner', worker_session_id: 'runtime', stopped: true } };
+    if (request.path.includes('/items?')) return { status: 200, statusText: 'OK', body: sessionPage(fixtureSession('daily-planner', 'daily'), [sessionItem('daily-planner', 1, 'Working on the [Release evidence](mailto:release@example.test).')], sessionTurn('daily-planner')) };
+    if (request.path.endsWith('/interrupt')) return { status: 200, statusText: 'OK', body: { card_id: 'daily-planner', worker_session_id: 'runtime', stopped: true } };
     return undefined;
   } });
   const assistant = page.getByRole('region', { name: 'Today Assistant', exact: true });
@@ -433,7 +334,7 @@ it('interrupts the working Today conversation from the transcript with Escape', 
   const evidence = await assistant.getByRole('link', { name: 'Release evidence', exact: true }).findElement();
   evidence.focus();
   await userEvent.keyboard('{Escape}');
-  await expect.poll(() => requests.filter(request => request.path.endsWith('/planner/interrupt')).length).toBe(1);
+  await expect.poll(() => requests.filter(request => request.path.endsWith('/interrupt')).length).toBe(1);
   await expect.element(assistant).toBeVisible();
 });
 
@@ -457,139 +358,4 @@ it('honors inventory and New conversation focus when leaving a Today subview', a
   await page.getByRole('button', { name: /Conversation Daily Planner conversation/ }).click();
   await expect.element(field).toHaveFocus();
   await expect.element(field).toHaveTextContent('Planner draft');
-});
-
-
-it.each([['Report changes', 'transcript'], ['Report changes', 'composer'], ['Daily Supervisor', 'transcript'], ['Daily Supervisor', 'composer']])('keeps an adopted working Today side interactive in %s from %s', async (view, input) => {
-  await page.viewport(1440, 900);
-  const { requests, rows } = renderWorkingDailySideFixture();
-  const main = page.getByRole('region', { name: 'Today Assistant', exact: true });
-  const mainField = main.getByRole('combobox', { name: 'Message', exact: true });
-  await expect.element(main.getByRole('button', { name: 'Stop', exact: true })).toBeVisible();
-  await expect.element(main.getByRole('link', { name: 'Side evidence', exact: true })).toBeVisible();
-  await page.getByRole('radio', { name: 'Month', exact: true }).click();
-  await mainField.fill('/side Explore independently');
-  await userEvent.keyboard('{Enter}');
-  const side = page.getByRole('region', { name: 'Side conversation · Codex', exact: true });
-  await expect.element(side.getByRole('button', { name: 'Stop', exact: true })).toBeVisible();
-  const sideId = rows[0].id;
-  expect(requests.find(request => request.method === 'POST' && request.path.endsWith('/conversations'))?.body)
-    .toMatchObject({ text: 'Explore independently', side: { source_card_id: 'daily-planner' } });
-  const sideField = side.getByRole('combobox', { name: 'Message', exact: true });
-  await sideField.fill('Side draft survives');
-  await mainField.fill('Main draft survives');
-  const mainElement = main.element();
-  await page.getByRole('button', { name: view, exact: true }).click();
-  await expect.element(mainElement).not.toBeVisible();
-  await expect.element(side).toBeVisible();
-  const evidence = await side.getByRole('link', { name: 'Side evidence', exact: true }).findElement();
-  if (input === 'transcript') evidence.focus();
-  else await sideField.click();
-  await expect.element(input === 'transcript' ? evidence : sideField).toHaveFocus();
-  if (input === 'transcript') await page.screenshot({ path: `../../../../test-results/today-side-${view === 'Report changes' ? 'changes' : 'supervisor'}.png` });
-  await userEvent.keyboard('{Escape}');
-  // One side request, no main request: the two working controllers must stay isolated.
-  await expect.poll(() => requests.filter(request => request.path.endsWith('/planner/interrupt')).map(request => request.path))
-    .toEqual([`/api/cards/${sideId}/planner/interrupt`]);
-  await expect.element(side).toBeVisible();
-  await expect.element(side.getByRole('button', { name: 'Stop', exact: true })).not.toBeInTheDocument();
-  await page.getByRole('button', { name: 'Back to Today Assistant', exact: true }).click();
-  await expect.element(mainField).toHaveTextContent('Main draft survives');
-  await expect.element(sideField).toHaveTextContent('Side draft survives');
-  await side.getByRole('button', { name: 'Close side conversation', exact: true }).click();
-  await expect.element(page.getByRole('radio', { name: 'Month', exact: true })).toBeChecked();
-});
-
-
-it.each(['terminal', 'compact'])('isolates Today side visible effects while hidden by %s and restores its reading and drafts', async hiddenBy => {
-  await page.viewport(1440, 900);
-  const fixture = renderWorkingDailySideFixture({ paginated: true });
-  const main = page.getByRole('region', { name: 'Today Assistant', exact: true });
-  const mainField = main.getByRole('combobox', { name: 'Message', exact: true });
-  await expect.element(main.getByText('Paragraph 34.', { exact: false })).toBeVisible();
-  await page.getByRole('radio', { name: 'Month', exact: true }).click();
-  // Explicit selection preserves the parent identity while compact owns the main Sheet.
-  await page.getByRole('button', { name: /Conversation Daily Planner conversation/ }).click();
-  await mainField.fill('/side Explore independently');
-  await userEvent.keyboard('{Enter}');
-  const side = page.getByRole('region', { name: 'Side conversation · Codex', exact: true });
-  await expect.element(side.getByRole('button', { name: 'Stop', exact: true })).toBeVisible();
-  const sideId = fixture.rows[0].id;
-  const sideField = side.getByRole('combobox', { name: 'Message', exact: true });
-  await mainField.fill('Main draft survives');
-  await page.getByRole('button', { name: 'Report changes', exact: true }).click();
-
-  const receiptWrites = () => fixture.receipts.requests.filter(request => request.method === 'POST' && request.path.includes('/conversation/'));
-  const receiptStart = receiptWrites().length;
-  act(() => { document.dispatchEvent(new Event('visibilitychange')); });
-  await expect.poll(() => receiptWrites().slice(receiptStart).map(request => request.path))
-    .toEqual([`/api/read-receipts/conversation/${sideId}/read`]);
-  // Editing the real queue asks this side controller to focus its existing portalled editor.
-  await sideField.fill('');
-  await side.getByRole('button', { name: 'Edit queued message', exact: true }).click();
-  await expect.element(sideField).toHaveFocus();
-  await expect.element(sideField).toHaveTextContent('Explore independently');
-  await side.getByRole('button', { name: 'Cancel edit', exact: true }).click();
-  await sideField.fill('Side draft survives');
-  const editor = sideField.element();
-  const evidence = side.getByRole('link', { name: 'Side evidence', exact: true }).element();
-  evidence.focus();
-  await userEvent.keyboard('{Home}');
-  const earlierReads = () => fixture.requests.filter(request => request.path.includes('/harness/items') && request.path.includes('&cursor='));
-  await expect.poll(() => earlierReads().map(request => conversationCardId(request.path))).toEqual([sideId]);
-
-  // A fresh server window gives the hidden branch an unspent cursor to reject.
-  fixture.advanceHistory();
-  await act(async () => { await fixture.client.invalidateQueries({ queryKey: transcript(sideId) }); });
-  const sideElement = side.element();
-  const scroller = sideElement.querySelector<HTMLElement>('[data-nc-drawer-scroll]')!;
-  fireEvent.wheel(scroller, { deltaY: 40 });
-  scroller.scrollTop = 350;
-  fireEvent.scroll(scroller);
-  await expect.poll(() => scroller.scrollTop).toBe(350);
-  const place = scroller.scrollTop;
-  const beforeHidden = receiptWrites().length;
-  const readsBeforeHidden = earlierReads().length;
-  if (hiddenBy === 'terminal') {
-    await page.getByRole('button', { name: 'Terminal', exact: true }).click();
-    await expect.element(page.getByRole('button', { name: 'Hide terminal', exact: true })).toBeVisible();
-    await expect.element(sideElement).not.toBeVisible();
-    expect(sideElement.closest('[inert]')).not.toBeNull();
-  } else {
-    await page.viewport(390, 844);
-    const companion = document.querySelector<HTMLElement>('[aria-label="Track workbench"]')!;
-    expect(companion.hidden).toBe(true);
-    expect(companion.inert).toBe(true);
-  }
-  act(() => {
-    document.dispatchEvent(new Event('visibilitychange'));
-    fireEvent.keyDown(editor, { key: 'Escape' });
-    fireEvent.wheel(scroller, { deltaY: -40 });
-  });
-  await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
-  expect(receiptWrites().slice(beforeHidden).filter(request => request.path.includes(sideId))).toEqual([]);
-  expect(earlierReads()).toHaveLength(readsBeforeHidden);
-  expect(fixture.requests.filter(request => request.path.endsWith('/planner/interrupt'))).toEqual([]);
-
-  if (hiddenBy === 'terminal') await page.getByRole('button', { name: 'Discussion', exact: true }).click();
-  else await page.viewport(1440, 900);
-  await expect.element(side).toBeVisible();
-  await expect.element(sideField).toHaveTextContent('Side draft survives');
-  await expect.poll(() => side.element().querySelector<HTMLElement>('[data-nc-drawer-scroll]')!.scrollTop).toBe(place);
-  const resumedReceipts = receiptWrites().length;
-  act(() => { document.dispatchEvent(new Event('visibilitychange')); });
-  await expect.poll(() => receiptWrites().slice(resumedReceipts).some(request => request.path.includes(sideId))).toBe(true);
-  // Request older history from the first loaded link, at the top of the reader.
-  side.getByRole('link', { name: 'Side evidence', exact: true }).first().element().focus();
-  await userEvent.keyboard('{Home}');
-  await expect.poll(() => earlierReads().length).toBe(readsBeforeHidden + 1);
-  expect(conversationCardId(earlierReads().at(-1)!.path)).toBe(sideId);
-  await sideField.click();
-  await userEvent.keyboard('{Escape}');
-  await expect.poll(() => fixture.requests.filter(request => request.path.endsWith('/planner/interrupt')).map(request => request.path))
-    .toEqual([`/api/cards/${sideId}/planner/interrupt`]);
-  await page.getByRole('button', { name: 'Back to Today Assistant', exact: true }).click();
-  await expect.element(mainField).toHaveTextContent('Main draft survives');
-  await side.getByRole('button', { name: 'Close side conversation', exact: true }).click();
-  await page.screenshot({ path: `../../../../test-results/today-side-${hiddenBy}-restored.png` });
 });

@@ -64,13 +64,10 @@ export function agentProvidersOperation(recheck: boolean): ApiOperation<Provider
   return {
     method: 'GET',
     path: recheck ? '/api/v1/bootstrap?scope=providers&refresh=true' : '/api/v1/bootstrap?scope=providers',
-    responseSchema: z.union([
-      bootstrapDtoSchema.transform((bootstrap) => bootstrap.providers.flatMap((provider) => {
-        const mapped = providerStatusToAvailability(provider);
-        return mapped === null ? [] : [mapped];
-      })),
-      agentProvidersSchema,
-    ]),
+    responseSchema: bootstrapDtoSchema.transform((bootstrap) => bootstrap.providers.flatMap((provider) => {
+      const mapped = providerStatusToAvailability(provider);
+      return mapped === null ? [] : [mapped];
+    })),
   };
 }
 
@@ -138,26 +135,23 @@ export function managedProvidersOperation(recheck: boolean): ApiOperation<Manage
   return {
     method: 'GET',
     path: recheck ? '/api/v1/bootstrap?scope=managed&refresh=true' : '/api/v1/bootstrap?scope=managed',
-    responseSchema: z.union([
-      bootstrapDtoSchema.transform((bootstrap) => bootstrap.providers.flatMap((provider) => {
-        const availability = providerStatusToAvailability(provider);
-        if (availability === null) return [];
-        return [{
-          accepts_unavailable_blank_track: false,
-          availability,
-          permission_modes: provider.permissionModes,
-          capabilities: {
-            managed_conversation: true,
-            steer: true,
-            images: false,
-            manual_compact: true,
-            history_replacement: false,
-            requires_ready_availability: true,
-          },
-        }];
-      })),
-      z.array(managedProviderAvailabilitySchema),
-    ]),
+    responseSchema: bootstrapDtoSchema.transform((bootstrap) => bootstrap.providers.flatMap((provider) => {
+      const availability = providerStatusToAvailability(provider);
+      if (availability === null) return [];
+      return [{
+        accepts_unavailable_blank_track: true,
+        availability,
+        permission_modes: provider.permissionModes,
+        capabilities: {
+          managed_conversation: true,
+          steer: true,
+          images: false,
+          manual_compact: true,
+          history_replacement: false,
+          requires_ready_availability: false,
+        },
+      }];
+    })),
   };
 }
 
@@ -177,7 +171,6 @@ export function defaultPermissionModeFor(options: readonly PermissionModeOptionD
 export function managedProviderProblem(answers: readonly ManagedProviderAvailability[] | undefined, provider: AgentProvider): string | null {
   const answer = answers?.find(({ availability }) => availability.provider === provider);
   if (answer === undefined) return 'Managed provider capabilities are unavailable. Reconnect before sending.';
-  if (!answer.capabilities.managed_conversation) return 'This provider does not support managed conversations.';
   return !answer.capabilities.requires_ready_availability || answer.availability.status === 'ready'
     ? null : answer.availability.reason;
 }

@@ -1,4 +1,5 @@
-import { historicalConversationPage, conversationCardId, historicalConversationRun } from './conversation-read-data.ts';
+import { fixtureTrack, fixtureSession, fixtureSnapshot, fixtureReport } from './session-contract-fixture.ts';
+import type { SessionItemsPageDto } from '../../../../core/api/perga-v1.ts';
 import { prepareReportDocument } from '../../features/report/document/preparation.ts';
 import '../../styles/entry.css';
 import { page } from 'vitest/browser';
@@ -21,18 +22,9 @@ import { withReadReceipts } from '../providers/read-receipts-fixture.tsx';
 const BOOM: ApiFailure = Object.freeze({ kind: 'http', status: 500, code: 'internal', message: 'boom' });
 
 const AREA = { id: 'c1', name: 'Work', color: '#000', sort: 1, kind: 'user', created_at: 1, updated_at: 1 };
-const TRACK = { workspace: { isolation: 'none' as const, kind: 'attached' as const, path: '/tmp', frozen_at: null }, id: 'w1', area_id: 'c1', title: 'Rates', sort: 1, cwd: '/tmp', pinned_at: null, closed_at: null, created_at: 1, updated_at: 2 };
-const PLANNER_CARD = { id: 'card-1', track_id: 'w1', kind: 'codex', title: 'Planner chat', sort: 1, payload: { planner_harness: true }, deletable: true, created_at: 1, updated_at: 2 };
-const REPORT_CARD = {
-  id: 'report', track_id: 'w1', title: null, kind: 'track-report', sort: 2, deletable: false, created_at: 1, updated_at: 2,
-  payload: {
-    schemaVersion: 3, docRev: 1, summary: '', body: '',
-    blocks: [{
-      id: 'b_1', rev: 1, kind: 'prose',
-      payload: { markdown: '央行加息在即（[Mikko 日志](neige://source/src_2c9e0a1b#q1)），另见[旧引用](neige://source/src_0badf00d)与[未追加的锚点](neige://source/src_2c9e0a1b#q7)。' },
-    }],
-  },
-};
+const TRACK = fixtureTrack('w1', { areaId: 'c1', title: 'Rates', cwd: '/tmp' });
+const PLANNER_CARD = fixtureSession('card-1', 'w1', { title: 'Planner chat', isLead: true });
+const REPORT = { docRev: 1, summary: '', leadingComment: '', blocks: [{ id: 'b_1', rev: 1, kind: 'prose', markdown: '央行加息在即（[Mikko 日志](neige://source/src_2c9e0a1b#q1)），另见[旧引用](neige://source/src_0badf00d)与[未追加的锚点](neige://source/src_2c9e0a1b#q7)。', payload: null }] };
 const SOURCE_ROW = {
   source_id: 'src_2c9e0a1b', provenance: 'summary',
   origin: { kind: 'plugin', plugin_id: 'mcp-wisburg', tool: 'get_report_detail', args_sha256: 'ab', args_canon: 'v1', content_id: '752972' },
@@ -42,6 +34,12 @@ const SOURCE_ROW = {
   body: '央行表示，9月加息概率接近九成。\n\n市场普遍同意。',
 };
 const unauthorized = createUnauthorizedChannel({ enqueue: (task) => task() });
+
+function sessionPage(running = false): SessionItemsPageDto {
+  return { session: { ...PLANNER_CARD, status: running ? 'running' : 'idle' }, items: [], unknownInput: null,
+    activeTurn: running ? { id: 'source-turn', sessionId: PLANNER_CARD.id, turnIndex: 0, epoch: 1,
+      triggerKind: 'user', status: 'running', startedAtMs: Date.now() } : null };
+}
 
 function ok(body: unknown): ApiTransportResponse {
   return { status: 200, statusText: 'OK', body };
@@ -60,19 +58,14 @@ function setup(reply?: Reply) {
   async function answer(request: ApiRequest): Promise<ApiTransportResponse> {
     const scripted = await reply?.(request);
     if (scripted) return scripted;
-    if (request.path === '/api/areas') return ok([AREA]);
-    if (request.path === '/api/areas/c1/tracks') return ok([TRACK]);
-    if (request.path === '/api/overlays?entity_kind=track') return ok([]);
-    if (request.path === '/api/tracks/w1') return ok({ track: TRACK, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true, cards: [PLANNER_CARD, REPORT_CARD], overlays: [] });
-    if (request.path === '/api/tracks/w1/report') return ok({ taskDiagnostics: [] });
+    if (request.path === '/api/v1/areas') return ok([AREA]);
+    if (request.path === '/api/v1/areas/c1/tracks?includeClosed=true') return ok([TRACK]);
+    if (request.path === '/api/v1/tracks/w1') return ok(fixtureSnapshot(TRACK, [PLANNER_CARD], REPORT));
     if (request.path === '/api/tracks/w1/sources/src_2c9e0a1b') return ok(SOURCE_ROW);
     if (request.path.startsWith('/api/tracks/w1/sources/')) {
       return { status: 404, statusText: 'Not Found', body: { error: 'source not found', code: 'not_found' } };
     }
-    if (request.path.includes('/harness/items')) return ok(historicalConversationPage(conversationCardId(request.path), [], null));
-    if (request.path.includes('/planner/run?contract=conversation_v1')) {
-      return ok(historicalConversationRun({ card_id: PLANNER_CARD.id, worker_session_id: 'runtime', phase: 'idle', model: null, reasoning_effort: null, permission_mode: 'never', blocked_reason: null, manual_compact_supported: true, recovery: null, compact_outcome: null, context_usage_invalidated: false, running_turn: null }, 'idle', true));
-    }
+    if (request.path.startsWith('/api/v1/sessions/card-1/items?')) return ok(sessionPage());
     if (request.path === '/api/settings') return ok({});
     return ok([]);
   }
@@ -108,13 +101,11 @@ describe('the source panel on the track page', () => {
   it('retries an unreadable referenced report inside the hover card', async () => {
     let reads = 0;
     setup(request => {
-      if (request.path === '/api/tracks/w1') return ok({ track: TRACK, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true,
-        cards: [{ ...REPORT_CARD, payload: { ...REPORT_CARD.payload, blocks: [{ id: 'b_1', kind: 'prose', rev: 1,
-          payload: { markdown: `[Report](${trackReportLinkUrl('w2')})` } }] } }], overlays: [] });
-      if (request.path !== '/api/tracks/w2') return undefined;
+      if (request.path === '/api/v1/tracks/w1') return ok(fixtureSnapshot(TRACK, [], { ...REPORT, blocks: [{ id: 'b_1', kind: 'prose', rev: 1, markdown: `[Report](${trackReportLinkUrl('w2')})`, payload: null }] }));
+      if (request.path !== '/api/v1/tracks/w2') return undefined;
       reads++;
       return reads === 1 ? { status: 500, statusText: 'Error', body: { error: 'Report read failed' } }
-        : ok({ track: { ...TRACK, id: 'w2' }, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true, cards: [REPORT_CARD], overlays: [] });
+        : ok(fixtureSnapshot({ ...TRACK, id: 'w2' }, [], REPORT));
     });
     const link = await screen.findByRole('button', { name: 'Report' }, { timeout: 5_000 });
     fireEvent.pointerEnter(link.parentElement!);
@@ -127,15 +118,10 @@ describe('the source panel on the track page', () => {
 
   it('previews and opens another track file using its declared worktree root', async () => {
     const { requests } = setup(request => {
-      if (request.path === '/api/tracks/w1') return ok({ track: TRACK, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true,
-        cards: [{ ...REPORT_CARD, payload: { ...REPORT_CARD.payload, blocks: [{ id: 'b_1', kind: 'prose', rev: 1,
-          payload: { markdown: `[Other report](${trackReportLinkUrl('w2')})` } }] } }], overlays: [] });
-      if (request.path === '/api/tracks/w2') return ok({ track: { ...TRACK, id: 'w2', cwd: '/base', workspace: { ...TRACK.workspace, isolation: 'worktree', worktree: '/owned-worktree' } },
-        planner_revision: 0, can_reopen: false, can_admin: false, can_close: true, cards: [{ ...REPORT_CARD, track_id: 'w2', payload: { ...REPORT_CARD.payload, blocks: [{
-          id: 'b_1', kind: 'prose', rev: 1, payload: { markdown: '[Scoped notes](/owned-worktree/docs/notes.md)' },
-        }] } }], overlays: [] });
-      if (request.path === '/api/tracks/w2/workspace/readfile?path=docs%2Fnotes.md') return ok({
-        path: 'docs/notes.md', size: 22, truncated: false, text: '# Other workspace file',
+      if (request.path === '/api/v1/tracks/w1') return ok(fixtureSnapshot(TRACK, [], { ...REPORT, blocks: [{ id: 'b_1', kind: 'prose', rev: 1, markdown: `[Other report](${trackReportLinkUrl('w2')})`, payload: null }] }));
+      if (request.path === '/api/v1/tracks/w2') return ok(fixtureSnapshot({ ...TRACK, id: 'w2', cwd: '/base', workspaceDriver: 'git-worktree', workspaceSpec: { worktreePath: '/owned-worktree' } }, [], { ...REPORT, blocks: [{ id: 'b_1', kind: 'prose', rev: 1, markdown: '[Scoped notes](/owned-worktree/docs/notes.md)', payload: null }] }));
+      if (request.path === '/api/v1/tracks/w2/files?path=docs%2Fnotes.md') return ok({
+        relativePath: 'docs/notes.md', isDirectory: false, entries: [], truncated: false, content: '# Other workspace file',
       });
     });
     const link = await screen.findByRole('button', { name: 'Other report' }, { timeout: 5_000 });
@@ -148,16 +134,14 @@ describe('the source panel on the track page', () => {
     fireEvent.click(within(file).getByRole('button', { name: 'Open in workspace' }));
     const viewer = await screen.findByRole('region', { name: 'File docs/notes.md' });
     await within(viewer).findByRole('heading', { name: 'Other workspace file' });
-    expect(requests.some(request => request.path.includes('/api/tracks/w1/workspace/'))).toBe(false);
+    expect(requests.some(request => request.path.includes('/api/v1/tracks/w1/files'))).toBe(false);
   });
 
   it('previews and opens evidence linked from a workspace Markdown file', async () => {
     const { requests } = setup(request => {
-      if (request.path === '/api/tracks/w1') return ok({ track: TRACK, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true,
-        cards: [{ ...REPORT_CARD, payload: { ...REPORT_CARD.payload, blocks: [{ id: 'b_1', kind: 'prose', rev: 1,
-          payload: { markdown: '[Notes](./notes.md)' } }] } }], overlays: [] });
-      if (request.path === '/api/tracks/w1/workspace/readfile?path=notes.md') return ok({ path: 'notes.md', size: 60, truncated: false,
-        text: '[File evidence](neige://source/src_2c9e0a1b#q1)' });
+      if (request.path === '/api/v1/tracks/w1') return ok(fixtureSnapshot(TRACK, [], { ...REPORT, blocks: [{ id: 'b_1', kind: 'prose', rev: 1, markdown: '[Notes](./notes.md)', payload: null }] }));
+      if (request.path === '/api/v1/tracks/w1/files?path=notes.md') return ok({ relativePath: 'notes.md', isDirectory: false, entries: [], truncated: false,
+        content: '[File evidence](neige://source/src_2c9e0a1b#q1)' });
     });
     fireEvent.click(await screen.findByRole('button', { name: 'Notes' }, { timeout: 5_000 }));
     const file = await screen.findByRole('region', { name: 'File notes.md' });
@@ -174,40 +158,27 @@ describe('the source panel on the track page', () => {
 
   it.each(['empty', 'missing block', 'table block'])('renders the %s state of a report reference', async mode => {
     const { requests } = setup(request => {
-      if (request.path === '/api/tracks/w1') return ok({ track: TRACK, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true,
-        cards: [{ ...REPORT_CARD, payload: { ...REPORT_CARD.payload, blocks: [{ id: 'b_1', kind: 'prose', rev: 1,
-          payload: { markdown: `[Report](${trackReportLinkUrl('w2')}${mode === 'empty' ? '' : '#b_table'})` } }] } }], overlays: [] });
-      if (request.path === '/api/tracks/w2') return ok({ track: { ...TRACK, id: 'w2' }, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true,
-        cards: mode === 'empty' ? [] : [{ ...REPORT_CARD, track_id: 'w2', payload: { ...REPORT_CARD.payload, blocks: [{
-          id: mode === 'table block' ? 'b_table' : 'other', kind: 'table', rev: 1,
-          payload: { columns: [{ key: 'result', label: 'Result' }], rows: [{ result: 'Actual table contents' }] },
-        }] } }], overlays: [] });
+      if (request.path === '/api/v1/tracks/w1') return ok(fixtureSnapshot(TRACK, [], { ...REPORT, blocks: [{ id: 'b_1', kind: 'prose', rev: 1, markdown: `[Report](${trackReportLinkUrl('w2')}${mode === 'empty' ? '' : '#b_table'})`, payload: null }] }));
+      if (request.path === '/api/v1/tracks/w2') return ok(fixtureSnapshot({ ...TRACK, id: 'w2' }, [], mode === 'empty' ? fixtureReport() : { ...REPORT, blocks: [{ id: mode === 'table block' ? 'b_table' : 'other', kind: 'table', rev: 1, markdown: '', payload: { columns: [{ key: 'result', label: 'Result' }], rows: [{ result: 'Actual table contents' }] } }] }));
     });
     const link = await screen.findByRole('button', { name: 'Report' }, { timeout: 5_000 });
-    expect(requests.some(request => request.path === '/api/tracks/w2')).toBe(false);
+    expect(requests.some(request => request.path === '/api/v1/tracks/w2')).toBe(false);
     fireEvent.pointerEnter(link.parentElement!);
     const preview = await screen.findByRole('dialog', { name: 'Preview: Report' });
     await within(preview).findByText(mode === 'empty' ? '这份报告暂无内容。'
       : mode === 'missing block' ? '报告中没有这条引用指向的内容。' : 'Actual table contents');
   });
 
-  it.each(['inline table', 'live table', 'native table', 'live native table'])('previews evidence in a %s through the full route', async surface => {
+  it.each(['inline table', 'native table'])('previews evidence in a %s through the full route', async surface => {
     const table = { columns: [{ key: 'source', label: 'Source' }], rows: [{ source: '[Table evidence](neige://source/src_2c9e0a1b#q1)' }] };
     const snapshot = { id: 's1', observedAt: 1, producedAt: 2 };
     const cell = { kind: 'table', id: 'table', title: '', table };
-    const source = 'neige://plugin/research/evidence';
-    const live = surface.startsWith('live');
-    const native = surface.includes('native');
-    const block = { id: 'b_table', kind: native ? 'view' : 'table', rev: 1, payload: native
-      ? { version: 1, title: '', description: '', snapshot: live ? null : snapshot,
-        rows: [{ id: 'row', title: '', layout: 'one', cells: [live ? { kind: 'live', id: 'table', source, expects: 'table' } : cell] }] }
-      : live ? { source } : table };
-    const { requests } = setup(request => request.path === '/api/tracks/w1' ? ok({
-      track: TRACK, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true,
-      cards: [{ ...REPORT_CARD, payload: { ...REPORT_CARD.payload, blocks: [block] } }],
-      overlays: live ? [{ id: 'evidence', updated_at: 1, entity_kind: 'track', entity_id: 'w1', plugin_id: 'research', kind: 'evidence',
-        payload: native ? { snapshot, cell } : table }] : [],
-    }) : undefined);
+    const native = surface === 'native table';
+    const block = { markdown: '', id: 'b_table', kind: native ? 'view' : 'table', rev: 1, payload: native
+      ? { version: 1, title: '', description: '', snapshot,
+        rows: [{ id: 'row', title: '', layout: 'one', cells: [cell] }] }
+      : table };
+    const { requests } = setup(request => request.path === '/api/v1/tracks/w1' ? ok(fixtureSnapshot(TRACK, [], { ...REPORT, blocks: [block] })) : undefined);
     const link = await screen.findByRole('button', { name: 'Table evidence' }, { timeout: 5_000 });
     expect(requests.filter(request => request.path.includes('/sources/'))).toHaveLength(0);
     fireEvent.pointerEnter(link.parentElement!);
@@ -232,10 +203,7 @@ describe('the source panel on the track page', () => {
   });
 
   it('explains a malformed citation on hover without making a source request', async () => {
-    const { requests } = setup(request => request.path === '/api/tracks/w1' ? ok({ track: TRACK, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true,
-      cards: [{ ...REPORT_CARD, payload: { ...REPORT_CARD.payload, blocks: [{ id: 'b_1', kind: 'prose', rev: 1,
-        payload: { markdown: '[Invalid](neige://source/src_bad#q0)' } }] } }], overlays: [],
-    }) : undefined);
+    const { requests } = setup(request => request.path === '/api/v1/tracks/w1' ? ok(fixtureSnapshot(TRACK, [], { ...REPORT, blocks: [{ id: 'b_1', kind: 'prose', rev: 1, markdown: '[Invalid](neige://source/src_bad#q0)', payload: null }] })) : undefined);
     const link = await screen.findByRole('button', { name: 'Invalid' }, { timeout: 5_000 });
     fireEvent.pointerEnter(link.parentElement!);
     const preview = await screen.findByRole('dialog', { name: 'Preview: Invalid' });
@@ -268,19 +236,14 @@ describe('the source panel on the track page', () => {
   });
 
   it('previews a different track report and reads its nested evidence in that track', async () => {
-    const otherReport = { ...REPORT_CARD, track_id: 'w2', payload: { ...REPORT_CARD.payload, blocks: [{
-      id: 'b_1', kind: 'prose', rev: 1, payload: { markdown: '[Other evidence](neige://source/src_2c9e0a1b#q1)' },
-    }] } };
+    const otherReport = { ...REPORT, blocks: [{ id: 'b_1', kind: 'prose', rev: 1, markdown: '[Other evidence](neige://source/src_2c9e0a1b#q1)', payload: null }] };
     const { requests } = setup(request => {
-      if (request.path === '/api/tracks/w1') return ok({ track: TRACK, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true,
-        cards: [{ ...REPORT_CARD, payload: { ...REPORT_CARD.payload, blocks: [{
-          id: 'b_1', kind: 'prose', rev: 1, payload: { markdown: `[Other report](${trackReportLinkUrl('w2')})` },
-        }] } }], overlays: [] });
-      if (request.path === '/api/tracks/w2') return ok({ track: { ...TRACK, id: 'w2' }, planner_revision: 0, can_reopen: false, can_admin: false, can_close: true, cards: [otherReport], overlays: [] });
+      if (request.path === '/api/v1/tracks/w1') return ok(fixtureSnapshot(TRACK, [], { ...REPORT, blocks: [{ id: 'b_1', kind: 'prose', rev: 1, markdown: `[Other report](${trackReportLinkUrl('w2')})`, payload: null }] }));
+      if (request.path === '/api/v1/tracks/w2') return ok(fixtureSnapshot({ ...TRACK, id: 'w2' }, [], otherReport));
       if (request.path === '/api/tracks/w2/sources/src_2c9e0a1b') return ok({ ...SOURCE_ROW, body: 'Other track evidence.' });
     });
     const link = await screen.findByRole('button', { name: 'Other report' }, { timeout: 5_000 });
-    expect(requests.some(request => request.path === '/api/tracks/w2')).toBe(false);
+    expect(requests.some(request => request.path === '/api/v1/tracks/w2')).toBe(false);
     fireEvent.pointerEnter(link.parentElement!);
     const preview = await screen.findByRole('dialog', { name: 'Preview: Other report' });
     const evidence = await within(preview).findByRole('button', { name: 'Other evidence' });
@@ -388,24 +351,22 @@ describe('the source panel on the track page', () => {
 
   it('does not let an Escape inside the source card interrupt a running planner turn', async () => {
     const { requests } = setup((request) => {
-      if (request.path.includes('/planner/run?contract=conversation_v1')) {
-        return ok(historicalConversationRun({ card_id: PLANNER_CARD.id, worker_session_id: 'runtime', phase: 'turn_running', model: null, reasoning_effort: null, permission_mode: 'never', blocked_reason: null, manual_compact_supported: true, recovery: null, compact_outcome: null, context_usage_invalidated: false, running_turn: null }, 'idle', true));
-      }
+      if (request.path.includes('&view=run')) return ok(sessionPage(true));
       return undefined;
     });
     fireEvent.click(await screen.findByRole('button', { name: /Conversation Planner chat/ }));
     await screen.findByRole('complementary', { name: 'Planner chat' });
-    await waitFor(() => expect(requests.some((request) => request.path.includes('/planner/run?contract=conversation_v1'))).toBe(true));
+    await waitFor(() => expect(requests.some((request) => request.path.includes('&view=run'))).toBe(true));
     fireEvent.click(await screen.findByRole('button', { name: 'Mikko 日志' }, { timeout: 5_000 }));
     const source = await screen.findByRole('complementary', { name: 'Mikko 全球市场日志 9-13' });
     fireEvent.keyDown(source, { key: 'Escape' });
     await waitFor(() => expect(source.hasAttribute('data-nc-escape-layer')).toBe(false));
-    expect(requests.filter((request) => request.path.endsWith('/planner/interrupt'))).toHaveLength(0);
+    expect(requests.filter((request) => request.path.endsWith('/interrupt'))).toHaveLength(0);
     const conversation = screen.getByRole('complementary', { name: 'Planner chat' });
     expect(conversation.hasAttribute('data-nc-escape-layer')).toBe(true);
     /* The premise, checked after rather than before so it cannot have used up the running turn. */
     fireEvent.keyDown(conversation, { key: 'Escape' });
-    await waitFor(() => expect(requests.filter((request) => request.path.endsWith('/planner/interrupt'))).toHaveLength(1));
+    await waitFor(() => expect(requests.filter((request) => request.path.endsWith('/interrupt'))).toHaveLength(1));
     expect(conversation.hasAttribute('data-nc-escape-layer')).toBe(true);
   });
 });

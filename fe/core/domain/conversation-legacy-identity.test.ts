@@ -1,9 +1,8 @@
 import { expect, it } from 'vitest';
-import { sha256Hex } from './sha256.js';
 import type { HarnessQueueEntryRef } from '../api/generated/wire.js';
 import { buildConversationTranscript } from './conversation-display.js';
 import { harnessItemSchema, isConversationMessage, type ConversationTurnOutcome } from './conversation.js';
-import { matchSendOps, outboxView, withInitialInputSources, queueDisplayAccounting, type AcceptedInitialInput, type SendOp } from './conversation-outbox.js';
+import { matchSendOps, outboxView, type SendOp } from './conversation-outbox.js';
 import { editedTurnRefill } from './conversation-composer.js';
 import { currentResponseMessage, latestUserMessage } from './conversation-actions.js';
 
@@ -60,20 +59,4 @@ it('does not let an older Unknown version retire a newer acknowledged queue edit
     stalled: false, ops: [current], spent: [], landed: { transcript: 1, run: 1 }, liveReplies: [] });
   expect(shown.retire).toEqual([]);
   expect(shown.transcript.map(entry => 'text' in entry ? entry.text : '')).toEqual(['Newer current body']);
-});
-
-it('hands initial-input display to a real versioned Unknown source without rewriting attribution', () => {
-  const entries = transcript([{ id: 'entry-a', rev: 3 }]);
-  const accepted: AcceptedInitialInput = { phase: 'initial-accepted', key: 'actual-create-key', trackId: 'track',
-    submitted: { text: 'same words', atMs: 1 }, receipt: { version: 'initial-input-v1', entryId: 'entry-a', entryRev: 0,
-      queuedAtMs: 1, textSha256: sha256Hex('same words'), initialRuntimeId: 'runtime' },
-    localWrite: null, inputFact: null, sourceWitness: null };
-  const ops = withInitialInputSources([accepted], entries);
-  const shown = outboxView({ cardId: 'card', serverEntries: entries, serverTurns: entries.filter(isConversationMessage),
-    queuedEntryIds: new Set(), stalled: false, ops, spent: [], landed: { transcript: 1, run: 1 }, liveReplies: [] });
-  expect(shown.transcript).toEqual(entries);
-  expect(shown.checkingInitialInput).toBe(false);
-  expect(entries[0].author).toBe('unknown');
-  expect(queueDisplayAccounting(entries, ops, []).displayed).toEqual([{ id: 'entry-a', rev: 3 }]);
-  expect(ops[0].phase === 'initial-accepted' && ops[0].sourceWitness).toMatchObject({ cardId: 'card', threadId: 'thread', entryRev: 3 });
 });

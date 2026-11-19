@@ -1,3 +1,4 @@
+import { fixtureSnapshot, fixtureTrack } from './session-contract-fixture.ts';
 import { prepareReportDocument } from '../../features/report/document/preparation.ts';
 // @vitest-environment jsdom
 // #2131 S1: every non-chat write on these surfaces settles through one runner and reads its failure through the write's
@@ -18,9 +19,8 @@ import { withReadReceipts } from '../providers/read-receipts-fixture.tsx';
 
 const unauthorized = createUnauthorizedChannel({ enqueue: (task) => task() });
 const area = { id: 'c1', name: 'One', color: '#123456', sort: 1, kind: 'user', created_at: 1, updated_at: 1 };
-const openTrack = { workspace: { isolation: 'none' as const, kind: 'attached' as const, path: '/tmp', frozen_at: null }, id: 'w1', area_id: 'c1', title: 'Reliable', sort: 1, cwd: '/tmp',
-  pinned_at: null, closed_at: null, created_at: 1, updated_at: 1 };
-const card = { id: 'k1', track_id: 'w1', kind: 'notes', title: 'Build log', sort: 1, payload: {},
+const openTrack = fixtureTrack('w1', { areaId: 'c1', title: 'Reliable', cwd: '/tmp', sortOrder: 1, closedAtMs: null, createdAtMs: 1, updatedAtMs: 1 });
+const card = { id: 'k1', track_id: 'w1', kind: 'terminal', title: 'Build log', sort: 1, payload: { terminal_presentation: { source: 'manual', in_workbench: true } },
   deletable: true, created_at: 1, updated_at: 1 };
 const ok = (body: unknown): ApiTransportResponse => ({ status: 200, statusText: 'OK', body });
 const notFound: ApiTransportResponse = { status: 404, statusText: 'Not Found', body: { error: 'track not found', code: 'not_found' } };
@@ -38,14 +38,13 @@ function renderApp(path: string, write: (request: ApiRequest, world: World) => P
   const transport: ApiTransportPort = { send(request) {
     if (request.method !== 'GET') { writes.push(request); return write(request, world); }
     reads.push(request.path);
-    const track = { ...openTrack, closed_at: world.closed ? 2 : null };
+    const track = { ...openTrack, closedAtMs: world.closed ? 2 : null };
     if (request.path.startsWith('/api/today/daily')) return Promise.resolve(ok(null));
     if (request.path === '/api/v1/areas') return Promise.resolve(ok([area]));
     if (request.path === '/api/v1/areas/c1/tracks?includeClosed=true') return Promise.resolve(ok(world.gone ? [] : [track]));
     if (request.path === '/api/v1/tracks/w1' && world.stale) return new Promise<ApiTransportResponse>(() => undefined);
-    if (request.path === '/api/v1/tracks/w1') return Promise.resolve(world.gone ? notFound : ok({
-      track, planner_revision: 0, can_reopen: world.closed, can_admin: false, can_close: !world.closed, cards: [card], overlays: [],
-    }));
+    if (request.path === '/api/v1/tracks/w1') return Promise.resolve(world.gone ? notFound : ok(fixtureSnapshot(track, [])));
+    if (request.path === '/api/v1/tracks/w1/terminals') return world.stale ? new Promise<ApiTransportResponse>(() => undefined) : Promise.resolve(ok([card]));
     if (request.path === '/api/settings') return Promise.resolve(ok({}));
     if (request.path === '/api/v1/bootstrap') return Promise.resolve(ok({ areaCreateIdempotency: true }));
     return Promise.resolve(ok([]));
@@ -99,8 +98,8 @@ describe('a lost answer shows the write’s fixed state, never transport text', 
     }, 'The delete is unconfirmed.'],
     ['card delete', '/track/w1', async () => {
       await screen.findByRole('region', { name: 'Workbench' });
-      await userEvent.click(await screen.findByRole('button', { name: 'Actions for Build log' }));
-      await userEvent.click(await screen.findByRole('menuitem', { name: 'Delete card Build log' }));
+      await userEvent.click(await screen.findByRole('button', { name: /^Build log/ }));
+      await userEvent.click(await screen.findByRole('button', { name: 'Delete card Build log' }));
       await userEvent.click(screen.getByRole('button', { name: 'Delete card' }));
     }, 'The delete is unconfirmed.'],
     ['area edit', '/', async () => {
@@ -171,15 +170,15 @@ describe('a DELETE retried after a lost answer and answered 404 is done', () => 
     });
     const deleteCard = async () => {
       await screen.findByRole('region', { name: 'Workbench' });
-      await userEvent.click(await screen.findByRole('button', { name: 'Actions for Build log' }));
-      await userEvent.click(await screen.findByRole('menuitem', { name: 'Delete card Build log' }));
+      await userEvent.click(await screen.findByRole('button', { name: /^Build log/ }));
+      await userEvent.click(await screen.findByRole('button', { name: 'Delete card Build log' }));
       await userEvent.click(screen.getByRole('button', { name: 'Delete card' }));
     };
     await deleteCard();
     const dialog = screen.getByRole('dialog', { name: 'Delete this card?' });
     expect((await within(dialog).findByRole('alert')).textContent).toContain('The delete is unconfirmed.');
     await userEvent.click(within(dialog).getByRole('button', { name: 'Delete card' }));
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'Actions for Build log' })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole('button', { name: /^Build log/ })).toBeNull());
     expect(screen.queryAllByRole('alert').map((alert) => alert.textContent)).toEqual([]);
     expect(writes.map((request) => `${request.method} ${request.path}`)).toEqual(['DELETE /api/v1/tracks/w1/terminals/k1', 'DELETE /api/v1/tracks/w1/terminals/k1']);
   });

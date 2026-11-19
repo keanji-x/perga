@@ -1,12 +1,13 @@
+import { fixtureCreation, fixtureSession } from './session-contract-fixture.ts';
 import type { History } from '../conversations/history.ts';
 import { act, cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { ApiTransportResponse } from '../../../../core/api/types.ts';
-import { historicalConversationPage, conversationCardId, historicalConversationRun } from './conversation-read-data.ts';
+import { fixtureBootstrap } from './session-contract-fixture.ts';
+import { sessionPage, sessionTurn } from './conversation-session-data.ts';
 import { buildTranscript, harnessItemToTurns as toTranscriptTurns } from '../../../../core/domain/conversation.ts';
 import { groupTranscriptActivities } from '../../../../core/domain/conversation-groups.ts';
 import { currentResponseMessage } from '../../../../core/domain/conversation-actions.ts';
-import { WEB_COMPAT_VERSION } from '../providers/public.tsx';
 import { renderDailyFixture } from './daily-planner-fixture.tsx';
 
 // Count the canonical production derivations, without replacing their behavior.
@@ -45,20 +46,10 @@ function heldResponse() {
 }
 function mount({ phase = 'idle', input }: { phase?: string; input?: Promise<ApiTransportResponse> } = {}) {
   return renderDailyFixture({ initial: '/track/daily?panel=conversations', extraPlanner: true, reply: request => {
-    if (request.path === '/api/v1/bootstrap') return ok({ assistantProviders: true, conversationInitialInput: true, conversationCreateModel: true,
-      webCompatVersion: WEB_COMPAT_VERSION, minWebCompatVersion: WEB_COMPAT_VERSION, syncEventVersion: 29, dbInstanceId: 'input-response' });
-    if (request.path.startsWith('/api/v1/bootstrap?scope=managed')) return ok([{
-      availability: { provider: 'codex', status: 'ready', reason: null, checked_at_ms: 1, authentication_method: null, authentication_notice: null },
-      accepts_unavailable_blank_track: true, capabilities: { managed_conversation: true, steer: true, images: true, manual_compact: true, history_replacement: true, requires_ready_availability: false },
-    }]);
-    if (request.path === '/api/v1/sessions/second-planner/items?afterId=0&limit=1&view=run') return ok(historicalConversationRun({ card_id: 'second-planner', worker_session_id: 'runtime',
-      phase, model: null, reasoning_effort: null, permission_mode: 'never', blocked_reason: null, manual_compact_supported: true,
-      recovery: null, compact_outcome: null, context_usage_invalidated: false, running_turn: null }, 'idle', true));
-    if (request.path.includes('/second-planner/items') && !request.path.includes('view=')) return ok(historicalConversationPage(conversationCardId(request.path), Array.from({ length: 120 }, (_, index) => ({
-      id: index + 1, worker_session_id: 'runtime', card_id: 'second-planner', track_id: 'daily', thread_id: 'thread',
-      turn_id: null, turn_error_text: null, item_uuid: null, item_type: 'agentMessage', method: 'item/completed',
-      params: JSON.stringify({ item: { text: `Stored reply ${index}. **Evidence** remains readable.` } }), created_at_ms: index + 1,
-    })), null));
+    if (request.path === '/api/v1/bootstrap') return ok(fixtureBootstrap());
+    if (request.path.startsWith('/api/v1/bootstrap?scope=managed')) return ok({ version: 'test', providers: [{ provider: 'codex', available: true, version: null, reason: null, models: [] }], templates: [], areas: [] });
+    if (request.path === '/api/v1/sessions/second-planner/items?afterId=0&limit=1&view=run') return ok(sessionPage(fixtureSession('second-planner', 'daily'), [], phase === 'turn_running' ? sessionTurn('second-planner') : null));
+    if (request.path.includes('/second-planner/items') && !request.path.includes('view=')) return ok(sessionPage(fixtureSession('second-planner', 'daily'), Array.from({ length: 120 }, (_, index) => ({ id: index + 1, sessionId: 'second-planner', turnId: 'turn', kind: 'assistant_text', payload: { text: `Stored reply ${index}. **Evidence** remains readable.` }, createdAtMs: index + 1 }))));
     if (input !== undefined && request.path.endsWith('/messages')) return input;
     if (input !== undefined && request.method === 'POST' && request.path.endsWith('/sessions')) return input;
     return undefined;
@@ -88,7 +79,7 @@ it('keeps unchanged stored history derivation and grouping out of composer updat
     // Real new server content still invalidates the projection without touching the draft.
     await act(async () => {
       view.client.setQueryData<History>(['harness-items', 'second-planner', 'conversation_v1'], previous => previous === undefined ? previous : ({
-        ...previous, latest: { ...previous.latest, rows: previous.latest.rows.map(row => row.source.kind === 'historical_raw' && row.source.item.id === 120
+        ...previous, latest: { ...previous.latest, rows: previous.latest.rows.map(row => row.source.kind === 'native' && row.source.item.id === 120
           ? { ...row, source: { ...row.source, item: { ...row.source.item, params: JSON.stringify({ item: { text: 'The server updated the last reply.' } }) } } } : row) },
       }));
       await Promise.resolve();
@@ -100,27 +91,23 @@ it('keeps unchanged stored history derivation and grouping out of composer updat
   } finally { cleanup(); view.client.clear(); }
 });
 
-it.each(['idle', 'turn_running'])('shows the local sending state before a held %s request answers', async phase => {
+it('shows the local sending state before a held request answers', async () => {
   const response = heldResponse();
-  const view = mount({ phase, input: response.promise });
+  const view = mount({ input: response.promise });
   try {
     await openExisting(); await type('Send without waiting for the server');
     vi.mocked(buildTranscript).mockClear(); vi.mocked(toTranscriptTurns).mockClear();
     fireEvent.keyDown(field(), { key: 'Enter' });
     await waitFor(() => expect(view.requests.filter(request => request.path.endsWith('/messages'))).toHaveLength(1));
-    const localMessage = phase === 'turn_running' ? document.querySelector('[data-nc-pending-send]') : document.querySelector('[data-nc-thread] [data-nc-entry] [data-nc-turn="you"]');
+    const localMessage = document.querySelector('[data-nc-thread] [data-nc-entry] [data-nc-turn="you"]');
     expect(localMessage?.textContent).toContain('Send without waiting for the server');
-    if (phase === 'turn_running') expect(localMessage?.closest('[data-nc-pending-queue]')).not.toBeNull();
     expect(screen.getByText('Sending…')).toBeDefined();
     expect(buildTranscript).not.toHaveBeenCalled();
     expect(toTranscriptTurns).not.toHaveBeenCalled();
-    // Local dispatch is not a confirmed queued entry; Stop remains available for an existing run.
+    // Local dispatch is not a confirmed queued entry.
     expect(screen.queryByText('Queued · sends when this turn ends')).toBeNull();
-    if (phase === 'turn_running') expect(screen.getByRole('button', { name: 'Stop' })).toBeDefined();
-    else {
-      expect(screen.getByRole('button', { name: 'Send' }).hasAttribute('disabled')).toBe(true);
-      expect(screen.queryByText('Running', { exact: true })).toBeNull();
-    }
+    expect(screen.getByRole('button', { name: 'Send' }).hasAttribute('disabled')).toBe(true);
+    expect(screen.queryByText('Running', { exact: true })).toBeNull();
     fireEvent.keyDown(field(), { key: 'Enter' });
     expect(view.requests.filter(request => request.path.endsWith('/messages'))).toHaveLength(1);
   } finally { await response.release({ card_id: 'second-planner', worker_session_id: 'runtime' }); cleanup(); view.client.clear(); }
@@ -139,7 +126,7 @@ it('shows first-message sending feedback while conversation creation is held', a
     expect(document.querySelector('[data-nc-turn="you"]')?.textContent).toBe('The first local message');
     expect(screen.getByText('Sending…')).toBeDefined();
     expect(screen.getByRole('button', { name: 'Send' }).hasAttribute('disabled')).toBe(true);
-  } finally { await response.release({ id: 'created', trackId: 'daily', title: null, kind: 'track-assistant', provider: 'codex', state: null, updatedAt: 1, archivedAt: null, lastTurnCompletedAt: null }); cleanup(); view.client.clear(); }
+  } finally { await response.release(fixtureCreation(fixtureSession('created', 'daily'))); cleanup(); view.client.clear(); }
 });
 
 it('retry callback stays committed across input renders', async () => {

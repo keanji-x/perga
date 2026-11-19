@@ -5,7 +5,7 @@ import { page } from 'vitest/browser';
 import { RecoveryAccess } from '../../../../../core/domain/recovery/access.ts';
 
 import '../../../styles/entry.css';
-import type { ClientMsg, DaemonMsg } from '../../terminal/generated-terminal.ts';
+import { encodeTerminalInputFrame, TERMINAL_FRAME_CONTROL_JSON } from '../../terminal/protocol.ts';
 import { createCardHost } from '../host.ts';
 import { createCardRegistry } from '../registry.ts';
 import { BoardHost } from '../ui/board-host.tsx';
@@ -22,30 +22,28 @@ function terminalTransport() {
     static CONNECTING = 0;
     readyState = 0;
     onopen: (() => void) | null = null;
-    onmessage: ((event: { data: string }) => void) | null = null;
+    onmessage: ((event: { data: Uint8Array }) => void) | null = null;
     onclose: ((event: { code: number; reason: string; wasClean: boolean }) => void) | null = null;
     onerror: (() => void) | null = null;
-    sent: ClientMsg[] = [];
+    sent: Uint8Array[] = [];
     readonly url: string;
     constructor(url: string) { this.url = url; sockets.push(this); }
-    send(data: string) { this.sent.push(JSON.parse(data) as ClientMsg); }
+    send(data: Uint8Array) { this.sent.push(data.slice()); }
     close() { this.readyState = 3; }
     disconnect() {
       this.readyState = 3;
       this.onclose?.({ code: 1006, reason: '', wasClean: false });
     }
-    open(text: string, role: 'Owner' | 'Observer' = 'Owner') {
+    open(text: string) {
       this.readyState = 1;
       this.onopen?.();
-      this.message({ ServerHello: {
-        protocol_version: 4, terminal_id: 'pty-1', session_id: 'session-1', client_role: role,
-        owner_client_id: null, pty_size: { cols: 80, rows: 24, pixel_width: null, pixel_height: null },
-        pty_seq_head: 1, pty_seq_tail: 0, render_rev: 1, history_gap: null, is_child_ready: true,
-        snapshot: { cols: 80, rows: 24, render_rev: 1, pty_seq: 1, encoding: 'Vt',
-          data: [...new TextEncoder().encode(text)], scrollback: null },
-      } });
+      this.output(text);
     }
-    message(message: DaemonMsg) { this.onmessage?.({ data: JSON.stringify(message) }); }
+    output(text: string) { this.onmessage?.({ data: encodeTerminalInputFrame(text) }); }
+    exit(code: number) {
+      const payload = new TextEncoder().encode(JSON.stringify({ type: 'exit', exit_code: code }));
+      this.onmessage?.({ data: Uint8Array.of(TERMINAL_FRAME_CONTROL_JSON, ...payload) });
+    }
   }
   vi.stubGlobal('WebSocket', Socket);
   return sockets;
@@ -100,11 +98,10 @@ it('shows a refused connection and reconnects the same terminal without creating
   act(() => sockets[1].open('restored prompt'));
   await waitFor(() => expect(headStatusText()).toBeNull());
   expect(headIndicator()).toBeNull();
-  act(() => sockets[0].message({ ProtocolError: { code: 'NotOwner', message: 'Stale connection', expected_version: null } }));
+  act(() => sockets[0].output('stale output'));
   expect(headStatusText()).toBeNull();
   expect(headIndicator()).toBeNull();
-  expect(sockets[1].sent.some((frame) => typeof frame === 'object' && 'ClientHello' in frame
-    && frame.ClientHello.initial_scrollback === 'All')).toBe(true);
+  expect(buffer()).not.toContain('stale output');
   mounted.unmount();
   expect(sockets.every((socket) => socket.readyState === 3 && socket.onmessage === null && socket.onclose === null)).toBe(true);
 });
@@ -131,7 +128,7 @@ it('holds terminal output through failed reconnects and replaces it only with au
     act(() => sockets[2].open('kept output\r\nnew output'));
     await waitFor(() => expect(buffer()).toContain('new output'));
     expect(buffer().match(/kept output/g)).toHaveLength(1);
-    expect(sockets.flatMap((socket) => socket.sent).filter((frame) => typeof frame === 'object' && 'Input' in frame)).toEqual([]);
+    expect(sockets.flatMap((socket) => socket.sent).filter((frame) => frame[0] === 0x01)).toEqual([]);
     await page.screenshot({ path: 'test-results/terminal-reconnected.png' });
   } finally {
     history.replaceState(null, '', previousUrl);
@@ -145,7 +142,7 @@ it.each(['running', 'starting'] as const)('retains process exit truth when REST 
   await waitFor(() => expect(sockets).toHaveLength(1));
   act(() => {
     sockets[0].open('finished');
-    sockets[0].message({ TerminalExited: { code: 23, pty_seq: 2, render_rev: 2 } });
+    sockets[0].exit(23);
     sockets[0].disconnect();
   });
   expect(await screen.findByText('Session exited.')).toBeTruthy();
@@ -154,37 +151,10 @@ it.each(['running', 'starting'] as const)('retains process exit truth when REST 
 });
 
 
-it('accepts input and later automatically reconnects after a recoverable ownership rejection and successful owner claim', async () => {
-  vi.stubGlobal('__NC_BUNDLED__', true);
-  const access = new RecoveryAccess(); access.change('connected');
-  await page.viewport(1200, 800);
-  const sockets = terminalTransport();
-  mountTerminal('running', undefined, access);
-  await waitFor(() => expect(sockets).toHaveLength(1));
-  act(() => sockets[0].open('observer prompt', 'Observer'));
-  const hello = sockets[0].sent.find((frame) => typeof frame === 'object' && 'ClientHello' in frame);
-  if (typeof hello !== 'object' || !('ClientHello' in hello)) throw new Error('ClientHello missing');
-  act(() => {
-    sockets[0].message({ ProtocolError: { code: 'NotOwner', message: 'Only the owner may resize', expected_version: null } });
-    sockets[0].message({ OwnerChanged: { owner_client_id: hello.ClientHello.client_id } });
-  });
-  await userEvent.click(screen.getByLabelText('Terminal input'));
-  await userEvent.keyboard('x');
-  await waitFor(() => expect(sockets[0].sent.filter((frame) => typeof frame === 'object' && 'Input' in frame)).toHaveLength(1));
-  expect(screen.queryByText('Connection error')).toBeNull();
-  expect(headStatusText()).toBeNull();
-  expect(headIndicator()).toBeNull();
-  act(() => access.invalidate('recovering')); act(() => access.change('connected'));
-  await waitFor(() => expect(sockets).toHaveLength(2));
-  expect(sockets[1].url).toBe(sockets[0].url);
-});
-
-/* #2526: the parked-worker notice is a display only. Typed input still reaches the socket, and changing
-   or clearing the notice re-renders the card without a new attachment. */
 it('keeps input and the same attachment while the notice shows, changes and clears', async () => {
   await page.viewport(1200, 800);
   const sockets = terminalTransport();
-  const inputs = () => sockets[0].sent.filter((frame) => typeof frame === 'object' && 'Input' in frame);
+  const inputs = () => sockets[0].sent.filter((frame) => frame[0] === 0x01);
   const notice = () => document.querySelector('[data-nc-card-cell] [data-nc-terminal-notice]');
   const mounted = mountTerminal('running', undefined, undefined, 'Completed — this attempt has ended.');
   await waitFor(() => expect(sockets).toHaveLength(1));
@@ -204,39 +174,8 @@ it('keeps input and the same attachment while the notice shows, changes and clea
   await waitFor(() => expect(inputs()).toHaveLength(2));
   expect(sockets).toHaveLength(1);
   expect(sockets[0].readyState).toBe(1);
-  expect(sockets[0].sent.filter((frame) => typeof frame === 'object' && 'ClientHello' in frame)).toHaveLength(1);
+  expect(sockets[0].sent.filter(frame => frame[0] === 0x02)).not.toHaveLength(0);
 });
-
-it.each(['UnsupportedVersion', 'UnsupportedEncoding', 'BadHandshake', 'BadSequence', 'SnapshotMissing', 'closed', 'exited'] as const)(
-  'does not revive input after %s when a late owner notification arrives', async (failure) => {
-    vi.stubGlobal('__NC_BUNDLED__', true);
-    const access = new RecoveryAccess(); access.change('connected');
-    await page.viewport(1200, 800);
-    const sockets = terminalTransport();
-    mountTerminal('running', undefined, access);
-    await waitFor(() => expect(sockets).toHaveLength(1));
-    act(() => sockets[0].open('observer prompt', 'Observer'));
-    const hello = sockets[0].sent.find((frame) => typeof frame === 'object' && 'ClientHello' in frame);
-    if (typeof hello !== 'object' || !('ClientHello' in hello)) throw new Error('ClientHello missing');
-    act(() => {
-      sockets[0].message({ ProtocolError: { code: 'NotOwner', message: 'Only the owner may resize', expected_version: null } });
-      if (failure === 'closed') sockets[0].disconnect();
-      else if (failure === 'exited') sockets[0].message({ TerminalExited: { code: 0, pty_seq: 2, render_rev: 2 } });
-      else sockets[0].message({ ProtocolError: { code: failure, message: 'Cannot continue this connection', expected_version: null } });
-      sockets[0].message({ OwnerChanged: { owner_client_id: hello.ClientHello.client_id } });
-    });
-    // Trigger the real input surface without clicking through the fatal-error overlay.
-    const input = screen.getByLabelText('Terminal input');
-    input.focus();
-    await userEvent.keyboard('x');
-    expect(sockets[0].sent.filter((frame) => typeof frame === 'object' && 'Input' in frame)).toHaveLength(0);
-    expect(headIndicator()).toBeNull();
-    if (failure === 'closed') expect(screen.getByRole('button', { name: 'Reconnect' })).toBeTruthy();
-    if (failure !== 'closed' && failure !== 'exited') expect(screen.getByRole('alert').textContent).toContain('Cannot continue this connection');
-    act(() => access.invalidate('recovering')); act(() => access.change('connected'));
-    expect(sockets).toHaveLength(1);
-  },
-);
 
 it('keeps the terminal title and disconnected status separate in a 171px card', async () => {
   await page.viewport(390, 844);
@@ -291,8 +230,8 @@ it('bundled recovery fences input and automatically reattaches the same terminal
   act(() => access.change('syncing')); expect(sockets).toHaveLength(1);
   act(() => access.change('connected')); await waitFor(() => expect(sockets).toHaveLength(2));
   expect(sockets[1].url).toBe(sockets[0].url); act(() => sockets[1].open('authoritative prompt'));
-  expect(sockets[1].sent.some(frame => typeof frame === 'object' && 'Input' in frame)).toBe(false);
-  act(() => sockets[1].message({ ProtocolError: { code: 'NotOwner', message: 'Refused', expected_version: null } }));
+  expect(sockets[1].sent.some(frame => frame[0] === 0x01)).toBe(false);
+  act(() => sockets[1].exit(0));
   act(() => { access.invalidate('recovering'); access.change('connected'); });
   expect(sockets).toHaveLength(2);
 });
@@ -308,9 +247,9 @@ it('a successful manual same-terminal reconnect starts a fresh automatic recover
   act(() => { access.invalidate('recovering'); access.change('connected'); });
   await waitFor(() => expect(sockets).toHaveLength(3));
   expect(sockets[2].url).toBe(sockets[0].url);
-  expect(sockets[2].sent.some(frame => typeof frame === 'object' && 'Input' in frame)).toBe(false);
+  expect(sockets[2].sent.some(frame => frame[0] === 0x01)).toBe(false);
 });
-it.each([1000, 1005])('a locally timed-out OPEN handshake retries the same terminal after normal close %s', async (code) => {
+it.each([1000, 1005])('a locally timed-out connection opening retries the same terminal after normal close %s', async (code) => {
   vi.stubGlobal('__NC_BUNDLED__', true); await page.viewport(1200, 800);
   const deadlines: (() => void)[] = []; const schedule = globalThis.setTimeout.bind(globalThis);
   const clock = vi.spyOn(globalThis, 'setTimeout').mockImplementation((handler, delay) => {
@@ -320,11 +259,10 @@ it.each([1000, 1005])('a locally timed-out OPEN handshake retries the same termi
   try {
     const access = new RecoveryAccess(); access.change('connected'); const sockets = terminalTransport();
     mountTerminal('running', undefined, access); await waitFor(() => expect(sockets).toHaveLength(1));
-    act(() => { sockets[0].readyState = 1; sockets[0].onopen?.(); });
     expect(deadlines).toHaveLength(1);
     act(() => { deadlines[0](); sockets[0].onclose?.({ code, reason: '', wasClean: true }); });
     await waitFor(() => expect(sockets).toHaveLength(2), { timeout: 2000 });
     expect(sockets[1].url).toBe(sockets[0].url);
-    expect(sockets[0].sent.some(frame => typeof frame === 'object' && ('Input' in frame || 'ResizeCommit' in frame))).toBe(false);
+    expect(sockets[0].sent.some(frame => frame[0] === 0x01 || frame[0] === 0x02)).toBe(false);
   } finally { clock.mockRestore(); }
 });

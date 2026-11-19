@@ -5,7 +5,7 @@ import { page, userEvent } from 'vitest/browser';
 import { renderPlannerSwitchFixture } from './planner-switch-fixture.tsx';
 
 afterEach(() => { cleanup(); document.getElementById('root')?.remove(); });
-const posts = (fixture: ReturnType<typeof renderPlannerSwitchFixture>) => fixture.requests.filter(request => request.method === 'POST');
+const posts = (fixture: ReturnType<typeof renderPlannerSwitchFixture>) => fixture.requests.filter(request => request.method === 'PATCH');
 async function open() {
   await page.getByRole('button', { name: /Conversation Other conversation/ }).click();
   await expect.element(page.getByText('Ready for switching')).toBeVisible();
@@ -20,10 +20,9 @@ it.each([1280, 390])('promotes through the real menu and Enter flow at width %s'
   await userEvent.keyboard('{Enter}'); expect(posts(fixture)).toHaveLength(0);
   await userEvent.keyboard('{Enter}');
   await expect.poll(() => posts(fixture).map(request => request.body)).toEqual([{
-    target_assistant_card_id: 'second-planner', expected_planner_card_id: 'daily-planner', expected_revision: 7,
+    leadSessionId: 'second-planner',
   }]);
-  if (width === 1280) await expect.element(page.getByRole('button', { name: /Role: Member/ })).toBeVisible();
-  await expect.poll(() => fixture.client.getQueryData<{ planner_revision: number }>(['track', 'daily'])?.planner_revision).toBe(8);
+  await expect.poll(() => fixture.client.getQueryData<{ track: { leadSessionId: string } }>(['track', 'daily'])?.track.leadSessionId).toBe('second-planner');
   await expect.element(page.getByText('Ready for switching')).toBeVisible();
   await page.getByRole('button', { name: 'Close conversation' }).click();
   await expect.element(page.getByRole('button', { name: /Conversation Other conversation/ })).toBeVisible();
@@ -62,7 +61,7 @@ it('blocks another submission while the first request is pending', async () => {
   await input.fill('/planner'); await page.getByRole('option', { name: /^planner / }).click(); await userEvent.keyboard('{Enter}');
   await expect.element(page.getByRole('alert')).toHaveTextContent('was not accepted');
   expect(posts(fixture)).toHaveLength(1); finish();
-  await expect.element(page.getByRole('button', { name: /Role: Member/ })).toBeVisible();
+  await expect.poll(() => fixture.snapshot().track.leadSessionId).toBe('second-planner');
   expect(posts(fixture)).toHaveLength(1);
 });
 
@@ -77,7 +76,7 @@ it('dispatches a direct mobile dock submission and retains a refused command dra
   await page.getByRole('button', { name: 'Send chat message' }).click();
   await expect.element(page.getByRole('alert')).toHaveTextContent('Resolve the open questions first.');
   await expect.element(page.getByRole('textbox', { name: 'Chat message', exact: true })).toHaveValue('/planner');
-  expect(posts(fixture).map(request => request.path)).toEqual(['/api/tracks/daily/planner/switch']);
+  expect(posts(fixture).map(request => request.path)).toEqual(['/api/v1/tracks/daily']);
 });
 
 it.each(['mounted', 'remounted', 'unchanged'] as const)('dock clears only its owned draft after pending success (%s)', async mode => {
@@ -106,7 +105,7 @@ it.each(['mounted', 'remounted', 'unchanged'] as const)('dock clears only its ow
     await (await open()).fill('New draft');
   }
   finish();
-  await expect.poll(() => fixture.client.getQueryData<{ planner_revision: number }>(['track', 'daily'])?.planner_revision).toBe(8);
+  await expect.poll(() => fixture.client.getQueryData<{ track: { leadSessionId: string } }>(['track', 'daily'])?.track.leadSessionId).toBe('second-planner');
   if (mode === 'remounted') await expect.element(page.getByRole('combobox', { name: 'Message' })).toHaveTextContent('New draft');
   else await expect.element(dock).toHaveValue(mode === 'mounted' ? 'New draft' : '');
 });

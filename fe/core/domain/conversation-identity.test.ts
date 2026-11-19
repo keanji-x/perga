@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { HarnessItem } from '../api/generated/wire.js';
-import { harnessInputSegmentSchema, harnessItemsOperation, harnessItemToTurns, type ConversationTurn } from './conversation.js';
+import { harnessInputSegmentSchema, harnessItemSchema, harnessItemToTurns, type ConversationTurn } from './conversation.js';
 import { matchSendOps, outboxView, type SendOp } from './conversation-outbox.js';
 
 const RAW_SCOPE = Object.freeze({ cardId: 'card', threadId: 'thread' });
@@ -69,20 +69,19 @@ it('rejects the unreleased bare identity and preserves explicit unknown legacy s
 });
 
 
-it('decodes released legacy origin through the real history page while rejecting present malformed queue references', () => {
-  const operation = harnessItemsOperation('card');
+it('decodes stored legacy origin through the internal row model while rejecting present malformed queue references', () => {
   const row = { id: 7, worker_session_id: 'session', card_id: 'card', track_id: 'track', thread_id: 'thread', turn_id: null,
     item_uuid: 'legacy-user', item_type: 'userMessage', method: 'item/completed', params: '{}', created_at_ms: 1, turn_error_text: null };
   const segment = { presentation: 'user', text: 'User says:\nReleased words', attachments: [], origin: { observation: 'user_message', event_id: null } };
-  const legacy = operation.responseSchema.parse([{ ...row, input_segments: [segment] }]);
+  const legacy = [harnessItemSchema.parse({ ...row, input_segments: [segment] })];
   expect(legacy[0].input_segments?.[0].origin).toEqual({ ...segment.origin, queue_entry: null });
   expect(harnessItemToTurns(legacy[0])).toMatchObject([{ text: 'Released words', queueEntryId: null, inputSource: { entryRev: null, turnId: null } }]);
   for (const ref of [null, { id: 'known-entry', rev: 2 }]) {
-    const parsed = operation.responseSchema.parse([{ ...row, input_segments: [{ ...segment, origin: { ...segment.origin, queue_entry: ref } }] }]);
+    const parsed = [harnessItemSchema.parse({ ...row, input_segments: [{ ...segment, origin: { ...segment.origin, queue_entry: ref } }] })];
     expect(parsed[0].input_segments?.[0].origin?.queue_entry).toEqual(ref);
   }
   for (const ref of [undefined, {}, { id: 'known-entry' }, { rev: 2 }, { id: 'known-entry', rev: -1 }, { id: '', rev: 0 }]) {
-    expect(operation.responseSchema.safeParse([{ ...row, input_segments: [{ ...segment, origin: { ...segment.origin, queue_entry: ref } }] }]).success).toBe(false);
+    expect(harnessItemSchema.safeParse({ ...row, input_segments: [{ ...segment, origin: { ...segment.origin, queue_entry: ref } }] }).success).toBe(false);
   }
 });
 

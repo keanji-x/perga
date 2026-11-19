@@ -4,14 +4,14 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { PLANNER_CONVERSATION_KIND, type Conversation } from '../../../../../core/domain/conversation.ts';
+import type { Conversation } from '../../../../../core/domain/conversation.ts';
 import { ChatList, type ChatListProps } from './public.tsx';
 
 afterEach(cleanup);
 
 function conversation(overrides: Partial<Conversation> = {}): Conversation {
   return { provider: 'codex' as const,
-    id: 'c1', trackId: 'w1', title: 'Assistant', kind: 'track-assistant',
+    id: 'c1', trackId: 'w1', title: 'Assistant', kind: 'agent', isLead: false,
     state: 'turn_pending', updatedAt: 1, lastTurnCompletedAt: null, ...overrides,
   };
 }
@@ -90,13 +90,15 @@ describe('conversation rows read activity.cards, not session state', () => {
 
 it('distinguishes Planner and Assistant by their declared role even when their names are swapped', () => {
   const onOpen = vi.fn();
-  const planner = conversation({ id: 'planner', title: 'Assistant', kind: PLANNER_CONVERSATION_KIND });
-  const assistant = conversation({ id: 'assistant', title: 'Planner', kind: 'track-assistant' });
+  const planner = conversation({ id: 'planner', title: 'Assistant', kind: 'agent', isLead: true });
+  const assistant = conversation({ id: 'assistant', title: 'Planner', kind: 'agent' });
   render(<ChatList context cards={{}} showTrack={false} conversations={[planner, assistant]} onOpen={onOpen} />);
   const plannerRow = screen.getByRole('button', { name: 'Conversation Assistant' });
   const assistantRow = screen.getByRole('button', { name: 'Conversation Planner' });
   const description = (row: HTMLElement) => document.getElementById(row.getAttribute('aria-describedby') ?? '')?.textContent;
   expect(description(plannerRow)).toBe('Planner');
+  expect(plannerRow.title).toBe('Planner: Assistant');
+  expect(assistantRow.title).toBe('Assistant: Planner');
   expect(description(assistantRow)).toBe('Assistant');
   expect(plannerRow.querySelector('svg')?.innerHTML).not.toBe(assistantRow.querySelector('svg')?.innerHTML);
   plannerRow.click(); assistantRow.click();
@@ -107,7 +109,7 @@ it('distinguishes Planner and Assistant by their declared role even when their n
 it.each([false, true])('archives through either renderer and preserves failed rows (context=%s)', async context => {
   const onArchive = vi.fn().mockRejectedValue(new Error('Archive refused'));
   render(<ChatList context={context} cards={{}} onOpen={vi.fn()} onArchive={onArchive} conversations={[
-    conversation(), conversation({ id: 'planner', kind: PLANNER_CONVERSATION_KIND, title: 'Planner' }),
+    conversation(), conversation({ id: 'planner', kind: 'agent', isLead: true, title: 'Planner' }),
   ]} />);
   expect(screen.queryByRole('button', { name: 'Actions for conversation: Planner' })).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: 'Actions for conversation: Assistant' }));

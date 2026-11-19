@@ -9,7 +9,6 @@ import {
   askQuestionSchema,
   cardSchema,
   compiledTemplateManifestDtoSchema,
-  normalizeWireAgentProvider,
   overlaySchema,
   overlaysListDtoSchema,
   terminalDtoSchema,
@@ -347,18 +346,6 @@ export const cardWireSchema = z.object({
 });
 export type CardWire = z.infer<typeof cardWireSchema>;
 
-export const trackDetailSchema = z.object({
-  planner_revision: z.number().int().nonnegative(),
-  track: trackWireSchema,
-  can_reopen: z.boolean(),
-  can_close: z.boolean(),
-  can_admin: z.boolean(),
-  cards: z.array(cardWireSchema),
-  overlays: z.array(overlaySchema),
-  workspacePreparation: trackAggregateSnapshotDtoSchema.shape.workspacePreparation,
-});
-export type TrackDetailWire = z.infer<typeof trackDetailSchema>;
-
 /** `{ fg, bg }` RGB the kernel stamps onto a spawning daemon's argv. */
 export type ThemeRgb = Readonly<{ fg: readonly [number, number, number]; bg: readonly [number, number, number] }>;
 
@@ -368,17 +355,6 @@ export type ThemeRgb = Readonly<{ fg: readonly [number, number, number]; bg: rea
  */
 export function isBlankForKernel(text: string): boolean {
   return /^\p{White_Space}*$/u.test(text);
-}
-
-/**
- * The backend of a Planner card, from its server-owned `planner_provider` key (#1791). Read only for
- * copy: the server refuses to run a Planner card whose key is missing or unknown, so any value other
- * than a declared provider retains the historical Codex display fallback.
- */
-export function plannerProviderOf(payload: unknown): AgentProvider {
-  const value = typeof payload === 'object' && payload !== null
-    ? (payload as { planner_provider?: unknown }).planner_provider : undefined;
-  return normalizeWireAgentProvider(value) ?? 'codex';
 }
 
 export type NewTrackBody = Readonly<{
@@ -678,7 +654,7 @@ export function terminalDtoToCardWire(dto: TerminalDto, sort = 100, inWorkbench 
       program: dto.program ?? null,
       status: dto.status,
       exit_code: dto.exitCode ?? null,
-      terminal_presentation: { source: 'unrecorded', in_workbench: inWorkbench } satisfies TerminalPresentation,
+      terminal_presentation: { source: dto.attemptId == null ? 'unrecorded' : 'task', in_workbench: inWorkbench } satisfies TerminalPresentation,
     },
     runtime: {
       worker_session_id: dto.id,
@@ -693,102 +669,8 @@ export function terminalDtoToCardWire(dto: TerminalDto, sort = 100, inWorkbench 
   };
 }
 
-export function snapshotToTrackDetailWire(snapshot: TrackAggregateSnapshotDto): TrackDetailWire {
-  const track = trackDtoToWire(snapshot.track);
-  const cards: CardWire[] = [{
-    id: `report-${snapshot.track.id}`,
-    track_id: snapshot.track.id,
-    kind: 'track-report',
-    title: snapshot.report.summary || snapshot.track.title || null,
-    sort: 0,
-    payload: {
-      pergaSnapshot: true,
-      docRev: snapshot.report.docRev,
-      summary: snapshot.report.summary,
-      body: '',
-      blocks: snapshot.report.blocks,
-    },
-    deletable: false,
-    created_at: snapshot.track.createdAtMs,
-    updated_at: snapshot.track.updatedAtMs,
-  }];
-
-  const lead = snapshot.sessions.find((session) => session.isLead || session.id === snapshot.track.leadSessionId)
-    ?? snapshot.sessions[0];
-  if (lead !== undefined) {
-    const leadProvider = normalizeWireAgentProvider(lead.provider) ?? 'codex';
-    const leadStatus = lead.status === 'running' ? 'running' : lead.status === 'failed' ? 'failed' : 'idle';
-    cards.push({
-      id: lead.id,
-      track_id: snapshot.track.id,
-      kind: 'codex',
-      title: lead.title ?? null,
-      sort: 1,
-      payload: {
-        planner_harness: true,
-        planner_provider: leadProvider,
-        model: lead.model ?? null,
-        is_lead: lead.isLead,
-        epoch: lead.epoch,
-      },
-      runtime: {
-        worker_session_id: lead.id,
-        kind: leadProvider === 'claude' ? 'claude' : 'codex',
-        status: leadStatus,
-        provider: leadProvider,
-        session_id: lead.id,
-        updated_at_ms: lead.updatedAtMs,
-      },
-      deletable: false,
-      created_at: lead.createdAtMs,
-      updated_at: lead.updatedAtMs,
-    });
-  }
-
-  for (const [index, session] of snapshot.sessions.entries()) {
-    if (session.id === lead?.id) continue;
-    const provider = normalizeWireAgentProvider(session.provider) ?? 'codex';
-    const status = session.status === 'running' ? 'running' : session.status === 'failed' ? 'failed' : 'idle';
-    cards.push({
-      id: session.id,
-      track_id: snapshot.track.id,
-      kind: 'codex',
-      title: session.title ?? null,
-      sort: 2 + index,
-      payload: {
-        harness_profile: 'assistant',
-        model: session.model ?? null,
-        epoch: session.epoch,
-      },
-      runtime: {
-        worker_session_id: session.id,
-        kind: provider === 'claude' ? 'claude' : 'codex',
-        status,
-        provider,
-        session_id: session.id,
-        updated_at_ms: session.updatedAtMs,
-      },
-      deletable: false,
-      created_at: session.createdAtMs,
-      updated_at: session.updatedAtMs,
-    });
-  }
-
-  if (snapshot.workspacePreparation == null) {
-    const workspacePath = (track.workspace.worktree ?? track.workspace.path) || '.';
-    cards.push({
-      id: `files-${snapshot.track.id}`,
-      track_id: snapshot.track.id,
-      kind: 'file-viewer',
-      title: 'Files',
-      sort: 50,
-      payload: { path: workspacePath },
-      deletable: false,
-      created_at: snapshot.track.createdAtMs,
-      updated_at: snapshot.track.updatedAtMs,
-    });
-  }
-
+/** Activity facts read from the same aggregate as sessions and tasks. */
+export function snapshotActivityOverlays(snapshot: TrackAggregateSnapshotDto): OverlayWire[] {
   const openAskItems = snapshot.openAsks
     .filter((ask) => ask.status === 'open')
     .map(askDtoToActivityItem);
@@ -799,7 +681,7 @@ export function snapshotToTrackDetailWire(snapshot: TrackAggregateSnapshotDto): 
     : snapshot.tasks.some((task) => task.status === 'failed')
       ? 'failed'
       : 'none';
-  const overlays: OverlayWire[] = [{
+  return [{
     id: `activity-${snapshot.track.id}`,
     plugin_id: KERNEL_OVERLAY_PLUGIN_ID,
     entity_kind: 'track',
@@ -818,16 +700,6 @@ export function snapshotToTrackDetailWire(snapshot: TrackAggregateSnapshotDto): 
     updated_at: snapshot.track.updatedAtMs,
   }];
 
-  return {
-    planner_revision: Math.max(snapshot.report.docRev, Math.floor(snapshot.track.updatedAtMs)),
-    track,
-    can_reopen: snapshot.track.closedAtMs !== null && snapshot.track.closedAtMs !== undefined,
-    can_close: snapshot.track.closedAtMs === null || snapshot.track.closedAtMs === undefined,
-    can_admin: false,
-    cards,
-    overlays,
-    ...(snapshot.workspacePreparation == null ? {} : { workspacePreparation: snapshot.workspacePreparation }),
-  };
 }
 
 export function tracksInAreaOperation(areaId: string, includeClosed = true): ApiOperation<TrackWire[]> {
@@ -838,14 +710,11 @@ export function tracksInAreaOperation(areaId: string, includeClosed = true): Api
   };
 }
 
-export function trackDetailOperation(trackId: string): ApiOperation<TrackDetailWire> {
+export function trackDetailOperation(trackId: string): ApiOperation<TrackAggregateSnapshotDto> {
   return {
     method: 'GET',
     path: `/api/v1/tracks/${encodeURIComponent(trackId)}`,
-    responseSchema: z.union([
-      trackAggregateSnapshotDtoSchema.transform(snapshotToTrackDetailWire),
-      trackDetailSchema,
-    ]),
+    responseSchema: trackAggregateSnapshotDtoSchema,
   };
 }
 

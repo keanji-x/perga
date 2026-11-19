@@ -3,13 +3,12 @@ import { createConversationOwner } from './registry-owner.ts';
 import type { ConversationDraft } from './registry-model.ts';
 import type { Conversation } from '../../../../core/domain/conversation.ts';
 import type { SendOp } from '../../../../core/domain/conversation-outbox.ts';
-import { sha256Hex } from '../../../../core/domain/sha256.ts';
 import { EMPTY_COMPOSER, isComposerEmpty } from '../../../../core/domain/conversation-composer.ts';
 
 const card = 'opaque:card';
 const draft: ConversationDraft = { scopeId: 'opaque:scope', provider: 'codex', model: { model: null, reasoning_effort: null },
   key: 'attempt', text: 'Hello', submitted: null, creating: false, error: null, remedy: null };
-const conversation: Conversation = { id: card, trackId: 'track', title: null, kind: 'track-assistant', provider: 'codex', state: 'idle', updatedAt: 1 };
+const conversation: Conversation = { id: card, trackId: 'track', title: null, kind: 'agent', isLead: false, provider: 'codex', state: 'idle', updatedAt: 1 };
 const sending = (key: string): SendOp => ({ key, phase: 'sending', unknown: false, fromComposer: true, replaces: null,
   echo: { id: `echo-${key}`, author: 'you', text: key, atMs: 1, attachments: [], serverHighWaterBefore: 0, queued: false, entryId: null } });
 
@@ -125,18 +124,17 @@ it('publishes edit refill and send departure atomically before synchronous obser
 it('publishes accepted delivery and adoption together; stale keys and exceptions publish nothing', () => {
   const owner = createConversationOwner(); const registry = owner.commands;
   const submitted = { text: 'Hello', provider: 'codex', model: { model: null, reasoning_effort: null }, atMs: 2 } as const;
-  const receipt = { kind: 'known', receipt: { version: 'initial-input-v1', entryId: 'first', entryRev: 0, queuedAtMs: 3, textSha256: sha256Hex('Hello'), initialRuntimeId: 'runtime' } } as const;
+  const receipt = { inputId: 'first', sessionId: card, turnId: 'turn', deliveryState: 'accepted', turnStatus: 'queued', statusUrl: '/status' } as const;
   registry.startDraft(draft);
   const observations: unknown[] = [];
   owner.subscribe(state => state, () => { observations.push({ held: registry.draftOf(draft.scopeId), adopted: registry.adoptedDraftIdOf(draft.scopeId), delivery: registry.outboxOf(card) }); });
   const before = owner.getSnapshot();
   expect(() => registry.editDraft(draft, () => { throw new Error('bad updater'); })).toThrow('bad updater');
-  expect(() => registry.acceptDraft(draft, { conversation, initialInput: { ...receipt, receipt: { ...receipt.receipt, textSha256: 'mismatch' } } }, submitted)).toThrow();
-  expect(registry.acceptDraft({ ...draft, key: 'older' }, { conversation, initialInput: receipt }, submitted)).toBe(false);
+  expect(registry.acceptDraft({ ...draft, key: 'older' }, { conversation, sessionInput: receipt }, submitted)).toBe(false);
   expect(owner.getSnapshot()).toBe(before); expect(observations).toEqual([]);
-  expect(registry.acceptDraft(draft, { conversation, initialInput: receipt }, submitted)).toBe(true);
+  expect(registry.acceptDraft(draft, { conversation, sessionInput: receipt }, submitted)).toBe(true);
   expect(observations).toHaveLength(1);
-  expect(observations[0]).toMatchObject({ held: null, adopted: card, delivery: [{ phase: 'initial-accepted', key: draft.key }] });
+  expect(observations[0]).toMatchObject({ held: null, adopted: card, delivery: [{ phase: 'confirmed', key: draft.key, echo: { entryId: receipt.inputId, text: submitted.text } }] });
 });
 
 it('clears spent rows in the same publication as final outbox removal and returns the written outbox', () => {
@@ -204,4 +202,17 @@ it('keep and retry share one attempt intent', () => {
   expect(registry.beginResolution(card, 'keep', args, 'competing')).toMatchObject({decision:'retry',key:'original'});
   registry.finishResolution(card, 'original', 'done');
   expect(registry.beginResolution(card, 'keep', {...args,revision:'8'}, 'fresh')).toMatchObject({decision:'keep',key:'fresh'});
+});
+
+it('keeps a v1 accepted first input until session history witnesses its identity', () => {
+  const registry = createConversationOwner().commands;
+  const submitted = { text: 'Hello', provider: 'codex', model: draft.model, atMs: 2 } as const;
+  registry.startDraft(draft);
+  expect(registry.acceptDraft(draft, { conversation, sessionInput: { sessionId: card, inputId: 'input', turnId: 'turn',
+    deliveryState: 'accepted', turnStatus: 'queued', statusUrl: '/status' } }, submitted)).toBe(true);
+  registry.remember(conversation, []);
+  expect(registry.turnsOf(card)).toMatchObject([{ author: 'you', text: 'Hello' }]);
+  expect(registry.outboxOf(card)).toMatchObject([{ phase: 'confirmed', echo: { entryId: 'input', authorUserId: 'local-owner' } }]);
+  expect(registry.acceptDraft(draft, { conversation, sessionInput: { sessionId: card, inputId: 'input', turnId: 'turn',
+    deliveryState: 'accepted', turnStatus: 'queued', statusUrl: '/status' } }, submitted)).toBe(false);
 });

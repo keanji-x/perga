@@ -5,10 +5,11 @@ import { afterEach, expect, it, vi } from 'vitest';
 import type { ApiRequest } from '../../../../core/api/types.ts';
 import { DB_INSTANCE_ID_KEY } from '../../../../core/keys/storage.ts';
 import { mountProductionApp } from '../auth/production-app.tsx';
-import { WEB_COMPAT_VERSION } from '../providers/public.tsx';
 import { createTrackTaskFixture } from './track-task-fixture.ts';
 import { createMemoryStorage } from './share-reuse-fixture.ts';
-import { historicalConversationRun, historicalConversationPage } from './conversation-read-data.ts';
+import { fixtureSession, fixtureBootstrap } from './session-contract-fixture.ts';
+import { sessionPage } from './conversation-session-data.ts';
+import type { TrackAggregateSnapshotDto } from '../../../../core/api/perga-v1.ts';
 
 const lifecycle = vi.hoisted(() => ({ unmount: undefined as (() => void) | undefined }));
 vi.mock('react-dom/client', async original => {
@@ -31,7 +32,6 @@ function mountShare(kind: 'track' | 'area', unlocked = false, options: Readonly<
   const requests: ApiRequest[] = [];
   const sockets: string[] = [];
   let authorized = unlocked;
-  let archivedAt: number | null = null;
   const scope = kind === 'track' ? { kind, id: 'w1' } : { kind, id: 'c1' };
   vi.stubGlobal('WebSocket', class {
     static CONNECTING = 0; static OPEN = 1;
@@ -46,25 +46,20 @@ function mountShare(kind: 'track' | 'area', unlocked = false, options: Readonly<
     const reply = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
     if (url === '/api/share-links/link/access') return reply(authorized ? { status: 'unlocked', scope, expiresAt: Date.now() + 86400000 } : { status: 'locked', expiresAt: Date.now() + 86400000 });
     if (url === '/api/share-links/link/unlock') { authorized = true; return reply({ scope, expiresAt: Date.now() + 86400000 }); }
-    if (url === '/api/auth/whoami') {
+    if (url === '/api/v1/bootstrap?scope=whoami') {
       options.onProbe?.();
       if (options.whoami) return options.whoami();
       return authorized ? reply({ userId: 'local-owner', displayName: '访客', role: 'owner', sessionId: 'guest-session' }) : reply({}, 401);
     }
-    if (url === '/api/tracks/w1/conversations') return reply([{ id: 'assistant', trackId: 'w1', title: 'Shared Assistant', kind: 'track-assistant',
-      provider: 'codex', state: null, updatedAt: 2, archivedAt, lastTurnCompletedAt: null }]);
-    if (url === '/api/tracks/w1/conversations/assistant/archive') { archivedAt = Date.now(); return new Response(null, { status: 204 }); }
-    if (url === '/api/version') return reply({ webCompatVersion: WEB_COMPAT_VERSION, minWebCompatVersion: WEB_COMPAT_VERSION, syncEventVersion: 3, dbInstanceId: 'guest-instance' });
-    if (url === '/api/tracks/w1') {
+    const sessions = () => [fixtureSession('planner', 'w1', { title: 'Planner', isLead: true }), fixtureSession('assistant', 'w1', { title: 'Shared Assistant' })];
+    if (url === '/api/v1/tracks/w1/sessions') return reply(sessions());
+    if (url === '/api/v1/bootstrap') return reply({ ...fixtureBootstrap(), version: 'guest-instance' });
+    if (url === '/api/v1/tracks/w1') {
       const result = await fixture.transport.send(request);
-      const detail = result.body as { cards: unknown[] };
-      return reply({ ...detail, cards: [...detail.cards, { id: 'planner', track_id: 'w1', kind: 'codex', title: 'Planner', sort: 2,
-        payload: { planner_harness: true }, deletable: false, created_at: 1, updated_at: 2 }] });
+      const detail = result.body as TrackAggregateSnapshotDto;
+      return reply({ ...detail, track: { ...detail.track, leadSessionId: 'planner' }, sessions: sessions() });
     }
-    if (url.includes('/planner/run?')) return reply(historicalConversationRun({ card_id: 'planner', worker_session_id: null, phase: 'idle', model: null,
-      reasoning_effort: null, permission_mode: 'never', blocked_reason: null, manual_compact_supported: true, recovery: null,
-      compact_outcome: null, context_usage_invalidated: false, running_turn: null, attachments_supported: true }, null, true));
-    if (url.includes('/harness/items?')) return reply(historicalConversationPage('planner', [], null));
+    if (url.includes('/items?')) return reply(sessionPage(sessions()[0]));
     const result = await fixture.transport.send(request);
     return reply(result.body, result.status);
   });
@@ -80,7 +75,7 @@ it('unlocks into the production Report, tasks, tools and full Planner without a 
   await page.viewport(1440, 1000);
   const { requests, sockets, fixture, storage } = mountShare('track');
   await expect.element(page.getByLabelText('口令')).toBeVisible();
-  expect(requests.some(r => r.path === '/api/tracks/w1')).toBe(false);
+  expect(requests.some(r => r.path === '/api/v1/tracks/w1')).toBe(false);
   await page.getByLabelText('口令').fill('one-time-secret');
   await page.getByRole('button', { name: '解锁', exact: true }).click();
   await page.getByText('Reference', { exact: true }).click();
@@ -91,17 +86,14 @@ it('unlocks into the production Report, tasks, tools and full Planner without a 
   expect(document.querySelector('[data-nc-event-bridge]')).not.toBeNull();
   expect(page.getByRole('navigation', { name: 'Workspace' }).query()).toBeNull();
   expect(page.getByText('分享链接', { exact: true }).query()).toBeNull();
-  await page.getByRole('button', { name: 'Actions for conversation: Shared Assistant', exact: true }).click();
-  await page.getByRole('menuitem', { name: 'Archive conversation', exact: true }).click();
-  await waitFor(() => expect(requests.some(r => r.path.endsWith('/conversations/assistant/archive') && (r.body as { archived: boolean }).archived)).toBe(true));
   await page.screenshot({ path: '../../../../test-results/share-reuse-desktop.png' });
   await page.getByRole('button', { name: /Conversation Planner/ }).click();
   await expect.element(page.getByRole('combobox', { name: 'Message', exact: true })).toBeVisible();
   expect(window.location.pathname).toBe('/next/share/link/track/w1');
   expect(requests.filter(r => !r.path.startsWith('/api/share-links/')).every(r => r.headers?.['X-Calm-Share-Link'] === 'link')).toBe(true);
-  expect(sockets.some(url => url.includes('/api/events?share_link=link'))).toBe(true);
+  expect(sockets.some(url => url.includes('/api/v1/events?share_link=link'))).toBe(true);
   expect(storage.getItem(DB_INSTANCE_ID_KEY)).toBe('owner-instance');
-  expect(storage.getItem(`calm-share:link:${DB_INSTANCE_ID_KEY}`)).toBe('guest-instance');
+  expect(storage.getItem(`calm-share:link:${DB_INSTANCE_ID_KEY}`)).toBe('perga-guest-instance');
 });
 it.each([1280, 390])('limits Area navigation to its Tracks and New Track, with scoped production routing (%ipx)', async width => {
   await page.viewport(width, 900); mountShare('area', true);

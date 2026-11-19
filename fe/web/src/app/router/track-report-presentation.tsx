@@ -1,5 +1,5 @@
 import { useLayoutEffect, useMemo, useRef, type ReactNode } from 'react';
-import type { CardWire } from '../../../../core/domain/track.ts';
+import type { ReportDocumentDto } from '../../../../core/api/schemas.ts';
 import { useState } from '../../ui/state/public.ts';
 import { useContentAdmission } from '../../ui/content-presentation/public.ts';
 import { ErrorBox } from '../../ui/error-box/public.tsx';
@@ -11,9 +11,9 @@ import { useReadReceipt } from '../providers/read-receipts.tsx';
 import { useTrackReportCache } from './track-view-state.tsx';
 
 /** Queries and controls remain live while this report's pure preparation is pending. */
-export function useTrackReportPresentation(trackId: string, cards: readonly CardWire[], execute: ReportPreparationPort) {
+export function useTrackReportPresentation(trackId: string, document: ReportDocumentDto, execute: ReportPreparationPort) {
   const cache = useTrackReportCache();
-  const source = useMemo(() => cache.source(cards), [cache, cards]);
+  const source = useMemo(() => cache.documentSource(document), [cache, document]);
   const admitted = useContentAdmission(trackId, true);
   const resource = useReportPreparation(trackId, source, cache, execute, admitted);
   const committed = useRef<Readonly<{ trackId: string; value: NonNullable<typeof resource.candidate> }> | null>(null);

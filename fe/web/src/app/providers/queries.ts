@@ -16,7 +16,7 @@ import { hasReadFailure } from './query-read-feedback.ts';
 import { useMemo, useRef } from 'react';
 import { admitTransport, useRecoveryMutation } from './recovery-mutation.ts';
 import { z } from 'zod';
-import { bootstrapDtoSchema, type AgentProvider, type ReportReadResultDto } from '../../../../core/api/schemas.ts';
+import { bootstrapDtoSchema, type AgentProvider, type TrackAggregateSnapshotDto, type ReportReadResultDto } from '../../../../core/api/schemas.ts';
 
 import { performApiRequest } from '../../../../core/api/client.ts';
 import type { ApiOperation, ApiTransportPort } from '../../../../core/api/types.ts';
@@ -58,15 +58,15 @@ import {
   tracksInAreaOperation,
   type CardWire, type NewCardBody, type NewClaudeCardBody, type NewCodexCardBody, type NewTerminalCardBody,
   type NewTrackBody, type OverlayWire,
-  type Track, type TrackDetailWire, type TrackPatchBody, type TrackRecipe,
+  type Track, type TrackPatchBody, type TrackRecipe,
 } from '../../../../core/domain/track.ts';
 import {
   abandonSessionInputOperation, resumeProviderSessionOperation, compactPlannerOperation, interruptPlannerOperation, sendPlannerInputOperation, steerQueuedSessionMessageOperation, removeQueuedSessionMessageOperation,
-  createTrackConversationOperation, trackConversationsOperation, setConversationArchiveOperation,
+  createTrackConversationOperation, setConversationArchiveOperation,
   createSerialWriter, deletePlannerInputOperation, editPlannerInputOperation, steerPlannerInputOperation,
   modelCatalogOperation, plannerQueueWriteFailure, setPlannerModelOperation,
   uploadPlannerAttachmentOperation, PLANNER_ATTACHMENT_FAILURES, UPLOAD_TEXT,
-  type Conversation, type ModelCatalogScope, type ModelSelection, type ModelSelectionResult,
+  type ModelCatalogScope, type ModelSelection, type ModelSelectionResult,
   type PlannerQueueWriteOutcome, type PlannerQueueEditOutcome, type PendingQueueEntry, type PlannerInputMutation,
 } from '../../../../core/domain/conversation.ts';
 import { harnessLiveOperation } from '../../../../core/domain/conversation-live.ts';
@@ -195,7 +195,6 @@ export function usePlannerMutations(transport: ApiTransportPort, cardId: string,
            turn an accepted send into a failed write. Not awaited: a hung read must not retain the send lease. */
     void Promise.all([
       refreshTranscript(),
-      cancelThenInvalidate(client, queryKeys.initialInputPrefix()),
       client.invalidateQueries({ queryKey: queryKeys.plannerRun(cardId) }),
     ]).catch(() => undefined);
     return result;
@@ -215,7 +214,7 @@ export function usePlannerMutations(transport: ApiTransportPort, cardId: string,
   const refreshAfterInput = <T,>(result: T, resetTranscript: boolean): T => {
     if (resetTranscript) void client.resetQueries({ queryKey: transcriptKey }).catch(() => undefined);
     else void cancelThenInvalidate(client, transcriptKey);
-    for (const queryKey of [queryKeys.plannerRun(cardId), queryKeys.initialInputPrefix()]) void cancelThenInvalidate(client, queryKey);
+    void cancelThenInvalidate(client, queryKeys.plannerRun(cardId));
     refreshInputMetadata();
     return result;
   };
@@ -261,7 +260,6 @@ export function usePlannerMutations(transport: ApiTransportPort, cardId: string,
       .then(admitted => runOperation(admitted, resumeProviderSessionOperation(cardId, turnId), unauthorized))
       .finally(async () => {
         void cancelThenInvalidate(client, transcriptKey);
-        void cancelThenInvalidate(client, queryKeys.initialInputPrefix());
         refreshInputMetadata();
         await cancelThenInvalidate(client, queryKeys.plannerRun(cardId));
       }),
@@ -373,8 +371,6 @@ export function usePlannerMutations(transport: ApiTransportPort, cardId: string,
   };
 }
 
-import { initialInputObservationOperation } from '../../../../core/domain/conversation-initial-input.ts';
-import type { ConversationInitialInputObservation } from '../../../../core/api/generated/wire.ts';
 import type { SideConversation, CreatedConversation } from '../../../../core/domain/conversation.ts';
 
 export type ConversationMutations = Readonly<{
@@ -382,23 +378,9 @@ export type ConversationMutations = Readonly<{
   /** The key identifies the DRAFT, not the attempt: a retry after a timeout must reuse it, or it mints a second conversation. */
   create: (text: string, idempotencyKey: string, provider: AgentProvider, selection: ModelSelection, side: SideConversation | undefined,
     answered: (result: CreatedConversation) => void, permissionMode?: string | null) => Promise<CreatedConversation>;
-  inspect: (cardId: string, idempotencyKey: string) => Promise<ConversationInitialInputObservation>;
-  /** Re-read the list and hand back what it now holds. */
-  refresh: (beforePublish: (rows: readonly Conversation[]) => void) => Promise<Conversation[]>;
 }>;
 
-/** One track's assistant conversations; the event bridge already maps this key, so the list is live the moment it mounts. */
-export function trackConversationsQueryOptions(
-  transport: ApiTransportPort, trackId: string, unauthorized: UnauthorizedChannel,
-) {
-  return {
-    queryKey: queryKeys.trackConversations(trackId),
-    queryFn: ({ signal }: { signal: AbortSignal }): Promise<Conversation[]> =>
-      runOperation(transport, { ...trackConversationsOperation(trackId), signal }, unauthorized),
-  };
-}
-
-/** Creates and refreshes one Track's assistant-conversation list. */
+/** Session receipts and recovery reads update the Track's authoritative aggregate. */
 export function useTrackConversationMutations(
   transport: ApiTransportPort, trackId: string, unauthorized: UnauthorizedChannel,
 ): ConversationMutations {
@@ -412,25 +394,25 @@ export function useTrackConversationMutations(
       );
     },
     onSuccess: (result, { answered }) => {
-      answered(result);
-      const row = result.conversation;
-      /* Written through as well as invalidated: the drawer switches to this row in the same tick. */
-      client.setQueryData<Conversation[]>(queryKeys.trackConversations(trackId), (current) => {
-        const rows = current ?? [];
-        return rows.some((candidate) => candidate.id === row.id)
-          ? rows.map((candidate) => candidate.id === row.id ? row : candidate)
-          : [...rows, row];
+      // Fence an older aggregate read before publishing the create receipt.
+      // Query cancellation reverts synchronously, before its Promise settles. Keep
+      // this recovery-admitted publish in the same turn, without an await boundary.
+      void client.cancelQueries({ queryKey: queryKeys.trackDetail(trackId), exact: true });
+      client.setQueryData<TrackAggregateSnapshotDto>(queryKeys.trackDetail(trackId), current => {
+        if (current === undefined || current.track.id !== trackId) return current;
+        if (current.sessions.some(session => session.id === result.session.id)) return current;
+        return { ...current, sessions: [...current.sessions, result.session] };
       });
-      void client.invalidateQueries({ queryKey: queryKeys.trackConversations(trackId) });
-      /* The track detail is where the CARDS panel, the grid and the Today open-request read cards from. */
-      void client.invalidateQueries({ queryKey: queryKeys.trackDetail(trackId) });
+      answered(result);
+      void client.invalidateQueries({ queryKey: queryKeys.trackDetail(trackId), exact: true });
     },
   });
   const archive = useRecoveryMutation(transport, {
     mutationFn: ({ cardId, archived }: { cardId: string; archived: boolean }, transport: ApiTransportPort) =>
       runOperation(transport, setConversationArchiveOperation(trackId, cardId, archived), unauthorized),
-    onSuccess: async () => {
-      await client.invalidateQueries({ queryKey: queryKeys.trackConversations(trackId) });
+    onSettled: async () => {
+      await client.cancelQueries({ queryKey: queryKeys.trackDetail(trackId), exact: true });
+      await client.invalidateQueries({ queryKey: queryKeys.trackDetail(trackId), exact: true });
     },
   });
   const changeArchive = useCommittedCallback(trackId,
@@ -439,19 +421,6 @@ export function useTrackConversationMutations(
     archive: changeArchive,
     create: (text, idempotencyKey, provider, selection, side, answered, permissionMode) =>
       create.mutateAsync({ text, idempotencyKey, provider, selection, side, answered, permissionMode }),
-    inspect: (cardId, key) => runOperation(transport, initialInputObservationOperation(trackId, cardId, key), unauthorized),
-    refresh: async (beforePublish) => {
-      const admitted = admitTransport(transport);
-      const rows = await runOperation(admitted, trackConversationsOperation(trackId), unauthorized);
-      admitted.recovery?.checkpoint()();
-      // A manual cache write does not stop the list's older retryer from overwriting it.
-      // Fence that existing read before receipt adoption and its canonical row publish together.
-      await client.cancelQueries({ queryKey: queryKeys.trackConversations(trackId) });
-      admitted.recovery?.checkpoint()();
-      beforePublish(rows);
-      client.setQueryData(queryKeys.trackConversations(trackId), rows);
-      return rows;
-    },
   };
 }
 
@@ -481,7 +450,6 @@ export function serverVersionOperation(): ApiOperation<ServerVersionInfo> {
         assistantProviders: true,
         conversationCreateModel: true,
         conversationInitialInput: true,
-        sessionInputReceipts: true,
         conversationSide: false,
         webCompatVersion: WEB_COMPAT_VERSION,
         minWebCompatVersion: WEB_COMPAT_VERSION,
@@ -545,28 +513,20 @@ export function tracksInAreaQueryOptions(transport: ApiTransportPort, areaId: st
   };
 }
 
-function isPergaDetail(detail: TrackDetailWire | undefined): boolean {
-  const reportCard = detail?.cards[0];
-  return reportCard?.kind === 'track-report'
-    && (reportCard.payload as { pergaSnapshot?: unknown } | null)?.pergaSnapshot === true;
-}
-
 export function trackDetailQueryOptions(transport: ApiTransportPort, trackId: string, unauthorized: UnauthorizedChannel) {
   return {
     queryKey: queryKeys.trackDetail(trackId),
-    queryFn: async ({ signal }: { signal: AbortSignal }): Promise<TrackDetailWire> => {
-      const detail = await runOperation(transport, { ...trackDetailOperation(trackId), signal }, unauthorized);
-      if (!isPergaDetail(detail)) return detail;
-      try {
-        const terminals = await runOperation(transport, { ...listTrackTerminalsOperation(trackId), signal }, unauthorized);
-        if (terminals.length === 0) return detail;
-        const existingIds = new Set(detail.cards.map((card) => card.id));
-        const merged = [...detail.cards, ...terminals.filter((card) => !existingIds.has(card.id))];
-        return { ...detail, cards: merged };
-      } catch {
-        return detail;
-      }
-    },
+    queryFn: ({ signal }: { signal: AbortSignal }): Promise<TrackAggregateSnapshotDto> =>
+      runOperation(transport, { ...trackDetailOperation(trackId), signal }, unauthorized),
+  };
+}
+
+/** Workbench resources have their own cache and never contain agent sessions. */
+export function trackToolsQueryOptions(transport: ApiTransportPort, trackId: string, unauthorized: UnauthorizedChannel) {
+  return {
+    queryKey: queryKeys.trackTools(trackId),
+    queryFn: ({ signal }: { signal: AbortSignal }) =>
+      runOperation(transport, { ...listTrackTerminalsOperation(trackId), signal }, unauthorized),
   };
 }
 
@@ -971,82 +931,57 @@ export function useTrackMutations(transport: ApiTransportPort, unauthorized: Una
       void cancelThenInvalidate(client, queryKeys.overlaysByKind('track'));
     },
   });
-  /* The card creates answer with the row the kernel just wrote and the next render needs it: the caller
-   * navigates to `?card=<id>` and the board can only draw a card the detail cache already holds. */
-  const addCardToDetail = (card: CardWire): void => {
-    client.setQueryData(queryKeys.trackDetail(card.track_id), (previous: TrackDetailWire | undefined) => {
-      if (previous === undefined) return previous;
-      if (previous.cards.some((existing) => existing.id === card.id)) return previous;
-      return { ...previous, cards: [...previous.cards, card] };
+  /* Tool receipts go to the independent inventory. Cancellation synchronously fences
+   * older reads; publishing stays inside the recovery-admitted callback. */
+  const addToolToCache = (card: CardWire): void => {
+    void client.cancelQueries({ queryKey: queryKeys.trackTools(card.track_id), exact: true });
+    client.setQueryData(queryKeys.trackTools(card.track_id), (previous: CardWire[] | undefined) => {
+      if (previous?.some((existing) => existing.id === card.id)) return previous;
+      return [...(previous ?? []), card];
     });
-    void client.invalidateQueries({ queryKey: queryKeys.trackDetail(card.track_id) });
+    void client.invalidateQueries({ queryKey: queryKeys.trackTools(card.track_id), exact: true });
   };
   const createTerminal = useRecoveryMutation(transport, {
     mutationFn: ({ trackId, body, key }: { trackId: string; body: NewTerminalCardBody; key: string }, transport: ApiTransportPort) =>
       runOperation(transport, createTerminalCardOperation(trackId, body, key), unauthorized),
-    onSuccess: addCardToDetail,
+    onSuccess: addToolToCache,
   });
   const setTerminalWorkbench = useRecoveryMutation(transport, {
     mutationFn: ({ cardId, inWorkbench }: { trackId: string; cardId: string; inWorkbench: boolean }, port: ApiTransportPort) =>
       runOperation(port, setTerminalWorkbenchOperation(cardId, inWorkbench), unauthorized),
     onSuccess: (card) => {
-      client.setQueryData(queryKeys.trackDetail(card.track_id), (previous: TrackDetailWire | undefined) => previous === undefined ? previous
-        : { ...previous, cards: previous.cards.map(existing => existing.id === card.id ? card : existing) });
+      void client.cancelQueries({ queryKey: queryKeys.trackTools(card.track_id), exact: true });
+      client.setQueryData(queryKeys.trackTools(card.track_id), (previous: CardWire[] | undefined) => previous === undefined ? previous
+        : previous.map(existing => existing.id === card.id ? card : existing));
     },
     onSettled: (_card, _error, { trackId }) => {
-      void client.invalidateQueries({ queryKey: queryKeys.trackDetail(trackId) });
+      void cancelThenInvalidate(client, queryKeys.trackTools(trackId));
     },
   });
   const createCodex = useRecoveryMutation(transport, {
     mutationFn: ({ trackId, body, key }: { trackId: string; body: NewCodexCardBody; key: string }, transport: ApiTransportPort) =>
       runOperation(transport, createCodexCardOperation(trackId, body, key), unauthorized),
-    onSuccess: addCardToDetail,
+    onSuccess: addToolToCache,
   });
   const createClaude = useRecoveryMutation(transport, {
     mutationFn: ({ trackId, body, key }: { trackId: string; body: NewClaudeCardBody; key: string }, transport: ApiTransportPort) =>
       runOperation(transport, createClaudeCardOperation(trackId, body, key), unauthorized),
-    onSuccess: addCardToDetail,
+    onSuccess: addToolToCache,
   });
   const createCard = useRecoveryMutation(transport, {
-    mutationFn: async ({ trackId, body, key }: { trackId: string; body: NewCardBody; key: string }, transport: ApiTransportPort) => {
-      const cached = client.getQueryData<TrackDetailWire>(queryKeys.trackDetail(trackId));
-      if (isPergaDetail(cached) && body.kind === 'file-viewer') {
-        const now = Math.floor(Date.now() / 1000);
-        return {
-          id: `file-local-${key}`,
-          track_id: trackId,
-          kind: 'file-viewer',
-          title: body.title ?? 'Files',
-          sort: 900,
-          payload: body.payload ?? {},
-          deletable: true,
-          created_at: now,
-          updated_at: now,
-        } satisfies CardWire;
-      }
-      return runOperation(transport, createCardOperation(trackId, body, key), unauthorized);
-    },
-    onSuccess: (card) => {
-      const cached = client.getQueryData<TrackDetailWire>(queryKeys.trackDetail(card.track_id));
-      if (card.id.startsWith('file-local-') && isPergaDetail(cached)) {
-        client.setQueryData(queryKeys.trackDetail(card.track_id), (previous: TrackDetailWire | undefined) => {
-          if (previous === undefined) return previous;
-          if (previous.cards.some((existing) => existing.id === card.id)) return previous;
-          return { ...previous, cards: [...previous.cards, card] };
-        });
-        return;
-      }
-      addCardToDetail(card);
-    },
+    mutationFn: ({ trackId, body, key }: { trackId: string; body: NewCardBody; key: string }, transport: ApiTransportPort) =>
+      runOperation(transport, createCardOperation(trackId, body, key), unauthorized),
+    onSuccess: addToolToCache,
   });
-  /* Delete drops the row from the cached detail before the refetch lands: leaving it on screen would keep
+  /* Delete drops the row from the tool cache before the refetch lands: leaving it on screen would keep
    * a PTY attached to a card the kernel has torn down. A delete answered done (404, `DELETE_FAILURES`) is gone the same
    * way. `onSettled`: an aborted wait says nothing about commit. */
   const dropCard = (_result: unknown, { trackId, cardId }: { trackId: string; cardId: string }) => {
-    client.setQueryData(queryKeys.trackDetail(trackId), (previous: TrackDetailWire | undefined) => {
+    void client.cancelQueries({ queryKey: queryKeys.trackTools(trackId), exact: true });
+    client.setQueryData(queryKeys.trackTools(trackId), (previous: CardWire[] | undefined) => {
       if (previous === undefined) return previous;
-      const cards = previous.cards.filter((existing) => existing.id !== cardId);
-      return cards.length === previous.cards.length ? previous : { ...previous, cards };
+      const cards = previous.filter((existing) => existing.id !== cardId);
+      return cards.length === previous.length ? previous : cards;
     });
   };
   const removeCard = useRecoveryMutation(transport, {
@@ -1058,10 +993,8 @@ export function useTrackMutations(transport: ApiTransportPort, unauthorized: Una
     },
     onSuccess: dropCard,
     onError: (error, variables) => { if (deleteDone(error)) dropCard(undefined, variables); },
-    onSettled: (_result, _error, { trackId, cardId }) => {
-      if (!cardId.startsWith('file-local-')) {
-        void client.invalidateQueries({ queryKey: queryKeys.trackDetail(trackId) });
-      }
+    onSettled: (_result, _error, { trackId }) => {
+      void cancelThenInvalidate(client, queryKeys.trackTools(trackId));
       void cancelThenInvalidate(client, queryKeys.overlaysByKind('track'));
     },
   });

@@ -1,4 +1,6 @@
-/** Wire simulator only; real xterm, input, fit and lifecycle execute in browser tests. */
+import { encodeTerminalInputFrame, TERMINAL_FRAME_CONTROL_JSON } from '../../systems/terminal/protocol.ts';
+
+/** Binary v1 wire simulator; real xterm, input, fit and lifecycle execute in browser tests. */
 export function workbenchSockets() {
   const sockets: Socket[] = [];
   class Socket {
@@ -12,14 +14,15 @@ export function workbenchSockets() {
     sent: Uint8Array[] = [];
     readonly url: string;
     constructor(url: string) { this.url = url; sockets.push(this); }
-    send(data: Uint8Array) { this.sent.push(data); }
+    send(data: Uint8Array) { this.sent.push(data.slice()); }
     close() { this.readyState = 3; }
     open() {
       this.readyState = 1; this.onopen?.();
-      this.onmessage?.({ data: new Uint8Array([1, ...new TextEncoder().encode('workbench prompt')]) });
+      this.onmessage?.({ data: encodeTerminalInputFrame('workbench prompt') });
     }
-    exit() {
-      this.onmessage?.({ data: new Uint8Array([2, ...new TextEncoder().encode('{"type":"exit","exit_code":0}')]) });
+    exit(code: number) {
+      const payload = new TextEncoder().encode(JSON.stringify({ type: 'exit', exit_code: code }));
+      this.onmessage?.({ data: Uint8Array.of(TERMINAL_FRAME_CONTROL_JSON, ...payload) });
     }
   }
   return { sockets, Socket };

@@ -20,9 +20,9 @@ export function useManagedProviders(transport: ApiTransportPort, unauthorized: U
   const supportsAssistantProviders = !version.isError && version.data?.assistantProviders === true
     && version.data.webCompatVersion >= WEB_COMPAT_VERSION && version.data.minWebCompatVersion <= WEB_COMPAT_VERSION;
   const answers = query.isError ? undefined : query.data;
-  const catalogs = useQueries({ queries: (answers ?? []).map(({ availability, capabilities }) => ({
+  const catalogs = useQueries({ queries: (answers ?? []).map(({ availability }) => ({
     ...modelCatalogQueryOptions(transport, { kind: 'provider', provider: availability.provider }, unauthorized),
-    enabled: enabled && capabilities.managed_conversation && managedProviderProblem(answers, availability.provider) === null,
+    enabled: enabled && managedProviderProblem(answers, availability.provider) === null,
   })) });
   const recheck = async () => {
     const next = await runOperation(transport, managedProvidersOperation(true), unauthorized);

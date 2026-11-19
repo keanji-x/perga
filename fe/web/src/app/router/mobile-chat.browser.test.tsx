@@ -1,5 +1,6 @@
 import { createBrowserHistory } from '@tanstack/react-router';
-import { historicalConversationPage, conversationCardId, historicalConversationRun } from './conversation-read-data.ts';
+import { fixtureSession } from './session-contract-fixture.ts';
+import { sessionPage, sessionItem, sessionTurn, sessionInput } from './conversation-session-data.ts';
 import '../../styles/entry.css';
 import { useLayoutEffect, useRef } from 'react';
 import { ConversationSurface } from './mobile-conversation-surface.tsx';
@@ -27,7 +28,7 @@ it.each([320, 390])('aligns the left circular controls and keeps chat usable at 
   const workspace = page.getByRole('button', { name: 'Open workspace', exact: true }).element().getBoundingClientRect();
   expect(new Set([leading.height, title.height, workspace.height, bar.getBoundingClientRect().height].map(Math.round)).size).toBe(1);
   expect(workspace.left).toBe(leading.left);
-  expect(bar.getBoundingClientRect().right).toBe(title.right);
+  expect(bar.getBoundingClientRect().right).toBe(width - leading.left);
   expect(width - bar.getBoundingClientRect().right).toBe(leading.left);
   expect(title.left).toBeGreaterThanOrEqual(leading.right);
   expect(title.right).toBeLessThanOrEqual(width - leading.left);
@@ -92,12 +93,8 @@ it('keeps draft words across closing and sends the same Planner before reopening
   await page.viewport(390, 844);
   let answered = false;
   const { requests, client } = renderDailyFixture({ emptyWorkspace: true, reply: (request) => {
-    if (request.path.endsWith('/planner/input')) return ok({ card_id: 'daily-planner', worker_session_id: 'runtime' });
-    if (request.path.includes('/harness/items') && answered) return ok(historicalConversationPage(conversationCardId(request.path), [{
-      id: 1, worker_session_id: 'runtime', card_id: 'daily-planner', track_id: 'daily', thread_id: 'thread',
-      turn_id: null, turn_error_text: null, item_uuid: null, item_type: 'agentMessage', method: 'item/completed',
-      params: JSON.stringify({ item: { text: 'Your plan is ready.' } }), created_at_ms: 1,
-    }], null));
+    if (request.path.endsWith('/messages')) return ok(sessionInput('daily-planner'));
+    if (request.path.includes('/items?') && answered) return ok(sessionPage(fixtureSession('daily-planner', 'daily'), [sessionItem('daily-planner', 1, 'Your plan is ready.')]));
     return undefined;
   } });
   const entry = page.getByRole('textbox', { name: 'Chat message', exact: true });
@@ -108,9 +105,9 @@ it('keeps draft words across closing and sends the same Planner before reopening
   await expect.poll(() => document.querySelector('dialog[open]')).toBeNull();
   await expect.element(entry).toHaveValue('整理今天的计划\n保留这行');
   await page.getByRole('button', { name: 'Send chat message', exact: true }).click();
-  await expect.poll(() => requests.filter((request) => request.path.endsWith('/planner/input')).length).toBe(1);
-  const sent = requests.find((request) => request.path.endsWith('/planner/input'))!;
-  expect(sent.path).toBe('/api/cards/daily-planner/planner/input');
+  await expect.poll(() => requests.filter((request) => request.path.endsWith('/messages')).length).toBe(1);
+  const sent = requests.find((request) => request.path.endsWith('/messages'))!;
+  expect(sent.path).toBe('/api/v1/sessions/daily-planner/messages');
   expect(sent.body).toMatchObject({ text: '整理今天的计划\n保留这行' });
   expect(sent.headers?.['Idempotency-Key']).toBeTruthy();
   await expect.element(page.getByRole('dialog', { name: 'Daily Planner conversation', exact: true })).toBeVisible();
@@ -121,7 +118,7 @@ it('keeps draft words across closing and sends the same Planner before reopening
   await expect.poll(() => document.querySelector('dialog[open]')).toBeNull();
   entry.element().focus();
   await expect.element(page.getByText('Your plan is ready.', { exact: true })).toBeVisible();
-  expect(requests.filter((request) => request.method === 'POST' && request.path.endsWith('/conversations'))).toHaveLength(0);
+  expect(requests.filter((request) => request.method === 'POST' && request.path.endsWith('/sessions'))).toHaveLength(0);
 });
 
 it('shows no draft entry on desktop and never dispatches an empty message', async () => {
@@ -210,11 +207,7 @@ it('keeps the fixed mobile editor above a reduced visible viewport without losin
 
 it('keeps the message viewport above a growing multiline composer', async () => {
   await page.viewport(390, 844);
-  renderDailyFixture({ emptyWorkspace: true, reply: request => request.path.includes('/harness/items') ? ok(historicalConversationPage(conversationCardId(request.path), [{
-    id: 1, worker_session_id: 'runtime', card_id: 'daily-planner', track_id: 'daily', thread_id: 'thread',
-    turn_id: null, turn_error_text: null, item_uuid: null, item_type: 'agentMessage', method: 'item/completed',
-    params: JSON.stringify({ item: { text: `${'A previous reply.\n\n'.repeat(80)}Final line remains visible.` } }), created_at_ms: 1,
-  }], null)) : undefined });
+  renderDailyFixture({ emptyWorkspace: true, reply: request => request.path.includes('/items?') ? ok(sessionPage(fixtureSession('daily-planner', 'daily'), [sessionItem('daily-planner', 1, 'Long reply. '.repeat(400) + '\n\nFinal line remains visible.')])) : undefined });
   await page.getByRole('textbox', { name: 'Chat message', exact: true }).click();
   const field = page.getByRole('combobox', { name: 'Message', exact: true });
   await expect.element(field).toBeEnabled();
@@ -465,15 +458,16 @@ it('keeps Area editor actions inside the visible viewport when its keyboard open
 it('interrupts the current working conversation from its portalled mobile editor without dismissing it', async () => {
   await page.viewport(390, 844);
   const { requests } = renderDailyFixture({ emptyWorkspace: true, reply: request => {
-    if (request.path.includes('/planner/run?contract=conversation_v1')) return ok(historicalConversationRun({ card_id: 'daily-planner', worker_session_id: 'runtime', phase: 'turn_running', model: null, reasoning_effort: null, permission_mode: 'never', blocked_reason: null, pending_queue: [], manual_compact_supported: true, recovery: null, compact_outcome: null, context_usage_invalidated: false, running_turn: null, final_reply: null }, 'idle', true));
-    if (request.path.endsWith('/planner/interrupt')) return ok({ card_id: 'daily-planner', worker_session_id: 'runtime', stopped: true });
+    if (request.path.includes('/items?')) return ok(sessionPage(fixtureSession('daily-planner', 'daily'), [], sessionTurn('daily-planner')));
+    if (request.path.endsWith('/interrupt')) return ok({ card_id: 'daily-planner', worker_session_id: 'runtime', stopped: true });
     return undefined;
   } });
-  await page.getByRole('textbox', { name: 'Chat message', exact: true }).click();
+  await page.getByRole('button', { name: 'Open conversation history', exact: true }).click();
+  await page.getByRole('button', { name: '2026-10-04 Daily Planner conversation', exact: true }).click();
   await expect.element(page.getByRole('button', { name: 'Stop', exact: true })).toBeVisible();
-  await page.getByRole('combobox', { name: 'Message', exact: true }).click();
+  page.getByRole('button', { name: 'Stop', exact: true }).element().focus();
   await userEvent.keyboard('{Escape}');
-  await expect.poll(() => requests.filter(request => request.path === '/api/cards/daily-planner/planner/interrupt')).toHaveLength(1);
+  await expect.poll(() => requests.filter(request => request.path === '/api/v1/sessions/daily-planner/interrupt')).toHaveLength(1);
   await expect.element(page.getByRole('dialog', { name: 'Daily Planner conversation', exact: true })).toBeVisible();
 });
 

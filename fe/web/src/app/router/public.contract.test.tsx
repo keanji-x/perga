@@ -152,7 +152,7 @@ afterEach(() => { cleanup(); vi.useRealTimers(); });
 
 describe('conversation pending accounting', () => {
   const conversation = { provider: 'codex' as const,
-    id: 'c1', trackId: 'w1', trackTitle: 'Track', title: null, kind: 'shared-spec' as const,
+    id: 'c1', trackId: 'w1', trackTitle: 'Track', title: null, kind: 'agent' as const, isLead: true,
     state: 'idle' as const, updatedAt: 0, turns: 0,
   };
 
@@ -165,7 +165,7 @@ describe('conversation pending accounting', () => {
   /* Pending is what *this* tab is doing, so it cannot depend on the session
      state the server last reported — including its absence on a listed row. */
   it('accounts a conversation with no reported session the same way', () => {
-    const stateless = { ...conversation, kind: 'track-assistant' as const, state: null };
+    const stateless = { ...conversation, kind: 'agent' as const, isLead: false, state: null };
     expect(pendingConversationIds(stateless, false, true).has('c1')).toBe(true);
     expect(pendingConversationIds(stateless, false, false).has('c1')).toBe(false);
   });

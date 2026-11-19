@@ -1,3 +1,4 @@
+import type { TrackAggregateSnapshotDto } from '../../../../core/api/schemas.ts';
 import { ShareScopeProvider, useShareScope } from '../shell/public.tsx';
 import { terminalPresentation } from '../../../../core/domain/terminal-presentation.ts';
 import type { ShareScope } from '../../../../core/api/generated/wire.ts';
@@ -53,9 +54,8 @@ import {
   type AttachmentStore, usePlannerAttachments,
 } from '../../features/planner/attachments.tsx';
 import {
-   plannerProviderOf, trackOverlayPayload, toTrack, trackActivityFrom, trackDisplayTitle,
-  type Track, type TrackActivity, type TrackDetailWire,
-  retryTrackWorkspaceOperation,
+  trackOverlayPayload, toTrack, trackActivityFrom, trackDisplayTitle,
+  trackDtoToWire, snapshotActivityOverlays, type TrackActivity, retryTrackWorkspaceOperation,
 } from '../../../../core/domain/track.ts';
 import { cardActivityOf, type CardActivity } from '../../../../core/domain/activity.ts';
 import { parkedWorkerNotices, workbenchTerminalCardIds } from '../../../../core/view/track-page.ts';
@@ -63,7 +63,7 @@ import type {
   BoardHostItem, CardAddMenuEntry, CardHost, CardRegistry,
 } from '../../systems/cards/public.js';
 import {
-  cardAddMenuEntries, createCardHost, isAssistantHarnessPayload, isPlannerHarnessPayload, plannerCardIn, partitionTrackCards,
+  cardAddMenuEntries, createCardHost, partitionTrackCards,
 } from '../../systems/cards/public.js';
 import { mintIdempotencyKey, useKeyedIntent, type KeyedRequest } from '../providers/idempotency-key.ts';
 import footerStyles from './composer-footer.module.css';
@@ -104,7 +104,6 @@ import type { ReportSourceLinkTarget } from '../../../../core/domain/report-sour
 import {
   conversationName,
   isUserConversationTurn,
-  trackConversationCardId,
   FOLLOW_INSTALLATION_DEFAULT,
   type Conversation,
   type ConversationTurn,
@@ -123,7 +122,7 @@ import {
   prefetchAreaList, areaListQueryOptions, tracksInAreaQueryOptions,
 
   useTrackConversationMutations, useTrackMutations,
-  trackBacklinksQueryOptions, trackConversationsQueryOptions, trackDetailQueryOptions,
+  trackBacklinksQueryOptions, trackDetailQueryOptions, trackToolsQueryOptions,
   trackTaskVerdictsQueryOptions,
 } from '../providers/queries.ts';
 import { NewTrackRoute } from './new-track-route.tsx';
@@ -132,7 +131,7 @@ import { PergaOverviewRoute } from './perga-overview.tsx';
 import { ConversationComposer, ConversationDock } from './conversation-composer.tsx';
 import mobileChatStyles from './mobile-chat.module.css';
 import { ConversationSurface, type EmbeddedConversationPresentation } from './mobile-conversation-surface.tsx';
-import { trackConversationRows } from '../conversations/planner-row.ts';
+import { agentSessionDtoToConversation } from '../../../../core/domain/conversation.ts';
 import { NewTrackDraftProvider } from './new-track-drafts.tsx';
 import { RecipesRoute } from './recipes-route.tsx';
 import { createUiPreferences, UiPreferencesProvider, useUiPreferences, type UiPreferences } from '../providers/ui-preferences.tsx';
@@ -243,10 +242,7 @@ export function createRouteTree(deps: AppRouterDeps): AnyRoute {
       return <DailyTodayRoute transport={transport} unauthorized={unauthorized} selectedDate={day}
         onOpenTrack={(trackId) => go({ name: 'track', trackId })}
         renderTrack={(detail, evidence, panelContent, intro, supervisor, center) => <TrackRouteBody center={center} reportHeader={supervisor} reportEmpty={<TodayReportEmpty />} mobileReportIntro={intro} panelContent={panelContent} reportEvidence={evidence} key={detail.track.id} prepareReport={prepareReport} transport={transport} unauthorized={unauthorized}
-          track={toTrack(detail.track, trackActivityFrom(detail.track.id, detail.overlays))}
-          canReopenTrack={detail.can_reopen} canCloseTrack={detail.can_close}
-          adminGrantedAt={detail.track.admin_granted_at} canAdminTrack={detail.can_admin}
-          cards={detail.cards} overlays={detail.overlays} cardRuntime={cards} recentFiles={recentFiles} pergaMode={pergaMode} />} />;
+          snapshot={detail} cardRuntime={cards} recentFiles={recentFiles} pergaMode={pergaMode} />} />;
     },
   });
 
@@ -507,7 +503,7 @@ function useConversationPane(
     enabled: imageTrackId !== null && source.workspaceRoot === null,
   });
   const imageRoot = source.workspaceRoot
-    ?? (imageTrack.data === undefined ? null : toTrack(imageTrack.data.track).agentCwd);
+    ?? (imageTrack.data === undefined ? null : toTrack(trackDtoToWire(imageTrack.data.track)).agentCwd);
   const shareAccess = useShareScope();
   const conversationFiles = useMemo(() => imageTrackId === null ? null
     : createTrackWorkspaceFilesPort(transport, unauthorized, imageTrackId, shareAccess?.shareLinkId), [imageTrackId, transport, unauthorized, shareAccess?.shareLinkId]);
@@ -635,7 +631,6 @@ function useConversationPane(
 
   const { start, startWithMessage, withDraft, sendDraft, retryDraft, sendAsNewConversation, closeDrawer } = createConversationDraftActions({
     registry, draft, creating, source, sourceScopeId, transport, supportsDraftModel,
-    sessionInputReceipts: draftCapabilities.data?.sessionInputReceipts === true,
     defaultProvider: source.defaultProvider,
     supportsInitialInput: !draftCapabilities.isError && draftCapabilities.data?.conversationInitialInput === true,
     managedProviders: managed.answers,
@@ -707,7 +702,8 @@ function useConversationPane(
   const setModel = useCommittedCallback(existingId, store.setModel);
   const setPermissionMode = useCommittedCallback(existingId, store.setPermissionMode);
   const worker = store.worker;
-  const updateWorkerSettings = store.updateWorkerSettings;
+  const commitWorkerSettings = useCommittedCallback(existingId, store.updateWorkerSettings ?? (() => Promise.reject(new NotSentError())));
+  const updateWorkerSettings = store.updateWorkerSettings === undefined ? undefined : commitWorkerSettings;
   const workerDelivery = store.workerDelivery;
   const [submission, setSubmission] = useState<Readonly<{ conversationId: string; request: number }> | null>(null);
   /* Only a new admitted op asks the shown thread to follow. Retries retain their
@@ -799,8 +795,8 @@ function useConversationPane(
   const composerStop = !editingQueue && !composerView.compacting && (store.canStop || composerView.stopping) ? composerView.interrupt : undefined;
   const plannerCommands = plannerRow?.commands;
   const switchPlanner = usePlannerSwitchControl(transport, unauthorized, scope);
-  const plannerSwitchBinding = useMemo(() => scope?.kind === 'track-assistant' && plannerRow === null
-    ? { execute: switchPlanner } : undefined, [scope?.kind, plannerRow, switchPlanner]);
+  const plannerSwitchBinding = useMemo(() => scope !== null && scope.isLead !== true
+    ? { execute: switchPlanner } : undefined, [scope, switchPlanner]);
   const paneCommands = useMemo(() => composerCommands({
     ...conversationCommandBindings({
       newConversation: options?.inline === true ? undefined : newConversation,
@@ -986,10 +982,6 @@ function useConversationPane(
         ) : (
           <>
             {store.sending && !threadPresented && <ChatFooterNotice tone="neutral">Sending…</ChatFooterNotice>}
-            {store.initialInputChecking && !(threadPresented && openTurns.length > 0 && threadStatusUnconfirmed)
-              && <ChatFooterNotice tone="neutral">Checking the first message’s current status.</ChatFooterNotice>}
-            {store.initialInputError !== null && <ChatFooterNotice tone="neutral">{store.initialInputError}
-              <ChatFooterRemedy onClick={store.retryInitialInput}>Reload conversation</ChatFooterRemedy></ChatFooterNotice>}
             {store.awaitingConversationUpdate && <ChatFooterNotice tone="neutral">Waiting for conversation to update.</ChatFooterNotice>}
             {/* Each query owns its read retry; accepted sends keep their reconciliation fence (#2068). */}
             {readError}
@@ -1199,7 +1191,7 @@ function TrackRoute({ transport, unauthorized, cardRuntime, recentFiles, prepare
   const detail = useQuery({
     ...trackDetailQueryOptions(transport, trackId ?? '', unauthorized),
     enabled: trackId !== undefined,
-    refetchInterval: (query) => query.state.data?.workspacePreparation === 'pending' && !query.state.data.can_reopen ? 1000 : false,
+    refetchInterval: (query) => query.state.data?.workspacePreparation === 'pending' && query.state.data.track.closedAtMs == null ? 1000 : false,
   });
   const retry = useMutation({
     mutationFn: (id: string) => runOperation(transport, retryTrackWorkspaceOperation(id), unauthorized),
@@ -1208,15 +1200,10 @@ function TrackRoute({ transport, unauthorized, cardRuntime, recentFiles, prepare
   /* One `Track` per detail read, not per render: the body memoises on it. */
   const detailData = detail.data;
   const track = useMemo(
-    () => detailData === undefined ? null : toTrack(detailData.track, trackActivityFrom(detailData.track.id, detailData.overlays)),
+    () => detailData === undefined ? null : toTrack(trackDtoToWire(detailData.track), trackActivityFrom(detailData.track.id, snapshotActivityOverlays(detailData))),
     [detailData],
   );
-  /* The card Today asked for, if this track has it and it is a conversation card at
-   * all — BOTH conversation markers, not just the planner one. A fail-safe with no
-   * live producer. */
-  const requestedCard = detail.data?.cards.find((card) => card.id === openRequest?.id
-    && card.kind === 'codex'
-    && (isPlannerHarnessPayload(card.payload) || isAssistantHarnessPayload(card.payload)));
+  const requestedCard = detail.data?.sessions.find(session => session.id === openRequest?.id);
   const detailMatchesRoute = trackId !== undefined && detail.data?.track.id === trackId;
   useEffect(() => {
     if (openRequest === null || detail.isLoading || detail.isFetching) return;
@@ -1238,9 +1225,9 @@ function TrackRoute({ transport, unauthorized, cardRuntime, recentFiles, prepare
       prepareReport={prepareReport}
       transport={transport}
       unauthorized={unauthorized}
-      track={track}
+      snapshot={detail.data}
       workspaceWaiting={detail.data.workspacePreparation != null}
-      workspaceNotice={detail.data.workspacePreparation === 'failed' && detail.data.can_reopen
+      workspaceNotice={detail.data.workspacePreparation === 'failed' && detail.data.track.closedAtMs != null
         ? <Banner status="error" title="Reopen this Track to retry workspace setup." />
         : detail.data.workspacePreparation === 'failed'
         ? <ErrorBox message={retry.isError
@@ -1253,12 +1240,6 @@ function TrackRoute({ transport, unauthorized, cardRuntime, recentFiles, prepare
         : detail.data.workspacePreparation === 'pending'
         ? <p role="status">Preparing the workspace.</p>
         : undefined}
-      canReopenTrack={detail.data.can_reopen}
-      canCloseTrack={detail.data.can_close}
-      adminGrantedAt={detail.data.track.admin_granted_at}
-      canAdminTrack={detail.data.can_admin}
-      cards={detail.data.cards}
-      overlays={detail.data.overlays}
       cardRuntime={cardRuntime}
       recentFiles={recentFiles}
       pergaMode={pergaMode}
@@ -1286,17 +1267,11 @@ function trackNotifications(items: TrackActivity['attentionItems']): readonly Tr
 }
 
 function TrackRouteBody({
-  transport, unauthorized, track, canReopenTrack, canCloseTrack, adminGrantedAt, canAdminTrack, cards: sourceCards, overlays, cardRuntime, recentFiles, reportEvidence, reportHeader, reportEmpty, panelContent, mobileReportIntro, prepareReport, center, pergaMode = false, workspaceWaiting = false, workspaceNotice,
+  transport, unauthorized, snapshot, cardRuntime, recentFiles, reportEvidence, reportHeader, reportEmpty, panelContent, mobileReportIntro, prepareReport, center, pergaMode = false, workspaceWaiting = false, workspaceNotice,
 }: {
   transport: ApiTransportPort;
   unauthorized: UnauthorizedChannel;
-  track: Track;
-  canReopenTrack: boolean;
-  canCloseTrack: boolean;
-  adminGrantedAt: number | null;
-  canAdminTrack: boolean;
-  cards: TrackDetailWire['cards'];
-  overlays: TrackDetailWire['overlays'];
+  snapshot: TrackAggregateSnapshotDto;
   cardRuntime: CardRuntime;
   recentFiles: RecentFileHistory;
   center?: DailyCenterPresentation;
@@ -1310,13 +1285,20 @@ function TrackRouteBody({
   reportEmpty?: ReactNode;
   pergaMode?: boolean;
 }) {
+  const overlays = useMemo(() => snapshotActivityOverlays(snapshot), [snapshot]);
+  const track = useMemo(() => toTrack(trackDtoToWire(snapshot.track), trackActivityFrom(snapshot.track.id, overlays)), [snapshot.track, overlays]);
+  const canReopenTrack = snapshot.track.closedAtMs != null;
+  const canCloseTrack = !canReopenTrack;
+  const adminGrantedAt = null;
+  const canAdminTrack = false;
+  const toolsQuery = useQuery(trackToolsQueryOptions(transport, snapshot.track.id, unauthorized));
+  const rawCards = useMemo(() => toolsQuery.data ?? [], [toolsQuery.data]);
   const [centerHost, setCenterHost] = useState<HTMLDivElement | null>(null);
-  const isPergaTrack = pergaMode
-    || (sourceCards[0]?.kind === 'track-report' && (sourceCards[0].payload as { pergaSnapshot?: unknown } | null)?.pergaSnapshot === true);
+  const isPergaTrack = pergaMode;
   const preferences = useUiPreferences();
-  let cards = sourceCards;
-  if (isPergaTrack) {
-    const withPlacement = sourceCards.map((card) => {
+  const cards = useMemo(() => {
+    if (!isPergaTrack) return rawCards;
+    const withPlacement = rawCards.map((card) => {
       if (card.kind !== 'terminal') return card;
       const visible = preferences.terminalWorkbench(track.id, card.id);
       if (visible === null || visible === terminalPresentation(card).in_workbench) return card;
@@ -1325,13 +1307,13 @@ function TrackRouteBody({
         terminal_presentation: { ...terminalPresentation(card), in_workbench: visible },
       } };
     });
-    if (withPlacement.some((card, index) => card !== sourceCards[index])) cards = withPlacement;
-  }
+    return withPlacement.some((card, index) => card !== rawCards[index]) ? withPlacement : rawCards;
+  }, [isPergaTrack, preferences, rawCards, track.id]);
   const shareAccess = useShareScope();
   const openShare = useShareManagement();
   const areasForShare = useQuery(areaListQueryOptions(transport, unauthorized));
   const shareable = !isPergaTrack && shareAccess === null && areasForShare.data?.some(area => area.id === track.areaId && area.kind === 'user') === true;
-  const reportPresentation = useTrackReportPresentation(track.id, cards, prepareReport);
+  const reportPresentation = useTrackReportPresentation(track.id, snapshot.report, prepareReport);
   const progressDisclosure = useTrackViewState(track.id, reportPresentation.presentable);
   // The same key and comparison point the rail uses: the overlay's completion
   // high-water mark, never the row's `updatedAt`.
@@ -1392,14 +1374,9 @@ function TrackRouteBody({
       : cardRuntime.host,
     [isPergaTrack, cardRegistry, transport, unauthorized, track.id, track.agentCwd, shareAccess?.shareLinkId, cardRuntime.host],
   );
-  // The same predicate the planner entry resolves by, imported rather than copied.
-  const plannerCard = plannerCardIn(cards);
+  // Role and conversation metadata come directly from the aggregate sessions.
+  const plannerCard = snapshot.sessions.find(session => session.isLead);
   const registry = useConversationCommands();
-  const openRequest = useConversationOpenRequest();
-  /* The track's assistant conversations; the server's list predicate is
-   * `role == Assistant`, so the planner row is injected below. */
-  const conversationsQuery = useQuery(trackConversationsQueryOptions(transport, track.id, unauthorized));
-  const assistantRows = useMemo(() => conversationsQuery.data ?? [], [conversationsQuery.data]);
   const trackTitle = trackDisplayTitle(track.title);
   /* Redeeming the planner-open intent: `armed` is already "this track, this visit",
    * and the planner card's id exists only once the detail has landed. `disarm()`
@@ -1412,10 +1389,8 @@ function TrackRouteBody({
     if (plannerCard === undefined) return;
     registry.requestOpen(plannerCard.id, { focusComposer: true });
   }, [registry, plannerCard, plannerOpenIntent]);
-  /* Every row carries the track's title, unconditionally and before the planner
-       row is considered. */
-  const rows = useMemo(() => trackConversationRows(track.id, trackTitle, cards, assistantRows),
-    [track.id, trackTitle, cards, assistantRows]);
+  const rows = useMemo(() => snapshot.sessions.map(session => ({ ...agentSessionDtoToConversation(session), trackTitle }))
+    .toSorted((left, right) => Number(right.isLead) - Number(left.isLead)), [snapshot.sessions, trackTitle]);
   const openAsks = useMemo(() => openAsksOf(track.attentionItems), [track.attentionItems]);
   /* The runtime half of the TASKS panel, keyed `['track-report', trackId]`: the key
    * `invalidation-plan` refreshes on every `task.*` event and `track.report_edited`. */
@@ -1464,7 +1439,7 @@ function TrackRouteBody({
       }));
   }, [cardRegistry, cards, track, notices]);
   const openableCards = useMemo(() => new Set(gridItems.map((item) => item.card.id)), [gridItems]);
-  const existingCardIds = useMemo(() => new Set(cards.map(card => card.id)), [cards]);
+  const existingCardIds = useMemo(() => new Set([...cards.map(card => card.id), ...snapshot.sessions.map(session => session.id)]), [cards, snapshot.sessions]);
   const defaultTerminalIds = useMemo(() => workbenchTerminalCardIds({ cards: panelCards, existingCardIds, tasks,
     activity: track, openableCards }), [panelCards, existingCardIds, tasks, track, openableCards]);
   /* `'rows'` unconditionally: an empty list with a `+` over it is the whole feature. */
@@ -1481,7 +1456,7 @@ function TrackRouteBody({
     {
       scopeId: track.id,
       rows,
-      defaultProvider: plannerCard === undefined ? undefined : plannerProviderOf(plannerCard.payload),
+      defaultProvider: plannerCard === undefined ? undefined : agentSessionDtoToConversation(plannerCard).provider,
       pergaMode: isPergaTrack,
       /* The track's own overlay-derived verdicts (`toTrack(detail, detailActivity)`). */
       cards: track.cards,
@@ -1489,7 +1464,6 @@ function TrackRouteBody({
                open them; the store checks each row's `trackId` against this. */
       rememberOn: track.id,
       workspaceRoot: track.agentCwd,
-      derivedCardId: (idempotencyKey) => trackConversationCardId(track.id, idempotencyKey),
       scopeOf: (conversationId) => {
         const row = rows.find(candidate => candidate.id === conversationId);
         /* `id: row.trackId`, never `track.id`: this is the line the `rememberOn`
@@ -1498,12 +1472,10 @@ function TrackRouteBody({
           id: row.trackId,
           provider: row.provider,
           title: trackTitle, cardId: row.id, cardTitle: row.title,
-          updatedAt: row.updatedAt, kind: row.kind, state: row.state,
+          updatedAt: row.updatedAt, kind: row.kind, state: row.state, isLead: row.isLead,
         };
       },
       create: conversationMutations.create,
-      inspect: conversationMutations.inspect,
-      refresh: conversationMutations.refresh,
       planner: plannerCard === undefined ? null : {
         cardId: plannerCard.id, areaId: track.areaId, asks: openAsks,
         answerAsk: (askId, answers) => trackMutations.answerAsk(
@@ -1518,19 +1490,10 @@ function TrackRouteBody({
     },
     { workspace: { waiting: workspaceWaiting, notice: workspaceNotice }, defaultRowId: center !== undefined && plannerCard !== undefined ? plannerCard.id : null, onPresent: center?.onOpenAssistant, presented: centerActive ? center?.presented : undefined, embedded: center === undefined ? undefined : { active: centerActive, host: centerHost, footerPrefix: center.footerPrefix, label: center.title }, onArchive: conversationMutations.archive, terminal: { workbench, render: () => <TerminalWorkbenchView workbench={workbench} host={trackCardHost}
       items={workbench.ordinaryHost ? [] : gridItems.filter(item => workbench.cardIds.has(item.card.id))} visible={!compactViewport && workbench.open}
-      onRemove={(id) => cardDeletion.request(id, { kind: 'surface-center' })} /> }, showTrack: false, reportComposer: { ready: plannerCard !== undefined || conversationsQuery.isSuccess, returnLabel: routePanel === 'conversations' ? 'Conversations' : 'Report' } },
+      onRemove={(id) => cardDeletion.request(id, { kind: 'surface-center' })} /> }, showTrack: false, reportComposer: { ready: true, returnLabel: routePanel === 'conversations' ? 'Conversations' : 'Report' } },
   );
   useMobileConversationOwner({ track, conversations: rows, onArchive: conversationMutations.archive, onNew: chat.startConversation,
     selectedConversationId: chat.selectedConversationId, onClose: chat.close, onOpen: chat.openConversation, conversationOpen: chat.isOpen });
-  /* The fallback clear: a request for a card this track has, while the list that
-   * would open it could not be read. Not "the read failed", which would also
-   * throw away an openable planner row. */
-  useEffect(() => {
-    const requestedOpenId = openRequest?.id ?? null;
-    if (requestedOpenId === null || !conversationsQuery.isError) return;
-    if (rows.some((row) => row.id === requestedOpenId)) return;
-    registry.clearOpenRequest();
-  }, [conversationsQuery.isError, registry, rows, openRequest]);
   const inputNotifications = useMemo(
     () => trackNotifications(track.attentionItems),
     [track.attentionItems],
@@ -1554,11 +1517,11 @@ function TrackRouteBody({
   const knownCard = requestedCardId !== null
     && gridItems.some((item) => item.card.id === requestedCardId);
   useEffect(() => {
-    if (requestedCardId === null || knownCard) return;
+    if (requestedCardId === null || !toolsQuery.isSuccess || knownCard) return;
     // Bouncing an unopenable `?card=` must drop only that parameter: the panel,
     // return surface and block anchor describe where the reader is.
     goSameTrack(track.id, { card: undefined }, { replace: true });
-  }, [goSameTrack, knownCard, requestedCardId, track.id]);
+  }, [goSameTrack, knownCard, requestedCardId, toolsQuery.isSuccess, track.id]);
   // A card URL is an open intent, including on reload while secondary reads are pending.
   // Admit it once per desktop visit; ordinary rerenders must not reopen a hidden view.
   const admittedTerminalRoute = useRef<string | null>(null);

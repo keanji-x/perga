@@ -53,8 +53,11 @@ it('retries history independently and retains the last readable transcript', asy
   fixture.failHistory(false);
   fireEvent.click(within(alert).getByRole('button', { name: 'Reload history' }));
   await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
-  expect(fixture.requests.slice(before).every(request => request.method === 'GET' && request.path.includes('/items') && !request.path.includes('view='))).toBe(true);
-  expect(fixture.requests.length).toBeGreaterThan(before);
+  const after = fixture.requests.slice(before);
+  expect(after.every(request => request.method === 'GET')).toBe(true);
+  // Status/live polling may run while the history retry settles. Count the
+  // independently retried history read without treating a poll as its effect.
+  expect(after.filter(request => request.path === '/api/v1/sessions/daily-planner/items?afterId=0&limit=500&latest=true')).toHaveLength(1);
 });
 
 it('keeps execution status unconfirmed throughout a cold retry', async () => {

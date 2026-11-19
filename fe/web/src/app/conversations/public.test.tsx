@@ -10,7 +10,6 @@ import type { PlannerAttachment } from '../../../../core/api/generated/wire.ts';
 import { MAX_ATTACHMENTS_PER_MESSAGE, TOO_MANY_IMAGES } from '../../../../core/domain/conversation.ts';
 import type { SendOp } from '../../../../core/domain/conversation-outbox.ts';
 import type { Conversation } from '../../../../core/domain/conversation.ts';
-import { sha256Hex } from '../../../../core/domain/sha256.ts';
 import { ConversationProvider, useConversationCommands, useConversationComposerText, useConversationUpload, type ConversationRegistry } from './public.tsx';
 
 const CONVERSATION = 'conversation-a';
@@ -198,10 +197,9 @@ it('keeps accepted first-input display separate from stored canonical history an
   const registry = mountRegistry();
   const submitted = Object.freeze({ text: 'first words', atMs: 7 });
   const from = { scopeId: 'track', key: 'create-key' };
-  const conversation: Conversation = { id: CONVERSATION, trackId: 'track', kind: 'track-assistant', provider: 'codex', title: null,
+  const conversation: Conversation = { id: CONVERSATION, trackId: 'track', kind: 'agent', isLead: false, provider: 'codex', title: null,
     state: 'idle', updatedAt: 100 };
-  const result = { conversation, initialInput: { kind: 'known', receipt: { version: 'initial-input-v1', entryId: 'first-entry', entryRev: 0,
-    queuedAtMs: 100, textSha256: sha256Hex(submitted.text), initialRuntimeId: 'runtime' } } } as const;
+  const result = { conversation, sessionInput: { inputId: 'first-entry', sessionId: CONVERSATION, turnId: 'turn', deliveryState: 'accepted', turnStatus: 'queued', statusUrl: '/status' } } as const;
   act(() => {
     registry().remember(conversation, []);
     registry().startDraft({ ...from, provider: 'codex', model: { model: null, reasoning_effort: null }, text: submitted.text,
@@ -211,7 +209,7 @@ it('keeps accepted first-input display separate from stored canonical history an
   expect(registry().draftOf(from.scopeId)).toBeNull();
   expect(registry().turnsOf(CONVERSATION)).toMatchObject([{ text: submitted.text, atMs: submitted.atMs }]);
   expect(registry().rememberedTurnsOf(CONVERSATION)).toEqual([]);
-  expect(registry().outboxOf(CONVERSATION)[0]).toMatchObject({ phase: 'initial-accepted', submitted, receipt: result.initialInput.receipt });
+  expect(registry().outboxOf(CONVERSATION)[0]).toMatchObject({ phase: 'confirmed', echo: { entryId: result.sessionInput.inputId, text: submitted.text } });
   act(() => { registry().retireSends(CONVERSATION, [{ key: from.key, row: null }]); });
   expect(registry().turnsOf(CONVERSATION)).toEqual([]);
   act(() => { expect(registry().acceptDraft(from, result, submitted)).toBe(false); });
@@ -226,9 +224,8 @@ it('ignores a late acceptance after a valid rekey without touching a newer draft
     submitted, creating: false, error: null, remedy: null }); });
   act(() => { registry().editDraft(from, current => ({ ...current, key: 'new-key', submitted: null })); });
   act(() => { expect(registry().acceptDraft(from, {
-    conversation: { id: CONVERSATION, trackId: 'track', kind: 'track-assistant', provider: 'codex', title: null, state: 'idle', updatedAt: 1 },
-    initialInput: { kind: 'known', receipt: { version: 'initial-input-v1', entryId: 'old-entry', entryRev: 0, queuedAtMs: 10,
-      textSha256: sha256Hex(submitted.text), initialRuntimeId: 'runtime' } },
+    conversation: { id: CONVERSATION, trackId: 'track', kind: 'agent', isLead: false, provider: 'codex', title: null, state: 'idle', updatedAt: 1 },
+    sessionInput: { inputId: 'old-entry', sessionId: CONVERSATION, turnId: 'turn', deliveryState: 'accepted', turnStatus: 'queued', statusUrl: '/status' },
   }, submitted)).toBe(false); });
   expect(registry().draftOf(from.scopeId)).toMatchObject({ key: 'new-key', text: 'new words', submitted: null });
   expect(registry().outboxOf(CONVERSATION)).toEqual([]);

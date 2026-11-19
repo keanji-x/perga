@@ -16,7 +16,7 @@ it('opens the real slash menu and closes the Track through its command', async (
   expect(fixture.requests.filter(request => request.method === 'PATCH')).toHaveLength(0);
   await userEvent.keyboard('{Enter}');
   await expect.poll(() => fixture.requests.filter(request => request.method === 'PATCH').map(request => request.body)).toEqual([{ closed: true }]);
-  expect(fixture.requests.filter(request => request.path.endsWith('/planner/input'))).toHaveLength(0);
+  expect(fixture.requests.filter(request => request.path.endsWith('/messages'))).toHaveLength(0);
 });
 
 
@@ -29,7 +29,7 @@ it('submits prose containing /close with real Enter without changing approvals',
   await input.click();
   await userEvent.keyboard('{End}');
   await userEvent.keyboard('{Enter}');
-  await expect.poll(() => fixture.requests.filter(request => request.path.endsWith('/planner/input')).map(request => request.body))
+  await expect.poll(() => fixture.requests.filter(request => request.path.endsWith('/messages')).map(request => request.body))
     .toEqual([expect.objectContaining({ text: 'Explain /close' })]);
   expect(fixture.requests.filter(request => request.method === 'PATCH' || request.method === 'PUT')).toHaveLength(0);
 });

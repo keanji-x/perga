@@ -1,6 +1,5 @@
 import type { KeepConversationInputRequest, AgentProvider } from '../../../../core/api/generated/wire.ts';
-import type { SideConversation, PendingQueueEntry, PlannerQueueEditOutcome, ModelSelection, Conversation, CreatedConversation, TranscriptEntry } from '../../../../core/domain/conversation.ts';
-import type { SubmittedConversationInput } from '../../../../core/domain/conversation-initial-input.ts';
+import type { SubmittedConversationInput, SideConversation, PendingQueueEntry, PlannerQueueEditOutcome, ModelSelection, Conversation, CreatedConversation, TranscriptEntry } from '../../../../core/domain/conversation.ts';
 import type { RetiredSend, SendOp, ConversationOutboxOp } from '../../../../core/domain/conversation-outbox.ts';
 import type { ComposerContent } from '../../../../core/domain/conversation-composer.ts';
 import type { UploadState } from '../../features/planner/attachments.tsx';

@@ -18,6 +18,7 @@ import {
   normalizeWireAgentProvider,
   reportReadResultDtoSchema,
   taskDtoSchema,
+  type ReportDocumentDto,
   type ReportBlockKind,
   type ReportReadResultDto,
   type TaskDto,
@@ -411,6 +412,11 @@ export type TrackReport = Readonly<{
   /** `null` on a v1 row: blocks were not persisted, so `body` is all there is. */
   blocks: readonly ReportBlock[] | null;
 }>;
+
+/** The aggregate report is a document, independent of Workbench cards. */
+export function readReportDocument(document: ReportDocumentDto): TrackReport | null {
+  return readTrackReportPayload({ ...document, pergaSnapshot: true });
+}
 
 /** The kernel's single report card, in wire order. */
 export function trackReportCardIn(cards: readonly CardWire[]): CardWire | undefined {

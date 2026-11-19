@@ -1,5 +1,5 @@
-import { historicalConversationPage, conversationCardId } from './conversation-read-data.ts';
-import { WEB_COMPAT_VERSION } from '../providers/public.tsx';
+import { sessionPage } from './conversation-session-data.ts';
+import { fixtureBootstrap, fixtureSession } from './session-contract-fixture.ts';
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -7,22 +7,15 @@ import { renderDailyFixture } from './daily-planner-fixture.tsx';
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); document.getElementById('root')?.remove(); });
 
-it('offers the side menu only after the source mounts, while keeping the trigger text', async () => {
+it('keeps the side command text and requires support when v1 does not advertise side creation', async () => {
   const frames = new Map<number, FrameRequestCallback>();
   let sequence = 0;
   vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { frames.set(++sequence, callback); return sequence; });
   vi.stubGlobal('cancelAnimationFrame', (id: number) => { frames.delete(id); });
   const fixture = renderDailyFixture({ initial: '/track/daily?panel=conversations', extraPlanner: true,
     reply: request => {
-      if (request.path === '/api/v1/bootstrap') return { status: 200, statusText: 'OK', body: {
-        assistantProviders: true, conversationInitialInput: true, conversationSide: true, webCompatVersion: WEB_COMPAT_VERSION, minWebCompatVersion: WEB_COMPAT_VERSION,
-        syncEventVersion: 29, dbInstanceId: 'presentation-menu',
-      } };
-      if (request.path.includes('/second-planner/items') && !request.path.includes('view=')) return { status: 200, statusText: 'OK', body: historicalConversationPage(conversationCardId(request.path), [{
-        id: 1, worker_session_id: 'runtime', card_id: 'second-planner', track_id: 'daily', thread_id: 'thread',
-        turn_id: null, turn_error_text: null, item_uuid: null, item_type: 'agentMessage', method: 'item/completed',
-        params: JSON.stringify({ item: { text: 'Source ready for presentation.' } }), created_at_ms: 1,
-      }], null) };
+      if (request.path === '/api/v1/bootstrap') return { status: 200, statusText: 'OK', body: fixtureBootstrap() };
+      if (request.path.includes('/second-planner/items') && !request.path.includes('view=')) return { status: 200, statusText: 'OK', body: sessionPage(fixtureSession('second-planner', 'daily'), [{ id: 1, sessionId: 'second-planner', turnId: 'turn', kind: 'assistant_text', payload: { text: 'Source ready for presentation.' }, createdAtMs: 1 }]) };
       return undefined;
     },
   });
@@ -52,7 +45,8 @@ it('offers the side menu only after the source mounts, while keeping the trigger
     expect(screen.queryByRole('region', { name: 'Side conversation · Codex' })).toBeNull();
     expect(fixture.requests.filter(request => ['POST', 'PATCH', 'PUT', 'DELETE'].includes(request.method))).toHaveLength(0);
     await userEvent.keyboard('{Enter}');
-    await screen.findByRole('region', { name: 'Side conversation · Codex' });
+    await screen.findByText('Side conversations require a server that reports support. Update or reconnect, then try again.');
+    expect(screen.queryByRole('region', { name: 'Side conversation · Codex' })).toBeNull();
     expect(fixture.requests.filter(request => request.method === 'POST'
       && request.path.endsWith('/messages'))).toHaveLength(0);
   } finally { cleanup(); fixture.client.clear(); }
