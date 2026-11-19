@@ -13,7 +13,7 @@ import type { AskAnswer } from '../../../../core/api/generated/wire.ts';
 
 export type ConversationStore = Readonly<{
   worker?: import('../../../../core/api/perga-v1.ts').WorkerActivity | null;
-  updateWorkerSettings?: (settings: import('../../../../core/api/perga-v1.ts').WorkerSettings & { attemptId: string }, approvalKey?: string) => Promise<unknown>;
+  updateWorkerSettings: (settings: import('../../../../core/api/perga-v1.ts').WorkerSettings & { attemptId: string }, approvalKey?: string) => Promise<unknown>;
   answerWorkerAsk?: (ask: OpenAsk, answers: readonly AskAnswer[]) => Promise<void>;
   workerDelivery?: Readonly<{ mode: WorkerMessageMode; select: (mode: WorkerMessageMode) => void }> | null;
   unconfirmedWorkerSend?: Readonly<{ retry: () => void; dismiss: () => void }> | null;
