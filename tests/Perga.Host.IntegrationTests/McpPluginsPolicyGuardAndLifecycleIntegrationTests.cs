@@ -19,6 +19,7 @@ using Perga.VcsKit;
 
 namespace Perga.Host.IntegrationTests;
 
+[Collection("Template policy sandbox")]
 public sealed class McpPluginsPolicyGuardAndLifecycleIntegrationTests
 {
     [Fact]
@@ -174,7 +175,7 @@ public sealed class McpPluginsPolicyGuardAndLifecycleIntegrationTests
                   id: "guarded-mcp-test",
                   title: "Guarded MCP Policy",
                   plugins: ["http-quote"],
-                  guardToolCall(ctx, call) {
+                  before(call, ctx) {
                     const mode = call.arguments && call.arguments.mode;
                     if (mode === "deny") {
                       return Deny(`Policy blocked ${call.mcpServer}:${call.toolName}`);
@@ -463,8 +464,10 @@ public sealed class McpPluginsPolicyGuardAndLifecycleIntegrationTests
                 var maintService = cluster.Services.GetRequiredService<SqliteMaintenanceHostedService>();
 
                 var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
+                // The scheduler counter records enqueueing; the background turn can reach the runtime later.
                 while (DateTimeOffset.UtcNow < deadline &&
-                       (schedService.TriggeredWakeCount < 1 || maintService.CompletedPasses < 1))
+                       (schedService.TriggeredWakeCount < 1 || maintService.CompletedPasses < 1 ||
+                        !cluster.AgentRuntime.ExecutedTurns.Any(t => t.Input.Prompt.Contains("CRON_PULSE:prod-cluster", StringComparison.Ordinal))))
                 {
                     await Task.Delay(25, ct);
                 }

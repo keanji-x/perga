@@ -174,7 +174,9 @@ public sealed record WorkerMessageReceipt(string? TurnId, string Delivery, strin
 }
 
 public sealed record DispatchWorkerRequest(string Goal, string? Access = null, string? Acceptance = null,
-    IReadOnlyList<string>? DependsOn = null, string? Gate = null, string? Provider = null, string? Model = null);
+    IReadOnlyList<string>? DependsOn = null, string? Gate = null, string? Provider = null, string? Model = null, string? Role = null);
+
+public sealed record TemplateSetResult(TrackDto Track, IReadOnlyList<string> Warnings, bool DryRun);
 
 public sealed record WorkerDispatchReceipt(TaskDto Task, string? SessionId, string RequestKey);
 

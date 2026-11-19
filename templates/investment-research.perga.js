@@ -52,27 +52,16 @@ const investmentResearchTemplate = {
     paperOrdersSubmitted: 0,
     convictionScore: null
   }),
-  initialMarkdown: [
-    "# Executive Thesis",
-    "",
-    "State core variant perception, target return profile, and key invalidation triggers.",
-    "",
-    "# Catalysts & Valuation",
-    "",
-    "Detail fundamental drivers, scenario valuation multiples, and timeline.",
-    "",
-    "# Factor & Risk Exposure",
-    "",
-    "Quantify Barra style/industry exposures, drawdown scenarios, and benchmark relative risk.",
-    "",
-    "# Research Tasks",
-    "",
-    "Coordinate data-gathering, factor decomposition, and financial modeling tasks.",
-    "",
-    "# Citations & Archive",
-    "",
-    "List archived filings, transcripts, market series snapshots, and provenance links."
-  ].join("\n"),
+  headerView: (ctx) => ({
+    badges: [{ label: ctx.inputs.tickerOrTheme, tone: "accent" }, { label: ctx.inputs.allowPaperOrders ? "Paper orders enabled" : "Research only" }],
+    notice: ctx.state.dataSourcesVerified === 0 ? { text: "Awaiting verified research sources.", tone: "info" } : undefined,
+    metrics: [
+      { label: "Verified sources", value: String(ctx.state.dataSourcesVerified) },
+      { label: "Completed analyses", value: String(ctx.state.completedAnalyses.length) },
+      { label: "Conviction", value: ctx.state.convictionScore === null ? "Unrated" : `${ctx.state.convictionScore}/100` }
+    ],
+    rules: [{ label: "Evidence", text: "Archive sources and verify data before submitting paper orders." }]
+  }),
   workspace: {
     driver: "direct"
   },
@@ -94,47 +83,13 @@ const investmentResearchTemplate = {
         omitIfEmpty: true,
         editableBy: ["human", "lead", "subagent", "system"]
       }
-    ],
-    customValidate: (_ctx, info) => {
-      if (
-        info.touchedSections.includes("Executive Thesis") &&
-        info.nextMarkdown.includes("TODO:UNVERIFIED")
-      ) {
-        return Deny(
-          "Cannot publish 'TODO:UNVERIFIED' placeholder figures inside '# Executive Thesis'; verify primary data first."
-        );
-      }
-      return Allow();
-    }
+    ]
   },
   tasks: {
-    requireGateForReadWrite: false,
-    onSettled: (ctx, event) => {
-      if (event.attemptStatus === "done") {
-        if (!ctx.state.completedAnalyses.includes(event.taskKey)) {
-          ctx.state.completedAnalyses.push(event.taskKey);
-        }
-        const verifiedDelta =
-          typeof event.workerResult?.verifiedSources === "number"
-            ? event.workerResult.verifiedSources
-            : 1;
-        ctx.state.dataSourcesVerified += verifiedDelta;
-
-        if (typeof event.workerResult?.convictionScore === "number") {
-          ctx.state.convictionScore = event.workerResult.convictionScore;
-        }
-
-        return `Research task '${event.taskKey}' completed for ${ctx.inputs.tickerOrTheme} (verified sources=${ctx.state.dataSourcesVerified}). Synthesize findings into the report.`;
-      }
-
-      if (event.attemptStatus === "failed") {
-        return `Research task '${event.taskKey}' failed; cross-check data feed availability before retrying.`;
-      }
-
-      return undefined;
-    }
+    requireGateForReadWrite: false
   },
-  buildTurnContext: (ctx, session) => {
+  turnContext: (ctx) => {
+    const session = ctx.session;
     const conviction =
       ctx.state.convictionScore === null ? "unrated" : `${ctx.state.convictionScore}/100`;
     return [
@@ -145,7 +100,46 @@ const investmentResearchTemplate = {
         : "[Subagent Scope] Attach structured citations and numeric evidence to worker results."
     ].join("\n");
   },
-  guardToolCall: (ctx, call) => {
+  after: (event, ctx) => {
+    if (event.type !== "task.settled") return;
+    if (event.attemptStatus === "done") {
+      if (!ctx.state.completedAnalyses.includes(event.taskKey)) {
+        ctx.state.completedAnalyses.push(event.taskKey);
+      }
+      const verifiedDelta =
+        typeof event.workerResult?.verifiedSources === "number"
+          ? event.workerResult.verifiedSources
+          : 1;
+      ctx.state.dataSourcesVerified += verifiedDelta;
+
+      if (typeof event.workerResult?.convictionScore === "number") {
+        ctx.state.convictionScore = event.workerResult.convictionScore;
+      }
+
+      return `Research task '${event.taskKey}' completed for ${ctx.inputs.tickerOrTheme} (verified sources=${ctx.state.dataSourcesVerified}). Synthesize findings into the report.`;
+    }
+
+    if (event.attemptStatus === "failed") {
+      return `Research task '${event.taskKey}' failed; cross-check data feed availability before retrying.`;
+    }
+
+    return undefined;
+  },
+  before: (action, ctx) => {
+    if (action.type === "report.commit") {
+      const info = action;
+      if (
+        info.touchedSections.includes("Executive Thesis") &&
+        info.nextMarkdown.includes("TODO:UNVERIFIED")
+      ) {
+        return Deny(
+          "Cannot publish 'TODO:UNVERIFIED' placeholder figures inside '# Executive Thesis'; verify primary data first."
+        );
+      }
+      return Allow();
+    }
+    if (!action.type.startsWith("tool.")) return Allow();
+    const call = action;
     if (call.mcpServer === "paper-trading") {
       const isReadOnlyQuery =
         call.toolName.endsWith("_get") ||

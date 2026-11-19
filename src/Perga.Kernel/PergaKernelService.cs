@@ -35,6 +35,10 @@ public interface IPergaKernel : IAsyncDisposable
     HostListDirResultDto ListHostDirectory(string? path = null);
     IReadOnlyList<CompiledTemplateManifest> ListTemplates();
     JsonElement InspectTemplate(string? templateId);
+    Task<JsonElement> InspectCurrentTemplateAsync(string trackId, string sessionId, CancellationToken ct = default);
+    Task<TemplateSetResult> SetTrackTemplateWithOptionsAsync(string trackId, string sessionId, string? templateId,
+        string? source, string generation, JsonElement? inputs, bool dryRun, bool clear, CancellationToken ct = default);
+    Task<TrackDto> UpdateTemplateInputsAsync(string trackId, string sessionId, JsonElement inputs, string generation, CancellationToken ct = default);
     Task<TrackDto> SetTrackTemplateAsync(string trackId, string callerSessionId, string? templateId, string? source, string expectedPolicyGeneration, JsonElement? inputs = null, CancellationToken ct = default);
     Task<BootReconcileResult> ReconcileOnBootAsync(CancellationToken ct = default);
     Task<DbMaintenanceStatsDto> RunMaintenancePassAsync(CancellationToken ct = default);
@@ -503,6 +507,16 @@ public sealed partial class PergaKernelService : IPergaKernel
         return JsonHelpers.ToElement(new { policy.Manifest, policy.JsSource });
     }
 
+    public Task<JsonElement> InspectCurrentTemplateAsync(string trackId, string sessionId, CancellationToken ct = default) =>
+        Actors.GetOrActivate(trackId).InspectCurrentTemplateAsync(sessionId, ct);
+
+    public Task<TemplateSetResult> SetTrackTemplateWithOptionsAsync(string trackId, string sessionId, string? templateId,
+        string? source, string generation, JsonElement? inputs, bool dryRun, bool clear, CancellationToken ct = default) =>
+        Actors.GetOrActivate(trackId).SetTemplateWithOptionsAsync(sessionId, templateId, source, generation, inputs, dryRun, clear, ct);
+
+    public Task<TrackDto> UpdateTemplateInputsAsync(string trackId, string sessionId, JsonElement inputs, string generation, CancellationToken ct = default) =>
+        Actors.GetOrActivate(trackId).UpdateTemplateInputsAsync(sessionId, inputs, generation, ct);
+
     public Task<TrackDto> SetTrackTemplateAsync(string trackId, string callerSessionId, string? templateId,
         string? source, string expectedPolicyGeneration, JsonElement? inputs = null, CancellationToken ct = default) =>
         Actors.GetOrActivate(trackId).SetTemplateBySessionAsync(callerSessionId, templateId, source, expectedPolicyGeneration, inputs, ct);
@@ -617,11 +631,42 @@ public sealed partial class PergaKernelService : IPergaKernel
 
     // ------------------- Tracks -------------------
 
-    public Task<IReadOnlyList<TrackDto>> ListTracksAsync(
+    public async Task<IReadOnlyList<TrackDto>> ListTracksAsync(
         string? areaId = null,
         bool includeClosed = false,
-        CancellationToken ct = default) =>
-        _store.ListTracksAsync(areaId, includeClosed, ct);
+        CancellationToken ct = default)
+    {
+        var tracks = await _store.ListTracksAsync(areaId, includeClosed, ct).ConfigureAwait(false);
+        var projected = new List<TrackDto>(tracks.Count);
+        foreach (var track in tracks)
+        {
+            if (track.TemplateId is null)
+            {
+                projected.Add(track);
+                continue;
+            }
+            var snapshot = await _store.LoadTrackAggregateAsync(track.Id, ct).ConfigureAwait(false);
+            if (snapshot is null) continue; // Deleted after listing.
+            CompiledPolicy? policy;
+            try
+            {
+                policy = !string.IsNullOrWhiteSpace(snapshot.TemplateSnapshotSource)
+                    ? Templates.GetOrCompileSnapshot(snapshot.TemplateSnapshotSource)
+                    : Templates.TryGetPolicy(snapshot.Track.TemplateId!);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                // Presentation failure must not hide this track or its siblings. Actor hydration
+                // still compiles the persisted snapshot and fails closed for commands.
+                System.Diagnostics.Trace.TraceWarning(
+                    "Could not compile template presentation for Track {0}: {1}", track.Id, ex);
+                projected.Add(snapshot.Track with { TemplateHeaderView = null, TemplateSchedules = [] });
+                continue;
+            }
+            projected.Add(TemplatePresentation.Project(snapshot.Track, policy, _policyVm));
+        }
+        return projected;
+    }
 
     public Task<TrackAggregateSnapshot> CreateTrackAsync(CreateTrackRequest req, CancellationToken ct = default, string? requestKey = null) =>
         CreateTrackCoreAsync(req, ct, requestKey);
@@ -684,7 +729,7 @@ public sealed partial class PergaKernelService : IPergaKernel
                 : initEval.NextState.Clone();
         }
 
-        var initialMarkdown = dailyDate is not null ? string.Empty : policy?.Manifest.InitialReportMarkdown ?? "# Overview\n\nTrack initialized.\n";
+        var initialMarkdown = dailyDate is not null ? string.Empty : policy?.Manifest.InitialReportMarkdown ?? "";
         var initialReport = _reportEngine.Parse(initialMarkdown, docRev: 0, summary: string.Empty);
 
         var enabledPlugins = req.EnabledPlugins?.ToArray()
@@ -747,7 +792,7 @@ public sealed partial class PergaKernelService : IPergaKernel
             requireGateForReadWrite: policy?.Manifest.RequireGateForReadWrite ?? false, nowMs: now).SyncedTasks;
         EventEnvelopeDto[] events =
         [
-            new(null, area.Id, trackId, KernelEventKinds.TrackUpdated, JsonHelpers.ToElement(track), now),
+            new(null, area.Id, trackId, KernelEventKinds.TrackUpdated, JsonHelpers.ToElement(TemplatePresentation.Project(track, policy, _policyVm)), now),
             new(null, area.Id, trackId, KernelEventKinds.SessionUpdated, JsonHelpers.ToElement(leadSession), now)
         ];
 

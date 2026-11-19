@@ -68,7 +68,7 @@ public sealed class CronosScheduleHostedService : BackgroundService
             foreach (var track in openTracks)
             {
                 ct.ThrowIfCancellationRequested();
-                var schedules = ResolveSchedulesForTrack(track.TemplateSnapshotSource, track.TemplateId);
+                var schedules = ResolveSchedulesForTrack(track.TemplateSnapshotSource, track.TemplateId, track.TrackId);
                 if (schedules.Count == 0)
                 {
                     continue;
@@ -170,12 +170,21 @@ public sealed class CronosScheduleHostedService : BackgroundService
     }
 
     private IReadOnlyList<ScheduleSpec> ResolveSchedulesForTrack(
-        string? snapshotSource, string? templateId)
+        string? snapshotSource, string? templateId, string trackId)
     {
         if (!string.IsNullOrWhiteSpace(snapshotSource))
         {
-            var compiled = _kernel.Templates.GetOrCompileSnapshot(snapshotSource!);
-            return compiled.Manifest.Schedules;
+            try
+            {
+                var compiled = _kernel.Templates.GetOrCompileSnapshot(snapshotSource!);
+                return compiled.Manifest.Schedules;
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogWarning(ex,
+                    "Could not compile template snapshot for track '{TrackId}'; skipping its schedules.", trackId);
+                return [];
+            }
         }
 
         if (!string.IsNullOrWhiteSpace(templateId) &&

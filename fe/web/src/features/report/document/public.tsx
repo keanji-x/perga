@@ -251,9 +251,9 @@ function BlockSlot({
   const canEditProse = block.kind === 'prose' && onSaveProseBlock !== undefined;
   return (
     <div className={styles.row}>
-      <div className={styles.block} id={block.id} data-nc-report-reading="" data-nc-link-reading="">
+      <div className={`${styles.block} ${canEditProse ? styles.editable : ''}`} id={block.id} data-nc-report-reading="" data-nc-link-reading="">
         {canEditProse && editing ? (
-          <div data-nc-prose-editor="">
+          <div className={styles.proseEditor} data-nc-prose-editor="">
             <textarea
               aria-label={`Markdown for block ${block.id}`}
               value={draft}
@@ -262,7 +262,7 @@ function BlockSlot({
               onChange={(event) => { setDraft(event.target.value); }}
             />
             {saveError !== null && <p role="alert">{saveError}</p>}
-            <div>
+            <div className={styles.proseEditorActions}>
               <button
                 type="button"
                 disabled={saving}
@@ -303,6 +303,7 @@ function BlockSlot({
               {canEditProse && (
                 <button
                   type="button"
+                  className={styles.editProse}
                   aria-label={`Edit block ${block.id}`}
                   onClick={() => { setDraft(block.payload.markdown); setSaveError(null); setEditing(true); }}
                 >

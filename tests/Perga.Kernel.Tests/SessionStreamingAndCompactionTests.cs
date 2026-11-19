@@ -516,6 +516,8 @@ public sealed class SessionStreamingAndCompactionTests
         if (dynamicModes)
             ctx.AgentRuntime.Providers = [new("codex", true, "1", null, [], PermissionModes:
                 [new("runtime-worker", "Worker", "", "neutral", true)])];
+        if (provider != "codex")
+            ctx.AgentRuntime.Providers = [.. ctx.AgentRuntime.Providers, new(provider, true, "1", null, [])];
         var (_, snap) = await ctx.CreateDefaultTrackAsync();
         var trackId = snap.Track.Id;
         var leadId = snap.Track.LeadSessionId!;

@@ -542,3 +542,16 @@ it('renders inline and display formulas in report prose while keeping code liter
   expect(container.querySelectorAll('math')).toHaveLength(2);
   expect(container.querySelector('code')?.textContent).toBe('$x$');
 });
+
+it('keeps prose editing keyboard accessible and saves the edited block', async () => {
+  const save = vi.fn().mockResolvedValue(undefined);
+  render(<ReportDocument report={{ ...blocked(prose('editable', 'Original prose')), docRev: 1 }} empty={EMPTY} onSaveProseBlock={save} />);
+  const edit = screen.getByRole('button', { name: 'Edit block editable' });
+  expect(edit.className).toContain('editProse');
+  expect(edit.getAttribute('tabindex')).not.toBe('-1');
+  fireEvent.click(edit);
+  fireEvent.change(screen.getByRole('textbox', { name: 'Markdown for block editable' }), { target: { value: 'Updated prose' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save block' }));
+  expect(save).toHaveBeenCalledWith('editable', 'Updated prose');
+  await screen.findByRole('button', { name: 'Edit block editable' });
+});

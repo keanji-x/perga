@@ -9,6 +9,7 @@ using Perga.Kernel.Ports;
 
 namespace Perga.Host.IntegrationTests;
 
+[Collection("Template policy sandbox")]
 public sealed class CronosSnapshotScheduleTests
 {
     [Fact]

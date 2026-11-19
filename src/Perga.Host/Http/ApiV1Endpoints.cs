@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.AspNetCore.StaticFiles;
+using Perga.Contracts;
 using Perga.Host.Serialization;
 using Perga.Host.WebSockets;
 using Perga.Kernel;
@@ -111,20 +112,32 @@ public static class ApiV1Endpoints
                 ?? throw KernelException.NotFound($"Area '{areaId}' not found.");
             var tracks = await kernel.ListTracksAsync(areaId, includeClosed ?? false, ct).ConfigureAwait(false);
             return Results.Json(tracks, PergaJsonDefaults.ApiOptions);
-        });
+        }).Produces<IReadOnlyList<TrackDto>>();
 
         v1.MapPost("/tracks", async (HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
         {
             var req = await ReadRequiredJsonBodyAsync<CreateTrackRequest>(ctx, ct).ConfigureAwait(false);
             var snapshot = await kernel.CreateTrackAsync(req, ct, OptionalCreationKey(ctx)).ConfigureAwait(false);
             return Results.Json(snapshot, PergaJsonDefaults.ApiOptions, statusCode: StatusCodes.Status201Created);
-        });
+        }).Produces<TrackAggregateSnapshot>(StatusCodes.Status201Created);
 
         v1.MapGet("/tracks/{trackId}", async (string trackId, IPergaKernel kernel, CancellationToken ct) =>
         {
             var snapshot = await kernel.GetTrackAggregateAsync(trackId, ct).ConfigureAwait(false);
             return Results.Json(snapshot, PergaJsonDefaults.ApiOptions);
-        });
+        }).Produces<TrackAggregateSnapshot>();
+
+        v1.MapGet("/tracks/{trackId}/template", async (string trackId, IPergaKernel kernel, CancellationToken ct) =>
+        {
+            var template = await kernel.Actors.GetOrActivate(trackId).InspectCurrentTemplateAsync(ct).ConfigureAwait(false);
+            return Results.Json(template, PergaJsonDefaults.ApiOptions);
+        }).Produces<JsonElement>();
+
+        v1.MapDelete("/tracks/{trackId}/template", async (string trackId, IPergaKernel kernel, CancellationToken ct) =>
+        {
+            var track = await kernel.Actors.GetOrActivate(trackId).ClearTemplateAsync(ct).ConfigureAwait(false);
+            return Results.Json(track, PergaJsonDefaults.ApiOptions);
+        }).Produces<TrackDto>();
 
         v1.MapPost("/tracks/{trackId}/workspace/retry", async (string trackId, IPergaKernel kernel, CancellationToken ct) =>
         {
@@ -137,7 +150,7 @@ public static class ApiV1Endpoints
             var req = await ReadRequiredJsonBodyAsync<PatchTrackRequest>(ctx, ct).ConfigureAwait(false);
             var updated = await kernel.PatchTrackAsync(trackId, req, ct).ConfigureAwait(false);
             return Results.Json(updated, PergaJsonDefaults.ApiOptions);
-        });
+        }).Produces<TrackDto>();
 
         v1.MapDelete("/tracks/{trackId}", async (string trackId, IPergaKernel kernel, CancellationToken ct) =>
         {

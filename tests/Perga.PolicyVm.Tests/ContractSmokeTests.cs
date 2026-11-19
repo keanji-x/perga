@@ -9,17 +9,9 @@ public sealed class ContractSmokeTests
     {
         GuardDecision decision = new GuardDecision.Allow();
         using var doc = JsonDocument.Parse("{}");
-        var ctx = new PolicyToolCallContext(
-            "trk_1",
-            "ses_1",
-            true,
-            null,
-            "perga",
-            "perga_report_read",
-            doc.RootElement.Clone(),
-            doc.RootElement.Clone());
+        var route = new PolicyTaskRoute("codex", "gpt-5");
 
         Assert.IsType<GuardDecision.Allow>(decision);
-        Assert.Equal("perga", ctx.McpServer);
+        Assert.Equal("codex", route.Provider);
     }
 }

@@ -18,24 +18,6 @@ public sealed partial class TrackActor
         var taskKey = "worker-" + RequestIdentity.Hash(new { TrackId, authorId, key })[..24].ToLowerInvariant();
         request = request with { Goal = request.Goal.Trim() };
         var intent = new WorkerDispatchIntent(TrackId, authorId, key, RequestIdentity.Hash(request), taskKey);
-        if (request.Provider is not null || request.Model is not null)
-        {
-            var (replay, defaultProvider) = await EnqueueAsync(async _ =>
-            {
-                await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
-                var existing = await TryReplayWorkerDispatchCoreAsync(intent, callerSessionId, ct).ConfigureAwait(false);
-                return (existing, GetDefaultProviderCore());
-            }, ct).ConfigureAwait(false);
-            if (replay is null)
-            {
-                var effectiveProvider = request.Provider ?? defaultProvider;
-                var providers = await _agentRuntime.ProbeProvidersAsync(ct).ConfigureAwait(false);
-                if (!providers.Any(provider => provider.Available && provider.Provider == effectiveProvider &&
-                    (request.Model is null || provider.Models.Contains(request.Model, StringComparer.Ordinal))))
-                    throw KernelException.InvalidArgument("The requested Worker provider and model combination is unavailable.");
-                request = request with { Provider = effectiveProvider };
-            }
-        }
         var committed = await CommitReportInternalAsync(callerSessionId is null ? EditActorKind.Human : null, callerSessionId,
             report => BuildWorkerDispatchReportCommitCore(report, request, taskKey), ct, intent, origin).ConfigureAwait(false);
         var task = committed.Tasks.Single(item => item.TaskKey == taskKey);
@@ -81,39 +63,42 @@ public sealed partial class TrackActor
                 schema.TryGetProperty("default", out var defaultGate) && defaultGate.ValueKind == System.Text.Json.JsonValueKind.String)
                 configuredGate = defaultGate.GetString();
         }
-        if (request.Gate is not null && request.Gate != configuredGate)
+        if (configuredGate is not null && request.Gate is not null && request.Gate != configuredGate)
             throw KernelException.PolicyDenied("Dispatch uses the validation command already configured by the Track template.");
-        var gate = access == "read_write" ? configuredGate : request.Gate;
+        var gate = access == "read_write" ? configuredGate ?? request.Gate : request.Gate;
 
         var payload = JsonHelpers.ToElement(new
         {
             task_key = taskKey, kind = "agent", ready = true, goal_or_cmd = request.Goal,
-            provider = request.Provider ?? GetDefaultProviderCore(), access, acceptance = request.Acceptance,
+            provider = request.Provider, role = request.Role, access, acceptance = request.Acceptance,
             depends_on = request.DependsOn, gate,
-            context = new { workerDispatch = true, initialModel = request.Model ??
-                (request.Provider is null || string.Equals(request.Provider, GetDefaultProviderCore(), StringComparison.OrdinalIgnoreCase)
-                    ? GetDefaultModelCore(request.Provider ?? GetDefaultProviderCore()) : null) }
+            context = new { workerDispatch = true, initialModel = request.Model }
         });
         var position = report.Blocks.Count;
+        var ops = new List<BlockOp>();
         if (defaults?.Section is { } section)
         {
+            var sectionExists = false;
             for (var i = 0; i < report.Blocks.Count; i++)
-                if (string.Equals(report.Blocks[i].SectionH1, section, StringComparison.Ordinal))
-                    position = i + 1;
+            {
+                if (!string.Equals(report.Blocks[i].SectionH1, section, StringComparison.Ordinal)) continue;
+                position = i + 1;
+                sectionExists = true;
+            }
+            // Empty reports have no section to inherit. Create it with the first dispatched task.
+            if (!sectionExists)
+            {
+                ops.Add(new BlockOp.UpsertBlockOp(null, ReportBlockKind.Prose, $"# {section}\n", null, position));
+                position++;
+            }
         }
-        return new ReportCommitRequest(WorkerDispatchReadAnchor(report),
-            [new BlockOp.UpsertBlockOp(null, ReportBlockKind.Task, null, payload, position)], CommitMessage: $"Dispatch {taskKey}");
+        ops.Add(new BlockOp.UpsertBlockOp(null, ReportBlockKind.Task, null, payload, position));
+        return new ReportCommitRequest(WorkerDispatchReadAnchor(report), ops, CommitMessage: $"Dispatch {taskKey}");
     }
 
     private static ReadAnchor WorkerDispatchReadAnchor(ReportDocument report) =>
         new(report.DocRev, report.Blocks.ToDictionary(block => block.Id, block => block.Rev, StringComparer.Ordinal), WholeDocumentRead: true);
 
-    private string? ResolveTaskWorkerModelCore(TaskDto task)
-    {
-        if (task.Context is not { } context || !JsonHelpers.TryGetPropertyIgnoreCase(context, ["workerDispatch"], out var dispatched) ||
-            dispatched.ValueKind != System.Text.Json.JsonValueKind.True)
-            return GetDefaultModelCore(task.Provider ?? GetDefaultProviderCore());
-        return JsonHelpers.TryGetPropertyIgnoreCase(context, ["initialModel"], out var model) && model.ValueKind == System.Text.Json.JsonValueKind.String
-            ? model.GetString() : null;
-    }
+    private string? ResolveTaskWorkerModelCore(string provider) =>
+        string.Equals(provider, GetDefaultProviderCore(), StringComparison.Ordinal) ? GetDefaultModelCore(provider) : null;
 }

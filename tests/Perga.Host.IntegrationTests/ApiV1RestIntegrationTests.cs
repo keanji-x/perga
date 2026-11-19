@@ -10,6 +10,7 @@ using Perga.Contracts;
 using Perga.Host.IntegrationTests.Fixtures;
 using Perga.Host.Serialization;
 using Perga.Kernel;
+using Perga.ReportDoc;
 using Perga.VcsKit;
 
 namespace Perga.Host.IntegrationTests;
@@ -137,11 +138,18 @@ public sealed class ApiV1RestIntegrationTests
         using var trackSnap = JsonDocument.Parse(await trackResp.Content.ReadAsStringAsync());
         var trackId = trackSnap.RootElement.GetProperty("track").GetProperty("id").GetString()!;
 
+        // Seed authored content: new tracks intentionally have an empty report.
+        var seedKernel = cluster.Services.GetRequiredService<IPergaKernel>();
+        var initialReport = await seedKernel.ReadReportAsync(trackId);
+        await seedKernel.CommitReportAsync(trackId, trackSnap.RootElement.GetProperty("track").GetProperty("leadSessionId").GetString()!,
+            new ReportCommitRequest(initialReport.Anchor,
+                [new BlockOp.UpsertBlockOp(null, ReportBlockKind.Prose, "# Overview\n\nAuthored content.", null)]));
+
         // GET /api/v1/tracks/{trackId}/report
         using var readResp = await client.GetAsync($"/api/v1/tracks/{trackId}/report");
         Assert.Equal(HttpStatusCode.OK, readResp.StatusCode);
         using var readDoc = JsonDocument.Parse(await readResp.Content.ReadAsStringAsync());
-        Assert.Equal(0, readDoc.RootElement.GetProperty("docRev").GetInt32());
+        Assert.Equal(1, readDoc.RootElement.GetProperty("docRev").GetInt32());
         Assert.True(readDoc.RootElement.TryGetProperty("renderedMarkdown", out _));
         Assert.True(readDoc.RootElement.TryGetProperty("diagnostics", out _));
 
@@ -157,7 +165,7 @@ public sealed class ApiV1RestIntegrationTests
             $"/api/v1/tracks/{trackId}/report/blocks/{firstBlockId}",
             new
             {
-                docRev = 0,
+                docRev = 1,
                 knownBlockRev = firstBlockRev,
                 kind = "prose",
                 markdown = "# Overview\n\nUpdated directly by human in UI.\n",
@@ -165,7 +173,7 @@ public sealed class ApiV1RestIntegrationTests
             });
         Assert.Equal(HttpStatusCode.OK, putResp.StatusCode);
         using var updatedReportDoc = JsonDocument.Parse(await putResp.Content.ReadAsStringAsync());
-        Assert.Equal(1, updatedReportDoc.RootElement.GetProperty("docRev").GetInt32());
+        Assert.Equal(2, updatedReportDoc.RootElement.GetProperty("docRev").GetInt32());
         Assert.Equal("Human updated overview", updatedReportDoc.RootElement.GetProperty("summary").GetString());
         Assert.True(cluster.AgentRuntime.ExecutedTurns.Count > turnsBeforeEdit);
         Assert.Contains(
@@ -177,7 +185,7 @@ public sealed class ApiV1RestIntegrationTests
             $"/api/v1/tracks/{trackId}/report/blocks/{firstBlockId}",
             new
             {
-                docRev = 0,
+                docRev = 1,
                 knownBlockRev = firstBlockRev, // stale!
                 markdown = "# Overview\n\nBlind overwrite.\n"
             });
@@ -192,7 +200,7 @@ public sealed class ApiV1RestIntegrationTests
             $"/api/v1/tracks/{trackId}/report/blocks/b_cmd1",
             new
             {
-                docRev = 1,
+                docRev = 2,
                 knownBlockRev = 0,
                 kind = "task",
                 payload = new

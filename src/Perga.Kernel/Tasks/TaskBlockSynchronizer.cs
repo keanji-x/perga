@@ -131,7 +131,7 @@ internal static class TaskBlockSynchronizer
                 continue;
             }
 
-            var parsed = ParseTaskBlock(block, diagnostics);
+            var parsed = ParseTaskBlock(trackId, block, nowMs, diagnostics);
             if (!seenKeys.Add(parsed.TaskKey))
             {
                 throw KernelException.InvalidArgument($"Duplicate task_key '{parsed.TaskKey}' in report.");
@@ -147,28 +147,7 @@ internal static class TaskBlockSynchronizer
 
             if (!existingByKey.TryGetValue(parsed.TaskKey, out var oldTask))
             {
-                var created = new TaskDto(
-                    Id: $"tsk_{Guid.NewGuid():N}",
-                    TrackId: trackId,
-                    BlockId: block.Id,
-                    TaskKey: parsed.TaskKey,
-                    Generation: 1,
-                    Kind: parsed.Kind,
-                    Provider: parsed.Provider,
-                    Access: parsed.Access,
-                    Ready: parsed.Ready,
-                    DependsOn: parsed.DependsOn,
-                    GoalOrCmd: parsed.GoalOrCmd,
-                    Context: parsed.Context,
-                    Acceptance: parsed.Acceptance,
-                    Gate: parsed.Gate,
-                    Status: parsed.Ready ? TaskRunStatus.Pending : TaskRunStatus.Draft,
-                    StatusDetail: null,
-                    SemanticVerdict: SemanticVerdict.None,
-                    SemanticNote: null,
-                    LatestAttemptId: null,
-                    CreatedAtMs: nowMs,
-                    UpdatedAtMs: nowMs);
+                var created = parsed;
 
                 synced.Add(created);
                 changed.Add(created);
@@ -178,6 +157,7 @@ internal static class TaskBlockSynchronizer
             var contractChanged =
                 !string.Equals(oldTask.GoalOrCmd, parsed.GoalOrCmd, StringComparison.Ordinal) ||
                 !string.Equals(oldTask.Acceptance, parsed.Acceptance, StringComparison.Ordinal) ||
+                !string.Equals(oldTask.Role, parsed.Role, StringComparison.Ordinal) ||
                 !GatesEqual(oldTask.Gate, parsed.Gate);
 
             if (contractChanged)
@@ -193,6 +173,7 @@ internal static class TaskBlockSynchronizer
                     Generation = oldTask.Generation + 1,
                     Kind = parsed.Kind,
                     Provider = parsed.Provider,
+                    Role = parsed.Role,
                     Access = parsed.Access,
                     Ready = parsed.Ready,
                     DependsOn = parsed.DependsOn,
@@ -239,6 +220,7 @@ internal static class TaskBlockSynchronizer
                     BlockId = block.Id,
                     Kind = parsed.Kind,
                     Provider = parsed.Provider,
+                    Role = parsed.Role,
                     Access = parsed.Access,
                     Ready = parsed.Ready,
                     DependsOn = parsed.DependsOn,
@@ -295,6 +277,35 @@ internal static class TaskBlockSynchronizer
         return new TaskSyncOutcome(synced, changed, cancelActiveIds, diagnostics);
     }
 
+    internal static TaskDto ParseTaskBlock(string trackId, ReportBlock block, long nowMs,
+        List<ReportDiagnosticDto>? diagnostics = null)
+    {
+        var parsed = ReadTaskDeclaration(block, diagnostics ?? []);
+        return new TaskDto(
+            Id: $"tsk_{Guid.NewGuid():N}",
+            TrackId: trackId,
+            BlockId: block.Id,
+            TaskKey: parsed.TaskKey,
+            Generation: 1,
+            Kind: parsed.Kind,
+            Provider: parsed.Provider,
+            Role: parsed.Role,
+            Access: parsed.Access,
+            Ready: parsed.Ready,
+            DependsOn: parsed.DependsOn,
+            GoalOrCmd: parsed.GoalOrCmd,
+            Context: parsed.Context,
+            Acceptance: parsed.Acceptance,
+            Gate: parsed.Gate,
+            Status: parsed.Ready ? TaskRunStatus.Pending : TaskRunStatus.Draft,
+            StatusDetail: null,
+            SemanticVerdict: SemanticVerdict.None,
+            SemanticNote: null,
+            LatestAttemptId: null,
+            CreatedAtMs: nowMs,
+            UpdatedAtMs: nowMs);
+    }
+
     private sealed record ParsedTaskDeclaration(
         string TaskKey,
         string Kind,
@@ -305,9 +316,10 @@ internal static class TaskBlockSynchronizer
         string GoalOrCmd,
         JsonElement? Context,
         string? Acceptance,
-        GateSpecDto? Gate);
+        GateSpecDto? Gate,
+        string? Role = null);
 
-    private static ParsedTaskDeclaration ParseTaskBlock(ReportBlock block, List<ReportDiagnosticDto> diagnostics)
+    internal static JsonElement? ExtractTaskJson(ReportBlock block)
     {
         JsonElement? rootObj = null;
         if (block.Payload is { ValueKind: JsonValueKind.Object } payloadObj)
@@ -331,6 +343,12 @@ internal static class TaskBlockSynchronizer
             }
         }
 
+        return rootObj is { ValueKind: JsonValueKind.Object } ? rootObj : null;
+    }
+
+    private static ParsedTaskDeclaration ReadTaskDeclaration(ReportBlock block, List<ReportDiagnosticDto> diagnostics)
+    {
+        var rootObj = ExtractTaskJson(block);
         if (rootObj is null || rootObj.Value.ValueKind != JsonValueKind.Object)
         {
             diagnostics.Add(new ReportDiagnosticDto(
@@ -390,6 +408,13 @@ internal static class TaskBlockSynchronizer
             context = ctxElem.Clone();
         }
 
+        if (ReadString(obj, ["model"]) is { } model)
+        {
+            var values = context is { ValueKind: JsonValueKind.Object } existingContext
+                ? System.Text.Json.Nodes.JsonNode.Parse(existingContext.GetRawText())!.AsObject() : new System.Text.Json.Nodes.JsonObject();
+            values["initialModel"] = model;
+            context = JsonHelpers.ParseClone(values.ToJsonString());
+        }
         var acceptance = ReadString(obj, ["acceptance", "acceptance_criteria", "acceptanceCriteria"]);
         var gate = ParseGateSpec(obj);
 
@@ -403,7 +428,8 @@ internal static class TaskBlockSynchronizer
             GoalOrCmd: goalOrCmd,
             Context: context,
             Acceptance: acceptance,
-            Gate: gate);
+            Gate: gate,
+            Role: ReadString(obj, ["role"]));
     }
 
     internal static string? NormalizeProviderId(string? rawProvider)

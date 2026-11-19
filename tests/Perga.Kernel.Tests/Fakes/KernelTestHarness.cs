@@ -64,6 +64,7 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
     private long _nextEventId = 1;
 
     public bool FailTemplateUpdate { get; set; }
+    public bool FailTemplateStateUpdate { get; set; }
 
     public int MarkInterruptedCalls { get; private set; }
 
@@ -269,18 +270,19 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
         }
     }
 
-    public Task<IReadOnlyList<EventEnvelopeDto>> ListEventsSinceAsync(long sinceEventId, string? trackId = null, int limit = 500, CancellationToken ct = default)
+    public Func<IReadOnlyList<EventEnvelopeDto>, Task>? BeforeEventPublication { get; set; }
+
+    public async Task<IReadOnlyList<EventEnvelopeDto>> ListEventsSinceAsync(long sinceEventId, string? trackId = null, int limit = 500, CancellationToken ct = default)
     {
+        IReadOnlyList<EventEnvelopeDto> events;
         lock (_gate)
         {
             var q = _events.Where(e => e.EventId > sinceEventId);
-            if (trackId is not null)
-            {
-                q = q.Where(e => e.TrackId == trackId);
-            }
-
-            return Task.FromResult<IReadOnlyList<EventEnvelopeDto>>(q.OrderBy(e => e.EventId).Take(limit).ToArray());
+            if (trackId is not null) q = q.Where(e => e.TrackId == trackId);
+            events = q.OrderBy(e => e.EventId).Take(limit).ToArray();
         }
+        if (BeforeEventPublication is { } before) await before(events);
+        return events;
     }
 
     public string DatabaseId { get; } = Guid.NewGuid().ToString("N");
@@ -444,6 +446,7 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
     {
         lock (_gate)
         {
+            if (FailTemplateStateUpdate && evt is null) throw new IOException("template state persistence failure");
             _tracks[track.Id] = track;
             if (track.ClosedAtMs is not null)
                 for (var i = 0; i < _trackWakes.Count; i++)
@@ -458,7 +461,7 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
         }
     }
 
-    public Task UpdateTrackTemplateAndEmitAsync(TrackDto track, string templateSnapshot, EventEnvelopeDto evt, CancellationToken ct)
+    public Task UpdateTrackTemplateAndEmitAsync(TrackDto track, string? templateSnapshot, EventEnvelopeDto evt, CancellationToken ct)
     {
         lock (_gate)
         {
@@ -1263,14 +1266,12 @@ internal sealed class ConfigurableFakePolicyVm : IPolicyVm
 
     public Func<string, CompiledTemplateManifest>? CustomManifestFactory { get; set; }
     public Func<CompiledPolicy, JsonElement, PolicyEvalResult<JsonElement>>? OnInitState { get; set; }
-    public Func<CompiledPolicy, PolicyTurnContext, JsonElement, PolicyEvalResult<string?>>? OnBuildTurnContext { get; set; }
-    public Func<CompiledPolicy, PolicyReportCommitContext, JsonElement, PolicyEvalResult<GuardDecision>>? OnGuardReportCommit { get; set; }
-    public Func<CompiledPolicy, PolicyToolCallContext, JsonElement, PolicyEvalResult<GuardDecision>>? OnGuardToolCall { get; set; }
-    public Func<CompiledPolicy, PolicyTaskSettledContext, JsonElement, PolicyEvalResult<string?>>? OnTaskSettledHook { get; set; }
+    public Func<CompiledPolicy, string, JsonElement, JsonElement, PolicyEvalResult<GuardDecision>>? OnBefore { get; set; }
+    public Func<CompiledPolicy, string, JsonElement, JsonElement, PolicyEvalResult<string?>>? OnAfter { get; set; }
     public Func<CompiledPolicy, string, JsonElement, JsonElement, PolicyEvalResult<string?>>? OnBuildScheduleWake { get; set; }
+    public ConcurrentQueue<JsonElement> RecordedSettledEvents { get; } = new();
 
-    public ConcurrentQueue<PolicyTaskSettledContext> RecordedSettledContexts { get; } = new();
-    public ConcurrentQueue<PolicyToolCallContext> RecordedToolGuardContexts { get; } = new();
+    public TemplateHeaderView? EvaluateHeaderView(CompiledPolicy policy, PolicyHeaderViewContext ctx, JsonElement state) => null;
 
     public CompiledPolicy Compile(string jsModuleSource)
     {
@@ -1306,6 +1307,7 @@ internal sealed class ConfigurableFakePolicyVm : IPolicyVm
                 WorkspaceCloseCmd: closeCmdMatch.Success ? closeCmdMatch.Groups[1].Value : null,
                 AfterWorkerDoneCmd: afterCmdMatch.Success ? afterCmdMatch.Groups[1].Value : null,
                 Schedules: [new ScheduleSpec("daily-check", "0 9 * * *", "UTC", "Static daily check prompt")],
+                Routing: [],
                 InitialReportMarkdown: "# Overview\n\nInitial template markdown.\n");
         }
 
@@ -1323,46 +1325,20 @@ internal sealed class ConfigurableFakePolicyVm : IPolicyVm
         return new PolicyEvalResult<JsonElement>(init, init);
     }
 
-    public PolicyEvalResult<string?> BuildTurnContext(CompiledPolicy policy, PolicyTurnContext ctx, JsonElement state)
+    public PolicyEvalResult<PolicyTurnPreparation> PrepareTurn(CompiledPolicy policy, PolicyTurnContext ctx, JsonElement state) =>
+        new(state, new(null, new GuardDecision.Allow()));
+
+    public PolicyEvalResult<GuardDecision> Before(CompiledPolicy policy, string action, string trackId, JsonElement data, JsonElement inputs, JsonElement state) =>
+        OnBefore?.Invoke(policy, action, data, state) ?? new(state, new GuardDecision.Allow());
+
+    public PolicyTaskRoute RouteTaskDispatch(CompiledPolicy policy, string? role, string access, string? provider, string? model, JsonElement inputs) => new(provider, model);
+    public IReadOnlyList<PolicyTaskRoute> ResolveRoutingTargets(CompiledPolicy policy, JsonElement inputs) => [];
+
+    public PolicyEvalResult<string?> After(CompiledPolicy policy, string eventName, string trackId, JsonElement data, JsonElement inputs, JsonElement state)
     {
-        if (OnBuildTurnContext is not null)
-        {
-            return OnBuildTurnContext(policy, ctx, state);
-        }
-
-        return new PolicyEvalResult<string?>(state, null);
-    }
-
-    public PolicyEvalResult<GuardDecision> GuardReportCommit(CompiledPolicy policy, PolicyReportCommitContext ctx, JsonElement state)
-    {
-        if (OnGuardReportCommit is not null)
-        {
-            return OnGuardReportCommit(policy, ctx, state);
-        }
-
-        return new PolicyEvalResult<GuardDecision>(state, new GuardDecision.Allow());
-    }
-
-    public PolicyEvalResult<GuardDecision> GuardToolCall(CompiledPolicy policy, PolicyToolCallContext ctx, JsonElement state)
-    {
-        RecordedToolGuardContexts.Enqueue(ctx);
-        if (OnGuardToolCall is not null)
-        {
-            return OnGuardToolCall(policy, ctx, state);
-        }
-
-        return new PolicyEvalResult<GuardDecision>(state, new GuardDecision.Allow());
-    }
-
-    public PolicyEvalResult<string?> OnTaskSettled(CompiledPolicy policy, PolicyTaskSettledContext ctx, JsonElement state)
-    {
-        RecordedSettledContexts.Enqueue(ctx);
-        if (OnTaskSettledHook is not null)
-        {
-            return OnTaskSettledHook(policy, ctx, state);
-        }
-
-        return new PolicyEvalResult<string?>(state, $"Policy noted {ctx.TaskKey} -> {ctx.AttemptStatus}");
+        if (eventName == "task.settled") RecordedSettledEvents.Enqueue(data);
+        return OnAfter?.Invoke(policy, eventName, data, state) ?? new(state,
+            eventName == "task.settled" ? $"Policy noted {data.GetProperty("taskKey").GetString()} -> {data.GetProperty("attemptStatus").GetString()}" : null);
     }
 
     public PolicyEvalResult<string?> BuildScheduleWakePrompt(CompiledPolicy policy, string scheduleId, JsonElement inputs, JsonElement state)
@@ -1499,6 +1475,8 @@ internal sealed class ScriptableFakeAgentRuntime : IAgentRuntime
 
     public Func<ScriptableFakeAgentSession, TurnInput, CancellationToken, IAsyncEnumerable<UnifiedAgentEvent>>? TurnScript { get; set; }
 
+    public Func<CancellationToken, Task<IReadOnlyList<ProviderStatus>>>? ProbeScript { get; set; }
+
     public IReadOnlyList<ProviderStatus> Providers { get; set; } =
         [new ProviderStatus("codex", true, "1.0.0", null, ["gpt-5"])];
 
@@ -1514,7 +1492,7 @@ internal sealed class ScriptableFakeAgentRuntime : IAgentRuntime
             : Providers.FirstOrDefault(status => status.Provider == provider)?.PermissionModes ?? []);
     }
 
-    public Task<IReadOnlyList<ProviderStatus>> ProbeProvidersAsync(CancellationToken ct) => Task.FromResult(Providers);
+    public Task<IReadOnlyList<ProviderStatus>> ProbeProvidersAsync(CancellationToken ct) => ProbeScript?.Invoke(ct) ?? Task.FromResult(Providers);
 
     public Task<IAgentSession> OpenSessionAsync(HarnessLaunchSpec spec, CancellationToken ct)
     {

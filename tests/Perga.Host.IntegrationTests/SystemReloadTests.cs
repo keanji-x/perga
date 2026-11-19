@@ -161,7 +161,7 @@ public sealed class SystemReloadTests
             File.WriteAllText(Path.Combine(directory, "web", "index.html"), "<html>" + text + "</html>");
             File.WriteAllText(Path.Combine(directory, "web", "assets", text + "-abc123.js"), text + " asset");
             File.WriteAllText(Path.Combine(directory, "templates", "reload.perga.js"),
-                "export default defineTemplate({ id: 'reload-test', title: '" + text + "', guardToolCall() { return Allow(); } });");
+                "export default defineTemplate({ id: 'reload-test', title: '" + text + "', before() { return Allow(); } });");
             Manifest(id, webId);
         }
         public void Manifest(string id, string webId)

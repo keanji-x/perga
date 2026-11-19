@@ -41,6 +41,7 @@ public sealed partial class TrackActor : IAsyncDisposable
     private TrackDto _track = null!;
     private ReportDocument _report = null!;
     private CompiledPolicy? _policy;
+    private string? _policyUnavailableReason;
     private string _policyGeneration = Guid.NewGuid().ToString("N");
     private string? _templateSnapshotSource;
     private MountedWorkspace? _mountedWorkspace;
@@ -192,7 +193,7 @@ public sealed partial class TrackActor : IAsyncDisposable
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
             var unreadMails = await _store.ListMailsAsync(TrackId, unreadOnly: true, ct).ConfigureAwait(false);
             return new TrackStatusDto(
-                Track: _track,
+                Track: PresentTrackCore(),
                 Sessions: OrderedSessionsCore(),
                 Tasks: _tasks.ToArray(),
                 OpenAsks: _asks.Values.Where(a => a.Status == AskStatus.Open).OrderBy(a => a.CreatedAtMs).ToArray(),
@@ -279,7 +280,7 @@ public sealed partial class TrackActor : IAsyncDisposable
                 await ResumeWorkspaceWorkCoreAsync(_actorShutdownCts.Token).ConfigureAwait(false);
             }
 
-            return _track;
+            return PresentTrackCore();
         }, ct);
     }
 
@@ -293,12 +294,16 @@ public sealed partial class TrackActor : IAsyncDisposable
             var now = NowMs();
             _track = _track with { Title = newTitle, UpdatedAtMs = now };
             await EmitTrackUpdatedCoreAsync(now, ct).ConfigureAwait(false);
-            return _track;
+            return PresentTrackCore();
         }, ct);
     }
 
-    public Task<TrackDto> SetTemplateBySessionAsync(string callerSessionId, string? templateId,
-        string? source, string expectedPolicyGeneration, JsonElement? inputs, CancellationToken ct = default)
+    public async Task<TrackDto> SetTemplateBySessionAsync(string callerSessionId, string? templateId,
+        string? source, string expectedPolicyGeneration, JsonElement? inputs, CancellationToken ct = default) =>
+        (await SetTemplateWithOptionsAsync(callerSessionId, templateId, source, expectedPolicyGeneration, inputs, false, false, ct).ConfigureAwait(false)).Track;
+
+    public Task<TemplateSetResult> SetTemplateWithOptionsAsync(string callerSessionId, string? templateId,
+        string? source, string expectedPolicyGeneration, JsonElement? inputs, bool dryRun, bool clear, CancellationToken ct = default)
     {
         return EnqueueAsync(async _ =>
         {
@@ -308,6 +313,13 @@ public sealed partial class TrackActor : IAsyncDisposable
                 throw KernelException.PolicyDenied("Active policy changed after template application was authorized.");
             if (_track.ClosedAtMs is not null)
                 throw KernelException.Conflict("Cannot set a template on a closed track.");
+            if (clear && (templateId is not null || source is not null || inputs is not null))
+                throw KernelException.InvalidArgument("clear cannot be combined with a template or inputs.");
+            if (clear)
+            {
+                return new TemplateSetResult(await DetachTemplateCoreAsync(dryRun, ct).ConfigureAwait(false), [], dryRun);
+            }
+
             if ((templateId is null) == (source is null) ||
                 templateId is not null && string.IsNullOrWhiteSpace(templateId) ||
                 source is not null && string.IsNullOrWhiteSpace(source))
@@ -332,6 +344,7 @@ public sealed partial class TrackActor : IAsyncDisposable
                 throw KernelException.InvalidArgument($"Template compilation or initialization failed: {ex.Message}");
             }
 
+            var warnings = await TemplateWarningsCoreAsync(policy, nextInputs, ct).ConfigureAwait(false);
             var now = NowMs();
             var nextTrack = _track with
             {
@@ -341,11 +354,13 @@ public sealed partial class TrackActor : IAsyncDisposable
                 EnabledPlugins = _track.EnabledPlugins.Concat(policy.Manifest.DefaultPlugins).Distinct(StringComparer.Ordinal).ToArray(),
                 UpdatedAtMs = now
             };
+            if (dryRun) return new TemplateSetResult(TemplatePresentation.Project(nextTrack, policy, _policyVm), warnings, true);
             var evt = new EventEnvelopeDto(null, nextTrack.AreaId, TrackId, KernelEventKinds.TrackUpdated,
-                JsonHelpers.ToElement(nextTrack), now);
+                JsonHelpers.ToElement(TemplatePresentation.Project(nextTrack, policy, _policyVm)), now);
             await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
             await _store.UpdateTrackTemplateAndEmitAsync(nextTrack, policy.JsSource, evt, ct).ConfigureAwait(false);
             _policy = policy;
+            _policyUnavailableReason = null;
             _policyGeneration = Guid.NewGuid().ToString("N");
             _templateSnapshotSource = policy.JsSource;
             var pluginsChanged = !_track.EnabledPlugins.SequenceEqual(nextTrack.EnabledPlugins, StringComparer.Ordinal);
@@ -353,7 +368,7 @@ public sealed partial class TrackActor : IAsyncDisposable
             if (pluginsChanged)
                 _mcpBridge.UpdateTrackPlugins(TrackId, nextTrack.EnabledPlugins);
             await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, evt, ct).ConfigureAwait(false);
-            return _track;
+            return new TemplateSetResult(PresentTrackCore(), warnings, false);
         }, ct);
     }
 
@@ -369,7 +384,7 @@ public sealed partial class TrackActor : IAsyncDisposable
             _track = _track with { ClosedAtMs = _track.ClosedAtMs ?? now, UpdatedAtMs = now };
             SetApprovalAdmissionClosed(true, stopPendingTurns: true);
             await EmitTrackUpdatedCoreAsync(now, ct).ConfigureAwait(false);
-            return _track;
+            return PresentTrackCore();
         }, ct).ConfigureAwait(false);
 
         return closedTrack;
@@ -629,19 +644,22 @@ public sealed partial class TrackActor : IAsyncDisposable
         Interlocked.Increment(ref _inFlightExternalOps);
         try
         {
-            var phase1 = await EnqueueAsync<(ReportReadResult? Completed, PolicyApproval? Ask, ReportCommitRequest EffectiveRequest)>(async _ =>
+            string? authorizedGeneration = null;
+            // Observe mailbox admission even after request cancellation so every approval is reclaimed.
+            var phase1 = await EnqueueAsync<(ReportReadResult? Completed, IReadOnlyList<PolicyApproval> Asks, ReportCommitRequest EffectiveRequest, HashSet<string> ApprovedKeys)>(async _ =>
             {
                 await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
+                RequirePolicyAvailableCore();
 
                 if (dispatch is not null && await TryReplayWorkerDispatchCoreAsync(dispatch, callerSessionId, ct).ConfigureAwait(false) is { } replay)
-                    return (replay, null, null!);
+                    return (replay, [], null!, []);
 
                 var (editorRole, boundAttemptId) = ResolveEditorIdentityCore(actorKind, callerSessionId);
                 var effectiveReq = buildOps(_report);
-
                 TaskBlockSynchronizer.ValidatePreCommitBoundAttemptFence(boundAttemptId, _report, effectiveReq.Ops);
                 var preview = _reportEngine.ApplyCommit(_report, effectiveReq.Anchor, effectiveReq.Ops, effectiveReq.Summary);
                 TaskBlockSynchronizer.ValidatePostCommitBoundAttemptFence(boundAttemptId, _report, preview);
+                authorizedGeneration = _policyGeneration;
 
                 var touchedSections = CollectTouchedSections(_report, preview, effectiveReq.Ops);
                 var nextProseChars = preview.NextDocument.Blocks
@@ -649,49 +667,77 @@ public sealed partial class TrackActor : IAsyncDisposable
                     .Sum(b => b.Markdown?.Length ?? 0);
 
                 ValidateManifestReportRulesCore(editorRole, touchedSections, nextProseChars);
+                // Parse and validate the complete prospective task set before any approval is persisted.
+                var taskPreview = TaskBlockSynchronizer.SyncTasksFromReport(TrackId, preview.NextDocument, _tasks,
+                    _policy?.Manifest.RequireGateForReadWrite ?? false, NowMs());
+                RequireAttemptsOutsideVerification(_activeAttempts.Values.Where(attempt =>
+                    taskPreview.SupersededOrRemovedActiveTaskIds.Contains(attempt.TaskId)));
+                var taskAdmission = await AdmitTaskDeclarationsCoreAsync(preview, ct).ConfigureAwait(false);
+                var decisions = taskAdmission.Asks;
 
                 if (_policy is not null)
                 {
                     var prevMd = _reportEngine.RenderMarkdown(_report, withMarkers: false);
                     var nextMd = _reportEngine.RenderMarkdown(preview.NextDocument, withMarkers: false);
-                    var ctx = new PolicyReportCommitContext(
-                        TrackId: TrackId,
-                        EditorRole: editorRole,
-                        PrevMarkdown: prevMd,
-                        NextMarkdown: nextMd,
-                        TouchedSections: touchedSections,
-                        NextProseChars: nextProseChars,
-                        Inputs: _track.TemplateInputs);
-
-                    var eval = _policyVm.GuardReportCommit(_policy, ctx, _track.TemplateState);
-                    if (eval.Output is GuardDecision.AskHuman)
-                        RequireApprovalOrigin(callerSessionId, approvalTurn, origin);
+                    var eval = _policyVm.Before(_policy, "report.commit", TrackId, JsonHelpers.ToElement(new {
+                        editorRole, prevMarkdown = prevMd, nextMarkdown = nextMd, touchedSections, nextProseChars
+                    }), _track.TemplateInputs, _track.TemplateState);
                     await UpdateTemplateStateIfChangedCoreAsync(eval.NextState, ct).ConfigureAwait(false);
 
-                    var suspension = ApplyGuardDecisionCore(eval.Output, callerSessionId, approvalTurn, ct);
-                    if (suspension is not null)
-                        return (null, suspension, effectiveReq);
+                    if (eval.Output is GuardDecision.Deny denied) throw KernelException.PolicyDenied(denied.Reason);
+                    if (eval.Output is GuardDecision.AskHuman ask) decisions.Add(ask);
                 }
+                var asks = new List<PolicyApproval>();
+                try
+                {
+                    foreach (var decision in decisions)
+                    {
+                        RequireApprovalOrigin(callerSessionId, approvalTurn, origin);
+                        asks.Add(ApplyGuardDecisionCore(decision, callerSessionId ?? _track.LeadSessionId, approvalTurn, ct)!);
+                    }
+                }
+                catch
+                {
+                    foreach (var ask in asks) ExpireApproval(ask.Pending);
+                    throw;
+                }
+                if (asks.Count > 0) return (null, asks, effectiveReq, taskAdmission.ApprovedKeys);
 
                 var result = await FinalizeReportCommitCoreAsync(
                     preview,
                     callerSessionId,
                     effectiveReq.CommitMessage ?? $"Report commit ({editorRole})",
-                    ct, dispatch).ConfigureAwait(false);
-                return (result, null, effectiveReq);
-            }, ct).ConfigureAwait(false);
+                    ct, dispatch, taskAdmission.ApprovedKeys).ConfigureAwait(false);
+                return (result, [], effectiveReq, taskAdmission.ApprovedKeys);
+            }, CancellationToken.None).ConfigureAwait(false);
 
             if (phase1.Completed is not null)
             {
                 return phase1.Completed;
             }
 
-            await RequirePolicyApprovalAsync(phase1.Ask!, ct).ConfigureAwait(false);
+            try
+            {
+                var remaining = phase1.Asks.ToList();
+                while (remaining.Count > 0)
+                {
+                    var completed = await Task.WhenAny(remaining.Select(ask => ask.Decision)).WaitAsync(ct).ConfigureAwait(false);
+                    var ask = remaining.First(ask => ask.Decision == completed);
+                    await RequirePolicyApprovalAsync(ask, ct).ConfigureAwait(false);
+                    remaining.Remove(ask);
+                }
+            }
+            finally
+            {
+                foreach (var ask in phase1.Asks) ExpireApproval(ask.Pending);
+            }
 
             return await EnqueueAsync(async _ =>
             {
                 if (dispatch is not null && await TryReplayWorkerDispatchCoreAsync(dispatch, callerSessionId, ct).ConfigureAwait(false) is { } replay)
                     return replay;
+                if (_policyGeneration != authorizedGeneration)
+                    throw KernelException.PolicyDenied("Active policy changed during task/report approval.");
                 var (editorRole, boundAttemptId) = ResolveEditorIdentityCore(actorKind, callerSessionId);
                 TaskBlockSynchronizer.ValidatePreCommitBoundAttemptFence(boundAttemptId, _report, phase1.EffectiveRequest.Ops);
                 var verifiedCommit = _reportEngine.ApplyCommit(
@@ -709,7 +755,7 @@ public sealed partial class TrackActor : IAsyncDisposable
                     verifiedCommit,
                     callerSessionId,
                     phase1.EffectiveRequest.CommitMessage ?? $"Report commit ({editorRole}, human-approved)",
-                    ct, dispatch).ConfigureAwait(false);
+                    ct, dispatch, phase1.ApprovedKeys).ConfigureAwait(false);
             }, ct).ConfigureAwait(false);
         }
         finally
@@ -1077,29 +1123,12 @@ public sealed partial class TrackActor : IAsyncDisposable
 
             var now = NowMs();
             TaskAttemptDto? settledAttempt = null;
-            JsonElement? nextTemplateState = null;
 
             if (task.LatestAttemptId is not null &&
                 _activeAttempts.TryGetValue(task.LatestAttemptId, out var activeAttempt))
             {
                 settledAttempt = await CancelAndDiscardActiveAttemptCoreAsync(activeAttempt, reason ?? "Canceled by governance.", now, ct)
                     .ConfigureAwait(false);
-            }
-
-            if (_policy is not null)
-            {
-                var settledCtx = new PolicyTaskSettledContext(
-                    TrackId: TrackId,
-                    TaskKey: task.TaskKey,
-                    AccessMode: FormatAccessModeForPolicy(task.Access),
-                    AttemptStatus: "canceled",
-                    WorkerResult: settledAttempt?.WorkerResult,
-                    AttemptMeta: settledAttempt?.Meta ?? JsonHelpers.EmptyObject,
-                    GateVerdict: null,
-                    Inputs: _track.TemplateInputs);
-                var eval = _policyVm.OnTaskSettled(_policy, settledCtx, _track.TemplateState);
-                _track = _track with { TemplateState = eval.NextState };
-                nextTemplateState = eval.NextState;
             }
 
             var updatedTask = task with
@@ -1111,7 +1140,13 @@ public sealed partial class TrackActor : IAsyncDisposable
             };
             ReplaceTaskInMemoryCore(updatedTask);
 
-            await PersistAndEmitTaskUpdatedCoreAsync(updatedTask, settledAttempt, nextTemplateState, now, ct).ConfigureAwait(false);
+            var after = EvaluateAfterPolicyEventCore("task.settled", JsonHelpers.ToElement(new {
+                taskKey = task.TaskKey, accessMode = FormatAccessModeForPolicy(task.Access),
+                attemptStatus = "canceled", workerResult = settledAttempt?.WorkerResult,
+                meta = settledAttempt?.Meta ?? JsonHelpers.EmptyObject, gateVerdict = (JsonElement?)null
+            }));
+            await PersistAndEmitTaskUpdatedCoreAsync(updatedTask, settledAttempt, after.NextState, now, ct, after.Output).ConfigureAwait(false);
+
             await ScheduleEligibleTasksCoreAsync(ct).ConfigureAwait(false);
             return updatedTask;
         }, ct);
@@ -1215,7 +1250,7 @@ public sealed partial class TrackActor : IAsyncDisposable
         return await CompleteAttemptFailByAttemptIdAsync(attemptId, reason, workerResult, ct, origin).ConfigureAwait(false);
     }
 
-    // ------------------- Asks, Mail, Terminals, GuardToolCall & Schedules -------------------
+    // ------------------- Asks, Mail, Terminals, Policy Hooks & Schedules -------------------
 
     public async Task<JsonElement> AskUserAsync(
         string? callerSessionId,
@@ -1658,29 +1693,30 @@ public sealed partial class TrackActor : IAsyncDisposable
                 if (mcpServer == "perga" && KernelMcpCatalog.IsWorkerOperatorOnly(toolName))
                     RequireWorkerOperatorCore(caller.Id);
 
+                var previewOnly = false;
+                if (mcpServer == "perga" && toolName == KernelMcpToolNames.TrackSet)
+                    previewOnly = ValidateTemplateSetArguments(arguments);
+                if (!(mcpServer == "perga" && toolName == KernelMcpToolNames.TrackSet))
+                    RequirePolicyAvailableCore();
                 if (_policy is null)
                 {
                     return null;
                 }
 
-                var ctx = new PolicyToolCallContext(
-                    TrackId: TrackId,
-                    SessionId: caller.Id,
-                    IsLead: caller.IsLead,
-                    BoundAttemptId: caller.BoundAttemptId,
-                    McpServer: mcpServer,
-                    ToolName: toolName,
-                    Arguments: arguments.ValueKind == JsonValueKind.Undefined ? JsonHelpers.EmptyObject : arguments.Clone(),
-                    Inputs: _track.TemplateInputs);
-
-                var eval = _policyVm.GuardToolCall(_policy, ctx, _track.TemplateState);
+                var eval = _policyVm.Before(_policy, "tool." + toolName, TrackId, JsonHelpers.ToElement(new {
+                    sessionId = caller.Id, isLead = caller.IsLead, boundAttemptId = caller.BoundAttemptId,
+                    mcpServer, toolName, arguments = arguments.ValueKind == JsonValueKind.Undefined ? JsonHelpers.EmptyObject : arguments
+                }), _track.TemplateInputs, _track.TemplateState);
                 if (eval.Output is GuardDecision.AskHuman)
                     RequireApprovalOrigin(sessionId, approvalTurn, origin);
                 // An allowed replacement initializes its own state atomically. Denied or
                 // suspended attempts still retain the current policy's guard state updates.
-                if (!string.Equals(mcpServer, "perga", StringComparison.OrdinalIgnoreCase) ||
-                    toolName != KernelMcpToolNames.TrackSet || eval.Output is not GuardDecision.Allow)
+                if (!previewOnly && (!string.Equals(mcpServer, "perga", StringComparison.OrdinalIgnoreCase) ||
+                    toolName != KernelMcpToolNames.TrackSet || eval.Output is not GuardDecision.Allow))
                     await UpdateTemplateStateIfChangedCoreAsync(eval.NextState, ct).ConfigureAwait(false);
+
+                if (previewOnly && eval.Output is GuardDecision.AskHuman)
+                    throw KernelException.PolicyDenied("Template preview requires human approval; dryRun cannot create an approval request.");
 
                 return ApplyGuardDecisionCore(eval.Output, caller.Id, approvalTurn, ct);
             }, ct).ConfigureAwait(false);
@@ -1746,13 +1782,17 @@ public sealed partial class TrackActor : IAsyncDisposable
         _report = snapshot.Report;
         _templateSnapshotSource = snapshot.TemplateSnapshotSource;
 
-        if (!string.IsNullOrWhiteSpace(snapshot.TemplateSnapshotSource))
+        try
         {
-            _policy = _templateCatalog.GetOrCompileSnapshot(snapshot.TemplateSnapshotSource!);
+            if (!string.IsNullOrWhiteSpace(snapshot.TemplateSnapshotSource))
+                _policy = _templateCatalog.GetOrCompileSnapshot(snapshot.TemplateSnapshotSource!);
+            else if (!string.IsNullOrWhiteSpace(_track.TemplateId))
+                throw new InvalidOperationException("Active template has no frozen snapshot.");
         }
-        else if (!string.IsNullOrWhiteSpace(_track.TemplateId))
+        catch (Exception ex)
         {
-            _policy = _templateCatalog.TryGetPolicy(_track.TemplateId!);
+            _policy = null;
+            _policyUnavailableReason = $"Active template is unavailable: {ex.Message}";
         }
 
         _policyGeneration = Guid.NewGuid().ToString("N");
@@ -1857,7 +1897,7 @@ public sealed partial class TrackActor : IAsyncDisposable
         string? authorSessionId,
         string commitMessage,
         CancellationToken ct,
-        WorkerDispatchIntent? dispatch = null)
+        WorkerDispatchIntent? dispatch = null, IReadOnlySet<string>? approvedKeys = null)
     {
         var now = NowMs();
         var requireGate = _policy?.Manifest.RequireGateForReadWrite ?? false;
@@ -1914,6 +1954,8 @@ public sealed partial class TrackActor : IAsyncDisposable
         _report = commitResult.NextDocument;
         _tasks.Clear();
         _tasks.AddRange(syncOutcome.SyncedTasks);
+        foreach (var admitted in _tasks.Where(t => approvedKeys?.Contains(t.TaskKey) == true))
+            _taskDispatchApprovals[admitted.TaskKey] = (admitted.Generation, _policyGeneration, TaskDispatchFields(admitted));
         var committedCt = _actorShutdownCts.Token;
         await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, reportEvt, committedCt).ConfigureAwait(false);
 
@@ -1921,6 +1963,7 @@ public sealed partial class TrackActor : IAsyncDisposable
         await _store.AppendEventAsync(taskEvt, committedCt).ConfigureAwait(false);
         await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, taskEvt, committedCt).ConfigureAwait(false);
 
+        await AfterPolicyEventCoreAsync("report.commit", reportPayload, committedCt).ConfigureAwait(false);
         await ScheduleEligibleTasksCoreAsync(committedCt).ConfigureAwait(false);
 
         var rendered = _reportEngine.RenderMarkdown(_report, withMarkers: true);
@@ -1947,7 +1990,7 @@ public sealed partial class TrackActor : IAsyncDisposable
 
     private async Task ScheduleEligibleTasksCoreAsync(CancellationToken ct)
     {
-        if (_options.DispatchAdmission.Draining || _deletingTrack || _track.ClosedAtMs is not null || !WorkspaceReady)
+        if (_policyUnavailableReason is not null || _options.DispatchAdmission.Draining || _deletingTrack || _track.ClosedAtMs is not null || !WorkspaceReady)
         {
             return;
         }
@@ -1961,7 +2004,26 @@ public sealed partial class TrackActor : IAsyncDisposable
             var schedulable = TaskGraphScheduler.ComputeSchedulable(_tasks, driver.SupportsParallelIsolatedWriteLeases);
             foreach (var task in schedulable)
             {
-                if (!await StartTaskAttemptCoreAsync(task, driver, mounted, ct).ConfigureAwait(false))
+                PolicyTaskRoute route;
+                try
+                {
+                    route = RouteTaskCore(task);
+                    if (!await EnsureTaskDispatchApprovedCoreAsync(task, route, ct).ConfigureAwait(false)) continue;
+                    await ValidateTaskProviderModelCoreAsync(route.Provider, route.Model, ct).ConfigureAwait(false);
+                }
+                catch (KernelException ex) when (ex.Code == KernelErrorCode.Conflict && !ct.IsCancellationRequested)
+                {
+                    // Probe outages are retryable; retain the pending task for the next scheduling pass.
+                    continue;
+                }
+                catch (Exception ex) when (!ct.IsCancellationRequested)
+                {
+                    var failed = task with { Status = TaskRunStatus.Failed, StatusDetail = ex.Message, UpdatedAtMs = NowMs() };
+                    await PersistAndEmitTaskUpdatedCoreAsync(failed, null, null, failed.UpdatedAtMs, ct).ConfigureAwait(false);
+                    ReplaceTaskInMemoryCore(failed);
+                    continue;
+                }
+                if (!await StartTaskAttemptCoreAsync(task, route, driver, mounted, ct).ConfigureAwait(false))
                     preparationFailed = true;
             }
         } while (preparationFailed);
@@ -1969,6 +2031,7 @@ public sealed partial class TrackActor : IAsyncDisposable
 
     private async Task<bool> StartTaskAttemptCoreAsync(
         TaskDto task,
+        PolicyTaskRoute route,
         IWorkspaceDriver driver,
         MountedWorkspace mounted,
         CancellationToken ct)
@@ -1985,7 +2048,7 @@ public sealed partial class TrackActor : IAsyncDisposable
                                 string.Equals(task.Kind, "cmd", StringComparison.OrdinalIgnoreCase) ||
                                 string.Equals(task.Kind, "shell", StringComparison.OrdinalIgnoreCase) ||
                                 string.Equals(task.Kind, "terminal", StringComparison.OrdinalIgnoreCase);
-            var workerProvider = string.IsNullOrWhiteSpace(task.Provider) ? GetDefaultProviderCore() : task.Provider!;
+            var workerProvider = route.Provider ?? GetDefaultProviderCore();
             var subagent = isCommandTask ? null : new AgentSessionDto(
                 Id: $"ses_{Guid.NewGuid():N}",
                 TrackId: TrackId,
@@ -1994,7 +2057,7 @@ public sealed partial class TrackActor : IAsyncDisposable
                 BoundAttemptId: attemptId,
                 Title: $"Task: {task.TaskKey}",
                 Provider: workerProvider,
-                Model: ResolveTaskWorkerModelCore(task),
+                Model: route.Model ?? ResolveTaskWorkerModelCore(workerProvider),
                 NativeThreadId: null,
                 Epoch: 1,
                 Status: "idle",
@@ -2300,26 +2363,6 @@ public sealed partial class TrackActor : IAsyncDisposable
                 var currentTask = RequireTaskCore(prep.Task.Id);
                 var now = NowMs();
 
-                JsonElement? nextTemplateState = null;
-                string? policyNote = null;
-
-                if (_policy is not null)
-                {
-                    var settledCtx = new PolicyTaskSettledContext(
-                        TrackId: TrackId,
-                        TaskKey: currentTask.TaskKey,
-                        AccessMode: FormatAccessModeForPolicy(currentTask.Access),
-                        AttemptStatus: gatePassed ? "done" : "failed",
-                        WorkerResult: prep.Active.AttemptDto.WorkerResult,
-                        AttemptMeta: mergedMeta,
-                        GateVerdict: gateVerdict,
-                        Inputs: _track.TemplateInputs);
-
-                    var eval = _policyVm.OnTaskSettled(_policy, settledCtx, _track.TemplateState);
-                    _track = _track with { TemplateState = eval.NextState };
-                    nextTemplateState = eval.NextState;
-                    policyNote = eval.Output;
-                }
 
                 var settledTask = currentTask with
                 {
@@ -2336,6 +2379,14 @@ public sealed partial class TrackActor : IAsyncDisposable
                     GateVerdict = gateVerdict,
                     FinishedAtMs = now
                 };
+
+                var after = EvaluateAfterPolicyEventCore("task.settled", JsonHelpers.ToElement(new {
+                    taskKey = currentTask.TaskKey, accessMode = FormatAccessModeForPolicy(currentTask.Access),
+                    attemptStatus = settledAttempt.Status, workerResult = settledAttempt.WorkerResult,
+                    meta = mergedMeta, gateVerdict
+                }));
+                var nextTemplateState = after.NextState;
+                var policyNote = after.Output;
 
                 var summarySb = new StringBuilder();
                 summarySb.Append($"Task '{settledTask.TaskKey}' (attempt '{attemptId}') settled as {settledTask.Status}.");
@@ -2399,26 +2450,6 @@ public sealed partial class TrackActor : IAsyncDisposable
                 var now = NowMs();
                 var clonedWorkerResult = workerResult?.Clone();
 
-                JsonElement? nextTemplateState = null;
-                string? policyNote = null;
-
-                if (_policy is not null)
-                {
-                    var settledCtx = new PolicyTaskSettledContext(
-                        TrackId: TrackId,
-                        TaskKey: currentTask.TaskKey,
-                        AccessMode: FormatAccessModeForPolicy(currentTask.Access),
-                        AttemptStatus: "failed",
-                        WorkerResult: clonedWorkerResult,
-                        AttemptMeta: active.AttemptDto.Meta,
-                        GateVerdict: null,
-                        Inputs: _track.TemplateInputs);
-
-                    var eval = _policyVm.OnTaskSettled(_policy, settledCtx, _track.TemplateState);
-                    _track = _track with { TemplateState = eval.NextState };
-                    nextTemplateState = eval.NextState;
-                    policyNote = eval.Output;
-                }
 
                 var updatedTask = currentTask with
                 {
@@ -2434,6 +2465,14 @@ public sealed partial class TrackActor : IAsyncDisposable
                     WorkerResult = clonedWorkerResult,
                     FinishedAtMs = now
                 };
+
+                var after = EvaluateAfterPolicyEventCore("task.settled", JsonHelpers.ToElement(new {
+                    taskKey = currentTask.TaskKey, accessMode = FormatAccessModeForPolicy(currentTask.Access),
+                    attemptStatus = "failed", workerResult = clonedWorkerResult,
+                    meta = active.AttemptDto.Meta, gateVerdict = (JsonElement?)null
+                }));
+                var nextTemplateState = after.NextState;
+                var policyNote = after.Output;
 
                 var msg = string.IsNullOrWhiteSpace(policyNote)
                     ? $"Task '{updatedTask.TaskKey}' (attempt '{attemptId}') failed: {reason}"
@@ -2813,6 +2852,11 @@ public sealed partial class TrackActor : IAsyncDisposable
         await _scheduler.PokeLeadAsync().ConfigureAwait(false);
     }
 
+    private void RequirePolicyAvailableCore()
+    {
+        if (_policyUnavailableReason is { } reason) throw KernelException.PolicyDenied(reason);
+    }
+
     private async Task<Task<JsonElement>> CreateWakeAskCoreAsync(
         IReadOnlyList<AskQuestionDto> questions,
         string? callerSessionId,
@@ -2841,10 +2885,9 @@ public sealed partial class TrackActor : IAsyncDisposable
             CreatedAtMs: now);
         await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
         await _store.UpsertAskAsync(ask, evt, ct).ConfigureAwait(false);
-        await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, evt, ct).ConfigureAwait(false);
-
         _asks[ask.Id] = ask;
         _pendingAskWaiters[ask.Id] = tcs;
+        await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, evt, ct).ConfigureAwait(false);
         // Request cancellation expires approval authority even if the ask stays visible.
         if (ct.CanBeCanceled)
             _ = ct.Register(() => tcs.TrySetCanceled(ct));
@@ -2942,9 +2985,9 @@ public sealed partial class TrackActor : IAsyncDisposable
             foreach (var touched in touchedSections)
             {
                 var rule = _policy.Manifest.Sections.FirstOrDefault(s =>
-                    string.Equals(s.H1.TrimStart('#').Trim(), touched.TrimStart('#').Trim(), StringComparison.OrdinalIgnoreCase));
+                    string.Equals(s.H1.Trim().TrimStart('#').Trim(), touched.Trim().TrimStart('#').Trim(), StringComparison.OrdinalIgnoreCase));
 
-                if (rule?.EditableBy is { Count: > 0 } allowed &&
+                if (rule?.EditableBy is { } allowed &&
                     !allowed.Any(r => string.Equals(r, editorRole, StringComparison.OrdinalIgnoreCase)))
                 {
                     throw KernelException.PolicyDenied(
@@ -3074,8 +3117,9 @@ public sealed partial class TrackActor : IAsyncDisposable
             return;
         }
 
-        _track = _track with { TemplateState = nextState.Clone(), UpdatedAtMs = NowMs() };
-        await _store.UpdateTrackAndEmitAsync(_track, evt: null, ct).ConfigureAwait(false);
+        var nextTrack = _track with { TemplateState = nextState.Clone(), UpdatedAtMs = NowMs() };
+        await _store.UpdateTrackAndEmitAsync(nextTrack, evt: null, ct).ConfigureAwait(false);
+        _track = nextTrack;
     }
 
     private async Task EmitTrackUpdatedCoreAsync(long now, CancellationToken ct)
@@ -3085,7 +3129,7 @@ public sealed partial class TrackActor : IAsyncDisposable
             AreaId: _track.AreaId,
             TrackId: TrackId,
             Kind: KernelEventKinds.TrackUpdated,
-            Payload: JsonHelpers.ToElement(_track),
+            Payload: JsonHelpers.ToElement(PresentTrackCore()),
             CreatedAtMs: now);
         await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
         await _store.UpdateTrackAndEmitAsync(_track, evt, ct).ConfigureAwait(false);
@@ -3120,6 +3164,7 @@ public sealed partial class TrackActor : IAsyncDisposable
         var evt = CreateTaskUpdatedEventCore(now);
         await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
         await _store.UpsertTaskAndAttemptAsync(task, attempt, nextTemplateState, evt, ct, wakePrompt: wakePrompt).ConfigureAwait(false);
+        if (nextTemplateState is { } state) _track = _track with { TemplateState = state };
         await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, evt, ct).ConfigureAwait(false);
     }
 
@@ -3137,10 +3182,12 @@ public sealed partial class TrackActor : IAsyncDisposable
         await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, evt, ct).ConfigureAwait(false);
     }
 
+    private TrackDto PresentTrackCore() => TemplatePresentation.Project(_track, _policy, _policyVm);
+
     private TrackAggregateSnapshot BuildSnapshotCore()
     {
         return new TrackAggregateSnapshot(
-            Track: _track,
+            Track: PresentTrackCore(),
             Report: _report,
             Tasks: _tasks.ToArray(),
             Sessions: OrderedSessionsCore(),
@@ -3198,8 +3245,8 @@ public sealed partial class TrackActor : IAsyncDisposable
                 ? $"Contract Subagent (BoundAttemptId={session.BoundAttemptId})"
                 : "Collaborative Subagent (Unbound)";
 
-        var templateNote = session.IsLead && _policy is null
-            ? "\n\nTemplates are optional and implicit. If useful, discover them with perga_template_ls, inspect a template or the authoring contract with perga_template_cat, and apply one with perga_track_set using templateId or custom .perga.js source (plus optional inputs)."
+        var templateNote = session.IsLead
+            ? "\n\nTemplates are optional and implicit. If useful, discover them with perga_template_ls, inspect a template or the authoring contract with perga_template_cat, inspect the active snapshot with perga_template_cat(__current__), apply or preview with perga_track_set (templateId or JSON/.perga.js source, inputs, dryRun), detach with clear, and update inputs with perga_template_update_inputs (preserves state)."
             : string.Empty;
         return $"You are operating in Perga Track '{_track.Title}' ({TrackId}) as {role}.{templateNote}\n\n## Current Report\n{reportMd}";
     }

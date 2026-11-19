@@ -1,0 +1,53 @@
+@layer features {
+  .protocol {
+    margin-block: var(--space-3) var(--space-5);
+    margin-inline-start: var(--document-start, 0px);
+    color: var(--text-2);
+    font: var(--type-ui);
+  }
+
+  .bar {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-inline-size: 0;
+  }
+
+  .badges { display: flex; align-items: center; gap: var(--space-2); overflow-x: auto; white-space: nowrap; min-inline-size: 0; }
+  .badges > * { flex-shrink: 0; }
+  .template, .pill { padding: var(--space-half) var(--space-2); border-radius: var(--radius-sm); background: var(--surface-chip); }
+  .template { color: var(--accent); font-weight: var(--weight-medium); }
+  .hint { color: var(--text-3); }
+  .toggle { margin-inline-start: auto; flex-shrink: 0; white-space: nowrap; }
+  .toggle, .tabs button {
+    padding: var(--space-1) var(--space-2);
+    border: 0;
+    border-radius: var(--radius-sm);
+    color: var(--text-2);
+    background: transparent;
+    font: inherit;
+    cursor: pointer;
+  }
+
+  .toggle:hover, .tabs button:hover { background: var(--overlay-hover); }
+  .toggle:focus-visible, .tabs button:focus-visible { outline: var(--space-half) solid var(--accent); outline-offset: var(--space-half); }
+  .tabs button[aria-selected="true"] { background: var(--surface-chip); color: var(--accent); }
+  .notice { margin-block: var(--space-2); padding: var(--space-2) var(--space-3); background: var(--surface-chip); border-radius: var(--radius-sm); }
+  .metrics { display: flex; flex-wrap: wrap; gap: var(--space-5); margin-block: var(--space-3); }
+  .metric dd { margin: 0; }
+  .metric dt { color: var(--text-3); }
+  .metric strong { font: var(--type-page-title); }
+  .spark { display: block; inline-size: 6rem; block-size: 2rem; }
+  .drawer { margin-block-start: var(--space-3); padding: var(--space-3); border-radius: var(--radius-sm); background: var(--surface-chip); }
+  .tabs { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+  .drawer dt { font-weight: var(--weight-medium); }
+  .drawer dd { margin-inline-start: 0; margin-block-end: var(--space-3); white-space: pre-wrap; overflow-wrap: anywhere; }
+  .neutral { color: var(--text-2); }
+  .accent, .info { color: var(--accent); }
+  .pill.accent, .notice.info { background: var(--accent-soft); }
+  .pill.warn, .notice.warn { background: var(--warn-soft); }
+  .pill.error, .notice.error { background: var(--error-soft); }
+  .success { color: var(--success-text); }
+  .warn { color: var(--warn-text); }
+  .error { color: var(--error-text); }
+}

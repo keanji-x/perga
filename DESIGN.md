@@ -486,10 +486,10 @@ public interface IPolicyVm
 {
     CompiledPolicy Compile(string jsModuleSource);
     PolicyEvalResult<JsonElement> InitState(CompiledPolicy policy, JsonElement inputs);
-    PolicyEvalResult<string?> BuildTurnContext(CompiledPolicy policy, PolicyTurnContext ctx, JsonElement state);
-    PolicyEvalResult<GuardDecision> GuardReportCommit(CompiledPolicy policy, PolicyReportCommitContext ctx, JsonElement state);
-    PolicyEvalResult<GuardDecision> GuardToolCall(CompiledPolicy policy, PolicyToolCallContext ctx, JsonElement state);
-    PolicyEvalResult<string?> OnTaskSettled(CompiledPolicy policy, PolicyTaskSettledContext ctx, JsonElement state);
+    PolicyEvalResult<GuardDecision> Before(CompiledPolicy policy, string action, string trackId, JsonElement data, JsonElement inputs, JsonElement state);
+    PolicyEvalResult<string?> After(CompiledPolicy policy, string eventName, string trackId, JsonElement data, JsonElement inputs, JsonElement state);
+    PolicyEvalResult<PolicyTurnPreparation> PrepareTurn(CompiledPolicy policy, PolicyTurnContext ctx, JsonElement state);
+    PolicyTaskRoute RouteTaskDispatch(CompiledPolicy policy, string? role, string access, string? provider, string? model, JsonElement inputs);
     PolicyEvalResult<string?> BuildScheduleWakePrompt(CompiledPolicy policy, string scheduleId, JsonElement inputs, JsonElement state);
 }
 ```
@@ -497,6 +497,17 @@ public interface IPolicyVm
 #### `templates/perga-template.d.ts`（冻结脚本契约 · `@ts-check` + Jint 原生直跑）
 
 ```ts
+/** A pure JSON object may contain the declarative fields of this definition.
+ * Function hooks require an ES module: export default defineTemplate({...}). */
+export type Tone = "neutral" | "accent" | "success" | "warn" | "error";
+
+export interface TemplateHeaderView {
+  badges?: Array<{ label: string; tone?: Tone }>;
+  notice?: { text: string; tone?: "info" | "warn" | "error" };
+  metrics?: Array<{ label: string; value: string; delta?: string; tone?: Tone; sub?: string; spark?: number[] }>;
+  rules?: Array<{ label: string; text: string }>;
+}
+
 export type GuardDecision =
   | { kind: "allow" }
   | { kind: "deny"; reason: string }
@@ -518,10 +529,17 @@ export interface PergaTemplateDefinition<TState = Record<string, any>, TInputs =
   id: string;
   title: string;
   description?: string;
+  /** Catalog base; snapshots freeze its complete source. Child keyed declarations take precedence. */
+  extends?: string;
+  /** Child hooks replace the inherited slot; omitted hooks inherit. */
+  before?: (action: { type: string; role?: string; access?: string; provider?: string; model?: string; context?: string; arguments?: Record<string, any>; [key: string]: any }, ctx: TemplateContext<TState, TInputs>) => GuardDecision;
+  /** Events include task.settled, report.commit, turn.after, and tool.<name>. */
+  after?: (event: { type: string; [key: string]: any }, ctx: TemplateContext<TState, TInputs>) => string | void;
   plugins?: string[];
   inputs?: Record<string, { type: "string" | "number" | "boolean" | "enum"; values?: string[]; default?: any; optional?: boolean; label?: string }>;
   initialState?: (inputs: TInputs) => TState;
   initialMarkdown?: string;
+  headerView?: (ctx: TemplateContext<TState, TInputs>) => TemplateHeaderView;
   workspace?: {
     driver?: string;
     lowerCacheDirs?: string[];
@@ -531,40 +549,21 @@ export interface PergaTemplateDefinition<TState = Record<string, any>, TInputs =
   report?: {
     maxProseChars?: number;
     sections?: SectionSpec[];
-    customValidate?: (ctx: TemplateContext<TState, TInputs>, info: {
-      editorRole: string;
-      prevMarkdown: string;
-      nextMarkdown: string;
-      touchedSections: string[];
-      nextProseChars: number;
-    }) => GuardDecision;
   };
   tasks?: {
+    dispatch?: { section?: string; access?: "read_only" | "read_write"; gateInput?: string };
+    /** First matching defaults fill omitted fields. enforce denies explicit conflicts.
+     * provider/model support ${inputs.key}, including input schema defaults. */
+    routing?: Array<{ when: { role?: string; access?: "read_only" | "read_write" }; provider?: string; model?: string; enforce?: boolean }>;
     requireGateForReadWrite?: boolean;
     afterWorkerDoneCmd?: string;
-    onSettled?: (ctx: TemplateContext<TState, TInputs>, event: {
-      taskKey: string;
-      accessMode: "read_only" | "read_write";
-      attemptStatus: string;
-      workerResult?: any;
-      meta: Record<string, any>;
-      gateVerdict?: any;
-    }) => string | void;
   };
-  buildTurnContext?: (ctx: TemplateContext<TState, TInputs>, session: {
+  turnContext?: (ctx: TemplateContext<TState, TInputs> & { session: {
     sessionId: string;
     isLead: boolean;
     boundAttemptId?: string;
     contextUsageRatio: number;
-  }) => string | void;
-  guardToolCall?: (ctx: TemplateContext<TState, TInputs>, call: {
-    sessionId: string;
-    isLead: boolean;
-    boundAttemptId?: string;
-    mcpServer: string;
-    toolName: string;
-    arguments: Record<string, any>;
-  }) => GuardDecision;
+  } }) => string | void;
   schedules?: Array<{
     id: string;
     cron: string;
@@ -957,7 +956,7 @@ public interface ITerminalBridgeClient : IAsyncDisposable
        4. 用「最新 Report 全文 + 交接摘要」作为系统种子打开全新底层 `IAgentSession` 并绑定新 `NativeThreadId`（前端 `SessionId` 与历史消息流水保持连贯不断）。
 4. **`TaskGraphScheduler` 租约感知调度与 `afterWorkerDoneCmd`**：
    - `ComputeSchedulable(tasks, bool allowParallelWriteLeases = false)`：筛选 `ready == true`、所有 `depends_on` 任务处于 `Done`、非 `Draft`/`Running`/`Verifying`/`Done`/`Failed`/`Canceled` 的任务；当 `driver.SupportsParallelIsolatedWriteLeases == false`（一期默认）时，存在在途 `ReadWrite` 任务则返回空，存在在途 `ReadOnly` 任务仅放行 `ReadOnly`，无在途则按优先级与创建时间放行 `ReadOnly` 集合或单个最高优 `ReadWrite`；未来若挂载了支持独立 per-attempt CoW `upperdir` 的 `OverlayFS` 驱动（`SupportsParallelIsolatedWriteLeases == true`），调度器无需改动即可并发放行多个相互隔离的投机写 Attempt。
-   - **Attempt 租约与统一钩子槽 `afterWorkerDoneCmd`**：派发 Attempt 前先向 `IWorkspaceDriver.AcquireAttemptLeaseAsync` 申请 `AttemptWorkspaceLease`（并将快照持久化至 `task_attempts.workspace_lease_json`）；契约 `Subagent` 会话、`afterWorkerDoneCmd` 与 `GateSpec` 门禁均在 `lease.EffectiveCwd`（以及透传映射到 `HarnessLaunchSpec.OverlayMounts` 的层配置）内执行。`perga_task_done` 后若 `CompiledTemplateManifest.AfterWorkerDoneCmd` 非空，在 `lease.EffectiveCwd` 下运行该命令并解析 `stdout` **最后一行非空合法 JSON** 并入 `task_attempts.meta_json` 后传给 `PolicyVm.OnTaskSettled`；最终门禁通过调 `SettleAttemptLeaseAsync(lease, AttemptLeaseDisposition.Promote)`，门禁失败/取消/Fail 调 `SettleAttemptLeaseAsync(lease, AttemptLeaseDisposition.Discard)`（秒级 O(1) 抛弃脏层）。
+   - **Attempt 租约与统一钩子槽 `afterWorkerDoneCmd`**：派发 Attempt 前先向 `IWorkspaceDriver.AcquireAttemptLeaseAsync` 申请 `AttemptWorkspaceLease`（并将快照持久化至 `task_attempts.workspace_lease_json`）；契约 `Subagent` 会话、`afterWorkerDoneCmd` 与 `GateSpec` 门禁均在 `lease.EffectiveCwd`（以及透传映射到 `HarnessLaunchSpec.OverlayMounts` 的层配置）内执行。`perga_task_done` 后若 `CompiledTemplateManifest.AfterWorkerDoneCmd` 非空，在 `lease.EffectiveCwd` 下运行该命令并解析 `stdout` **最后一行非空合法 JSON** 并入 `task_attempts.meta_json` 后传给 `PolicyVm.After("task.settled", ...)`；最终门禁通过调 `SettleAttemptLeaseAsync(lease, AttemptLeaseDisposition.Promote)`，门禁失败/取消/Fail 调 `SettleAttemptLeaseAsync(lease, AttemptLeaseDisposition.Discard)`（秒级 O(1) 抛弃脏层）。
 5. **启动收口 `BootReconciler`**：
    - 启动监听前扫描数据库 `status IN ('Running', 'Verifying')` 的 `task_attempts` 与 `session_turns`：统一标记为 `interrupted`；对仍持有非空 `workspace_lease_json` 的中断 Attempt 调用 `SettleAttemptLeaseAsync(lease, Discard)` 清理残留临时挂载与 CoW 层；释放内存占坑后向受影响的开放 Track 投递 `SystemWake` 通知 `LeadSessionId` 恢复决策。
 
@@ -1377,7 +1376,7 @@ Host 沿用默认每 6 小时的 SQLite 维护服务。维护通过单写通道�
    - 暴露：`vcs_status`, `vcs_diff`, `vcs_restore_op` (JJ 时光机), `vcs_rebase_upstream`, `vcs_publish_pr`, `vcs_pr_checks`, `vcs_ci_evidence`, `vcs_pr_merge`, `vcs_issue_view`。
 3. **`/mcp/p/{pluginId}`（静态配置文件 `mcp-plugins.json` 挂载外部标准 MCP）**：
    - 支持配置 `"transport": "http" | "stdio"`，例如直接挂载智堡 Wisburg MCP 或原仓库 `market` 二进制。
-   - **全局安全拦截切面**：所有 `/mcp/kernel`、`/mcp/vcs` 与 `/mcp/p/{pluginId}` 的 `tools/call` 请求在执行前统一先走 `TrackActor` 的 `PolicyVm.GuardToolCall`：
+   - **全局安全拦截切面**：所有 `/mcp/kernel`、`/mcp/vcs` 与 `/mcp/p/{pluginId}` 的 `tools/call` 请求在执行前统一先走 `TrackActor` 的 `PolicyVm.Before("tool.<name>", ...)`：
      - `Allow` → 立即放行执行；
      - `Deny(reason)` → 立刻返回 MCP `isError: true` 给 Agent；
      - `AskHuman(title, options)` → 自动插入 `asks` 表、推 WS 通知用户并挂起当前 MCP HTTP 请求（或返还挂起等待用户点击后自动放行执行）！
