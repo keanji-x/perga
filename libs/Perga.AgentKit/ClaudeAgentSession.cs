@@ -56,8 +56,10 @@ public sealed class ClaudeAgentSession : IAgentSession
     private readonly CancellationTokenSource _pumpCts = new();
     private readonly Task _pumpTask;
     private TurnStreamState? _currentTurn;
-    private string? _nativeThreadId;
+    private string? _observedNativeThreadId;
     private readonly string? _resumeNativeThreadId;
+    private string? _terminalReaderFailure;
+    private readonly TaskCompletionSource _identityObserved = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private string? _lastEmittedThreadId;
     private bool _supportsNativeCompact = true;
     private int _disposed;
@@ -72,13 +74,12 @@ public sealed class ClaudeAgentSession : IAgentSession
     {
         _process = process;
         _mcpConfigFilePath = mcpConfigFilePath;
-        _nativeThreadId = initialThreadId;
         _resumeNativeThreadId = initialThreadId;
         _onDispose = onDispose;
         _pumpTask = Task.Run(PumpNdjsonStdoutAsync);
     }
 
-    public string? NativeThreadId => Volatile.Read(ref _nativeThreadId);
+    public string? NativeThreadId => Volatile.Read(ref _observedNativeThreadId);
 
     public bool SupportsNativeSteer => false;
     public bool CanReuseContextWindow => true;
@@ -186,8 +187,11 @@ public sealed class ClaudeAgentSession : IAgentSession
                     request_id = session._initializeRequestId,
                     request = new { subtype = "initialize" }
                 }), ct).ConfigureAwait(false);
-                await session._initialized.Task.WaitAsync(handshakeTimeout ?? TimeSpan.FromSeconds(15), ct).ConfigureAwait(false);
-                if (subprocess.HasExited || session._pumpTask.IsCompleted)
+                var handshake = string.IsNullOrWhiteSpace(spec.ResumeNativeThreadId)
+                    ? session._initialized.Task
+                    : Task.WhenAll(session._initialized.Task, session._identityObserved.Task);
+                await handshake.WaitAsync(handshakeTimeout ?? TimeSpan.FromSeconds(15), ct).ConfigureAwait(false);
+                if (subprocess.HasExited || session._pumpTask.IsCompleted || Volatile.Read(ref session._terminalReaderFailure) is not null)
                     throw new SessionConfigurationException(new SessionConfigurationOutcome.Rejected(
                         ConfigurationFailureCode.OperationFailed, "Claude exited during initialization.", new(null, null, false)));
                 if (spec.ResumeNativeThreadId is not null && session.NativeThreadId != spec.ResumeNativeThreadId)
@@ -252,7 +256,11 @@ public sealed class ClaudeAgentSession : IAgentSession
                 turnState.Events.Writer.TryWrite(new UnifiedAgentEvent.ThreadBound(existingThreadId));
             }
 
-            if (_process.HasExited)
+            if (Volatile.Read(ref _terminalReaderFailure) is { } readerFailure)
+            {
+                turnState.TryFinish(new UnifiedAgentEvent.TurnError("claude_disconnected", readerFailure, false));
+            }
+            else if (_process.HasExited)
             {
                 var stderr = _process.GetStderrSummary();
                 var detail = string.IsNullOrWhiteSpace(stderr) ? "Claude CLI process has already exited." : stderr;
@@ -406,7 +414,12 @@ public sealed class ClaudeAgentSession : IAgentSession
     {
         Effort = SessionConfigurationCapabilities.LaunchDimension(_supportsEffort ? ConfigurationSupport.Supported : ConfigurationSupport.Unsupported)
     };
-    public ConfirmedConfiguration? ConfigurationState { get; private set; }
+    private ConfirmedConfiguration? _configurationState;
+    public ConfirmedConfiguration? ConfigurationState
+    {
+        get => Volatile.Read(ref _terminalReaderFailure) is null ? Volatile.Read(ref _configurationState) : null;
+        private set => Volatile.Write(ref _configurationState, value);
+    }
     public Task<SessionConfigurationOutcome> ConfigureAsync(SessionConfiguration configuration, CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
@@ -515,10 +528,21 @@ public sealed class ClaudeAgentSession : IAgentSession
             return;
         }
 
+        var stderr = _process.GetStderrSummary();
+        var message = pumpFailure?.Message
+                      ?? (string.IsNullOrWhiteSpace(stderr)
+                          ? "Claude stream-json stdout closed before turn result."
+                          : $"Claude process exited unexpectedly: {stderr}");
+        // Publish the fence before clearing confirmation or stopping the child. A new turn
+        // must never write to a process whose sole stdout reader has terminated.
+        Volatile.Write(ref _terminalReaderFailure, message);
         ConfigurationState = null;
-        _initialized.TrySetException(new SessionConfigurationException(new SessionConfigurationOutcome.Rejected(
-            ConfigurationFailureCode.OperationFailed,
-            pumpFailure?.Message ?? $"Claude startup/stream closed: {_process.GetStderrSummary()}", new(null, null, false))));
+        var failure = pumpFailure as SessionConfigurationException
+            ?? new SessionConfigurationException(new SessionConfigurationOutcome.Rejected(
+                ConfigurationFailureCode.OperationFailed, message, new(null, null, false)));
+        _initialized.TrySetException(failure);
+        _identityObserved.TrySetException(failure);
+        await _process.DisposeAsync().ConfigureAwait(false);
         var turnState = Volatile.Read(ref _currentTurn);
         if (turnState is null)
         {
@@ -534,11 +558,6 @@ public sealed class ClaudeAgentSession : IAgentSession
             return;
         }
 
-        var stderr = _process.GetStderrSummary();
-        var message = pumpFailure?.Message
-                      ?? (string.IsNullOrWhiteSpace(stderr)
-                          ? "Claude stream-json stdout closed before turn result."
-                          : $"Claude process exited unexpectedly: {stderr}");
         turnState.TryFinish(new UnifiedAgentEvent.TurnError("claude_disconnected", message, IsRetryable: false));
     }
 
@@ -738,7 +757,8 @@ public sealed class ClaudeAgentSession : IAgentSession
         if (_resumeNativeThreadId is not null && sessionId != _resumeNativeThreadId)
             throw new SessionConfigurationException(new SessionConfigurationOutcome.Rejected(
                 ConfigurationFailureCode.InvalidAcknowledgement, "Claude returned a different resumed session identity.", new(null, null, false)));
-        Volatile.Write(ref _nativeThreadId, sessionId);
+        Volatile.Write(ref _observedNativeThreadId, sessionId);
+        _identityObserved.TrySetResult();
         if (turnState is not null && !string.Equals(_lastEmittedThreadId, sessionId, StringComparison.Ordinal))
         {
             _lastEmittedThreadId = sessionId;

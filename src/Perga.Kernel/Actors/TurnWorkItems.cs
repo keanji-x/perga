@@ -107,8 +107,14 @@ public sealed partial class TrackActor
 
         public Task OnTurnCreatedAsync(SessionTurnDto turn) => Task.CompletedTask;
 
-        public Task OnTurnActivatedCoreAsync(AgentSessionDto runningSession, EventEnvelopeDto runningEvent, long now,
-            CancellationToken ct) => actor.PublishInputEventAsync(runningEvent);
+        public async Task OnTurnActivatedCoreAsync(AgentSessionDto runningSession, EventEnvelopeDto runningEvent, long now,
+            CancellationToken ct)
+        {
+            // The claim precedes provider preparation. Persist and announce the refreshed
+            // session together, including any identity preparation established.
+            await actor._store.UpsertSessionAsync(runningSession, runningEvent, ct).ConfigureAwait(false);
+            await actor.PublishInputEventAsync(runningEvent).ConfigureAwait(false);
+        }
 
         public SessionTurnDto CreateUnstartedTurn() =>
             new(input.Receipt.TurnId, SessionId, input.TurnIndex, input.Epoch, TriggerKind,

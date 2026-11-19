@@ -231,3 +231,21 @@ turns on shared hosts. Mutation-check acknowledgement rejection and no-dispatch
 guards in an isolated checkout, restore production and confirm green. This task's
 checks are document paths, diff whitespace, and the declared design-doc gate;
 implementation test results must be reported separately.
+
+## Round-2 identity and activation corrections
+
+A requested Claude resume ID is intent, not provider evidence. Keep observed
+identity empty until a stdout frame supplies it. Resumed launch confirmation
+requires both initialize acknowledgement and matching observed identity within
+one handshake timeout; a fresh launch may discover identity on its first turn.
+A contradictory identity or unexpected stdout closure permanently fences that
+session, clears confirmation and stops the child. Later turns return a terminal
+error before writing another prompt.
+
+Dispatch preparation can persist the identity of a replacement context created
+by compaction. Build the active running session from the latest actor session
+after preparation, preserving its identity and usage, and regenerate the running
+event from that same value. Durable input claims retain their existing atomic
+claim ordering; activation publishes the refreshed snapshot. SQLite integration
+regressions hold both wake and durable-input streams open to check identity
+before settlement can repair it.

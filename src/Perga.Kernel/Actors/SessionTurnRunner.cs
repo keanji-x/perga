@@ -100,7 +100,10 @@ public sealed partial class TrackActor
             try
             {
                 prepared = await PrepareDispatchCoreAsync(work, executionSession, prompt, policyAdmission, ct).ConfigureAwait(false);
-                runningSession = runningSession with { ContextUsage = actor.RequireSessionCore(sessionId).ContextUsage };
+                // Preparation may persist identity and usage from a compacted or reopened
+                // provider. Activate that durable snapshot, rather than the pre-claim copy.
+                runningSession = actor.RequireSessionCore(sessionId) with { Status = "running", UpdatedAtMs = now };
+                runningEvent = actor.SessionUpdatedEvent(runningSession);
                 if (workerSettings is not null)
                     workerSettings = actor.ResolveWorkerTurnSettingsCore(executionSession, workerSettings);
             }

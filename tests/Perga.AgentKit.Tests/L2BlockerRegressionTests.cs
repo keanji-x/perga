@@ -71,6 +71,104 @@ for line in sys.stdin:
         }
     }
 
+    [Theory]
+    [InlineData("missing", true)]
+    [InlineData("late", true)]
+    [InlineData("matching", true)]
+    [InlineData("contradictory", true)]
+    [InlineData("missing", false)]
+    public async Task ClaudeResumeRequiresObservedIdentityWithinHandshake(string identity, bool resume)
+    {
+        using var fixture = new MockCliFixture();
+        var log = Path.Combine(fixture.RootDir, "users.log");
+        var script = fixture.WriteExecutable("handshake.py", """
+#!/usr/bin/env python3
+import json, sys, time
+if '--help' in sys.argv:
+    print('--effort <level>')
+    sys.exit(0)
+for line in sys.stdin:
+    frame = json.loads(line)
+    if frame['type'] == 'control_request':
+        print(json.dumps({'type':'control_response','response':{'subtype':'success','request_id':frame['request_id'],'response':{}}}), flush=True)
+        if IDENTITY != 'missing':
+            time.sleep(1 if IDENTITY == 'late' else 0.05)
+            print(json.dumps({'type':'system','session_id':'other' if IDENTITY == 'contradictory' else 'original'}), flush=True)
+    elif frame['type'] == 'user':
+        with open(LOG, 'a') as f: f.write('user\n')
+        print(json.dumps({'type':'result','session_id':'original','subtype':'success','is_error':False}), flush=True)
+""".Replace("IDENTITY", JsonSerializer.Serialize(identity)).Replace("LOG", JsonSerializer.Serialize(log)));
+        await using var runtime = new AgentRuntime(new AgentRuntimeOptions { HandshakeTimeout = TimeSpan.FromMilliseconds(300),
+            ProviderOverrides = new Dictionary<string, ProviderCommandOverride> { ["claude"] = new(script) } });
+        var spec = new HarnessLaunchSpec("claude", null, fixture.WorkspaceDir, resume ? "original" : null, null, new Dictionary<string, McpServerConfig>());
+        if (resume && identity != "matching")
+        {
+            await Assert.ThrowsAsync<SessionConfigurationException>(() => runtime.OpenSessionAsync(spec, default));
+            Assert.False(File.Exists(log));
+        }
+        else
+        {
+            await using var session = await runtime.OpenSessionAsync(spec, default);
+            Assert.NotNull(session.ConfigurationState);
+            if (resume) Assert.Equal("original", session.NativeThreadId);
+            var events = await DrainClaudeTurn(session);
+            Assert.Contains(events, e => e is UnifiedAgentEvent.TurnCompleted);
+            Assert.Equal("original", session.NativeThreadId);
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ClaudeReaderFailureFencesSubsequentTurns(bool idle)
+    {
+        using var fixture = new MockCliFixture();
+        var log = Path.Combine(fixture.RootDir, "users.log");
+        var signal = Path.Combine(fixture.RootDir, "mismatch");
+        var script = fixture.WriteExecutable("reader_failure.py", """
+#!/usr/bin/env python3
+import json, sys, threading, time, os
+if '--help' in sys.argv:
+    print('--effort <level>')
+    sys.exit(0)
+def mismatch():
+    while not os.path.exists(SIGNAL): time.sleep(0.01)
+    print(json.dumps({'type':'system','session_id':'other'}), flush=True)
+for line in sys.stdin:
+    frame = json.loads(line)
+    if frame['type'] == 'control_request':
+        print(json.dumps({'type':'control_response','session_id':'original','response':{'subtype':'success','request_id':frame['request_id'],'response':{}}}), flush=True)
+        if IDLE: threading.Thread(target=mismatch, daemon=True).start()
+    elif frame['type'] == 'user':
+        with open(LOG, 'a') as f: f.write('user\n')
+        print(json.dumps({'type':'result','session_id':'other','subtype':'success','is_error':False}), flush=True)
+""".Replace("IDLE", idle ? "True" : "False").Replace("LOG", JsonSerializer.Serialize(log)).Replace("SIGNAL", JsonSerializer.Serialize(signal)));
+        await using var runtime = new AgentRuntime(new AgentRuntimeOptions { ProviderOverrides =
+            new Dictionary<string, ProviderCommandOverride> { ["claude"] = new(script) } });
+        await using var session = await runtime.OpenSessionAsync(new("claude", null, fixture.WorkspaceDir, "original", null, new Dictionary<string, McpServerConfig>()), default);
+        if (idle)
+        {
+            await File.WriteAllTextAsync(signal, "go");
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+            while (session.ConfigurationState is not null) await Task.Delay(10, timeout.Token);
+        }
+        else Assert.Contains(await DrainClaudeTurn(session), e => e is UnifiedAgentEvent.TurnError);
+        Assert.Null(session.ConfigurationState);
+        var events = await DrainClaudeTurn(session);
+        Assert.Contains(events, e => e is UnifiedAgentEvent.TurnError);
+        Assert.Equal(idle ? 0 : 1, File.Exists(log) ? File.ReadAllLines(log).Length : 0);
+        using var stopTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        while (!session.ShutdownConfirmed) await Task.Delay(10, stopTimeout.Token);
+    }
+
+    private static async Task<List<UnifiedAgentEvent>> DrainClaudeTurn(IAgentSession session)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        var events = new List<UnifiedAgentEvent>();
+        await foreach (var evt in session.StreamTurnAsync(new("test", "test"), timeout.Token)) events.Add(evt);
+        return events;
+    }
+
     [Fact]
     public async Task ClaudeHelpCacheIsScopedToCwdSandboxAndOverlays()
     {

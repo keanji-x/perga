@@ -822,7 +822,7 @@ while True:
         approval_payload.update(frame)
         approval_event.set()
     elif ftype == "control_request":
-        emit({"type": "control_response", "response": {"subtype": "success", "request_id": frame.get("request_id"), "response": {}}})
+        emit({"type": "control_response", **({"session_id": session_id} if args.resume else {}), "response": {"subtype": "success", "request_id": frame.get("request_id"), "response": {}}})
     elif ftype == "user":
         t = threading.Thread(target=process_user_turn, args=(frame,), daemon=True)
         t.start()

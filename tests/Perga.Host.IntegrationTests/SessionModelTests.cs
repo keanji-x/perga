@@ -16,6 +16,58 @@ namespace Perga.Host.IntegrationTests;
 
 public sealed class SessionModelTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ActivePostCompactionTurnRetainsDurableIdentity(bool wake)
+    {
+        await using var host = new PergaHostTestCluster();
+        var (trackId, sessionId) = await host.CreateTrackAsync();
+        var kernel = host.Services.GetRequiredService<IPergaKernel>();
+        await kernel.AcceptMessageAsync(sessionId, new("warm", "identity-warm"), default);
+        await kernel.WaitForTrackIdleAsync(trackId);
+        await kernel.CompactSessionAsync(sessionId);
+        Assert.Null(Assert.Single(await kernel.ListSessionsAsync(trackId)).NativeThreadId);
+        var expectedId = host.AgentRuntime.OpenedSessions.Last().NativeThreadId;
+        Assert.NotNull(expectedId);
+        kernel.DispatchAdmission.SetDraining(true);
+        await kernel.UpdateSessionModelAsync(sessionId, new("post-compaction-model", "high"));
+        kernel.DispatchAdmission.SetDraining(false);
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        host.AgentRuntime.SetTurnHandler(Stream);
+        async IAsyncEnumerable<UnifiedAgentEvent> Stream(HarnessLaunchSpec spec, TurnInput input,
+            [EnumeratorCancellation] CancellationToken ct)
+        {
+            started.TrySetResult();
+            await release.Task.WaitAsync(ct);
+            yield return new UnifiedAgentEvent.TurnCompleted(null);
+        }
+        try
+        {
+            if (wake)
+            {
+                var store = host.Services.GetRequiredService<Perga.Kernel.Ports.ITrackStore>();
+                await store.TrackWakes.EnqueueAsync(Perga.Kernel.Ports.TrackWakeRequests.Prompt(trackId, "mail", "identity-wake", "hold"), default);
+                await ((PergaKernelService)kernel).Actors.GetOrActivate(trackId).PokeLeadAsync(allowInline: false);
+            }
+            else await kernel.AcceptMessageAsync(sessionId, new("hold", "identity-hold"), default);
+            await started.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            var memory = Assert.Single(await kernel.ListSessionsAsync(trackId));
+            Assert.Equal("running", memory.Status);
+            await using var db = new SqliteConnection($"Data Source={Path.Combine(host.DataDir, "perga.db")};Pooling=False");
+            var stored = await db.QuerySingleAsync<string?>("SELECT native_thread_id FROM agent_sessions WHERE id = @sessionId", new { sessionId });
+            Assert.Equal(expectedId, stored);
+            Assert.Equal(expectedId, memory.NativeThreadId);
+            var readStore = host.Services.GetRequiredService<Perga.Kernel.Ports.ITrackStore>();
+            var lastEvent = (await readStore.ListEventsSinceAsync(0, trackId)).Last(e => e.Kind == "session.updated");
+            Assert.Equal("running", lastEvent.Payload.GetProperty("status").GetString());
+            Assert.Equal(expectedId, lastEvent.Payload.GetProperty("nativeThreadId").GetString());
+        }
+        finally { release.TrySetResult(); }
+        await kernel.WaitForTrackIdleAsync(trackId);
+    }
+
     [Fact]
     public async Task DesiredDefaultModelAndEffortSurviveRejectedConfigurationAndHostRestart()
     {
