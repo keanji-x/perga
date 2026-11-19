@@ -275,15 +275,20 @@ public sealed class ClaudeAgentSession : IAgentSession
         string? reason = null,
         CancellationToken ct = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(requestId);
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        var send = TryClaimApprovalResponse(requestId, approved, selectedOptionId: null, reason, ct)
+            ?? throw new InvalidOperationException($"No pending Claude approval request with id '{requestId}'.");
+        await send().ConfigureAwait(false);
+    }
 
-        if (!_pendingApprovals.TryRemove(requestId, out var pending))
-        {
-            throw new InvalidOperationException($"No pending Claude approval request with id '{requestId}'.");
-        }
+    public Func<Task>? TryClaimApprovalResponse(
+        string requestId, bool approved, string? selectedOptionId, string? reason, CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(requestId);
+        if (Volatile.Read(ref _disposed) != 0 || !_pendingApprovals.TryRemove(requestId, out var pending))
+            return null;
 
-        await WriteApprovalResponseAsync(pending, approved, reason, ct).ConfigureAwait(false);
+        return () => WriteApprovalResponseAsync(pending, approved, reason, ct);
     }
 
     private async Task TryWriteApprovalResponseAsync(

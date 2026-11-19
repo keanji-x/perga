@@ -520,13 +520,18 @@ public sealed class AcpAgentSession : IAgentSession
         string? reason = null,
         CancellationToken ct = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(requestId);
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        var send = TryClaimApprovalResponse(requestId, approved, selectedOptionId, reason, ct)
+            ?? throw new InvalidOperationException($"No pending ACP permission request with id '{requestId}'.");
+        await send().ConfigureAwait(false);
+    }
 
-        if (!_pendingPermissions.TryRemove(requestId, out var pending))
-        {
-            throw new InvalidOperationException($"No pending ACP permission request with id '{requestId}'.");
-        }
+    public Func<Task>? TryClaimApprovalResponse(
+        string requestId, bool approved, string? selectedOptionId, string? reason, CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(requestId);
+        if (Volatile.Read(ref _disposed) != 0 || !_pendingPermissions.TryRemove(requestId, out var pending))
+            return null;
 
         var optionId = !string.IsNullOrWhiteSpace(selectedOptionId) && pending.ValidOptionIds.Contains(selectedOptionId)
             ? selectedOptionId
@@ -542,7 +547,7 @@ public sealed class AcpAgentSession : IAgentSession
             ["reason"] = reason
         };
 
-        await _rpc.SendResultResponseAsync(pending.RawId, resultPayload, ct).ConfigureAwait(false);
+        return () => _rpc.SendResultResponseAsync(pending.RawId, resultPayload, ct);
     }
 
     public Task<SteerDelivery> SteerAsync(string turnCorrelationId, string message, CancellationToken ct) =>

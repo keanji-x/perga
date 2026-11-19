@@ -378,7 +378,9 @@ public sealed class PausedApprovalTests
         await StartTurn(host, sessionId);
         var approval = await WaitForApproval(host, trackId);
 
-        using var stop = await host.Client.PostAsJsonAsync($"/api/v1/sessions/{sessionId}/interrupt", new { turnId = approval.TurnId });
+        using var stop = await host.Client.PostAsJsonAsync(
+            $"/api/v1/sessions/{sessionId}/interrupt", new { turnId = approval.TurnId })
+            .WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Equal(HttpStatusCode.Conflict, stop.StatusCode);
         await cancelSent.Task.WaitAsync(TimeSpan.FromSeconds(2));
 
@@ -387,6 +389,38 @@ public sealed class PausedApprovalTests
         var snapshot = await Snapshot(host, trackId);
         Assert.Equal("unknown", snapshot.Sessions.Single(s => s.Id == sessionId).Status);
         Assert.Empty(snapshot.PendingApprovals);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task OutOfRangeStopGraceUsesDefault(bool invalidCancelGrace)
+    {
+        await using var host = new PergaHostTestCluster(configureHostOptions: opts =>
+        {
+            if (invalidCancelGrace)
+                opts.ProviderCancelDispatchGrace = TimeSpan.FromDays(60);
+            else
+                opts.ProviderTerminalStopGrace = TimeSpan.FromDays(60);
+        });
+        host.AgentRuntime.RequiresTerminalStop = true;
+        var cancelSent = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        host.AgentRuntime.CancelHandler = _ =>
+        {
+            cancelSent.TrySetResult();
+            return Task.CompletedTask;
+        };
+        host.AgentRuntime.SetTurnHandler((_, _, ct) => TerminalApprovalTurn(cancelSent.Task, ct));
+
+        var (trackId, sessionId) = await host.CreateTrackAsync();
+        await StartTurn(host, sessionId);
+        var approval = await WaitForApproval(host, trackId);
+        using var stop = await host.Client.PostAsJsonAsync(
+            $"/api/v1/sessions/{sessionId}/interrupt", new { turnId = approval.TurnId })
+            .WaitAsync(TimeSpan.FromSeconds(5));
+
+        stop.EnsureSuccessStatusCode();
+        Assert.True(cancelSent.Task.IsCompletedSuccessfully);
     }
 
     [Fact]
@@ -399,7 +433,7 @@ public sealed class PausedApprovalTests
         host.AgentRuntime.ApprovalHandler = () =>
         {
             deliveryEntered.TrySetResult();
-            // Block synchronously inside RespondApprovalAsync to prove neither _approvalAdmission nor Control.Sync is held.
+            // Simulate a synchronous provider write that must never hold either lock.
             releaseDelivery.Task.GetAwaiter().GetResult();
             turnFinished.TrySetResult();
         };
@@ -413,12 +447,14 @@ public sealed class PausedApprovalTests
         await deliveryEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
         try
         {
-            // While delivery is synchronously blocked inside RespondApprovalAsync:
-            // 1. Closing the track acquires _approvalAdmission (must not block on delivery).
-            // 2. Stopping the turn acquires Control.Sync (must not block on delivery).
+            // Close enters approval admission. Explicit Stop enters the turn's control lock.
             using var closeResp = await host.Client.PatchAsJsonAsync($"/api/v1/tracks/{trackId}", new { closed = true })
-                .WaitAsync(TimeSpan.FromSeconds(2));
+                .WaitAsync(TimeSpan.FromSeconds(5));
             closeResp.EnsureSuccessStatusCode();
+            using var stop = await host.Client.PostAsJsonAsync(
+                $"/api/v1/sessions/{sessionId}/interrupt", new { turnId = approval.TurnId })
+                .WaitAsync(TimeSpan.FromSeconds(5));
+            stop.EnsureSuccessStatusCode();
         }
         finally
         {
@@ -427,6 +463,83 @@ public sealed class PausedApprovalTests
 
         using var decided = await decideTask.WaitAsync(TimeSpan.FromSeconds(5));
         decided.EnsureSuccessStatusCode();
+    }
+
+    [Fact]
+    public async Task StopCannotTakeProviderRequestAfterApprovalClaimsDelivery()
+    {
+        var clock = new ApprovalNotificationClock();
+        await using var host = new PergaHostTestCluster(configureExtraServices: services =>
+        {
+            services.Replace(ServiceDescriptor.Singleton<TimeProvider>(clock));
+            services.Replace(ServiceDescriptor.Singleton<ITrackStore>(sp =>
+            {
+                var store = DispatchProxy.Create<ITrackStore, AnswerPublicationStoreProxy>();
+                var proxy = (AnswerPublicationStoreProxy)store;
+                var sqlite = sp.GetRequiredService<SqliteTrackStore>();
+                sqlite.InitializeAsync().GetAwaiter().GetResult();
+                proxy.Inner = sqlite;
+                proxy.BeforeNextApprovalAudit = clock.PauseNextRead;
+                return store;
+            }));
+        });
+
+        var requestPending = 1;
+        var cancelTookRequest = false;
+        var cancelSent = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        host.AgentRuntime.RequiresTerminalStop = true;
+        host.AgentRuntime.ApprovalClaimHandler = () => Interlocked.Exchange(ref requestPending, 0) == 1;
+        host.AgentRuntime.CancelHandler = _ =>
+        {
+            cancelTookRequest = Interlocked.Exchange(ref requestPending, 0) == 1;
+            cancelSent.TrySetResult();
+            return Task.CompletedTask;
+        };
+        host.AgentRuntime.SetTurnHandler((_, _, ct) => TerminalApprovalTurn(cancelSent.Task, ct));
+        var (trackId, sessionId) = await host.CreateTrackAsync();
+        await StartTurn(host, sessionId);
+        var approval = await WaitForApproval(host, trackId);
+
+        var answer = host.Client.PostAsJsonAsync(ApprovalPath(trackId, approval), true);
+        try
+        {
+            // Hold the answer at its approval-change notification, between the claim and write.
+            await clock.NotificationStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            using var stop = await host.Client.PostAsJsonAsync(
+                $"/api/v1/sessions/{sessionId}/interrupt", new { turnId = approval.TurnId })
+                .WaitAsync(TimeSpan.FromSeconds(5));
+            stop.EnsureSuccessStatusCode();
+            Assert.Empty(host.AgentRuntime.ApprovalResponses);
+        }
+        finally
+        {
+            clock.ReleaseNotification.TrySetResult();
+        }
+
+        using var response = await answer.WaitAsync(TimeSpan.FromSeconds(5));
+        response.EnsureSuccessStatusCode();
+        Assert.False(cancelTookRequest);
+        Assert.Equal(("terminal-approval", true), Assert.Single(host.AgentRuntime.ApprovalResponses));
+    }
+
+    private sealed class ApprovalNotificationClock : TimeProvider
+    {
+        private readonly AsyncLocal<bool> _pauseNextRead = new();
+        public TaskCompletionSource NotificationStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource ReleaseNotification { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public void PauseNextRead() => _pauseNextRead.Value = true;
+
+        public override DateTimeOffset GetUtcNow()
+        {
+            if (_pauseNextRead.Value)
+            {
+                _pauseNextRead.Value = false;
+                NotificationStarted.TrySetResult();
+                ReleaseNotification.Task.WaitAsync(TimeSpan.FromSeconds(10)).GetAwaiter().GetResult();
+            }
+            return TimeProvider.System.GetUtcNow();
+        }
     }
 
     private static async IAsyncEnumerable<UnifiedAgentEvent> DelayedTerminalStopTurn(

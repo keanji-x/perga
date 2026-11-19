@@ -29,8 +29,10 @@ busy. An approval expires when its execution stops, even when storage fails.
   is persisting earlier events. A repeated Stop reuses the in-flight cancellation.
 - Approval validates the execution and request, persists the human decision
   for audit, then rechecks the execution before releasing the decision. Stop
-  wins against any decision that has yet to claim delivery. A reply already
-  being sent can take effect. The provider cancellation then owns cleanup.
+  wins against any decision that has yet to claim delivery. The Kernel claims
+  the provider request or releases the policy waiter within that same state
+  check. Provider replies are written after releasing the locks. A claimed
+  reply can take effect, and provider cancellation owns cleanup.
 - Provider terminal evidence or confirmed scoped close proves quiescence.
   A lost response or timeout leaves the binding fenced until confirmed safe.
   The scheduler keeps the old execution slot until cancellation and turn

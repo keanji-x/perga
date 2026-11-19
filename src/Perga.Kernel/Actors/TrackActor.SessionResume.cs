@@ -6,7 +6,6 @@ namespace Perga.Kernel.Actors;
 
 public sealed partial class TrackActor
 {
-    private static readonly TimeSpan SessionResumeTimeout = TimeSpan.FromSeconds(20);
     private int _sessionResumeHoldCount;
 
     private sealed class SessionResumeHold(string turnId, string nativeId)
@@ -75,7 +74,7 @@ public sealed partial class TrackActor
     internal async Task<AgentSessionDto> ResumeProviderSessionAsync(string sessionId, string turnId, CancellationToken ct)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct, _actorShutdownCts.Token);
-        deadline.CancelAfter(SessionResumeTimeout + _options.ProviderCancelDispatchGrace);
+        deadline.CancelAfter(KernelOptions.SessionResumeTimeout + _options.ProviderCancelDispatchGrace);
         try
         {
             return await AcceptSessionResumeAsync(sessionId, turnId, deadline.Token).ConfigureAwait(false);
@@ -157,7 +156,7 @@ public sealed partial class TrackActor
         string sessionId, SessionResumeHold hold, ActiveTurnState? active, IAgentSession? old, bool quiescent)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(_actorShutdownCts.Token);
-        deadline.CancelAfter(SessionResumeTimeout);
+        deadline.CancelAfter(KernelOptions.SessionResumeTimeout);
         var ct = deadline.Token;
         IAgentSession? replacement = null;
         var success = false;

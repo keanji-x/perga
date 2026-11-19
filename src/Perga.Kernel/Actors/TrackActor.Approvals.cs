@@ -17,8 +17,8 @@ public sealed partial class TrackActor
 
     private enum ExecutionPhase { Starting, Running, Stopping, Ended }
 
-    // This lock only protects in-memory state transitions. Provider I/O, event
-    // publishing, expiration callbacks, and audit writes always run outside it.
+    // Approval claims only change in-memory state. Approval delivery, expiry,
+    // notifications and audit writes run outside the execution and admission locks.
     private sealed class ExecutionControl(bool starting = false)
     {
         public object Sync { get; } = new();
@@ -50,11 +50,11 @@ public sealed partial class TrackActor
     }
 
     private sealed class PendingApproval(
-        ApprovalDto dto, ExecutionControl control, Func<JsonElement, Task> deliver, Action expire)
+        ApprovalDto dto, ExecutionControl control, Func<JsonElement, Func<Task>?> claimDelivery, Action expire)
     {
         public ApprovalDto Dto { get; } = dto;
         public ExecutionControl Control { get; } = control;
-        public Func<JsonElement, Task> Deliver { get; } = deliver;
+        public Func<JsonElement, Func<Task>?> ClaimDelivery { get; } = claimDelivery;
         public Action Expire { get; } = expire;
         public bool RecordingDecision { get; set; }
         public CancellationTokenRegistration Cancellation { get; set; }
@@ -69,19 +69,28 @@ public sealed partial class TrackActor
 
     private PendingApproval? RegisterApproval(
         string executionId, string sessionId, string? turnId, string title, IReadOnlyList<string> options,
-        ExecutionControl control, Func<JsonElement, Task> deliver, Action expire, CancellationToken ct = default)
+        ExecutionControl control, Func<JsonElement, Func<Task>?> claimDelivery, Action expire, CancellationToken ct = default)
     {
         var dto = new ApprovalDto($"apr_{Guid.NewGuid():N}", executionId, sessionId, turnId,
             [new AskQuestionDto(title, options.Count > 0 ? options : ["Approve", "Deny"])], NowMs());
-        var pending = new PendingApproval(dto, control, deliver, expire);
+        var pending = new PendingApproval(dto, control, claimDelivery, expire);
+        // An already canceled token can run its callback inline during registration.
+        pending.Cancellation = ct.UnsafeRegister(_ => ExpireApproval(pending), null);
+        bool admitted;
         lock (_approvalAdmission)
         lock (control.Sync)
         {
-            if (_approvalAdmissionClosed || ct.IsCancellationRequested || control.Phase != ExecutionPhase.Running)
-                return null;
-            _approvals[dto.Id] = pending;
-            pending.Cancellation = ct.UnsafeRegister(_ => ExpireApproval(pending), null);
+            admitted = !_approvalAdmissionClosed && !ct.IsCancellationRequested && control.Phase == ExecutionPhase.Running;
+            if (admitted)
+                _approvals[dto.Id] = pending;
         }
+
+        if (!admitted)
+        {
+            pending.Cancellation.Unregister();
+            return null;
+        }
+
         NotifyApprovalsChanged(sessionId);
         return pending;
     }
@@ -110,13 +119,10 @@ public sealed partial class TrackActor
         if (expired is null or { Count: 0 })
             return;
 
-        HashSet<string>? notifiedSessions = null;
         foreach (var approval in expired)
-        {
             approval.Expire();
-            if (expired.Count == 1 || (notifiedSessions ??= new(StringComparer.Ordinal)).Add(approval.Dto.SessionId))
-                NotifyApprovalsChanged(approval.Dto.SessionId);
-        }
+        foreach (var sessionId in expired.Select(approval => approval.Dto.SessionId).Distinct(StringComparer.Ordinal))
+            NotifyApprovalsChanged(sessionId);
     }
 
     private void ExpireApproval(PendingApproval approval)
@@ -201,6 +207,7 @@ public sealed partial class TrackActor
         string delivery = "expired";
         try
         {
+            Func<Task>? send;
             lock (_approvalAdmission)
             lock (pending.Control.Sync)
             {
@@ -208,12 +215,17 @@ public sealed partial class TrackActor
                     !TryDetachApprovalLocked(pending))
                     throw KernelException.Conflict("The execution ended before the decision could be delivered.");
 
-                delivery = "unconfirmed";
+                // Claim the provider request before Stop can cancel it. Writing the reply
+                // can block and must run outside both locks.
+                send = pending.ClaimDelivery(decision);
             }
 
-            // Notification and provider delivery always run outside admission and control locks.
             NotifyApprovalsChanged(pending.Dto.SessionId);
-            await pending.Deliver(decision).ConfigureAwait(false);
+            if (send is null)
+                throw KernelException.Conflict("The approval request ended before the decision could be delivered.");
+
+            delivery = "unconfirmed";
+            await send().ConfigureAwait(false);
             delivery = "sent";
         }
         finally
@@ -246,7 +258,7 @@ public sealed partial class TrackActor
         var options = approval.Options?.Select(option => option.Label).ToArray();
         if (turn.Settings?.ApprovalMode != "deny" &&
             RegisterApproval(turn.TurnDto.Id, turn.SessionId, turn.TurnDto.Id, $"Approve tool '{approval.ToolName}'?",
-                options ?? [], turn.Control, async answer =>
+                options ?? [], turn.Control, answer =>
                 {
                     var selected = approval.Options is { Count: > 0 } choices &&
                         AskAnswerEvaluator.TryGetSelectedOptionIndex(answer, options!, out var index)
@@ -254,16 +266,23 @@ public sealed partial class TrackActor
                         : null;
                     var approved = selected?.IsApproval ??
                         AskAnswerEvaluator.IsApproved(answer, options is { Length: > 0 } ? options : ["Approve", "Deny"]);
-                    try
+                    var send = turn.AgentSession.TryClaimApprovalResponse(approval.RequestId, approved, selected?.OptionId,
+                        approved ? null : "Denied by user.", turn.TurnCts.Token);
+                    if (send is null)
+                        return null;
+
+                    return async () =>
                     {
-                        await turn.AgentSession.RespondApprovalAsync(approval.RequestId, approved, selected?.OptionId,
-                            approved ? null : "Denied by user.", turn.TurnCts.Token).ConfigureAwait(false);
-                    }
-                    catch
-                    {
-                        ObserveTaskFault(RequestTurnStop(turn));
-                        throw;
-                    }
+                        try
+                        {
+                            await send().ConfigureAwait(false);
+                        }
+                        catch
+                        {
+                            ObserveTaskFault(RequestTurnStop(turn));
+                            throw;
+                        }
+                    };
                 }, static () => { }) is not null)
             return;
 
@@ -306,7 +325,7 @@ public sealed partial class TrackActor
             ask.Title, ask.Options, turn?.Control ?? new ExecutionControl(), answer =>
             {
                 waiter.TrySetResult(answer);
-                return Task.CompletedTask;
+                return static () => Task.CompletedTask;
             }, () => waiter.TrySetCanceled(), ct);
         return new PolicyApproval(pending ?? throw KernelException.Conflict("The turn is stopping."), waiter.Task);
     }

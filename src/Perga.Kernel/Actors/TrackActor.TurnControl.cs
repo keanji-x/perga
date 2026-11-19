@@ -21,13 +21,19 @@ public sealed partial class TrackActor
             TaskScheduler.Default);
     }
 
-    private Task RequestTurnStop(ActiveTurnState active, bool observeTerminal = false)
+    private Task RequestTurnStop(ActiveTurnState active, bool observeTerminal = false, ActiveAttemptState? workerAttempt = null)
     {
         var control = active.Control;
         List<PendingApproval>? expired = null;
         Task stopTask;
         lock (control.Sync)
         {
+            if (workerAttempt is not null && control.Phase != ExecutionPhase.Ended)
+            {
+                workerAttempt.Paused = true;
+                _mcpBridge.RevokeSession(active.SessionId);
+            }
+
             if (control.StopDispatch is { IsCompleted: false } inFlight)
                 return inFlight;
             if (control.Phase == ExecutionPhase.Ended)
@@ -111,12 +117,14 @@ public sealed partial class TrackActor
         // Separate cancel-dispatch timeout from terminal-event observation timeout:
         // Resume probes briefly before falling back to scoped close; normal Stop gives
         // real providers enough grace to unwind tools/streams cleanly without false unknowns.
-        var terminalGrace = observeTerminal ? cancelGrace : _options.ProviderTerminalStopGrace;
-        using var terminalDeadline = CancellationTokenSource.CreateLinkedTokenSource(_actorShutdownCts.Token);
-        terminalDeadline.CancelAfter(terminalGrace);
+        using var terminalDeadline = observeTerminal
+            ? null
+            : CancellationTokenSource.CreateLinkedTokenSource(_actorShutdownCts.Token);
+        terminalDeadline?.CancelAfter(_options.ProviderTerminalStopGrace);
+        var terminalToken = terminalDeadline?.Token ?? cancelDeadline.Token;
         try
         {
-            if (!await active.Control.ObservationEnded.Task.WaitAsync(terminalDeadline.Token).ConfigureAwait(false))
+            if (!await active.Control.ObservationEnded.Task.WaitAsync(terminalToken).ConfigureAwait(false))
                 throw KernelException.PreconditionFailed("The provider ended without confirming the turn outcome.");
         }
         catch (OperationCanceledException)

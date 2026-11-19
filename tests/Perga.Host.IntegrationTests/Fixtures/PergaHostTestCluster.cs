@@ -58,6 +58,7 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
     private readonly ConcurrentQueue<RecordedTurnExecution> _executedTurns = new();
     private Func<HarnessLaunchSpec, TurnInput, CancellationToken, IAsyncEnumerable<UnifiedAgentEvent>>? _turnHandler;
     private Func<string, Task<bool>>? _steerHandler;
+    public Func<bool>? ApprovalClaimHandler { get; set; }
     public Action? ApprovalHandler { get; set; }
     public bool RequiresTerminalStop { get; set; }
     public Func<CancellationToken, Task>? CancelHandler { get; set; }
@@ -216,11 +217,23 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
 
         public Task RespondApprovalAsync(string requestId, bool approved, string? reason = null, CancellationToken ct = default)
         {
-            _owner.ApprovalResponses.Enqueue((requestId, approved));
-            _owner.ApprovalHandler?.Invoke();
-            _ = reason;
-            _ = ct;
-            return Task.CompletedTask;
+            var send = TryClaimApprovalResponse(requestId, approved, null, reason, ct)
+                ?? throw new InvalidOperationException("The approval response was already claimed.");
+            return send();
+        }
+
+        public Func<Task>? TryClaimApprovalResponse(
+            string requestId, bool approved, string? selectedOptionId, string? reason, CancellationToken ct)
+        {
+            if (_owner.ApprovalClaimHandler?.Invoke() == false)
+                return null;
+
+            return () =>
+            {
+                _owner.ApprovalResponses.Enqueue((requestId, approved));
+                _owner.ApprovalHandler?.Invoke();
+                return Task.CompletedTask;
+            };
         }
 
         public Task<bool> TrySetModelAsync(string? model, string? reasoningEffort = null, CancellationToken ct = default) => Task.FromResult(_owner.SupportsModelSwitch);
