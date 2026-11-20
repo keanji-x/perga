@@ -6,7 +6,7 @@ import { page, userEvent } from 'vitest/browser';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { RouterProvider, createMemoryHistory } from '@tanstack/react-router';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 
 import type { ApiFailure, ApiRequest, ApiTransportPort, ApiTransportResponse } from '../../../../core/api/types.ts';
 import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
@@ -78,14 +78,13 @@ function setup(reply?: Reply) {
   return { requests, client };
 }
 
-const nativeScrollIntoView = HTMLElement.prototype.scrollIntoView;
-const scrollIntoView = vi.fn();
+let scrollIntoView: MockInstance<HTMLElement['scrollIntoView']>;
 beforeEach(async () => {
   await page.viewport(1400, 900);
-  Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: scrollIntoView });
+  scrollIntoView = vi.spyOn(HTMLElement.prototype, 'scrollIntoView').mockImplementation(() => undefined);
   vi.spyOn(window, 'scrollTo').mockImplementation(() => undefined);
 });
-afterEach(() => { cleanup(); vi.restoreAllMocks(); scrollIntoView.mockReset(); });
+afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 describe('sourceResolutionOf', () => {
   it('reads data first — found or missing — then the error, then loading', () => {
@@ -332,9 +331,7 @@ describe('the source panel on the track page', () => {
   });
 
   it('keeps a late citation in view while a long source loads and scrolls to the quote', async () => {
-    scrollIntoView.mockImplementation(function (this: HTMLElement, options?: ScrollIntoViewOptions | boolean) {
-      nativeScrollIntoView.call(this, options);
-    });
+    scrollIntoView.mockRestore();
     let finishSource!: (response: ApiTransportResponse) => void;
     const pendingSource = new Promise<ApiTransportResponse>(resolve => { finishSource = resolve; });
     setup(request => {
