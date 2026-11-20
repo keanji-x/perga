@@ -21,7 +21,7 @@ public sealed class ProbeProvidersTests : IDisposable
             }
         });
         var status = Assert.Single(await runtime.ProbeProvidersAsync(CancellationToken.None), s => s.Provider == provider);
-        Assert.True(status.Available);
+        Assert.True(status.Available, status.Reason);
         Assert.Equal(["mock-model-a", "mock-model-b"], status.Models);
     }
 
@@ -40,7 +40,7 @@ public sealed class ProbeProvidersTests : IDisposable
             }
         });
         var status = Assert.Single(await runtime.ProbeProvidersAsync(CancellationToken.None), s => s.Provider == "acp:custom");
-        Assert.True(status.Available);
+        Assert.True(status.Available, status.Reason);
         Assert.Equal(explicitOverride ? ["override"] : new[] { "model-1", "model-2" }, status.Models);
     }
 
@@ -79,7 +79,7 @@ public sealed class ProbeProvidersTests : IDisposable
             ProviderOverrides = new Dictionary<string, ProviderCommandOverride>(_fixture.UnavailableProviders(), StringComparer.OrdinalIgnoreCase) { ["acp:antigravity"] = new(path) }
         });
         var status = Assert.Single(await runtime.ProbeProvidersAsync(CancellationToken.None), s => s.Provider == "acp:antigravity");
-        Assert.True(status.Available);
+        Assert.True(status.Available, status.Reason);
         Assert.Empty(status.Models);
     }
 
@@ -116,7 +116,7 @@ public sealed class ProbeProvidersTests : IDisposable
         });
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var status = Assert.Single(await runtime.ProbeProvidersAsync(deadline.Token), s => s.Provider == "acp:opencode");
-        Assert.True(status.Available);
+        Assert.True(status.Available, status.Reason);
         Assert.Null(status.Reason);
         Assert.Equal(modelsTimeout ? Array.Empty<string>() : ["provider/model"], status.Models);
     }
@@ -141,13 +141,13 @@ public sealed class ProbeProvidersTests : IDisposable
         var statuses = await runtime.ProbeProvidersAsync(CancellationToken.None);
 
         var codex = Assert.Single(statuses, s => s.Provider == "codex");
-        Assert.True(codex.Available);
+        Assert.True(codex.Available, codex.Reason);
         Assert.Equal("codex-cli 0.99.0-mock", codex.Version);
         Assert.Null(codex.Reason);
         Assert.Equal(["gpt-6.2-sol", "gpt-5.4", "gpt-6.1-sol"], codex.Models);
 
         var claude = Assert.Single(statuses, s => s.Provider == "claude");
-        Assert.True(claude.Available);
+        Assert.True(claude.Available, claude.Reason);
         Assert.Equal("2.1.0 (Claude Code Mock)", claude.Version);
         Assert.Equal(["claude-sonnet-4-6-custom"], claude.Models);
 
@@ -308,11 +308,11 @@ public sealed class ProbeProvidersTests : IDisposable
 
         var statuses = await runtime.ProbeProvidersAsync(CancellationToken.None);
         var codex = Assert.Single(statuses, s => s.Provider == "codex");
-        Assert.True(codex.Available);
+        Assert.True(codex.Available, codex.Reason);
         Assert.Equal("codex-cli 0.169.1", codex.Version);
 
         var agy = Assert.Single(statuses, s => s.Provider == "acp:antigravity");
-        Assert.True(agy.Available);
+        Assert.True(agy.Available, agy.Reason);
         Assert.Equal("antigravity 1.5.10", agy.Version);
     }
 

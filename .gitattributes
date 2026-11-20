@@ -14,3 +14,6 @@ crates/calm-server/prompts/** -text
 # their front matter, to `split_body` (#1635 S4): a CRLF checkout would change
 # where blocks split and what a `template_id` create instantiates.
 crates/calm-server/templates/builtin/*.md -text
+
+# Mock CLIs are launched directly and require Unix shebang line endings.
+tests/Perga.AgentKit.Tests/MockCli/*.py text eol=lf

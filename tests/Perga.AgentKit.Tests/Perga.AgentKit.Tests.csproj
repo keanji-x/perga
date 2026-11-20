@@ -17,4 +17,5 @@
   <ItemGroup>
     <Using Include="Xunit" />
   </ItemGroup>
+  <Import Project="MockCliFixture.props" />
 </Project>
