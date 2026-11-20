@@ -22,7 +22,8 @@ it('uses shared chat controls to show tools, change settings, retry, steer, and 
   let queuedVisible = false;
   let handedOff = false;
   let currentTurn = 'turn-1';
-  const denyApproval = Promise.withResolvers<void>();
+  let releaseDeny!: () => void;
+  const denyApproval = new Promise<void>(resolve => { releaseDeny = resolve; });
   const approval = { id: 'worker-ask', executionId: 'turn-1', turnId: 'turn-1', sessionId: id, createdAtMs: 4,
     questions: [{ question: 'Approve reading the report?', options: ['Approve', 'Deny'], isMultiSelect: false }] };
   let settings = { version: 0, model: null as string | null, reasoningEffort: null as string | null, approvalMode: 'ask' };
@@ -76,7 +77,7 @@ it('uses shared chat controls to show tools, change settings, retry, steer, and 
     }
     if (request.path === `${path}/settings`) {
       const next = request.body as typeof settings;
-      if (next.approvalMode === 'deny') await denyApproval.promise;
+      if (next.approvalMode === 'deny') await denyApproval;
       settings = { ...next, version: settings.version + 1 };
       return ok(settings);
     }
@@ -143,7 +144,7 @@ it('uses shared chat controls to show tools, change settings, retry, steer, and 
       fireEvent.keyDown(composer, { key: 'Enter' });
     });
     expect(view.requests.filter(request => request.path === `${path}/messages`)).toHaveLength(0);
-    denyApproval.resolve();
+    releaseDeny();
     await screen.findByRole('button', { name: 'Approvals: Deny requests' });
     const settingsWrites = view.requests.filter(request => request.path === `${path}/settings`);
     expect(settingsWrites.map(request => request.body)).toEqual([
@@ -189,7 +190,7 @@ it('uses shared chat controls to show tools, change settings, retry, steer, and 
     expect(screen.getAllByText('Check the appendix')).toHaveLength(1);
     expect(screen.getByRole('button', { name: /^Model:/ })).toBeDisabled();
     expect(composer).not.toHaveAttribute('contenteditable', 'true');
-  } finally { denyApproval.resolve(); view.client.clear(); }
+  } finally { releaseDeny(); view.client.clear(); }
 });
 
 it('dispatches a Worker from the report with only a goal', async () => {
