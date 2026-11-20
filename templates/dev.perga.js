@@ -112,6 +112,8 @@ const devTemplate = {
     return lines.join("\n");
   },
   after: (event, ctx) => {
+    if (event.type === "schedule.fired" && event.scheduleId === "upstream-drift-check")
+      return `${event.prompt} (completed tasks: ${ctx.state.completedTasks.length}).`;
     if (event.type !== "task.settled") return;
     ctx.state.iteration += 1;
 
@@ -196,8 +198,7 @@ const devTemplate = {
       id: "upstream-drift-check",
       cron: "0 9 * * 1-5",
       timezone: "UTC",
-      wakePrompt: (ctx) =>
-        `Check upstream branch '${ctx.inputs.baseBranch}' for new commits and verify '${ctx.inputs.testCmd}' still passes (completed tasks: ${ctx.state.completedTasks.length}).`
+      prompt: "Check upstream branch '${inputs.baseBranch}' for new commits and verify '${inputs.testCmd}' still passes."
     }
   ]
 };

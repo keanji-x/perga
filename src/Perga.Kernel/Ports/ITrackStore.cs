@@ -38,7 +38,10 @@ public sealed record WorkspacePreparation(WorkspaceProvisionRequest Request, str
 
 public sealed record TrackCreation(TrackDto Track, ReportDocument Report, string? TemplateSnapshot,
     AgentSessionDto Lead, IReadOnlyList<TaskDto> Tasks, SessionInputRequest? FirstInput,
-    WorkspacePreparation? Preparation, IReadOnlyList<EventEnvelopeDto> Events, string? DailyDate = null, AreaDto? SystemArea = null);
+    WorkspacePreparation? Preparation, IReadOnlyList<EventEnvelopeDto> Events, string? DailyDate = null, AreaDto? SystemArea = null)
+{
+    public IReadOnlyList<TrackScheduleDto> TemplateSchedules { get; init; } = [];
+}
 
 public sealed record WorkerDispatchIntent(string TrackId, string AuthorId, string RequestKey, string RequestHash, string TaskKey);
 public sealed record StoredWorkerDispatch(string RequestHash, string TaskId);
@@ -47,8 +50,6 @@ public sealed record ProviderSessionResumeFence(string SessionId, string TurnId,
 public sealed record InterruptedAttemptLeaseDto(
     string AttemptId, string TaskId, string TrackId, JsonElement WorkspaceLease);
 
-public sealed record OpenTrackScheduleSource(string TrackId, string? TemplateId, string? TemplateSnapshotSource, long CreatedAtMs);
-
 public interface ITrackReadStore
 {
     string DatabaseId => string.Empty;
@@ -56,7 +57,6 @@ public interface ITrackReadStore
     Task<IReadOnlyList<AreaDto>> ListAreasAsync(CancellationToken ct);
     Task<AreaDto?> GetAreaAsync(string areaId, CancellationToken ct);
     Task<IReadOnlyList<TrackDto>> ListTracksAsync(string? areaId = null, bool includeClosed = false, CancellationToken ct = default);
-    Task<IReadOnlyList<OpenTrackScheduleSource>> ListOpenTrackScheduleSourcesAsync(CancellationToken ct);
     Task<TrackDto?> GetTrackAsync(string trackId, CancellationToken ct);
     Task<TrackAggregateSnapshot?> LoadTrackAggregateAsync(string trackId, CancellationToken ct);
     Task<IReadOnlyList<ReportBlock>> GetReportRevisionBlocksAsync(string trackId, int docRev, CancellationToken ct);
@@ -104,7 +104,7 @@ public interface ITrackStore : ITrackReadStore
     Task<bool> TryClaimWorkspacePreparationAsync(string trackId, WorkspacePreparationPhase expected, WorkspacePreparation claimed, CancellationToken ct);
     Task SaveWorkspacePreparationAsync(string trackId, WorkspacePreparation preparation, TrackDto? readyTrack, EventEnvelopeDto? evt, CancellationToken ct);
     Task UpdateTrackAndEmitAsync(TrackDto track, EventEnvelopeDto? evt, CancellationToken ct);
-    Task UpdateTrackTemplateAndEmitAsync(TrackDto track, string? templateSnapshot, EventEnvelopeDto evt, CancellationToken ct);
+    Task UpdateTrackTemplateAndEmitAsync(TrackDto track, string? templateSnapshot, EventEnvelopeDto evt, CancellationToken ct, IReadOnlyList<TrackScheduleDto>? templateSchedules = null, bool refreshPromptsOnly = false);
     Task DeleteTrackAsync(string trackId, CancellationToken ct);
 
     Task SaveReportAndTasksAsync(

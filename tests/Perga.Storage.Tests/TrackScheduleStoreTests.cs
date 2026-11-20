@@ -55,6 +55,40 @@ public sealed class TrackScheduleStoreTests
         UpdatedAtMs: 500);
 
     [Fact]
+    public async Task TemplateSyncRefreshesOnlyActivePromptsAndRollsBackConflicts()
+    {
+        await using var h = await SeedAsync();
+        var track = (await h.Store.GetTrackAsync("trk_1", default))!;
+        var evt = StorageTestHarness.CreateEvent("track.updated", track.Id, track.AreaId);
+        var template = CronSchedule("template") with { SourceKind = "template" };
+        var canceled = CronSchedule("canceled") with { SourceKind = "template" };
+        await h.Store.UpdateTrackTemplateAndEmitAsync(track with { TemplateId = "tpl" }, "snapshot", evt, default, [template, canceled]);
+        await h.Store.TrackSchedules!.CancelAsync(track.Id, canceled.Id, default);
+        await h.Store.TrackSchedules.FireDueAsync(1_100, _ => 5_000, default);
+        var fired = (await h.Store.TrackSchedules.GetAsync(track.Id, template.Id, default))!;
+        await h.Store.UpdateTrackTemplateAndEmitAsync(track with { TemplateId = "tpl" }, "snapshot", evt, default,
+            [template with { Prompt = "refreshed", NextFireAtMs = 99_000 }, canceled with { Prompt = "refreshed" }], refreshPromptsOnly: true);
+        var refreshed = (await h.Store.TrackSchedules.GetAsync(track.Id, template.Id, default))!;
+        Assert.Equal(fired with { Prompt = "refreshed", UpdatedAtMs = track.UpdatedAtMs }, refreshed);
+        Assert.Equal("canceled", (await h.Store.TrackSchedules.GetAsync(track.Id, canceled.Id, default))!.State);
+        await h.Store.TrackSchedules.UpsertAsync(CronSchedule("user"), default);
+        var beforeEvents = await h.Store.ListEventsSinceAsync(0, track.Id);
+        var failure = await Assert.ThrowsAsync<KernelException>(() => h.Store.UpdateTrackTemplateAndEmitAsync(
+            track with { TemplateId = "conflict", Title = "Must roll back" }, "conflicting snapshot", evt, default,
+            [template with { Prompt = "must roll back" }, CronSchedule("user") with { SourceKind = "template" }]));
+        Assert.Equal(KernelErrorCode.Conflict, failure.Code);
+        var aggregate = (await h.Store.LoadTrackAggregateAsync(track.Id, default))!;
+        Assert.Equal("tpl", aggregate.Track.TemplateId);
+        Assert.Equal(track.Title, aggregate.Track.Title);
+        Assert.Equal("snapshot", aggregate.TemplateSnapshotSource);
+        Assert.Equal(refreshed, await h.Store.TrackSchedules.GetAsync(track.Id, template.Id, default));
+        Assert.Equal(beforeEvents.Count, (await h.Store.ListEventsSinceAsync(0, track.Id)).Count);
+        await h.Store.UpdateTrackTemplateAndEmitAsync(track with { TemplateId = null }, null, evt, default);
+        Assert.Equal("user", Assert.Single(await h.Store.TrackSchedules.ListForTrackAsync(track.Id, false, default)).Id);
+        Assert.Equal("template_changed", Assert.Single(await h.Store.TrackWakes.ListAsync(track.Id, default)).Reason);
+    }
+
+    [Fact]
     public async Task CancelRequiresBothScheduleKeyAndPayloadIdentity()
     {
         await using var h = await SeedAsync();
@@ -255,13 +289,12 @@ public sealed class TrackScheduleStoreTests
     }
 
     [Fact]
-    public async Task TemplateChangeAndCancelIsolateDynamicVsTemplateWakesAndTracksShareSemanticIds()
+    public async Task TemplateChangesPreserveUserSchedulesAndTracksShareIds()
     {
         await using var h = await SeedAsync();
         // Same semantic id "daily-review" on both a dynamic schedule and a template wake on trk_1.
         await h.Store.TrackSchedules!.UpsertAsync(CronSchedule("daily-review", nextFireAtMs: 1_000, maxOccurrences: 5), default);
         await h.Store.TrackSchedules!.FireDueAsync(1_100, _ => 5_000, default);
-        await h.Store.TrackWakes.EnqueueAsync(TrackWakeRequests.Schedule("trk_1", "daily-review"), default);
 
         // Updating an active schedule by id preserves fired_count, last_fired_at_ms, and created_at_ms.
         var updated = await h.Store.TrackSchedules!.UpsertAsync(
@@ -288,34 +321,12 @@ public sealed class TrackScheduleStoreTests
 
         var wakes = await h.Store.TrackWakes.ListAsync("trk_1", default);
         var durableWake = Assert.Single(wakes, w => w.CoalesceKey == TrackWakeRequests.TrackScheduleKey("daily-review"));
-        var templateWake = Assert.Single(wakes, w => w.CoalesceKey == TrackWakeRequests.ScheduleKey("daily-review"));
         Assert.Equal(TrackWakeStates.Pending, durableWake.State);
-        Assert.Equal(TrackWakeStates.Dropped, templateWake.State);
-        Assert.Equal(TrackWakeReasons.TemplateChanged, templateWake.Reason);
-
-        // Clearing a template (templateSnapshot = null) also drops non-track_schedule wakes (including keys like "track-schedule:x"
-        // that would falsely match an unescaped SQLite LIKE wildcard) while preserving "track_schedule:daily-review".
-        await h.Store.TrackWakes.EnqueueAsync(
-            TrackWakeRequests.Prompt("trk_1", TrackWakeKinds.Schedule, "track-schedule:dash", "Template-like dash key"), default);
-        await h.Store.UpdateTrackTemplateAndEmitAsync(
-            track! with { TemplateId = null, UpdatedAtMs = 2_500 },
-            null,
-            StorageTestHarness.CreateEvent("track.updated", track.Id, track.AreaId),
-            default);
-        var wakesAfterClear = await h.Store.TrackWakes.ListAsync("trk_1", default);
-        Assert.Equal(TrackWakeStates.Pending,
-            Assert.Single(wakesAfterClear, w => w.CoalesceKey == TrackWakeRequests.TrackScheduleKey("daily-review")).State);
-        Assert.Equal(TrackWakeStates.Dropped,
-            Assert.Single(wakesAfterClear, w => w.CoalesceKey == "track-schedule:dash").State);
-
-        // Canceling dynamic schedule "daily-review" drops ONLY its track_schedule wake, not a fresh template wake of the same id.
-        await h.Store.TrackWakes.EnqueueAsync(TrackWakeRequests.Schedule("trk_1", "daily-review"), default);
+        await h.Store.UpdateTrackTemplateAndEmitAsync(track! with { TemplateId = null }, null,
+            StorageTestHarness.CreateEvent("track.updated", track.Id, track.AreaId), default);
+        Assert.Equal(TrackScheduleStates.Active, (await h.Store.TrackSchedules!.GetAsync("trk_1", "daily-review", default))!.State);
         Assert.True(await h.Store.TrackSchedules!.CancelAsync("trk_1", "daily-review", default));
-        var wakesAfterCancel = await h.Store.TrackWakes.ListAsync("trk_1", default);
-        Assert.Equal(TrackWakeStates.Dropped,
-            Assert.Single(wakesAfterCancel, w => w.CoalesceKey == TrackWakeRequests.TrackScheduleKey("daily-review")).State);
-        Assert.Contains(wakesAfterCancel, w =>
-            w.CoalesceKey == TrackWakeRequests.ScheduleKey("daily-review") && w.State == TrackWakeStates.Pending);
+        Assert.All(await h.Store.TrackWakes.ListAsync("trk_1", default), w => Assert.Equal(TrackWakeStates.Dropped, w.State));
 
         // Re-arming a canceled schedule resets fired_count, last_fired_at_ms, created_at_ms, and returns to active.
         var rearmed = await h.Store.TrackSchedules!.UpsertAsync(
@@ -329,8 +340,7 @@ public sealed class TrackScheduleStoreTests
         await h.Store.TrackSchedules!.FireDueAsync(8_100, _ => 9_000, default);
         Assert.Equal(1, await h.Store.TrackSchedules!.CancelActiveForTrackAsync("trk_1", default));
         var wakesAfterBulkCancel = await h.Store.TrackWakes.ListAsync("trk_1", default);
-        Assert.Contains(wakesAfterBulkCancel, w =>
-            w.CoalesceKey == TrackWakeRequests.ScheduleKey("daily-review") && w.State == TrackWakeStates.Pending);
+        Assert.DoesNotContain(wakesAfterBulkCancel, w => w.Kind == "schedule" && w.State == "pending");
 
         // A second Track can independently use the exact same semantic id "daily-review",
         // and pruning old canceled "daily-review" on trk_1 must NOT delete trk_2's active "daily-review".

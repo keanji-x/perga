@@ -21,17 +21,16 @@ public sealed class CronosDurableBatchTests
         await kernel.WaitForTrackIdleAsync(trackId);
         for (var i = 0; i < 65; i++)
             await kernel.SetTrackScheduleAsync(trackId, new("Batch", "BATCH_PROMPT", Id: $"batch_{i:D2}", RunAtMs: 1));
-        var store = host.Services.GetRequiredService<ITrackStore>().TrackSchedules!;
-        var observed = DispatchProxy.Create<ITrackScheduleStore, ScheduleProxy>();
-        var proxy = (ScheduleProxy)(object)observed;
-        proxy.Inner = store;
+        var observed = DispatchProxy.Create<IPergaKernel, KernelProxy>();
+        var proxy = (KernelProxy)(object)observed;
+        proxy.Inner = kernel;
+        proxy.FailFirstPoke = false;
         proxy.BeforeFire = calls =>
         {
             if (calls == 2)
                 Assert.Contains(host.AgentRuntime.ExecutedTurns, t => t.Input.Prompt.Contains("BATCH_PROMPT", StringComparison.Ordinal));
         };
-        using var scheduler = new CronosScheduleHostedService(kernel, host.Services.GetRequiredService<ITrackReadStore>(),
-            new PergaHostOptions(), host.TimeProvider, NullLogger<CronosScheduleHostedService>.Instance, observed);
+        using var scheduler = new CronosScheduleHostedService(observed, new PergaHostOptions(), host.TimeProvider, NullLogger<CronosScheduleHostedService>.Instance);
         Assert.Equal(65, await scheduler.EvaluateDueSchedulesOnceAsync());
         Assert.Equal(2, proxy.FireCalls);
         await kernel.WaitForTrackIdleAsync(trackId);
@@ -48,9 +47,7 @@ public sealed class CronosDurableBatchTests
         var observed = DispatchProxy.Create<IPergaKernel, KernelProxy>();
         var proxy = (KernelProxy)(object)observed;
         proxy.Inner = kernel;
-        using var scheduler = new CronosScheduleHostedService(observed, host.Services.GetRequiredService<ITrackReadStore>(),
-            new PergaHostOptions(), host.TimeProvider, NullLogger<CronosScheduleHostedService>.Instance,
-            host.Services.GetRequiredService<ITrackStore>().TrackSchedules!);
+        using var scheduler = new CronosScheduleHostedService(observed, new PergaHostOptions(), host.TimeProvider, NullLogger<CronosScheduleHostedService>.Instance);
         Assert.Equal(1, await scheduler.EvaluateDueSchedulesOnceAsync());
         Assert.Equal(1, proxy.PokeAttempts);
         Assert.DoesNotContain(host.AgentRuntime.ExecutedTurns, t => t.Input.Prompt.Contains("RETRY_PROMPT", StringComparison.Ordinal));
@@ -79,9 +76,7 @@ public sealed class CronosDurableBatchTests
         proxy.PokeFailure = scenario == "not_found" ? KernelException.NotFound("Deleted track")
             : new InvalidOperationException("Injected transient failure");
         proxy.AlwaysFail = true;
-        using var scheduler = new CronosScheduleHostedService(observed, host.Services.GetRequiredService<ITrackReadStore>(),
-            new PergaHostOptions(), host.TimeProvider, NullLogger<CronosScheduleHostedService>.Instance,
-            host.Services.GetRequiredService<ITrackStore>().TrackSchedules!);
+        using var scheduler = new CronosScheduleHostedService(observed, new PergaHostOptions(), host.TimeProvider, NullLogger<CronosScheduleHostedService>.Instance);
         Assert.Equal(1, await scheduler.EvaluateDueSchedulesOnceAsync());
         Assert.Equal(1, proxy.PokeAttempts);
         if (scenario == "closed")
@@ -95,27 +90,19 @@ public sealed class CronosDurableBatchTests
         Assert.Equal(1, proxy.PokeAttempts);
     }
 
-    public class ScheduleProxy : DispatchProxy
-    {
-        public ITrackScheduleStore Inner = null!;
-        public Action<int>? BeforeFire;
-        public int FireCalls;
-        protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
-        {
-            if (targetMethod!.Name == nameof(ITrackScheduleStore.FireDueAsync)) BeforeFire?.Invoke(++FireCalls);
-            return targetMethod.Invoke(Inner, args);
-        }
-    }
-
     public class KernelProxy : DispatchProxy
     {
         public IPergaKernel Inner = null!;
         public int PokeAttempts;
+        public bool FailFirstPoke = true;
+        public Action<int>? BeforeFire;
+        public int FireCalls;
         public Exception PokeFailure = new InvalidOperationException("Injected transient poke failure");
         public bool AlwaysFail;
         protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
         {
-            if (targetMethod!.Name == "get_Actors" && (++PokeAttempts == 1 || AlwaysFail))
+            if (targetMethod!.Name == nameof(IPergaKernel.FireDueTrackSchedulesAsync)) BeforeFire?.Invoke(++FireCalls);
+            if (targetMethod.Name == "get_Actors" && ((++PokeAttempts == 1 && FailFirstPoke) || AlwaysFail))
                 throw PokeFailure;
             return targetMethod.Invoke(Inner, args);
         }

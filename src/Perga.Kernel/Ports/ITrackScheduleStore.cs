@@ -27,6 +27,7 @@ public sealed record FiredTrackSchedule(string TrackId, string ScheduleId);
 
 public interface ITrackScheduleStore
 {
+    Task<bool> TriggerAsync(string trackId, string scheduleId, CancellationToken ct);
     Task<TrackScheduleDto> UpsertAsync(TrackScheduleDto schedule, CancellationToken ct);
     Task<TrackScheduleDto?> GetAsync(string trackId, string scheduleId, CancellationToken ct);
     Task<IReadOnlyList<TrackScheduleDto>> ListForTrackAsync(string trackId, bool includeTerminal, CancellationToken ct);
@@ -37,3 +38,5 @@ public interface ITrackScheduleStore
         Func<TrackScheduleDto, long?> computeNextFireAtMs,
         CancellationToken ct);
 }
+
+public sealed record TrackSchedulesSnapshot(IReadOnlyList<TrackScheduleDto> Schedules, IReadOnlyList<TrackWake> RecentRuns);

@@ -141,7 +141,9 @@ public interface IPergaKernel : IAsyncDisposable
         CancellationToken ct = default, McpExecutionOrigin? origin = null);
     Task<JsonElement> InvokeKernelMcpToolAsync(McpSessionPrincipal caller, string toolName, JsonElement arguments, CancellationToken ct = default);
     Task<bool> CancelPendingWakeAsync(string trackId, string wakeId, CancellationToken ct = default);
-    Task TriggerScheduleWakeAsync(string trackId, string scheduleId, CancellationToken ct = default);
+    Task<TrackSchedulesSnapshot> GetTrackSchedulesAsync(string trackId, bool includeTerminal = false, int runsLimit = 20, CancellationToken ct = default);
+    Task<bool> TriggerTrackScheduleAsync(string trackId, string scheduleId, CancellationToken ct = default);
+    Task<IReadOnlyList<FiredTrackSchedule>> FireDueTrackSchedulesAsync(long nowMs, CancellationToken ct = default);
     Task<TrackScheduleDto> SetTrackScheduleAsync(string trackId, SetTrackScheduleRequest request, CancellationToken ct = default);
     Task<IReadOnlyList<TrackScheduleDto>> ListTrackSchedulesAsync(string trackId, bool includeTerminal = false, CancellationToken ct = default);
     Task<bool> CancelTrackScheduleAsync(string trackId, string scheduleId, CancellationToken ct = default);
@@ -224,7 +226,7 @@ public sealed partial class PergaKernelService : IPergaKernel
             _commandRunner,
             _eventHub,
             _options,
-            _timeProvider);
+            _timeProvider, _scheduleCronEvaluator);
         UpgradeReceipts = new SystemUpgrade.UpgradeReceiptConsumer(_store, upgradeReceiptSource, Actors, _eventHub, DispatchAdmission);
         BootReconciler = new BootReconciler(_store, _workspaceDrivers, Actors, UpgradeReceipts);
         DispatchAdmission.Changed += PublishUpgradeStatus;
@@ -638,42 +640,8 @@ public sealed partial class PergaKernelService : IPergaKernel
 
     // ------------------- Tracks -------------------
 
-    public async Task<IReadOnlyList<TrackDto>> ListTracksAsync(
-        string? areaId = null,
-        bool includeClosed = false,
-        CancellationToken ct = default)
-    {
-        var tracks = await _store.ListTracksAsync(areaId, includeClosed, ct).ConfigureAwait(false);
-        var projected = new List<TrackDto>(tracks.Count);
-        foreach (var track in tracks)
-        {
-            if (track.TemplateId is null)
-            {
-                projected.Add(track);
-                continue;
-            }
-            var snapshot = await _store.LoadTrackAggregateAsync(track.Id, ct).ConfigureAwait(false);
-            if (snapshot is null) continue; // Deleted after listing.
-            CompiledPolicy? policy;
-            try
-            {
-                policy = !string.IsNullOrWhiteSpace(snapshot.TemplateSnapshotSource)
-                    ? Templates.GetOrCompileSnapshot(snapshot.TemplateSnapshotSource)
-                    : Templates.TryGetPolicy(snapshot.Track.TemplateId!);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                // Presentation failure must not hide this track or its siblings. Actor hydration
-                // still compiles the persisted snapshot and fails closed for commands.
-                System.Diagnostics.Trace.TraceWarning(
-                    "Could not compile template presentation for Track {0}: {1}", track.Id, ex);
-                projected.Add(snapshot.Track with { TemplateHeaderView = null, TemplateSchedules = [] });
-                continue;
-            }
-            projected.Add(TemplatePresentation.Project(snapshot.Track, policy, _policyVm));
-        }
-        return projected;
-    }
+    public Task<IReadOnlyList<TrackDto>> ListTracksAsync(string? areaId = null, bool includeClosed = false, CancellationToken ct = default) =>
+        _store.ListTracksAsync(areaId, includeClosed, ct);
 
     public Task<TrackAggregateSnapshot> CreateTrackAsync(CreateTrackRequest req, CancellationToken ct = default, string? requestKey = null) =>
         CreateTrackCoreAsync(req, ct, requestKey);
@@ -730,14 +698,14 @@ public sealed partial class PergaKernelService : IPergaKernel
         var templateState = JsonHelpers.EmptyObject;
         if (policy is not null)
         {
+            TemplateSchedules.ValidateInputs(_policyVm, policy, templateInputs);
             var initEval = _policyVm.InitState(policy, templateInputs);
             templateState = initEval.Output.ValueKind != JsonValueKind.Undefined
                 ? initEval.Output.Clone()
                 : initEval.NextState.Clone();
         }
 
-        var initialMarkdown = dailyDate is not null ? string.Empty : policy?.Manifest.InitialReportMarkdown ?? "";
-        var initialReport = _reportEngine.Parse(initialMarkdown, docRev: 0, summary: string.Empty);
+        var initialReport = _reportEngine.Parse(string.Empty, docRev: 0, summary: string.Empty);
 
         var enabledPlugins = req.EnabledPlugins?.ToArray()
                              ?? policy?.Manifest.DefaultPlugins.ToArray()
@@ -799,7 +767,7 @@ public sealed partial class PergaKernelService : IPergaKernel
 
         await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
         var id = await _store.CreateTrackAsync(
-            new(track, initialReport, policy?.JsSource, leadSession, initialTasks, null, preparation, events, dailyDate, systemArea),
+            new(track, initialReport, policy?.JsSource, leadSession, initialTasks, null, preparation, events, dailyDate, systemArea) { TemplateSchedules = TemplateSchedules.Materialize(policy, templateInputs, trackId, now, _policyVm, _scheduleCronEvaluator) },
             key, ct).ConfigureAwait(false);
         var snapshot = await ReadCreatedTrackAsync(id, CancellationToken.None).ConfigureAwait(false);
         if (id == track.Id)
@@ -1449,8 +1417,6 @@ public sealed partial class PergaKernelService : IPergaKernel
     public Task<bool> CancelPendingWakeAsync(string trackId, string wakeId, CancellationToken ct = default) =>
         Actors.GetOrActivate(trackId).CancelPendingWakeAsync(wakeId, ct);
 
-    public Task TriggerScheduleWakeAsync(string trackId, string scheduleId, CancellationToken ct = default) =>
-        Actors.GetOrActivate(trackId).TriggerScheduleWakeAsync(scheduleId, ct);
 
     public Task WaitForTrackIdleAsync(string trackId, CancellationToken ct = default) =>
         Actors.GetOrActivate(trackId).WaitForBackgroundWorkAsync(ct);

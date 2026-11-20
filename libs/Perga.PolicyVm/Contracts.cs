@@ -18,7 +18,8 @@ public sealed record ScheduleSpec(
     string Id,
     string Cron,
     string Timezone,
-    string? StaticWakePrompt = null);
+    string Prompt,
+    string? Title = null);
 
 public sealed record WorkerDispatchDefaults(string? Section, string? Access, string? GateInput);
 
@@ -37,7 +38,6 @@ public sealed record CompiledTemplateManifest(
     string? WorkspaceCloseCmd,
     string? AfterWorkerDoneCmd,
     IReadOnlyList<ScheduleSpec> Schedules,
-    string InitialReportMarkdown,
     IReadOnlyList<TaskRoutingRule> Routing,
     WorkerDispatchDefaults? WorkerDispatch = null,
     string? Extends = null,
@@ -90,5 +90,6 @@ public interface IPolicyVm
     PolicyEvalResult<PolicyTurnPreparation> PrepareTurn(CompiledPolicy policy, PolicyTurnContext ctx, JsonElement state);
     PolicyTaskRoute RouteTaskDispatch(CompiledPolicy policy, string? role, string access, string? provider, string? model, JsonElement inputs);
     IReadOnlyList<PolicyTaskRoute> ResolveRoutingTargets(CompiledPolicy policy, JsonElement inputs);
-    PolicyEvalResult<string?> BuildScheduleWakePrompt(CompiledPolicy policy, string scheduleId, JsonElement inputs, JsonElement state);
+    void ValidateInputs(CompiledPolicy policy, JsonElement inputs);
+    string InterpolateInputs(CompiledPolicy policy, string text, JsonElement inputs);
 }

@@ -40,17 +40,17 @@ public sealed class TrackWakeSchedulingTests
         await using var ctx = new KernelTestContext();
         var manifest = ctx.PolicyVm.Compile("export default defineTemplate({id:'schedule-test',title:'Schedule'});").Manifest;
         ctx.PolicyVm.CustomManifestFactory = _ => manifest with
-        { Schedules = [new ScheduleSpec("daily", "0 9 * * *", "UTC", staticPrompt)] };
-        ctx.PolicyVm.OnBuildScheduleWake = (_, _, _, state) => new(state, output);
+        { Schedules = [new ScheduleSpec("daily", "0 9 * * *", "UTC", staticPrompt ?? "stored prompt")] };
+        ctx.PolicyVm.OnScheduleFired = (_, _, _, state) => new(state, output);
         ctx.Kernel.Templates.RegisterTemplate("export default defineTemplate({id:'schedule-test',title:'Schedule'});");
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync(templateId: "schedule-test");
         var id = snapshot.Track.Id;
-        await ctx.Store.TrackWakes.EnqueueAsync(new(id, "schedule", "schedule:daily", TestJson.FromObject(new { scheduleId = "daily" })), default);
+        await ctx.Store.TrackWakes.EnqueueAsync(new(id, "schedule", "track_schedule:daily", TestJson.FromObject(new { scheduleId = "daily", sourceKind = "template", prompt = staticPrompt ?? "stored prompt" })), default);
         if (withMail)
             await ctx.Store.TrackWakes.EnqueueAsync(TrackWakeRequests.Prompt(id, "mail", "mail:test", "mail prompt", "system_mail"), default);
         await ctx.Kernel.Actors.GetOrActivate(id).PokeLeadAsync();
         await ctx.Kernel.WaitForTrackIdleAsync(id);
-        var expected = !string.IsNullOrWhiteSpace(output) ? output : staticPrompt ?? output ?? "Scheduled wake 'daily' triggered.";
+        var expected = output ?? staticPrompt ?? "stored prompt";
         var suppressed = string.IsNullOrWhiteSpace(expected);
         var turns = ctx.Store.GetTurnsForSession(snapshot.Track.LeadSessionId!);
         if (suppressed && !withMail)
@@ -188,7 +188,7 @@ public sealed class TrackWakeSchedulingTests
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
         var id = snapshot.Track.Id;
         ctx.AgentRuntime.TurnScript = Fail;
-        var payload = kind == "schedule" ? TestJson.FromObject(new { scheduleId = "daily" }) : TestJson.FromObject(new { prompt = "notice" });
+        var payload = kind == "schedule" ? TestJson.FromObject(new { scheduleId = "daily", sourceKind = "user", prompt = "notice" }) : TestJson.FromObject(new { prompt = "notice" });
         await ctx.Store.TrackWakes.EnqueueAsync(new(id, kind, null, payload), default);
         await ctx.Kernel.Actors.GetOrActivate(id).PokeLeadAsync();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
@@ -219,10 +219,10 @@ public sealed class TrackWakeSchedulingTests
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync(templateId: "schedule-test");
         var id = snapshot.Track.Id;
         if (duringPreparation)
-            ctx.PolicyVm.OnBuildScheduleWake = (_, _, _, _) => throw new InvalidOperationException("broken schedule JS");
+            ctx.PolicyVm.OnScheduleFired = (_, _, _, _) => throw new InvalidOperationException("broken schedule JS");
         else
             ctx.AgentRuntime.OnBeforeOpenSession = _ => throw new InvalidOperationException("provider open failed");
-        await ctx.Store.TrackWakes.EnqueueAsync(new(id, "schedule", "schedule:daily", TestJson.FromObject(new { scheduleId = "daily" })), default);
+        await ctx.Store.TrackWakes.EnqueueAsync(new(id, "schedule", "track_schedule:daily", TestJson.FromObject(new { scheduleId = "daily", sourceKind = "template", prompt = "stored prompt" })), default);
         await ctx.Store.TrackWakes.EnqueueAsync(TrackWakeRequests.Prompt(id, "mail", "mail:test", "mail"), default);
         var actor = ctx.Kernel.Actors.GetOrActivate(id);
         await Assert.ThrowsAsync<InvalidOperationException>(() => actor.PokeLeadAsync());
@@ -245,9 +245,9 @@ public sealed class TrackWakeSchedulingTests
         var id = snapshot.Track.Id;
         var actor = ctx.Kernel.Actors.GetOrActivate(id);
         var evaluations = 0;
-        ctx.PolicyVm.OnBuildScheduleWake = (_, _, _, state) => { evaluations++; return new PolicyEvalResult<string?>(state, "schedule evaluated"); };
+        ctx.PolicyVm.OnScheduleFired = (_, _, _, state) => { evaluations++; return new PolicyEvalResult<string?>(state, "schedule evaluated"); };
         await ctx.Store.TrackWakes.EnqueueAsync(TrackWakeRequests.Prompt(id, "mail", "mail:test", "first notice"), default);
-        await ctx.Store.TrackWakes.EnqueueAsync(new(id, "schedule", "schedule:daily", TestJson.FromObject(new { scheduleId = "daily" })), default);
+        await ctx.Store.TrackWakes.EnqueueAsync(new(id, "schedule", "track_schedule:daily", TestJson.FromObject(new { scheduleId = "daily", sourceKind = "template", prompt = "stored prompt" })), default);
         Assert.Equal(0, evaluations);
         await actor.PokeLeadAsync();
         Assert.Equal(1, evaluations);

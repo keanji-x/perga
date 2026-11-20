@@ -12,6 +12,7 @@ public sealed record TrackWake(long Ordinal, string Id, string TrackId, string? 
 
 public interface ITrackWakeStore
 {
+    Task<IReadOnlyList<TrackWake>> ListScheduleRunsAsync(string trackId, int limit, CancellationToken ct);
     Task EnqueueAsync(TrackWakeRequest request, CancellationToken ct);
     Task<IReadOnlyList<TrackWake>> ListAsync(string trackId, CancellationToken ct);
     Task<IReadOnlyList<string>> ListPendingTracksAsync(CancellationToken ct);

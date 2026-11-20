@@ -93,6 +93,11 @@ const longTermGoalTemplate = {
     ].join("\n");
   },
   after: (event, ctx) => {
+    if (event.type === "schedule.fired") {
+      if (event.scheduleId !== "cadence-checkin") return event.prompt;
+      ctx.state.checkInCount += 1;
+      return `${event.prompt} Check-in #${ctx.state.checkInCount}.`;
+    }
     if (event.type !== "task.settled") return;
     ctx.state.lastSettledTask = event.taskKey;
 
@@ -154,16 +159,13 @@ const longTermGoalTemplate = {
       id: "cadence-checkin",
       cron: "0 9 * * 1",
       timezone: "UTC",
-      wakePrompt: (ctx) => {
-        ctx.state.checkInCount += 1;
-        return `Scheduled ${ctx.inputs.cadence} check-in #${ctx.state.checkInCount}: review '${ctx.inputs.targetMetric ?? "North Star"}', log measurable progress, and refresh '# Active Tasks'.`;
-      }
+      prompt: "Scheduled ${inputs.cadence} check-in: review '${inputs.targetMetric}', log measurable progress, and refresh '# Active Tasks'."
     },
     {
       id: "friday-retrospective",
       cron: "0 17 * * 5",
       timezone: "UTC",
-      wakePrompt:
+      prompt:
         "Run end-of-week retrospective: summarize accomplishments in '# Progress Log' and surface any emerging blockers in '# Risks & Blockers'."
     }
   ]

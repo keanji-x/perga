@@ -69,25 +69,26 @@ public sealed class TrackScheduleTests
     }
 
     [Fact]
-    public async Task DynamicScheduleWakeUsesCustomPromptAndTemplateScheduleUsesPolicyPrompt()
+    public async Task AllScheduleSourcesUseAfterPolicy()
     {
         await using var ctx = new KernelTestContext();
         ctx.Kernel.Templates.RegisterTemplate("""export default defineTemplate({ id: "ops", title: "Ops" });""");
-        ctx.PolicyVm.OnBuildScheduleWake = (_, scheduleId, _, state) => new(state, $"POLICY:{scheduleId}");
+        ctx.PolicyVm.OnScheduleFired = (_, scheduleId, _, state) => new(state, $"POLICY:{scheduleId}");
         var (_, snap) = await ctx.CreateDefaultTrackAsync(templateId: "ops");
         var trackId = snap.Track.Id;
         var leadId = snap.Track.LeadSessionId!;
 
         await ctx.Store.TrackWakes.EnqueueAsync(
-            TrackWakeRequests.DynamicSchedule(trackId, "sch_dyn", "CUSTOM_DYNAMIC_PROMPT"),
+            TrackWakeRequests.DynamicSchedule(trackId, "sch_dyn", "CUSTOM_DYNAMIC_PROMPT", "user"),
             default);
         await ctx.Kernel.Actors.GetOrActivate(trackId).PokeLeadAsync(default);
         await ctx.Kernel.WaitForTrackIdleAsync(trackId);
 
         Assert.Contains(ctx.Store.GetTurnsForSession(leadId),
-            t => t.Input.GetProperty("prompt").GetString()!.Contains("CUSTOM_DYNAMIC_PROMPT", StringComparison.Ordinal));
+            t => t.Input.GetProperty("prompt").GetString()!.Contains("POLICY:sch_dyn", StringComparison.Ordinal));
 
-        await ctx.Kernel.TriggerScheduleWakeAsync(trackId, "tpl_sched");
+        await ctx.Kernel.SetTrackScheduleAsync(trackId, new("Template", "Template prompt", Id: "tpl_sched", RunAtMs: 1));
+        await ctx.Kernel.TriggerTrackScheduleAsync(trackId, "tpl_sched");
         await ctx.Kernel.WaitForTrackIdleAsync(trackId);
         Assert.Contains(ctx.Store.GetTurnsForSession(leadId),
             t => t.Input.GetProperty("prompt").GetString()!.Contains("POLICY:tpl_sched", StringComparison.Ordinal));

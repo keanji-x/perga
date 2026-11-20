@@ -144,12 +144,15 @@ public sealed class PolicyGuardMailTerminalScheduleBootTests
         var terms = await ctx.Kernel.ListTerminalsAsync(trackId);
         Assert.Equal(TerminalStatus.Exited, terms[0].Status);
 
-        // 2. Schedule wake invokes BuildScheduleWakePrompt and wakes LeadSessionId
+        // 2. Schedule wake invokes after(schedule.fired) and wakes LeadSessionId
         var turnsBeforeSched = ctx.Store.GetTurnsForSession(leadId).Count;
-        await ctx.Kernel.TriggerScheduleWakeAsync(trackId, "daily-check");
+        await ctx.Kernel.TriggerTrackScheduleAsync(trackId, "daily-check");
         Assert.Equal(turnsBeforeSched + 1, ctx.Store.GetTurnsForSession(leadId).Count);
 
         // 3. Human single-block update (PUT /api/v1/tracks/{trackId}/report/blocks/{blockId}) wakes LeadSessionId
+        var emptyReport = await ctx.Kernel.ReadReportAsync(trackId);
+        await ctx.Kernel.CommitReportAsync(trackId, leadId, new(emptyReport.Anchor,
+            [new BlockOp.UpsertBlockOp(null, ReportBlockKind.Prose, "# Overview\n\nEditable content.\n", null)]));
         var reportBefore = await ctx.Kernel.ReadReportAsync(trackId);
         var targetBlock = reportBefore.Blocks[0];
         var turnsBeforeHumanEdit = ctx.Store.GetTurnsForSession(leadId).Count;

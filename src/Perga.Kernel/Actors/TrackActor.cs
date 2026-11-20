@@ -31,6 +31,7 @@ public sealed partial class TrackActor : IAsyncDisposable
     private readonly EventHub _eventHub;
     private readonly KernelOptions _options;
     private readonly TimeProvider _timeProvider;
+    private readonly IScheduleCronEvaluator? _scheduleCronEvaluator;
 
     private readonly Channel<Func<TrackActor, Task>> _mailbox;
     private readonly CancellationTokenSource _actorShutdownCts = new();
@@ -77,12 +78,13 @@ public sealed partial class TrackActor : IAsyncDisposable
         IShellCommandRunner commandRunner,
         EventHub eventHub,
         KernelOptions options,
-        TimeProvider timeProvider)
+        TimeProvider timeProvider, IScheduleCronEvaluator? scheduleCronEvaluator)
     {
         TrackId = trackId;
         _scheduler = new SessionTurnScheduler(this);
         _turnRunner = new SessionTurnRunner(this);
         _store = store;
+        _scheduleCronEvaluator = scheduleCronEvaluator;
         _reportEngine = reportEngine;
         _policyVm = policyVm;
         _templateCatalog = templateCatalog;
@@ -334,6 +336,7 @@ public sealed partial class TrackActor : IAsyncDisposable
                 policy = templateId is not null
                     ? _templateCatalog.GetRequiredPolicy(templateId)
                     : _templateCatalog.GetOrCompileSnapshot(source!);
+                TemplateSchedules.ValidateInputs(_policyVm, policy, nextInputs);
                 var init = _policyVm.InitState(policy, nextInputs);
                 state = (init.Output.ValueKind != JsonValueKind.Undefined ? init.Output : init.NextState).Clone();
             }
@@ -353,11 +356,12 @@ public sealed partial class TrackActor : IAsyncDisposable
                 EnabledPlugins = _track.EnabledPlugins.Concat(policy.Manifest.DefaultPlugins).Distinct(StringComparer.Ordinal).ToArray(),
                 UpdatedAtMs = now
             };
+            var schedules = TemplateSchedules.Materialize(policy, nextInputs, TrackId, now, _policyVm, _scheduleCronEvaluator);
             if (dryRun) return new TemplateSetResult(TemplatePresentation.Project(nextTrack, policy, _policyVm), warnings, true);
             var evt = new EventEnvelopeDto(null, nextTrack.AreaId, TrackId, KernelEventKinds.TrackUpdated,
                 JsonHelpers.ToElement(TemplatePresentation.Project(nextTrack, policy, _policyVm)), now);
             await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
-            await _store.UpdateTrackTemplateAndEmitAsync(nextTrack, policy.JsSource, evt, ct).ConfigureAwait(false);
+            await _store.UpdateTrackTemplateAndEmitAsync(nextTrack, policy.JsSource, evt, ct, schedules).ConfigureAwait(false);
             _policy = policy;
             _policyUnavailableReason = null;
             _policyGeneration = Guid.NewGuid().ToString("N");
@@ -3119,7 +3123,7 @@ public sealed partial class TrackActor : IAsyncDisposable
         _tasks.Add(updated);
     }
 
-    private async Task UpdateTemplateStateIfChangedCoreAsync(JsonElement nextState, CancellationToken ct)
+    private async Task UpdateTemplateStateIfChangedCoreAsync(JsonElement nextState, CancellationToken ct, bool emitEvent = false)
     {
         if (nextState.ValueKind == JsonValueKind.Undefined || JsonElement.DeepEquals(_track.TemplateState, nextState))
         {
@@ -3127,8 +3131,12 @@ public sealed partial class TrackActor : IAsyncDisposable
         }
 
         var nextTrack = _track with { TemplateState = nextState.Clone(), UpdatedAtMs = NowMs() };
-        await _store.UpdateTrackAndEmitAsync(nextTrack, evt: null, ct).ConfigureAwait(false);
+        var evt = emitEvent ? new EventEnvelopeDto(null, nextTrack.AreaId, TrackId, KernelEventKinds.TrackUpdated,
+            JsonHelpers.ToElement(TemplatePresentation.Project(nextTrack, _policy, _policyVm)), nextTrack.UpdatedAtMs) : null;
+        if (evt is not null) await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
+        await _store.UpdateTrackAndEmitAsync(nextTrack, evt, ct).ConfigureAwait(false);
         _track = nextTrack;
+        if (evt is not null) await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, evt, CancellationToken.None).ConfigureAwait(false);
     }
 
     private async Task EmitTrackUpdatedCoreAsync(long now, CancellationToken ct)

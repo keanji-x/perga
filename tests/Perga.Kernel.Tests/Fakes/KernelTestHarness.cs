@@ -382,6 +382,7 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
             if (firstInput is not null)
                 throw new NotSupportedException("Durable first inputs are tested with SQLite.");
             _tracks.Add(track.Id, track);
+            SyncTemplateSchedulesLocked(track.Id, creation.TemplateSchedules);
             _reports[track.Id] = report;
             _revisions[(track.Id, report.DocRev)] = new InMemoryReportDocEngine().CompressZstd(report.Blocks);
             _templateSnapshots[track.Id] = templateSnapshot;
@@ -466,16 +467,13 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
         }
     }
 
-    public Task UpdateTrackTemplateAndEmitAsync(TrackDto track, string? templateSnapshot, EventEnvelopeDto evt, CancellationToken ct)
+    public Task UpdateTrackTemplateAndEmitAsync(TrackDto track, string? templateSnapshot, EventEnvelopeDto evt, CancellationToken ct, IReadOnlyList<TrackScheduleDto>? templateSchedules = null, bool refreshPromptsOnly = false)
     {
         lock (_gate)
         {
             if (FailTemplateUpdate) throw new IOException("template persistence failure");
             _templateSnapshots[track.Id] = templateSnapshot;
-            for (var i = 0; i < _trackWakes.Count; i++)
-                if (_trackWakes[i] is { State: TrackWakeStates.Pending, Kind: TrackWakeKinds.Schedule } w &&
-                    w.TrackId == track.Id && !TrackWakeRequests.IsTrackScheduleWake(w))
-                    _trackWakes[i] = w with { State = TrackWakeStates.Dropped, Reason = TrackWakeReasons.TemplateChanged };
+            SyncTemplateSchedulesLocked(track.Id, refreshPromptsOnly ? (templateSchedules ?? []).Where(s => _trackSchedules.Any(old => old.TrackId == track.Id && old.Id == s.Id && old.SourceKind == "template" && old.State == "active")).ToArray() : templateSchedules ?? []);
             return UpdateTrackAndEmitAsync(track, evt, ct);
         }
     }
@@ -1276,7 +1274,7 @@ internal sealed class ConfigurableFakePolicyVm : IPolicyVm
     public Func<CompiledPolicy, JsonElement, PolicyEvalResult<JsonElement>>? OnInitState { get; set; }
     public Func<CompiledPolicy, string, JsonElement, JsonElement, PolicyEvalResult<GuardDecision>>? OnBefore { get; set; }
     public Func<CompiledPolicy, string, JsonElement, JsonElement, PolicyEvalResult<string?>>? OnAfter { get; set; }
-    public Func<CompiledPolicy, string, JsonElement, JsonElement, PolicyEvalResult<string?>>? OnBuildScheduleWake { get; set; }
+    public Func<CompiledPolicy, string, JsonElement, JsonElement, PolicyEvalResult<string?>>? OnScheduleFired { get; set; }
     public ConcurrentQueue<JsonElement> RecordedSettledEvents { get; } = new();
 
     public TemplateHeaderView? EvaluateHeaderView(CompiledPolicy policy, PolicyHeaderViewContext ctx, JsonElement state) => null;
@@ -1315,8 +1313,7 @@ internal sealed class ConfigurableFakePolicyVm : IPolicyVm
                 WorkspaceCloseCmd: closeCmdMatch.Success ? closeCmdMatch.Groups[1].Value : null,
                 AfterWorkerDoneCmd: afterCmdMatch.Success ? afterCmdMatch.Groups[1].Value : null,
                 Schedules: [new ScheduleSpec("daily-check", "0 9 * * *", "UTC", "Static daily check prompt")],
-                Routing: [],
-                InitialReportMarkdown: "# Overview\n\nInitial template markdown.\n");
+                Routing: []);
         }
 
         return new CompiledPolicy(manifest.Id, jsModuleSource, manifest);
@@ -1344,20 +1341,16 @@ internal sealed class ConfigurableFakePolicyVm : IPolicyVm
 
     public PolicyEvalResult<string?> After(CompiledPolicy policy, string eventName, string trackId, JsonElement data, JsonElement inputs, JsonElement state)
     {
+        if (eventName == "schedule.fired" && OnScheduleFired is not null)
+            return OnScheduleFired(policy, data.GetProperty("scheduleId").GetString()!, inputs, state);
         if (eventName == "task.settled") RecordedSettledEvents.Enqueue(data);
         return OnAfter?.Invoke(policy, eventName, data, state) ?? new(state,
             eventName == "task.settled" ? $"Policy noted {data.GetProperty("taskKey").GetString()} -> {data.GetProperty("attemptStatus").GetString()}" : null);
     }
 
-    public PolicyEvalResult<string?> BuildScheduleWakePrompt(CompiledPolicy policy, string scheduleId, JsonElement inputs, JsonElement state)
-    {
-        if (OnBuildScheduleWake is not null)
-        {
-            return OnBuildScheduleWake(policy, scheduleId, inputs, state);
-        }
+    public void ValidateInputs(CompiledPolicy policy, JsonElement inputs) => new PolicyVm.PolicyVm().ValidateInputs(policy, inputs);
+    public string InterpolateInputs(CompiledPolicy policy, string text, JsonElement inputs) => new PolicyVm.PolicyVm().InterpolateInputs(policy, text, inputs);
 
-        return new PolicyEvalResult<string?>(state, $"Dynamic wake prompt for schedule '{scheduleId}'.");
-    }
 }
 
 internal sealed class ScriptableFakeAgentSession : IAgentSession
@@ -1782,7 +1775,7 @@ internal sealed partial class KernelTestContext : IAsyncDisposable
             options: effectiveOptions,
             commandRunner: CommandRunner,
             eventHub: EventHub,
-            timeProvider: Time);
+            timeProvider: Time, scheduleCronEvaluator: new TestScheduleCronEvaluator());
     }
 
     public async Task<(AreaDto Area, TrackAggregateSnapshot TrackSnap)> CreateDefaultTrackAsync(
@@ -1802,4 +1795,13 @@ internal sealed partial class KernelTestContext : IAsyncDisposable
     }
 
     public ValueTask DisposeAsync() => Kernel.DisposeAsync();
+}
+
+internal sealed class TestScheduleCronEvaluator : IScheduleCronEvaluator
+{
+    public bool TryValidate(string cron, string timezone, out string normalizedTimezone, out string? error)
+    {
+        normalizedTimezone = timezone; error = null; return true;
+    }
+    public long? GetNextOccurrenceMs(string cron, string timezone, long afterMs) => afterMs + 60_000;
 }

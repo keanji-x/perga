@@ -35,6 +35,7 @@ public sealed partial class PolicyVm
             var definition = engine.Modules.Import(name).Get("default");
             // Validate every source before merging: a child must not hide a legacy base hook.
             RejectLegacyHooks(definition);
+            if (definition is ObjectInstance sourceDefinition) ParseSchedules(sourceDefinition);
             return definition;
         }
         return engine.Invoke("__adaptTemplate", Load(source));
@@ -44,6 +45,9 @@ public sealed partial class PolicyVm
     {
         if (definition is not ObjectInstance obj) return;
 
+        Reject(obj, "initialMarkdown", "initialMarkdown");
+        if (!obj.Get("headerView").IsUndefined() && obj.Get("headerView") is not Function)
+            throw new InvalidOperationException("template.headerView must be a function.");
         Reject(obj, "guardToolCall", "guardToolCall");
         Reject(obj, "buildTurnContext", "buildTurnContext");
         if (obj.Get("report") is ObjectInstance report)
@@ -105,16 +109,10 @@ public sealed partial class PolicyVm
     public IReadOnlyList<PolicyTaskRoute> ResolveRoutingTargets(CompiledPolicy policy, JsonElement inputs)
         => policy.Manifest.Routing.Select(rule => ResolveRoutingTarget(policy, rule, inputs)).ToArray();
 
-    private static PolicyTaskRoute ResolveRoutingTarget(CompiledPolicy policy, TaskRoutingRule rule, JsonElement inputs)
+    private PolicyTaskRoute ResolveRoutingTarget(CompiledPolicy policy, TaskRoutingRule rule, JsonElement inputs)
     {
-        string? Interpolate(string? value) => value is null ? null : System.Text.RegularExpressions.Regex.Replace(value,
-            @"\$\{inputs\.([A-Za-z0-9_]+)\}", match => {
-                var key = match.Groups[1].Value;
-                if (inputs.TryGetProperty(key, out var supplied)) return supplied.ToString();
-                if (policy.Manifest.InputsSchema.TryGetProperty(key, out var schema) && schema.TryGetProperty("default", out var fallback)) return fallback.ToString();
-                throw new InvalidOperationException($"Missing routing input: {key}");
-            });
-        return new PolicyTaskRoute(Interpolate(rule.Provider), Interpolate(rule.Model));
+        return new PolicyTaskRoute(rule.Provider is null ? null : InterpolateInputs(policy, rule.Provider, inputs),
+            rule.Model is null ? null : InterpolateInputs(policy, rule.Model, inputs));
     }
 
     private static IReadOnlyList<TaskRoutingRule> ReadRoutingRules(Engine engine, ObjectInstance definition)
@@ -169,8 +167,9 @@ public sealed partial class PolicyVm
         globalThis.__beforeTemplate = (def, type, data, ctx) => def.before?.(__templateAction(type,data),ctx) ?? Allow();
         globalThis.__adaptTemplate = def => {
           if (!def || typeof def !== 'object' || Array.isArray(def)) throw new TypeError('Invalid template definition');
-          for (const key of ['before','after','initialState','turnContext'])
+          for (const key of ['before','after','initialState','turnContext','headerView'])
             if (def[key] != null && typeof def[key] !== 'function') throw new TypeError('template.' + key + ' must be a function');
+          if (def.headerView !== undefined && typeof def.headerView !== 'function') throw new TypeError('template.headerView must be a function');
           for (const key of ['report','tasks'])
             if (def[key] != null && (typeof def[key] !== 'object' || Array.isArray(def[key]))) throw new TypeError('template.' + key + ' must be an object');
           return def;

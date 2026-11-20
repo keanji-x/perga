@@ -417,7 +417,8 @@ public sealed record ScheduleSpec(
     string Id,
     string Cron,
     string Timezone,
-    string? StaticWakePrompt = null);
+    string Prompt,
+    string? Title = null);
 
 public sealed record CompiledTemplateManifest(
     string Id,
@@ -433,8 +434,7 @@ public sealed record CompiledTemplateManifest(
     string? WorkspaceCreateCmd,
     string? WorkspaceCloseCmd,
     string? AfterWorkerDoneCmd,
-    IReadOnlyList<ScheduleSpec> Schedules,
-    string InitialReportMarkdown);
+    IReadOnlyList<ScheduleSpec> Schedules);
 
 public sealed record CompiledPolicy(
     string TemplateId,
@@ -490,7 +490,8 @@ public interface IPolicyVm
     PolicyEvalResult<string?> After(CompiledPolicy policy, string eventName, string trackId, JsonElement data, JsonElement inputs, JsonElement state);
     PolicyEvalResult<PolicyTurnPreparation> PrepareTurn(CompiledPolicy policy, PolicyTurnContext ctx, JsonElement state);
     PolicyTaskRoute RouteTaskDispatch(CompiledPolicy policy, string? role, string access, string? provider, string? model, JsonElement inputs);
-    PolicyEvalResult<string?> BuildScheduleWakePrompt(CompiledPolicy policy, string scheduleId, JsonElement inputs, JsonElement state);
+    void ValidateInputs(CompiledPolicy policy, JsonElement inputs);
+    string InterpolateInputs(CompiledPolicy policy, string text, JsonElement inputs);
 }
 ```
 
@@ -538,7 +539,6 @@ export interface PergaTemplateDefinition<TState = Record<string, any>, TInputs =
   plugins?: string[];
   inputs?: Record<string, { type: "string" | "number" | "boolean" | "enum"; values?: string[]; default?: any; optional?: boolean; label?: string }>;
   initialState?: (inputs: TInputs) => TState;
-  initialMarkdown?: string;
   headerView?: (ctx: TemplateContext<TState, TInputs>) => TemplateHeaderView;
   workspace?: {
     driver?: string;
@@ -568,7 +568,8 @@ export interface PergaTemplateDefinition<TState = Record<string, any>, TInputs =
     id: string;
     cron: string;
     timezone?: string;
-    wakePrompt: string | ((ctx: TemplateContext<TState, TInputs>) => string);
+    title?: string;
+    prompt: string;
   }>;
 }
 

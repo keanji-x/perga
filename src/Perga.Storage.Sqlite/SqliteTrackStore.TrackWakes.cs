@@ -57,6 +57,15 @@ public sealed partial class SqliteTrackStore : ITrackWakeStore
             " WHERE track_id=@TrackId ORDER BY ordinal;", new { TrackId = trackId }, cancellationToken: ct)).ConfigureAwait(false)).AsList();
     }
 
+    public async Task<IReadOnlyList<TrackWake>> ListScheduleRunsAsync(string trackId, int limit, CancellationToken ct)
+    {
+        EnsureInitialized();
+        await using var conn = await OpenReadConnectionAsync(ct).ConfigureAwait(false);
+        return (await conn.QueryAsync<TrackWake>(new CommandDefinition(WakeSelect +
+            " WHERE track_id=@TrackId AND kind='schedule' ORDER BY ordinal DESC LIMIT @Limit;",
+            new { TrackId = trackId, Limit = limit }, cancellationToken: ct)).ConfigureAwait(false)).AsList();
+    }
+
     public async Task<IReadOnlyList<string>> ListPendingTracksAsync(CancellationToken ct)
     {
         EnsureInitialized();

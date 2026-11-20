@@ -101,6 +101,7 @@ const investmentResearchTemplate = {
     ].join("\n");
   },
   after: (event, ctx) => {
+    if (event.type === "schedule.fired") return event.prompt;
     if (event.type !== "task.settled") return;
     if (event.attemptStatus === "done") {
       if (!ctx.state.completedAnalyses.includes(event.taskKey)) {
@@ -176,14 +177,13 @@ const investmentResearchTemplate = {
       id: "market-open-brief",
       cron: "25 9 * * 1-5",
       timezone: "Asia/Shanghai",
-      wakePrompt: (ctx) =>
-        `Pre-open check for ${ctx.inputs.tickerOrTheme} vs ${ctx.inputs.benchmark}: scan overnight filings, macro releases, and factor moves.`
+      prompt: "Pre-open check for ${inputs.tickerOrTheme} vs ${inputs.benchmark}: scan overnight filings, macro releases, and factor moves."
     },
     {
       id: "post-close-attribution",
       cron: "30 15 * * 1-5",
       timezone: "Asia/Shanghai",
-      wakePrompt:
+      prompt:
         "Run post-close Barra factor attribution and archive any material price/volume anomalies."
     }
   ]
