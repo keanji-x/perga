@@ -142,11 +142,12 @@ public sealed partial class TrackActor
             var startup = _scheduler.BeginStartup(input.Receipt.SessionId, input.Receipt.TurnId);
             // Capture a token before activation can dispose the scheduler's source.
             var startupToken = startup.Token;
+            var expectedEpoch = input.Epoch;
             try
             {
                 await WaitForWorkspacePreparationAsync(startupToken).ConfigureAwait(false);
                 await _turnRunner.RunAsync(new SessionInputBatchWorkItem(this, input), _actorShutdownCts.Token,
-                    startupCancellation: startupToken).ConfigureAwait(false);
+                    startupCancellation: startupToken, compactedEpoch: epoch => expectedEpoch = epoch).ConfigureAwait(false);
             }
             catch (OperationCanceledException error) when (!_actorShutdownCts.IsCancellationRequested)
             {
@@ -170,7 +171,7 @@ public sealed partial class TrackActor
                 if (!_actorShutdownCts.IsCancellationRequested)
                     await EnqueueAsync(async _ =>
                     {
-                        if (RequireSessionCore(input.Receipt.SessionId).Epoch == input.Epoch)
+                        if (RequireSessionCore(input.Receipt.SessionId).Epoch == expectedEpoch)
                             await PokeSessionCoreAsync(input.Receipt.SessionId).ConfigureAwait(false);
                     }, CancellationToken.None).ConfigureAwait(false);
             }

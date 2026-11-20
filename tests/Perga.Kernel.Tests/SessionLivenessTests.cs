@@ -26,6 +26,99 @@ public sealed class SessionLivenessTests
     }
 
     [Theory]
+    [InlineData(false, false, false)]
+    [InlineData(false, true, false)]
+    [InlineData(false, false, true)]
+    [InlineData(false, true, true)]
+    [InlineData(true, false, false)]
+    [InlineData(true, true, false)]
+    public async Task FailedLaunchOrReconfigurationRetainsUnconfirmedShutdown(bool mismatch, bool throws, bool configureThrows)
+    {
+        await using var ctx = new KernelTestContext();
+        var (_, snap) = await ctx.CreateDefaultTrackAsync();
+        var id = snap.Track.LeadSessionId!;
+        await ctx.SendAndWaitForTurnAsync(id, new("first", "first"));
+        ctx.Kernel.DispatchAdmission.SetDraining(true);
+        if (!mismatch)
+        {
+            ctx.Kernel.DispatchAdmission.SetDraining(false);
+            var old = ctx.AgentRuntime.OpenedSessions.Last();
+            if (configureThrows) old.ConfigureHandler = _ => throw new IOException("configure failed");
+            old.ShutdownConfirmed = false;
+            old.FailDisposal = throws;
+            await Assert.ThrowsAnyAsync<Exception>(() => ctx.Kernel.UpdateSessionModelAsync(id, new("B", "high")));
+        }
+        else
+        {
+            await ctx.Kernel.UpdateSessionModelAsync(id, new("B", "high"));
+            ctx.AgentRuntime.OnOpenedSession = agent => {
+                agent.NativeThreadId = "wrong";
+                agent.ShutdownConfirmed = false;
+                agent.FailDisposal = throws;
+            };
+            ctx.Kernel.DispatchAdmission.SetDraining(false);
+            await ctx.Kernel.AcceptMessageAsync(id, new("reopen", "reopen"), default);
+            await ctx.Kernel.WaitForTrackIdleAsync(snap.Track.Id).WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        ctx.Kernel.DispatchAdmission.SetDraining(false);
+        var retained = ctx.AgentRuntime.OpenedSessions.Last();
+        var epoch = (await ctx.Kernel.GetSessionItemsAsync(id)).Session.Epoch;
+        await Assert.ThrowsAnyAsync<Exception>(() => ctx.Kernel.RecoverSessionAsync(id, new("reset_context"), default));
+        Assert.Equal(epoch, (await ctx.Kernel.GetSessionItemsAsync(id)).Session.Epoch);
+        await Assert.ThrowsAnyAsync<Exception>(() => ctx.Kernel.AcceptMessageAsync(id, new("blocked", "blocked"), default));
+        retained.ShutdownConfirmed = true;
+        retained.FailDisposal = false;
+        await ctx.Kernel.RecoverSessionAsync(id, new("reset_context"), default);
+        Assert.Equal(epoch + 1, (await ctx.Kernel.GetSessionItemsAsync(id)).Session.Epoch);
+    }
+
+    [Fact]
+    public async Task ReconfigurationDisposalTimeoutIsJoinedByResetBeforeEpochAdvances()
+    {
+        await using var ctx = new KernelTestContext(new KernelOptions { SessionStartupTimeout = TimeSpan.FromMilliseconds(100) });
+        var (_, snap) = await ctx.CreateDefaultTrackAsync();
+        var id = snap.Track.LeadSessionId!;
+        await ctx.SendAndWaitForTurnAsync(id, new("first", "first"));
+        var agent = ctx.AgentRuntime.OpenedSessions.Single();
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        agent.DisposeHandler = () => release.Task;
+        agent.ShutdownConfirmed = false;
+        await Assert.ThrowsAnyAsync<Exception>(() => ctx.Kernel.UpdateSessionModelAsync(id, new("B", "high")));
+        var reset = ctx.Kernel.RecoverSessionAsync(id, new("reset_context"), default);
+        await Assert.ThrowsAnyAsync<Exception>(() => ctx.Kernel.AcceptMessageAsync(id, new("blocked", "blocked"), default));
+        Assert.False(reset.IsCompleted);
+        Assert.Equal(1, agent.DisposeCalls);
+        Assert.Equal(1, (await ctx.Kernel.GetSessionItemsAsync(id)).Session.Epoch);
+        release.SetResult();
+        await Assert.ThrowsAnyAsync<Exception>(() => reset);
+        agent.ShutdownConfirmed = true;
+        await ctx.Kernel.RecoverSessionAsync(id, new("reset_context"), default);
+        Assert.Equal(2, (await ctx.Kernel.GetSessionItemsAsync(id)).Session.Epoch);
+    }
+
+    [Fact]
+    public async Task TimedOutLateLaunchRetainsOwnershipUntilShutdownConfirmed()
+    {
+        await using var ctx = new KernelTestContext(new KernelOptions { SessionStartupTimeout = TimeSpan.FromMilliseconds(100) });
+        var (_, snap) = await ctx.CreateDefaultTrackAsync();
+        var id = snap.Track.LeadSessionId!;
+        var launch = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        ctx.AgentRuntime.BeforeOpenAsync = () => launch.Task;
+        ctx.AgentRuntime.OnOpenedSession = agent => { agent.ShutdownConfirmed = false; agent.FailDisposal = true; };
+        await ctx.Kernel.AcceptMessageAsync(id, new("slow", "slow"), default);
+        await ctx.Kernel.WaitForTrackIdleAsync(snap.Track.Id).WaitAsync(TimeSpan.FromSeconds(5));
+        launch.SetResult();
+        while (ctx.AgentRuntime.OpenedSessions.IsEmpty) await Task.Delay(10);
+        await Assert.ThrowsAnyAsync<Exception>(() => ctx.Kernel.RecoverSessionAsync(id, new("reset_context"), default));
+        await Assert.ThrowsAnyAsync<Exception>(() => ctx.Kernel.AcceptMessageAsync(id, new("blocked", "blocked"), default));
+        var agent = ctx.AgentRuntime.OpenedSessions.Single();
+        agent.FailDisposal = false;
+        agent.ShutdownConfirmed = true;
+        await ctx.Kernel.RecoverSessionAsync(id, new("reset_context"), default);
+        Assert.Equal(2, (await ctx.Kernel.GetSessionItemsAsync(id)).Session.Epoch);
+    }
+
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task StartupIdentityLossFencesSessionEvenWithoutQueue(bool mismatch)

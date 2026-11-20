@@ -80,6 +80,9 @@ export function useConversationOutbox({
   const run = (op: SendOp & { phase: 'sending' }, admittedAtPress: ApiTransportPort): Promise<void> => {
     const sentTo = cardId;
     const { key, echo, fromComposer, target } = op;
+    const generation = registry.sendGenerationOf(sentTo);
+    const current = () => registry.sendGenerationOf(sentTo) === generation;
+    const requireCurrent = () => { if (!current()) throw new KeyedSendFailure(new NotSentError(), 'refused'); };
     const attachments: readonly PlannerAttachment[] = echo.attachments ?? [];
     const settle = (next: SendOp | null) => editOutbox(sentTo, (current) => settleSendOp(current, key, next));
     /* An unknown answer is sent again under the same key, so the server queues the message at most once. Each
@@ -87,6 +90,7 @@ export function useConversationOutbox({
     const admitRetry = (): ApiTransportPort | null => { try { return admitTransport(transport); } catch { return null; } };
     const deliver = () => retryUnknownSend(
       (attempt) => {
+        requireCurrent();
         const admitted = attempt === 0 ? admittedAtPress : admitRetry();
         return admitted === null ? Promise.reject(new NotSentError())
           : send(echo.text, attachments.map((attachment) => attachment.id), key, admitted, queueIfBusy, target);
@@ -102,10 +106,13 @@ export function useConversationOutbox({
     const prerequisite = registry.permissionWriteOf(sentTo);
     const delivery = prerequisite === undefined ? deliver() : prerequisite.then(deliver,
       (error: unknown) => { throw new KeyedSendFailure(error, op.unknown ? 'unknown' : 'refused'); });
-    return delivery.then(() => {
+    return delivery.then(answer => {
+      if (!current()) return;
+      if (answer.sent.turnId !== undefined) registry.rememberAcceptedTurn(sentTo, answer.sent.turnId);
       if (fromComposer) releaseComposerImages(sentTo, attachments);
       settle(null);
     }, (error: unknown) => {
+      if (!current()) return;
       const failed = error instanceof KeyedSendFailure ? error : new KeyedSendFailure(error, 'unknown');
       const message = failed.cause instanceof Error && failed.cause.message !== '' ? failed.cause.message : 'Could not send the message.';
       /* `message` is shown only for an op that was not sent: an unknown op's footer says no more than that it is unconfirmed. */

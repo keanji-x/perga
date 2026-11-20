@@ -39,7 +39,8 @@ public sealed partial class TrackActor
 
     private void RequireSessionDispatchAvailableCore(string sessionId)
     {
-        if (_scheduler.HasResumeHold(sessionId) || RequireSessionCore(sessionId).Status == "unknown")
+        if (_sessionShutdownPending.ContainsKey(sessionId) || _pendingSessionLaunches.ContainsKey(sessionId) ||
+            _scheduler.HasResumeHold(sessionId) || RequireSessionCore(sessionId).Status == "unknown")
             throw KernelException.PreconditionFailed("Recover the provider session before sending more input.");
     }
 
@@ -131,6 +132,23 @@ public sealed partial class TrackActor
         var success = false;
         try
         {
+            var pending = await EnqueueAsync(_ => Task.FromResult(
+                _pendingSessionLaunches.GetValueOrDefault(sessionId)), ct).ConfigureAwait(false);
+            if (pending is not null)
+            {
+                IAgentSession? late = null;
+                try { late = await pending.Launch.WaitAsync(ct).ConfigureAwait(false); }
+                catch (Exception) when (pending.Launch.IsFaulted || pending.Launch.IsCanceled) { /* No handle was created. */ }
+                if (late is not null)
+                {
+                    // Join the original cleanup before deciding whether another disposal is needed.
+                    try { await pending.Cleanup.WaitAsync(ct).ConfigureAwait(false); }
+                    catch (Exception) when (pending.Cleanup.IsCompleted && !ct.IsCancellationRequested) { }
+                    if (!pending.Cleanup.IsCompletedSuccessfully || !late.ShutdownConfirmed)
+                        await ConfirmProviderShutdownAsync(sessionId, late, ct).ConfigureAwait(false);
+                }
+                await EnqueueAsync(_ => { _pendingSessionLaunches.TryRemove(sessionId, out var removedLaunch); return Task.CompletedTask; }, ct).ConfigureAwait(false);
+            }
             var old = await EnqueueAsync(_ => Task.FromResult(
                 _openSessionHandles.TryGetValue(sessionId, out var handle) ? handle.Agent : null), ct).ConfigureAwait(false);
             // Adapter disposal kills the entire owned subprocess tree. Never clear identity before confirmation.
@@ -138,9 +156,7 @@ public sealed partial class TrackActor
             {
                 if (mode == "reconnect" && old.SupportsScopedClose)
                     await old.TryCloseSessionAsync(ct).WaitAsync(ct).ConfigureAwait(false);
-                await old.DisposeAsync().AsTask().WaitAsync(ct).ConfigureAwait(false);
-                if (!old.ShutdownConfirmed)
-                    throw KernelException.PreconditionFailed("The previous provider subprocess shutdown was not confirmed.");
+                await ConfirmProviderShutdownAsync(sessionId, old, ct).ConfigureAwait(false);
             }
             var spec = await EnqueueAsync(async _ =>
             {
@@ -148,13 +164,14 @@ public sealed partial class TrackActor
                 RequireResumeWorkspaceCore(session);
                 if (session.Epoch != opEpoch) throw KernelException.Conflict("Session epoch changed during recovery.");
                 _openSessionHandles.Remove(sessionId);
+                _sessionShutdownPending.TryRemove(sessionId, out var removedShutdown);
                 _mcpBridge.RevokeSession(sessionId);
                 return mode == "reconnect" ? await BuildAgentLaunchSpecCoreAsync(session, null, ct).ConfigureAwait(false) : null;
             }, ct).ConfigureAwait(false);
             if (spec is not null)
             {
                 using var launch = await _options.DispatchAdmission.EnterAsync(ct).ConfigureAwait(false);
-                replacement = await OpenAgentSessionBoundedAsync(spec, ct).ConfigureAwait(false);
+                replacement = await OpenAgentSessionBoundedAsync(sessionId, spec, ct).ConfigureAwait(false);
                 // Retain ownership even if validation or cleanup fails, so a later reset can stop this process.
                 await EnqueueAsync(_ =>
                 {
@@ -216,9 +233,15 @@ public sealed partial class TrackActor
         }
         finally
         {
+            var replacementShutdownConfirmed = false;
             if (!success && replacement is not null)
             {
-                try { await replacement.DisposeAsync().AsTask().WaitAsync(KernelOptions.SessionResumeTimeout).ConfigureAwait(false); }
+                try
+                {
+                    using var cleanup = new CancellationTokenSource(KernelOptions.SessionResumeTimeout);
+                    await ConfirmProviderShutdownAsync(sessionId, replacement, cleanup.Token).ConfigureAwait(false);
+                    replacementShutdownConfirmed = true;
+                }
                 catch { /* Keep ownership for the next recovery if shutdown could not be confirmed. */ }
             }
             if (!_actorShutdownCts.IsCancellationRequested)
@@ -227,8 +250,8 @@ public sealed partial class TrackActor
                     hold.Busy = false;
                     if (RequireSessionCore(sessionId).Epoch != (success && mode == "reset_context" ? opEpoch + 1 : opEpoch)) return;
                     if (!success) _mcpBridge.RevokeSession(sessionId);
-                    if (RequireSessionCore(sessionId).Status == "idle") ReleaseSessionResumeCore(sessionId);
-                    if (!success && replacement?.ShutdownConfirmed == true &&
+                    if (RequireSessionCore(sessionId).Status == "idle" && !_sessionShutdownPending.ContainsKey(sessionId)) ReleaseSessionResumeCore(sessionId);
+                    if (!success && replacementShutdownConfirmed &&
                         _openSessionHandles.TryGetValue(sessionId, out var current) && ReferenceEquals(current.Agent, replacement))
                         _openSessionHandles.Remove(sessionId);
                     NotifyQueueChangedCore(sessionId);

@@ -134,6 +134,11 @@ export type ConversationRegistry = Readonly<{
   adoptedDraftIdOf: (scopeId: string) => string | null;
   finishDraftAdoption: (scopeId: string, conversationId: string) => void;
   /** Each conversation's keyed sends not yet shown by the server, above every route remount. */
+  acceptedTurnOf: (id: string) => string | null;
+  rememberAcceptedTurn: (id: string, turnId: string | null) => void;
+  sendGenerationOf: (id: string) => number;
+  invalidateSends: (id: string) => void;
+  observeEpoch: (id: string, epoch: number) => void;
   outboxOf: (conversationId: string) => readonly ConversationOutboxOp[];
   /** Start a send there (`beginSendOp`): false while that conversation cannot take it. One active operation per conversation. */
   beginSend: (conversationId: string, op: SendOp) => boolean;

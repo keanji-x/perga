@@ -1528,14 +1528,21 @@ internal sealed class ScriptableFakeAgentSession : IAgentSession
         return Task.FromResult(SteerDelivery.Accepted);
     }
 
-    public ValueTask DisposeAsync()
+    public bool ShutdownConfirmed { get; set; } = true;
+    public bool FailDisposal { get; set; }
+    public Func<Task>? DisposeHandler { get; set; }
+    public int DisposeCalls { get; private set; }
+
+    public async ValueTask DisposeAsync()
     {
+        DisposeCalls++;
+        if (FailDisposal) throw new IOException("shutdown failed");
+        if (DisposeHandler is not null) await DisposeHandler();
         lock (_approvalLock)
         {
             Disposed = true;
             ExpireApprovals();
         }
-        return ValueTask.CompletedTask;
     }
 }
 
@@ -1547,6 +1554,7 @@ internal sealed class ScriptableFakeAgentRuntime : IAgentRuntime
 
     public ConcurrentQueue<ScriptableFakeAgentSession> OpenedSessions { get; } = new();
     public Action<HarnessLaunchSpec>? OnBeforeOpenSession { get; set; }
+    public Func<Task>? BeforeOpenAsync { get; set; }
     public Action<ScriptableFakeAgentSession>? OnOpenedSession { get; set; }
 
     public Func<ScriptableFakeAgentSession, TurnInput, CancellationToken, IAsyncEnumerable<UnifiedAgentEvent>>? TurnScript { get; set; }
@@ -1563,8 +1571,9 @@ internal sealed class ScriptableFakeAgentRuntime : IAgentRuntime
         return ProbeScript?.Invoke(ct) ?? Task.FromResult(Providers);
     }
 
-    public Task<IAgentSession> OpenSessionAsync(HarnessLaunchSpec spec, CancellationToken ct)
+    public async Task<IAgentSession> OpenSessionAsync(HarnessLaunchSpec spec, CancellationToken ct)
     {
+        if (BeforeOpenAsync is not null) await BeforeOpenAsync();
         OnBeforeOpenSession?.Invoke(spec);
         var threadId = spec.ResumeNativeThreadId ?? $"thr_{Interlocked.Increment(ref _threadCounter)}";
         var session = new ScriptableFakeAgentSession(
@@ -1574,7 +1583,7 @@ internal sealed class ScriptableFakeAgentRuntime : IAgentRuntime
         session.SupportsSessionResume = SupportsSessionResume;
         OpenedSessions.Enqueue(session);
         OnOpenedSession?.Invoke(session);
-        return Task.FromResult<IAgentSession>(session);
+        return session;
     }
 
     private static async IAsyncEnumerable<UnifiedAgentEvent> DefaultTurnScript(

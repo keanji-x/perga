@@ -3,11 +3,42 @@ using Perga.AgentKit;
 using Perga.Contracts;
 using Perga.Kernel.Tests.Fakes;
 using Perga.ReportDoc;
+using Perga.Kernel.Ports;
 
 namespace Perga.Kernel.Tests;
 
 public sealed class SessionStreamingAndCompactionTests
 {
+    [Fact]
+    public async Task AutomaticHandoverReleasesDurableDispatchThenDrainsFollowupAndWake()
+    {
+        await using var ctx = new KernelTestContext();
+        var (_, snap) = await ctx.CreateDefaultTrackAsync();
+        var id = snap.Track.LeadSessionId!;
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var calls = 0;
+        async IAsyncEnumerable<UnifiedAgentEvent> Stream(ScriptableFakeAgentSession agent, TurnInput input,
+            [EnumeratorCancellation] CancellationToken ct)
+        {
+            var call = Interlocked.Increment(ref calls);
+            if (call == 1) { entered.SetResult(); await release.Task.WaitAsync(ct); }
+            yield return new UnifiedAgentEvent.ThreadBound(agent.NativeThreadId!);
+            yield return new UnifiedAgentEvent.TextDelta("summary");
+            yield return new UnifiedAgentEvent.TurnCompleted(new TokenUsage(call == 1 ? 85_000 : 100, 0, 0, 100_000));
+        }
+        ctx.AgentRuntime.TurnScript = Stream;
+        await ctx.Kernel.AcceptMessageAsync(id, new("first", "first"), default);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await ctx.Kernel.AcceptMessageAsync(id, new("followup", "followup", QueueIfBusy: true), default);
+        await ctx.Store.TrackWakes.EnqueueAsync(TrackWakeRequests.Prompt(snap.Track.Id, "mail", "mail:handover", "wake"), default);
+        release.SetResult();
+        await ctx.Kernel.WaitForTrackIdleAsync(snap.Track.Id).WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(4, calls); // original, summary, queued followup, wake
+        Assert.All((await ctx.Store.TrackWakes.ListAsync(snap.Track.Id, default)), wake => Assert.Equal("done", wake.State));
+        Assert.Equal(2, (await ctx.Kernel.GetSessionItemsAsync(id)).Session.Epoch);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

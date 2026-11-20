@@ -457,6 +457,7 @@ export type SentPlannerInput = Readonly<{
   /** The queue entry the text is now sitting in, or `null` when it folded into an entry that has no id. */
   entry_id: string | null;
   queued?: boolean | undefined;
+  turnId?: string;
 }>;
 
 /**
@@ -492,6 +493,7 @@ export function sendPlannerInputOperation(
         card_id: receipt.sessionId,
         worker_session_id: receipt.sessionId,
         entry_id: receipt.messageId ?? receipt.inputId,
+        turnId: receipt.turnId,
         ...(queueIfBusy ? { queued: false } : {}),
       })),
       ...(steerIfRunning ? [sessionTurnDtoSchema.transform((turn) => ({

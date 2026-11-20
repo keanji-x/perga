@@ -669,7 +669,7 @@ describe('Perga /api/v1 protocol contracts', () => {
       turnStatus: 'queued',
       statusUrl: '/api/v1/sessions/ses_lead/inputs/inp_77',
       resolvedAtMs: null,
-    })).toEqual({ card_id: 'ses_lead', worker_session_id: 'ses_lead', entry_id: 'inp_77' });
+    })).toEqual({ card_id: 'ses_lead', worker_session_id: 'ses_lead', entry_id: 'inp_77', turnId: 'turn_9' });
 
 
 

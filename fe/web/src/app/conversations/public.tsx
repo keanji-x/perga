@@ -86,3 +86,7 @@ export function useConversationQueueWriteOut(cardId: string | null) {
 export function useConversationRestartOut(cardId: string | null) {
   return useSnapshot(useCallback((state: ConversationSnapshot) => cardId !== null && state.restarts[cardId] === true, [cardId]), cardId !== null);
 }
+
+export function useConversationAcceptedTurn(cardId: string) {
+  return useSnapshot(useCallback((state: ConversationSnapshot) => state.acceptedTurns[cardId] ?? null, [cardId]));
+}

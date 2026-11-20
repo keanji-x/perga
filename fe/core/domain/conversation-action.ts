@@ -36,11 +36,21 @@ export function deriveConversationAction(input: Readonly<{
 /** Shared execution policy for overflow actions and slash commands. */
 export function conversationCommandEnabled(command: 'stop' | 'compact' | 'reconnect' | 'reset' | 'new',
   state: SessionItemsPageDto['state'] | null, readonlyReason: SessionItemsPageDto['readonlyReason'],
-  detail: SessionItemsPageDto['unknownDetail'], recovering: boolean): boolean {
+  detail: SessionItemsPageDto['unknownDetail'], recovering: boolean,
+  capabilities: Readonly<{ canStop: boolean; manualCompactSupported: boolean; canResetContext: boolean }>): boolean {
   if (command === 'new') return true;
   if (readonlyReason !== null || recovering) return false;
-  if (command === 'stop') return state === 'running';
-  if (command === 'compact') return state === 'idle';
+  if (command === 'stop') return capabilities.canStop;
+  if (command === 'compact') return state === 'idle' && capabilities.manualCompactSupported;
   if (command === 'reconnect') return state === 'unknown' && detail?.canReconnect === true;
-  return state === 'idle' || (state === 'unknown' && detail?.canResetContext === true);
+  return capabilities.canResetContext && (state === 'idle' || (state === 'unknown' && detail?.canResetContext === true));
+}
+
+/** Startup identity exists before the provider becomes an active turn. */
+export function conversationStopTurn(run: Pick<SessionItemsPageDto, 'activeTurn' | 'lastTurn'> | undefined,
+  acceptedTurnId: string | null): string | null {
+  if (run?.activeTurn?.status === 'running') return run.activeTurn.id;
+  const last = run?.lastTurn;
+  if (last?.status === 'queued' || last?.status === 'starting' || last?.status === 'running') return last.id;
+  return last?.id === acceptedTurnId ? null : acceptedTurnId;
 }

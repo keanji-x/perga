@@ -788,6 +788,12 @@ function useConversationPane(
   const plannerSwitchBinding = useMemo(() => scope !== null && scope.isLead !== true
     ? { execute: switchPlanner } : undefined, [scope, switchPlanner]);
   const recover = useCommittedCallback(existingId, (mode: 'reconnect' | 'reset_context') => store.recover(mode));
+  const commandEnabled = useCallback((command: 'stop' | 'compact' | 'reconnect' | 'reset') =>
+    conversationCommandEnabled(command, store.sessionState, store.readonlyReason, store.unknownDetail, store.recovering, {
+      canStop: store.canStop, manualCompactSupported: store.manualCompactSupported,
+      canResetContext: store.session?.boundTaskId == null && store.session?.boundAttemptId == null,
+    }), [store.sessionState, store.readonlyReason, store.unknownDetail, store.recovering, store.canStop,
+      store.manualCompactSupported, store.session?.boundTaskId, store.session?.boundAttemptId]);
   const paneCommands = useMemo(() => composerCommands({
     ...conversationCommandBindings({
       newConversation: options?.inline === true ? undefined : newConversation,
@@ -800,13 +806,14 @@ function useConversationPane(
     ...plannerCommands?.(composerStop),
     planner: plannerSwitchBinding,
     ...Object.fromEntries((['stop', 'compact', 'reconnect', 'reset'] as const).map(command => [command, {
-      execute: () => { if (command === 'stop') interrupt(); else if (command === 'compact') compact();
+      execute: () => { if (!commandEnabled(command)) return;
+        if (command === 'stop') interrupt(); else if (command === 'compact') compact();
         else recover(command === 'reset' ? 'reset_context' : 'reconnect'); },
-      unavailableReason: conversationCommandEnabled(command, store.sessionState, store.readonlyReason, store.unknownDetail, store.recovering)
+      unavailableReason: commandEnabled(command)
         ? undefined : '当前会话状态下不可用',
     }])),
   }), [options?.inline, options?.showSideCommand, newConversation, composerView.manualCompactSupported, composerView.historyReady,
-    composerView.compact, hasSideConversation, sideQuestion, sideSourceReady, onTerminal, compactComposer, plannerCommands, composerStop, plannerSwitchBinding, interrupt, compact, recover, store.sessionState, store.readonlyReason, store.unknownDetail, store.recovering]);
+    composerView.compact, hasSideConversation, sideQuestion, sideSourceReady, onTerminal, compactComposer, plannerCommands, composerStop, plannerSwitchBinding, interrupt, compact, recover, commandEnabled]);
   const draftOnly = options?.workspace?.waiting === true;
   const composerNode = useMemo(() => existingId === null ? null : (
             <ConversationComposer target={{ kind: 'card', id: existingId }} layout={compactComposer ? 'mobile' : 'standard'}
@@ -947,8 +954,8 @@ function useConversationPane(
         contextTitle={scope?.title}
         sessionHeader={open === null ? undefined : <ConversationSessionHeader session={store.session} state={store.sessionState}
           readonlyReason={store.readonlyReason} workerPaused={store.workerPaused}
-          compactEnabled={conversationCommandEnabled('compact', store.sessionState, store.readonlyReason, store.unknownDetail, store.recovering) && store.manualCompactSupported}
-          resetEnabled={conversationCommandEnabled('reset', store.sessionState, store.readonlyReason, store.unknownDetail, store.recovering)}
+          compactEnabled={commandEnabled('compact') && store.manualCompactSupported}
+          resetEnabled={commandEnabled('reset')}
           onCompact={compact} onReset={() => store.recover('reset_context')}
           onArchive={store.session?.isLead === true || store.session?.boundTaskId != null || options?.onArchive === undefined || (store.readonlyReason !== null && !store.canReopen) ? undefined : () => changeArchive(store.readonlyReason !== 'archived')} />}
         resizeGroup={resizeGroup}

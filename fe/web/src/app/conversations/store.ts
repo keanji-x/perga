@@ -1,3 +1,4 @@
+import { conversationStopTurn } from '../../../../core/domain/conversation-action.ts';
 import { sessionContextUsage } from '../../../../core/domain/session-context-usage.ts';
 import { NotSentError } from '../../../../core/domain/failure-class.ts';
 import { withTaskMessageFailures, workerModelCatalog } from '../../../../core/domain/worker-session.ts';
@@ -19,7 +20,7 @@ import { readErrorText } from '../../../../core/domain/read-failure.ts';
 import type { ConversationStopFeedback } from '../../../../core/domain/conversation-stop.ts';
 import { conversationHistoryQueryOptions, modelCatalogQueryOptions, plannerRunQueryOptions, usePlannerMutations } from '../providers/queries.ts';
 import { useState } from '../../ui/state/public.ts';
-import { useConversationCommands, useConversationSendOps, useConversationQueueWriteOut, useConversationRememberedTurns, useRememberedConversations } from './public.tsx';
+import { useConversationAcceptedTurn, useConversationCommands, useConversationSendOps, useConversationQueueWriteOut, useConversationRememberedTurns, useRememberedConversations } from './public.tsx';
 import { NO_TURNS } from './registry-owner.ts';
 import { useConversationStop } from './stop.ts';
 import { useLiveReplies } from './live-replies.ts';
@@ -67,7 +68,14 @@ export function useConversationStore(
   const { loadEarlier } = history;
   const historyKnown = history.data !== undefined;
   const runQuery = useMemo(
-    () => plannerRunQueryOptions(transport, cardId, unauthorized), [transport, cardId, unauthorized],
+    () => {
+      const options = plannerRunQueryOptions(transport, cardId, unauthorized);
+      return { ...options, queryFn: (context: Parameters<typeof options.queryFn>[0]) => options.queryFn(context).then(page => {
+        // Fence deferred work before query completion can release a permission/send continuation.
+        registry.observeEpoch(cardId, page.session.epoch);
+        return page;
+      }) };
+    }, [transport, cardId, unauthorized, registry],
   );
   const run = useQuery({ ...runQuery, enabled: scope !== null, refetchInterval: query =>
     query.state.data?.worker?.phase === 'running' || query.state.data?.worker?.phase === 'interrupting' ? 1000 : false });
@@ -76,6 +84,7 @@ export function useConversationStore(
   if (readFailure.cardId !== cardId || (run.error !== readFailure.error && (run.error !== null || !run.isFetching)))
     setReadFailure({ cardId, error: run.error });
   const worker = run.data?.worker ?? null;
+  const workerSession = worker !== null || run.data?.session.boundTaskId != null || run.data?.session.boundAttemptId != null;
   const workerTurn = worker === null ? undefined : (run.data?.activeTurn?.status === 'running' ? run.data.activeTurn.id : undefined);
   const workerEditable = worker?.phase === 'running' || worker?.phase === 'paused';
   const workerCatalog = useMemo(() => worker === null ? null : workerModelCatalog(worker), [worker]);
@@ -152,12 +161,22 @@ export function useConversationStore(
     runningTurnId: run.data?.activeTurn?.status === 'running' ? run.data.activeTurn.id : null, nextRead: registry.nextRead,
     transcriptKey: transcriptQuery.queryKey, transcriptReads, items, worker,
   });
-  const working = sessionState === 'running' || sessionState === 'stopping' || sessionState === 'compacting';
-  const stopTurnId = run.data?.activeTurn?.status === 'running' ? run.data.activeTurn.id : null;
-  const canStop = !recoveryHoldsSend && readonlyReason === null && working && stopTurnId !== null && phase === 'turn_running';
+  const acceptedTurnId = useConversationAcceptedTurn(cardId);
+  const startupTurn = run.data?.lastTurn;
+  const starting = run.data?.session.status === 'queued' || run.data?.session.status === 'starting'
+    || startupTurn?.status === 'queued' || startupTurn?.status === 'starting';
+  useEffect(() => {
+    if (run.data?.session.epoch !== undefined) registry.observeEpoch(cardId, run.data.session.epoch);
+    if (acceptedTurnId !== null && startupTurn?.id === acceptedTurnId &&
+      startupTurn.status !== 'queued' && startupTurn.status !== 'starting' && startupTurn.status !== 'running')
+      registry.rememberAcceptedTurn(cardId, null);
+  }, [acceptedTurnId, cardId, registry, run.data?.session.epoch, startupTurn]);
+  const stopTurnId = conversationStopTurn(run.data, acceptedTurnId);
+  const working = starting || stopTurnId !== null || sessionState === 'running' || sessionState === 'stopping' || sessionState === 'compacting';
+  const canStop = !recoveryHoldsSend && readonlyReason === null && working && stopTurnId !== null && sessionState !== 'stopping' && sessionState !== 'compacting';
   const stop = useConversationStop({
     cardId, canStop,
-    responseEnded: runReadError === null && run.data !== undefined && (phase === 'idle' || phase === 'turn_completed'),
+    responseEnded: !starting && acceptedTurnId === null && runReadError === null && run.data !== undefined && (phase === 'idle' || phase === 'turn_completed'),
     historyKnown: historyKnown,
     newestRowId: items.reduce((latest, row) => Math.max(latest, row.id), 0),
     completedRowId: items.reduce<number | null>((latest, row) => !row.outcome
@@ -290,14 +309,18 @@ export function useConversationStore(
     dismissActionError: () => { setActionError(null); stop.clearFeedback(); },
     recover: (mode: 'reconnect' | 'reset_context') => {
       const detail = run.data?.unknownDetail;
-      if (readonlyReason !== null || recoveryLeases.current.has(cardId) || detail?.recovering === true
+      if (workerSession || readonlyReason !== null || recoveryLeases.current.has(cardId) || detail?.recovering === true
         || (mode === 'reconnect' ? sessionState !== 'unknown' || !detail?.canReconnect
           : sessionState !== 'idle' && !(sessionState === 'unknown' && detail?.canResetContext))) return;
       const id = cardId;
+      if (mode === 'reset_context') registry.invalidateSends(id);
       recoveryLeases.current.add(id);
       setRecoveryPending(current => new Set([...current, id]));
       setActionError(null);
-      void mutations.recover(mode).catch((error: unknown) => {
+      void mutations.recover(mode).then(session => {
+        // Publish the acknowledged epoch before enabling a fresh composer send.
+        registry.observeEpoch(id, session.epoch);
+      }).catch((error: unknown) => {
         if (shownCardId.current === id) setActionError({ cardId: id,
           message: error instanceof Error ? error.message : '恢复失败，请重试。' });
       }).finally(() => {
@@ -341,12 +364,12 @@ export function useConversationStore(
       if (worker !== null && (!workerEditable || attachments.length > 0)) return null;
       return outbox.send(id, content, attachments, fromComposer, key);
     },
-    manualCompactSupported: sessionState === 'idle' && readonlyReason === null && worker === null,
+    manualCompactSupported: sessionState === 'idle' && readonlyReason === null && !workerSession,
     contextUsage: run.data === undefined ? null : sessionContextUsage(run.data.session),
     uploadAttachment: mutations.uploadAttachment,
     compacting: compactPending.has(cardId) || phase === 'compacting',
     compact: () => {
-      if (sessionState !== 'idle' || readonlyReason !== null || compactLeases.current.has(cardId) || cardId === '') return;
+      if (workerSession || sessionState !== 'idle' || readonlyReason !== null || compactLeases.current.has(cardId) || cardId === '') return;
       const compactFor = cardId;
       compactLeases.current.add(compactFor);
       setCompactPending((current) => new Set([...current, compactFor]));

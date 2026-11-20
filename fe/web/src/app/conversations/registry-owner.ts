@@ -26,6 +26,7 @@ export type ConversationSnapshot = Readonly<{
   openRequest: ConversationOpenRequest | null;
   pendingTrackInitialSends: ById<PendingTrackInitialSend>;
   outboxes: ById<readonly ConversationOutboxOp[]>;
+  acceptedTurns: ById<string>;
   composers: ById<ComposerContent>;
   newComposers: ById<string>;
   uploads: ById<UploadState>;
@@ -104,9 +105,11 @@ function writePendingTrackInitialSends(key: string, map: ById<PendingTrackInitia
 export function createConversationOwner(submittedStorage?: () => Storage) {
   const pendingInitialSendsKey = createStorageKey('pending-track-initial-sends-v1');
   let state: ConversationSnapshot = {
-    entries: {}, conversations: NO_CONVERSATIONS, drafts: {}, openRequest: null, pendingTrackInitialSends: readPendingTrackInitialSends(pendingInitialSendsKey, submittedStorage), outboxes: {},
+    entries: {}, conversations: NO_CONVERSATIONS, drafts: {}, openRequest: null, pendingTrackInitialSends: readPendingTrackInitialSends(pendingInitialSendsKey, submittedStorage), outboxes: {}, acceptedTurns: {},
     composers: {}, newComposers: {}, uploads: {},  queueWrites: {}, restarts: {}, resolutions: {},
   };
+  const sendGenerations = new Map<string, number>();
+  const epochs = new Map<string, number>();
   const permissionWrites = new Map<string, Promise<unknown>>();
   let read = 0;
   const listeners = new Set<() => void>();
@@ -192,6 +195,7 @@ export function createConversationOwner(submittedStorage?: () => Storage) {
       }] };
       const entries = put(state.entries, result.conversation.id, accepted);
       commit({ ...state, entries, conversations: Object.values(entries).map(entry => entry.conversation),
+        acceptedTurns: put(state.acceptedTurns, result.conversation.id, result.sessionInput.turnId),
         drafts: moveDraft(state.drafts, { kind: 'adopt', from, conversationId: result.conversation.id }) });
       return true;
     },
@@ -207,6 +211,22 @@ export function createConversationOwner(submittedStorage?: () => Storage) {
     finishDraftAdoption: (scopeId, conversationId) => {
       const drafts = moveDraft(state.drafts, { kind: 'finish-adoption', scopeId, conversationId });
       if (drafts !== state.drafts) commit({ ...state, drafts });
+    },
+    acceptedTurnOf: id => state.acceptedTurns[id] ?? null,
+    rememberAcceptedTurn: (id, turnId) => { commit({ ...state, acceptedTurns: put(state.acceptedTurns, id, turnId ?? undefined) }); },
+    sendGenerationOf: id => sendGenerations.get(id) ?? 0,
+    invalidateSends: id => {
+      sendGenerations.set(id, (sendGenerations.get(id) ?? 0) + 1);
+      let next = state;
+      for (const op of state.outboxes[id] ?? []) {
+        if (op.fromComposer) next = withRefilledComposer(next, id, { text: op.echo.text, attachments: op.echo.attachments ?? [] });
+      }
+      commit({ ...withOutbox(next, id, NO_SENDS), acceptedTurns: put(next.acceptedTurns, id, undefined) });
+    },
+    observeEpoch: (id, epoch) => {
+      const previous = epochs.get(id);
+      if (previous !== undefined && epoch > previous) commands.invalidateSends(id);
+      if (previous === undefined || epoch > previous) epochs.set(id, epoch);
     },
     outboxOf: id => state.outboxes[id] ?? NO_SENDS,
     beginSend: (id, op) => {

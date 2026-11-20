@@ -167,6 +167,7 @@ public sealed partial class TrackActor
 
         public bool IsOccupied(AgentSessionDto session, PersistedSessionInput? input = null, Guid? reservation = null, bool allowFinishingDispatch = false)
         {
+            if (actor._sessionShutdownPending.ContainsKey(session.Id)) return true;
             if (!_sessions.TryGetValue(session.Id, out var state))
                 return input is null && session.Status is "queued" or "running" or "unknown";
             return state.Active is not null || state.Compacting || state.Steering is not null || state.Resume is not null ||

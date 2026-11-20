@@ -1,9 +1,10 @@
 import { expect, it } from 'vitest';
 import { recoverSessionOperation } from './conversation.js';
-import { conversationCommandEnabled, deriveConversationAction } from './conversation-action.js';
+import { conversationStopTurn, conversationCommandEnabled, deriveConversationAction } from './conversation-action.js';
 
 const baseline = Object.freeze({ readError: null, readonlyReason: null, canReopen: false, state: 'idle' as const,
   unknownDetail: null, hasAsks: false, localSend: 'idle' as const, sendUnconfirmed: false, actionError: null, workerPaused: false });
+const supported = Object.freeze({ canStop: false, manualCompactSupported: true, canResetContext: true });
 const unknown = Object.freeze({ reason: 'stream_lost', detail: '连接已断开', canReconnect: true,
   canResetContext: true, recovering: false, lastError: null });
 it('selects exactly one action in strict priority order', () => {
@@ -25,19 +26,20 @@ it('selects exactly one action in strict priority order', () => {
   expect(deriveConversationAction(baseline)).toBeNull();
 });
 it.each(['idle', 'running', 'stopping', 'compacting', 'unknown'] as const)('gates commands against explicit %s state', state => {
-  expect(conversationCommandEnabled('stop', state, null, unknown, false)).toBe(state === 'running');
-  expect(conversationCommandEnabled('compact', state, null, unknown, false)).toBe(state === 'idle');
-  expect(conversationCommandEnabled('reset', state, null, unknown, false)).toBe(state === 'idle' || state === 'unknown');
-  expect(conversationCommandEnabled('reconnect', state, null, unknown, false)).toBe(state === 'unknown');
+  const capabilities = { ...supported, canStop: state === 'running' };
+  expect(conversationCommandEnabled('stop', state, null, unknown, false, capabilities)).toBe(state === 'running');
+  expect(conversationCommandEnabled('compact', state, null, unknown, false, capabilities)).toBe(state === 'idle');
+  expect(conversationCommandEnabled('reset', state, null, unknown, false, capabilities)).toBe(state === 'idle' || state === 'unknown');
+  expect(conversationCommandEnabled('reconnect', state, null, unknown, false, capabilities)).toBe(state === 'unknown');
   for (const command of ['stop', 'compact', 'reset', 'reconnect'] as const) {
-    expect(conversationCommandEnabled(command, state, 'archived', unknown, false)).toBe(false);
-    expect(conversationCommandEnabled(command, state, null, unknown, true)).toBe(false);
+    expect(conversationCommandEnabled(command, state, 'archived', unknown, false, capabilities)).toBe(false);
+    expect(conversationCommandEnabled(command, state, null, unknown, true, capabilities)).toBe(false);
   }
-  expect(conversationCommandEnabled('new', state, 'archived', unknown, true)).toBe(true);
+  expect(conversationCommandEnabled('new', state, 'archived', unknown, true, capabilities)).toBe(true);
 });
 it('honors unavailable recovery capabilities', () => {
-  expect(conversationCommandEnabled('reconnect', 'unknown', null, { ...unknown, canReconnect: false }, false)).toBe(false);
-  expect(conversationCommandEnabled('reset', 'unknown', null, { ...unknown, canResetContext: false }, false)).toBe(false);
+  expect(conversationCommandEnabled('reconnect', 'unknown', null, { ...unknown, canReconnect: false }, false, supported)).toBe(false);
+  expect(conversationCommandEnabled('reset', 'unknown', null, { ...unknown, canResetContext: false }, false, supported)).toBe(false);
 });
 
 it('uses the unified recovery endpoint for both modes', () => {
@@ -46,4 +48,20 @@ it('uses the unified recovery endpoint for both modes', () => {
     expect(operation).toMatchObject({ method: 'POST', path: '/api/v1/sessions/session%20%2F/recover', body: { mode } });
     expect(operation.responseSchema.safeParse({ id: 'other', trackId: 't', provider: 'codex', contextUsage: null, createdAtMs: 1, updatedAtMs: 1 }).success).toBe(false);
   }
+});
+
+it('uses startup stop identity and denies unsupported Worker context commands', () => {
+  const capabilities = { canStop: true, manualCompactSupported: false, canResetContext: false };
+  expect(conversationCommandEnabled('stop', 'running', null, null, false, capabilities)).toBe(true);
+  for (const state of ['idle', 'unknown'] as const) {
+    expect(conversationCommandEnabled('compact', state, null, unknown, false, capabilities)).toBe(false);
+    expect(conversationCommandEnabled('reset', state, null, unknown, false, capabilities)).toBe(false);
+  }
+});
+
+it.each(['queued', 'starting', 'running'])('keeps %s lastTurn identity before activation', status => {
+  const turn = { id: 'startup', sessionId: 'a', epoch: 1, turnIndex: 1, triggerKind: 'user', status, startedAtMs: null };
+  expect(conversationStopTurn({ activeTurn: null, lastTurn: turn }, null)).toBe('startup');
+  expect(conversationStopTurn({ activeTurn: null, lastTurn: null }, 'accepted')).toBe('accepted');
+  expect(conversationStopTurn({ activeTurn: null, lastTurn: { ...turn, status: 'completed' } }, 'startup')).toBeNull();
 });

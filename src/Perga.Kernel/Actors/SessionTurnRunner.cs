@@ -32,7 +32,7 @@ public sealed partial class TrackActor
             public StringBuilder Thinking { get; } = new();
         }
 
-        public async Task<SessionTurnDto?> RunAsync(ITurnWorkItem work, CancellationToken ct, bool alreadyAdmitted = false, CancellationToken? startupCancellation = null)
+        public async Task<SessionTurnDto?> RunAsync(ITurnWorkItem work, CancellationToken ct, bool alreadyAdmitted = false, CancellationToken? startupCancellation = null, Action<int>? compactedEpoch = null)
         {
             var preparationCt = startupCancellation ?? ct;
             if (work.WaitForWorkspacePreparation)
@@ -52,7 +52,10 @@ public sealed partial class TrackActor
                 var outcome = await StreamTurnAsync(work, start.Active, start.EffectivePrompt, ct).ConfigureAwait(false);
                 var settled = await SettleTurnAsync(work, start.Active, prompt, outcome).ConfigureAwait(false);
                 if (settled.ShouldAutoCompact)
-                    await TryAutoCompactAsync(work.SessionId).ConfigureAwait(false);
+                {
+                    var epoch = await TryAutoCompactAsync(work.SessionId).ConfigureAwait(false);
+                    if (epoch is { } value) compactedEpoch?.Invoke(value);
+                }
                 await actor.EnqueueAsync(async _ =>
                 {
                     if (actor.RequireSessionCore(work.SessionId).Epoch == start.Active.TurnDto.Epoch)
@@ -463,15 +466,16 @@ public sealed partial class TrackActor
                 await actor.MarkSessionResumeQuiescentCoreAsync(sessionId, recovery, CancellationToken.None).ConfigureAwait(false);
         }
 
-        private async Task TryAutoCompactAsync(string sessionId)
+        private async Task<int?> TryAutoCompactAsync(string sessionId)
         {
             try
             {
-                await actor.CompactSessionInternalAsync(sessionId, CancellationToken.None, automatic: true).ConfigureAwait(false);
+                return (await actor.CompactSessionInternalAsync(sessionId, CancellationToken.None, automatic: true).ConfigureAwait(false)).Epoch;
             }
             catch (KernelException ex) when (ex.Code == KernelErrorCode.Conflict)
             {
                 // A new turn reserved the session before optional compaction.
+                return null;
             }
         }
 
