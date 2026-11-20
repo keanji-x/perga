@@ -18,6 +18,20 @@ public sealed class HostSmokeTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
+    [Theory]
+    [InlineData("codex", "always", "never, ask, full")]
+    [InlineData("opencode", "plan", "no configurable launch modes")]
+    public async Task StartupRejectsInvalidWorkerPermissionDefaults(string provider, string mode, string reason)
+    {
+        string[] arguments = [$"--Perga:WorkerPermissionModes:{provider}={mode}"];
+        await using var factory = new WebApplicationFactory<Program>()
+            .WithWebHostBuilder(builder => builder.ConfigureAppConfiguration((_, config) => config.AddCommandLine(arguments)));
+
+        var error = Assert.Throws<InvalidOperationException>(() => factory.CreateClient());
+        Assert.Contains($"Perga:WorkerPermissionModes:{provider}", error.Message);
+        Assert.Contains(reason, error.Message);
+    }
+
     [Fact]
     public async Task Bootstrap_ProbesProviderExecutablesFromHostConfiguration()
     {

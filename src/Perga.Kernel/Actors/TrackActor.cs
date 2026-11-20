@@ -2043,7 +2043,7 @@ public sealed partial class TrackActor : IAsyncDisposable
                 ArchivedAtMs: null,
                 CreatedAtMs: now,
                 UpdatedAtMs: now,
-                PermissionMode: RuntimePermissionModes.Resolve(workerProvider, null));
+                PermissionMode: RuntimePermissionModes.ResolveWorkerDefault(workerProvider, _options.WorkerPermissionModes));
 
             var runningTask = task with { Status = TaskRunStatus.Running, StatusDetail = "Allocating workspace.",
                 LatestAttemptId = attemptId, UpdatedAtMs = now };

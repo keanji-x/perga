@@ -20,6 +20,36 @@ namespace Perga.Host.IntegrationTests;
 
 public sealed class WorkerSessionIntegrationTests
 {
+    [Theory]
+    [InlineData("codex", "codex", null, "never")]
+    [InlineData("codex", "codex", "ask", "ask")]
+    [InlineData("codex", "codex", "full", "full")]
+    [InlineData("agy", "acp:antigravity", "bypassPermissions", "bypassPermissions")]
+    public async Task NewWorkerUsesConfiguredLaunchPermissionMode(
+        string configuredProvider, string workerProvider, string? configuredMode, string expectedMode)
+    {
+        await using var host = new PergaHostTestCluster(configureHostOptions: options =>
+        {
+            if (configuredMode is not null)
+                options.WorkerPermissionModes[configuredProvider] = configuredMode;
+        });
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        var ct = timeout.Token;
+        var kernel = host.Services.GetRequiredService<IPergaKernel>();
+        var (trackId, leadId) = await host.CreateTrackAsync();
+        var dispatched = await kernel.DispatchWorkerAsync(trackId,
+            new("Inspect the report", Access: "read_only", Provider: workerProvider),
+            "permission-default", null, ct);
+        await kernel.WaitForTrackIdleAsync(trackId, ct);
+
+        var sessions = await kernel.ListSessionsAsync(trackId, ct);
+        Assert.Equal("never", Assert.Single(sessions, session => session.Id == leadId).PermissionMode);
+        Assert.Equal(expectedMode, Assert.Single(sessions, session => session.BoundTaskId == dispatched.Task.Id).PermissionMode);
+        var spec = Assert.Single(host.AgentRuntime.OpenedSessions, session => session.Spec.ConfigureWorker).Spec;
+        Assert.Equal(expectedMode, spec.PermissionMode);
+        Assert.Equal(OsSandboxMode.ReadOnlyBwrap, spec.Sandbox);
+    }
+
     [Fact]
     public async Task WorkerSettingsUseReportedDefaultsAndRequireAnOwnerProofToRestoreApprovals()
     {

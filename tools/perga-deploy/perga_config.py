@@ -22,6 +22,7 @@ class InstallationConfig:
     release_url_prefix: str = ''
     workspaces_dir: str | None = None
     provider_executables: dict[str, str] = field(default_factory=dict)
+    worker_permission_modes: dict[str, str] = field(default_factory=dict)
     codex_worker_home: str = ''
     proxy_url: str | None = None
     no_proxy: tuple[str, ...] = ()
@@ -74,9 +75,13 @@ def read_toml(path):
     providers = table(values.get('providers', {}), 'providers', PROVIDERS)
     for provider, options in providers.items():
         section = f'providers.{provider}'
-        table(options, section, ('executable', 'worker_home') if provider == 'codex' else ('executable',))
+        allowed = ('executable', 'worker_permission_mode')
+        table(options, section, (*allowed, 'worker_home') if provider == 'codex' else allowed)
         if 'executable' in options:
             config.provider_executables[provider] = absolute_path(options['executable'], section + '.executable')
+        if 'worker_permission_mode' in options:
+            config.worker_permission_modes[provider] = string(options['worker_permission_mode'],
+                                                               section + '.worker_permission_mode')
         if 'worker_home' in options:
             config.codex_worker_home = absolute_path(options['worker_home'], section + '.worker_home')
 

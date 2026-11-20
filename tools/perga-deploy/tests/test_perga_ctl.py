@@ -145,6 +145,7 @@ class Harness(unittest.TestCase):
             '[instance]\nname = "demo"\nhost_url = "http://127.0.0.1:4240"\n'
             'overlayfs = true\nworkspaces_dir = "/custom workspaces"\n'
             '\n[providers.codex]\nexecutable = "/tools/bin/codex"\nworker_home = "/private/codex"\n'
+            'worker_permission_mode = "ask"\n'
             '\n[providers.agy]\nexecutable = "/tools/bin/agy"\n'
             '\n[providers.opencode]\nexecutable = "/tools/bin/opencode"\n'
             '\n[providers.claude]\nexecutable = "/tools/bin/claude"\n'
@@ -165,6 +166,7 @@ class Harness(unittest.TestCase):
         self.assertIn('--Perga:ProviderExecutables:agy=/tools/bin/agy', arguments)
         self.assertIn('--Perga:ProviderExecutables:opencode=/tools/bin/opencode', arguments)
         self.assertIn('--Perga:ProviderExecutables:codex=/tools/bin/codex', arguments)
+        self.assertIn('--Perga:WorkerPermissionModes:codex=ask', arguments)
         self.assertIn('--Perga:ProviderExecutables:claude=/tools/bin/claude', arguments)
         self.assertIn('--Perga:AutoManageTerminalBridge=true', arguments)
         self.assertEqual(proxy, 'http://127.0.0.1:2080')
@@ -185,6 +187,12 @@ class Harness(unittest.TestCase):
         config = self.root / 'config/perga.toml'
         config.write_text(config.read_text() + 'overlayfs = "false"\n')
         with self.assertRaisesRegex(ctl.DeployError, 'instance.overlayfs must be a boolean'):
+            self.controller.validate_config()
+
+    def test_worker_permission_mode_requires_a_string(self):
+        config = self.root / 'config/perga.toml'
+        config.write_text(config.read_text() + '\n[providers.codex]\nworker_permission_mode = true\n')
+        with self.assertRaisesRegex(ctl.DeployError, 'providers.codex.worker_permission_mode must be a non-empty string'):
             self.controller.validate_config()
 
     def test_toml_unit_rejects_missing_config_before_starting_host(self):
