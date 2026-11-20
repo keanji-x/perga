@@ -145,9 +145,10 @@ class Harness(unittest.TestCase):
             '[instance]\nname = "demo"\nhost_url = "http://127.0.0.1:4240"\n'
             'overlayfs = true\nworkspaces_dir = "/custom workspaces"\n'
             '\n[providers.codex]\nexecutable = "/tools/bin/codex"\nworker_home = "/private/codex"\n'
-            '\n[providers.agy]\nexecutable = "/tools/bin/agy"\n'
-            '\n[providers.opencode]\nexecutable = "/tools/bin/opencode"\n'
-            '\n[providers.claude]\nexecutable = "/tools/bin/claude"\n'
+            'permission_mode = "ask"\n'
+            '\n[providers.agy]\nexecutable = "/tools/bin/agy"\npermission_mode = "bypassPermissions"\n'
+            '\n[providers.opencode]\nexecutable = "/tools/bin/opencode"\npermission_mode = "workspace-mode"\n'
+            '\n[providers.claude]\nexecutable = "/tools/bin/claude"\npermission_mode = "plan"\n'
             '\n[proxy]\nurl = "http://127.0.0.1:2080"\nno_proxy = ["internal.test"]\n')
         launcher = self.root / 'bin/perga-overlayfs-launch.py'
         source = MODULE.parent.parent / 'perga-overlayfs/launch.py'
@@ -166,6 +167,10 @@ class Harness(unittest.TestCase):
         self.assertIn('--Perga:ProviderExecutables:opencode=/tools/bin/opencode', arguments)
         self.assertIn('--Perga:ProviderExecutables:codex=/tools/bin/codex', arguments)
         self.assertIn('--Perga:ProviderExecutables:claude=/tools/bin/claude', arguments)
+        self.assertIn('--Perga:PermissionModeDefaults:codex=ask', arguments)
+        self.assertIn('--Perga:PermissionModeDefaults:agy=bypassPermissions', arguments)
+        self.assertIn('--Perga:PermissionModeDefaults:opencode=workspace-mode', arguments)
+        self.assertIn('--Perga:PermissionModeDefaults:claude=plan', arguments)
         self.assertIn('--Perga:AutoManageTerminalBridge=true', arguments)
         self.assertEqual(proxy, 'http://127.0.0.1:2080')
         self.assertEqual(exclusions, 'localhost,127.0.0.1,::1,internal.test')
@@ -185,6 +190,12 @@ class Harness(unittest.TestCase):
         config = self.root / 'config/perga.toml'
         config.write_text(config.read_text() + 'overlayfs = "false"\n')
         with self.assertRaisesRegex(ctl.DeployError, 'instance.overlayfs must be a boolean'):
+            self.controller.validate_config()
+
+    def test_permission_mode_requires_a_string(self):
+        config = self.root / 'config/perga.toml'
+        config.write_text(config.read_text() + '\n[providers.codex]\npermission_mode = true\n')
+        with self.assertRaisesRegex(ctl.DeployError, 'providers.codex.permission_mode must be a non-empty string'):
             self.controller.validate_config()
 
     def test_toml_unit_rejects_missing_config_before_starting_host(self):

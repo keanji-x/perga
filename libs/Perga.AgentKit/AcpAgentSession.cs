@@ -591,9 +591,11 @@ public sealed partial class AcpAgentSession : IAgentSession
         if (requestedEntry is not null && requestedEntry.Transport is not AcpPermissionTransport.LaunchArgument)
         {
             var result = await SetPermissionModeAsync(requestedEntry.Option.Id, resolvedSessionId, requestedEntry.Transport, ct).ConfigureAwait(false);
-            if (!IsPositiveAcknowledgement(result))
+            var reportedMode = AcpPermissionCatalog.ReadCurrentMode(result, requestedEntry.Transport);
+            if (!IsPositiveAcknowledgement(result) || (reportedMode is not null && reportedMode != requestedEntry.Option.Id))
                 throw new SessionConfigurationException(new SessionConfigurationOutcome.Rejected(
-                    ConfigurationFailureCode.InvalidAcknowledgement, "The provider rejected the permission mode.", new(null, null, false)));
+                    ConfigurationFailureCode.InvalidAcknowledgement,
+                    $"The provider did not confirm permission mode '{requestedEntry.Option.Id}'.", new(null, null, false)));
         }
 
         Volatile.Write(ref _nativeThreadId, resolvedSessionId);

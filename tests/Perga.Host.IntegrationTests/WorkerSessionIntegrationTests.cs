@@ -21,6 +21,49 @@ namespace Perga.Host.IntegrationTests;
 public sealed class WorkerSessionIntegrationTests
 {
     [Fact]
+    public async Task ProviderPermissionDefaultAppliesToEveryNewSessionRole()
+    {
+        await using var host = new PergaHostTestCluster(configureHostOptions: options =>
+        {
+            options.PermissionModeDefaults["codex"] = "ask";
+            options.PermissionModeDefaults["claude"] = "plan";
+            options.PermissionModeDefaults["agy"] = "bypassPermissions";
+            options.PermissionModeDefaults["opencode"] = "workspace-mode";
+        });
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        var ct = timeout.Token;
+        var kernel = host.Services.GetRequiredService<IPergaKernel>();
+        var (trackId, leadId) = await host.CreateTrackAsync();
+
+        var ordinary = await kernel.CreateSubagentSessionAsync(trackId, new(Title: "Ordinary"), ct);
+        var explicitMode = await kernel.CreateSubagentSessionAsync(trackId, new(Title: "Explicit", PermissionMode: "never"), ct);
+        var claude = await kernel.CreateSubagentSessionAsync(trackId, new(Title: "Claude", Provider: "claude"), ct);
+        var agy = await kernel.CreateSubagentSessionAsync(trackId, new(Title: "Antigravity", Provider: "acp:antigravity"), ct);
+        var opencode = await kernel.CreateSubagentSessionAsync(trackId, new(Title: "OpenCode", Provider: "acp:opencode"), ct);
+        var dispatched = await kernel.DispatchWorkerAsync(trackId, new("Inspect the report", Access: "read_only"),
+            "permission-default", null, ct);
+        await kernel.WaitForTrackIdleAsync(trackId, ct);
+
+        var sessions = await kernel.ListSessionsAsync(trackId, ct);
+        Assert.Equal("ask", Assert.Single(sessions, session => session.Id == leadId).PermissionMode);
+        Assert.Equal("ask", ordinary.PermissionMode);
+        Assert.Equal("never", explicitMode.PermissionMode);
+        Assert.Equal("plan", claude.PermissionMode);
+        Assert.Equal("bypassPermissions", agy.PermissionMode);
+        Assert.Equal("workspace-mode", opencode.PermissionMode);
+        Assert.Equal("ask", Assert.Single(sessions, session => session.BoundTaskId == dispatched.Task.Id).PermissionMode);
+        var spec = Assert.Single(host.AgentRuntime.OpenedSessions, session => session.Spec.ConfigureWorker).Spec;
+        Assert.Equal("ask", spec.PermissionMode);
+        Assert.Equal(OsSandboxMode.ReadOnlyBwrap, spec.Sandbox);
+
+        var providers = (await kernel.GetBootstrapAsync(ct)).Providers;
+        var codex = Assert.Single(providers, provider => provider.Provider == "codex");
+        Assert.Equal("ask", Assert.Single(codex.PermissionModes!, mode => mode.IsDefault).Id);
+        var antigravity = Assert.Single(providers, provider => provider.Provider == "acp:antigravity");
+        Assert.Equal("bypassPermissions", Assert.Single(antigravity.PermissionModes!, mode => mode.IsDefault).Id);
+    }
+
+    [Fact]
     public async Task WorkerSettingsUseReportedDefaultsAndRequireAnOwnerProofToRestoreApprovals()
     {
         var ownerKey = new string('a', 64);

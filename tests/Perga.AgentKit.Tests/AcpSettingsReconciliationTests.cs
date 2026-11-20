@@ -245,6 +245,28 @@ public sealed class AcpSettingsReconciliationTests : IDisposable
     }
 
     [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task LaunchRejectsConflictingPermissionReadback(bool configureWorker, bool hasUnrelatedMode)
+    {
+        await using var runtime = Runtime("acp:opencode", config: true, env: new()
+        {
+            ["MOCK_ACP_PERMISSION_RESPONSE"] = hasUnrelatedMode
+                ? """
+                  {"configOptions":[
+                    {"id":"unrelated-mode","category":"mode","type":"select","currentValue":"act","options":[{"value":"act"}]},
+                    {"id":"permission-policy","currentValue":"safe"}
+                  ]}
+                  """
+                : ConfigModes
+        });
+        var spec = Spec("acp:opencode", "act") with { ConfigureWorker = configureWorker };
+        await Assert.ThrowsAsync<SessionConfigurationException>(() => runtime.OpenSessionAsync(spec, default));
+        Assert.DoesNotContain(Calls(), call => call.GetProperty("method").GetString() == "session/prompt");
+    }
+
+    [Theory]
     [InlineData(false, "null")]
     [InlineData(true, "null")]
     [InlineData(false, "[]")]

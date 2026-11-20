@@ -102,6 +102,28 @@ internal sealed class AcpPermissionCatalog
         return new AcpPermissionCatalog(merged, _launchModes);
     }
 
+    internal static string? ReadCurrentMode(JsonElement response, AcpPermissionTransport transport)
+    {
+        if (response.ValueKind != JsonValueKind.Object)
+            return null;
+
+        if (transport is AcpPermissionTransport.RpcConfigOption config &&
+            response.TryGetProperty("configOptions", out var options) && options.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var option in options.EnumerateArray())
+            {
+                if (Text(option, "id") == config.ConfigId)
+                    return Text(option, "currentValue");
+            }
+        }
+        else if (transport is AcpPermissionTransport.RpcLegacyMode && response.TryGetProperty("modes", out var modes))
+        {
+            return Text(modes, "currentModeId");
+        }
+
+        return null;
+    }
+
     private static (IReadOnlyList<PermissionModeOption> Options, AcpPermissionTransport? Transport) ReadProtocolModes(JsonElement response)
     {
         if (response.TryGetProperty("configOptions", out var configs) && configs.ValueKind == JsonValueKind.Array)

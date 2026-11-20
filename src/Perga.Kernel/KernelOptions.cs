@@ -10,6 +10,12 @@ public sealed record KernelOptions
     public string WorkspacesRootDirectory { get; init; } = Path.Combine(Path.GetTempPath(), "perga-workspaces");
     public string DefaultProvider { get; init; } = "codex";
     public string? DefaultModel { get; init; }
+    public IReadOnlyDictionary<string, string> PermissionModeDefaults
+    {
+        get => PermissionModes.Defaults;
+        init => PermissionModes = new RuntimePermissionModes(value);
+    }
+    internal RuntimePermissionModes PermissionModes { get; private init; } = RuntimePermissionModes.Unconfigured;
     public bool WorkerApprovalAuthorizationConfigured { get; init; }
     public string DefaultWorkspaceDriver { get; init; } = "direct";
     public TimeSpan ActorIdleTimeout { get; init; } = TimeSpan.FromMinutes(10);

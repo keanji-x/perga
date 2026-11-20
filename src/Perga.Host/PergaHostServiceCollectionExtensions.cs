@@ -174,6 +174,7 @@ public static class PergaHostServiceCollectionExtensions
                 WorkspacesRootDirectory = paths.WorkspacesRootDir,
                 DefaultProvider = opts.DefaultProvider,
                 DefaultModel = opts.DefaultModel,
+                PermissionModeDefaults = opts.PermissionModeDefaults,
                 DefaultWorkspaceDriver = opts.DefaultWorkspaceDriver,
                 McpBaseUri = baseUri,
                 DispatchWakesInBackground = opts.DispatchWakesInBackground,

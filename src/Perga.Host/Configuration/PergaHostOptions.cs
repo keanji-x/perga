@@ -26,6 +26,7 @@ public sealed class PergaHostOptions
     public string DefaultProvider { get; set; } = "codex";
     public string? DefaultModel { get; set; }
     public Dictionary<string, string> ProviderExecutables { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    public Dictionary<string, string> PermissionModeDefaults { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public string? CodexSandboxApiKey { get; set; }
     public string? CodexWorkerHomeDirectory { get; set; }
     public string? WorkerApprovalAuthorizationSha256 { get; set; }
@@ -53,6 +54,14 @@ public sealed class PergaHostOptions
     {
         var opts = new PergaHostOptions();
         var section = configuration.GetSection(SectionName);
+        var permissionDefaults = section.GetSection(nameof(PermissionModeDefaults));
+        if (permissionDefaults.Value is not null)
+            throw new InvalidOperationException($"{permissionDefaults.Path} must map provider names to permission modes.");
+        foreach (var entry in permissionDefaults.GetChildren())
+        {
+            if (entry.Value is null || entry.GetChildren().Any())
+                throw new InvalidOperationException($"{entry.Path} must be a permission mode ID.");
+        }
         section.Bind(opts);
 
         if (string.IsNullOrWhiteSpace(opts.DataDir))

@@ -143,6 +143,7 @@ executable = "/absolute/path/to/agy"
 [providers.codex]
 executable = "/absolute/path/to/codex"
 # worker_home = "/absolute/path/to/private/codex-home"
+# permission_mode = "ask"
 
 [providers.opencode]
 executable = "/absolute/path/to/opencode"
@@ -157,7 +158,9 @@ url = "http://127.0.0.1:2080"
 
 Unset executables use existing CLI discovery. Explicit paths apply to provider
 probes and sessions and require a Host release with provider configuration support.
-Use the `agy` or `antigravity` executable name for Antigravity's permission modes.
+Set `permission_mode` in any provider table to select its default for new
+sessions. See [provider permission defaults](provider-permission-defaults.md)
+for validation and rollout behavior.
 The proxy URL applies to HTTP and HTTPS for the Host and its provider processes.
 Loopback addresses always bypass the configured proxy. Managed instances use a
 direct connection when the proxy section is absent. The controller always

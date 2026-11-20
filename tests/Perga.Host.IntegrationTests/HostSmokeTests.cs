@@ -19,6 +19,18 @@ public sealed class HostSmokeTests
     }
 
     [Fact]
+    public async Task StartupRejectsInvalidProviderPermissionDefault()
+    {
+        string[] arguments = ["--Perga:PermissionModeDefaults:codex=always"];
+        await using var factory = new WebApplicationFactory<Program>()
+            .WithWebHostBuilder(builder => builder.ConfigureAppConfiguration((_, config) => config.AddCommandLine(arguments)));
+
+        var error = Assert.Throws<InvalidOperationException>(() => factory.CreateClient());
+        Assert.Contains("Perga:PermissionModeDefaults:codex", error.Message);
+        Assert.Contains("never, ask, full", error.Message);
+    }
+
+    [Fact]
     public async Task Bootstrap_ProbesProviderExecutablesFromHostConfiguration()
     {
         if (!OperatingSystem.IsLinux()) return;

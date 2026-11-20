@@ -483,9 +483,9 @@ public sealed partial class PergaKernelService : IPergaKernel
                 probed = await _agentRuntime.ProbeProvidersAsync(ct).ConfigureAwait(false);
             }
 
-            _cachedProviders = probed;
+            _cachedProviders = probed.Select(_options.PermissionModes.ApplyDefault).ToArray();
             Volatile.Write(ref _cachedProvidersAtMs, NowMs());
-            return probed;
+            return _cachedProviders;
         }
         finally
         {
@@ -737,7 +737,7 @@ public sealed partial class PergaKernelService : IPergaKernel
 
         var leadProvider = string.IsNullOrWhiteSpace(req.Provider) ? _options.DefaultProvider
             : TaskBlockSynchronizer.NormalizeProviderId(req.Provider) ?? req.Provider.Trim();
-        var leadPermissionMode = RuntimePermissionModes.Resolve(leadProvider, req.PermissionMode);
+        var leadPermissionMode = _options.PermissionModes.Resolve(leadProvider, req.PermissionMode);
         var leadSession = new AgentSessionDto(
             Id: leadSessionId,
             TrackId: trackId,

@@ -35,6 +35,8 @@ def build_launch(root, config, term_socket):
     }
     settings.update((f'ProviderExecutables:{provider}', path)
                     for provider, path in config.provider_executables.items())
+    settings.update((f'PermissionModeDefaults:{provider}', mode)
+                    for provider, mode in config.permission_mode_defaults.items())
     command = [str(host), '--urls=' + config.host_url]
     command.extend(f'--Perga:{key}={value}' for key, value in settings.items())
     env = dict(os.environ)

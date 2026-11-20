@@ -809,7 +809,7 @@ public sealed partial class TrackActor : IAsyncDisposable
             ? handle.Agent : null;
 
     private string? ResolveSessionPermissionModeCore(string provider, string? requested, string? sessionId = null) =>
-        RuntimePermissionModes.Resolve(provider, requested,
+        _options.PermissionModes.Resolve(provider, requested,
             sessionId is null ? null : FindOpenSessionForSettingsCore(sessionId, provider)?.AvailablePermissionModes);
 
     private async Task<AgentSessionDto> NewSubagentSessionCoreAsync(CreateSessionRequest req, CancellationToken ct)
@@ -2046,7 +2046,7 @@ public sealed partial class TrackActor : IAsyncDisposable
                 ArchivedAtMs: null,
                 CreatedAtMs: now,
                 UpdatedAtMs: now,
-                PermissionMode: RuntimePermissionModes.Resolve(workerProvider, null));
+                PermissionMode: _options.PermissionModes.Resolve(workerProvider, null));
 
             var runningTask = task with { Status = TaskRunStatus.Running, StatusDetail = "Allocating workspace.",
                 LatestAttemptId = attemptId, UpdatedAtMs = now };
