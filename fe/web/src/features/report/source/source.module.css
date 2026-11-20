@@ -1,6 +1,6 @@
 @layer features {
   /*
-   * The source panel (#1669 §2.5), inside the right-rail drawer.
+   * Captured source content shared by the document reader and previews.
    *
    * Two registers and nothing else. The head — badge, title, the row's facts
    * — is the panel's own sans, in the small sizes the series figure's head
@@ -70,8 +70,32 @@
     vertical-align: baseline;
   }
 
+  .reader {
+    --report-source-reading-height: min(50dvh, 22rem);
+    background: var(--surface-chip);
+    border-radius: var(--radius-md);
+    padding: var(--space-3) var(--space-4);
+  }
+
+  .panelBar {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .readerClose {
+    margin-inline-start: auto;
+    scroll-margin-block-end: calc(var(--report-source-reading-height) + var(--space-4));
+  }
+
+  .readerScroll {
+    max-block-size: var(--report-source-reading-height);
+    overflow: auto;
+  }
+
   .panel {
-    font-family: var(--font-sans);
+    font: var(--type-ui);
+    letter-spacing: var(--type-ui-tracking);
     display: flex;
     flex-direction: column;
     gap: var(--space-3);

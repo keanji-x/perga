@@ -11,6 +11,7 @@ import { useState } from '../../../ui/state/public.ts';
 import { ReportHtmlFrame } from '../html/public.tsx';
 import type { ReportLinkPreviewResources } from '../link-preview/public.tsx';
 import { ReportDocument } from '../document/public.tsx';
+import type { ReportSourceInsertion } from '../source/placement.ts';
 import styles from './report-file-viewer.module.css';
 
 function basename(path: string): string {
@@ -29,7 +30,7 @@ function parentDirectory(path: string): string {
  * card board.
  */
 export function ReportFileViewer({
-  path, files, fileRoot, wide, onClose, onFileOpened, onOpenFileLink, onOpenSourceLink, linkPreview,
+  path, files, fileRoot, wide, onClose, onFileOpened, onOpenFileLink, onOpenSourceLink, linkPreview, sourceInsertion,
 }: Readonly<{
   path: string;
   files: WorkspaceFilePort;
@@ -41,6 +42,7 @@ export function ReportFileViewer({
   onOpenFileLink?: (target: ReportFileLinkTarget) => void;
   onOpenSourceLink?: (target: ReportSourceLinkTarget) => void;
   linkPreview?: ReportLinkPreviewResources;
+  sourceInsertion?: ReportSourceInsertion;
 }>) {
   const layerRef = useRef<HTMLDivElement | null>(null);
   const resource = useReportFileResource(path, files, onFileOpened);
@@ -104,6 +106,7 @@ export function ReportFileViewer({
             <ReportDocument
               report={report}
               empty={<></>}
+              sourceInsertion={sourceInsertion}
               fileRoot={fileRoot}
               fileBasePath={parentDirectory(resource.path)}
               onOpenFileLink={onOpenFileLink}

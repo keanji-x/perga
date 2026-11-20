@@ -96,7 +96,8 @@ import { WorkerDispatchControl } from './worker-controls.tsx';
 import { useReportPreviewResolver, useReportPreviewViewports } from './report-preview.ts';
 import { useReportSeriesResolver } from './report-series.ts';
 import { ReportReferencePreview } from './report-reference.tsx';
-import { ReportSourceDrawer, ReportSourcePreview } from './report-source.tsx';
+import { ReportSourceInDocument, ReportSourcePreview } from './report-source.tsx';
+import { reportSourcePosition, type ReportSourcePosition } from '../../features/report/source/placement.ts';
 import { ReportEmpty } from '../../features/report/empty/public.tsx';
 import { ReportFileViewer } from '../../features/report/file-viewer/public.tsx';
 import { ReportOutline } from '../../features/report/outline/public.tsx';
@@ -1665,13 +1666,13 @@ function TrackRouteBody({
     fileNavigation.openFile(track.id, relativePath);
   };
 
-  /* A `neige://source/…` citation opens the source panel: route-local state, not
-   * the URL, keyed to this body so leaving the track drops it. Phone and desktop
-   * share the target. */
-  const [sourceSelection, setSourceSelection] = useState<{ trackId: string; target: ReportSourceLinkTarget } | null>(null);
-  const sourceOpen = sourceSelection !== null;
+  const [sourceSelection, setSourceSelection] = useState<{
+    trackId: string; target: ReportSourceLinkTarget; opener: HTMLElement | null; filePath: string | null; position: ReportSourcePosition | null;
+  } | null>(null);
+  if (sourceSelection !== null && sourceSelection.filePath !== requestedFilePath) setSourceSelection(null);
   const openSource = (trackId: string, target: ReportSourceLinkTarget) => {
-    setSourceSelection({ trackId, target });
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setSourceSelection({ trackId, target, opener, filePath: requestedFilePath, position: reportSourcePosition(opener) });
   };
   const openReportSource = (target: ReportSourceLinkTarget) => { openSource(track.id, target); };
   const linkPreview = { files: reportFiles, trackId: track.id, report,
@@ -1680,7 +1681,11 @@ function TrackRouteBody({
       onOpenLink={openReportLink} onOpenSource={openSource}
       onOpenFile={(owner, file) => { if (owner === track.id) openReportFile(file); else fileNavigation.openFile(owner, file.path); }} />,
   };
-  const closeReportSource = () => { setSourceSelection(null); };
+  const sourceInsertion = sourceSelection === null ? undefined : {
+    position: sourceSelection.position,
+    content: <ReportSourceInDocument key={`${sourceSelection.trackId}:${sourceSelection.target.destination}`}
+      transport={transport} unauthorized={unauthorized} selection={sourceSelection} onClose={() => { setSourceSelection(null); }} />,
+  };
 
   const closeBoard = () => {
     if (requestedFilePath !== null) {
@@ -1726,6 +1731,7 @@ function TrackRouteBody({
     {pergaMode && centerActive && reportPresentation.visible?.preparation.kind === 'empty' ? null : (
         <TrackReportRegion
         presentation={reportPresentation}
+        sourceInsertion={requestedFilePath === null ? sourceInsertion : undefined}
         trackId={track.id}
         activityAt={track.activityAt}
         openedAt={navigationCompletedAt}
@@ -1784,7 +1790,7 @@ function TrackRouteBody({
       panelHeader={pergaMode && panelContent !== undefined ? <div className={dailyStyles.calendarPanel}>{panelContent}</div> : undefined}
       panelContent={pergaMode ? (centerActive && reportPresentation.visible?.preparation.kind !== 'empty' ? <div className={dailyStyles.reportPanel}><PanelModule title="Daily report" icon="file">{reportRegion}</PanelModule></div> : undefined) : panelContent}
       mobileReportIntro={mobileReportIntro}
-      mobilePanelObscured={(!centerActive && chat.isOpen) || sourceOpen}
+      mobilePanelObscured={!centerActive && chat.isOpen}
       mobileHeaderActionsHost={mobileHeaderActionsHost}
       mobileHeaderTitleHost={mobileHeaderTitleHost}
       mobileTitleReadView={shareAccess?.scope.kind === 'track' ? undefined : (controls) => <TrackSelector track={track} controls={controls}
@@ -1833,6 +1839,7 @@ function TrackRouteBody({
             key={requestedFilePath}
             path={requestedFilePath}
             files={reportFiles}
+            sourceInsertion={sourceInsertion}
             linkPreview={linkPreview}
             fileRoot={track.agentCwd}
             wide={gridItems.length === 0}
@@ -1929,19 +1936,9 @@ function TrackRouteBody({
     {/* Only while the dialog is closed: `NewCardForm` renders the same `error` inline. */}
     {cardDraft === null && <OperationFeedback feedback={cardCreateFeedback}
       action={retryCardCreate === null ? undefined : <Button label="Try again" variant="ghost" onClick={retryCardCreate} />} />}
-    {/* The source card is painted over the conversation's, which stays in the DOM
-            underneath and so is `inert` for the duration. The wrapper is a static block
-            so the drawer's absolute box still resolves against `.main`. */}
-    <div data-nc-conversation-drawer-host="" inert={sourceOpen}>
+    <div data-nc-conversation-drawer-host="">
       <div className={mobileChatStyles.history}>{chat.drawer}</div>
     </div>
-    <ReportSourceDrawer
-      transport={transport}
-      trackId={sourceSelection?.trackId ?? track.id}
-      target={sourceSelection?.target ?? null}
-      unauthorized={unauthorized}
-      onClose={closeReportSource}
-    />
     </>
   );
 }

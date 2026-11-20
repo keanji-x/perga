@@ -475,7 +475,7 @@ describe('dragged conversation width', () => {
             <aside data-nc-panel="">
               <button type="button" data-testid="opener" onClick={() => { setOpen(true); }}>Conversation Chat</button>
             </aside>
-            {/* As on the track route: the source card is painted over the conversation, which stays mounted and inert. */}
+            {/* Exercise width sharing for two drawers in the same shell. */}
             <div inert={source}>
               <ConversationDrawer open={open} title={title} stacked={stacked} onClose={() => { setOpen(false); onClose?.(); }} />
             </div>

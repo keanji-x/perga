@@ -1,13 +1,11 @@
-// The track page's source panel: the drawer a `neige://source/…` citation opens,
-// with the query that fills it. Which citation is open is route-local state, not
-// `?source=`: a source is read beside the document and changes nothing about where the reader is.
+// Authenticated source reads shared by documents, previews and the chat drawer.
 
 import { useQuery, type UseQueryResult } from '@tanstack/react-query';
 
 import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import type { ReportSourceLinkTarget, SourceResolution } from '../../../../core/domain/report-source.ts';
-import { ReportSourcePanel, reportSourcePanelTitle, SOURCE_PANEL_COPY } from '../../features/report/source/public.tsx';
+import { ReportSourcePanel, ReportSourceReader, reportSourcePanelTitle, SOURCE_PANEL_COPY } from '../../features/report/source/public.tsx';
 import { Drawer } from '../../ui/drawer/public.tsx';
 import { readFailureOf } from '../../../../core/domain/read-failure.ts';
 import { trackSourceQueryOptions, type SourceRead } from '../providers/queries.ts';
@@ -41,6 +39,17 @@ export function ReportSourcePreview({ transport, trackId, target, unauthorized }
 }) {
   const query = useSource(transport, trackId, target, unauthorized);
   return <ReportSourcePanel target={target} resolution={sourceResolutionOf(query)} scrollToQuote={false} initialView="reading"
+    onRetry={() => { void query.refetch(); }} />;
+}
+
+export function ReportSourceInDocument({ transport, unauthorized, selection, onClose }: Readonly<{
+  transport: ApiTransportPort;
+  unauthorized: UnauthorizedChannel;
+  selection: Readonly<{ trackId: string; target: ReportSourceLinkTarget; opener: HTMLElement | null }>;
+  onClose: () => void;
+}>) {
+  const query = useSource(transport, selection.trackId, selection.target, unauthorized);
+  return <ReportSourceReader selection={selection} resolution={sourceResolutionOf(query)} onClose={onClose}
     onRetry={() => { void query.refetch(); }} />;
 }
 

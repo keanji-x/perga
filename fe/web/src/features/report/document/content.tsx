@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from 'react';
+import { cloneElement, isValidElement, useMemo, type ReactNode } from 'react';
 import { prepareProse, preparePreviewProse, type PreparedProse, type PreviewReferenceContext } from './preparation.ts';
 import { parseReportLink, type ReportLinkTarget } from '../../../../../core/domain/report.ts';
 import { parseReportFileLink, reportFilePathRelativeToRoot, type ReportFileLinkTarget } from '../../../../../core/domain/report-file.ts';
@@ -8,6 +8,7 @@ import { isImagePath, useReportFileResource } from '../../../systems/fs-viewers/
 import type { WorkspaceFilePort } from '../../../../../core/domain/fs.ts';
 import { MarkdownBlocks } from '../../../ui/markdown/public.tsx';
 import { ReportLinkPreview, ReportSourceLinkPreview, externalPreviewUrl, type ReportLinkPreviewResources, type PreviewDestination } from '../link-preview/public.tsx';
+import type { ReportSourceInsertion } from '../source/placement.ts';
 import styles from './document.module.css';
 
 type ProseOptions = Omit<ReportTextContext, 'referenceRepository'> & Readonly<{
@@ -33,15 +34,22 @@ function PreviewProse({ markdown, referenceContext, ...options }: ProseOptions &
 /** The rendered half consumes prepared syntax; admission and live callbacks remain current. */
 export function PreparedProseBlock({
   prepared, onOpenLink, onOpenFileLink, onOpenSourceLink, fileRoot, fileBasePath, linkPreview,
-  referenceRepository = null, compact = false, destinationMode = 'interactive',
-}: ProseOptions & Readonly<{ prepared: PreparedProse }>) {
+  referenceRepository = null, compact = false, destinationMode = 'interactive', sourceInsertion,
+}: ProseOptions & Readonly<{ prepared: PreparedProse; sourceInsertion?: ReportSourceInsertion }>) {
   const { result } = prepared;
-  if (result.status === 'failed') return <pre className={styles.raw}>{prepared.source}</pre>;
+  if (result.status === 'failed') return <><pre className={styles.raw}>{prepared.source}</pre>{sourceInsertion?.content}</>;
   const { ast, headingIds } = result;
-  if (ast.children.length === 0) return null;
+  if (ast.children.length === 0) return sourceInsertion?.content ?? null;
   const context: ReportTextContext = { onOpenLink, onOpenFileLink, onOpenSourceLink, fileRoot, fileBasePath,
     linkPreview, referenceRepository, destinationMode };
-  const rendered = <MarkdownBlocks blocks={ast.children} presentation={{
+  const last = ast.children.length - 1;
+  const selected = Math.min(sourceInsertion?.position?.markdownBlock ?? last, last);
+  const rendered = <MarkdownBlocks blocks={ast.children} decorateBlock={onOpenSourceLink === undefined ? undefined : (content, index) => {
+    const anchor = isValidElement<{ 'data-nc-report-markdown-block'?: number }>(content) && typeof content.type === 'string'
+      ? cloneElement(content, { 'data-nc-report-markdown-block': index })
+      : content;
+    return index === selected && sourceInsertion !== undefined ? <>{anchor}{sourceInsertion.content}</> : anchor;
+  }} presentation={{
     classes: { paragraph: styles.p, list: styles.list, item: styles.item, check: styles.check,
       quote: styles.quote, inlineCode: styles.inlineCode, strong: styles.strong,
       tableWrap: styles.tableWrap, table: styles.table, cell: styles.cell, rule: styles.rule },

@@ -20,6 +20,7 @@ import {
 import type { SeriesResolution } from '../../../../../core/domain/report-series.ts';
 import { type ReportSourceLinkTarget } from '../../../../../core/domain/report-source.ts';
 import { type ReportLinkPreviewResources } from '../link-preview/public.tsx';
+import type { ReportSourceInsertion } from '../source/placement.ts';
 import { prepareReportDocument, type PreparedReport, type PreparedReportBlock } from './preparation.ts';
 import { ReportDetails } from './details.tsx';
 import { REPORT_ANCHOR_REQUEST, revealReportAnchor, type ReportAnchorRequest } from '../anchor/public.ts';
@@ -47,6 +48,8 @@ export type ReportDocumentProps = Readonly<{
   rail?: ReactNode;
   /** The byline row (`Planner Agent · 2h`), composed by `app/router`. */
   byline?: ReactNode;
+  /** The open citation and its position in this document. */
+  sourceInsertion?: ReportSourceInsertion;
   /** How many backlinks land on each block, for the sidenote markers. */
   backlinkCounts?: ReadonlyMap<string, number>;
   /** A `neige://wave/…` link was activated. Absent ⇒ links render as plain text. */
@@ -82,7 +85,7 @@ export type ReportDocumentProps = Readonly<{
 
 /** Agent-authored destinations become admitted preview controls. Navigation stays behind typed callbacks or explicit external activation. */
 export function ReportDocument({
-  report, preparation, empty, outlineEmpty, rail, byline, backlinkCounts, onOpenLink, onOpenFileLink, onOpenSourceLink, fileRoot, fileBasePath, linkPreview,
+  report, preparation, empty, outlineEmpty, rail, byline, sourceInsertion, backlinkCounts, onOpenLink, onOpenFileLink, onOpenSourceLink, fileRoot, fileBasePath, linkPreview,
   resolveOverlay, resolveSeries, resolvePreview, previewViewports, onSaveProseBlock,
   arrivalAnchorId, taskVerdicts, taskRows, renderTaskExecution,
 }: ReportDocumentProps) {
@@ -107,9 +110,10 @@ export function ReportDocument({
       {prepared.kind === 'legacy'
         ? (
           <div className={styles.row}>
-            <div className={styles.block} data-nc-report-reading="" data-nc-link-reading="">
+            <div className={styles.block} data-nc-report-reading="" data-nc-link-reading="" data-nc-report-source-block="">
               <PreparedProseBlock
                 prepared={prepared.prose}
+                sourceInsertion={sourceInsertion}
                 referenceRepository={referenceRepository} onOpenLink={onOpenLink}
                 onOpenFileLink={onOpenFileLink}
                 onOpenSourceLink={onOpenSourceLink}
@@ -129,6 +133,7 @@ export function ReportDocument({
                 <BlockSlot
                   key={slot.block.id}
                   slot={slot}
+                  sourceInsertion={sourceInsertion?.position?.blockId === slot.block.id ? sourceInsertion : undefined}
                   backlinks={backlinkCounts?.get(slot.block.id) ?? 0}
                   referenceRepository={referenceRepository} onOpenLink={onOpenLink}
                   onOpenFileLink={onOpenFileLink}
@@ -145,10 +150,13 @@ export function ReportDocument({
               ))}
               {processBlocks.length > 0 && (
                 <ReportReference blocks={processBlocks} backlinkCounts={backlinkCounts}
+                  sourceInsertion={sourceInsertion}
                   tasks={taskRows} verdicts={taskVerdicts} renderTaskExecution={renderTaskExecution}
                   referenceRepository={referenceRepository} onOpenLink={onOpenLink} onOpenFileLink={onOpenFileLink}
                   onOpenSourceLink={onOpenSourceLink} fileRoot={fileRoot} fileBasePath={fileBasePath} linkPreview={linkPreview} />
               )}
+              {sourceInsertion !== undefined && !prepared.blocks.some(({ block }) => block.id === sourceInsertion.position?.blockId)
+                && <div className={styles.block}>{sourceInsertion.content}</div>}
             </>
           );
         })()}
@@ -160,7 +168,7 @@ function isProcessBlock(block: ReportBlock): boolean {
   return isTaskBlock(block);
 }
 
-function ReportReference({ blocks, backlinkCounts, tasks, verdicts, renderTaskExecution, ...textContext }: {
+function ReportReference({ blocks, backlinkCounts, tasks, verdicts, renderTaskExecution, sourceInsertion, ...textContext }: {
   blocks: readonly ReportBlock[];
   backlinkCounts?: ReadonlyMap<string, number>;
   tasks?: readonly ReportTaskRow[];
@@ -173,6 +181,7 @@ function ReportReference({ blocks, backlinkCounts, tasks, verdicts, renderTaskEx
   fileBasePath?: string;
   linkPreview?: ReportLinkPreviewResources;
   renderTaskExecution?: ReportDocumentProps['renderTaskExecution'];
+  sourceInsertion?: ReportSourceInsertion;
 }) {
   const [visited, setVisited] = useState(false);
   const region = useRef<HTMLDivElement | null>(null);
@@ -205,8 +214,9 @@ function ReportReference({ blocks, backlinkCounts, tasks, verdicts, renderTaskEx
         {blocks.map((block) => {
           const backlinks = backlinkCounts?.get(block.id) ?? 0;
           return (
-            <div key={block.id} className={styles.referenceItem} id={block.id}>
+            <div key={block.id} className={styles.referenceItem} id={block.id} data-nc-report-source-block={block.id}>
               {visited && <BlockBody block={block} task={tasksByBlock.get(block.id)} renderTaskExecution={renderTaskExecution} {...textContext} />}
+              {sourceInsertion?.position?.blockId === block.id && sourceInsertion.content}
               {backlinks > 0 && (
                 <span
                   className={styles.referenceSidenote}
@@ -226,7 +236,7 @@ function ReportReference({ blocks, backlinkCounts, tasks, verdicts, renderTaskEx
 /** One block, plus the sidenote that belongs to it. */
 function BlockSlot({
   slot, backlinks, onOpenLink, onOpenFileLink, onOpenSourceLink, fileRoot, fileBasePath, linkPreview, referenceRepository, resolveOverlay, resolveSeries,
-  resolvePreview, previewViewports, onSaveProseBlock,
+  resolvePreview, previewViewports, onSaveProseBlock, sourceInsertion,
 }: {
   referenceRepository: ReferenceRepository | null;
   slot: PreparedReportBlock;
@@ -242,6 +252,7 @@ function BlockSlot({
   resolvePreview?: ReportDocumentProps['resolvePreview'];
   previewViewports?: PreviewViewportStore;
   onSaveProseBlock?: ReportDocumentProps['onSaveProseBlock'];
+  sourceInsertion?: ReportSourceInsertion;
 }) {
   const { block, prose } = slot;
   const [editing, setEditing] = useState(false);
@@ -251,7 +262,7 @@ function BlockSlot({
   const canEditProse = block.kind === 'prose' && onSaveProseBlock !== undefined;
   return (
     <div className={styles.row}>
-      <div className={`${styles.block} ${canEditProse ? styles.editable : ''}`} id={block.id} data-nc-report-reading="" data-nc-link-reading="">
+      <div className={`${styles.block} ${canEditProse ? styles.editable : ''}`} id={block.id} data-nc-report-reading="" data-nc-link-reading="" data-nc-report-source-block={block.id}>
         {canEditProse && editing ? (
           <div className={styles.proseEditor} data-nc-prose-editor="">
             <textarea
@@ -293,6 +304,7 @@ function BlockSlot({
           ? <>
               <PreparedProseBlock
                 prepared={prose}
+                sourceInsertion={sourceInsertion}
                 referenceRepository={referenceRepository} onOpenLink={onOpenLink}
                 onOpenFileLink={onOpenFileLink}
                 onOpenSourceLink={onOpenSourceLink}
@@ -316,6 +328,7 @@ function BlockSlot({
               onOpenSourceLink={onOpenSourceLink} linkPreview={linkPreview}
               resolveOverlay={resolveOverlay} resolveSeries={resolveSeries} resolvePreview={resolvePreview}
               previewViewports={previewViewports} />}
+        {(!prose || editing) && sourceInsertion?.content}
       </div>
       {backlinks > 0 && (
         <span className={styles.sidenote} title={`${backlinks} report${backlinks === 1 ? '' : 's'} cite this block`}>
