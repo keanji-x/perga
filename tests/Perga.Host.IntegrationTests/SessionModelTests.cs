@@ -353,7 +353,7 @@ public sealed class SessionModelTests
             await using (var host = new PergaHostTestCluster(directory.FullName))
             {
                 (trackId, sessionId) = await host.CreateTrackAsync();
-                using var modeResponse = await host.Client.PutAsJsonAsync($"/api/v1/sessions/{sessionId}/permission-mode", new { permissionMode = "ask" });
+                using var modeResponse = await host.Client.PutAsJsonAsync($"/api/v1/sessions/{sessionId}/permission-mode", new { permissionMode = "full" });
                 Assert.Equal(HttpStatusCode.OK, modeResponse.StatusCode);
                 using var response = await host.Client.PutAsJsonAsync($"/api/v1/sessions/{sessionId}/model", new { model = "chosen-model", reasoningEffort = "high" });
                 Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -365,7 +365,7 @@ public sealed class SessionModelTests
                 var session = await response.Content.ReadFromJsonAsync<AgentSessionDto>(PergaJsonDefaults.ApiOptions);
                 Assert.Equal("chosen-model", session!.Model);
                 Assert.Equal("high", session.ReasoningEffort);
-                Assert.Equal("ask", session.PermissionMode);
+                Assert.Equal("full", session.PermissionMode);
                 Assert.Null(session.ContextUsage);
                 using var missing = await host.Client.PutAsJsonAsync("/api/v1/sessions/missing/model", new { model = "chosen-model" });
                 Assert.Equal(HttpStatusCode.NotFound, missing.StatusCode);
@@ -375,14 +375,14 @@ public sealed class SessionModelTests
             Assert.Equal("chosen-model", (await kernel.ListSessionsAsync(trackId)).Single(s => s.Id == sessionId).Model);
             var restored = (await kernel.ListSessionsAsync(trackId)).Single(s => s.Id == sessionId);
             Assert.Equal("high", restored.ReasoningEffort);
-            Assert.Equal("ask", restored.PermissionMode);
+            Assert.Equal("full", restored.PermissionMode);
             Assert.Null(restored.ContextUsage);
             using var reset = await reopened.Client.PutAsJsonAsync($"/api/v1/sessions/{sessionId}/model", new { model = (string?)null });
             Assert.Equal(HttpStatusCode.OK, reset.StatusCode);
             var cleared = await reset.Content.ReadFromJsonAsync<AgentSessionDto>(PergaJsonDefaults.ApiOptions);
             Assert.Null(cleared!.Model);
             Assert.Null(cleared.ReasoningEffort);
-            Assert.Equal("ask", cleared.PermissionMode);
+            Assert.Equal("full", cleared.PermissionMode);
             Assert.Null((await kernel.ListSessionsAsync(trackId)).Single(s => s.Id == sessionId).Model);
         }
         finally
@@ -407,7 +407,7 @@ public sealed class SessionModelTests
                 if (!lead)
                     sessionId = (await kernel.CreateSubagentSessionAsync(trackId, new CreateSessionRequest(Provider: "codex"))).Id;
                 await kernel.UpdateSessionModelAsync(sessionId, new("chosen", "low"));
-                using var permission = await host.Client.PutAsJsonAsync($"/api/v1/sessions/{sessionId}/permission-mode", new { permissionMode = "ask" });
+                using var permission = await host.Client.PutAsJsonAsync($"/api/v1/sessions/{sessionId}/permission-mode", new { permissionMode = "full" });
                 permission.EnsureSuccessStatusCode();
                 using var response = await host.Client.PutAsJsonAsync($"/api/v1/sessions/{sessionId}/model",
                     new { model = (string?)null, reasoningEffort = " high " });
@@ -427,7 +427,7 @@ public sealed class SessionModelTests
                 var launch = Assert.Single(reopened.AgentRuntime.ExecutedTurns).Spec;
                 Assert.Null(launch.Model);
                 Assert.Equal("high", launch.ReasoningEffort);
-                Assert.Equal("ask", launch.PermissionMode);
+                Assert.Equal("full", launch.PermissionMode);
                 using var clearEffort = await reopened.Client.PutAsJsonAsync($"/api/v1/sessions/{sessionId}/model",
                     new { model = "chosen", reasoningEffort = (string?)null });
                 clearEffort.EnsureSuccessStatusCode();
@@ -439,7 +439,7 @@ public sealed class SessionModelTests
             var persisted = Assert.Single(await clearedHost.Services.GetRequiredService<IPergaKernel>().ListSessionsAsync(trackId), s => s.Id == sessionId);
             Assert.Equal("chosen", persisted.Model);
             Assert.Null(persisted.ReasoningEffort);
-            Assert.Equal("ask", persisted.PermissionMode);
+            Assert.Equal("full", persisted.PermissionMode);
         }
         finally { directory.Delete(recursive: true); }
     }

@@ -128,7 +128,7 @@ public sealed class L2ConfigurationRecoveryRegressionTests
         try
         {
             await launched.Task.WaitAsync(TimeSpan.FromSeconds(10));
-            await ctx.Kernel.SetSessionPermissionModeAsync(id, "ask");
+            await ctx.Kernel.SetSessionPermissionModeAsync(id, "full");
         }
         finally { release.Set(); }
         if (unconfirmed)
@@ -141,10 +141,10 @@ public sealed class L2ConfigurationRecoveryRegressionTests
         {
             await resume;
             Assert.Empty(await ctx.Store.ListSessionResumeFencesAsync(snap.Track.Id, default));
-            Assert.Equal("ask", (await ctx.Kernel.ListSessionsAsync(snap.Track.Id)).Single().PermissionMode);
+            Assert.Equal("full", (await ctx.Kernel.ListSessionsAsync(snap.Track.Id)).Single().PermissionMode);
             ctx.AgentRuntime.OnBeforeOpenSession = null;
             await ctx.SendAndWaitForTurnAsync(id, new("next", "next"));
-            Assert.Equal("ask", ctx.AgentRuntime.OpenedSessions.Last().LaunchSpec.PermissionMode);
+            Assert.Equal("full", ctx.AgentRuntime.OpenedSessions.Last().LaunchSpec.PermissionMode);
         }
     }
 

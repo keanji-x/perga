@@ -2,13 +2,6 @@ using System.Text.Json;
 
 namespace Perga.AgentKit;
 
-public enum OsSandboxMode
-{
-    None,
-    WorkspaceWriteBwrap,
-    ReadOnlyBwrap
-}
-
 public abstract record McpServerConfig
 {
     public sealed record HttpMcpServer(
@@ -21,21 +14,13 @@ public abstract record McpServerConfig
         IReadOnlyDictionary<string, string> Env) : McpServerConfig;
 }
 
-public sealed record OverlayMountSpec(
-    IReadOnlyList<string> LowerDirs,
-    string? UpperDir,
-    string? WorkDir,
-    string TargetPath);
-
 public sealed record HarnessLaunchSpec(
-    string Provider,   // "codex" | "claude" | "acp:antigravity" | "acp:opencode"
+    string Provider,   // "codex" | "claude" | "acp:antigravity" | "acp:opencode" | "oar:<runtime>"
     string? Model,
     string Cwd,
     string? ResumeNativeThreadId,
     string? SystemPrompt,
     IReadOnlyDictionary<string, McpServerConfig> McpServers,
-    OsSandboxMode Sandbox = OsSandboxMode.None,
-    IReadOnlyList<OverlayMountSpec>? OverlayMounts = null,
     string? ReasoningEffort = null,
     string? StateKey = null,
     bool ConfigureWorker = false,
@@ -54,8 +39,6 @@ public sealed record TokenUsage(
     long? ContextWindowTokens,
     long? UsedTokens = null)
 {
-    // CachedInputTokens is a subset of InputTokens unless a provider supplies
-    // an explicit snapshot that accounts for its different cache semantics.
     public long EffectiveUsedTokens => UsedTokens ?? InputTokens + OutputTokens;
 
     public void Deconstruct(out long inputTokens, out long outputTokens,
@@ -96,7 +79,6 @@ public sealed record ProviderModelEffort(
     string ReasoningEffort,
     string Description);
 
-// Model and effort selection IDs are opaque to callers.
 public sealed record ProviderModelInfo(
     string Model,
     string DisplayName,
@@ -138,11 +120,9 @@ public enum SteerDelivery { Accepted, Declined, Unconfirmed }
 
 public interface IAgentSession : IAsyncDisposable
 {
-    // Options returned by this open provider session, including registered launch modes.
     IReadOnlyList<PermissionModeOption> AvailablePermissionModes => [];
     string? NativeThreadId { get; }
     bool SupportsNativeSteer { get; }
-    // Revisions are local to this session instance. Null means the producing configuration is unconfirmed.
     long? ContextUsageRevision => 0;
     bool CanReuseContextWindow => false;
     bool SupportsNativeCompact => false;
@@ -170,9 +150,6 @@ public interface IAgentSession : IAsyncDisposable
         CancellationToken ct = default) =>
         (TryClaimApprovalResponse(requestId, approved, selectedOptionId, reason, ct)
             ?? throw new InvalidOperationException($"No pending approval request with id '{requestId}'."))();
-    // Sessions with a pending request registry claim the response in memory here.
-    // A null result means that the request already ended.
-    // Invoke the returned sender at most once, outside the execution lock.
     Func<Task>? TryClaimApprovalResponse(
         string requestId, bool approved, string? selectedOptionId, string? reason, CancellationToken ct);
     SessionConfigurationCapabilities ConfigurationCapabilities { get; }
@@ -184,7 +161,6 @@ public interface IAgentSession : IAsyncDisposable
 public interface IAgentRuntime : IAsyncDisposable
 {
     bool CanResumeSession(string provider) => false;
-    // Returns normalized availability and model options for every provider.
     Task<IReadOnlyList<ProviderStatus>> ProbeProvidersAsync(CancellationToken ct);
     Task<IAgentSession> OpenSessionAsync(HarnessLaunchSpec spec, CancellationToken ct);
 }

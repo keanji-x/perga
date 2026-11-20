@@ -1875,18 +1875,6 @@ public sealed partial class TrackActor : IAsyncDisposable
                 : track.WorkspaceSpec.Clone());
     }
 
-    private static IReadOnlyList<OverlayMountSpec>? MapOverlayLayers(IReadOnlyList<WorkspaceOverlayLayer>? layers)
-    {
-        if (layers is null || layers.Count == 0)
-        {
-            return null;
-        }
-
-        return layers
-            .Select(l => new OverlayMountSpec(l.LowerDirs, l.UpperDir, l.WorkDir, l.TargetPath))
-            .ToArray();
-    }
-
     private async Task<ReportReadResult> FinalizeReportCommitCoreAsync(
         ReportCommitResult commitResult,
         string? authorSessionId,
@@ -2864,29 +2852,11 @@ public sealed partial class TrackActor : IAsyncDisposable
             throw KernelException.Conflict("The task attempt workspace is no longer available.");
         var mounted = await EnsureWorkspaceMountedCoreAsync(ct).ConfigureAwait(false);
         var effectiveCwd = mounted.MergedCwd;
-        var overlayMounts = MapOverlayLayers(mounted.ProcessOverlayLayers);
-        var sandboxMode = session.IsLead
-            ? _options.LeadSandboxMode
-            : _options.FreeSubagentSandboxMode;
 
-        if (session.BoundAttemptId is not null)
+        if (session.BoundAttemptId is not null &&
+            _activeAttempts.TryGetValue(session.BoundAttemptId, out var activeAttempt))
         {
-            if (_activeAttempts.TryGetValue(session.BoundAttemptId, out var activeAttempt))
-            {
-                effectiveCwd = activeAttempt.Lease.EffectiveCwd;
-                overlayMounts = MapOverlayLayers(activeAttempt.Lease.ProcessOverlayLayers ?? mounted.ProcessOverlayLayers);
-            }
-
-            if (session.BoundTaskId is not null)
-            {
-                var boundTask = _tasks.FirstOrDefault(t => string.Equals(t.Id, session.BoundTaskId, StringComparison.Ordinal));
-                if (boundTask is not null)
-                {
-                    sandboxMode = boundTask.Access == AccessMode.ReadOnly
-                        ? _options.ReadOnlyTaskSandboxMode
-                        : _options.ReadWriteTaskSandboxMode;
-                }
-            }
+            effectiveCwd = activeAttempt.Lease.EffectiveCwd;
         }
 
         var mcpReg = _mcpBridge.RegisterSession(
@@ -2905,8 +2875,6 @@ public sealed partial class TrackActor : IAsyncDisposable
             ResumeNativeThreadId: session.NativeThreadId,
             SystemPrompt: systemPrompt,
             McpServers: mcpReg.McpServers,
-            Sandbox: sandboxMode,
-            OverlayMounts: overlayMounts,
             ReasoningEffort: session.ReasoningEffort,
             StateKey: session.Id,
             ConfigureWorker: session.BoundAttemptId is not null,

@@ -3,12 +3,13 @@ using Perga.Kernel.Ports;
 
 namespace Perga.Kernel.Tests.Fakes;
 
-internal sealed partial class InMemoryTrackStore : ISessionInputStore, ISessionMessageStore
+internal sealed partial class InMemoryTrackStore : ISessionInputStore, ISessionMessageStore, IWorkerSettingsStore
 {
     private readonly Dictionary<(string SessionId, bool Worker, string Id), PersistedSessionInput> _inputs = new();
     private readonly Dictionary<(string SessionId, bool Worker, string Id), SessionMessage> _messages = new();
     private readonly Dictionary<(string Track, string Key), StoredSessionCreation> _sessionCreations = new();
     private readonly Dictionary<(string Id, string Turn), string> _queuedSteers = new();
+    private readonly Dictionary<string, WorkerSettings> _workerSettings = new(StringComparer.Ordinal);
 
     private static (string SessionId, bool Worker, string Id) Key(SessionMessage message) =>
         (message.SessionId, message.AttemptId is not null, message.Id);
@@ -17,6 +18,24 @@ internal sealed partial class InMemoryTrackStore : ISessionInputStore, ISessionM
 
     public ISessionInputStore SessionInputs => this;
     public ISessionMessageStore SessionMessages => this;
+    public IWorkerSettingsStore? WorkerSettings => this;
+
+    public Task<WorkerSettings?> ReadAsync(string sessionId, CancellationToken ct)
+    {
+        lock (_gate)
+            return Task.FromResult(_workerSettings.GetValueOrDefault(sessionId));
+    }
+
+    public Task WriteAsync(string sessionId, WorkerSettings settings, string authorId, AgentSessionDto? updatedSession, EventEnvelopeDto evt, CancellationToken ct)
+    {
+        lock (_gate)
+        {
+            _workerSettings[sessionId] = settings;
+            if (updatedSession is not null) _sessions[sessionId] = updatedSession;
+            AppendEventLocked(evt);
+            return Task.CompletedTask;
+        }
+    }
 
 
     public Task<IReadOnlyList<SessionTurnDto>> ListSessionTurnsAsync(string sessionId, CancellationToken ct) =>

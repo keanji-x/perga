@@ -26,8 +26,8 @@ public sealed class PergaHostOptions
     public string DefaultProvider { get; set; } = "codex";
     public string? DefaultModel { get; set; }
     public Dictionary<string, string> ProviderExecutables { get; set; } = new(StringComparer.OrdinalIgnoreCase);
-    public string? CodexSandboxApiKey { get; set; }
-    public string? CodexWorkerHomeDirectory { get; set; }
+    public string? OarNodeExecutablePath { get; set; }
+    public string? OarBridgeScriptPath { get; set; }
     public string? WorkerApprovalAuthorizationSha256 { get; set; }
     public string DefaultWorkspaceDriver { get; set; } = "direct";
     public bool DispatchWakesInBackground { get; set; } = true;
@@ -104,6 +104,20 @@ public sealed class PergaHostOptions
         if (string.IsNullOrWhiteSpace(opts.McpBaseUri))
         {
             opts.McpBaseUri = Environment.GetEnvironmentVariable("PERGA_MCP_BASE_URI");
+        }
+
+        if (string.IsNullOrWhiteSpace(opts.OarNodeExecutablePath))
+        {
+            opts.OarNodeExecutablePath = Environment.GetEnvironmentVariable("PERGA_OAR_NODE_BIN");
+        }
+
+        if (string.IsNullOrWhiteSpace(opts.OarBridgeScriptPath))
+        {
+            var bundled = Path.Combine(AppContext.BaseDirectory, "oar-bridge", "perga-oar-bridge.mjs");
+            opts.OarBridgeScriptPath = Environment.GetEnvironmentVariable("PERGA_OAR_BRIDGE_SCRIPT")
+                ?? (File.Exists(bundled) ? bundled : null)
+                ?? DiscoverFileUpwards(contentRootPath, Path.Combine("tools", "perga-oar-bridge", "dist", "perga-oar-bridge.mjs"))
+                ?? DiscoverFileUpwards(AppContext.BaseDirectory, Path.Combine("tools", "perga-oar-bridge", "dist", "perga-oar-bridge.mjs"));
         }
 
         opts.InstallationRoot ??= Environment.GetEnvironmentVariable("PERGA_INSTALL_ROOT");

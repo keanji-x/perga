@@ -673,17 +673,17 @@ public sealed class ApiV1RestIntegrationTests
         var leadSessionId = trackEl.GetProperty("leadSessionId").GetString()!;
 
         using var retiredAlias = await client.PutAsJsonAsync(
-            $"/api/v1/sessions/{leadSessionId}/permission-mode", new { permission_mode = "ask" }, PergaJsonDefaults.ApiOptions);
+            $"/api/v1/sessions/{leadSessionId}/permission-mode", new { permission_mode = "full" }, PergaJsonDefaults.ApiOptions);
         Assert.Equal(HttpStatusCode.BadRequest, retiredAlias.StatusCode);
 
-        // 1. Lead session defaults to provider's default ("never" for codex) and can switch to "ask" and "full".
-        using var putLeadAsk = await client.PutAsJsonAsync(
+        // 1. Lead session defaults to provider's default ("never" for codex) and can switch to "full".
+        using var putLeadFull = await client.PutAsJsonAsync(
             $"/api/v1/sessions/{leadSessionId}/permission-mode",
-            new { permissionMode = "ask" },
+            new { permissionMode = "full" },
             PergaJsonDefaults.ApiOptions);
-        Assert.Equal(HttpStatusCode.OK, putLeadAsk.StatusCode);
-        var updatedLead = (await putLeadAsk.Content.ReadFromJsonAsync<AgentSessionDto>(PergaJsonDefaults.ApiOptions))!;
-        Assert.Equal("ask", updatedLead.PermissionMode);
+        Assert.Equal(HttpStatusCode.OK, putLeadFull.StatusCode);
+        var updatedLead = (await putLeadFull.Content.ReadFromJsonAsync<AgentSessionDto>(PergaJsonDefaults.ApiOptions))!;
+        Assert.Equal("full", updatedLead.PermissionMode);
 
         // 2. Assistant session created with explicit permissionMode = "acceptEdits" for claude.
         using var createSubReq = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/tracks/{trackId}/sessions")
@@ -707,7 +707,7 @@ public sealed class ApiV1RestIntegrationTests
 
         var sessions = (await client.GetFromJsonAsync<List<AgentSessionDto>>(
             $"/api/v1/tracks/{trackId}/sessions", PergaJsonDefaults.ApiOptions))!;
-        Assert.Equal("ask", sessions.Single(s => s.Id == leadSessionId).PermissionMode);
+        Assert.Equal("full", sessions.Single(s => s.Id == leadSessionId).PermissionMode);
         Assert.Equal("bypassPermissions", sessions.Single(s => s.Id == createdSub.Session.Id).PermissionMode);
 
         // 4. Unsupported mode for provider returns 400.
@@ -720,7 +720,7 @@ public sealed class ApiV1RestIntegrationTests
         // 5. Reusing Idempotency-Key with a different permissionMode returns 409 Conflict.
         using var conflictSubReq = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/tracks/{trackId}/sessions")
         {
-            Content = JsonContent.Create(new { title = "Claude Helper", provider = "claude", permissionMode = "default" })
+            Content = JsonContent.Create(new { title = "Claude Helper", provider = "claude", permissionMode = "plan" })
         };
         conflictSubReq.Headers.Add("Idempotency-Key", "idem-perm-sub-1");
         using var conflictSubResp = await client.SendAsync(conflictSubReq);

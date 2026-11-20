@@ -51,7 +51,7 @@ public sealed class ActiveTurnContextUsageBindingTests
             if (loseConfirmation)
                 Assert.Single(ctx.AgentRuntime.OpenedSessions).ConfigurationState = null;
             else
-                await ctx.Kernel.SetSessionPermissionModeAsync(id, "ask");
+                await ctx.Kernel.SetSessionPermissionModeAsync(id, "full");
             release.TrySetResult();
             await streamed.Task.WaitAsync(TimeSpan.FromSeconds(10));
             var live = Assert.Single(await ctx.Kernel.ListSessionsAsync(snap.Track.Id));

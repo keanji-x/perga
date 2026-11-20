@@ -78,11 +78,6 @@ public sealed class TrackActorAndHydrationTests
 
         Assert.True(ctx.AgentRuntime.OpenedSessions.TryDequeue(out var openedSession));
         Assert.Equal("/mounted/merged", openedSession!.LaunchSpec.Cwd);
-        Assert.NotNull(openedSession.LaunchSpec.OverlayMounts);
-        var mount = Assert.Single(openedSession.LaunchSpec.OverlayMounts!);
-        Assert.Equal("/mounted/merged", mount.TargetPath);
-        Assert.Equal("/overlay/upper", mount.UpperDir);
-        Assert.Equal(["/cache/lower"], mount.LowerDirs);
 
         // 2. Open terminal -> uses hydrated MountedWorkspace.MergedCwd
         var term = await ctx.Kernel.OpenTerminalAsync("trk_cold", "ses_lead_cold", new OpenTerminalRequest(Title: "Build Shell"));

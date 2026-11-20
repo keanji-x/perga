@@ -107,13 +107,12 @@ public static class PergaHostServiceCollectionExtensions
             var opts = sp.GetRequiredService<PergaHostOptions>();
             return new AgentRuntime(new AgentRuntimeOptions
             {
-                SandboxStateRootDirectory = Path.Combine(sp.GetRequiredService<ResolvedHostStoragePaths>().DataDir, "provider-state"),
-                CodexSandboxApiKey = opts.CodexSandboxApiKey,
-                CodexWorkerHomeDirectory = opts.CodexWorkerHomeDirectory,
+                NodeExecutablePath = opts.OarNodeExecutablePath,
+                BridgeScriptPath = opts.OarBridgeScriptPath,
                 ProviderOverrides = opts.ProviderExecutables.ToDictionary(
                     entry => AgentRuntime.NormalizeProviderName(entry.Key),
                     entry => new ProviderCommandOverride(entry.Value),
-                    StringComparer.OrdinalIgnoreCase),
+                    StringComparer.OrdinalIgnoreCase)
             });
         });
         services.TryAddSingleton<VcsService>();

@@ -1615,6 +1615,7 @@ internal sealed class SpyWorkspaceDriver : IWorkspaceDriver
     public IReadOnlyList<WorkspaceOverlayLayer>? OverlayLayersToInject { get; set; }
     public string? OverrideMountedMergedCwd { get; set; }
     public bool VerifyMountOnAccess { get; set; }
+    public bool CreateLeaseDirectories { get; set; }
 
     public ConcurrentQueue<WorkspaceProvisionRequest> ProvisionCalls { get; } = new();
     public ConcurrentQueue<WorkspaceSpec> EnsureMountedCalls { get; } = new();
@@ -1655,6 +1656,7 @@ internal sealed class SpyWorkspaceDriver : IWorkspaceDriver
         AcquireLeaseCalls.Enqueue((workspace, attemptId, readWrite));
         LifecycleTimeline.Enqueue($"acquire_lease:{attemptId}:{(readWrite ? "rw" : "ro")}");
         var effectiveCwd = Path.Combine(workspace.MergedCwd, "leases", attemptId);
+        if (CreateLeaseDirectories) Directory.CreateDirectory(effectiveCwd);
         return Task.FromResult(new AttemptWorkspaceLease(
             DriverId: DriverId,
             AttemptId: attemptId,

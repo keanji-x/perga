@@ -19,11 +19,11 @@ public sealed class HostSmokeTests
     }
 
     [Fact]
-    public async Task Bootstrap_ProbesProviderExecutablesFromHostConfiguration()
+    public async Task Bootstrap_ProbesProviderExecutablesThroughOarBridge()
     {
         if (!OperatingSystem.IsLinux()) return;
 
-        var directory = Directory.CreateTempSubdirectory("perga-provider-paths-");
+        var directory = Directory.CreateTempSubdirectory("perga-oar-provider-paths-");
         try
         {
             var commands = new[] { "agy", "codex", "opencode", "claude" };
@@ -32,7 +32,9 @@ public sealed class HostSmokeTests
             {
                 var name = commands[index];
                 var executable = Path.Combine(directory.FullName, name);
-                File.WriteAllText(executable, $"#!/bin/sh\n[ \"$1\" = --version ] || exit 1\necho '90.0.{index}'\n");
+                File.WriteAllText(
+                    executable,
+                    $"#!/bin/sh\nif [ \"$1\" = --version ]; then echo '90.0.{index}'; exit 0; fi\nif [ \"$1\" = app-server ] && [ \"$2\" = --help ]; then echo 'usage: codex app-server'; exit 0; fi\nexit 1\n");
                 File.SetUnixFileMode(executable, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
                 arguments[index] = $"--Perga:ProviderExecutables:{name}={executable}";
             }
@@ -49,7 +51,7 @@ public sealed class HostSmokeTests
             for (var index = 0; index < providerNames.Length; index++)
             {
                 var provider = providers[providerNames[index]];
-                Assert.True(provider.GetProperty("available").GetBoolean());
+                Assert.True(provider.GetProperty("available").GetBoolean(), $"Expected provider '{providerNames[index]}' to be available. Raw: {provider.GetRawText()}");
                 Assert.Equal($"90.0.{index}", provider.GetProperty("version").GetString());
             }
         }

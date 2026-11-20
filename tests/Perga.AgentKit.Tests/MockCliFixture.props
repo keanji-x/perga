@@ -1,7 +1,0 @@
-<Project>
-  <ItemGroup>
-    <Content Include="$(MSBuildThisFileDirectory)MockCli/*.py"
-             Link="MockCli/%(Filename)%(Extension)"
-             CopyToOutputDirectory="PreserveNewest" />
-  </ItemGroup>
-</Project>

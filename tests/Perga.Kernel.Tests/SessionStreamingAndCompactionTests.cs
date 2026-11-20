@@ -378,7 +378,7 @@ public sealed class SessionStreamingAndCompactionTests
         original.SupportsModelSwitch = true;
         try
         {
-            await ctx.Kernel.SetSessionPermissionModeAsync(id, "ask");
+            await ctx.Kernel.SetSessionPermissionModeAsync(id, "full");
             await ctx.Kernel.UpdateSessionModelAsync(id, new UpdateSessionModelRequest("next-model", "high"));
             Assert.False(original.Disposed);
             Assert.Empty(original.ModelSwitches);
@@ -390,7 +390,7 @@ public sealed class SessionStreamingAndCompactionTests
         Assert.Empty(original.ModelSwitches);
         Assert.Equal(2, ctx.AgentRuntime.OpenedSessions.Count);
         var reopened = ctx.AgentRuntime.OpenedSessions.Last().LaunchSpec;
-        Assert.Equal("ask", reopened.PermissionMode);
+        Assert.Equal("full", reopened.PermissionMode);
         Assert.Equal("next-model", reopened.Model);
         Assert.Equal("high", reopened.ReasoningEffort);
     }
@@ -664,7 +664,7 @@ public sealed class SessionStreamingAndCompactionTests
         var (_, snap) = await ctx.CreateDefaultTrackAsync();
         var leadId = snap.Track.LeadSessionId!;
 
-        await ctx.Kernel.SetSessionPermissionModeAsync(leadId, "ask");
+        await ctx.Kernel.SetSessionPermissionModeAsync(leadId, "full");
         var patched = await ctx.Kernel.PatchSessionAsync(leadId, new PatchSessionRequest(Provider: "claude"));
         Assert.Equal("claude", patched.Provider);
         Assert.Equal("dontAsk", patched.PermissionMode);

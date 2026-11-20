@@ -11,11 +11,10 @@ public sealed class ContractSmokeTests
             "/tmp",
             null,
             null,
-            new Dictionary<string, McpServerConfig>(),
-            OsSandboxMode.WorkspaceWriteBwrap);
+            new Dictionary<string, McpServerConfig>());
         UnifiedAgentEvent evt = new UnifiedAgentEvent.TextDelta("hello");
 
-        Assert.Equal(OsSandboxMode.WorkspaceWriteBwrap, spec.Sandbox);
+        Assert.Equal("codex", spec.Provider);
         Assert.IsType<UnifiedAgentEvent.TextDelta>(evt);
     }
 }
