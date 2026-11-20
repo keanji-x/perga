@@ -5,6 +5,7 @@ using Dapper;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Perga.Host.IntegrationTests.Fixtures;
+using Perga.Host.Serialization;
 using Perga.Kernel;
 using Perga.Kernel.Ports;
 using Perga.VcsKit;
@@ -29,6 +30,51 @@ public sealed class TrackCreationTests
         Assert.Equal("plan", Assert.Single(await host.Services.GetRequiredService<IPergaKernel>().ListSessionsAsync(trackId)).PermissionMode);
         Assert.Equal(probes, host.AgentRuntime.ProbeCount);
         Assert.Empty(host.AgentRuntime.OpenedSessions);
+    }
+
+    [Fact]
+    public async Task SessionReadsUseOpenAcpPermissionsWithoutOpeningProvider()
+    {
+        await using var host = new PergaHostTestCluster();
+        host.AgentRuntime.AcpPermissionModes =
+            [new("inspect", "Inspect", "Read only", IsDefault: true), new("act", "Act", "Make changes")];
+        var areaId = await CreateAreaAsync(host);
+        using var response = await PostAsync(host, "/api/v1/tracks", "acp-live-modes",
+            new { areaId, provider = "acp:antigravity" });
+        var track = (await ReadAsync(response)).GetProperty("track");
+        var sessionId = track.GetProperty("leadSessionId").GetString()!;
+        var trackId = track.GetProperty("id").GetString()!;
+        var path = $"/api/v1/sessions/{sessionId}";
+
+        async Task<SessionItemsPageDto> ReadPageAsync() =>
+            (await host.Client.GetFromJsonAsync<SessionItemsPageDto>(path + "/items", PergaJsonDefaults.ApiOptions))!;
+
+        var cold = await ReadPageAsync();
+        Assert.Null(cold.PermissionModes);
+        Assert.Empty(host.AgentRuntime.OpenedSessions);
+
+        var kernel = host.Services.GetRequiredService<IPergaKernel>();
+        await kernel.WaitForTrackIdleAsync(trackId).WaitAsync(Deadline);
+        using var first = await PostAsync(host, path + "/messages", "acp-live-input",
+            new { content = "Start the conversation." });
+        Assert.Equal(HttpStatusCode.Accepted, first.StatusCode);
+        await kernel.WaitForTrackIdleAsync(trackId).WaitAsync(Deadline);
+        var open = await ReadPageAsync();
+        Assert.Equal(host.AgentRuntime.AcpPermissionModes, open.PermissionModes);
+        Assert.Single(host.AgentRuntime.OpenedSessions);
+
+        using var update = await host.Client.PutAsJsonAsync(path + "/permission-mode", new { permissionMode = "act" });
+        update.EnsureSuccessStatusCode();
+        var updated = await ReadPageAsync();
+        Assert.Equal("act", updated.Session.PermissionMode);
+        Assert.Equal(host.AgentRuntime.AcpPermissionModes, updated.PermissionModes);
+        Assert.Single(host.AgentRuntime.OpenedSessions);
+
+        using var changeProvider = await host.Client.PatchAsJsonAsync(path, new { provider = "codex" });
+        changeProvider.EnsureSuccessStatusCode();
+        var switched = await ReadPageAsync();
+        Assert.Null(switched.PermissionModes);
+        Assert.Single(host.AgentRuntime.OpenedSessions);
     }
 
     [Theory]

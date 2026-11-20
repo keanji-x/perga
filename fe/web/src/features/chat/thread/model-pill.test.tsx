@@ -104,6 +104,47 @@ function openMenu(name: RegExp): HTMLElement {
 }
 
 describe('ModelPill', () => {
+  it('keeps the draft effort on same-model clicks and clears it only on Default or model change', () => {
+    const choose = vi.fn();
+    const group = { provider: 'opencode' as const, availability: null, catalog: catalog({
+      models: [
+        model({ default_reasoning_effort: 'low' }),
+        model({ id: 'second', model: 'second', display_name: 'Second', default_reasoning_effort: null }),
+      ],
+    }) };
+    render(<ModelPill provider="opencode" groups={[group]} selection={{ model: 'gpt-5', reasoning_effort: 'high' }}
+      onChange={choose} />);
+    let menu = within(openMenu(/^Model:/));
+    fireEvent.click(menu.getByRole('radio', { name: /^GPT-5/ }));
+    expect(menu.getByRole('slider').getAttribute('aria-valuetext')).toBe('high');
+    fireEvent.click(menu.getByRole('button', { name: 'Save' }));
+    expect(choose).toHaveBeenLastCalledWith({ model: 'gpt-5', reasoning_effort: 'high' }, 'opencode');
+
+    menu = within(openMenu(/^Model:/));
+    fireEvent.keyDown(menu.getByRole('slider'), { key: 'Home' });
+    fireEvent.click(menu.getByRole('button', { name: 'Save' }));
+    expect(choose).toHaveBeenLastCalledWith({ model: 'gpt-5', reasoning_effort: null }, 'opencode');
+
+    menu = within(openMenu(/^Model:/));
+    fireEvent.click(menu.getByRole('radio', { name: 'Second' }));
+    fireEvent.click(menu.getByRole('button', { name: 'Save' }));
+    expect(choose).toHaveBeenLastCalledWith({ model: 'second', reasoning_effort: null }, 'opencode');
+  });
+
+  it('allows Default to clear a saved effort when the provider lists no efforts', () => {
+    const choose = vi.fn();
+    render(<ModelPill provider="codex" groups={[{ provider: 'codex', availability: null,
+      catalog: catalog({ models: [model({ supported_reasoning_efforts: [], default_reasoning_effort: null })] }) }]}
+      selection={{ model: 'gpt-5', reasoning_effort: 'high' }} onChange={choose} />);
+    const menu = within(openMenu(/^Model:/));
+    const slider = menu.getByRole('slider', { name: 'Reasoning effort' });
+    expect(slider.getAttribute('aria-valuetext')).toBe('high (Unavailable)');
+    fireEvent.keyDown(slider, { key: 'Home' });
+    expect(slider.getAttribute('aria-valuetext')).toBe('Default');
+    fireEvent.click(menu.getByRole('button', { name: 'Save' }));
+    expect(choose).toHaveBeenCalledWith({ model: 'gpt-5', reasoning_effort: null }, 'codex');
+  });
+
   it('announces Default for unset effort when the model declares no default', () => {
     render(<ModelPill provider="codex"
       groups={[{ provider: 'codex', availability: null, catalog: catalog({ models: [model({
@@ -230,7 +271,7 @@ describe('ModelPill', () => {
     expect(onChange).toHaveBeenCalledWith({ model: 'sonnet', reasoning_effort: null }, 'claude');
   });
 
-  it('positions the effort slider in monotonic weak-to-strong order and rests on defaultEffort when unset', () => {
+  it('offers a distinct Default plus ordered explicit effort choices', () => {
     const onChange = vi.fn();
     const multiEffortCatalog = catalog({
       models: [model({
@@ -251,11 +292,11 @@ describe('ModelPill', () => {
       />,
     );
     const menu = openMenu(/^Model:/);
-    expect(within(menu).getByText('medium (Default)')).toBeTruthy();
+    expect(within(menu).getByText('Default (medium)')).toBeTruthy();
     const slider = within(menu).getByRole('slider', { name: 'Reasoning effort' });
-    expect(slider.getAttribute('aria-valuetext')).toBe('medium');
+    expect(slider.getAttribute('aria-valuetext')).toBe('Default (medium)');
 
-    fireEvent.keyDown(slider, { key: 'ArrowRight' });
+    fireEvent.keyDown(slider, { key: 'End' });
     expect(within(menu).getByText('high')).toBeTruthy();
     expect(onChange).not.toHaveBeenCalled();
     fireEvent.click(within(menu).getByRole('button', { name: 'Save' }));
@@ -286,7 +327,7 @@ describe('ModelPill', () => {
       />,
     );
     const menu3 = openMenu(/^Model:/);
-    fireEvent.keyDown(within(menu3).getByRole('slider', { name: 'Reasoning effort' }), { key: 'Home' });
+    fireEvent.keyDown(within(menu3).getByRole('slider', { name: 'Reasoning effort' }), { key: 'ArrowLeft' });
     fireEvent.click(within(menu3).getByRole('button', { name: 'Save' }));
     expect(onChange).toHaveBeenLastCalledWith({ model: 'gpt-5', reasoning_effort: 'low' }, 'codex');
   });

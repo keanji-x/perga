@@ -419,7 +419,7 @@ export function modelCatalogOperation(
           })),
           default_reasoning_effort: entry.defaultReasoningEffort,
         }));
-        const defaultEntry = models.find((entry) => entry.is_default) ?? models[0] ?? null;
+        const defaultEntry = models.find((entry) => entry.is_default);
         return {
           models,
           default: {

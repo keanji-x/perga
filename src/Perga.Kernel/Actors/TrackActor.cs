@@ -802,15 +802,15 @@ public sealed partial class TrackActor : IAsyncDisposable
         }, ct);
     }
 
-    private string? ResolveSessionPermissionModeCore(string provider, string? requested, string? sessionId = null)
-    {
-        IReadOnlyList<PermissionModeOption>? modes = null;
-        if (sessionId is not null && !_scheduler.HasResumeHold(sessionId) &&
+    private IAgentSession? FindOpenSessionForSettingsCore(string sessionId, string provider) =>
+        !_scheduler.HasResumeHold(sessionId) &&
             _openSessionHandles.TryGetValue(sessionId, out var handle) &&
-            string.Equals(handle.LaunchSpec.Provider, provider, StringComparison.OrdinalIgnoreCase))
-            modes = handle.Agent.AvailablePermissionModes;
-        return RuntimePermissionModes.Resolve(provider, requested, modes);
-    }
+            string.Equals(handle.LaunchSpec.Provider, provider, StringComparison.OrdinalIgnoreCase)
+            ? handle.Agent : null;
+
+    private string? ResolveSessionPermissionModeCore(string provider, string? requested, string? sessionId = null) =>
+        RuntimePermissionModes.Resolve(provider, requested,
+            sessionId is null ? null : FindOpenSessionForSettingsCore(sessionId, provider)?.AvailablePermissionModes);
 
     private async Task<AgentSessionDto> NewSubagentSessionCoreAsync(CreateSessionRequest req, CancellationToken ct)
     {
@@ -934,10 +934,13 @@ public sealed partial class TrackActor : IAsyncDisposable
                 : null;
             var worker = await ReadWorkerActivityCoreAsync(session, running, activityTurnId, afterSequence, ct).ConfigureAwait(false);
             var queue = await ReadMessageQueueCoreAsync(sessionId, ct).ConfigureAwait(false);
+            var settingsSession = session.BoundAttemptId is null && session.Provider.StartsWith("acp:", StringComparison.OrdinalIgnoreCase)
+                ? FindOpenSessionForSettingsCore(sessionId, session.Provider) : null;
             return new SessionItemsPageDto(items.Select(item => WithMessageStatus(item, running)).ToArray(),
                 activeTurn, session, unknown?.Receipt, hasMoreBefore,
                 queue.Queue, running?.CanSteerQueuedMessages == true, queue.Handoffs,
-                ReadSessionResumeCore(session, running, unknown?.Receipt), worker);
+                ReadSessionResumeCore(session, running, unknown?.Receipt), worker,
+                settingsSession?.AvailablePermissionModes);
         }, ct);
     }
 

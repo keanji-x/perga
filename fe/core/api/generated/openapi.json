@@ -18743,7 +18743,7 @@
               "string",
               "null"
             ],
-            "description": "Provider permission mode ID from bootstrap permissionModes; omitted follows the provider default."
+            "description": "Provider permission mode ID. When omitted, the provider chooses its default."
           },
           "planner_provider": {
             "$ref": "#/components/schemas/AgentProvider",
@@ -25632,35 +25632,38 @@
               "null"
             ],
             "items": {
-              "type": "object",
-              "required": [
-                "id",
-                "label",
-                "description"
-              ],
-              "properties": {
-                "id": {
-                  "type": "string"
-                },
-                "label": {
-                  "type": "string"
-                },
-                "description": {
-                  "type": "string"
-                },
-                "tone": {
-                  "type": "string",
-                  "enum": [
-                    "neutral",
-                    "warning",
-                    "danger"
-                  ]
-                },
-                "isDefault": {
-                  "type": "boolean"
-                }
-              }
+              "$ref": "#/components/schemas/PermissionModeOptionDto"
             }
+          }
+        }
+      },
+      "PermissionModeOptionDto": {
+        "type": "object",
+        "required": [
+          "id",
+          "label",
+          "description"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "tone": {
+            "type": "string",
+            "enum": [
+              "neutral",
+              "warning",
+              "danger"
+            ]
+          },
+          "isDefault": {
+            "type": "boolean"
           }
         }
       },
@@ -26739,6 +26742,16 @@
           "canSteer": {
             "type": "boolean",
             "description": "Whether the current active turn supports steering."
+          },
+          "permissionModes": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/PermissionModeOptionDto"
+            },
+            "description": "Permission options reported by this conversation's open provider session, when known."
           },
           "worker": {
             "anyOf": [

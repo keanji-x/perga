@@ -492,6 +492,7 @@ public sealed partial class AcpAgentSession : IAgentSession
         };
 
         var initResult = await _rpc.SendRequestAsync("initialize", initParams, ct).ConfigureAwait(false);
+        _advertisedEffortResetValue = ResolveAdvertisedEffortResetValue(spec.Provider, initResult);
         var supportsHttpMcp = AcpStdioHttpMcpBridge.SupportsHttpMcp(initResult);
         var agentCapabilities = initResult.ValueKind == JsonValueKind.Object &&
             initResult.TryGetProperty("agentCapabilities", out var capabilities) ? capabilities : default;
@@ -835,6 +836,8 @@ public sealed partial class AcpAgentSession : IAgentSession
             RefreshPermissionModes(update);
             if (_configureWorker && AcpSessionOptions.Read(update) is { } options)
                 ApplyWorkerOptions(options);
+            else if (UsesAdvertisedModelOptions)
+                RefreshAdvertisedModelOptions(update);
         }
 
         var updateKind = TryGetString(update, "sessionUpdate")

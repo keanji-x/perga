@@ -1,6 +1,6 @@
 import { sessionContextUsage } from './session-context-usage.js';
 import { expect, it } from 'vitest';
-import { harnessItemsOperation } from './conversation.js';
+import { harnessItemsOperation, modelCatalogOperation } from './conversation.js';
 import { buildConversationTranscript, conversationItemsOperation, conversationRunOperation, conversationRunPhase, conversationRunningTurn, conversationBlockedReason, conversationPendingQueue } from './conversation-display.js';
 
 const session = Object.freeze({ id: 'session', trackId: 'track', isLead: true, provider: 'codex', model: 'model',
@@ -13,6 +13,28 @@ it('projects the real session items page through both transcript readers', () =>
   const display = conversationItemsOperation(session.id, null).responseSchema.parse(page);
   expect(buildConversationTranscript(display.items, null)).toMatchObject([{ author: 'agent', text: 'Actual v1 reply' }]);
   expect(harnessItemsOperation(session.id).responseSchema.parse(page)).toMatchObject([{ id: 1, thread_id: 'thread' }]);
+});
+
+it('keeps a CLI catalog without a declared default selectable', () => {
+  const model = 'gemini-4-neon-high';
+  const catalog = modelCatalogOperation({ kind: 'provider', provider: 'antigravity' }).responseSchema.parse({
+    version: 'test',
+    providers: [{
+      provider: 'acp:antigravity', available: true, models: [model],
+      modelCatalog: [{ model, displayName: 'Gemini 4 Neon (High)', isDefault: false }],
+    }],
+  });
+  expect(catalog.models).toMatchObject([{ model, display_name: 'Gemini 4 Neon (High)', is_default: false }]);
+  expect(catalog.default.model).toBeNull();
+  expect(catalog.default_source).toBe('unknown');
+});
+
+it('keeps the permission options advertised by the open conversation', () => {
+  const permissionModes = [{ id: 'inspect', label: 'Inspect', description: 'Read only', tone: 'neutral', isDefault: true }];
+  const operation = conversationRunOperation(session.id);
+  expect(operation.responseSchema.parse(page).permissionModes).toBeUndefined();
+  const run = operation.responseSchema.parse({ ...page, permissionModes });
+  expect(run.permissionModes).toEqual(permissionModes);
 });
 
 it('rejects raw rows and the retired conversation page at the production read boundary', () => {

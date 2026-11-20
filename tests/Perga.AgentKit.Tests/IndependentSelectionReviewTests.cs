@@ -54,7 +54,8 @@ public sealed class IndependentSelectionReviewTests
                 ["codex"] = new(Path.Combine(fixture.RootDir, "unavailable-codex")),
                 ["claude"] = new(Path.Combine(fixture.RootDir, "unavailable-claude")),
                 ["acp:antigravity"] = new(Path.Combine(fixture.RootDir, "unavailable-antigravity")),
-                ["acp:opencode"] = new(fixture.MockAcpPath, Env: new Dictionary<string, string>
+                ["acp:opencode"] = new(Path.Combine(fixture.RootDir, "unavailable-opencode")),
+                ["acp:custom"] = new(fixture.MockAcpPath, Env: new Dictionary<string, string>
                 {
                     ["MOCK_ACP_LOG"] = log,
                     ["MOCK_ACP_STRICT_MODELS"] = "1",
@@ -65,7 +66,7 @@ public sealed class IndependentSelectionReviewTests
             }
         });
         var status = Assert.Single(await runtime.ProbeProvidersAsync(CancellationToken.None),
-            p => p.Provider == "acp:opencode");
+            p => p.Provider == "acp:custom");
         var catalog = status.ModelCatalog!;
         Assert.Equal(3, catalog.Count);
         Assert.Equal(3, catalog.Select(m => m.Model).Distinct().Count());
@@ -86,7 +87,7 @@ public sealed class IndependentSelectionReviewTests
 
         File.WriteAllText(log, ""); // Exclude discovery's temporary session.
         await using var session = await runtime.OpenSessionAsync(new HarnessLaunchSpec(
-            "acp:opencode", normal.Model, fixture.WorkspaceDir, resumeId, null,
+            "acp:custom", normal.Model, fixture.WorkspaceDir, resumeId, null,
             new Dictionary<string, McpServerConfig>(), ReasoningEffort: "high"), CancellationToken.None);
         var expected = new List<string> { "vendor/model-high" };
         var previous = SessionConfiguration.FromNullable(normal.Model, "high");

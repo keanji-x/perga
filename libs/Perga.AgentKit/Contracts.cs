@@ -96,6 +96,7 @@ public sealed record ProviderModelEffort(
     string ReasoningEffort,
     string Description);
 
+// Model and effort selection IDs are opaque to callers.
 public sealed record ProviderModelInfo(
     string Model,
     string DisplayName,
@@ -181,6 +182,7 @@ public interface IAgentSession : IAsyncDisposable
 
 public interface IAgentRuntime : IAsyncDisposable
 {
+    // Returns normalized availability and model options for every provider.
     Task<IReadOnlyList<ProviderStatus>> ProbeProvidersAsync(CancellationToken ct);
     Task<IAgentSession> OpenSessionAsync(HarnessLaunchSpec spec, CancellationToken ct);
 }
