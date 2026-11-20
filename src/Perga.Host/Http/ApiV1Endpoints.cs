@@ -494,10 +494,10 @@ public static class ApiV1Endpoints
         v1.MapPost("/tracks/{trackId}/executions/{executionId}/approvals/{approvalId}/decision", async (
             string trackId, string executionId, string approvalId, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
         {
-            using var doc = await JsonDocument.ParseAsync(ctx.Request.Body, cancellationToken: ct).ConfigureAwait(false);
-            if (doc.RootElement.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
-                return HttpErrorHandling.BadRequest("invalid_argument", "An approval decision is required.");
-            var approval = await kernel.DecideApprovalAsync(trackId, executionId, approvalId, doc.RootElement, ct).ConfigureAwait(false);
+            var body = await ReadRequiredJsonBodyAsync<ApprovalDecisionRequest>(ctx, ct).ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(body.OptionId))
+                return HttpErrorHandling.BadRequest("invalid_argument", "optionId is required.");
+            var approval = await kernel.DecideApprovalAsync(trackId, executionId, approvalId, body.OptionId, ct).ConfigureAwait(false);
             return Results.Json(approval, PergaJsonDefaults.ApiOptions);
         });
 

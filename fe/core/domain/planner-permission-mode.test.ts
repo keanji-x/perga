@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import { conversationRunOperation } from './conversation-display.js';
-import { setPlannerPermissionModeOperation } from './planner-permission-mode.js';
+import {
+  permissionModeAfterProviderChange,
+  resolvePermissionControl,
+  setPlannerPermissionModeOperation,
+} from './planner-permission-mode.js';
 
 const RUN = {
   card_id: 'card-1', worker_session_id: null, phase: null, model: null, reasoning_effort: null,
@@ -61,5 +65,35 @@ describe('session permission mode', () => {
 
   it('rejects the retired planner run response', () => {
     expect(conversationRunOperation('card-1').responseSchema.safeParse({ ...RUN, permission_mode: 'ask' }).success).toBe(false);
+  });
+
+  it('resolves permission controls uniformly from backend metadata without inventing fallback modes', () => {
+    const agyModes = [
+      { id: 'plan', label: 'Plan', description: 'Read first', tone: 'neutral' as const, isDefault: true },
+      { id: 'bypassPermissions', label: 'Full access', description: 'Skip prompts', tone: 'danger' as const, isDefault: false },
+    ];
+    expect(resolvePermissionControl({ storedMode: null, providerModes: agyModes, metadataLoaded: true, isDisabled: false }))
+      .toEqual({ visible: true, mode: 'plan', options: agyModes, isDisabled: false });
+    expect(resolvePermissionControl({ storedMode: 'bypassPermissions', providerModes: agyModes, metadataLoaded: true, isDisabled: false }))
+      .toEqual({ visible: true, mode: 'bypassPermissions', options: agyModes, isDisabled: false });
+    expect(resolvePermissionControl({ storedMode: 'stale', providerModes: agyModes, metadataLoaded: true, isDisabled: false }))
+      .toEqual({ visible: true, mode: 'plan', options: agyModes, isDisabled: false });
+    expect(resolvePermissionControl({ storedMode: 'bypassPermissions', providerModes: [], metadataLoaded: false, isDisabled: false }))
+      .toEqual({
+        visible: true,
+        mode: 'bypassPermissions',
+        options: [{ id: 'bypassPermissions', label: 'bypassPermissions', description: 'Provider approval options unavailable.', tone: 'neutral', isDefault: true }],
+        isDisabled: true,
+      });
+    expect(resolvePermissionControl({ storedMode: 'bypassPermissions', providerModes: [], metadataLoaded: true, isDisabled: false }))
+      .toEqual({ visible: false });
+    expect(resolvePermissionControl({ storedMode: null, providerModes: [], metadataLoaded: false, isDisabled: false }))
+      .toEqual({ visible: false });
+  });
+
+  it('clears permission mode when switching providers and preserves it otherwise', () => {
+    expect(permissionModeAfterProviderChange('codex', 'codex', 'ask')).toBe('ask');
+    expect(permissionModeAfterProviderChange('codex', 'antigravity', 'ask')).toBeNull();
+    expect(permissionModeAfterProviderChange('antigravity', 'claude', 'bypassPermissions')).toBeNull();
   });
 });

@@ -39,6 +39,7 @@ import {
 import { trackSourceOperation, type TrackSourceDetail } from '../../../../core/domain/report-source.ts';
 import { dismissActivityItemOperation, type AskId, type AskQuestion } from '../../../../core/domain/activity.ts';
 import { answerAskOperation } from '../../../../core/domain/ask.ts';
+import { decideApprovalOperation, type PendingApproval } from '../../../../core/domain/approval.ts';
 import { probeFailureText, readErrorText } from '../../../../core/domain/read-failure.ts';
 import {
   checkConnectorOperation, CONNECTOR_CHECK_TEXT, type ConnectorCheckResult,
@@ -316,13 +317,6 @@ export function usePlannerMutations(transport: ApiTransportPort, cardId: string,
       Promise.resolve().then(() => admitTransport(transport))
         .then(admitted => runOperation(admitted, updateWorkerSettingsOperation(cardId, settings, approvalKey), unauthorized))
         .finally(() => cancelThenInvalidate(client, queryKeys.plannerRun(cardId))),
-    answerWorkerAsk: (trackId: string, askId: AskId, answers: readonly AskAnswer[], questions: readonly AskQuestion[], executionId?: string) =>
-      Promise.resolve().then(() => admitTransport(transport))
-        .then(admitted => runOperation(admitted, answerAskOperation(trackId, askId, answers, questions, executionId), unauthorized))
-        .finally(() => {
-          refreshAfter(undefined);
-          void client.invalidateQueries({ queryKey: queryKeys.trackDetail(trackId) });
-        }),
     /* Settles once the run read started after the answer has landed, so what follows reads the new session, not the
        wedge it replaced (#2192). A failure refreshes too: one whose outcome is unknown may have started a session. */
     restart: (recovery?: RunRecovery | null) => {
@@ -921,8 +915,10 @@ export type TrackMutations = Readonly<{
   remove: (trackId: string, areaId: string, signal?: AbortSignal) => Promise<void>;
   /** Dismiss one notification item by its kernel key. A `404` rejects too: `DISMISS_FAILURES` reads it as done. */
   dismissActivityItem: (trackId: string, key: string) => Promise<void>;
-  /** Answer one ask, one answer per question in order. A `409` rejects too: `ANSWER_ASK_FAILURES` reads it as done. */
-  answerAsk: (trackId: string, askId: AskId, answers: readonly AskAnswer[], questions?: readonly AskQuestion[], executionId?: string) => Promise<void>;
+  /** Answer one durable ask, one answer per question in order. A `409` rejects too: `ANSWER_ASK_FAILURES` reads it as done. */
+  answerAsk: (trackId: string, askId: AskId, answers: readonly AskAnswer[], questions?: readonly AskQuestion[]) => Promise<void>;
+  /** Decide one live execution-scoped approval by structured option ID. */
+  decideApproval: (trackId: string, approval: PendingApproval, optionId: string) => Promise<void>;
   /** Update one report block by human CAS edit (`PUT /api/v1/tracks/{trackId}/report/blocks/{blockId}`). */
   updateReportBlock: (trackId: string, blockId: string, body: HumanReportBlockUpdateBody) => Promise<ReportReadResultDto>;
 }>;
@@ -1046,11 +1042,21 @@ export function useTrackMutations(transport: ApiTransportPort, unauthorized: Una
   /* An answer may apply a lifecycle action; refresh detail/lists even after an uncertain response.
    * The projector's overlay remains authoritative for removing the question itself. */
   const answerAsk = useRecoveryMutation(transport, {
-    mutationFn: ({ trackId, askId, answers, questions, executionId }: { trackId: string; askId: AskId; answers: readonly AskAnswer[]; questions?: readonly AskQuestion[]; executionId?: string }, transport: ApiTransportPort) =>
-      runOperation(transport, answerAskOperation(trackId, askId, answers, questions, executionId), unauthorized),
+    mutationFn: ({ trackId, askId, answers, questions }: { trackId: string; askId: AskId; answers: readonly AskAnswer[]; questions?: readonly AskQuestion[] }, transport: ApiTransportPort) =>
+      runOperation(transport, answerAskOperation(trackId, askId, answers, questions), unauthorized),
     onSettled: (_answer, _error, { trackId }) => {
       void client.invalidateQueries({ queryKey: queryKeys.trackDetail(trackId) });
       void client.invalidateQueries({ queryKey: queryKeys.trackLists() });
+    },
+  });
+  const decideApproval = useRecoveryMutation(transport, {
+    mutationFn: ({ trackId, approval, optionId }: { trackId: string; approval: PendingApproval; optionId: string }, transport: ApiTransportPort) =>
+      runOperation(transport, decideApprovalOperation(trackId, approval.executionId, approval.id, optionId), unauthorized),
+    onSettled: (_answer, _error, { trackId, approval }) => {
+      void client.invalidateQueries({ queryKey: queryKeys.trackDetail(trackId) });
+      void client.invalidateQueries({ queryKey: queryKeys.trackLists() });
+      void client.invalidateQueries({ queryKey: queryKeys.plannerRun(approval.sessionId) });
+      void client.invalidateQueries({ queryKey: queryKeys.harnessItems(approval.sessionId) });
     },
   });
   const updateReportBlock = useRecoveryMutation(transport, {
@@ -1080,7 +1086,8 @@ export function useTrackMutations(transport: ApiTransportPort, unauthorized: Una
       patchTrack(trackId, areaId, { pinned_at: pinned ? nowMs : null }),
     remove: async (trackId, areaId, signal) => { await remove.mutateAsync({ trackId, areaId, signal }); },
     dismissActivityItem: async (trackId, key) => { await dismissItem.mutateAsync({ trackId, key }); },
-    answerAsk: async (trackId, askId, answers, questions, executionId) => { await answerAsk.mutateAsync({ trackId, askId, answers, questions, executionId }); },
+    answerAsk: async (trackId, askId, answers, questions) => { await answerAsk.mutateAsync({ trackId, askId, answers, questions }); },
+    decideApproval: async (trackId, approval, optionId) => { await decideApproval.mutateAsync({ trackId, approval, optionId }); },
     updateReportBlock: async (trackId, blockId, body) => updateReportBlock.mutateAsync({ trackId, blockId, body }),
   };
 }

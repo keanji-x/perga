@@ -166,7 +166,7 @@ const investmentResearchTemplate = {
       ctx.state.paperOrdersSubmitted += 1;
       return AskHuman(
         `Approve paper-trading action '${call.toolName}' on ${ctx.inputs.tickerOrTheme}?`,
-        ["Execute Paper Order", "Reject Order"]
+        { approve: "Execute Paper Order", deny: "Reject Order" }
       );
     }
 

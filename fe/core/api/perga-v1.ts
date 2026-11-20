@@ -486,12 +486,20 @@ export const askQuestionDtoSchema = z.object({
 });
 export type AskQuestionDto = z.infer<typeof askQuestionDtoSchema>;
 
+export const approvalChoiceDtoSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  isApproval: z.boolean(),
+});
+export type ApprovalChoiceDto = z.infer<typeof approvalChoiceDtoSchema>;
+
 export const approvalDtoSchema = z.object({
   id: z.string(),
   executionId: z.string(),
   sessionId: z.string(),
   turnId: z.string().nullish(),
-  questions: z.array(askQuestionDtoSchema),
+  title: z.string(),
+  options: z.array(approvalChoiceDtoSchema),
   createdAtMs: z.number(),
 });
 export type ApprovalDto = z.infer<typeof approvalDtoSchema>;

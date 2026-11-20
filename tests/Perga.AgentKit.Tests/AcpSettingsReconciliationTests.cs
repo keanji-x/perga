@@ -11,29 +11,20 @@ public sealed class AcpSettingsReconciliationTests : IDisposable
 
     public void Dispose() => _fixture.Dispose();
 
-    private AgentRuntime Runtime(string provider, bool config = false, int error = 0, bool launchMode = false, Dictionary<string, string>? env = null)
-    {
-        var executable = _fixture.MockAcpPath;
-        if (launchMode && !OperatingSystem.IsWindows())
-        {
-            executable = Path.Combine(_fixture.RootDir, "agy");
-            File.WriteAllText(executable, $"#!/bin/sh\nexec \"{_fixture.MockAcpPath}\" \"$@\"\n");
-            File.SetUnixFileMode(executable, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
-        }
-        return new(new AgentRuntimeOptions
+    private AgentRuntime Runtime(string provider, bool config = false, int error = 0, Dictionary<string, string>? env = null, string? modes = null) =>
+        new(new AgentRuntimeOptions
         {
             ProviderOverrides = new Dictionary<string, ProviderCommandOverride>
             {
-                [provider] = new(executable, Env: new Dictionary<string, string>
+                [provider] = new(_fixture.MockAcpPath, Env: new Dictionary<string, string>
                 {
-                    ["MOCK_ACP_MODELS"] = config ? ConfigModes : Modes,
+                    ["MOCK_ACP_MODELS"] = modes ?? (config ? ConfigModes : Modes),
                     ["MOCK_ACP_LOG"] = Log,
                     ["MOCK_ACP_LOG_ARGV"] = "1",
                     ["MOCK_ACP_MODE_ERROR"] = error.ToString()
                 }.Concat(env ?? []).ToDictionary(pair => pair.Key, pair => pair.Value))
             }
         });
-    }
 
     private HarnessLaunchSpec Spec(string provider, string? mode = null, string? resume = null) =>
         new(provider, null, _fixture.WorkspaceDir, resume, null, new Dictionary<string, McpServerConfig>(), PermissionMode: mode);
@@ -128,8 +119,7 @@ public sealed class AcpSettingsReconciliationTests : IDisposable
     [InlineData(true)]
     public async Task CatalogueRefreshPreservesInjectedLaunchModeWithoutDuplicates(bool notification)
     {
-        if (OperatingSystem.IsWindows()) return;
-        await using var runtime = Runtime("acp:antigravity", true, launchMode: true, env: new()
+        await using var runtime = Runtime("acp:antigravity", true, env: new()
         {
             [notification ? "MOCK_ACP_PERMISSION_UPDATE" : "MOCK_ACP_PERMISSION_RESPONSE"] = UpdatedModes
         });
@@ -138,6 +128,45 @@ public sealed class AcpSettingsReconciliationTests : IDisposable
         Assert.IsType<SessionConfigurationOutcome.Applied>(await session.ConfigureAsync(session.ConfigurationState!.Selection with { Permission = new SessionSelection.Explicit("extra") }, default));
         Assert.Single(session.AvailablePermissionModes, mode => mode.Id == "bypassPermissions");
         Assert.IsType<SessionConfigurationOutcome.RequiresReopen>(await session.ConfigureAsync(session.ConfigurationState!.Selection with { Model = new SessionSelection.Explicit("next-model"), Permission = new SessionSelection.Explicit("bypassPermissions") }, default));
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task ProtocolCollisionKeepsBypassPermissionsAsLaunchMode(bool config, bool notification)
+    {
+        const string provider = "acp:antigravity";
+        var modes = config
+            ? ConfigModes.Replace("{\"value\":\"act\"}", "{\"value\":\"act\"},{\"value\":\"bypassPermissions\"}")
+            : Modes.Replace("{\"id\":\"act\"}", "{\"id\":\"act\"},{\"id\":\"bypassPermissions\"}");
+        var refreshed = modes.Replace("act", "extra");
+        await using var runtime = Runtime(provider, config, env: new()
+        {
+            [notification ? "MOCK_ACP_PERMISSION_UPDATE" : "MOCK_ACP_PERMISSION_RESPONSE"] = refreshed
+        }, modes: modes);
+        await using (var ordinary = await runtime.OpenSessionAsync(Spec(provider), default))
+        {
+            Assert.Equal("danger", Assert.Single(ordinary.AvailablePermissionModes, mode => mode.Id == "bypassPermissions").Tone);
+            if (notification)
+                Assert.IsType<SessionConfigurationOutcome.Applied>(await ordinary.ConfigureAsync(ordinary.ConfigurationState!.Selection with { Model = new SessionSelection.Explicit("next-model") }));
+            else
+                Assert.IsType<SessionConfigurationOutcome.Applied>(await ordinary.ConfigureAsync(SessionConfiguration.FromNullable(null, null, "act")));
+            Assert.Contains(ordinary.AvailablePermissionModes, mode => mode.Id == "extra");
+            Assert.Equal("danger", Assert.Single(ordinary.AvailablePermissionModes, mode => mode.Id == "bypassPermissions").Tone);
+            var before = Calls().Length;
+            Assert.IsType<SessionConfigurationOutcome.RequiresReopen>(await ordinary.ConfigureAsync(ordinary.ConfigurationState!.Selection with { Model = new SessionSelection.Explicit("next-model"), Permission = new SessionSelection.Explicit("bypassPermissions") }));
+            Assert.Equal(before, Calls().Length);
+        }
+        await using var full = await runtime.OpenSessionAsync(Spec(provider, "bypassPermissions") with { Model = "next-model" }, default);
+        Assert.Equal("danger", Assert.Single(full.AvailablePermissionModes, mode => mode.Id == "bypassPermissions").Tone);
+        var beforeSelection = Calls().Length;
+        Assert.IsType<SessionConfigurationOutcome.Applied>(await full.ConfigureAsync(SessionConfiguration.FromNullable("next-model", null, "bypassPermissions")));
+        Assert.IsType<SessionConfigurationOutcome.RequiresReopen>(await full.ConfigureAsync(SessionConfiguration.FromNullable("next-model", null, "safe")));
+        Assert.Equal(beforeSelection, Calls().Length);
+        Assert.DoesNotContain(Calls(), call => call.GetProperty("method").GetString() is "session/set_mode" or "session/set_config_option" &&
+            call.GetProperty("params").ToString().Contains("bypassPermissions", StringComparison.Ordinal));
     }
 
     [Theory]
@@ -246,9 +275,8 @@ public sealed class AcpSettingsReconciliationTests : IDisposable
     [Fact]
     public async Task LaunchArgumentTransitionsRequireRestartAndResumeSameNativeThread()
     {
-        if (OperatingSystem.IsWindows()) return;
         const string provider = "acp:antigravity";
-        await using var runtime = Runtime(provider, launchMode: true);
+        await using var runtime = Runtime(provider);
         string? nativeId;
         await using (var ordinary = await runtime.OpenSessionAsync(Spec(provider, "safe"), default))
         {

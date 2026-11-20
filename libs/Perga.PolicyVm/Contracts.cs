@@ -6,7 +6,7 @@ public closed record GuardDecision
 {
     public sealed record Allow : GuardDecision;
     public sealed record Deny(string Reason) : GuardDecision;
-    public sealed record AskHuman(string Title, IReadOnlyList<string> Options) : GuardDecision;
+    public sealed record AskHuman(string Title, string ApproveLabel = "Approve", string DenyLabel = "Deny") : GuardDecision;
 }
 
 public sealed record SectionRule(

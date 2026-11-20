@@ -203,7 +203,7 @@ public sealed class BoundAttemptFenceAndGovernanceTests
 
         // 2. AskHuman -> suspends without blocking actor -> human approves -> commit succeeds!
         ctx.PolicyVm.OnBefore = (_, action, _, state) =>
-            new PolicyEvalResult<GuardDecision>(state, new GuardDecision.AskHuman("Approve report edit?", ["Approve", "Deny"]));
+            new PolicyEvalResult<GuardDecision>(state, new GuardDecision.AskHuman("Approve report edit?"));
 
         var expired = await Assert.ThrowsAsync<KernelException>(() => ctx.Kernel.CommitReportAsync(trackId, leadId,
             new ReportCommitRequest(r0.Anchor, [new BlockOp.UpsertBlockOp(null, ReportBlockKind.Prose, "Stale request", null)]),
@@ -230,7 +230,7 @@ public sealed class BoundAttemptFenceAndGovernanceTests
         Assert.NotNull(openAsk);
         Assert.False(suspendedCommitTask.IsCompleted);
 
-        await ctx.Kernel.DecideApprovalAsync(trackId, openAsk!.ExecutionId, openAsk!.Id, TestJson.FromObject(new { answers = new[] { "Approve" } }));
+        await ctx.Kernel.DecideApprovalAsync(trackId, openAsk!.ExecutionId, openAsk!.Id, openAsk.Options[0].Id);
         var approvedCommit = await suspendedCommitTask;
         Assert.Equal(1, approvedCommit.DocRev);
     }

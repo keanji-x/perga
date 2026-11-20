@@ -26,7 +26,11 @@ it.each([1200, 390])('shows and remembers the read state of each notification at
     }],
     pendingApprovals: [{
       id: 'approval-1', executionId: 'execution-1', sessionId: planner.id, createdAtMs: 2,
-      questions: [{ question: 'Publish the update?', options: ['Yes', 'No'] }],
+      title: 'Publish the update?',
+      options: [
+        { id: 'approve', label: 'Yes', isApproval: true },
+        { id: 'deny', label: 'No', isApproval: false },
+      ],
     }],
   };
   const mount = () => renderDailyFixture({ pergaMode: true, initial: '/track/project', uiPreferences: createUiPreferences(storage),

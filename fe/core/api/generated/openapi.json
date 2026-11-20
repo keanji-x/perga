@@ -15805,6 +15805,9 @@
               }
             }
           },
+          "400": {
+            "description": "Missing or unknown approval optionId."
+          },
           "409": {
             "description": "The execution no longer accepts this approval decision."
           }
@@ -15813,7 +15816,9 @@
           "required": true,
           "content": {
             "application/json": {
-              "schema": {}
+              "schema": {
+                "$ref": "#/components/schemas/ApprovalDecisionRequest"
+              }
             }
           }
         }
@@ -27793,13 +27798,44 @@
           }
         }
       },
+      "ApprovalChoiceDto": {
+        "type": "object",
+        "required": [
+          "id",
+          "label",
+          "isApproval"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "isApproval": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ApprovalDecisionRequest": {
+        "type": "object",
+        "required": [
+          "optionId"
+        ],
+        "properties": {
+          "optionId": {
+            "type": "string"
+          }
+        }
+      },
       "ApprovalDto": {
         "type": "object",
         "required": [
           "id",
           "executionId",
           "sessionId",
-          "questions",
+          "title",
+          "options",
           "createdAtMs"
         ],
         "properties": {
@@ -27816,7 +27852,15 @@
             "type": "string",
             "nullable": true
           },
-          "questions": {},
+          "title": {
+            "type": "string"
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ApprovalChoiceDto"
+            }
+          },
           "createdAtMs": {
             "type": "integer",
             "format": "int64"

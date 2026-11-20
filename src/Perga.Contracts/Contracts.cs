@@ -190,13 +190,21 @@ public sealed record AskDto(
     string? SessionId = null,
     string? TurnId = null);
 
+public sealed record ApprovalChoiceDto(
+    string Id,
+    string Label,
+    bool IsApproval);
+
 public sealed record ApprovalDto(
     string Id,
     string ExecutionId,
     string SessionId,
     string? TurnId,
-    IReadOnlyList<AskQuestionDto> Questions,
+    string Title,
+    IReadOnlyList<ApprovalChoiceDto> Options,
     long CreatedAtMs);
+
+public sealed record ApprovalDecisionRequest(string OptionId);
 
 public sealed record MailDto(
     string Id,

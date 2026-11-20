@@ -173,7 +173,7 @@ public sealed partial class AcpAgentSession : IAgentSession
         }
     }
 
-    public IReadOnlyList<PermissionModeOption> AvailablePermissionModes => Volatile.Read(ref _permissionModes).Options;
+    public IReadOnlyList<PermissionModeOption> AvailablePermissionModes => Volatile.Read(ref _permissionCatalog).Options;
 
     internal IReadOnlyList<string> AvailableModels { get; private set; } = [];
     internal IReadOnlyList<ProviderModelInfo> AvailableModelCatalog => _modelCatalog.Models;
@@ -221,8 +221,7 @@ public sealed partial class AcpAgentSession : IAgentSession
         TimeSpan handshakeTimeout,
         Action<IAgentSession>? onDispose,
         CancellationToken ct,
-        IReadOnlyList<PermissionModeOption>? extraPermissionModes = null,
-        IReadOnlyList<string>? launchArgumentModes = null,
+        IReadOnlyList<LaunchPermissionMode>? launchModes = null,
         TimeSpan? commandsGraceTimeout = null)
     {
         var process = StdioSubprocess.Start(wrappedCommand);
@@ -233,8 +232,7 @@ public sealed partial class AcpAgentSession : IAgentSession
             handshakeCts.CancelAfter(handshakeTimeout);
             await session.InitializeAndBindSessionAsync(
                 spec,
-                extraPermissionModes,
-                launchArgumentModes,
+                launchModes,
                 handshakeCts.Token).ConfigureAwait(false);
             return session;
         }
@@ -466,12 +464,10 @@ public sealed partial class AcpAgentSession : IAgentSession
 
     private async Task InitializeAndBindSessionAsync(
         HarnessLaunchSpec spec,
-        IReadOnlyList<PermissionModeOption>? extraPermissionModes,
-        IReadOnlyList<string>? launchArgumentModes,
+        IReadOnlyList<LaunchPermissionMode>? launchModes,
         CancellationToken ct)
     {
-        _extraPermissionModes = Array.AsReadOnly((extraPermissionModes ?? []).ToArray());
-        Volatile.Write(ref _permissionModes, new(_extraPermissionModes, null));
+        Volatile.Write(ref _permissionCatalog, AcpPermissionCatalog.Create(launchModes));
         var initParams = new Dictionary<string, object?>
         {
             ["protocolVersion"] = 1,
@@ -588,13 +584,12 @@ public sealed partial class AcpAgentSession : IAgentSession
             throw new InvalidOperationException($"ACP '{method}' response did not contain a sessionId.");
         }
 
-        var permissionModes = Volatile.Read(ref _permissionModes);
-        _launchArgumentModes = new HashSet<string>(launchArgumentModes ?? [], StringComparer.Ordinal);
+        var permissionCatalog = Volatile.Read(ref _permissionCatalog);
         var requestedMode = spec.PermissionMode?.Trim();
-        ValidatePermissionMode(requestedMode, permissionModes);
-        if (requestedMode is not null && !_launchArgumentModes.Contains(requestedMode))
+        var requestedEntry = ValidatePermissionMode(requestedMode, permissionCatalog);
+        if (requestedEntry is not null && requestedEntry.Transport is not AcpPermissionTransport.LaunchArgument)
         {
-            var result = await SetPermissionModeAsync(requestedMode, resolvedSessionId, permissionModes, ct).ConfigureAwait(false);
+            var result = await SetPermissionModeAsync(requestedEntry.Option.Id, resolvedSessionId, requestedEntry.Transport, ct).ConfigureAwait(false);
             if (!IsPositiveAcknowledgement(result))
                 throw new SessionConfigurationException(new SessionConfigurationOutcome.Rejected(
                     ConfigurationFailureCode.InvalidAcknowledgement, "The provider rejected the permission mode.", new(null, null, false)));

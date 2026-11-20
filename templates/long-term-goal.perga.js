@@ -143,12 +143,12 @@ const longTermGoalTemplate = {
       if (ctx.state.milestonesCompleted === 0) {
         return AskHuman(
           "Close long-term goal track before any milestone task has completed?",
-          ["Close Track Anyway", "Keep Track Open"]
+          { approve: "Close Track Anyway", deny: "Keep Track Open" }
         );
       }
       return AskHuman(
         `Confirm closing long-term goal track (${ctx.state.milestonesCompleted} tasks completed)?`,
-        ["Confirm Close", "Continue Working"]
+        { approve: "Confirm Close", deny: "Continue Working" }
       );
     }
 

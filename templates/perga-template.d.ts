@@ -12,7 +12,7 @@ export interface TemplateHeaderView {
 export type GuardDecision =
   | { kind: "allow" }
   | { kind: "deny"; reason: string }
-  | { kind: "ask_human"; title: string; options?: string[] };
+  | { kind: "ask_human"; title: string; approveLabel?: string; denyLabel?: string };
 
 export interface SectionSpec {
   h1: string;
@@ -77,7 +77,7 @@ export interface PergaTemplateDefinition<TState = Record<string, any>, TInputs =
 declare global {
   function Allow(): GuardDecision;
   function Deny(reason: string): GuardDecision;
-  function AskHuman(title: string, options?: string[]): GuardDecision;
+  function AskHuman(title: string, labels?: { approve?: string; deny?: string }): GuardDecision;
   function defineTemplate<TState = Record<string, any>, TInputs = Record<string, any>>(
     def: PergaTemplateDefinition<TState, TInputs>
   ): PergaTemplateDefinition<TState, TInputs>;

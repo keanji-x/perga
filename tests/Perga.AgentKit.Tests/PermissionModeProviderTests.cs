@@ -23,6 +23,12 @@ public sealed class PermissionModeProviderTests : IDisposable
         Assert.Empty(acpModes);
         Assert.Null(ProviderPermissionModes.GetDefaultMode("acp:opencode"));
 
+        var agyProfile = ProviderPermissionModes.GetProfile("acp:antigravity");
+        Assert.Equal(PermissionCatalogSource.Dynamic, agyProfile.CatalogSource);
+        Assert.Equal(["--dangerously-skip-permissions"], agyProfile.GetLaunchArgs("bypassPermissions"));
+        Assert.Empty(agyProfile.GetLaunchArgs("other"));
+        Assert.Equal(agyProfile, ProviderPermissionModes.GetProfile("agy"));
+
         Assert.True(ProviderPermissionModes.IsSupported("codex", "ask"));
         Assert.False(ProviderPermissionModes.IsSupported("codex", "bypassPermissions"));
         Assert.True(ProviderPermissionModes.IsSupported("claude", "acceptEdits"));

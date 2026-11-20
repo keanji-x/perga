@@ -1,52 +1,61 @@
 using System.Text.Json;
-using Perga.AgentKit.Internal;
 
 namespace Perga.AgentKit;
 
 public sealed partial class AcpAgentSession
 {
     private ConfigurationSupport _permissionChangeSupport = ConfigurationSupport.Unknown;
-    private AcpPermissionModes _permissionModes = new([], null);
-    private IReadOnlyList<PermissionModeOption> _extraPermissionModes = [];
-    private IReadOnlySet<string> _launchArgumentModes = new HashSet<string>(StringComparer.Ordinal);
+    private AcpPermissionCatalog _permissionCatalog = AcpPermissionCatalog.Empty;
 
     private void RefreshPermissionModes(JsonElement response)
     {
-        // Empty success responses do not advertise a replacement catalogue.
-        if (response.ValueKind != JsonValueKind.Object ||
-            (!response.TryGetProperty("configOptions", out _) && !response.TryGetProperty("modes", out _)))
-            return;
-
-        var modes = AcpPermissionModes.Read(response);
-        var merged = modes.Options.ToList();
-        foreach (var extra in _extraPermissionModes)
-            if (!merged.Any(option => string.Equals(option.Id, extra.Id, StringComparison.Ordinal)))
-                merged.Add(extra);
-
-        // Publish options and their transport together; readers retain one immutable snapshot.
-        Volatile.Write(ref _permissionModes, new(Array.AsReadOnly(merged.ToArray()), modes.ConfigId));
+        var current = Volatile.Read(ref _permissionCatalog);
+        var updated = current.RefreshFromProtocol(response);
+        if (!ReferenceEquals(updated, current))
+        {
+            Volatile.Write(ref _permissionCatalog, updated);
+        }
     }
 
-    private static void ValidatePermissionMode(string? mode, AcpPermissionModes modes)
+    private static AcpPermissionEntry? ValidatePermissionMode(string? mode, AcpPermissionCatalog catalog)
     {
-        if (mode is not null && !modes.Options.Any(option => option.Id == mode))
+        if (mode is null)
+        {
+            return null;
+        }
+
+        if (!catalog.TryResolve(mode, out var entry))
+        {
             throw new ArgumentException($"Unsupported ACP permission mode '{mode}'.", nameof(mode));
+        }
+
+        return entry;
     }
 
-    private Task<JsonElement> SetPermissionModeAsync(string mode, string sessionId, AcpPermissionModes modes, CancellationToken ct)
+    private Task<JsonElement> SetPermissionModeAsync(
+        string mode, string sessionId, AcpPermissionTransport transport, CancellationToken ct)
     {
         var parameters = new Dictionary<string, object?> { ["sessionId"] = sessionId };
-        if (modes.ConfigId is { } configId)
+        string method;
+        switch (transport)
         {
-            parameters["configId"] = configId;
-            parameters["value"] = mode;
+            case AcpPermissionTransport.RpcConfigOption config:
+                method = "session/set_config_option";
+                parameters["configId"] = config.ConfigId;
+                parameters["value"] = mode;
+                break;
+            case AcpPermissionTransport.RpcLegacyMode:
+                method = "session/set_mode";
+                parameters["modeId"] = mode;
+                break;
+            default:
+                throw new InvalidOperationException($"ACP permission mode '{mode}' cannot be applied via RPC.");
         }
-        else parameters["modeId"] = mode;
-        return _rpc.SendRequestAsync(modes.ConfigId is null ? "session/set_mode" : "session/set_config_option", parameters, ct, response =>
+
+        return _rpc.SendRequestAsync(method, parameters, ct, response =>
         {
             RefreshPermissionModes(response);
             if (IsPositiveAcknowledgement(response)) _permissionChangeSupport = ConfigurationSupport.Supported;
         });
     }
-
 }

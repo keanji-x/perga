@@ -181,7 +181,7 @@ public sealed class McpPluginsPolicyGuardAndLifecycleIntegrationTests
                       return Deny(`Policy blocked ${call.mcpServer}:${call.toolName}`);
                     }
                     if (mode === "ask") {
-                      return AskHuman(`Approve ${call.mcpServer}:${call.toolName}?`, ["Approve", "Reject"]);
+                      return AskHuman(`Approve ${call.mcpServer}:${call.toolName}?`, { approve: "Approve", deny: "Reject" });
                     }
                     return Allow();
                   }
@@ -336,7 +336,7 @@ public sealed class McpPluginsPolicyGuardAndLifecycleIntegrationTests
 
             using var approveResp = await client.PostAsJsonAsync(
                 $"/api/v1/tracks/{trackId}/executions/{approvalApprove.ExecutionId}/approvals/{approvalApprove.Id}/decision",
-                new { answers = new[] { "Approve" } },
+                new { optionId = "approve" },
                 ct);
             approveResp.EnsureSuccessStatusCode();
 
@@ -372,7 +372,7 @@ public sealed class McpPluginsPolicyGuardAndLifecycleIntegrationTests
 
             using var rejectResp = await client.PostAsJsonAsync(
                 $"/api/v1/tracks/{trackId}/executions/{approvalReject.ExecutionId}/approvals/{approvalReject.Id}/decision",
-                new { answers = new[] { "Reject" } },
+                new { optionId = "deny" },
                 ct);
             rejectResp.EnsureSuccessStatusCode();
 
