@@ -155,6 +155,11 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
         private readonly ScriptableAgentRuntime _owner;
         private HarnessLaunchSpec _spec;
         private CancellationTokenSource? _activeTurnCts;
+        private readonly object _approvalLock = new();
+        private readonly HashSet<string> _seenApprovalRequests = new(StringComparer.Ordinal);
+        private readonly HashSet<string> _pendingApprovalRequests = new(StringComparer.Ordinal);
+        private bool _approvalsActive;
+        private bool _disposed;
 
         public ScriptableAgentSession(ScriptableAgentRuntime owner, HarnessLaunchSpec spec)
         {
@@ -189,24 +194,49 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
             [EnumeratorCancellation] CancellationToken ct)
         {
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            _activeTurnCts = linked;
+            lock (_approvalLock)
+            {
+                _activeTurnCts = linked;
+                _approvalsActive = !_disposed;
+            }
             try
             {
                 await foreach (var evt in _owner.DefaultStreamAsync(_spec, input, linked.Token).ConfigureAwait(false))
                 {
+                    lock (_approvalLock)
+                    {
+                        if (evt is UnifiedAgentEvent.ApprovalRequested request
+                            && _seenApprovalRequests.Add(request.RequestId) && _approvalsActive)
+                            _pendingApprovalRequests.Add(request.RequestId);
+                        if (evt is UnifiedAgentEvent.TurnCompleted or UnifiedAgentEvent.TurnInterrupted)
+                            ExpireApprovals();
+                    }
                     yield return evt;
                 }
             }
             finally
             {
-                _activeTurnCts = null;
+                lock (_approvalLock)
+                {
+                    _activeTurnCts = null;
+                    ExpireApprovals();
+                }
             }
+        }
+
+        // Called under _approvalLock, shared by stream completion, cancellation and disposal.
+        private void ExpireApprovals()
+        {
+            _approvalsActive = false;
+            _pendingApprovalRequests.Clear();
         }
 
         public bool RequiresTerminalStop => _owner.RequiresTerminalStop;
 
         public Task CancelTurnAsync(CancellationToken ct)
         {
+            lock (_approvalLock)
+                ExpireApprovals();
             if (_owner.CancelHandler is { } handler)
                 return handler(ct);
             _activeTurnCts?.Cancel();
@@ -216,8 +246,12 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
         public Func<Task>? TryClaimApprovalResponse(
             string requestId, bool approved, string? selectedOptionId, string? reason, CancellationToken ct)
         {
-            if (_owner.ApprovalClaimHandler?.Invoke() == false)
-                return null;
+            lock (_approvalLock)
+            {
+                if (_disposed || !_approvalsActive || !_pendingApprovalRequests.Remove(requestId)
+                    || _owner.ApprovalClaimHandler?.Invoke() == false)
+                    return null;
+            }
 
             return () =>
             {
@@ -254,6 +288,11 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
 
         public ValueTask DisposeAsync()
         {
+            lock (_approvalLock)
+            {
+                _disposed = true;
+                ExpireApprovals();
+            }
             _owner.DisposedSessions.Enqueue(NativeThreadId);
             return ValueTask.CompletedTask;
         }
