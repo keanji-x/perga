@@ -1,12 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { plannerRunOperation } from './conversation.js';
 import { conversationRunOperation } from './conversation-display.js';
 import { setPlannerPermissionModeOperation } from './planner-permission-mode.js';
 
 const RUN = {
   card_id: 'card-1', worker_session_id: null, phase: null, model: null, reasoning_effort: null,
-  blocked_reason: null, manual_compact_supported: true, recovery: null, compact_outcome: null, running_turn: null,
+  blocked_reason: null, manual_compact_supported: true, running_turn: null,
 };
 
 describe('session permission mode', () => {
@@ -37,7 +36,7 @@ describe('session permission mode', () => {
         permissionMode: 'bypassPermissions',
       },
     });
-    expect(lead.permission_mode).toBe('bypassPermissions');
+    expect(lead.session.permissionMode).toBe('bypassPermissions');
 
     const assistant = responseSchema.parse({
       ...basePage,
@@ -47,7 +46,7 @@ describe('session permission mode', () => {
         permissionMode: 'ask',
       },
     });
-    expect(assistant.permission_mode).toBe('ask');
+    expect(assistant.session.permissionMode).toBe('ask');
 
     const taskBound = responseSchema.parse({
       ...basePage,
@@ -57,10 +56,10 @@ describe('session permission mode', () => {
         permissionMode: 'full',
       },
     });
-    expect(taskBound.permission_mode).toBe('full');
+    expect(taskBound.session.permissionMode).toBe('full');
   });
 
   it('rejects the retired planner run response', () => {
-    expect(plannerRunOperation('card-1').responseSchema.safeParse({ ...RUN, permission_mode: 'ask' }).success).toBe(false);
+    expect(conversationRunOperation('card-1').responseSchema.safeParse({ ...RUN, permission_mode: 'ask' }).success).toBe(false);
   });
 });

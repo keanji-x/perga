@@ -58,3 +58,35 @@ it.each([390, 1280])('each Claude row is one line, its resolved id at the right 
   expect(getComputedStyle(long).textOverflow).toBe('ellipsis');
   expect(document.documentElement.scrollWidth).toBe(width);
 });
+
+it('selects low with the pointer and returns to Default with the keyboard without changing null on Cancel', async () => {
+  const onChange = vi.fn();
+  render(<ModelPill provider="claude" selection={FOLLOW_INSTALLATION_DEFAULT} onChange={onChange}
+    groups={[{ provider: 'claude', availability: null, catalog: CATALOG }]} />);
+  await page.getByRole('button', { name: /^Model:/ }).click();
+  const slider = screen.getByRole('slider', { name: 'Reasoning effort' });
+  expect(slider.getAttribute('aria-valuetext')).toBe('Default');
+  const root = slider.closest<HTMLElement>('[class*="radixSliderRoot"]')!;
+  const track = root.getBoundingClientRect();
+  await userEvent.pointer({ keys: '[MouseLeft]', target: root, coords: { clientX: track.right - 6, clientY: track.top + track.height / 2 } });
+  expect(slider.getAttribute('aria-valuetext')).toBe('low');
+  slider.focus();
+  await userEvent.keyboard('{End}');
+  expect(slider.getAttribute('aria-valuetext')).toBe('low');
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  expect(onChange).toHaveBeenLastCalledWith({ model: null, reasoning_effort: 'low' }, 'claude');
+  await page.getByRole('button', { name: /^Model:/ }).click();
+  screen.getByRole('slider').focus();
+  await userEvent.keyboard('{End}{Home}');
+  expect(screen.getByRole('slider').getAttribute('aria-valuetext')).toBe('Default');
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  expect(onChange).toHaveBeenLastCalledWith({ model: null, reasoning_effort: null }, 'claude');
+  onChange.mockClear();
+  await page.getByRole('button', { name: /^Model:/ }).click();
+  screen.getByRole('slider').focus();
+  await userEvent.keyboard('{End}');
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await page.getByRole('button', { name: /^Model:/ }).click();
+  expect(screen.getByRole('slider').getAttribute('aria-valuetext')).toBe('Default');
+  expect(onChange).not.toHaveBeenCalled();
+});

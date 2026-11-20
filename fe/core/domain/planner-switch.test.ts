@@ -1,5 +1,4 @@
 import { expect, it } from 'vitest';
-import { plannerRunOperation } from './conversation.js';
 import { conversationRunOperation } from './conversation-display.js';
 import { plannerSwitchOperation, plannerSwitchFailure, PLANNER_SWITCH_COPY, PLANNER_SWITCH_UNCONFIRMED } from './planner-switch.js';
 
@@ -37,9 +36,9 @@ it.each([true, false])('v1 run controls reflect session capabilities regardless 
   const page = { items: [], activeTurn: null, unknownInput: null,
     session: { id: 'session', trackId: 'track', isLead, provider: 'codex', model: 'model',
       contextUsage: null, createdAtMs: 1, updatedAtMs: 2 } };
-  for (const operation of [plannerRunOperation('session'), conversationRunOperation('session')]) {
+  for (const operation of [conversationRunOperation('session')]) {
     expect(operation.responseSchema.parse(page)).toMatchObject({
-      model: 'model', permission_mode: null, attachments_supported: false, manual_compact_supported: true,
+      session: { model: 'model' },
     });
   }
 });

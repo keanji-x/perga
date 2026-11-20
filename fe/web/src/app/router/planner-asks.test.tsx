@@ -1,5 +1,5 @@
 import { fixtureSnapshot, fixtureSession, fixtureTrack } from './session-contract-fixture.ts';
-import { historicalConversationPage, conversationCardId, historicalConversationRun } from './conversation-read-data.ts';
+import { conversationCardId } from './conversation-read-data.ts';
 import { prepareReportDocument } from '../../features/report/document/preparation.ts';
 // @vitest-environment jsdom
 // #2209 U3: the Planner's open asks, answered from its composer through the production router.
@@ -40,11 +40,10 @@ function setup() {
         openAsks: [ASK],
       });
       if (request.path === '/api/v1/tracks/w1/asks/41/answer') return ok(undefined, 204);
-      if (request.path.includes('/items') && !request.path.includes('view=')) return ok(historicalConversationPage(conversationCardId(request.path), [], null));
-      if (request.path.includes('view=run')) return ok(historicalConversationRun({
-        card_id: conversationCardId(request.path), worker_session_id: 'runtime', phase: 'idle', model: null,
-        reasoning_effort: null, permission_mode: 'never', blocked_reason: null, manual_compact_supported: true, recovery: null, compact_outcome: null, running_turn: null,
-      }, 'idle', true));
+      if (request.path.includes('/items')) return ok({
+        session: fixtureSession(conversationCardId(request.path), TRACK.id, { permissionMode: 'never' }),
+        items: [], activeTurn: null, unknownInput: null,
+      });
       if (request.path === '/api/settings') return ok({});
       return ok([]);
     },

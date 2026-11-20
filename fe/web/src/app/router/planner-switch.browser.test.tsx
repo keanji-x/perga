@@ -1,3 +1,6 @@
+import { fixtureBootstrap, fixtureSession } from './session-contract-fixture.ts';
+import { sessionPage, sessionItem } from './conversation-session-data.ts';
+import type { ModelSelection } from '../../../../core/domain/conversation.ts';
 import '../../styles/entry.css';
 import { cleanup } from '@testing-library/react';
 import { afterEach, expect, it } from 'vitest';
@@ -108,4 +111,50 @@ it.each(['mounted', 'remounted', 'unchanged'] as const)('dock clears only its ow
   await expect.poll(() => fixture.client.getQueryData<{ track: { leadSessionId: string } }>(['track', 'daily'])?.track.leadSessionId).toBe('second-planner');
   if (mode === 'remounted') await expect.element(page.getByRole('combobox', { name: 'Message' })).toHaveTextContent('New draft');
   else await expect.element(dock).toHaveValue(mode === 'mounted' ? 'New draft' : '');
+});
+
+it('saves and reads back null effort on an existing session without materializing low', async () => {
+  await page.viewport(1280, 800);
+  let saved: ModelSelection = { model: 'test-model', reasoning_effort: null };
+  const readbacks: (string | null)[] = [];
+  let wrote = false;
+  const session = () => fixtureSession('second-planner', 'daily', { model: saved.model, reasoningEffort: saved.reasoning_effort });
+  const ok = (body: unknown) => ({ status: 200, statusText: 'OK', body });
+  const fixture = renderPlannerSwitchFixture({ reply: request => {
+    if (request.path.startsWith('/api/v1/bootstrap') && !request.path.includes('scope=whoami')) {
+      const bootstrap = fixtureBootstrap(['codex'], ['test-model']);
+      bootstrap.providers[0].modelCatalog = [{ model: 'test-model', displayName: 'Test model', description: '', isDefault: true,
+        defaultReasoningEffort: null, supportedReasoningEfforts: [{ reasoningEffort: 'low', description: '' }, { reasoningEffort: 'high', description: '' }] }];
+      return ok(bootstrap);
+    }
+    if (request.method === 'PUT' && request.path === '/api/v1/sessions/second-planner/model') {
+      const body = request.body as { model: string | null; reasoningEffort: string | null };
+      saved = { model: body.model, reasoning_effort: body.reasoningEffort };
+      wrote = true;
+      return ok(session());
+    }
+    if (request.path.startsWith('/api/v1/sessions/second-planner/items?')) {
+      if (wrote && request.path.includes('view=run')) readbacks.push(saved.reasoning_effort);
+      return ok(sessionPage(session(), [sessionItem('second-planner', 1, 'Ready for switching')]));
+    }
+    return undefined;
+  } });
+  await open();
+  const trigger = page.getByRole('button', { name: /^Model:/ });
+  await trigger.click();
+  await expect.element(page.getByRole('slider', { name: 'Reasoning effort' })).toHaveAttribute('aria-valuetext', 'Default');
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect.poll(() => fixture.requests.filter(request => request.method === 'PUT').map(request => request.body))
+    .toEqual([{ model: 'test-model', reasoningEffort: null }]);
+  await expect.poll(() => readbacks).toEqual([null]);
+  await expect.poll(() => fixture.client.getQueryData<{ session: { reasoningEffort: string | null } }>(['planner-run', 'second-planner', 'conversation_v1'])?.session.reasoningEffort).toBeNull();
+  await trigger.click();
+  await expect.element(page.getByRole('slider')).toHaveAttribute('aria-valuetext', 'Default');
+  await page.getByRole('slider').click();
+  await userEvent.keyboard('{End}');
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await trigger.click();
+  await expect.element(page.getByRole('slider')).toHaveAttribute('aria-valuetext', 'Default');
+  expect(saved.reasoning_effort).toBeNull();
+  expect(fixture.requests.filter(request => request.method === 'PUT')).toHaveLength(1);
 });

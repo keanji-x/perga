@@ -1,10 +1,10 @@
+import { sessionContextUsage } from '../../../../core/domain/session-context-usage.ts';
 import { ApiError, NotSentError } from '../../../../core/domain/failure-class.ts';
 import type { WorkerMessageBody, WorkerMessageMode } from '../../../../core/domain/worker-session.ts';
 import { pendingQueueWithCurrentHumanVersions, pendingQueueOwnsHumanEntry } from '../../../../core/domain/conversation-queue-controls.ts';
 import { mintIdempotencyKey } from '../providers/idempotency-key.ts';
 import { useCurrentUser } from '../auth/current-user.tsx';
-import { buildConversationTranscript, currentConversationOutcome, nativeDisplayRows, orderedPendingInputs, removedHumanIds } from '../../../../core/domain/conversation-display.ts';
-import type { ConversationPendingInput } from '../../../../core/api/generated/wire.ts';
+import { conversationRunPhase, conversationRunningTurn, conversationBlockedReason, conversationPendingQueue, buildConversationTranscript, nativeDisplayRows, removedHumanIds } from '../../../../core/domain/conversation-display.ts';
 import { useEffect, useMemo, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import type { ApiTransportPort } from '../../../../core/api/types.ts';
@@ -24,7 +24,6 @@ import { useConversationCommands, useConversationSendOps, useConversationQueueWr
 import type { WorkerSendIntent } from './registry-model.ts';
 import { NO_TURNS } from './registry-owner.ts';
 import { useConversationStop } from './stop.ts';
-import { useConversationRestart } from './restart.ts';
 import { useLiveReplies } from './live-replies.ts';
 import { useConversationOutbox, useRunReads } from './outbox.ts';
 import type { ConversationRouteIntent, ConversationStore, PlannerConversationScope } from './contracts.ts';
@@ -37,7 +36,6 @@ function forgottenKey(card: string, entryId: string): string {
 /* A stable identity for "no queue page", so the memo below is not recomputed on
    every render by a fresh array literal. */
 const EMPTY_PENDING_QUEUE: readonly PendingQueueEntry[] = Object.freeze([]);
-const EMPTY_PENDING_INPUTS: readonly ConversationPendingInput[] = Object.freeze([]);
 
 export function useConversationStore(
   transport: ApiTransportPort,
@@ -78,18 +76,16 @@ export function useConversationStore(
   const run = useQuery({ ...runQuery, enabled: scope !== null, refetchInterval: query =>
     query.state.data?.worker?.phase === 'running' || query.state.data?.worker?.phase === 'interrupting' ? 1000 : false });
   const worker = run.data?.worker ?? null;
-  const workerTurn = worker === null ? undefined : run.data?.running_turn?.turn_id;
+  const workerTurn = worker === null ? undefined : (run.data?.activeTurn?.status === 'running' ? run.data.activeTurn.id : undefined);
   const workerSendIntent = useWorkerSendIntent(worker === null ? null : cardId);
   const [deliveryChoice, setDeliveryChoice] = useState<Readonly<{ cardId: string; turnId: string; mode: WorkerMessageMode }> | null>(null);
   const workerMode = worker?.nativeSteer !== true ? 'queue'
     : deliveryChoice?.cardId === cardId && deliveryChoice.turnId === workerTurn ? deliveryChoice.mode : 'steer';
-  const pendingInputs = useMemo(() => run.data === undefined ? EMPTY_PENDING_INPUTS : orderedPendingInputs(run.data.pending_inputs), [run.data]);
   /* The catalog rides alongside the run query: the trigger has to render the chosen
        model's name, and `planner-run` gives only its slug. */
   const modelCatalog = useQuery({
     ...modelCatalogQueryOptions(transport, { kind: 'card', cardId, provider: provider ?? 'codex' }, unauthorized), enabled: scope !== null,
   });
-  const historyReplacementSupported = run.data?.history_replacement_supported === true;
   const displayItems = history.loadedRows;
   const items = useMemo(() => nativeDisplayRows(displayItems), [displayItems]);
   const removedMessages = useMemo(() => removedHumanIds(displayItems), [displayItems]);
@@ -101,19 +97,14 @@ export function useConversationStore(
     [displayItems, currentUser?.userId, rememberedEntries],
   );
   const landedRun = runReads.startOf(run.data);
-  const servedQueue = run.data?.pending ?? EMPTY_PENDING_QUEUE;
+  const servedQueue = useMemo(() => run.data === undefined ? EMPTY_PENDING_QUEUE : conversationPendingQueue(run.data), [run.data]);
   const queueOps = useConversationSendOps(scope === null ? null : cardId);
-  const phase = run.data?.phase ?? null;
-  const pergaInputProtocol = run.data?.unknown_session_input !== undefined;
-  const recovery = run.data?.recovery ?? null;
-  const stalled = recovery !== null;
-  const canonical = run.data?.input_contract === 'canonical';
-  const inputStalled = stalled && !canonical;
-  const executionHeld = run.data?.runtime_state === 'failed' || run.data?.runtime_state === 'exited'
-    || run.data?.runtime_state === 'superseded';
+  const phase = run.data === undefined ? null : conversationRunPhase(run.data);
+  const executionHeld = run.data?.session.status === 'failed' || run.data?.session.status === 'exited'
+    || run.data?.session.status === 'superseded';
   /* Anchored on the response's arrival (`dataUpdatedAt`); the fold keeps the earlier anchor for one turn. */
   const [runningAnchor, setRunningAnchor] = useState<RunningTurnAnchor | null>(null);
-  const nextRunningAnchor = anchorRunningTurn(runningAnchor, run.data?.running_turn ?? null, run.dataUpdatedAt);
+  const nextRunningAnchor = anchorRunningTurn(runningAnchor, run.data === undefined ? null : conversationRunningTurn(run.data, run.dataUpdatedAt), run.dataUpdatedAt);
   if (nextRunningAnchor !== runningAnchor) setRunningAnchor(nextRunningAnchor);
   /* The run page owns pending input identity. Replace its persisted rows with
      the display projection below, keeping one bubble while the queue drains. */
@@ -124,23 +115,22 @@ export function useConversationStore(
   const [forgotten, setForgotten] = useState<ReadonlyMap<string, number>>(() => new Map());
   const savedMessageIds = useMemo(() => new Set(displayItems.flatMap(item =>
     item.source.kind === 'human' ? [item.source.message_id] : [])), [displayItems]);
-  const [handoff, setHandoff] = useState(() => ({ cardId, source: servedQueue, saved: savedMessageIds, ids: run.data?.queue_handoff_ids, rows: servedQueue }));
+  const [handoff, setHandoff] = useState(() => ({ cardId, source: servedQueue, saved: savedMessageIds, ids: run.data?.queueHandoffIds, rows: servedQueue }));
   let handoffRows = handoff.rows;
-  if (handoff.cardId !== cardId || handoff.source !== servedQueue || handoff.saved !== savedMessageIds || handoff.ids !== run.data?.queue_handoff_ids) {
+  if (handoff.cardId !== cardId || handoff.source !== servedQueue || handoff.saved !== savedMessageIds || handoff.ids !== run.data?.queueHandoffIds) {
     const currentIds = new Set(servedQueue.map(entry => entry.entry_id));
-    const handoffIds = new Set(run.data?.queue_handoff_ids);
+    const handoffIds = new Set(run.data?.queueHandoffIds);
     const waitingForHistory = handoff.cardId === cardId ? handoff.rows.filter(entry =>
       (handoffIds.has(entry.entry_id) || entry.state === 'processing') &&
       !currentIds.has(entry.entry_id) && !savedMessageIds.has(entry.entry_id))
       .map((entry): PendingQueueEntry => handoffIds.has(entry.entry_id) ? { ...entry, state: 'processing' } : entry) : [];
     handoffRows = [...waitingForHistory, ...servedQueue];
-    setHandoff({ cardId, source: servedQueue, saved: savedMessageIds, ids: run.data?.queue_handoff_ids, rows: handoffRows });
+    setHandoff({ cardId, source: servedQueue, saved: savedMessageIds, ids: run.data?.queueHandoffIds, rows: handoffRows });
   }
   const currentQueue = useMemo(() => {
-    const entries = pergaInputProtocol ? handoffRows.filter(entry => entry.state === 'unconfirmed' ||
-      !savedMessageIds.has(entry.entry_id)) : servedQueue;
-    return canonical ? pendingQueueWithCurrentHumanVersions(entries, serverTurns) : entries;
-  }, [canonical, handoffRows, pergaInputProtocol, savedMessageIds, servedQueue, serverTurns]);
+    const entries = handoffRows.filter(entry => entry.state === 'unconfirmed' || !savedMessageIds.has(entry.entry_id));
+    return pendingQueueWithCurrentHumanVersions(entries, serverTurns);
+  }, [handoffRows, savedMessageIds, serverTurns]);
   const pendingQueue = useMemo(
     () => forgotten.size === 0 ? currentQueue : currentQueue.filter(entry =>
       !tombstoneHides(forgotten.get(forgottenKey(cardId, entry.entry_id)), entry.rev)),
@@ -166,7 +156,6 @@ export function useConversationStore(
   const forgetQueuedEntry = (entry: PendingQueueEntry): void => {
     setForgotten((current) => new Map([...current, [forgottenKey(cardId, entry.entry_id), entry.rev]]));
   };
-  const pendingQueueOverflow = run.data?.pending_overflow ?? 0;
   const pendingQueueIds = useMemo(
     () => new Map(pendingQueue.map((entry) => [entry.entry_id, entry.rev])), [pendingQueue],
   );
@@ -176,7 +165,7 @@ export function useConversationStore(
   const compactLeases = useRef(new Set<string>());
   const resumeLeases = useRef(new Set<string>());
   const [resumePending, setResumePending] = useState<ReadonlySet<string>>(() => new Set());
-  const providerResume = run.data?.provider_resume ?? null;
+  const providerResume = run.data?.resume ?? null;
   const resumeState = resumePending.has(cardId) ? 'resuming' : providerResume?.state;
   const recoveryHoldsSend = resumeState === 'resuming' || resumeState === 'paused';
   const [actionError, setActionError] = useState<Readonly<{ cardId: string; message: string }> | null>(null);
@@ -193,18 +182,16 @@ export function useConversationStore(
   useEffect(() => { setActionError(null); }, [cardId]);
   /* The running turn's streamed replies: drawn at the tail, never remembered, never counted. */
   const liveReplies = useLiveReplies({
-    canonical:run.data?.input_contract === 'canonical',
     transport, unauthorized, cardId, enabled: scope !== null && run.data !== undefined && !executionHeld, phase,
-    runningTurnId: run.data?.native_turn_id ?? run.data?.running_turn?.turn_id ?? null, nextRead: registry.nextRead,
+    runningTurnId: run.data?.activeTurn?.status === 'running' ? run.data.activeTurn.id : null, nextRead: registry.nextRead,
     transcriptKey: transcriptQuery.queryKey, transcriptReads, items, worker,
   });
-  const working = !executionHeld && !stalled && (phase === 'issuing_turn' || phase === 'compacting' || phase === 'turn_running');
-  const stopTurnId = run.data?.running_turn?.turn_id ?? run.data?.native_turn_id;
-  const canStop = resumeState !== 'resuming' && working && stopTurnId != null && (!pergaInputProtocol || phase === 'turn_running');
+  const working = !executionHeld && (phase === 'issuing_turn' || phase === 'compacting' || phase === 'turn_running');
+  const stopTurnId = run.data?.activeTurn?.status === 'running' ? run.data.activeTurn.id : null;
+  const canStop = resumeState !== 'resuming' && working && stopTurnId !== null && phase === 'turn_running';
   const stop = useConversationStop({
     cardId, canStop,
-    responseEnded: run.error === null && (canonical && !pergaInputProtocol
-      ? run.data?.terminal_outcome != null : phase === 'idle' || phase === 'turn_completed'),
+    responseEnded: run.error === null && run.data !== undefined && (phase === 'idle' || phase === 'turn_completed'),
     historyKnown: historyKnown,
     newestRowId: items.reduce((latest, row) => Math.max(latest, row.id), 0),
     completedRowId: items.reduce<number | null>((latest, row) => transcriptRowToTurnOutcome(row) === null
@@ -215,17 +202,16 @@ export function useConversationStore(
       return stopTurnId == null ? Promise.reject(new NotSentError()) : mutations.interrupt({ turnId: stopTurnId });
     },
   });
-  const restart = useConversationRestart({ cardId, enabled: run.data?.input_contract === 'historical' || recovery?.action === 'abandon_session' || recovery?.action === 'recover_session', recovery, restart: () => mutations.restart(recovery) });
   const landedTranscript = transcriptReads.startOf(history.data);
   /* A refetch keeping `run.data` restamps it; this re-renders only because `run.dataUpdatedAt` is read above (#2068). */
   const landed = useMemo(() => ({ transcript: landedTranscript, run: landedRun }), [landedTranscript, landedRun]);
-  const canQueueWhileRunning = pergaInputProtocol && phase === 'turn_running' && working && run.error === null;
-  const steeringTarget = run.data?.native_turn_id ?? null;
+  const canQueueWhileRunning = phase === 'turn_running' && working && run.error === null;
+  const steeringTarget = run.data?.activeTurn?.status === 'running' ? run.data.activeTurn.id : null;
   const outbox = useConversationOutbox({
     removedMessages, viewerId:currentUser?.userId ?? null,
     cardId, transport, send: mutations.send, serverEntries, serverTurns, liveReplies, queuedEntries: pendingQueue,
-    stalled: inputStalled, landed, queuesInput: kernelQueuesInput(phase), queueIfBusy: canQueueWhileRunning, highWater: displayItems.reduce((maximum,item) => Math.max(maximum,item.cursor.position),0),
-    pressed: () => { setActionError(null); stop.clearFeedback(); restart.clearError(); },
+    stalled: false, landed, queuesInput: kernelQueuesInput(phase), queueIfBusy: canQueueWhileRunning, highWater: displayItems.reduce((maximum,item) => Math.max(maximum,item.cursor.position),0),
+    pressed: () => { setActionError(null); stop.clearFeedback(); },
   });
   const { view, accountQueueDisplay } = outbox;
   const [placementMemory, setPlacementMemory] = useState(() => ({ cardId, ops: queueOps, queue: pendingQueue,
@@ -236,8 +222,8 @@ export function useConversationStore(
     setPlacementMemory({ cardId, ops: queueOps, queue: pendingQueue, placements });
   }
   const presentation = useMemo(() => presentPendingMessages(view.transcript, pendingQueue, view.shown,
-    placements, view.failed, stalled, queueOps),
-  [view.transcript, pendingQueue, view.shown, placements, view.failed, stalled, queueOps]);
+    placements, view.failed, false, queueOps),
+  [view.transcript, pendingQueue, view.shown, placements, view.failed, queueOps]);
   const queueDisplayAccounting = useMemo(() => accountQueueDisplay(presentation.transcript, []),
     [accountQueueDisplay, presentation.transcript]);
   /* What the reader is looking at, and what the tab may remember: a message is the conversation's only once the
@@ -248,14 +234,13 @@ export function useConversationStore(
   const confirmedTurns = useMemo(
     () => [...serverTurns, ...view.confirmed].sort((left, right) => left.atMs - right.atMs), [serverTurns, view.confirmed],
   );
-  const stopping = !stalled && !executionHeld && (phase === 'issuing_interrupt' || (working && stop.pending));
-  const stopFeedback: ConversationStopFeedback | null = stalled ? null
-    : phase === 'issuing_interrupt' ? { kind: 'stopping' }
+  const stopping = !executionHeld && (phase === 'issuing_interrupt' || (working && stop.pending));
+  const stopFeedback: ConversationStopFeedback | null = phase === 'issuing_interrupt' ? { kind: 'stopping' }
     : stop.feedback?.kind === 'requesting' && !working ? null : stop.feedback;
   const facts = useMemo<ConversationFacts | null>(() => trackId === undefined || provider === undefined ? null : {
     sourceCardId, cardId, trackId, trackTitle, provider, cardTitle: cardTitle ?? null, kind: scopeKind, isLead: scope?.isLead,
-    state: scopeState, working, stalled:stalled || executionHeld, fallbackUpdatedAt: scopeUpdatedAt ?? 0,
-  }, [scope?.isLead, sourceCardId, cardId, cardTitle, provider, scopeKind, scopeState, scopeUpdatedAt, trackId, trackTitle, working, stalled,executionHeld]);
+    state: scopeState, working, stalled: executionHeld, fallbackUpdatedAt: scopeUpdatedAt ?? 0,
+  }, [scope?.isLead, sourceCardId, cardId, cardTitle, provider, scopeKind, scopeState, scopeUpdatedAt, trackId, trackTitle, working, executionHeld]);
   /** What the reader is looking at: every turn, echoes included. */
   const conversation = useMemo(
     () => facts === null ? null : describeConversation(facts, turns), [facts, turns],
@@ -302,69 +287,25 @@ export function useConversationStore(
     ? serverRows
     : serverRows.map((row) => row.id === conversation.id ? { ...conversation, archivedAt: row.archivedAt } : row), [conversation, serverRows]);
   const model = useMemo(() => run.data === undefined ? FOLLOW_INSTALLATION_DEFAULT
-    : { model: run.data.model, reasoning_effort: run.data.reasoning_effort }, [run.data]);
-
-  const canonicalCarrier = (): string => {
-    const carrier = run.data?.worker_session_id;
-    if (!canonical || carrier == null) throw new Error('The current conversation carrier is not confirmed.');
-    return carrier;
-  };
-  const removeQueued = (entry: PendingQueueEntry, answered: (saved: import('../../../../core/domain/conversation.ts').PlannerInputMutation) => void) => canonical
-    ? mutations.withdrawCanonicalQueued(entry.entry_id,entry.rev,canonicalCarrier(),answered)
-    : mutations.deleteQueued(entry.entry_id,entry.rev,answered);
-
-  const observeQueueOutcome = <T extends PlannerQueueWriteOutcome>(outcome: T): T => {
-    return outcome;
-  };
+    : { model: run.data.session.model ?? null, reasoning_effort: run.data.session.reasoningEffort ?? null }, [run.data]);
 
   /* Held in the registry, so a strip remounted on the way back still sees its conversation's write out (#2068). */
   const deleteQueuedEntry = (entry: PendingQueueEntry) =>
     registry.holdQueueWrite<PlannerQueueWriteOutcome>(cardId, async () => {
-      if (pergaInputProtocol) {
-        await mutations.removeQueuedSessionMessage(entry.entry_id);
-        outbox.forgetQueuedEntry({ card_id: cardId, entry_id: entry.entry_id, rev: entry.rev, text: null });
-        forgetQueuedEntry(entry);
-        return { kind: 'done' };
-      }
-      return removeQueued(entry, removed => {
-        // Import the real ACK before the mutation owner starts either reconciliation read.
-        outbox.forgetQueuedEntry(removed);
-        forgetQueuedEntry(entry);
-      }).then(observeQueueOutcome);
+      await mutations.removeQueuedSessionMessage(entry.entry_id);
+      outbox.forgetQueuedEntry({ card_id: cardId, entry_id: entry.entry_id, rev: entry.rev, text: null });
+      forgetQueuedEntry(entry);
+      return { kind: 'done' };
     });
-  /* A persisted handoff retires the queue copy; canonical Unknown remains a held submission. */
-  const steerQueuedEntry = !recoveryHoldsSend && phase === 'turn_running' && !executionHeld && !stalled && run.error === null
-    && (!canonical || steeringTarget !== null)
-    && (!pergaInputProtocol || (!run.isFetching && run.data?.can_steer_queued === true))
-    ? (entry: PendingQueueEntry) => registry.holdQueueWrite<PlannerQueueWriteOutcome>(cardId,
-      async () => {
-        if (pergaInputProtocol) {
-          const result = await mutations.steerQueuedSessionMessage(entry.entry_id, steeringTarget!);
-          if (result.delivery === 'queued' || result.delivery === 'rejected') return { kind: 'not_running' };
-          if (result.delivery === 'unconfirmed') return { kind: 'unanswered' };
-          return { kind: 'done' };
-        }
-        return (canonical
-          ? mutations.steerCanonicalQueued(entry, canonicalCarrier(), steeringTarget!, () => { forgetQueuedEntry(entry); })
-          : mutations.steerQueued(entry.entry_id, entry.rev, () => { forgetQueuedEntry(entry); })).then(observeQueueOutcome);
-      })
-    : undefined;
+  const steerQueuedEntry = !recoveryHoldsSend && phase === 'turn_running' && !executionHeld && run.error === null
+    && steeringTarget !== null && !run.isFetching && run.data?.canSteer === true
+    ? (entry: PendingQueueEntry) => registry.holdQueueWrite<PlannerQueueWriteOutcome>(cardId, async () => {
+      const result = await mutations.steerQueuedSessionMessage(entry.entry_id, steeringTarget);
+      if (result.delivery === 'queued' || result.delivery === 'rejected') return { kind: 'not_running' };
+      if (result.delivery === 'unconfirmed') return { kind: 'unanswered' };
+      return { kind: 'done' };
+    }) : undefined;
 
-  const resolveInput = async (decision: 'keep' | 'retry', submission: import('../../../../core/api/generated/wire.ts').ConversationSubmissionDelivery) => {
-    const attempt = submission.attempt;
-    if (attempt === null || attempt.actions[decision].kind !== 'available') return;
-    const intent = registry.beginResolution(cardId, decision, { carrier_id:submission.carrier_id,
-      submission_id:submission.submission_id, attempt_id:attempt.attempt_id, revision:attempt.revision }, mintIdempotencyKey());
-    if (intent === null) return;
-    try {
-      await mutations[intent.decision](intent.args, intent.key);
-      registry.finishResolution(cardId, intent.key, 'done');
-    } catch (error) {
-      const terminal = error instanceof ApiError && (error.failure.kind === 'unauthorized' || (error.failure.kind === 'http' && [400, 403, 404, 409, 422].includes(error.failure.status)));
-      registry.finishResolution(cardId, intent.key, terminal ? 'done' : 'unknown');
-      throw error;
-    }
-  };
   const deliverWorkerMessage = (intent: WorkerSendIntent): Promise<void> => {
     setActionError(null);
     const finish = (unconfirmed: boolean) => registry.editWorkerSend(cardId, current => current?.key !== intent.key
@@ -436,32 +377,22 @@ export function useConversationStore(
     conversations,
     turns: conversation === null ? NO_TURNS : presentation.transcript,
     canQueueWhileRunning,
-    nativeQueue: pergaInputProtocol,
-    pending: pendingConversationIds(conversation, working, !stalled && view.sending),
+    pending: pendingConversationIds(conversation, working, view.sending),
     working,
     canStop,
-    stalled,
-    recovery,
-    inputStalled,
     executionHeld,
     stopping,
     stopFeedback,
     sending: view.sending || workerSendIntent?.state === 'sending',
-    sendBlocked: recoveryHoldsSend || view.blocked || run.data?.unknown_session_input != null ||
-      (worker === null ? pergaInputProtocol && working && !canQueueWhileRunning
+    sendBlocked: recoveryHoldsSend || view.blocked || run.data?.unknownInput != null ||
+      (worker === null ? working && !canQueueWhileRunning
         : !['running', 'paused'].includes(worker.phase) || workerSendIntent !== null),
     awaitingConversationUpdate: view.awaitingReconciliation && history.error === null && run.error === null,
     pendingQueue: presentation.queue,
-    pendingInputs,
-    activeInput: run.data?.active_input ?? null,
-    keepInput: submission => resolveInput('keep', submission),
-    retryInput: submission => resolveInput('retry', submission),
     pendingSends: presentation.sending,
     queueDisplayAccounting,
-    pendingQueueOverflow,
-    editQueuedEntry: (entry, text) => registry.holdQueueWrite(cardId, () => (canonical
-      ? mutations.editCanonicalQueued(entry,text,canonicalCarrier(),saved => { outbox.acknowledgeQueuedEdit(entry,saved); })
-      : mutations.editQueued(entry,text,saved => { outbox.acknowledgeQueuedEdit(entry,saved); })).then(observeQueueOutcome)),
+    editQueuedEntry: (entry, text) => registry.holdQueueWrite(cardId, () =>
+      mutations.editCanonicalQueued(entry, text, cardId, saved => { outbox.acknowledgeQueuedEdit(entry, saved); })),
     deleteQueuedEntry,
     queueWriteOut,
     steerQueuedEntry,
@@ -480,11 +411,8 @@ export function useConversationStore(
     discardFailedSend: outbox.discardFailedSend,
     dismissFailedSend: outbox.dismissFailedSend,
     send: worker === null ? outbox.send : sendWorker,
-    attachmentsSupported: run.data?.attachments_supported ?? false,
-    historyReplacementSupported,
-    manualCompactSupported: !recoveryHoldsSend && run.data?.manual_compact_supported === true,
-    contextUsage: run.data?.token_usage ?? null,
-    compactOutcome: run.data?.compact_outcome ?? null,
+    manualCompactSupported: !recoveryHoldsSend && run.data !== undefined && worker === null,
+    contextUsage: run.data === undefined ? null : sessionContextUsage(run.data.session),
     runningAnchor: nextRunningAnchor,
     uploadAttachment: mutations.uploadAttachment,
     compacting: compactPending.has(cardId) || phase === 'compacting',
@@ -507,11 +435,10 @@ export function useConversationStore(
       });
     },
     interrupt: stop.interrupt,
-    restart: { strip: restart.strip, pending: restart.pending, start: restart.start },
     retryHistory: () => { void (history.earlier.failed ? Promise.resolve(history.loadEarlier()) : history.refetch()).catch(() => undefined); },
     retryRun: () => { void run.refetch().catch(() => undefined); },
     loadEarlier,
-    blockedReason: run.data?.blocked_reason ?? null,
+    blockedReason: run.data === undefined ? null : conversationBlockedReason(run.data),
     providerRecoveryHoldsSend: recoveryHoldsSend,
     providerResume: providerResume === null || resumeState === undefined || run.error !== null ? null : {
       state: resumeState,
@@ -534,16 +461,14 @@ export function useConversationStore(
         });
       },
     },
-    abandonUnknownInput: run.data?.unknown_session_input == null || (recoveryHoldsSend && (resumeState === 'resuming' || providerResume?.canStartFresh !== true)) ? null : () => {
-      const input = run.data?.unknown_session_input;
+    abandonUnknownInput: run.data?.unknownInput == null || (recoveryHoldsSend && (resumeState === 'resuming' || providerResume?.canStartFresh !== true)) ? null : () => {
+      const input = run.data?.unknownInput;
       if (input == null || input.sessionId !== cardId) return;
       setActionError(null);
       void mutations.abandonSessionInput(input.inputId).catch(() => {
         if (shownCardId.current === cardId) setActionError({ cardId, message: 'Could not start a fresh provider session. Try again.' });
       });
     },
-    terminalTimeout: run.data?.terminal_timeout ?? null,
-    currentOutcome: run.error !== null || working ? null : currentConversationOutcome(run.data?.terminal_outcome ?? null),
     /* Before the first answer the conversation is following the default, which is
            what a card with no selection really does. */
     model,
@@ -559,7 +484,7 @@ export function useConversationStore(
           fail(refusalText(writeFailureOf(error), PLANNER_MODEL_FAILURES, MODEL_CHANGE_TEXT.refused) ?? MODEL_CHANGE_TEXT.unknown);
         });
     },
-    permissionMode: run.data?.permission_mode ?? null,
+    permissionMode: run.data?.session.permissionMode ?? null,
     setPermissionMode: (mode) => {
       const setFor = cardId;
       setActionError(null);

@@ -10,6 +10,7 @@ import { sessionPage, sessionReply, sessionInput } from '../router/conversation-
 import { ConversationProvider, useConversationCommands } from '../conversations/public.tsx';
 import { useConversationStore } from '../conversations/store.ts';
 import { plannerRunQueryOptions, usePlannerMutations } from './queries.ts';
+import type { ConversationRun } from '../../../../core/domain/conversation-display.ts';
 
 const unauthorized = createUnauthorizedChannel({ enqueue: task => task() });
 afterEach(cleanup);
@@ -43,17 +44,17 @@ it('publishes only the latest serialized permission ACK and cancels a stale run 
   const second = result.current.setPermissionMode('never');
   expect(puts).toBe(1);
   await act(async () => { writes[0].resolve(sessionReply({ card_id: 'a', permission_mode: 'full' })); await Promise.resolve(); });
-  expect(client.getQueryData<{ permission_mode: string }>(options.queryKey)?.permission_mode).toBe('ask');
+  expect(client.getQueryData<ConversationRun>(options.queryKey)?.session.permissionMode).toBe('ask');
   expect(oldSignal?.aborted).toBe(true);
   expect(puts).toBe(2);
   await act(async () => { writes[1].resolve(sessionReply({ card_id: 'a', permission_mode: 'never' })); await second; await first; });
   stale.resolve(sessionReply(sessionPage(fixtureSession('a', 't', { permissionMode: 'ask' }))));
   await reading;
-  expect(client.getQueryData<{ permission_mode: string }>(options.queryKey)?.permission_mode).toBe('never');
+  expect(client.getQueryData<ConversationRun>(options.queryKey)?.session.permissionMode).toBe('never');
   const refused = result.current.setPermissionMode('full');
   writes[2].resolve({ status: 409, statusText: 'Conflict', body: { code: 'precondition_failed', error: 'Not available' } });
   await expect(refused).rejects.toThrow();
-  expect(client.getQueryData<{ permission_mode: string }>(options.queryKey)?.permission_mode).toBe('never');
+  expect(client.getQueryData<ConversationRun>(options.queryKey)?.session.permissionMode).toBe('never');
   client.clear();
 });
 
@@ -110,8 +111,8 @@ it('scopes delayed ACKs to their original card across switching and unmounting',
   unmount();
   writes[0].resolve(sessionReply({ card_id: 'a', permission_mode: 'full' }));
   await first;
-  expect(client.getQueryData<{ permission_mode: string }>(plannerRunQueryOptions(transport, 'a', unauthorized).queryKey)?.permission_mode).toBe('full');
-  expect(client.getQueryData<{ permission_mode: string }>(plannerRunQueryOptions(transport, 'b', unauthorized).queryKey)?.permission_mode).toBe('never');
+  expect(client.getQueryData<ConversationRun>(plannerRunQueryOptions(transport, 'a', unauthorized).queryKey)?.session.permissionMode).toBe('full');
+  expect(client.getQueryData<ConversationRun>(plannerRunQueryOptions(transport, 'b', unauthorized).queryKey)?.session.permissionMode).toBe('never');
   client.clear();
 });
 
@@ -161,7 +162,7 @@ it.each([false, true])('protects a newer confirmed GET from an old ACK across A 
   await client.fetchQuery(plannerRunQueryOptions(transport, 'a', unauthorized));
   holdReads = true;
   await act(async () => { writes[0].resolve(sessionReply({ card_id: 'a', permission_mode: 'full' })); await Promise.resolve(); });
-  expect(client.getQueryData<{ permission_mode: string }>(plannerRunQueryOptions(transport, 'a', unauthorized).queryKey)?.permission_mode).toBe('never');
+  expect(client.getQueryData<ConversationRun>(plannerRunQueryOptions(transport, 'a', unauthorized).queryKey)?.session.permissionMode).toBe('never');
   if (newerWrite) {
     await waitFor(() => expect(puts).toBe(2));
     await act(async () => { writes[1].resolve(sessionReply({ card_id: 'a', permission_mode: 'never' })); await Promise.resolve(); });

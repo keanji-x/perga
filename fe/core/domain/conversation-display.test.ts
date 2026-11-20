@@ -1,5 +1,5 @@
 import { describe,it,expect } from 'vitest';
-import { conversationItemsOperation, conversationRunOperation, currentConversationOutcome, heldConversationInputs, keepConversationInputOperation, retryConversationInputOperation, buildConversationTranscript, conversationPageSchema, conversationRunMetadataSchema, orderedPendingInputs, removedHumanIds } from './conversation-display.js';
+import { conversationItemsOperation, conversationRunOperation, heldConversationInputs, keepConversationInputOperation, retryConversationInputOperation, buildConversationTranscript, conversationPageSchema, removedHumanIds } from './conversation-display.js';
 import { outboxFactsWithRemovedInputs, matchSendOps, reportedInputSource, type SendOp } from './conversation-outbox.js';
 import type { ConversationDisplayItem, HarnessItem as HistoricalRow } from '../api/generated/wire.js';
 import { isConversationMessage, SYSTEM_PRESENTATION_LABELS } from './conversation.js';
@@ -93,50 +93,7 @@ describe('canonical conversation display',()=>{
   });
 });
 
-it('refuses a canonical run with missing current runtime state instead of treating null as Idle',()=>{
-  const value={input_contract:'canonical',history_replacement_supported:false,terminal_outcome:null,terminal_timeout:null,runtime_state:null,pending_inputs:[],active_input:null,native_turn_id:null};
-  expect(conversationRunMetadataSchema.safeParse(value).success).toBe(false);
-  expect(conversationRunMetadataSchema.safeParse({...value,runtime_state:'failed'}).success).toBe(true);
-  expect(conversationRunMetadataSchema.safeParse({...value,input_contract:'historical'}).success).toBe(true);
-});
 
-it('requires one tagged pending input list without losing Human revisions or System queue order',()=>{
-  const pending=[{kind:'system',observation_id:'observation',queue_position:3,queued_at_ms:23},
-    {kind:'human',message_id:'message',revision:2,queue_position:2,queued_at_ms:22}];
-  const value={input_contract:'canonical',history_replacement_supported:false,terminal_outcome:null,terminal_timeout:null,runtime_state:'idle',
-    pending_inputs:pending,active_input:null,native_turn_id:null};
-  expect(conversationRunMetadataSchema.parse(value)).toMatchObject({pending_inputs:pending});
-  const parsed=conversationRunMetadataSchema.parse(value);
-  expect(orderedPendingInputs(parsed.pending_inputs)).toEqual([pending[1],pending[0]]);
-  expect(parsed.pending_inputs).toEqual(pending);
-  expect(conversationRunMetadataSchema.safeParse({...value,pending_inputs:undefined,pending_messages:[]}).success).toBe(false);
-  expect(conversationRunMetadataSchema.safeParse({...value,pending_inputs:[{...pending[0],revision:1}]}).success).toBe(false);
-  expect(conversationRunMetadataSchema.safeParse({...value,pending_inputs:[{kind:'human',message_id:'message',queue_position:2,queued_at_ms:22}]}).success).toBe(false);
-});
-
-it('rejects missing CAS identity and unknown availability in canonical delivery',()=>{
-  const attempt={attempt_id:'attempt',revision:'7',delivery:'unknown',target:{provider:'codex',thread_id:'thread',native_session_id:null,
-    native_turn_id:null,local_turn_id:null,rpc_request_id:null},invocation:{kind:'prior_invocation_not_recorded'},
-    resolution:null,actions:{keep:{kind:'available'},retry:{kind:'unavailable',reason:'unsupported_source'}}};
-  const submission={carrier_id:'carrier',logical_turn_id:'logical',ordinal:0,submission_id:'submission',attempt};
-  const run={input_contract:'canonical',runtime_state:'failed',history_replacement_supported:false,terminal_outcome:null,terminal_timeout:null,
-    pending_inputs:[],active_input:{current_execution_id:null,submissions:[submission]},native_turn_id:null};
-  expect(conversationRunMetadataSchema.safeParse(run).success).toBe(true);
-  const maximum={...run,active_input:{...run.active_input,submissions:[{...submission,attempt:{...attempt,revision:'18446744073709551615'}}]}};
-  expect(conversationRunMetadataSchema.parse(maximum).active_input?.submissions[0].attempt?.revision).toBe('18446744073709551615');
-  for(const revision of ['abc','18446744073709551616','-1','01',7]) {
-    expect(conversationRunMetadataSchema.safeParse({...run,active_input:{...run.active_input,submissions:[{...submission,attempt:{...attempt,revision}}]}}).success).toBe(false);
-  }
-  for(const field of ['attempt_id','revision','target','invocation','actions','resolution']) {
-    const broken={...attempt,[field]:undefined};
-    expect(conversationRunMetadataSchema.safeParse({...run,active_input:{...run.active_input,submissions:[{...submission,attempt:broken}]}}).success).toBe(false);
-  }
-  for(const field of ['carrier_id','logical_turn_id','submission_id','ordinal']) {
-    expect(conversationRunMetadataSchema.safeParse({...run,active_input:{...run.active_input,submissions:[{...submission,[field]:undefined}]}}).success).toBe(false);
-  }
-  expect(conversationRunMetadataSchema.safeParse({...run,active_input:{...run.active_input,submissions:[{...submission,attempt:{...attempt,
-    actions:{...attempt.actions,keep:{kind:'unavailable',reason:'invalid_reason'}}}}]}}).success).toBe(false);
-});
 
 it('Keep preserves its owned operation key and exact CAS arguments and refuses a crossed receipt', () => {
   const args={carrier_id:'carrier',submission_id:'submission',attempt_id:'attempt',revision:'7'};
@@ -148,7 +105,6 @@ it('Keep preserves its owned operation key and exact CAS arguments and refuses a
   expect(operation.responseSchema.safeParse({...result,revision:'9'}).success).toBe(false);
 });
 
-
 it('retry operation preserves exact CAS and key', () => {
   const args={carrier_id:'carrier',submission_id:'submission',attempt_id:'attempt',revision:'7'};
   const operation=retryConversationInputOperation('card /',args,'owned-key');
@@ -158,13 +114,6 @@ it('retry operation preserves exact CAS and key', () => {
   expect(operation.responseSchema.safeParse({...result,attempt_id:'other'}).success).toBe(false);
   expect(operation.responseSchema.safeParse({...result,revision:'9'}).success).toBe(false);
   expect(operation.responseSchema.safeParse({...result,retry_intent_id:undefined}).success).toBe(false);
-});
-it('queued successor uses the ordinary unattempted pending projection', () => {
-  const pending={kind:'explicit_successor',retry_intent_id:'intent',queue_position:2,queued_at_ms:22};
-  const run={input_contract:'canonical',runtime_state:'idle',history_replacement_supported:false,terminal_outcome:null,terminal_timeout:null,
-    pending_inputs:[pending],active_input:null,native_turn_id:null};
-  expect(conversationRunMetadataSchema.parse(run)).toMatchObject({pending_inputs:[pending],active_input:null});
-  expect(conversationRunMetadataSchema.safeParse({...run,pending_inputs:[{...pending,retry_intent_id:undefined}]}).success).toBe(false);
 });
 
 it('u2_imported_no_human_author_from_viewer_text_or_folded_segments',()=>{
@@ -227,29 +176,6 @@ it('separates pending native acknowledgement from unresolved delivery without ch
 });
 
 
-it('adapts only a required typed current terminal fact, without inventing a display identity', () => {
-  expect(currentConversationOutcome(null)).toBeNull();
-  const fact = {worker_session_id:'worker',card_id:'card',track_id:'track',thread_id:'thread',turn_id:'turn',
-    status:'interrupted' as const,created_at_ms:20,duration_ms:null};
-  expect(currentConversationOutcome(fact)).toEqual({turnId:'turn',status:'interrupted',atMs:20,elapsedMs:null});
-  const metadata = {input_contract:'canonical',runtime_state:'idle',history_replacement_supported:false,
-    terminal_timeout:null,terminal_outcome:fact,pending_inputs:[],active_input:null,native_turn_id:null};
-  expect(conversationRunMetadataSchema.safeParse(metadata).success).toBe(true);
-  expect(conversationRunMetadataSchema.safeParse({...metadata,terminal_outcome:{...fact,status:'running'}}).success).toBe(false);
-  const missing: Record<string, unknown> = {...metadata};
-  delete missing.terminal_outcome;
-  expect(conversationRunMetadataSchema.safeParse(missing).success).toBe(false);
-  expect(conversationRunMetadataSchema.safeParse({...metadata,input_contract:'historical'}).success).toBe(false);
-  const run = {...metadata,card_id:'card',worker_session_id:'worker',phase:'turn_completed',
-    model:null,reasoning_effort:null,permission_mode:null,blocked_reason:null,recovery:null,
-    manual_compact_supported:false,compact_outcome:null,running_turn:null};
-  const schema = conversationRunOperation('card').responseSchema;
-  expect(schema.safeParse(run).success).toBe(false);
-  expect(schema.safeParse({...run,terminal_outcome:{...fact,worker_session_id:'other-worker'}}).success).toBe(false);
-  expect(schema.safeParse({...run,terminal_outcome:{...fact,card_id:'other-card'}}).success).toBe(false);
-  expect(schema.safeParse({...run,native_turn_id:'other-turn'}).success).toBe(false);
-});
-
 
 describe('system wake projection', () => {
   it.each([
@@ -268,4 +194,17 @@ describe('system wake projection', () => {
     expect(page.items[0].source).toEqual({ kind: 'system', observation_id: '1', presentation: expected,
       text: 'Wake notice', created_at_ms: 2 });
   });
+});
+
+it('rejects old run objects and raw arrays at the canonical run boundary', () => {
+  const operation = conversationRunOperation('a/b');
+  expect(operation.path).toBe('/api/v1/sessions/a%2Fb/items?afterId=0&limit=1&view=run');
+  for (const value of [[], { card_id: 'card', phase: 'idle' }]) expect(operation.responseSchema.safeParse(value).success).toBe(false);
+});
+
+it.each(['-1', '01', 'abc', '18446744073709551616'])('rejects non-u64 CAS revision %s in standalone keep/retry receipts', revision => {
+  const args = { carrier_id: 'carrier', submission_id: 'submission', attempt_id: 'attempt', revision: '7' };
+  const receipt = { ...args, revision, waiting_for_settlement: false };
+  expect(keepConversationInputOperation('card', args, 'key').responseSchema.safeParse(receipt).success).toBe(false);
+  expect(retryConversationInputOperation('card', args, 'key').responseSchema.safeParse({ ...receipt, retry_intent_id: 'intent' }).success).toBe(false);
 });
