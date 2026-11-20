@@ -1,9 +1,9 @@
 // The source panel: what a `neige://source/…` citation opens.
 // Captured evidence has an inert reading view and an exact original-text view.
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, type ReactNode, type RefObject } from 'react';
 import { IconButton } from '@astryxdesign/core/IconButton';
-import { isImeKeyEvent } from '@astryxdesign/core/utils';
+import { LayerDepthProvider, useLayerDismissal } from '@astryxdesign/core/Layer';
 
 import type {
   ReportSourceLinkTarget, SourceResolution, TrackSourceDetail,
@@ -35,7 +35,7 @@ export type ReportSourcePanelProps = Readonly<{
   initialView?: 'reading' | 'original';
 }>;
 
-/** The drawer's accessible name for this state: the row's title once known, the generic word until then. */
+/** The source's accessible name uses its title once loaded. */
 export function reportSourcePanelTitle(resolution: SourceResolution): string {
   return resolution.status === 'ok' ? resolution.source.title : SOURCE_PANEL_COPY.panelTitle;
 }
@@ -46,42 +46,64 @@ export function ReportSourceReader({ selection, onClose, ...panel }: Omit<Report
   onClose: () => void;
 }>) {
   const reader = useRef<HTMLDivElement>(null);
-  useEffect(() => { reader.current?.focus(); }, [selection]);
+  const closeButton = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    const active = document.activeElement;
+    if (active !== selection.opener && active !== document.body) return;
+    const source = reader.current;
+    source?.focus({ preventScroll: true });
+    if (document.activeElement === source) closeButton.current?.scrollIntoView({ block: 'nearest' });
+  }, [selection]);
   const close = () => {
     const source = reader.current;
     if (source?.contains(document.activeElement)) {
       const { opener } = selection;
       if (opener?.isConnected) opener.focus();
-      if (document.activeElement !== opener) source.closest<HTMLElement>('[data-nc-report]')?.focus();
+      if (document.activeElement !== opener) source.closest<HTMLElement>('[data-nc-report]')?.focus({ preventScroll: true });
     }
     onClose();
   };
-  return <CardFrame ref={reader} role="region" aria-label={reportSourcePanelTitle(panel.resolution)} tabIndex={-1}
-    elevation="flat" className={styles.reader}
-    onKeyDown={event => {
-      if (event.key !== 'Escape' || event.defaultPrevented || isImeKeyEvent(event.nativeEvent)) return;
-      event.preventDefault();
-      close();
-    }}>
-    <div className={styles.readerActions}>
-      <IconButton label={SOURCE_PANEL_COPY.closeLabel} variant="ghost" icon={<Icon name="close" size="sm" />} onClick={close} />
-    </div>
-    <div className={styles.readerScroll}><ReportSourcePanel {...panel} target={selection.target} /></div>
-  </CardFrame>;
+  useLayerDismissal({
+    isActive: true,
+    getContainer: () => reader.current,
+    isPresent: () => reader.current?.contains(document.activeElement) ?? false,
+    onDismiss: close,
+  });
+  return <LayerDepthProvider><CardFrame ref={reader} role="region" aria-label={reportSourcePanelTitle(panel.resolution)}
+    tabIndex={-1} elevation="flat" className={styles.reader}>
+    <ReportSourcePanel {...panel} target={selection.target} closeAction={
+      <IconButton ref={closeButton} className={styles.readerClose} label={SOURCE_PANEL_COPY.closeLabel} variant="ghost" size="sm"
+        icon={<Icon name="close" size="sm" />} onClick={close} />
+    } />
+  </CardFrame></LayerDepthProvider>;
 }
 
-export function ReportSourcePanel({ target, resolution, onRetry, scrollToQuote = true, initialView }: ReportSourcePanelProps) {
+export function ReportSourcePanel({ target, resolution, onRetry, scrollToQuote = true, initialView, closeAction }: ReportSourcePanelProps & Readonly<{
+  closeAction?: ReactNode;
+}>) {
+  const scrollRoot = useRef<HTMLDivElement>(null);
+  const inline = closeAction !== undefined;
+  const provenance = target.sourceId !== null && resolution.status === 'ok' ? resolution.source.provenance : null;
+  const body = target.sourceId === null
+    ? <Missing target={target} reason="malformed" />
+    : resolution.status === 'missing'
+      ? <Missing target={target} reason="dangling" />
+      : resolution.status === 'loading'
+        ? <p className={styles.state} role="status">{SOURCE_PANEL_COPY.loading}</p>
+        : resolution.status === 'error'
+          ? <ErrorBox message={readFailureText(resolution.failure, '无法读取来源。')} onRetry={onRetry} />
+          : <Source key={`${resolution.source.source_id}:${target.quoteId ?? ''}:${initialView ?? ''}`} source={resolution.source} target={target}
+            scrollToQuote={scrollToQuote} scrollRoot={inline ? scrollRoot : undefined}
+            initialView={initialView ?? (target.quoteId === null ? 'reading' : 'original')} />;
   return (
     <div className={styles.panel} data-nc-report-source="">
-      {target.sourceId === null
-        ? <Missing target={target} reason="malformed" />
-        : resolution.status === 'missing'
-          ? <Missing target={target} reason="dangling" />
-          : resolution.status === 'loading'
-            ? <p className={styles.state} role="status">{SOURCE_PANEL_COPY.loading}</p>
-            : resolution.status === 'error'
-              ? <ErrorBox message={readFailureText(resolution.failure, '无法读取来源。')} onRetry={onRetry} />
-              : <Source key={`${resolution.source.source_id}:${target.quoteId ?? ''}:${initialView ?? ''}`} source={resolution.source} target={target} scrollToQuote={scrollToQuote} initialView={initialView ?? (target.quoteId === null ? 'reading' : 'original')} />}
+      {(provenance !== null || inline) && <div className={styles.panelBar}>
+        {provenance !== null && <span className={styles.badge} data-nc-report-source-provenance={provenance}>
+          {SOURCE_PROVENANCE_COPY[provenance]}
+        </span>}
+        {closeAction}
+      </div>}
+      {inline ? <div ref={scrollRoot} className={styles.readerScroll}>{body}</div> : body}
     </div>
   );
 }
@@ -117,7 +139,10 @@ function Missing({ target, reason }: { target: ReportSourceLinkTarget; reason: '
   );
 }
 
-function Source({ source, target, scrollToQuote, initialView }: { source: TrackSourceDetail; target: ReportSourceLinkTarget; scrollToQuote: boolean; initialView: 'reading' | 'original' }) {
+function Source({ source, target, scrollToQuote, scrollRoot, initialView }: {
+  source: TrackSourceDetail; target: ReportSourceLinkTarget; scrollToQuote: boolean;
+  scrollRoot?: RefObject<HTMLDivElement | null>; initialView: 'reading' | 'original';
+}) {
   const { quoteId } = target;
   const [original, setOriginal] = useState(initialView === 'original');
   const highlight = quoteId === null ? null : sourceHighlight(source, quoteId);
@@ -127,16 +152,20 @@ function Source({ source, target, scrollToQuote, initialView }: { source: TrackS
   const placed = highlight !== null;
   useEffect(() => {
     if (!placed || !original || !scrollToQuote) return;
-    const options = { block: 'center', container: 'nearest' } as const;
-    markRef.current?.scrollIntoView(options);
-  }, [placed, original, quoteId, source.source_id, scrollToQuote]);
+    const mark = markRef.current;
+    if (mark === null) return;
+    const root = scrollRoot?.current;
+    if (root == null) {
+      mark.scrollIntoView({ block: 'center' });
+      return;
+    }
+    const { top, height } = mark.getBoundingClientRect();
+    root.scrollTop += top - root.getBoundingClientRect().top - root.clientTop + (height - root.clientHeight) / 2;
+  }, [placed, original, quoteId, source.source_id, scrollToQuote, scrollRoot]);
 
   return (
     <article className={styles.source}>
       <header className={styles.head}>
-        <span className={styles.badge} data-nc-report-source-provenance={source.provenance}>
-          {SOURCE_PROVENANCE_COPY[source.provenance]}
-        </span>
         <h2 className={styles.title}>{source.title}</h2>
         <dl className={styles.meta}>
           {source.published_at !== undefined && source.published_at !== '' && (

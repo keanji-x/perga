@@ -10,7 +10,7 @@ export const SOURCE_PROVENANCE_COPY = Object.freeze({
 } satisfies Record<SourceProvenance, string>);
 
 export const SOURCE_PANEL_COPY = Object.freeze({
-  /** The drawer's name before the row has arrived, and the citation badge. */
+  /** The source's name before the row has arrived. */
   panelTitle: '来源',
   viewLabel: '来源阅读方式',
   reading: '阅读',

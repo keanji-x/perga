@@ -97,6 +97,7 @@ import { useReportPreviewResolver, useReportPreviewViewports } from './report-pr
 import { useReportSeriesResolver } from './report-series.ts';
 import { ReportReferencePreview } from './report-reference.tsx';
 import { ReportSourceInDocument, ReportSourcePreview } from './report-source.tsx';
+import { reportSourcePosition, type ReportSourcePosition } from '../../features/report/source/placement.ts';
 import { ReportEmpty } from '../../features/report/empty/public.tsx';
 import { ReportFileViewer } from '../../features/report/file-viewer/public.tsx';
 import { ReportOutline } from '../../features/report/outline/public.tsx';
@@ -1666,12 +1667,12 @@ function TrackRouteBody({
   };
 
   const [sourceSelection, setSourceSelection] = useState<{
-    trackId: string; target: ReportSourceLinkTarget; opener: HTMLElement | null; filePath: string | null;
+    trackId: string; target: ReportSourceLinkTarget; opener: HTMLElement | null; filePath: string | null; position: ReportSourcePosition | null;
   } | null>(null);
   if (sourceSelection !== null && sourceSelection.filePath !== requestedFilePath) setSourceSelection(null);
   const openSource = (trackId: string, target: ReportSourceLinkTarget) => {
     const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    setSourceSelection({ trackId, target, opener, filePath: requestedFilePath });
+    setSourceSelection({ trackId, target, opener, filePath: requestedFilePath, position: reportSourcePosition(opener) });
   };
   const openReportSource = (target: ReportSourceLinkTarget) => { openSource(track.id, target); };
   const linkPreview = { files: reportFiles, trackId: track.id, report,
@@ -1680,9 +1681,11 @@ function TrackRouteBody({
       onOpenLink={openReportLink} onOpenSource={openSource}
       onOpenFile={(owner, file) => { if (owner === track.id) openReportFile(file); else fileNavigation.openFile(owner, file.path); }} />,
   };
-  const sourceReader = sourceSelection === null ? null : <ReportSourceInDocument
-    key={`${sourceSelection.trackId}:${sourceSelection.target.destination}`} transport={transport} unauthorized={unauthorized}
-    selection={sourceSelection} onClose={() => { setSourceSelection(null); }} />;
+  const sourceInsertion = sourceSelection === null ? undefined : {
+    position: sourceSelection.position,
+    content: <ReportSourceInDocument key={`${sourceSelection.trackId}:${sourceSelection.target.destination}`}
+      transport={transport} unauthorized={unauthorized} selection={sourceSelection} onClose={() => { setSourceSelection(null); }} />,
+  };
 
   const closeBoard = () => {
     if (requestedFilePath !== null) {
@@ -1728,7 +1731,7 @@ function TrackRouteBody({
     {pergaMode && centerActive && reportPresentation.visible?.preparation.kind === 'empty' ? null : (
         <TrackReportRegion
         presentation={reportPresentation}
-        leadingContent={requestedFilePath === null ? sourceReader : null}
+        sourceInsertion={requestedFilePath === null ? sourceInsertion : undefined}
         trackId={track.id}
         activityAt={track.activityAt}
         openedAt={navigationCompletedAt}
@@ -1836,7 +1839,7 @@ function TrackRouteBody({
             key={requestedFilePath}
             path={requestedFilePath}
             files={reportFiles}
-            leadingContent={sourceReader}
+            sourceInsertion={sourceInsertion}
             linkPreview={linkPreview}
             fileRoot={track.agentCwd}
             wide={gridItems.length === 0}

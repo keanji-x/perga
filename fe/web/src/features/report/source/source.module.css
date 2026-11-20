@@ -71,23 +71,31 @@
   }
 
   .reader {
-    border: 1px solid var(--hairline);
+    --report-source-reading-height: min(50dvh, 22rem);
+    background: var(--surface-chip);
+    border-radius: var(--radius-md);
+    padding: var(--space-3) var(--space-4);
   }
 
-  .readerActions {
+  .panelBar {
     display: flex;
-    justify-content: flex-end;
-    padding: var(--space-2) var(--space-3) 0;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .readerClose {
+    margin-inline-start: auto;
+    scroll-margin-block-end: calc(var(--report-source-reading-height) + var(--space-4));
   }
 
   .readerScroll {
-    max-block-size: min(65dvh, 36rem);
-    padding: 0 var(--space-4) var(--space-4);
+    max-block-size: var(--report-source-reading-height);
     overflow: auto;
   }
 
   .panel {
-    font-family: var(--font-sans);
+    font: var(--type-ui);
+    letter-spacing: var(--type-ui-tracking);
     display: flex;
     flex-direction: column;
     gap: var(--space-3);

@@ -71,7 +71,7 @@ function tableColumnMinWidths(table: Extract<SafeBlock, { type: 'table' }>): rea
   });
 }
 
-function Block({ block, presentation }: { block: SafeBlock; presentation: MarkdownPresentation }): ReactNode {
+function renderBlock(block: SafeBlock, presentation: MarkdownPresentation): ReactNode {
   const classes = presentation.classes;
   switch (block.type) {
     case 'heading': {
@@ -82,7 +82,7 @@ function Block({ block, presentation }: { block: SafeBlock; presentation: Markdo
     case 'paragraph': return <p className={classes?.paragraph}><Inlines nodes={block.children} presentation={presentation} /></p>;
     case 'code': return <ReadOnlyCode text={block.value} source={{ kind: 'language', value: block.language ?? '' }} />;
     case 'math': return <Formula value={block.value} display />;
-    case 'blockquote': return <blockquote className={classes?.quote}>{block.children.map((child, index) => <Block key={index} block={child} presentation={presentation} />)}</blockquote>;
+    case 'blockquote': return <blockquote className={classes?.quote}><MarkdownBlocks blocks={block.children} presentation={presentation} /></blockquote>;
     case 'list': {
       const Tag = block.ordered ? 'ol' : 'ul';
       return <Tag className={classes?.list} start={block.ordered ? block.start ?? undefined : undefined}>
@@ -90,7 +90,7 @@ function Block({ block, presentation }: { block: SafeBlock; presentation: Markdo
           {item.checked !== null && <input type="checkbox" className={classes?.check} checked={item.checked} disabled readOnly />}
           {item.children.map((child, childIndex) => !block.spread && child.type === 'paragraph'
             ? <Inlines key={childIndex} nodes={child.children} presentation={presentation} />
-            : <Block key={childIndex} block={child} presentation={presentation} />)}
+            : <Fragment key={childIndex}>{renderBlock(child, presentation)}</Fragment>)}
         </li>)}
       </Tag>;
     }
@@ -110,6 +110,13 @@ function Block({ block, presentation }: { block: SafeBlock; presentation: Markdo
 }
 
 /** Render sanitized syntax; navigation, images and heading identity remain caller-owned. */
-export function MarkdownBlocks({ blocks, presentation }: { blocks: readonly SafeBlock[]; presentation: MarkdownPresentation }) {
-  return <>{blocks.map((block, index) => <Block key={index} block={block} presentation={presentation} />)}</>;
+export function MarkdownBlocks({ blocks, presentation, decorateBlock }: {
+  blocks: readonly SafeBlock[];
+  presentation: MarkdownPresentation;
+  decorateBlock?: (content: ReactNode, index: number) => ReactNode;
+}) {
+  return <>{blocks.map((block, index) => {
+    const content = renderBlock(block, presentation);
+    return <Fragment key={index}>{decorateBlock === undefined ? content : decorateBlock(content, index)}</Fragment>;
+  })}</>;
 }
