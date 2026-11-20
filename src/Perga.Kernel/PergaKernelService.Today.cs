@@ -235,7 +235,11 @@ public static class TodayCalendar
             var timePart = trimmed[11..];
             var offsetStart = timePart.IndexOfAny(['Z', 'z', '+', '-']);
             var clock = offsetStart < 0 ? timePart : timePart[..offsetStart].TrimEnd(' ');
-            if (!TimeOnly.TryParseExact(clock, ["HH:mm", "HH:mm:ss", "HH:mm:ss.fFFFFFF"],
+            // TimeOnly.TryParseExact accepts 24:00, so enforce the ISO hour range explicitly.
+            if (clock.Length < 5 ||
+                !int.TryParse(clock.AsSpan(0, 2), NumberStyles.None, CultureInfo.InvariantCulture, out var hour) ||
+                hour > 23 || clock.EndsWith('.') ||
+                !TimeOnly.TryParseExact(clock, ["HH:mm", "HH:mm:ss", "HH:mm:ss.FFFFFFF"],
                     CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsedTime))
                 throw InvalidTimestamp();
             localDt = datePart.ToDateTime(parsedTime);
