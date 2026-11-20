@@ -34,6 +34,39 @@ public sealed class TrackScheduleTests
         Assert.Equal("done", wake.State);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task PostCommitPublicationFailurePreservesScheduleResultAndDelivery(bool trigger)
+    {
+        await using var ctx = new KernelTestContext();
+        var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
+        var id = snapshot.Track.Id;
+        await ctx.Kernel.SetTrackScheduleAsync(id, new("Reminder", "COMMITTED_PROMPT", Id: "reminder", RunAtMs: 1));
+        var faults = 0;
+        ctx.Store.BeforeEventPublication = async _ =>
+        {
+            // Assert the fault is after the durable wake write, and fail only publication.
+            Assert.Single(await ctx.Store.TrackWakes.ListAsync(id, default));
+            if (faults++ == 0) throw new IOException("post-commit event read failed");
+        };
+        if (trigger)
+            Assert.True(await ctx.Kernel.TriggerTrackScheduleAsync(id, "reminder"));
+        else
+        {
+            var fired = Assert.Single(await ctx.Kernel.FireDueTrackSchedulesAsync(2));
+            Assert.Equal((id, "reminder"), (fired.TrackId, fired.ScheduleId));
+            Assert.Equal(1, (await ctx.Store.TrackSchedules!.GetAsync(id, "reminder", default))!.FiredCount);
+            // The hosted scheduler pokes the returned tracks.
+            await ctx.Kernel.Actors.GetOrActivate(fired.TrackId).PokeLeadAsync();
+        }
+        await ctx.Kernel.WaitForTrackIdleAsync(id);
+        Assert.True(faults > 0);
+        Assert.Contains("COMMITTED_PROMPT", Assert.Single(ctx.Store.GetTurnsForSession(snapshot.Track.LeadSessionId!))
+            .Input.GetProperty("prompt").GetString());
+        Assert.Equal("done", Assert.Single(await ctx.Store.TrackWakes.ListAsync(id, default)).State);
+    }
+
     [Fact]
     public async Task SetTrackScheduleValidatesInputs()
     {

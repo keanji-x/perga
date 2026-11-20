@@ -218,11 +218,9 @@ public sealed class TrackWakeSchedulingTests
         ctx.Kernel.Templates.RegisterTemplate("export default defineTemplate({id:'schedule-test',title:'Schedule'});");
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync(templateId: "schedule-test");
         var id = snapshot.Track.Id;
-        if (duringPreparation)
-            ctx.PolicyVm.OnScheduleFired = (_, _, _, _) => throw new InvalidOperationException("broken schedule JS");
-        else
+        if (!duringPreparation)
             ctx.AgentRuntime.OnBeforeOpenSession = _ => throw new InvalidOperationException("provider open failed");
-        await ctx.Store.TrackWakes.EnqueueAsync(new(id, "schedule", "track_schedule:daily", TestJson.FromObject(new { scheduleId = "daily", sourceKind = "template", prompt = "stored prompt" })), default);
+        await ctx.Store.TrackWakes.EnqueueAsync(new(id, "schedule", "track_schedule:daily", TestJson.FromObject(new { scheduleId = "daily", sourceKind = "template", prompt = duringPreparation ? null : "stored prompt" })), default);
         await ctx.Store.TrackWakes.EnqueueAsync(TrackWakeRequests.Prompt(id, "mail", "mail:test", "mail"), default);
         var actor = ctx.Kernel.Actors.GetOrActivate(id);
         await Assert.ThrowsAsync<InvalidOperationException>(() => actor.PokeLeadAsync());
@@ -234,6 +232,25 @@ public sealed class TrackWakeSchedulingTests
         Assert.Equal("idle", (await ctx.Store.LoadTrackAggregateAsync(id, default))!.Sessions.Single(s => s.IsLead).Status);
         await actor.PokeLeadAsync();
         Assert.All(await ctx.Store.TrackWakes.ListAsync(id, default), w => Assert.Equal(1, w.Attempts));
+    }
+
+    [Fact]
+    public async Task ThrowingScheduleHookFallsBackAndDeliversCoBatchedMailWithoutChangingState()
+    {
+        await using var ctx = new KernelTestContext();
+        ctx.Kernel.Templates.RegisterTemplate("export default defineTemplate({id:'schedule-test',title:'Schedule'});");
+        var (_, snapshot) = await ctx.CreateDefaultTrackAsync(templateId: "schedule-test");
+        var id = snapshot.Track.Id;
+        var state = snapshot.Track.TemplateState.GetRawText();
+        ctx.PolicyVm.OnScheduleFired = (_, _, _, _) => throw new InvalidOperationException("broken schedule JS");
+        await ctx.Store.TrackWakes.EnqueueAsync(TrackWakeRequests.DynamicSchedule(id, "daily", "stored prompt", "template"), default);
+        await ctx.Store.TrackWakes.EnqueueAsync(TrackWakeRequests.Prompt(id, "mail", "mail:test", "mail prompt"), default);
+        await ctx.Kernel.Actors.GetOrActivate(id).PokeLeadAsync();
+        await ctx.Kernel.WaitForTrackIdleAsync(id);
+        Assert.Equal("stored prompt\n\nmail prompt", Assert.Single(ctx.Store.GetTurnsForSession(snapshot.Track.LeadSessionId!))
+            .Input.GetProperty("prompt").GetString());
+        Assert.All(await ctx.Store.TrackWakes.ListAsync(id, default), w => Assert.Equal(("done", "delivered"), (w.State, w.Reason)));
+        Assert.Equal(state, (await ctx.Kernel.GetTrackAggregateAsync(id)).Track.TemplateState.GetRawText());
     }
 
     [Fact]

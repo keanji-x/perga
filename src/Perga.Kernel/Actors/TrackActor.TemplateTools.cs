@@ -71,7 +71,11 @@ public sealed partial class TrackActor
         if (_policy is null) throw KernelException.Conflict("The track has no active template.");
         if (patch.ValueKind != JsonValueKind.Object) throw KernelException.InvalidArgument("inputs must be an object.");
         var merged = JsonNode.Parse(_track.TemplateInputs.GetRawText())!.AsObject();
-        foreach (var entry in patch.EnumerateObject()) merged[entry.Name] = JsonNode.Parse(entry.Value.GetRawText());
+        foreach (var entry in patch.EnumerateObject())
+        {
+            if (entry.Value.ValueKind == JsonValueKind.Null) merged.Remove(entry.Name);
+            else merged[entry.Name] = JsonNode.Parse(entry.Value.GetRawText());
+        }
         var next = _track with { TemplateInputs = JsonHelpers.ParseClone(merged.ToJsonString()), UpdatedAtMs = NowMs() };
         TemplateSchedules.ValidateInputs(_policyVm, _policy, next.TemplateInputs);
         var schedules = TemplateSchedules.Materialize(_policy, next.TemplateInputs, TrackId, next.UpdatedAtMs, _policyVm, _scheduleCronEvaluator);

@@ -20,7 +20,13 @@ export function InputsPanel({ schema, inputs, onSave }: {
     event.preventDefault();
     if (!compiled.valid || !onSave || busy) return;
     setBusy(true); setMessage('');
-    void onSave(compiled.input).then(() => { setDraft({}); setMessage('Inputs saved.'); }, (cause: unknown) => {
+    const patch: Record<string, unknown> = { ...compiled.input };
+    for (const field of fields) {
+      if (field.optional && Object.hasOwn(current, field.key) && !Object.hasOwn(compiled.input, field.key)) {
+        patch[field.key] = null;
+      }
+    }
+    void onSave(patch).then(() => { setDraft({}); setMessage('Inputs saved.'); }, (cause: unknown) => {
       setMessage(cause instanceof Error ? cause.message : 'Input update failed.');
     }).finally(() => setBusy(false));
   }}>

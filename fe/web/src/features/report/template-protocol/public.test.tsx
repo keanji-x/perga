@@ -114,7 +114,7 @@ it('adds a once schedule and re-arms terminal schedules through the same form', 
   fireEvent.click(screen.getByRole('button', { name: /Details/ }));
   fireEvent.click(screen.getByRole('button', { name: 'Re-arm' }));
   fireEvent.click(screen.getByRole('button', { name: 'Save schedule' }));
-  await vi.waitFor(() => expect(onSaveSchedule).toHaveBeenCalledWith({ id: 'daily', sourceKind: 'user', title: 'Daily', prompt: 'Check', cronExpr: '0 9 * * *', timezone: 'UTC' }));
+  await vi.waitFor(() => expect(onSaveSchedule).toHaveBeenCalledWith({ id: 'daily', title: 'Daily', prompt: 'Check', cronExpr: '0 9 * * *', timezone: 'UTC' }));
   await vi.waitFor(() => expect(screen.getByLabelText('Title').getAttribute('disabled')).toBeNull());
   fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Once' } });
   fireEvent.change(screen.getByLabelText('Prompt'), { target: { value: 'Do it' } });
@@ -122,4 +122,18 @@ it('adds a once schedule and re-arms terminal schedules through the same form', 
   fireEvent.change(screen.getByLabelText('Run at'), { target: { value: '2030-01-01T12:00' } });
   fireEvent.click(screen.getByRole('button', { name: 'Add schedule' }));
   await vi.waitFor(() => expect(onSaveSchedule).toHaveBeenLastCalledWith({ title: 'Once', prompt: 'Do it', runAtMs: Date.parse('2030-01-01T12:00') }));
+});
+
+it('sends null for cleared existing optional fields and omits absent optional fields', async () => {
+  const onSaveInputs = vi.fn().mockResolvedValue(undefined);
+  render(<TemplateProtocolBar track={track({ templateId: 'dev', templateInputs: { note: 'old', count: 3, mode: 'a', enabled: true } })}
+    inputsSchema={{ note: { type: 'string', optional: true }, count: { type: 'number', optional: true },
+      mode: { type: 'enum', values: ['a', 'b'], optional: true }, absent: { type: 'string', optional: true },
+      enabled: { type: 'boolean', optional: true } }} onSaveInputs={onSaveInputs} />);
+  fireEvent.click(screen.getByRole('button', { name: /Details/ }));
+  fireEvent.click(screen.getByRole('tab', { name: 'Inputs' }));
+  for (const key of ['note', 'count', 'mode']) fireEvent.change(screen.getByLabelText(key), { target: { value: '' } });
+  fireEvent.click(screen.getByLabelText('enabled'));
+  fireEvent.click(screen.getByRole('button', { name: 'Save inputs' }));
+  await vi.waitFor(() => expect(onSaveInputs).toHaveBeenCalledWith({ note: null, count: null, mode: null, enabled: false }));
 });

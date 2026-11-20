@@ -153,7 +153,9 @@ public static class ApiV1Endpoints
         v1.MapPost("/tracks/{trackId}/schedules", async (string trackId, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
         {
             var req = await ReadRequiredJsonBodyAsync<SetTrackScheduleRequest>(ctx, ct).ConfigureAwait(false);
-            var schedule = await kernel.SetTrackScheduleAsync(trackId, req with { SourceKind = req.SourceKind ?? "user" }, ct).ConfigureAwait(false);
+            if (req.SourceKind is not null and not "user")
+                throw KernelException.InvalidArgument("HTTP schedules must use sourceKind 'user'.");
+            var schedule = await kernel.SetTrackScheduleAsync(trackId, req with { SourceKind = "user" }, ct).ConfigureAwait(false);
             return Results.Json(schedule, PergaJsonDefaults.ApiOptions);
         }).Produces<TrackScheduleDto>();
 

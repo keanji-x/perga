@@ -43,19 +43,20 @@ it('edits typed inputs and creates schedules in Chromium', async () => {
   const schedules: unknown[] = [];
   const track = toTrack(trackWireSchema.parse({ id: 't', area_id: 'a', title: 'Report', sort: 0,
     workspace: { isolation: 'managed', kind: 'managed', path: '', frozen_at: null }, created_at: 1, updated_at: 1,
-    templateId: 'dev', templateInputs: { branch: 'main', count: 1, enabled: false, mode: 'slow' },
+    templateId: 'dev', templateInputs: { branch: 'main', count: 1, enabled: false, mode: 'slow', note: 'clear me' },
   }));
   render(<TemplateProtocolBar track={track}
-    inputsSchema={{ branch: { type: 'string' }, count: { type: 'number' }, enabled: { type: 'boolean' }, mode: { type: 'enum', values: ['slow', 'fast'] } }}
+    inputsSchema={{ note: { type: 'string', optional: true }, branch: { type: 'string' }, count: { type: 'number' }, enabled: { type: 'boolean' }, mode: { type: 'enum', values: ['slow', 'fast'] } }}
     onSaveInputs={patch => { inputs.push(patch); return Promise.resolve(); }} onSaveSchedule={request => { schedules.push(request); return Promise.resolve(); }} />);
   await page.getByRole('button', { name: /Details/ }).click();
   await page.getByRole('tab', { name: 'Inputs' }).click();
+  await page.getByLabelText('note').fill('');
   await page.getByLabelText('branch').fill('next');
   await page.getByLabelText('count').fill('2.5');
   await page.getByLabelText('enabled').click();
   await page.getByLabelText('mode').selectOptions('fast');
   await page.getByRole('button', { name: 'Save inputs' }).click();
-  await expect.poll(() => inputs).toEqual([{ branch: 'next', count: 2.5, enabled: true, mode: 'fast' }]);
+  await expect.poll(() => inputs).toEqual([{ branch: 'next', count: 2.5, enabled: true, mode: 'fast', note: null }]);
   await page.getByRole('tab', { name: 'Schedules' }).click();
   await page.getByLabelText('Title', { exact: true }).fill('Daily');
   await page.getByLabelText('Prompt', { exact: true }).fill('Check daily');

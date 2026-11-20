@@ -180,7 +180,17 @@ public sealed partial class PergaKernelService
             throw KernelException.NotFound($"Track '{trackId}' not found.");
     }
 
-    private Task PublishScheduleEventsAsync(string trackId) => _eventHub.PublishSyncedAfterStoreWriteAsync(_store,
-        new EventEnvelopeDto(null, null, trackId, KernelEventKinds.TrackSchedulesUpdated, JsonHelpers.ToElement(new { trackId }), NowMs()),
-        CancellationToken.None, allowFallback: false);
+    private async Task PublishScheduleEventsAsync(string trackId)
+    {
+        try
+        {
+            await _eventHub.PublishSyncedAfterStoreWriteAsync(_store,
+                new EventEnvelopeDto(null, null, trackId, KernelEventKinds.TrackSchedulesUpdated, JsonHelpers.ToElement(new { trackId }), NowMs()),
+                CancellationToken.None, allowFallback: false).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            System.Diagnostics.Trace.TraceWarning("Could not publish committed schedule events for Track {0}: {1}", trackId, ex);
+        }
+    }
 }

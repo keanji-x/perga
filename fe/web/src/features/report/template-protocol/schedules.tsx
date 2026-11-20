@@ -31,7 +31,7 @@ export function SchedulePanel({ schedules, recentRuns, onSaveSchedule, onCancelS
     void perform(async () => {
       if (kind === 'once' && !Number.isFinite(runAtMs)) throw new Error('Choose a valid date and time.');
       await onSaveSchedule({ title: text('title'), prompt: text('prompt'),
-        ...(rearm ? { id: rearm.id, sourceKind: rearm.sourceKind, ...(rearm.maxOccurrences === null ? {} : { maxOccurrences: rearm.maxOccurrences }) } : {}),
+        ...(rearm ? { id: rearm.id, ...(rearm.maxOccurrences === null ? {} : { maxOccurrences: rearm.maxOccurrences }) } : {}),
         ...(kind === 'cron' ? { cronExpr: text('cron'), timezone: text('timezone') } : { runAtMs }),
       });
       form.reset();

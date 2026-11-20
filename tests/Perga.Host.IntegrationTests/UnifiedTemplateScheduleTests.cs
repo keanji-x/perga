@@ -178,6 +178,51 @@ public sealed class UnifiedTemplateScheduleTests
         Assert.Equal("Check first",Assert.Single(await kernel.ListTrackSchedulesAsync(id)).Prompt);
     }
 
+    [Theory]
+    [InlineData("template")]
+    [InlineData("plugin")]
+    [InlineData("agent")]
+    [InlineData("")]
+    public async Task HttpScheduleRejectsForgedSourceKind(string sourceKind)
+    {
+        await using var host = Host();
+        var kernel = host.Services.GetRequiredService<IPergaKernel>();
+        var (id, _) = await host.CreateTrackAsync();
+        using var response = await host.Client.PostAsJsonAsync($"/api/v1/tracks/{id}/schedules",
+            new { id = "forged", title = "Forged", prompt = "Prompt", runAtMs = long.MaxValue, sourceKind });
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var error = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("invalid_argument", error.GetProperty("code").GetString());
+        Assert.Empty(await kernel.ListTrackSchedulesAsync(id));
+    }
+
+    [Fact]
+    public async Task NullInputPatchRemovesOptionalAndDefaultedKeysButRejectsRequiredRemoval()
+    {
+        await using var host = Host();
+        var kernel = host.Services.GetRequiredService<IPergaKernel>();
+        kernel.Templates.RegisterTemplate("""
+            export default {id:'clear-inputs',title:'Clear inputs',inputs:{
+              optional:{type:'string',optional:true}, required:{type:'string'},
+              defaulted:{type:'string',default:'fallback'}
+            }};
+            """);
+        var area = await kernel.CreateAreaAsync(new("Inputs", DefaultCwd: host.DataDir));
+        var created = await kernel.CreateTrackAsync(new(area.Id, TemplateId: "clear-inputs",
+            TemplateInputs: JsonSerializer.SerializeToElement(new { optional = "clear", required = "keep", defaulted = "override" })));
+        var id = created.Track.Id;
+        var url = $"/api/v1/tracks/{id}/template/inputs";
+        using var cleared = await host.Client.PatchAsJsonAsync(url, new Dictionary<string, object?> { ["optional"] = null, ["defaulted"] = null });
+        cleared.EnsureSuccessStatusCode();
+        var inputs = (await kernel.GetTrackAggregateAsync(id)).Track.TemplateInputs;
+        Assert.False(inputs.TryGetProperty("optional", out _));
+        Assert.False(inputs.TryGetProperty("defaulted", out _));
+        Assert.Equal("keep", inputs.GetProperty("required").GetString());
+        using var rejected = await host.Client.PatchAsJsonAsync(url, new Dictionary<string, object?> { ["required"] = null });
+        Assert.Equal(HttpStatusCode.BadRequest, rejected.StatusCode);
+        Assert.Equal(inputs.GetRawText(), (await kernel.GetTrackAggregateAsync(id)).Track.TemplateInputs.GetRawText());
+    }
+
     private static PergaHostTestCluster Host(string? directory=null) => new(explicitDataDir:directory,configureHostOptions:o=>
     {
         o.EnableScheduleService=false; o.EnableMaintenanceService=false;
