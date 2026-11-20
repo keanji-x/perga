@@ -384,6 +384,26 @@ public sealed class CodexProviderTests : IDisposable
     }
 
     [Fact]
+    public async Task CodexReconnectNotificationDoesNotEndTheTurn()
+    {
+        await using var runtime = CreateRuntime();
+        var spec = new HarnessLaunchSpec("codex", null, _fixture.WorkspaceDir, null, null,
+            MockCliFixture.CreateSampleMcpServers());
+        await using var session = await runtime.OpenSessionAsync(spec, CancellationToken.None);
+
+        var recovered = await DrainTurnAsync(session, new("RECONNECT_THEN_COMPLETE", "recovered"));
+        Assert.Empty(recovered.OfType<UnifiedAgentEvent.TurnError>());
+        Assert.NotEmpty(recovered.OfType<UnifiedAgentEvent.TextDelta>());
+        Assert.Single(recovered.OfType<UnifiedAgentEvent.TurnCompleted>());
+
+        var exhausted = await DrainTurnAsync(session, new("RECONNECT_THEN_FAIL", "exhausted"));
+        var error = Assert.Single(exhausted.OfType<UnifiedAgentEvent.TurnError>());
+        Assert.Equal("Reconnect attempts exhausted", error.Message);
+        Assert.True(error.IsRetryable);
+        Assert.Empty(exhausted.OfType<UnifiedAgentEvent.TurnCompleted>());
+    }
+
+    [Fact]
     public async Task EarlyCompletionIsAppliedOnlyToTheTurnReturnedByStart()
     {
         await using var runtime = CreateRuntime();
