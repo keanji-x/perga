@@ -525,7 +525,8 @@ public sealed class AgentRuntime : IAgentRuntime
             var version = ExtractVersionString(stdout) ?? ExtractVersionString(stderr) ?? "unknown";
             IReadOnlyList<string> models;
             IReadOnlyList<ProviderModelInfo> catalog;
-            if (provider.StartsWith("acp:", StringComparison.OrdinalIgnoreCase))
+            var nativeCatalog = NativeModelCatalogs.ForProvider(provider);
+            if (provider.StartsWith("acp:", StringComparison.OrdinalIgnoreCase) && nativeCatalog is null)
             {
                 (models, catalog, permissionModes) = await ProbeAcpModelsAsync(provider, ct).ConfigureAwait(false);
                 if (cmdSpec.Models is not null)
@@ -538,6 +539,12 @@ public sealed class AgentRuntime : IAgentRuntime
             {
                 models = cmdSpec.Models;
                 catalog = BuildSimpleModelCatalog(models);
+            }
+            else if (nativeCatalog is not null)
+            {
+                catalog = await ProbeProviderModelCatalogAsync(nativeCatalog, resolvedExe, cmdSpec.PrependArgs, env, ct)
+                    .ConfigureAwait(false);
+                models = catalog.Select(model => model.Model).ToArray();
             }
             else if (string.Equals(provider, "codex", StringComparison.OrdinalIgnoreCase))
             {
@@ -617,69 +624,79 @@ public sealed class AgentRuntime : IAgentRuntime
         }
         catch
         {
-            // Fall through to provider-specific fallback or empty list.
-        }
-
-        if (string.Equals(provider, "acp:opencode", StringComparison.OrdinalIgnoreCase))
-        {
-            var cliModels = await ProbeOpenCodeCliModelsAsync(ct).ConfigureAwait(false);
-            if (cliModels.Count > 0)
-            {
-                return (cliModels, BuildSimpleModelCatalog(cliModels), modes);
-            }
+            // Session discovery is optional for custom ACP providers.
         }
 
         return ([], [], modes);
     }
 
-    private async Task<IReadOnlyList<string>> ProbeOpenCodeCliModelsAsync(CancellationToken ct)
+    private Task<IReadOnlyList<ProviderModelInfo>> ProbeProviderModelCatalogAsync(
+        NativeModelCatalogs.Read read,
+        string executable,
+        IReadOnlyList<string>? prependArgs,
+        IReadOnlyDictionary<string, string> environment,
+        CancellationToken ct)
+    {
+        var cwd = Path.TrimEndingDirectorySeparator(Path.GetFullPath(Path.GetTempPath()));
+        return read(cwd, (args, timeout) => ReadProviderCommandJsonAsync(executable, prependArgs, environment, cwd, args, timeout, ct),
+            _options.ProbeTimeout, _options.HandshakeTimeout);
+    }
+
+    private static async Task<JsonElement> ReadProviderCommandJsonAsync(
+        string executable,
+        IReadOnlyList<string>? prependArgs,
+        IReadOnlyDictionary<string, string> environment,
+        string cwd,
+        IReadOnlyList<string> args,
+        TimeSpan timeout,
+        CancellationToken ct)
     {
         using var probeCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        probeCts.CancelAfter(GetModelProbeTimeout());
+        probeCts.CancelAfter(timeout);
         try
         {
-            var (cmdOverride, _) = ResolveAcpCommandSpec("acp:opencode");
-            var env = BuildProcessEnvironment(cmdOverride.Env);
-            var exePath = FindExecutableOnPath(cmdOverride.FileName, env);
-            if (exePath is null)
-            {
-                return [];
-            }
-
             var psi = new ProcessStartInfo
             {
-                FileName = exePath,
+                FileName = Path.GetFullPath(executable),
+                WorkingDirectory = cwd,
+                RedirectStandardInput = true,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
-                CreateNoWindow = true
+                CreateNoWindow = true,
+                StandardOutputEncoding = Utf8NoBom,
+                StandardErrorEncoding = Utf8NoBom
             };
-            psi.ArgumentList.Add("models");
-            foreach (var (k, v) in env)
+            foreach (var arg in (prependArgs ?? []).Concat(args))
             {
-                psi.Environment[k] = v;
+                psi.ArgumentList.Add(arg);
+            }
+            psi.Environment.Clear();
+            foreach (var (key, value) in environment)
+            {
+                psi.Environment[key] = value;
             }
 
             using var process = Process.Start(psi);
             if (process is null)
             {
-                return [];
+                return default;
             }
 
-            var stdoutTask = process.StandardOutput.ReadToEndAsync(probeCts.Token);
-            var stderrTask = process.StandardError.ReadToEndAsync(probeCts.Token);
-            string stdout;
+            Task<string>? stdoutTask = null;
+            Task<string>? stderrTask = null;
             try
             {
+                process.StandardInput.Close();
+                stdoutTask = process.StandardOutput.ReadToEndAsync(probeCts.Token);
+                stderrTask = process.StandardError.ReadToEndAsync(probeCts.Token);
                 await process.WaitForExitAsync(probeCts.Token).ConfigureAwait(false);
-                stdout = await SafeAwaitOutputAsync(stdoutTask).ConfigureAwait(false);
-                await SafeAwaitOutputAsync(stderrTask).ConfigureAwait(false);
+                var output = await Task.WhenAll(stdoutTask, stderrTask).ConfigureAwait(false);
                 probeCts.Token.ThrowIfCancellationRequested();
                 if (process.ExitCode != 0)
-                {
-                    TryKillProcessTree(process);
-                    return [];
-                }
+                    return default;
+                using var document = JsonDocument.Parse(output[0]);
+                return document.RootElement.Clone();
             }
             catch
             {
@@ -688,19 +705,13 @@ public sealed class AgentRuntime : IAgentRuntime
             }
             finally
             {
-                await SafeAwaitOutputAsync(stdoutTask).ConfigureAwait(false);
-                await SafeAwaitOutputAsync(stderrTask).ConfigureAwait(false);
+                if (stdoutTask is not null) await SafeAwaitOutputAsync(stdoutTask).ConfigureAwait(false);
+                if (stderrTask is not null) await SafeAwaitOutputAsync(stderrTask).ConfigureAwait(false);
             }
-
-            return stdout
-                .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .Where(static line => line.Contains('/', StringComparison.Ordinal) && !line.Contains(' ', StringComparison.Ordinal))
-                .Distinct(StringComparer.Ordinal)
-                .ToArray();
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
-            return [];
+            return default;
         }
         catch (OperationCanceledException)
         {
@@ -708,7 +719,7 @@ public sealed class AgentRuntime : IAgentRuntime
         }
         catch
         {
-            return [];
+            return default;
         }
     }
 

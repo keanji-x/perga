@@ -449,6 +449,7 @@ export const sessionItemsPageDtoSchema = z.object({
   session: agentSessionDtoSchema,
   hasMoreBefore: z.boolean().optional(),
   worker: workerActivitySchema.nullish(),
+  permissionModes: z.array(permissionModeOptionDtoSchema).nullish(),
 });
 export type SessionItemsPageDto = z.infer<typeof sessionItemsPageDtoSchema>;
 

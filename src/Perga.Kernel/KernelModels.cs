@@ -137,7 +137,8 @@ public sealed record SessionItemsPageDto(
     bool CanSteer,
     IReadOnlyList<string> QueueHandoffIds,
     ProviderSessionResumeDto? Resume,
-    WorkerActivityDto? Worker = null);
+    WorkerActivityDto? Worker = null,
+    IReadOnlyList<PermissionModeOption>? PermissionModes = null);
 
 public sealed record WorkerActivityEvent(long Sequence, string Kind, JsonElement Payload, long CreatedAtMs);
 

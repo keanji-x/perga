@@ -460,7 +460,7 @@ export function useConversationStore(
       });
     },
     permissionMode: worker?.nextSettings.approvalMode ?? run.data?.session.permissionMode ?? null,
-    permissionOptions: worker === null ? null : TASK_APPROVAL_OPTIONS,
+    permissionOptions: worker === null ? run.data?.permissionModes ?? null : TASK_APPROVAL_OPTIONS,
     permissionChangeDisabled: run.data === undefined || (worker !== null && (!workerEditable || settingsPending.has(cardId))),
     permissionAuthorizationMode: taskApprovalsDenied && canAuthorize ? 'ask' : null,
     unavailablePermissionMode: taskApprovalsDenied && !canAuthorize ? 'ask' : null,

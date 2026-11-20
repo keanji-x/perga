@@ -7,11 +7,69 @@ public sealed class ProbeProvidersTests : IDisposable
     public void Dispose() => _fixture.Dispose();
 
     [Theory]
-    [InlineData("acp:antigravity")]
-    [InlineData("acp:opencode")]
-    [InlineData("acp:custom")]
-    public async Task AcpDiscoveryReturnsAdvertisedModels(string provider)
+    [InlineData("acp:antigravity", false)]
+    [InlineData("acp:antigravity", true)]
+    [InlineData("acp:opencode", false)]
+    [InlineData("acp:opencode", true)]
+    public async Task BuiltInAcpCatalogPreservesNativeSelectionWithoutStartingSession(string provider, bool defaultFails)
     {
+        var log = Path.Combine(_fixture.RootDir, "provider-commands.txt");
+        var cli = _fixture.WriteExecutable("model-catalog.py", """
+            #!/usr/bin/env python3
+            import os, sys
+            with open(os.environ['COMMAND_LOG'], 'a') as log:
+                log.write(' '.join(sys.argv[1:]) + '\n')
+            if sys.argv[1:] == ['wrapper-arg', '--version']:
+                print('mock 1.0.0')
+            elif sys.argv[1:] == ['wrapper-arg', '--output-format', 'json', 'models']:
+                print('{"status":"SUCCESS","command":{"name":"models","data":{"models":[{"id":"gemini-4-neon-high","label":"Gemini 4 Neon (High)"},{"id":"gemini-4-neon-low","label":"Gemini 4 Neon (Low)"}]}}}')
+            elif sys.argv[1:] == ['wrapper-arg', '--settings', '{"disableSlashCommands":false}', '--disable-slash-commands=false', '--output-format', 'json', '-p', '/model']:
+                if os.environ['DEFAULT_FAILS'] == 'true':
+                    sys.exit(1)
+                print('{"status":"SUCCESS","command":{"name":"model","data":{"id":"gemini-4-neon-low","label":"Gemini 4 Neon (Low)","effort":"low","is_default":false}}}')
+            elif sys.argv[1:6] == ['wrapper-arg', 'api', 'model.list', '--standalone', '--param'] and sys.argv[6] == 'location[directory]=' + os.getcwd():
+                print('{"data":[{"providerID":"vendor","id":"model-high","name":"Other","variants":[{"id":"low"}]},{"providerID":"other","id":"model-high","name":"Chosen","variants":[{"id":"none"},{"id":"xhigh"},{"id":"xhigh"}]},{"enabled":false,"providerID":"vendor","id":"disabled"}]}')
+            elif sys.argv[1:6] == ['wrapper-arg', 'api', 'model.default', '--standalone', '--param'] and sys.argv[6] == 'location[directory]=' + os.getcwd():
+                if os.environ['DEFAULT_FAILS'] == 'true':
+                    print('invalid JSON')
+                else:
+                    print('{"data":{"providerID":"other","id":"model-high"}}')
+            else:
+                sys.exit(1)
+            """);
+        var overrides = _fixture.UnavailableProviders();
+        overrides[provider] = new(cli, PrependArgs: ["wrapper-arg"], Env: new Dictionary<string, string>
+        {
+            ["COMMAND_LOG"] = log,
+            ["DEFAULT_FAILS"] = defaultFails ? "true" : "false"
+        });
+        await using var runtime = new AgentRuntime(new AgentRuntimeOptions { ProviderOverrides = overrides });
+
+        var status = Assert.Single(await runtime.ProbeProvidersAsync(CancellationToken.None), s => s.Provider == provider);
+        var location = $"location[directory]={Path.TrimEndingDirectorySeparator(Path.GetFullPath(Path.GetTempPath()))}";
+        var commands = File.ReadAllLines(log);
+        Assert.Equal("wrapper-arg --version", commands[0]);
+        Assert.Equal(provider == "acp:antigravity"
+                ? ["wrapper-arg --output-format json models", """wrapper-arg --settings {"disableSlashCommands":false} --disable-slash-commands=false --output-format json -p /model"""]
+                : new[] { $"wrapper-arg api model.default --standalone --param {location}",
+                    $"wrapper-arg api model.list --standalone --param {location}" },
+            commands.Skip(1).Order(StringComparer.Ordinal));
+        Assert.True(status.Available);
+        var entries = status.ModelCatalog!;
+        Assert.Equal(provider == "acp:antigravity"
+            ? ["gemini-4-neon-high", "gemini-4-neon-low"] : new[] { "vendor/model-high", "other/model-high" }, status.Models);
+        Assert.False(entries[0].IsDefault);
+        Assert.Equal(!defaultFails, entries[1].IsDefault);
+        Assert.Equal(provider == "acp:antigravity" ? "Gemini 4 Neon (Low)" : "Chosen", entries[1].DisplayName);
+        Assert.Equal(provider == "acp:antigravity" && !defaultFails ? "low" : null, entries[1].DefaultReasoningEffort);
+        Assert.Equal(provider == "acp:antigravity" ? [] : new[] { "none", "xhigh" },
+            entries[1].SupportedReasoningEfforts.Select(option => option.ReasoningEffort));
+    }
+
+    [Fact]
+    public async Task CustomAcpDiscoveryReturnsAdvertisedModels()
+    {
+        const string provider = "acp:custom";
         await using var runtime = new AgentRuntime(new AgentRuntimeOptions
         {
             ProviderOverrides = new Dictionary<string, ProviderCommandOverride>(_fixture.UnavailableProviders(), StringComparer.OrdinalIgnoreCase)
@@ -69,37 +127,63 @@ public sealed class ProbeProvidersTests : IDisposable
         Assert.Equal("plan", Assert.Single(status.PermissionModes!).Id);
     }
 
-    [Fact]
-    public async Task FailedAcpHandshakeKeepsProviderAvailableWithoutInventingModels()
+    [Theory]
+    [InlineData("acp:antigravity")]
+    [InlineData("acp:opencode")]
+    public async Task FailedModelsCommandKeepsProviderAvailableWithoutStartingSession(string provider)
     {
-        var path = _fixture.WriteExecutable("version-only.py", "#!/usr/bin/env python3\nprint('version-only')\n");
+        var log = Path.Combine(_fixture.RootDir, "provider-commands.txt");
+        var path = _fixture.WriteExecutable("version-only.py", """
+            #!/usr/bin/env python3
+            import os, sys
+            with open(os.environ['COMMAND_LOG'], 'a') as log:
+                log.write(' '.join(sys.argv[1:]) + '\n')
+            if sys.argv[1:] == ['--version']:
+                print('version-only')
+            else:
+                sys.exit(1)
+            """);
+        var overrides = _fixture.UnavailableProviders();
+        overrides[provider] = new(path, Env: new Dictionary<string, string> { ["COMMAND_LOG"] = log });
         await using var runtime = new AgentRuntime(new AgentRuntimeOptions
         {
-            ProbeTimeout = TimeSpan.FromMilliseconds(300),
-            ProviderOverrides = new Dictionary<string, ProviderCommandOverride>(_fixture.UnavailableProviders(), StringComparer.OrdinalIgnoreCase) { ["acp:antigravity"] = new(path) }
+            ProviderOverrides = overrides
         });
-        var status = Assert.Single(await runtime.ProbeProvidersAsync(CancellationToken.None), s => s.Provider == "acp:antigravity");
+        var status = Assert.Single(await runtime.ProbeProvidersAsync(CancellationToken.None), s => s.Provider == provider);
         Assert.True(status.Available, status.Reason);
         Assert.Empty(status.Models);
+        var launchLog = File.ReadAllLines(log);
+        Assert.Equal(provider == "acp:antigravity" ? 2 : 3, launchLog.Length);
+        Assert.Equal("--version", launchLog[0]);
+        Assert.DoesNotContain(launchLog, command => command == "acp");
+
+        File.WriteAllText(log, "");
+        overrides[provider] = overrides[provider] with { Models = ["configured-model"] };
+        var configured = Assert.Single(await runtime.ProbeProvidersAsync(forceRefresh: true, CancellationToken.None),
+            s => s.Provider == provider);
+        Assert.Equal(["configured-model"], configured.Models);
+        Assert.Equal(["--version"], File.ReadAllLines(log));
     }
 
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task OpenCodeFallbackHasItsOwnTimeoutAndDrainsStderr(bool modelsTimeout)
+    public async Task OpenCodeModelsIsBoundedAndDrainsStderr(bool modelsTimeout)
     {
-        var path = _fixture.WriteExecutable("opencode-fallback.py", """
+        var path = _fixture.WriteExecutable("opencode-models.py", """
             #!/usr/bin/env python3
             import os, sys, time
             if '--version' in sys.argv:
                 print('opencode mock')
-            elif 'models' in sys.argv:
+            elif 'model.list' in sys.argv:
                 if os.environ['MODELS_TIMEOUT'] == 'true':
                     time.sleep(30)
                 else:
                     sys.stderr.write('x' * 262144)
                     sys.stderr.flush()
-                    print('provider/model')
+                    print('{"data":[{"providerID":"provider","id":"model","name":"Model"}]}')
+            elif 'model.default' in sys.argv:
+                print('{"data":null}')
             else:
                 time.sleep(30)
             """);
@@ -166,7 +250,7 @@ public sealed class ProbeProvidersTests : IDisposable
     }
 
     [Fact]
-    public async Task ProbeProvidersAsync_DiscoversAcpAvailableModelsAndConfigOptions_WithUpdatedFallbacks()
+    public async Task ProbeProvidersAsync_FallsBackToStaticModelsWhenCodexModelListFails()
     {
         var versionOnlyCli = _fixture.WriteExecutable(
             "version_only_cli.py",
@@ -179,41 +263,17 @@ public sealed class ProbeProvidersTests : IDisposable
             sys.exit(1)
             """);
 
-        await using var liveRuntime = new AgentRuntime(new AgentRuntimeOptions
-        {
-            ProviderOverrides = new Dictionary<string, ProviderCommandOverride>(_fixture.UnavailableProviders(), StringComparer.OrdinalIgnoreCase)
-            {
-                ["acp:antigravity"] = new(_fixture.MockAcpPath),
-                ["acp:opencode"] = new(
-                    _fixture.MockAcpPath,
-                    Env: new Dictionary<string, string> { ["MOCK_ACP_CONFIG_OPTIONS_MODELS"] = "1" })
-            }
-        });
-
-        var liveStatuses = await liveRuntime.ProbeProvidersAsync(CancellationToken.None);
-        var agyLive = Assert.Single(liveStatuses, s => s.Provider == "acp:antigravity");
-        Assert.Equal(["gemini-4-carbon", "claude-sonnet-5-5"], agyLive.Models);
-        Assert.Equal(["medium", "high"], agyLive.ModelCatalog![0].SupportedReasoningEfforts.Select(e => e.ReasoningEffort));
-
-        var opencodeLive = Assert.Single(liveStatuses, s => s.Provider == "acp:opencode");
-        Assert.Equal(["opencode-sonnet-4-6", "opencode-gpt-5.4"], opencodeLive.Models);
-
-        // Codex retains its configured defaults; ACP failures must not invent model IDs.
         await using var fallbackRuntime = new AgentRuntime(new AgentRuntimeOptions
         {
             ProviderOverrides = new Dictionary<string, ProviderCommandOverride>(_fixture.UnavailableProviders(), StringComparer.OrdinalIgnoreCase)
             {
-                ["codex"] = new(versionOnlyCli),
-                ["acp:antigravity"] = new(versionOnlyCli)
+                ["codex"] = new(versionOnlyCli)
             }
         });
 
         var fallbackStatuses = await fallbackRuntime.ProbeProvidersAsync(CancellationToken.None);
         var codexFallback = Assert.Single(fallbackStatuses, s => s.Provider == "codex");
         Assert.Equal(["gpt-5.4", "gpt-5.3-codex", "o4-mini"], codexFallback.Models);
-
-        var agyFallback = Assert.Single(fallbackStatuses, s => s.Provider == "acp:antigravity");
-        Assert.Empty(agyFallback.Models);
     }
 
     [Fact]

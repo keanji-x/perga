@@ -260,6 +260,9 @@ export function ModelPill<Provider extends string = AgentProvider>({
   const viewedIsDraft = viewedGroup !== undefined && viewedGroup.provider === draft.provider;
   const viewedModelId = viewedIsDraft ? draft.selection.model : null;
   const viewedEffortValue = viewedIsDraft ? draft.selection.reasoning_effort : null;
+  const savedEffort = viewedGroup?.provider === provider && viewedModelId === selection.model
+    ? selection.reasoning_effort : null;
+  const retainedEffort = viewedEffortValue ?? savedEffort;
   const viewedEffortInfo = effortsFor(viewedGroup, viewedModelId);
   const viewedReason = viewedGroup ? catalogReason(viewedGroup) : { reason: null, refused: false, blocked: null };
   const draftGroup = shown.find((group) => group.provider === draft.provider);
@@ -269,22 +272,18 @@ export function ModelPill<Provider extends string = AgentProvider>({
     value: entry.reasoning_effort,
     label: entry.reasoning_effort,
   }));
-  const advertisedDefault = effortStops.findIndex(stop => stop.value === viewedEffortInfo.effortDefault);
-  if (effortStops.length > 0 && advertisedDefault === -1) {
-    effortStops.unshift({ value: null, label: FOLLOW_DEFAULT_LABEL });
+  if (effortStops.length > 0 || retainedEffort !== null) {
+    const defaultEffort = viewedEffortInfo.effortDefault;
+    effortStops.unshift({ value: null, label: defaultEffort !== null && effortStops.some(stop => stop.value === defaultEffort)
+      ? `${FOLLOW_DEFAULT_LABEL} (${defaultEffort})` : FOLLOW_DEFAULT_LABEL });
   }
   // Keep an unavailable saved value visible until the user deliberately replaces it.
-  if (viewedEffortValue !== null && !effortStops.some(stop => stop.value === viewedEffortValue)) {
-    effortStops.unshift({ value: viewedEffortValue, label: `${viewedEffortValue} (Unavailable)` });
+  if (retainedEffort !== null && !effortStops.some(stop => stop.value === retainedEffort)) {
+    effortStops.splice(1, 0, { value: retainedEffort, label: `${retainedEffort} (Unavailable)` });
   }
-  const sliderIndex = effortStops.findIndex(stop => stop.value === (viewedEffortValue
-    ?? (advertisedDefault === -1 ? null : viewedEffortInfo.effortDefault)));
-  const currentStopLabel = effortStops.at(sliderIndex)?.label ?? FOLLOW_DEFAULT_LABEL;
-  const displayedEffortLabel = viewedEffortInfo.efforts.length === 0
-    ? 'N/A'
-    : viewedEffortValue === null && advertisedDefault !== -1
-      ? `${currentStopLabel} (${FOLLOW_DEFAULT_LABEL})`
-      : currentStopLabel;
+  const sliderIndex = effortStops.findIndex(stop => stop.value === viewedEffortValue);
+  const hasEffortChoices = effortStops.length > 0;
+  const displayedEffortLabel = effortStops[sliderIndex]?.label ?? 'N/A';
 
   const popoverContent = viewedGroup === undefined ? null : (
     <div className={styles.pickerPanel}>
@@ -318,8 +317,9 @@ export function ModelPill<Provider extends string = AgentProvider>({
           <GroupChoices
             group={viewedGroup}
             selection={viewedIsDraft ? draft.selection : null}
-            onChange={(next) => {
-              setDraft({ provider: viewedGroup.provider, selection: next });
+            onChange={(model) => {
+              if (viewedIsDraft && model === viewedModelId) return;
+              setDraft({ provider: viewedGroup.provider, selection: { model, reasoning_effort: null } });
             }}
           />
         </div>
@@ -331,9 +331,9 @@ export function ModelPill<Provider extends string = AgentProvider>({
           <span className={styles.effortValue}>{displayedEffortLabel}</span>
         </div>
         <EffortSlider
-          stops={viewedEffortInfo.efforts.length > 0 ? effortStops : [{ value: null, label: 'N/A' }]}
-          selectedIndex={viewedEffortInfo.efforts.length > 0 ? sliderIndex : 0}
-          isDisabled={viewedEffortInfo.efforts.length === 0 || viewedReason.blocked !== null}
+          stops={hasEffortChoices ? effortStops : [{ value: null, label: 'N/A' }]}
+          selectedIndex={hasEffortChoices ? sliderIndex : 0}
+          isDisabled={!hasEffortChoices || viewedReason.blocked !== null}
           onChangeIndex={(idx) => {
             const stop = effortStops.at(idx);
             if (!stop) return;
@@ -406,7 +406,7 @@ export function ModelPill<Provider extends string = AgentProvider>({
 function GroupChoices<Provider extends string>({ group, selection, onChange }: Readonly<{
   group: ModelGroup<Provider>;
   selection: ModelSelection | null;
-  onChange: (next: ModelSelection) => void;
+  onChange: (model: string | null) => void;
 }>) {
   const models: readonly CatalogEntry[] = group.catalog?.models ?? [];
   const defaultName = defaultNameOf(group.catalog);
@@ -433,7 +433,7 @@ function GroupChoices<Provider extends string>({ group, selection, onChange }: R
       label={defaultLabel}
       isSelected={selection !== null && selection.model === null}
       isDisabled={blocked !== null || group.defaultAvailable === false}
-      onSelect={() => onChange({ model: null, reasoning_effort: null })}
+      onSelect={() => onChange(null)}
     />
     {models.map((model) => (
       <ModelRow
@@ -442,8 +442,7 @@ function GroupChoices<Provider extends string>({ group, selection, onChange }: R
           : <ResolvedLabel name={model.display_name} resolved={model.resolved_model} />}
         isSelected={selection !== null && selection.model === model.model}
         isDisabled={blocked !== null}
-        /* Switching model drops the effort: one chosen for the previous model may not exist on this one. */
-        onSelect={() => onChange({ model: model.model, reasoning_effort: null })}
+        onSelect={() => onChange(model.model)}
       />
     ))}
     {models.length === 0 && reason === null && (

@@ -28,11 +28,11 @@ public sealed partial class AcpAgentSession
             AvailableModels, _defaultModel),
         new(EffortChangeSupport, EffortChangeSupport, EffortChangeSupport,
             _defaultThoughtLevel is null ? ConfigurationSupport.Unknown : _thoughtChangeSupport,
-            _modelCatalog.Models.SelectMany(model => model.SupportedReasoningEfforts.Select(effort => effort.ReasoningEffort))
-                .Concat(_modelCatalog.ThoughtLevel?.Values.Select(value => value.Id) ?? []).Distinct().ToArray(), _defaultThoughtLevel),
+            AvailableModelCatalog.SelectMany(model => model.SupportedReasoningEfforts.Select(effort => effort.ReasoningEffort))
+                .Concat((Volatile.Read(ref _advertisedOptions)?.Reasoning ?? _modelCatalog.ThoughtLevel)?.Values.Select(value => value.Id) ?? []).Distinct().ToArray(), _defaultThoughtLevel),
         new(ConfigurationSupport.Supported, _permissionChangeSupport, ConfigurationSupport.Supported,
             ConfigurationSupport.Unsupported, AvailablePermissionModes.Select(mode => mode.Id).ToArray()));
-    private ConfigurationSupport EffortChangeSupport => _modelCatalog.ThoughtLevel is not null
+    private ConfigurationSupport EffortChangeSupport => UsesAdvertisedModelOptions || _modelCatalog.ThoughtLevel is not null
         ? _thoughtChangeSupport : _modelCatalog.Models.Any(model => model.SupportedReasoningEfforts.Count > 0)
             ? _modelChangeSupport : ConfigurationSupport.Unsupported;
 
@@ -43,27 +43,15 @@ public sealed partial class AcpAgentSession
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         var permissionModes = Volatile.Read(ref _permissionModes);
         ValidatePermissionMode(configuration.Permission.ValueOrNull, permissionModes);
-        if (ConfigurationState?.Selection == configuration)
+        var matchesConfirmedModelOptions = !UsesAdvertisedModelOptions || MatchesConfirmedModelOptions();
+        if (ConfigurationState?.Selection == configuration && matchesConfirmedModelOptions)
             return new SessionConfigurationOutcome.Applied(ConfigurationState);
         if (configuration.Model is SessionSelection.ProviderDefault && _hasExplicitModel && _defaultModel is null)
             return new SessionConfigurationOutcome.Unsupported(ConfigurationDimension.Model, "The original default model is unknown.");
-        if (configuration.Effort is SessionSelection.ProviderDefault && _hasExplicitThoughtLevel && _defaultThoughtLevel is null)
-            return new SessionConfigurationOutcome.Unsupported(ConfigurationDimension.Effort, "The original default effort is unknown.");
         var targetModel = configuration.Model.ValueOrNull ?? _defaultModel;
-        var usesThought = _modelCatalog.UsesThoughtLevel(targetModel);
-        if (configuration.Effort is SessionSelection.ProviderDefault && _isResumed &&
-            (usesThought || !_modelCatalog.HasDefaultEffortEvidence(targetModel)))
-            return new SessionConfigurationOutcome.Unsupported(ConfigurationDimension.Effort, "The original default effort is unknown after resume.");
-        if (configuration.Effort is SessionSelection.Explicit thoughtEffort && usesThought &&
-            !_modelCatalog.ThoughtLevel!.Values.Any(value => value.Id == thoughtEffort.Value))
-            return new SessionConfigurationOutcome.Rejected(ConfigurationFailureCode.InvalidSelection,
-                "The requested effort is not advertised.", new(_confirmedConfiguration.ModelId, _appliedThoughtLevel, ConfigurationState is not null));
-        if (configuration.Effort is SessionSelection.Explicit explicitEffort && !usesThought)
-        {
-            var model = _modelCatalog.Models.FirstOrDefault(row => row.Model == targetModel);
-            if (model?.SupportedReasoningEfforts.Any(value => string.Equals(value.ReasoningEffort, explicitEffort.Value, StringComparison.OrdinalIgnoreCase)) != true)
-                return new SessionConfigurationOutcome.Unsupported(ConfigurationDimension.Effort, "No advertised operation expresses this model and effort selection.");
-        }
+        var usesThought = !UsesAdvertisedModelOptions && _modelCatalog.UsesThoughtLevel(targetModel);
+        if (!UsesAdvertisedModelOptions && ValidateLegacyEffort(configuration.Effort, targetModel, usesThought) is { } invalidEffort)
+            return invalidEffort;
         if (configuration.Permission != _permission &&
             (configuration.Permission is SessionSelection.ProviderDefault ||
              _launchArgumentModes.Contains(configuration.Permission.ValueOrNull!) ||
@@ -82,12 +70,14 @@ public sealed partial class AcpAgentSession
         _pendingConfiguration = configuration;
         _configurationHadEffect = false;
         // Existing model-only evidence remains valid while reasserting the same wire ID.
-        _configurationUncertain = usesThought || targetModel is null ||
-            _confirmedConfiguration.ModelId != _modelCatalog.Resolve(targetModel, configuration.Effort.ValueOrNull);
+        var targetNativeId = UsesAdvertisedModelOptions || targetModel is null ? targetModel
+            : _modelCatalog.Resolve(targetModel, configuration.Effort.ValueOrNull);
+        _configurationUncertain = UsesAdvertisedModelOptions || usesThought || targetNativeId is null ||
+            _confirmedConfiguration.ModelId != targetNativeId;
         lock (_idleUsageLock)
         {
-            if (targetModel is null || _confirmedConfiguration.ModelId != _modelCatalog.Resolve(targetModel, configuration.Effort.ValueOrNull) ||
-                (usesThought && configuration.Effort.ValueOrNull != _appliedThoughtLevel))
+            if (targetNativeId is null || _confirmedConfiguration.ModelId != targetNativeId ||
+                ((UsesAdvertisedModelOptions || usesThought) && configuration.Effort.ValueOrNull != _appliedThoughtLevel))
             {
                 _pendingIdleUsage = null;
                 _pendingIdleUsageWithWindow = null;
@@ -113,7 +103,7 @@ public sealed partial class AcpAgentSession
                     return new SessionConfigurationOutcome.RequiresReopen("Permission operation is unavailable.");
                 }
             }
-            if ((previousSelection?.Model != configuration.Model || previousSelection?.Effort != configuration.Effort) &&
+            if ((previousSelection?.Model != configuration.Model || previousSelection?.Effort != configuration.Effort || !matchesConfirmedModelOptions) &&
                 !await ApplySelectionAsync(configuration.Model.ValueOrNull, configuration.Effort.ValueOrNull, ct).ConfigureAwait(false))
             {
                 var rejected = RejectConfiguration(ConfigurationFailureCode.InvalidAcknowledgement, "The provider did not confirm the complete selection.");
@@ -138,6 +128,26 @@ public sealed partial class AcpAgentSession
         }
     }
 
+    private SessionConfigurationOutcome? ValidateLegacyEffort(SessionSelection effort, string? targetModel, bool usesThought)
+    {
+        if (effort is SessionSelection.ProviderDefault && _hasExplicitThoughtLevel && _defaultThoughtLevel is null)
+            return new SessionConfigurationOutcome.Unsupported(ConfigurationDimension.Effort, "The original default effort is unknown.");
+        if (effort is SessionSelection.ProviderDefault && _isResumed &&
+            (usesThought || !_modelCatalog.HasDefaultEffortEvidence(targetModel)))
+            return new SessionConfigurationOutcome.Unsupported(ConfigurationDimension.Effort, "The original default effort is unknown after resume.");
+        if (effort is SessionSelection.Explicit thoughtEffort && usesThought &&
+            !_modelCatalog.ThoughtLevel!.Values.Any(value => value.Id == thoughtEffort.Value))
+            return new SessionConfigurationOutcome.Rejected(ConfigurationFailureCode.InvalidSelection,
+                "The requested effort is not advertised.", new(_confirmedConfiguration.ModelId, _appliedThoughtLevel, ConfigurationState is not null));
+        if (effort is SessionSelection.Explicit explicitEffort && !usesThought)
+        {
+            var model = _modelCatalog.Models.FirstOrDefault(row => row.Model == targetModel);
+            if (model?.SupportedReasoningEfforts.Any(value => string.Equals(value.ReasoningEffort, explicitEffort.Value, StringComparison.OrdinalIgnoreCase)) != true)
+                return new SessionConfigurationOutcome.Unsupported(ConfigurationDimension.Effort, "No advertised operation expresses this model and effort selection.");
+        }
+        return null;
+    }
+
     private SessionConfigurationOutcome.Rejected RejectConfiguration(ConfigurationFailureCode code, string reason)
     {
         lock (_idleUsageLock)
@@ -158,10 +168,20 @@ public sealed partial class AcpAgentSession
         _permission = SessionSelection.FromNullable(spec.PermissionMode);
         var (rawModels, currentModelId) = ExtractAvailableModels(response);
         AvailableModels = rawModels.Select(m => m.ModelId).ToArray();
-        _modelCatalog = AcpModelCatalog.Build(rawModels, currentModelId, AcpSessionOptions.Read(response)?.Reasoning, currentSelectionIsDefault: !isResume);
+        var observedThought = AcpSessionOptions.Read(response)?.Reasoning;
+        if (_advertisedEffortResetValue is not null)
+            RefreshAdvertisedModelOptions(response);
+        if (UsesAdvertisedModelOptions)
+        {
+            _defaultModel = isResume ? null : _advertisedOptions!.Model!.Current;
+        }
+        else
+        {
+            _modelCatalog = AcpModelCatalog.Build(rawModels, currentModelId, observedThought, currentSelectionIsDefault: !isResume);
+            _defaultModel = isResume || currentModelId is null ? null : _modelCatalog.Models.FirstOrDefault(model => model.IsDefault)?.Model;
+        }
         // A resumed current selection is not evidence of the original default.
-        _defaultModel = isResume || currentModelId is null ? null : _modelCatalog.Models.FirstOrDefault(model => model.IsDefault)?.Model;
-        _appliedThoughtLevel = _modelCatalog.ThoughtLevel?.Current;
+        _appliedThoughtLevel = observedThought?.Current;
         if (!isResume) _defaultThoughtLevel = _appliedThoughtLevel;
         var configuration = SessionConfiguration.FromLaunch(spec);
         if (isResume && configuration.Model is SessionSelection.ProviderDefault)
@@ -169,6 +189,8 @@ public sealed partial class AcpAgentSession
                 ConfigurationDimension.Model, "The resumed session does not advertise its original default model."));
         if (configuration.Model is SessionSelection.ProviderDefault && configuration.Effort is SessionSelection.ProviderDefault)
         {
+            if (UsesAdvertisedModelOptions)
+                ConfirmContextBinding(currentModelId, _appliedThoughtLevel);
             ConfigurationState = new(configuration, currentModelId, _appliedThoughtLevel, ContextUsageRevision);
             return;
         }
@@ -208,10 +230,11 @@ public sealed partial class AcpAgentSession
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         var hasModel = !string.IsNullOrWhiteSpace(model);
         var effort = string.IsNullOrWhiteSpace(reasoningEffort) ? null : reasoningEffort.Trim();
-        if (!hasModel && effort is null && !_hasExplicitModel && !_hasExplicitThoughtLevel && !_hasExplicitSuffixEffort) return true;
-
         // A blank model keeps the group advertised as the session's initial default.
         var requestedModel = hasModel ? model!.Trim() : _defaultModel;
+        if (UsesAdvertisedModelOptions)
+            return requestedModel is not null && await ApplyAdvertisedModelOptionsAsync(requestedModel, effort, hasModel, ct).ConfigureAwait(false);
+        if (!hasModel && effort is null && !_hasExplicitModel && !_hasExplicitThoughtLevel && !_hasExplicitSuffixEffort) return true;
         var entry = _modelCatalog.Models.FirstOrDefault(row => row.Model == requestedModel);
         var reasoningOption = _modelCatalog.ThoughtLevel;
         var useThoughtLevel = _modelCatalog.UsesThoughtLevel(requestedModel);

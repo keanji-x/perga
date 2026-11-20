@@ -4,9 +4,34 @@ import { afterEach, expect, it } from 'vitest';
 import { page } from 'vitest/browser';
 import { renderSessionFixture } from './conversation-session-fixture.tsx';
 import { fixtureTrack, fixtureSnapshot, fixtureSession } from './session-contract-fixture.ts';
-import { sessionReply } from './conversation-session-data.ts';
+import { sessionPage, sessionReply } from './conversation-session-data.ts';
 
 afterEach(() => { cleanup(); document.getElementById('root')?.remove(); });
+
+it('uses the approval options advertised by the open ACP session', async () => {
+  await page.viewport(1280, 844);
+  const session = fixtureSession('daily-planner', 'daily', {
+    isLead: true, provider: 'acp:opencode', title: 'ACP Planner conversation',
+  });
+  renderSessionFixture({ initial: '/track/daily?panel=conversations', reply: request => {
+    if (request.path === '/api/v1/tracks/daily')
+      return sessionReply(fixtureSnapshot(fixtureTrack('daily', { leadSessionId: session.id }), [session]));
+    if (request.path.startsWith(`/api/v1/sessions/${session.id}/items?`))
+      return sessionReply({
+        ...sessionPage(session),
+        permissionModes: [
+          { id: 'inspect', label: 'Inspect workspace', description: 'Read only', isDefault: true },
+          { id: 'act', label: 'Make changes', description: 'Allow edits' },
+        ],
+      });
+    return undefined;
+  } });
+  await page.getByRole('button', { name: /Conversation ACP Planner conversation/ }).click();
+  const approvals = page.getByRole('button', { name: 'Approvals: Inspect workspace' });
+  await expect.element(approvals).toBeEnabled();
+  await approvals.click();
+  await expect.element(page.getByText('Make changes', { exact: true })).toBeVisible();
+});
 
 it.each([1280, 390])('answers a v1 open ask in the lead conversation at %ipx', async width => {
   await page.viewport(width, 844);

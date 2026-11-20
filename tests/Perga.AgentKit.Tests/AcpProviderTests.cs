@@ -23,6 +23,13 @@ public sealed class AcpProviderTests : IDisposable
             }
         });
 
+    private AgentRuntime CreateDiscoveryRuntime(IReadOnlyDictionary<string, string> acpEnv)
+    {
+        var overrides = _fixture.UnavailableProviders();
+        overrides["acp:custom"] = new(_fixture.MockAcpPath, Env: acpEnv);
+        return new AgentRuntime(new AgentRuntimeOptions { ProviderOverrides = overrides });
+    }
+
     [Theory]
     [InlineData(OsSandboxMode.ReadOnlyBwrap)]
     [InlineData(OsSandboxMode.WorkspaceWriteBwrap)]
@@ -237,17 +244,13 @@ public sealed class AcpProviderTests : IDisposable
             ["MOCK_ACP_LOG"] = log,
             ["MOCK_ACP_RESUME"] = nativeResume ? "1" : "0"
         });
-        var statuses = await runtime.ProbeProvidersAsync(CancellationToken.None);
-        foreach (var status in statuses.Where(status => status.Provider.StartsWith("acp:")))
-        {
-            Assert.Equal(["safe", "execute"], status.PermissionModes!.Select(mode => mode.Id));
-            Assert.Equal("safe", Assert.Single(status.PermissionModes!, mode => mode.IsDefault).Id);
-            Assert.Equal("Read first", status.PermissionModes![0].Description);
-        }
         await using var session = await runtime.OpenSessionAsync(new HarnessLaunchSpec(
             "acp:antigravity", resume is null ? null : "saved-model", _fixture.WorkspaceDir, resume, null,
             new Dictionary<string, McpServerConfig>(), PermissionMode: "execute"), CancellationToken.None);
-        Assert.Equal(["safe", "execute"], session.AvailablePermissionModes.Select(mode => mode.Id));
+        var modes = session.AvailablePermissionModes;
+        Assert.Equal(["safe", "execute"], modes.Select(mode => mode.Id));
+        Assert.Equal("safe", Assert.Single(modes, mode => mode.IsDefault).Id);
+        Assert.Equal("Read first", modes[0].Description);
         var calls = File.ReadAllLines(log).Select(line => JsonSerializer.Deserialize<JsonElement>(line)).ToArray();
         var selected = Assert.Single(calls, call => call.GetProperty("method").GetString() ==
             (config ? "session/set_config_option" : "session/set_mode"));
@@ -309,14 +312,14 @@ public sealed class AcpProviderTests : IDisposable
     {
         var log = Path.Combine(_fixture.RootDir, "strict-model.jsonl");
         var modelIds = ids.Split(',');
-        await using var runtime = CreateRuntime(new Dictionary<string, string>
+        await using var runtime = CreateDiscoveryRuntime(new Dictionary<string, string>
         {
             ["MOCK_ACP_LOG"] = log,
             ["MOCK_ACP_STRICT_MODELS"] = "1",
             ["MOCK_ACP_MODELS"] = JsonSerializer.Serialize(new { models = new {
                 currentModelId = modelIds[0], availableModels = modelIds.Select(id => new { modelId = id }) } })
         });
-        var status = Assert.Single(await runtime.ProbeProvidersAsync(CancellationToken.None), p => p.Provider == "acp:opencode");
+        var status = Assert.Single(await runtime.ProbeProvidersAsync(CancellationToken.None), p => p.Provider == "acp:custom");
         var model = Assert.Single(status.ModelCatalog!);
         Assert.Equal("vendor/model", model.Model);
         if (effort is null && !modelIds.Contains("vendor/model"))
@@ -324,7 +327,7 @@ public sealed class AcpProviderTests : IDisposable
         if (modelIds.Contains("vendor/model"))
             Assert.Null(model.DefaultReasoningEffort);
         await using var session = await runtime.OpenSessionAsync(new HarnessLaunchSpec(
-            "acp:opencode", model.Model, _fixture.WorkspaceDir, null, null,
+            "acp:custom", model.Model, _fixture.WorkspaceDir, null, null,
             new Dictionary<string, McpServerConfig>(), ReasoningEffort: effort), CancellationToken.None);
         Assert.IsType<SessionConfigurationOutcome.Applied>(await session.ConfigureAsync(SessionConfiguration.FromNullable(model.Model, effort)));
         var calls = File.ReadAllLines(log).Select(line => JsonSerializer.Deserialize<JsonElement>(line))
@@ -339,17 +342,17 @@ public sealed class AcpProviderTests : IDisposable
     public async Task DefaultModelEffortAppliesOnOpenAndSwitch(bool configFallback)
     {
         var log = Path.Combine(_fixture.RootDir, "default-effort.jsonl");
-        await using var runtime = CreateRuntime(new Dictionary<string, string>
+        await using var runtime = CreateDiscoveryRuntime(new Dictionary<string, string>
         {
             ["MOCK_ACP_LOG"] = log,
             ["MOCK_ACP_NO_SET_MODEL"] = configFallback ? "1" : "0",
             ["MOCK_ACP_MODELS"] = """{"models":{"currentModelId":"vendor/model-high","availableModels":[{"modelId":"vendor/model-low"},{"modelId":"vendor/model-high"}]}}"""
         });
-        var status = Assert.Single(await runtime.ProbeProvidersAsync(CancellationToken.None), p => p.Provider == "acp:opencode");
+        var status = Assert.Single(await runtime.ProbeProvidersAsync(CancellationToken.None), p => p.Provider == "acp:custom");
         Assert.Equal("high", Assert.Single(status.ModelCatalog!).DefaultReasoningEffort);
         File.Delete(log);
         await using var session = await runtime.OpenSessionAsync(new HarnessLaunchSpec(
-            "acp:opencode", null, _fixture.WorkspaceDir, null, null,
+            "acp:custom", null, _fixture.WorkspaceDir, null, null,
             new Dictionary<string, McpServerConfig>(), ReasoningEffort: "low"), CancellationToken.None);
         Assert.IsType<SessionConfigurationOutcome.Applied>(await session.ConfigureAsync(SessionConfiguration.FromNullable(null, "high")));
         Assert.IsType<SessionConfigurationOutcome.Applied>(await session.ConfigureAsync(SessionConfiguration.FromNullable("vendor/model")));
@@ -388,18 +391,18 @@ public sealed class AcpProviderTests : IDisposable
     public async Task OrdinarySessionsDiscoverAndApplyThoughtLevel(string? model)
     {
         var log = Path.Combine(_fixture.RootDir, "ordinary-thought.jsonl");
-        await using var runtime = CreateRuntime(new Dictionary<string, string>
+        await using var runtime = CreateDiscoveryRuntime(new Dictionary<string, string>
         {
             ["MOCK_ACP_LOG"] = log,
             ["MOCK_ACP_WORKER_OPTIONS"] = "1"
         });
-        var status = Assert.Single(await runtime.ProbeProvidersAsync(CancellationToken.None), p => p.Provider == "acp:opencode");
+        var status = Assert.Single(await runtime.ProbeProvidersAsync(CancellationToken.None), p => p.Provider == "acp:custom");
         var small = Assert.Single(status.ModelCatalog!, m => m.Model == "small");
         Assert.Equal("normal", small.DefaultReasoningEffort);
         Assert.Equal(new[] { "normal", "deep" }, small.SupportedReasoningEfforts.Select(e => e.ReasoningEffort));
         File.Delete(log);
         await using var session = await runtime.OpenSessionAsync(new HarnessLaunchSpec(
-            "acp:opencode", model, _fixture.WorkspaceDir, null, null,
+            "acp:custom", model, _fixture.WorkspaceDir, null, null,
             new Dictionary<string, McpServerConfig>(), ReasoningEffort: "deep"), CancellationToken.None);
         var deepRevision = session.ContextUsageRevision;
         Assert.NotNull(deepRevision);

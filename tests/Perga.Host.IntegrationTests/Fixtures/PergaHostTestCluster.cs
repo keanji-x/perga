@@ -169,6 +169,8 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
         public bool SupportsNativeSteer => _owner.SupportsSteering;
         public bool SupportsNativeCompact => _owner.CompactHandler is not null;
         public Task<NativeCompactResult> CompactAsync(CancellationToken ct) => _owner.CompactHandler!(ct);
+        public IReadOnlyList<PermissionModeOption> AvailablePermissionModes =>
+            _spec.Provider.StartsWith("acp:", StringComparison.Ordinal) ? _owner.AcpPermissionModes ?? [] : [];
         public WorkerProviderConfiguration? WorkerConfiguration => _spec.ConfigureWorker && _spec.Provider == "codex"
             ? new([
                 new WorkerModelOption("gpt-5.4", "GPT 5.4", ["low", "high"], "low"),
