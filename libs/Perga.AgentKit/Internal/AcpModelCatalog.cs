@@ -9,7 +9,9 @@ internal sealed class AcpModelCatalog(
     AcpSessionOption? thoughtLevel)
 {
     private static readonly string[] KnownEffortSuffixes = ["low", "medium", "high", "xhigh", "max", "ultra"];
-    internal sealed record Selection(string DefaultId, Dictionary<string, string> Variants);
+    internal sealed record Selection(string? DefaultId, Dictionary<string, string> Variants);
+    internal bool HasDefaultEffortEvidence(string? model) => model is not null &&
+        (!selections.TryGetValue(model, out var selection) || selection.DefaultId is not null);
     internal AcpSessionOption? ThoughtLevel { get; } = thoughtLevel;
     internal IReadOnlyList<ProviderModelInfo> Models { get; } = models.Select(model =>
         model.SupportedReasoningEfforts.Count == 0 && thoughtLevel is not null
@@ -28,13 +30,14 @@ internal sealed class AcpModelCatalog(
         if (!selections.TryGetValue(model, out var selection))
             return model; // Preserve explicit raw IDs and provider validation of unknown IDs.
         return !string.IsNullOrWhiteSpace(effort) && selection.Variants.TryGetValue(effort.Trim(), out var rawId)
-            ? rawId : selection.DefaultId;
+            ? rawId : selection.DefaultId ?? throw new InvalidOperationException("The original default effort is unknown.");
     }
 
     internal static AcpModelCatalog Build(
         IReadOnlyList<AcpRawModel> rawModels,
         string? currentModelId,
-        AcpSessionOption? thoughtLevel = null)
+        AcpSessionOption? thoughtLevel = null,
+        bool currentSelectionIsDefault = true)
     {
         if (rawModels.Count == 0)
         {
@@ -136,7 +139,7 @@ internal sealed class AcpModelCatalog(
                 .Select(e => new ProviderModelEffort(e, e))
                 .ToArray();
             string? defaultEffort = null;
-            if (entry.BareId is null)
+            if (entry.BareId is null && currentSelectionIsDefault)
             {
                 if (baseId == currentBase && currentEffort is not null && entry.Variants.ContainsKey(currentEffort))
                     defaultEffort = currentEffort;
@@ -145,7 +148,7 @@ internal sealed class AcpModelCatalog(
                 else
                     defaultEffort = sortedEfforts.FirstOrDefault()?.ReasoningEffort;
             }
-            var defaultId = entry.BareId ?? entry.Variants[defaultEffort!];
+            var defaultId = entry.BareId ?? (defaultEffort is null ? null : entry.Variants[defaultEffort]);
             // A derived name may already be a wire ID belonging to another group.
             // Publish this group's raw variants instead, so every row stays selectable
             // without allowing an alias to change the meaning of an advertised ID.

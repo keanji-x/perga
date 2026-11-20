@@ -17,6 +17,62 @@ public sealed class ClaudeProviderTests : IDisposable
             }
         });
 
+    [Theory]
+    [InlineData(null, "low")]
+    [InlineData(null, "medium")]
+    [InlineData(null, "high")]
+    [InlineData("resumed-claude", "xhigh")]
+    [InlineData("resumed-claude", "max")]
+    public async Task ExplicitEffortWithDefaultModelIsPassedSeparatelyOnOpenAndResume(string? resumeId, string effort)
+    {
+        var log = Path.Combine(_fixture.RootDir, "claude-args.json");
+        await using var runtime = new AgentRuntime(new AgentRuntimeOptions
+        {
+            ProviderOverrides = new Dictionary<string, ProviderCommandOverride>
+            {
+                ["claude"] = new(_fixture.MockClaudePath, Env: new Dictionary<string, string> { ["MOCK_CLAUDE_ARGS_LOG"] = log })
+            }
+        });
+        var spec = new HarnessLaunchSpec("claude", null, _fixture.WorkspaceDir, resumeId, null, new Dictionary<string, McpServerConfig>(), ReasoningEffort: effort);
+        await using var session = await runtime.OpenSessionAsync(spec, default);
+        await DrainTurnAsync(session, new("capture args", "effort"));
+        var args = JsonSerializer.Deserialize<string[]>(File.ReadAllText(log))!;
+        Assert.DoesNotContain("--model", args);
+        Assert.Equal(effort, args[Array.IndexOf(args, "--effort") + 1]);
+        if (resumeId is not null) Assert.Equal(resumeId, args[Array.IndexOf(args, "--resume") + 1]);
+        Assert.Equal(SessionConfiguration.FromLaunch(spec), session.ConfigurationState?.Selection);
+        Assert.Equal(ConfigurationEvidence.LaunchAccepted, session.ConfigurationState?.Evidence);
+        Assert.IsType<SessionConfigurationOutcome.RequiresReopen>(await session.ConfigureAsync(SessionConfiguration.FromNullable(null, "other")));
+    }
+
+    [Fact]
+    public async Task StartupRejectsExplicitEffortBeforeReturningConfirmedSession()
+    {
+        await using var runtime = CreateRuntime();
+        var spec = new HarnessLaunchSpec("claude", null, _fixture.WorkspaceDir, null, null,
+            new Dictionary<string, McpServerConfig>(), ReasoningEffort: "ultra");
+        var error = await Assert.ThrowsAsync<SessionConfigurationException>(() => runtime.OpenSessionAsync(spec, default));
+        Assert.IsType<SessionConfigurationOutcome.Rejected>(error.Outcome);
+    }
+
+    [Fact]
+    public async Task MissingEffortSupportIsExplicitAndDoesNotLaunchExplicitEffort()
+    {
+        await using var runtime = new AgentRuntime(new AgentRuntimeOptions
+        {
+            ProviderOverrides = new Dictionary<string, ProviderCommandOverride>
+            {
+                ["claude"] = new(_fixture.MockClaudePath, Env: new Dictionary<string, string> { ["MOCK_CLAUDE_NO_EFFORT"] = "1" })
+            }
+        });
+        var spec = new HarnessLaunchSpec("claude", null, _fixture.WorkspaceDir, null, null, new Dictionary<string, McpServerConfig>());
+        await using var session = await runtime.OpenSessionAsync(spec, default);
+        Assert.Equal(ConfigurationSupport.Unsupported, session.ConfigurationCapabilities.Effort.Open);
+        Assert.IsType<SessionConfigurationOutcome.Unsupported>(await session.ConfigureAsync(SessionConfiguration.FromNullable(null, "high")));
+        var error = await Assert.ThrowsAsync<SessionConfigurationException>(() => runtime.OpenSessionAsync(spec with { ReasoningEffort = "high" }, default));
+        Assert.IsType<SessionConfigurationOutcome.Unsupported>(error.Outcome);
+    }
+
     [Fact]
     public async Task Claude_MultiTurnStreamJson_McpTempFileCleanup_Resume_AndNoDuplicateDeltas()
     {

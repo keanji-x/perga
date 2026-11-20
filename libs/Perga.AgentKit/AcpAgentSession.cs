@@ -53,14 +53,6 @@ public sealed partial class AcpAgentSession : IAgentSession
         }
     }
 
-    private string? _defaultModel;
-    private bool _hasExplicitModel;
-    private string? _defaultThoughtLevel;
-    private string? _appliedThoughtLevel;
-    private bool _hasExplicitThoughtLevel;
-    private AcpModelCatalog _modelCatalog = AcpModelCatalog.Build([], null);
-
-
     private static readonly TimeSpan DefaultCommandsGraceTimeout = TimeSpan.FromSeconds(2);
 
     private readonly JsonRpcStdioConnection _rpc;
@@ -191,6 +183,7 @@ public sealed partial class AcpAgentSession : IAgentSession
     {
         get
         {
+            if (!_configureWorker && _configurationUncertain) return null;
             var revision = Interlocked.Read(ref _contextUsageRevision);
             return revision > 0 ? revision : null;
         }
@@ -307,6 +300,10 @@ public sealed partial class AcpAgentSession : IAgentSession
     {
         ArgumentNullException.ThrowIfNull(input);
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        if (!_configureWorker && ConfigurationState is null)
+            throw new SessionConfigurationException(new SessionConfigurationOutcome.Rejected(
+                ConfigurationFailureCode.UnconfirmedLaunch, "The complete configuration is unconfirmed.",
+                new(_confirmedConfiguration.ModelId, _appliedThoughtLevel, false)));
 
         await _turnLock.WaitAsync(ct).ConfigureAwait(false);
         var turnState = new TurnStreamState();
@@ -595,94 +592,25 @@ public sealed partial class AcpAgentSession : IAgentSession
         var requestedMode = spec.PermissionMode?.Trim();
         ValidatePermissionMode(requestedMode, permissionModes);
         if (requestedMode is not null && !_launchArgumentModes.Contains(requestedMode))
-            await SetPermissionModeAsync(requestedMode, resolvedSessionId, permissionModes, ct).ConfigureAwait(false);
-        _appliedSettings = new(spec.Model, spec.ReasoningEffort, requestedMode);
+        {
+            var result = await SetPermissionModeAsync(requestedMode, resolvedSessionId, permissionModes, ct).ConfigureAwait(false);
+            if (!IsPositiveAcknowledgement(result))
+                throw new SessionConfigurationException(new SessionConfigurationOutcome.Rejected(
+                    ConfigurationFailureCode.InvalidAcknowledgement, "The provider rejected the permission mode.", new(null, null, false)));
+        }
 
         Volatile.Write(ref _nativeThreadId, resolvedSessionId);
         _useRestoredModelOnPrompt = isResume && string.IsNullOrWhiteSpace(spec.Model);
         if (_configureWorker)
+        {
+            // Ordinary reuse validates the launch tuple; Worker model/effort changes
+            // remain governed by the separate per-turn selection/readback contract.
+            _permission = SessionSelection.FromNullable(spec.PermissionMode);
+            ConfigurationState = new(SessionConfiguration.FromLaunch(spec), Evidence: ConfigurationEvidence.LaunchAccepted);
             return;
-
-        var (rawModels, currentModelId) = ExtractAvailableModels(response);
-        AvailableModels = rawModels.Select(m => m.ModelId).ToArray();
-        _modelCatalog = AcpModelCatalog.Build(rawModels, currentModelId, AcpSessionOptions.Read(response)?.Reasoning);
-        _defaultModel = _modelCatalog.Models.FirstOrDefault(model => model.IsDefault)?.Model;
-        _appliedThoughtLevel = _modelCatalog.ThoughtLevel?.Current;
-        if (!isResume) _defaultThoughtLevel = _appliedThoughtLevel;
-        if (!string.IsNullOrWhiteSpace(spec.Model) || !string.IsNullOrWhiteSpace(spec.ReasoningEffort))
-        {
-            var requestedModel = string.IsNullOrWhiteSpace(spec.Model) ? _defaultModel : spec.Model.Trim();
-            var modelSet = await TrySetModelAsync(spec.Model, spec.ReasoningEffort, ct).ConfigureAwait(false);
-            if (!modelSet && requestedModel is not null &&
-                !string.IsNullOrWhiteSpace(currentModelId) &&
-                string.Equals(currentModelId, _modelCatalog.Resolve(requestedModel, spec.ReasoningEffort), StringComparison.Ordinal))
-            {
-                ConfirmContextBinding(currentModelId);
-            }
-        }
-    }
-
-    private static (IReadOnlyList<AcpRawModel> Models, string? CurrentModelId) ExtractAvailableModels(JsonElement response)
-    {
-        var ids = new HashSet<string>(StringComparer.Ordinal);
-        var result = new List<AcpRawModel>();
-        string? currentModelId = null;
-        void Add(string? id, string? name, string? description)
-        {
-            if (!string.IsNullOrWhiteSpace(id) && ids.Add(id))
-            {
-                result.Add(new AcpRawModel(id, name, description));
-            }
         }
 
-        if (response.ValueKind != JsonValueKind.Object)
-        {
-            return (result, currentModelId);
-        }
-
-        if (response.TryGetProperty("models", out var models) && models.ValueKind == JsonValueKind.Object)
-        {
-            currentModelId ??= TryGetString(models, "currentModelId");
-            if (models.TryGetProperty("availableModels", out var available) && available.ValueKind == JsonValueKind.Array)
-            {
-                foreach (var model in available.EnumerateArray())
-                {
-                    Add(TryGetString(model, "modelId"), TryGetString(model, "name"), TryGetString(model, "description"));
-                }
-            }
-        }
-
-        if (response.TryGetProperty("configOptions", out var config) && config.ValueKind == JsonValueKind.Array)
-        {
-            foreach (var option in config.EnumerateArray())
-            {
-                if (option.ValueKind != JsonValueKind.Object ||
-                    !(TryGetString(option, "category") == "model" || TryGetString(option, "id") == "model") ||
-                    !option.TryGetProperty("options", out var values) || values.ValueKind != JsonValueKind.Array)
-                {
-                    continue;
-                }
-
-                currentModelId ??= TryGetString(option, "currentValue");
-                foreach (var value in values.EnumerateArray())
-                {
-                    if (value.ValueKind == JsonValueKind.Object && value.TryGetProperty("options", out var group) &&
-                        group.ValueKind == JsonValueKind.Array)
-                    {
-                        foreach (var item in group.EnumerateArray())
-                        {
-                            Add(TryGetString(item, "value"), TryGetString(item, "name"), TryGetString(item, "description"));
-                        }
-                    }
-                    else
-                    {
-                        Add(TryGetString(value, "value"), TryGetString(value, "name"), TryGetString(value, "description"));
-                    }
-                }
-            }
-        }
-
-        return (result, currentModelId);
+        await InitializeConfigurationAsync(response, spec, isResume, ct).ConfigureAwait(false);
     }
 
     private async Task RunSessionPromptRpcAsync(
@@ -959,7 +887,7 @@ public sealed partial class AcpAgentSession : IAgentSession
                     Action<IdleContextUsage>? handler;
                     lock (_idleUsageLock)
                     {
-                        if (_disposed != 0 || _contextUsageRevision == 0)
+                        if (_disposed != 0 || _contextUsageRevision == 0 || (!_configureWorker && _configurationUncertain))
                             return;
 
                         var completedPrompt = Volatile.Read(ref _lastCompletedContextPrompt);

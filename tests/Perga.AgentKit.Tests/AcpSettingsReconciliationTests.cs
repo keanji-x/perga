@@ -62,14 +62,14 @@ public sealed class AcpSettingsReconciliationTests : IDisposable
         await using var runtime = Runtime("acp:opencode", config, env: env);
         await using var session = await runtime.OpenSessionAsync(Spec("acp:opencode"), default);
         if (source.StartsWith("permission", StringComparison.Ordinal))
-            Assert.True(await session.TryReconcileSettingsAsync(new(null, null, "act"), default));
+            Assert.IsType<SessionConfigurationOutcome.Applied>(await session.ConfigureAsync(SessionConfiguration.FromNullable(null, null, "act"), default));
         else
-            Assert.True(await session.TrySetModelAsync("next-model"));
+            Assert.IsType<SessionConfigurationOutcome.Applied>(await session.ConfigureAsync(session.ConfigurationState!.Selection with { Model = new SessionSelection.Explicit("next-model") }));
         // Exercise reconciliation before inspecting the catalogue: the old implementation rejects extra here.
-        Assert.True(await session.TryReconcileSettingsAsync(new(null, null, "extra"), default));
+        Assert.IsType<SessionConfigurationOutcome.Applied>(await session.ConfigureAsync(session.ConfigurationState!.Selection with { Permission = new SessionSelection.Explicit("extra") }, default));
         Assert.Equal(new[] { "safe", "extra" }, session.AvailablePermissionModes.Select(mode => mode.Id));
         var before = Calls().Length;
-        await Assert.ThrowsAsync<ArgumentException>(() => session.TryReconcileSettingsAsync(new(null, null, "act"), default));
+        await Assert.ThrowsAsync<ArgumentException>(() => session.ConfigureAsync(SessionConfiguration.FromNullable(null, null, "act"), default));
         Assert.Equal(before, Calls().Length);
         var last = Calls().Last();
         Assert.Equal(legacyModes ? "session/set_mode" : "session/set_config_option", last.GetProperty("method").GetString());
@@ -88,9 +88,9 @@ public sealed class AcpSettingsReconciliationTests : IDisposable
             [source == "permission" ? "MOCK_ACP_PERMISSION_RESPONSE" : "MOCK_ACP_PERMISSION_UPDATE"] = expanded
         });
         await using var session = await runtime.OpenSessionAsync(Spec("acp:opencode"), default);
-        if (source == "permission") Assert.True(await session.TryReconcileSettingsAsync(new(null, null, "act"), default));
-        else Assert.True(await session.TrySetModelAsync("next-model"));
-        Assert.True(await session.TryReconcileSettingsAsync(new(null, null, "extra"), default));
+        if (source == "permission") Assert.IsType<SessionConfigurationOutcome.Applied>(await session.ConfigureAsync(SessionConfiguration.FromNullable(null, null, "act"), default));
+        else Assert.IsType<SessionConfigurationOutcome.Applied>(await session.ConfigureAsync(session.ConfigurationState!.Selection with { Model = new SessionSelection.Explicit("next-model") }));
+        Assert.IsType<SessionConfigurationOutcome.Applied>(await session.ConfigureAsync(session.ConfigurationState!.Selection with { Permission = new SessionSelection.Explicit("extra") }, default));
         Assert.Equal(new[] { "safe", "act", "extra" }, session.AvailablePermissionModes.Select(mode => mode.Id));
     }
 
@@ -101,8 +101,8 @@ public sealed class AcpSettingsReconciliationTests : IDisposable
     {
         await using var runtime = Runtime("acp:opencode", config);
         await using var session = await runtime.OpenSessionAsync(Spec("acp:opencode", "safe"), default);
-        Assert.True(await session.TryReconcileSettingsAsync(new(null, null, "act"), default));
-        Assert.True(await session.TryReconcileSettingsAsync(new(null, null, "safe"), default));
+        Assert.IsType<SessionConfigurationOutcome.Applied>(await session.ConfigureAsync(SessionConfiguration.FromNullable(null, null, "act"), default));
+        Assert.IsType<SessionConfigurationOutcome.Applied>(await session.ConfigureAsync(SessionConfiguration.FromNullable(null, null, "safe"), default));
         Assert.Equal(new[] { "safe", "act" }, session.AvailablePermissionModes.Select(mode => mode.Id));
         Assert.Equal(config ? "session/set_config_option" : "session/set_mode", Calls().Last().GetProperty("method").GetString());
     }
@@ -118,7 +118,7 @@ public sealed class AcpSettingsReconciliationTests : IDisposable
                 ["MOCK_ACP_PERMISSION_UPDATE_SESSION"] = sessionId
             });
             await using var session = await runtime.OpenSessionAsync(Spec("acp:opencode"), default);
-            Assert.True(await session.TrySetModelAsync("next-model"));
+            Assert.IsType<SessionConfigurationOutcome.Applied>(await session.ConfigureAsync(session.ConfigurationState!.Selection with { Model = new SessionSelection.Explicit("next-model") }));
             Assert.Equal(new[] { "safe", "act" }, session.AvailablePermissionModes.Select(mode => mode.Id));
         }
     }
@@ -134,10 +134,10 @@ public sealed class AcpSettingsReconciliationTests : IDisposable
             [notification ? "MOCK_ACP_PERMISSION_UPDATE" : "MOCK_ACP_PERMISSION_RESPONSE"] = UpdatedModes
         });
         await using var session = await runtime.OpenSessionAsync(Spec("acp:antigravity", "safe"), default);
-        if (notification) Assert.True(await session.TrySetModelAsync("next-model"));
-        Assert.True(await session.TryReconcileSettingsAsync(new(null, null, "extra"), default));
+        if (notification) Assert.IsType<SessionConfigurationOutcome.Applied>(await session.ConfigureAsync(session.ConfigurationState!.Selection with { Model = new SessionSelection.Explicit("next-model") }));
+        Assert.IsType<SessionConfigurationOutcome.Applied>(await session.ConfigureAsync(session.ConfigurationState!.Selection with { Permission = new SessionSelection.Explicit("extra") }, default));
         Assert.Single(session.AvailablePermissionModes, mode => mode.Id == "bypassPermissions");
-        Assert.False(await session.TryReconcileSettingsAsync(new(null, null, "bypassPermissions"), default));
+        Assert.IsType<SessionConfigurationOutcome.RequiresReopen>(await session.ConfigureAsync(session.ConfigurationState!.Selection with { Model = new SessionSelection.Explicit("next-model"), Permission = new SessionSelection.Explicit("bypassPermissions") }, default));
     }
 
     [Theory]
@@ -150,9 +150,9 @@ public sealed class AcpSettingsReconciliationTests : IDisposable
         await using var runtime = Runtime(provider, config);
         await using var session = await runtime.OpenSessionAsync(Spec(provider, "safe"), default);
         var nativeId = session.NativeThreadId;
-        var desired = new SessionRuntimeSettings("next-model", null, "act");
-        Assert.True(await session.TryReconcileSettingsAsync(desired, default));
-        Assert.True(await session.TryReconcileSettingsAsync(desired, default));
+        var desired = SessionConfiguration.FromNullable("next-model", null, "act");
+        Assert.IsType<SessionConfigurationOutcome.Applied>(await session.ConfigureAsync(desired, default));
+        Assert.IsType<SessionConfigurationOutcome.Applied>(await session.ConfigureAsync(desired, default));
         Assert.Equal(nativeId, session.NativeThreadId);
         Assert.Single(Calls(), call => call.GetProperty("method").GetString() == "initialize");
         Assert.Single(Calls(), call => call.GetProperty("method").GetString() == "session/new");
@@ -163,8 +163,8 @@ public sealed class AcpSettingsReconciliationTests : IDisposable
         Assert.Equal("act", parameters.GetProperty(config ? "value" : "modeId").GetString());
         if (config) Assert.Equal("permission-policy", parameters.GetProperty("configId").GetString());
         Assert.Single(Calls(), call => call.GetProperty("method").GetString() == "session/set_model");
-        Assert.False(await session.TryReconcileSettingsAsync(desired with { PermissionMode = null }, default));
-        Assert.False(await session.TryReconcileSettingsAsync(desired with { Model = null }, default));
+        Assert.IsType<SessionConfigurationOutcome.RequiresReopen>(await session.ConfigureAsync(desired with { Permission = new SessionSelection.ProviderDefault() }, default));
+        Assert.IsType<SessionConfigurationOutcome.Unsupported>(await session.ConfigureAsync(desired with { Model = new SessionSelection.ProviderDefault() }, default));
     }
 
     [Theory]
@@ -176,12 +176,12 @@ public sealed class AcpSettingsReconciliationTests : IDisposable
     {
         await using var runtime = Runtime("acp:opencode", config, error);
         await using var session = await runtime.OpenSessionAsync(Spec("acp:opencode"), default);
-        var desired = new SessionRuntimeSettings(null, null, "act");
-        if (error == -32601) Assert.False(await session.TryReconcileSettingsAsync(desired, default));
+        var desired = SessionConfiguration.FromNullable(null, null, "act");
+        if (error == -32601) Assert.IsType<SessionConfigurationOutcome.RequiresReopen>(await session.ConfigureAsync(desired, default));
         else
         {
-            var failure = await Assert.ThrowsAnyAsync<Exception>(() => session.TryReconcileSettingsAsync(desired, default));
-            Assert.Contains("mode switch failed", failure.Message);
+            var failure = Assert.IsType<SessionConfigurationOutcome.Rejected>(await session.ConfigureAsync(desired, default));
+            Assert.Contains("mode switch failed", failure.Reason);
         }
         Assert.Single(Calls(), call => call.GetProperty("method").GetString() == "session/new");
         Assert.DoesNotContain(Calls(), call => call.GetProperty("method").GetString() == "session/prompt");
@@ -196,9 +196,50 @@ public sealed class AcpSettingsReconciliationTests : IDisposable
         await Assert.ThrowsAsync<ArgumentException>(() => runtime.OpenSessionAsync(Spec("acp:opencode", "invented"), default));
         await using var session = await runtime.OpenSessionAsync(Spec("acp:opencode", "safe"), default);
         var before = Calls().Length;
-        await Assert.ThrowsAsync<ArgumentException>(() => session.TryReconcileSettingsAsync(new(null, null, "invented"), default));
+        await Assert.ThrowsAsync<ArgumentException>(() => session.ConfigureAsync(SessionConfiguration.FromNullable(null, null, "invented"), default));
         Assert.Equal(before, Calls().Length);
-        Assert.True(await session.TryReconcileSettingsAsync(new(null, null, "act"), default));
+        Assert.IsType<SessionConfigurationOutcome.Applied>(await session.ConfigureAsync(SessionConfiguration.FromNullable(null, null, "act"), default));
+        Assert.DoesNotContain(Calls(), call => call.GetProperty("method").GetString() == "session/prompt");
+    }
+
+    [Fact]
+    public async Task WorkerReuseValidatesLaunchSelectionWithoutRepeatingOrdinaryConfiguration()
+    {
+        await using var runtime = Runtime("acp:opencode");
+        var spec = Spec("acp:opencode", "safe") with { ConfigureWorker = true };
+        await using var session = await runtime.OpenSessionAsync(spec, default);
+        var configuration = SessionConfiguration.FromLaunch(spec);
+        Assert.IsType<SessionConfigurationOutcome.Applied>(await session.ConfigureAsync(configuration));
+        Assert.IsType<SessionConfigurationOutcome.Applied>(await session.ConfigureAsync(configuration));
+        Assert.Single(Calls(), call => call.GetProperty("method").GetString() == "session/set_mode");
+        Assert.DoesNotContain(Calls(), call => call.GetProperty("method").GetString() == "session/set_model");
+    }
+
+    [Theory]
+    [InlineData(false, "null")]
+    [InlineData(true, "null")]
+    [InlineData(false, "[]")]
+    [InlineData(true, "[]")]
+    [InlineData(false, "{\"success\":false}")]
+    [InlineData(true, "{\"success\":false}")]
+    public async Task RejectedPermissionAcknowledgementCannotConfirmOrDispatch(bool config, string acknowledgement)
+    {
+        await using var runtime = Runtime("acp:opencode", config, env: new()
+        {
+            ["MOCK_ACP_PERMISSION_RESPONSE"] = acknowledgement
+        });
+        await Assert.ThrowsAsync<SessionConfigurationException>(() => runtime.OpenSessionAsync(Spec("acp:opencode", "act"), default));
+        await using var session = await runtime.OpenSessionAsync(Spec("acp:opencode"), default);
+        var outcome = Assert.IsType<SessionConfigurationOutcome.Rejected>(await session.ConfigureAsync(
+            SessionConfiguration.FromNullable(null, null, "act")));
+        Assert.Equal(ConfigurationFailureCode.InvalidAcknowledgement, outcome.Code);
+        Assert.False(outcome.ObservedState.IsUsable);
+        Assert.Null(session.ConfigurationState);
+        Assert.Null(session.ContextUsageRevision);
+        await Assert.ThrowsAsync<SessionConfigurationException>(async () =>
+        {
+            await foreach (var _ in session.StreamTurnAsync(new("blocked", "rejected-permission"), default)) { }
+        });
         Assert.DoesNotContain(Calls(), call => call.GetProperty("method").GetString() == "session/prompt");
     }
 
@@ -212,17 +253,17 @@ public sealed class AcpSettingsReconciliationTests : IDisposable
         await using (var ordinary = await runtime.OpenSessionAsync(Spec(provider, "safe"), default))
         {
             nativeId = ordinary.NativeThreadId;
-            Assert.True(await ordinary.TryReconcileSettingsAsync(new(null, null, "act"), default));
-            Assert.False(await ordinary.TryReconcileSettingsAsync(new(null, null, "bypassPermissions"), default));
+            Assert.IsType<SessionConfigurationOutcome.Applied>(await ordinary.ConfigureAsync(SessionConfiguration.FromNullable(null, null, "act"), default));
+            Assert.IsType<SessionConfigurationOutcome.RequiresReopen>(await ordinary.ConfigureAsync(SessionConfiguration.FromNullable("next-model", null, "bypassPermissions"), default));
         }
-        await using (var full = await runtime.OpenSessionAsync(Spec(provider, "bypassPermissions", nativeId), default))
+        await using (var full = await runtime.OpenSessionAsync(Spec(provider, "bypassPermissions", nativeId) with { Model = "next-model" }, default))
         {
             Assert.Equal(nativeId, full.NativeThreadId);
-            Assert.True(await full.TryReconcileSettingsAsync(new(null, null, "bypassPermissions"), default));
-            Assert.False(await full.TryReconcileSettingsAsync(new(null, null, "safe"), default));
-            Assert.False(await full.TryReconcileSettingsAsync(new(null, null, null), default));
+            Assert.IsType<SessionConfigurationOutcome.Applied>(await full.ConfigureAsync(SessionConfiguration.FromNullable("next-model", null, "bypassPermissions"), default));
+            Assert.IsType<SessionConfigurationOutcome.RequiresReopen>(await full.ConfigureAsync(SessionConfiguration.FromNullable("next-model", null, "safe"), default));
+            Assert.IsType<SessionConfigurationOutcome.RequiresReopen>(await full.ConfigureAsync(SessionConfiguration.FromNullable("next-model", null, null), default));
         }
-        await using var restored = await runtime.OpenSessionAsync(Spec(provider, "safe", nativeId), default);
+        await using var restored = await runtime.OpenSessionAsync(Spec(provider, "safe", nativeId) with { Model = "next-model" }, default);
         Assert.Equal(nativeId, restored.NativeThreadId);
         var argv = File.ReadAllLines(Log).Select(line => JsonSerializer.Deserialize<JsonElement>(line))
             .Where(call => call.TryGetProperty("argv", out _)).Select(call => call.GetProperty("argv").ToString()).ToArray();

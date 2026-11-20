@@ -13,6 +13,55 @@ namespace Perga.Host.IntegrationTests;
 public sealed class ProviderSessionResumeTests
 {
     [Fact]
+    public async Task UnconfirmedResumeKeepsRecoveryHoldAndQueuedInputUntilConfirmedRetry()
+    {
+        await using var host = new PergaHostTestCluster();
+        var (trackId, sessionId) = await host.CreateTrackAsync();
+        var kernel = host.Services.GetRequiredService<IPergaKernel>();
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var end = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        host.AgentRuntime.SetTurnHandler(Stream);
+        host.AgentRuntime.CancelHandler = _ => { end.TrySetResult(); return Task.CompletedTask; };
+        async IAsyncEnumerable<UnifiedAgentEvent> Stream(HarnessLaunchSpec spec, TurnInput input,
+            [EnumeratorCancellation] CancellationToken ct)
+        {
+            if (input.Prompt == "old")
+            {
+                yield return new UnifiedAgentEvent.TextDelta("accepted");
+                started.TrySetResult();
+                await end.Task.WaitAsync(ct);
+                yield return new UnifiedAgentEvent.TurnInterrupted();
+            }
+            else yield return new UnifiedAgentEvent.TurnCompleted(null);
+        }
+        try
+        {
+            await kernel.AcceptMessageAsync(sessionId, new("old", "unconfirmed-resume-old"), default);
+            await started.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            var original = await kernel.GetSessionItemsAsync(sessionId);
+            var turnId = original.Resume!.TurnId;
+            var nativeId = Assert.Single(host.AgentRuntime.OpenedSessions).NativeThreadId;
+            await kernel.AcceptMessageAsync(sessionId, new("queued", "unconfirmed-resume-next", QueueIfBusy: true), default);
+            host.AgentRuntime.LaunchConfirmationHandler = _ => null;
+            using var response = await host.Client.PostAsJsonAsync($"/api/v1/sessions/{sessionId}/resume", new { turnId });
+            Assert.False(response.IsSuccessStatusCode);
+            var held = await kernel.GetSessionItemsAsync(sessionId);
+            Assert.Equal("paused", held.Resume?.State);
+            Assert.Single(held.QueuedMessages);
+            Assert.Single(host.AgentRuntime.ExecutedTurns);
+            Assert.Equal(nativeId, held.Session.NativeThreadId);
+            Assert.Contains(nativeId, host.AgentRuntime.DisposedSessions);
+            host.AgentRuntime.LaunchConfirmationHandler = null;
+            using var retry = await host.Client.PostAsJsonAsync($"/api/v1/sessions/{sessionId}/resume", new { turnId });
+            retry.EnsureSuccessStatusCode();
+            await kernel.WaitForTrackIdleAsync(trackId).WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.Equal(new[] { "old", "queued" }, host.AgentRuntime.ExecutedTurns.Select(turn => turn.Input.Prompt));
+            Assert.All(host.AgentRuntime.OpenedSessions.Skip(1), open => Assert.Equal(nativeId, open.Spec.ResumeNativeThreadId));
+        }
+        finally { end.TrySetResult(); }
+    }
+
+    [Fact]
     public async Task ResumeRequiresATargetTurn()
     {
         await using var host = new PergaHostTestCluster();

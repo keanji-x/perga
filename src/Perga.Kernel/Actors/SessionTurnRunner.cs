@@ -100,7 +100,10 @@ public sealed partial class TrackActor
             try
             {
                 prepared = await PrepareDispatchCoreAsync(work, executionSession, prompt, policyAdmission, ct).ConfigureAwait(false);
-                runningSession = runningSession with { ContextUsage = actor.RequireSessionCore(sessionId).ContextUsage };
+                // Preparation may persist identity and usage from a compacted or reopened
+                // provider. Activate that durable snapshot, rather than the pre-claim copy.
+                runningSession = actor.RequireSessionCore(sessionId) with { Status = "running", UpdatedAtMs = now };
+                runningEvent = actor.SessionUpdatedEvent(runningSession);
                 if (workerSettings is not null)
                     workerSettings = actor.ResolveWorkerTurnSettingsCore(executionSession, workerSettings);
             }
@@ -116,7 +119,7 @@ public sealed partial class TrackActor
 
             actor._sessions[sessionId] = runningSession;
             var turnCts = CancellationTokenSource.CreateLinkedTokenSource(ct, actor._actorShutdownCts.Token);
-            var active = new ActiveTurnState(sessionId, (executionSession.Model, executionSession.ReasoningEffort),
+            var active = new ActiveTurnState(sessionId, SessionConfiguration.FromNullable(executionSession.Model, executionSession.ReasoningEffort, executionSession.PermissionMode),
                 actor._liveContextUsage.GetOrCreateValue(prepared.AgentSession), turn, prepared.AgentSession, turnCts, true)
             {
                 Settings = workerSettings
@@ -142,6 +145,7 @@ public sealed partial class TrackActor
                 : $"<policy_context>\n{policyAdmission.Context}\n</policy_context>\n\n{prompt}";
             var agentSession = await actor.GetOrOpenAgentSessionCoreAsync(session, overrideSystemPrompt: null, ct)
                 .ConfigureAwait(false);
+            RequireConfirmedConfiguration(session, agentSession, agentSession.ConfigurationState);
             return new PreparedDispatch(agentSession, effectivePrompt);
         }
 
@@ -424,7 +428,7 @@ public sealed partial class TrackActor
             var settledSession = actor._sessions[sessionId];
             var autoCompact = !actor._scheduler.HasResumeHold(sessionId) && settledSession.BoundAttemptId is null &&
                               settledSession.Status == "idle" && outcome.Status == "completed" &&
-                              actor.CurrentContextUsageRatioCore(updatedSession) >= actor._options.AutoCompactionThreshold;
+                              actor.CurrentContextUsageRatioCore(settledSession) >= actor._options.AutoCompactionThreshold;
             return (completedTurn, autoCompact);
         }
 

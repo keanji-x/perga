@@ -72,6 +72,125 @@ public sealed class AcpProviderTests : IDisposable
         Assert.Equal(sandbox == OsSandboxMode.ReadOnlyBwrap ? "--ro-bind" : "--bind", args[workspaceBind]);
     }
 
+    [Theory]
+    [InlineData("null")]
+    [InlineData("[]")]
+    [InlineData("{\"success\":false}")]
+    [InlineData("{\"configOptions\":null}")]
+    [InlineData("{\"configOptions\":[]}")]
+    [InlineData("{\"success\":\"false\"}")]
+    [InlineData("{\"configOptions\":[{\"id\":\"worker-thought\",\"category\":\"thought_level\",\"type\":\"select\",\"currentValue\":\"normal\",\"options\":[{\"value\":\"normal\"}]}]}")]
+    [InlineData("{\"configOptions\":[{\"id\":\"worker-thought\",\"category\":\"thought_level\",\"currentValue\":42}]}")]
+    [InlineData("{\"configOptions\":[{\"id\":\"other\",\"category\":\"thought_level\",\"currentValue\":\"deep\"}]}")]
+    public async Task ThoughtAcknowledgementRejectionKeepsPartialStateAndBlocksPrompt(string acknowledgement)
+    {
+        var log = Path.Combine(_fixture.RootDir, "rejected-thought.jsonl");
+        await using var runtime = CreateRuntime(new Dictionary<string, string>
+        {
+            ["MOCK_ACP_LOG"] = log,
+            ["MOCK_ACP_WORKER_OPTIONS"] = "1",
+            ["MOCK_ACP_THOUGHT_RESULT"] = acknowledgement
+        });
+        var spec = new HarnessLaunchSpec("acp:opencode", null, _fixture.WorkspaceDir, null, null, new Dictionary<string, McpServerConfig>());
+        await using var session = await runtime.OpenSessionAsync(spec, default);
+        var result = Assert.IsType<SessionConfigurationOutcome.Rejected>(await session.ConfigureAsync(SessionConfiguration.FromNullable("large", "deep")));
+        Assert.Equal("large", result.ObservedState.NativeModel);
+        Assert.Equal("normal", result.ObservedState.NativeEffort);
+        Assert.False(result.ObservedState.IsUsable);
+        Assert.Null(session.ConfigurationState);
+        Assert.Null(session.ContextUsageRevision);
+        await Assert.ThrowsAsync<SessionConfigurationException>(() => DrainTurnAsync(session, new("blocked", "blocked")));
+        Assert.DoesNotContain(File.ReadAllLines(log), line => line.Contains("session/prompt", StringComparison.Ordinal));
+        var error = await Assert.ThrowsAsync<SessionConfigurationException>(() => runtime.OpenSessionAsync(spec with { Model = "large", ReasoningEffort = "deep" }, default));
+        Assert.IsType<SessionConfigurationOutcome.Rejected>(error.Outcome);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ThoughtTransportTimeoutOrCancellationInvalidatesCompleteSelection(bool cancelCaller)
+    {
+        await using var runtime = new AgentRuntime(new AgentRuntimeOptions
+        {
+            HandshakeTimeout = TimeSpan.FromMilliseconds(500),
+            ProviderOverrides = new Dictionary<string, ProviderCommandOverride>
+            {
+                ["acp:opencode"] = new(_fixture.MockAcpPath, Env: new Dictionary<string, string>
+                    { ["MOCK_ACP_WORKER_OPTIONS"] = "1", ["MOCK_ACP_THOUGHT_DELAY_MS"] = "2000" })
+            }
+        });
+        await using var session = await runtime.OpenSessionAsync(new HarnessLaunchSpec("acp:opencode", null,
+            _fixture.WorkspaceDir, null, null, new Dictionary<string, McpServerConfig>()), default);
+        var nativeId = session.NativeThreadId;
+        using var cancellation = new CancellationTokenSource();
+        if (cancelCaller) cancellation.CancelAfter(200);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => session.ConfigureAsync(
+            SessionConfiguration.FromNullable("large", "deep"), cancellation.Token));
+        Assert.Null(session.ConfigurationState);
+        Assert.Null(session.ContextUsageRevision);
+        Assert.Equal(nativeId, session.NativeThreadId);
+        await Assert.ThrowsAsync<SessionConfigurationException>(() => DrainTurnAsync(session, new("blocked", "after-timeout")));
+    }
+
+    [Fact]
+    public async Task PermissionReopenOutcomeRequiresTheCompleteSelectionToBeExpressible()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var executable = Path.Combine(_fixture.RootDir, "agy");
+        File.WriteAllText(executable, $"#!/bin/sh\nexec \"{_fixture.MockAcpPath}\" \"$@\"\n");
+        File.SetUnixFileMode(executable, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        await using var runtime = new AgentRuntime(new AgentRuntimeOptions
+        {
+            ProviderOverrides = new Dictionary<string, ProviderCommandOverride>
+            {
+                ["acp:antigravity"] = new(executable, Env: new Dictionary<string, string>
+                    { ["MOCK_ACP_WORKER_OPTIONS"] = "1" })
+            }
+        });
+        await using var session = await runtime.OpenSessionAsync(new HarnessLaunchSpec("acp:antigravity", null,
+            _fixture.WorkspaceDir, null, null, new Dictionary<string, McpServerConfig>()), default);
+        Assert.IsType<SessionConfigurationOutcome.Unsupported>(await session.ConfigureAsync(SessionConfiguration.FromNullable(null, "deep", "bypassPermissions")));
+        Assert.IsType<SessionConfigurationOutcome.Rejected>(await session.ConfigureAsync(SessionConfiguration.FromNullable("large", "invalid", "bypassPermissions")));
+        Assert.IsType<SessionConfigurationOutcome.RequiresReopen>(await session.ConfigureAsync(SessionConfiguration.FromNullable("large", "deep", "bypassPermissions")));
+    }
+
+    [Fact]
+    public async Task EmptyThoughtAcknowledgementIsCompatibleAndConfirmsCompleteSelection()
+    {
+        await using var runtime = CreateRuntime(new Dictionary<string, string>
+        {
+            ["MOCK_ACP_WORKER_OPTIONS"] = "1", ["MOCK_ACP_THOUGHT_RESULT"] = "{}"
+        });
+        await using var session = await runtime.OpenSessionAsync(new HarnessLaunchSpec("acp:opencode", null, _fixture.WorkspaceDir,
+            null, null, new Dictionary<string, McpServerConfig>(), ReasoningEffort: "deep"), default);
+        Assert.Equal("deep", session.ConfigurationState?.NativeEffort);
+        Assert.IsType<SessionSelection.ProviderDefault>(session.ConfigurationState!.Selection.Model);
+    }
+
+    [Fact]
+    public async Task ResumeCannotInferDefaultModelFromLoadedCurrentSelection()
+    {
+        await using var runtime = CreateRuntime(new Dictionary<string, string> { ["MOCK_ACP_WORKER_OPTIONS"] = "1" });
+        var error = await Assert.ThrowsAsync<SessionConfigurationException>(() => runtime.OpenSessionAsync(new HarnessLaunchSpec(
+            "acp:opencode", null, _fixture.WorkspaceDir, "saved-thread", null, new Dictionary<string, McpServerConfig>(), ReasoningEffort: "deep"), default));
+        var unsupported = Assert.IsType<SessionConfigurationOutcome.Unsupported>(error.Outcome);
+        Assert.Equal(ConfigurationDimension.Model, unsupported.Dimension);
+    }
+
+    [Fact]
+    public async Task OrdinaryThoughtLevelRejectsContradictoryAcknowledgement()
+    {
+        await using var runtime = CreateRuntime(new Dictionary<string, string>
+        {
+            ["MOCK_ACP_WORKER_OPTIONS"] = "1",
+            ["MOCK_ACP_REJECT_WORKER_EFFORT"] = "1"
+        });
+        await using var session = await runtime.OpenSessionAsync(new HarnessLaunchSpec(
+            "acp:opencode", null, _fixture.WorkspaceDir, null, null,
+            new Dictionary<string, McpServerConfig>()), CancellationToken.None);
+        Assert.IsNotType<SessionConfigurationOutcome.Applied>(await session.ConfigureAsync(SessionConfiguration.FromNullable("large", "deep")));
+    }
+
     [Fact]
     public async Task NullLaunchReadsWorkspaceCatalogueAndKeepsWorkspaceDefault()
     {
@@ -126,7 +245,7 @@ public sealed class AcpProviderTests : IDisposable
             Assert.Equal("Read first", status.PermissionModes![0].Description);
         }
         await using var session = await runtime.OpenSessionAsync(new HarnessLaunchSpec(
-            "acp:antigravity", null, _fixture.WorkspaceDir, resume, null,
+            "acp:antigravity", resume is null ? null : "saved-model", _fixture.WorkspaceDir, resume, null,
             new Dictionary<string, McpServerConfig>(), PermissionMode: "execute"), CancellationToken.None);
         Assert.Equal(["safe", "execute"], session.AvailablePermissionModes.Select(mode => mode.Id));
         var calls = File.ReadAllLines(log).Select(line => JsonSerializer.Deserialize<JsonElement>(line)).ToArray();
@@ -207,10 +326,10 @@ public sealed class AcpProviderTests : IDisposable
         await using var session = await runtime.OpenSessionAsync(new HarnessLaunchSpec(
             "acp:opencode", model.Model, _fixture.WorkspaceDir, null, null,
             new Dictionary<string, McpServerConfig>(), ReasoningEffort: effort), CancellationToken.None);
-        Assert.True(await session.TrySetModelAsync(model.Model, effort));
+        Assert.IsType<SessionConfigurationOutcome.Applied>(await session.ConfigureAsync(SessionConfiguration.FromNullable(model.Model, effort)));
         var calls = File.ReadAllLines(log).Select(line => JsonSerializer.Deserialize<JsonElement>(line))
             .Where(call => call.GetProperty("method").GetString() == "session/set_model").ToArray();
-        Assert.Equal(2, calls.Length);
+        Assert.Single(calls);
         Assert.All(calls, call => Assert.Equal(expected, call.GetProperty("params").GetProperty("modelId").GetString()));
     }
 
@@ -232,14 +351,14 @@ public sealed class AcpProviderTests : IDisposable
         await using var session = await runtime.OpenSessionAsync(new HarnessLaunchSpec(
             "acp:opencode", null, _fixture.WorkspaceDir, null, null,
             new Dictionary<string, McpServerConfig>(), ReasoningEffort: "low"), CancellationToken.None);
-        Assert.True(await session.TrySetModelAsync(null, "high"));
-        Assert.True(await session.TrySetModelAsync("vendor/model"));
-        Assert.True(await session.TrySetModelAsync("  ", " low "));
-        Assert.False(await session.TrySetModelAsync(null, "unsupported"));
-        Assert.False(await session.TrySetModelAsync(null, null));
+        Assert.IsType<SessionConfigurationOutcome.Applied>(await session.ConfigureAsync(SessionConfiguration.FromNullable(null, "high")));
+        Assert.IsType<SessionConfigurationOutcome.Applied>(await session.ConfigureAsync(SessionConfiguration.FromNullable("vendor/model")));
+        Assert.IsType<SessionConfigurationOutcome.Applied>(await session.ConfigureAsync(SessionConfiguration.FromNullable("  ", " low ")));
+        Assert.IsNotType<SessionConfigurationOutcome.Applied>(await session.ConfigureAsync(SessionConfiguration.FromNullable(null, "unsupported")));
+        Assert.IsType<SessionConfigurationOutcome.Applied>(await session.ConfigureAsync(SessionConfiguration.FromNullable(null, null)));
         var calls = File.ReadAllLines(log).Select(line => JsonSerializer.Deserialize<JsonElement>(line))
             .Where(call => call.GetProperty("method").GetString() == (configFallback ? "session/set_config_option" : "session/set_model")).ToArray();
-        Assert.Equal(new[] { "vendor/model-low", "vendor/model-high", "vendor/model-high", "vendor/model-low" },
+        Assert.Equal(new[] { "vendor/model-low", "vendor/model-high", "vendor/model-high", "vendor/model-low", "vendor/model-high" },
             calls.Select(call => call.GetProperty("params").GetProperty(configFallback ? "value" : "modelId").GetString()));
     }
 
@@ -254,10 +373,12 @@ public sealed class AcpProviderTests : IDisposable
             ["MOCK_ACP_LOG"] = log,
             ["MOCK_ACP_MODELS"] = payload
         });
-        await using var session = await runtime.OpenSessionAsync(new HarnessLaunchSpec(
-            "acp:opencode", null, _fixture.WorkspaceDir, null, null,
-            new Dictionary<string, McpServerConfig>(), ReasoningEffort: "high"), CancellationToken.None);
-        Assert.False(await session.TrySetModelAsync(null, "high"));
+        var spec = new HarnessLaunchSpec("acp:opencode", null, _fixture.WorkspaceDir, null, null,
+            new Dictionary<string, McpServerConfig>(), ReasoningEffort: "high");
+        var error = await Assert.ThrowsAsync<SessionConfigurationException>(() => runtime.OpenSessionAsync(spec, default));
+        Assert.IsType<SessionConfigurationOutcome.Unsupported>(error.Outcome);
+        await using var session = await runtime.OpenSessionAsync(spec with { ReasoningEffort = null }, default);
+        Assert.IsType<SessionConfigurationOutcome.Unsupported>(await session.ConfigureAsync(SessionConfiguration.FromNullable(null, "high")));
         Assert.DoesNotContain(File.ReadAllLines(log), line => line.Contains("session/set_", StringComparison.Ordinal));
     }
 
@@ -282,13 +403,13 @@ public sealed class AcpProviderTests : IDisposable
             new Dictionary<string, McpServerConfig>(), ReasoningEffort: "deep"), CancellationToken.None);
         var deepRevision = session.ContextUsageRevision;
         Assert.NotNull(deepRevision);
-        Assert.True(await session.TrySetModelAsync(null, "normal"));
+        Assert.IsType<SessionConfigurationOutcome.Applied>(await session.ConfigureAsync(SessionConfiguration.FromNullable(null, "normal")));
         Assert.NotEqual(deepRevision, session.ContextUsageRevision);
         var normalRevision = session.ContextUsageRevision;
-        Assert.True(await session.TrySetModelAsync(null, "normal"));
+        Assert.IsType<SessionConfigurationOutcome.Applied>(await session.ConfigureAsync(SessionConfiguration.FromNullable(null, "normal")));
         Assert.Equal(normalRevision, session.ContextUsageRevision);
-        Assert.False(await session.TrySetModelAsync(null, "unsupported"));
-        Assert.False(await session.TrySetModelAsync(null, null));
+        Assert.IsNotType<SessionConfigurationOutcome.Applied>(await session.ConfigureAsync(SessionConfiguration.FromNullable(null, "unsupported")));
+        Assert.IsType<SessionConfigurationOutcome.Applied>(await session.ConfigureAsync(SessionConfiguration.FromNullable(null, null)));
         var calls = File.ReadAllLines(log).Select(line => JsonSerializer.Deserialize<JsonElement>(line))
             .Where(call => call.GetProperty("method").GetString() == "session/set_config_option" &&
                 call.GetProperty("params").GetProperty("configId").GetString() == "worker-thought").ToArray();
@@ -316,8 +437,8 @@ public sealed class AcpProviderTests : IDisposable
         await using var session = await runtime.OpenSessionAsync(new HarnessLaunchSpec(
             "acp:opencode", null, _fixture.WorkspaceDir, null, null,
             new Dictionary<string, McpServerConfig>(), ReasoningEffort: "deep"), CancellationToken.None);
-        Assert.True(await session.TrySetModelAsync(null, "normal"));
-        Assert.False(await session.TrySetModelAsync(null, null));
+        Assert.IsType<SessionConfigurationOutcome.Applied>(await session.ConfigureAsync(SessionConfiguration.FromNullable(null, "normal")));
+        Assert.IsType<SessionConfigurationOutcome.Applied>(await session.ConfigureAsync(SessionConfiguration.FromNullable(null, null)));
         var calls = File.ReadAllLines(log).Select(line => JsonSerializer.Deserialize<JsonElement>(line)).ToArray();
         Assert.DoesNotContain(calls, call => call.GetProperty("method").GetString() == "session/set_model");
         Assert.Equal(new[] { "deep", "normal" }, calls
@@ -339,18 +460,20 @@ public sealed class AcpProviderTests : IDisposable
             ["MOCK_ACP_WORKER_OPTIONS"] = "1",
             ["MOCK_ACP_NO_SET_MODEL"] = configFallback ? "1" : "0"
         });
-        await using var session = await runtime.OpenSessionAsync(new HarnessLaunchSpec(
-            "acp:opencode", onOpen ? "large" : null, _fixture.WorkspaceDir, "resumed-session", null,
-            new Dictionary<string, McpServerConfig>()), CancellationToken.None);
-        if (!onOpen) Assert.True(await session.TrySetModelAsync("large", null));
-
-        var calls = File.ReadAllLines(log).Select(line => JsonSerializer.Deserialize<JsonElement>(line)).ToArray();
-        var modelCall = Assert.Single(calls, call => call.GetProperty("method").GetString() ==
-            (configFallback ? "session/set_config_option" : "session/set_model"));
-        Assert.Equal("large", modelCall.GetProperty("params").GetProperty(configFallback ? "value" : "modelId").GetString());
-        if (configFallback) Assert.Equal("model", modelCall.GetProperty("params").GetProperty("configId").GetString());
-        Assert.DoesNotContain(calls, call => call.GetProperty("method").GetString() == "session/set_config_option" &&
-            call.GetProperty("params").GetProperty("configId").GetString() == "worker-thought");
+        var spec = new HarnessLaunchSpec("acp:opencode", "large", _fixture.WorkspaceDir, "resumed-session", null,
+            new Dictionary<string, McpServerConfig>());
+        if (onOpen)
+        {
+            var error = await Assert.ThrowsAsync<SessionConfigurationException>(() => runtime.OpenSessionAsync(spec, default));
+            Assert.Equal(ConfigurationDimension.Effort, Assert.IsType<SessionConfigurationOutcome.Unsupported>(error.Outcome).Dimension);
+        }
+        else
+        {
+            await using var session = await runtime.OpenSessionAsync(spec with { ReasoningEffort = "deep" }, default);
+            var before = File.ReadAllLines(log).Length;
+            Assert.IsType<SessionConfigurationOutcome.Unsupported>(await session.ConfigureAsync(SessionConfiguration.FromNullable("large")));
+            Assert.Equal(before, File.ReadAllLines(log).Length);
+        }
     }
 
     [Theory]
@@ -367,16 +490,15 @@ public sealed class AcpProviderTests : IDisposable
             ["MOCK_ACP_WORKER_OPTIONS"] = "1"
         });
         await using var session = await runtime.OpenSessionAsync(new HarnessLaunchSpec(
-            "acp:opencode", null, _fixture.WorkspaceDir, "resumed-session", null,
-            new Dictionary<string, McpServerConfig>(), ReasoningEffort: onOpen ? effort : null), CancellationToken.None);
-        if (!onOpen) Assert.True(await session.TrySetModelAsync(null, effort));
+            "acp:opencode", "large", _fixture.WorkspaceDir, "resumed-session", null,
+            new Dictionary<string, McpServerConfig>(), ReasoningEffort: onOpen ? effort : "deep"), CancellationToken.None);
+        if (!onOpen) Assert.IsType<SessionConfigurationOutcome.Applied>(await session.ConfigureAsync(SessionConfiguration.FromNullable("large", effort)));
         var before = File.ReadAllLines(log).Length;
-        Assert.False(await session.TrySetModelAsync("large", null));
+        Assert.IsType<SessionConfigurationOutcome.Unsupported>(await session.ConfigureAsync(SessionConfiguration.FromNullable(null, effort)));
         Assert.Equal(before, File.ReadAllLines(log).Length);
-
-        Assert.True(await session.TrySetModelAsync("small", effort));
+        Assert.IsType<SessionConfigurationOutcome.Applied>(await session.ConfigureAsync(SessionConfiguration.FromNullable("small", effort)));
         before = File.ReadAllLines(log).Length;
-        Assert.False(await session.TrySetModelAsync("large", null));
+        Assert.IsType<SessionConfigurationOutcome.Unsupported>(await session.ConfigureAsync(SessionConfiguration.FromNullable("large")));
         Assert.Equal(before, File.ReadAllLines(log).Length);
     }
 
@@ -390,11 +512,10 @@ public sealed class AcpProviderTests : IDisposable
             ["MOCK_ACP_WORKER_OPTIONS"] = "1"
         });
         await using var session = await runtime.OpenSessionAsync(new HarnessLaunchSpec(
-            "acp:opencode", null, _fixture.WorkspaceDir, "resumed-session", null,
-            new Dictionary<string, McpServerConfig>()), CancellationToken.None);
-        Assert.True(await session.TrySetModelAsync("small", "deep"));
+            "acp:opencode", "large", _fixture.WorkspaceDir, "resumed-session", null,
+            new Dictionary<string, McpServerConfig>(), ReasoningEffort: "deep"), CancellationToken.None);
         var before = File.ReadAllLines(log).Length;
-        Assert.False(await session.TrySetModelAsync("large", null));
+        Assert.IsType<SessionConfigurationOutcome.Unsupported>(await session.ConfigureAsync(SessionConfiguration.FromNullable("large")));
         Assert.Equal(before, File.ReadAllLines(log).Length);
     }
 
@@ -417,7 +538,7 @@ public sealed class AcpProviderTests : IDisposable
         await using var session = await runtime.OpenSessionAsync(new HarnessLaunchSpec(
             "acp:opencode", null, _fixture.WorkspaceDir, null, null,
             new Dictionary<string, McpServerConfig>(), ReasoningEffort: "deep"), CancellationToken.None);
-        Assert.True(await session.TrySetModelAsync("large", "deep"));
+        Assert.IsType<SessionConfigurationOutcome.Applied>(await session.ConfigureAsync(SessionConfiguration.FromNullable("large", "deep")));
         var calls = File.ReadAllLines(log).Select(line => JsonSerializer.Deserialize<JsonElement>(line));
         Assert.Equal(new[] { "deep", "deep" }, calls
             .Where(call => call.GetProperty("method").GetString() == "session/set_config_option" &&
@@ -441,7 +562,7 @@ public sealed class AcpProviderTests : IDisposable
             "acp:opencode", "large", _fixture.WorkspaceDir, null, null,
             new Dictionary<string, McpServerConfig>(), ReasoningEffort: "deep"), CancellationToken.None);
 
-        Assert.True(await session.TrySetModelAsync("  ", "normal"));
+        Assert.IsType<SessionConfigurationOutcome.Applied>(await session.ConfigureAsync(SessionConfiguration.FromNullable("  ", "normal")));
 
         var calls = File.ReadAllLines(log).Select(line => JsonSerializer.Deserialize<JsonElement>(line))
             .Where(call => call.GetProperty("method").GetString() ==
@@ -468,7 +589,7 @@ public sealed class AcpProviderTests : IDisposable
             "acp:opencode", "large", _fixture.WorkspaceDir, null, null,
             new Dictionary<string, McpServerConfig>(), ReasoningEffort: "deep"), CancellationToken.None);
         var before = File.ReadAllLines(log).Length;
-        Assert.False(await session.TrySetModelAsync(null, "normal"));
+        Assert.IsNotType<SessionConfigurationOutcome.Applied>(await session.ConfigureAsync(SessionConfiguration.FromNullable(null, "normal")));
         Assert.Equal(before, File.ReadAllLines(log).Length);
     }
 
@@ -487,9 +608,9 @@ public sealed class AcpProviderTests : IDisposable
             "acp:opencode", "small", _fixture.WorkspaceDir, null, null,
             new Dictionary<string, McpServerConfig>()), CancellationToken.None);
         Assert.DoesNotContain(File.ReadAllLines(log), line => line.Contains("worker-thought", StringComparison.Ordinal));
-        Assert.True(await session.TrySetModelAsync("small", "deep"));
-        Assert.True(await session.TrySetModelAsync(model, effort));
-        Assert.True(await session.TrySetModelAsync(model, null));
+        Assert.IsType<SessionConfigurationOutcome.Applied>(await session.ConfigureAsync(SessionConfiguration.FromNullable("small", "deep")));
+        Assert.IsType<SessionConfigurationOutcome.Applied>(await session.ConfigureAsync(SessionConfiguration.FromNullable(model, effort)));
+        Assert.IsType<SessionConfigurationOutcome.Applied>(await session.ConfigureAsync(SessionConfiguration.FromNullable(model, null)));
 
         var calls = File.ReadAllLines(log).Select(line => JsonSerializer.Deserialize<JsonElement>(line))
             .Where(call => call.GetProperty("method").GetString() == "session/set_config_option" &&
@@ -519,13 +640,20 @@ public sealed class AcpProviderTests : IDisposable
             ["MOCK_ACP_POST_SESSION_DELAY_MS"] = "300",
             ["MOCK_ACP_POST_SESSION_USAGE"] = """{"used":100,"size":200000}"""
         });
+        if (modelUnavailable && !thoughtLevel)
+        {
+            await Assert.ThrowsAsync<SessionConfigurationException>(() => runtime.OpenSessionAsync(new HarnessLaunchSpec(
+                "acp:opencode", null, _fixture.WorkspaceDir, null, null,
+                new Dictionary<string, McpServerConfig>(), ReasoningEffort: "medium"), default));
+            return;
+        }
         await using var session = await runtime.OpenSessionAsync(new HarnessLaunchSpec(
             "acp:opencode", null, _fixture.WorkspaceDir, null, null,
             new Dictionary<string, McpServerConfig>(), ReasoningEffort: thoughtLevel ? "deep" : modelUnavailable ? "medium" : "high"), CancellationToken.None);
         if (switchModel)
         {
-            Assert.True(await session.TrySetModelAsync(thoughtLevel ? "large" : "gemini-4-carbon", thoughtLevel ? "deep" : "high"));
-            Assert.True(await session.TrySetModelAsync("  ", thoughtLevel ? "normal" : "medium"));
+            Assert.IsType<SessionConfigurationOutcome.Applied>(await session.ConfigureAsync(SessionConfiguration.FromNullable(thoughtLevel ? "large" : "gemini-4-carbon", thoughtLevel ? "deep" : "high")));
+            Assert.IsType<SessionConfigurationOutcome.Applied>(await session.ConfigureAsync(SessionConfiguration.FromNullable("  ", thoughtLevel ? "normal" : "medium")));
         }
 
         var received = new TaskCompletionSource<IdleContextUsage>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -575,21 +703,23 @@ public sealed class AcpProviderTests : IDisposable
                 })
             }
         });
-        await using var session = await runtime.OpenSessionAsync(new HarnessLaunchSpec(
-            "acp:custom", "selected-model", _fixture.WorkspaceDir, resumeId, null,
-            new Dictionary<string, McpServerConfig>()), CancellationToken.None);
-        Assert.Equal(error == 0, await session.TrySetModelAsync("another-model"));
-        Assert.False(await session.TrySetModelAsync(null));
+        var spec = new HarnessLaunchSpec("acp:custom", "selected-model", _fixture.WorkspaceDir, resumeId, null,
+            new Dictionary<string, McpServerConfig>());
+        if (error != 0)
+        {
+            await Assert.ThrowsAsync<SessionConfigurationException>(() => runtime.OpenSessionAsync(spec, default));
+            Assert.DoesNotContain(File.ReadAllLines(log), line => line.Contains("session/prompt", StringComparison.Ordinal));
+            return;
+        }
+        await using var session = await runtime.OpenSessionAsync(spec, default);
+        Assert.IsType<SessionConfigurationOutcome.Applied>(await session.ConfigureAsync(SessionConfiguration.FromNullable("another-model")));
         var calls = File.ReadAllLines(log).Select(line => JsonSerializer.Deserialize<JsonElement>(line)).ToArray();
-        var expectedMethods = error == -32601
-            ? new[] { "initialize", resumeId is null ? "session/new" : "session/load", "session/set_model", "session/set_config_option", "session/set_model", "session/set_config_option" }
-            : new[] { "initialize", resumeId is null ? "session/new" : "session/load", "session/set_model", "session/set_model" };
-        Assert.Equal(expectedMethods,
+        Assert.Equal(new[] { "initialize", resumeId is null ? "session/new" : "session/load", "session/set_model", "session/set_model" },
             calls.Select(call => call.GetProperty("method").GetString()));
         Assert.False(calls[1].GetProperty("params").TryGetProperty("model", out _));
-        var selection = calls[2].GetProperty("params");
-        Assert.Equal(session.NativeThreadId, selection.GetProperty("sessionId").GetString());
-        Assert.Equal("selected-model", selection.GetProperty("modelId").GetString());
+        Assert.Equal("selected-model", calls[2].GetProperty("params").GetProperty("modelId").GetString());
+        if (resumeId is not null)
+            Assert.IsType<SessionConfigurationOutcome.Unsupported>(await session.ConfigureAsync(SessionConfiguration.FromNullable(null)));
     }
 
     [Theory]
@@ -730,7 +860,7 @@ public sealed class AcpProviderTests : IDisposable
             ["MOCK_ACP_DISABLE_LOAD"] = "1",
             ["MOCK_ACP_RESUME"] = supportsResume ? "1" : "0",
         });
-        var spec = new HarnessLaunchSpec("acp:antigravity", null, _fixture.WorkspaceDir, "stored-session", null,
+        var spec = new HarnessLaunchSpec("acp:antigravity", "saved-model", _fixture.WorkspaceDir, "stored-session", null,
             MockCliFixture.CreateSampleMcpServers());
         if (!supportsResume)
         {
@@ -1123,7 +1253,7 @@ public sealed class AcpProviderTests : IDisposable
         var sampled = await DrainTurnAsync(session, new TurnInput("CONTEXT_ACP_USED", "sample"));
         Assert.NotNull(Assert.Single(sampled.OfType<UnifiedAgentEvent.TurnCompleted>()).Usage);
         if (switchModel)
-            Assert.True(await session.TrySetModelAsync("next-model"));
+            Assert.IsType<SessionConfigurationOutcome.Applied>(await session.ConfigureAsync(SessionConfiguration.FromNullable("next-model")));
 
         Assert.True(session.SupportsNativeCompact);
         var compacted = await session.CompactAsync(CancellationToken.None);
@@ -1190,7 +1320,7 @@ public sealed class AcpProviderTests : IDisposable
 
         await using var session = await runtime.OpenSessionAsync(new HarnessLaunchSpec(
             "acp:antigravity",
-            null,
+            "saved-model",
             _fixture.WorkspaceDir,
             "acp_sess_no_compact",
             null,
@@ -1242,7 +1372,7 @@ public sealed class AcpProviderTests : IDisposable
             Assert.Empty(received);
         }
 
-        Assert.True(await session.TrySetModelAsync("gemini-4-carbon-high"));
+        Assert.IsType<SessionConfigurationOutcome.Applied>(await session.ConfigureAsync(SessionConfiguration.FromNullable("gemini-4-carbon-high")));
         var switched = await switchedTcs.Task.WaitAsync(TimeSpan.FromSeconds(3));
         Assert.Equal(session.ContextUsageRevision, switched.ContextUsageRevision);
         Assert.Equal(100, switched.Usage.EffectiveUsedTokens);
@@ -1435,7 +1565,7 @@ public sealed class AcpProviderTests : IDisposable
         var first = await DrainTurnAsync(session, new TurnInput("CONTEXT_ACP_USED", "first"));
         var original = Assert.Single(first.OfType<UnifiedAgentEvent.TurnCompleted>());
         Assert.Equal(1_048_576, original.Usage!.ContextWindowTokens);
-        Assert.True(await session.TrySetModelAsync("vendor/model", "high"));
+        Assert.IsType<SessionConfigurationOutcome.Applied>(await session.ConfigureAsync(SessionConfiguration.FromNullable("vendor/model", "high")));
         var second = await DrainTurnAsync(session, new TurnInput("ACP_NO_SIZE_USAGE", "second"));
         var completed = Assert.Single(second.OfType<UnifiedAgentEvent.TurnCompleted>());
         Assert.Null(completed.Usage!.ContextWindowTokens);

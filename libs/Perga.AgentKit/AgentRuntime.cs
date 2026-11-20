@@ -29,6 +29,7 @@ public sealed class AgentRuntime : IAgentRuntime
     private readonly SemaphoreSlim _probeLock = new(1, 1);
     private IReadOnlyList<ProviderStatus>? _cachedProbeStatuses;
     private DateTimeOffset _cachedProbeExpiresAt = DateTimeOffset.MinValue;
+    private readonly ConcurrentDictionary<string, bool> _claudeEffortSupport = new(StringComparer.Ordinal);
     private int _disposed;
 
     public AgentRuntime()
@@ -211,7 +212,7 @@ public sealed class AgentRuntime : IAgentRuntime
                 normalizedSpec,
                 env,
                 UnregisterSession,
-                ct).ConfigureAwait(false);
+                ct, await DetectClaudeEffortSupportAsync(effectiveCmd, env, normalizedSpec.Cwd, normalizedSpec.Sandbox, normalizedSpec.OverlayMounts, ct).ConfigureAwait(false), _options.HandshakeTimeout).ConfigureAwait(false);
         }
         else if (provider.StartsWith("acp:", StringComparison.OrdinalIgnoreCase))
         {
@@ -290,6 +291,49 @@ public sealed class AgentRuntime : IAgentRuntime
 
     private void UnregisterSession(IAgentSession session) =>
         _activeSessions.TryRemove(session, out _);
+
+    private async Task<bool> DetectClaudeEffortSupportAsync(ProviderCommandOverride command, IReadOnlyDictionary<string, string> environment,
+        string cwd, OsSandboxMode sandbox, IReadOnlyList<OverlayMountSpec>? overlayMounts, CancellationToken ct)
+    {
+        var invocation = _sandboxWrapper.Wrap(new CommandInvocation(command.FileName,
+            [.. command.PrependArgs ?? [], "--help"], cwd, environment), sandbox, overlayMounts);
+        var key = JsonSerializer.Serialize(new { invocation, sandbox, overlayMounts,
+            Environment = environment.OrderBy(pair => pair.Key).ToArray() });
+        if (_claudeEffortSupport.TryGetValue(key, out var cached)) return cached;
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeout.CancelAfter(_options.ProbeTimeout);
+        var start = new ProcessStartInfo(invocation.FileName)
+        {
+            WorkingDirectory = invocation.WorkingDirectory,
+            RedirectStandardOutput = true, RedirectStandardError = true, RedirectStandardInput = true,
+            UseShellExecute = false, CreateNoWindow = true
+        };
+        start.Environment.Clear();
+        foreach (var pair in invocation.Environment) start.Environment[pair.Key] = pair.Value;
+        foreach (var arg in invocation.Arguments) start.ArgumentList.Add(arg);
+        using var process = new Process { StartInfo = start };
+        var started = false;
+        try
+        {
+            started = process.Start();
+            process.StandardInput.Close();
+            var stdout = process.StandardOutput.ReadToEndAsync(timeout.Token);
+            var stderr = process.StandardError.ReadToEndAsync(timeout.Token);
+            await process.WaitForExitAsync(timeout.Token).ConfigureAwait(false);
+            var help = await stdout.ConfigureAwait(false) + "\n" + await stderr.ConfigureAwait(false);
+            var supported = process.ExitCode == 0 && System.Text.RegularExpressions.Regex.IsMatch(help, @"(?m)^\s*--effort(?:\s|[=<])");
+            _claudeEffortSupport[key] = supported;
+            return supported;
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            return false;
+        }
+        finally
+        {
+            if (started && !process.HasExited) process.Kill(entireProcessTree: true);
+        }
+    }
 
     private ProviderCommandOverride ResolveCommandSpec(string provider, string defaultExecutable)
     {
@@ -505,6 +549,16 @@ public sealed class AgentRuntime : IAgentRuntime
                 catalog = BuildSimpleModelCatalog(models);
             }
 
+            SessionConfigurationCapabilities configurationCapabilities = SessionConfigurationCapabilities.Unknown;
+            if (provider == "codex") configurationCapabilities = SessionConfigurationCapabilities.LaunchOnly;
+            else if (provider == "claude")
+            {
+                var supportsEffort = await DetectClaudeEffortSupportAsync(cmdSpec with { FileName = resolvedExe }, env, Directory.GetCurrentDirectory(), OsSandboxMode.None, null, ct).ConfigureAwait(false);
+                configurationCapabilities = SessionConfigurationCapabilities.LaunchOnly with
+                {
+                    Effort = SessionConfigurationCapabilities.LaunchDimension(supportsEffort ? ConfigurationSupport.Supported : ConfigurationSupport.Unsupported)
+                };
+            }
             return new ProviderStatus(
                 provider,
                 Available: true,
@@ -512,7 +566,7 @@ public sealed class AgentRuntime : IAgentRuntime
                 Reason: null,
                 Models: models,
                 ModelCatalog: catalog,
-                PermissionModes: permissionModes);
+                PermissionModes: permissionModes, ConfigurationCapabilities: configurationCapabilities);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {

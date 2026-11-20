@@ -118,7 +118,8 @@ public sealed record ProviderStatus(
     string? Reason,
     IReadOnlyList<string> Models,
     IReadOnlyList<ProviderModelInfo>? ModelCatalog = null,
-    IReadOnlyList<PermissionModeOption>? PermissionModes = null);
+    IReadOnlyList<PermissionModeOption>? PermissionModes = null,
+    [property: System.Text.Json.Serialization.JsonIgnore] SessionConfigurationCapabilities? ConfigurationCapabilities = null);
 
 public sealed record NativeCompactResult(
     TokenUsage? Usage = null,
@@ -133,8 +134,6 @@ public sealed record IdleContextUsage(
     long? CompletedPromptId = null);
 
 public enum SteerDelivery { Accepted, Declined, Unconfirmed }
-
-public sealed record SessionRuntimeSettings(string? Model, string? ReasoningEffort, string? PermissionMode);
 
 public interface IAgentSession : IAsyncDisposable
 {
@@ -174,12 +173,9 @@ public interface IAgentSession : IAsyncDisposable
     Func<Task>? TryClaimApprovalResponse(
         string requestId, bool approved, string? selectedOptionId, string? reason, CancellationToken ct) =>
         () => RespondApprovalAsync(requestId, approved, selectedOptionId, reason, ct);
-    // Called at every idle reuse boundary, including unchanged desired settings.
-    // Validate against current provider constraints before returning true.
-    // False requires disposal and resume/reopen;
-    // a rejected setting throws, and the caller must not dispatch on the old settings.
-    Task<bool> TryReconcileSettingsAsync(SessionRuntimeSettings settings, CancellationToken ct) => Task.FromResult(false);
-    Task<bool> TrySetModelAsync(string? model, string? reasoningEffort = null, CancellationToken ct = default);
+    SessionConfigurationCapabilities ConfigurationCapabilities { get; }
+    ConfirmedConfiguration? ConfigurationState { get; }
+    Task<SessionConfigurationOutcome> ConfigureAsync(SessionConfiguration configuration, CancellationToken ct = default);
     Task<SteerDelivery> SteerAsync(string turnCorrelationId, string message, CancellationToken ct);
 }
 
