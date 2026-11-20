@@ -457,7 +457,10 @@ public sealed partial class TrackActor
                 UnknownReason = outcome.Status == "unknown" ? (active.Control.StopTimedOut ? "stop_timeout" : "stream_lost") : null,
                 UnknownTurnId = outcome.Status == "unknown" ? active.TurnDto.Id : null,
                 UnknownLastError = null, ReconnectInvalidated = false,
-                UpdatedAtMs = endNow
+                UpdatedAtMs = endNow,
+                LastNotifiableTurnAtMs = outcome.Status is "completed" or "failed"
+                    ? Math.Max(currentSession.LastNotifiableTurnAtMs ?? 0, endNow)
+                    : currentSession.LastNotifiableTurnAtMs
             };
             var completedTurn = active.TurnDto with
             {

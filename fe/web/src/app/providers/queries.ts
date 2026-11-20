@@ -36,7 +36,7 @@ import {
   staleRevBodySchema, trackReportSeriesOperation, type ResolvedSeries, type SeriesDetail,
 } from '../../../../core/domain/report-series.ts';
 import { trackSourceOperation, type TrackSourceDetail } from '../../../../core/domain/report-source.ts';
-import { dismissActivityItemOperation, type AskId, type AskQuestion } from '../../../../core/domain/activity.ts';
+import { type AskId, type AskQuestion } from '../../../../core/domain/activity.ts';
 import { answerAskOperation } from '../../../../core/domain/ask.ts';
 import { decideApprovalOperation, type PendingApproval } from '../../../../core/domain/approval.ts';
 import { probeFailureText, readErrorText } from '../../../../core/domain/read-failure.ts';
@@ -838,8 +838,6 @@ export type TrackMutations = Readonly<{
   createCard: (trackId: string, body: NewCardBody, idempotencyKey: string) => Promise<CardWire>;
   removeCard: (trackId: string, cardId: string, signal?: AbortSignal) => Promise<void>;
   remove: (trackId: string, areaId: string, signal?: AbortSignal) => Promise<void>;
-  /** Dismiss one notification item by its kernel key. A `404` rejects too: `DISMISS_FAILURES` reads it as done. */
-  dismissActivityItem: (trackId: string, key: string) => Promise<void>;
   /** Answer one durable ask, one answer per question in order. A `409` rejects too: `ANSWER_ASK_FAILURES` reads it as done. */
   answerAsk: (trackId: string, askId: AskId, answers: readonly AskAnswer[], questions?: readonly AskQuestion[]) => Promise<void>;
   /** Decide one live execution-scoped approval by structured option ID. */
@@ -958,12 +956,6 @@ export function useTrackMutations(transport: ApiTransportPort, unauthorized: Una
       void cancelThenInvalidate(client, queryKeys.overlaysByKind('track'));
     },
   });
-  /* No cache write and no invalidation: the projector's `overlay.set` is what drops the row, and a
-   * refetch fired now would race the recompute and read the item back. */
-  const dismissItem = useRecoveryMutation(transport, {
-    mutationFn: ({ trackId, key }: { trackId: string; key: string }, transport: ApiTransportPort) =>
-      runOperation(transport, dismissActivityItemOperation(trackId, key), unauthorized),
-  });
   /* An answer may apply a lifecycle action; refresh detail/lists even after an uncertain response.
    * The projector's overlay remains authoritative for removing the question itself. */
   const answerAsk = useRecoveryMutation(transport, {
@@ -1010,7 +1002,6 @@ export function useTrackMutations(transport: ApiTransportPort, unauthorized: Una
     setPinned: (trackId, areaId, pinned, nowMs) =>
       patchTrack(trackId, areaId, { pinned_at: pinned ? nowMs : null }),
     remove: async (trackId, areaId, signal) => { await remove.mutateAsync({ trackId, areaId, signal }); },
-    dismissActivityItem: async (trackId, key) => { await dismissItem.mutateAsync({ trackId, key }); },
     answerAsk: async (trackId, askId, answers, questions) => { await answerAsk.mutateAsync({ trackId, askId, answers, questions }); },
     decideApproval: async (trackId, approval, optionId) => { await decideApproval.mutateAsync({ trackId, approval, optionId }); },
     updateReportBlock: async (trackId, blockId, body) => updateReportBlock.mutateAsync({ trackId, blockId, body }),

@@ -3,7 +3,7 @@ import type { z } from 'zod';
 
 import type { ReadReceipt as GeneratedReceipt, ReadReceipts as GeneratedReceipts } from '../api/generated/wire.js';
 import {
-  isUnread, markReadOperation, markUnreadOperation, readReceiptSchema, readReceiptsOperation, readReceiptsSchema, toReadState,
+  isUnread, isTrackUnread, markReadOperation, markUnreadOperation, readReceiptSchema, readReceiptsOperation, readReceiptsSchema, toReadState,
   withMarkedRead, withMarkedUnread, withReceipt, type ReadState,
 } from './read-receipts.js';
 
@@ -58,11 +58,11 @@ describe('operations', () => {
   });
 
   it('address the kernel routes with an encoded id', () => {
-    expect(readReceiptsOperation()).toMatchObject({ method: 'GET', path: '/api/read-receipts' });
+    expect(readReceiptsOperation()).toMatchObject({ method: 'GET', path: '/api/v1/read-receipts' });
     expect(markReadOperation('conversation', 'a/b', 42)).toMatchObject({
-      method: 'POST', path: '/api/read-receipts/conversation/a%2Fb/read', body: { readThroughMs: 42 },
+      method: 'POST', path: '/api/v1/read-receipts/conversation/a%2Fb/read', body: { readThroughMs: 42 },
     });
-    expect(markUnreadOperation('track', 't 1')).toMatchObject({ method: 'POST', path: '/api/read-receipts/track/t%201/unread' });
+    expect(markUnreadOperation('track', 't 1')).toMatchObject({ method: 'POST', path: '/api/v1/read-receipts/track/t%201/unread' });
     expect(markUnreadOperation('track', 't').body).toBeUndefined();
   });
 
@@ -71,4 +71,19 @@ describe('operations', () => {
     expect(readReceiptsSchema.safeParse({ baselineMs: 1, receipts: [{ ...receipt('track', 't', 1), kind: 'area' }] }).success).toBe(false);
     expect(readReceiptsSchema.safeParse({ receipts: [] }).success).toBe(false);
   });
+});
+
+it('aggregates independent conversation receipts while track reads only clear manual unread', () => {
+  const sessions = [{ sessionId: 'a', lastNotifiableTurnAtMs: 200 }, { sessionId: 'b', lastNotifiableTurnAtMs: 300 }];
+  let read = state(100, receipt('track', 't', 1000));
+  expect(isTrackUnread(read, 't', sessions)).toBe(true);
+  read = withMarkedRead(read, 'conversation', 'a', 200);
+  expect(isTrackUnread(read, 't', sessions)).toBe(true);
+  read = withMarkedRead(read, 'conversation', 'b', 300);
+  expect(isTrackUnread(read, 't', sessions)).toBe(false);
+  read = withMarkedUnread(read, 'track', 't');
+  expect(isTrackUnread(read, 't', [])).toBe(true);
+  read = withMarkedRead(read, 'track', 't', 0);
+  expect(isTrackUnread(read, 't', sessions)).toBe(false);
+  expect(isTrackUnread(state(300), 't', sessions)).toBe(false);
 });

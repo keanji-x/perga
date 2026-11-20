@@ -68,8 +68,6 @@ export function createUiPreferences(storage?: UiPreferenceStorage) {
     if (!notifySubscribers) return;
     notify();
   };
-  const notificationKey = (trackId: string, key: string) =>
-    `browser:track-notification:${JSON.stringify([database, trackId, key])}`;
   return Object.freeze({
     databaseScope: () => database,
     /** The database the visible data belongs to; a `null` scope keeps no per-database choice. */
@@ -156,16 +154,7 @@ export function createUiPreferences(storage?: UiPreferenceStorage) {
     },
     setTurnDurationMinutes: (minutes: number | null) =>
       write('browser:perga-turn-duration', minutes === null ? null : String(minutes), true),
-    readReceiptsJson(): string | null {
-      const stored = read('browser:perga-read-receipts');
-      return typeof stored === 'string' ? stored : null;
-    },
-    setReadReceiptsJson: (json: string | null) => write('browser:perga-read-receipts', json, false),
-    trackNotificationRead(trackId: string, key: string, atMs: number): boolean {
-      return read(notificationKey(trackId, key)) === String(atMs);
-    },
-    setTrackNotificationRead: (trackId: string, key: string, atMs: number, isRead: boolean) =>
-      write(notificationKey(trackId, key), isRead ? String(atMs) : null, true),
+
   });
 }
 

@@ -338,7 +338,7 @@ it.each(['input', 'failed'] as const)('keeps kernel %s visible alongside a runni
     activity: { cards: { [worker.id]: activity } }, openableCards: new Set([worker.id]) });
   render(<PanelCard>{paintDesktopPanel(makeDesktopPainter({}), view)}</PanelCard>);
   const name = document.querySelector('[data-nc-row="busy-worker"]')!;
-  const expected = activity === 'input' ? 'Needs input' : 'Needs attention';
+  const expected = activity === 'input' ? 'Needs input' : 'Needs repair';
   const label = [...name.querySelectorAll('span')].find(element => element.textContent === expected);
   expect(label, 'attention must be in the visible name area, outside clipped metadata').toBeDefined();
   expect(label!.getBoundingClientRect().width).toBeGreaterThan(1);

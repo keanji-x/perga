@@ -6,6 +6,7 @@ import type { ApiDecodeFailure } from './types.js';
 import {
   systemUpgradeStatusPayloadSchema,
   agentSessionDtoSchema,
+  readReceiptDtoSchema,
   askDtoSchema,
   decodePergaEventEnvelope,
   mailDtoSchema,
@@ -1182,6 +1183,7 @@ export const wireEventSchema = z.discriminatedUnion('ev', [
   pergaTurnCompletedSchema,
   pergaAskChangedSchema,
   z.object({ ev: z.literal('approval.changed'), data: z.object({ trackId: z.string(), sessionId: z.string() }) }),
+  z.object({ ev: z.literal('read_receipt.updated'), data: readReceiptDtoSchema }),
   z.object({ ev: z.literal('approval.audit'), data: z.undefined() }),
   pergaMailReceivedSchema,
   pergaTerminalChangedSchema,
@@ -1268,6 +1270,7 @@ export function decodeWireEvent(input: unknown): WireEventDecodeResult {
   if (typeof input === 'object' && input !== null && 'kind' in input && !('ev' in input)) {
     const perga = decodePergaEventEnvelope(input);
     if (perga.status === 'failed') return perga;
+    if (perga.kind === 'read-receipt') return { status: 'ready', value: { ev: 'read_receipt.updated', data: perga.payload } };
     if (perga.kind === 'approvals') return { status: 'ready', value: {
       ev: 'approval.changed', data: { trackId: perga.trackId, sessionId: perga.sessionId },
     } };

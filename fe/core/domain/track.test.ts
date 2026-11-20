@@ -218,7 +218,6 @@ describe('trackActivityFrom: the kernel activity overlay', () => {
   const payload = {
     schemaVersion: 4, working: true, attention: 'failed', activity_at_ms: 1_789_460_968_837,
     items: [
-      { source: 'planner_down', key: 'planner_down:22825', text: 'unexpected status 403 Forbidden', at_ms: 20 },
       { source: 'ask', key: 'ask:22801', text: 'Which branch?', at_ms: 10, ask_id: 22801,
         questions: [{ title: 'Which branch?', options: [] }], delivery: 'wake' },
       { source: 'ask', key: 'ask:28475', text: 'Run `cargo test`?', at_ms: 5, ask_id: 28475,
@@ -250,7 +249,7 @@ describe('trackActivityFrom: the kernel activity overlay', () => {
     expect(JSON.stringify(rows)).toBe(before);
   });
 
-  it('keeps timeout notices with none attention and skips unknown sources', () => {
+  it('ignores retired timeout notices and unknown sources', () => {
     const activity = trackActivityFrom('t1', [overlay({ ...payload, attention: 'none', working: false,
       items: [
         { source: 'planner_turn_timeout', key: 'planner_turn_timeout:9', text: 'Stopped at 12:00 UTC', at_ms: 20 },
@@ -258,9 +257,7 @@ describe('trackActivityFrom: the kernel activity overlay', () => {
       ], cards: [],
     })]);
     expect(activity.attention).toBe('none');
-    expect(activity.attentionItems).toEqual([
-      { source: 'planner_turn_timeout', key: 'planner_turn_timeout:9', text: 'Stopped at 12:00 UTC', atMs: 20 },
-    ]);
+    expect(activity.attentionItems).toEqual([]);
   });
 
   it('decodes working, attention, the high-water mark, the items and the per-card verdicts', () => {
@@ -270,7 +267,6 @@ describe('trackActivityFrom: the kernel activity overlay', () => {
     expect(activity.activityAt).toBe(1_789_460_968_837);
     expect(activity.recentAt).toBe(1_789_460_968_837);
     expect(activity.attentionItems).toEqual([
-      { source: 'planner_down', key: 'planner_down:22825', text: 'unexpected status 403 Forbidden', atMs: 20 },
       { source: 'ask', key: 'ask:22801', text: 'Which branch?', atMs: 10, askId: 22801,
         questions: [{ title: 'Which branch?', options: [] }], delivery: 'wake' },
       { source: 'ask', key: 'ask:28475', text: 'Run `cargo test`?', atMs: 5, askId: 28475,
@@ -328,7 +324,7 @@ describe('trackActivityFrom: the kernel activity overlay', () => {
       ],
       cards: [{ card_id: 'w9', state: 'sleeping' }, { card_id: 'w2', state: 'working' }],
     })]);
-    expect(activity.attentionItems).toHaveLength(3);
+    expect(activity.attentionItems).toHaveLength(2);
     expect(activity.cards).toEqual({ w2: 'working' });
     expect(activity.working).toBe(true);
   });

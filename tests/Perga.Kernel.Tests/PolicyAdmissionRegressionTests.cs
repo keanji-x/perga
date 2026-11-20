@@ -35,9 +35,13 @@ public sealed class PolicyAdmissionRegressionTests
             pending = await ctx.Kernel.GetTrackAggregateAsync(caller.TrackId, timeout.Token);
         } while (pending.PendingApprovals.Count == 0);
         var approval = Assert.Single(pending.PendingApprovals);
+        var overlay = Assert.Single((await ctx.Kernel.GetOverlaysAsync()).Tracks);
+        Assert.Equal(1, overlay.PendingApprovalCount);
+        Assert.Equal(0, overlay.OpenAskCount);
         cancellation.Cancel();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => commit);
         Assert.Empty((await ctx.Kernel.GetTrackAggregateAsync(caller.TrackId)).PendingApprovals);
+        Assert.Equal(0, Assert.Single((await ctx.Kernel.GetOverlaysAsync()).Tracks).PendingApprovalCount);
         Assert.Empty((await ctx.Store.LoadTrackAggregateAsync(caller.TrackId, default))!.OpenAsks);
         var error = await Assert.ThrowsAsync<KernelException>(() => ctx.Kernel.DecideApprovalAsync(
             caller.TrackId, approval.ExecutionId, approval.Id, approval.Options.Single(o => o.IsApproval).Id));

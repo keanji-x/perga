@@ -46,6 +46,24 @@ public static class ApiV1Endpoints
     {
         var v1 = endpoints.MapGroup("/api/v1");
 
+        v1.MapGet("/read-receipts", async (IPergaKernel kernel, CancellationToken ct) =>
+            Results.Json(await kernel.GetReadReceiptsAsync(ct).ConfigureAwait(false), PergaJsonDefaults.ApiOptions));
+        v1.MapPost("/read-receipts/{kind}/{targetId}/read", async (string kind, string targetId, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
+        {
+            var req = await ReadRequiredJsonBodyAsync<MarkReadRequest>(ctx, ct).ConfigureAwait(false);
+            return Results.Json(await kernel.MarkReadAsync(kind, targetId, req.ReadThroughMs ?? 0, ct).ConfigureAwait(false), PergaJsonDefaults.ApiOptions);
+        });
+        v1.MapPost("/read-receipts/{kind}/{targetId}/unread", async (string kind, string targetId, IPergaKernel kernel, CancellationToken ct) =>
+            Results.Json(await kernel.MarkUnreadAsync(kind, targetId, ct).ConfigureAwait(false), PergaJsonDefaults.ApiOptions));
+
+        // Empty segments do not bind {targetId}; explicitly reject these malformed receipt URLs.
+        v1.MapPost("/read-receipts/{kind}/{**invalidTarget}", (string? invalidTarget) =>
+        {
+            if (invalidTarget is "/read" or "/unread")
+                throw KernelException.InvalidArgument("TargetId cannot be empty.");
+            return Results.NotFound();
+        }).ExcludeFromDescription();
+
         // ------------------- System -------------------
         v1.MapGet("/bootstrap", async (string? scope, bool? refresh, IPergaKernel kernel, CancellationToken ct) =>
         {

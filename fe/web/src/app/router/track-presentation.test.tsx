@@ -12,7 +12,7 @@ import { createReadReceiptsKernel } from '../providers/read-receipts-fixture.tsx
 
 const SOURCE = '# Staged report\n\nCurrent **evidence** and report content.';
 function setup(prepareReport: ReportPreparationPort = prepareReportDocument, initial = '/track/daily', reply?: (request: ApiRequest) => ApiTransportResponse | undefined | Promise<ApiTransportResponse | undefined>) {
-  const kernel = createReadReceiptsKernel();
+  const kernel = createReadReceiptsKernel({ receipts: [{ kind: 'track', targetId: 'daily', readThroughMs: 0, manualUnread: true }] });
   const fixture = renderDailyFixture({ initial, prepareReport, receipts: kernel, reply: async request => {
     const extra = await reply?.(request); if (extra !== undefined) return extra;
     if (request.path === '/api/v1/tracks/daily') return { status: 200, statusText: 'OK', body: fixtureSnapshot(fixtureTrack('daily', { title: 'Staged Track' }), [], fixtureReport(SOURCE)) };
@@ -55,7 +55,7 @@ it('does not acknowledge a Track while its report is waiting for presentation', 
   await screen.findByRole('button', { name: 'Rename track' });
   await waitFor(() => expect(fixture.client.isFetching()).toBe(0));
   const receipts = () => fixture.kernel.posts().filter(request => request.method === 'POST'
-    && request.path === '/api/read-receipts/track/daily/read');
+    && request.path === '/api/v1/read-receipts/track/daily/read');
   expect(receipts()).toHaveLength(0);
   await frame.next(); await frame.next();
   await screen.findByRole('heading', { name: 'Staged report' });
@@ -134,10 +134,10 @@ it('retains the displayed report while a replacement prepares and does not ackno
   await held.release(1);
   await screen.findByRole('heading', { name: 'Replacement report' });
   expect(screen.queryByRole('heading', { name: 'Staged report' })).toBeNull();
-  await waitFor(() => expect(fixture.kernel.stored('track', 'daily')?.readThroughMs).toBe(200));
+  await waitFor(() => expect(fixture.kernel.stored('track', 'daily')?.readThroughMs).toBe(0));
   const before = held.jobs.length;
   await act(() => fixture.client.setQueryData<TrackAggregateSnapshotDto>(queryKeys.trackDetail('daily'), detail => detail === undefined ? detail : ({ ...detail, track: { ...detail.track, updatedAtMs: 300 } })));
-  await waitFor(() => expect(fixture.kernel.stored('track', 'daily')?.readThroughMs).toBe(300));
+  await waitFor(() => expect(fixture.kernel.stored('track', 'daily')?.readThroughMs).toBe(0));
   expect(held.jobs).toHaveLength(before);
 });
 

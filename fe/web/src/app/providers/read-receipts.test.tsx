@@ -49,7 +49,7 @@ it('marks unread optimistically, posts it, and refetches', async () => {
   act(() => { void markUnread('t'); });
   await screen.findByText('t: unread');
   await waitFor(() => expect(fake.requests.map((request) => `${request.method} ${request.path}`)).toEqual([
-    'GET /api/read-receipts', 'POST /api/read-receipts/track/t/unread', 'GET /api/read-receipts',
+    'GET /api/v1/read-receipts', 'POST /api/v1/read-receipts/track/t/unread', 'GET /api/v1/read-receipts',
   ]));
   expect(screen.getByText('t: unread')).toBeTruthy();
 });
@@ -84,7 +84,7 @@ it('acknowledges the open target only while the tab is visible, and again when i
   act(() => { document.dispatchEvent(new Event('visibilitychange')); });
   await screen.findByText('t: read');
   expect(fake.posts().map((request) => [request.path, request.body])).toEqual([
-    ['/api/read-receipts/track/t/read', { readThroughMs: 150 }],
+    ['/api/v1/read-receipts/track/t/read', { readThroughMs: 150 }],
   ]);
   // A move is acknowledged whatever the cache says; the kernel keeps the larger instant.
   view.rerender(<Open at={160} />);
@@ -109,7 +109,7 @@ it('keeps a manual unread of the open target until it is opened again', async ()
   view.rerender(<Open opened={2} />);
   await screen.findByText('t: read');
   expect(fake.posts().map((request) => request.path)).toEqual([
-    '/api/read-receipts/track/t/read', '/api/read-receipts/track/t/unread', '/api/read-receipts/track/t/read',
+    '/api/v1/read-receipts/track/t/read', '/api/v1/read-receipts/track/t/unread', '/api/v1/read-receipts/track/t/read',
   ]);
 });
 
@@ -127,7 +127,7 @@ it('keeps a manual unread posted while the first read is still loading', async (
   act(() => release());
   await screen.findByText('t: unread');
   expect(fake.requests.map((request) => `${request.method} ${request.path}`)).toEqual([
-    'GET /api/read-receipts', 'POST /api/read-receipts/track/t/unread', 'GET /api/read-receipts',
+    'GET /api/v1/read-receipts', 'POST /api/v1/read-receipts/track/t/unread', 'GET /api/v1/read-receipts',
   ]);
 });
 
@@ -137,7 +137,7 @@ it('acknowledges a target opened while a refetch reveals another device’s manu
   const view = mount(fake, <Verdict id="t" at={150} />);
   await screen.findByText('t: read');
   // Another device marks it unread; this tab's refetch on focus is still in flight when the target opens.
-  await fake.reply({ method: 'POST', path: '/api/read-receipts/track/t/unread', credentials: 'include' });
+  await fake.reply({ method: 'POST', path: '/api/v1/read-receipts/track/t/unread', credentials: 'include' });
   const release = fake.holdReads();
   act(() => { window.dispatchEvent(new Event('visibilitychange')); });
   await waitFor(() => expect(fake.requests.filter((request) => request.method === 'GET')).toHaveLength(2));
@@ -145,7 +145,7 @@ it('acknowledges a target opened while a refetch reveals another device’s manu
   view.rerender(<Open />);
   act(() => release());
   await waitFor(() => expect(fake.posts().map((request) => request.path)).toEqual([
-    '/api/read-receipts/track/t/unread', '/api/read-receipts/track/t/read',
+    '/api/v1/read-receipts/track/t/unread', '/api/v1/read-receipts/track/t/read',
   ]));
   await waitFor(() => expect(fake.stored('track', 't')?.manualUnread).toBe(false));
   await screen.findByText('t: read');
@@ -195,7 +195,7 @@ it('sends one target’s writes in order, even over a network that answers out o
   await waitFor(() => expect(writes.held()).toBe(0));
   await waitFor(() => expect(fake.requests.at(-1)?.method).toBe('GET'));
   expect(fake.posts().map((request) => request.path)).toEqual([
-    '/api/read-receipts/track/t/unread', '/api/read-receipts/track/t/read',
+    '/api/v1/read-receipts/track/t/unread', '/api/v1/read-receipts/track/t/read',
   ]);
   expect(fake.stored('track', 't')?.manualUnread).toBe(false);
   await screen.findByText('t: read');
@@ -215,7 +215,7 @@ it('acknowledges a target opened offline once the browser is back online', async
   const release = fake.holdReads();
   act(() => onlineManager.setOnline(true));
   await waitFor(() => expect(fake.posts().map((request) => [request.path, request.body])).toEqual([
-    ['/api/read-receipts/track/t/read', { readThroughMs: 150 }],
+    ['/api/v1/read-receipts/track/t/read', { readThroughMs: 150 }],
   ]));
   act(() => release());
   await screen.findByText('t: read');
@@ -257,7 +257,7 @@ it('keeps an acknowledgement recorded after a manual unread, behind an earlier o
   }
   await waitFor(() => expect(fake.requests.at(-1)?.method).toBe('GET'));
   expect(fake.posts().map((request) => request.path)).toEqual([
-    '/api/read-receipts/track/t/read', '/api/read-receipts/track/t/unread', '/api/read-receipts/track/t/read',
+    '/api/v1/read-receipts/track/t/read', '/api/v1/read-receipts/track/t/unread', '/api/v1/read-receipts/track/t/read',
   ]);
   expect(fake.stored('track', 't')).toMatchObject({ readThroughMs: 150, manualUnread: false });
   await screen.findByText('t: read');

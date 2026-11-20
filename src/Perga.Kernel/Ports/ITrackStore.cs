@@ -86,12 +86,16 @@ public interface ITrackReadStore
     Task<IReadOnlyList<TerminalDto>> ListTerminalsAsync(string trackId, CancellationToken ct);
     Task<long> GetEventTipIdAsync(CancellationToken ct);
     Task<IReadOnlyList<EventEnvelopeDto>> ListEventsSinceAsync(long sinceEventId, string? trackId = null, int limit = 500, CancellationToken ct = default);
+    Task<ReadReceiptsResponseDto> GetReadReceiptsAsync(CancellationToken ct = default);
     Task<IReadOnlyList<TrackOverlayDto>> ListTrackOverlaysAsync(bool includeClosed = false, CancellationToken ct = default);
     Task<string?> FindTrackIdBySessionAsync(string sessionId, CancellationToken ct);
 }
 
 public interface ITrackStore : ITrackReadStore
 {
+    Task<ReadReceiptDto> MarkReadAsync(string kind, string targetId, long readThroughMs, CancellationToken ct = default);
+    Task<ReadReceiptDto> MarkUnreadAsync(string kind, string targetId, CancellationToken ct = default);
+
     Task<AreaDto> UpsertAreaAsync(AreaDto area, CancellationToken ct);
     Task<string?> FindCreationAsync(ResourceCreationKey key, CancellationToken ct);
     Task<string> CreateAreaAsync(AreaDto area, ResourceCreationKey? key, CancellationToken ct, EventEnvelopeDto? evt = null);

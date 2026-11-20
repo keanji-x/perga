@@ -269,7 +269,7 @@ export type EnrollmentRedeemed = { enrollmentId: string, attemptId: string, sess
  * The full set of WS event envelopes the kernel emits on `/api/events`. ts-rs requires every
  * payload type referenced here to also derive `TS`.
  */
-export type Event = { ev: 'track.schedules.updated'; data: { trackId: string } } | { "ev": "approval.changed", "data": { trackId: string, sessionId: string } } | { "ev": "approval.audit", "data": undefined } | { ev: 'system.upgrade_status'; data: SystemUpgradeStatusPayload }
+export type Event = { ev: 'read_receipt.updated'; data: ReadReceipt } | { ev: 'track.schedules.updated'; data: { trackId: string } } | { "ev": "approval.changed", "data": { trackId: string, sessionId: string } } | { "ev": "approval.audit", "data": undefined } | { ev: 'system.upgrade_status'; data: SystemUpgradeStatusPayload }
 | { "ev": "area.updated", "data": Area } | { "ev": "area.deleted", "data": { id: AreaId, } } | { "ev": "track.updated", "data": TrackUpdatedPayload } | { "ev": "track.deleted", "data": { id: TrackId, area_id: AreaId, } } | { "ev": "card.added", "data": Card } | { "ev": "card.updated", "data": Card } | { "ev": "card.deleted", "data": { id: CardId, track_id: TrackId, } } | { "ev": "worker_session.started", "data": { worker_session_id: string, card_id: string, kind: WorkerSessionKind, agent_provider: AgentProvider | null, status: WorkerSessionState, } } | { "ev": "worker_session.status_changed", "data": { worker_session_id: string, card_id: string, old_status: WorkerSessionState, new_status: WorkerSessionState, } } | { "ev": "worker_session.superseded", "data": { old_worker_session_id: string, new_worker_session_id: string, card_id: string, } } | { "ev": "harness.item.added", "data": { worker_session_id: string, card_id: CardId, track_id: TrackId, item_db_id: number, item_uuid: string | null, item_type: string | null, turn_id: string | null, method: string, } } | { "ev": "harness.phase.changed", "data": { worker_session_id: string, card_id: CardId, track_id: TrackId, old_phase: HarnessPhaseTag, new_phase: HarnessPhaseTag, } } | { "ev": "harness.transcript.cleared", "data": { worker_session_id: string, card_id: CardId, track_id: TrackId,
 /**
  * Number of `harness_items` rows deleted by this reset; `None` on unmeasured historical rows.
@@ -572,9 +572,9 @@ revision: string, };
 export type KeepConversationInputResult = { carrier_id: string, submission_id: string, attempt_id: string, revision: string, waiting_for_settlement: boolean, };
 
 /**
- * `POST /api/read-receipts/{kind}/{target_id}/read`: the activity instant the reader has seen.
+ * `POST /api/v1/read-receipts/{kind}/{targetId}/read`: the activity instant the reader has seen.
  */
-export type MarkReadRequest = { readThroughMs: number, };
+export type MarkReadRequest = { readThroughMs?: number | null, };
 
 export type McpCheckResult = { tools: Array<string>, };
 
@@ -1281,3 +1281,7 @@ export type SetTrackScheduleRequest = {
   title: string; prompt: string; id?: string; cronExpr?: string; runAtMs?: number;
   runAt?: string; timezone?: string; maxOccurrences?: number; sourceKind?: string;
 };
+
+/** Perga v1 persisted read receipt contracts. */
+export type ReadReceiptDto = ReadReceipt;
+export type ReadReceiptsResponseDto = ReadReceipts;

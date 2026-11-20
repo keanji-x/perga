@@ -1,3 +1,4 @@
+import { isTrackUnread, toReadState } from '../../../../core/domain/read-receipts.ts';
 import { useTestConversationRegistry } from './permission-registry-fixture.ts';
 import { fixtureSession } from '../router/session-contract-fixture.ts';
 import { sessionPage, sessionItem } from '../router/conversation-session-data.ts';
@@ -98,7 +99,6 @@ describe('writes never queue an offline submission, in either build', () => {
     ['card delete', ({ track }) => track.removeCard('w1', 'card-1')],
     ['area delete', ({ area }) => area.remove('c1')],
     ['recipe delete', ({ recipe }) => recipe.remove('recipe-1')],
-    ['notification dismiss', ({ track }) => track.dismissActivityItem('w1', 'ask:1')],
     ['ask answer', ({ track }) => track.answerAsk('w1', 1, [{ option: 0 }])],
   ];
   it.each(cases)('rejects %s before dispatch and does not replay it on reconnect', async (_name, submit) => {
@@ -190,6 +190,27 @@ describe('failure channel', () => {
 });
 
 describe('track list', () => {
+  it('retains closed-track watermarks using the Host includeClosed default', async () => {
+    const { transport } = recordingTransport(request => {
+      if (request.path === '/api/v1/areas') return ok([userArea]);
+      if (request.path === '/api/v1/areas/c1/tracks?includeClosed=true') return ok([{ ...baseTrackWire, closed_at: 3 }]);
+      if (request.path.startsWith('/api/v1/overlays?')) {
+        const includeClosed = new URL(request.path, 'http://host').searchParams.get('includeClosed') === 'true';
+        return ok({ tracks: includeClosed ? [{ trackId: 'w1', areaId: 'c1', isWorking: false, openAskCount: 0, pendingApprovalCount: 0,
+          hasBlockedSession: false, workspaceFailed: false, updatedAtMs: 3,
+          notifiableSessions: [{ sessionId: 's1', lastNotifiableTurnAtMs: 200 }] }] : [] });
+      }
+      throw new Error(request.path);
+    });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const wrapper = ({ children }: { children: ReactNode }) => createElement(QueryClientProvider, { client }, children);
+    const { result } = renderHook(() => useWorkspace(transport, unauthorized), { wrapper });
+    await waitFor(() => expect(result.current.tracks).toHaveLength(1));
+    await waitFor(() => expect(result.current.tracks[0].notifiableSessions).toEqual([{ sessionId: 's1', lastNotifiableTurnAtMs: 200 }]));
+    expect(isTrackUnread(toReadState({ baselineMs: 100, receipts: [] }), 'w1', result.current.tracks[0].notifiableSessions)).toBe(true);
+    client.clear();
+  });
+
   it('reads one area at a time so each area keeps its own cache entry', async () => {
     const { transport, paths } = recordingTransport(() => ok([]));
     await tracksInAreaQueryOptions(transport, 'c1', unauthorized).queryFn({ signal: new AbortController().signal });
@@ -223,7 +244,7 @@ describe('track list', () => {
       if (request.path === '/api/v1/areas') return ok([userArea, secondArea]);
       if (request.path === '/api/v1/areas/c1/tracks?includeClosed=true') return ok([old, recent]);
       if (request.path === '/api/v1/areas/c2/tracks?includeClosed=true') return ok([second]);
-      if (request.path === '/api/v1/overlays?entity_kind=track') return ok([activityOverlay]);
+      if (request.path === '/api/v1/overlays?entity_kind=track&includeClosed=true') return ok([activityOverlay]);
       throw new Error(`unexpected request: ${request.path}`);
     });
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -290,7 +311,7 @@ describe('delete mutation wiring', () => {
     const transport: ApiTransportPort = {
       send: (request) => {
         if (request.method === 'DELETE') return Promise.resolve(ok(undefined));
-        if (request.path !== '/api/v1/overlays?entity_kind=track') {
+        if (request.path !== '/api/v1/overlays?entity_kind=track&includeClosed=true') {
           return Promise.resolve(ok(request.path.includes('/tracks/') ? { ...baseTrackWire } : []));
         }
         const signal = request.signal as AbortSignal;

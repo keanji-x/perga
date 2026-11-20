@@ -1,17 +1,16 @@
+import type { NotifiableSessionWatermark } from '../../../../core/api/perga-v1.ts';
 import { focusManager, onlineManager, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { createContext, useContext, useEffect, useMemo, useRef, type ReactNode } from 'react';
 import type { ApiOperation, ApiTransportPort } from '../../../../core/api/types.ts';
 import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
-import { ApiError } from '../../../../core/domain/failure-class.ts';
 import {
-  isUnread, markReadOperation, markUnreadOperation, readReceiptsOperation, readReceiptsSchema, receiptKey, toReadState, withMarkedRead,
+  isUnread, isTrackUnread, markReadOperation, markUnreadOperation, readReceiptsOperation, receiptKey, toReadState, withMarkedRead,
   withMarkedUnread, withReceipt, type ReadReceipt, type ReadReceiptKind, type ReadState,
 } from '../../../../core/domain/read-receipts.ts';
 import { useState } from '../../ui/state/public.ts';
 import { useConnectionStatus } from './connection-status.tsx';
 import { queryKeys, runOperation } from './queries.ts';
 import { useRecoveryMutation } from './recovery-mutation.ts';
-import { useUiPreferences } from './ui-preferences.tsx';
 
 /** The provider's writes: how many are in flight, and each target's last write. */
 type WriteLedger = { pending: number; tails: Map<string, Promise<void>> };
@@ -19,20 +18,7 @@ type Target = Readonly<{ kind: ReadReceiptKind; id: string }>;
 type Owed = Target & Readonly<{ at: number }>;
 type WriteIntent = Target & Readonly<{ operation: ApiOperation<ReadReceipt>; optimistic: (state: ReadState) => ReadState }>;
 type ReceiptChannel = Pick<ReadReceipts, 'markRead' | 'markUnread'> & Readonly<{
-  transport: ApiTransportPort; unauthorized: UnauthorizedChannel; localOnly: boolean; initialLocalState: ReadState }>;
-
-function parseStoredReadState(raw: string | null): ReadState {
-  if (raw === null) return toReadState({ baselineMs: 0, receipts: [] });
-  try {
-    const parsed = readReceiptsSchema.safeParse(JSON.parse(raw));
-    if (parsed.success) return toReadState(parsed.data);
-  } catch { /* ignore malformed storage */ }
-  return toReadState({ baselineMs: 0, receipts: [] });
-}
-
-function serializeReadState(state: ReadState): string {
-  return JSON.stringify({ baselineMs: state.baselineMs, receipts: Object.values(state.receipts) });
-}
+  transport: ApiTransportPort; unauthorized: UnauthorizedChannel }>;
 
 const ReadReceiptsContext = createContext<ReceiptChannel | null>(null);
 
@@ -78,12 +64,10 @@ async function write(
  * into another. Triggers flush only what is owed, so none can clear a manual unread, and admission is never predicted
  * here. An owed acknowledgement outlives navigation, unmount and a hidden tab: it was seen.
  */
-export function ReadReceiptsProvider({ transport, unauthorized, localOnly = false, children }: Readonly<{
-  transport: ApiTransportPort; unauthorized: UnauthorizedChannel; localOnly?: boolean; children: ReactNode;
+export function ReadReceiptsProvider({ transport, unauthorized, children }: Readonly<{
+  transport: ApiTransportPort; unauthorized: UnauthorizedChannel; children: ReactNode;
 }>) {
   const client = useQueryClient();
-  const preferences = useUiPreferences();
-  const [initialLocalState] = useState(() => parseStoredReadState(localOnly ? preferences.readReceiptsJson() : null));
   const [{ ledger, owed, sending, missed }] = useState(() => ({ ledger: { pending: 0, tails: new Map<string, Promise<void>>() } satisfies WriteLedger,
     owed: new Map<string, Owed>(), sending: new Map<string, Owed>(), missed: new Set<string>() }));
   const mutation = useRecoveryMutation(transport, { mutationFn: (intent: WriteIntent, admitted: ApiTransportPort) =>
@@ -94,7 +78,6 @@ export function ReadReceiptsProvider({ transport, unauthorized, localOnly = fals
   // finds the record still in flight is remembered, and that key alone is sent once more when the send settles: a
   // replay is no trigger for other keys, so two failing targets cannot keep replaying each other.
   const flush = useMemo(() => {
-    if (localOnly) return () => undefined;
     const flushKey = (key: string) => {
       const record = owed.get(key);
       if (record === undefined) return;
@@ -109,43 +92,28 @@ export function ReadReceiptsProvider({ transport, unauthorized, localOnly = fals
       });
     };
     return () => { for (const key of [...owed.keys()]) flushKey(key); };
-  }, [localOnly, owed, sending, missed]);
+  }, [owed, sending, missed]);
   const channel = useMemo<ReceiptChannel>(() => ({
-    transport, unauthorized, localOnly, initialLocalState,
+    transport, unauthorized,
     markRead(kind, id, activityAt) {
-      if (localOnly) {
-        const at = activityAt ?? Date.now();
-        const queryKey = queryKeys.readReceipts();
-        const current = client.getQueryData<ReadState>(queryKey) ?? initialLocalState;
-        const next = withMarkedRead(current, kind, id, at);
-        if (next !== current) {
-          client.setQueryData<ReadState>(queryKey, next);
-          preferences.setReadReceiptsJson(serializeReadState(next));
-        }
-        return;
-      }
       // Every reader-visible event owes its own acknowledgement, even at an unchanged instant.
       const key = receiptKey(kind, id);
       owed.set(key, { kind, id, at: Math.max(owed.get(key)?.at ?? 0, activityAt ?? 0) });
       flush();
     },
     markUnread(kind, id) {
-      if (localOnly) {
-        const queryKey = queryKeys.readReceipts();
-        const current = client.getQueryData<ReadState>(queryKey) ?? initialLocalState;
-        const next = withMarkedUnread(current, kind, id);
-        client.setQueryData<ReadState>(queryKey, next);
-        preferences.setReadReceiptsJson(serializeReadState(next));
-        return Promise.resolve();
-      }
       owed.delete(receiptKey(kind, id)); // The reader's later intent wins over an acknowledgement still owed.
       return send.current({ kind, id, operation: markUnreadOperation(kind, id), optimistic: (state) => withMarkedUnread(state, kind, id) });
     },
-  }), [transport, unauthorized, localOnly, initialLocalState, client, preferences, owed, flush]);
-  useEffect(() => localOnly ? undefined : onlineManager.subscribe((online) => { if (online) flush(); }), [localOnly, flush]);
-  useEffect(() => localOnly ? undefined : focusManager.subscribe((focused) => { if (focused) flush(); }), [localOnly, flush]);
+  }), [transport, unauthorized, owed, flush]);
+  useEffect(() => onlineManager.subscribe((online) => { if (online) flush(); }), [flush]);
+  useEffect(() => focusManager.subscribe((focused) => { if (focused) flush(); }), [flush]);
   const connected = useConnectionStatus()?.connected === true;
-  useEffect(() => { if (!localOnly && connected) flush(); }, [localOnly, connected, flush]);
+  useEffect(() => {
+    if (!connected) return;
+    flush();
+    if (ledger.pending === 0) void client.invalidateQueries({ queryKey: queryKeys.readReceipts() });
+  }, [connected, flush, ledger, client]);
   return <ReadReceiptsContext.Provider value={channel}>{children}</ReadReceiptsContext.Provider>;
 }
 
@@ -154,21 +122,14 @@ export function readReceiptsQueryOptions(transport: ApiTransportPort, unauthoriz
     queryKey: queryKeys.readReceipts(),
     staleTime: 0,
     refetchOnWindowFocus: true,
-    queryFn: async (): Promise<ReadState> => {
-      try {
-        return toReadState(await runOperation(transport, readReceiptsOperation(), unauthorized));
-      } catch (error) {
-        if (error instanceof ApiError && error.failure.kind === 'http' && error.failure.status === 404) {
-          return toReadState({ baselineMs: 0, receipts: [] });
-        }
-        throw error;
-      }
-    },
+    queryFn: async (): Promise<ReadState> => toReadState(await runOperation(transport, readReceiptsOperation(), unauthorized)),
   };
 }
 
 export type ReadReceipts = Readonly<{
   /** Until the kernel's receipts are read nothing is unread: no verdict is not "everything is unread". */
+  isTrackUnread(trackId: string, notifiableSessions: readonly NotifiableSessionWatermark[]): boolean;
+  hasManualUnread(kind: ReadReceiptKind, id: string): boolean;
   isUnread(kind: ReadReceiptKind, id: string, activityAt: number | null): boolean;
   /** Owes the reader an acknowledgement of `activityAt`, sent now and, if refused or failed, on the next trigger. */
   markRead(kind: ReadReceiptKind, id: string, activityAt: number | null): void;
@@ -186,17 +147,11 @@ function useReceiptChannel(): ReceiptChannel {
 
 export function useReadReceipts(): ReadReceipts {
   const channel = useReceiptChannel();
-  const { data } = useQuery(channel.localOnly
-    ? {
-        queryKey: queryKeys.readReceipts(),
-        staleTime: Infinity,
-        refetchOnWindowFocus: false,
-        initialData: channel.initialLocalState,
-        queryFn: () => Promise.resolve(channel.initialLocalState),
-      }
-    : readReceiptsQueryOptions(channel.transport, channel.unauthorized));
+  const { data } = useQuery(readReceiptsQueryOptions(channel.transport, channel.unauthorized));
   return useMemo<ReadReceipts>(() => ({
     markRead: channel.markRead, markUnread: channel.markUnread, ready: data !== undefined,
+    isTrackUnread: (id, sessions) => data !== undefined && isTrackUnread(data, id, sessions),
+    hasManualUnread: (kind, id) => data?.receipts[receiptKey(kind, id)]?.manualUnread === true,
     isUnread: (kind, id, activityAt) => data !== undefined && isUnread(data, kind, id, activityAt),
   }), [data, channel]);
 }
@@ -216,4 +171,24 @@ export function useReadReceipt(kind: ReadReceiptKind, id: string | null, activit
     document.addEventListener('visibilitychange', record);
     return () => document.removeEventListener('visibilitychange', record);
   }, [markRead, kind, id, activityAt, enabled, openedAt]);
+}
+
+/** Clear manual intent once on admission of a view visit, including initial receipt readiness.
+ * Cache updates and temporary presentation/loading changes cannot create another visit. */
+export function useViewReadReceipt(kind: ReadReceiptKind, id: string | null, enabled: boolean, visitKey?: string | number) {
+  const { ready, markRead } = useReadReceipts();
+  const seen = useRef<Readonly<{ kind: ReadReceiptKind; id: string; visitKey?: string | number }> | null>(null);
+  useEffect(() => {
+    if (id === null) { seen.current = null; return; }
+    if (!enabled || !ready) return;
+    const record = () => {
+      if (document.visibilityState !== 'visible') return;
+      if (seen.current?.kind === kind && seen.current.id === id && seen.current.visitKey === visitKey) return;
+      seen.current = { kind, id, visitKey };
+      markRead(kind, id, 0);
+    };
+    record();
+    document.addEventListener('visibilitychange', record);
+    return () => document.removeEventListener('visibilitychange', record);
+  }, [kind, id, enabled, ready, visitKey, markRead]);
 }

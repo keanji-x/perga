@@ -29,7 +29,7 @@ it('hides phone entries and rejects manual commands locally while keeping the dr
   fireEvent.submit(dock.closest('form')!);
   expect(dock.value).toBe('/terminal');
   // Opening history still acknowledges reading; neither command creates or sends anything.
-  expect(fixture.requests.filter(request => request.method === 'POST' && !request.path.startsWith('/api/read-receipts/'))).toEqual([]);
+  expect(fixture.requests.filter(request => request.method === 'POST' && !request.path.startsWith('/api/v1/read-receipts/'))).toEqual([]);
 });
 
 it('preserves the ordinary phone terminal card input and confirmed deletion path', async () => {

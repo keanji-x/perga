@@ -2587,12 +2587,12 @@ public sealed partial class TrackActor : IAsyncDisposable
                     {
                         NativeThreadId = current.NativeThreadId ?? prep.OldAgentSession.NativeThreadId,
                         Status = "idle",
+                        LastNotifiableTurnAtMs = Math.Max(current.LastNotifiableTurnAtMs ?? 0, now),
                         UpdatedAtMs = now
                     };
-                    _sessions[sessionId] = compacted;
-
                     await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
                     await _store.RecordTurnAndItemsAsync(compactTurn, compactItems, compacted, ct).ConfigureAwait(false);
+                    _sessions[sessionId] = compacted;
                     await PersistAndEmitSessionUpdatedCoreAsync(compacted, now, ct).ConfigureAwait(false);
 
                     return compacted;
@@ -2663,12 +2663,12 @@ public sealed partial class TrackActor : IAsyncDisposable
                     NativeThreadId = null,
                     ContextUsage = null,
                     Status = "idle",
+                    LastNotifiableTurnAtMs = Math.Max(current.LastNotifiableTurnAtMs ?? 0, now),
                     UpdatedAtMs = now
                 };
-                _sessions[sessionId] = compacted;
-
                 await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
                 await _store.RecordTurnAndItemsAsync(handoverTurn, handoverItems, compacted, ct).ConfigureAwait(false);
+                _sessions[sessionId] = compacted;
                 await PersistAndEmitSessionUpdatedCoreAsync(compacted, now, ct).ConfigureAwait(false);
 
                 var latestReportMarkdown = _reportEngine.RenderMarkdown(_report, withMarkers: true);

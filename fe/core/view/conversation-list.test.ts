@@ -13,9 +13,9 @@ it('keeps questions, failures and unread distinct from idle session state', () =
   ]);
 });
 
-it('uses the active drawer echo and the same failure precedence as the ordinary list', () => {
-  const rows = deriveConversationList({ conversations: [conversation('one')], cards: { one: 'working' },
-    local: { id: 'one', working: true, stalled: true } });
+it('uses the authoritative failure verdict for every conversation', () => {
+  const rows = deriveConversationList({ conversations: [conversation('one')], cards: { one: 'failed' },
+    awaitingInputIds: new Set(['one']) });
   expect(rows[0]).toMatchObject({ activity: 'failed' });
 });
 

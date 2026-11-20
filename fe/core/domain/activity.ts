@@ -1,9 +1,6 @@
 // Activity: the one vocabulary every indicator speaks. The kernel's `kernel/track/activity`
 // overlay is the only source of "in motion / waiting on a person / broken" for a track; nothing else gets folded in.
 
-import { z } from 'zod';
-import type { ApiOperation } from '../api/types.js';
-import type { FailureTable, WriteClass, WriteText } from './failure-class.js';
 import {
   parse, type NormalizedBlock, type NormalizedInline,
 } from '../markdown/public.js';
@@ -18,7 +15,7 @@ export type AttentionKind = 'none' | 'input' | 'failed';
 export type CardActivity = 'working' | 'input' | 'failed';
 
 /** Notification sources projected from Track activity. */
-export type NotificationSource = 'ask' | 'planner_down' | 'planner_turn_timeout' | 'task_failed';
+export type NotificationSource = 'ask';
 
 /** One question of an ask: the first option is the recommended one; none means a free answer. */
 export type AskQuestion = Readonly<{ title: string; detail?: string; options: readonly string[] }>;
@@ -43,45 +40,10 @@ export type AskId = string | number;
  * One thing addressed to the user and not yet handled, as the kernel listed it (`items[]`). Only an
  * ask carries its id (the answer route's `ask_id`), its questions and its delivery.
  */
-export type ActivityItem =
-  | (ActivityItemBase & Readonly<{
-    source: 'ask'; askId: AskId; questions: readonly AskQuestion[]; delivery: AskDelivery;
-    action?: import('../api/generated/wire.js').AskAction;
-  }>)
-  | (ActivityItemBase & Readonly<{ source: 'task_failed'; blockId: string }>)
-  | (ActivityItemBase & Readonly<{ source: 'planner_down' | 'planner_turn_timeout' }>);
-
-/**
- * Dismiss one item: the kernel stores its key and the projector drops it, so the row goes when the
- * overlay's `overlay.set` lands; there is no optimistic removal. `204` is the answer, idempotent;
- * `404` means the track is gone. The same source happening again is a new key and shows again.
- * Its failures read through {@link DISMISS_FAILURES}.
- */
-export function dismissActivityItemOperation(trackId: string, key: string): ApiOperation<undefined> {
-  return {
-    method: 'POST',
-    path: `/api/tracks/${encodeURIComponent(trackId)}/activity/dismissals`,
-    body: { key },
-    responseSchema: z.undefined(),
-  };
-}
-
-/**
- * What a failed dismissal says. It is idempotent, and a 404 means the track is gone and its notification with it: the
- * intent holds, so it is `done`. 400, 403 and 422 refuse it before anything is stored; anything else may have stored it.
- */
-export const DISMISS_FAILURES: FailureTable<WriteClass> = Object.freeze({
-  rules: Object.freeze([
-    Object.freeze({ status: Object.freeze([404]), is: 'done' as const }),
-    Object.freeze({ status: Object.freeze([400, 403, 422]), is: 'refused' as const }),
-  ]),
-  unauthorized: 'refused',
-  otherwise: 'unknown',
-});
-
-export const DISMISS_TEXT: WriteText = Object.freeze({
-  refused: 'The notification was not dismissed.', unknown: 'Dismissing the notification is unconfirmed.',
-});
+export type ActivityItem = ActivityItemBase & Readonly<{
+  source: 'ask'; askId: AskId; questions: readonly AskQuestion[]; delivery: AskDelivery;
+  action?: import('../api/generated/wire.js').AskAction;
+}>;
 
 function inlinePlainText(nodes: readonly NormalizedInline[]): string {
   return nodes.map((node): string => {
@@ -133,7 +95,7 @@ export function activityLabelOf(state: ActivityState): string | null {
   switch (state) {
     case 'working': return 'Working';
     case 'attention': return 'Needs input';
-    case 'failed': return 'Needs attention';
+    case 'failed': return 'Needs repair';
     case 'unread': return 'Unread updates';
     case 'quiet': return null;
   }
@@ -166,4 +128,13 @@ export function attentionOfCard(card: CardActivity | null): AttentionKind {
 /** A card verdict as an indicator shows it. Cards have no read receipt, so `unread` is never part of a card-level state. */
 export function cardActivityState(card: CardActivity): ActivityState {
   return activityStateOf({ working: card === 'working', attention: attentionOfCard(card), unread: false });
+}
+
+/** Stable list order breaks ties within each actionable priority. */
+export function priorityConversation<T extends Readonly<{ id: string; isLead?: boolean; archivedAt?: number | null }>>(
+  conversations: readonly T[], cards: Readonly<Record<string, CardActivity>>, unread: (conversation: T) => boolean,
+): T | undefined {
+  const active = conversations.filter(c => c.archivedAt == null);
+  return active.find(c => cards[c.id] === 'failed') ?? active.find(c => cards[c.id] === 'input')
+    ?? active.find(unread) ?? active.find(c => c.isLead);
 }

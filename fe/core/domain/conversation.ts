@@ -754,7 +754,7 @@ export function agentSessionDtoToConversation(dto: AgentSessionDto): Conversatio
     provider,
     state: stateParsed.success ? stateParsed.data : 'idle',
     updatedAt: dto.updatedAtMs,
-    lastTurnCompletedAt: dto.updatedAtMs,
+    lastTurnCompletedAt: dto.lastNotifiableTurnAtMs ?? null,
   };
 }
 

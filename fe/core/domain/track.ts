@@ -1,3 +1,4 @@
+import { notifiableSessionWatermarkSchema, type NotifiableSessionWatermark } from '../api/perga-v1.js';
 import type { TerminalPresentation } from './terminal-presentation.js';
 // Track: the unit of work the product is organised around — wire decode, open or closed,
 // and the pure predicates several surfaces must agree on.
@@ -30,7 +31,6 @@ import {
 } from './activity.js';
 import { visibleAreas, type Area } from './area.js';
 import { normalizeAskQuestions } from './ask.js';
-import { liveReportTaskKey } from './report-task-declaration.js';
 import {
   casAttempts, classifyFailure, NotSentError, refusedText, writeFailureOf,
   type FailureTable, type Landed, type WriteClass, type WriteFailure, type WriteText,
@@ -62,6 +62,7 @@ export type TrackWire = z.infer<typeof trackWireSchema>;
 
 /** Plugin-written activity on top of the kernel row; the neutral values mean "nothing posted", not "unknown". */
 export type TrackActivity = Readonly<{
+  notifiableSessions: readonly NotifiableSessionWatermark[];
   progress: number;
   eta: string;
   now: string;
@@ -82,6 +83,7 @@ export type TrackActivity = Readonly<{
 /* Nested containers are frozen too: `no-module-runtime-state` only credits a fully frozen literal,
  * and a `new Map()` here would be rejected — hence `cards` is a `Record`. */
 export const NEUTRAL_ACTIVITY: TrackActivity = Object.freeze({
+  notifiableSessions: Object.freeze([]),
   progress: 0, eta: '', now: '',
   working: false, attention: 'none', activityAt: null, recentAt: null,
   attentionItems: Object.freeze([]), cards: Object.freeze({}),
@@ -181,25 +183,6 @@ const activityItemWireSchema = z.discriminatedUnion('source', [
     delivery: z.enum(['wake', 'hold']),
     action: askActionSchema.optional(),
   }),
-  z.object({
-    source: z.literal('planner_down'),
-    key: z.string(),
-    text: z.string(),
-    at_ms: z.number(),
-  }),
-  z.object({
-    source: z.literal('planner_turn_timeout'),
-    key: z.string(),
-    text: z.string(),
-    at_ms: z.number(),
-  }),
-  z.object({
-    source: z.literal('task_failed'),
-    key: z.string(),
-    text: z.string(),
-    at_ms: z.number(),
-    block_id: z.string(),
-  }),
 ]);
 const activityCardWireSchema = z.object({
   card_id: z.string(),
@@ -213,6 +196,7 @@ const activityOverlayWireSchema = z.object({
   working: z.boolean(),
   attention: attentionKindSchema,
   activity_at_ms: z.number().nullable(),
+  notifiableSessions: z.array(notifiableSessionWatermarkSchema).default([]),
   items: z.array(z.unknown()),
   cards: z.array(z.unknown()),
 });
@@ -225,14 +209,8 @@ function activityOverlayFields(payload: unknown): Partial<TrackActivity> | null 
     const item = activityItemWireSchema.safeParse(row);
     if (!item.success) continue;
     const base = { key: item.data.key, text: item.data.text, atMs: item.data.at_ms };
-    attentionItems.push(item.data.source === 'ask'
-      ? {
-        ...base, source: 'ask', askId: item.data.ask_id, questions: item.data.questions, delivery: item.data.delivery,
-        ...(item.data.action === undefined ? {} : { action: item.data.action }),
-      }
-      : item.data.source === 'task_failed'
-        ? { ...base, source: 'task_failed', blockId: item.data.block_id }
-        : { ...base, source: item.data.source });
+    attentionItems.push({ ...base, source: 'ask', askId: item.data.ask_id, questions: item.data.questions,
+      delivery: item.data.delivery, ...(item.data.action === undefined ? {} : { action: item.data.action }) });
   }
   const cards: Record<string, CardActivity> = {};
   for (const row of parsed.data.cards) {
@@ -240,6 +218,7 @@ function activityOverlayFields(payload: unknown): Partial<TrackActivity> | null 
     if (card.success) cards[card.data.card_id] = card.data.state;
   }
   return {
+    notifiableSessions: parsed.data.notifiableSessions,
     working: parsed.data.working,
     attention: parsed.data.attention,
     activityAt: parsed.data.activity_at_ms,
@@ -701,27 +680,18 @@ export function snapshotActivityOverlays(snapshot: TrackAggregateSnapshotDto): O
   const openAskItems = snapshot.openAsks
     .filter((ask) => ask.status === 'open')
     .map(askDtoToActivityItem);
-  const failedTasks = snapshot.tasks.filter((task) => task.status === 'failed');
-  const failedBlockIds = new Set(failedTasks.map((task) => task.blockId));
-  const currentTaskKeys = new Map(snapshot.report.blocks
-    .filter((block) => failedBlockIds.has(block.id))
-    .map((block) => [block.id, liveReportTaskKey(block)] as const));
-  const failedTaskItems = failedTasks
-    .filter((task) => currentTaskKeys.get(task.blockId) === task.taskKey)
-    .map((task) => ({
-      source: 'task_failed',
-      key: `task_failed:${task.id}`,
-      text: `${task.taskKey}: ${task.statusDetail?.trim() || 'Review the task for details.'}`,
-      at_ms: task.updatedAtMs,
-      block_id: task.blockId,
-    }));
-  const working = snapshot.tasks.some((task) => task.status === 'running' || task.status === 'verifying')
-    || snapshot.sessions.some((session) => session.status === 'running');
-  const attention = openAskItems.length > 0 || (snapshot.pendingApprovals?.length ?? 0) > 0
-    ? 'input'
-    : failedTasks.length > 0
-      ? 'failed'
-      : 'none';
+  const closed = snapshot.track.closedAtMs != null;
+  const sessions = snapshot.sessions.filter(s => s.archivedAtMs == null);
+  const workingStates = ['queued', 'running', 'stopping', 'compacting'];
+  const blocked = sessions.some(s => s.status === 'unknown' && (s.boundTaskId == null
+    || (s.boundAttemptId != null && snapshot.tasks.some(t => t.id === s.boundTaskId && t.latestAttemptId === s.boundAttemptId && ['running', 'verifying'].includes(t.status)))));
+  const failed = blocked || snapshot.workspacePreparation === 'failed' || snapshot.workspacePreparation === 'unknown';
+  const working = !closed && (snapshot.tasks.some(t => t.status === 'running' || t.status === 'verifying')
+    || sessions.some(s => workingStates.includes(s.status)) || snapshot.workspacePreparation === 'pending');
+  const attention = closed ? 'none' : failed ? 'failed'
+    : openAskItems.length > 0 || (snapshot.pendingApprovals?.length ?? 0) > 0 ? 'input' : 'none';
+  const inputIds = new Set([...(snapshot.pendingApprovals ?? []).map(a => a.sessionId),
+    ...snapshot.openAsks.filter(a => a.status === 'open').map(a => a.sessionId ?? snapshot.sessions.find(s => s.isLead)?.id)]);
   return [{
     id: `activity-${snapshot.track.id}`,
     plugin_id: KERNEL_OVERLAY_PLUGIN_ID,
@@ -732,11 +702,15 @@ export function snapshotActivityOverlays(snapshot: TrackAggregateSnapshotDto): O
       schemaVersion: 4,
       working,
       attention,
-      activity_at_ms: snapshot.track.updatedAtMs,
-      items: [...openAskItems, ...failedTaskItems],
-      cards: snapshot.sessions
-        .filter((session) => session.status === 'running')
-        .map((session) => ({ card_id: session.id, state: 'working' })),
+      activity_at_ms: null,
+      notifiableSessions: sessions.filter(s => s.boundTaskId == null && s.lastNotifiableTurnAtMs != null)
+        .map(s => ({ sessionId: s.id, lastNotifiableTurnAtMs: s.lastNotifiableTurnAtMs })),
+      items: closed ? [] : openAskItems,
+      cards: closed ? [] : sessions.flatMap(s => {
+        const state = s.status === 'unknown' ? 'failed' : inputIds.has(s.id) ? 'input'
+          : workingStates.includes(s.status) ? 'working' : null;
+        return state === null ? [] : [{ card_id: s.id, state }];
+      }),
     },
     updated_at: snapshot.track.updatedAtMs,
   }];
@@ -1059,7 +1033,7 @@ export function deleteCardOperation(cardId: string): ApiOperation<undefined> {
 export function overlaysByKindOperation(entityKind: 'track' | 'card'): ApiOperation<OverlayWire[]> {
   return {
     method: 'GET',
-    path: `/api/v1/overlays?entity_kind=${entityKind}`,
+    path: `/api/v1/overlays?entity_kind=${entityKind}${entityKind === 'track' ? '&includeClosed=true' : ''}`,
     responseSchema: z.union([
       overlaysListDtoSchema.transform((dto): OverlayWire[] => {
         if (entityKind !== 'track') return [];
@@ -1072,19 +1046,11 @@ export function overlaysByKindOperation(entityKind: 'track' | 'card'): ApiOperat
           payload: {
             schemaVersion: 4,
             working: item.isWorking,
-            attention: item.openAskCount > 0 ? 'input' : item.hasFailedTask ? 'failed' : 'none',
-            activity_at_ms: item.updatedAtMs,
-            items: item.openAskCount > 0
-              ? Array.from({ length: item.openAskCount }, (_, index) => ({
-                source: 'ask' as const,
-                key: `ask:${item.trackId}:${index}`,
-                text: 'Question waiting for your answer',
-                at_ms: item.updatedAtMs,
-                ask_id: `${item.trackId}:${index}`,
-                questions: [],
-                delivery: 'wake' as const,
-              }))
-              : [],
+            attention: item.hasBlockedSession || item.workspaceFailed ? 'failed'
+              : item.openAskCount + item.pendingApprovalCount > 0 ? 'input' : 'none',
+            activity_at_ms: null,
+            notifiableSessions: item.notifiableSessions,
+            items: [],
             cards: [],
           },
           updated_at: item.updatedAtMs,

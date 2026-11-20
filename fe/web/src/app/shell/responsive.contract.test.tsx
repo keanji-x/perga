@@ -131,7 +131,7 @@ describe('compact navigation interaction contracts', () => {
     expect(screen.getByRole('button', { name: 'Responsive mobile UI' })).toBeTruthy();
 
     // Read elsewhere; this tab sees it when it is shown again.
-    await receipts.transport.send({ method: 'POST', path: '/api/read-receipts/track/w1/read', credentials: 'include', body: { readThroughMs: 150 } });
+    await receipts.transport.send({ method: 'POST', path: '/api/v1/read-receipts/track/w1/read', credentials: 'include', body: { readThroughMs: 150 } });
     act(() => { window.dispatchEvent(new Event('visibilitychange')); });
     await waitFor(() => expect(marker()).toBeNull());
   });

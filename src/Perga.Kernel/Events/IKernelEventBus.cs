@@ -24,12 +24,14 @@ public static class KernelEventKinds
     public const string TerminalChanged = "terminal.changed";
 
     // Transient streaming frames (EventId == null, never written to SQLite)
+    public const string ReadReceiptUpdated = "read_receipt.updated";
     public const string SessionTextDelta = "session.text_delta";
     public const string SessionThinkingDelta = "session.thinking_delta";
     public const string SessionToolProgress = "session.tool_progress";
 
     private static readonly HashSet<string> TransientKinds = new(StringComparer.Ordinal)
     {
+        ReadReceiptUpdated,
         ApprovalsChanged,
         SessionTextDelta,
         SessionThinkingDelta,

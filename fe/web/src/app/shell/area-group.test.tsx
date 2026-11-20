@@ -216,7 +216,7 @@ function closedAt(count: number, closed: readonly number[], unread: readonly num
   return new Map([['c1', tracks(count).map((track, index) => ({
     ...track,
     closedAt: closed.includes(index + 1) ? 10 : null,
-    activityAt: unread.includes(index + 1) ? 50 : null,
+    notifiableSessions: unread.includes(index + 1) ? [{ sessionId: `session-${index}`, lastNotifiableTurnAtMs: 50 }] : [],
   }))]]);
 }
 

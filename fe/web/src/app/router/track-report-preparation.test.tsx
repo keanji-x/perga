@@ -1,8 +1,10 @@
 import { fixtureTrack, fixtureSnapshot, fixtureReport } from './session-contract-fixture.ts';
-import { act, cleanup, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import * as markdown from '../../../../core/markdown/public.ts';
 import type { TrackAggregateSnapshotDto } from '../../../../core/api/schemas.ts';
+import { useReadReceipts } from '../providers/read-receipts.tsx';
+import { createReadReceiptsKernel } from '../providers/read-receipts-fixture.tsx';
 import { queryKeys } from '../providers/queries.ts';
 import { renderDailyFixture } from './daily-planner-fixture.tsx';
 
@@ -61,4 +63,34 @@ it('prepares a changed report once and keeps its new content and destinations', 
   expect(screen.getByRole('button', { name: 'reference' }).getAttribute('title')).toBe('fresh.md');
   expect(document.querySelector('script')).toBeNull();
   expect(parse.mock.calls.filter(([source]) => source === changed)).toHaveLength(1);
+});
+
+it('does not retry a failed report acknowledgement on receipt refetch', async () => {
+  const receipts = createReadReceiptsKernel({ fail: true, writeDelayMs: 10, receipts: [{ kind: 'track', targetId: 'daily', readThroughMs: 0, manualUnread: true }] });
+  receipts.capWrites(4);
+  const fixture = renderDailyFixture({ initial: '/track/daily', receipts }); clients.push(fixture);
+  await screen.findByRole('region', { name: 'Track report' });
+  await waitFor(() => expect(receipts.posts().length).toBeGreaterThan(0));
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 300)); });
+  expect(receipts.posts()).toHaveLength(1);
+});
+
+it('keeps a visible report manually unread after a later receipt update', async () => {
+  const receipts = createReadReceiptsKernel({ writeDelayMs: 10, receipts: [{ kind: 'track', targetId: 'daily', readThroughMs: 0, manualUnread: true }] });
+  receipts.capWrites(5);
+  function MarkUnread() {
+    const channel = useReadReceipts();
+    return <button onClick={() => { void channel.markUnread('track', 'daily'); }}>Mark report unread</button>;
+  }
+  const fixture = renderDailyFixture({ initial: '/track/daily', receipts, routeProbe: <MarkUnread /> }); clients.push(fixture);
+  await screen.findByRole('region', { name: 'Track report' });
+  await waitFor(() => expect(receipts.posts()).toHaveLength(1));
+  await waitFor(() => expect(fixture.client.isFetching()).toBe(0));
+  const before = receipts.posts().length;
+  fireEvent.click(screen.getByRole('button', { name: 'Mark report unread' }));
+  await waitFor(() => expect(receipts.stored('track', 'daily')?.manualUnread).toBe(true));
+  await act(async () => { await fixture.client.invalidateQueries({ queryKey: queryKeys.readReceipts() }); });
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 100)); });
+  expect(receipts.posts()).toHaveLength(before + 1);
+  expect(receipts.stored('track', 'daily')?.manualUnread).toBe(true);
 });

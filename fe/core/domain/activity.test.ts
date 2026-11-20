@@ -43,7 +43,7 @@ describe('activityLabelOf', () => {
   it.each<[ActivityState, string | null]>([
     ['working', 'Working'],
     ['attention', 'Needs input'],
-    ['failed', 'Needs attention'],
+    ['failed', 'Needs repair'],
     ['unread', 'Unread updates'],
     ['quiet', null],
   ])('%s → %s', (state, expected) => {

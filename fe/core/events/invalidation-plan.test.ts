@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { wireEventSchema, type WireEvent } from '../api/schemas.js';
+import { wireEventSchema, decodeWireEvent, type WireEvent } from '../api/schemas.js';
 import { invalidationPlanFor } from './invalidation-plan.js';
 
 function event(value: unknown): WireEvent {
@@ -42,7 +42,7 @@ describe('invalidation plan behavior', () => {
   it('invalidates track projections and pending diagnostics for track updates', () => {
     expect(invalidationPlanFor(event({ ev: 'track.updated', data: { id: 'w1', area_id: 'c1' } }))).toEqual({
       invalidate: [
-        ['tracks', 'c1'], ['track', 'w1'], ['track-template', 'w1'],
+        ['overlays', 'track'], ['tracks', 'c1'], ['track', 'w1'], ['track-template', 'w1'],
         ['track-report'],
       ],
       remove: [],
@@ -269,4 +269,28 @@ it('keeps historical Terminal events opaque and refetches current placement', ()
     expect(plan.invalidate).toContainEqual(['track', 'track']);
     expect(plan.writeThrough).toEqual([]);
   }
+});
+
+it.each([
+  { ev: 'track.updated', data: { id: 't', area_id: 'a' } },
+  { ev: 'session.updated', data: { track_id: 't', session: { id: 's' } } },
+  { ev: 'turn.completed', data: { track_id: 't', turn: { id: 'turn', sessionId: 's' } } },
+  { ev: 'ask.changed', data: { track_id: 't' } },
+  { ev: 'approval.changed', data: { trackId: 't', sessionId: 's' } },
+  { ev: 'task.updated', data: { track_id: 't' } },
+])('refreshes track overlays on $ev', value => {
+  expect(invalidationPlanFor(event(value)).invalidate).toContainEqual(['overlays', 'track']);
+});
+it('refreshes cross-device receipts on a transient receipt update', () => {
+  const value = wireEventSchema.parse({ ev: 'read_receipt.updated', data: {
+    kind: 'conversation', targetId: 's', readThroughMs: 200, manualUnread: false,
+  } });
+  expect(invalidationPlanFor(value).invalidate).toEqual([['read-receipts']]);
+});
+
+it('decodes receipt events with no persistent event ID and rejects malformed receipts', () => {
+  const data = { kind: 'track', targetId: 't', readThroughMs: 0, manualUnread: true };
+  expect(decodeWireEvent({ kind: 'read_receipt.updated', eventId: null, payload: data, createdAtMs: 1 }))
+    .toEqual({ status: 'ready', value: { ev: 'read_receipt.updated', data } });
+  expect(decodeWireEvent({ kind: 'read_receipt.updated', payload: { ...data, kind: 'area' } }).status).toBe('failed');
 });

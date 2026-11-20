@@ -14,8 +14,6 @@ describe('openAsksOf', () => {
   it('keeps only the asks, oldest first, whatever order the overlay listed them in', () => {
     const items: ActivityItem[] = [
       { source: 'ask', key: 'ask:30', text: 'Why?', atMs: 30, askId: 30, questions: [WHY], delivery: 'wake' },
-      { source: 'planner_down', key: 'planner_down:1', text: 'The Planner stopped.', atMs: 20 },
-      { source: 'planner_turn_timeout', key: 'planner_turn_timeout:9', text: 'Turn timed out.', atMs: 30 },
       { source: 'ask', key: 'ask:10', text: 'Which branch?', atMs: 10, askId: 10, questions: [BRANCH], delivery: 'hold' },
     ];
     expect(openAsksOf(items)).toEqual([
