@@ -332,6 +332,10 @@ export function removedHumanIds(items: readonly ConversationDisplayItem[]): Read
     ? [source.identity.message_id] : []));
 }
 
+export function nativeTranscriptEntryId(threadId: string, itemId: string | null, index: number): string {
+  return `native:${encodeURIComponent(JSON.stringify([threadId, itemId]))}:${index}`;
+}
+
 export function buildConversationTranscript(items: readonly ConversationDisplayItem[], viewerId: string | null): readonly TranscriptEntry[] {
   const ordered = [...items].sort((a,b) => a.cursor.position-b.cursor.position);
   if (ordered.every(item => item.cursor.source === 'historical_raw')) {
@@ -365,7 +369,7 @@ export function buildConversationTranscript(items: readonly ConversationDisplayI
     // The native parser owns provider shapes. A presentation has already paired started/completed;
     // never re-sort by physical row ID or pair equal item IDs from different native threads.
     return buildTranscript([source.item]).map((entry,index) => ({ ...entry,
-      id:`native:${encodeURIComponent(JSON.stringify([source.item.thread_id,source.item.item_uuid]))}:${index}`,
+      id:nativeTranscriptEntryId(source.item.thread_id, source.item.item_uuid, index),
       displayPosition:cursor.position,
       ...(source.item.turn_id === null ? {} : { nativeTurn: { threadId: source.item.thread_id, turnId: source.item.turn_id } }),
     }));

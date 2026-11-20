@@ -69,7 +69,7 @@ export type KeyedSendAnswer<T> = Readonly<{ sent: T; everUnknown: boolean }>;
  * `Idempotency-Key`. `failureOf` reads an attempt's error as the {@link ApiFailure} it carries, or
  * `null`, which {@link SEND_FAILURES} classifies; `pause` waits before retry `retry`. `unknown` is
  * the op's state from earlier runs: a resumed op that was unknown ends unknown on anything but a
- * 200. A 200 after an unknown outcome may replay a message that has since been deleted, rewound
+ * confirmed receipt. A 200 after an unknown outcome may replay a message that has since been deleted, rewound
  * or reset, so `everUnknown` tells the caller not to trust its entry for display.
  */
 export async function retryUnknownSend<T>(
@@ -78,13 +78,16 @@ export async function retryUnknownSend<T>(
   pause: (retry: number) => Promise<void>,
   unknown: boolean,
   retries = SEND_RETRIES,
+  classify = (failure: ApiFailure | null) => classifyFailure(failure, SEND_FAILURES),
 ): Promise<KeyedSendAnswer<T>> {
   let unknownSoFar = unknown;
   for (let index = 0; ; index += 1) {
     try {
       return { sent: await attempt(index), everUnknown: unknownSoFar };
     } catch (error) {
-      const kind = classifyFailure(failureOf(error), SEND_FAILURES);
+      // A persisted receipt can establish the outcome even after a lost response.
+      if (error instanceof KeyedSendFailure) throw error;
+      const kind = classify(failureOf(error));
       if (kind === 'unknown') {
         unknownSoFar = true;
         if (index < retries) {

@@ -1,3 +1,5 @@
+import { nativeTranscriptEntryId } from '../../../../core/domain/conversation-display.ts';
+import { workerToolActivity } from '../../../../core/domain/worker-session.ts';
 import { hashKey, notifyManager, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
 
@@ -150,44 +152,64 @@ export function useLiveReplies({ transport, unauthorized, cardId, enabled, phase
   );
 
   const wsActivities = useMemo((): readonly ConversationActivity[] => {
-    if (wsLive === undefined || wsLive.turnId === null || wsLive.completed === true || wsPersistedInTranscript) return [];
+    const turnId = scope.turnId ?? wsLive?.turnId;
+    if (turnId == null || (wsLive?.turnId === turnId && (wsPersistedInTranscript || wsLive.completed === true))) return [];
+    const stream = wsLive?.turnId === turnId ? wsLive : undefined;
     const activities: ConversationActivity[] = [];
-    if (wsLive.thinking.trim() !== '' && !items.some((item) => item.turn_id === wsLive.turnId && item.item_uuid?.startsWith('thinking-'))) {
-      const doneThinking = wsLive.text.trim() !== '' || wsLive.tools.length > 0;
+    if (stream !== undefined && stream.thinking.trim() !== '' && !items.some((item) => item.turn_id === turnId && item.item_uuid?.startsWith('thinking-'))) {
+      const doneThinking = stream.text.trim() !== '' || stream.tools.length > 0;
       activities.push({
-        id: `live-thinking-${wsLive.turnId}`,
+        id: `live-thinking-${turnId}`,
         author: 'activity',
         verb: doneThinking ? 'Thought' : 'Thinking',
         target: null,
         state: doneThinking ? 'done' : 'running',
         durationMs: null,
         detail: null,
-        content: wsLive.thinking,
+        content: stream.thinking,
         tool: null,
-        atMs: wsLive.updatedAtMs,
+        atMs: stream.updatedAtMs,
       });
     }
-    for (const tool of wsLive.tools) {
-      if (items.some((item) => item.item_uuid === tool.callId)) continue;
+    const tools = workerToolActivity(scope.turnId === turnId ? worker?.events ?? [] : []);
+    for (const update of stream?.tools ?? []) {
+      const prior = tools.get(update.callId);
+      const useStreamState = prior?.phase !== 'completed' || update.phase === 'completed';
+      tools.set(update.callId, {
+        ...update,
+        phase: useStreamState ? update.phase : prior.phase,
+        isError: update.isError || prior?.isError === true,
+        name: update.name ?? prior?.name ?? null,
+        args: update.args ?? prior?.args,
+        output: prior?.output ?? null,
+        atMs: prior?.atMs ?? stream?.updatedAtMs ?? 0,
+      });
+    }
+    for (const tool of tools.values()) {
       const doneTool = tool.phase === 'completed';
-      const argsContent = tool.args !== null && tool.args !== undefined
-        ? `Input\n${typeof tool.args === 'string' ? tool.args : JSON.stringify(tool.args, null, 2)}`
-        : undefined;
+      const stored = items.find(item => item.turn_id === turnId && item.item_uuid === tool.callId);
+      if (stored !== undefined && (stored.method === 'item/completed' || !doneTool)) continue;
+      const id = stored === undefined ? `live-tool-${tool.callId}`
+        : stored.thread_id !== undefined ? nativeTranscriptEntryId(stored.thread_id, tool.callId, 0)
+          : `activity-${tool.callId}`;
+      const input = tool.args == null ? null : `Input\n${typeof tool.args === 'string' ? tool.args : JSON.stringify(tool.args, null, 2)}`;
+      const output = tool.output === null ? null : `Output\n${tool.output}`;
+      const content = [input, output].filter(Boolean).join('\n\n');
       activities.push({
-        id: `live-tool-${tool.callId}`,
+        id,
         author: 'activity',
         verb: doneTool ? 'Called' : 'Calling',
         target: tool.name,
         state: tool.isError ? 'failed' : doneTool ? 'done' : 'running',
         durationMs: null,
         detail: null,
-        ...(argsContent === undefined ? {} : { content: argsContent }),
+        ...(content === '' ? {} : { content }),
         tool: tool.name,
-        atMs: wsLive.updatedAtMs,
+        atMs: tool.atMs,
       });
     }
     return activities;
-  }, [items, wsLive, wsPersistedInTranscript]);
+  }, [items, scope.turnId, worker?.events, wsLive, wsPersistedInTranscript]);
 
   /* Only a read started after this point stands for the phase, however late an earlier one lands.
      The transcript is re-read here so that one always starts; the cancel comes first because the

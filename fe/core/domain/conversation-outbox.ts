@@ -1,6 +1,6 @@
 import {
   isConversationMessage, isOptimisticConversationTurn, isUserConversationTurn, mergeTranscript, inputBodyMatchesEcho,
-  type ConversationMessage, type ConversationTurn, type OptimisticConversationTurn, type TranscriptEntry, type PendingQueueEntry,
+  type ConversationActivity, type ConversationMessage, type ConversationTurn, type OptimisticConversationTurn, type TranscriptEntry, type PendingQueueEntry,
 } from './conversation.js';
 import type { SendFailureKind } from './conversation-delivery.js';
 import { withoutEditedTurn } from './conversation-composer.js';
@@ -8,6 +8,9 @@ import type { HarnessQueueEntryRef } from '../api/generated/wire.js';
 
 /** The latest turn an Edit's send replaces (#2043): the turn id the server removes, and its outcome row here. */
 export type ReplacedTurn = Readonly<{ turnId: string; outcomeId: string }>;
+
+/** A task-bound submission keeps its original attempt and delivery choice across retries. */
+export type ConversationSendTarget = Readonly<{ attemptId: string; queue: boolean }>;
 
 /**
  * Where one keyed send is. `sending`: attempts are out, `unknown` once any was. `confirmed`: answered
@@ -30,6 +33,7 @@ export type SendOpPhase = Readonly<
  */
 export type SendOp = Readonly<{
   key: string;
+  target?: ConversationSendTarget;
   /** The message as first shown: its id, place (`atMs`) and `serverHighWaterBefore` are the op's. */
   echo: OptimisticConversationTurn;
   /** Whether its images came from the composer, which a delivered attempt then clears (a Regenerate's never did). */
@@ -247,7 +251,20 @@ export type OutboxFacts = Omit<OutboxView, 'transcript'> & Readonly<{
  * Session creation and ordinary echoes retain the existing tail. */
 export function withOutboxLiveReplies(facts: OutboxFacts, liveReplies: readonly TranscriptEntry[]): OutboxView {
   const { entries, echoes, ...state } = facts;
-  return { ...state, transcript: mergeTranscript(mergeTranscript(entries, liveReplies), echoes) };
+  const updates = new Map(liveReplies.flatMap(entry => entry.author === 'activity' && entry.state !== 'running'
+    ? [[entry.id, entry] as const] : []));
+  const merged = new Set<string>();
+  const current = updates.size === 0 ? entries : entries.map(entry => {
+    if (entry.author !== 'activity') return entry;
+    const update: ConversationActivity | undefined = updates.get(entry.id);
+    if (update === undefined) return entry;
+    merged.add(entry.id);
+    return entry.state === 'running' ? {
+      ...entry, ...update, atMs: entry.atMs, target: update.target ?? entry.target, tool: update.tool ?? entry.tool,
+    } : entry;
+  });
+  const tail = merged.size === 0 ? liveReplies : liveReplies.filter(entry => !merged.has(entry.id));
+  return { ...state, transcript: mergeTranscript(mergeTranscript(current, tail), echoes) };
 }
 
 /** The complete projection for consumers that need facts and live display together. */

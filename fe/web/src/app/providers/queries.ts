@@ -1,3 +1,5 @@
+import type { ConversationSendTarget } from '../../../../core/domain/conversation-outbox.ts';
+import { KeyedSendFailure } from '../../../../core/domain/conversation-delivery.ts';
 import { retireAreaQueries } from './area-query-lifecycle.ts';
 import { queryKeys } from './query-keys.ts';
 export { queryKeys } from './query-keys.ts';
@@ -265,13 +267,28 @@ export function usePlannerMutations(transport: ApiTransportPort, cardId: string,
     /* `admitted` is the caller's: a keyed send is admitted at the press, and each retry is admitted again.
        `answered` runs when the 200 is in hand, before the refresh starts its reads. */
     send: (text: string, attachments: readonly string[], idempotencyKey: string, replacesTurn: string | null,
-      admitted: ApiTransportPort, answered: () => void, queueIfBusy = false) =>
-      runOperation(admitted, sendPlannerInputOperation(cardId, text, attachments, idempotencyKey, replacesTurn, false, queueIfBusy), unauthorized)
-        .then((sent) => { answered(); return refreshAfterInput(sent, replacesTurn !== null); }, (error: unknown) => {
-          // A refusal may expose a stale revision; a lost answer may follow a durable write.
-          refreshInputMetadata(admitted, error);
-          throw error;
-        }),
+      admitted: ApiTransportPort, answered: () => void, queueIfBusy = false, target?: ConversationSendTarget) => {
+      const sent = target === undefined
+        ? runOperation(admitted, sendPlannerInputOperation(cardId, text, attachments, idempotencyKey, replacesTurn, false, queueIfBusy), unauthorized)
+        : runOperation(admitted, sendWorkerMessageOperation(cardId, idempotencyKey, {
+          attemptId: target.attemptId, content: text, ...(target.queue ? { mode: 'queue' as const } : {}),
+        }), unauthorized).then(receipt => {
+          if (receipt.delivery === 'unknown' || receipt.delivery === 'dispatching') {
+            throw new Error('Message delivery is unconfirmed.');
+          }
+          if (receipt.turnId == null && (receipt.delivery === 'rejected' || receipt.delivery === 'interrupted')) {
+            throw new KeyedSendFailure(new Error(receipt.delivery === 'rejected'
+              ? 'The message was rejected.' : 'The message was interrupted.'), 'refused');
+          }
+          return { card_id: cardId, worker_session_id: cardId, entry_id: receipt.messageId ?? receipt.inputId,
+            queued: receipt.delivery === 'queued' };
+        });
+      return sent.then((receipt) => { answered(); return refreshAfterInput(receipt, replacesTurn !== null); }, (error: unknown) => {
+        refreshInputMetadata(admitted, error);
+        if (target !== undefined) refreshAfter(undefined);
+        throw error;
+      });
+    },
     steerQueuedSessionMessage: (inputId: string, turnId: string) =>
       Promise.resolve().then(() => admitTransport(transport))
         .then(admitted => runOperation(admitted, steerQueuedSessionMessageOperation(cardId, inputId, turnId), unauthorized))
@@ -295,12 +312,10 @@ export function usePlannerMutations(transport: ApiTransportPort, cardId: string,
       .then((admitted) => runOperation(admitted, compactPlannerOperation(cardId), unauthorized)).then(refreshAfter),
     interrupt: (worker?: { attemptId?: string; turnId: string }) => Promise.resolve().then(() => admitTransport(transport))
       .then((admitted) => runOperation(admitted, interruptPlannerOperation(cardId, worker), unauthorized)).then(refreshAfter),
-    sendWorker: (key: string, body: Parameters<typeof sendWorkerMessageOperation>[2]) =>
-      Promise.resolve().then(() => admitTransport(transport))
-        .then(admitted => runOperation(admitted, sendWorkerMessageOperation(cardId, key, body), unauthorized)).then(refreshAfter),
     updateWorkerSettings: (settings: Parameters<typeof updateWorkerSettingsOperation>[1], approvalKey?: string) =>
       Promise.resolve().then(() => admitTransport(transport))
-        .then(admitted => runOperation(admitted, updateWorkerSettingsOperation(cardId, settings, approvalKey), unauthorized)).then(refreshAfter),
+        .then(admitted => runOperation(admitted, updateWorkerSettingsOperation(cardId, settings, approvalKey), unauthorized))
+        .finally(() => cancelThenInvalidate(client, queryKeys.plannerRun(cardId))),
     answerWorkerAsk: (trackId: string, askId: AskId, answers: readonly AskAnswer[], questions: readonly AskQuestion[], executionId?: string) =>
       Promise.resolve().then(() => admitTransport(transport))
         .then(admitted => runOperation(admitted, answerAskOperation(trackId, askId, answers, questions, executionId), unauthorized))

@@ -72,6 +72,8 @@ export type ModelGroup<Provider extends string = AgentProvider> = Readonly<{
   acceptsUnavailableBlankTrack?: boolean;
   /** Explicit host admission, independent of the Planner create policy; undefined keeps its existing behavior. */
   selectionProblem?: string | null;
+  /** A provider can expose a current selection without a selectable default. */
+  defaultAvailable?: boolean;
 }>;
 
 function legacyPresentation(provider: string) {
@@ -187,7 +189,7 @@ function effortsFor<Provider extends string>(
 }
 
 export function ModelPill<Provider extends string = AgentProvider>({
-  groups, provider, selection, onChange, isDisabled = false, placement = 'above', triggerId, effortControl = 'separate',
+  groups, provider, selection, onChange, isDisabled = false, placement = 'above', triggerId, effortControl = 'separate', appliesNextTurn = false,
 }: Readonly<{
   /** What can be chosen, one group per provider, in menu order. A conversation passes only its own provider's. */
   groups: readonly ModelGroup<Provider>[];
@@ -202,6 +204,7 @@ export function ModelPill<Provider extends string = AgentProvider>({
   triggerId?: string;
   /** Kept for caller compatibility; all surfaces render the unified two-column + effort slider picker. */
   effortControl?: 'separate' | 'in-menu';
+  appliesNextTurn?: boolean;
 }>) {
   const [open, setOpen] = useState(false);
   const [viewedProvider, setViewedProvider] = useState<Provider>(provider);
@@ -342,6 +345,7 @@ export function ModelPill<Provider extends string = AgentProvider>({
         />
       </div>
       <Divider />
+      {appliesNextTurn && <div className={styles.settingNote} role="note"><Text type="supporting">{PERMISSION_NOTE}</Text></div>}
       <div className={styles.pickerActions}>
         <Button
           label="Cancel"
@@ -428,7 +432,7 @@ function GroupChoices<Provider extends string>({ group, selection, onChange }: R
     <ModelRow
       label={defaultLabel}
       isSelected={selection !== null && selection.model === null}
-      isDisabled={blocked !== null}
+      isDisabled={blocked !== null || group.defaultAvailable === false}
       onSelect={() => onChange({ model: null, reasoning_effort: null })}
     />
     {models.map((model) => (
@@ -549,12 +553,13 @@ const DEFAULT_PERMISSION_MODES: Readonly<Record<string, SettingOption>> = Object
 const PERMISSION_NOTE = 'Applies from the next turn.';
 
 /** A session's approval setting: renders provider-declared modes or the default set when omitted. */
-export function PermissionModePill({ mode, options, onChange, isDisabled = false, placement = 'above' }: Readonly<{
+export function PermissionModePill({ mode, options, onChange, isDisabled = false, unavailableMode, placement = 'above' }: Readonly<{
   /** What the session has stored (or selected in draft). */
   mode: string;
   options?: readonly PermissionModeOptionDto[];
   onChange: (mode: string) => void;
   isDisabled?: boolean;
+  unavailableMode?: string;
   placement?: 'above' | 'below';
 }>) {
   if (options !== undefined && options.length === 0) return null;
@@ -562,7 +567,9 @@ export function PermissionModePill({ mode, options, onChange, isDisabled = false
     ? DEFAULT_PERMISSION_MODES
     : Object.fromEntries(options.map((opt) => [
       opt.id,
-      { label: opt.label, description: opt.description, ...(opt.tone === 'neutral' ? {} : { tone: opt.tone }) },
+      { label: opt.label, description: opt.id === unavailableMode
+        ? 'Restoring approval requests requires owner authorization over HTTPS.' : opt.description,
+      ...(opt.tone === 'neutral' ? {} : { tone: opt.tone }) },
     ]));
   const effectiveMode = Object.prototype.hasOwnProperty.call(optionMap, mode)
     ? mode
@@ -570,7 +577,7 @@ export function PermissionModePill({ mode, options, onChange, isDisabled = false
       ? (options.find((opt) => opt.isDefault) ?? options[0]).id
       : 'never';
   return <SettingPill name="Approvals" options={optionMap} value={effectiveMode} onChange={onChange}
-    note={PERMISSION_NOTE} isDisabled={isDisabled} placement={placement} />;
+    note={PERMISSION_NOTE} isDisabled={isDisabled} unavailableOption={unavailableMode} placement={placement} />;
 }
 
 /** What a Track's Planner may do in its Area: an ordinary Planner, or an Area admin (`admin` on `POST`/`PATCH /api/tracks`). */
@@ -599,7 +606,7 @@ export function PlannerRolePill({ value, onChange, isDisabled = false, disabledR
 
 /** A short fixed setting: the trigger names it and its value, and each row explains itself. */
 function SettingPill<Value extends string>({
-  name, options, value, onChange, note, isDisabled, tooltip, placement, alignment = 'start',
+  name, options, value, onChange, note, isDisabled, unavailableOption, tooltip, placement, alignment = 'start',
 }: Readonly<{
   name: string;
   options: Readonly<Record<Value, SettingOption>>;
@@ -607,6 +614,7 @@ function SettingPill<Value extends string>({
   onChange: (value: Value) => void;
   note?: string;
   isDisabled: boolean;
+  unavailableOption?: Value;
   /** With it Astryx marks a disabled trigger `aria-disabled` rather than `disabled`, so the tooltip stays reachable. */
   tooltip?: string;
   placement: 'above' | 'below';
@@ -646,7 +654,7 @@ function SettingPill<Value extends string>({
           <Choice key={option} label={options[option].label}
             variant={options[option].tone === 'danger' ? 'destructive' : 'default'}
             description={<Text type="inherit" color="inherit">{options[option].description}</Text>}
-            isSelected={value === option} onSelect={() => { if (option !== value) onChange(option); }} />
+            isSelected={value === option} isDisabled={option === unavailableOption} onSelect={() => { if (option !== value) onChange(option); }} />
         ))}
         {note !== undefined && (
           <>
