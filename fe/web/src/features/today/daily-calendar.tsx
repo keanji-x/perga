@@ -233,7 +233,7 @@ export function DailyCalendar({
             <h3 className={styles.agendaHeading}>Scheduled · {selectedDaySchedules.length}</h3>
             <ul className={styles.agendaList}>
               {selectedDaySchedules.map((item) => (
-                <li key={item.id} className={styles.agendaItem}>
+                <li key={`${item.track_id}:${item.id}:${item.date}`} className={styles.agendaItem}>
                   <span className={styles.agendaTime}>
                     {formatScheduleTime(item.next_fire_at_ms, timeZone ?? item.timezone)}
                   </span>

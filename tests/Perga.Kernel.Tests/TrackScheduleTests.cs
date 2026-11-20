@@ -15,8 +15,10 @@ public sealed class TrackScheduleTests
         var (_, snap) = await ctx.CreateDefaultTrackAsync();
         var trackId = snap.Track.Id;
 
-        await Assert.ThrowsAsync<KernelException>(() =>
+        var missingTarget = await Assert.ThrowsAsync<KernelException>(() =>
             ctx.Kernel.SetTrackScheduleAsync(trackId, new SetTrackScheduleRequest("Bad", "Prompt")));
+        Assert.Contains("'cron'", missingTarget.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("cronExpr", missingTarget.Message, StringComparison.Ordinal);
 
         await Assert.ThrowsAsync<KernelException>(() =>
             ctx.Kernel.SetTrackScheduleAsync(trackId, new SetTrackScheduleRequest("Bad", "Prompt", CronExpr: "* * * * *", RunAtMs: 1000)));
@@ -106,6 +108,25 @@ public sealed class TrackScheduleTests
             JsonSerializer.SerializeToElement(new { title = "LowerZ", prompt = "Go", runAt = " 2026-11-20T10:00:00z ", timezone = "Asia/Shanghai" }));
         Assert.Equal(DateTimeOffset.Parse("2026-11-20T10:00:00Z").ToUnixTimeMilliseconds(),
             lowerZRes.GetProperty("runAtMs").GetInt64());
+
+        // Explicit offset outside the compact ISO suffix (space before offset) must still honor its offset.
+        var spacedOffsetRes = await KernelMcpDispatcher.ExecuteGuardedAsync(ctx.Kernel, caller, KernelMcpToolNames.ScheduleSet,
+            JsonSerializer.SerializeToElement(new { title = "SpacedOffset", prompt = "Go", runAt = "2026-11-20 10:00:00 +08:00", timezone = "America/New_York" }));
+        Assert.Equal(DateTimeOffset.Parse("2026-11-20T10:00:00+08:00").ToUnixTimeMilliseconds(),
+            spacedOffsetRes.GetProperty("runAtMs").GetInt64());
+
+        // Non-object JSON arguments fail fast on schedule tools.
+        var exNonObj = await Assert.ThrowsAsync<KernelException>(() =>
+            KernelMcpDispatcher.ExecuteGuardedAsync(ctx.Kernel, caller, KernelMcpToolNames.ScheduleLs,
+                JsonSerializer.SerializeToElement(new[] { "bad" })));
+        Assert.Equal(KernelErrorCode.InvalidArgument, exNonObj.Code);
+
+        // Unknown properties (like 'cronExpr' instead of schema's 'cron') fail fast instead of being ignored.
+        var exUnknown = await Assert.ThrowsAsync<KernelException>(() =>
+            KernelMcpDispatcher.ExecuteGuardedAsync(ctx.Kernel, caller, KernelMcpToolNames.ScheduleSet,
+                JsonSerializer.SerializeToElement(new { title = "Bad", prompt = "Go", cronExpr = "0 9 * * *" })));
+        Assert.Equal(KernelErrorCode.InvalidArgument, exUnknown.Code);
+        Assert.Contains("Unknown argument 'cronExpr'", exUnknown.Message, StringComparison.Ordinal);
 
         // Malformed optional parameter types fail fast instead of being ignored.
         var exCron = await Assert.ThrowsAsync<KernelException>(() =>

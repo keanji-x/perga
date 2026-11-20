@@ -17,6 +17,10 @@ public sealed record TodayScheduleEntry(
     string? CronExpr,
     string Timezone,
     long NextFireAtMs,
+    long CreatedAtMs,
+    long? LastFiredAtMs,
+    int? MaxOccurrences,
+    int FiredCount,
     string State);
 
 public interface ITodayReadStore

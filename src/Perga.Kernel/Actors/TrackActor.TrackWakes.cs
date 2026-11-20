@@ -31,8 +31,10 @@ public sealed partial class TrackActor
     {
         if (wake.Kind != TrackWakeKinds.Schedule)
             return payload.Prompt ?? throw new InvalidOperationException($"Track wake '{wake.Id}' has no prompt.");
-        if (!string.IsNullOrWhiteSpace(payload.Prompt))
-            return payload.Prompt;
+        if (TrackWakeRequests.IsTrackScheduleWake(wake))
+            return !string.IsNullOrWhiteSpace(payload.Prompt)
+                ? payload.Prompt
+                : throw new InvalidOperationException($"Track schedule wake '{wake.Id}' has no prompt.");
         var scheduleId = payload.ScheduleId ?? throw new InvalidOperationException($"Schedule wake '{wake.Id}' has no scheduleId.");
         var fallback = $"Scheduled wake '{scheduleId}' triggered.";
         if (_policy is null) return fallback;

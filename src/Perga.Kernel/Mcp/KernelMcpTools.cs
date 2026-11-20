@@ -483,6 +483,7 @@ public static class KernelMcpDispatcher
 
             case KernelMcpToolNames.ScheduleLs:
             {
+                RejectUnknownArgs(args, ["includeTerminal"]);
                 var includeTerminal = false;
                 if (JsonHelpers.TryGetPropertyIgnoreCase(args, ["includeTerminal"], out var inc) &&
                     inc.ValueKind != JsonValueKind.Null)
@@ -505,6 +506,7 @@ public static class KernelMcpDispatcher
 
             case KernelMcpToolNames.ScheduleRm:
             {
+                RejectUnknownArgs(args, ["scheduleId"]);
                 var scheduleId = RequireStringArg(args, ["scheduleId"]);
                 var canceled = await kernel.CancelTrackScheduleAsync(caller.TrackId, scheduleId, ct).ConfigureAwait(false);
                 return JsonHelpers.ToElement(new { scheduleId, canceled });
@@ -540,6 +542,28 @@ public static class KernelMcpDispatcher
         JsonHelpers.TryGetPropertyIgnoreCase(args, [name], out var value) && value.ValueKind == JsonValueKind.Number &&
         value.TryGetInt64(out var parsed) ? parsed : null;
 
+    private static void RejectUnknownArgs(JsonElement args, ReadOnlySpan<string> allowedKeys)
+    {
+        if (args.ValueKind != JsonValueKind.Object)
+            throw KernelException.InvalidArgument("Tool arguments must be a JSON object.");
+        foreach (var prop in args.EnumerateObject())
+        {
+            var matched = false;
+            foreach (var allowed in allowedKeys)
+            {
+                if (string.Equals(prop.Name, allowed, StringComparison.OrdinalIgnoreCase))
+                {
+                    matched = true;
+                    break;
+                }
+            }
+
+            if (!matched)
+                throw KernelException.InvalidArgument(
+                    $"Unknown argument '{prop.Name}'. Allowed arguments: {string.Join(", ", allowedKeys.ToArray())}.");
+        }
+    }
+
     private static string? OptionalTypedStringArg(JsonElement args, ReadOnlySpan<string> keys)
     {
         if (!JsonHelpers.TryGetPropertyIgnoreCase(args, keys, out var elem) || elem.ValueKind == JsonValueKind.Null)
@@ -551,6 +575,7 @@ public static class KernelMcpDispatcher
 
     private static SetTrackScheduleRequest ParseScheduleSetArgs(JsonElement args)
     {
+        RejectUnknownArgs(args, ["id", "title", "prompt", "runAt", "runAtMs", "cron", "timezone", "maxOccurrences"]);
         var id = OptionalTypedStringArg(args, ["id"]);
         var title = RequireStringArg(args, ["title"]);
         var prompt = RequireStringArg(args, ["prompt"]);

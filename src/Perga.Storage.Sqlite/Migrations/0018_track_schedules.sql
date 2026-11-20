@@ -1,8 +1,8 @@
 CREATE TABLE track_schedules (
-    id TEXT NOT NULL PRIMARY KEY,
+    id TEXT NOT NULL,
     track_id TEXT NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
     target_session_id TEXT REFERENCES agent_sessions(id) ON DELETE CASCADE,
-    source_kind TEXT NOT NULL CHECK (source_kind IN ('agent','user','plugin')),
+    source_kind TEXT NOT NULL CHECK (source_kind IN ('agent','user','plugin','template')),
     schedule_kind TEXT NOT NULL CHECK (schedule_kind IN ('once','cron')),
     title TEXT NOT NULL,
     prompt TEXT NOT NULL,
@@ -14,9 +14,10 @@ CREATE TABLE track_schedules (
     max_occurrences INTEGER,
     fired_count INTEGER NOT NULL DEFAULT 0,
     coalesce_key TEXT,
-    state TEXT NOT NULL CHECK (state IN ('active','done','canceled')),
+    state TEXT NOT NULL DEFAULT 'active' CHECK (state IN ('active','paused','done','canceled')),
     created_at_ms INTEGER NOT NULL,
-    updated_at_ms INTEGER NOT NULL
+    updated_at_ms INTEGER NOT NULL,
+    PRIMARY KEY (track_id, id)
 );
 
 CREATE INDEX idx_track_schedules_due

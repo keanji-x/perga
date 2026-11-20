@@ -46,18 +46,28 @@ public sealed partial class SqliteTrackStore : ITodayReadStore
             SELECT s.id AS Id, s.track_id AS TrackId, t.title AS TrackTitle,
                    s.title AS Title, s.schedule_kind AS ScheduleKind,
                    s.cron_expr AS CronExpr, s.timezone AS Timezone,
-                   s.next_fire_at_ms AS NextFireAtMs, s.state AS State
+                   s.next_fire_at_ms AS NextFireAtMs,
+                   s.created_at_ms AS CreatedAtMs,
+                   s.last_fired_at_ms AS LastFiredAtMs,
+                   s.max_occurrences AS MaxOccurrences,
+                   s.fired_count AS FiredCount,
+                   s.state AS State
             FROM track_schedules s
             JOIN tracks t ON t.id = s.track_id
             WHERE s.state = '{TrackScheduleStates.Active}'
               AND t.closed_at_ms IS NULL
               AND s.next_fire_at_ms IS NOT NULL
-              AND s.next_fire_at_ms >= @StartMs
-              AND s.next_fire_at_ms < @EndMs
-            ORDER BY s.next_fire_at_ms ASC, s.id ASC;
+              AND (
+                  s.schedule_kind = '{TrackScheduleKinds.Cron}'
+                  OR (s.next_fire_at_ms >= @StartMs AND s.next_fire_at_ms < @EndMs)
+              )
+            ORDER BY s.next_fire_at_ms ASC, s.track_id ASC, s.id ASC;
             """, new { StartMs = startMs, EndMs = endMs }, cancellationToken: ct)).ConfigureAwait(false);
         return rows.Select(r => new TodayScheduleEntry(
-            r.Id, r.TrackId, r.TrackTitle, r.Title, r.ScheduleKind, r.CronExpr, r.Timezone, r.NextFireAtMs, r.State)).ToArray();
+            r.Id, r.TrackId, r.TrackTitle, r.Title, r.ScheduleKind, r.CronExpr, r.Timezone,
+            r.NextFireAtMs, r.CreatedAtMs, r.LastFiredAtMs,
+            r.MaxOccurrences.HasValue ? checked((int)r.MaxOccurrences.Value) : null,
+            checked((int)r.FiredCount), r.State)).ToArray();
     }
 
     public async Task<IReadOnlyList<DailyReportRevision>> ListDailyReportRevisionsAsync(
@@ -130,6 +140,10 @@ public sealed partial class SqliteTrackStore : ITodayReadStore
         public string? CronExpr { get; set; }
         public string Timezone { get; set; } = "";
         public long NextFireAtMs { get; set; }
+        public long CreatedAtMs { get; set; }
+        public long? LastFiredAtMs { get; set; }
+        public long? MaxOccurrences { get; set; }
+        public long FiredCount { get; set; }
         public string State { get; set; } = "";
     }
 }

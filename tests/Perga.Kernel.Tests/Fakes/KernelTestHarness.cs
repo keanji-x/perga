@@ -454,7 +454,7 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
                     if (_trackWakes[i] is { State: TrackWakeStates.Pending or TrackWakeStates.Delivering } w && w.TrackId == track.Id)
                         _trackWakes[i] = w with { State = TrackWakeStates.Dropped, Reason = TrackWakeReasons.TrackClosed };
                 for (var i = 0; i < _trackSchedules.Count; i++)
-                    if (_trackSchedules[i] is { State: TrackScheduleStates.Active } s && s.TrackId == track.Id)
+                    if (_trackSchedules[i] is { State: TrackScheduleStates.Active or TrackScheduleStates.Paused } s && s.TrackId == track.Id)
                         _trackSchedules[i] = s with { State = TrackScheduleStates.Canceled, NextFireAtMs = null, UpdatedAtMs = track.UpdatedAtMs };
             }
             if (evt is not null)
@@ -473,7 +473,8 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
             if (FailTemplateUpdate) throw new IOException("template persistence failure");
             _templateSnapshots[track.Id] = templateSnapshot;
             for (var i = 0; i < _trackWakes.Count; i++)
-                if (_trackWakes[i] is { State: TrackWakeStates.Pending, Kind: TrackWakeKinds.Schedule } w && w.TrackId == track.Id)
+                if (_trackWakes[i] is { State: TrackWakeStates.Pending, Kind: TrackWakeKinds.Schedule } w &&
+                    w.TrackId == track.Id && !TrackWakeRequests.IsTrackScheduleWake(w))
                     _trackWakes[i] = w with { State = TrackWakeStates.Dropped, Reason = TrackWakeReasons.TemplateChanged };
             return UpdateTrackAndEmitAsync(track, evt, ct);
         }
@@ -974,6 +975,8 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
         }
 
         _mailsByToTrack.Remove(trackId);
+        _trackSchedules.RemoveAll(s => s.TrackId == trackId);
+        _trackWakes.RemoveAll(w => w.TrackId == trackId);
         foreach (var term in _terminals.Values.Where(t => t.TrackId == trackId).ToArray())
         {
             _terminals.Remove(term.Id);

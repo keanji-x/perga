@@ -33,11 +33,25 @@ public sealed partial class SqliteTrackStore : ITrackScheduleStore
             if (trackRow.ClosedAtMs is not null)
                 throw KernelException.Conflict($"Cannot schedule wake on closed track '{schedule.TrackId}'.");
 
-            var existingTrackId = await conn.ExecuteScalarAsync<string?>(new CommandDefinition(
-                "SELECT track_id FROM track_schedules WHERE id=@Id;",
-                new { schedule.Id }, tx, cancellationToken: token)).ConfigureAwait(false);
-            if (existingTrackId is not null && !string.Equals(existingTrackId, schedule.TrackId, StringComparison.Ordinal))
-                throw KernelException.Conflict($"Schedule '{schedule.Id}' belongs to another track.");
+            var existing = await conn.QuerySingleOrDefaultAsync<TrackScheduleRow>(new CommandDefinition(
+                ScheduleSelect + " WHERE track_id=@TrackId AND id=@Id;",
+                new { schedule.TrackId, schedule.Id }, tx, cancellationToken: token)).ConfigureAwait(false);
+
+            var toPersist = schedule;
+            if (existing is not null &&
+                existing.State is TrackScheduleStates.Active or TrackScheduleStates.Paused)
+            {
+                var firedCount = checked((int)existing.FiredCount);
+                if (schedule.MaxOccurrences is { } max && firedCount >= max)
+                    throw KernelException.InvalidArgument($"maxOccurrences ({max}) must exceed current firedCount ({firedCount}).");
+
+                toPersist = schedule with
+                {
+                    FiredCount = firedCount,
+                    LastFiredAtMs = existing.LastFiredAtMs,
+                    CreatedAtMs = existing.CreatedAtMs
+                };
+            }
 
             await conn.ExecuteAsync(new CommandDefinition("""
                 INSERT INTO track_schedules(
@@ -48,7 +62,7 @@ public sealed partial class SqliteTrackStore : ITrackScheduleStore
                     @Id, @TrackId, @TargetSessionId, @SourceKind, @ScheduleKind, @Title, @Prompt,
                     @CronExpr, @Timezone, @RunAtMs, @NextFireAtMs, @LastFiredAtMs,
                     @MaxOccurrences, @FiredCount, @CoalesceKey, @State, @CreatedAtMs, @UpdatedAtMs)
-                ON CONFLICT(id) DO UPDATE SET
+                ON CONFLICT(track_id, id) DO UPDATE SET
                     target_session_id = excluded.target_session_id,
                     source_kind = excluded.source_kind,
                     schedule_kind = excluded.schedule_kind,
@@ -63,11 +77,13 @@ public sealed partial class SqliteTrackStore : ITrackScheduleStore
                     fired_count = excluded.fired_count,
                     coalesce_key = excluded.coalesce_key,
                     state = excluded.state,
+                    created_at_ms = excluded.created_at_ms,
                     updated_at_ms = excluded.updated_at_ms;
-                """, schedule, tx, cancellationToken: token)).ConfigureAwait(false);
+                """, toPersist, tx, cancellationToken: token)).ConfigureAwait(false);
 
             var row = await conn.QuerySingleAsync<TrackScheduleRow>(new CommandDefinition(
-                ScheduleSelect + " WHERE id=@Id;", new { schedule.Id }, tx, cancellationToken: token)).ConfigureAwait(false);
+                ScheduleSelect + " WHERE track_id=@TrackId AND id=@Id;",
+                new { schedule.TrackId, schedule.Id }, tx, cancellationToken: token)).ConfigureAwait(false);
             return row.ToDto();
         }, ct);
     }
@@ -86,7 +102,7 @@ public sealed partial class SqliteTrackStore : ITrackScheduleStore
     {
         EnsureInitialized();
         await using var conn = await OpenReadConnectionAsync(ct).ConfigureAwait(false);
-        var filter = includeTerminal ? string.Empty : $" AND state='{TrackScheduleStates.Active}'";
+        var filter = includeTerminal ? string.Empty : $" AND state IN ('{TrackScheduleStates.Active}','{TrackScheduleStates.Paused}')";
         var rows = await conn.QueryAsync<TrackScheduleRow>(new CommandDefinition(
             ScheduleSelect + $" WHERE track_id=@TrackId{filter} ORDER BY CASE WHEN next_fire_at_ms IS NULL THEN 1 ELSE 0 END, next_fire_at_ms ASC, created_at_ms ASC;",
             new { TrackId = trackId }, cancellationToken: ct)).ConfigureAwait(false);
@@ -102,15 +118,15 @@ public sealed partial class SqliteTrackStore : ITrackScheduleStore
             var existing = await conn.QuerySingleOrDefaultAsync<TrackScheduleRow>(new CommandDefinition(
                 ScheduleSelect + " WHERE track_id=@TrackId AND id=@Id;",
                 new { TrackId = trackId, Id = scheduleId }, tx, cancellationToken: token)).ConfigureAwait(false);
-            if (existing is null || existing.State != TrackScheduleStates.Active)
+            if (existing is null || existing.State is not (TrackScheduleStates.Active or TrackScheduleStates.Paused))
                 return false;
 
             await conn.ExecuteAsync(new CommandDefinition($"""
                 UPDATE track_schedules SET state='{TrackScheduleStates.Canceled}', next_fire_at_ms=NULL, updated_at_ms=@Now
-                WHERE track_id=@TrackId AND id=@Id AND state='{TrackScheduleStates.Active}';
+                WHERE track_id=@TrackId AND id=@Id AND state IN ('{TrackScheduleStates.Active}','{TrackScheduleStates.Paused}');
                 """, new { TrackId = trackId, Id = scheduleId, Now = now }, tx, cancellationToken: token)).ConfigureAwait(false);
 
-            var coalesceKey = existing.CoalesceKey ?? TrackWakeRequests.ScheduleKey(existing.Id);
+            var coalesceKey = TrackWakeRequests.TrackScheduleKey(existing.Id, existing.CoalesceKey);
             await conn.ExecuteAsync(new CommandDefinition($"""
                 UPDATE track_wakes SET state='{TrackWakeStates.Dropped}', reason='{TrackWakeReasons.Canceled}', updated_at_ms=@Now
                 WHERE track_id=@TrackId AND kind='{TrackWakeKinds.Schedule}' AND coalesce_key=@CoalesceKey AND state='{TrackWakeStates.Pending}';
@@ -127,11 +143,11 @@ public sealed partial class SqliteTrackStore : ITrackScheduleStore
         {
             var updated = await conn.ExecuteAsync(new CommandDefinition($"""
                 UPDATE track_schedules SET state='{TrackScheduleStates.Canceled}', next_fire_at_ms=NULL, updated_at_ms=@Now
-                WHERE track_id=@TrackId AND state='{TrackScheduleStates.Active}';
+                WHERE track_id=@TrackId AND state IN ('{TrackScheduleStates.Active}','{TrackScheduleStates.Paused}');
                 """, new { TrackId = trackId, Now = now }, tx, cancellationToken: token)).ConfigureAwait(false);
             await conn.ExecuteAsync(new CommandDefinition($"""
                 UPDATE track_wakes SET state='{TrackWakeStates.Dropped}', reason='{TrackWakeReasons.Canceled}', updated_at_ms=@Now
-                WHERE track_id=@TrackId AND kind='{TrackWakeKinds.Schedule}' AND state='{TrackWakeStates.Pending}';
+                WHERE track_id=@TrackId AND kind='{TrackWakeKinds.Schedule}' AND instr(coalesce_key, '{TrackWakeRequests.TrackScheduleKeyPrefix}') = 1 AND state='{TrackWakeStates.Pending}';
                 """, new { TrackId = trackId, Now = now }, tx, cancellationToken: token)).ConfigureAwait(false);
             return updated;
         }, ct);
@@ -148,7 +164,7 @@ public sealed partial class SqliteTrackStore : ITrackScheduleStore
         {
             await conn.ExecuteAsync(new CommandDefinition($"""
                 UPDATE track_schedules SET state='{TrackScheduleStates.Canceled}', next_fire_at_ms=NULL, updated_at_ms=@Now
-                WHERE state='{TrackScheduleStates.Active}' AND EXISTS (
+                WHERE state IN ('{TrackScheduleStates.Active}','{TrackScheduleStates.Paused}') AND EXISTS (
                     SELECT 1 FROM tracks t WHERE t.id=track_id AND t.closed_at_ms IS NOT NULL);
                 """, new { Now = nowMs }, tx, cancellationToken: token)).ConfigureAwait(false);
 
@@ -189,9 +205,10 @@ public sealed partial class SqliteTrackStore : ITrackScheduleStore
                     UPDATE track_schedules
                     SET fired_count=@FiredCount, last_fired_at_ms=@Now, next_fire_at_ms=@NextFireAtMs,
                         state=@State, updated_at_ms=@Now
-                    WHERE id=@Id AND state='active';
+                    WHERE track_id=@TrackId AND id=@Id AND state='active';
                     """, new
                 {
+                    schedule.TrackId,
                     schedule.Id,
                     FiredCount = nextFiredCount,
                     Now = nowMs,

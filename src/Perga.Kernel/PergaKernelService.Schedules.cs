@@ -29,7 +29,7 @@ public sealed partial class PergaKernelService
         var hasRunAtStr = !string.IsNullOrWhiteSpace(request.RunAt);
         var scheduleTargets = (hasCron ? 1 : 0) + (hasRunAtMs ? 1 : 0) + (hasRunAtStr ? 1 : 0);
         if (scheduleTargets != 1)
-            throw KernelException.InvalidArgument("Specify exactly one of 'runAt', 'runAtMs', or 'cronExpr'.");
+            throw KernelException.InvalidArgument("Specify exactly one of 'runAt', 'runAtMs', or 'cron'.");
 
         var scheduleId = string.IsNullOrWhiteSpace(request.Id)
             ? $"sch_{Guid.NewGuid():N}"
@@ -40,7 +40,7 @@ public sealed partial class PergaKernelService
         var sourceKind = string.IsNullOrWhiteSpace(request.SourceKind)
             ? TrackScheduleSources.Agent
             : request.SourceKind.Trim();
-        if (sourceKind is not (TrackScheduleSources.Agent or TrackScheduleSources.User or TrackScheduleSources.Plugin))
+        if (sourceKind is not (TrackScheduleSources.Agent or TrackScheduleSources.User or TrackScheduleSources.Plugin or TrackScheduleSources.Template))
             throw KernelException.InvalidArgument("Unsupported schedule sourceKind.");
 
         var nowMs = NowMs();

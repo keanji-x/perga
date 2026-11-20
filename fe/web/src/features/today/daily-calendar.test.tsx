@@ -58,7 +58,7 @@ it('renders day indicators, reports visible ranges, and lists scheduled wakes fo
       ]}
       schedules={[
         {
-          id: 'sch_1',
+          id: 'daily-review',
           date: '2026-10-03',
           track_id: 'trk_release',
           track_title: 'Release Track',
@@ -67,6 +67,30 @@ it('renders day indicators, reports visible ranges, and lists scheduled wakes fo
           cron_expr: '0 9 * * *',
           timezone: 'UTC',
           next_fire_at_ms: Date.parse('2026-10-03T09:00:00Z'),
+          state: 'active',
+        },
+        {
+          id: 'daily-review',
+          date: '2026-10-03',
+          track_id: 'trk_ops',
+          track_title: 'Ops Track',
+          title: 'Ops review',
+          schedule_kind: 'cron',
+          cron_expr: '0 10 * * *',
+          timezone: 'UTC',
+          next_fire_at_ms: Date.parse('2026-10-03T10:00:00Z'),
+          state: 'active',
+        },
+        {
+          id: 'daily-review',
+          date: '2026-10-04',
+          track_id: 'trk_release',
+          track_title: 'Release Track',
+          title: 'Deploy check',
+          schedule_kind: 'cron',
+          cron_expr: '0 9 * * *',
+          timezone: 'UTC',
+          next_fire_at_ms: Date.parse('2026-10-04T09:00:00Z'),
           state: 'active',
         },
       ]}
@@ -82,14 +106,16 @@ it('renders day indicators, reports visible ranges, and lists scheduled wakes fo
   const day3 = within(calendar).getByRole('button', { name: '2026-10-03' });
   const day4 = within(calendar).getByRole('button', { name: '2026-10-04' });
   expect(day3.getAttribute('aria-pressed')).toBe('true');
-  expect(day3.getAttribute('data-nc-schedule-count')).toBe('1');
+  expect(day3.getAttribute('data-nc-schedule-count')).toBe('2');
   expect(day4.getAttribute('data-nc-has-track')).toBe('');
   expect(day4.getAttribute('data-nc-has-report')).toBe('');
+  expect(day4.getAttribute('data-nc-schedule-count')).toBe('1');
 
   const agenda = within(calendar).getByRole('region', { name: 'Scheduled wakes' });
-  within(agenda).getByText('Scheduled · 1');
+  within(agenda).getByText('Scheduled · 2');
   within(agenda).getByText('09:00');
   within(agenda).getByText('Deploy check');
+  within(agenda).getByText('Ops review');
   within(agenda).getByText('0 9 * * *');
 
   await userEvent.click(within(agenda).getByRole('button', { name: 'Release Track' }));

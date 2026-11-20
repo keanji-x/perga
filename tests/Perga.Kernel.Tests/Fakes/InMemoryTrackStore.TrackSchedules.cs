@@ -17,19 +17,31 @@ internal sealed partial class InMemoryTrackStore : ITrackScheduleStore, ITodayRe
             if (track.ClosedAtMs is not null)
                 throw KernelException.Conflict($"Cannot schedule wake on closed track '{schedule.TrackId}'.");
 
-            var existingIndex = _trackSchedules.FindIndex(s => s.Id == schedule.Id);
+            var existingIndex = _trackSchedules.FindIndex(s => s.TrackId == schedule.TrackId && s.Id == schedule.Id);
+            var toPersist = schedule;
             if (existingIndex >= 0)
             {
-                if (_trackSchedules[existingIndex].TrackId != schedule.TrackId)
-                    throw KernelException.Conflict($"Schedule '{schedule.Id}' belongs to another track.");
-                _trackSchedules[existingIndex] = schedule;
+                var existing = _trackSchedules[existingIndex];
+                if (existing.State is TrackScheduleStates.Active or TrackScheduleStates.Paused)
+                {
+                    if (schedule.MaxOccurrences is { } max && existing.FiredCount >= max)
+                        throw KernelException.InvalidArgument($"maxOccurrences ({max}) must exceed current firedCount ({existing.FiredCount}).");
+                    toPersist = schedule with
+                    {
+                        FiredCount = existing.FiredCount,
+                        LastFiredAtMs = existing.LastFiredAtMs,
+                        CreatedAtMs = existing.CreatedAtMs
+                    };
+                }
+
+                _trackSchedules[existingIndex] = toPersist;
             }
             else
             {
-                _trackSchedules.Add(schedule);
+                _trackSchedules.Add(toPersist);
             }
 
-            return Task.FromResult(schedule);
+            return Task.FromResult(toPersist);
         }
     }
 
@@ -46,7 +58,8 @@ internal sealed partial class InMemoryTrackStore : ITrackScheduleStore, ITodayRe
         lock (_gate)
         {
             return Task.FromResult<IReadOnlyList<TrackScheduleDto>>(_trackSchedules
-                .Where(s => s.TrackId == trackId && (includeTerminal || s.State == TrackScheduleStates.Active))
+                .Where(s => s.TrackId == trackId &&
+                            (includeTerminal || s.State is TrackScheduleStates.Active or TrackScheduleStates.Paused))
                 .OrderBy(s => s.NextFireAtMs ?? long.MaxValue)
                 .ThenBy(s => s.CreatedAtMs)
                 .ToArray());
@@ -57,14 +70,16 @@ internal sealed partial class InMemoryTrackStore : ITrackScheduleStore, ITodayRe
     {
         lock (_gate)
         {
-            var idx = _trackSchedules.FindIndex(s => s.TrackId == trackId && s.Id == scheduleId && s.State == TrackScheduleStates.Active);
+            var idx = _trackSchedules.FindIndex(s =>
+                s.TrackId == trackId && s.Id == scheduleId &&
+                s.State is TrackScheduleStates.Active or TrackScheduleStates.Paused);
             if (idx < 0)
                 return Task.FromResult(false);
 
             var existing = _trackSchedules[idx];
             var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             _trackSchedules[idx] = existing with { State = TrackScheduleStates.Canceled, NextFireAtMs = null, UpdatedAtMs = now };
-            var key = existing.CoalesceKey ?? TrackWakeRequests.ScheduleKey(existing.Id);
+            var key = TrackWakeRequests.TrackScheduleKey(existing.Id, existing.CoalesceKey);
             for (var i = 0; i < _trackWakes.Count; i++)
                 if (_trackWakes[i] is { State: TrackWakeStates.Pending, Kind: TrackWakeKinds.Schedule } w &&
                     w.TrackId == trackId && w.CoalesceKey == key)
@@ -80,13 +95,14 @@ internal sealed partial class InMemoryTrackStore : ITrackScheduleStore, ITodayRe
             var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             var count = 0;
             for (var i = 0; i < _trackSchedules.Count; i++)
-                if (_trackSchedules[i] is { State: TrackScheduleStates.Active } s && s.TrackId == trackId)
+                if (_trackSchedules[i] is { State: TrackScheduleStates.Active or TrackScheduleStates.Paused } s && s.TrackId == trackId)
                 {
                     _trackSchedules[i] = s with { State = TrackScheduleStates.Canceled, NextFireAtMs = null, UpdatedAtMs = now };
                     count++;
                 }
             for (var i = 0; i < _trackWakes.Count; i++)
-                if (_trackWakes[i] is { State: TrackWakeStates.Pending, Kind: TrackWakeKinds.Schedule } w && w.TrackId == trackId)
+                if (_trackWakes[i] is { State: TrackWakeStates.Pending, Kind: TrackWakeKinds.Schedule } w &&
+                    w.TrackId == trackId && TrackWakeRequests.IsTrackScheduleWake(w))
                     _trackWakes[i] = w with { State = TrackWakeStates.Dropped, Reason = TrackWakeReasons.Canceled, UpdatedAtMs = now };
             return Task.FromResult(count);
         }
@@ -100,13 +116,15 @@ internal sealed partial class InMemoryTrackStore : ITrackScheduleStore, ITodayRe
             for (var i = 0; i < _trackSchedules.Count; i++)
             {
                 var s = _trackSchedules[i];
-                if (s.State != TrackScheduleStates.Active)
+                if (s.State is not (TrackScheduleStates.Active or TrackScheduleStates.Paused))
                     continue;
                 if (!_tracks.TryGetValue(s.TrackId, out var t) || t.ClosedAtMs is not null)
                 {
                     _trackSchedules[i] = s with { State = TrackScheduleStates.Canceled, NextFireAtMs = null, UpdatedAtMs = nowMs };
                     continue;
                 }
+                if (s.State != TrackScheduleStates.Active)
+                    continue;
                 if (s.NextFireAtMs is null || s.NextFireAtMs > nowMs)
                     continue;
 
@@ -151,8 +169,11 @@ internal sealed partial class InMemoryTrackStore : ITrackScheduleStore, ITodayRe
             return Task.FromResult<IReadOnlyList<TodayScheduleEntry>>(_trackSchedules
                 .Where(s => s.State == TrackScheduleStates.Active &&
                             _tracks.TryGetValue(s.TrackId, out var t) && t.ClosedAtMs is null &&
-                            s.NextFireAtMs is >= 0 && s.NextFireAtMs >= startMs && s.NextFireAtMs < endMs)
+                            s.NextFireAtMs is >= 0 &&
+                            (s.ScheduleKind == TrackScheduleKinds.Cron ||
+                             (s.NextFireAtMs >= startMs && s.NextFireAtMs < endMs)))
                 .OrderBy(s => s.NextFireAtMs)
+                .ThenBy(s => s.TrackId, StringComparer.Ordinal)
                 .ThenBy(s => s.Id, StringComparer.Ordinal)
                 .Select(s => new TodayScheduleEntry(
                     s.Id,
@@ -163,6 +184,10 @@ internal sealed partial class InMemoryTrackStore : ITrackScheduleStore, ITodayRe
                     s.CronExpr,
                     s.Timezone,
                     s.NextFireAtMs!.Value,
+                    s.CreatedAtMs,
+                    s.LastFiredAtMs,
+                    s.MaxOccurrences,
+                    s.FiredCount,
                     s.State))
                 .ToArray());
         }

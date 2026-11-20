@@ -5,6 +5,7 @@ namespace Perga.Kernel.Ports;
 public static class TrackScheduleStates
 {
     public const string Active = "active";
+    public const string Paused = "paused";
     public const string Done = "done";
     public const string Canceled = "canceled";
 }
@@ -20,6 +21,7 @@ public static class TrackScheduleSources
     public const string Agent = "agent";
     public const string User = "user";
     public const string Plugin = "plugin";
+    public const string Template = "template";
 }
 
 public sealed record FiredTrackSchedule(string TrackId, string ScheduleId);

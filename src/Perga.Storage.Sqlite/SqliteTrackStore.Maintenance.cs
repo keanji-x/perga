@@ -135,17 +135,17 @@ public sealed partial class SqliteTrackStore
         {
             await conn.ExecuteAsync(new CommandDefinition($"""
                 UPDATE track_schedules SET state='{TrackScheduleStates.Canceled}', next_fire_at_ms=NULL, updated_at_ms=@Now
-                WHERE state='{TrackScheduleStates.Active}' AND EXISTS (
+                WHERE state IN ('{TrackScheduleStates.Active}','{TrackScheduleStates.Paused}') AND EXISTS (
                     SELECT 1 FROM tracks t WHERE t.id=track_id AND t.closed_at_ms IS NOT NULL);
                 """, new { Now = nowMs }, tx, cancellationToken: token)).ConfigureAwait(false);
         }, ct).ConfigureAwait(false);
         return await RunMaintenanceBatchesAsync(() => _writer.EnqueueAsync<int>(async (conn, tx, token) =>
             await conn.ExecuteAsync(new CommandDefinition($"""
-                DELETE FROM track_schedules WHERE id IN (
-                    SELECT id FROM track_schedules
+                DELETE FROM track_schedules WHERE rowid IN (
+                    SELECT rowid FROM track_schedules
                     WHERE state IN ('{TrackScheduleStates.Done}','{TrackScheduleStates.Canceled}')
                       AND updated_at_ms < @Cutoff
-                    ORDER BY updated_at_ms ASC, id ASC LIMIT 1000
+                    ORDER BY updated_at_ms ASC, track_id ASC, id ASC LIMIT 1000
                 );
                 """, new { Cutoff = nowMs - 90L * DayMs }, tx, cancellationToken: token)).ConfigureAwait(false), ct), 1000).ConfigureAwait(false);
     }

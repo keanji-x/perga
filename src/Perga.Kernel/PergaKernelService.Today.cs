@@ -42,17 +42,11 @@ public sealed partial class PergaKernelService
         var store = (ITodayReadStore)_store;
         var presence = (await store.ListDailyTrackPresenceAsync(dates, ct).ConfigureAwait(false))
             .ToDictionary(p => p.Date, StringComparer.Ordinal);
-        var (windowStartMs, _) = TodayCalendar.Bounds(startDate, zone);
-        var (_, windowEndMs) = TodayCalendar.Bounds(endDate, zone);
+        var dayBounds = dates.Select(d => (Date: d, Bounds: TodayCalendar.Bounds(d, zone))).ToArray();
+        var windowStartMs = dayBounds[0].Bounds.Start;
+        var windowEndMs = dayBounds[^1].Bounds.End;
         var rawSchedules = await store.ListActiveSchedulesInWindowAsync(windowStartMs, windowEndMs, ct).ConfigureAwait(false);
-        var schedules = rawSchedules.Select(item =>
-        {
-            var day = TimeZoneInfo.ConvertTime(DateTimeOffset.FromUnixTimeMilliseconds(item.NextFireAtMs), zone)
-                .ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-            return new TodayScheduleItemDto(
-                item.Id, day, item.TrackId, item.TrackTitle, item.Title,
-                item.ScheduleKind, item.CronExpr, item.Timezone, item.NextFireAtMs, item.State);
-        }).ToArray();
+        var expanded = ExpandSchedulesForCalendar(rawSchedules, dayBounds, windowStartMs, windowEndMs, zone, _scheduleCronEvaluator);
 
         var days = dates.Select(d =>
         {
@@ -60,7 +54,117 @@ public sealed partial class PergaKernelService
             return new TodayCalendarDayDto(d, p?.HasDailyTrack ?? false, p?.HasReport ?? false);
         }).ToArray();
 
-        return new TodayCalendarDto(today, TodayCalendar.IanaId(zone), startDate, endDate, days, schedules);
+        return new TodayCalendarDto(today, TodayCalendar.IanaId(zone), startDate, endDate, days, expanded);
+    }
+
+    private static List<TodayScheduleItemDto> ExpandSchedulesForCalendar(
+        IReadOnlyList<TodayScheduleEntry> rawSchedules,
+        (string Date, (long Start, long End) Bounds)[] dayBounds,
+        long windowStartMs,
+        long windowEndMs,
+        TimeZoneInfo zone,
+        IScheduleCronEvaluator? cronEvaluator)
+    {
+        var expanded = new List<TodayScheduleItemDto>(rawSchedules.Count);
+
+        foreach (var item in rawSchedules)
+        {
+            if (item.ScheduleKind != TrackScheduleKinds.Cron ||
+                string.IsNullOrWhiteSpace(item.CronExpr) ||
+                cronEvaluator is null)
+            {
+                if (item.NextFireAtMs >= windowStartMs && item.NextFireAtMs < windowEndMs)
+                {
+                    var day = TimeZoneInfo.ConvertTime(DateTimeOffset.FromUnixTimeMilliseconds(item.NextFireAtMs), zone)
+                        .ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+                    expanded.Add(new TodayScheduleItemDto(
+                        item.Id, day, item.TrackId, item.TrackTitle, item.Title,
+                        item.ScheduleKind, item.CronExpr, item.Timezone, item.NextFireAtMs, item.State));
+                }
+
+                continue;
+            }
+
+            if (item.MaxOccurrences is { } maxOcc && maxOcc - item.FiredCount <= 0)
+                continue;
+
+            var lastAllowedFutureMs = ComputeLastAllowedOccurrenceMs(item, windowEndMs, cronEvaluator);
+            foreach (var (d, (dayStartMs, dayEndMs)) in dayBounds)
+            {
+                var matchedFireMs = ResolveCronOccurrenceForDay(item, dayStartMs, dayEndMs, lastAllowedFutureMs, cronEvaluator);
+                if (matchedFireMs.HasValue)
+                {
+                    expanded.Add(new TodayScheduleItemDto(
+                        item.Id, d, item.TrackId, item.TrackTitle, item.Title,
+                        item.ScheduleKind, item.CronExpr, item.Timezone, matchedFireMs.Value, item.State));
+                }
+            }
+        }
+
+        expanded.Sort((a, b) =>
+        {
+            var cmp = a.NextFireAtMs.CompareTo(b.NextFireAtMs);
+            if (cmp != 0) return cmp;
+            cmp = StringComparer.Ordinal.Compare(a.TrackId, b.TrackId);
+            return cmp != 0 ? cmp : StringComparer.Ordinal.Compare(a.Id, b.Id);
+        });
+        return expanded;
+    }
+
+    private static long? ComputeLastAllowedOccurrenceMs(
+        TodayScheduleEntry item,
+        long windowEndMs,
+        IScheduleCronEvaluator cronEvaluator)
+    {
+        if (item.MaxOccurrences is not { } maxOcc)
+            return null;
+
+        var remaining = maxOcc - item.FiredCount;
+        var cursorMs = item.NextFireAtMs;
+        const int maxStepBudget = 2048;
+        var steps = 1;
+        var exhaustedCron = false;
+        while (steps < remaining && steps < maxStepBudget && cursorMs < windowEndMs)
+        {
+            var nextMs = cronEvaluator.GetNextOccurrenceMs(item.CronExpr!, item.Timezone, cursorMs);
+            if (!nextMs.HasValue)
+            {
+                exhaustedCron = true;
+                break;
+            }
+            cursorMs = nextMs.Value;
+            steps++;
+        }
+
+        return steps >= remaining || exhaustedCron ? cursorMs : null;
+    }
+
+    private static long? ResolveCronOccurrenceForDay(
+        TodayScheduleEntry item,
+        long dayStartMs,
+        long dayEndMs,
+        long? lastAllowedFutureMs,
+        IScheduleCronEvaluator cronEvaluator)
+    {
+        if (item.NextFireAtMs >= dayStartMs && item.NextFireAtMs < dayEndMs)
+            return item.NextFireAtMs;
+
+        if (dayEndMs <= item.NextFireAtMs)
+        {
+            if (item.LastFiredAtMs is not { } lastFired || lastFired < dayStartMs)
+                return null;
+            var searchAfter = Math.Max(dayStartMs, item.CreatedAtMs) - 1;
+            if (searchAfter >= Math.Min(dayEndMs, lastFired))
+                return null;
+            var pastOcc = cronEvaluator.GetNextOccurrenceMs(item.CronExpr!, item.Timezone, searchAfter);
+            return pastOcc is { } pastFire && pastFire < dayEndMs && pastFire <= lastFired ? pastFire : null;
+        }
+
+        var futureOcc = cronEvaluator.GetNextOccurrenceMs(item.CronExpr!, item.Timezone, dayStartMs - 1);
+        return futureOcc is { } futureFire && futureFire < dayEndMs &&
+               (!lastAllowedFutureMs.HasValue || futureFire <= lastAllowedFutureMs.Value)
+            ? futureFire
+            : null;
     }
 }
 
@@ -121,9 +225,19 @@ public static partial class TodayCalendar
             throw KernelException.InvalidArgument($"Invalid 'runAt' timestamp '{rawRunAt}'. Expected ISO-8601 date/time.");
         }
 
-        if (!DateTime.TryParse(trimmed, CultureInfo.InvariantCulture, DateTimeStyles.NoCurrentDateDefault, out var localDt) ||
+        if (!DateTime.TryParse(trimmed, CultureInfo.InvariantCulture,
+                DateTimeStyles.NoCurrentDateDefault | DateTimeStyles.RoundtripKind, out var localDt) ||
             localDt.Year < 1970)
         {
+            throw KernelException.InvalidArgument($"Invalid 'runAt' timestamp '{rawRunAt}'. Expected ISO-8601 date/time.");
+        }
+
+        // If .NET detected an explicit offset or zone specifier outside ExplicitIsoOffsetSuffix (e.g.
+        // space before offset or RFC1123 GMT), honor that offset directly instead of re-interpreting it.
+        if (localDt.Kind != DateTimeKind.Unspecified)
+        {
+            if (DateTimeOffset.TryParse(trimmed, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var explicitDto))
+                return explicitDto.ToUnixTimeMilliseconds();
             throw KernelException.InvalidArgument($"Invalid 'runAt' timestamp '{rawRunAt}'. Expected ISO-8601 date/time.");
         }
 

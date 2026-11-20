@@ -201,35 +201,99 @@ public sealed class TrackScheduleIntegrationTests
         // Schedule a reminder on a specific day within the visible range.
         var area = await kernel.CreateAreaAsync(new CreateAreaRequest("Work", DefaultCwd: host.DataDir));
         var workTrack = await kernel.CreateTrackAsync(new CreateTrackRequest(area.Id, Title: "Release Track", Cwd: host.DataDir));
+        await kernel.WaitForTrackIdleAsync(workTrack.Track.Id).WaitAsync(Deadline);
         var leadCaller = new McpSessionPrincipal("lead-tok", workTrack.Track.Id, workTrack.Track.LeadSessionId!, true, null, null, []);
-        var targetLocalDate = DateOnly.ParseExact(todayDate, "yyyy-MM-dd").AddDays(1).ToString("yyyy-MM-dd");
-        var noonTarget = host.TimeProvider.GetUtcNow().AddDays(1);
+        var day0 = DateOnly.ParseExact(todayDate, "yyyy-MM-dd");
+        var targetLocalDate = day0.AddDays(1).ToString("yyyy-MM-dd");
+        var day2Date = day0.AddDays(2).ToString("yyyy-MM-dd");
+        var day3Date = day0.AddDays(3).ToString("yyyy-MM-dd");
+        var hostZone = TodayCalendar.Zone(host.TimeProvider);
+        var (day1StartMs, _) = TodayCalendar.Bounds(targetLocalDate, hostZone);
+        var day1AfternoonMs = DateTimeOffset.FromUnixTimeMilliseconds(day1StartMs).AddHours(14).ToUnixTimeMilliseconds();
         await KernelMcpDispatcher.ExecuteGuardedAsync(kernel, leadCaller, KernelMcpToolNames.ScheduleSet,
             JsonSerializer.SerializeToElement(new
             {
                 id = "sch_tomorrow",
                 title = "Release check-in",
                 prompt = "Check release metrics",
-                runAtMs = noonTarget.ToUnixTimeMilliseconds()
+                runAtMs = day1AfternoonMs
             }));
 
-        var calResp = await host.Client.GetAsync($"/api/today/calendar?start={todayDate}&end={targetLocalDate}");
+        // Also schedule a daily 09:00 cron (maxOccurrences = 2) and fire it once to verify:
+        // (1) multi-day expansion across the window, (2) already-fired today occurrence stays visible,
+        // and (3) expansion stops once maxOccurrences is exhausted.
+        host.TimeProvider.SetUtcNow(DateTimeOffset.FromUnixTimeMilliseconds(day1StartMs).AddHours(8));
+        await KernelMcpDispatcher.ExecuteGuardedAsync(kernel, leadCaller, KernelMcpToolNames.ScheduleSet,
+            JsonSerializer.SerializeToElement(new
+            {
+                id = "daily-standup",
+                title = "Daily standup",
+                prompt = "Summarize progress",
+                cron = "0 9 * * *",
+                timezone = TodayCalendar.IanaId(hostZone),
+                maxOccurrences = 2
+            }));
+        // Fire day1 09:00 and view calendar at day1 10:00.
+        host.TimeProvider.SetUtcNow(DateTimeOffset.FromUnixTimeMilliseconds(day1StartMs).AddHours(10));
+        var scheduler = host.Services.GetRequiredService<CronosScheduleHostedService>();
+        Assert.Equal(1, await scheduler.EvaluateDueSchedulesOnceAsync());
+        await kernel.WaitForTrackIdleAsync(workTrack.Track.Id).WaitAsync(Deadline);
+
+        // Also test a mid-day created multi-fire cron ("0 9,15 * * *" created at 10:00 -> upcoming at 15:00 today)
+        // and a high-frequency cron with maxOccurrences > 2048 so maxStepBudget does not truncate Day 3.
+        await KernelMcpDispatcher.ExecuteGuardedAsync(kernel, leadCaller, KernelMcpToolNames.ScheduleSet,
+            JsonSerializer.SerializeToElement(new
+            {
+                id = "midday-multi",
+                title = "Twice daily",
+                prompt = "Check queue",
+                cron = "0 9,15 * * *",
+                timezone = TodayCalendar.IanaId(hostZone)
+            }));
+        await KernelMcpDispatcher.ExecuteGuardedAsync(kernel, leadCaller, KernelMcpToolNames.ScheduleSet,
+            JsonSerializer.SerializeToElement(new
+            {
+                id = "every-minute-budget",
+                title = "Heartbeat",
+                prompt = "Ping",
+                cron = "* * * * *",
+                timezone = TodayCalendar.IanaId(hostZone),
+                maxOccurrences = 5000
+            }));
+
+        var calResp = await host.Client.GetAsync($"/api/today/calendar?start={todayDate}&end={day3Date}");
         calResp.EnsureSuccessStatusCode();
         using var calDoc = JsonDocument.Parse(await calResp.Content.ReadAsStringAsync());
-        Assert.Equal(todayDate, calDoc.RootElement.GetProperty("today").GetString());
+        Assert.Equal(targetLocalDate, calDoc.RootElement.GetProperty("today").GetString());
         var days = calDoc.RootElement.GetProperty("days");
-        Assert.Equal(2, days.GetArrayLength());
+        Assert.Equal(4, days.GetArrayLength());
         Assert.Equal(todayDate, days[0].GetProperty("date").GetString());
         Assert.True(days[0].GetProperty("has_daily_track").GetBoolean());
         Assert.True(days[0].GetProperty("has_report").GetBoolean());
         Assert.Equal(targetLocalDate, days[1].GetProperty("date").GetString());
         Assert.False(days[1].GetProperty("has_daily_track").GetBoolean());
 
-        var items = calDoc.RootElement.GetProperty("schedules");
-        Assert.Single(items.EnumerateArray());
-        Assert.Equal(targetLocalDate, items[0].GetProperty("date").GetString());
-        Assert.Equal("Release check-in", items[0].GetProperty("title").GetString());
-        Assert.Equal("Release Track", items[0].GetProperty("track_title").GetString());
+        var items = calDoc.RootElement.GetProperty("schedules").EnumerateArray().ToArray();
+        // Expect 1 one-shot on day1 + 2 expanded daily-standup occurrences (day1 already-fired at 09:00 + day2 upcoming at 09:00; NOT day3 because maxOccurrences=2).
+        var standups = items.Where(i => i.GetProperty("id").GetString() == "daily-standup").ToArray();
+        Assert.Equal(2, standups.Length);
+        Assert.Equal(targetLocalDate, standups[0].GetProperty("date").GetString());
+        Assert.Equal(day2Date, standups[1].GetProperty("date").GetString());
+
+        // Mid-day created multi-fire cron must appear on day1 (at 15:00), day2, and day3.
+        var middayDates = items.Where(i => i.GetProperty("id").GetString() == "midday-multi")
+            .Select(i => i.GetProperty("date").GetString()!).ToArray();
+        Assert.Equal([targetLocalDate, day2Date, day3Date], middayDates);
+
+        // High-frequency cron with 5000 remaining minutes (~3.47 days) must NOT be truncated before day3 by maxStepBudget.
+        var heartbeatDates = items.Where(i => i.GetProperty("id").GetString() == "every-minute-budget")
+            .Select(i => i.GetProperty("date").GetString()!).ToArray();
+        Assert.Equal([targetLocalDate, day2Date, day3Date], heartbeatDates);
+
+        var checkIn = Assert.Single(items, i => i.GetProperty("id").GetString() == "sch_tomorrow");
+        Assert.Equal(targetLocalDate, checkIn.GetProperty("date").GetString());
+        Assert.Equal("Release check-in", checkIn.GetProperty("title").GetString());
+        Assert.Equal("Release Track", checkIn.GetProperty("track_title").GetString());
 
         Assert.Equal(HttpStatusCode.BadRequest, (await host.Client.GetAsync("/api/today/calendar?start=2026-11-20&end=2026-11-19")).StatusCode);
         Assert.Equal(HttpStatusCode.BadRequest, (await host.Client.GetAsync("/api/today/calendar?start=2026-01-01&end=2026-04-01")).StatusCode);
