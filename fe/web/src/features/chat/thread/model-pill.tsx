@@ -541,30 +541,21 @@ function EffortSlider({
 type SettingTone = 'neutral' | 'warning' | 'danger';
 type SettingOption = Readonly<{ label: string; description: string; tone?: SettingTone }>;
 
-/** Fallback options when no provider-declared list is supplied. */
-const DEFAULT_PERMISSION_MODES: Readonly<Record<string, SettingOption>> = Object.freeze({
-  never: Object.freeze({ label: 'Never', description: 'Sandbox only; never asks.' }),
-  ask: Object.freeze({ label: 'Ask me', description: 'Pauses the turn to ask you.', tone: 'warning' }),
-  full: Object.freeze({ label: 'Full access', description: "No sandbox; never asks. Runs with your account's access.", tone: 'danger' }),
-});
-
 /** The kernel reads the mode when it starts a turn, so a change never reaches the one already running. */
 const PERMISSION_NOTE = 'Applies from the next turn.';
 
-/** A session's approval setting: renders provider-declared modes or the default set when omitted. */
+/** A session's approval setting: renders backend-declared modes only. */
 export function PermissionModePill({ mode, options, onChange, isDisabled = false, unavailableMode, placement = 'above' }: Readonly<{
   /** What the session has stored (or selected in draft). */
   mode: string;
-  options?: readonly PermissionModeOptionDto[];
+  options: readonly PermissionModeOptionDto[];
   onChange: (mode: string) => void;
   isDisabled?: boolean;
   unavailableMode?: string;
   placement?: 'above' | 'below';
 }>) {
-  if (options !== undefined && options.length === 0) return null;
-  const optionMap: Readonly<Record<string, SettingOption>> = options === undefined
-    ? DEFAULT_PERMISSION_MODES
-    : Object.fromEntries(options.map((opt) => [
+  if (options.length === 0) return null;
+  const optionMap: Readonly<Record<string, SettingOption>> = Object.fromEntries(options.map((opt) => [
       opt.id,
       { label: opt.label, description: opt.id === unavailableMode
         ? 'Restoring approval requests requires owner authorization over HTTPS.' : opt.description,
@@ -572,9 +563,7 @@ export function PermissionModePill({ mode, options, onChange, isDisabled = false
     ]));
   const effectiveMode = Object.prototype.hasOwnProperty.call(optionMap, mode)
     ? mode
-    : options !== undefined
-      ? (options.find((opt) => opt.isDefault) ?? options[0]).id
-      : 'never';
+    : (options.find((opt) => opt.isDefault) ?? options[0]).id;
   return <SettingPill name="Approvals" options={optionMap} value={effectiveMode} onChange={onChange}
     note={PERMISSION_NOTE} isDisabled={isDisabled} unavailableOption={unavailableMode} placement={placement} />;
 }

@@ -336,7 +336,7 @@ public sealed class McpPluginsPolicyGuardAndLifecycleIntegrationTests
 
             using var approveResp = await client.PostAsJsonAsync(
                 $"/api/v1/tracks/{trackId}/executions/{approvalApprove.ExecutionId}/approvals/{approvalApprove.Id}/decision",
-                new { answers = new[] { "Approve" } },
+                new { optionId = approvalApprove.Options.Single(o => o.IsApproval).Id },
                 ct);
             approveResp.EnsureSuccessStatusCode();
 
@@ -372,7 +372,7 @@ public sealed class McpPluginsPolicyGuardAndLifecycleIntegrationTests
 
             using var rejectResp = await client.PostAsJsonAsync(
                 $"/api/v1/tracks/{trackId}/executions/{approvalReject.ExecutionId}/approvals/{approvalReject.Id}/decision",
-                new { answers = new[] { "Reject" } },
+                new { optionId = approvalReject.Options.Single(o => !o.IsApproval).Id },
                 ct);
             rejectResp.EnsureSuccessStatusCode();
 

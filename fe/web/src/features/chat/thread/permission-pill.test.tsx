@@ -1,11 +1,18 @@
 // @vitest-environment jsdom
-// #2348: a Planner conversation's approval setting, beside the model picker.
+// #2348: a session's approval setting, beside the model picker.
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import type { PermissionModeOptionDto } from '../../../../../core/api/perga-v1.ts';
 import { PermissionModePill } from './model-pill.tsx';
 
 afterEach(cleanup);
+
+const CODEX_OPTIONS: readonly PermissionModeOptionDto[] = Object.freeze([
+  { id: 'never', label: 'Never', description: 'Sandbox only; never asks.', tone: 'neutral', isDefault: true },
+  { id: 'ask', label: 'Ask me', description: 'Pauses the turn to ask you.', tone: 'warning', isDefault: false },
+  { id: 'full', label: 'Full access', description: "No sandbox; never asks. Runs with your account's access.", tone: 'danger', isDefault: false },
+]);
 
 function openMenu(name: string): HTMLElement {
   fireEvent.click(screen.getByRole('button', { name }));
@@ -15,7 +22,7 @@ function openMenu(name: string): HTMLElement {
 describe('PermissionModePill', () => {
   it.each([['never', 'Approvals: Never'], ['ask', 'Approvals: Ask me'], ['full', 'Approvals: Full access']] as const)(
     'names the stored mode (%s) on its trigger', (mode, name) => {
-      render(<PermissionModePill mode={mode} onChange={vi.fn()} />);
+      render(<PermissionModePill mode={mode} options={CODEX_OPTIONS} onChange={vi.fn()} />);
       const button = screen.getByRole('button', { name });
       expect(button.textContent).toBe(name);
       expect(button.getAttribute('data-variant')).toBe('ghost');
@@ -30,7 +37,7 @@ describe('PermissionModePill', () => {
   );
 
   it('offers every mode, marks the stored one, and says when a change applies', () => {
-    render(<PermissionModePill mode="never" onChange={vi.fn()} />);
+    render(<PermissionModePill mode="never" options={CODEX_OPTIONS} onChange={vi.fn()} />);
     const menu = openMenu('Approvals: Never');
     const rows = within(menu).getAllByRole('menuitem');
     expect(rows.map((row) => row.textContent)).toEqual([
@@ -44,7 +51,7 @@ describe('PermissionModePill', () => {
 
   it('hands back the mode picked, and nothing for the one already stored', () => {
     const onChange = vi.fn();
-    render(<PermissionModePill mode="never" onChange={onChange} />);
+    render(<PermissionModePill mode="never" options={CODEX_OPTIONS} onChange={onChange} />);
     fireEvent.click(within(openMenu('Approvals: Never')).getByRole('menuitem', { name: /^Never/ }));
     expect(onChange).not.toHaveBeenCalled();
     fireEvent.click(within(openMenu('Approvals: Never')).getByRole('menuitem', { name: /^Ask me/ }));
@@ -54,7 +61,7 @@ describe('PermissionModePill', () => {
   });
 
   it('cannot be opened while disabled', () => {
-    render(<PermissionModePill mode="ask" onChange={vi.fn()} isDisabled />);
+    render(<PermissionModePill mode="ask" options={CODEX_OPTIONS} onChange={vi.fn()} isDisabled />);
     const button = screen.getByRole('button', { name: 'Approvals: Ask me' });
     expect(button.hasAttribute('disabled') || button.getAttribute('aria-disabled') === 'true').toBe(true);
   });

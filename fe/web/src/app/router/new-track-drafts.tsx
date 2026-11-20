@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useSyncExternalStore, type ReactNode } from 'react';
 import { FOLLOW_INSTALLATION_DEFAULT, type ModelSelection } from '../../../../core/domain/conversation.ts';
+import { permissionModeAfterProviderChange } from '../../../../core/domain/planner-permission-mode.ts';
 import type { AgentProvider } from '../../../../core/api/generated/wire.ts';
 import type { Area } from '../../../../core/domain/area.ts';
 import type { NewTrackBody } from '../../../../core/domain/track.ts';
@@ -95,9 +96,11 @@ function createDraftStore(submittedStorage?: () => Storage, userId?: string) {
     update: (areaId: string, patch: Partial<NewTrackSession>) => {
       const current = drafts.get(areaId);
       if (current === undefined) return;
-      drafts.set(areaId, { ...current, ...patch,
-        ...(patch.provider !== undefined && patch.provider !== current.provider ? { permissionMode: null } : {}),
-      });
+      const nextProvider = patch.provider ?? current.provider;
+      const nextPermissionMode = patch.provider !== undefined
+        ? permissionModeAfterProviderChange(current.provider, nextProvider, patch.permissionMode ?? current.permissionMode)
+        : (patch.permissionMode !== undefined ? patch.permissionMode : current.permissionMode);
+      drafts.set(areaId, { ...current, ...patch, permissionMode: nextPermissionMode });
       if (patch.request !== undefined) remember(areaId, patch.request);
       notify();
     },

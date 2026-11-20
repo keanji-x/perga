@@ -69,7 +69,7 @@ public sealed class AcpProviderTests : IDisposable
             "acp:antigravity", null, _fixture.WorkspaceDir, null, null, new Dictionary<string, McpServerConfig>(),
             Sandbox: sandbox, OverlayMounts: [new([lower], null, null, _fixture.WorkspaceDir)]), CancellationToken.None);
         var modes = session.AvailablePermissionModes;
-        Assert.Equal("plan", Assert.Single(modes).Id);
+        Assert.Equal(["plan", "bypassPermissions"], modes.Select(mode => mode.Id));
         var args = File.ReadAllLines(log);
         Assert.Contains("--overlay-src", args);
         Assert.Contains(lower, args);
@@ -142,15 +142,11 @@ public sealed class AcpProviderTests : IDisposable
     [Fact]
     public async Task PermissionReopenOutcomeRequiresTheCompleteSelectionToBeExpressible()
     {
-        if (OperatingSystem.IsWindows()) return;
-        var executable = Path.Combine(_fixture.RootDir, "agy");
-        File.WriteAllText(executable, $"#!/bin/sh\nexec \"{_fixture.MockAcpPath}\" \"$@\"\n");
-        File.SetUnixFileMode(executable, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         await using var runtime = new AgentRuntime(new AgentRuntimeOptions
         {
             ProviderOverrides = new Dictionary<string, ProviderCommandOverride>
             {
-                ["acp:antigravity"] = new(executable, Env: new Dictionary<string, string>
+                ["acp:antigravity"] = new(_fixture.MockAcpPath, Env: new Dictionary<string, string>
                     { ["MOCK_ACP_WORKER_OPTIONS"] = "1" })
             }
         });
@@ -212,7 +208,8 @@ public sealed class AcpProviderTests : IDisposable
         await using var session = await runtime.OpenSessionAsync(new HarnessLaunchSpec(
             "acp:antigravity", null, _fixture.WorkspaceDir, null, null,
             new Dictionary<string, McpServerConfig>()), CancellationToken.None);
-        Assert.Equal("project-plan", Assert.Single(session.AvailablePermissionModes).Id);
+        Assert.Equal(["project-plan", "bypassPermissions"], session.AvailablePermissionModes.Select(mode => mode.Id));
+        Assert.Equal("project-plan", Assert.Single(session.AvailablePermissionModes, mode => mode.IsDefault).Id);
         var calls = File.ReadAllLines(log).Select(line => JsonSerializer.Deserialize<JsonElement>(line)).ToArray();
         var opens = calls.Where(call => call.GetProperty("method").GetString() == "session/new").ToArray();
         Assert.Equal([_fixture.WorkspaceDir],
@@ -248,7 +245,7 @@ public sealed class AcpProviderTests : IDisposable
             "acp:antigravity", resume is null ? null : "saved-model", _fixture.WorkspaceDir, resume, null,
             new Dictionary<string, McpServerConfig>(), PermissionMode: "execute"), CancellationToken.None);
         var modes = session.AvailablePermissionModes;
-        Assert.Equal(["safe", "execute"], modes.Select(mode => mode.Id));
+        Assert.Equal(["safe", "execute", "bypassPermissions"], modes.Select(mode => mode.Id));
         Assert.Equal("safe", Assert.Single(modes, mode => mode.IsDefault).Id);
         Assert.Equal("Read first", modes[0].Description);
         var calls = File.ReadAllLines(log).Select(line => JsonSerializer.Deserialize<JsonElement>(line)).ToArray();
@@ -261,22 +258,14 @@ public sealed class AcpProviderTests : IDisposable
     }
 
     [Fact]
-    public async Task AntigravityExecutableExposesBypassPermissionsAndPassesDangerouslySkipPermissions()
+    public async Task AntigravityProviderExposesBypassPermissionsAndPassesDangerouslySkipPermissions()
     {
-        if (OperatingSystem.IsWindows()) return;
-        var agyWrapper = Path.Combine(_fixture.RootDir, "agy");
-        File.WriteAllText(agyWrapper, $"""
-            #!/bin/sh
-            exec "{_fixture.MockAcpPath}" "$@"
-            """);
-        File.SetUnixFileMode(agyWrapper, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
-
         var log = Path.Combine(_fixture.RootDir, "antigravity-bypass.jsonl");
         await using var runtime = new AgentRuntime(new AgentRuntimeOptions
         {
             ProviderOverrides = new Dictionary<string, ProviderCommandOverride>
             {
-                ["acp:antigravity"] = new(agyWrapper, Env: new Dictionary<string, string>
+                ["acp:antigravity"] = new(_fixture.MockAcpPath, Env: new Dictionary<string, string>
                 {
                     ["MOCK_ACP_LOG"] = log,
                     ["MOCK_ACP_LOG_ARGV"] = "1",

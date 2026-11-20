@@ -60,6 +60,8 @@ export type TrackInputNotification = Readonly<{
   text: string;
   atMs: number;
   read?: boolean;
+  /** Owning session ID when an approval belongs to a specific Lead, Subagent, or Worker session. */
+  sessionId?: string;
   action?: import('../../../../../core/api/generated/wire.ts').AskAction;
 }> & (Readonly<{ kind: 'ask' | 'approval' | 'planner-down' | 'planner-turn-timeout' }>
   | Readonly<{ kind: 'task-failed'; blockId: string }>);
@@ -131,8 +133,8 @@ export type TrackPageProps = Readonly<{
    *  the route from the activity overlay's items (`attentionItems`). */
   inputNotifications?: readonly TrackInputNotification[];
   onNotificationReadChange?: (item: TrackInputNotification, read: boolean) => void;
-  /** Opens the Planner for questions and Planner notices. */
-  onReply?: () => void;
+  /** Opens the Planner or the approval's owning conversation. */
+  onReply?: (sessionId?: string) => void;
   /** Dismiss the row's item by its kernel key. The row stays until the overlay no longer lists it. */
   onDismiss?: (key: string) => Promise<void>;
   /** The clock the rows' relative times read; the current time when omitted. */
@@ -405,7 +407,7 @@ export function TrackPage({ fillReading = false, showWorkspaceIsolation = true, 
                 variant="ghost"
                 size="sm"
                 icon={<Icon name="chat" />}
-                onClick={onReply ?? onStartConversation}
+                onClick={onReply === undefined ? onStartConversation : () => { onReply(); }}
               />
             )}
             {trackMutationActions.length > 0 && <span ref={desktopSourceRef} className={styles.trackActions}>
@@ -625,7 +627,7 @@ export function TrackPage({ fillReading = false, showWorkspaceIsolation = true, 
               <ul className={notificationStyles.needsInputNoticeList}>
                 {inputNotifications.map((notification) => {
                   const open = notification.kind !== 'task-failed'
-                    ? onReply
+                    ? (onReply === undefined ? undefined : () => onReply(notification.sessionId))
                     : onOpenTask && (() => onOpenTask(notification.blockId));
                   const gist = notificationGist(notification.text);
                   return <li

@@ -11,50 +11,35 @@ namespace Perga.Kernel.Tests;
 public sealed class UserJourneyAuditFixesTests
 {
     [Fact]
-    public void AskAnswerEvaluator_IsFailClosed_SupportsOptionIndex_RecommendedPrefix_AndChineseKeywords()
+    public void PolicyApprovalOptionClassifier_BuildsStructuredChoicesWithRecommendedPrefixAndChineseKeywords()
     {
-        string[] standardOptions = ["(Recommended) Approve", "Deny"];
-        string[] chineseOptions = ["(Recommended) 允许执行", "拒绝执行"];
+        var standard = PolicyApprovalOptionClassifier.BuildChoices(["(Recommended) Approve", "Deny"]);
+        Assert.Equal(["option_0", "option_1"], standard.Select(c => c.Id));
+        Assert.Equal(["(Recommended) Approve", "Deny"], standard.Select(c => c.Label));
+        Assert.Equal([true, false], standard.Select(c => c.IsApproval));
 
-        // 1. Fail-closed on unrecognized free text, empty strings, null, or empty objects
-        Assert.False(AskAnswerEvaluator.IsApproved(TestJson.Parse("\"maybe later\""), standardOptions));
-        Assert.False(AskAnswerEvaluator.IsApproved(TestJson.Parse("\"\""), standardOptions));
-        Assert.False(AskAnswerEvaluator.IsApproved(TestJson.Parse("null"), standardOptions));
-        Assert.False(AskAnswerEvaluator.IsApproved(TestJson.Parse("{}"), standardOptions));
-        Assert.False(AskAnswerEvaluator.IsApproved(TestJson.Parse("[]"), standardOptions));
-        Assert.False(AskAnswerEvaluator.IsApproved(TestJson.Parse("""{"answers":["unsure"]}"""), standardOptions));
-        Assert.False(AskAnswerEvaluator.IsApproved(TestJson.Parse("""{"option":99}"""), standardOptions));
-        Assert.False(AskAnswerEvaluator.IsApproved(TestJson.Parse("""{"option":-1}"""), standardOptions));
+        var inverted = PolicyApprovalOptionClassifier.BuildChoices(["(Recommended) Deny", "Approve"]);
+        Assert.Equal([false, true], inverted.Select(c => c.IsApproval));
 
-        // 2. Option index resolution & (Recommended) prefix stripping
-        Assert.True(AskAnswerEvaluator.IsApproved(TestJson.Parse("""{"option":0}"""), standardOptions));
-        Assert.False(AskAnswerEvaluator.IsApproved(TestJson.Parse("""{"option":1}"""), standardOptions));
-        Assert.True(AskAnswerEvaluator.IsApproved(TestJson.Parse("\"(Recommended) Approve\""), standardOptions));
-        Assert.False(AskAnswerEvaluator.IsApproved(TestJson.Parse("\"(Recommended) Deny\""), ["(Recommended) Deny", "Approve"]));
+        var chinese = PolicyApprovalOptionClassifier.BuildChoices(["(Recommended) 允许执行", "拒绝执行"]);
+        Assert.Equal([true, false], chinese.Select(c => c.IsApproval));
 
-        // 3. Chinese approval & denial words (including "不同意" vs "同意" precedence!)
         foreach (var yesWord in new[] { "同意", "允许", "批准", "继续", "是" })
         {
-            Assert.True(
-                AskAnswerEvaluator.IsApproved(TestJson.FromObject(new { answer = yesWord }), chineseOptions),
-                $"Expected '{yesWord}' to evaluate to approved=true.");
+            var single = Assert.Single(PolicyApprovalOptionClassifier.BuildChoices([yesWord]));
+            Assert.True(single.IsApproval, $"Expected '{yesWord}' to classify as approval.");
         }
 
         foreach (var noWord in new[] { "拒绝", "不同意", "取消", "禁止", "否", "不同意执行", "不允许此操作" })
         {
-            Assert.False(
-                AskAnswerEvaluator.IsApproved(TestJson.FromObject(new { answer = noWord }), chineseOptions),
-                $"Expected '{noWord}' to evaluate to approved=false.");
+            var pair = PolicyApprovalOptionClassifier.BuildChoices([noWord, "批准"]);
+            Assert.False(pair[0].IsApproval, $"Expected '{noWord}' to classify as denial.");
+            Assert.True(pair[1].IsApproval);
         }
 
-        Assert.False(AskAnswerEvaluator.IsApproved(TestJson.FromObject("允许执行前需要复核"), chineseOptions));
-        Assert.False(AskAnswerEvaluator.IsApproved(TestJson.FromObject("Approve after a separate review"), standardOptions));
-        Assert.False(AskAnswerEvaluator.IsApproved(TestJson.FromObject(new { option = 1, value = "Approve" }), standardOptions));
-        Assert.True(AskAnswerEvaluator.IsApproved(TestJson.FromObject(new { option = 0, value = chineseOptions[0] }), chineseOptions));
-        Assert.True(AskAnswerEvaluator.IsApproved(TestJson.FromObject(new { text = "同意", value = "同意" }), chineseOptions));
-        Assert.False(AskAnswerEvaluator.IsApproved(TestJson.FromObject(new { text = "同意", value = "拒绝" }), chineseOptions));
-        Assert.True(AskAnswerEvaluator.IsApproved(TestJson.Parse("""{"option":0}"""), chineseOptions));
-        Assert.False(AskAnswerEvaluator.IsApproved(TestJson.Parse("""{"option":1}"""), chineseOptions));
+        var fallback = PolicyApprovalOptionClassifier.BuildChoices([]);
+        Assert.Equal(["approve", "deny"], fallback.Select(c => c.Id));
+        Assert.Equal([true, false], fallback.Select(c => c.IsApproval));
     }
 
     [Fact]

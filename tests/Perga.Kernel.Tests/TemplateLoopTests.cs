@@ -58,7 +58,7 @@ public sealed class TemplateLoopTests
         }
         Assert.False(dispatch.IsCompleted);
         Assert.Empty(await ctx.Kernel.ListTasksAsync(snap.Track.Id, timeout.Token));
-        await ctx.Kernel.DecideApprovalAsync(snap.Track.Id, ask.ExecutionId, ask.Id, TestJson.FromObject(new { answers = new[] { "Approve" } }), timeout.Token);
+        await ctx.Kernel.DecideApprovalAsync(snap.Track.Id, ask.ExecutionId, ask.Id, ask.Options.Single(o => o.IsApproval).Id, timeout.Token);
         Assert.Equal("review", (await dispatch).Task.Role);
 
         const string rewriting = """
@@ -95,7 +95,7 @@ public sealed class TemplateLoopTests
             if (ask is null) await Task.Delay(10, timeout.Token);
         }
         Assert.DoesNotContain(ctx.AgentRuntime.OpenedSessions.SelectMany(session => session.RecordedInputs), input => input.Prompt.Contains("Review context", StringComparison.Ordinal));
-        await ctx.Kernel.DecideApprovalAsync(snapshot.Track.Id, ask.ExecutionId, ask.Id, TestJson.FromObject(new { answers = new[] { "Approve" } }), timeout.Token);
+        await ctx.Kernel.DecideApprovalAsync(snapshot.Track.Id, ask.ExecutionId, ask.Id, ask.Options.Single(o => o.IsApproval).Id, timeout.Token);
         await wake;
         await ctx.Kernel.WaitForTrackIdleAsync(snapshot.Track.Id, timeout.Token);
         var input = Assert.Single(ctx.AgentRuntime.OpenedSessions.SelectMany(session => session.RecordedInputs), input => input.Prompt.Contains("Review context", StringComparison.Ordinal));

@@ -230,7 +230,7 @@ public sealed class BoundAttemptFenceAndGovernanceTests
         Assert.NotNull(openAsk);
         Assert.False(suspendedCommitTask.IsCompleted);
 
-        await ctx.Kernel.DecideApprovalAsync(trackId, openAsk!.ExecutionId, openAsk!.Id, TestJson.FromObject(new { answers = new[] { "Approve" } }));
+        await ctx.Kernel.DecideApprovalAsync(trackId, openAsk!.ExecutionId, openAsk!.Id, openAsk.Options[0].Id);
         var approvedCommit = await suspendedCommitTask;
         Assert.Equal(1, approvedCommit.DocRev);
     }

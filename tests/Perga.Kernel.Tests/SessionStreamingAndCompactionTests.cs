@@ -544,7 +544,7 @@ public sealed class SessionStreamingAndCompactionTests
         Assert.Contains("Use --release flag", activeFakeSession.SteeredMessages);
 
         // Answer the approval Ask -> unblocks RespondApprovalAsync on IAgentSession without extra duplicate wake turn!
-        await ctx.Kernel.DecideApprovalAsync(trackId, approvalAsk!.ExecutionId, approvalAsk!.Id, TestJson.FromObject(new { approved = true }));
+        await ctx.Kernel.DecideApprovalAsync(trackId, approvalAsk!.ExecutionId, approvalAsk!.Id, approvalAsk.Options.Single(o => o.IsApproval).Id);
         releaseTurn.TrySetResult();
 
         var finishedTurn = await inFlightTurnTask;
@@ -698,11 +698,11 @@ public sealed class SessionStreamingAndCompactionTests
         }
 
         Assert.NotNull(approvalAsk);
-        var question = Assert.Single(approvalAsk!.Questions);
-        Assert.Equal(["Allow once", "Always allow", "Reject once"], question.Options);
+        Assert.Equal(["opt_allow_once", "opt_allow_always", "opt_reject_once"], approvalAsk!.Options.Select(o => o.Id));
+        Assert.Equal(["Allow once", "Always allow", "Reject once"], approvalAsk.Options.Select(o => o.Label));
 
-        // User chooses index 1 ("Always allow")
-        await ctx.Kernel.DecideApprovalAsync(track.Track.Id, approvalAsk.ExecutionId, approvalAsk.Id, TestJson.FromObject(new object[] { new { option = 1 } }));
+        // User chooses "opt_allow_always" ("Always allow") directly by structured optionId
+        await ctx.Kernel.DecideApprovalAsync(track.Track.Id, approvalAsk.ExecutionId, approvalAsk.Id, "opt_allow_always");
 
         allowCompletion.TrySetResult();
         var finishedTurn = await turnTask;

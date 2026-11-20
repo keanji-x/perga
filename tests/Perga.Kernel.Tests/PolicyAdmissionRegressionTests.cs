@@ -40,7 +40,7 @@ public sealed class PolicyAdmissionRegressionTests
         Assert.Empty((await ctx.Kernel.GetTrackAggregateAsync(caller.TrackId)).PendingApprovals);
         Assert.Empty((await ctx.Store.LoadTrackAggregateAsync(caller.TrackId, default))!.OpenAsks);
         var error = await Assert.ThrowsAsync<KernelException>(() => ctx.Kernel.DecideApprovalAsync(
-            caller.TrackId, approval.ExecutionId, approval.Id, TestJson.FromObject(new { answers = new[] { "Approve" } })));
+            caller.TrackId, approval.ExecutionId, approval.Id, approval.Options.Single(o => o.IsApproval).Id));
         Assert.Equal(KernelErrorCode.Conflict, error.Code);
     }
 
@@ -73,7 +73,7 @@ public sealed class PolicyAdmissionRegressionTests
         foreach (var approval in pending.PendingApprovals)
         {
             var late = await Assert.ThrowsAsync<KernelException>(() => ctx.Kernel.DecideApprovalAsync(
-                caller.TrackId, approval.ExecutionId, approval.Id, TestJson.FromObject(new { approved = true }), timeout.Token));
+                caller.TrackId, approval.ExecutionId, approval.Id, approval.Options.Single(o => o.IsApproval).Id, timeout.Token));
             Assert.Equal(KernelErrorCode.Conflict, late.Code);
         }
         await running;
@@ -149,8 +149,9 @@ public sealed class PolicyAdmissionRegressionTests
             pending = await ctx.Kernel.GetTrackAggregateAsync(caller.TrackId, timeout.Token);
         } while (pending.PendingApprovals.Count < 2);
         // Deny the last ask while the first remains unanswered.
-        await ctx.Kernel.DecideApprovalAsync(caller.TrackId, pending.PendingApprovals.Last().ExecutionId, pending.PendingApprovals.Last().Id,
-            TestJson.FromObject(new { answers = new[] { "Reject" } }), timeout.Token);
+        var last = pending.PendingApprovals.Last();
+        await ctx.Kernel.DecideApprovalAsync(caller.TrackId, last.ExecutionId, last.Id,
+            last.Options.Single(o => !o.IsApproval).Id, timeout.Token);
         var error = await Assert.ThrowsAsync<KernelException>(() => commit);
         Assert.Equal(KernelErrorCode.PolicyDenied, error.Code);
         Assert.Empty((await ctx.Kernel.GetTrackAggregateAsync(caller.TrackId)).PendingApprovals);
@@ -338,7 +339,7 @@ public sealed class PolicyAdmissionRegressionTests
         report = await ctx.Kernel.ReadReportAsync(caller.TrackId);
         await ctx.Kernel.CommitReportAsync(caller.TrackId, caller.SessionId,
             new(report.Anchor, [new BlockOp.UpsertBlockOp("unrelated", ReportBlockKind.Prose, "Sync", null)]));
-        await ctx.Kernel.DecideApprovalAsync(caller.TrackId, first.ExecutionId, first.Id, TestJson.FromObject(new { answers = new[] { "Approve" } }));
+        await ctx.Kernel.DecideApprovalAsync(caller.TrackId, first.ExecutionId, first.Id, first.Options.Single(o => o.IsApproval).Id);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         await ctx.Kernel.WaitForTrackIdleAsync(caller.TrackId, timeout.Token);
         Assert.Empty((await ctx.Kernel.GetTrackAggregateAsync(caller.TrackId)).PendingApprovals);
@@ -391,7 +392,7 @@ public sealed class PolicyAdmissionRegressionTests
         var fresh = Assert.Single(reopened.PendingApprovals);
         Assert.NotEqual(first.Id, fresh.Id);
         await ctx.Kernel.DecideApprovalAsync(caller.TrackId, fresh.ExecutionId, fresh.Id,
-            TestJson.FromObject(new { answers = new[] { "Approve" } }), timeout.Token);
+            fresh.Options.Single(o => o.IsApproval).Id, timeout.Token);
         await ctx.Kernel.WaitForTrackIdleAsync(caller.TrackId, timeout.Token);
         Assert.Empty((await ctx.Kernel.GetTrackAggregateAsync(caller.TrackId)).PendingApprovals);
         Assert.Single(await ctx.Kernel.ListSessionsAsync(caller.TrackId), session => session.BoundTaskId == pending.Id);

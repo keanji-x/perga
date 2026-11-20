@@ -25,7 +25,11 @@ it('uses shared chat controls to show tools, change settings, retry, steer, and 
   let releaseDeny!: () => void;
   const denyApproval = new Promise<void>(resolve => { releaseDeny = resolve; });
   const approval = { id: 'worker-ask', executionId: 'turn-1', turnId: 'turn-1', sessionId: id, createdAtMs: 4,
-    questions: [{ question: 'Approve reading the report?', options: ['Approve', 'Deny'], isMultiSelect: false }] };
+    title: 'Approve reading the report?',
+    options: [
+      { id: 'approve', label: 'Approve', isApproval: true },
+      { id: 'deny', label: 'Deny', isApproval: false },
+    ] };
   let settings = { version: 0, model: null as string | null, reasoningEffort: null as string | null, approvalMode: 'ask' };
   const providerConfiguration = { defaultModel: 'gpt-5.4-mini', defaultReasoningEffort: 'low', models: [
     { id: 'gpt-5.4-mini', name: 'GPT 5.4 Mini', reasoningEfforts: ['low'], defaultReasoningEffort: 'low' },
@@ -116,7 +120,7 @@ it('uses shared chat controls to show tools, change settings, retry, steer, and 
     await screen.findByText('Approve reading the report?');
     fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
     await waitFor(() => expect(view.requests.find(request => request.path === '/api/v1/tracks/daily/executions/turn-1/approvals/worker-ask/decision')?.body).toEqual({
-      answers: [{ option: 0, value: 'Approve' }],
+      optionId: 'approve',
     }));
     await waitFor(() => expect(screen.queryByText('Approve reading the report?')).toBeNull());
 

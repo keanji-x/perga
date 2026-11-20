@@ -61,7 +61,7 @@ public sealed class PolicyGuardMailTerminalScheduleBootTests
         Assert.NotNull(openAsk);
         Assert.False(guardTask.IsCompleted);
 
-        await ctx.Kernel.DecideApprovalAsync(trackId, openAsk!.ExecutionId, openAsk!.Id, TestJson.FromObject(new { answers = new[] { "Approve" } }));
+        await ctx.Kernel.DecideApprovalAsync(trackId, openAsk!.ExecutionId, openAsk!.Id, openAsk.Options.Single(o => o.IsApproval).Id);
         await guardTask; // Completes cleanly!
 
         // Now verify human rejection throws PolicyDenied
@@ -77,7 +77,7 @@ public sealed class PolicyGuardMailTerminalScheduleBootTests
         }
 
         Assert.NotNull(rejectAsk);
-        await ctx.Kernel.DecideApprovalAsync(trackId, rejectAsk!.ExecutionId, rejectAsk!.Id, TestJson.FromObject(new { answers = new[] { "Reject" } }));
+        await ctx.Kernel.DecideApprovalAsync(trackId, rejectAsk!.ExecutionId, rejectAsk!.Id, rejectAsk.Options.Single(o => !o.IsApproval).Id);
         var humanRejectEx = await Assert.ThrowsAsync<KernelException>(() => rejectGuardTask);
         Assert.Equal(KernelErrorCode.PolicyDenied, humanRejectEx.Code);
     }

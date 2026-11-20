@@ -127,7 +127,7 @@ public sealed class ImplicitTemplateToolsTests
         await Call(ctx, caller, KernelMcpToolNames.TrackSet, new { source = replacement });
         var events = ctx.Store.PersistedEvents.Count(e => e.Kind == "track.updated");
         await ctx.Kernel.DecideApprovalAsync(snap.Track.Id, ask.ExecutionId, ask.Id,
-            TestJson.FromObject(new { answers = new[] { "Approve" } }), timeout.Token);
+            ask.Options.Single(option => option.IsApproval).Id, timeout.Token);
         var ex = await Assert.ThrowsAsync<KernelException>(() => suspended);
         Assert.Equal(KernelErrorCode.PolicyDenied, ex.Code);
         var persisted = (await ctx.Store.LoadTrackAggregateAsync(snap.Track.Id, default))!;

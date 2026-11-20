@@ -5,14 +5,10 @@ import type { FailedSendOp, PendingQueueSend, ReplacedTurn, QueueDisplayAccounti
 import type { ConversationStopFeedback } from '../../../../core/domain/conversation-stop.ts';
 import type { RunningTurnAnchor } from '../../../../core/domain/conversation-meta.ts';
 import type { UploadAttachment } from '../../features/planner/attachments.tsx';
-import type { PermissionModeOptionDto } from '../../../../core/api/perga-v1.ts';
-import type { OpenAsk } from '../../../../core/domain/ask.ts';
-import type { AskAnswer } from '../../../../core/api/generated/wire.ts';
+import type { PermissionModeOptionDto, ApprovalDto } from '../../../../core/api/perga-v1.ts';
 
 export type ConversationStore = Readonly<{
-  /** A session-specific list when available. Legacy Track asks are supplied by the caller. */
-  openAsks: readonly OpenAsk[] | null;
-  answerAsk: (ask: OpenAsk, answers: readonly AskAnswer[]) => Promise<void>;
+  pendingApprovals: readonly ApprovalDto[] | null;
   statusNotice: string | null;
   conversations: readonly Conversation[];
   /** This selected scope's messages and actions, in canonical display order. */

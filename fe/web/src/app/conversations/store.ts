@@ -1,7 +1,6 @@
 import { sessionContextUsage } from '../../../../core/domain/session-context-usage.ts';
 import { NotSentError } from '../../../../core/domain/failure-class.ts';
 import { withTaskMessageFailures, workerModelCatalog } from '../../../../core/domain/worker-session.ts';
-import { pendingApprovalQuestions } from '../../../../core/domain/ask.ts';
 import type { PermissionModeOptionDto, WorkerSettings } from '../../../../core/api/perga-v1.ts';
 import { pendingQueueWithCurrentHumanVersions, pendingQueueOwnsHumanEntry } from '../../../../core/domain/conversation-queue-controls.ts';
 import { useCurrentUser } from '../auth/current-user.tsx';
@@ -82,8 +81,6 @@ export function useConversationStore(
     query.state.data?.worker?.phase === 'running' || query.state.data?.worker?.phase === 'interrupting' ? 1000 : false });
   const worker = run.data?.worker ?? null;
   const workerTurn = worker === null ? undefined : (run.data?.activeTurn?.status === 'running' ? run.data.activeTurn.id : undefined);
-  const openWorkerAsks = worker?.pendingApprovals;
-  const openAsks = useMemo(() => openWorkerAsks === undefined ? null : pendingApprovalQuestions(openWorkerAsks), [openWorkerAsks]);
   const workerEditable = worker?.phase === 'running' || worker?.phase === 'paused';
   const workerCatalog = useMemo(() => worker === null ? null : workerModelCatalog(worker), [worker]);
   /* The catalog rides alongside the run query: the trigger has to render the chosen
@@ -340,9 +337,7 @@ export function useConversationStore(
     : worker?.phase === 'paused' ? 'Paused. Send a message to continue.'
     : null;
   return {
-    openAsks,
-    answerAsk: (ask, answers) => trackId === undefined ? Promise.reject(new NotSentError())
-      : mutations.answerWorkerAsk(trackId, ask.askId, answers, ask.questions, ask.executionId),
+    pendingApprovals: worker?.pendingApprovals ?? null,
     statusNotice,
     conversations,
     turns: conversation === null ? NO_TURNS : presentation.transcript,

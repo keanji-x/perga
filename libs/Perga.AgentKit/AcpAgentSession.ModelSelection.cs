@@ -41,8 +41,8 @@ public sealed partial class AcpAgentSession
         ArgumentNullException.ThrowIfNull(configuration);
         ct.ThrowIfCancellationRequested();
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-        var permissionModes = Volatile.Read(ref _permissionModes);
-        ValidatePermissionMode(configuration.Permission.ValueOrNull, permissionModes);
+        var permissionCatalog = Volatile.Read(ref _permissionCatalog);
+        var targetPermission = ValidatePermissionMode(configuration.Permission.ValueOrNull, permissionCatalog);
         var matchesConfirmedModelOptions = !UsesAdvertisedModelOptions || MatchesConfirmedModelOptions();
         if (ConfigurationState?.Selection == configuration && matchesConfirmedModelOptions)
             return new SessionConfigurationOutcome.Applied(ConfigurationState);
@@ -53,9 +53,9 @@ public sealed partial class AcpAgentSession
         if (!UsesAdvertisedModelOptions && ValidateLegacyEffort(configuration.Effort, targetModel, usesThought) is { } invalidEffort)
             return invalidEffort;
         if (configuration.Permission != _permission &&
-            (configuration.Permission is SessionSelection.ProviderDefault ||
-             _launchArgumentModes.Contains(configuration.Permission.ValueOrNull!) ||
-             (_permission.ValueOrNull is { } currentMode && _launchArgumentModes.Contains(currentMode))))
+            (targetPermission is null ||
+             targetPermission.Transport is AcpPermissionTransport.LaunchArgument ||
+             permissionCatalog.IsLaunchArgument(_permission.ValueOrNull)))
         {
             if (configuration.Model is SessionSelection.ProviderDefault)
                 return new SessionConfigurationOutcome.Unsupported(ConfigurationDimension.Model,
@@ -91,7 +91,7 @@ public sealed partial class AcpAgentSession
                 timeout.CancelAfter(_handshakeTimeout);
                 try
                 {
-                    var result = await SetPermissionModeAsync(configuration.Permission.ValueOrNull!, NativeThreadId!, permissionModes, timeout.Token).ConfigureAwait(false);
+                    var result = await SetPermissionModeAsync(targetPermission!.Option.Id, NativeThreadId!, targetPermission.Transport, timeout.Token).ConfigureAwait(false);
                     if (!IsPositiveAcknowledgement(result))
                         return RejectConfiguration(ConfigurationFailureCode.InvalidAcknowledgement, "The provider rejected the permission mode.");
                     _permission = configuration.Permission;

@@ -118,7 +118,7 @@ public interface IPergaKernel : IAsyncDisposable
     // Asks
     Task<JsonElement> AskUserAsync(string trackId, string? callerSessionId, IReadOnlyList<AskQuestionDto> questions, CancellationToken ct = default);
     Task<AskDto> AnswerAskAsync(string trackId, string askId, JsonElement answer, CancellationToken ct = default);
-    Task<ApprovalDto> DecideApprovalAsync(string trackId, string executionId, string approvalId, JsonElement answer, CancellationToken ct = default);
+    Task<ApprovalDto> DecideApprovalAsync(string trackId, string executionId, string approvalId, string optionId, CancellationToken ct = default);
 
 
     // Cross-Track Mail
@@ -1310,8 +1310,8 @@ public sealed partial class PergaKernelService : IPergaKernel
         Actors.GetOrActivate(trackId).AnswerAskAsync(askId, answer, ct);
 
     public Task<ApprovalDto> DecideApprovalAsync(
-        string trackId, string executionId, string approvalId, JsonElement answer, CancellationToken ct = default) =>
-        Actors.GetOrActivate(trackId).DecideApprovalAsync(executionId, approvalId, answer, ct);
+        string trackId, string executionId, string approvalId, string optionId, CancellationToken ct = default) =>
+        Actors.GetOrActivate(trackId).DecideApprovalAsync(executionId, approvalId, optionId, ct);
 
     // ------------------- Cross-Track Mail -------------------
 

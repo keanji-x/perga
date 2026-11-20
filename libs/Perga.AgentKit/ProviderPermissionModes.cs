@@ -1,8 +1,54 @@
 namespace Perga.AgentKit;
 
+public enum PermissionCatalogSource
+{
+    Static,
+    Dynamic
+}
+
+public sealed record LaunchPermissionMode(
+    PermissionModeOption Option,
+    IReadOnlyList<string> ExtraLaunchArgs);
+
+public sealed record ProviderPermissionProfile(
+    PermissionCatalogSource CatalogSource,
+    IReadOnlyList<PermissionModeOption> StaticModes,
+    IReadOnlyList<LaunchPermissionMode> LaunchModes)
+{
+    public static ProviderPermissionProfile EmptyStatic { get; } =
+        new(PermissionCatalogSource.Static, [], []);
+
+    public static ProviderPermissionProfile PlainDynamic { get; } =
+        new(PermissionCatalogSource.Dynamic, [], []);
+
+    public string? DefaultModeId =>
+        CatalogSource == PermissionCatalogSource.Static
+            ? (StaticModes.FirstOrDefault(m => m.IsDefault) ?? StaticModes.FirstOrDefault())?.Id
+            : null;
+
+    public IReadOnlyList<string> GetLaunchArgs(string? mode)
+    {
+        if (string.IsNullOrWhiteSpace(mode) || LaunchModes.Count == 0)
+        {
+            return [];
+        }
+
+        var trimmed = mode.Trim();
+        foreach (var launchMode in LaunchModes)
+        {
+            if (string.Equals(launchMode.Option.Id, trimmed, StringComparison.Ordinal))
+            {
+                return launchMode.ExtraLaunchArgs;
+            }
+        }
+
+        return [];
+    }
+}
+
 /// <summary>
-/// Provider-declared permission modes and launch-time validation helpers.
-/// Each harness owns its supported mode IDs and how they map to provider flags/RPC fields.
+/// Single authoritative declaration of provider permission catalogs and launch-argument modes.
+/// Each provider owns its catalog source (static vs runtime-discovered) and any CLI-flag modes.
 /// </summary>
 public static class ProviderPermissionModes
 {
@@ -23,44 +69,63 @@ public static class ProviderPermissionModes
         new("bypassPermissions", "Full access", "No sandbox; never asks. Runs with your account's access.", "danger")
     ];
 
-    private static readonly IReadOnlyList<PermissionModeOption> AcpModes = [];
+    private static readonly IReadOnlyList<LaunchPermissionMode> AntigravityLaunchModes =
+    [
+        new(
+            new PermissionModeOption(
+                "bypassPermissions",
+                "Full access",
+                "Auto-approves all tool permission requests without prompting.",
+                "danger",
+                IsDefault: false),
+            ["--dangerously-skip-permissions"])
+    ];
 
-    public static IReadOnlyList<PermissionModeOption> GetModesForProvider(string provider)
+    private static readonly ProviderPermissionProfile CodexProfile =
+        new(PermissionCatalogSource.Static, CodexModes, []);
+
+    private static readonly ProviderPermissionProfile ClaudeProfile =
+        new(PermissionCatalogSource.Static, ClaudeModes, []);
+
+    private static readonly ProviderPermissionProfile AntigravityProfile =
+        new(PermissionCatalogSource.Dynamic, [], AntigravityLaunchModes);
+
+    public static ProviderPermissionProfile GetProfile(string provider)
     {
-        if (string.IsNullOrWhiteSpace(provider))
+        var normalized = AgentRuntime.NormalizeProviderName(provider);
+        if (string.IsNullOrWhiteSpace(normalized))
         {
-            return [];
+            return ProviderPermissionProfile.EmptyStatic;
         }
 
-        var normalized = provider.Trim();
         if (string.Equals(normalized, "codex", StringComparison.OrdinalIgnoreCase))
         {
-            return CodexModes;
+            return CodexProfile;
         }
 
         if (string.Equals(normalized, "claude", StringComparison.OrdinalIgnoreCase))
         {
-            return ClaudeModes;
+            return ClaudeProfile;
+        }
+
+        if (string.Equals(normalized, "acp:antigravity", StringComparison.OrdinalIgnoreCase))
+        {
+            return AntigravityProfile;
         }
 
         if (normalized.StartsWith("acp:", StringComparison.OrdinalIgnoreCase))
         {
-            return AcpModes;
+            return ProviderPermissionProfile.PlainDynamic;
         }
 
-        return [];
+        return ProviderPermissionProfile.EmptyStatic;
     }
 
-    public static string? GetDefaultMode(string provider)
-    {
-        var modes = GetModesForProvider(provider);
-        if (modes.Count == 0)
-        {
-            return null;
-        }
+    public static IReadOnlyList<PermissionModeOption> GetModesForProvider(string provider) =>
+        GetProfile(provider).StaticModes;
 
-        return (modes.FirstOrDefault(m => m.IsDefault) ?? modes[0]).Id;
-    }
+    public static string? GetDefaultMode(string provider) =>
+        GetProfile(provider).DefaultModeId;
 
     public static bool IsSupported(string provider, string? mode)
     {

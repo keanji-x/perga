@@ -50,11 +50,11 @@ public sealed partial class TrackActor
     }
 
     private sealed class PendingApproval(
-        ApprovalDto dto, ExecutionControl control, Func<JsonElement, Func<Task>?> claimDelivery, Action expire)
+        ApprovalDto dto, ExecutionControl control, Func<ApprovalChoiceDto, Func<Task>?> claimDelivery, Action expire)
     {
         public ApprovalDto Dto { get; } = dto;
         public ExecutionControl Control { get; } = control;
-        public Func<JsonElement, Func<Task>?> ClaimDelivery { get; } = claimDelivery;
+        public Func<ApprovalChoiceDto, Func<Task>?> ClaimDelivery { get; } = claimDelivery;
         public Action Expire { get; } = expire;
         public bool RecordingDecision { get; set; }
         public CancellationTokenRegistration Cancellation { get; set; }
@@ -68,11 +68,11 @@ public sealed partial class TrackActor
             .OrderBy(item => item.CreatedAtMs).ThenBy(item => item.Id, StringComparer.Ordinal).ToArray();
 
     private PendingApproval? RegisterApproval(
-        string executionId, string sessionId, string? turnId, string title, IReadOnlyList<string> options,
-        ExecutionControl control, Func<JsonElement, Func<Task>?> claimDelivery, Action expire, CancellationToken ct = default)
+        string executionId, string sessionId, string? turnId, string title, IReadOnlyList<ApprovalChoiceDto> options,
+        ExecutionControl control, Func<ApprovalChoiceDto, Func<Task>?> claimDelivery, Action expire, CancellationToken ct = default)
     {
         var dto = new ApprovalDto($"apr_{Guid.NewGuid():N}", executionId, sessionId, turnId,
-            [new AskQuestionDto(title, options.Count > 0 ? options : ["Approve", "Deny"])], NowMs());
+            title, options.Count > 0 ? options : PolicyApprovalOptionClassifier.DefaultBinaryChoices, NowMs());
         var pending = new PendingApproval(dto, control, claimDelivery, expire);
         // An already canceled token can run its callback inline during registration.
         pending.Cancellation = ct.UnsafeRegister(_ => ExpireApproval(pending), null);
@@ -176,11 +176,18 @@ public sealed partial class TrackActor
             JsonHelpers.ToElement(new { sessionId }), NowMs());
 
     internal async Task<ApprovalDto> DecideApprovalAsync(
-        string executionId, string approvalId, JsonElement answer, CancellationToken ct)
+        string executionId, string approvalId, string optionId, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
+        if (string.IsNullOrWhiteSpace(optionId))
+            throw KernelException.InvalidArgument("optionId is required.");
         if (!_approvals.TryGetValue(approvalId, out var pending) || pending.Dto.ExecutionId != executionId)
             throw KernelException.Conflict("This approval is no longer pending.");
+
+        var normalizedOptionId = optionId.Trim();
+        var choice = pending.Dto.Options.FirstOrDefault(
+            option => string.Equals(option.Id, normalizedOptionId, StringComparison.Ordinal))
+            ?? throw KernelException.InvalidArgument($"Unknown approval option '{optionId}'.");
 
         lock (_approvalAdmission)
         lock (pending.Control.Sync)
@@ -191,11 +198,11 @@ public sealed partial class TrackActor
             pending.RecordingDecision = true;
         }
 
-        var decision = answer.Clone();
         try
         {
             await RecordApprovalAsync(KernelEventKinds.ApprovalDecided, pending.Dto,
-                JsonHelpers.ToElement(new { answer = decision })).ConfigureAwait(false);
+                JsonHelpers.ToElement(new { optionId = choice.Id, label = choice.Label, isApproval = choice.IsApproval }))
+                .ConfigureAwait(false);
         }
         catch
         {
@@ -217,7 +224,7 @@ public sealed partial class TrackActor
 
                 // Claim the provider request before Stop can cancel it. Writing the reply
                 // can block and must run outside both locks.
-                send = pending.ClaimDelivery(decision);
+                send = pending.ClaimDelivery(choice);
             }
 
             NotifyApprovalsChanged(pending.Dto.SessionId);
@@ -255,19 +262,20 @@ public sealed partial class TrackActor
 
     private void AdmitProviderApproval(ActiveTurnState turn, UnifiedAgentEvent.ApprovalRequested approval)
     {
-        var options = approval.Options?.Select(option => option.Label).ToArray();
+        var hasProviderOptions = approval.Options is { Count: > 0 };
+        var choices = hasProviderOptions
+            ? approval.Options!.Select(option => new ApprovalChoiceDto(option.OptionId, option.Label, option.IsApproval)).ToArray()
+            : PolicyApprovalOptionClassifier.DefaultBinaryChoices;
         if (turn.Settings?.ApprovalMode != "deny" &&
             RegisterApproval(turn.TurnDto.Id, turn.SessionId, turn.TurnDto.Id, $"Approve tool '{approval.ToolName}'?",
-                options ?? [], turn.Control, answer =>
+                choices, turn.Control, choice =>
                 {
-                    var selected = approval.Options is { Count: > 0 } choices &&
-                        AskAnswerEvaluator.TryGetSelectedOptionIndex(answer, options!, out var index)
-                        ? choices[index]
-                        : null;
-                    var approved = selected?.IsApproval ??
-                        AskAnswerEvaluator.IsApproved(answer, options is { Length: > 0 } ? options : ["Approve", "Deny"]);
-                    var send = turn.AgentSession.TryClaimApprovalResponse(approval.RequestId, approved, selected?.OptionId,
-                        approved ? null : "Denied by user.", turn.TurnCts.Token);
+                    var send = turn.AgentSession.TryClaimApprovalResponse(
+                        approval.RequestId,
+                        choice.IsApproval,
+                        hasProviderOptions ? choice.Id : null,
+                        choice.IsApproval ? null : "Denied by user.",
+                        turn.TurnCts.Token);
                     if (send is null)
                         return null;
 
@@ -300,7 +308,7 @@ public sealed partial class TrackActor
         });
     }
 
-    private sealed record PolicyApproval(PendingApproval Pending, Task<JsonElement> Decision);
+    private sealed record PolicyApproval(PendingApproval Pending, Task<ApprovalChoiceDto> Decision);
 
     private void RequireApprovalOrigin(string? sessionId, ActiveTurnState? turn, McpExecutionOrigin? origin)
     {
@@ -320,11 +328,12 @@ public sealed partial class TrackActor
         if (_track.ClosedAtMs is not null || _deletingTrack || sessionId is null)
             throw KernelException.Forbidden("An approval requires an open Track and a session.");
 
-        var waiter = new TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var waiter = new TaskCompletionSource<ApprovalChoiceDto>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var choices = PolicyApprovalOptionClassifier.BuildChoices(ask.Options);
         var pending = RegisterApproval($"op_{Guid.NewGuid():N}", sessionId, turn?.TurnDto.Id,
-            ask.Title, ask.Options, turn?.Control ?? new ExecutionControl(), answer =>
+            ask.Title, choices, turn?.Control ?? new ExecutionControl(), choice =>
             {
-                waiter.TrySetResult(answer);
+                waiter.TrySetResult(choice);
                 return static () => Task.CompletedTask;
             }, () => waiter.TrySetCanceled(), ct);
         return new PolicyApproval(pending ?? throw KernelException.Conflict("The turn is stopping."), waiter.Task);
@@ -334,8 +343,8 @@ public sealed partial class TrackActor
     {
         try
         {
-            var answer = await approval.Decision.WaitAsync(ct).ConfigureAwait(false);
-            if (!AskAnswerEvaluator.IsApproved(answer, approval.Pending.Dto.Questions[0].Options))
+            var choice = await approval.Decision.WaitAsync(ct).ConfigureAwait(false);
+            if (!choice.IsApproval)
                 throw KernelException.PolicyDenied($"Operation denied by human on approval '{approval.Pending.Dto.Id}'.");
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)

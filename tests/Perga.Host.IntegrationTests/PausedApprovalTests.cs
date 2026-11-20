@@ -20,11 +20,9 @@ namespace Perga.Host.IntegrationTests;
 public sealed class PausedApprovalTests
 {
     [Theory]
-    [InlineData("{\"option\":0,\"value\":\"Approve\"}", true)]
-    [InlineData("{\"option\":1,\"value\":\"Deny\"}", false)]
-    [InlineData("true", true)]
-    [InlineData("{\"option\":0,\"value\":\"Deny\"}", false)]
-    public async Task ProviderApprovalPublishesIdentityAndOnlyResumesItsOriginalTurn(string answer, bool approved)
+    [InlineData("approve", true)]
+    [InlineData("deny", false)]
+    public async Task ProviderApprovalPublishesIdentityAndOnlyResumesItsOriginalTurn(string optionId, bool approved)
     {
         await using var host = new PergaHostTestCluster();
         WaitForProviderDecision(host);
@@ -33,16 +31,29 @@ public sealed class PausedApprovalTests
         var ask = await WaitForApproval(host, trackId);
         Assert.Equal(sessionId, ask.SessionId);
         Assert.NotNull(ask.TurnId);
+        Assert.Equal("Approve tool 'shell'?", ask.Title);
+        Assert.Equal(["approve", "deny"], ask.Options.Select(o => o.Id));
         var page = await host.Client.GetFromJsonAsync<SessionItemsPageDto>($"/api/v1/sessions/{sessionId}/items", PergaJsonDefaults.ApiOptions);
         Assert.Equal(page!.ActiveTurn!.Id, ask.TurnId);
         Assert.Empty(host.AgentRuntime.ApprovalResponses);
 
         var (otherTrack, _) = await host.CreateTrackAsync();
-        using var crossTrack = await host.Client.PostAsJsonAsync(ApprovalPath(otherTrack, ask), true);
+        using var crossTrack = await host.Client.PostAsJsonAsync(ApprovalPath(otherTrack, ask), new { optionId });
         Assert.Equal(HttpStatusCode.Conflict, crossTrack.StatusCode);
         Assert.Empty(host.AgentRuntime.ApprovalResponses);
 
-        using var response = await host.Client.PostAsJsonAsync(ApprovalPath(trackId, ask), JsonSerializer.Deserialize<JsonElement>(answer));
+        using var blank = await host.Client.PostAsJsonAsync(ApprovalPath(trackId, ask), new { optionId = " " });
+        Assert.Equal(HttpStatusCode.BadRequest, blank.StatusCode);
+        using var unknown = await host.Client.PostAsJsonAsync(ApprovalPath(trackId, ask), new { optionId = "invented" });
+        Assert.Equal(HttpStatusCode.BadRequest, unknown.StatusCode);
+        Assert.Empty(host.AgentRuntime.ApprovalResponses);
+        Assert.Equal(ask.Id, Assert.Single((await Snapshot(host, trackId)).PendingApprovals).Id);
+
+        await using var connection = new SqliteConnection($"Data Source={Path.Combine(host.DataDir, "perga.db")};Pooling=False");
+        await connection.OpenAsync();
+        Assert.Equal(0, await connection.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM events WHERE kind = 'approval.decided'"));
+
+        using var response = await host.Client.PostAsJsonAsync(ApprovalPath(trackId, ask), new { optionId });
         response.EnsureSuccessStatusCode();
         var answered = (await response.Content.ReadFromJsonAsync<ApprovalDto>(PergaJsonDefaults.ApiOptions))!;
         Assert.Equal(ask.TurnId, answered.ExecutionId);
@@ -51,7 +62,7 @@ public sealed class PausedApprovalTests
         for (var i = 0; i < 100 && host.AgentRuntime.ApprovalResponses.IsEmpty; i++)
             await Task.Delay(10);
         Assert.Equal(("approval-request", approved), Assert.Single(host.AgentRuntime.ApprovalResponses));
-        using var duplicate = await host.Client.PostAsJsonAsync(ApprovalPath(trackId, ask), true);
+        using var duplicate = await host.Client.PostAsJsonAsync(ApprovalPath(trackId, ask), new { optionId });
         Assert.Equal(HttpStatusCode.Conflict, duplicate.StatusCode);
         Assert.Single(host.AgentRuntime.ExecutedTurns);
     }
@@ -72,12 +83,12 @@ public sealed class PausedApprovalTests
             WHEN NEW.kind = 'approval.decided'
             BEGIN SELECT RAISE(ABORT, 'injected answer event failure'); END;
             """);
-        await Assert.ThrowsAsync<SqliteException>(() => kernel.DecideApprovalAsync(trackId, ask.ExecutionId, ask.Id, JsonSerializer.Deserialize<JsonElement>("true")));
+        await Assert.ThrowsAsync<SqliteException>(() => kernel.DecideApprovalAsync(trackId, ask.ExecutionId, ask.Id, "approve"));
         Assert.Equal(ask.Id, Assert.Single((await Snapshot(host, trackId)).PendingApprovals).Id);
         Assert.Equal(0, await connection.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM asks WHERE id = @Id", ask));
         Assert.Empty(host.AgentRuntime.ApprovalResponses);
         await connection.ExecuteAsync("DROP TRIGGER reject_answer_event;");
-        using var response = await host.Client.PostAsJsonAsync(ApprovalPath(trackId, ask), true);
+        using var response = await host.Client.PostAsJsonAsync(ApprovalPath(trackId, ask), new { optionId = "approve" });
         response.EnsureSuccessStatusCode();
         for (var i = 0; i < 100 && host.AgentRuntime.ApprovalResponses.IsEmpty; i++) await Task.Delay(10);
         Assert.True(Assert.Single(host.AgentRuntime.ApprovalResponses).Approved);
@@ -103,7 +114,7 @@ public sealed class PausedApprovalTests
             var snapshot = await Snapshot(reopened, trackId);
             Assert.Empty(snapshot.OpenAsks);
             Assert.Empty(snapshot.PendingApprovals);
-            using var response = await reopened.Client.PostAsJsonAsync(ApprovalPath(trackId, ask), true);
+            using var response = await reopened.Client.PostAsJsonAsync(ApprovalPath(trackId, ask), new { optionId = "approve" });
             Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
             using var error = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
             Assert.Equal("conflict", error.RootElement.GetProperty("code").GetString());
@@ -141,7 +152,7 @@ public sealed class PausedApprovalTests
 
         using var interrupted = await host.Client.PostAsJsonAsync($"/api/v1/sessions/{sessionId}/interrupt", new { turnId = hold.TurnId });
         interrupted.EnsureSuccessStatusCode();
-        using var expired = await host.Client.PostAsJsonAsync(ApprovalPath(trackId, hold), true);
+        using var expired = await host.Client.PostAsJsonAsync(ApprovalPath(trackId, hold), new { optionId = "approve" });
         Assert.Equal(HttpStatusCode.Conflict, expired.StatusCode);
         Assert.Empty(host.AgentRuntime.ApprovalResponses);
         Assert.Single(host.AgentRuntime.ExecutedTurns);
@@ -216,7 +227,7 @@ public sealed class PausedApprovalTests
         var released = false;
         try
         {
-            var answer = host.Client.PostAsJsonAsync(ApprovalPath(trackId, approval), true);
+            var answer = host.Client.PostAsJsonAsync(ApprovalPath(trackId, approval), new { optionId = "approve" });
             await auditStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
             using var stop = await host.Client.PostAsJsonAsync($"/api/v1/sessions/{sessionId}/interrupt", new { turnId = approval.TurnId });
             stop.EnsureSuccessStatusCode();
@@ -253,7 +264,7 @@ public sealed class PausedApprovalTests
 
         using var closed = await host.Client.PatchAsJsonAsync($"/api/v1/tracks/{trackId}", new { closed = true });
         closed.EnsureSuccessStatusCode();
-        using var late = await host.Client.PostAsJsonAsync(ApprovalPath(trackId, approval), true);
+        using var late = await host.Client.PostAsJsonAsync(ApprovalPath(trackId, approval), new { optionId = "approve" });
         Assert.Equal(HttpStatusCode.Conflict, late.StatusCode);
         Assert.Empty((await Snapshot(host, trackId)).PendingApprovals);
         Assert.Empty(host.AgentRuntime.ApprovalResponses);
@@ -268,7 +279,7 @@ public sealed class PausedApprovalTests
         var stopPath = $"/api/v1/sessions/{sessionId}/interrupt";
         await StartTurn(host, sessionId);
         var first = await WaitForApproval(host, trackId);
-        using (var decided = await host.Client.PostAsJsonAsync(ApprovalPath(trackId, first), true))
+        using (var decided = await host.Client.PostAsJsonAsync(ApprovalPath(trackId, first), new { optionId = "approve" }))
             decided.EnsureSuccessStatusCode();
         var kernel = host.Services.GetRequiredService<IPergaKernel>();
         await kernel.WaitForTrackIdleAsync(trackId).WaitAsync(TimeSpan.FromSeconds(5));
@@ -443,7 +454,7 @@ public sealed class PausedApprovalTests
         await StartTurn(host, sessionId);
         var approval = await WaitForApproval(host, trackId);
 
-        var decideTask = host.Client.PostAsJsonAsync(ApprovalPath(trackId, approval), true);
+        var decideTask = host.Client.PostAsJsonAsync(ApprovalPath(trackId, approval), new { optionId = "approve" });
         await deliveryEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
         try
         {
@@ -500,7 +511,7 @@ public sealed class PausedApprovalTests
         await StartTurn(host, sessionId);
         var approval = await WaitForApproval(host, trackId);
 
-        var answer = host.Client.PostAsJsonAsync(ApprovalPath(trackId, approval), true);
+        var answer = host.Client.PostAsJsonAsync(ApprovalPath(trackId, approval), new { optionId = "approve" });
         try
         {
             // Hold the answer at its approval-change notification, between the claim and write.

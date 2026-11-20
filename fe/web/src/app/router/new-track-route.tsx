@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef } from 'react';
 import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { availabilityOf, permissionModesForProvider } from '../../../../core/domain/agent-providers.ts';
+import { resolvePermissionControl } from '../../../../core/domain/planner-permission-mode.ts';
 import { folderConflictMessage } from '../../../../core/domain/area.ts';
 import { ApiError, classifyFailure, NotSentError, refusedText, writeFailureOf } from '../../../../core/domain/failure-class.ts';
 import { selectedReadyTemplateId } from '../../../../core/domain/mentions.ts';
@@ -189,6 +190,13 @@ function NewTrackEditor({ transport, unauthorized, pergaMode = false, workspace,
   const createdTrackId = session.createdTrackId;
   const configurationLocked = session.creating || session.request !== null || !available || createdTrackId !== null;
 
+  const permissionControl = resolvePermissionControl({
+    storedMode: session.permissionMode,
+    providerModes: permissionModesForProvider(providers.data, session.provider),
+    metadataLoaded: providers.data !== undefined,
+    isDisabled: session.creating || session.request !== null,
+  });
+
   return <NewTrackForm
     workspaceOptions={pergaMode
       ? { cwd: optionCwd,
@@ -202,12 +210,14 @@ function NewTrackEditor({ transport, unauthorized, pergaMode = false, workspace,
         : undefined}
     mentionTrigger={mentionTrigger}
     modelControls={<>
-      <PermissionModePill
-        mode={session.permissionMode ?? ''}
-        options={permissionModesForProvider(providers.data, session.provider)}
-        onChange={(permissionMode) => { store.update(areaId, { permissionMode }); }}
-        isDisabled={session.creating || session.request !== null}
-      />
+      {permissionControl.visible && (
+        <PermissionModePill
+          mode={permissionControl.mode}
+          options={permissionControl.options}
+          onChange={(permissionMode) => { store.update(areaId, { permissionMode }); }}
+          isDisabled={permissionControl.isDisabled}
+        />
+      )}
       <ModelPill
         groups={[
           { provider: 'codex', catalog: codexCatalog.data ?? null, availability: availabilityOf(availability.data, 'codex'),

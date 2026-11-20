@@ -104,7 +104,7 @@ public sealed partial class TrackActor
         var pendingRemoved = false;
         try
         {
-            var answer = await suspension.Decision.WaitAsync(_actorShutdownCts.Token).ConfigureAwait(false);
+            var choice = await suspension.Decision.WaitAsync(_actorShutdownCts.Token).ConfigureAwait(false);
             await EnqueueAsync(async _ => {
                 _pendingTaskDispatchApprovals.Remove(task.Id);
                 pendingRemoved = true;
@@ -112,7 +112,7 @@ public sealed partial class TrackActor
                 if (current is null || current.Status != TaskRunStatus.Pending) return;
                 if (current.Generation == task.Generation && _policyGeneration == generation && TaskDispatchFields(current) == TaskDispatchFields(task))
                 {
-                    if (AskAnswerEvaluator.IsApproved(answer, suspension.Pending.Dto.Questions[0].Options))
+                    if (choice.IsApproval)
                         _taskDispatchApprovals[task.TaskKey] = (task.Generation, generation, TaskDispatchFields(task));
                     else
                     {

@@ -36,7 +36,8 @@ import { writeClipboardText } from '../../ui/operation-feedback/clipboard.ts';
 import { useConversationEdit } from '../conversations/edit.ts';
 import { readErrorText } from '../../../../core/domain/read-failure.ts';
 import { notSentMessage } from '../../../../core/domain/conversation-delivery.ts';
-import { defaultPermissionModeFor, permissionModesForProvider } from '../../../../core/domain/agent-providers.ts';
+import { permissionModesForProvider } from '../../../../core/domain/agent-providers.ts';
+import { permissionModeAfterProviderChange, resolvePermissionControl } from '../../../../core/domain/planner-permission-mode.ts';
 import { DELETE_FAILURES, DELETE_TEXT, NotSentError, writeFailureText } from '../../../../core/domain/failure-class.ts';
 // Code-based TanStack Router setup, built inside a factory so a test can inject the
 // transport and QueryClient; also the composition point for route-owned surfaces.
@@ -160,8 +161,9 @@ import { readHostThemeRgb } from '../theme/host-rgb.ts';
 import { PendingRoute } from './pending-route.tsx';
 import { Banner } from '@astryxdesign/core/Banner';
 import { ErrorBox } from '../../ui/error-box/public.tsx';
-import { PlannerAskDrawer } from '../../features/planner/public.ts';
-import { openAsksOf, pendingApprovalQuestions, type OpenAsk } from '../../../../core/domain/ask.ts';
+import { ApprovalDrawer, PlannerAskDrawer } from '../../features/planner/public.ts';
+import { approvalsForSession, NO_PENDING_APPROVALS, type PendingApproval } from '../../../../core/domain/approval.ts';
+import { openAsksOf, type OpenAsk } from '../../../../core/domain/ask.ts';
 import { useCompactViewport } from '../../ui/viewport/public.ts';
 
 export const APP_BASEPATH = '/next';
@@ -185,9 +187,12 @@ type ConversationPanelSource = ConversationCreationSource & Readonly<{
     /** Known on the Track route; Today resolves the open conversation's Track on demand. */
     workspaceRoot: string | null;
     scopeOf: (conversationId: string) => PlannerConversationScope | null;
+    /** Live execution-scoped approvals for this Track, scoped to each owning sessionId by the pane. */
+    pendingApprovals: readonly PendingApproval[];
+    decideApproval: (approval: PendingApproval, optionId: string) => Promise<void>;
     /** The row and Area supplying report mention candidates; null without an Area context.
      * Candidate inserts are server-owned and the composer sends them verbatim.
-     * asks/answerAsk serve open asks above the composer; role supplies the Area admin state. */
+     * asks/answerAsk serve durable open asks above the composer; role supplies the Area admin state. */
     planner: Readonly<{
       cardId: string; areaId: string; asks: readonly OpenAsk[];
       answerAsk: (askId: import('../../../../core/domain/activity.ts').AskId, answers: readonly AskAnswer[]) => Promise<void>;
@@ -492,8 +497,8 @@ function useConversationPane(
   const dockRowId = compactComposer ? options?.reportComposer?.conversationId ?? null : null;
   const composerRowId = openRowId ?? dockRowId;
   const managed = useManagedProviders(transport, unauthorized, openTarget?.kind === 'draft');
-  // The app owns capability reads; unknown/error answers never inject a steer action.
-  const steerCapabilities = useQuery({ ...managedProvidersQueryOptions(transport, unauthorized), enabled: composerRowId !== null });
+  // The app owns provider metadata reads (permission modes and capabilities).
+  const managedProvidersQuery = useQuery({ ...managedProvidersQueryOptions(transport, unauthorized), enabled: composerRowId !== null });
   const draftCapabilities = managed.version;
   const supportsDraftModel = draftCapabilities.data?.conversationCreateModel === true;
   useEffect(() => { if (openRowId === null) setComposerFocusFor(null); }, [openRowId]);
@@ -719,19 +724,20 @@ function useConversationPane(
     if (open === null || options?.onSide === undefined || !sideSourceReady) return false;
     return options.onSide(open, store.turns, question);
   });
-  const conversationAsks = store.openAsks === null ? plannerRow?.asks ?? NO_ASKS
-    : shareAccess !== null ? NO_ASKS : store.openAsks;
+  const conversationApprovals = useMemo(
+    () => shareAccess !== null ? NO_PENDING_APPROVALS : approvalsForSession(source.pendingApprovals, openRowId, store.pendingApprovals),
+    [shareAccess, source.pendingApprovals, openRowId, store.pendingApprovals],
+  );
+  const conversationAsks = plannerRow?.asks ?? NO_ASKS;
+  /* Read field by field: the control is rebuilt each render, and the composer's memo keys on what it shows. */
   const roleValue = plannerRow?.role.value ?? null;
   const roleDisabled = plannerRow?.role.isDisabled ?? true;
   const roleDisabledReason = plannerRow?.role.disabledReason;
   const roleChange = plannerRow?.role.onChange;
-  const answerAsk = useCommittedCallback(existingId, (askId: import('../../../../core/domain/activity.ts').AskId, answers: readonly AskAnswer[]) => {
-    if (store.openAsks !== null) {
-      const ask = conversationAsks.find(candidate => candidate.askId === askId);
-      return ask === undefined ? Promise.reject(new NotSentError()) : store.answerAsk(ask, answers);
-    }
-    return plannerRow === null ? Promise.reject(new NotSentError()) : plannerRow.answerAsk(askId, answers);
-  });
+  const decideApproval = useCommittedCallback(existingId, (approval: PendingApproval, optionId: string) =>
+    source.decideApproval(approval, optionId));
+  const answerAsk = useCommittedCallback(existingId, (askId: import('../../../../core/domain/activity.ts').AskId, answers: readonly AskAnswer[]) =>
+    plannerRow === null ? Promise.reject(new NotSentError()) : plannerRow.answerAsk(askId, answers));
   const attach = useCommittedCallback(existingId, attachments.attach);
   const removeAttachment = useCommittedCallback(existingId, attachments.remove);
   const { items: attachmentItems, ids: attachmentIds, busy: attachmentBusy, error: attachmentError, atCapacity } = attachments;
@@ -754,8 +760,8 @@ function useConversationPane(
   [existingId, threadPresented, store.pendingQueue, store.pendingSends, store.queueDisplayAccounting, store.sending, store.queueWriteOut,
     deleteQueuedEntry, editQueuedEntry, edit.queued?.entry.entry_id, edit.savedQueuedEntry, refocusQueuedComposer, pendingPresenceChanged, canSteer, steerQueuedEntry]);
   const scopePermissionModes = useMemo(
-    () => permissionModesForProvider(steerCapabilities.data, scopeProvider),
-    [steerCapabilities.data, scopeProvider],
+    () => permissionModesForProvider(managedProvidersQuery.data, scopeProvider),
+    [managedProvidersQuery.data, scopeProvider],
   );
   const hasSideConversation = options?.onSide !== undefined;
   const composerView = useMemo(() => ({
@@ -784,10 +790,14 @@ function useConversationPane(
     working: store.working
   }), [compact, store.compacting, store.manualCompactSupported, store.contextUsage, store.historyReady, store.runReady, interrupt, store.model, store.modelCatalog, store.modelDefaultAvailable, store.modelChangeDisabled, store.permissionChangeDisabled,
     store.permissionAuthorizationMode, store.unavailablePermissionMode, store.permissionMode, store.sendBlocked, store.sending, store.canQueueWhileRunning, setModel, setPermissionMode, store.stopping, store.working]);
-  const effectivePermissionMode = composerView.permissionMode;
   const permissionOptions = store.permissionOptions ?? scopePermissionModes;
-  const hasPermissionMetadata = permissionOptions.length > 0;
-  const displayPermissionMode = effectivePermissionMode ?? (hasPermissionMetadata ? defaultPermissionModeFor(permissionOptions) : null);
+  const permissionControl = useMemo(() => resolvePermissionControl({
+    storedMode: composerView.permissionMode,
+    providerModes: permissionOptions,
+    metadataLoaded: store.permissionOptions !== null || managedProvidersQuery.data !== undefined,
+    isDisabled: !composerView.historyReady || composerView.permissionChangeDisabled,
+  }), [composerView.permissionMode, permissionOptions, store.permissionOptions, managedProvidersQuery.data,
+    composerView.historyReady, composerView.permissionChangeDisabled]);
   const { bar: editingBar } = edit;
   const replacing = edit.replacing || edit.queuedSaving;
   const editingQueue = edit.queued !== null;
@@ -832,7 +842,8 @@ function useConversationPane(
               /* Questions and attachments belong to the composer; waiting messages follow the running status. */
               drawer={(
                 <>
-                  {/* Above the images: those belong to the message being written, so they stay next to its field. */}
+                  {/* Above the images: approvals and questions belong above message attachments. */}
+                  <ApprovalDrawer key={`approvals-${existingId}`} approvals={conversationApprovals} onDecide={decideApproval} />
                   <PlannerAskDrawer key={`asks-${existingId}`} asks={conversationAsks} onAnswer={answerAsk} />
                   <PlannerAttachmentDrawer attachments={composerAttachments} />
                 </>
@@ -867,14 +878,12 @@ function useConversationPane(
                     isDisabled={!composerView.historyReady || composerView.modelChangeDisabled}
                     appliesNextTurn={composerView.working}
                   />
-                  {displayPermissionMode !== null && (
+                  {permissionControl.visible && (
                     <ConversationApprovalControl key={`approvals-${existingId}`}
-                      mode={displayPermissionMode}
-                      options={hasPermissionMetadata
-                        ? permissionOptions
-                        : [{ id: displayPermissionMode, label: displayPermissionMode, description: 'Provider approval options unavailable.', tone: 'neutral', isDefault: true }]}
+                      mode={permissionControl.mode}
+                      options={permissionControl.options}
                       change={composerView.setPermissionMode}
-                      disabled={!composerView.historyReady || !hasPermissionMetadata || composerView.permissionChangeDisabled}
+                      disabled={permissionControl.isDisabled}
                       authorizationMode={composerView.permissionAuthorizationMode}
                       unavailableMode={composerView.unavailablePermissionMode}
                     />
@@ -884,7 +893,7 @@ function useConversationPane(
             />
   ), [existingId, compactComposer, panePresented, composerFocusFor, composerFocusRequest, changeComposer, composerView, draftOnly,
     paneCommands, composerStop, replacing, editingQueue, edit.queuedSaving, editingBar,
-    sendText, composerAttachments, mentionTrigger, scopeProvider, permissionOptions, hasPermissionMetadata, displayPermissionMode, conversationAsks, answerAsk]);
+    sendText, composerAttachments, mentionTrigger, scopeProvider, permissionControl, conversationApprovals, decideApproval, conversationAsks, answerAsk]);
 
   const centeredEmpty = options?.embedded?.active === true && open !== null && store.historyReady && openTurns.length === 0 && !hasPendingMessages && !(pendingPresentation?.conversationId === existingId && pendingPresentation.visible) && !store.sending && !store.working && store.failedSend === null;
 
@@ -933,8 +942,12 @@ function useConversationPane(
               changeText={setNewConversationText}
               /* Menu membership and readiness come from the managed backend declarations. */
               footerActions={(() => {
-                const draftPermissionModes = draft === null ? [] : permissionModesForProvider(managed.answers, draft.provider);
-                const draftPermissionMode = draft?.permissionMode ?? defaultPermissionModeFor(draftPermissionModes);
+                const draftPermissionControl = resolvePermissionControl({
+                  storedMode: draft?.permissionMode,
+                  providerModes: draft === null ? [] : permissionModesForProvider(managed.answers, draft.provider),
+                  metadataLoaded: managed.answers !== undefined,
+                  isDisabled: creating || draft.submitted !== null,
+                });
                 return (
                   <HStack gap={1} align="center" wrap="wrap" className={footerStyles.group}>
                     <PlannerAttachButton
@@ -946,20 +959,21 @@ function useConversationPane(
                       effortControl={compactComposer ? 'in-menu' : 'separate'}
                       onChange={(model, provider) => withDraft(draft, current => {
                         if (current.creating || current.submitted !== null) return current;
-                        const nextModes = permissionModesForProvider(managed.answers, provider);
-                        const nextMode = current.provider === provider
-                          ? current.permissionMode
-                          : defaultPermissionModeFor(nextModes);
-                        return { ...current, model, provider, permissionMode: nextMode };
+                        return {
+                          ...current,
+                          model,
+                          provider,
+                          permissionMode: permissionModeAfterProviderChange(current.provider, provider, current.permissionMode),
+                        };
                       })}
                       isDisabled={creating || draft.submitted !== null || !supportsDraftModel || !managed.supportsAssistantProviders} />
-                    {draftPermissionMode !== null && draftPermissionModes.length > 0 && (
+                    {draftPermissionControl.visible && (
                       <PermissionModePill
-                        mode={draftPermissionMode}
-                        options={draftPermissionModes}
+                        mode={draftPermissionControl.mode}
+                        options={draftPermissionControl.options}
                         onChange={(permissionMode) => withDraft(draft, current =>
                           current.creating || current.submitted !== null ? current : { ...current, permissionMode })}
-                        isDisabled={creating || draft.submitted !== null}
+                        isDisabled={draftPermissionControl.isDisabled}
                       />
                     )}
                     {roleValue !== null && roleChange !== undefined && (
@@ -1111,13 +1125,17 @@ function useConversationPane(
   const receipts = useReadReceipts();
   const unreadIds = useMemo(() => new Set(rows.filter(row => receipts.isUnread('conversation', row.id,
     row.lastTurnCompletedAt ?? null)).map(row => row.id)), [rows, receipts]);
-  const pendingInputCardId = source.planner !== null && source.planner.asks.length > 0 ? source.planner.cardId : null;
+  const awaitingInputIds = useMemo(() => {
+    const ids = new Set<string>(source.pendingApprovals.map((approval) => approval.sessionId));
+    if (source.planner !== null && source.planner.asks.length > 0) ids.add(source.planner.cardId);
+    return ids;
+  }, [source.pendingApprovals, source.planner]);
   const listProps = useMemo(() => ({
     conversations: store.conversations, cards: source.cards, unreadIds, activeId: existingId,
-    awaitingInputIds: new Set(pendingInputCardId === null ? [] : [pendingInputCardId]),
+    awaitingInputIds,
     local: existingId === null ? null : { id: existingId, working: store.working, stalled: store.executionHeld },
     showTrack: options?.showTrack ?? true, onOpen: openConversation, onArchive: options?.onArchive,
-  }), [store.conversations, source.cards, unreadIds, pendingInputCardId, existingId, store.working, store.executionHeld, options?.showTrack, options?.onArchive, openConversation]);
+  }), [store.conversations, source.cards, unreadIds, awaitingInputIds, existingId, store.working, store.executionHeld, options?.showTrack, options?.onArchive, openConversation]);
   const listNode = useMemo(() => <ChatList {...listProps} />, [listProps]);
   const contextList = useMemo(() => <ChatList {...listProps} context />, [listProps]);
 
@@ -1366,10 +1384,8 @@ function TrackRouteBody({
   }, [registry, plannerCard, plannerOpenIntent]);
   const rows = useMemo(() => snapshot.sessions.map(session => ({ ...agentSessionDtoToConversation(session), trackTitle }))
     .toSorted((left, right) => Number(right.isLead) - Number(left.isLead)), [snapshot.sessions, trackTitle]);
-  const openAsks = useMemo(() => [
-    ...pendingApprovalQuestions(snapshot.pendingApprovals ?? []),
-    ...openAsksOf(track.attentionItems),
-  ], [snapshot.pendingApprovals, track.attentionItems]);
+  const pendingApprovals = snapshot.pendingApprovals ?? NO_PENDING_APPROVALS;
+  const openAsks = useMemo(() => openAsksOf(track.attentionItems), [track.attentionItems]);
   /* The runtime half of the TASKS panel, keyed `['track-report', trackId]`: the key
    * `invalidation-plan` refreshes on every `task.*` event and `track.report_edited`. */
   /* Read before the query: the poll's interval depends on the rows this report can produce. */
@@ -1454,11 +1470,13 @@ function TrackRouteBody({
         };
       },
       create: conversationMutations.create,
+      pendingApprovals,
+      decideApproval: (approval, optionId) => trackMutations.decideApproval(track.id, approval, optionId),
       planner: plannerCard === undefined ? null : {
         cardId: plannerCard.id, areaId: track.areaId, asks: openAsks,
         answerAsk: (askId, answers) => {
-          const ask = typeof askId === 'string' ? openAsks.find(item => item.askId === askId) : undefined;
-          return trackMutations.answerAsk(track.id, askId, answers, ask?.questions, ask?.executionId);
+          const ask = openAsks.find(item => item.askId === askId);
+          return trackMutations.answerAsk(track.id, askId, answers, ask?.questions);
         },
         role: plannerRole,
         commands: plannerCommands,
@@ -1472,9 +1490,9 @@ function TrackRouteBody({
     selectedConversationId: chat.selectedConversationId, onClose: chat.close, onOpen: chat.openConversation, conversationOpen: chat.isOpen });
   const notificationIsRead = (key: string, atMs: number) => preferences.trackNotificationRead(track.id, key, atMs);
   const inputNotifications: readonly TrackInputNotification[] = [
-    ...(snapshot.pendingApprovals ?? []).map(approval => ({
-      key: approval.id, kind: 'approval' as const, text: approval.questions[0]?.question ?? 'Approval required',
-      atMs: approval.createdAtMs, read: notificationIsRead(approval.id, approval.createdAtMs),
+    ...pendingApprovals.map(approval => ({
+      key: approval.id, kind: 'approval' as const, text: approval.title || 'Approval required',
+      atMs: approval.createdAtMs, sessionId: approval.sessionId, read: notificationIsRead(approval.id, approval.createdAtMs),
     })),
     ...trackNotifications(track.attentionItems, notificationIsRead),
   ];
@@ -1883,9 +1901,11 @@ function TrackRouteBody({
       conversationOpen={!centerActive && chat.isOpen}
       inputNotifications={inputNotifications}
       onNotificationReadChange={(item, read) => preferences.setTrackNotificationRead(track.id, item.key, item.atMs, read)}
-      onReply={plannerCard === undefined ? undefined : () => {
+      onReply={plannerCard === undefined && pendingApprovals.length === 0 ? undefined : (targetSessionId) => {
+        const destination = targetSessionId ?? plannerCard?.id;
+        if (destination === undefined) return;
         center?.onOpenAssistant();
-        registry.requestOpen(plannerCard.id, { focusComposer: true });
+        registry.requestOpen(destination, { focusComposer: true });
       }}
       onDismiss={(key) => trackMutations.dismissActivityItem(track.id, key)}
       onRenameTrack={(title) => trackMutations.patch(track.id, track.areaId, { title }).then(() => undefined)}
