@@ -17,4 +17,7 @@
   <ItemGroup>
     <Using Include="Xunit" />
   </ItemGroup>
+  <ItemGroup>
+    <None Update="MockCli/*.py" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>
