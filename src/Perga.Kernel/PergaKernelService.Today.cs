@@ -35,7 +35,9 @@ public sealed partial class PergaKernelService
             throw KernelException.InvalidArgument("Calendar range cannot exceed 62 days.");
 
         var zone = TodayCalendar.Zone(_timeProvider);
-        var today = TimeZoneInfo.ConvertTime(_timeProvider.GetUtcNow(), zone).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        var now = _timeProvider.GetUtcNow();
+        var nowMs = now.ToUnixTimeMilliseconds();
+        var today = TimeZoneInfo.ConvertTime(now, zone).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
         var dates = new List<string>(endDay.DayNumber - startDay.DayNumber + 1);
         for (var cursor = startDay; cursor <= endDay; cursor = cursor.AddDays(1))
             dates.Add(cursor.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
@@ -47,7 +49,7 @@ public sealed partial class PergaKernelService
         var windowStartMs = dayBounds[0].Bounds.Start;
         var windowEndMs = dayBounds[^1].Bounds.End;
         var rawSchedules = await store.ListCalendarSchedulesInWindowAsync(windowStartMs, windowEndMs, ct).ConfigureAwait(false);
-        var expanded = ExpandSchedulesForCalendar(rawSchedules, dayBounds, windowStartMs, windowEndMs, zone, _scheduleCronEvaluator);
+        var expanded = ExpandSchedulesForCalendar(rawSchedules, dayBounds, windowStartMs, windowEndMs, nowMs, zone, _scheduleCronEvaluator);
 
         var days = dates.Select(d =>
         {
@@ -63,6 +65,7 @@ public sealed partial class PergaKernelService
         (string Date, (long Start, long End) Bounds)[] dayBounds,
         long windowStartMs,
         long windowEndMs,
+        long nowMs,
         TimeZoneInfo zone,
         IScheduleCronEvaluator? cronEvaluator)
     {
@@ -84,10 +87,10 @@ public sealed partial class PergaKernelService
                 {
                     if (item.MaxOccurrences is not { } maxOcc || maxOcc > item.FiredCount)
                     {
-                        var lastAllowed = ComputeLastAllowedOccurrenceMs(item, windowEndMs, cronEvaluator);
+                        var lastAllowed = ComputeLastAllowedOccurrenceMs(item, windowEndMs, nowMs, cronEvaluator);
                         foreach (var (day, (start, end)) in dayBounds)
                         {
-                            var fire = ResolveCronOccurrenceForDay(item, start, end, lastAllowed, cronEvaluator);
+                            var fire = ResolveCronOccurrenceForDay(item, start, end, nowMs, lastAllowed, cronEvaluator);
                             if (fire is { } fireMs)
                             {
                                 Add(day, fireMs);
@@ -125,12 +128,14 @@ public sealed partial class PergaKernelService
     private static long? ComputeLastAllowedOccurrenceMs(
         TodayScheduleEntry item,
         long windowEndMs,
+        long nowMs,
         IScheduleCronEvaluator cronEvaluator)
     {
         if (item.NextFireAtMs is not { } nextFire || nextFire >= windowEndMs ||
             item.MaxOccurrences is not { } maxOcc)
             return null;
 
+        nextFire = Math.Max(nextFire, nowMs);
         var remaining = maxOcc - item.FiredCount;
         if (remaining == 1) return nextFire;
         var cursorMs = nextFire;
@@ -152,10 +157,12 @@ public sealed partial class PergaKernelService
         TodayScheduleEntry item,
         long dayStartMs,
         long dayEndMs,
+        long nowMs,
         long? lastAllowedFutureMs,
         IScheduleCronEvaluator cronEvaluator)
     {
         if (item.NextFireAtMs is not { } nextFire) return null;
+        nextFire = Math.Max(nextFire, nowMs);
         if (nextFire >= dayStartMs && nextFire < dayEndMs)
             return nextFire;
         if (dayEndMs <= nextFire) return null;
@@ -215,19 +222,47 @@ public static class TodayCalendar
         if (trimmed.Length == 0)
             throw KernelException.InvalidArgument("'runAt' must be a non-empty ISO-8601 timestamp string.");
 
-        if (!DateTime.TryParse(trimmed, CultureInfo.InvariantCulture,
-                DateTimeStyles.NoCurrentDateDefault | DateTimeStyles.RoundtripKind, out var localDt) ||
-            localDt.Year < 1970)
-        {
-            throw KernelException.InvalidArgument($"Invalid 'runAt' timestamp '{rawRunAt}'. Expected ISO-8601 date/time.");
-        }
+        KernelException InvalidTimestamp() => KernelException.InvalidArgument(
+            $"Invalid 'runAt' timestamp '{rawRunAt}'. Expected ISO-8601 date/time.");
+        if (trimmed.Length < 10 || !DateOnly.TryParseExact(trimmed[..10], "yyyy-MM-dd",
+                CultureInfo.InvariantCulture, DateTimeStyles.None, out var datePart))
+            throw InvalidTimestamp();
 
-        if (localDt.Kind != DateTimeKind.Unspecified)
+        var localDt = datePart.ToDateTime(TimeOnly.MinValue);
+        if (trimmed.Length > 10)
         {
-            // DateTimeOffset rejects NoCurrentDateDefault; the DateTime parse above already requires a date.
-            if (DateTimeOffset.TryParse(trimmed, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var explicitDto))
-                return explicitDto.ToUnixTimeMilliseconds();
-            throw KernelException.InvalidArgument($"Invalid 'runAt' timestamp '{rawRunAt}'. Expected ISO-8601 date/time.");
+            if (trimmed[10] is not ('T' or 't' or ' ')) throw InvalidTimestamp();
+            var timePart = trimmed[11..];
+            var offsetStart = timePart.IndexOfAny(['Z', 'z', '+', '-']);
+            var clock = offsetStart < 0 ? timePart : timePart[..offsetStart].TrimEnd(' ');
+            if (clock.Length < 5 ||
+                !int.TryParse(clock.AsSpan(0, 2), NumberStyles.None, CultureInfo.InvariantCulture, out var hour) || hour > 23 ||
+                !TimeOnly.TryParseExact(clock, ["HH:mm", "HH:mm:ss", "HH:mm:ss.FFFFFFF"],
+                    CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsedTime))
+                throw InvalidTimestamp();
+            localDt = datePart.ToDateTime(parsedTime);
+            if (offsetStart >= 0)
+            {
+                // Normalize only the supported ISO offset forms, then parse the instant directly.
+                // Parsing through DateTime would first convert it to the host's local timezone.
+                var suffix = timePart[offsetStart..];
+                if (suffix is "Z" or "z") suffix = "+00:00";
+                else
+                {
+                    if (suffix.Length == 3) suffix += ":00";
+                    else if (suffix.Length == 5) suffix = suffix.Insert(3, ":");
+                    if (suffix.Length != 6 || suffix[0] is not ('+' or '-') || suffix[3] != ':' ||
+                        !char.IsAsciiDigit(suffix[1]) || !char.IsAsciiDigit(suffix[2]) ||
+                        !char.IsAsciiDigit(suffix[4]) || !char.IsAsciiDigit(suffix[5]))
+                        throw InvalidTimestamp();
+                }
+                var normalized = localDt.ToString("yyyy-MM-dd'T'HH:mm:ss.fffffff", CultureInfo.InvariantCulture) + suffix;
+                if (!DateTimeOffset.TryParseExact(normalized, "yyyy-MM-dd'T'HH:mm:ss.fffffffzzz",
+                        CultureInfo.InvariantCulture, DateTimeStyles.None, out var explicitDto))
+                    throw InvalidTimestamp();
+                var explicitMs = explicitDto.ToUnixTimeMilliseconds();
+                return explicitMs >= 0 ? explicitMs : throw InvalidTimestamp();
+            }
         }
 
         var tz = string.IsNullOrWhiteSpace(timezone) ? Zone(timeProvider) : ResolveZone(timezone);
@@ -237,7 +272,15 @@ public static class TodayCalendar
         var offset = tz.IsAmbiguousTime(unspecified)
             ? tz.GetAmbiguousTimeOffsets(unspecified).Max()
             : tz.GetUtcOffset(unspecified);
-        return new DateTimeOffset(unspecified, offset).ToUnixTimeMilliseconds();
+        try
+        {
+            var runAtMs = new DateTimeOffset(unspecified, offset).ToUnixTimeMilliseconds();
+            return runAtMs >= 0 ? runAtMs : throw InvalidTimestamp();
+        }
+        catch (ArgumentException)
+        {
+            throw InvalidTimestamp();
+        }
     }
 
     public static DateOnly ParseDate(string date) => DateOnly.TryParseExact(date, "yyyy-MM-dd",

@@ -15,6 +15,46 @@ public sealed class TrackScheduleIntegrationTests
     private static readonly TimeSpan Deadline = TimeSpan.FromSeconds(10);
 
     [Theory]
+    [InlineData(null)]
+    [InlineData(2)]
+    [InlineData(3)]
+    public async Task OverdueCalendarProjectsOnlyOneCatchUpAndPreservesRecordedHistory(int? maxOccurrences)
+    {
+        await using var host = new PergaHostTestCluster(configureHostOptions: opts =>
+        {
+            opts.EnableScheduleService = false;
+            opts.EnableMaintenanceService = false;
+        });
+        host.TimeProvider.SetUtcNow(DateTimeOffset.Parse("2026-10-31T00:00:00Z"));
+        var (trackId, _) = await host.CreateTrackAsync();
+        var kernel = host.Services.GetRequiredService<IPergaKernel>();
+        await kernel.WaitForTrackIdleAsync(trackId).WaitAsync(Deadline);
+        await kernel.SetTrackScheduleAsync(trackId, new("Daily", "Go", Id: "daily",
+            CronExpr: "0 9 * * *", Timezone: "UTC", MaxOccurrences: maxOccurrences));
+        var store = host.Services.GetRequiredService<ITrackStore>().TrackSchedules!;
+        var recorded = DateTimeOffset.Parse("2026-10-31T09:00:00Z").ToUnixTimeMilliseconds();
+        var staleNext = DateTimeOffset.Parse("2026-11-01T09:00:00Z").ToUnixTimeMilliseconds();
+        await store.FireDueAsync(recorded, _ => staleNext, default);
+        var now = DateTimeOffset.Parse("2026-11-05T10:00:00Z");
+        host.TimeProvider.SetUtcNow(now);
+
+        var calendar = await kernel.GetTodayCalendarAsync("2026-10-31", "2026-11-07");
+        var items = calendar.Schedules.Where(s => s.Id == "daily").ToArray();
+        var expectedDates = maxOccurrences == 2 ? new[] { "2026-10-31", "2026-11-05" }
+            : maxOccurrences == 3 ? new[] { "2026-10-31", "2026-11-05", "2026-11-06" }
+            : new[] { "2026-10-31", "2026-11-05", "2026-11-06", "2026-11-07" };
+        Assert.Equal(expectedDates, items.Select(s => s.Date));
+        Assert.Equal(recorded, items[0].NextFireAtMs);
+        Assert.Equal(now.ToUnixTimeMilliseconds(), items[1].NextFireAtMs);
+        Assert.All(items.Skip(2), s => Assert.Equal(
+            DateTimeOffset.Parse($"{s.Date}T09:00:00Z").ToUnixTimeMilliseconds(), s.NextFireAtMs));
+        // Projection must not mutate the durable schedule before the catch-up poll.
+        var schedule = await store.GetAsync(trackId, "daily", default);
+        Assert.Equal(staleNext, schedule!.NextFireAtMs);
+        Assert.Equal(1, schedule.FiredCount);
+    }
+
+    [Theory]
     [InlineData("history")]
     [InlineData("done")]
     [InlineData("budget")]

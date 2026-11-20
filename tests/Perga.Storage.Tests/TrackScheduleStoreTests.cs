@@ -124,11 +124,42 @@ public sealed class TrackScheduleStoreTests
             await new SqliteMigrator().MigrateAsync(path);
             Assert.Equal(18L, await conn.ExecuteScalarAsync<long>("SELECT MAX(version) FROM schema_migrations;"));
             Assert.Equal(16L, await conn.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM pragma_table_info('track_schedules');"));
+            Assert.Equal("Area", await conn.ExecuteScalarAsync<string>("SELECT name FROM areas WHERE id='area';"));
+            Assert.Equal("area", await conn.ExecuteScalarAsync<string>("SELECT area_id FROM tracks WHERE id='track';"));
+            Assert.Equal("/tmp", await conn.ExecuteScalarAsync<string>("SELECT cwd FROM tracks WHERE id='track';"));
             foreach (var migration in original)
                 Assert.Equal(migration.ChecksumSha256, await conn.ExecuteScalarAsync<string>(
                     "SELECT checksum_sha256 FROM schema_migrations WHERE version = @Version AND name = @Name;", migration));
         }
         finally { SqliteConnection.ClearAllPools(); directory.Delete(recursive: true); }
+    }
+
+    [Fact]
+    public async Task WakeInsertFailureRollsBackScheduleAndRetryFiresExactlyOnce()
+    {
+        await using var h = await SeedAsync();
+        var before = await h.Store.TrackSchedules!.UpsertAsync(CronSchedule(maxOccurrences: 2), default);
+        await using var conn = h.OpenRawInspectConnection();
+        await conn.ExecuteAsync("""
+            CREATE TRIGGER reject_schedule_wake BEFORE INSERT ON track_wakes
+            BEGIN SELECT RAISE(ABORT, 'injected wake failure'); END;
+            """);
+        var error = await Assert.ThrowsAsync<SqliteException>(() =>
+            h.Store.TrackSchedules!.FireDueAsync(1_500, _ => 2_500, default));
+        Assert.Contains("injected wake failure", error.Message, StringComparison.Ordinal);
+        Assert.Equal(before, await h.Store.TrackSchedules!.GetAsync("trk_1", before.Id, default));
+        Assert.Empty(await h.Store.TrackWakes.ListAsync("trk_1", default));
+
+        await conn.ExecuteAsync("DROP TRIGGER reject_schedule_wake;");
+        Assert.Single(await h.Store.TrackSchedules!.FireDueAsync(1_500, _ => 2_500, default));
+        var after = await h.Store.TrackSchedules!.GetAsync("trk_1", before.Id, default);
+        Assert.Equal(TrackScheduleStates.Active, after!.State);
+        Assert.Equal(1, after.FiredCount);
+        Assert.Equal(2_500, after.NextFireAtMs);
+        Assert.Equal(1_500, after.LastFiredAtMs);
+        Assert.Single(await h.Store.TrackWakes.ListAsync("trk_1", default));
+        Assert.Empty(await h.Store.TrackSchedules!.FireDueAsync(1_500, _ => 2_500, default));
+        Assert.Single(await h.Store.TrackWakes.ListAsync("trk_1", default));
     }
 
     [Fact]

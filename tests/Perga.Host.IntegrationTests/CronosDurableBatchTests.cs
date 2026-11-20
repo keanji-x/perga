@@ -62,6 +62,39 @@ public sealed class CronosDurableBatchTests
         Assert.Equal(2, proxy.PokeAttempts);
     }
 
+    [Theory]
+    [InlineData("not_found")]
+    [InlineData("closed")]
+    [InlineData("deleted")]
+    public async Task RetiresPendingPokesForPermanentFailuresAndInactiveTracks(string scenario)
+    {
+        await using var host = new PergaHostTestCluster(configureHostOptions: o => o.EnableScheduleService = false);
+        var (trackId, _) = await host.CreateTrackAsync();
+        var kernel = host.Services.GetRequiredService<IPergaKernel>();
+        await kernel.WaitForTrackIdleAsync(trackId);
+        await kernel.SetTrackScheduleAsync(trackId, new("Retry", "RETRY_PROMPT", RunAtMs: 1));
+        var observed = DispatchProxy.Create<IPergaKernel, KernelProxy>();
+        var proxy = (KernelProxy)(object)observed;
+        proxy.Inner = kernel;
+        proxy.PokeFailure = scenario == "not_found" ? KernelException.NotFound("Deleted track")
+            : new InvalidOperationException("Injected transient failure");
+        proxy.AlwaysFail = true;
+        using var scheduler = new CronosScheduleHostedService(observed, host.Services.GetRequiredService<ITrackReadStore>(),
+            new PergaHostOptions(), host.TimeProvider, NullLogger<CronosScheduleHostedService>.Instance,
+            host.Services.GetRequiredService<ITrackStore>().TrackSchedules!);
+        Assert.Equal(1, await scheduler.EvaluateDueSchedulesOnceAsync());
+        Assert.Equal(1, proxy.PokeAttempts);
+        if (scenario == "closed")
+        {
+            var track = await host.Services.GetRequiredService<ITrackReadStore>().GetTrackAsync(trackId, default);
+            await kernel.CloseTrackAsync(trackId, track!.LeadSessionId!);
+        }
+        if (scenario == "deleted") await kernel.DeleteTrackAsync(trackId);
+        Assert.Equal(0, await scheduler.EvaluateDueSchedulesOnceAsync());
+        Assert.Equal(0, await scheduler.EvaluateDueSchedulesOnceAsync());
+        Assert.Equal(1, proxy.PokeAttempts);
+    }
+
     public class ScheduleProxy : DispatchProxy
     {
         public ITrackScheduleStore Inner = null!;
@@ -78,10 +111,12 @@ public sealed class CronosDurableBatchTests
     {
         public IPergaKernel Inner = null!;
         public int PokeAttempts;
+        public Exception PokeFailure = new InvalidOperationException("Injected transient poke failure");
+        public bool AlwaysFail;
         protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
         {
-            if (targetMethod!.Name == "get_Actors" && ++PokeAttempts == 1)
-                throw new InvalidOperationException("Injected transient poke failure");
+            if (targetMethod!.Name == "get_Actors" && (++PokeAttempts == 1 || AlwaysFail))
+                throw PokeFailure;
             return targetMethod.Invoke(Inner, args);
         }
     }

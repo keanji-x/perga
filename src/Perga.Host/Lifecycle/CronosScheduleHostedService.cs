@@ -65,7 +65,8 @@ public sealed class CronosScheduleHostedService : BackgroundService
                 .ConfigureAwait(false);
             var activeTrackIds = new HashSet<string>(openTracks.Select(static t => t.TrackId), StringComparer.Ordinal);
 
-            // Clean up watermarks for closed or deleted tracks.
+            // Clean up retry state and watermarks for closed or deleted tracks.
+            _tracksNeedingPoke.RemoveWhere(trackId => !activeTrackIds.Contains(trackId));
             foreach (var key in _watermarks.Keys.ToArray())
             {
                 if (!activeTrackIds.Contains(key.TrackId))
@@ -229,6 +230,11 @@ public sealed class CronosScheduleHostedService : BackgroundService
             {
                 await _kernel.Actors.GetOrActivate(trackId).PokeLeadAsync(ct).ConfigureAwait(false);
                 _tracksNeedingPoke.Remove(trackId);
+            }
+            catch (KernelException ex) when (ex.Code == KernelErrorCode.NotFound)
+            {
+                _tracksNeedingPoke.Remove(trackId);
+                _logger.LogWarning(ex, "Track '{TrackId}' no longer exists; retiring durable schedule poke retry.", trackId);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
