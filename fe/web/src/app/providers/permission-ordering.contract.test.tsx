@@ -77,7 +77,7 @@ it.each([false, true])('holds a production store send behind permission writes a
   const images = [{ id: 'image', url: '/image', contentType: 'image/png', size: 1 }];
   let sent: Promise<void> | null = null;
   act(() => {
-    result.current.store.setPermissionMode('full');
+    void result.current.store.setPermissionMode('full');
     sent = result.current.store.send('a', 'keep draft', images, true, null);
   });
   await act(async () => { await Promise.resolve(); });
@@ -132,7 +132,7 @@ it('keeps an unknown retry and its key when a permission prerequisite fails', as
   await waitFor(() => expect(result.current.store.runReady).toBe(true));
   act(() => { result.current.registry.editOutbox('a', () => [{ key: 'original-key', phase: 'failed', delivery: 'unknown', message: '', fromComposer: true, replaces: null,
     echo: { id: 'echo', text: 'possibly stored', author: 'you', atMs: 1, serverHighWaterBefore: 0, entryId: null, queued: false } }]); });
-  act(() => { result.current.store.setPermissionMode('full'); result.current.store.retrySend('original-key'); });
+  act(() => { void result.current.store.setPermissionMode('full'); result.current.store.retrySend('original-key'); });
   await act(async () => { write.resolve({ status: 500, statusText: 'Error', body: { error: 'permission failed' } }); await Promise.resolve(); });
   await waitFor(() => expect(result.current.store.failedSend).toMatchObject({ key: 'original-key', delivery: 'unknown' }));
   expect(result.current.registry.composerOf('a').text).toBe('');
@@ -153,10 +153,10 @@ it.each([false, true])('protects a newer confirmed GET from an old ACK across A 
     id: 't', cardId: id, title: 'Track', provider: 'codex', kind: 'agent', isLead: false, state: 'idle', updatedAt: 1, cardTitle: null,
   }, { rows: [], rememberOn: 't' }) }), { initialProps: { id: 'a' }, wrapper: wrapper(client) });
   await waitFor(() => expect(result.current.store.runReady).toBe(true));
-  act(() => result.current.store.setPermissionMode('full'));
+  act(() => { void result.current.store.setPermissionMode('full'); });
   rerender({ id: 'b' }); rerender({ id: 'a' });
   if (newerWrite) {
-    act(() => result.current.store.setPermissionMode('never'));
+    act(() => { void result.current.store.setPermissionMode('never'); });
     expect(puts).toBe(1);
   }
   await client.fetchQuery(plannerRunQueryOptions(transport, 'a', unauthorized));
