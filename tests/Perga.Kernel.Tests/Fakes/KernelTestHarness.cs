@@ -625,20 +625,28 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
     }
 
     public Task<IReadOnlyList<ProviderSessionResumeFence>> ListSessionResumeFencesAsync(string trackId, CancellationToken ct) =>
-        Task.FromResult<IReadOnlyList<ProviderSessionResumeFence>>(_resumeFences.Values.Where(f => _sessions[f.SessionId].TrackId == trackId).ToArray());
+        Task.FromResult<IReadOnlyList<ProviderSessionResumeFence>>(_sessions.Values.Where(s => s.TrackId == trackId && s.Status == "unknown")
+            .Select(s => new ProviderSessionResumeFence(s.Id, s.UnknownTurnId ?? "", s.NativeThreadId ?? "", true)).ToArray());
 
     public Task SaveSessionResumeFenceAsync(ProviderSessionResumeFence fence, CancellationToken ct)
     {
-        lock (_gate) _resumeFences[fence.SessionId] = fence;
+        lock (_gate)
+        {
+            var session = _sessions[fence.SessionId];
+            _sessions[fence.SessionId] = session with { Status = "unknown", UnknownTurnId = fence.TurnId,
+                UnknownReason = session.UnknownReason ?? "stream_lost" };
+        }
         return Task.CompletedTask;
     }
 
     public Task CompleteSessionResumeAsync(AgentSessionDto session, PersistedSessionInput? unresolved,
-        EventEnvelopeDto sessionEvent, CancellationToken ct)
+        EventEnvelopeDto sessionEvent, int expectedEpoch, CancellationToken ct, SessionItemDto? boundary = null)
     {
         lock (_gate)
         {
-            _resumeFences.Remove(session.Id);
+            if (_sessions[session.Id].Epoch != expectedEpoch)
+                throw new InvalidOperationException("Session epoch changed during recovery.");
+            if (boundary is not null) AppendSessionItemsAsync(session.Id, [boundary], ct).GetAwaiter().GetResult();
             if (unresolved is not null) return ResolveAsync(unresolved, session, sessionEvent, ct);
             _sessions[session.Id] = session;
             AppendEventLocked(sessionEvent);
@@ -1520,24 +1528,33 @@ internal sealed class ScriptableFakeAgentSession : IAgentSession
         return Task.FromResult(SteerDelivery.Accepted);
     }
 
-    public ValueTask DisposeAsync()
+    public bool ShutdownConfirmed { get; set; } = true;
+    public bool FailDisposal { get; set; }
+    public Func<Task>? DisposeHandler { get; set; }
+    public int DisposeCalls { get; private set; }
+
+    public async ValueTask DisposeAsync()
     {
+        DisposeCalls++;
+        if (FailDisposal) throw new IOException("shutdown failed");
+        if (DisposeHandler is not null) await DisposeHandler();
         lock (_approvalLock)
         {
             Disposed = true;
             ExpireApprovals();
         }
-        return ValueTask.CompletedTask;
     }
 }
 
 internal sealed class ScriptableFakeAgentRuntime : IAgentRuntime
 {
+    public bool CanResumeSession(string provider) => SupportsSessionResume;
     private int _threadCounter;
     public bool SupportsSessionResume { get; set; }
 
     public ConcurrentQueue<ScriptableFakeAgentSession> OpenedSessions { get; } = new();
     public Action<HarnessLaunchSpec>? OnBeforeOpenSession { get; set; }
+    public Func<Task>? BeforeOpenAsync { get; set; }
     public Action<ScriptableFakeAgentSession>? OnOpenedSession { get; set; }
 
     public Func<ScriptableFakeAgentSession, TurnInput, CancellationToken, IAsyncEnumerable<UnifiedAgentEvent>>? TurnScript { get; set; }
@@ -1554,8 +1571,9 @@ internal sealed class ScriptableFakeAgentRuntime : IAgentRuntime
         return ProbeScript?.Invoke(ct) ?? Task.FromResult(Providers);
     }
 
-    public Task<IAgentSession> OpenSessionAsync(HarnessLaunchSpec spec, CancellationToken ct)
+    public async Task<IAgentSession> OpenSessionAsync(HarnessLaunchSpec spec, CancellationToken ct)
     {
+        if (BeforeOpenAsync is not null) await BeforeOpenAsync();
         OnBeforeOpenSession?.Invoke(spec);
         var threadId = spec.ResumeNativeThreadId ?? $"thr_{Interlocked.Increment(ref _threadCounter)}";
         var session = new ScriptableFakeAgentSession(
@@ -1565,7 +1583,7 @@ internal sealed class ScriptableFakeAgentRuntime : IAgentRuntime
         session.SupportsSessionResume = SupportsSessionResume;
         OpenedSessions.Enqueue(session);
         OnOpenedSession?.Invoke(session);
-        return Task.FromResult<IAgentSession>(session);
+        return session;
     }
 
     private static async IAsyncEnumerable<UnifiedAgentEvent> DefaultTurnScript(

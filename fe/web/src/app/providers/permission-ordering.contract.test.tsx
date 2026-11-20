@@ -78,7 +78,7 @@ it.each([false, true])('holds a production store send behind permission writes a
   let sent: Promise<void> | null = null;
   act(() => {
     void result.current.store.setPermissionMode('full');
-    sent = result.current.store.send('a', 'keep draft', images, true, null);
+    sent = result.current.store.send('a', 'keep draft', images, true);
   });
   await act(async () => { await Promise.resolve(); });
   expect(posts).toBe(0);
@@ -86,6 +86,8 @@ it.each([false, true])('holds a production store send behind permission writes a
   expect(posts).toBe(0);
   expect(result.current.store.permissionMode).toBe('ask');
   expect(result.current.store.actionError).not.toBeNull();
+  expect(result.current.store.failedSend?.delivery).toBe('refused');
+  act(() => { result.current.store.discardFailedSend(result.current.store.failedSend!.key); });
   expect(result.current.registry.composerOf('a')).toMatchObject({ text: 'keep draft', attachments: images });
   client.clear();
 });
@@ -130,8 +132,8 @@ it('keeps an unknown retry and its key when a permission prerequisite fails', as
     id: 't', cardId: 'a', title: 'Track', provider: 'codex', kind: 'agent', isLead: false, state: 'idle', updatedAt: 1, cardTitle: null,
   }, { rows: [], rememberOn: 't' }), registry: useConversationCommands() }), { wrapper: wrapper(client) });
   await waitFor(() => expect(result.current.store.runReady).toBe(true));
-  act(() => { result.current.registry.editOutbox('a', () => [{ key: 'original-key', phase: 'failed', delivery: 'unknown', message: '', fromComposer: true, replaces: null,
-    echo: { id: 'echo', text: 'possibly stored', author: 'you', atMs: 1, serverHighWaterBefore: 0, entryId: null, queued: false } }]); });
+  act(() => { result.current.registry.editOutbox('a', () => [{ key: 'original-key', phase: 'failed', delivery: 'unknown', message: '', fromComposer: true,
+    echo: { id: 'echo', text: 'possibly stored', author: 'you', atMs: 1, localSend: true, queued: false } }]); });
   act(() => { void result.current.store.setPermissionMode('full'); result.current.store.retrySend('original-key'); });
   await act(async () => { write.resolve({ status: 500, statusText: 'Error', body: { error: 'permission failed' } }); await Promise.resolve(); });
   await waitFor(() => expect(result.current.store.failedSend).toMatchObject({ key: 'original-key', delivery: 'unknown' }));

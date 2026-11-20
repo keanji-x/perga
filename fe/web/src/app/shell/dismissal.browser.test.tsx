@@ -36,7 +36,7 @@ it('leaves composing Escape to the IME before the conversation interrupt command
     useConversationEscape({ open: {
       id: 'c1', provider: 'codex', trackId: 't1', trackTitle: 'Track', title: null,
       kind: 'codex', state: 'running', updatedAt: 0, turns: 1,
-    }, store: { working: true, stopping: false, interrupt } });
+    }, store: { working: true, stopping: false, stopFeedback: null, interrupt } });
     return <div data-nc-conversation-region="conversation-c1"><input aria-label="Running conversation" /></div>;
   }
   render(<RunningConversation />);

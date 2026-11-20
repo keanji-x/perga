@@ -20,31 +20,23 @@ function printable(value: unknown): string | null {
   return typeof value === 'string' ? value : JSON.stringify(value, null, 2);
 }
 
-/** Missing content means the activity has no readable body; it never invents a tool result. */
-export function activityContent(itemType: string, item: Record<string, unknown>): { content?: string } {
-  let text: string;
-  if (itemType === 'reasoning') {
-    text = [...textBlocks(item.summary), ...textBlocks(item.content)].join('\n\n');
-  } else if (itemType === 'dynamicToolCall' || itemType === 'mcpToolCall') {
-    const sections: string[] = [];
-    const argsObj = record(item.arguments);
-    const hasArgs = argsObj !== null ? Object.keys(argsObj).length > 0 : item.arguments !== null && item.arguments !== undefined && item.arguments !== '';
-    const input = hasArgs ? printable(item.arguments) : null;
-    if (input) sections.push(`Input\n${input}`);
-    const result = record(item.result);
-    const output = result === null ? printable(item.result) : [
-      ...textBlocks(result.content), printable(result.structuredContent ?? (Object.hasOwn(result, 'content') ? undefined : result)),
-    ].filter(Boolean).join('\n\n');
-    if (output) sections.push(`Output\n${output}`);
-    if (itemType === 'mcpToolCall' && item.error !== undefined && item.error !== null) {
-      const errorText = printable(item.error);
-      if (errorText) sections.push(`Error\n${errorText}`);
-    }
-    text = sections.join('\n\n');
-  } else {
-    return {};
-  }
+/** Bound readable content while preserving its original text. */
+export function thinkingActivityContent(text: string): { content?: string } {
   if (!text.trim()) return {};
-  return { content: text.length > MAX_CONTENT_LENGTH
-    ? `${text.slice(0, MAX_CONTENT_LENGTH)}\n… (truncated)` : text };
+  return { content: text.length > MAX_CONTENT_LENGTH ? `${text.slice(0, MAX_CONTENT_LENGTH)}\n… (truncated)` : text };
+}
+
+/** Perga tool inputs/results become readable text, without a provider item envelope. */
+export function toolActivityContent(args: unknown, output: unknown, isError: boolean): { content?: string } {
+  const sections: string[] = [];
+  const argsObj = record(args);
+  const hasArgs = argsObj !== null ? Object.keys(argsObj).length > 0 : args !== null && args !== undefined && args !== '';
+  const input = hasArgs ? printable(args) : null;
+  if (input) sections.push(`Input\n${input}`);
+  const result = record(output);
+  const body = isError || result === null ? printable(output) : [
+    ...textBlocks(result.content), printable(result.structuredContent ?? (Object.hasOwn(result, 'content') ? undefined : result)),
+  ].filter(Boolean).join('\n\n');
+  if (body) sections.push(`${isError ? 'Error' : 'Output'}\n${body}`);
+  return thinkingActivityContent(sections.join('\n\n'));
 }

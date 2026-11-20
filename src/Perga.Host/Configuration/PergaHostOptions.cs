@@ -44,6 +44,9 @@ public sealed class PergaHostOptions
     public TimeSpan MaintenanceInterval { get; set; } = TimeSpan.FromHours(6);
     public bool EnableMaintenanceService { get; set; } = true;
 
+    public TimeSpan SessionStartupTimeout { get; set; } = TimeSpan.FromSeconds(30);
+    public TimeSpan SessionCompactionTimeout { get; set; } = TimeSpan.FromSeconds(60);
+
     public TimeSpan ProviderCancelDispatchGrace { get; set; } = KernelOptions.DefaultProviderCancelDispatchGrace;
     public TimeSpan ProviderTerminalStopGrace { get; set; } = KernelOptions.DefaultProviderTerminalStopGrace;
 

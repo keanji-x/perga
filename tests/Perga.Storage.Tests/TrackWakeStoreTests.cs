@@ -20,6 +20,48 @@ public sealed class TrackWakeStoreTests
     }
 
     [Fact]
+    public async Task CriticalWakeStopsAfterThreeAttemptsAndLeavesOneVisibleSystemItem()
+    {
+        await using var h = await SeedAsync();
+        await h.Store.TrackWakes.EnqueueAsync(Wake(key: null), default);
+        for (var attempt = 1; attempt <= 3; attempt++)
+        {
+            var claimed = Assert.Single(await h.Store.TrackWakes.ClaimBatchAsync("trk_1", "sess_lead_1", 32, default));
+            Assert.Equal(attempt, claimed.Attempts);
+            await h.Store.TrackWakes.RecoverOnBootAsync(default);
+        }
+        Assert.Empty(await h.Store.TrackWakes.ClaimBatchAsync("trk_1", "sess_lead_1", 32, default));
+        var row = Assert.Single(await h.Store.TrackWakes.ListAsync("trk_1", default));
+        Assert.Equal(("dropped", "max_attempts_exceeded", 3L), (row.State, row.Reason, row.Attempts));
+        var item = Assert.Single(await h.Store.ListSessionItemsAsync("sess_lead_1"));
+        Assert.Equal("system", item.Kind);
+        Assert.Null(item.TurnId);
+        Assert.Equal("max_attempts_exceeded", item.Payload.GetProperty("reason").GetString());
+        Assert.Contains("notice", item.Payload.GetProperty("content").GetString());
+        await h.Store.TrackWakes.RecoverOnBootAsync(default);
+        Assert.Single(await h.Store.ListSessionItemsAsync("sess_lead_1"));
+    }
+
+    [Theory]
+    [InlineData("pending")]
+    [InlineData("delivering")]
+    public async Task ExhaustedWakeIsDroppedOnClaimOrRuntimeFailure(string state)
+    {
+        await using var h = await SeedAsync();
+        await h.Store.TrackWakes.EnqueueAsync(Wake("schedule", key: null), default);
+        using var db = h.OpenRawInspectConnection();
+        await db.ExecuteAsync("UPDATE track_wakes SET attempts=3,state=@State;", new { State = state });
+        if (state == "pending")
+            Assert.Empty(await h.Store.TrackWakes.ClaimBatchAsync("trk_1", "sess_lead_1", 32, default));
+        else
+            await h.Store.TrackWakes.MarkDroppedAsync(await h.Store.TrackWakes.ListAsync("trk_1", default),
+                "max_attempts_exceeded", null, default);
+        var wake = Assert.Single(await h.Store.TrackWakes.ListAsync("trk_1", default));
+        Assert.Equal(("dropped", "max_attempts_exceeded", 3L), (wake.State, wake.Reason, wake.Attempts));
+        Assert.Single(await h.Store.ListSessionItemsAsync("sess_lead_1"));
+    }
+
+    [Fact]
     public async Task CoalesceIsAppendOnlyAndCancelOnlyAffectsPending()
     {
         await using var h = await SeedAsync();

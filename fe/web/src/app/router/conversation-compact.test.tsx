@@ -20,7 +20,7 @@ it.each(['claude', 'codex', 'opencode', 'grok'] as const)('compact is available 
 it('compact remains hidden until history is ready', async () => {
   renderCompactFixture('codex', false);
   await userEvent.click(await screen.findByRole('button', { name: /Conversation Daily Planner conversation/ }));
-  await screen.findByText('The conversation history could not be loaded.');
+  await screen.findByText('无法加载对话记录。');
   await userEvent.type(screen.getByRole('combobox', { name: 'Message' }), '/');
   expect(screen.queryByRole('option', { name: /^compact/ })).toBeNull();
 });

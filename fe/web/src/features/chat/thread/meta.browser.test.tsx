@@ -33,8 +33,8 @@ for (const theme of ['light', 'dark'] as const) {
         </div>);
         const meta = screen.getByRole('status', { name: 'Current response status' });
         const label = screen.getByText(sample.label, { exact: true });
-        const buttons = within(meta).getAllByRole('button', { name: /not available/ });
-        expect(buttons).toHaveLength(3);
+        const buttons = within(meta).getAllByRole('button', { name: /暂不可用/ });
+        expect(buttons).toHaveLength(2);
         expect(buttons.every((button) => button.hasAttribute('disabled') || button.getAttribute('aria-disabled') === 'true')).toBe(true);
         expect(getComputedStyle(label).fontSize).toBe('12px');
         expect(getComputedStyle(label).fontWeight).toBe('400');
@@ -119,24 +119,24 @@ it('does not take focus from another control when stopping becomes completed', (
 });
 
 for (const width of [390, 1280]) {
-  it(`offers a live Edit in the same row that answers at the click (${width}px)`, async () => {
+  it(`offers regenerate in the current Turn row (${width}px)`, async () => {
     await page.viewport(width, 844);
-    const run = vi.fn();
+    const run = vi.fn(() => Promise.resolve());
     render(<div style={{ width: Math.min(width - 32, 600) }}>
       <ThreadStatusNotice heading="Completed" clock={{ elapsedMs: null, timestamp: { kind: 'finished', atMs: 1000 } }}
-        editAction={{ id: 'c:turn', run }} />
+        regenerateAction={{ id: 'c:turn', run }} />
     </div>);
     const meta = screen.getByRole('status', { name: 'Current response status' });
-    const edit = within(meta).getByRole('button', { name: 'Edit message' });
+    const edit = within(meta).getByRole('button', { name: '重新生成' });
     expect(edit.hasAttribute('disabled') || edit.getAttribute('aria-disabled') === 'true').toBe(false);
     expect(edit.getBoundingClientRect().height).toBe(28);
     const label = screen.getByText('Completed', { exact: true });
     const center = (element: Element) => { const box = element.getBoundingClientRect(); return box.top + box.height / 2; };
     expect(Math.abs(center(edit.querySelector('svg')!) - center(label))).toBeLessThanOrEqual(1);
-    expect(within(meta).getAllByRole('button', { name: /not available/ })).toHaveLength(2);
+    expect(within(meta).getAllByRole('button', { name: /暂不可用/ })).toHaveLength(1);
     await userEvent.click(edit);
     expect(run).toHaveBeenCalledOnce();
-    expect(edit.getAttribute('aria-label')).toBe('Edit message');
+    expect(edit.getAttribute('aria-label')).toBe('重新生成');
     expect(document.documentElement.scrollWidth).toBe(width);
   });
 }
@@ -144,8 +144,8 @@ for (const width of [390, 1280]) {
 it('keeps the same copy control when its feedback glyph changes', async () => {
   render(<ThreadStatusNotice heading="Completed" clock={{ elapsedMs: null, timestamp: null }}
     copyAction={{ id: 'response', text: 'Answer', run: () => Promise.resolve() }} />);
-  const button = screen.getByRole('button', { name: 'Copy response' });
+  const button = screen.getByRole('button', { name: '复制回复' });
   await userEvent.click(button);
-  await expect.element(page.getByRole('button', { name: 'Copied response', exact: true })).toBeVisible();
-  expect(screen.getByRole('button', { name: 'Copied response' })).toBe(button);
+  await expect.element(page.getByRole('button', { name: '已复制回复', exact: true })).toBeVisible();
+  expect(screen.getByRole('button', { name: '已复制回复' })).toBe(button);
 });

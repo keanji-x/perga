@@ -236,9 +236,12 @@ public sealed partial class AcpAgentSession : IAgentSession
                 handshakeCts.Token).ConfigureAwait(false);
             return session;
         }
-        catch
+        catch (Exception error)
         {
             await session.DisposeAsync().ConfigureAwait(false);
+            if (spec.ResumeNativeThreadId is not null && error is JsonRpcRemoteException &&
+                ProviderSessionNotFoundException.IsMissingSession(error.Message))
+                throw new ProviderSessionNotFoundException(error.Message, error);
             throw;
         }
     }

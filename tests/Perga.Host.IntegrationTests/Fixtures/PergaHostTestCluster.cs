@@ -54,6 +54,7 @@ public sealed record RecordedTurnExecution(
 
 public sealed class ScriptableAgentRuntime : IAgentRuntime
 {
+    public bool CanResumeSession(string provider) => true;
     private readonly ConcurrentQueue<RecordedSessionOpen> _openedSessions = new();
     private readonly ConcurrentQueue<RecordedTurnExecution> _executedTurns = new();
     private Func<HarnessLaunchSpec, TurnInput, CancellationToken, IAsyncEnumerable<UnifiedAgentEvent>>? _turnHandler;
@@ -63,6 +64,10 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
     public bool RequiresTerminalStop { get; set; }
     public Func<CancellationToken, Task>? CancelHandler { get; set; }
     public Func<CancellationToken, Task<bool>>? CloseHandler { get; set; }
+    public Func<HarnessLaunchSpec, CancellationToken, Task>? BeforeOpenAsync { get; set; }
+    public bool MismatchNativeThreadId { get; set; }
+    public Func<HarnessLaunchSpec, Exception?>? OpenError { get; set; }
+    public bool ShutdownConfirmed { get; set; } = true;
     private int _probeCount;
     private int _forceRefreshProbeCount;
 
@@ -117,12 +122,13 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
         return ProbeProvidersAsync(ct);
     }
 
-    public Task<IAgentSession> OpenSessionAsync(HarnessLaunchSpec spec, CancellationToken ct)
+    public async Task<IAgentSession> OpenSessionAsync(HarnessLaunchSpec spec, CancellationToken ct)
     {
-        _ = ct;
+        if (BeforeOpenAsync is { } before) await before(spec, ct);
+        if (OpenError?.Invoke(spec) is { } error) throw error;
         IAgentSession session = new ScriptableAgentSession(this, spec);
         _openedSessions.Enqueue(new RecordedSessionOpen(spec, DateTimeOffset.UtcNow, session.NativeThreadId));
-        return Task.FromResult(session);
+        return session;
     }
 
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
@@ -167,7 +173,7 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
             _spec = spec;
             ConfigurationState = owner.LaunchConfirmationHandler is { } confirm
                 ? confirm(spec) : new(SessionConfiguration.FromLaunch(spec));
-            NativeThreadId = spec.ResumeNativeThreadId ?? $"thr_{Guid.NewGuid():N}";
+            NativeThreadId = _owner.MismatchNativeThreadId ? "wrong-native-id" : spec.ResumeNativeThreadId ?? $"thr_{Guid.NewGuid():N}";
         }
 
         public string? NativeThreadId { get; }
@@ -183,6 +189,7 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
             ], "gpt-5.4", "low")
             : null;
         public bool SupportsSessionResume => true;
+        public bool ShutdownConfirmed => _owner.ShutdownConfirmed;
         public bool CanReuseContextWindow => true;
         public bool SupportsScopedClose => _owner.CloseHandler is not null;
 
@@ -438,11 +445,11 @@ public sealed class PergaHostTestCluster : IAsyncDisposable
     {
         using var areaResponse = await Client.PostAsJsonAsync("/api/v1/areas",
             new { name = "Test area", defaultCwd = DataDir });
-        areaResponse.EnsureSuccessStatusCode();
+        Assert.True(areaResponse.IsSuccessStatusCode, await areaResponse.Content.ReadAsStringAsync());
         var area = (await areaResponse.Content.ReadFromJsonAsync<AreaDto>(PergaJsonDefaults.ApiOptions))!;
         using var trackResponse = await Client.PostAsJsonAsync("/api/v1/tracks",
             new { areaId = area.Id, cwd = DataDir });
-        trackResponse.EnsureSuccessStatusCode();
+        Assert.True(trackResponse.IsSuccessStatusCode, await trackResponse.Content.ReadAsStringAsync());
         using var snapshot = JsonDocument.Parse(await trackResponse.Content.ReadAsStringAsync());
         var track = snapshot.RootElement.GetProperty("track");
         var trackId = track.GetProperty("id").GetString()!;

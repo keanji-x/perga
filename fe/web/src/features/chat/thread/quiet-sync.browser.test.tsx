@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import '../../../styles/entry.css';
 
 import { ChatThread } from './public.tsx';
+const RUNNING_TURN = Object.freeze({ id: 't1', sessionId: 'chat', turnIndex: 1, epoch: 1, triggerKind: 'user', status: 'running', startedAtMs: null });
 import {
   SYSTEM_PRESENTATION_LABELS,
   type Conversation, type ConversationActivity, type ConversationSystemEntry, type ConversationTurn,
@@ -82,7 +83,7 @@ describe('the quiet-sync fold in a real engine', () => {
 
 it('names syncing as ongoing until a confirmed completion, and keeps the fold as indicator owner', () => {
   const props = { hasPendingMessages: false, canContinue: false, cards: {}, stalled: false, conversation };
-  const { container, rerender } = render(<ChatThread {...props} turns={[wake, { ...read, state: 'running' }]} pending />);
+  const { container, rerender } = render(<ChatThread {...props} turns={[wake, { ...read, state: 'running' }]} lastSessionTurn={RUNNING_TURN} />);
   const summary = container.querySelector('summary')!;
   expect(summary.textContent).toMatch(/Syncing ·/);
   expect(container.querySelector('[data-nc-turn="quiet-sync"]')!.textContent).not.toContain('Completion unconfirmed');

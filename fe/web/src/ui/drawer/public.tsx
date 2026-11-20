@@ -31,7 +31,7 @@ function focusTook(element: HTMLElement): boolean {
   return document.activeElement === element;
 }
 
-export function Drawer({ open, title, mobileBackLabel, mobileHeader, closeLabel = 'Close conversation', onClose, children, footer, resize, companion, inline = false, id, stacked = false, resizeGroup: suppliedResizeGroup = null, retainCompanion = false, companionVisible: suppliedCompanionVisible }: {
+export function Drawer({ open, title, headerActions, mobileBackLabel, mobileHeader, closeLabel = 'Close conversation', onClose, children, footer, resize, companion, inline = false, id, stacked = false, resizeGroup: suppliedResizeGroup = null, retainCompanion = false, companionVisible: suppliedCompanionVisible }: {
   open: boolean;
   /** Keep only the independent companion slot mounted when both panes are closed. */
   retainCompanion?: boolean;
@@ -47,6 +47,8 @@ export function Drawer({ open, title, mobileBackLabel, mobileHeader, closeLabel 
   inline?: boolean;
   /** The drawer's accessible name, painted once: in the desktop header row, or in the shared compact Header. */
   title: string;
+  /** Optional controls beside the title, supplied by the surface owner. */
+  headerActions?: ReactNode;
   /** Accessible destination announced by the compact header's back control. */
   mobileBackLabel?: string;
   /** Optional compact header supplied by the host for a modal presentation. */
@@ -101,7 +103,9 @@ export function Drawer({ open, title, mobileBackLabel, mobileHeader, closeLabel 
 
   /* Retracting panels show their last frame. Resource retention belongs only to the independent companion slot. A ref must never cause a render. */
   const lastFrame = useRef<{
-    title: string; mobileBackLabel?: string; children: ReactNode; footer?: ReactNode;
+    title: string;
+  /** Optional controls beside the title, supplied by the surface owner. */
+  headerActions?: ReactNode; mobileBackLabel?: string; children: ReactNode; footer?: ReactNode;
   }>(
     { title, mobileBackLabel, children, footer },
   );
@@ -204,7 +208,7 @@ export function Drawer({ open, title, mobileBackLabel, mobileHeader, closeLabel 
           />}
         </div>
       ) : (
-        <DrawerHeader title={frame.title} titleId={titleId} closeLabel={closeLabel} closeTitle="Close" onClose={onClose} />
+        <DrawerHeader title={frame.title} titleId={titleId} closeLabel={closeLabel} closeTitle="Close" onClose={onClose}>{headerActions}</DrawerHeader>
       )}
       <div ref={scrollRef} className={styles.scroll} data-nc-drawer-scroll="">
         <div className={styles.bodyInner}>

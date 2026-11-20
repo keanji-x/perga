@@ -13,10 +13,10 @@ it.each([false, true])('retries a refused v1 send with the original key and rest
   const field = page.getByRole('combobox', { name: 'Message', exact: true });
   await field.fill('Keep these words through retry.');
   await userEvent.keyboard('{Enter}');
-  await expect.element(page.getByRole('button', { name: 'Try again', exact: true })).toBeVisible();
+  await expect.element(page.getByRole('button', { name: /^(Try again|重试|安全重试（同幂等键）)$/, exact: true })).toBeVisible();
   await expect.element(page.getByText('Keep these words through retry.', { exact: true })).toBeVisible();
   view.allow();
-  await page.getByRole('button', { name: 'Try again', exact: true }).click();
+  await page.getByRole('button', { name: /^(Try again|重试|安全重试（同幂等键）)$/, exact: true }).click();
   await expect.element(field).toHaveTextContent('');
   await expect.poll(() => document.activeElement).toBe(field.element());
   const writes = view.requests.filter(request => request.method === 'POST');
@@ -31,7 +31,7 @@ it('replays a lost creation reply and adopts the server session without a second
   await page.getByRole('button', { name: 'New conversation', exact: true }).click();
   await page.getByRole('combobox', { name: 'Message' }).fill('Create exactly once.');
   await userEvent.keyboard('{Enter}');
-  await page.getByRole('button', { name: 'Try again', exact: true }).click();
+  await page.getByRole('button', { name: /^(Try again|重试|安全重试（同幂等键）)$/, exact: true }).click();
   await expect.element(page.getByRole('combobox', { name: 'Message' })).toHaveTextContent('');
   await expect.element(page.getByRole('paragraph').filter({ hasText: /^Create exactly once\.$/ })).toBeVisible();
   const writes = view.requests.filter(request => request.method === 'POST');
@@ -49,9 +49,9 @@ it.each([false, true])('preserves a later focus choice when a retry finishes (ne
     await page.getByRole('button', { name: draft ? 'New conversation' : 'Conversation Daily Planner conversation', exact: true }).click();
     await page.getByRole('combobox', { name: 'Message' }).fill('Respect my later focus choice.');
     await userEvent.keyboard('{Enter}');
-    await expect.element(page.getByRole('button', { name: 'Try again', exact: true })).toBeVisible();
+    await expect.element(page.getByRole('button', { name: /^(Try again|重试|安全重试（同幂等键）)$/, exact: true })).toBeVisible();
     view.allow(); view.pauseSend();
-    await page.getByRole('button', { name: 'Try again', exact: true }).click();
+    await page.getByRole('button', { name: /^(Try again|重试|安全重试（同幂等键）)$/, exact: true }).click();
     await expect.poll(() => view.requests.filter(request => request.method === 'POST').length).toBe(2);
     const other = document.createElement('button');
     other.textContent = 'Later focus destination';
@@ -71,9 +71,9 @@ it.each(['close', 'switch'] as const)('keeps a later view choice when session cr
     await page.getByRole('button', { name: 'New conversation', exact: true }).click();
     await page.getByRole('combobox', { name: 'Message' }).fill('Finish without reopening my drawer.');
     await userEvent.keyboard('{Enter}');
-    await expect.element(page.getByRole('button', { name: 'Try again', exact: true })).toBeVisible();
+    await expect.element(page.getByRole('button', { name: /^(Try again|重试|安全重试（同幂等键）)$/, exact: true })).toBeVisible();
     view.allow(); view.pauseSend();
-    await page.getByRole('button', { name: 'Try again', exact: true }).click();
+    await page.getByRole('button', { name: /^(Try again|重试|安全重试（同幂等键）)$/, exact: true }).click();
     await expect.poll(() => view.requests.filter(request => request.method === 'POST').length).toBe(2);
     await page.getByRole('button', { name: 'Close conversation', exact: true }).click();
     if (action === 'switch') await page.getByRole('button', { name: 'Conversation Other conversation', exact: true }).click();

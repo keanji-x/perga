@@ -5,266 +5,121 @@ using Microsoft.Extensions.DependencyInjection;
 using Perga.AgentKit;
 using Perga.Contracts;
 using Perga.Host.IntegrationTests.Fixtures;
-using Perga.Host.Serialization;
 using Perga.Kernel;
 
 namespace Perga.Host.IntegrationTests;
 
 public sealed class ProviderSessionResumeTests
 {
-    [Fact]
-    public async Task UnconfirmedResumeKeepsRecoveryHoldAndQueuedInputUntilConfirmedRetry()
+    private static async IAsyncEnumerable<UnifiedAgentEvent> Unknown(HarnessLaunchSpec spec, TurnInput input,
+        [EnumeratorCancellation] CancellationToken ct)
     {
-        await using var host = new PergaHostTestCluster();
-        var (trackId, sessionId) = await host.CreateTrackAsync();
-        var kernel = host.Services.GetRequiredService<IPergaKernel>();
-        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var end = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        host.AgentRuntime.SetTurnHandler(Stream);
-        host.AgentRuntime.CancelHandler = _ => { end.TrySetResult(); return Task.CompletedTask; };
-        async IAsyncEnumerable<UnifiedAgentEvent> Stream(HarnessLaunchSpec spec, TurnInput input,
-            [EnumeratorCancellation] CancellationToken ct)
-        {
-            if (input.Prompt == "old")
-            {
-                yield return new UnifiedAgentEvent.TextDelta("accepted");
-                started.TrySetResult();
-                await end.Task.WaitAsync(ct);
-                yield return new UnifiedAgentEvent.TurnInterrupted();
-            }
-            else yield return new UnifiedAgentEvent.TurnCompleted(null);
-        }
-        try
-        {
-            await kernel.AcceptMessageAsync(sessionId, new("old", "unconfirmed-resume-old"), default);
-            await started.Task.WaitAsync(TimeSpan.FromSeconds(10));
-            var original = await kernel.GetSessionItemsAsync(sessionId);
-            var turnId = original.Resume!.TurnId;
-            var nativeId = Assert.Single(host.AgentRuntime.OpenedSessions).NativeThreadId;
-            await kernel.AcceptMessageAsync(sessionId, new("queued", "unconfirmed-resume-next", QueueIfBusy: true), default);
-            host.AgentRuntime.LaunchConfirmationHandler = _ => null;
-            using var response = await host.Client.PostAsJsonAsync($"/api/v1/sessions/{sessionId}/resume", new { turnId });
-            Assert.False(response.IsSuccessStatusCode);
-            var held = await kernel.GetSessionItemsAsync(sessionId);
-            Assert.Equal("paused", held.Resume?.State);
-            Assert.Single(held.QueuedMessages);
-            Assert.Single(host.AgentRuntime.ExecutedTurns);
-            Assert.Equal(nativeId, held.Session.NativeThreadId);
-            Assert.Contains(nativeId, host.AgentRuntime.DisposedSessions);
-            host.AgentRuntime.LaunchConfirmationHandler = null;
-            using var retry = await host.Client.PostAsJsonAsync($"/api/v1/sessions/{sessionId}/resume", new { turnId });
-            retry.EnsureSuccessStatusCode();
-            await kernel.WaitForTrackIdleAsync(trackId).WaitAsync(TimeSpan.FromSeconds(10));
-            Assert.Equal(new[] { "old", "queued" }, host.AgentRuntime.ExecutedTurns.Select(turn => turn.Input.Prompt));
-            Assert.All(host.AgentRuntime.OpenedSessions.Skip(1), open => Assert.Equal(nativeId, open.Spec.ResumeNativeThreadId));
-        }
-        finally { end.TrySetResult(); }
+        await Task.Yield();
+        ct.ThrowIfCancellationRequested();
+        yield return new UnifiedAgentEvent.TextDelta("partial");
+        yield return new UnifiedAgentEvent.TurnError("connection_lost", "Provider disconnected.", false);
     }
 
     [Fact]
-    public async Task ResumeRequiresATargetTurn()
+    public async Task FailedReconnectPreservesUnknownAndRetryPreservesIdentityWithoutResending()
     {
         await using var host = new PergaHostTestCluster();
-        var (_, sessionId) = await host.CreateTrackAsync();
-        using var response = await host.Client.PostAsJsonAsync(
-            $"/api/v1/sessions/{sessionId}/resume", new { turnId = "" });
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var (trackId, id) = await host.CreateTrackAsync();
+        var kernel = host.Services.GetRequiredService<IPergaKernel>();
+        host.AgentRuntime.SetTurnHandler(Unknown);
+        var receipt = await kernel.AcceptMessageAsync(id, new("original", "original"), default);
+        await kernel.WaitForTrackIdleAsync(trackId);
+        var before = await kernel.GetSessionItemsAsync(id);
+        Assert.Equal("unknown", before.State);
+        Assert.Equal("unknown", before.LastTurn?.Status);
+        Assert.True(before.UnknownDetail?.CanReconnect);
+        host.AgentRuntime.LaunchConfirmationHandler = _ => null;
+        using var failed = await host.Client.PostAsJsonAsync($"/api/v1/sessions/{id}/recover", new { mode = "reconnect" });
+        Assert.Equal(HttpStatusCode.Conflict, failed.StatusCode);
+        var held = await kernel.GetSessionItemsAsync(id);
+        Assert.Equal("unknown", held.State);
+        Assert.NotNull(held.UnknownDetail?.LastError);
+        Assert.False(held.UnknownDetail?.Recovering);
+        var failedLaunch = host.AgentRuntime.OpenedSessions.Last().Spec;
+        var failedMcp = Assert.IsType<McpServerConfig.HttpMcpServer>(failedLaunch.McpServers["perga"]);
+        Assert.Null(kernel.McpSessionBridge.ResolveToken(failedMcp.Headers["Authorization"]["Bearer ".Length..]));
+        Assert.Equal(before.Session.NativeThreadId, held.Session.NativeThreadId);
+        host.AgentRuntime.LaunchConfirmationHandler = null;
+        using var retry = await host.Client.PostAsJsonAsync($"/api/v1/sessions/{id}/recover", new { mode = "reconnect" });
+        retry.EnsureSuccessStatusCode();
+        var restored = await kernel.GetSessionItemsAsync(id);
+        Assert.Equal("idle", restored.State);
+        Assert.Null(restored.UnknownDetail);
+        Assert.Equal(before.Session.NativeThreadId, restored.Session.NativeThreadId);
+        Assert.Equal(before.Session.Epoch, restored.Session.Epoch);
+        Assert.Equal(before.Session.ContextUsage, restored.Session.ContextUsage);
+        Assert.Equal(before.LastTurn?.Id, restored.LastTurn?.Id);
+        Assert.Equal("unknown", restored.LastTurn?.Status);
+        Assert.NotNull((await kernel.GetSessionInputAsync(id, receipt.Receipt!.InputId, default)).ResolvedAtMs);
+        Assert.Single(host.AgentRuntime.ExecutedTurns);
+        Assert.All(host.AgentRuntime.OpenedSessions.Skip(1), s => Assert.Equal(before.Session.NativeThreadId, s.Spec.ResumeNativeThreadId));
     }
 
     [Theory]
-    [InlineData("terminal", false)]
-    [InlineData("scoped-close", false)]
-    [InlineData("scoped-close", true)]
-    [InlineData("unexpected-end", true)]
-    [InlineData("unconfirmed", false)]
-    public async Task RecoveryRebindsOnlyAfterStopEvidenceAndNeverResendsTheOldPrompt(string stop, bool queuedFollowUp)
+    [InlineData("reconnect")]
+    [InlineData("reset_context")]
+    public async Task RunningTurnsNeverOfferRecovery(string mode)
     {
         await using var host = new PergaHostTestCluster();
-        var (trackId, sessionId) = await host.CreateTrackAsync();
-        var primeStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var finishPrime = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var oldStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var endOld = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var oldTurnStopped = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var (_, id) = await host.CreateTrackAsync();
         var kernel = host.Services.GetRequiredService<IPergaKernel>();
-        host.AgentRuntime.SetTurnHandler(StreamAsync);
-        host.AgentRuntime.CancelHandler = token =>
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        host.AgentRuntime.SetTurnHandler(Stream);
+        async IAsyncEnumerable<UnifiedAgentEvent> Stream(HarnessLaunchSpec spec, TurnInput input,
+            [EnumeratorCancellation] CancellationToken ct)
         {
-            if (stop == "terminal")
-                endOld.TrySetResult();
-            return stop == "unconfirmed" ? Task.Delay(Timeout.InfiniteTimeSpan, token) : Task.CompletedTask;
-        };
-        if (stop is "scoped-close" or "unexpected-end")
-            host.AgentRuntime.CloseHandler = _ => Task.FromResult(true);
-
-        async IAsyncEnumerable<UnifiedAgentEvent> StreamAsync(
-            HarnessLaunchSpec spec, TurnInput input, [EnumeratorCancellation] CancellationToken ct)
-        {
-            yield return new UnifiedAgentEvent.TextDelta("provided evidence");
-            if (input.Prompt == "prime")
-            {
-                primeStarted.TrySetResult();
-                await finishPrime.Task.WaitAsync(ct);
-                yield return new UnifiedAgentEvent.TurnCompleted(null);
-            }
-            else if (input.Prompt == "old prompt")
-            {
-                oldStarted.TrySetResult();
-                await endOld.Task.WaitAsync(ct);
-                oldTurnStopped.TrySetResult();
-                yield return stop == "unexpected-end"
-                    ? new UnifiedAgentEvent.TurnError("connection_lost", "Provider disconnected.", IsRetryable: false)
-                    : new UnifiedAgentEvent.TurnInterrupted();
-            }
-            else
-                yield return new UnifiedAgentEvent.TurnCompleted(null);
+            yield return new UnifiedAgentEvent.TextDelta("running");
+            started.TrySetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, ct);
         }
-
-        var path = $"/api/v1/sessions/{sessionId}";
-        async Task<HttpResponseMessage> PostAsync(string key, string text)
-        {
-            using var request = new HttpRequestMessage(HttpMethod.Post, path + "/messages")
-            {
-                Content = JsonContent.Create(new { content = text, queueIfBusy = true }),
-            };
-            request.Headers.Add("Idempotency-Key", key);
-            return await host.Client.SendAsync(request);
-        }
-
-        try
-        {
-            if (queuedFollowUp)
-            {
-                using var primed = await PostAsync("prime", "prime");
-                primed.EnsureSuccessStatusCode();
-                await primeStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            }
-
-            using var sent = await PostAsync("old", "old prompt");
-            Assert.Equal(HttpStatusCode.Accepted, sent.StatusCode);
-            var receipt = queuedFollowUp ? null :
-                await sent.Content.ReadFromJsonAsync<SessionInputReceipt>(PergaJsonDefaults.ApiOptions);
-            Assert.Equal(!queuedFollowUp, sent.Headers.Location is not null);
-            finishPrime.TrySetResult();
-            await oldStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            var original = await kernel.GetSessionItemsAsync(sessionId);
-            Assert.Equal("available", original.Resume?.State);
-            var turnId = original.Resume!.TurnId;
-            var nativeId = Assert.Single(host.AgentRuntime.OpenedSessions).NativeThreadId;
-            Assert.False(string.IsNullOrWhiteSpace(nativeId));
-
-            using var queued = await PostAsync("next", "queued prompt");
-            Assert.Equal(HttpStatusCode.Accepted, queued.StatusCode);
-            var action = path + "/resume";
-            if (stop == "unexpected-end")
-            {
-                endOld.TrySetResult();
-                await kernel.WaitForTrackIdleAsync(trackId).WaitAsync(TimeSpan.FromSeconds(5));
-                var paused = await kernel.GetSessionItemsAsync(sessionId);
-                Assert.Equal("paused", paused.Resume?.State);
-                Assert.Single(paused.QueuedMessages);
-            }
-
-            using var answer = await host.Client.PostAsJsonAsync(action, new { turnId });
-            if (stop == "unconfirmed")
-            {
-                Assert.Equal(HttpStatusCode.Conflict, answer.StatusCode);
-                var held = await kernel.GetSessionItemsAsync(sessionId);
-                Assert.Equal("paused", held.Resume?.State);
-                Assert.Single(held.QueuedMessages);
-                Assert.Single(host.AgentRuntime.OpenedSessions);
-                Assert.Single(host.AgentRuntime.ExecutedTurns);
-
-                // The old adapter later supplies a terminal event. A new manual attempt can use that evidence.
-                endOld.TrySetResult();
-                await oldTurnStopped.Task.WaitAsync(TimeSpan.FromSeconds(5));
-                await kernel.WaitForTrackIdleAsync(trackId).WaitAsync(TimeSpan.FromSeconds(5));
-                Assert.Single(host.AgentRuntime.ExecutedTurns);
-                using var retry = await host.Client.PostAsJsonAsync(action, new { turnId });
-                retry.EnsureSuccessStatusCode();
-            }
-            else
-            {
-                answer.EnsureSuccessStatusCode();
-                var restored = (await answer.Content.ReadFromJsonAsync<AgentSessionDto>(PergaJsonDefaults.ApiOptions))!;
-                Assert.Equal(original.Session.Epoch, restored.Epoch);
-                Assert.Equal(nativeId, restored.NativeThreadId);
-            }
-
-            await kernel.WaitForTrackIdleAsync(trackId).WaitAsync(TimeSpan.FromSeconds(5));
-            Assert.Equal(2, host.AgentRuntime.OpenedSessions.Count);
-            Assert.Equal(nativeId, host.AgentRuntime.OpenedSessions.Last().Spec.ResumeNativeThreadId);
-            Assert.Equal(queuedFollowUp ? new[] { "prime", "old prompt", "queued prompt" } : new[] { "old prompt", "queued prompt" },
-                host.AgentRuntime.ExecutedTurns.Select(turn => turn.Input.Prompt));
-            if (stop == "scoped-close" && receipt is not null)
-            {
-                var settled = await kernel.GetSessionInputAsync(sessionId, receipt.InputId, CancellationToken.None);
-                Assert.Equal("unknown", settled.TurnStatus);
-                Assert.Equal("delivered", settled.DeliveryState);
-                Assert.NotNull(settled.ResolvedAtMs);
-            }
-        }
-        finally
-        {
-            finishPrime.TrySetResult();
-            endOld.TrySetResult();
-        }
+        await kernel.AcceptMessageAsync(id, new("running", "running"), default);
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var page = await kernel.GetSessionItemsAsync(id);
+        Assert.Equal("running", page.State);
+        Assert.Null(page.UnknownDetail);
+        using var result = await host.Client.PostAsJsonAsync($"/api/v1/sessions/{id}/recover", new { mode });
+        Assert.Equal(HttpStatusCode.Conflict, result.StatusCode);
+        Assert.Single(host.AgentRuntime.OpenedSessions);
     }
 
     [Fact]
-    public async Task UnconfirmedStopFenceSurvivesHostRestart()
+    public async Task ArchiveAndUnarchivePreserveUnknownAndLatestTurn()
     {
-        var data = Directory.CreateTempSubdirectory("perga-resume-fence-");
-        try
-        {
-            string path;
-            string turnId;
-            string inputId;
-            await using (var host = new PergaHostTestCluster(data.FullName))
-            {
-                var (_, sessionId) = await host.CreateTrackAsync();
-                path = $"/api/v1/sessions/{sessionId}";
-                var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-                host.AgentRuntime.SetTurnHandler(StreamAsync);
-                host.AgentRuntime.CancelHandler = token => Task.Delay(Timeout.InfiniteTimeSpan, token);
+        await using var host = new PergaHostTestCluster();
+        var (trackId, id) = await host.CreateTrackAsync();
+        var kernel = host.Services.GetRequiredService<IPergaKernel>();
+        host.AgentRuntime.SetTurnHandler(Unknown);
+        await kernel.AcceptMessageAsync(id, new("uncertain", "uncertain"), default);
+        await kernel.WaitForTrackIdleAsync(trackId);
+        var before = await kernel.GetSessionItemsAsync(id);
+        await kernel.PatchSessionAsync(id, new(Archived: true));
+        var archived = await kernel.GetSessionItemsAsync(id);
+        Assert.Equal("unknown", archived.State);
+        Assert.Equal("archived", archived.ReadonlyReason);
+        Assert.True(archived.CanReopen);
+        await kernel.PatchSessionAsync(id, new(Archived: false));
+        var reopened = await kernel.GetSessionItemsAsync(id);
+        Assert.Equal("unknown", reopened.State);
+        Assert.Null(reopened.ReadonlyReason);
+        Assert.Equal(before.LastTurn?.Id, reopened.LastTurn?.Id);
+        Assert.Equal("unknown", reopened.LastTurn?.Status);
+    }
 
-                async IAsyncEnumerable<UnifiedAgentEvent> StreamAsync(
-                    HarnessLaunchSpec spec, TurnInput input, [EnumeratorCancellation] CancellationToken ct)
-                {
-                    yield return new UnifiedAgentEvent.TextDelta("waiting for terminal outcome");
-                    started.TrySetResult();
-                    await Task.Delay(Timeout.InfiniteTimeSpan, ct);
-                }
-
-                using var request = new HttpRequestMessage(HttpMethod.Post, path + "/messages")
-                {
-                    Content = JsonContent.Create(new { content = "Uncertain external work" }),
-                };
-                request.Headers.Add("Idempotency-Key", "initial");
-                using var sent = await host.Client.SendAsync(request);
-                sent.EnsureSuccessStatusCode();
-                var receipt = (await sent.Content.ReadFromJsonAsync<SessionInputReceipt>(PergaJsonDefaults.ApiOptions))!;
-                inputId = receipt.InputId;
-                turnId = receipt.TurnId;
-                await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
-                using var paused = await host.Client.PostAsJsonAsync(path + "/resume", new { turnId });
-                Assert.Equal(HttpStatusCode.Conflict, paused.StatusCode);
-            }
-
-            await using var reopened = new PergaHostTestCluster(data.FullName);
-            var page = await reopened.Client.GetFromJsonAsync<SessionItemsPageDto>(path + "/items", PergaJsonDefaults.ApiOptions);
-            Assert.Equal("paused", page?.Resume?.State);
-            Assert.Equal(turnId, page?.Resume?.TurnId);
-            Assert.False(page?.Resume?.CanStartFresh);
-            using var retry = await reopened.Client.PostAsJsonAsync(path + "/resume", new { turnId });
-            Assert.Equal(HttpStatusCode.Conflict, retry.StatusCode);
-            using var abandon = await reopened.Client.PostAsync(path + $"/inputs/{inputId}/abandon", null);
-            Assert.Equal(HttpStatusCode.Conflict, abandon.StatusCode);
-            Assert.Empty(reopened.AgentRuntime.OpenedSessions);
-        }
-        finally
-        {
-            data.Delete(recursive: true);
-        }
+    [Fact]
+    public async Task RecoveryModeIsRequiredAndOldRoutesAreRemoved()
+    {
+        await using var host = new PergaHostTestCluster();
+        var (_, id) = await host.CreateTrackAsync();
+        using var invalid = await host.Client.PostAsJsonAsync($"/api/v1/sessions/{id}/recover", new { mode = "" });
+        Assert.Equal(HttpStatusCode.BadRequest, invalid.StatusCode);
+        using var resume = await host.Client.PostAsJsonAsync($"/api/v1/sessions/{id}/resume", new { turnId = "old" });
+        Assert.Equal(HttpStatusCode.NotFound, resume.StatusCode);
+        using var abandon = await host.Client.PostAsync($"/api/v1/sessions/{id}/inputs/old/abandon", null);
+        Assert.Equal(HttpStatusCode.NotFound, abandon.StatusCode);
     }
 }

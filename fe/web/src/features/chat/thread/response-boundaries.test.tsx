@@ -1,10 +1,11 @@
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, expect, it } from 'vitest';
-import type { ConversationDisplayItem } from '../../../../../core/api/generated/wire.ts';
+
 import type { Conversation, TranscriptEntry } from '../../../../../core/domain/conversation.ts';
 import { buildConversationTranscript } from '../../../../../core/domain/conversation-display.ts';
 import { liveReplyTurns, reconcileLiveReplies } from '../../../../../core/domain/conversation-live.ts';
 import { ChatThread } from './public.tsx';
+import type { ConversationDisplayItem } from '../../../../../core/domain/conversation-display.ts';
 
 afterEach(cleanup);
 
@@ -16,12 +17,11 @@ function human(id: string, position: number): ConversationDisplayItem {
       text: id, attachments: [], created_at_ms: position } };
 }
 function native(id: string, turn: string | null, position: number, thread = 'thread', tool = false): ConversationDisplayItem {
-  return { cursor: { contract: 'conversation_v1', source: 'presentation', card_id: 'card', position }, source: {
-    kind: 'native', item: { id: position, card_id: 'card', track_id: 'track', worker_session_id: 'runtime',
-      thread_id: thread, turn_id: turn, item_uuid: id, item_type: tool ? 'commandExecution' : 'agentMessage',
-      method: 'item/completed', params: JSON.stringify({ item: tool ? { command: id, exitCode: 0 } : { text: id } }),
-      created_at_ms: position, turn_error_text: null },
-  } };
+  return { cursor: { contract: 'conversation_v1', source: 'presentation', card_id: 'card', position },
+    source: { kind: 'entry', entry: { id, atMs: position, ...(turn === null ? {} : { nativeTurn: { threadId: thread, turnId: turn } }),
+      ...(tool ? { author: 'activity', verb: 'Ran', target: id, state: 'done', durationMs: null, detail: null, tool: null }
+        : { author: 'agent', text: id }) } } };
+
 }
 function thread(entries: readonly TranscriptEntry[]) {
   return <ChatThread conversation={conversation} turns={entries} hasPendingMessages={false}

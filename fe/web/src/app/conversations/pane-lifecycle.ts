@@ -63,13 +63,13 @@ export function useRequestedConversationOpen({ registry, rows, setOpenTarget, re
 
 export function useConversationEscape({ open, store }: Readonly<{
   open: Conversation | null;
-  store: Pick<ConversationStore, 'working' | 'stopping' | 'interrupt'>;
+  store: Pick<ConversationStore, 'working' | 'stopping' | 'interrupt' | 'stopFeedback'>;
 }>) {
   useEffect(() => {
     if (open === null) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape' || event.defaultPrevented || isImeKeyEvent(event)) return;
-      if (!store.working || store.stopping) return;
+      if (!store.working || store.stopping || store.stopFeedback?.kind === 'requesting' || store.stopFeedback?.kind === 'stopping') return;
       const target = event.target;
       if (!(target instanceof Element)) return;
       if (target.closest('[data-nc-terminal-card]') !== null) return;

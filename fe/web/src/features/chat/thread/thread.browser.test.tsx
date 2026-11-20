@@ -1,9 +1,10 @@
+import type { SessionTurnDto } from '../../../../../core/api/perga-v1.ts';
 import { useMemo, useRef } from 'react';
 import { conversationCommands } from './composer-command.ts';
 import { ChatComposer as SdkComposer, ChatComposerInput as SdkComposerInput } from '@astryxdesign/core/Chat';
 import { withFontRoleProbe } from '../../../../../tools/styles/font-role-fixture.ts';
 /* The composer, the exchange rail and the reply's type, measured against a real rendering engine. */
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { page, userEvent } from 'vitest/browser';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -199,7 +200,8 @@ describe('the / command menu, as the engine lays it out', () => {
     await expect.poll(() => waiting.getAnimations({ subtree: true })
       .some(animation => animation.effect?.getTiming().iterations === Infinity && animation.playState === 'running')).toBe(true);
     const box = waiting.getBoundingClientRect();
-    expect([box.width, box.height, box.right, box.bottom]).toEqual([send.width, send.height, send.right, send.bottom]);
+    expect([box.width, box.height, box.right]).toEqual([send.width, send.height, send.right]);
+    expect(screen.getByText('正在发送…', { exact: true }).checkVisibility()).toBe(true);
     expect(parseFloat(getComputedStyle(waiting).borderTopLeftRadius)).toBeGreaterThanOrEqual(box.height / 2);
     const probe = document.createElement('div');
     probe.style.backgroundColor = 'var(--surface-chip)';
@@ -268,7 +270,7 @@ describe('the / command menu, as the engine lays it out', () => {
     await page.viewport(1400, 900);
     const queuedTurn: OptimisticConversationTurn = {
       id: 'echo-1', author: 'you', text: 'A message that is waiting its turn.',
-      atMs: 4_000, serverHighWaterBefore: 0, queued: true, entryId: null,
+      atMs: 4_000, localSend: true, queued: true,
     };
     render(<RailPane turns={[...railTurns(1), queuedTurn]} />);
 
@@ -503,8 +505,9 @@ ConversationTurn[] {
 const DRAWER_BLOCK_INSETS = 20 + 28;
 
 /** The drawer with independent layout frames around its card and seam paints. Card and seam carry the production `CardFrame` and `drawerStyles` rules (the card clip is what the portal exists for); the animation is off and the pane takes a fixed `blockSize`. */
-function RailPane({ turns, paneHeight = 400, conversationSpan = 396 }: {
+function RailPane({ turns, lastSessionTurn = null, paneHeight = 400, conversationSpan = 396 }: {
   turns: readonly TranscriptEntry[];
+  lastSessionTurn?: SessionTurnDto | null;
   paneHeight?: number;
   conversationSpan?: number;
 }) {
@@ -530,7 +533,7 @@ function RailPane({ turns, paneHeight = 400, conversationSpan = 396 }: {
             style={{ blockSize: paneHeight, flex: 'none' }}
           >
             <div className={drawerStyles.bodyInner} data-nc-rail-pane-inner="">
-              <ChatThread hasPendingMessages={false} canContinue={false} cards={{}} stalled={false} conversation={railConversation()} turns={turns} />
+              <ChatThread hasPendingMessages={false} canContinue={false} cards={{}} stalled={false} conversation={railConversation()} turns={turns} lastSessionTurn={lastSessionTurn} />
             </div>
           </div>
         </CardFrame>
@@ -649,19 +652,19 @@ describe('a failed turn in a real engine', () => {
     const completed: ConversationTurnOutcome = {
       id: 'outcome-2', author: 'turn', elapsedMs: null, turnId: 'turn-2', status: 'completed', atMs: 0,
     };
-    const { rerender } = render(<RailPane turns={[you, failed]} />);
+    const { rerender } = render(<RailPane turns={[you, failed]} lastSessionTurn={{ id: 'turn-1', sessionId: 'chat', turnIndex: 1, epoch: 1, triggerKind: 'user', status: 'failed', errorText: failed.text, startedAtMs: null }} />);
     await frame();
 
     const outcomes = document.querySelectorAll<HTMLElement>('[data-nc-turn="outcome"]');
     expect(outcomes).toHaveLength(1);
     const outcome = outcomes[0];
     expect(outcome.dataset['ncTurnOutcome']).toBe('failed');
-    expect(screen.getByText('Failed', { exact: true }).checkVisibility()).toBe(true);
-    const disclosure = screen.getByRole('button', { name: /^Failed(?: ·|$)/, expanded: false });
+    expect(screen.getByText('本轮执行失败', { exact: true }).checkVisibility()).toBe(true);
+    const disclosure = screen.getByRole('button', { name: /^本轮执行失败(?: ·|$)/, expanded: false });
     disclosure.focus();
     await userEvent.keyboard('{Enter}');
     expect(disclosure.getAttribute('aria-expanded')).toBe('true');
-    const message = outcome.querySelector<HTMLElement>('[data-nc-turn-outcome-message]')!;
+    const message = within(outcome).getByText(failed.text!);
     expect(message.textContent).toBe(failed.text);
     expect(message.checkVisibility()).toBe(true);
     const labelBox = disclosure.getBoundingClientRect();
@@ -669,11 +672,9 @@ describe('a failed turn in a real engine', () => {
     expect(messageBox.top).toBeGreaterThanOrEqual(labelBox.bottom);
     expect(messageBox.width).toBeLessThanOrEqual(outcome.getBoundingClientRect().width + 1);
     expect(messageBox.height).toBeGreaterThan(Number.parseFloat(getComputedStyle(message).lineHeight) * 1.5);
-    expect(outcome.querySelector('[data-nc-turn-outcome-hint]')?.textContent)
-      .toBe('The conversation no longer fits in the model’s context window.');
-    rerender(<RailPane turns={[you, failed, { ...you, id: 'you-2' }, completed]} />);
+    rerender(<RailPane turns={[you, failed, { ...you, id: 'you-2' }, completed]} lastSessionTurn={{ id: 'turn-2', sessionId: 'chat', turnIndex: 2, epoch: 1, triggerKind: 'user', status: 'completed', startedAtMs: null }} />);
     expect(document.querySelectorAll('[data-nc-current-meta]')).toHaveLength(1);
-    expect(screen.getByText('Completed', { exact: true }).checkVisibility()).toBe(true);
+    expect(screen.getByText('完成', { exact: true }).checkVisibility()).toBe(true);
     expect(screen.queryByText(failed.text!)).toBeNull();
   });
 });

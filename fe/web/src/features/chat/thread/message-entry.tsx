@@ -90,7 +90,7 @@ export const MessageEntry = memo(function MessageEntry({ id, entryKey, author, h
               Queued · sends when this turn ends
             </p>
           )}
-          {(deliveryError !== undefined || messageStatus !== undefined) && <p className={styles.queuedNote} role="status">
+          {(deliveryError !== undefined || (messageStatus !== undefined && messageStatus !== 'completed')) && <p className={styles.queuedNote} role="status">
             {deliveryError ?? (messageStatus === undefined ? null : messageStatusLabel(messageStatus))}
           </p>}
           {replacement && <p className={styles.queuedNote}>Replaces the marked message above</p>}

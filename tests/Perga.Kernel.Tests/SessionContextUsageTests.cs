@@ -417,7 +417,7 @@ public sealed class SessionContextUsageTests
                 yield return new UnifiedAgentEvent.ThreadBound("thr_resume_fault");
                 oldStarted.TrySetResult();
                 await releaseOld.Task.WaitAsync(ct);
-                yield return new UnifiedAgentEvent.TurnInterrupted();
+                yield return new UnifiedAgentEvent.TurnError("stream_lost", "Disconnected", false);
                 yield break;
             }
 
@@ -427,8 +427,10 @@ public sealed class SessionContextUsageTests
 
         var oldTurnTask = ctx.SendAndWaitForTurnAsync(id, new("stuck", "resume-fault-1"));
         await oldStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        releaseOld.TrySetResult();
+        await oldTurnTask;
         var items = await ctx.Kernel.GetSessionItemsAsync(id);
-        var targetTurnId = items.Resume!.TurnId;
+        var targetTurnId = items.LastTurn!.Id;
 
         var throwOnPendingUsage = false;
         var pendingWriteAttempts = 0;
@@ -443,12 +445,12 @@ public sealed class SessionContextUsageTests
 
         // Allow pending idle usage write to fail after CompleteSessionResumeAsync commits.
         throwOnPendingUsage = true;
-        var resumed = await ctx.Kernel.ResumeProviderSessionAsync(id, targetTurnId, CancellationToken.None);
+        var resumed = await ctx.Kernel.RecoverSessionAsync(id, new("reconnect"), CancellationToken.None);
         await oldTurnTask;
 
         Assert.Equal(1, pendingWriteAttempts);
         Assert.Equal("idle", resumed.Status);
-        Assert.Equal("thr_1", resumed.NativeThreadId);
+        Assert.Equal("thr_resume_fault", resumed.NativeThreadId);
         Assert.Null(resumed.ContextUsage?.UsedTokens);
 
         var opened = ctx.AgentRuntime.OpenedSessions.ToArray();

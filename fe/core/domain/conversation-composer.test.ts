@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
-import type { HarnessInputSegment } from '../api/generated/wire.js';
-import { buildTranscript, MAX_ATTACHMENTS_PER_MESSAGE, type TranscriptEntry } from './conversation.js';
+
+import { MAX_ATTACHMENTS_PER_MESSAGE, SYSTEM_PRESENTATION_LABELS, type TranscriptEntry } from './conversation.js';
 import {
   editedTurnMessageIds, editedTurnRefill, isLatestTurn, isSameComposer,
   withoutEditedTurn, withRefill,
@@ -8,28 +8,21 @@ import {
 
 const image = (id: string) => ({ id, contentType: 'image/png', size: 4, url: `/api/cards/c/planner/attachments/${id}` });
 
-/** One stored row of the thread, as `GET …/harness/items` lists it. */
-type StoredRow = Parameters<typeof buildTranscript>[0][number];
-function row(id: number, turnId: string, itemType: string | null, method: string, params: unknown,
-  segments?: readonly HarnessInputSegment[]): StoredRow {
-  return {
-    id, worker_session_id: 'r', card_id: 'c', track_id: 't', thread_id: 'th', turn_id: turnId, turn_error_text: null,
-    item_uuid: null, item_type: itemType, method, params: JSON.stringify(params), created_at_ms: id,
-    ...(segments === undefined ? {} : { input_segments: [...segments] }),
-  };
-}
-const said = (id: number, turnId: string, segments: readonly HarnessInputSegment[]) =>
-  row(id, turnId, 'userMessage', 'item/completed', { item: { content: [] }, completedAtMs: id }, segments);
-const answer = (id: number, turnId: string, text: string) =>
-  row(id, turnId, 'agentMessage', 'item/completed', { item: { text }, completedAtMs: id });
-const ended = (id: number, turnId: string) =>
-  row(id, turnId, null, 'turn/completed', { id: turnId, status: 'completed', error: null });
+/** Typed entry fixtures exercise composer policy independently of transport parsing. */
+type Segment = Readonly<{ presentation: string; text: string; attachments?: readonly import('../api/generated/wire.js').PlannerAttachment[] }>;
+const said = (id: number, _turnId: string, segments: readonly Segment[]): TranscriptEntry[] => segments.map((segment, index) =>
+  segment.presentation === 'user'
+    ? { id: `${id}:${index}`, author: 'you', text: segment.text.replace(/^User says:\n/, '').trim(), attachments: segment.attachments ?? [], atMs: id }
+    : { id: `${id}:${index}`, author: 'system', label: SYSTEM_PRESENTATION_LABELS[segment.presentation as keyof typeof SYSTEM_PRESENTATION_LABELS], text: segment.text, atMs: id });
+const answer = (id: number, _turnId: string, text: string): TranscriptEntry[] => [{ id: String(id), author: 'agent', text, atMs: id }];
+const ended = (id: number, turnId: string): TranscriptEntry[] => [{ id: `outcome-${id}`, author: 'turn', turnId, status: 'completed', elapsedMs: null, atMs: id }];
+const entriesOf = (groups: readonly TranscriptEntry[][]) => groups.flat();
 
 it('refills from the transcript what the turn said: prompt and steers, lead dropped, each image once', () => {
   const prompt = { presentation: 'user' as const, text: 'User says:\n  Original prompt\n', attachments: [image('a.png')] };
   const steer = { presentation: 'user' as const, text: 'User says:\nA steer', attachments: [image('a.png'), image('b.png')] };
   const picture = { presentation: 'user' as const, text: 'User says:\n', attachments: [image('c.png')] };
-  const entries = buildTranscript([
+  const entries = entriesOf([
     said(1, 'turn-0', [{ presentation: 'user', text: 'User says:\nEarlier', attachments: [image('z.png')] }]),
     answer(2, 'turn-0', 'Earlier answer'), ended(3, 'turn-0'),
     said(11, 'turn-1', [prompt]), said(12, 'turn-1', [steer]), said(13, 'turn-1', [picture]),
@@ -110,7 +103,7 @@ it('never takes more images than a message carries, keeping the composer’s own
 
 
 it('removes the regenerable opening budget when replacing a user turn without refilling it', () => {
-  const entries = buildTranscript([
+  const entries = entriesOf([
     said(1, 'turn-0', [{ presentation: 'user', text: 'Earlier', attachments: [] }]),
     ended(2, 'turn-0'),
     said(3, 'turn-1', [
@@ -118,7 +111,7 @@ it('removes the regenerable opening budget when replacing a user turn without re
       { presentation: 'system_planner_context_usage', text: 'Frozen usage', attachments: [] },
       { presentation: 'user', text: 'User says:\nPrompt', attachments: [image('a.png')] },
     ]),
-    row(4, 'turn-1', 'agentMessage', 'item/completed', { item: { text: 'Reply' } }),
+    answer(4, 'turn-1', 'Reply'),
     ended(5, 'turn-1'),
   ]);
   const id = entries.at(-1)!.id;
@@ -131,11 +124,11 @@ it('removes the regenerable opening budget when replacing a user turn without re
 it('preserves preceding one-shot System events and never refills budget-only input', () => {
   const system = { presentation: 'system' as const, text: 'Previous timeout', attachments: [] };
   const budget = { presentation: 'system_planner_turn_budget' as const, text: 'Frozen context', attachments: [] };
-  const entries = buildTranscript([said(1, 'turn-1', [system, budget,
+  const entries = entriesOf([said(1, 'turn-1', [system, budget,
     { presentation: 'user', text: 'Prompt', attachments: [] }]), ended(2, 'turn-1')]);
   expect(withoutEditedTurn(entries, 'outcome-2')).toEqual(entries.slice(0, 1));
   expect(editedTurnRefill(entries, 'outcome-2')).toEqual({ text: 'Prompt', attachments: [] });
-  const automatic = buildTranscript([said(1, 'turn-1', [budget]), ended(2, 'turn-1')]);
+  const automatic = entriesOf([said(1, 'turn-1', [budget]), ended(2, 'turn-1')]);
   expect(editedTurnRefill(automatic, 'outcome-2')).toBeNull();
   expect(withoutEditedTurn(automatic, 'outcome-2')).toBe(automatic);
 });

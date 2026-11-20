@@ -21,6 +21,16 @@ public sealed partial class TrackActor
             TaskScheduler.Default);
     }
 
+    private Task EnterStoppingAsync(ActiveTurnState active) => EnqueueAsync(_ => PersistStoppingCoreAsync(active), CancellationToken.None);
+
+    private async Task PersistStoppingCoreAsync(ActiveTurnState active)
+    {
+        if (!_scheduler.TryGetActive(active.SessionId, out var current) || !ReferenceEquals(current, active)) return;
+        var session = RequireSessionCore(active.SessionId);
+        if (session.Status != "running") return;
+        await PersistAndEmitSessionUpdatedCoreAsync(session with { Status = "stopping", UpdatedAtMs = NowMs() }, NowMs(), CancellationToken.None).ConfigureAwait(false);
+    }
+
     private Task RequestTurnStop(ActiveTurnState active, bool observeTerminal = false, ActiveAttemptState? workerAttempt = null)
     {
         var control = active.Control;
@@ -54,6 +64,8 @@ public sealed partial class TrackActor
             control.StopRequested = true;
             control.Stopping.TrySetResult();
             control.Phase = ExecutionPhase.Stopping;
+            // Queue the transition before cancellation, but never make provider stop wait for SQLite.
+            ObserveTaskFault(EnterStoppingAsync(active));
             expired = CollectExpiredApprovalsLocked(control);
             stopTask = control.StopDispatch = started
                 ? StartTurnStopDispatch(active, observeTerminal)
@@ -99,6 +111,7 @@ public sealed partial class TrackActor
         }
         catch (Exception error) when (error is OperationCanceledException or IOException or InvalidOperationException)
         {
+            active.Control.StopTimedOut = true;
             if (dispatch is not null)
                 ObserveTaskFault(dispatch);
             if (!observeTerminal || _actorShutdownCts.IsCancellationRequested)
@@ -129,6 +142,7 @@ public sealed partial class TrackActor
         }
         catch (OperationCanceledException)
         {
+            active.Control.StopTimedOut = true;
             if (!observeTerminal || _actorShutdownCts.IsCancellationRequested)
                 active.CancelStream();
             if (!_actorShutdownCts.IsCancellationRequested)

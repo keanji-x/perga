@@ -1,18 +1,17 @@
 import { sessionContextUsage } from './session-context-usage.js';
 import { expect, it } from 'vitest';
-import { harnessItemsOperation, modelCatalogOperation } from './conversation.js';
-import { buildConversationTranscript, conversationItemsOperation, conversationRunOperation, conversationRunPhase, conversationRunningTurn, conversationBlockedReason, conversationPendingQueue } from './conversation-display.js';
+import { modelCatalogOperation } from './conversation.js';
+import { buildConversationTranscript, conversationItemsOperation, conversationRunOperation, conversationRunPhase, conversationRunningTurn, conversationPendingQueue } from './conversation-display.js';
 
 const session = Object.freeze({ id: 'session', trackId: 'track', isLead: true, provider: 'codex', model: 'model',
   nativeThreadId: 'thread', epoch: 1, status: 'idle', contextUsage: { usedTokens: 64_000, windowTokens: 256_000, observedAtMs: 7, ratio: 0.25 }, archivedAtMs: null, createdAtMs: 1, updatedAtMs: 2 });
-const page = Object.freeze({ session, activeTurn: null, unknownInput: null, items: [
+const page = Object.freeze({ session, activeTurn: null, state: 'idle', readonlyReason: null, canReopen: false, workerPaused: false, lastTurn: null, unknownDetail: null, items: [
   { id: 1, sessionId: session.id, turnId: 'turn', kind: 'assistant_text', payload: { text: 'Actual v1 reply' }, createdAtMs: 2 },
 ] });
 
 it('projects the real session items page through both transcript readers', () => {
   const display = conversationItemsOperation(session.id, null).responseSchema.parse(page);
   expect(buildConversationTranscript(display.items, null)).toMatchObject([{ author: 'agent', text: 'Actual v1 reply' }]);
-  expect(harnessItemsOperation(session.id).responseSchema.parse(page)).toMatchObject([{ id: 1, thread_id: 'thread' }]);
 });
 
 it('keeps a CLI catalog without a declared default selectable', () => {
@@ -42,18 +41,15 @@ it('rejects raw rows and the retired conversation page at the production read bo
   const display = operation.responseSchema.parse(page);
   expect(operation.responseSchema.safeParse(display).success).toBe(false);
   expect(operation.responseSchema.safeParse([]).success).toBe(false);
-  expect(harnessItemsOperation(session.id).responseSchema.safeParse([]).success).toBe(false);
 });
 
 it('projects idle, queued, running and unknown states from SessionItemsPageDto only', () => {
   for (const operation of [conversationRunOperation(session.id)]) {
     expect(operation.responseSchema.parse(page)).toMatchObject({ session: { status: 'idle', model: 'model' } });
     expect(conversationRunPhase(operation.responseSchema.parse(page))).toBe('idle');
-    const queued = { ...page, session: { ...session, status: 'queued' } };
-    expect(conversationRunPhase(operation.responseSchema.parse(queued))).toBe('issuing_turn');
-    const unknown = { ...page, session: { ...session, status: 'unknown' } };
-    expect(conversationBlockedReason(operation.responseSchema.parse(unknown))).toMatch(/unknown outcome/);
-    const running = { ...page, activeTurn: { id: 'turn', sessionId: session.id, turnIndex: 1, epoch: 1,
+    const queued = { ...page, state: 'running', session: { ...session, status: 'queued' } };
+    expect(conversationRunPhase(operation.responseSchema.parse(queued))).toBe('turn_running');
+    const running = { ...page, state: 'running', activeTurn: { id: 'turn', sessionId: session.id, turnIndex: 1, epoch: 1,
       triggerKind: 'user', status: 'running', startedAtMs: 1, completedAtMs: null } };
     expect(conversationRunPhase(operation.responseSchema.parse(running))).toBe('turn_running');
     expect(conversationRunningTurn(operation.responseSchema.parse(running), 100)).toEqual({ turn_id: 'turn', elapsed_ms: 99 });
@@ -90,9 +86,7 @@ it('returns the canonical queue, handoff, receipt and resume facts without a sec
       { id: 'first', text: 'first message', queuedAtMs: 8, state: 'unconfirmed' },
     ],
     queueHandoffIds: ['handoff'], canSteer: true,
-    unknownInput: { sessionId: session.id, inputId: 'input', turnId: 'turn', deliveryState: 'unknown',
-      turnStatus: 'unknown', statusUrl: '/api/v1/sessions/session/inputs/input' },
-    resume: { turnId: 'turn', state: 'paused', canStartFresh: true },
+
   };
   const run = conversationRunOperation(session.id).responseSchema.parse(value);
   expect(run).toEqual(value);
@@ -100,7 +94,7 @@ it('returns the canonical queue, handoff, receipt and resume facts without a sec
     { entry_id: 'second', text: 'second message', queued_at_ms: 9, rev: 1, state: 'waiting' },
     { entry_id: 'first', text: 'first message', queued_at_ms: 8, rev: 1, state: 'unconfirmed' },
   ]);
-  expect(conversationRunOperation(session.id).responseSchema.safeParse({ ...value, unknownInput: undefined }).success).toBe(false);
+  expect(conversationRunOperation(session.id).responseSchema.safeParse({ ...value, state: undefined }).success).toBe(false);
   expect(conversationRunOperation(session.id).responseSchema.safeParse({ ...value, session: { ...session, contextUsage: undefined } }).success).toBe(false);
 });
 
@@ -123,7 +117,7 @@ it('preserves worker activity and interrupting phase independently of the sessio
     text: 'partial reply', textTruncated: false, nextSettings: { version: 1, model: null, reasoningEffort: null, approvalMode: 'ask' },
     canChangeModel: true, reasoningEfforts: ['low'], events: [], messages: [],
   };
-  const run = conversationRunOperation(session.id).responseSchema.parse({ ...page, worker });
+  const run = conversationRunOperation(session.id).responseSchema.parse({ ...page, state: 'stopping', worker });
   expect(run.worker).toMatchObject(worker);
   expect(conversationRunPhase(run)).toBe('issuing_interrupt');
   expect(conversationRunningTurn(run, 10)).toBeNull();

@@ -102,7 +102,7 @@ it('sends from Today through the existing Planner endpoint and shows a refused s
   await waitFor(() => expect(send.hasAttribute('disabled')).toBe(false));
   await userEvent.click(send);
   await waitFor(() => expect(requests.filter(request => request.path.endsWith('/messages'))).toHaveLength(1));
-  await within(assistant).findByText(/^Not sent\./);
+  await within(assistant).findByText(/^消息未发送。/);
   expect(within(assistant).getByRole('button', { name: 'Report changes' })).toBeTruthy();
   const input = requests.filter(request => request.path.endsWith('/messages'));
   expect(input).toHaveLength(1);
@@ -114,7 +114,7 @@ it('shows the existing history retry in Today when conversation history cannot l
   renderDailyFixture({ reply: request => (request.path.includes('/items') && !request.path.includes('view='))
     ? { status: 500, statusText: 'Error', body: { error: 'unavailable' } } : undefined });
   const assistant = await screen.findByRole('region', { name: 'Today Assistant' });
-  await within(assistant).findByRole('button', { name: 'Reload history' });
+  await within(assistant).findByRole('button', { name: '刷新' });
 });
 
 

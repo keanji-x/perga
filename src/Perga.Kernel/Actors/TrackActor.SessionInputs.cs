@@ -125,49 +125,11 @@ public sealed partial class TrackActor
         }, ct);
     }
 
-    public Task<SessionInputReceipt> ResolveUnknownInputAsync(string sessionId, string inputId, CancellationToken ct) =>
-        EnqueueAsync(async _ =>
-        {
-            await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
-            var session = RequireSessionCore(sessionId);
-            var input = await _store.SessionInputs.FindByIdAsync(sessionId, inputId, ct).ConfigureAwait(false)
-                ?? throw KernelException.NotFound("Session input not found.");
-            if (input.Receipt.ResolvedAtMs is not null)
-                return input.Receipt;
-            if (input.Receipt.TurnStatus != "unknown" || session.Status != "unknown")
-                throw KernelException.Conflict("Only an unresolved unknown input can be abandoned.");
-
-            _scheduler.TryGetResumeHold(sessionId, out var resume);
-            if (resume is not null && (resume.Busy || !resume.Quiescent || resume.TurnId != input.Receipt.TurnId))
-                throw KernelException.PreconditionFailed("Confirm that the previous provider execution has stopped before replacing its session.");
-
-            // The previous provider thread may still contain effects from the unknown turn.
-            var updated = session with
-            {
-                Status = "idle", Epoch = checked(session.Epoch + 1), NativeThreadId = null,
-                ContextUsage = null, UpdatedAtMs = NowMs()
-            };
-            _mcpBridge.RevokeSession(sessionId);
-            if (_openSessionHandles.Remove(sessionId, out var agent))
-                await agent.Agent.DisposeAsync().ConfigureAwait(false);
-            var sessionEvent = SessionUpdatedEvent(updated);
-            await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
-            if (resume is null)
-                await _store.SessionInputs.ResolveAsync(input, updated, sessionEvent, ct).ConfigureAwait(false);
-            else
-                await _store.CompleteSessionResumeAsync(updated, input, sessionEvent, ct).ConfigureAwait(false);
-
-            _sessions[sessionId] = updated;
-            ReleaseSessionResumeCore(sessionId);
-            await PokeSessionCoreAsync(sessionId).ConfigureAwait(false);
-            NotifyQueueChangedCore(sessionId);
-            return input.Receipt with { ResolvedAtMs = updated.UpdatedAtMs };
-        }, ct);
-
     private void RegisterAcceptedInput(AgentSessionDto session, PersistedSessionInput input)
     {
         _sessions[session.Id] = session;
         _nextTurnIndexBySession[session.Id] = input.TurnIndex;
+        _scheduler.BeginStartup(session.Id, input.Receipt.TurnId);
         DispatchAcceptedInput(input);
     }
 
@@ -175,19 +137,43 @@ public sealed partial class TrackActor
     {
         TrackBackgroundJob(async () =>
         {
-            await WaitForWorkspacePreparationAsync(_actorShutdownCts.Token).ConfigureAwait(false);
             if (!_scheduler.TryDispatch(input.Receipt.SessionId, input.Receipt.InputId))
                 return;
+            var startup = _scheduler.BeginStartup(input.Receipt.SessionId, input.Receipt.TurnId);
+            // Capture a token before activation can dispose the scheduler's source.
+            var startupToken = startup.Token;
+            var expectedEpoch = input.Epoch;
             try
             {
-                await _turnRunner.RunAsync(new SessionInputBatchWorkItem(this, input), _actorShutdownCts.Token).ConfigureAwait(false);
+                await WaitForWorkspacePreparationAsync(startupToken).ConfigureAwait(false);
+                await _turnRunner.RunAsync(new SessionInputBatchWorkItem(this, input), _actorShutdownCts.Token,
+                    startupCancellation: startupToken, compactedEpoch: epoch => expectedEpoch = epoch).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException error) when (!_actorShutdownCts.IsCancellationRequested)
+            {
+                // Stop can arrive while queued behind workspace/admission/policy work,
+                // before the runner has claimed the durable input.
+                await EnqueueAsync(async _ =>
+                {
+                    var session = RequireSessionCore(input.Receipt.SessionId);
+                    if (session.Epoch != input.Epoch) return;
+                    var work = new SessionInputBatchWorkItem(this, input);
+                    var running = session with { Status = "running", UpdatedAtMs = NowMs() };
+                    if (await work.ClaimCoreAsync(session, running, SessionUpdatedEvent(running), CancellationToken.None).ConfigureAwait(false) is null) return;
+                    var turn = work.CreateTurnCore(session, input.Content, null, NowMs());
+                    await work.TrySettleSetupFailureCoreAsync(error, turn, running).ConfigureAwait(false);
+                }, CancellationToken.None).ConfigureAwait(false);
             }
             finally
             {
+                _scheduler.EndStartup(input.Receipt.SessionId, startup);
                 _scheduler.EndDispatch(input.Receipt.SessionId, input.Receipt.InputId);
                 if (!_actorShutdownCts.IsCancellationRequested)
-                    await EnqueueAsync(async _ => await PokeSessionCoreAsync(input.Receipt.SessionId).ConfigureAwait(false),
-                        CancellationToken.None).ConfigureAwait(false);
+                    await EnqueueAsync(async _ =>
+                    {
+                        if (RequireSessionCore(input.Receipt.SessionId).Epoch == expectedEpoch)
+                            await PokeSessionCoreAsync(input.Receipt.SessionId).ConfigureAwait(false);
+                    }, CancellationToken.None).ConfigureAwait(false);
             }
         });
     }
@@ -195,7 +181,10 @@ public sealed partial class TrackActor
     private async Task<SessionInputReceipt> ReplayInputCoreAsync(PersistedSessionInput input, CancellationToken ct)
     {
         if (input.Receipt.DeliveryState == "accepted")
+        {
+            _scheduler.BeginStartup(input.Receipt.SessionId, input.Receipt.TurnId);
             DispatchAcceptedInput(input);
+        }
         else if (input.Receipt.TurnStatus == "running" && !_scheduler.IsDispatching(input.Receipt.SessionId, input.Receipt.InputId))
         {
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
@@ -208,7 +197,7 @@ public sealed partial class TrackActor
     private async Task<SessionInputReceipt> RecoverDispatchCoreAsync(PersistedSessionInput input)
     {
         var now = NowMs();
-        var session = RequireSessionCore(input.Receipt.SessionId) with { Status = "unknown", UpdatedAtMs = now };
+        var session = RequireSessionCore(input.Receipt.SessionId) with { Status = "unknown", UnknownReason = "stream_lost", UnknownTurnId = input.Receipt.TurnId, UpdatedAtMs = now };
         var turn = new SessionTurnDto(input.Receipt.TurnId, session.Id, input.TurnIndex, input.Epoch,
             "user", JsonHelpers.ToElement(new { }), "unknown", null, "Dispatch outcome could not be saved.", null, null);
         var delivery = input.Receipt.DeliveryState == "delivered" ? "delivered" : "unknown";

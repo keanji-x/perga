@@ -183,6 +183,7 @@ public interface IAgentSession : IAsyncDisposable
 
 public interface IAgentRuntime : IAsyncDisposable
 {
+    bool CanResumeSession(string provider) => false;
     // Returns normalized availability and model options for every provider.
     Task<IReadOnlyList<ProviderStatus>> ProbeProvidersAsync(CancellationToken ct);
     Task<IAgentSession> OpenSessionAsync(HarnessLaunchSpec spec, CancellationToken ct);

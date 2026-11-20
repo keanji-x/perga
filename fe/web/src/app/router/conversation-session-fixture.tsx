@@ -1,4 +1,4 @@
-import type { SessionInputReceipt, SessionItemDto, SessionTurnDto } from '../../../../core/api/perga-v1.ts';
+import type { SessionItemDto, SessionTurnDto } from '../../../../core/api/perga-v1.ts';
 import { renderDailyFixture } from './daily-planner-fixture.tsx';
 import { fixtureSession, fixtureSnapshot, fixtureTrack } from './session-contract-fixture.ts';
 
@@ -10,7 +10,6 @@ export function renderSessionFixture(options: Parameters<typeof renderDailyFixtu
     fixtureSession('second-planner', 'daily', { title: 'Other conversation' })];
   const items = new Map<string, SessionItemDto[]>();
   const activeTurns = new Map<string, SessionTurnDto>();
-  const unknownInputs = new Map<string, SessionInputReceipt>();
   const view = renderDailyFixture({ ...options, extraPlanner: true, reply: async request => {
     const custom = await options.reply?.(request);
     if (custom !== undefined) return custom;
@@ -28,9 +27,9 @@ export function renderSessionFixture(options: Parameters<typeof renderDailyFixtu
       if (session === undefined) throw new Error(`Unknown fixture session ${id}`);
       const before = new URL(request.path, 'http://fixture').searchParams.get('beforeId');
       return sessionReply(sessionPage(session, (items.get(id) ?? []).filter(item => before === null || item.id < Number(before)).slice(-500),
-        activeTurns.get(id) ?? null, unknownInputs.get(id) ?? null));
+        activeTurns.get(id) ?? null));
     }
     return undefined;
   } });
-  return { ...view, sessions, items, activeTurns, unknownInputs };
+  return { ...view, sessions, items, activeTurns };
 }

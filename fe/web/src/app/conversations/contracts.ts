@@ -1,15 +1,23 @@
 import type { AgentProvider, PlannerAttachment } from '../../../../core/api/generated/wire.ts';
 import type { PlannerPermissionMode } from '../../../../core/domain/planner-permission-mode.ts';
-import type { Conversation, CreatedConversation, SideConversation, ConversationKind, ConversationState, ModelCatalog, ModelSelection, PendingQueueEntry, PlannerQueueEditOutcome, PlannerRunTokenUsage, PlannerQueueWriteOutcome, TranscriptEntry } from '../../../../core/domain/conversation.ts';
-import type { FailedSendOp, PendingQueueSend, ReplacedTurn, QueueDisplayAccounting } from '../../../../core/domain/conversation-outbox.ts';
+import type { Conversation, CreatedConversation, SideConversation, ConversationKind, ConversationState, ModelCatalog, ModelSelection, PendingQueueEntry, PlannerRunTokenUsage, PlannerQueueWriteOutcome, TranscriptEntry } from '../../../../core/domain/conversation.ts';
+import type { FailedSendOp, PendingQueueSend, QueueDisplayAccounting } from '../../../../core/domain/conversation-outbox.ts';
 import type { ConversationStopFeedback } from '../../../../core/domain/conversation-stop.ts';
-import type { RunningTurnAnchor } from '../../../../core/domain/conversation-meta.ts';
 import type { UploadAttachment } from '../../features/planner/attachments.tsx';
 import type { PermissionModeOptionDto, ApprovalDto } from '../../../../core/api/perga-v1.ts';
 
 export type ConversationStore = Readonly<{
   pendingApprovals: readonly ApprovalDto[] | null;
-  statusNotice: string | null;
+  session: import('../../../../core/api/perga-v1.ts').AgentSessionDto | null;
+  sessionState: import('../../../../core/api/perga-v1.ts').SessionItemsPageDto['state'] | null;
+  readonlyReason: import('../../../../core/api/perga-v1.ts').SessionItemsPageDto['readonlyReason'];
+  canReopen: boolean;
+  workerPaused: boolean;
+  lastTurn: import('../../../../core/api/perga-v1.ts').SessionTurnDto | null;
+  unknownDetail: import('../../../../core/api/perga-v1.ts').SessionItemsPageDto['unknownDetail'];
+  recovering: boolean;
+  recover: (mode: 'reconnect' | 'reset_context') => void;
+  dismissActionError: () => void;
   conversations: readonly Conversation[];
   /** This selected scope's messages and actions, in canonical display order. */
   turns: readonly TranscriptEntry[];
@@ -18,11 +26,11 @@ export type ConversationStore = Readonly<{
   working: boolean;
   canStop: boolean;
   /** Actual current session is terminal; display hold does not prevent saving new content. */
-  executionHeld: boolean;
   stopping: boolean;
   stopFeedback: ConversationStopFeedback | null;
   sending: boolean;
   sendBlocked: boolean;
+  composerBlocked: boolean;
   /** Existing outbox reconciliation gate, with read errors left to their explicit retry surface. */
   awaitingConversationUpdate: boolean;
   /** The addressable page of the harness pending queue. */
@@ -30,7 +38,6 @@ export type ConversationStore = Readonly<{
   pendingSends: readonly PendingQueueSend[];
   /** Versioned displayed carriers and intentional owner suppression; never suppresses an alive queue row. */
   queueDisplayAccounting: QueueDisplayAccounting;
-  editQueuedEntry: (entry: PendingQueueEntry, text: string) => Promise<PlannerQueueEditOutcome>;
   deleteQueuedEntry: (entry: PendingQueueEntry) => Promise<PlannerQueueWriteOutcome>;
   /** A delete or steer of this card's queued entries is unanswered, whichever view made it. */
   queueWriteOut: boolean;
@@ -59,14 +66,11 @@ export type ConversationStore = Readonly<{
   /**
    * What became of the send. `attachments` are ids already uploaded; naming one here is what makes it permanent.
    * `fromComposer`: they are the composer's own, so a delivery clears them (and the upload refusal) there.
-   * `replaces`: the turn an Edit's Send replaces in the same request, or `null` for a new message.
    */
   send: (conversationId: string, text: string, attachments: readonly PlannerAttachment[], fromComposer: boolean,
-    replaces: ReplacedTurn | null, idempotencyKey?: string) => Promise<void> | null;
+    idempotencyKey?: string) => Promise<void> | null;
   /** How full this conversation's context is; `null` when the harness has never said. */
   contextUsage: PlannerRunTokenUsage | null;
-  /** Where the running turn's clock starts, anchored when the run response arrived; `null` when no turn is running. */
-  runningAnchor: RunningTurnAnchor | null;
   uploadAttachment: UploadAttachment;
   interrupt: () => void;
   /** Declared by the bound Planner backend; false until the run read answers. */
@@ -77,10 +81,6 @@ export type ConversationStore = Readonly<{
   retryRun: () => void;
   /** False means newest reconciliation still owns the query; no input was spent. */
   loadEarlier: () => boolean;
-  /** Why the queue is not draining, when the reader has to act; a standing condition of the conversation, unlike `actionError`. */
-  blockedReason: string | null;
-  providerResume: Readonly<{ state: 'available' | 'resuming' | 'paused'; start: () => void }> | null;
-  abandonUnknownInput: (() => void) | null;
   /** What this conversation's turns run with. */
   model: ModelSelection;
   /** What may be chosen, or `null` until the catalog has answered once. */

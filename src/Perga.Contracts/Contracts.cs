@@ -83,7 +83,11 @@ public sealed record AgentSessionDto(
     long UpdatedAtMs,
     string? ReasoningEffort = null,
     string? PermissionMode = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] SessionContextUsage? ContextUsage = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] SessionContextUsage? ContextUsage = null,
+    string? UnknownReason = null,
+    string? UnknownTurnId = null,
+    string? UnknownLastError = null,
+    bool ReconnectInvalidated = false);
 
 public sealed record SessionTurnDto(
     string Id,
@@ -116,7 +120,7 @@ public sealed record SessionCreationReceipt(AgentSessionDto Session, SessionInpu
 public sealed record SessionItemDto(
     long Id,
     string SessionId,
-    string TurnId,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? TurnId,
     string Kind,
     JsonElement Payload,
     long CreatedAtMs)

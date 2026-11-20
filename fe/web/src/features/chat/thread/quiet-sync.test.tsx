@@ -123,7 +123,7 @@ describe('QuietSyncFold in the thread', () => {
 
   it('draws a failed sync outcome outside the fold, after it', () => {
     const { container } = render(
-      <ChatThread hasPendingMessages={false} canContinue={false} cards={{}} stalled={false}
+      <ChatThread lastSessionTurn={{ id: 'turn', sessionId: 'c1', turnIndex: 1, epoch: 1, triggerKind: 'system', status: 'failed', startedAtMs: null }} hasPendingMessages={false} canContinue={false} cards={{}} stalled={false}
         conversation={conversation()}
         turns={[
           reportEdited('user'), activity('act1'),
@@ -190,7 +190,7 @@ describe('QuietSyncFold in the thread', () => {
   it('carries the live mark on the fold line while the sync is running', () => {
     /* Live is the kernel's verdict for this card, not the session state on the row. */
     const { container } = render(
-      <ChatThread hasPendingMessages={false} canContinue={false} cards={{ c1: 'working' }} stalled={false}
+      <ChatThread lastSessionTurn={{ id: 'turn', sessionId: 'c1', turnIndex: 1, epoch: 1, triggerKind: 'system', status: 'running', startedAtMs: null }} hasPendingMessages={false} canContinue={false} cards={{ c1: 'working' }} stalled={false}
         conversation={conversation({ state: 'running' })}
         turns={[you('u1', 'hello'), reportEdited('assistant'), activity('act1', { verb: 'Reading report', state: 'running' })]}
       />,

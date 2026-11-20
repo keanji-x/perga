@@ -1,71 +1,25 @@
 /** One typed read contract over the existing transcript resource. Display identities are not native turns. */
-import { z } from 'zod';
+
 import { DEPLOYMENT_OWNER_USER_ID } from '../api/auth.js';
 import type { ApiOperation } from '../api/types.js';
-import {
-  conversationCursorSchema,
-  sessionItemsPageDtoSchema,
-  type SessionItemsPageDto,
-} from '../api/schemas.js';
-import type { ConversationCursor, ConversationDisplayItem, ConversationPage, ConversationActiveInput, ConversationSubmissionDelivery, HarnessItem as TranscriptRow } from '../api/generated/wire.js';
-import { messageStatusSchema, SYSTEM_PRESENTATION_LABELS, systemInputPresentationSchema, buildTranscript, retireFollowedThoughts, harnessItemSchema as transcriptRowSchema, HARNESS_ITEMS_PAGE_LIMIT as TRANSCRIPT_PAGE_LIMIT, type TranscriptEntry } from './conversation.js';
+import { sessionItemsPageDtoSchema, type SessionItemsPageDto } from '../api/schemas.js';
+import type { ConversationCursor, ConversationDisplayItem as WireDisplayItem } from '../api/generated/wire.js';
+import { retireFollowedThoughts, SYSTEM_PRESENTATION_LABELS, systemInputPresentationSchema, type TranscriptEntry } from './conversation.js';
+import { thinkingActivityContent, toolActivityContent } from './conversation-activity-content.js';
+import type { LiveReplyTranscriptRow } from './conversation-live.js';
+import { conversationToolQuestion, conversationToolShape } from './conversation-tool.js';
 
-/** Native acknowledgement can arrive at END. Defer intervention for the exact
- * tracked execution without changing its delivery fact; other held inputs remain visible. */
-export function heldConversationInputs(input: ConversationActiveInput | null, executionRunning: boolean): readonly ConversationSubmissionDelivery[] {
-  return input?.submissions.filter(submission => {
-    const attempt = submission.attempt;
-    return attempt !== null && (attempt.delivery === 'crossing_unknown' || attempt.delivery === 'unknown')
-      && (!executionRunning || submission.ordinal > 0 || attempt.resolution !== null || submission.logical_turn_id !== input.current_execution_id);
-  }) ?? [];
+/** Authored fixtures and canonical human/system metadata use the same renderer contract. */
+type AuthoredSource = Exclude<Extract<WireDisplayItem['source'], { kind: 'human' | 'system' | 'removed' }>, { kind: 'system' }>
+  | (Extract<WireDisplayItem['source'], { kind: 'system' }> & { statusLabel?: string });
+export type ConversationDisplayItem = Readonly<{ cursor: ConversationCursor; source: AuthoredSource
+  | { kind: 'entry'; entry: TranscriptEntry; observation?: LiveReplyTranscriptRow & { id: number; outcome: boolean } } }>;
+export type ConversationPage = Readonly<{ contract: 'conversation_v1'; source: 'presentation' | 'historical_raw'; items: ConversationDisplayItem[]; next_cursor: ConversationCursor | null }>;
+const TRANSCRIPT_PAGE_LIMIT = 60;
+
+export function nativeTranscriptEntryId(threadId: string, itemId: string | null, index: number): string {
+  return `native:${encodeURIComponent(JSON.stringify([threadId, itemId]))}:${index}`;
 }
-
-const decimalU64 = z.string().regex(/^(0|[1-9]\d*)$/).pipe(z.string().refine(value => BigInt(value) <= 18446744073709551615n));
-const keepResultSchema = z.object({ carrier_id:z.string(), submission_id:z.string(), attempt_id:z.string(),
-  revision:decimalU64, waiting_for_settlement:z.boolean() }).strict();
-
-export function keepConversationInputOperation(card: string, args: import('../api/generated/wire.js').KeepConversationInputRequest, key: string): ApiOperation<import('../api/generated/wire.js').KeepConversationInputResult> {
-  return { method:'POST', path:`/api/cards/${encodeURIComponent(card)}/conversation/input/keep`,
-    headers:{'Idempotency-Key':key}, body:args, responseSchema:keepResultSchema.refine(result =>
-      result.carrier_id === args.carrier_id && result.submission_id === args.submission_id
-      && result.attempt_id === args.attempt_id && result.revision === (BigInt(args.revision)+1n).toString(),
-    'Keep receipt does not match its original CAS request') };
-}
-
-const retryResultSchema = z.object({...keepResultSchema.shape,retry_intent_id:z.string().min(1)}).strict();
-export function retryConversationInputOperation(card: string, args: import('../api/generated/wire.js').RetryConversationInputRequest, key: string): ApiOperation<import('../api/generated/wire.js').RetryConversationInputResult> {
-  return { method:'POST', path:`/api/cards/${encodeURIComponent(card)}/conversation/input/retry`,
-    headers:{'Idempotency-Key':key}, body:args, responseSchema:retryResultSchema.refine(result =>
-      result.carrier_id === args.carrier_id && result.submission_id === args.submission_id
-      && result.attempt_id === args.attempt_id && result.revision === (BigInt(args.revision)+1n).toString(),
-    'Retry receipt does not match its original CAS request') };
-}
-const attachment = z.object({ id: z.string(), size: z.number(), url: z.string(), contentType:z.string() });
-const importedProvenance = z.object({kind:z.literal('unknown_legacy'),original_row_id:z.number().int().positive(),
-  worker_session_id:z.string(),card_id:z.string(),track_id:z.string(),thread_id:z.string(),
-  turn_id:z.string().nullable(),item_uuid:z.string().nullable(),item_type:z.string().nullable(),method:z.string(),
-  created_at_ms:z.number(),original_digest:z.string().regex(/^sha256-v1:[0-9a-f]{64}$/),
-  import_boundary_sequence:z.number().int().nonnegative()}).strict();
-const identity = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('human'), message_id: z.string() }).strict(),
-  z.object({ kind: z.literal('system'), observation_id: z.string() }).strict(),
-  z.object({ kind: z.literal('native'), thread_id: z.string(), item_id: z.string() }).strict(),
-  z.object({ kind:z.literal('imported'),provenance:importedProvenance }).strict(),
-]);
-export const conversationPageSchema: z.ZodType<ConversationPage> = z.object({
-  contract: z.literal('conversation_v1'), source: z.enum(['presentation', 'historical_raw']),
-  items: z.array(z.object({ cursor: conversationCursorSchema, source: z.discriminatedUnion('kind', [
-    z.object({ kind: z.literal('human'), message_id: z.string(), revision: z.number().int().positive(),
-      author: z.object({ user_id: z.string(), display_name: z.string() }).strict(), text: z.string(),
-      attachments: z.array(attachment), created_at_ms: z.number(), delivery_error: z.string().optional(), message_status: messageStatusSchema.optional(), supplemental: z.boolean().optional() }).strict(),
-    z.object({ kind: z.literal('system'), observation_id: z.string(), presentation: systemInputPresentationSchema,
-      text: z.string(), created_at_ms: z.number() }).strict(),
-    z.object({ kind: z.literal('native'), item: transcriptRowSchema }).strict(),
-    z.object({ kind:z.literal('imported_item'),item:transcriptRowSchema,provenance:importedProvenance }).strict(),
-    z.object({ kind: z.literal('historical_raw'), item: transcriptRowSchema }).strict(),
-    z.object({ kind: z.literal('removed'), identity }).strict(),
-  ]) }).strict()), next_cursor: conversationCursorSchema.nullable(),
-}).strict();
 
 export function sessionItemsPageDtoToConversationPage(
   card: string,
@@ -100,6 +54,23 @@ export function sessionItemsPageDtoToConversationPage(
       ? (item.payload as Record<string, unknown>)
       : {};
 
+    if (item.kind === 'epoch_boundary') return [{ cursor: itemCursor, source: {
+      kind: 'system', observation_id: `epoch-${item.id}`, presentation: 'system',
+      text: `${payloadObj.reason === 'compacted' || payloadObj.reason === 'compact' ? '已压缩上下文' : '已重置上下文'} · Epoch ${String(payloadObj.epoch)}`,
+      created_at_ms: item.createdAtMs,
+    } }];
+
+    const interrupted = item.turnId === null && payloadObj.archived === true
+      && payloadObj.status === 'interrupted' && payloadObj.reason === 'session_reset';
+    if (item.kind === 'system') return [{ cursor: itemCursor, source: {
+      kind: 'system', observation_id: typeof payloadObj.wakeId === 'string' ? payloadObj.wakeId : String(item.id),
+      presentation: 'system', text: typeof payloadObj.content === 'string' ? payloadObj.content
+        : typeof payloadObj.message === 'string' ? payloadObj.message : JSON.stringify(item.payload),
+      ...(interrupted ? { statusLabel: 'Interrupted · Unsent' }
+        : payloadObj.reason === 'max_attempts_exceeded' ? { statusLabel: 'Wake delivery failed · Retry limit reached' } : {}),
+      created_at_ms: item.createdAtMs,
+    } }];
+
     if (item.kind === 'user') {
       const content = typeof payloadObj.content === 'string' ? payloadObj.content : '';
       const triggerKind = typeof payloadObj.triggerKind === 'string' ? payloadObj.triggerKind : 'user';
@@ -126,192 +97,72 @@ export function sessionItemsPageDtoToConversationPage(
           text: content,
           ...(payloadObj.steered === true ? { supplemental: true } : {}),
           ...(item.messageStatus == null ? {} : { message_status: item.messageStatus }),
-          ...(typeof payloadObj.deliveryError === 'string' ? { delivery_error: payloadObj.deliveryError } : {}),
+          ...(interrupted ? { delivery_error: 'Interrupted · Unsent' }
+            : typeof payloadObj.deliveryError === 'string' ? { delivery_error: payloadObj.deliveryError } : {}),
           attachments: [],
           created_at_ms: item.createdAtMs,
         },
       }];
     }
 
+    const context = item.turnId === null ? {} : { nativeTurn: { threadId, turnId: item.turnId } };
+    const outcome = item.kind === 'turn_outcome' || item.kind === 'turn_error' || item.kind === 'error';
+    const callId = typeof payloadObj.callId === 'string' ? payloadObj.callId : `call-${item.id}`;
+    const itemId = item.kind === 'tool_call' ? callId : `${item.kind === 'thinking' ? 'thinking' : 'item'}-${item.id}`;
+    const completed = item.kind === 'tool_call' ? resultsByCallId.get(callId) : undefined;
+    const observation = { id: item.id, outcome, itemId, threadId, turnId: item.turnId,
+      kind: item.kind, completed: item.kind !== 'tool_call' || completed !== undefined };
+    const base = { id: nativeTranscriptEntryId(threadId, outcome ? `outcome-${item.id}` : itemId, 0), atMs: item.createdAtMs, ...context };
+    let entry: TranscriptEntry;
     if (item.kind === 'assistant_text') {
       const text = typeof payloadObj.text === 'string' ? payloadObj.text : '';
-      return [{
-        cursor: itemCursor,
-        source: {
-          kind: 'native',
-          item: {
-            id: item.id,
-            worker_session_id: item.sessionId,
-            card_id: card,
-            track_id: page.session.trackId,
-            thread_id: threadId,
-            turn_id: item.turnId || null,
-            item_uuid: `item-${item.id}`,
-            item_type: 'agentMessage',
-            method: 'item/completed',
-            params: JSON.stringify({
-              completedAtMs: item.createdAtMs,
-              item: { id: `item-${item.id}`, type: 'agentMessage', text },
-            }),
-            created_at_ms: item.createdAtMs,
-            turn_error_text: null,
-          },
-        },
-      }];
-    }
-
-    if (item.kind === 'thinking') {
+      entry = { ...base, author: 'agent', text };
+    } else if (item.kind === 'thinking') {
       const text = typeof payloadObj.text === 'string' ? payloadObj.text : '';
-      return [{
-        cursor: itemCursor,
-        source: {
-          kind: 'native',
-          item: {
-            id: item.id,
-            worker_session_id: item.sessionId,
-            card_id: card,
-            track_id: page.session.trackId,
-            thread_id: threadId,
-            turn_id: item.turnId || null,
-            item_uuid: `thinking-${item.id}`,
-            item_type: 'reasoning',
-            method: 'item/completed',
-            params: JSON.stringify({
-              completedAtMs: item.createdAtMs,
-              item: { type: 'reasoning', summary: [{ text }] },
-            }),
-            created_at_ms: item.createdAtMs,
-            turn_error_text: null,
-          },
-        },
-      }];
-    }
-
-    if (item.kind === 'tool_call') {
-      const callId = typeof payloadObj.callId === 'string' ? payloadObj.callId : `call-${item.id}`;
-      const toolName = typeof payloadObj.name === 'string' ? payloadObj.name : 'tool';
+      entry = { ...base, author: 'activity', verb: 'Thought', target: null, state: 'done', durationMs: null,
+        detail: null, tool: null, ...thinkingActivityContent(text) };
+    } else if (item.kind === 'tool_call') {
+      const name = typeof payloadObj.name === 'string' ? payloadObj.name : 'tool';
       const args = payloadObj.args ?? {};
-      const completed = resultsByCallId.get(callId);
-      return [{
-        cursor: itemCursor,
-        source: {
-          kind: 'native',
-          item: {
-            id: item.id,
-            worker_session_id: item.sessionId,
-            card_id: card,
-            track_id: page.session.trackId,
-            thread_id: threadId,
-            turn_id: item.turnId || null,
-            item_uuid: callId,
-            item_type: 'mcpToolCall',
-            method: completed !== undefined ? 'item/completed' : 'item/started',
-            params: JSON.stringify({
-              ...(completed !== undefined ? { completedAtMs: completed.createdAtMs } : {}),
-              item: {
-                type: 'mcpToolCall',
-                tool: toolName,
-                arguments: args,
-                ...(completed !== undefined
-                  ? completed.isError
-                    ? { status: 'failed', error: completed.output }
-                    : { status: 'completed', result: completed.output }
-                  : {}),
-              },
-            }),
-            created_at_ms: item.createdAtMs,
-            turn_error_text: null,
-          },
-        },
-      }];
-    }
-
-    if (item.kind === 'turn_outcome' || item.kind === 'turn_error' || item.kind === 'error') {
+      const shape = conversationToolShape(name, args);
+      const failed = completed?.isError === true;
+      const error = completed?.output;
+      const detail = typeof error === 'string' ? error : typeof error === 'object' && error !== null
+        && 'message' in error && typeof error.message === 'string' ? error.message : null;
+      const question = completed !== undefined && !failed ? conversationToolQuestion(name, args) : null;
+      entry = question === null ? { ...base, author: 'activity', verb: completed === undefined ? shape.running : shape.done, target: shape.target,
+        state: failed ? 'failed' : completed === undefined ? 'running' : 'done', durationMs: null,
+        detail: failed ? detail : null, tool: name,
+        ...toolActivityContent(args, completed?.output, failed),
+        atMs: completed?.createdAtMs ?? item.createdAtMs }
+        : { ...base, author: 'agent', text: question, origin: 'ask', atMs: completed?.createdAtMs ?? item.createdAtMs };
+    } else if (outcome) {
       const status = typeof payloadObj.status === 'string' ? payloadObj.status : 'failed';
-      const errorText = typeof payloadObj.error === 'string'
-        ? payloadObj.error
-        : typeof payloadObj.errorText === 'string'
-          ? payloadObj.errorText
-          : typeof payloadObj.message === 'string'
-            ? payloadObj.message
-            : null;
-      const turnId = item.turnId || `turn-${item.id}`;
-      return [{
-        cursor: itemCursor,
-        source: {
-          kind: 'native',
-          item: {
-            id: item.id,
-            worker_session_id: item.sessionId,
-            card_id: card,
-            track_id: page.session.trackId,
-            thread_id: threadId,
-            turn_id: turnId,
-            item_uuid: `outcome-${item.id}`,
-            item_type: 'turn/completed',
-            method: 'turn/completed',
-            params: JSON.stringify({
-              id: turnId,
-              status,
-              ...(errorText !== null ? { error: { message: errorText } } : {}),
-            }),
-            created_at_ms: item.createdAtMs,
-            turn_error_text: errorText,
-          },
-        },
-      }];
-    }
-
-    return [];
+      const error = typeof payloadObj.error === 'string' ? payloadObj.error : typeof payloadObj.errorText === 'string'
+        ? payloadObj.errorText : typeof payloadObj.message === 'string' ? payloadObj.message : null;
+      entry = { ...base, author: 'turn', turnId: item.turnId ?? `turn-${item.id}`,
+        status: status === 'completed' || status === 'interrupted' ? status : 'failed',
+        ...(status === 'completed' || status === 'interrupted' || status === 'failed' ? {} : { rawStatus: status }),
+        ...(error === null ? {} : { message: error, text: error }), elapsedMs: null };
+    } else return [];
+    return [{ cursor: itemCursor, source: { kind: 'entry', entry, observation } }];
   });
 
-  if (
-    cursor === null
-    && page.activeTurn !== null
-    && page.activeTurn !== undefined
-    && (page.activeTurn.status === 'failed' || page.activeTurn.status === 'interrupted')
-    && !sliced.some((item) =>
-      (item.kind === 'turn_outcome' || item.kind === 'turn_error' || item.kind === 'error')
-      && item.turnId === page.activeTurn!.id)
-  ) {
-    const activeTurn = page.activeTurn;
-    const syntheticId = (sliced.at(-1)?.id ?? 0) + 1;
-    const errorText = activeTurn.errorText ?? null;
-    displayItems.push({
-      cursor: { contract: 'conversation_v1', card_id: card, source: 'presentation', position: syntheticId },
-      source: {
-        kind: 'native',
-        item: {
-          id: syntheticId,
-          worker_session_id: page.session.id,
-          card_id: card,
-          track_id: page.session.trackId,
-          thread_id: threadId,
-          turn_id: activeTurn.id,
-          item_uuid: `outcome-turn-${activeTurn.id}`,
-          item_type: 'turn/completed',
-          method: 'turn/completed',
-          params: JSON.stringify({
-            id: activeTurn.id,
-            status: activeTurn.status,
-            ...(errorText !== null ? { error: { message: errorText } } : {}),
-          }),
-          created_at_ms: activeTurn.completedAtMs ?? activeTurn.startedAtMs ?? Date.now(),
-          turn_error_text: errorText,
-        },
-      },
-    });
+  const activeTurn = page.activeTurn;
+  if (cursor === null && activeTurn != null && (activeTurn.status === 'failed' || activeTurn.status === 'interrupted')
+    && !sliced.some(item => (item.kind === 'turn_outcome' || item.kind === 'turn_error' || item.kind === 'error') && item.turnId === activeTurn.id)) {
+    const position = (sliced.at(-1)?.id ?? 0) + 1;
+    displayItems.push({ cursor: { contract: 'conversation_v1', card_id: card, source: 'presentation', position },
+      source: { kind: 'entry', entry: { id: `outcome-turn-${activeTurn.id}`, author: 'turn', turnId: activeTurn.id,
+        status: activeTurn.status, elapsedMs: null,
+        nativeTurn: { threadId, turnId: activeTurn.id },
+        ...(activeTurn.errorText == null ? {} : { message: activeTurn.errorText, text: activeTurn.errorText }),
+        atMs: activeTurn.completedAtMs ?? activeTurn.startedAtMs ?? page.session.updatedAtMs } } });
   }
-
   const oldestPosition = sliced[0]?.id;
-  return {
-    contract: 'conversation_v1',
-    source: 'presentation',
-    items: displayItems,
+  return { contract: 'conversation_v1', source: 'presentation', items: displayItems,
     next_cursor: hasOlder && oldestPosition !== undefined
-      ? { contract: 'conversation_v1', card_id: card, source: 'presentation', position: oldestPosition }
-      : null,
-  };
+      ? { contract: 'conversation_v1', card_id: card, source: 'presentation', position: oldestPosition } : null };
 }
 
 export function conversationItemsOperation(card: string, cursor: ConversationCursor | null): ApiOperation<ConversationPage> {
@@ -323,58 +174,26 @@ export function conversationItemsOperation(card: string, cursor: ConversationCur
   };
 }
 
-/** Only real Native/raw observations may retire a streamed native item. */
-export function nativeDisplayRows(items: readonly ConversationDisplayItem[]): readonly TranscriptRow[] {
-  return items.flatMap(({ source }) => source.kind === 'native' || source.kind === 'historical_raw' ? [source.item] : []);
-}
-export function removedHumanIds(items: readonly ConversationDisplayItem[]): ReadonlySet<string> {
-  return new Set(items.flatMap(({ source }) => source.kind === 'removed' && source.identity.kind === 'human'
-    ? [source.identity.message_id] : []));
-}
-
-export function nativeTranscriptEntryId(threadId: string, itemId: string | null, index: number): string {
-  return `native:${encodeURIComponent(JSON.stringify([threadId, itemId]))}:${index}`;
+/** Persisted identity and completion facts for live reply retirement, without provider methods or params. */
+export function nativeDisplayRows(items: readonly ConversationDisplayItem[]) {
+  return items.flatMap(({ source }) => source.kind === 'entry' && source.observation !== undefined ? [source.observation] : []);
 }
 
 export function buildConversationTranscript(items: readonly ConversationDisplayItem[], viewerId: string | null): readonly TranscriptEntry[] {
-  const ordered = [...items].sort((a,b) => a.cursor.position-b.cursor.position);
-  if (ordered.every(item => item.cursor.source === 'historical_raw')) {
-    return buildTranscript(nativeDisplayRows(ordered)).map(entry => entry.author === 'you'
-      ? { ...entry, author:'unknown' as const } : entry);
-  }
-  const entries=ordered.flatMap(({ source, cursor }): readonly TranscriptEntry[] => {
+  return retireFollowedThoughts([...items].sort((a, b) => a.cursor.position - b.cursor.position).flatMap(({ source, cursor }): TranscriptEntry[] => {
     if (source.kind === 'removed') return [];
-    if (source.kind === 'system') return [{
-      id:`system:${source.observation_id}`, author:'system', label:SYSTEM_PRESENTATION_LABELS[source.presentation],
-      text:source.text, atMs:source.created_at_ms, displayPosition:cursor.position,
-    }];
-    if (source.kind === 'human') return [{
-      id:`human:${source.message_id}`, author:source.author.user_id === viewerId ? 'you' : 'human',
-      human:{ userId:source.author.user_id, displayName:source.author.display_name, messageId:source.message_id, revision:source.revision },
-      text:source.text, attachments:source.attachments, atMs:source.created_at_ms, displayPosition:cursor.position,
+    if (source.kind === 'entry') return source.entry.author === 'agent' && source.entry.text.trim() === '' ? []
+      : [{ ...source.entry, displayPosition: cursor.position }];
+    if (source.kind === 'system') return [{ id: `system:${source.observation_id}`, author: 'system',
+      label: source.statusLabel ?? SYSTEM_PRESENTATION_LABELS[source.presentation], text: source.text,
+      atMs: source.created_at_ms, displayPosition: cursor.position }];
+    return [{ id: `human:${source.message_id}`, author: source.author.user_id === viewerId ? 'you' : 'human',
+      human: { userId: source.author.user_id, displayName: source.author.display_name, messageId: source.message_id, revision: source.revision },
+      text: source.text, attachments: source.attachments, atMs: source.created_at_ms, displayPosition: cursor.position,
       ...(source.supplemental === true ? { supplemental: true } : {}),
       ...(source.message_status === undefined ? {} : { messageStatus: source.message_status }),
-      ...(source.delivery_error === undefined ? {} : { deliveryError: source.delivery_error }),
-    }];
-    if (source.kind === 'imported_item') return buildTranscript([source.item]).map((entry,index) => {
-      const position={id:`imported:${source.provenance.original_row_id}:${index}`,displayPosition:cursor.position};
-      if(entry.author === 'system')return {...entry,...position,label:`Imported history · ${entry.label}`};
-      if(entry.author === 'activity')return {...entry,...position,verb:`Imported history · ${entry.verb}`};
-      if(entry.author === 'turn')return {...entry,...position,imported:true};
-      // Native folded segments can carry queue-looking hints, never application acceptance.
-      return { text:entry.text,atMs:entry.atMs,attachments:entry.attachments, author:entry.author === 'you' || entry.author === 'human' ? 'unknown' as const : entry.author,
-        imported:true,...position };
-    });
-    if (source.kind !== 'native') throw new Error('Mixed historical/native display contract');
-    // The native parser owns provider shapes. A presentation has already paired started/completed;
-    // never re-sort by physical row ID or pair equal item IDs from different native threads.
-    return buildTranscript([source.item]).map((entry,index) => ({ ...entry,
-      id:nativeTranscriptEntryId(source.item.thread_id, source.item.item_uuid, index),
-      displayPosition:cursor.position,
-      ...(source.item.turn_id === null ? {} : { nativeTurn: { threadId: source.item.thread_id, turnId: source.item.turn_id } }),
-    }));
-  });
-  return retireFollowedThoughts(entries);
+      ...(source.delivery_error === undefined ? {} : { deliveryError: source.delivery_error }) }];
+  }));
 }
 
 /** Current response metadata has no transcript author, item identity or pagination position. */
@@ -390,19 +209,14 @@ export function conversationRunOperation(sessionId: string): ApiOperation<Conver
 }
 
 export function conversationRunPhase(run: ConversationRun): import('../api/generated/wire.js').HarnessPhaseTag {
-  return run.worker?.phase === 'interrupting' ? 'issuing_interrupt'
-    : run.activeTurn?.status === 'running' ? 'turn_running'
-    : run.session.status === 'queued' ? 'issuing_turn' : 'idle';
+  return run.state === 'running' ? 'turn_running' : run.state === 'stopping' ? 'issuing_interrupt'
+    : run.state === 'compacting' ? 'compacting' : 'idle';
 }
 
 export function conversationRunningTurn(run: ConversationRun, now: number): import('./conversation.js').PlannerRunningTurn | null {
   const turn = run.activeTurn;
   return turn?.status === 'running'
     ? { turn_id: turn.id, elapsed_ms: Math.max(0, now - (turn.startedAtMs ?? now)) } : null;
-}
-
-export function conversationBlockedReason(run: ConversationRun): string | null {
-  return run.session.status === 'unknown' ? 'The previous message has an unknown outcome.' : null;
 }
 
 export function conversationPendingQueue(run: ConversationRun): readonly import('./conversation.js').PendingQueueEntry[] {

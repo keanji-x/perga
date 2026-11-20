@@ -7,11 +7,15 @@ namespace Perga.Kernel.Actors;
 public sealed partial class TrackActor
 {
     // All scheduling decisions and slot transitions run on the Track mailbox. Dispatch
-    // identity alone is atomic because a durable input starts outside that mailbox.
+    // identity and startup cancellation are synchronized because dispatch and Stop run outside that mailbox.
     private sealed class SessionTurnScheduler(TrackActor actor)
     {
         private sealed class SessionState
         {
+            public readonly object StartupSync = new();
+            public CancellationTokenSource? Startup;
+            public string? StartupTurnId;
+            public bool WorkerStartup;
             public volatile ActiveTurnState? Active;
             public Guid? Reservation;
             public bool Compacting;
@@ -28,9 +32,68 @@ public sealed partial class TrackActor
         public bool HasActiveTurns => ActiveTurns.Any();
         public bool HasDispatchingInputs => _sessions.Values.Any(s => Volatile.Read(ref s.DispatchInputId) is not null);
 
+        public CancellationTokenSource BeginStartup(string id, string? turnId = null, bool worker = false)
+        {
+            var state = State(id);
+            lock (state.StartupSync)
+            {
+                state.StartupTurnId ??= turnId;
+                state.WorkerStartup = worker;
+                return state.Startup ??= CancellationTokenSource.CreateLinkedTokenSource(actor._actorShutdownCts.Token);
+            }
+        }
+
+        public bool CancelStartup(string id, string? turnId = null)
+        {
+            if (!_sessions.TryGetValue(id, out var state)) return false;
+            lock (state.StartupSync)
+            {
+                if (state.Active is not null || state.Startup is null || state.WorkerStartup || (turnId is not null && state.StartupTurnId != turnId)) return false;
+                state.Startup.Cancel();
+                return true;
+            }
+        }
+
+        public void EndStartup(string id, CancellationTokenSource? expected = null)
+        {
+            var state = State(id);
+            lock (state.StartupSync)
+            {
+                if (expected is not null && !ReferenceEquals(state.Startup, expected)) return;
+                state.Startup?.Dispose();
+                state.Startup = null;
+                state.StartupTurnId = null;
+                state.WorkerStartup = false;
+            }
+        }
+
+        public void Clear(string id)
+        {
+            CancelStartup(id);
+            EndStartup(id);
+            if (_sessions.TryGetValue(id, out var state))
+            {
+                state.Active = null;
+                state.Reservation = null;
+                state.Compacting = false;
+                state.Steering = null;
+                state.Resume = null;
+                Interlocked.Exchange(ref state.DispatchInputId, null);
+            }
+        }
+
         // Active turn
         public bool HasActive(string id) => _sessions.TryGetValue(id, out var state) && state.Active is not null;
-        public void SetActive(string id, ActiveTurnState active) => State(id).Active = active;
+        public void SetActive(string id, ActiveTurnState active)
+        {
+            var state = State(id);
+            lock (state.StartupSync)
+            {
+                state.Active = active;
+                if (state.Startup?.IsCancellationRequested == true)
+                    ObserveTaskFault(actor.RequestTurnStop(active));
+            }
+        }
         public void RemoveActive(string id) => State(id).Active = null;
         public bool TryGetActive(string id, out ActiveTurnState active)
         {
@@ -104,6 +167,7 @@ public sealed partial class TrackActor
 
         public bool IsOccupied(AgentSessionDto session, PersistedSessionInput? input = null, Guid? reservation = null, bool allowFinishingDispatch = false)
         {
+            if (actor._sessionShutdownPending.ContainsKey(session.Id)) return true;
             if (!_sessions.TryGetValue(session.Id, out var state))
                 return input is null && session.Status is "queued" or "running" or "unknown";
             return state.Active is not null || state.Compacting || state.Steering is not null || state.Resume is not null ||

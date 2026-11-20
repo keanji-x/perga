@@ -1,6 +1,6 @@
 import type { KeepConversationInputRequest, AgentProvider } from '../../../../core/api/generated/wire.ts';
-import type { SubmittedConversationInput, SideConversation, PendingQueueEntry, PlannerQueueEditOutcome, ModelSelection, Conversation, CreatedConversation, TranscriptEntry } from '../../../../core/domain/conversation.ts';
-import type { RetiredSend, SendOp, ConversationOutboxOp } from '../../../../core/domain/conversation-outbox.ts';
+import type { Conversation, CreatedConversation, ModelSelection, SideConversation, SubmittedConversationInput, TranscriptEntry } from '../../../../core/domain/conversation.ts';
+import type { ConversationOutboxOp, SendOp } from '../../../../core/domain/conversation-outbox.ts';
 import type { ComposerContent } from '../../../../core/domain/conversation-composer.ts';
 import type { UploadState } from '../../features/planner/attachments.tsx';
 
@@ -96,30 +96,6 @@ export function moveDraft(slots: DraftSlots, move: DraftMove): DraftSlots {
   }
 }
 
-/**
- * An Edit of a conversation's latest turn (#1923): its message is in the composer and Send replaces the turn. The
- * Send is one keyed send that names the turn (#2043); beginning it ends the Edit, and the outbox holds the rest.
- */
-export type ConversationEdit = Readonly<{ refill: ComposerContent }> & Readonly<
-  | { kind: 'turn'; turnId: string; outcomeId: string }
-  | { kind: 'queued'; entry: PendingQueueEntry }
->;
-export type QueuedConversationEdit = Extract<ConversationEdit, { kind: 'queued' }>;
-
-/**
- * How this conversation's last Edit or send ended, shown above its composer until its next Edit or send: a newer turn
- * arrived first, or the server refused the send (`edit`: the replace of a turn, which is untouched); a refused send's
- * words are back in the composer (#2068). `dormant`: refused because the session cannot be resumed, so a fresh session
- * is offered; `restarted`: that fresh session started (#2192).
- */
-export type EditNotice = Readonly<
-  | { kind: 'stale' } | { kind: 'refused'; message: string; edit: boolean } | { kind: 'dormant'; edit: boolean }
-  | { kind: 'restarted' }
->;
-
-/** A refused send's notice, by the class its failure was read as. */
-export type RefusedSendNotice = Extract<EditNotice, { kind: 'refused' | 'dormant' }>;
-
 export type RememberedConversation = Readonly<{
   conversation: Conversation;
   turns: readonly TranscriptEntry[];
@@ -158,16 +134,16 @@ export type ConversationRegistry = Readonly<{
   adoptedDraftIdOf: (scopeId: string) => string | null;
   finishDraftAdoption: (scopeId: string, conversationId: string) => void;
   /** Each conversation's keyed sends not yet shown by the server, above every route remount. */
+  acceptedTurnOf: (id: string) => string | null;
+  rememberAcceptedTurn: (id: string, turnId: string | null) => void;
+  sendGenerationOf: (id: string) => number;
+  invalidateSends: (id: string) => void;
+  observeEpoch: (id: string, epoch: number) => void;
   outboxOf: (conversationId: string) => readonly ConversationOutboxOp[];
-  /** Start a send there (`beginSendOp`): false while that conversation cannot take it. Clears its Edit notice, and
-   * ends the Edit the send replaces the turn of. */
+  /** Start a send there (`beginSendOp`): false while that conversation cannot take it. One active operation per conversation. */
   beginSend: (conversationId: string, op: SendOp) => boolean;
   /** Change one conversation's outbox, whichever is shown; returns it as written. */
   editOutbox: (conversationId: string, next: (current: readonly ConversationOutboxOp[]) => readonly ConversationOutboxOp[]) => readonly ConversationOutboxOp[];
-  /** Remove the sends server state now carries; each row that retired one stands for no other send of the outbox (#2068). */
-  retireSends: (conversationId: string, retired: readonly RetiredSend[]) => void;
-  /** The rows that already retired a send of that conversation's outbox. */
-  spentRowsOf: (conversationId: string) => readonly string[];
   /** The next number in the tab's one read order: a read numbered later started later, whichever view started it. */
   nextRead: () => number;
   /** Pending permission writes live with the conversation, across pane remounts. */
@@ -184,21 +160,6 @@ export type ConversationRegistry = Readonly<{
    * Not `ConversationDraft.text`, which holds the words after the composer clears on send. */
   newConversationComposerOf: (scopeId: string) => string;
   editNewConversationComposer: (scopeId: string, next: (current: string) => string) => void;
-  /** The Edit held for this conversation, if any; nothing else acts on the conversation meanwhile. */
-  editOf: (conversationId: string) => ConversationEdit | null;
-  /** Enter edit mode, one Edit per conversation; false while one is held. Puts the message in that conversation's composer. */
-  beginEdit: (conversationId: string, edit: ConversationEdit) => boolean;
-  /** Settle a queued edit only while this exact edit is still held; accepted saves clear only their submitted draft. */
-  settleQueuedEdit: (conversationId: string, edit: QueuedConversationEdit, submitted: ComposerContent, outcome: PlannerQueueEditOutcome) => void;
-  /** Leave edit mode and its notice; a composer still holding exactly the refill (no upload in flight) goes back to empty, one the reader changed is kept. */
-  cancelEdit: (conversationId: string) => void;
-  /** The edited turn is no longer the latest: edit mode ends and the composer keeps what it holds. */
-  leaveEdit: (conversationId: string, outcomeId: string) => void;
-  /** The server refused a send (`edit`: an Edit's replace), changing nothing: say why above that conversation's composer. */
-  noteRefusedSend: (conversationId: string, notice: RefusedSendNotice) => void;
-  /** A fresh session started for that conversation (#2192): its notice replaces whatever the strip said. */
-  noteRestarted: (conversationId: string) => void;
-  editNoticeOf: (conversationId: string) => EditNotice | null;
   /** One card's image uploads, held here so a remount or another route sees an upload still in flight. */
   uploadOf: (cardId: string) => UploadState;
   editUpload: (cardId: string, next: (current: UploadState) => UploadState) => void;

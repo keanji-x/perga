@@ -95,9 +95,8 @@ public interface IPergaKernel : IAsyncDisposable
     Task<AgentSessionDto> PatchSessionAsync(string sessionId, PatchSessionRequest req, CancellationToken ct = default);
     Task<MessageAcceptance> AcceptMessageAsync(
         string sessionId, SendMessageRequest req, CancellationToken ct);
-    Task<AgentSessionDto> ResumeProviderSessionAsync(string sessionId, string turnId, CancellationToken ct);
+    Task<AgentSessionDto> RecoverSessionAsync(string sessionId, RecoverSessionRequest request, CancellationToken ct);
     Task<SessionInputReceipt> GetSessionInputAsync(string sessionId, string inputId, CancellationToken ct);
-    Task<SessionInputReceipt> ResolveUnknownInputAsync(string sessionId, string inputId, CancellationToken ct);
     Task<SessionItemsPageDto> GetSessionItemsAsync(string sessionId, long afterId = 0, int limit = 100,
         CancellationToken ct = default, bool latest = false, long? beforeId = null, McpSessionPrincipal? caller = null,
         string? activityTurnId = null, long? afterSequence = null, int waitMs = 0);
@@ -1170,22 +1169,16 @@ public sealed partial class PergaKernelService : IPergaKernel
         return await Actors.GetOrActivate(trackId).AcceptMessageAsync(sessionId, req, ct).ConfigureAwait(false);
     }
 
-    public async Task<AgentSessionDto> ResumeProviderSessionAsync(string sessionId, string turnId, CancellationToken ct)
+    public async Task<AgentSessionDto> RecoverSessionAsync(string sessionId, RecoverSessionRequest request, CancellationToken ct)
     {
         var trackId = await ResolveTrackIdForSessionAsync(sessionId, ct).ConfigureAwait(false);
-        return await Actors.GetOrActivate(trackId).ResumeProviderSessionAsync(sessionId, turnId, ct).ConfigureAwait(false);
+        return await Actors.GetOrActivate(trackId).RecoverSessionAsync(sessionId, request, ct).ConfigureAwait(false);
     }
 
     public async Task<SessionInputReceipt> GetSessionInputAsync(string sessionId, string inputId, CancellationToken ct)
     {
         var input = await _store.SessionInputs.FindByIdAsync(sessionId, inputId, ct).ConfigureAwait(false);
         return input?.Receipt ?? throw KernelException.NotFound("Session input not found.");
-    }
-
-    public async Task<SessionInputReceipt> ResolveUnknownInputAsync(string sessionId, string inputId, CancellationToken ct)
-    {
-        var trackId = await ResolveTrackIdForSessionAsync(sessionId, ct).ConfigureAwait(false);
-        return await Actors.GetOrActivate(trackId).ResolveUnknownInputAsync(sessionId, inputId, ct).ConfigureAwait(false);
     }
 
     public async Task<SessionItemsPageDto> GetSessionItemsAsync(

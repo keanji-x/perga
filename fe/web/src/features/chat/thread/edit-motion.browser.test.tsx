@@ -1,4 +1,4 @@
-/* Exercise the real Edit action and composer: mode changes are local and text never scales. */
+/* Exercise the composer editing primitive: mode changes are local and text never scales. */
 import { act, cleanup, render, screen } from '@testing-library/react';
 import { commands } from 'vitest/browser';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -18,8 +18,9 @@ function Scene({ onUpdate = () => {}, message = TEXT }: { onUpdate?: () => void;
     { id: 'outcome', author: 'turn', turnId: 'turn', status: 'completed', elapsedMs: null, atMs: 2 },
   ];
   return <div data-nc-drawer="" style={{ width: 440 }}>
+    <button type="button" onClick={() => { onUpdate(); setEditing(true); setText(message); }}>Edit message</button>
     <ChatThread hasPendingMessages={false} conversation={conversation} turns={turns} cards={{}} stalled={false} canContinue={false}
-      editing={editing ? 'outcome' : null} editMessage={() => { onUpdate(); setEditing(true); setText(message); }} />
+      editing={editing ? 'outcome' : null} />
     <ChatComposer onSend={() => {}} draft={{ text, onChange: setText }} focusRequest={editing ? 1 : 0}
       {...(editing ? { editing: { preview: message, onCancel: () => { setEditing(false); setText(''); } } } : {})} />
   </div>;

@@ -44,14 +44,14 @@ it('keeps the real composer drawer queue controls tappable above a floating inpu
   render(<ConversationSurface mobileSheet open title="Conversation" onClose={() => undefined}
     footer={<ChatComposer layout="mobile" disabled={false} onSend={() => undefined}
       drawer={<PendingQueue pendingInputCount={0} queueDisplayAccounting={{ displayed: [], suppressed: [] }} entries={[{ entry_id: 'queued', text: 'Queued question', rev: 0, queued_at_ms: 1 }]}
-        overflow={0} busy={false} onEdit={() => undefined} canEdit editingEntryId={null} savedEntry={null} onFocusComposer={() => undefined} onDelete={onDelete} />} />}>
+        overflow={0} busy={false}  onDelete={onDelete} />} />}>
     <p>Scroll behind the floating controls.</p>
   </ConversationSurface>);
   await expect.element(page.getByRole('dialog', { name: 'Conversation', exact: true })).toBeVisible();
   const panel = document.querySelector<HTMLElement>('[data-nc-mobile-chat-panel]')!;
   await expect.poll(() => panel.getAnimations().every(animation => animation.playState !== 'running')).toBe(true);
-  const control = await page.getByRole('button', { name: 'Delete this message', exact: true }).findElement();
+  const control = await page.getByRole('button', { name: '撤回', exact: true }).findElement();
   expect(getComputedStyle(control).pointerEvents).toBe('auto');
-  await commands.tap('button[aria-label="Delete this message"]');
+  await commands.tap('button[aria-label="撤回"]');
   await expect.poll(() => onDelete.mock.calls.length).toBe(1);
 });

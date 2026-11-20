@@ -9,13 +9,11 @@ import {
   type QuietSyncGroup, type ReportEditAuthor, type TranscriptBlock,
 } from './conversation-quiet-sync.js';
 import {
-  SYSTEM_PRESENTATION_LABELS, buildTranscript,
+  SYSTEM_PRESENTATION_LABELS,
   type ConversationActivity, type ConversationSystemEntry, type ConversationTurn,
   type ConversationTurnOutcome, type TranscriptEntry,
 } from './conversation.js';
 
-/** One persisted transcript row, as `buildTranscript` takes them. */
-type Row = Parameters<typeof buildTranscript>[0][number];
 
 const NOW = 1_760_000_000_000;
 
@@ -208,99 +206,6 @@ describe('foldQuietSyncs outcome', () => {
     expect(isReportWriteTool(`${REPORT_TOOL_PREFIX.slice(0, -1)}ing.x`)).toBe(false);
   });
 
-  it('reads the verdict off persisted rows', () => {
-    type Row = Parameters<typeof buildTranscript>[0][number];
-    const row = (id: number, overrides: Partial<Row>): Row => ({
-      id, worker_session_id: 'runtime', card_id: 'card', track_id: 'track', thread_id: 'thread',
-      turn_id: 'turn', turn_error_text: null, item_uuid: `item-${id}`, item_type: null, method: 'item/completed',
-      params: '{}', created_at_ms: NOW + id, ...overrides,
-    });
-    const wake = row(1, {
-      item_type: 'userMessage',
-      input_segments: [{ presentation: 'system_report_edited', text: DIFF_TEXT, attachments: [] }],
-      params: JSON.stringify({ completedAtMs: NOW + 1, item: { content: [] } }),
-    });
-    const call = (id: number, tool: string): Row => row(id, {
-      item_type: 'mcpToolCall',
-      params: JSON.stringify({ completedAtMs: NOW + id, item: { tool, status: 'completed' } }),
-    });
-    const done = row(9, {
-      item_type: null, method: 'turn/completed',
-      params: JSON.stringify({ id: 'turn', status: 'completed' }),
-    });
-    const read = foldQuietSyncs(buildTranscript([wake, call(2, REPORT_READ_TOOLS[0] ?? ''), done]));
-    expect(group(read[0]).outcome).toBe('accepted');
-    const write = foldQuietSyncs(buildTranscript([wake, call(2, REPORT_READ_TOOLS[0] ?? ''), call(3, REPORT_WRITE_TOOLS[2] ?? ''), done]));
-    expect(group(write[0]).outcome).toBe('updated');
-  });
-});
-
-/* Driven through `buildTranscript` from persisted rows, because the `quiet` mark is derived there. */
-describe('foldQuietSyncs over persisted batches', () => {
-  type Segment = NonNullable<Row['input_segments']>[number];
-  const userSays = (text: string): Segment => ({ presentation: 'user', text: `User says:\n${text}`, attachments: [] });
-  const edited = (): Segment => ({ presentation: 'system_report_edited', text: DIFF_TEXT, attachments: [] });
-  const taskDone = (): Segment => ({ presentation: 'system_task_completed', text: 'Task completed.', attachments: [] });
-  const row = (id: number, overrides: Partial<Row>): Row => ({
-    id, worker_session_id: 'runtime', card_id: 'card', track_id: 'track', thread_id: 'thread',
-    turn_id: 'turn', turn_error_text: null, item_uuid: `item-${id}`, item_type: null, method: 'item/completed',
-    params: '{}', created_at_ms: NOW + id, ...overrides,
-  });
-  const batch = (id: number, segments: Segment[]): Row => row(id, {
-    item_type: 'userMessage', input_segments: segments,
-    params: JSON.stringify({ completedAtMs: NOW + id, item: { content: [] } }),
-  });
-  const reply = (id: number, text: string): Row => row(id, {
-    item_type: 'agentMessage', params: JSON.stringify({ completedAtMs: NOW + id, item: { text } }),
-  });
-  const action = (id: number): Row => row(id, {
-    item_type: 'mcpToolCall',
-    params: JSON.stringify({ completedAtMs: NOW + id, item: { tool: REPORT_READ_TOOLS[0], status: 'completed' } }),
-  });
-
-  it('does not fold a batch of a user message and a report edit — the reply is to the user', () => {
-    const entries = buildTranscript([batch(1, [userSays('please add a risks section'), edited()]), action(2), reply(3, 'Added.')]);
-    expect(entries.map((entry) => entry.id)).toEqual(['1:0', '1:1', 'activity-item-2', '3']);
-    expect(entries[1]).toMatchObject({ author: 'system', label: 'Report edited' });
-    expect((entries[1] as { quiet?: true }).quiet).toBeUndefined();
-    const blocks = foldQuietSyncs(entries);
-    expect(blocks.map(ids)).toEqual(['1:0', '1:1', 'activity-item-2', '3']);
-    expect(blocks.every((block) => block.kind === 'entry')).toBe(true);
-  });
-
-  it('does not fold a batch of a task event and a report edit, whichever comes first', () => {
-    const eventFirst = buildTranscript([batch(1, [taskDone(), edited()]), reply(2, 'The task landed; I noted it.')]);
-    expect(foldQuietSyncs(eventFirst).map(ids)).toEqual(['1:0', '1:1', '2']);
-    const editFirst = buildTranscript([batch(1, [edited(), taskDone()]), reply(2, 'The task landed; I noted it.')]);
-    expect(foldQuietSyncs(editFirst).map(ids)).toEqual(['1:0', '1:1', '2']);
-  });
-
-  const budget = (): Segment => ({ presentation: 'system_planner_turn_budget', text: 'Frozen context', attachments: [] });
-
-  it('folds regenerable budget and report edits together through the production transcript', () => {
-    const entries = buildTranscript([batch(1, [budget(), { presentation: 'system_planner_context_usage', text: 'Frozen usage', attachments: [] }, { ...edited(), origin: { observation: 'report_edited', event_id: 42, queue_entry: null } }]), action(2), reply(3, 'Re-read.')]);
-    expect(entries.slice(0, 3)).toMatchObject([{ quiet: true }, { quiet: true }, { quiet: true }]);
-    const blocks = foldQuietSyncs(entries);
-    expect(blocks.map(ids)).toEqual([['1:0', '1:1', '1:2', 'activity-item-2', '3']]);
-    expect(blocks[0]).toMatchObject({ kind: 'quiet-sync', author: 'user' });
-  });
-
-  it('keeps budget-only, user, task, timeout and warning batches visible', () => {
-    const system = (text: string): Segment => ({ presentation: 'system', text, attachments: [] });
-    for (const segments of [[budget()], [budget(), userSays('budget'), edited()],
-      [budget(), taskDone(), edited()], [budget(), system('Previous timeout'), edited()],
-      [budget(), system('Budget warning'), edited()], [system('Frozen context'), edited()]]) {
-      const entries = buildTranscript([batch(1, segments), reply(2, 'Visible')]);
-      expect(entries.filter((entry) => entry.author === 'system').every((entry) => entry.quiet === undefined)).toBe(true);
-      expect(foldQuietSyncs(entries).every((block) => block.kind === 'entry')).toBe(true);
-    }
-  });
-
-  it('folds a batch that is nothing but the report edit', () => {
-    const entries = buildTranscript([batch(1, [edited()]), action(2), reply(3, 'I re-read the report.')]);
-    expect(entries[0]).toMatchObject({ id: '1', author: 'system', label: 'Report edited', quiet: true });
-    expect(foldQuietSyncs(entries).map(ids)).toEqual([['1', 'activity-item-2', '3']]);
-  });
 });
 
 describe('reportEditAuthor', () => {
@@ -322,85 +227,5 @@ describe('reportEditAuthor', () => {
       reportEditAuthor(`The track report was edited (author = "${author}").`)));
     expect([...parsed].sort()).toEqual([...REPORT_EDIT_AUTHORS].sort());
     expect(Object.isFrozen(REPORT_EDIT_AUTHORS)).toBe(true);
-  });
-});
-
-describe('user-ask rows', () => {
-  const row = (overrides: Partial<Row>): Row => ({
-    id: 40, worker_session_id: 'runtime', card_id: 'card', track_id: 'track', thread_id: 'thread',
-    turn_id: 'turn', turn_error_text: null, item_uuid: 'exec-ask-1', item_type: 'mcpToolCall', method: 'item/completed',
-    params: '{}', created_at_ms: NOW, ...overrides,
-  });
-  /* The persisted shape: `params.item.arguments` on `item/started` and `item/completed` alike. */
-  const questions = (...titles: string[]) => ({ questions: titles.map((title) => ({ title })) });
-  const askParams = (extra: Record<string, unknown> = {}) => JSON.stringify({
-    completedAtMs: NOW + 5,
-    item: {
-      appContext: null,
-      arguments: { questions: [
-        { title: '  You edited the block I was writing: keep yours?  ', options: [' Keep mine ', 'Keep yours'] },
-        { title: 'Which branch?' },
-      ] },
-      durationMs: 3, error: null, id: 'exec-ask-1', pluginId: null, readOnlyHint: false,
-      result: { content: [{ text: '{"ask_id":7}', type: 'text' }], structuredContent: { ask_id: 7 } },
-      server: 'neige', status: 'completed', tool: USER_ASK_TOOL, type: 'mcpToolCall', ...extra,
-    },
-  });
-
-  it('reads an ask call as an agent turn, one trimmed line per question with its options', () => {
-    const turns = buildTranscript([row({ params: askParams() })]);
-    expect(turns).toEqual([{
-      id: 'ask-exec-ask-1', author: 'agent',
-      text: 'You edited the block I was writing: keep yours? (Keep mine / Keep yours)\nWhich branch?',
-      atMs: NOW + 5, origin: 'ask',
-    }]);
-  });
-
-  const started = () => row({
-    id: 39, method: 'item/started',
-    params: JSON.stringify({
-      item: { arguments: questions('Heads up?'), status: 'inProgress', tool: USER_ASK_TOOL, type: 'mcpToolCall' },
-    }),
-  });
-
-  it('draws item/started as a running line that the completed row replaces in place', () => {
-    expect(buildTranscript([started()])).toMatchObject([{ author: 'activity', state: 'running', verb: 'Calling' }]);
-    const completed = row({ params: askParams({ arguments: questions('Heads up?') }) });
-    const entries = buildTranscript([completed, started()]);
-    expect(entries).toHaveLength(1);
-    expect(entries[0]).toMatchObject({ id: 'ask-exec-ask-1', author: 'agent', text: 'Heads up?', atMs: NOW + 5 });
-  });
-
-  it('draws a refused ask as a failed line, not a bubble', () => {
-    const refused = row({
-      params: askParams({
-        arguments: { questions: [{ title: 'Merge?', choices: ['yes'] }] },
-        error: { message: 'tool call error: tool call failed\n\nCaused by:\n    Mcp error: -32602: neige_user_ask: invalid args' },
-        result: null, status: 'failed',
-      }),
-    });
-    const entries = buildTranscript([started(), refused]);
-    expect(entries).toHaveLength(1);
-    expect(entries[0]).toMatchObject({
-      author: 'activity', state: 'failed', verb: 'Called',
-      detail: 'Mcp error: -32602: neige_user_ask: invalid args',
-    });
-    expect(entries.some(isAskTurn)).toBe(false);
-    const statusOnly = row({ params: askParams({ status: 'failed' }) });
-    expect(buildTranscript([statusOnly]).map((entry) => entry.author)).toEqual(['activity']);
-  });
-
-  it('leaves every other tool call an activity line', () => {
-    const other = row({ params: askParams({ tool: REPORT_READ_TOOLS[0] }) });
-    const [entry] = buildTranscript([other]);
-    expect(entry?.author).toBe('activity');
-    expect(entry).toMatchObject({ verb: 'Read report' });
-  });
-
-  it('is not a message without a question', () => {
-    const blank = row({ params: askParams({ arguments: questions('   ') }) });
-    expect(buildTranscript([blank]).map((entry) => entry.author)).toEqual(['activity']);
-    const missing = row({ params: askParams({ arguments: {} }) });
-    expect(buildTranscript([missing]).map((entry) => entry.author)).toEqual(['activity']);
   });
 });

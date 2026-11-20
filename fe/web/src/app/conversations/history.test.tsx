@@ -13,16 +13,15 @@ import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts'
 import { conversationHistoryQueryOptions as pageOptions } from '../providers/queries.ts';
 import { earlierReadingPosition, historyRows, latestHistory as applyLatestPage, observedWindow as observePage, useTranscriptReads, useTranscriptHistory, type History } from './history.ts';
 
-import type { ConversationCursor, ConversationPage, ConversationDisplayItem } from '../../../../core/api/generated/wire.ts';
+import type { ConversationCursor } from '../../../../core/api/generated/wire.ts';
+import type { ConversationDisplayItem, ConversationPage } from '../../../../core/domain/conversation-display.ts';
 type Row = ConversationDisplayItem;
 function cursor(position: number): ConversationCursor {
   return { contract: 'conversation_v1', source: 'presentation', card_id: 'card', position };
 }
 function rows(first: number, count = 60): Row[] {
-  return Array.from({ length: count }, (_, i) => ({ cursor: cursor(first + i), source: { kind: 'historical_raw', item: {
-    id: first + i, card_id: 'card', track_id: 'track', worker_session_id: 'worker', thread_id: 'thread',
-    turn_id: null, turn_error_text: null, item_uuid: null, item_type: 'agentMessage', method: 'item/completed', params: '{}', created_at_ms: first + i,
-  } } }));
+  return Array.from({ length: count }, (_, i) => ({ cursor: cursor(first + i), source: { kind: 'entry',
+    entry: { id: String(first + i), author: 'agent', text: '', atMs: first + i } } }));
 }
 function page(items: Row[]): ConversationPage {
   return { contract: 'conversation_v1', source: 'historical_raw', items,
@@ -131,7 +130,7 @@ it('surfaces a failed v1 earlier read and retries only on explicit input', async
 
 it('applies latest interval edits and deletions without duplicate or unordered rows', () => {
   const previous: History = { latest: observedWindow(rows(61), { kind: 'latest' }), retained: [observedWindow(rows(1), { kind: 'before', cursor: cursor(61) })] };
-  const latest = rows(62, 61).filter(row => row.cursor.position !== 100).map(row => row.cursor.position === 101 ? { ...row, source: { ...row.source, ...(row.source.kind === 'historical_raw' ? { item: { ...row.source.item, params: 'edited' } } : {}) } } : row);
+  const latest = rows(62, 61).filter(row => row.cursor.position !== 100).map(row => row.cursor.position === 101 ? { ...row, source: { ...row.source, ...(row.source.kind === 'entry' ? { entry: { ...row.source.entry, text: 'edited' } } : {}) } } : row);
   const data = latestHistory(previous, latest);
   const result = historyRows(data);
   expect(result.map(row => row.cursor.position)).toEqual(rows(1, 122).filter(row => row.cursor.position !== 100).map(row => row.cursor.position));

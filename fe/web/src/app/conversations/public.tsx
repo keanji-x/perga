@@ -2,10 +2,10 @@ import { createContext, useCallback, useContext, useSyncExternalStore, type Reac
 import { EMPTY_COMPOSER, isComposerEmpty } from '../../../../core/domain/conversation-composer.ts';
 import { NO_UPLOAD } from '../../features/planner/attachments.tsx';
 import { useState } from '../../ui/state/public.ts';
-import { createConversationOwner, NO_SENDS, NO_ROWS, NO_TURNS, type ConversationSnapshot } from './registry-owner.ts';
+import { createConversationOwner, NO_SENDS, NO_TURNS, type ConversationSnapshot } from './registry-owner.ts';
 
-export type { ConversationDraft, ConversationDraftId, ConversationEdit, QueuedConversationEdit, EditNotice,
-  RefusedSendNotice, RememberedConversation, ConversationRegistry } from './registry-model.ts';
+
+export type { ConversationDraft, ConversationDraftId, ConversationRegistry, RememberedConversation } from './registry-model.ts';
 
 const ConversationContext = createContext<ReturnType<typeof createConversationOwner> | null>(null);
 
@@ -59,10 +59,6 @@ export function useConversationSendOps(cardId: string | null) {
   return useSnapshot(useCallback((state: ConversationSnapshot) => cardId === null ? NO_SENDS : state.outboxes[cardId] ?? NO_SENDS, [cardId]), cardId !== null);
 }
 
-export function useConversationSpentRows(cardId: string | null) {
-  return useSnapshot(useCallback((state: ConversationSnapshot) => cardId === null ? NO_ROWS : state.spentRows[cardId] ?? NO_ROWS, [cardId]), cardId !== null);
-}
-
 export function useConversationRememberedTurns(cardId: string | null) {
   return useSnapshot(useCallback((state: ConversationSnapshot) => cardId === null ? NO_TURNS : state.entries[cardId]?.turns ?? NO_TURNS, [cardId]), cardId !== null);
 }
@@ -79,14 +75,6 @@ export function usePendingTrackInitialSend(trackId: string | null) {
   return useSnapshot(useCallback((state: ConversationSnapshot) => trackId === null ? undefined : state.pendingTrackInitialSends[trackId], [trackId]), trackId !== null);
 }
 
-export function useConversationEditState(cardId: string | null) {
-  return useSnapshot(useCallback((state: ConversationSnapshot) => cardId === null ? null : state.edits[cardId] ?? null, [cardId]), cardId !== null);
-}
-
-export function useConversationEditNotice(cardId: string | null) {
-  return useSnapshot(useCallback((state: ConversationSnapshot) => cardId === null ? null : state.notices[cardId] ?? null, [cardId]), cardId !== null);
-}
-
 export function useConversationUpload(cardId: string | null) {
   return useSnapshot(useCallback((state: ConversationSnapshot) => cardId === null ? NO_UPLOAD : state.uploads[cardId] ?? NO_UPLOAD, [cardId]), cardId !== null);
 }
@@ -97,4 +85,8 @@ export function useConversationQueueWriteOut(cardId: string | null) {
 
 export function useConversationRestartOut(cardId: string | null) {
   return useSnapshot(useCallback((state: ConversationSnapshot) => cardId !== null && state.restarts[cardId] === true, [cardId]), cardId !== null);
+}
+
+export function useConversationAcceptedTurn(cardId: string) {
+  return useSnapshot(useCallback((state: ConversationSnapshot) => state.acceptedTurns[cardId] ?? null, [cardId]));
 }

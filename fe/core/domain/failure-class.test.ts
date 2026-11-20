@@ -8,7 +8,6 @@ import {
 } from './conversation.js';
 import { SEND_FAILURES } from './conversation-delivery.js';
 import { PLANNER_INTERRUPT_FAILURES } from './conversation-stop.js';
-import { PLANNER_RESTART_FAILURES } from './conversation-restart.js';
 import { AREA_CREATE_FAILURES, AREA_PATCH_FAILURES } from './area.js';
 import { DISMISS_FAILURES } from './activity.js';
 import { READ_RECEIPT_FAILURES } from './read-receipts.js';
@@ -87,14 +86,6 @@ const cases: ReadonlyArray<readonly [string, FailureTable<string>, ReadonlyArray
     /* Only the dormant 409 is answered before a dispatch; any other may follow one. */
     [http(409, 'conflict'), 'unknown'], [http(400), 'unknown'], [http(500, 'internal'), 'unknown'],
     [http(503, 'service_unavailable'), 'unknown'],
-    [transport, 'unknown'], [decode, 'unknown'], [null, 'unknown'],
-  ]],
-  ['POST /planner/restart', PLANNER_RESTART_FAILURES, [
-    /* Answered before any session starts: the server's reason is shown. */
-    [http(400, 'bad_request'), 'refused'], [http(403, 'forbidden'), 'refused'], [http(404, 'not_found'), 'refused'],
-    [http(409, 'conflict'), 'refused'], [unauthorized, 'refused'],
-    /* May follow a started session: the run read after it says which. */
-    [http(500, 'internal'), 'unknown'], [http(503, 'service_unavailable'), 'unknown'],
     [transport, 'unknown'], [decode, 'unknown'], [null, 'unknown'],
   ]],
   ['POST /planner/attachments', PLANNER_ATTACHMENT_FAILURES, [

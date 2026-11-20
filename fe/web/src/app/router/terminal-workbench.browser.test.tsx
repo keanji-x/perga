@@ -235,7 +235,7 @@ it.each(['light', 'dark'] as const)('shares the Chat header geometry and exposes
     .toBe(chatHeader.querySelector('h2')!.getBoundingClientRect().left - chatHeader.getBoundingClientRect().left);
   const hide = page.getByRole('button', { name: 'Hide terminal' });
   const remove = page.getByRole('button', { name: 'Delete card shell', exact: true });
-  const chatHide = chatHeader.querySelector('button')!;
+  const chatHide = chatHeader.querySelector('button[aria-label="Close conversation"]')!;
   expect(recipe(hide.element())).toEqual(recipe(chatHide));
   expect(header.getBoundingClientRect().right - hide.element().getBoundingClientRect().right)
     .toBe(chatHeader.getBoundingClientRect().right - chatHide.getBoundingClientRect().right);

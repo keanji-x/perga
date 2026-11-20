@@ -17,9 +17,9 @@ it.each([[false, false], [true, false], [false, true], [true, true]] as const)(
       await field.fill('A readable local message.');
       await userEvent.keyboard('{Enter}');
       await expect.element(page.getByRole('paragraph').filter({ hasText: /^A readable local message\.$/ })).toBeVisible();
-      await expect.element(page.getByText('Sending…', { exact: true })).toBeVisible();
+      await expect.element(page.getByText('正在发送…', { exact: true })).toBeVisible();
       view.release();
-      await expect.element(page.getByText('Sending…', { exact: true })).not.toBeInTheDocument();
+      await expect.element(page.getByText('正在发送…', { exact: true })).not.toBeInTheDocument();
       await expect.element(page.getByRole('paragraph').filter({ hasText: /^A readable local message\.$/ })).toBeVisible();
       await expect.element(field).toHaveTextContent('');
       expect(page.getByRole('paragraph').filter({ hasText: /^A readable local message\.$/ }).elements()).toHaveLength(1);

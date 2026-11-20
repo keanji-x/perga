@@ -177,6 +177,8 @@ public static class PergaHostServiceCollectionExtensions
                 DefaultWorkspaceDriver = opts.DefaultWorkspaceDriver,
                 McpBaseUri = baseUri,
                 DispatchWakesInBackground = opts.DispatchWakesInBackground,
+                SessionStartupTimeout = opts.SessionStartupTimeout,
+                SessionCompactionTimeout = opts.SessionCompactionTimeout,
                 ProviderCancelDispatchGrace = opts.ProviderCancelDispatchGrace,
                 ProviderTerminalStopGrace = opts.ProviderTerminalStopGrace
             };

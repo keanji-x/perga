@@ -1,9 +1,9 @@
+import { InputCopy } from './input-copy.tsx';
 import { isImeKeyEvent } from '@astryxdesign/core/utils';
 import { useHistoryPrefetch, type HistoryPrefetch } from './history-prefetch.ts';
 import { PrependReading } from './prepend-reading.tsx';
 import { dispatchComposerCommand, executeComposerCommand } from './composer-command.ts';
 import type { ComposerCommand } from './composer-command.ts';
-import type { RunRecovery } from '../../../../../core/domain/conversation-restart.ts';
 import { withEmptyTrigger } from '../../../ui/empty-state/astryx-trigger.tsx';
 import { EmptyState, type EmptyStateSchema } from '../../../ui/empty-state/public.tsx';
 import { useThreadReadingView, type ThreadReadingView } from './reading-view.tsx';
@@ -24,9 +24,6 @@ import {
 } from '@astryxdesign/core/Chat';
 import { Button } from '@astryxdesign/core/Button';
 import { Divider } from '@astryxdesign/core/Divider';
-import { HeldInputStatus } from './held-input.tsx';
-import { heldConversationInputs } from '../../../../../core/domain/conversation-display.ts';
-import type { ConversationActiveInput, ConversationSubmissionDelivery } from '../../../../../core/api/generated/wire.ts';
 import { useIcon } from '@astryxdesign/core/Icon';
 import { VisuallyHidden } from '@astryxdesign/core/VisuallyHidden';
 
@@ -39,7 +36,7 @@ import { Icon } from '../../../ui/icon/public.tsx';
 import { triggerMenuKeyRoute } from '../../../ui/trigger-menu-keys/public.ts';
 import { useState } from '../../../ui/state/public.ts';
 
-import { activityLabelOf, cardActivityOf, type CardActivity } from '../../../../../core/domain/activity.ts';
+import { activityLabelOf, type CardActivity } from '../../../../../core/domain/activity.ts';
 import { projectTranscriptView, type TranscriptView } from '../../../../../core/domain/conversation-view.ts';
 import {
   isQueuedConversationTurn, opensAfterGap, opensExchange,
@@ -73,6 +70,7 @@ function emptyConversationContent(working: boolean): EmptyStateSchema {
 }
 
 export type ChatThreadProps = Readonly<{
+  lastSessionTurn?: import('../../../../../core/api/perga-v1.ts').SessionTurnDto | null;
   hasPendingInputs?: boolean;
   readingView?: ThreadReadingView;
   historyPrefetch?: HistoryPrefetch;
@@ -81,9 +79,6 @@ export type ChatThreadProps = Readonly<{
   turns: readonly TranscriptEntry[];
   /** Waiting inputs follow the current status without interleaving with its reply. */
   pendingMessages?: ReactNode;
-  activeInput?: ConversationActiveInput | null;
-  keepInput?: (submission: ConversationSubmissionDelivery) => Promise<void>;
-  retryInput?: (submission: ConversationSubmissionDelivery) => Promise<void>;
   /** Current pending inputs or their retained exit content; the mounted node alone does not declare presence. */
   hasPendingMessages: boolean;
   /** Current work confirmed by the run query while the activity overlay catches up. */
@@ -99,7 +94,6 @@ export type ChatThreadProps = Readonly<{
   /** The runtime reason is separate from the persisted terminal transcript. */
   stalledReason?: string | null;
   /** Server-declared recovery explains the current stalled status. */
-  recovery?: RunRecovery | null;
   /** A failed status read cannot confirm current execution from cached facts. History stays readable. */
   statusUnconfirmed?: boolean;
   /** Read progress describes the status query, independently of model execution. */
@@ -126,7 +120,7 @@ export type ChatThreadProps = Readonly<{
   renderLink?: ReplyLinkRenderer;
 }>;
 
-export const ChatThread = memo(function ChatThread({ conversation, turns, pendingMessages, activeInput = null, keepInput, retryInput, hasPendingMessages, pending = false, sending = false, submissionRequest = 0, cards, stalled, stalledReason, recovery = null, statusUnconfirmed = false, statusLoading = false, stopFeedback = null, currentResponseOutcome = null, canContinue, messageActions = 'all', copyText, regenerateMessage, editMessage, editing = null, replacement = null, runningAnchor = null, imageFiles = null, renderLink, readingView, historyPrefetch, hasPendingInputs = false }: ChatThreadProps) {
+export const ChatThread = memo(function ChatThread({ conversation, turns, pendingMessages, hasPendingMessages, submissionRequest = 0, messageActions = 'all', copyText, regenerateMessage, editing = null, replacement = null, imageFiles = null, renderLink, readingView, historyPrefetch, lastSessionTurn = null }: ChatThreadProps) {
   const compactViewport = useCompactViewport();
   // Observe the browser timezone on render; keep formatters stable for memoized rows.
   const timeZone = new Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -140,24 +134,17 @@ export const ChatThread = memo(function ChatThread({ conversation, turns, pendin
   const reading = readingView ?? localReading;
   /* Only run/activity evidence claims execution. A local outgoing message has its own sending feedback.
      Never use `conversation.state`, which can stay at `turn_pending`/`running` after a turn ended. */
-  const live = !statusUnconfirmed && !stalled && (pending || cardActivityOf({ cards }, conversation.id) === 'working');
-  const heldInputs = heldConversationInputs(activeInput, live);
+  const live = lastSessionTurn?.status === 'running';
   const lastTurn = turns[turns.length - 1];
   const responseTail = turns[lastResponseEntryIndex(turns)];
   const currentOutcome = responseTail?.author === 'turn' && responseTail.imported !== true ? responseTail : null;
-  const copyTarget = currentResponseMessage(turns, currentOutcome !== null && !statusUnconfirmed && !live && !stalled && stopFeedback === null);
+  const copyTarget = currentResponseMessage(turns, currentOutcome !== null);
   const copyAction = copyText === undefined || copyTarget === null ? null
     : { id: `${conversation.id}:${copyTarget.id}`, text: copyTarget.text, run: () => copyText(copyTarget.text) };
   const regenerateTarget = latestUserMessage(turns);
-  const regenerateAction = regenerateMessage === undefined || regenerateTarget === null || statusUnconfirmed || live || stalled || currentOutcome === null
+  const regenerateAction = regenerateMessage === undefined || regenerateTarget === null || live || lastSessionTurn === null
     ? null : { id: `${conversation.id}:${regenerateTarget.id}`, run: () => regenerateMessage(regenerateTarget) };
   /* Only the latest turn, and only one the reader started: its outcome names the turn the server removes. */
-  const editAction = editMessage === undefined || regenerateTarget === null || statusUnconfirmed || live || stalled || currentOutcome === null
-    || currentOutcome.turnId === '' ? null
-    : { id: `${conversation.id}:${currentOutcome.turnId}`, run: () => {
-      // Enter immediately. Presentation must not delay edit state or the caret.
-      editMessage(currentOutcome);
-    } };
   const endRef = useRef<HTMLDivElement | null>(null);
   /** The box every marker lookup starts from. Not `.thread` itself: the stylesheet's `> * + *` rules space that element's children. */
   const frameRef = useRef<HTMLDivElement | null>(null);
@@ -189,9 +176,6 @@ export const ChatThread = memo(function ChatThread({ conversation, turns, pendin
     (activities) => activities.map(activity => toolCallOf(activity)),
     (key) => groupUi.get(key) ?? untouchedGroupUi,
   );
-  /* Active tool rows and background-sync summaries own their local marks.
-     Waiting and streamed replies use the current status row, never Markdown.
-     A closed tool group shows only its latest call; an open group shows each call. */
   const tail = transcriptGroups[transcriptGroups.length - 1];
   const tailQuiet = tail?.body.quiet ?? null;
   const tailCarriesLiveMark = tail === undefined ? false
@@ -233,7 +217,7 @@ export const ChatThread = memo(function ChatThread({ conversation, turns, pendin
   const followedTo = useRef<string | undefined>(undefined);
   const followedLength = useRef(0);
   const followedNotice = useRef<string | null>(null);
-  const noticeKind = statusUnconfirmed ? 'status-unconfirmed' : stalled ? 'paused' : stopFeedback?.kind ?? null;
+  const noticeKind = lastSessionTurn?.status ?? null;
 
   // The controller retains this conversation's reading state while presentation
   // replaces the transcript. Width-keyed offsets keep a responsive CSS reflow
@@ -288,6 +272,7 @@ export const ChatThread = memo(function ChatThread({ conversation, turns, pendin
     const index = indexOf.get(turn) ?? -1;
     const last = index === turns.length - 1;
     if (turn.author === 'activity') return renderRun(turn, key, live && last, showLive && last);
+    if (turn.author === 'system' && turn.id.startsWith('system:epoch-')) return <Divider key={turn.id} label={turn.text} />;
     if (turn.author === 'system') {
       return (
         <div key={turn.id} data-nc-entry={key}>
@@ -295,26 +280,28 @@ export const ChatThread = memo(function ChatThread({ conversation, turns, pendin
             <p className={styles.gap}>{clockTime(gapClock, turn.atMs)}</p>
           )}
           <SystemDisclosure turn={turn} />
+          {copyText !== undefined && <InputCopy id={turn.id} text={turn.text} copyText={copyText} />}
         </div>
       );
     }
     // Outcomes retain their grouping boundary; only the current metadata row paints status.
     if (turn.author === 'turn') return turn.imported === true ? <HistoricalOutcomeNotice key={turn.id} outcome={turn} /> : null;
     return (
-      <MessageEntry key={turn.id} mobile={compactViewport} atMs={turn.atMs} timestampFormatter={turn.author === 'agent' ? compactClock : null} id={turn.id} entryKey={key} author={turn.author} human={turn.human} imported={turn.imported === true} text={turn.text}
+      <Fragment key={turn.id}><MessageEntry mobile={compactViewport} atMs={turn.atMs} timestampFormatter={turn.author === 'agent' ? compactClock : null} id={turn.id} entryKey={key} author={turn.author} human={turn.human} imported={turn.imported === true} text={turn.text}
         attachments={turn.attachments} deliveryError={turn.deliveryError} messageStatus={turn.messageStatus} opens={opensExchange(turns, index)}
         gapLabel={opensAfterGap(turns, index) && index > 0 ? clockTime(gapClock, turn.atMs) : null}
         queued={isQueuedConversationTurn(turn)} edited={edited.has(turn.id)} replacement={turn.id === replacement}
         imageFiles={imageFiles} renderLink={renderLink} />
+      {turn.deliveryError !== undefined && copyText !== undefined && <InputCopy id={turn.id} text={turn.text} copyText={copyText} />}
+      </Fragment>
     );
   };
 
-  const empty = turns.length === 0 && noticeKind === null && !hasPendingMessages && heldInputs.length === 0;
+  const empty = turns.length === 0 && noticeKind === null && !hasPendingMessages;
 
-  const currentMeta = <CurrentStatusNotice detailsExpanded={reading.expanded.get('current-status') ?? false}
-    leading={live && !empty && !tailCarriesLiveMark ? <ActivityIndicator state="working" motion="thinking" /> : undefined}
-    onDetailsExpandedChange={expanded => reading.setExpanded('current-status', expanded)} outcome={currentResponseOutcome ?? currentOutcome} canContinue={canContinue && !statusUnconfirmed} live={live} sending={sending} statusUnconfirmed={statusUnconfirmed} statusLoading={statusLoading}
-    hasPendingInputs={hasPendingInputs} stalled={stalled} recovery={recovery} stalledReason={stalledReason ?? null} feedback={stopFeedback} messageActions={messageActions} copyAction={copyAction} editAction={editAction} regenerateAction={regenerateAction} runningAnchor={runningAnchor} />;
+  const currentMeta = <CurrentStatusNotice lastTurn={lastSessionTurn} leading={live && !tailCarriesLiveMark ? <ActivityIndicator state="working" motion="thinking" /> : undefined} detailsExpanded={reading.expanded.get('current-status') ?? false}
+    onDetailsExpandedChange={expanded => reading.setExpanded('current-status', expanded)}
+    copyAction={copyAction} regenerateAction={regenerateAction} messageActions={messageActions} />;
 
   const scrollControls = <div className={styles.scrollDockContent} data-nc-chat-scroll-dock="">
     <ChatLayoutScrollButton isVisible className={styles.scrollButton} onClick={scrollFollower.followToEnd} />
@@ -344,7 +331,6 @@ export const ChatThread = memo(function ChatThread({ conversation, turns, pendin
         {live && <VisuallyHidden>{activityLabelOf('working')}</VisuallyHidden>}
         {currentMeta}
         <div key="pending-messages" className={styles.pendingMessages}>
-          <HeldInputStatus held={heldInputs} keepInput={keepInput} retryInput={retryInput} />
           {pendingMessages}
         </div>
         <div ref={endRef} aria-hidden="true" />
@@ -366,7 +352,7 @@ const FOLLOW_BOTTOM_SLACK_PX = 64;
 
 
 /** Astryx's ChatComposer; we own the value and the send callback so the kernel path stays a string. */
-export type ComposerFocusHandle = Readonly<{ ownsFocus: () => boolean }>;
+export type ComposerFocusHandle = Readonly<{ ownsFocus: () => boolean; focus: () => void }>;
 
 export function ChatComposer({
   onSend, onStop, commands = [], disabled = false, sendDisabled = false, sendWaiting = false, canQueueWhileRunning = false,
@@ -445,7 +431,14 @@ export function ChatComposer({
   /** The element this component last put focus on; `null` while no restore is in flight. */
   const parkedFocus = useRef<Element | null>(null);
   const answeredFocusRequest = useRef(focusRequest);
-  useImperativeHandle(focusHandle, () => ({ ownsFocus: () => {
+  useImperativeHandle(focusHandle, () => ({ focus: () => {
+    wantsFieldFocus.current = true;
+    const root = rootRef.current;
+    const field = root?.querySelector<HTMLElement>('[contenteditable="true"], textarea');
+    (field ?? root)?.focus({ preventScroll: true });
+    parkedFocus.current = document.activeElement;
+    setSendCount(count => count + 1);
+  }, ownsFocus: () => {
     const active = document.activeElement;
     const message = messageInputRef.current?.querySelector('[contenteditable], textarea');
     return active === message || (active === rootRef.current && wantsFieldFocus.current && parkedFocus.current === active);
@@ -541,7 +534,7 @@ export function ChatComposer({
       onClick={() => { submit(); }}
     >Send image</button>
   ) : canQueueWhileRunning && stopShown && !sendDisabled && draft.trim() !== '' && !sendWaiting && editing === undefined ? (
-    <button type="button" className={styles.queueSend} disabled={disabled} onClick={submit}>Send</button>
+    <button type="button" className={styles.queueSend} disabled={disabled} onClick={submit}>排队发送</button>
   ) : undefined;
 
   return (
@@ -598,6 +591,7 @@ export function ChatComposer({
         }
       }}
     >
+      {sendWaiting && <span role="status">正在发送…</span>}
       <SizeMotion motionKey={editing !== undefined}>
         <AstryxChatComposer
           className={layout === 'mobile' ? `${mobileStyles.vendorComposer} ${floatingControlMaterialClassName}` : composerLayoutStyles.vendor}
@@ -605,7 +599,7 @@ export function ChatComposer({
           elevation="none"
           value={draft}
           onChange={setDraft}
-          placeholder={layout === 'mobile' ? '说说你想做什么…' : 'Say something'}
+          placeholder="输入消息，或输入 / 呼出命令…"
           isDisabled={disabled}
           isStopShown={stopShown}
           footerActions={layout === 'mobile' && footerActions !== undefined ? <details className={mobileStyles.options}>
@@ -634,7 +628,7 @@ export function ChatComposer({
               maxRows={3}
               onFiles={disabled ? undefined : onFiles}
               label="Message"
-              placeholder={layout === 'mobile' ? '说说你想做什么…' : 'Say something'}
+              placeholder="输入消息，或输入 / 呼出命令…"
               /* No triggers where there is neither a command nor a mention: otherwise the field becomes an `aria-expanded="false"` combobox that can never expand. */
               {...(triggers.length === 0 ? {} : { triggers })}
               /* The `@` source waits out keystrokes itself (`MENTION_SEARCH_DELAY_MS` says why Astryx's own delay must be off); the `/` source is synchronous and never delayed. */
@@ -673,13 +667,14 @@ export function ChatFooterError({ message }: { message: string }) {
 }
 
 /** The way out of that error, inline in the strip; `tertiary` so it does not compete with Send. */
-export function ChatFooterRemedy({ disabled = false, onClick, children }: {
+export function ChatFooterRemedy({ disabled = false, pending = false, onClick, children }: {
   disabled?: boolean;
+  pending?: boolean;
   onClick: () => void;
   children: ReactNode;
 }) {
   return (
-    <button type="button" data-nc-action="tertiary" disabled={disabled} onClick={onClick}>
+    <button type="button" data-nc-action="tertiary" disabled={disabled || pending} aria-busy={pending || undefined} onClick={onClick}>
       {children}
     </button>
   );

@@ -15,7 +15,7 @@ it('keeps queued messages out of current-response copy and delivered-message edi
   const delivered = { id: 'user', author: 'you' as const, text: 'Original prompt', atMs: 1 };
   const reply = { id: 'reply', author: 'agent' as const, text: 'Current answer', atMs: 2 };
   const queued: OptimisticConversationTurn = { id: 'queued', author: 'you', text: 'Queued prompt', atMs: 3,
-    serverHighWaterBefore: 2, queued: true, entryId: 'queued-entry' };
+    localSend: true, queued: true };
   expect(currentResponseMessage([delivered, reply, queued], false)).toBe(reply);
   expect(latestUserMessage([delivered, reply, queued])).toBe(delivered);
 });

@@ -42,7 +42,7 @@ function setup() {
       if (request.path === '/api/v1/tracks/w1/asks/41/answer') return ok(undefined, 204);
       if (request.path.includes('/items')) return ok({
         session: fixtureSession(conversationCardId(request.path), TRACK.id, { permissionMode: 'never' }),
-        items: [], activeTurn: null, unknownInput: null,
+        items: [], activeTurn: null, state: 'idle', readonlyReason: null, canReopen: false, workerPaused: false, lastTurn: null, unknownDetail: null,
       });
       if (request.path === '/api/settings') return ok({});
       return ok([]);

@@ -48,7 +48,7 @@ public sealed partial class TrackActor
             "running" when running?.TurnDto.Id != item.TurnId => "unconfirmed",
             "running" when item.InputDelivery == "delivered" ||
                            (item.Payload.TryGetProperty("steered", out var steered) && steered.ValueKind == System.Text.Json.JsonValueKind.True) ||
-                           (running?.TurnDto.Id == item.TurnId && running.ProviderAccepted) => "processing",
+                           (running is not null && running.TurnDto.Id == item.TurnId && running.ProviderAccepted) => "processing",
             "running" => "sending",
             "completed" => "completed",
             "unknown" => "unconfirmed",
@@ -89,7 +89,8 @@ public sealed partial class TrackActor
             if (attemptId is not null && attemptId != message.AttemptId)
                 throw KernelException.Conflict("The message belongs to another Worker attempt.");
             if (message.Delivery == "withdrawn") return;
-            if (message.TurnId is not null || !await Messages.TransitionAsync(message with { Delivery = "withdrawn" }, "queued", ct).ConfigureAwait(false))
+            if (message.TurnId is not null || message.Delivery is not ("queued" or "unknown") ||
+                !await Messages.TransitionAsync(message with { Delivery = "withdrawn" }, message.Delivery, ct).ConfigureAwait(false))
                 throw KernelException.Conflict("Only waiting messages can be withdrawn.");
 
             NotifyQueueChangedCore(sessionId);

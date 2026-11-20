@@ -82,7 +82,7 @@ it.each([
   await page.getByRole('button', { name: /Conversation Planner/ }).click();
   const ask = page.getByRole('group', { name: 'The Planner asks' });
   await expect.element(ask).toBeVisible();
-  expect((await ask.findElement()).closest('[data-nc-composer]')).not.toBeNull();
+  expect((await ask.findElement()).closest('[data-nc-conversation-action="ask"]')).not.toBeNull();
   const questionElement = await ask.findElement();
   await expect.element(ask.getByRole('button', { name: 'Other…' })).toBeVisible();
   expect(getComputedStyle(questionElement.querySelector('h3')!).fontSize).toBe('16px');
@@ -146,7 +146,7 @@ it.each([
   const field = (await page.getByRole('combobox', { name: 'Message' }).findElement()).getBoundingClientRect();
   expect(field.bottom).toBeLessThanOrEqual(window.innerHeight);
   expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(window.innerWidth);
-  expect((await ask.findElement()).closest('[data-nc-composer]')).not.toBeNull();
+  expect((await ask.findElement()).closest('[data-nc-conversation-action="ask"]')).not.toBeNull();
   if (count === 4 && width === 1280) await page.screenshot({ path: '../../../../test-results/v10-track-asks.png' });
   for (let index = 0; index < count; index++) {
     await expect.element(ask.getByRole('heading', { name: new RegExp(`^Question ${index + 1}:`) })).toBeVisible();

@@ -80,7 +80,7 @@ public sealed partial class TrackActor
         public async Task<AgentSessionDto?> ClaimCoreAsync(AgentSessionDto session, AgentSessionDto runningSession,
             EventEnvelopeDto runningEvent, CancellationToken ct)
         {
-            if (actor._track.ClosedAtMs is not null)
+            if (actor._track.ClosedAtMs is not null || session.Epoch != input.Epoch)
                 return null;
             await actor._eventHub.EnsureInitializedFromStoreAsync(actor._store, ct).ConfigureAwait(false);
             if (!await actor._store.SessionInputs.ClaimAsync(input, runningSession, runningEvent, ct).ConfigureAwait(false))
@@ -92,11 +92,15 @@ public sealed partial class TrackActor
 
         public async Task<bool> TrySettleSetupFailureCoreAsync(Exception ex, SessionTurnDto turn, AgentSessionDto runningSession)
         {
-            var failed = turn with { Status = "failed", ErrorText = "Message could not be prepared for dispatch.", CompletedAtMs = actor.NowMs() };
-            var idle = actor.RequireSessionCore(SessionId) with { Status = "idle", UpdatedAtMs = failed.CompletedAtMs.Value };
+            var lost = ex is ProviderSessionNotFoundException;
+            var status = lost ? "unknown" : ex is OperationCanceledException ? "interrupted" : "failed";
+            var failed = turn with { Status = status, ErrorText = ex.Message, CompletedAtMs = lost ? null : actor.NowMs() };
+            var idle = actor.RequireSessionCore(SessionId) with { Status = lost ? "unknown" : "idle",
+                UnknownReason = lost ? "session_lost" : null, UnknownTurnId = lost ? turn.Id : null,
+                ReconnectInvalidated = lost, UpdatedAtMs = actor.NowMs() };
             var outcome = new SessionItemDto(0, SessionId, turn.Id, "turn_outcome",
-                JsonHelpers.ToElement(new { v = 1, status = "failed", error = failed.ErrorText }), idle.UpdatedAtMs);
-            await actor.SettleDurableTurnCoreAsync(input, "rejected", failed, [outcome], idle).ConfigureAwait(false);
+                JsonHelpers.ToElement(new { v = 1, status, error = failed.ErrorText }), idle.UpdatedAtMs);
+            await actor.SettleDurableTurnCoreAsync(input, lost ? "unknown" : "rejected", failed, [outcome], idle).ConfigureAwait(false);
             await actor.PokeSessionCoreAsync(SessionId).ConfigureAwait(false);
             return true;
         }
@@ -173,8 +177,12 @@ public sealed partial class TrackActor
         {
             if (ex is KernelException { Code: KernelErrorCode.Conflict } && !RecordsSetupConflicts)
                 return false;
-            var failed = turn with { Status = "failed", ErrorText = ex.Message, CompletedAtMs = Actor.NowMs() };
-            var idle = Actor.RequireSessionCore(SessionId) with { Status = "idle", UpdatedAtMs = failed.CompletedAtMs.Value };
+            var lost = ex is ProviderSessionNotFoundException;
+            var failed = turn with { Status = lost ? "unknown" : ex is OperationCanceledException ? "interrupted" : "failed",
+                ErrorText = ex.Message, CompletedAtMs = lost ? null : Actor.NowMs() };
+            var idle = Actor.RequireSessionCore(SessionId) with { Status = lost ? "unknown" : "idle",
+                UnknownReason = lost ? "session_lost" : null, UnknownTurnId = lost ? turn.Id : null,
+                ReconnectInvalidated = lost, UpdatedAtMs = Actor.NowMs() };
             await Actor._store.RecordTurnAndItemsAsync(failed, [], idle, CancellationToken.None).ConfigureAwait(false);
             Actor._sessions[SessionId] = idle;
             await OnTurnCreatedAsync(failed).ConfigureAwait(false);
@@ -369,7 +377,9 @@ public sealed partial class TrackActor
             if (_acked) return;
             if (_turnId is not null)
                 await Actor._store.TrackWakes.LinkTurnAsync(DispatchBatch, _turnId, CancellationToken.None).ConfigureAwait(false);
-            await Actor._store.TrackWakes.MarkDroppedAsync(DispatchBatch.Where(w => !w.IsCritical).ToArray(),
+            await Actor._store.TrackWakes.MarkDroppedAsync(DispatchBatch.Where(w => w.Attempts >= 3).ToArray(),
+                "max_attempts_exceeded", _turnId, CancellationToken.None).ConfigureAwait(false);
+            await Actor._store.TrackWakes.MarkDroppedAsync(DispatchBatch.Where(w => !w.IsCritical && w.Attempts < 3).ToArray(),
                 TrackWakeReasons.RuntimeFailed, _turnId, CancellationToken.None).ConfigureAwait(false);
         }
     }

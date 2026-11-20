@@ -33,7 +33,7 @@ import {
   agentSessionDtoToConversation,
 } from '../domain/conversation.js';
 import { buildConversationTranscript, conversationItemsOperation, conversationRunOperation } from '../domain/conversation-display.js';
-import { matchSendOps, type SendOp } from '../domain/conversation-outbox.js';
+
 import {
   listDirectoryOperation,
   listTrackWorkspaceDirectoryOperation,
@@ -499,7 +499,7 @@ describe('Perga /api/v1 protocol contracts', () => {
         { id: 5, sessionId: 'ses_lead', turnId: 'turn_1', kind: 'assistant_text', payload: { v: 1, text: 'Report inspected.' }, createdAtMs: 1300 },
       ],
       activeTurn: null,
-      unknownInput: null,
+      state: 'idle', readonlyReason: null, canReopen: false, workerPaused: false, lastTurn: null, unknownDetail: null,
       session: {
         id: 'ses_lead',
         trackId: 'trk_1',
@@ -549,7 +549,7 @@ describe('Perga /api/v1 protocol contracts', () => {
     const createAgyConv = createTrackConversationOperation('trk_1', 'AGY help', 'idem-s3', 'antigravity', { model: null, reasoning_effort: null });
     expect(createAgyConv.body).toMatchObject({ provider: 'acp:antigravity' });
 
-    const msgOp = sendPlannerInputOperation('ses_lead', 'Ship it', [], 'idem-m1', null, true);
+    const msgOp = sendPlannerInputOperation('ses_lead', 'Ship it', [], 'idem-m1', true);
     expect(msgOp).toMatchObject({
       method: 'POST',
       path: '/api/v1/sessions/ses_lead/messages',
@@ -658,7 +658,7 @@ describe('Perga /api/v1 protocol contracts', () => {
     expect(loginOperation({ username: 'u', password: 'p' })).not.toHaveProperty('body');
 
     // CHAT-03, CHAT-04 & CHAT-05: 10-minute timeout, SessionInputReceipt -> entry_id, and null-entryId outbox retirement
-    const sendOp = sendPlannerInputOperation('ses_lead', 'Ship Perga', [], 'idem-1', null);
+    const sendOp = sendPlannerInputOperation('ses_lead', 'Ship Perga', [], 'idem-1');
     expect(sendOp.timeoutMs).toBe(600_000);
     expect(compactPlannerOperation('ses_lead').timeoutMs).toBe(600_000);
     expect(sendOp.responseSchema.parse({
@@ -669,38 +669,9 @@ describe('Perga /api/v1 protocol contracts', () => {
       turnStatus: 'queued',
       statusUrl: '/api/v1/sessions/ses_lead/inputs/inp_77',
       resolvedAtMs: null,
-    })).toEqual({ card_id: 'ses_lead', worker_session_id: 'ses_lead', entry_id: 'inp_77' });
+    })).toEqual({ card_id: 'ses_lead', worker_session_id: 'ses_lead', entry_id: 'inp_77', turnId: 'turn_9' });
 
-    const confirmedNullEntry: SendOp = {
-      key: 'idem-null',
-      phase: 'confirmed',
-      queueRevision: null,
-      fromComposer: true,
-      replaces: null,
-      echo: {
-        id: 'idem-null',
-        author: 'you',
-        text: 'Hello without userItemId',
-        atMs: 1000,
-        serverHighWaterBefore: 5,
-        queued: false,
-        entryId: null,
-      },
-    };
-    const retired = matchSendOps(
-      [{
-        id: 'human:6',
-        author: 'you',
-        human: { userId: DEPLOYMENT_OWNER_USER_ID, displayName: 'Local Operator', messageId: '6', revision: 1 },
-        text: 'Hello without userItemId',
-        atMs: 1005,
-        displayPosition: 6,
-      }],
-      [confirmedNullEntry],
-      [],
-      'ses_lead',
-    );
-    expect(retired.get('idem-null')).toBe('human:6');
+
 
     // CHAT-06, CHAT-07 & CHAT-11: beforeId pagination, turn_outcome error projection, mcpToolCall content, permission_mode: null
     const cursorOp = conversationItemsOperation('ses_lead', {
@@ -719,7 +690,7 @@ describe('Perga /api/v1 protocol contracts', () => {
       ],
       hasMoreBefore: true,
       activeTurn: null,
-      unknownInput: null,
+      state: 'idle', readonlyReason: null, canReopen: false, workerPaused: false, lastTurn: null, unknownDetail: null,
       session: {
         id: 'ses_lead', trackId: 'trk_1', isLead: true, boundTaskId: null, boundAttemptId: null,
         title: 'Lead', provider: 'codex', model: 'gpt-5', nativeThreadId: 'thr_1', epoch: 1,
@@ -744,7 +715,7 @@ describe('Perga /api/v1 protocol contracts', () => {
     const run = conversationRunOperation('ses_lead').responseSchema.parse({
       items: [],
       activeTurn: null,
-      unknownInput: null,
+      state: 'idle', readonlyReason: null, canReopen: false, workerPaused: false, lastTurn: null, unknownDetail: null,
       session: {
         id: 'ses_lead', trackId: 'trk_1', isLead: true, boundTaskId: null, boundAttemptId: null,
         title: 'Lead', provider: 'codex', model: 'gpt-5', nativeThreadId: 'thr_1', epoch: 1,

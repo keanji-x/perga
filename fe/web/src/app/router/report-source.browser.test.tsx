@@ -36,7 +36,7 @@ const SOURCE_ROW = {
 const unauthorized = createUnauthorizedChannel({ enqueue: (task) => task() });
 
 function sessionPage(running = false): SessionItemsPageDto {
-  return { session: { ...PLANNER_CARD, status: running ? 'running' : 'idle' }, items: [], unknownInput: null,
+  return { session: { ...PLANNER_CARD, status: running ? 'running' : 'idle' }, items: [], state: running ? 'running' : 'idle', readonlyReason: null, canReopen: false, workerPaused: false, lastTurn: null, unknownDetail: null,
     activeTurn: running ? { id: 'source-turn', sessionId: PLANNER_CARD.id, turnIndex: 0, epoch: 1,
       triggerKind: 'user', status: 'running', startedAtMs: Date.now() } : null };
 }

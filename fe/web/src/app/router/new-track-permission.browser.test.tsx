@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { RouterProvider, createMemoryHistory } from '@tanstack/react-router';
 import { cleanup, render } from '@testing-library/react';
 import { afterEach, expect, it } from 'vitest';
-import { page, userEvent } from 'vitest/browser';
+import { page } from 'vitest/browser';
 import type { ApiRequest, ApiTransportPort } from '../../../../core/api/types.ts';
 import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { prepareReportDocument } from '../../features/report/document/preparation.ts';
@@ -62,7 +62,7 @@ it('unlocks the picker and shows the reason after a first discovery refusal', as
   await page.getByRole('button', { name: /^Model:/ }).click();
   await page.getByRole('group', { name: 'Providers' }).getByRole('radio', { name: 'OpenCode', exact: true }).click();
   await page.getByRole('group', { name: 'Models' }).getByRole('radio', { name: 'gpt-test', exact: true }).click();
-  await userEvent.keyboard('{Escape}');
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
   await page.getByRole('button', { name: 'Approvals: Inspect live' }).click();
   await page.getByRole('menuitem', { name: /^Act live/ }).click();
   await page.getByRole('combobox', { name: 'What this track should do' }).fill('Discover modes');
@@ -83,7 +83,7 @@ it('clears the mode on a provider switch and hides an empty provider list', asyn
   await page.getByRole('button', { name: /^Model:/ }).click();
   await page.getByRole('group', { name: 'Providers' }).getByRole('radio', { name: 'Claude' }).click();
   await page.getByRole('group', { name: 'Models' }).getByRole('radio', { name: 'haiku', exact: true }).click();
-  await userEvent.keyboard('{Escape}');
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
   await expect.element(page.getByRole('button', { name: /^Approvals:/ })).not.toBeInTheDocument();
   await page.getByRole('combobox', { name: 'What this track should do' }).fill('Switch provider');
   await page.getByRole('button', { name: 'Create track' }).click();
@@ -106,12 +106,12 @@ it.each([false, true])('renders ACP approvals for a null mode (assistant=%s)', a
       } };
       if (assistant && request.path === '/api/v1/tracks/daily/sessions') return { status: 200, statusText: 'OK', body: [
         { id, trackId: 'daily', title: 'Other conversation', kind: 'track-assistant', provider: 'opencode',
-          state: 'idle', updatedAt: 2, archivedAt: null, lastTurnCompletedAt: null },
+          isLead: false, contextUsage: null, createdAtMs: 1, updatedAtMs: 2, archivedAtMs: null },
       ] };
       if (request.path.startsWith(`/api/v1/sessions/${id}/items?`)) return { status: 200, statusText: 'OK', body: {
         session: { id, trackId: 'daily', provider: 'acp:opencode', permissionMode: null,
-          isLead: !assistant, status: 'idle', createdAtMs: 1, updatedAtMs: 2 },
-        items: [], unknownInput: null, activeTurn: null, canSteer: true, queuedMessages: [],
+          isLead: !assistant, contextUsage: null, status: 'idle', createdAtMs: 1, updatedAtMs: 2 },
+        items: [], state: 'idle', readonlyReason: null, canReopen: false, workerPaused: false, lastTurn: null, unknownDetail: null, activeTurn: null, canSteer: true, queuedMessages: [],
       } };
       return undefined;
     } });

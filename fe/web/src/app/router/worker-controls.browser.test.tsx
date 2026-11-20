@@ -53,7 +53,7 @@ it('uses shared chat controls to show tools, change settings, retry, steer, and 
         ...(handedOff ? [{ id: 7, sessionId: id, turnId: currentTurn, kind: 'user', createdAtMs: 3, turnStatus: 'running',
           messageStatus: 'processing', payload: { v: 1, inputId: 'input-2', content: 'Inspect later', triggerKind: 'user', steered: true } }] : []),
       ],
-      unknownInput: null, canSteer: !paused,
+      state: finished || paused ? 'idle' : 'running', readonlyReason: finished ? 'worker_finished' : null, canReopen: false, workerPaused: paused && !finished, lastTurn: null, unknownDetail: null, canSteer: !paused,
       queuedMessages: [
         ...(queuedVisible ? [{ id: 'input-2', text: 'Inspect later', queuedAtMs: 2, state: 'waiting' }] : []),
         ...(!finished ? [{ id: 'abandoned', text: 'Check the appendix', queuedAtMs: 2, state: 'waiting' }] : []),
@@ -117,7 +117,7 @@ it('uses shared chat controls to show tools, change settings, retry, steer, and 
     expect(screen.queryByRole('button', { name: /Worker activity|Worker settings/ })).toBeNull();
     expect(screen.queryByRole('combobox', { name: 'Delivery' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Approvals: Ask a person' })).toBeVisible();
-    await screen.findByText('Approve reading the report?');
+    expect((await screen.findByText('Approve reading the report?')).closest('[data-nc-conversation-action="ask"]')).not.toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
     await waitFor(() => expect(view.requests.find(request => request.path === '/api/v1/tracks/daily/executions/turn-1/approvals/worker-ask/decision')?.body).toEqual({
       optionId: 'approve',
@@ -161,39 +161,40 @@ it('uses shared chat controls to show tools, change settings, retry, steer, and 
     expect(screen.queryByLabelText('Owner authorization key')).toBeNull();
     fireEvent.keyDown(restore, { key: 'Escape' });
 
-    await screen.findByText('Paused. Send a message to continue.');
-    fireEvent.click(await screen.findByRole('button', { name: 'Try again' }));
+    await screen.findByText('发送结果未确认。');
+    fireEvent.click(await screen.findByRole('button', { name: /^(Try again|重试|安全重试（同幂等键）)$/ }));
     await waitFor(() => expect(queuedRequests).toBe(2));
     const queued = view.requests.filter(request => request.path === `${path}/messages`);
     expect(queued[0].body).toEqual({ attemptId: 'attempt-1', content: 'Inspect later', mode: 'queue' });
     expect(queued[1].body).toEqual(queued[0].body);
     expect(queued[0].headers?.['Idempotency-Key']).toBeTruthy();
     expect(queued[1].headers?.['Idempotency-Key']).toBe(queued[0].headers?.['Idempotency-Key']);
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull());
-    const sharedQueue = within(await screen.findByRole('region', { name: 'Queued messages' }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: /^(Try again|重试|安全重试（同幂等键）)$/ })).toBeNull());
+    const sharedQueue = within(await screen.findByRole('region', { name: '排队消息' }));
     const waiting = await sharedQueue.findByText('Inspect later');
     expect(waiting).toBeVisible();
-    await page.elementLocator(waiting.closest('[data-nc-pending-entry]')!).getByRole('button', { name: 'Say it now' }).click();
+    await page.elementLocator(waiting.closest('[data-nc-pending-entry]')!).getByRole('button', { name: '立即插队' }).click();
     await waitFor(() => expect(view.requests.some(request => request.path === `${path}/messages/queue/input-2/steer`)).toBe(true));
     await waitFor(() => expect(document.querySelector('[data-nc-pending-entry="input-2"]')).toBeNull());
     await waitFor(() => expect(screen.getAllByText('Inspect later')).toHaveLength(1));
 
     fireEvent.click(screen.getByRole('button', { name: 'Stop' }));
-    await screen.findByText('Paused. Send a message to continue.');
+    await screen.findByText('已暂停，发送消息即可继续。');
     expect(view.requests.find(request => request.path === `${path}/interrupt`)?.body).toEqual({ attemptId: 'attempt-1', turnId: 'turn-2' });
     await act(async () => { composer.textContent = 'Resume the task'; fireEvent.input(composer); await Promise.resolve(); });
     fireEvent.keyDown(composer, { key: 'Enter' });
     await waitFor(() => expect(refused).toBe(true));
-    await screen.findByText(/Not sent.*The task changed/);
+    await screen.findByText(/消息未发送.*The task changed/);
+    fireEvent.click(await screen.findByRole('button', { name: '放回输入框' }));
     expect(composer).toHaveTextContent('Resume the task');
-    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^(Try again|重试|安全重试（同幂等键）)$/ })).toBeNull();
 
     finished = true;
     await act(async () => { await view.client.invalidateQueries({ queryKey: queryKeys.plannerRun(id) }); });
     expect(await screen.findByText('Delivery was interrupted.')).toBeVisible();
     expect(screen.getAllByText('Check the appendix')).toHaveLength(1);
-    expect(screen.getByRole('button', { name: /^Model:/ })).toBeDisabled();
-    expect(composer).not.toHaveAttribute('contenteditable', 'true');
+    expect(screen.queryByRole('button', { name: /^Model:/ })).toBeNull();
+    expect(screen.queryByRole('combobox', { name: 'Message' })).toBeNull();
   } finally { releaseDeny(); view.client.clear(); }
 });
 
@@ -247,7 +248,7 @@ it('keeps one timeline item when a waiting conversation message is steered', asy
     if (request.path.startsWith(`${path}/items?`)) return ok({
       session: { id, trackId: 'daily', provider: 'codex', contextUsage: null, status: 'running', createdAtMs: 1, updatedAtMs: 2 },
       activeTurn: { id: 'turn-1', sessionId: id, status: 'running', startedAtMs: Date.now() },
-      unknownInput: null, canSteer: true,
+      state: 'running', readonlyReason: null, canReopen: false, workerPaused: false, lastTurn: null, unknownDetail: null, canSteer: true,
       queuedMessages: handedOff ? [] : [{ id: 'message-1', text, queuedAtMs: 2, state: 'waiting' }],
       queueHandoffIds: handedOff ? ['message-1'] : [],
       items: [{
@@ -267,9 +268,9 @@ it('keeps one timeline item when a waiting conversation message is steered', asy
   } });
   try {
     fireEvent.click(await screen.findByRole('button', { name: /Conversation Other conversation/ }));
-    const queue = within(await screen.findByRole('region', { name: 'Queued messages' }));
+    const queue = within(await screen.findByRole('region', { name: '排队消息' }));
     expect(await queue.findByText(text)).toBeVisible();
-    await page.getByRole('button', { name: 'Say it now' }).click();
+    await page.getByRole('button', { name: '立即插队' }).click();
     await waitFor(() => expect(view.requests.some(request => request.path === `${path}/messages/queue/message-1/steer`)).toBe(true));
     await waitFor(() => expect(document.querySelector('[data-nc-pending-entry="message-1"]')).toBeNull());
     await waitFor(() => expect(screen.getAllByText(text)).toHaveLength(1));

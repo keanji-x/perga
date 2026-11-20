@@ -2,16 +2,13 @@ import { expect, it, vi } from 'vitest';
 import { createConversationOwner } from './registry-owner.ts';
 import type { ConversationDraft } from './registry-model.ts';
 import type { Conversation } from '../../../../core/domain/conversation.ts';
-import type { SendOp } from '../../../../core/domain/conversation-outbox.ts';
+
 import { EMPTY_COMPOSER, isComposerEmpty } from '../../../../core/domain/conversation-composer.ts';
 
 const card = 'opaque:card';
 const draft: ConversationDraft = { scopeId: 'opaque:scope', provider: 'codex', model: { model: null, reasoning_effort: null },
   key: 'attempt', text: 'Hello', submitted: null, creating: false, error: null, remedy: null };
 const conversation: Conversation = { id: card, trackId: 'track', title: null, kind: 'agent', isLead: false, provider: 'codex', state: 'idle', updatedAt: 1 };
-const sending = (key: string): SendOp => ({ key, phase: 'sending', unknown: false, fromComposer: true, replaces: null,
-  echo: { id: `echo-${key}`, author: 'you', text: key, atMs: 1, attachments: [], serverHighWaterBefore: 0, queued: false, entryId: null } });
-
 it('notifies only changed selected facts and preserves no-op, empty and summary snapshots', () => {
   const owner = createConversationOwner();
   const registry = owner.commands;
@@ -82,43 +79,13 @@ it('reads a coherent latest state when an earlier observer completes a reentrant
   const owner = createConversationOwner(); const registry = owner.commands;
   const observations: unknown[] = [];
   owner.subscribe(state => state.composers[card]?.text, () => {
-    if (registry.composerOf(card).text === 'First') registry.beginEdit(card, {
-      kind: 'turn', turnId: 'turn', outcomeId: 'outcome', refill: { text: 'Refill', attachments: [] },
-    });
+    if (registry.composerOf(card).text === 'First') registry.refillComposer(card, { text: 'Refill', attachments: [] });
   });
   owner.subscribe(state => state, () => {
-    observations.push({ edit: registry.editOf(card), composer: registry.composerOf(card), notice: registry.editNoticeOf(card) });
+    observations.push(registry.composerOf(card));
   });
   registry.editComposer(card, current => ({ ...current, text: 'First' }));
-  expect(observations).toEqual([{ edit: { kind: 'turn', turnId: 'turn', outcomeId: 'outcome', refill: { text: 'Refill', attachments: [] } },
-    composer: { text: 'First\n\nRefill', attachments: [] }, notice: null }]);
-});
-
-it('uses current upload ownership when cancelling an edit in the same tick', () => {
-  const registry = createConversationOwner().commands;
-  registry.beginEdit(card, { kind: 'turn', turnId: 'turn', outcomeId: 'outcome', refill: { text: 'Retained prompt', attachments: [] } });
-  registry.editUpload(card, () => ({ inFlight: 1, refusal: null }));
-  registry.cancelEdit(card);
-  expect(registry.editOf(card)).toBeNull();
-  expect(registry.composerOf(card).text).toBe('Retained prompt');
-});
-
-it('publishes edit refill and send departure atomically before synchronous observers and fences a same-tick send', () => {
-  const owner = createConversationOwner(); const registry = owner.commands;
-  const edit = { kind: 'turn', turnId: 'turn', outcomeId: 'outcome', refill: { text: 'Original', attachments: [] } } as const;
-  const observed: unknown[] = [];
-  owner.subscribe(state => state, () => { observed.push({ edit: registry.editOf(card), composer: registry.composerOf(card), outbox: registry.outboxOf(card), notice: registry.editNoticeOf(card) }); });
-  registry.noteRefusedSend(card, { kind: 'refused', edit: true, message: 'Old refusal' });
-  observed.length = 0;
-  expect(registry.beginEdit(card, edit)).toBe(true);
-  expect(observed).toHaveLength(1);
-  expect(observed[0]).toMatchObject({ edit: { kind: 'turn' }, composer: { text: 'Original' }, notice: null });
-  const op = { ...sending('one'), replaces: { turnId: 'turn', outcomeId: 'outcome' } };
-  observed.length = 0;
-  expect(registry.beginSend(card, op)).toBe(true);
-  expect(registry.beginSend(card, sending('two'))).toBe(false);
-  expect(observed).toHaveLength(1);
-  expect(observed[0]).toMatchObject({ edit: null, notice: null, outbox: [{ key: 'one' }] });
+  expect(observations).toEqual([{ text: 'First\n\nRefill', attachments: [] }]);
 });
 
 it('publishes accepted delivery and adoption together; stale keys and exceptions publish nothing', () => {
@@ -134,18 +101,7 @@ it('publishes accepted delivery and adoption together; stale keys and exceptions
   expect(owner.getSnapshot()).toBe(before); expect(observations).toEqual([]);
   expect(registry.acceptDraft(draft, { conversation, sessionInput: receipt }, submitted)).toBe(true);
   expect(observations).toHaveLength(1);
-  expect(observations[0]).toMatchObject({ held: null, adopted: card, delivery: [{ phase: 'confirmed', key: draft.key, echo: { entryId: receipt.inputId, text: submitted.text } }] });
-});
-
-it('clears spent rows in the same publication as final outbox removal and returns the written outbox', () => {
-  const owner = createConversationOwner(); const registry = owner.commands;
-  registry.editOutbox(card, () => [{ ...sending('first'), phase: 'confirmed', queueRevision: null }, sending('left')]);
-  registry.retireSends(card, [{ key: 'first', row: 'row' }]);
-  expect(registry.spentRowsOf(card)).toEqual(['row']);
-  const observe = vi.fn(() => { expect(registry.outboxOf(card)).toEqual([]); expect(registry.spentRowsOf(card)).toEqual([]); });
-  owner.subscribe(state => state.outboxes[card], observe);
-  const written = registry.editOutbox(card, () => []);
-  expect(written).toEqual([]); expect(registry.outboxOf(card)).toEqual(written); expect(observe).toHaveBeenCalledOnce();
+  expect(observations[0]).toMatchObject({ held: null, adopted: card, delivery: [] });
 });
 
 it('keeps queue acquisition after its microtask, notifies only busy changes and fences synchronous restarts', async () => {
@@ -202,19 +158,6 @@ it('keep and retry share one attempt intent', () => {
   expect(registry.beginResolution(card, 'keep', args, 'competing')).toMatchObject({decision:'retry',key:'original'});
   registry.finishResolution(card, 'original', 'done');
   expect(registry.beginResolution(card, 'keep', {...args,revision:'8'}, 'fresh')).toMatchObject({decision:'keep',key:'fresh'});
-});
-
-it('keeps a v1 accepted first input until session history witnesses its identity', () => {
-  const registry = createConversationOwner().commands;
-  const submitted = { text: 'Hello', provider: 'codex', model: draft.model, atMs: 2 } as const;
-  registry.startDraft(draft);
-  expect(registry.acceptDraft(draft, { conversation, sessionInput: { sessionId: card, inputId: 'input', turnId: 'turn',
-    deliveryState: 'accepted', turnStatus: 'queued', statusUrl: '/status' } }, submitted)).toBe(true);
-  registry.remember(conversation, []);
-  expect(registry.turnsOf(card)).toMatchObject([{ author: 'you', text: 'Hello' }]);
-  expect(registry.outboxOf(card)).toMatchObject([{ phase: 'confirmed', echo: { entryId: 'input', authorUserId: 'local-owner' } }]);
-  expect(registry.acceptDraft(draft, { conversation, sessionInput: { sessionId: card, inputId: 'input', turnId: 'turn',
-    deliveryState: 'accepted', turnStatus: 'queued', statusUrl: '/status' } }, submitted)).toBe(false);
 });
 
 it('retains the three-generation permission barrier until every real write settles', async () => {

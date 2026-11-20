@@ -1,6 +1,8 @@
 using Dapper;
 using Microsoft.Data.Sqlite;
 using Perga.Kernel.Ports;
+using Perga.Contracts;
+using System.Text.Json;
 
 namespace Perga.Storage.Sqlite;
 
@@ -79,6 +81,7 @@ public sealed partial class SqliteTrackStore : ITrackWakeStore
     public Task<IReadOnlyList<TrackWake>> ClaimBatchAsync(string trackId, string targetSessionId, int limit, CancellationToken ct) =>
         _writer.EnqueueAsync<IReadOnlyList<TrackWake>>(async (conn, tx, token) =>
         {
+            await DropExhaustedWakesAsync(conn, tx, trackId, null, token).ConfigureAwait(false);
             var wakes = (await conn.QueryAsync<TrackWake>(new CommandDefinition(WakeSelect + $"""
                  WHERE track_id=@TrackId AND state='{TrackWakeStates.Pending}'
                    AND (target_session_id IS NULL OR target_session_id=@TargetSessionId)
@@ -94,6 +97,33 @@ public sealed partial class SqliteTrackStore : ITrackWakeStore
             return wakes.Select(w => w with { State = TrackWakeStates.Delivering, Attempts = w.Attempts + 1, UpdatedAtMs = now }).ToArray();
         }, ct);
 
+    private async Task DropExhaustedWakesAsync(SqliteConnection conn, SqliteTransaction tx,
+        string? trackId, string[]? ids, CancellationToken ct, bool includeDelivering = false)
+    {
+        var exhausted = (await conn.QueryAsync<TrackWake>(new CommandDefinition(WakeSelect +
+            (includeDelivering ? " WHERE state IN ('pending','delivering')" : " WHERE state='pending'") +
+            " AND attempts >= 3 AND (@TrackId IS NULL OR track_id=@TrackId)" +
+            (ids is null ? ";" : " AND id IN @Ids;"), new { TrackId = trackId, Ids = ids }, tx, cancellationToken: ct)).ConfigureAwait(false)).AsList();
+        var now = _timeProvider.GetUtcNow().ToUnixTimeMilliseconds();
+        foreach (var wake in exhausted)
+        {
+            var target = wake.TargetSessionId ?? await conn.ExecuteScalarAsync<string?>(new CommandDefinition(
+                "SELECT lead_session_id FROM tracks WHERE id=@TrackId;", new { wake.TrackId }, tx, cancellationToken: ct)).ConfigureAwait(false);
+            if (target is not null)
+            {
+                var item = new SessionItemDto(0, target, null, "system", JsonSerializer.SerializeToElement(new
+                {
+                    v = 1, content = wake.PayloadJson, wakeId = wake.Id, wakeKind = wake.Kind,
+                    status = "interrupted", archived = true, reason = "max_attempts_exceeded"
+                }), now);
+                await InsertSessionItemsAsync(conn, tx, wake.TrackId, [item], ct).ConfigureAwait(false);
+            }
+            await conn.ExecuteAsync(new CommandDefinition(
+                "UPDATE track_wakes SET state='dropped',reason='max_attempts_exceeded',updated_at_ms=@Now WHERE id=@Id;",
+                new { wake.Id, Now = now }, tx, cancellationToken: ct)).ConfigureAwait(false);
+        }
+    }
+
     public Task MarkDoneAsync(IReadOnlyList<TrackWake> batch, string reason, string turnId, CancellationToken ct) =>
         TransitionWakesAsync(batch, TrackWakeStates.Done, reason, turnId, ct);
     public Task MarkDroppedAsync(IReadOnlyList<TrackWake> batch, string reason, string? turnId, CancellationToken ct) =>
@@ -104,6 +134,8 @@ public sealed partial class SqliteTrackStore : ITrackWakeStore
         _writer.EnqueueAsync(async (conn, tx, token) =>
         {
             if (batch.Count == 0) return;
+            if (reason == "max_attempts_exceeded")
+                await DropExhaustedWakesAsync(conn, tx, null, batch.Select(w => w.Id).ToArray(), token, includeDelivering: true).ConfigureAwait(false);
             await conn.ExecuteAsync(new CommandDefinition($"""
                 UPDATE track_wakes SET state=@State, reason=@Reason, turn_id=COALESCE(@TurnId,turn_id), updated_at_ms=@Now
                 WHERE id IN @Ids AND state='{TrackWakeStates.Delivering}';
@@ -123,6 +155,7 @@ public sealed partial class SqliteTrackStore : ITrackWakeStore
         {
             var affected = (await conn.QueryAsync<string>(new CommandDefinition(
                 $"SELECT DISTINCT track_id FROM track_wakes WHERE state='{TrackWakeStates.Delivering}';", transaction: tx, cancellationToken: token)).ConfigureAwait(false)).AsList();
+            await DropExhaustedWakesAsync(conn, tx, null, null, token, includeDelivering: true).ConfigureAwait(false);
             await conn.ExecuteAsync(new CommandDefinition($"""
                 UPDATE track_wakes AS w SET state='{TrackWakeStates.Dropped}', reason='{TrackWakeReasons.BootSuperseded}', updated_at_ms=@Now
                 WHERE w.state='{TrackWakeStates.Delivering}' AND w.coalesce_key IS NOT NULL AND EXISTS (

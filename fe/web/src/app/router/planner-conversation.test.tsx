@@ -223,7 +223,7 @@ it('offers exactly the close, the resize edge, Send, the model picker, the role,
       .map((button) => button.getAttribute('aria-label') ?? button.textContent);
     /* Bootstrap declares no models, so the trigger reads `Model: Default` and no effort control appears; Cancel/Save live inside the closed popover. */
     expect([...names].sort()).toEqual([
-      'Attach an image', 'Cancel', 'Close conversation', 'Model: Default', 'Role: Member', 'Save', 'Send',
+      'Attach an image', 'Cancel', 'Close conversation', 'Model: Default', 'Role: Member', 'Save', 'Send', '会话操作',
     ]);
     /* One shell contract and one shared host edge serve the conversation layout. */
     expect(screen.getAllByRole('separator').map((edge) => edge.getAttribute('aria-label'))).toEqual(['Resize conversation']);
@@ -322,14 +322,26 @@ it('renders a server-sent reply from the history fixture', async () => {
     expect(await screen.findByText('reply 0')).toBeTruthy();
   });
 
-it('drops a completed tail thought when an optimistic message follows it', async () => {
+it('retires a completed tail thought through local send feedback and server history handoff', async () => {
     const thought = sessionItem(CARD.id, 1, '', 'thinking');
-    setup((request) => (request.path.includes('/items?') && !request.path.includes('view=')) ? ok(historyPage(conversationCardId(request.path), [thought])) : undefined);
+    let stored = false;
+    let accept!: () => void;
+    setup(request => {
+      if (request.path.endsWith('/messages')) return new Promise(resolve => {
+        accept = () => { stored = true; resolve(ok(sessionInput(CARD.id))); };
+      });
+      if (request.path.includes('/items?') && !request.path.includes('view=')) return ok(historyPage(conversationCardId(request.path),
+        [thought, ...(stored ? [sessionItem(CARD.id, 2, 'next message', 'user')] : [])]));
+      return undefined;
+    });
     await openConversation();
     expect(await screen.findByText('Thought')).toBeTruthy();
     const field = messageField();
     await typeInto(field, 'next message');
     await sendWithEnter(field);
+    expect(await screen.findByText('next message')).toBeTruthy();
+    expect(screen.queryByText('Thought')).toBeNull();
+    await act(async () => { accept(); await Promise.resolve(); });
     expect(await screen.findByText('next message')).toBeTruthy();
     expect(screen.queryByText('Thought')).toBeNull();
   });
@@ -386,14 +398,14 @@ it('pauses on failure and explicitly retries only the failed page', async () => 
     });
     await openConversation();
     await readEarlierWithInput();
-    await screen.findByRole('button', { name: 'Reload history' });
+    await screen.findByRole('button', { name: '刷新' });
     const reads = () => requests.filter(request => (request.path.includes('/items?') && !request.path.includes('view=')));
     expect(reads()).toHaveLength(2);
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 80)); });
     expect(reads()).toHaveLength(2);
     fail = false;
-    fireEvent.click(screen.getByRole('button', { name: 'Reload history' }));
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'Reload history' })).toBeNull());
+    fireEvent.click(screen.getByRole('button', { name: '刷新' }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: '刷新' })).toBeNull());
     expect(reads()).toHaveLength(3);
   });
 
@@ -468,11 +480,17 @@ it('surfaces send failures and prevents a second send while the first is pending
     await sendWithEnter(field);
     expect(requests.filter((request) => request.path.endsWith('/messages'))).toHaveLength(1);
     reject(new Error('send exploded'));
-    expect(within(await screen.findByRole('alert')).getByText('Delivery is unconfirmed.')).toBeTruthy();
+    expect(within(await screen.findByRole('alert')).getByText('发送结果未确认。')).toBeTruthy();
   });
 
 it('does not mark a message sent from an idle conversation as queued', async () => {
-    setup();
+    let stored = false;
+    setup(request => {
+      if (request.path.endsWith('/messages')) { stored = true; return ok(sessionInput(CARD.id)); }
+      if (request.path.includes('/items?') && !request.path.includes('view=')) return ok(historyPage(conversationCardId(request.path),
+        stored ? [sessionItem(CARD.id, 1, 'idle words', 'user')] : []));
+      return undefined;
+    });
     await openConversation();
     const field = messageField();
     await typeInto(field, 'idle words');
@@ -490,13 +508,18 @@ it('allows queuing while a v1 active turn is running and exposes Stop', async ()
   expect(requests.filter(request => request.path.endsWith('/messages'))).toHaveLength(0);
 });
 
-it('still closes the composer after an idle send until the server hands it back', async () => {
-    const { requests } = setup();
+it('holds the idle composer only while the send is unanswered', async () => {
+    let accept!: () => void;
+    const { requests } = setup(request => request.path.endsWith('/messages') ? new Promise(resolve => {
+      accept = () => resolve(ok(sessionInput(CARD.id)));
+    }) : undefined);
     await openConversation();
     await typeInto(messageField(), 'idle send');
     await sendWithEnter(messageField());
     await settleOneSend(requests);
     expect(messageField().getAttribute('contenteditable')).toBe('false');
+    await act(async () => { accept(); await Promise.resolve(); });
+    await waitFor(() => expect(messageField().getAttribute('contenteditable')).toBe('true'));
   });
 
 it('keeps Stop working, and offers nothing else beside it', async () => {
@@ -529,10 +552,10 @@ it('ticks the meta row from the run response\'s running turn', async () => {
       const meta = () => screen.getByRole('status', { name: 'Current response status' });
       const duration = () => meta().querySelector('[data-nc-meta-duration]')?.textContent ?? null;
       await waitFor(() => expect(duration()).toBe('· 18s'));
-      expect(meta().textContent).toContain('Running');
+      expect(meta().textContent).toContain('本轮生成中');
       act(() => { vi.advanceTimersByTime(2_000); });
       expect(duration()).toBe('· 20s');
-      /* Only one more second on the server's clock: the earlier anchor stands. */
+      /* The refreshed lastTurn owns the clock, including a corrected start time. */
       elapsed = 19_000;
       /* The refetched data reaches the store through TanStack's `setTimeout(0)` notify, which this clock does not fake. */
       await act(async () => {
@@ -540,7 +563,7 @@ it('ticks the meta row from the run response\'s running turn', async () => {
         await new Promise((resolve) => { setTimeout(resolve, 0); });
       });
       act(() => { vi.advanceTimersByTime(1_000); });
-      expect(duration()).toBe('· 21s');
+      expect(duration()).toBe('· 20s');
     } finally {
       vi.useRealTimers();
     }
@@ -677,7 +700,7 @@ it('keeps a v1 tool group expanded when a result arrives for its running call', 
   expect(header.getAttribute('aria-expanded')).toBe('true');
   rows = [...rows, toolResult(3, 'call-1', 'passed'), toolResult(4, 'call-2', 'done')];
   await act(async () => { await client.invalidateQueries({ queryKey: transcriptQueryKey() }); });
-  await waitFor(() => expect(within(group).queryByText('Running')).toBeNull());
+  await waitFor(() => expect(within(group).queryByText('本轮生成中')).toBeNull());
   expect(screen.getByRole('group', { name: '2 tool calls' })).toBe(group);
   expect(header.getAttribute('aria-expanded')).toBe('true');
 });

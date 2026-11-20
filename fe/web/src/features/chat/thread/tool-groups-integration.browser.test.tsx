@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import '../../../styles/entry.css';
 import { ChatThread } from './public.tsx';
+const RUNNING_TURN = Object.freeze({ id: 't1', sessionId: 'chat', turnIndex: 1, epoch: 1, triggerKind: 'user', status: 'running', startedAtMs: null });
 import { SYSTEM_PRESENTATION_LABELS,
   type Conversation, type ConversationActivity, type ConversationSystemEntry,
   type ConversationTurnOutcome,
@@ -57,7 +58,7 @@ describe('tool groups alongside quiet syncs and turn outcomes', () => {
   });
 
   it('keeps one live mark on the quiet summary even when its running tools are revealed', () => {
-    const { container } = render(<ChatThread hasPendingMessages={false} canContinue={false} cards={{}} stalled={false} conversation={conversation} pending turns={[
+    const { container } = render(<ChatThread hasPendingMessages={false} canContinue={false} cards={{}} stalled={false} conversation={conversation} lastSessionTurn={RUNNING_TURN} turns={[
       wake, activity('quiet-done'), activity('quiet-running', 'running'),
     ]} />);
     const fold = container.querySelector<HTMLDetailsElement>('[data-nc-turn="quiet-sync"]')!;

@@ -65,7 +65,7 @@ public sealed class SessionInputBatchRecoveryTests
                 }
                 if (interrupted)
                 {
-                    using var unlock = await reopened.Client.PostAsync($"/api/v1/sessions/{sessionId}/inputs/first/abandon", null);
+                    using var unlock = await reopened.Client.PostAsJsonAsync($"/api/v1/sessions/{sessionId}/recover", new { mode = "reset_context" });
                     Assert.Equal(HttpStatusCode.OK, unlock.StatusCode);
                     foreach (var id in new[] { "first", "second" })
                         Assert.NotNull((await store.SessionInputs.FindByIdAsync(sessionId, id, default))!.Receipt.ResolvedAtMs);

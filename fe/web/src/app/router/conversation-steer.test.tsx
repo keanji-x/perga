@@ -11,7 +11,7 @@ async function open() {
   await screen.findByText('Stored words');
 }
 function expectNoQueueControls() {
-  for (const name of ['Say it now', 'Edit queued message', 'Delete this message']) {
+  for (const name of ['立即插队', 'Edit queued message', '撤回']) {
     expect(screen.queryByRole('button', { name })).toBeNull();
   }
 }
