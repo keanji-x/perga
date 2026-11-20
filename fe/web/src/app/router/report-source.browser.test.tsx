@@ -17,6 +17,7 @@ import { createAppRouter } from './public.tsx';
 import { sourceResolutionOf } from './report-source.tsx';
 import { trackReportLinkUrl } from '../../../../core/domain/report.ts';
 import { bootTestCardRuntime } from './test-card-runtime.ts';
+import { queryKeys } from '../providers/query-keys.ts';
 import { withReadReceipts } from '../providers/read-receipts-fixture.tsx';
 
 const BOOM: ApiFailure = Object.freeze({ kind: 'http', status: 500, code: 'internal', message: 'boom' });
@@ -73,7 +74,7 @@ function setup(reply?: Reply) {
   const router = createAppRouter({ prepareReport: prepareReportDocument, transport: withReadReceipts(transport), unauthorized, client, cards: bootTestCardRuntime(), onSignOut: vi.fn() });
   router.update({ history: createMemoryHistory({ initialEntries: ['/track/w1'] }) });
   render(<QueryClientProvider client={client}><ThemeProvider><RouterProvider router={router} /></ThemeProvider></QueryClientProvider>);
-  return { requests };
+  return { requests, client };
 }
 
 const scrollIntoView = vi.fn();
@@ -318,6 +319,30 @@ describe('the source panel on the track page', () => {
     await userEvent.keyboard('{Escape}');
     await waitFor(() => expect(source.isConnected).toBe(false));
     await expect.element(citation).toHaveFocus();
+  });
+
+  it('returns focus to the report if a refresh removes the source citation', async () => {
+    let updated = false;
+    const { client } = setup(request => {
+      if (!updated || request.path !== '/api/v1/tracks/w1') return undefined;
+      const blocks = [{ ...REPORT.blocks[0], rev: 2, markdown: 'The report was updated.' }];
+      return ok(fixtureSnapshot(TRACK, [PLANNER_CARD], { ...REPORT, docRev: 2, blocks }));
+    });
+    const citation = page.getByRole('button', { name: 'Mikko 日志' });
+    await citation.click();
+    const source = page.getByRole('region', { name: SOURCE_ROW.title });
+    await expect.element(source).toHaveFocus();
+
+    updated = true;
+    await client.invalidateQueries({ queryKey: queryKeys.trackDetail(TRACK.id) });
+    await expect.element(page.getByText('The report was updated.', { exact: true })).toBeVisible();
+    await expect.element(citation).not.toBeInTheDocument();
+    await expect.element(source).toHaveFocus();
+    await userEvent.keyboard('{Escape}');
+    await expect.element(source).not.toBeInTheDocument();
+
+    const report = page.getByRole('region', { name: 'Track report' }).getByRole('article');
+    expect(document.activeElement).toBe(report.element());
   });
 
   it('says a dangling citation is missing, with its destination, instead of failing', async () => {

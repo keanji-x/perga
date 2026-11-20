@@ -48,8 +48,12 @@ export function ReportSourceReader({ selection, onClose, ...panel }: Omit<Report
   const reader = useRef<HTMLDivElement>(null);
   useEffect(() => { reader.current?.focus(); }, [selection]);
   const close = () => {
-    const { opener } = selection;
-    if (reader.current?.contains(document.activeElement) && opener?.isConnected) opener.focus();
+    const source = reader.current;
+    if (source?.contains(document.activeElement)) {
+      const { opener } = selection;
+      if (opener?.isConnected) opener.focus();
+      if (document.activeElement !== opener) source.closest<HTMLElement>('[data-nc-report]')?.focus();
+    }
     onClose();
   };
   return <CardFrame ref={reader} role="region" aria-label={reportSourcePanelTitle(panel.resolution)} tabIndex={-1}
