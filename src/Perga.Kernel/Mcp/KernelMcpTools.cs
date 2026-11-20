@@ -24,6 +24,7 @@ public static class KernelMcpToolNames
     public const string TerminalOpen = "perga_terminal_open";
     public const string TerminalRead = "perga_terminal_read";
     public const string TerminalInput = "perga_terminal_input";
+    public const string ScheduleLs = "perga_schedule_ls";
 
     // Governance tools (BoundAttemptId == null ONLY)
     public const string TaskCancel = "perga_task_cancel";
@@ -36,6 +37,8 @@ public static class KernelMcpToolNames
     public const string TemplateUpdateInputs = "perga_template_update_inputs";
     public const string TrackSet = "perga_track_set";
     public const string TrackClose = "perga_track_close";
+    public const string ScheduleSet = "perga_schedule_set";
+    public const string ScheduleRm = "perga_schedule_rm";
 
     // Contract completion tools (BoundAttemptId != null ONLY)
     public const string TaskDone = "perga_task_done";
@@ -61,12 +64,15 @@ public static class KernelMcpToolNames
         TerminalOpen,
         TerminalRead,
         TerminalInput,
+        ScheduleLs,
         TaskCancel,
         TaskAccept,
         TaskReject,
         MailSend,
         TrackRename,
         TrackClose,
+        ScheduleSet,
+        ScheduleRm,
         TemplateLs,
         TemplateCat,
         TemplateUpdateInputs,
@@ -113,7 +119,9 @@ public static class KernelMcpCatalog
         KernelMcpToolNames.TemplateLs or
         KernelMcpToolNames.TemplateCat or
         KernelMcpToolNames.TemplateUpdateInputs or
-        KernelMcpToolNames.TrackSet;
+        KernelMcpToolNames.TrackSet or
+        KernelMcpToolNames.ScheduleSet or
+        KernelMcpToolNames.ScheduleRm;
 
     public static bool IsCompletionOnly(string toolName) => toolName is
         KernelMcpToolNames.TaskDone or
@@ -157,6 +165,12 @@ public static class KernelMcpCatalog
                 Schema(KernelMcpReportSupport.TerminalReadSchemaJson)),
             new(KernelMcpToolNames.TerminalInput, "Send text, keys, paste, or submit action to a terminal.",
                 Schema(KernelMcpReportSupport.TerminalInputSchemaJson)),
+            new(KernelMcpToolNames.ScheduleLs, "List durable schedules and reminders configured on this track.",
+                Schema("""{"type":"object","additionalProperties":false,"properties":{"includeTerminal":{"type":"boolean"}}}""")),
+            new(KernelMcpToolNames.ScheduleSet, "Create or update a persistent one-shot reminder or recurring cron schedule that wakes this track (governance only).",
+                Schema("""{"type":"object","additionalProperties":false,"required":["title","prompt"],"properties":{"id":{"type":"string"},"title":{"type":"string"},"prompt":{"type":"string"},"runAt":{"type":"string"},"runAtMs":{"type":"integer"},"cron":{"type":"string"},"timezone":{"type":"string"},"maxOccurrences":{"type":"integer","minimum":1}}}""")),
+            new(KernelMcpToolNames.ScheduleRm, "Cancel an active schedule on this track and drop any pending wake for it (governance only).",
+                Schema("""{"type":"object","additionalProperties":false,"required":["scheduleId"],"properties":{"scheduleId":{"type":"string"}}}""")),
             new(KernelMcpToolNames.TaskCancel, "Cancel a task and discard any active attempt lease (governance only).",
                 Schema("""{"type":"object","required":["taskKey"],"properties":{"taskKey":{"type":"string"},"reason":{"type":"string"}}}""")),
             new(KernelMcpToolNames.TaskAccept, "Record semantic acceptance verdict on a task (governance only).",
@@ -467,6 +481,37 @@ public static class KernelMcpDispatcher
                 return JsonHelpers.ToElement(res);
             }
 
+            case KernelMcpToolNames.ScheduleLs:
+            {
+                RejectUnknownArgs(args, ["includeTerminal"]);
+                var includeTerminal = false;
+                if (JsonHelpers.TryGetPropertyIgnoreCase(args, ["includeTerminal"], out var inc) &&
+                    inc.ValueKind != JsonValueKind.Null)
+                {
+                    if (inc.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+                        throw KernelException.InvalidArgument("'includeTerminal' must be a boolean.");
+                    includeTerminal = inc.GetBoolean();
+                }
+
+                var schedules = await kernel.ListTrackSchedulesAsync(caller.TrackId, includeTerminal, ct).ConfigureAwait(false);
+                return JsonHelpers.ToElement(new { schedules });
+            }
+
+            case KernelMcpToolNames.ScheduleSet:
+            {
+                var req = ParseScheduleSetArgs(args);
+                var schedule = await kernel.SetTrackScheduleAsync(caller.TrackId, req, ct).ConfigureAwait(false);
+                return JsonHelpers.ToElement(schedule);
+            }
+
+            case KernelMcpToolNames.ScheduleRm:
+            {
+                RejectUnknownArgs(args, ["scheduleId"]);
+                var scheduleId = RequireStringArg(args, ["scheduleId"]);
+                var canceled = await kernel.CancelTrackScheduleAsync(caller.TrackId, scheduleId, ct).ConfigureAwait(false);
+                return JsonHelpers.ToElement(new { scheduleId, canceled });
+            }
+
             case KernelMcpToolNames.TaskDone:
             {
                 JsonElement? workerResult = JsonHelpers.TryGetPropertyIgnoreCase(args, ["result", "workerResult", "worker_result"], out var wr)
@@ -496,6 +541,77 @@ public static class KernelMcpDispatcher
     private static long? OptionalInt64Arg(JsonElement args, string name) =>
         JsonHelpers.TryGetPropertyIgnoreCase(args, [name], out var value) && value.ValueKind == JsonValueKind.Number &&
         value.TryGetInt64(out var parsed) ? parsed : null;
+
+    private static void RejectUnknownArgs(JsonElement args, ReadOnlySpan<string> allowedKeys)
+    {
+        if (args.ValueKind != JsonValueKind.Object)
+            throw KernelException.InvalidArgument("Tool arguments must be a JSON object.");
+        foreach (var prop in args.EnumerateObject())
+        {
+            var matched = false;
+            foreach (var allowed in allowedKeys)
+            {
+                if (string.Equals(prop.Name, allowed, StringComparison.OrdinalIgnoreCase))
+                {
+                    matched = true;
+                    break;
+                }
+            }
+
+            if (!matched)
+                throw KernelException.InvalidArgument(
+                    $"Unknown argument '{prop.Name}'. Allowed arguments: {string.Join(", ", allowedKeys.ToArray())}.");
+        }
+    }
+
+    private static string? OptionalTypedStringArg(JsonElement args, ReadOnlySpan<string> keys)
+    {
+        if (!JsonHelpers.TryGetPropertyIgnoreCase(args, keys, out var elem) || elem.ValueKind == JsonValueKind.Null)
+            return null;
+        if (elem.ValueKind != JsonValueKind.String)
+            throw KernelException.InvalidArgument($"'{keys[0]}' must be a string.");
+        return elem.GetString();
+    }
+
+    private static SetTrackScheduleRequest ParseScheduleSetArgs(JsonElement args)
+    {
+        RejectUnknownArgs(args, ["id", "title", "prompt", "runAt", "runAtMs", "cron", "timezone", "maxOccurrences"]);
+        var id = OptionalTypedStringArg(args, ["id"]);
+        var title = RequireStringArg(args, ["title"]);
+        var prompt = RequireStringArg(args, ["prompt"]);
+        var cron = OptionalTypedStringArg(args, ["cron"]);
+        var timezone = OptionalTypedStringArg(args, ["timezone"]);
+        var runAt = OptionalTypedStringArg(args, ["runAt"]);
+
+        long? runAtMs = null;
+        if (JsonHelpers.TryGetPropertyIgnoreCase(args, ["runAtMs"], out var msElem) &&
+            msElem.ValueKind != JsonValueKind.Null)
+        {
+            if (msElem.ValueKind != JsonValueKind.Number || !msElem.TryGetInt64(out var parsedMs))
+                throw KernelException.InvalidArgument("'runAtMs' must be an integer Unix millisecond timestamp.");
+            runAtMs = parsedMs;
+        }
+
+        int? maxOccurrences = null;
+        if (JsonHelpers.TryGetPropertyIgnoreCase(args, ["maxOccurrences"], out var maxElem) &&
+            maxElem.ValueKind != JsonValueKind.Null)
+        {
+            if (maxElem.ValueKind != JsonValueKind.Number || !maxElem.TryGetInt32(out var parsedMax) || parsedMax < 1)
+                throw KernelException.InvalidArgument("'maxOccurrences' must be an integer >= 1.");
+            maxOccurrences = parsedMax;
+        }
+
+        return new SetTrackScheduleRequest(
+            Title: title,
+            Prompt: prompt,
+            Id: id,
+            CronExpr: cron,
+            RunAtMs: runAtMs,
+            Timezone: timezone,
+            MaxOccurrences: maxOccurrences,
+            SourceKind: TrackScheduleSources.Agent,
+            RunAt: runAt);
+    }
 
     private static ReportCommitRequest ParseReportCommitArgs(JsonElement args)
     {

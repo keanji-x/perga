@@ -239,6 +239,7 @@ export function createRouteTree(deps: AppRouterDeps): AnyRoute {
       const go = useGo();
       return <DailyTodayRoute pergaMode={pergaMode} transport={transport} unauthorized={unauthorized} selectedDate={day}
         onOpenTrack={(trackId) => go({ name: 'track', trackId })}
+        onSelectDate={(nextDay) => go({ name: 'today', day: nextDay })}
         renderTrack={(detail, evidence, panelContent, intro, supervisor, center) => <TrackRouteBody showWorkspaceIsolation={false} center={center} reportHeader={supervisor} reportEmpty={pergaMode ? null : <TodayReportEmpty />} mobileReportIntro={intro} panelContent={panelContent} reportEvidence={evidence} key={detail.track.id} prepareReport={prepareReport} transport={transport} unauthorized={unauthorized}
           snapshot={detail} cardRuntime={cards} recentFiles={recentFiles} pergaMode={pergaMode} />} />;
     },
@@ -1753,8 +1754,8 @@ function TrackRouteBody({
       shareLinks={!isPergaTrack && shareAccess === null ? <TrackShareLinks trackId={track.id} areaId={track.areaId} shareable={shareable} transport={transport} unauthorized={unauthorized} /> : undefined}
       onShareTrack={shareable && openShare !== null ? origin => openShare({ scope: { kind: 'track', id: track.id }, title: track.title, origin }) : undefined}
       progressDisclosure={progressDisclosure}
-      panelHeader={pergaMode && centerActive && panelContent !== undefined && panelContent !== null ? <div className={dailyStyles.calendarPanel}>{panelContent}</div> : undefined}
-      panelContent={pergaMode && centerActive ? <div className={dailyStyles.reportPanel}>{reportPresentation.visible?.preparation.kind !== 'empty' ? <PanelModule title="Daily report" icon="file">{reportRegion}</PanelModule> : reportRegion}</div> : panelContent}
+      panelHeader={pergaMode && panelContent !== undefined ? <div className={dailyStyles.calendarPanel}>{panelContent}</div> : undefined}
+      panelContent={pergaMode ? (centerActive && reportPresentation.visible?.preparation.kind !== 'empty' ? <div className={dailyStyles.reportPanel}><PanelModule title="Daily report" icon="file">{reportRegion}</PanelModule></div> : undefined) : panelContent}
       mobileReportIntro={mobileReportIntro}
       mobilePanelObscured={(!centerActive && chat.isOpen) || sourceOpen}
       mobileHeaderActionsHost={mobileHeaderActionsHost}

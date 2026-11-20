@@ -66,7 +66,7 @@ public sealed class TrackMailRecoveryTests
             await using (var db = new SqliteConnection($"Data Source={path};Pooling=False"))
             {
                 await db.OpenAsync();
-                Assert.Equal(17, await db.ExecuteScalarAsync<int>("SELECT MAX(version) FROM schema_migrations;"));
+                Assert.Equal(18, await db.ExecuteScalarAsync<int>("SELECT MAX(version) FROM schema_migrations;"));
                 Assert.Equal(0, await db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM mails WHERE wake_pending=1;"));
                 var json = await db.QuerySingleAsync<string>("SELECT payload_json FROM track_wakes;");
                 using var payload = JsonDocument.Parse(json);

@@ -8,11 +8,17 @@ public static class TrackWakeRequests
 {
     public const string BootPrompt = "System boot reconciliation completed: previous in-flight session turns and task attempts were marked interrupted and temporary workspace leases were discarded. Review track status and decide next steps.";
     public const string MailKeyPrefix = "mail:";
+    public const string TrackScheduleKeyPrefix = "track_schedule:";
     public const string SystemUpgradeMailIdPrefix = "system-upgrade:";
     public const string SystemUpgradeMailKeyPrefix = MailKeyPrefix + SystemUpgradeMailIdPrefix;
 
     public static string MailKey(string mailId) => MailKeyPrefix + mailId;
     public static string ScheduleKey(string scheduleId) => "schedule:" + scheduleId;
+    public static string TrackScheduleKey(string scheduleId) =>
+        TrackScheduleKeyPrefix + scheduleId;
+    public static bool IsTrackScheduleWake(TrackWake wake) =>
+        wake.Kind == TrackWakeKinds.Schedule &&
+        wake.CoalesceKey?.StartsWith(TrackScheduleKeyPrefix, StringComparison.Ordinal) == true;
     public static string SystemUpgradeMailId(string jobId) => SystemUpgradeMailIdPrefix + jobId;
     public static bool IsSystemUpgradeMail(TrackWake wake) => TryGetSystemUpgradeMailId(wake, out _);
 
@@ -30,6 +36,10 @@ public static class TrackWakeRequests
         new(trackId, kind, key, JsonSerializer.SerializeToElement(new { prompt, presentation }));
     public static TrackWakeRequest Schedule(string trackId, string scheduleId) =>
         new(trackId, TrackWakeKinds.Schedule, ScheduleKey(scheduleId), JsonSerializer.SerializeToElement(new { scheduleId }));
+    public static TrackWakeRequest DynamicSchedule(string trackId, string scheduleId, string prompt) =>
+        new(trackId, TrackWakeKinds.Schedule, TrackScheduleKey(scheduleId),
+            JsonSerializer.SerializeToElement(new { scheduleId, prompt, presentation = TrackWakePresentations.System }),
+            TargetSessionId: null);
     public static TrackWakeRequest Mail(MailDto mail) => Prompt(mail.ToTrackId, TrackWakeKinds.Mail, MailKey(mail.Id),
         $"New cross-track mail '{mail.Id}' from track '{mail.FromTrackId}': {mail.Summary}\n\n{mail.Body}", TrackWakePresentations.SystemMail);
     public static TrackWakeRequest TaskSettled(TaskDto task, TaskAttemptDto attempt, string? prompt = null) => Prompt(task.TrackId,
