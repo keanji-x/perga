@@ -1,5 +1,3 @@
-using Perga.AgentKit;
-
 namespace Perga.Kernel;
 
 public sealed record KernelOptions
@@ -15,10 +13,6 @@ public sealed record KernelOptions
     public TimeSpan ActorIdleTimeout { get; init; } = TimeSpan.FromMinutes(10);
     public TimeSpan ActorEvictionSweepInterval { get; init; } = TimeSpan.FromMinutes(1);
     public double AutoCompactionThreshold { get; init; } = 0.80;
-    public OsSandboxMode LeadSandboxMode { get; init; } = OsSandboxMode.None;
-    public OsSandboxMode FreeSubagentSandboxMode { get; init; } = OsSandboxMode.None;
-    public OsSandboxMode ReadOnlyTaskSandboxMode { get; init; } = OsSandboxMode.ReadOnlyBwrap;
-    public OsSandboxMode ReadWriteTaskSandboxMode { get; init; } = OsSandboxMode.WorkspaceWriteBwrap;
     public string McpBaseUri { get; init; } = "http://127.0.0.1:5000";
     public bool DispatchWakesInBackground { get; init; } = false;
     public int DefaultHookTimeoutSecs { get; init; } = 300;

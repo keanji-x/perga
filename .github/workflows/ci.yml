@@ -38,6 +38,18 @@ jobs:
       - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
         with:
           dotnet-version: '11.0.x'
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: tools/perga-oar-bridge/package-lock.json
+      - name: Test and build OAR bridge
+        working-directory: tools/perga-oar-bridge
+        run: |
+          npm ci
+          npm run typecheck
+          npm run build
+          npm test
       - name: Install Jujutsu for .NET tests
         run: |
           # The VCS suite exercises discovery in ~/.local/bin with PATH overridden.

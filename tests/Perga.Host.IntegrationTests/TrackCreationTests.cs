@@ -116,7 +116,7 @@ public sealed class TrackCreationTests
             Assert.Equal(HttpStatusCode.Accepted, firstMsg.StatusCode);
             using var update = await host.Client.PutAsJsonAsync($"/api/v1/sessions/{sessionId}/model", new { model = "B", reasoningEffort = "high" });
             update.EnsureSuccessStatusCode();
-            using var permission = await host.Client.PutAsJsonAsync($"/api/v1/sessions/{sessionId}/permission-mode", new { permissionMode = "ask" });
+            using var permission = await host.Client.PutAsJsonAsync($"/api/v1/sessions/{sessionId}/permission-mode", new { permissionMode = "full" });
             permission.EnsureSuccessStatusCode();
             Assert.Empty(host.AgentRuntime.ExecutedTurns);
         }
@@ -126,7 +126,7 @@ public sealed class TrackCreationTests
         var execution = Assert.Single(host.AgentRuntime.ExecutedTurns);
         Assert.Equal("A", execution.Spec.Model);
         Assert.Equal("low", execution.Spec.ReasoningEffort);
-        Assert.Equal("ask", execution.Spec.PermissionMode);
+        Assert.Equal("full", execution.Spec.PermissionMode);
         var desired = Assert.Single(await kernel.ListSessionsAsync(trackId));
         Assert.Equal("B", desired.Model);
         Assert.Equal("high", desired.ReasoningEffort);

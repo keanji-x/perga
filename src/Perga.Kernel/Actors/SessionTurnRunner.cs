@@ -110,13 +110,12 @@ public sealed partial class TrackActor
                     startup.CancelAfter(actor._options.SessionStartupTimeout);
                     using var startupDeadline = CancellationTokenSource.CreateLinkedTokenSource(ct, startup.Token);
                     startupDeadline.Token.ThrowIfCancellationRequested();
-                    prepared = await PrepareDispatchCoreAsync(work, executionSession, prompt, policyAdmission, startupDeadline.Token).ConfigureAwait(false);
+                    (prepared, workerSettings) = await PrepareTurnDispatchCoreAsync(
+                        work, executionSession, workerSettings, prompt, policyAdmission, startupDeadline.Token).ConfigureAwait(false);
                     // Preparation may persist identity and usage from a compacted or reopened
                     // provider. Activate that durable snapshot, rather than the pre-claim copy.
                     runningSession = actor.RequireSessionCore(sessionId) with { Status = "running", UpdatedAtMs = now };
                     runningEvent = actor.SessionUpdatedEvent(runningSession);
-                    if (workerSettings is not null)
-                        workerSettings = actor.ResolveWorkerTurnSettingsCore(executionSession, workerSettings);
                 }
                 catch (Exception ex)
                 {
@@ -145,6 +144,42 @@ public sealed partial class TrackActor
                 actor._scheduler.EndStartup(sessionId);
             }
         }, actor._actorShutdownCts.Token);
+
+        private async Task<(PreparedDispatch Prepared, WorkerSettings? WorkerSettings)> PrepareTurnDispatchCoreAsync(
+            ITurnWorkItem work, AgentSessionDto executionSession, WorkerSettings? workerSettings,
+            string prompt, TurnPolicyAdmission policyAdmission, CancellationToken ct)
+        {
+            if (workerSettings is null)
+                return (await PrepareDispatchCoreAsync(work, executionSession, prompt, policyAdmission, ct).ConfigureAwait(false), null);
+
+            var dispatchSession = executionSession;
+            var resolvedBeforeOpen = actor.ResolveWorkerTurnSettingsCore(executionSession, workerSettings);
+            var hasHandle = actor._openSessionHandles.TryGetValue(executionSession.Id, out var existingHandle);
+            var needsExplicitDispatch =
+                workerSettings.Model is not null || workerSettings.ReasoningEffort is not null ||
+                (hasHandle && (existingHandle!.Selection.Model is SessionSelection.Explicit || existingHandle.Selection.Effort is SessionSelection.Explicit)) ||
+                (workerSettings.Version > 0 && !hasHandle);
+            if (needsExplicitDispatch)
+                dispatchSession = executionSession with { Model = resolvedBeforeOpen.Model, ReasoningEffort = resolvedBeforeOpen.ReasoningEffort };
+
+            var prepared = await PrepareDispatchCoreAsync(work, dispatchSession, prompt, policyAdmission, ct).ConfigureAwait(false);
+            var resolved = actor.ResolveWorkerTurnSettingsCore(executionSession, workerSettings);
+            var activeConfig = prepared.AgentSession.ConfigurationState;
+            var effectiveModel = activeConfig?.NativeModel ?? activeConfig?.Selection.Model.ValueOrNull;
+            var effectiveEffort = activeConfig?.NativeEffort ?? activeConfig?.Selection.Effort.ValueOrNull;
+            var mismatch =
+                (!string.IsNullOrWhiteSpace(resolved.Model) && !string.Equals(resolved.Model, effectiveModel, StringComparison.Ordinal)) ||
+                (!string.IsNullOrWhiteSpace(resolved.ReasoningEffort) && !string.Equals(resolved.ReasoningEffort, effectiveEffort, StringComparison.Ordinal));
+            if (mismatch &&
+                (!string.Equals(dispatchSession.Model, resolved.Model, StringComparison.Ordinal) ||
+                 !string.Equals(dispatchSession.ReasoningEffort, resolved.ReasoningEffort, StringComparison.Ordinal)))
+            {
+                dispatchSession = executionSession with { Model = resolved.Model, ReasoningEffort = resolved.ReasoningEffort };
+                prepared = await PrepareDispatchCoreAsync(work, dispatchSession, prompt, policyAdmission, ct).ConfigureAwait(false);
+            }
+
+            return (prepared, resolved);
+        }
 
         private async Task<PreparedDispatch> PrepareDispatchCoreAsync(ITurnWorkItem work, AgentSessionDto session,
             string prompt, TurnPolicyAdmission policyAdmission, CancellationToken ct)

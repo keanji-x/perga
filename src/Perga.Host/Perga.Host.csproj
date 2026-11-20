@@ -12,4 +12,10 @@
   <ItemGroup>
     <PackageReference Include="Cronos" Version="0.9.0" />
   </ItemGroup>
+  <ItemGroup Condition="Exists('..\..\tools\perga-oar-bridge\dist\perga-oar-bridge.mjs')">
+    <Content Include="..\..\tools\perga-oar-bridge\dist\perga-oar-bridge.mjs"
+             Link="oar-bridge\perga-oar-bridge.mjs"
+             CopyToOutputDirectory="PreserveNewest"
+             CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>

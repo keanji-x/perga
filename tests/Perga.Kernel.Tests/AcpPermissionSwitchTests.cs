@@ -12,124 +12,6 @@ public sealed class AcpPermissionSwitchTests
         [new("plan", "Plan", "", "neutral", true), new("act", "Act", "", "warning")];
 
     [Theory]
-    [InlineData(false, "message")]
-    [InlineData(true, "message")]
-    [InlineData(false, "wake")]
-    [InlineData(true, "wake")]
-    [InlineData(false, "compact")]
-    [InlineData(true, "compact")]
-    public async Task RemovedAppliedModeRejectsReuseAndDisposesBeforeDispatch(bool removeCategory, string operation)
-    {
-        using var fixture = new Perga.AgentKit.Tests.MockCliFixture();
-        var log = Path.Combine(fixture.RootDir, "reuse.jsonl");
-        var pidFile = Path.Combine(fixture.RootDir, "acp.pid");
-        await using var runtime = new AgentRuntime(new AgentRuntimeOptions
-        {
-            ProviderOverrides = new Dictionary<string, ProviderCommandOverride>
-            {
-                ["acp:opencode"] = new(fixture.MockAcpPath, Env: new Dictionary<string, string>
-                {
-                    ["MOCK_ACP_LOG"] = log,
-                    ["MOCK_ACP_PID_FILE"] = pidFile,
-                    ["MOCK_ACP_MODELS"] = """{"modes":{"availableModes":[{"id":"safe"},{"id":"act"}]}}""",
-                    ["MOCK_ACP_PERMISSION_UPDATE"] = removeCategory ? """{"configOptions":[]}"""
-                        : """{"configOptions":[{"id":"policy","category":"mode","type":"select","options":[{"value":"safe"}]}]}"""
-                })
-            }
-        });
-        await using var ctx = new KernelTestContext(agentRuntime: runtime);
-        var area = await ctx.Kernel.CreateAreaAsync(new("Removed modes", DefaultCwd: fixture.WorkspaceDir));
-        var snap = await ctx.Kernel.CreateTrackAsync(new(AreaId: area.Id, Provider: "acp:opencode", PermissionMode: "act"));
-        var id = snap.Track.LeadSessionId!;
-        await ctx.Kernel.UpdateSessionModelAsync(id, new("test-model"));
-        Assert.Equal("completed", (await ctx.SendAndWaitForTurnAsync(id, new("first", "first"))).Status);
-        using var process = System.Diagnostics.Process.GetProcessById(int.Parse(File.ReadAllText(pidFile)));
-        if (operation == "message")
-            Assert.Equal("failed", (await ctx.SendAndWaitForTurnAsync(id, new("next", "next"))).Status);
-        else if (operation == "compact")
-            await Assert.ThrowsAsync<ArgumentException>(() => ctx.Kernel.CompactSessionAsync(id));
-        else
-        {
-            await ctx.Store.TrackWakes.EnqueueAsync(TrackWakeRequests.Prompt(snap.Track.Id, "mail", "mail:test", "notice"), default);
-            await Assert.ThrowsAsync<ArgumentException>(() => ctx.Kernel.Actors.GetOrActivate(snap.Track.Id).PokeLeadAsync());
-        }
-        await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
-        Assert.Single(ReadCalls(), call => call.GetProperty("method").GetString() == "session/prompt");
-        Assert.Equal("act", (await ctx.Kernel.ListSessionsAsync(snap.Track.Id)).Single().PermissionMode);
-        // No old handle/catalogue remains. A legal cold correction resumes a fresh process.
-        await ctx.Kernel.SetSessionPermissionModeAsync(id, "safe");
-        Assert.Equal("completed", (await ctx.SendAndWaitForTurnAsync(id, new("retry", "retry"))).Status);
-        Assert.Equal(2, ReadCalls().Count(call => call.GetProperty("method").GetString() == "initialize"));
-
-        System.Text.Json.JsonElement[] ReadCalls() => File.ReadAllLines(log)
-            .Select(line => System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(line)).ToArray();
-    }
-
-    [Theory]
-    [InlineData("act")]
-    [InlineData(null)]
-    public async Task UnchangedValidSettingsReuseWithoutSettingsRpcOrReopen(string? mode)
-    {
-        using var fixture = new Perga.AgentKit.Tests.MockCliFixture();
-        var log = Path.Combine(fixture.RootDir, "unchanged.jsonl");
-        await using var runtime = new AgentRuntime(new AgentRuntimeOptions
-        {
-            ProviderOverrides = new Dictionary<string, ProviderCommandOverride>
-            {
-                ["acp:opencode"] = new(fixture.MockAcpPath, Env: new Dictionary<string, string>
-                {
-                    ["MOCK_ACP_LOG"] = log,
-                    ["MOCK_ACP_MODELS"] = """{"modes":{"availableModes":[{"id":"safe"},{"id":"act"}]}}"""
-                })
-            }
-        });
-        await using var ctx = new KernelTestContext(agentRuntime: runtime);
-        var area = await ctx.Kernel.CreateAreaAsync(new("Stable modes", DefaultCwd: fixture.WorkspaceDir));
-        var snap = await ctx.Kernel.CreateTrackAsync(new(AreaId: area.Id, Provider: "acp:opencode", PermissionMode: mode));
-        var id = snap.Track.LeadSessionId!;
-        Assert.Equal("completed", (await ctx.SendAndWaitForTurnAsync(id, new("first", "first"))).Status);
-        var before = File.ReadAllLines(log).Length;
-        Assert.Equal("completed", (await ctx.SendAndWaitForTurnAsync(id, new("next", "next"))).Status);
-        var extra = File.ReadAllLines(log).Skip(before).ToArray();
-        var prompt = Assert.Single(extra);
-        Assert.Equal("session/prompt", System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(prompt).GetProperty("method").GetString());
-    }
-
-    [Fact]
-    public async Task ProviderNotificationRefreshesHotPutValidationAndReconciliation()
-    {
-        using var fixture = new Perga.AgentKit.Tests.MockCliFixture();
-        var log = Path.Combine(fixture.RootDir, "kernel-settings.jsonl");
-        await using var runtime = new AgentRuntime(new AgentRuntimeOptions
-        {
-            ProviderOverrides = new Dictionary<string, ProviderCommandOverride>
-            {
-                ["acp:opencode"] = new(fixture.MockAcpPath, Env: new Dictionary<string, string>
-                {
-                    ["MOCK_ACP_LOG"] = log,
-                    ["MOCK_ACP_MODELS"] = """{"modes":{"availableModes":[{"id":"safe"},{"id":"act"}]}}""",
-                    ["MOCK_ACP_PERMISSION_UPDATE"] = """{"configOptions":[{"id":"new-policy","category":"mode","type":"select","options":[{"value":"safe"},{"value":"extra"}]}]}"""
-                })
-            }
-        });
-        await using var ctx = new KernelTestContext(agentRuntime: runtime);
-        var area = await ctx.Kernel.CreateAreaAsync(new("Dynamic modes", DefaultCwd: fixture.WorkspaceDir));
-        var snap = await ctx.Kernel.CreateTrackAsync(new(AreaId: area.Id, Provider: "acp:opencode", PermissionMode: "safe"));
-        var id = snap.Track.LeadSessionId!;
-        Assert.Equal("completed", (await ctx.SendAndWaitForTurnAsync(id, new("first", "first"))).Status);
-        await ctx.Kernel.SetSessionPermissionModeAsync(id, "extra");
-        var error = await Assert.ThrowsAsync<KernelException>(() => ctx.Kernel.SetSessionPermissionModeAsync(id, "act"));
-        Assert.Equal(KernelErrorCode.InvalidArgument, error.Code);
-        Assert.Equal("extra", (await ctx.Store.LoadTrackAggregateAsync(snap.Track.Id, default))!.Sessions.Single().PermissionMode);
-        Assert.Equal("completed", (await ctx.SendAndWaitForTurnAsync(id, new("next", "next"))).Status);
-        var calls = File.ReadAllLines(log).Select(line => System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(line)).ToArray();
-        Assert.Single(calls, call => call.GetProperty("method").GetString() == "session/new");
-        var switched = Assert.Single(calls, call => call.GetProperty("method").GetString() == "session/set_config_option");
-        Assert.Equal("new-policy", switched.GetProperty("params").GetProperty("configId").GetString());
-        Assert.Equal("extra", switched.GetProperty("params").GetProperty("value").GetString());
-    }
-
-    [Theory]
     [InlineData("message")]
     [InlineData("wake")]
     [InlineData("compact")]
@@ -162,7 +44,7 @@ public sealed class AcpPermissionSwitchTests
     }
 
     [Theory]
-    [InlineData("codex", "ask")]
+    [InlineData("codex", "full")]
     [InlineData("claude", "plan")]
     public async Task NativePermissionPutRetainsIdleProcessUntilNextDispatch(string provider, string mode)
     {
@@ -315,18 +197,13 @@ public sealed class AcpPermissionSwitchTests
     [InlineData("missing")]
     [InlineData("provider")]
     [InlineData("session")]
-    [InlineData("sandbox")]
     [InlineData("cwd")]
-    [InlineData("overlay")]
     public async Task ColdAndHotSettingsNeverProbeOrBlockDrain(string change)
     {
         await using var ctx = new KernelTestContext(new KernelOptions
         {
-            LeadSandboxMode = OsSandboxMode.ReadOnlyBwrap,
-            FreeSubagentSandboxMode = OsSandboxMode.WorkspaceWriteBwrap,
             ActorEvictionSweepInterval = TimeSpan.Zero
         });
-        ctx.DirectDriver.OverlayLayersToInject = [new(["/lower"], "/upper", "/work", "/merged")];
         var area = await ctx.Kernel.CreateAreaAsync(new("Modes"));
         var snap = await ctx.Kernel.CreateTrackAsync(new(AreaId: area.Id, Provider: "acp:custom"));
         var id = snap.Track.LeadSessionId!;
@@ -346,14 +223,6 @@ public sealed class AcpPermissionSwitchTests
             case "cwd":
                 ctx.DirectDriver.VerifyMountOnAccess = true;
                 ctx.DirectDriver.OverrideMountedMergedCwd = "/changed";
-                break;
-            case "overlay":
-                ctx.DirectDriver.VerifyMountOnAccess = true;
-                ctx.DirectDriver.OverlayLayersToInject = [new(["/changed-lower"], "/upper", "/work", "/merged")];
-                break;
-            case "sandbox":
-                var sub = await ctx.Kernel.CreateSubagentSessionAsync(snap.Track.Id, new(Provider: "acp:custom"));
-                await ctx.Kernel.PatchTrackAsync(snap.Track.Id, new(LeadSessionId: sub.Id));
                 break;
         }
         ctx.Kernel.DispatchAdmission.SetDraining(true);

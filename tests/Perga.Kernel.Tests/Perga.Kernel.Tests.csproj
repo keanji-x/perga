@@ -16,8 +16,6 @@
     <ProjectReference Include="..\..\src\Perga.Contracts\Perga.Contracts.csproj" />
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="../Perga.AgentKit.Tests/MockCliFixture.cs" Link="Fakes/MockCliFixture.cs" />
     <Using Include="Xunit" />
   </ItemGroup>
-  <Import Project="../Perga.AgentKit.Tests/MockCliFixture.props" />
 </Project>

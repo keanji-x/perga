@@ -15,6 +15,7 @@ plugins/*/bin/
 node_modules/
 **/node_modules/
 fe/web/dist/
+tools/perga-oar-bridge/dist/
 .vite/
 playwright-report/
 test-results/

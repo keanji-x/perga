@@ -21177,7 +21177,7 @@
       },
       "PlannerPermissionMode": {
         "type": "string",
-        "description": "Provider-declared session permission mode ID (e.g., never/ask/full for Codex, dontAsk/default/acceptEdits/bypassPermissions for Claude)."
+        "description": "Provider-declared session permission mode ID (e.g., never/full for Codex, dontAsk/acceptEdits/plan/bypassPermissions for Claude)."
       },
       "PlannerRunReadResponse": {
         "anyOf": [

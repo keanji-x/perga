@@ -1,0 +1,22 @@
+{
+  "name": "perga-oar-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "esbuild src/index.ts --bundle --platform=node --format=esm --target=node24 --outfile=dist/perga-oar-bridge.mjs --external:@cursor/sdk --external:@earendil-works/pi-durable --external:@earendil-works/chord --banner:js=\"import { createRequire as __pergaCreateRequire } from 'node:module'; const require = __pergaCreateRequire(import.meta.url);\"",
+    "test": "node --experimental-strip-types --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@botiverse/oar": "0.124.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "esbuild": "^0.25.2",
+    "typescript": "^5.8.3"
+  }
+}

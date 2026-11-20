@@ -136,7 +136,7 @@ public sealed class AttemptExecutionAndGateTests
 
         var subagent1 = Assert.Single(await ctx.Kernel.ListSessionsAsync(trackId), s => s.BoundAttemptId == attempt1.AttemptId);
         var subagentLaunch = ctx.AgentRuntime.OpenedSessions.Single(s => s.LaunchSpec.Cwd == expectedLeaseCwd);
-        Assert.Equal(OsSandboxMode.WorkspaceWriteBwrap, subagentLaunch.LaunchSpec.Sandbox);
+        Assert.Equal(expectedLeaseCwd, subagentLaunch.LaunchSpec.Cwd);
 
         var leadTurnsBefore = ctx.Store.GetTurnsForSession(leadId).Count;
 
@@ -178,11 +178,10 @@ public sealed class AttemptExecutionAndGateTests
         // Verify LeadSessionId was woken!
         Assert.True(ctx.Store.GetTurnsForSession(leadId).Count > leadTurnsBefore);
 
-        // Verify dependent step-2-audit automatically started with ReadOnlyBwrap sandbox!
+        // Verify dependent step-2-audit automatically started!
         var tasksAfter = await ctx.Kernel.ListTasksAsync(trackId);
         var step2After = tasksAfter.Single(t => t.TaskKey == "step-2-audit");
         Assert.Equal(TaskRunStatus.Running, step2After.Status);
-        Assert.Contains(ctx.AgentRuntime.OpenedSessions, s => s.LaunchSpec.Sandbox == OsSandboxMode.ReadOnlyBwrap);
     }
 
     [Theory]

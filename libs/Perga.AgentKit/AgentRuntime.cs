@@ -1,7 +1,4 @@
 using System.Collections.Concurrent;
-using System.Diagnostics;
-using System.Globalization;
-using System.Text;
 using System.Text.Json;
 using Perga.AgentKit.Internal;
 
@@ -17,134 +14,90 @@ public sealed class AgentRuntime : IAgentRuntime
         "acp:opencode"
     ];
 
-    private static readonly string[] DefaultCodexModels = ["gpt-5.4", "gpt-5.3-codex", "o4-mini"];
-    private static readonly string[] DefaultClaudeModels = ["claude-sonnet-4-6", "claude-opus-4-6"];
-    private static readonly Encoding Utf8NoBom = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
-
-
     private readonly AgentRuntimeOptions _options;
-    private readonly OsSandboxWrapper _sandboxWrapper;
-    private readonly string? _codexWorkerHome;
     private readonly ConcurrentDictionary<IAgentSession, byte> _activeSessions = new();
     private readonly ConcurrentDictionary<string, bool> _resumeCapabilities = new(StringComparer.Ordinal);
     private readonly SemaphoreSlim _probeLock = new(1, 1);
     private IReadOnlyList<ProviderStatus>? _cachedProbeStatuses;
     private DateTimeOffset _cachedProbeExpiresAt = DateTimeOffset.MinValue;
-    private readonly ConcurrentDictionary<string, bool> _claudeEffortSupport = new(StringComparer.Ordinal);
     private int _disposed;
 
-    public AgentRuntime()
-        : this(new AgentRuntimeOptions())
-    {
-    }
+    public AgentRuntime() : this(new AgentRuntimeOptions()) { }
 
     public AgentRuntime(AgentRuntimeOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
         _options = options;
-        _sandboxWrapper = new OsSandboxWrapper(options.Sandbox);
-        _codexWorkerHome = ResolveCodexWorkerHome(options);
     }
-
-    public OsSandboxWrapper SandboxWrapper => _sandboxWrapper;
 
     public bool CanResumeSession(string provider)
     {
         var name = NormalizeProviderName(provider);
-        return _resumeCapabilities.TryGetValue(name, out var supported) ? supported :
-            name is "codex" or "claude" || name.StartsWith("acp:", StringComparison.Ordinal);
+        return _resumeCapabilities.TryGetValue(name, out var supported)
+            ? supported
+            : OarNodeResolver.TryMapProviderToOarRuntime(name) is not null;
     }
-
     public static string NormalizeProviderName(string provider)
     {
-        if (string.IsNullOrWhiteSpace(provider))
-        {
-            return string.Empty;
-        }
-
+        if (string.IsNullOrWhiteSpace(provider)) return string.Empty;
         var trimmed = provider.Trim();
-        if (string.Equals(trimmed, "antigravity", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(trimmed, "agy", StringComparison.OrdinalIgnoreCase))
-        {
+        if (trimmed.Equals("antigravity", StringComparison.OrdinalIgnoreCase) ||
+            trimmed.Equals("agy", StringComparison.OrdinalIgnoreCase))
             return "acp:antigravity";
-        }
-
-        if (string.Equals(trimmed, "opencode", StringComparison.OrdinalIgnoreCase))
-        {
+        if (trimmed.Equals("opencode", StringComparison.OrdinalIgnoreCase))
             return "acp:opencode";
-        }
-
+        if (trimmed.StartsWith("oar:", StringComparison.OrdinalIgnoreCase))
+            return "oar:" + trimmed["oar:".Length..].Trim().ToLowerInvariant();
         return trimmed;
     }
 
     public Task<IReadOnlyList<ProviderStatus>> ProbeProvidersAsync(CancellationToken ct) =>
         ProbeProvidersAsync(forceRefresh: false, ct);
 
-    public async Task<IReadOnlyList<ProviderStatus>> ProbeProvidersAsync(
-        bool forceRefresh,
-        CancellationToken ct = default)
+    public async Task<IReadOnlyList<ProviderStatus>> ProbeProvidersAsync(bool forceRefresh, CancellationToken ct = default)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         ct.ThrowIfCancellationRequested();
 
         var ttl = _options.ProbeCacheTtl;
-        if (!forceRefresh && ttl > TimeSpan.Zero)
+        if (!forceRefresh && ttl > TimeSpan.Zero &&
+            Volatile.Read(ref _cachedProbeStatuses) is { } cached &&
+            _options.TimeProvider.GetUtcNow() < _cachedProbeExpiresAt)
         {
-            var cached = Volatile.Read(ref _cachedProbeStatuses);
-            if (cached is not null && _options.TimeProvider.GetUtcNow() < _cachedProbeExpiresAt)
-            {
-                return cached;
-            }
+            return cached;
         }
 
         await _probeLock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
             ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-
             if (!forceRefresh && ttl > TimeSpan.Zero && _cachedProbeStatuses is not null &&
                 _options.TimeProvider.GetUtcNow() < _cachedProbeExpiresAt)
             {
                 return _cachedProbeStatuses;
             }
 
-            var providerNames = new List<string>(CanonicalProviders.Length + _options.ProviderOverrides.Count);
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
+            var providers = new List<string>(CanonicalProviders.Length + _options.ProviderOverrides.Count);
             foreach (var canonical in CanonicalProviders)
             {
-                if (seen.Add(canonical))
-                {
-                    providerNames.Add(canonical);
-                }
+                if (seen.Add(canonical)) providers.Add(canonical);
             }
-
-            foreach (var customKey in _options.ProviderOverrides.Keys)
+            foreach (var custom in _options.ProviderOverrides.Keys)
             {
-                if (string.IsNullOrWhiteSpace(customKey))
-                {
-                    continue;
-                }
-
-                var normalizedCustom = NormalizeProviderName(customKey);
-                if (seen.Add(normalizedCustom))
-                {
-                    providerNames.Add(normalizedCustom);
-                }
+                var normalized = NormalizeProviderName(custom);
+                if (!string.IsNullOrWhiteSpace(normalized) && seen.Add(normalized))
+                    providers.Add(normalized);
             }
 
-            var probeTasks = providerNames
-                .Select(provider => ProbeSingleProviderAsync(provider, ct))
-                .ToArray();
-
-            var freshResults = await Task.WhenAll(probeTasks).ConfigureAwait(false);
+            var results = await Task.WhenAll(providers.Select(p => ProbeSingleProviderAsync(p, ct))).ConfigureAwait(false);
             if (ttl > TimeSpan.Zero)
             {
                 _cachedProbeExpiresAt = _options.TimeProvider.GetUtcNow().Add(ttl);
-                Volatile.Write(ref _cachedProbeStatuses, freshResults);
+                Volatile.Write(ref _cachedProbeStatuses, results);
             }
 
-            return freshResults;
+            return results;
         }
         finally
         {
@@ -159,103 +112,32 @@ public sealed class AgentRuntime : IAgentRuntime
         ct.ThrowIfCancellationRequested();
 
         if (string.IsNullOrWhiteSpace(spec.Provider))
-        {
             throw new ArgumentException("HarnessLaunchSpec.Provider must not be empty.", nameof(spec));
-        }
-
         if (string.IsNullOrWhiteSpace(spec.Cwd))
-        {
             throw new ArgumentException("HarnessLaunchSpec.Cwd must not be empty.", nameof(spec));
-        }
 
         var fullCwd = Path.GetFullPath(spec.Cwd);
         if (!Directory.Exists(fullCwd))
-        {
             throw new DirectoryNotFoundException($"Workspace Cwd directory does not exist: '{fullCwd}'.");
-        }
 
         var provider = NormalizeProviderName(spec.Provider);
-        var normalizedSpec = spec with { Provider = provider, Cwd = fullCwd };
+        var oarRuntimeId = OarNodeResolver.TryMapProviderToOarRuntime(provider)
+            ?? throw new NotSupportedException($"Unsupported provider '{provider}'.");
 
-        IAgentSession session;
-        if (string.Equals(provider, "codex", StringComparison.OrdinalIgnoreCase))
-        {
-            var cmdOverride = ResolveCommandSpec(provider, defaultExecutable: "codex");
-            var args = new List<string>();
-            if (cmdOverride.PrependArgs is not null)
-            {
-                args.AddRange(cmdOverride.PrependArgs);
-            }
+        var bridgeScript = RequireBridgeScriptPath();
+        var (exeOverride, extraEnv) = ResolveOverride(provider, oarRuntimeId);
+        var env = BuildProcessEnvironment(extraEnv);
+        var nodeExe = OarNodeResolver.ResolveNode24Executable(_options.NodeExecutablePath, env);
 
-            args.Add("app-server");
-            var env = BuildProcessEnvironment(cmdOverride.Env);
-            var resolvedExe = FindExecutableOnPath(cmdOverride.FileName, env) ?? cmdOverride.FileName;
-            var stateDirectory = PrepareCodexSandboxState(normalizedSpec, env);
-            var sandboxApiKey = stateDirectory is null ? null : _options.CodexSandboxApiKey;
-            if (stateDirectory is not null)
-            {
-                args.Add("-c");
-                args.Add("cli_auth_credentials_store=\"file\"");
-            }
-            var rawInvocation = new CommandInvocation(resolvedExe, args, fullCwd, env);
-            var wrapped = _sandboxWrapper.Wrap(rawInvocation, normalizedSpec.Sandbox, normalizedSpec.OverlayMounts,
-                writableStateDirectory: stateDirectory);
-            session = await CodexAgentSession.OpenAsync(
-                wrapped,
-                normalizedSpec,
-                _options.HandshakeTimeout,
-                UnregisterSession,
-                ct,
-                sandboxApiKey).ConfigureAwait(false);
-        }
-        else if (string.Equals(provider, "claude", StringComparison.OrdinalIgnoreCase))
-        {
-            var cmdOverride = ResolveCommandSpec(provider, defaultExecutable: "claude");
-            var env = BuildProcessEnvironment(cmdOverride.Env);
-            var resolvedExe = FindExecutableOnPath(cmdOverride.FileName, env) ?? cmdOverride.FileName;
-            var effectiveCmd = cmdOverride with { FileName = resolvedExe };
-            session = await ClaudeAgentSession.OpenAsync(
-                effectiveCmd,
-                _sandboxWrapper,
-                normalizedSpec,
-                env,
-                UnregisterSession,
-                ct, await DetectClaudeEffortSupportAsync(effectiveCmd, env, normalizedSpec.Cwd, normalizedSpec.Sandbox, normalizedSpec.OverlayMounts, ct).ConfigureAwait(false), _options.HandshakeTimeout).ConfigureAwait(false);
-        }
-        else if (provider.StartsWith("acp:", StringComparison.OrdinalIgnoreCase))
-        {
-            var (cmdOverride, appendAcpSubcommand) = ResolveAcpCommandSpec(provider);
-            var args = new List<string>();
-            if (cmdOverride.PrependArgs is not null)
-            {
-                args.AddRange(cmdOverride.PrependArgs);
-            }
-
-            if (appendAcpSubcommand)
-            {
-                args.Add("acp");
-            }
-
-            var env = BuildProcessEnvironment(cmdOverride.Env);
-            var resolvedExe = FindExecutableOnPath(cmdOverride.FileName, env) ?? cmdOverride.FileName;
-            var permissionProfile = ProviderPermissionModes.GetProfile(provider);
-            args.AddRange(permissionProfile.GetLaunchArgs(normalizedSpec.PermissionMode));
-
-            var rawInvocation = new CommandInvocation(resolvedExe, args, fullCwd, env);
-            var wrapped = _sandboxWrapper.Wrap(rawInvocation, normalizedSpec.Sandbox, normalizedSpec.OverlayMounts);
-            session = await AcpAgentSession.OpenAsync(
-                wrapped,
-                normalizedSpec,
-                _options.HandshakeTimeout,
-                UnregisterSession,
-                ct,
-                launchModes: permissionProfile.LaunchModes).ConfigureAwait(false);
-        }
-        else
-        {
-            throw new NotSupportedException(
-                $"Unsupported AgentKit provider '{provider}'. Supported surfaces: 'codex', 'claude', 'acp:antigravity', 'acp:opencode', 'acp:<cmd>'.");
-        }
+        var invocation = new CommandInvocation(nodeExe, [bridgeScript], fullCwd, env);
+        var session = await OarAgentSession.OpenAsync(
+            invocation,
+            spec with { Provider = provider, Cwd = fullCwd },
+            oarRuntimeId,
+            exeOverride,
+            _options.HandshakeTimeout,
+            UnregisterSession,
+            ct).ConfigureAwait(false);
 
         _resumeCapabilities[provider] = session.SupportsSessionResume;
         _activeSessions.TryAdd(session, 0);
@@ -271,930 +153,186 @@ public sealed class AgentRuntime : IAgentRuntime
 
     public async ValueTask DisposeAsync()
     {
-        if (Interlocked.Exchange(ref _disposed, 1) != 0)
-        {
-            return;
-        }
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
 
         var sessions = _activeSessions.Keys.ToArray();
         _activeSessions.Clear();
-
         foreach (var session in sessions)
         {
-            try
-            {
-                await session.DisposeAsync().ConfigureAwait(false);
-            }
-            catch
-            {
-                // Best-effort cleanup of active sessions.
-            }
+            try { await session.DisposeAsync().ConfigureAwait(false); } catch { }
         }
     }
 
-    private void UnregisterSession(IAgentSession session) =>
-        _activeSessions.TryRemove(session, out _);
-
-    private async Task<bool> DetectClaudeEffortSupportAsync(ProviderCommandOverride command, IReadOnlyDictionary<string, string> environment,
-        string cwd, OsSandboxMode sandbox, IReadOnlyList<OverlayMountSpec>? overlayMounts, CancellationToken ct)
-    {
-        var invocation = _sandboxWrapper.Wrap(new CommandInvocation(command.FileName,
-            [.. command.PrependArgs ?? [], "--help"], cwd, environment), sandbox, overlayMounts);
-        var key = JsonSerializer.Serialize(new { invocation, sandbox, overlayMounts,
-            Environment = environment.OrderBy(pair => pair.Key).ToArray() });
-        if (_claudeEffortSupport.TryGetValue(key, out var cached)) return cached;
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        timeout.CancelAfter(_options.ProbeTimeout);
-        var start = new ProcessStartInfo(invocation.FileName)
-        {
-            WorkingDirectory = invocation.WorkingDirectory,
-            RedirectStandardOutput = true, RedirectStandardError = true, RedirectStandardInput = true,
-            UseShellExecute = false, CreateNoWindow = true
-        };
-        start.Environment.Clear();
-        foreach (var pair in invocation.Environment) start.Environment[pair.Key] = pair.Value;
-        foreach (var arg in invocation.Arguments) start.ArgumentList.Add(arg);
-        using var process = new Process { StartInfo = start };
-        var started = false;
-        try
-        {
-            started = process.Start();
-            process.StandardInput.Close();
-            var stdout = process.StandardOutput.ReadToEndAsync(timeout.Token);
-            var stderr = process.StandardError.ReadToEndAsync(timeout.Token);
-            await process.WaitForExitAsync(timeout.Token).ConfigureAwait(false);
-            var help = await stdout.ConfigureAwait(false) + "\n" + await stderr.ConfigureAwait(false);
-            var supported = process.ExitCode == 0 && System.Text.RegularExpressions.Regex.IsMatch(help, @"(?m)^\s*--effort(?:\s|[=<])");
-            _claudeEffortSupport[key] = supported;
-            return supported;
-        }
-        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
-        {
-            return false;
-        }
-        finally
-        {
-            if (started && !process.HasExited) process.Kill(entireProcessTree: true);
-        }
-    }
-
-    private ProviderCommandOverride ResolveCommandSpec(string provider, string defaultExecutable)
-    {
-        if (_options.ProviderOverrides.TryGetValue(provider, out var configured))
-        {
-            return configured;
-        }
-
-        return new ProviderCommandOverride(defaultExecutable);
-    }
-
-    private (ProviderCommandOverride Command, bool AppendAcpSubcommand) ResolveAcpCommandSpec(string provider)
-    {
-        var acpTarget = provider["acp:".Length..].Trim();
-        if (string.IsNullOrWhiteSpace(acpTarget))
-        {
-            throw new ArgumentException($"ACP provider '{provider}' must specify a target after 'acp:'.", nameof(provider));
-        }
-
-        var isKnownSubcommandTarget =
-            string.Equals(acpTarget, "antigravity", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(acpTarget, "opencode", StringComparison.OrdinalIgnoreCase);
-
-        if (_options.ProviderOverrides.TryGetValue(provider, out var configured) ||
-            _options.ProviderOverrides.TryGetValue(acpTarget, out configured))
-        {
-            return (configured, isKnownSubcommandTarget);
-        }
-
-        if (string.Equals(acpTarget, "antigravity", StringComparison.OrdinalIgnoreCase))
-        {
-            var probeEnv = BuildProcessEnvironment(null);
-            var exe = FindExecutableOnPath("agy", probeEnv) is not null
-                ? "agy"
-                : FindExecutableOnPath("antigravity", probeEnv) is not null
-                    ? "antigravity"
-                    : "agy";
-            return (new ProviderCommandOverride(exe), AppendAcpSubcommand: true);
-        }
-
-        if (string.Equals(acpTarget, "opencode", StringComparison.OrdinalIgnoreCase))
-        {
-            return (new ProviderCommandOverride("opencode"), AppendAcpSubcommand: true);
-        }
-
-        return (new ProviderCommandOverride(acpTarget), AppendAcpSubcommand: false);
-    }
+    private void UnregisterSession(IAgentSession session) => _activeSessions.TryRemove(session, out _);
 
     private async Task<ProviderStatus> ProbeSingleProviderAsync(string provider, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
         var permissionModes = ProviderPermissionModes.GetModesForProvider(provider);
+        var oarRuntimeId = OarNodeResolver.TryMapProviderToOarRuntime(provider);
+        if (string.IsNullOrWhiteSpace(oarRuntimeId))
+        {
+            return new ProviderStatus(provider, Available: false, Version: null,
+                Reason: $"Unsupported provider '{provider}'.", Models: [], PermissionModes: permissionModes);
+        }
 
-        ProviderCommandOverride cmdSpec;
-        var appendAcpSubcommand = false;
         try
         {
-            if (string.Equals(provider, "codex", StringComparison.OrdinalIgnoreCase))
-            {
-                cmdSpec = ResolveCommandSpec(provider, "codex");
-            }
-            else if (string.Equals(provider, "claude", StringComparison.OrdinalIgnoreCase))
-            {
-                cmdSpec = ResolveCommandSpec(provider, "claude");
-            }
-            else if (provider.StartsWith("acp:", StringComparison.OrdinalIgnoreCase))
-            {
-                (cmdSpec, appendAcpSubcommand) = ResolveAcpCommandSpec(provider);
-            }
-            else
-            {
-                cmdSpec = ResolveCommandSpec(provider, provider);
-            }
-        }
-        catch (Exception ex)
-        {
-            return new ProviderStatus(provider, Available: false, Version: null, Reason: ex.Message, Models: [], PermissionModes: permissionModes);
-        }
-
-        var env = BuildProcessEnvironment(cmdSpec.Env);
-        var resolvedExe = FindExecutableOnPath(cmdSpec.FileName, env);
-        if (resolvedExe is null)
-        {
-            return new ProviderStatus(
-                provider,
-                Available: false,
-                Version: null,
-                Reason: $"Executable '{cmdSpec.FileName}' was not found on PATH.",
-                Models: [],
-                PermissionModes: permissionModes);
-        }
-
-        var psi = new ProcessStartInfo
-        {
-            FileName = resolvedExe,
-            UseShellExecute = false,
-            RedirectStandardInput = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true,
-            StandardOutputEncoding = Utf8NoBom,
-            StandardErrorEncoding = Utf8NoBom
-        };
-
-        if (cmdSpec.PrependArgs is not null)
-        {
-            foreach (var arg in cmdSpec.PrependArgs)
-            {
-                psi.ArgumentList.Add(arg);
-            }
-        }
-
-        psi.ArgumentList.Add("--version");
-
-        foreach (var kvp in env)
-        {
-            psi.Environment[kvp.Key] = kvp.Value;
-        }
-
-        using var process = new Process { StartInfo = psi };
-        try
-        {
-            if (!process.Start())
-            {
-                return new ProviderStatus(
-                    provider,
-                    Available: false,
-                    Version: null,
-                    Reason: $"Failed to start '{resolvedExe} --version'.",
-                    Models: [],
-                    PermissionModes: permissionModes);
-            }
-
-            process.StandardInput.Close();
+            var bridgeScript = RequireBridgeScriptPath();
+            var (exeOverride, extraEnv) = ResolveOverride(provider, oarRuntimeId);
+            var env = BuildProcessEnvironment(extraEnv);
+            var nodeExe = OarNodeResolver.ResolveNode24Executable(_options.NodeExecutablePath, env);
+            var cwd = Path.TrimEndingDirectorySeparator(Path.GetFullPath(Path.GetTempPath()));
+            var timeout = _options.ProbeTimeout > TimeSpan.Zero ? _options.ProbeTimeout : TimeSpan.FromSeconds(30);
 
             using var probeCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            probeCts.CancelAfter(_options.ProbeTimeout);
+            probeCts.CancelAfter(timeout);
 
-            var stdoutTask = process.StandardOutput.ReadToEndAsync(probeCts.Token);
-            var stderrTask = process.StandardError.ReadToEndAsync(probeCts.Token);
+            var process = StdioSubprocess.Start(new CommandInvocation(nodeExe, [bridgeScript], cwd, env));
+            await using var rpc = new JsonRpcStdioConnection(
+                process, static (_, _) => { }, static (_, _, _) => { }, static _ => { });
 
-            try
+            var response = await rpc.SendRequestAsync("probe", new Dictionary<string, object?>
             {
-                await process.WaitForExitAsync(probeCts.Token).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
-            {
-                TryKillProcessTree(process);
-                return new ProviderStatus(
-                    provider,
-                    Available: false,
-                    Version: null,
-                    Reason: $"Timed out after {_options.ProbeTimeout.TotalMilliseconds.ToString("F0", CultureInfo.InvariantCulture)}ms running --version.",
-                    Models: [],
-                    PermissionModes: permissionModes);
-            }
+                ["runtime"] = oarRuntimeId,
+                ["cwd"] = cwd,
+                ["executable"] = exeOverride,
+                ["timeoutMs"] = (int)timeout.TotalMilliseconds
+            }, probeCts.Token).ConfigureAwait(false);
 
-            var stdout = await SafeAwaitOutputAsync(stdoutTask).ConfigureAwait(false);
-            var stderr = await SafeAwaitOutputAsync(stderrTask).ConfigureAwait(false);
-
-            if (process.ExitCode != 0)
-            {
-                var errDetail = ExtractFirstNonEmptyLine(stderr)
-                                ?? ExtractFirstNonEmptyLine(stdout)
-                                ?? $"Process exited with code {process.ExitCode.ToString(CultureInfo.InvariantCulture)}.";
-                return new ProviderStatus(
-                    provider,
-                    Available: false,
-                    Version: null,
-                    Reason: errDetail,
-                    Models: [],
-                    PermissionModes: permissionModes);
-            }
-
-            var version = ExtractVersionString(stdout) ?? ExtractVersionString(stderr) ?? "unknown";
-            IReadOnlyList<string> models;
-            IReadOnlyList<ProviderModelInfo> catalog;
-            var nativeCatalog = NativeModelCatalogs.ForProvider(provider);
-            if (provider.StartsWith("acp:", StringComparison.OrdinalIgnoreCase) && nativeCatalog is null)
-            {
-                (models, catalog, permissionModes) = await ProbeAcpModelsAsync(provider, ct).ConfigureAwait(false);
-                if (cmdSpec.Models is not null)
-                {
-                    models = cmdSpec.Models;
-                    catalog = BuildSimpleModelCatalog(models);
-                }
-            }
-            else if (cmdSpec.Models is not null)
-            {
-                models = cmdSpec.Models;
-                catalog = BuildSimpleModelCatalog(models);
-            }
-            else if (nativeCatalog is not null)
-            {
-                catalog = await ProbeProviderModelCatalogAsync(nativeCatalog, resolvedExe, cmdSpec.PrependArgs, env, ct)
-                    .ConfigureAwait(false);
-                models = catalog.Select(model => model.Model).ToArray();
-            }
-            else if (string.Equals(provider, "codex", StringComparison.OrdinalIgnoreCase))
-            {
-                (models, catalog) = await ProbeCodexModelsAsync(ct).ConfigureAwait(false);
-            }
-            else
-            {
-                models = GetDefaultModelsForProvider(provider);
-                catalog = BuildSimpleModelCatalog(models);
-            }
-
-            SessionConfigurationCapabilities configurationCapabilities = SessionConfigurationCapabilities.Unknown;
-            if (provider == "codex") configurationCapabilities = SessionConfigurationCapabilities.LaunchOnly;
-            else if (provider == "claude")
-            {
-                var supportsEffort = await DetectClaudeEffortSupportAsync(cmdSpec with { FileName = resolvedExe }, env, Directory.GetCurrentDirectory(), OsSandboxMode.None, null, ct).ConfigureAwait(false);
-                configurationCapabilities = SessionConfigurationCapabilities.LaunchOnly with
-                {
-                    Effort = SessionConfigurationCapabilities.LaunchDimension(supportsEffort ? ConfigurationSupport.Supported : ConfigurationSupport.Unsupported)
-                };
-            }
+            var available = response.TryGetProperty("available", out var avail) && avail.ValueKind == JsonValueKind.True;
+            var catalog = ParseModelCatalog(response);
             return new ProviderStatus(
-                provider,
-                Available: true,
-                Version: version,
-                Reason: null,
-                Models: models,
+                Provider: provider,
+                Available: available,
+                Version: TryGetJsonString(response, "version"),
+                Reason: TryGetJsonString(response, "reason"),
+                Models: catalog.Select(m => m.Model).ToArray(),
                 ModelCatalog: catalog,
-                PermissionModes: permissionModes, ConfigurationCapabilities: configurationCapabilities);
+                PermissionModes: permissionModes,
+                ConfigurationCapabilities: available ? SessionConfigurationCapabilities.LaunchOnly : SessionConfigurationCapabilities.Unknown);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            TryKillProcessTree(process);
             throw;
         }
         catch (Exception ex)
         {
-            TryKillProcessTree(process);
-            return new ProviderStatus(
-                provider,
-                Available: false,
-                Version: null,
-                Reason: ex.Message,
-                Models: [],
-                PermissionModes: permissionModes);
+            return new ProviderStatus(provider, Available: false, Version: null,
+                Reason: ex.Message, Models: [], PermissionModes: permissionModes);
         }
     }
 
-    private TimeSpan GetModelProbeTimeout() =>
-        TimeSpan.FromMilliseconds(Math.Min(_options.ModelProbeTimeout.TotalMilliseconds,
-            Math.Min(_options.ProbeTimeout.TotalMilliseconds, _options.HandshakeTimeout.TotalMilliseconds)));
-
-    private async Task<(IReadOnlyList<string> Models, IReadOnlyList<ProviderModelInfo> Catalog, IReadOnlyList<PermissionModeOption> Modes)> ProbeAcpModelsAsync(
-        string provider,
-        CancellationToken ct)
+    private string RequireBridgeScriptPath()
     {
-        using var probeCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        probeCts.CancelAfter(GetModelProbeTimeout());
-        IReadOnlyList<PermissionModeOption> modes = [];
-        try
-        {
-            await using var session = await OpenSessionAsync(new HarnessLaunchSpec(
-                provider, null, Path.GetTempPath(), null, null,
-                new Dictionary<string, McpServerConfig>()), probeCts.Token).ConfigureAwait(false);
-            var acp = (AcpAgentSession)session;
-            modes = acp.AvailablePermissionModes;
-            var catalog = acp.AvailableModelCatalog;
-            var models = catalog.Count > 0 ? catalog.Select(m => m.Model).ToArray() : acp.AvailableModels;
-            if (models.Count > 0)
-            {
-                return (models, catalog, modes);
-            }
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch
-        {
-            // Session discovery is optional for custom ACP providers.
-        }
-
-        return ([], [], modes);
+        if (string.IsNullOrWhiteSpace(_options.BridgeScriptPath))
+            throw new InvalidOperationException("OAR bridge script path is not configured. Build tools/perga-oar-bridge or set PERGA_OAR_BRIDGE_SCRIPT.");
+        var full = Path.GetFullPath(_options.BridgeScriptPath);
+        if (!File.Exists(full))
+            throw new FileNotFoundException($"OAR bridge script was not found at '{full}'.", full);
+        return full;
     }
 
-    private Task<IReadOnlyList<ProviderModelInfo>> ProbeProviderModelCatalogAsync(
-        NativeModelCatalogs.Read read,
-        string executable,
-        IReadOnlyList<string>? prependArgs,
-        IReadOnlyDictionary<string, string> environment,
-        CancellationToken ct)
+    private (string? ExecutableOverride, IReadOnlyDictionary<string, string>? ExtraEnv) ResolveOverride(string provider, string oarRuntimeId) =>
+        _options.ProviderOverrides.TryGetValue(provider, out var configured) ||
+        _options.ProviderOverrides.TryGetValue(oarRuntimeId, out configured)
+            ? (configured.FileName, configured.Env)
+            : (null, null);
+
+    private static Dictionary<string, string> BuildProcessEnvironment(IReadOnlyDictionary<string, string>? overrides)
     {
-        var cwd = Path.TrimEndingDirectorySeparator(Path.GetFullPath(Path.GetTempPath()));
-        return read(cwd, (args, timeout) => ReadProviderCommandJsonAsync(executable, prependArgs, environment, cwd, args, timeout, ct),
-            _options.ProbeTimeout, _options.HandshakeTimeout);
-    }
-
-    private static async Task<JsonElement> ReadProviderCommandJsonAsync(
-        string executable,
-        IReadOnlyList<string>? prependArgs,
-        IReadOnlyDictionary<string, string> environment,
-        string cwd,
-        IReadOnlyList<string> args,
-        TimeSpan timeout,
-        CancellationToken ct)
-    {
-        using var probeCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        probeCts.CancelAfter(timeout);
-        try
+        var comparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+        var env = new Dictionary<string, string>(comparer);
+        foreach (System.Collections.DictionaryEntry entry in Environment.GetEnvironmentVariables())
         {
-            var psi = new ProcessStartInfo
-            {
-                FileName = Path.GetFullPath(executable),
-                WorkingDirectory = cwd,
-                RedirectStandardInput = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                StandardOutputEncoding = Utf8NoBom,
-                StandardErrorEncoding = Utf8NoBom
-            };
-            foreach (var arg in (prependArgs ?? []).Concat(args))
-            {
-                psi.ArgumentList.Add(arg);
-            }
-            psi.Environment.Clear();
-            foreach (var (key, value) in environment)
-            {
-                psi.Environment[key] = value;
-            }
-
-            using var process = Process.Start(psi);
-            if (process is null)
-            {
-                return default;
-            }
-
-            Task<string>? stdoutTask = null;
-            Task<string>? stderrTask = null;
-            try
-            {
-                process.StandardInput.Close();
-                stdoutTask = process.StandardOutput.ReadToEndAsync(probeCts.Token);
-                stderrTask = process.StandardError.ReadToEndAsync(probeCts.Token);
-                await process.WaitForExitAsync(probeCts.Token).ConfigureAwait(false);
-                var output = await Task.WhenAll(stdoutTask, stderrTask).ConfigureAwait(false);
-                probeCts.Token.ThrowIfCancellationRequested();
-                if (process.ExitCode != 0)
-                    return default;
-                using var document = JsonDocument.Parse(output[0]);
-                return document.RootElement.Clone();
-            }
-            catch
-            {
-                TryKillProcessTree(process);
-                throw;
-            }
-            finally
-            {
-                if (stdoutTask is not null) await SafeAwaitOutputAsync(stdoutTask).ConfigureAwait(false);
-                if (stderrTask is not null) await SafeAwaitOutputAsync(stderrTask).ConfigureAwait(false);
-            }
-        }
-        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
-        {
-            return default;
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch
-        {
-            return default;
-        }
-    }
-
-    private async Task<(IReadOnlyList<string> Models, IReadOnlyList<ProviderModelInfo> Catalog)> ProbeCodexModelsAsync(
-        CancellationToken ct)
-    {
-        using var probeCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        probeCts.CancelAfter(GetModelProbeTimeout());
-        try
-        {
-            var cmdOverride = ResolveCommandSpec("codex", defaultExecutable: "codex");
-            var args = new List<string>();
-            if (cmdOverride.PrependArgs is not null)
-            {
-                args.AddRange(cmdOverride.PrependArgs);
-            }
-
-            args.Add("app-server");
-            var env = BuildProcessEnvironment(cmdOverride.Env);
-            var invocation = new CommandInvocation(cmdOverride.FileName, args, Path.GetTempPath(), env);
-            var process = StdioSubprocess.Start(invocation);
-            await using var rpc = new JsonRpcStdioConnection(
-                process,
-                onNotification: static (_, _) => { },
-                onServerRequest: static (_, _, _) => Task.FromResult<object?>(new { }),
-                onDisconnected: static _ => { });
-
-            await rpc.SendRequestAsync("initialize", new
-            {
-                clientInfo = new { name = "perga-probe", version = "1.0.0" }
-            }, probeCts.Token).ConfigureAwait(false);
-
-            var response = await rpc.SendRequestAsync("model/list", new { }, probeCts.Token).ConfigureAwait(false);
-            if (response.ValueKind == JsonValueKind.Object &&
-                response.TryGetProperty("data", out var data) &&
-                data.ValueKind == JsonValueKind.Array)
-            {
-                var catalog = new List<ProviderModelInfo>();
-                foreach (var item in data.EnumerateArray())
-                {
-                    if (item.ValueKind != JsonValueKind.Object)
-                    {
-                        continue;
-                    }
-
-                    if (item.TryGetProperty("hidden", out var hiddenProp) &&
-                        hiddenProp.ValueKind == JsonValueKind.True)
-                    {
-                        continue;
-                    }
-
-                    var model = TryGetJsonString(item, "model") ?? TryGetJsonString(item, "id");
-                    if (string.IsNullOrWhiteSpace(model))
-                    {
-                        continue;
-                    }
-
-                    var displayName = TryGetJsonString(item, "displayName") ?? model;
-                    var description = TryGetJsonString(item, "description") ?? string.Empty;
-                    var isDefault = item.TryGetProperty("isDefault", out var defProp) && defProp.ValueKind == JsonValueKind.True;
-                    var defaultEffort = TryGetJsonString(item, "defaultReasoningEffort");
-                    var efforts = new List<ProviderModelEffort>();
-                    if (item.TryGetProperty("supportedReasoningEfforts", out var effArr) &&
-                        effArr.ValueKind == JsonValueKind.Array)
-                    {
-                        foreach (var eff in effArr.EnumerateArray())
-                        {
-                            var effName = TryGetJsonString(eff, "reasoningEffort");
-                            if (!string.IsNullOrWhiteSpace(effName))
-                            {
-                                efforts.Add(new ProviderModelEffort(effName, TryGetJsonString(eff, "description") ?? string.Empty));
-                            }
-                        }
-                    }
-
-                    catalog.Add(new ProviderModelInfo(
-                        Model: model,
-                        DisplayName: displayName,
-                        Description: description,
-                        IsDefault: isDefault,
-                        DefaultReasoningEffort: defaultEffort,
-                        SupportedReasoningEfforts: efforts));
-                }
-
-                if (catalog.Count > 0)
-                {
-                    return (catalog.Select(m => m.Model).ToArray(), catalog);
-                }
-            }
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch
-        {
-            // Fall back to static defaults when codex app-server probe fails (e.g. mock CLI).
+            if (entry.Key is string key && entry.Value is string value) env[key] = value;
         }
 
-        return (DefaultCodexModels, BuildSimpleModelCatalog(DefaultCodexModels));
-    }
-
-    private static IReadOnlyList<ProviderModelInfo> BuildSimpleModelCatalog(IReadOnlyList<string> models) =>
-        models.Select((m, i) => new ProviderModelInfo(m, m, string.Empty, i == 0, null, [])).ToArray();
-
-    private static string? TryGetJsonString(JsonElement obj, string property) =>
-        obj.TryGetProperty(property, out var val) && val.ValueKind == JsonValueKind.String
-            ? val.GetString()
-            : null;
-
-    private static IReadOnlyList<string> GetDefaultModelsForProvider(string provider)
-    {
-        if (string.Equals(provider, "codex", StringComparison.OrdinalIgnoreCase))
-        {
-            return DefaultCodexModels;
-        }
-
-        if (string.Equals(provider, "claude", StringComparison.OrdinalIgnoreCase))
-        {
-            return DefaultClaudeModels;
-        }
-
-        return [];
-    }
-
-    private string? PrepareCodexSandboxState(HarnessLaunchSpec spec, Dictionary<string, string> env)
-    {
-        if (!OperatingSystem.IsLinux() || spec.Sandbox == OsSandboxMode.None)
-            return null;
-
-        if (spec.ConfigureWorker && _codexWorkerHome is { } home)
-        {
-            var workspace = ResolvePhysicalDirectory(spec.Cwd);
-            if (ContainsPath(home, workspace) || ContainsPath(workspace, home))
-                throw new InvalidOperationException("The shared Codex Worker home must be separate from the workspace.");
-
-            env["CODEX_HOME"] = home;
-            // These account overrides must not replace the selected file login.
-            env["OPENAI_API_KEY"] = string.Empty;
-            env["CODEX_API_KEY"] = string.Empty;
-            env["CODEX_ACCESS_TOKEN"] = string.Empty;
-            return home;
-        }
-
-        if (_options.SandboxStateRootDirectory is not { } root || spec.StateKey is not { } key)
-            return null;
-
-        var digest = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(key)));
-        var directory = Path.Combine(Path.GetFullPath(root), "codex", digest);
-        const UnixFileMode ownerOnly = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute;
-        Directory.CreateDirectory(directory, ownerOnly);
-        if (new DirectoryInfo(directory).LinkTarget is not null)
-            throw new IOException("The Codex state directory must not be a symbolic link.");
-
-        var configuredHome = env.GetValueOrDefault("CODEX_HOME");
-        var hostHome = _options.Sandbox.HomeDirectoryOverride ?? env.GetValueOrDefault("HOME");
-        var source = !string.IsNullOrWhiteSpace(configuredHome) ? configuredHome
-            : !string.IsNullOrWhiteSpace(hostHome) ? Path.Combine(hostHome, ".codex") : null;
-        // Authentication is configured separately so sessions never share rotating login credentials.
-        if (source is not null)
-            CopyCodexStateSeed(source, directory, "config.toml");
-
-        env["CODEX_HOME"] = directory;
-        return directory;
-    }
-
-    private static string? ResolveCodexWorkerHome(AgentRuntimeOptions options)
-    {
-        if (string.IsNullOrWhiteSpace(options.CodexWorkerHomeDirectory))
-            return null;
-        if (!OperatingSystem.IsLinux() || !Path.IsPathFullyQualified(options.CodexWorkerHomeDirectory) ||
-            !string.IsNullOrWhiteSpace(options.CodexSandboxApiKey))
-            throw new InvalidOperationException(
-                "The shared Codex Worker home requires Linux, an absolute path, and no separate sandbox API key.");
-
-        var directory = new DirectoryInfo(Path.GetFullPath(options.CodexWorkerHomeDirectory));
-        const UnixFileMode privateAccess = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute;
-        if (!directory.Exists || directory.LinkTarget is not null ||
-            File.GetUnixFileMode(directory.FullName) != privateAccess)
-            throw new IOException("The shared Codex Worker home must be an existing owner-only directory.");
-        return ResolvePhysicalDirectory(directory.FullName);
-    }
-
-    private static string ResolvePhysicalDirectory(string path, int remainingLinks = 40)
-    {
-        var current = Path.GetPathRoot(path)!;
-        foreach (var part in path[current.Length..].Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries))
-        {
-            var directory = new DirectoryInfo(Path.Combine(current, part));
-            if (directory.ResolveLinkTarget(returnFinalTarget: false) is { } target)
-            {
-                if (remainingLinks == 0)
-                    throw new IOException("The Codex Worker directory has too many symbolic links.");
-                current = ResolvePhysicalDirectory(target.FullName, remainingLinks - 1);
-            }
-            else
-            {
-                current = directory.FullName;
-            }
-        }
-        return Path.TrimEndingDirectorySeparator(current);
-    }
-
-    private static bool ContainsPath(string root, string candidate)
-    {
-        var relative = Path.GetRelativePath(root, candidate);
-        return relative != ".." && !relative.StartsWith("../", StringComparison.Ordinal) &&
-            !Path.IsPathRooted(relative);
-    }
-
-    private static void CopyCodexStateSeed(string source, string directory, string name)
-    {
-        var input = Path.Combine(source, name);
-        var destination = Path.Combine(directory, name);
-        if (!File.Exists(input) || File.Exists(destination) || new FileInfo(destination).LinkTarget is not null)
-            return;
-
-        try
-        {
-            File.Copy(input, destination, overwrite: false);
-        }
-        catch (IOException) when (File.Exists(destination))
-        {
-            // Another launch seeded this state first.
-        }
-    }
-
-    private Dictionary<string, string> BuildProcessEnvironment(IReadOnlyDictionary<string, string>? overrides)
-    {
-        var env = new Dictionary<string, string>(
-            OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
-
-        var current = Environment.GetEnvironmentVariables();
-        foreach (System.Collections.DictionaryEntry entry in current)
-        {
-            if (entry.Key is string key && entry.Value is string value &&
-                !key.Equals("Perga__CodexSandboxApiKey", StringComparison.OrdinalIgnoreCase) &&
-                !key.Equals("Perga:CodexSandboxApiKey", StringComparison.OrdinalIgnoreCase))
-            {
-                env[key] = value;
-            }
-        }
-
-        var pathExplicitlyOverridden = false;
+        var pathOverridden = false;
         if (overrides is not null)
         {
             foreach (var (key, value) in overrides)
             {
-                if (string.Equals(key, "PATH", StringComparison.OrdinalIgnoreCase))
-                {
-                    pathExplicitlyOverridden = true;
-                }
-
+                if (key.Equals("PATH", StringComparison.OrdinalIgnoreCase)) pathOverridden = true;
                 env[key] = value;
             }
         }
 
-        var homeDir = _options.Sandbox.HomeDirectoryOverride;
-        if (string.IsNullOrWhiteSpace(homeDir))
+        if (!pathOverridden)
         {
-            env.TryGetValue("HOME", out homeDir);
-        }
-
-        if (string.IsNullOrWhiteSpace(homeDir))
-        {
-            homeDir = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        }
-
-        env.TryGetValue("PATH", out var rawPath);
-        var prioritizedPath = PrioritizeUserLocalBinInPath(
-            rawPath,
-            homeDir,
-            allowAppendWhenMissing: !pathExplicitlyOverridden);
-        // Retain OpenCode's installer location for the default environment while
-        // respecting a caller's explicit PATH boundary.
-        if (!pathExplicitlyOverridden && !string.IsNullOrWhiteSpace(homeDir))
-        {
-            var openCodeBin = Path.Combine(homeDir, ".opencode", "bin");
-            if (Directory.Exists(openCodeBin))
+            var home = env.GetValueOrDefault("HOME") ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            if (!string.IsNullOrWhiteSpace(home))
             {
-                var segments = prioritizedPath.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries);
-                if (!segments.Contains(openCodeBin, OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal))
-                    prioritizedPath = string.Join(Path.PathSeparator, [.. segments, openCodeBin]);
+                var segments = (env.GetValueOrDefault("PATH") ?? string.Empty)
+                    .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries).ToList();
+                foreach (var extra in new[] { Path.Combine(home, ".local", "bin"), Path.Combine(home, ".opencode", "bin") })
+                {
+                    if (Directory.Exists(extra) && !segments.Contains(extra, comparer))
+                        segments.Add(extra);
+                }
+                env["PATH"] = string.Join(Path.PathSeparator, segments);
             }
-        }
-        if (!string.IsNullOrWhiteSpace(prioritizedPath))
-        {
-            env["PATH"] = prioritizedPath;
         }
 
         return env;
     }
 
-    internal static string PrioritizeUserLocalBinInPath(
-        string? pathVar,
-        string? homeDir,
-        bool allowAppendWhenMissing = true)
-    {
-        var segments = string.IsNullOrWhiteSpace(pathVar)
-            ? new List<string>()
-            : pathVar.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries).ToList();
-
-        if (string.IsNullOrWhiteSpace(homeDir))
-        {
-            return string.Join(Path.PathSeparator, segments);
-        }
-
-        string userLocalBin;
-        try
-        {
-            userLocalBin = Path.GetFullPath(Path.Combine(homeDir, ".local", "bin"));
-        }
-        catch
-        {
-            return string.Join(Path.PathSeparator, segments);
-        }
-
-        var pathComparer = OperatingSystem.IsWindows()
-            ? StringComparer.OrdinalIgnoreCase
-            : StringComparer.Ordinal;
-
-        var firstLegacyIdx = -1;
-        var existingUserIdx = -1;
-
-        for (var i = 0; i < segments.Count; i++)
-        {
-            var seg = segments[i];
-            if (firstLegacyIdx < 0 && IsLegacyNeigeLocalBinSegment(seg))
-            {
-                firstLegacyIdx = i;
-            }
-
-            if (existingUserIdx < 0)
-            {
-                try
-                {
-                    var normSeg = Path.GetFullPath(seg).TrimEnd(Path.DirectorySeparatorChar);
-                    var normUser = userLocalBin.TrimEnd(Path.DirectorySeparatorChar);
-                    if (pathComparer.Equals(normSeg, normUser))
-                    {
-                        existingUserIdx = i;
-                    }
-                }
-                catch
-                {
-                    // Ignore malformed PATH entry.
-                }
-            }
-        }
-
-        if (firstLegacyIdx >= 0)
-        {
-            if (existingUserIdx > firstLegacyIdx)
-            {
-                var entry = segments[existingUserIdx];
-                segments.RemoveAt(existingUserIdx);
-                segments.Insert(firstLegacyIdx, entry);
-            }
-            else if (existingUserIdx < 0 && Directory.Exists(userLocalBin))
-            {
-                segments.Insert(firstLegacyIdx, userLocalBin);
-            }
-        }
-        else if (existingUserIdx < 0 && allowAppendWhenMissing && Directory.Exists(userLocalBin))
-        {
-            segments.Add(userLocalBin);
-        }
-
-        return string.Join(Path.PathSeparator, segments);
-    }
-
-    private static bool IsLegacyNeigeLocalBinSegment(string segment)
-    {
-        var normalized = segment.Replace('\\', '/');
-        return normalized.Contains("neige-calm", StringComparison.OrdinalIgnoreCase) &&
-               normalized.Contains(".local-bin", StringComparison.OrdinalIgnoreCase);
-    }
-
     internal static string? FindExecutableOnPath(string executable, IReadOnlyDictionary<string, string>? env)
     {
-        if (string.IsNullOrWhiteSpace(executable))
-        {
-            return null;
-        }
-
-        if (executable.Contains(Path.DirectorySeparatorChar, StringComparison.Ordinal) ||
-            executable.Contains(Path.AltDirectorySeparatorChar, StringComparison.Ordinal))
+        if (string.IsNullOrWhiteSpace(executable)) return null;
+        if (executable.Contains(Path.DirectorySeparatorChar) || executable.Contains(Path.AltDirectorySeparatorChar))
         {
             var full = Path.GetFullPath(executable);
             return File.Exists(full) ? full : null;
         }
 
-        string? pathVar = null;
-        string? homeDir = null;
-        if (env is not null)
+        var pathVar = env?.GetValueOrDefault("PATH") ?? Environment.GetEnvironmentVariable("PATH");
+        if (string.IsNullOrWhiteSpace(pathVar)) return null;
+        foreach (var dir in pathVar.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
         {
-            env.TryGetValue("PATH", out pathVar);
-            env.TryGetValue("HOME", out homeDir);
+            var candidate = Path.Combine(dir, executable);
+            if (File.Exists(candidate)) return candidate;
+            if (OperatingSystem.IsWindows() && !executable.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) &&
+                File.Exists(candidate + ".exe"))
+                return candidate + ".exe";
         }
-
-        pathVar ??= Environment.GetEnvironmentVariable("PATH");
-        homeDir ??= Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-
-        var prioritized = PrioritizeUserLocalBinInPath(pathVar, homeDir, allowAppendWhenMissing: env is null);
-        if (string.IsNullOrWhiteSpace(prioritized))
-        {
-            return null;
-        }
-
-        var segments = prioritized.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries);
-        foreach (var dir in segments)
-        {
-            try
-            {
-                var candidate = Path.Combine(dir, executable);
-                if (File.Exists(candidate))
-                {
-                    return candidate;
-                }
-
-                if (OperatingSystem.IsWindows() && !executable.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
-                {
-                    var exeCandidate = candidate + ".exe";
-                    if (File.Exists(exeCandidate))
-                    {
-                        return exeCandidate;
-                    }
-                }
-            }
-            catch
-            {
-                // Ignore malformed PATH segment.
-            }
-        }
-
         return null;
     }
 
-    private static async Task<string> SafeAwaitOutputAsync(Task<string> task)
+    private static IReadOnlyList<ProviderModelInfo> ParseModelCatalog(JsonElement response)
     {
-        try
-        {
-            return await task.ConfigureAwait(false);
-        }
-        catch
-        {
-            return string.Empty;
-        }
-    }
+        if (response.ValueKind != JsonValueKind.Object ||
+            !response.TryGetProperty("models", out var models) ||
+            models.ValueKind != JsonValueKind.Array)
+            return [];
 
-    private static string? ExtractVersionString(string output)
-    {
-        if (string.IsNullOrWhiteSpace(output))
+        var catalog = new List<ProviderModelInfo>();
+        foreach (var item in models.EnumerateArray())
         {
-            return null;
-        }
-
-        var lines = output
-            .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        return lines.Length == 0 ? null : lines[^1];
-    }
-
-    private static string? ExtractFirstNonEmptyLine(string output)
-    {
-        if (string.IsNullOrWhiteSpace(output))
-        {
-            return null;
-        }
-
-        var lines = output
-            .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        return lines.Length == 0 ? null : lines[0];
-    }
-
-    private static void TryKillProcessTree(Process process)
-    {
-        try
-        {
-            if (!process.HasExited)
+            var id = TryGetJsonString(item, "id");
+            if (string.IsNullOrWhiteSpace(id)) continue;
+            var efforts = new List<ProviderModelEffort>();
+            if (item.TryGetProperty("effortLevels", out var arr) && arr.ValueKind == JsonValueKind.Array)
             {
-                process.Kill(entireProcessTree: true);
+                foreach (var eff in arr.EnumerateArray())
+                {
+                    if (eff.ValueKind == JsonValueKind.String && eff.GetString() is { Length: > 0 } level)
+                        efforts.Add(new ProviderModelEffort(level, string.Empty));
+                }
             }
+            catalog.Add(new ProviderModelInfo(
+                Model: id,
+                DisplayName: TryGetJsonString(item, "displayName") ?? id,
+                Description: TryGetJsonString(item, "description") ?? string.Empty,
+                IsDefault: item.TryGetProperty("isDefault", out var def) && def.ValueKind == JsonValueKind.True,
+                DefaultReasoningEffort: TryGetJsonString(item, "defaultEffort"),
+                SupportedReasoningEfforts: efforts));
         }
-        catch
-        {
-            // Ignore kill failures on already-exited processes.
-        }
+        return catalog;
     }
+
+    private static string? TryGetJsonString(JsonElement obj, string property) =>
+        obj.ValueKind == JsonValueKind.Object && obj.TryGetProperty(property, out var val) && val.ValueKind == JsonValueKind.String
+            ? val.GetString()
+            : null;
 }
