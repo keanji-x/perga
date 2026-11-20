@@ -5,17 +5,15 @@ import type { FailedSendOp, PendingQueueSend, ReplacedTurn, QueueDisplayAccounti
 import type { ConversationStopFeedback } from '../../../../core/domain/conversation-stop.ts';
 import type { RunningTurnAnchor } from '../../../../core/domain/conversation-meta.ts';
 import type { UploadAttachment } from '../../features/planner/attachments.tsx';
-import type { WorkerMessageMode } from '../../../../core/domain/worker-session.ts';
+import type { PermissionModeOptionDto } from '../../../../core/api/perga-v1.ts';
 import type { OpenAsk } from '../../../../core/domain/ask.ts';
 import type { AskAnswer } from '../../../../core/api/generated/wire.ts';
 
 export type ConversationStore = Readonly<{
-  worker?: import('../../../../core/api/perga-v1.ts').WorkerActivity | null;
-  updateWorkerSettings: (settings: import('../../../../core/api/perga-v1.ts').WorkerSettings & { attemptId: string }, approvalKey?: string) => Promise<unknown>;
-  answerWorkerAsk?: (ask: OpenAsk, answers: readonly AskAnswer[]) => Promise<void>;
-  workerDelivery?: Readonly<{ mode: WorkerMessageMode; select: (mode: WorkerMessageMode) => void }> | null;
-  unconfirmedWorkerSend?: Readonly<{ retry: () => void; dismiss: () => void }> | null;
-  workerStatus?: string | null;
+  /** A session-specific list when available. Legacy Track asks are supplied by the caller. */
+  openAsks: readonly OpenAsk[] | null;
+  answerAsk: (ask: OpenAsk, answers: readonly AskAnswer[]) => Promise<void>;
+  statusNotice: string | null;
   conversations: readonly Conversation[];
   /** This selected scope's messages and actions, in canonical display order. */
   turns: readonly TranscriptEntry[];
@@ -85,19 +83,25 @@ export type ConversationStore = Readonly<{
   loadEarlier: () => boolean;
   /** Why the queue is not draining, when the reader has to act; a standing condition of the conversation, unlike `actionError`. */
   blockedReason: string | null;
-  providerRecoveryHoldsSend: boolean;
   providerResume: Readonly<{ state: 'available' | 'resuming' | 'paused'; start: () => void }> | null;
   abandonUnknownInput: (() => void) | null;
   /** What this conversation's turns run with. */
   model: ModelSelection;
   /** What may be chosen, or `null` until the catalog has answered once. */
   modelCatalog: ModelCatalog | null;
+  modelDefaultAvailable: boolean;
+  modelChangeDisabled: boolean;
   /** Store a whole new selection. Its failure lands in `actionError`, and only while its conversation is shown. */
   setModel: (selection: ModelSelection) => void;
-  /** Whether the Planner may pause a turn to ask first; `null` for a card that is not a Planner, and until the run read answers. */
+  /** The session's approval mode when the server provides one. */
   permissionMode: PlannerPermissionMode | null;
-  /** Store a new mode for the next turn. Its failure lands in `actionError`, as a model change's does. */
-  setPermissionMode: (mode: PlannerPermissionMode) => void;
+  /** Overrides the provider menu when the session exposes its own approval policy. */
+  permissionOptions: readonly PermissionModeOptionDto[] | null;
+  permissionChangeDisabled: boolean;
+  permissionAuthorizationMode: string | null;
+  unavailablePermissionMode: string | null;
+  /** A verified change can surface failures in the authorization dialog. */
+  setPermissionMode: (mode: PlannerPermissionMode, authorization?: string) => Promise<void>;
 }>;
 
 /** A server-backed list and the real Track whose rows may enter the tab registry. */

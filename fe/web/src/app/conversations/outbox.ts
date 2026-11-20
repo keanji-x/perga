@@ -7,12 +7,12 @@ import {
   conversationNameFrom, isConversationMessage,
   type ConversationMessage, type PlannerInputMutation, type PendingQueueEntry, type SentPlannerInput, type TranscriptEntry,
 } from '../../../../core/domain/conversation.ts';
-import { KeyedSendFailure, retryUnknownSend, SEND_RETRIES } from '../../../../core/domain/conversation-delivery.ts';
+import { KeyedSendFailure, retryUnknownSend, SEND_FAILURES, SEND_RETRIES } from '../../../../core/domain/conversation-delivery.ts';
 import {
-  queueDisplayAccounting, outboxFactsWithRemovedInputs, synchronizeQueuedSends, withOutboxLiveReplies, settleSendOp, wasUnknown, withConfirmedSends, withoutQueuedEntry, type LandedReads, type ReplacedTurn, type SendOp, type ConversationOutboxOp, type QueueDisplayAccounting,
+  queueDisplayAccounting, outboxFactsWithRemovedInputs, synchronizeQueuedSends, withOutboxLiveReplies, settleSendOp, wasUnknown, withConfirmedSends, withoutQueuedEntry, type LandedReads, type ConversationSendTarget, type ReplacedTurn, type SendOp, type ConversationOutboxOp, type QueueDisplayAccounting,
 } from '../../../../core/domain/conversation-outbox.ts';
 import { recoveryDelay } from '../../../../core/domain/recovery/access.ts';
-import { ApiError, NotSentError } from '../../../../core/domain/failure-class.ts';
+import { ApiError, classifyFailure, NotSentError } from '../../../../core/domain/failure-class.ts';
 import { admitTransport } from '../providers/recovery-mutation.ts';
 import { mintIdempotencyKey } from '../providers/idempotency-key.ts';
 import { useState } from '../../ui/state/public.ts';
@@ -64,15 +64,16 @@ function rememberSent(
  */
 export function useConversationOutbox({
   cardId, transport, send, serverEntries, serverTurns, liveReplies, queuedEntries, stalled, landed,
-  queuesInput, queueIfBusy, highWater, pressed, removedMessages, viewerId,
+  queuesInput, queueIfBusy, highWater, pressed, removedMessages, viewerId, target,
 }: {
   removedMessages: ReadonlySet<string>;
   viewerId: string | null;
   cardId: string;
   transport: ApiTransportPort;
-  /** `POST …/planner/input` for this card; `answered` runs when its 200 is in hand, before its refresh reads start. */
+  /** Mark the receipt before starting the reads that reconcile it. */
   send: (text: string, attachments: readonly string[], key: string, replacesTurn: string | null, admitted: ApiTransportPort,
-    answered: () => void, queueIfBusy: boolean) => Promise<SentPlannerInput>;
+    answered: () => void, queueIfBusy: boolean, target?: ConversationSendTarget) => Promise<SentPlannerInput>;
+  target?: ConversationSendTarget;
   serverEntries: readonly TranscriptEntry[];
   serverTurns: readonly ConversationMessage[];
   liveReplies: readonly TranscriptEntry[];
@@ -139,7 +140,7 @@ export function useConversationOutbox({
   /** One run of a begun op: its attempts under one key, settled into the outbox of the card it was pressed in. */
   const run = (op: SendOp & { phase: 'sending' }, admittedAtPress: ApiTransportPort): Promise<void> => {
     const sentTo = cardId;
-    const { key, echo, fromComposer, replaces } = op;
+    const { key, echo, fromComposer, replaces, target } = op;
     const attachments: readonly PlannerAttachment[] = echo.attachments ?? [];
     const settle = (next: SendOp | null) => editOutbox(sentTo, (current) => settleSendOp(current, key, next));
     let answeredRead = 0;
@@ -151,11 +152,15 @@ export function useConversationOutbox({
         const admitted = attempt === 0 ? admittedAtPress : admitRetry();
         return admitted === null ? Promise.reject(new NotSentError())
           : send(echo.text, attachments.map((attachment) => attachment.id), key, replaces?.turnId ?? null, admitted,
-            () => { answeredRead = nextRead(); }, queueIfBusy);
+            () => { answeredRead = nextRead(); }, queueIfBusy, target);
       },
       (error) => (error instanceof ApiError ? error.failure : null),
       (retry) => new Promise<void>((resolve) => { setTimeout(resolve, recoveryDelay(retry, Math.random())); }),
-      op.unknown, queueIfBusy ? 0 : SEND_RETRIES,
+      op.unknown, (target?.queue ?? queueIfBusy) ? 0 : SEND_RETRIES,
+      // The task admission check rejects a conflict before writing the message. After a lost
+      // response the shared retry logic still keeps uncertainty until it receives a receipt.
+      failure => target !== undefined && failure?.kind === 'http' && failure.status === 409 && failure.code === 'conflict'
+        ? 'refused' : classifyFailure(failure, SEND_FAILURES),
     );
     const prerequisite = registry.permissionWriteOf(sentTo);
     const delivery = prerequisite === undefined ? deliver() : prerequisite.then(deliver,
@@ -186,7 +191,7 @@ export function useConversationOutbox({
         return;
       }
       /* `message` is shown only for an op that was not sent: an unknown op's footer says no more than that it is unconfirmed. */
-      settle({ key, echo, fromComposer, replaces, phase: 'failed', delivery: failed.delivery, message });
+      settle({ key, target, echo, fromComposer, replaces, phase: 'failed', delivery: failed.delivery, message });
     });
   };
 
@@ -219,7 +224,7 @@ export function useConversationOutbox({
       let admitted: ApiTransportPort;
       try { admitted = admitTransport(transport); } catch { return null; }
       const op = {
-        key: idempotencyKey ?? mintIdempotencyKey(), fromComposer, replaces, phase: 'sending', unknown: false,
+        key: idempotencyKey ?? mintIdempotencyKey(), target, fromComposer, replaces, phase: 'sending', unknown: false,
         echo: {
           id: `echo-${mintIdempotencyKey()}`, author: 'you', text, atMs: Date.now(),
           /* The echo carries the images: an image-only message has no text to match on, so the ids are the second criterion. */
@@ -233,7 +238,7 @@ export function useConversationOutbox({
           queued: queuesInput,
           /* Not knowable yet: a 200 with no unknown attempt before it names it. */
           entryId: null,
-          ...(queueIfBusy ? { waitForIdentity: true } : {}),
+          ...((target?.queue ?? queueIfBusy) ? { waitForIdentity: true } : {}),
         },
       } as const;
       if (!beginSend(cardId, op)) return null;
@@ -252,7 +257,7 @@ export function useConversationOutbox({
       /* Not admitted: the op keeps its standing and its footer unchanged; the global recovery status says why. */
       try { admitted = admitTransport(transport); } catch { return false; }
       const op = {
-        key, echo: failed.echo, fromComposer: failed.fromComposer, replaces: failed.replaces, phase: 'sending',
+        key, target: failed.target, echo: failed.echo, fromComposer: failed.fromComposer, replaces: failed.replaces, phase: 'sending',
         unknown: failed.delivery === 'unknown',
       } as const;
       if (!beginSend(cardId, op)) return false;

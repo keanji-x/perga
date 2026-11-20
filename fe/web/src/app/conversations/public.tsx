@@ -59,10 +59,6 @@ export function useConversationSendOps(cardId: string | null) {
   return useSnapshot(useCallback((state: ConversationSnapshot) => cardId === null ? NO_SENDS : state.outboxes[cardId] ?? NO_SENDS, [cardId]), cardId !== null);
 }
 
-export function useWorkerSendIntent(cardId: string | null) {
-  return useSnapshot(useCallback((state: ConversationSnapshot) => cardId === null ? null : state.workerSends[cardId] ?? null, [cardId]), cardId !== null);
-}
-
 export function useConversationSpentRows(cardId: string | null) {
   return useSnapshot(useCallback((state: ConversationSnapshot) => cardId === null ? NO_ROWS : state.spentRows[cardId] ?? NO_ROWS, [cardId]), cardId !== null);
 }

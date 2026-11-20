@@ -23,6 +23,7 @@ import { useContentAdmission } from '../../ui/content-presentation/public.ts';
 import { useConversationDraftRetention, useConversationPaneTarget, useRequestedConversationOpen, useConversationEscape, useConversationDraftAutoSend } from '../conversations/pane-lifecycle.ts';
 import { createConversationDraftActions } from '../conversations/draft-actions.ts';
 import { useConversationStore } from '../conversations/store.ts';
+import { ConversationApprovalControl } from '../conversations/approval-control.tsx';
 import type { ConversationCreationSource, ConversationRouteIntent, PlannerConversationScope } from '../conversations/contracts.ts';
 import { Button } from '@astryxdesign/core/Button';
 import type { PaneResizeGroup } from '../../ui/drawer/resize-group.ts';
@@ -86,7 +87,7 @@ import { ContextRing } from '../../features/chat/thread/context-ring.tsx';
 import { useMentionTrigger } from '../../features/chat/thread/mention-trigger.tsx';
 import { ReportBacklinks } from '../../features/report/backlinks/public.tsx';
 import { TaskRecovery, useCurrentTaskRows } from './task-recovery.tsx';
-import { WorkerActivityControl, WorkerDeliveryControl, WorkerDispatchControl, WorkerSettingsControl } from './worker-controls.tsx';
+import { WorkerDispatchControl } from './worker-controls.tsx';
 import { useReportPreviewResolver, useReportPreviewViewports } from './report-preview.ts';
 import { useReportSeriesResolver } from './report-series.ts';
 import { ReportReferencePreview } from './report-reference.tsx';
@@ -697,9 +698,6 @@ function useConversationPane(
   });
   const setModel = useCommittedCallback(existingId, store.setModel);
   const setPermissionMode = useCommittedCallback(existingId, store.setPermissionMode);
-  const worker = store.worker;
-  const updateWorkerSettings = useCommittedCallback(existingId, store.updateWorkerSettings);
-  const workerDelivery = store.workerDelivery;
   const [submission, setSubmission] = useState<Readonly<{ conversationId: string; request: number }> | null>(null);
   /* Only a new admitted op asks the shown thread to follow. Retries retain their
      key and reading place; pending work on mount is not a fresh local press. */
@@ -717,18 +715,16 @@ function useConversationPane(
     if (open === null || options?.onSide === undefined || !sideSourceReady) return false;
     return options.onSide(open, store.turns, question);
   });
-  const workerOpen = worker?.pendingApprovals;
-  const workerAsks = useMemo(() => workerOpen === undefined || shareAccess !== null ? NO_ASKS : pendingApprovalQuestions(workerOpen), [workerOpen, shareAccess]);
-  const conversationAsks = worker == null ? plannerRow?.asks ?? NO_ASKS : workerAsks;
-  /* Read field by field: the control is rebuilt each render, and the composer's memo keys on what it shows. */
+  const conversationAsks = store.openAsks === null ? plannerRow?.asks ?? NO_ASKS
+    : shareAccess !== null ? NO_ASKS : store.openAsks;
   const roleValue = plannerRow?.role.value ?? null;
   const roleDisabled = plannerRow?.role.isDisabled ?? true;
   const roleDisabledReason = plannerRow?.role.disabledReason;
   const roleChange = plannerRow?.role.onChange;
   const answerAsk = useCommittedCallback(existingId, (askId: import('../../../../core/domain/activity.ts').AskId, answers: readonly AskAnswer[]) => {
-    if (worker != null) {
-      const ask = workerAsks.find(candidate => candidate.askId === askId);
-      return ask === undefined || store.answerWorkerAsk === undefined ? Promise.reject(new NotSentError()) : store.answerWorkerAsk(ask, answers);
+    if (store.openAsks !== null) {
+      const ask = conversationAsks.find(candidate => candidate.askId === askId);
+      return ask === undefined ? Promise.reject(new NotSentError()) : store.answerAsk(ask, answers);
     }
     return plannerRow === null ? Promise.reject(new NotSentError()) : plannerRow.answerAsk(askId, answers);
   });
@@ -765,22 +761,29 @@ function useConversationPane(
     attachmentsSupported: false,
     contextUsage: store.contextUsage,
     historyReady: store.historyReady,
+    runReady: store.runReady,
     interrupt: interrupt,
     model: store.model,
     modelCatalog: store.modelCatalog,
+    modelDefaultAvailable: store.modelDefaultAvailable,
+    modelChangeDisabled: store.modelChangeDisabled,
+    permissionChangeDisabled: store.permissionChangeDisabled,
+    permissionAuthorizationMode: store.permissionAuthorizationMode,
+    unavailablePermissionMode: store.unavailablePermissionMode,
     permissionMode: store.permissionMode,
     sendBlocked: store.sendBlocked,
     sending: store.sending,
     canQueueWhileRunning: store.canQueueWhileRunning,
-    providerRecoveryHoldsSend: store.providerRecoveryHoldsSend,
     setModel: setModel,
     setPermissionMode: setPermissionMode,
     stopping: store.stopping,
     working: store.working
-  }), [compact, store.compacting, store.manualCompactSupported, store.contextUsage, store.historyReady, interrupt, store.model, store.modelCatalog, store.permissionMode, store.sendBlocked, store.sending, store.canQueueWhileRunning, store.providerRecoveryHoldsSend, setModel, setPermissionMode, store.stopping, store.working]);
+  }), [compact, store.compacting, store.manualCompactSupported, store.contextUsage, store.historyReady, store.runReady, interrupt, store.model, store.modelCatalog, store.modelDefaultAvailable, store.modelChangeDisabled, store.permissionChangeDisabled,
+    store.permissionAuthorizationMode, store.unavailablePermissionMode, store.permissionMode, store.sendBlocked, store.sending, store.canQueueWhileRunning, setModel, setPermissionMode, store.stopping, store.working]);
   const effectivePermissionMode = composerView.permissionMode;
-  const hasPermissionMetadata = steerCapabilities.data !== undefined && scopePermissionModes.length > 0;
-  const displayPermissionMode = effectivePermissionMode ?? (hasPermissionMetadata ? defaultPermissionModeFor(scopePermissionModes) : null);
+  const permissionOptions = store.permissionOptions ?? scopePermissionModes;
+  const hasPermissionMetadata = permissionOptions.length > 0;
+  const displayPermissionMode = effectivePermissionMode ?? (hasPermissionMetadata ? defaultPermissionModeFor(permissionOptions) : null);
   const { bar: editingBar } = edit;
   const replacing = edit.replacing || edit.queuedSaving;
   const editingQueue = edit.queued !== null;
@@ -811,7 +814,7 @@ function useConversationPane(
               focusOnMount={panePresented && composerFocusFor === existingId}
               focusRequest={composerFocusRequest}
               changeText={changeComposer}
-              disabled={(!draftOnly && composerView.sendBlocked) || !composerView.historyReady || replacing}
+              disabled={(!draftOnly && composerView.sendBlocked) || !composerView.historyReady || !composerView.runReady || replacing}
               sendDisabled={draftOnly}
               sendWaiting={composerView.sending || edit.queuedSaving} {...(editingBar === undefined ? {} : { editing: editingBar })}
               /* The images stay with the composer until the store reports them delivered; the press waits out its Edit. */
@@ -851,43 +854,33 @@ function useConversationPane(
                     }}
                     disabled={editingQueue || composerView.sendBlocked || !composerView.historyReady || replacing}
                   />
-                  {worker == null && <ModelPill
-                    /* Without a scope the catalog read is disabled, so no `unavailable` label can show. */
-                    /* An existing conversation keeps issue-time handling: no availability gate here (#1817). */
-                    groups={[{ provider: scopeProvider, catalog: composerView.modelCatalog, availability: null }]}
+                  <ModelPill key={`model-${existingId}`}
+                    groups={[{ provider: scopeProvider, catalog: composerView.modelCatalog, availability: null,
+                      defaultAvailable: composerView.modelDefaultAvailable }]}
                     provider={scopeProvider}
                     selection={composerView.model}
                     onChange={composerView.setModel}
-                    isDisabled={!composerView.historyReady || composerView.providerRecoveryHoldsSend}
-                  />}
-                  {worker != null && updateWorkerSettings !== undefined &&
-                    <WorkerSettingsControl key={worker.attemptId} worker={worker} update={updateWorkerSettings} />}
-                  {worker != null && <WorkerActivityControl key={`activity-${worker.attemptId}`} worker={worker} />}
-                  {worker != null && workerDelivery != null &&
-                    <WorkerDeliveryControl {...workerDelivery} nativeSteer={worker.nativeSteer} />}
-                  {/* Provider-declared approval mode for Lead and Assistant sessions; Workers use their own settings. */}
-                  {worker == null && displayPermissionMode !== null && (
-                    <PermissionModePill
+                    isDisabled={!composerView.historyReady || composerView.modelChangeDisabled}
+                    appliesNextTurn={composerView.working}
+                  />
+                  {displayPermissionMode !== null && (
+                    <ConversationApprovalControl key={`approvals-${existingId}`}
                       mode={displayPermissionMode}
                       options={hasPermissionMetadata
-                        ? scopePermissionModes
+                        ? permissionOptions
                         : [{ id: displayPermissionMode, label: displayPermissionMode, description: 'Provider approval options unavailable.', tone: 'neutral', isDefault: true }]}
-                      onChange={composerView.setPermissionMode}
-                      isDisabled={!composerView.historyReady || !hasPermissionMetadata}
+                      change={composerView.setPermissionMode}
+                      disabled={!composerView.historyReady || !hasPermissionMetadata || composerView.permissionChangeDisabled}
+                      authorizationMode={composerView.permissionAuthorizationMode}
+                      unavailableMode={composerView.unavailablePermissionMode}
                     />
-                  )}
-                  {/* The Planner's own row on its Track: the Track's role, not the conversation's, so no turn gates it. */}
-                  {roleValue !== null && roleChange !== undefined && (
-                    <PlannerRolePill value={roleValue} onChange={roleChange} isDisabled={roleDisabled}
-                      disabledReason={roleDisabledReason} />
                   )}
                 </HStack>
               )}
             />
   ), [existingId, compactComposer, panePresented, composerFocusFor, composerFocusRequest, changeComposer, composerView, draftOnly,
     paneCommands, composerStop, replacing, editingQueue, edit.queuedSaving, editingBar,
-    sendText, composerAttachments, mentionTrigger, scopeProvider, scopePermissionModes, hasPermissionMetadata, displayPermissionMode, conversationAsks, answerAsk,
-    roleValue, roleDisabled, roleDisabledReason, roleChange, worker, updateWorkerSettings, workerDelivery]);
+    sendText, composerAttachments, mentionTrigger, scopeProvider, permissionOptions, hasPermissionMetadata, displayPermissionMode, conversationAsks, answerAsk]);
 
   const centeredEmpty = options?.embedded?.active === true && open !== null && store.historyReady && openTurns.length === 0 && !hasPendingMessages && !(pendingPresentation?.conversationId === existingId && pendingPresentation.visible) && !store.sending && !store.working && store.failedSend === null;
 
@@ -1014,12 +1007,7 @@ function useConversationPane(
             )}
             {store.loadingEarlier && <ChatFooterNotice tone="neutral">Loading earlier messages… Navigation covers loaded history.</ChatFooterNotice>}
             {store.compacting && <ChatFooterNotice>Compacting conversation context…</ChatFooterNotice>}
-            {store.workerStatus != null && <ChatFooterNotice tone="neutral">{store.workerStatus}</ChatFooterNotice>}
-            {store.unconfirmedWorkerSend != null && <ChatFooterNotice>
-              <ChatFooterError message="The Worker message’s delivery is unconfirmed." />
-              <ChatFooterRemedy onClick={store.unconfirmedWorkerSend.retry}>Retry same message</ChatFooterRemedy>
-              <ChatFooterRemedy onClick={store.unconfirmedWorkerSend.dismiss}>Dismiss</ChatFooterRemedy>
-            </ChatFooterNotice>}
+            {store.statusNotice != null && <ChatFooterNotice tone="neutral">{store.statusNotice}</ChatFooterNotice>}
             {store.actionError !== null && (
               <ChatFooterNotice><ChatFooterError message={store.actionError} /></ChatFooterNotice>
             )}
@@ -1049,6 +1037,10 @@ function useConversationPane(
           </>
         )}
       >
+        {open !== null && !draftOpen && !archived && roleValue !== null && roleChange !== undefined && (
+          <PlannerRolePill value={roleValue} onChange={roleChange} isDisabled={roleDisabled} placement="below"
+            disabledReason={roleDisabledReason} />
+        )}
         {(draft?.side !== undefined && draftOpen || open?.sourceCardId !== undefined) && (
           <p>From {contextSource === undefined ? 'an earlier conversation' : conversationName(contextSource)}.
             {' '}Uses a snapshot of loaded text, not complete history. Choose the backend before sending.</p>
@@ -1148,7 +1140,7 @@ function useConversationPane(
     dock: compactComposer ? <ConversationDock target={dockRowId === null ? { kind: 'scope', id: sourceScopeId } : { kind: 'card', id: dockRowId }}
       commands={dockRowId === null ? conversationCommands({ compactViewport: true }) : paneCommands}
       onChange={setDockText} onSend={sendFromDock} onBeginInput={openDockHistory}
-      disabled={archived || options?.reportComposer?.ready === false || (dockRowId !== null && (store.sendBlocked || !store.historyReady || edit.held !== null))} /> : undefined,
+      disabled={archived || options?.reportComposer?.ready === false || (dockRowId !== null && (store.sendBlocked || !store.historyReady || !store.runReady || edit.held !== null))} /> : undefined,
     selectedConversationId: draftOpen ? null : open?.id ?? dockRowId,
     isOpen: open !== null || draftOpen,
     close: closeDrawer,

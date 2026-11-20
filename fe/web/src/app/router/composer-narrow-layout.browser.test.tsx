@@ -31,8 +31,8 @@ it.each([[224, 16], [280, 16], [280, 20], [280, 32]])('keeps real Planner compos
   const restingWidth = root.style.inlineSize;
   root.style.inlineSize = `${width}px`;
   await input.fill('A long draft with a link https://example.invalid/' + 'path-'.repeat(24));
-  const controls = [page.getByRole('button', { name: /^Model:/ }),
-    page.getByRole('button', { name: /^Role:/ }), page.getByRole('button', { name: 'Send', exact: true })];
+  const controls = [page.getByRole('button', { name: /^Model:/ }), page.getByRole('button', { name: 'Send', exact: true })];
+  expect(root.contains(page.getByRole('button', { name: /^Role:/ }).element())).toBe(false);
   const check = () => {
     const bounds = root.getBoundingClientRect();
     for (const control of controls) {
