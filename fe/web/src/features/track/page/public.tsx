@@ -17,7 +17,7 @@ import { DropdownMenu as AstryxDropdownMenu } from '@astryxdesign/core/DropdownM
 import { Markdown } from '@astryxdesign/core/Markdown';
 import { MoreMenu as AstryxMoreMenu } from '@astryxdesign/core/MoreMenu';
 import { VisuallyHidden } from '@astryxdesign/core/VisuallyHidden';
-import { useCallback, useEffect, useLayoutEffect, useRef, type ReactNode } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useCompactViewport } from '../../../ui/viewport/public.ts';
 
@@ -56,25 +56,22 @@ type MobilePanelKind = 'outline' | Exclude<RowModuleView['key'], 'work' | 'tempo
 export type TrackInputNotification = Readonly<{
   /** The kernel's item key; the row's key. */
   key: string;
-  /**
-   * `ask`: the Planner asks the user something; `approval`: a Planner turn is paused on a request only an answer ends
-   * (#2348), so it cannot be dismissed; `planner-down`: the Planner stopped; `planner-turn-timeout`: a confirmed budget stop.
-   */
-  kind: 'ask' | 'approval' | 'planner-down' | 'planner-turn-timeout';
-  /** The kernel's words, shown verbatim: the Planner's questions, or the reason it stopped. */
+  /** The question or the recorded reason execution stopped. */
   text: string;
   atMs: number;
+  read?: boolean;
   action?: import('../../../../../core/api/generated/wire.ts').AskAction;
-}>;
+}> & (Readonly<{ kind: 'ask' | 'approval' | 'planner-down' | 'planner-turn-timeout' }>
+  | Readonly<{ kind: 'task-failed'; blockId: string }>);
 
 /** A row's meta line: what kind of thing is waiting, in plain words; only its dot carries colour. */
 const NOTIFICATION_LABEL = Object.freeze({
   ask: 'Needs your answer', approval: 'Waiting for your approval', 'planner-down': "Planner can't continue",
-  'planner-turn-timeout': 'Planner turn timed out',
+  'planner-turn-timeout': 'Planner turn timed out', 'task-failed': 'Task failed',
 } as const);
 
 /** Whether a row offers Dismiss. A paused turn's request stays until it is answered or goes away, so dismissing it would do nothing. */
-const NOTIFICATION_DISMISSABLE = Object.freeze({ ask: true, approval: false, 'planner-down': true, 'planner-turn-timeout': true } as const);
+const NOTIFICATION_DISMISSABLE = Object.freeze({ ask: true, approval: false, 'planner-down': true, 'planner-turn-timeout': true, 'task-failed': false } as const);
 
 /**
  * What clicking a row does: shown in the label's place while the row is hovered or focused, and the start of its
@@ -83,9 +80,11 @@ const NOTIFICATION_DISMISSABLE = Object.freeze({ ask: true, approval: false, 'pl
 const NOTIFICATION_ACTION = Object.freeze({
   answer: Object.freeze({ hint: 'Answer in Planner', name: 'Answer the Planner' }),
   open: Object.freeze({ hint: 'Open Planner', name: 'Open the Planner' }),
+  task: Object.freeze({ hint: 'View task', name: 'Open task' }),
 } as const);
 
 function notificationAction(kind: TrackInputNotification['kind']) {
+  if (kind === 'task-failed') return NOTIFICATION_ACTION.task;
   return NOTIFICATION_ACTION[kind === 'ask' || kind === 'approval' ? 'answer' : 'open'];
 }
 
@@ -131,7 +130,8 @@ export type TrackPageProps = Readonly<{
   /** Everything the kernel says is addressed to the user on this track, projected by
    *  the route from the activity overlay's items (`attentionItems`). */
   inputNotifications?: readonly TrackInputNotification[];
-  /** Opens the Planner's composer: what a click anywhere on a row does, an ask and planner down alike. */
+  onNotificationReadChange?: (item: TrackInputNotification, read: boolean) => void;
+  /** Opens the Planner for questions and Planner notices. */
   onReply?: () => void;
   /** Dismiss the row's item by its kernel key. The row stays until the overlay no longer lists it. */
   onDismiss?: (key: string) => Promise<void>;
@@ -194,7 +194,7 @@ function rowModule(view: TrackPageView, key: RowModuleView['key']): RowModuleVie
 
 export function TrackPage({ fillReading = false, showWorkspaceIsolation = true, mobileReportIntro, mobileChatComposer,
   panelHeader, panelContent, progressDisclosure, track, cards, existingCardIds, tasks, openableCards, outlineItems = [], report, backlinks, conversationList, conversationContextList,
-  shareLinks, onShareTrack, onStartConversation, showConversationAction = true, conversationOpen = false, mobilePanelObscured, inputNotifications = [], onReply, onDismiss, nowMs,
+  shareLinks, onShareTrack, onStartConversation, showConversationAction = true, conversationOpen = false, mobilePanelObscured, inputNotifications = [], onNotificationReadChange, onReply, onDismiss, nowMs,
   cardsAction, recentFiles, onOpenCard, onDeleteCard, onSetWorkbench, onOpenTask, onOpenOutline, board, onCloseBoard,
   panel = null, onOpenPanel, onClosePanel,
   mobileBackLabel = 'Pages', onMobileBack, mobileHeaderActionsHost = null, mobileHeaderTitleHost = null, mobileTitleReadView,
@@ -242,7 +242,11 @@ export function TrackPage({ fillReading = false, showWorkspaceIsolation = true, 
   const dismissFeedback = useOperationFeedback();
   const notificationSignature = inputNotifications.map(({ key }) => key).join('|');
   const hasTurnTimeout = inputNotifications.some(({ kind }) => kind === 'planner-turn-timeout');
-  const [noticeExpanded, setNoticeExpanded] = useState(inputNotifications.length > 0 && !conversationOpen);
+  const hasTaskFailure = inputNotifications.some(({ kind }) => kind === 'task-failed');
+  const unreadCount = inputNotifications.filter(({ read }) => read !== true).length;
+  const unreadCountId = useId();
+  const autoExpandNotice = !conversationOpen && (!compactViewport || hasTurnTimeout);
+  const [noticeExpanded, setNoticeExpanded] = useState(inputNotifications.length > 0 && autoExpandNotice);
   const [notificationAnnouncement, setNotificationAnnouncement] = useState('');
   const offeredClosedAction = closedControl === undefined ? null : canReopenTrack ? 'reopen' : (canCloseTrack ? 'close' : null);
   const previousNotificationSignatureRef = useRef('');
@@ -254,10 +258,10 @@ export function TrackPage({ fillReading = false, showWorkspaceIsolation = true, 
     setNotificationAnnouncement(count > 0
       ? `${count} ${count === 1 ? 'notification needs' : 'notifications need'} your attention.`
       : (previousNotificationCountRef.current > 0 ? 'All notifications cleared.' : ''));
-    if (count > 0 && !conversationOpen) setNoticeExpanded(true);
+    if (count > 0 && autoExpandNotice) setNoticeExpanded(true);
     previousNotificationSignatureRef.current = notificationSignature;
     previousNotificationCountRef.current = count;
-  }, [conversationOpen, inputNotifications.length, notificationSignature]);
+  }, [autoExpandNotice, inputNotifications.length, notificationSignature]);
   useEffect(() => {
     if (conversationOpen && !previousConversationOpenRef.current) setNoticeExpanded(false);
     previousConversationOpenRef.current = conversationOpen;
@@ -598,7 +602,7 @@ export function TrackPage({ fillReading = false, showWorkspaceIsolation = true, 
           className={`${notificationStyles.needsInputNotice} ${noticePanelOpen
             ? notificationStyles.needsInputNoticeExpanded
             : notificationStyles.needsInputNoticeCompact} ${conversationOpen ? notificationStyles.needsInputNoticeBesideDrawer : ''}
-            ${hasTurnTimeout && !conversationOpen && !mobilePanelObscured ? notificationStyles.timeoutNotice : ''}`}
+            ${conversationOpen || mobilePanelObscured || boardOpen || mobilePanelOpen ? notificationStyles.noticeBehindMobileSurface : ''}`}
           data-nc-needs-input-notice=""
           data-nc-notification-mode={noticePanelOpen ? 'expanded' : 'compact'}
           role="region"
@@ -608,8 +612,8 @@ export function TrackPage({ fillReading = false, showWorkspaceIsolation = true, 
             <>
               <span className={notificationStyles.needsInputNoticeHeader}>
                 <span className={notificationStyles.needsInputNoticeIcon}><Icon name="notification" size="sm" /></span>
-                <strong className={notificationStyles.needsInputNoticeTitle}>{hasTurnTimeout ? 'Notifications' : 'Waiting on you'}</strong>
-                <span className={notificationStyles.needsInputCount}>{inputNotifications.length}</span>
+                <strong className={notificationStyles.needsInputNoticeTitle}>{hasTurnTimeout || hasTaskFailure ? 'Notifications' : 'Waiting on you'}</strong>
+                {unreadCount > 0 && <span className={notificationStyles.needsInputCount} title={`${unreadCount} unread`}>{unreadCount}</span>}
                 <button
                   type="button"
                   className={notificationStyles.needsInputCollapse}
@@ -619,20 +623,26 @@ export function TrackPage({ fillReading = false, showWorkspaceIsolation = true, 
                 ><Icon name="chevron-right" size="sm" /></button>
               </span>
               <ul className={notificationStyles.needsInputNoticeList}>
-                {inputNotifications.map((notification) => (
-                  <li
+                {inputNotifications.map((notification) => {
+                  const open = notification.kind !== 'task-failed'
+                    ? onReply
+                    : onOpenTask && (() => onOpenTask(notification.blockId));
+                  const gist = notificationGist(notification.text);
+                  return <li
                     key={notification.key}
-                    className={`${notificationStyles.notice} ${onReply === undefined ? '' : notificationStyles.noticeActionable}`}
+                    className={`${notificationStyles.notice} ${open === undefined ? '' : notificationStyles.noticeActionable}`}
                     data-nc-notification-state={notification.kind}
                   >
-                    {/* The whole row is the reply: a button stretched over it, so nothing interactive nests
-                        inside another; the × and the body's links sit above it. */}
-                    {onReply !== undefined && (
+                    {/* A stretched button opens the row. The status, dismiss and link controls sit above it. */}
+                    {open !== undefined && (
                       <button
                         type="button"
                         className={notificationStyles.noticeOpen}
-                        aria-label={`${notificationAction(notification.kind).name}: ${notificationGist(notification.text)}`}
-                        onClick={onReply}
+                        aria-label={`${notificationAction(notification.kind).name}: ${gist}`}
+                        onClick={() => {
+                          if (!notification.read) onNotificationReadChange?.(notification, true);
+                          open();
+                        }}
                       />
                     )}
                     <span className={notificationStyles.noticeMeta}>
@@ -645,13 +655,20 @@ export function TrackPage({ fillReading = false, showWorkspaceIsolation = true, 
                           or focused. Stacked in one grid cell, so the swap does not move the time. */}
                       <span className={notificationStyles.noticeLabel}>
                         <span className={notificationStyles.noticeLabelText}>{NOTIFICATION_LABEL[notification.kind]}</span>
-                        {onReply !== undefined && (
+                        {open !== undefined && (
                           <span className={notificationStyles.noticeAction} aria-hidden="true">{notificationAction(notification.kind).hint}</span>
                         )}
                       </span>
                       <time className={notificationStyles.noticeTime} dateTime={new Date(notification.atMs).toISOString()}>
                         {relativeTime(notification.atMs, nowMs ?? Date.now())}
                       </time>
+                      {onNotificationReadChange !== undefined && <button
+                        type="button"
+                        className={notificationStyles.noticeReadState}
+                        data-nc-notification-unread={notification.read !== true || undefined}
+                        aria-label={`${notification.read ? 'Read, mark as unread' : 'Unread, mark as read'}: ${gist}`}
+                        onClick={() => onNotificationReadChange(notification, !notification.read)}
+                      >{notification.read ? 'Read' : 'Unread'}</button>}
                     </span>
                     {/* The kernel's words are markdown, rendered as the chat renders a reply. An ask is read whole;
                         a failure is clamped, its full text is in the Planner conversation. */}
@@ -665,15 +682,15 @@ export function TrackPage({ fillReading = false, showWorkspaceIsolation = true, 
                       <button
                         type="button"
                         className={notificationStyles.noticeDismiss}
-                        aria-label={`Dismiss: ${NOTIFICATION_LABEL[notification.kind]}: ${notificationGist(notification.text)}`}
+                        aria-label={`Dismiss: ${NOTIFICATION_LABEL[notification.kind]}: ${gist}`}
                         title="Dismiss"
                         onClick={() => {
                           void dismissFeedback.run(onDismiss(notification.key), writeFailureText(DISMISS_FAILURES, DISMISS_TEXT));
                         }}
                       ><Icon name="close" size="sm" /></button>
                     )}
-                  </li>
-                ))}
+                  </li>;
+                })}
               </ul>
             </>
           ) : (
@@ -682,11 +699,13 @@ export function TrackPage({ fillReading = false, showWorkspaceIsolation = true, 
               className={notificationStyles.needsInputLauncher}
               data-nc-notification-launcher=""
               aria-label={`Open ${inputNotifications.length} ${inputNotifications.length === 1 ? 'notification' : 'notifications'}`}
+              aria-describedby={unreadCountId}
               title="Open notifications"
               onClick={() => setNoticeExpanded(true)}
             >
               <Icon name="notification" />
-              <span className={notificationStyles.needsInputIndicator} aria-hidden="true">{inputNotifications.length}</span>
+              <VisuallyHidden id={unreadCountId}>{unreadCount} unread</VisuallyHidden>
+              {unreadCount > 0 && <span className={notificationStyles.needsInputIndicator} aria-hidden="true">{unreadCount}</span>}
             </button>
           )}
         </aside>
