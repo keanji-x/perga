@@ -31,7 +31,7 @@ export const FILE_PUSHED_STATE_KEY = 'ncFilePushed';
 export const PLANNER_OPEN_STATE_KEY = 'ncOpenPlanner';
 
 export type NavTarget =
-  | Readonly<{ name: 'today' }>
+  | Readonly<{ name: 'today'; day?: string }>
   | Readonly<{ name: 'today-legacy' }>
   /** Starting a track is a route, not a dialog; the track row is minted on submit, not on entering the route. */
   | Readonly<{ name: 'new-track'; areaId: string }>
@@ -90,9 +90,11 @@ export function useGo(): (target: NavTarget, options?: GoOptions) => void {
       const hash = target.name === 'track' ? target.blockId : undefined;
       // All four fields are built from the target, never spread from the previous
       // location: "not passed" means "cleared".
-      const search: TrackSearch = target.name === 'track'
+      const search: Record<string, unknown> = target.name === 'track'
         ? buildTrackSearch({ card: target.cardId, file: target.filePath, panel: target.panel, from: target.from })
-        : {};
+        : target.name === 'today' && target.day !== undefined
+          ? { day: target.day }
+          : {};
       // A plain cross-track selection resumes that track. Explicit links and
       // same-track commands retain their existing clear/replace semantics.
       const resumeTrack = target.name === 'track' && target.blockId === undefined

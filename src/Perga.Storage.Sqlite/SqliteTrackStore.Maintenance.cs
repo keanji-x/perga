@@ -25,6 +25,7 @@ public sealed partial class SqliteTrackStore
         EnsureInitialized();
 
         await PruneTrackWakesAsync(nowMs, ct).ConfigureAwait(false);
+        await PruneTrackSchedulesAsync(nowMs, ct).ConfigureAwait(false);
         var prunedEvents = await PruneEventsAsync(nowMs, ct).ConfigureAwait(false);
         var thinnedRevisions = await RunMaintenanceBatchesAsync(
             () => ThinReportRevisionsAsync(nowMs, ct), MaintenanceBatchSize).ConfigureAwait(false);
@@ -126,6 +127,27 @@ public sealed partial class SqliteTrackStore
                     ) WHERE updated_at_ms < @Cutoff OR position > 50000 ORDER BY ordinal LIMIT 1000
                 );
                 """, new { Cutoff = nowMs - 7 * DayMs }, tx, cancellationToken: token)).ConfigureAwait(false), ct), 1000).ConfigureAwait(false);
+    }
+
+    public async Task<int> PruneTrackSchedulesAsync(long nowMs, CancellationToken ct)
+    {
+        await _writer.EnqueueAsync(async (conn, tx, token) =>
+        {
+            await conn.ExecuteAsync(new CommandDefinition($"""
+                UPDATE track_schedules SET state='{TrackScheduleStates.Canceled}', next_fire_at_ms=NULL, updated_at_ms=@Now
+                WHERE state='{TrackScheduleStates.Active}' AND EXISTS (
+                    SELECT 1 FROM tracks t WHERE t.id=track_id AND t.closed_at_ms IS NOT NULL);
+                """, new { Now = nowMs }, tx, cancellationToken: token)).ConfigureAwait(false);
+        }, ct).ConfigureAwait(false);
+        return await RunMaintenanceBatchesAsync(() => _writer.EnqueueAsync<int>(async (conn, tx, token) =>
+            await conn.ExecuteAsync(new CommandDefinition($"""
+                DELETE FROM track_schedules WHERE rowid IN (
+                    SELECT rowid FROM track_schedules
+                    WHERE state IN ('{TrackScheduleStates.Done}','{TrackScheduleStates.Canceled}')
+                      AND updated_at_ms < @Cutoff
+                    ORDER BY updated_at_ms ASC, track_id ASC, id ASC LIMIT 1000
+                );
+                """, new { Cutoff = nowMs - 90L * DayMs }, tx, cancellationToken: token)).ConfigureAwait(false), ct), 1000).ConfigureAwait(false);
     }
 
     private Task<int> ThinReportRevisionsAsync(long nowMs, CancellationToken ct) =>

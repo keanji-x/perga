@@ -1,4 +1,5 @@
 using Dapper;
+using Perga.Contracts;
 using Perga.Kernel.Ports;
 using Perga.ReportDoc;
 
@@ -12,6 +13,61 @@ public sealed partial class SqliteTrackStore : ITodayReadStore
         await using var conn = await OpenReadConnectionAsync(ct).ConfigureAwait(false);
         return await conn.ExecuteScalarAsync<string?>(new CommandDefinition(
             "SELECT track_id FROM daily_tracks WHERE date = @Date;", new { Date = date }, cancellationToken: ct)).ConfigureAwait(false);
+    }
+
+    public async Task<IReadOnlyList<DailyTrackCalendarPresence>> ListDailyTrackPresenceAsync(
+        IReadOnlyList<string> dates, CancellationToken ct)
+    {
+        if (dates.Count == 0)
+            return [];
+        EnsureInitialized();
+        await using var conn = await OpenReadConnectionAsync(ct).ConfigureAwait(false);
+        var rows = await conn.QueryAsync<DailyPresenceRow>(new CommandDefinition("""
+            SELECT d.date AS Date,
+                   1 AS HasDailyTrack,
+                   CASE WHEN r.track_id IS NOT NULL AND (
+                       trim(r.leading_comment) <> '' OR
+                       (r.blocks_json IS NOT NULL AND trim(r.blocks_json) <> '' AND trim(r.blocks_json) <> '[]')
+                   ) THEN 1 ELSE 0 END AS HasReport
+            FROM daily_tracks d
+            JOIN tracks t ON t.id = d.track_id
+            LEFT JOIN reports r ON r.track_id = d.track_id
+            WHERE d.date IN @Dates;
+            """, new { Dates = dates }, cancellationToken: ct)).ConfigureAwait(false);
+        return rows.Select(r => new DailyTrackCalendarPresence(r.Date, r.HasDailyTrack != 0, r.HasReport != 0)).ToArray();
+    }
+
+    public async Task<IReadOnlyList<TodayScheduleEntry>> ListCalendarSchedulesInWindowAsync(
+        long startMs, long endMs, CancellationToken ct)
+    {
+        EnsureInitialized();
+        await using var conn = await OpenReadConnectionAsync(ct).ConfigureAwait(false);
+        var rows = await conn.QueryAsync<TodayScheduleRow>(new CommandDefinition($"""
+            SELECT s.id AS Id, s.track_id AS TrackId, t.title AS TrackTitle,
+                   s.title AS Title, s.schedule_kind AS ScheduleKind,
+                   s.cron_expr AS CronExpr, s.timezone AS Timezone,
+                   s.next_fire_at_ms AS NextFireAtMs,
+                   s.created_at_ms AS CreatedAtMs,
+                   s.last_fired_at_ms AS LastFiredAtMs,
+                   s.max_occurrences AS MaxOccurrences,
+                   s.fired_count AS FiredCount,
+                   s.state AS State
+            FROM track_schedules s
+            JOIN tracks t ON t.id = s.track_id
+            WHERE t.closed_at_ms IS NULL AND (
+                (s.state = '{TrackScheduleStates.Active}' AND s.next_fire_at_ms IS NOT NULL AND (
+                    s.schedule_kind = '{TrackScheduleKinds.Cron}'
+                    OR (s.next_fire_at_ms >= @StartMs AND s.next_fire_at_ms < @EndMs)
+                    OR (s.last_fired_at_ms >= @StartMs AND s.last_fired_at_ms < @EndMs)))
+                OR (s.state = '{TrackScheduleStates.Done}' AND s.last_fired_at_ms IS NOT NULL
+                    AND s.last_fired_at_ms >= @StartMs AND s.last_fired_at_ms < @EndMs))
+            ORDER BY s.next_fire_at_ms ASC, s.track_id ASC, s.id ASC;
+            """, new { StartMs = startMs, EndMs = endMs }, cancellationToken: ct)).ConfigureAwait(false);
+        return rows.Select(r => new TodayScheduleEntry(
+            r.Id, r.TrackId, r.TrackTitle, r.Title, r.ScheduleKind, r.CronExpr, r.Timezone,
+            r.NextFireAtMs, r.CreatedAtMs, r.LastFiredAtMs,
+            r.MaxOccurrences.HasValue ? checked((int)r.MaxOccurrences.Value) : null,
+            checked((int)r.FiredCount), r.State)).ToArray();
     }
 
     public async Task<IReadOnlyList<DailyReportRevision>> ListDailyReportRevisionsAsync(
@@ -65,5 +121,29 @@ public sealed partial class SqliteTrackStore : ITodayReadStore
         public byte[] AfterBlocks { get; set; } = [];
         public string BeforeComment { get; set; } = "";
         public string AfterComment { get; set; } = "";
+    }
+
+    private sealed class DailyPresenceRow
+    {
+        public string Date { get; set; } = "";
+        public int HasDailyTrack { get; set; }
+        public int HasReport { get; set; }
+    }
+
+    private sealed class TodayScheduleRow
+    {
+        public string Id { get; set; } = "";
+        public string TrackId { get; set; } = "";
+        public string TrackTitle { get; set; } = "";
+        public string Title { get; set; } = "";
+        public string ScheduleKind { get; set; } = "";
+        public string? CronExpr { get; set; }
+        public string Timezone { get; set; } = "";
+        public long? NextFireAtMs { get; set; }
+        public long CreatedAtMs { get; set; }
+        public long? LastFiredAtMs { get; set; }
+        public long? MaxOccurrences { get; set; }
+        public long FiredCount { get; set; }
+        public string State { get; set; } = "";
     }
 }

@@ -699,14 +699,21 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                         transaction: tx,
                         cancellationToken: innerCt)).ConfigureAwait(false);
 
-                if (track.ClosedAtMs is not null || templateSnapshot is not null)
+                if (track.ClosedAtMs is not null || replaceTemplateSnapshot)
                     await conn.ExecuteAsync(new CommandDefinition($"""
                         UPDATE track_wakes SET state='{TrackWakeStates.Dropped}', reason=@Reason, updated_at_ms=@Now
                         WHERE track_id=@TrackId AND
                             ((@Closed=1 AND state IN ('{TrackWakeStates.Pending}','{TrackWakeStates.Delivering}')) OR
-                             (@Closed=0 AND state='{TrackWakeStates.Pending}' AND kind='{TrackWakeKinds.Schedule}'));
+                             (@Closed=0 AND state='{TrackWakeStates.Pending}' AND kind='{TrackWakeKinds.Schedule}'
+                              AND (coalesce_key IS NULL OR instr(coalesce_key, '{TrackWakeRequests.TrackScheduleKeyPrefix}') != 1)));
                         """, new { TrackId = track.Id, Now = track.UpdatedAtMs, Closed = track.ClosedAtMs is not null,
                             Reason = track.ClosedAtMs is not null ? TrackWakeReasons.TrackClosed : TrackWakeReasons.TemplateChanged }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
+
+                if (track.ClosedAtMs is not null)
+                    await conn.ExecuteAsync(new CommandDefinition($"""
+                        UPDATE track_schedules SET state='{TrackScheduleStates.Canceled}', next_fire_at_ms=NULL, updated_at_ms=@Now
+                        WHERE track_id=@TrackId AND state='{TrackScheduleStates.Active}';
+                        """, new { TrackId = track.Id, Now = track.UpdatedAtMs }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
 
                 if (evt is not null)
                 {

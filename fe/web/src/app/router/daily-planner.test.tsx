@@ -158,7 +158,7 @@ it('preserves the isolation badge on regular Perga repo Tracks', async () => {
   expect(screen.getAllByText('源文件夹模式 · 未隔离').length).toBeGreaterThan(0);
 });
 
-it('keeps the perga Today masthead minimal and calendar selection local', async () => {
+it('keeps the perga Today masthead minimal and navigates routes on calendar selection', async () => {
   const { router, requests } = renderDailyFixture({ pergaMode: true });
   const assistant = await screen.findByRole('region', { name: 'Today Assistant' });
   const heading = await within(assistant).findByRole('heading', { name: '今天想推进什么？' });
@@ -175,11 +175,12 @@ it('keeps the perga Today masthead minimal and calendar selection local', async 
   expect(today.getAttribute('aria-pressed')).toBe('true');
   expect(today.hasAttribute('data-nc-today')).toBe(true);
   await userEvent.click(within(calendar).getByRole('button', { name: '2026-10-03' }));
-  expect(within(calendar).getByRole('button', { name: '2026-10-03' }).getAttribute('aria-pressed')).toBe('true');
-  expect(today.getAttribute('aria-pressed')).toBe('false');
-  expect(router.state.location.search).toEqual({});
-  expect(screen.getByRole('region', { name: 'Today Assistant' })).toBe(assistant);
-  expect(requests.filter(request => request.path.startsWith('/api/today/daily'))).toHaveLength(1);
+  await waitFor(() => expect((router.state.location.search as { day?: string }).day).toBe('2026-10-03'));
+  await screen.findByText('No daily Track was created for this date.');
+  const updatedCalendar = await screen.findByRole('region', { name: 'Calendar' });
+  expect(within(updatedCalendar).getByRole('button', { name: '2026-10-03' }).getAttribute('aria-pressed')).toBe('true');
+  expect(within(updatedCalendar).getByRole('button', { name: '2026-10-04' }).getAttribute('aria-pressed')).toBe('false');
+  expect(requests.filter(request => request.path.startsWith('/api/today/daily'))).toHaveLength(2);
 });
 
 it.each([false, true])('shows perga Conversations only with multiple conversations (extra=%s)', async extraPlanner => {
@@ -212,14 +213,26 @@ it.each(['', '   \n  ', '# 今日计划\n\nA populated daily report.'])('shows t
   }
 });
 
-it('keeps the perga calendar available without a daily track and selects days without navigation', async () => {
-  const { router } = renderDailyFixture({ pergaMode: true, initial: '/?day=2026-10-03' });
+it('keeps the perga calendar available without a daily track, preserves Month mode across route navigation, and surfaces calendar errors', async () => {
+  const { router } = renderDailyFixture({
+    pergaMode: true,
+    initial: '/?day=2026-10-03',
+    reply: request => {
+      if (request.path === '/api/today/calendar?start=2026-10-01&end=2026-10-31') {
+        return { status: 500, statusText: 'Error', body: { error: { code: 'internal', message: 'Calendar unavailable' } } };
+      }
+      return undefined;
+    },
+  });
   await screen.findByText('No daily Track was created for this date.');
   const calendar = await screen.findByRole('region', { name: 'Calendar' });
-  await userEvent.click(within(calendar).getByRole('button', { name: 'Next week' }));
-  const day = within(calendar).getAllByRole('button', { name: /^\d{4}-\d{2}-\d{2}$/ })[0];
-  await userEvent.click(day);
-  expect(day.getAttribute('aria-pressed')).toBe('true');
-  expect(router.state.location.search).toEqual({ day: '2026-10-03' });
-  expect(screen.getByText('No daily Track was created for this date.')).toBeTruthy();
+  await userEvent.click(screen.getByRole('radio', { name: 'Month' }));
+  await within(calendar).findByText('Calendar data could not be loaded.');
+  await userEvent.click(within(calendar).getByRole('button', { name: '2026-10-02' }));
+  await waitFor(() => expect((router.state.location.search as { day?: string }).day).toBe('2026-10-02'));
+  expect(screen.getByRole('radio', { name: 'Month' }).getAttribute('aria-checked')).toBe('true');
+  await userEvent.click(within(calendar).getByRole('button', { name: 'Today' }));
+  await waitFor(() => expect((router.state.location.search as { day?: string }).day).toBeUndefined());
+  await screen.findByRole('region', { name: 'Today Assistant' });
+  expect(screen.getByRole('radio', { name: 'Month' }).getAttribute('aria-checked')).toBe('true');
 });

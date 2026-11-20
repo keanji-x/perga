@@ -132,6 +132,7 @@ public interface ITrackStore : ITrackReadStore
     Task<int> GetLastTurnIndexAsync(string sessionId, CancellationToken ct);
     ISessionInputStore SessionInputs { get; }
     ITrackWakeStore TrackWakes { get; }
+    ITrackScheduleStore? TrackSchedules => null;
     ISessionMessageStore? SessionMessages => null;
     IWorkerSettingsStore? WorkerSettings => null;
     Task<IReadOnlyList<(string TrackId, PersistedSessionInput Input)>> RecoverSessionInputsAsync(CancellationToken ct);

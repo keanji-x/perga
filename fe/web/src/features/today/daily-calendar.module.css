@@ -93,16 +93,39 @@
     cursor: pointer;
   }
   .dateBadge {
+    position: relative;
     display: inline-flex;
+    flex-direction: column;
     justify-content: center;
     align-items: center;
-    gap: var(--space-half);
+    gap: 1px;
     min-width: 0;
     width: calc(var(--control-h-lg) + var(--space-2));
     max-width: 100%;
     height: var(--control-h-lg);
     padding-inline: var(--space-half);
     border-radius: var(--radius-sm);
+  }
+  .dayDots {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    height: 4px;
+  }
+  .dayDot {
+    width: 4px;
+    height: 4px;
+    border-radius: 999px;
+  }
+  .trackDot {
+    background: var(--text-4);
+  }
+  .reportDot {
+    background: var(--text-2);
+  }
+  .scheduleDot {
+    background: var(--accent);
   }
   .dayNumber {
     display: inline-flex;
@@ -113,6 +136,7 @@
     color: var(--text-2);
     font: var(--type-content);
     letter-spacing: var(--type-content-tracking);
+    line-height: 1;
   }
   .todayNumber {
     color: var(--accent);
@@ -131,5 +155,96 @@
   }
   .dateLink:hover .selectedDate {
     background: var(--overlay-active);
+  }
+  .agenda {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    margin-block-start: var(--space-2);
+    padding-block-start: var(--space-2);
+    border-top: 1px solid var(--hairline);
+  }
+  .agendaHeading {
+    margin: 0;
+    color: var(--text-3);
+    font: var(--type-metadata);
+    letter-spacing: var(--type-metadata-tracking);
+    font-weight: var(--weight-medium);
+  }
+  .agendaList {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .agendaItem {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-2);
+    min-inline-size: 0;
+    font: var(--type-ui);
+    letter-spacing: var(--type-ui-tracking);
+  }
+  .agendaTime {
+    flex-shrink: 0;
+    color: var(--text-3);
+    font: var(--type-metadata);
+    letter-spacing: var(--type-metadata-tracking);
+    font-variant-numeric: tabular-nums;
+    padding-block-start: 2px;
+  }
+  .agendaBody {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-inline-size: 0;
+    gap: 2px;
+  }
+  .agendaTitle {
+    color: var(--text);
+    overflow-wrap: anywhere;
+  }
+  .agendaMeta {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-1);
+    min-inline-size: 0;
+    max-inline-size: 100%;
+    overflow-wrap: anywhere;
+    color: var(--text-3);
+    font: var(--type-metadata);
+    letter-spacing: var(--type-metadata-tracking);
+  }
+  .agendaTrackButton {
+    min-inline-size: 0;
+    max-inline-size: 100%;
+    overflow-wrap: anywhere;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--accent);
+    font: inherit;
+    letter-spacing: inherit;
+    cursor: pointer;
+    text-align: start;
+  }
+  .agendaTrackButton:hover,
+  .agendaTrackButton:focus-visible {
+    text-decoration: underline;
+  }
+  .agendaCron {
+    padding-inline: var(--space-1);
+    border-radius: var(--radius-sm);
+    background: var(--surface-chip);
+    color: var(--text-3);
+  }
+  .calendarError {
+    margin: var(--space-2) 0 0;
+    color: var(--text-3);
+    font: var(--type-metadata);
+    letter-spacing: var(--type-metadata-tracking);
   }
 }

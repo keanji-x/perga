@@ -43,6 +43,25 @@ export function renderDailyFixture({ history, identity, routeProbe, withTranspor
       const date = new URL(request.path, 'http://fixture').searchParams.get('date');
       return ok(date === null || date === '2026-10-04' ? { date: '2026-10-04', time_zone: 'Asia/Shanghai', track_id: track.id } : null);
     }
+    if (request.path.startsWith('/api/today/calendar')) {
+      const params = new URL(request.path, 'http://fixture').searchParams;
+      const start = params.get('start') ?? '2026-09-28';
+      const end = params.get('end') ?? '2026-10-04';
+      const days: Array<{ date: string; has_daily_track: boolean; has_report: boolean }> = [];
+      const cursor = new Date(`${start}T12:00:00Z`);
+      const limit = new Date(`${end}T12:00:00Z`);
+      while (cursor <= limit && days.length < 62) {
+        const day = cursor.toISOString().slice(0, 10);
+        const hasDaily = day === '2026-10-04';
+        days.push({
+          date: day,
+          has_daily_track: hasDaily,
+          has_report: hasDaily && (reportBody === undefined || reportBody.trim().length > 0),
+        });
+        cursor.setUTCDate(cursor.getUTCDate() + 1);
+      }
+      return ok({ today: '2026-10-04', time_zone: 'Asia/Shanghai', start, end, days, schedules: [] });
+    }
     if (request.path === '/api/v1/tracks/daily') return ok(fixtureSnapshot(track, sessions, report));
     if (request.path === '/api/v1/tracks/daily/sessions') return ok(sessions);
     if (request.path === '/api/v1/tracks/project') return ok(fixtureSnapshot(project, [], fixtureReport('# Project result\n\nRelease is ready.\n')));

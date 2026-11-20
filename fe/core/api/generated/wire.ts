@@ -1259,3 +1259,7 @@ export type OverlaysListDto = import('../perga-v1.js').OverlaysListDto;
 export type SystemInfoDto = { releaseId: string; webBuildId: string; hostBuildId: string; bridgeBuildId: string; schemaVersion: number; draining: boolean; activeDispatches: number };
 export type SystemDrainResponse = { draining: boolean; activeDispatches: number };
 export type SystemReloadResponse = { releaseId: string; webBuildId: string };
+
+export type TodayCalendarDay = { date: string, has_daily_track: boolean, has_report: boolean, };
+export type TodayScheduleItem = { id: string, date: string, track_id: string, track_title: string, title: string, schedule_kind: "once" | "cron", cron_expr: string | null, timezone: string, next_fire_at_ms: number, state: string, };
+export type TodayCalendar = { today: string, time_zone: string, start: string, end: string, days: Array<TodayCalendarDay>, schedules: Array<TodayScheduleItem>, };

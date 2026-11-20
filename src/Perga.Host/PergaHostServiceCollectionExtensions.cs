@@ -93,8 +93,10 @@ public static class PergaHostServiceCollectionExtensions
         });
 
         services.TryAddSingleton<ITrackStore>(sp => sp.GetRequiredService<SqliteTrackStore>());
+        services.TryAddSingleton<ITrackScheduleStore>(sp => sp.GetRequiredService<SqliteTrackStore>());
         services.TryAddSingleton<ISystemUpgradeStore>(sp => sp.GetRequiredService<SqliteTrackStore>());
         services.TryAddSingleton<ITodayReadStore>(sp => sp.GetRequiredService<SqliteTrackStore>());
+        services.TryAddSingleton<IScheduleCronEvaluator, Perga.Host.Lifecycle.CronosScheduleCronEvaluator>();
         services.TryAddSingleton<TodayReportService>();
         services.TryAddSingleton<ITrackReadStore>(sp => sp.GetRequiredService<ITrackStore>());
 
@@ -197,7 +199,8 @@ public static class PergaHostServiceCollectionExtensions
                 commandRunner: sp.GetService<IShellCommandRunner>(),
                 timeProvider: sp.GetRequiredService<TimeProvider>(),
                 systemUpgradeController: sp.GetRequiredService<ISystemUpgradeController>(),
-                upgradeReceiptSource: sp.GetRequiredService<ISystemUpgradeReceiptSource>());
+                upgradeReceiptSource: sp.GetRequiredService<ISystemUpgradeReceiptSource>(),
+                scheduleCronEvaluator: sp.GetRequiredService<IScheduleCronEvaluator>());
         });
 
         services.TryAddSingleton<KernelMcpBackend>();
