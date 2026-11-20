@@ -235,9 +235,7 @@ public static class TodayCalendar
             var timePart = trimmed[11..];
             var offsetStart = timePart.IndexOfAny(['Z', 'z', '+', '-']);
             var clock = offsetStart < 0 ? timePart : timePart[..offsetStart].TrimEnd(' ');
-            if (clock.Length < 5 ||
-                !int.TryParse(clock.AsSpan(0, 2), NumberStyles.None, CultureInfo.InvariantCulture, out var hour) || hour > 23 ||
-                !TimeOnly.TryParseExact(clock, ["HH:mm", "HH:mm:ss", "HH:mm:ss.FFFFFFF"],
+            if (!TimeOnly.TryParseExact(clock, ["HH:mm", "HH:mm:ss", "HH:mm:ss.fFFFFFF"],
                     CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsedTime))
                 throw InvalidTimestamp();
             localDt = datePart.ToDateTime(parsedTime);

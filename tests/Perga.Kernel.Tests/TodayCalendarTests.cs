@@ -20,6 +20,8 @@ public sealed class TodayCalendarTests
     [InlineData("1970-01-01T00:00:00+01:00")]
     [InlineData("2026-11-20junk10:00")]
     [InlineData("2026-11-20T10:00:00.12345678Z")]
+    [InlineData("2026-11-20T10:00:00.")]
+    [InlineData("2026-11-20T10:00:00.Z")]
     public void RunAtRequiresAnExplicitSupportedDate(string timestamp)
     {
         var error = Assert.Throws<KernelException>(() => TodayCalendar.ParseRunAtMs(timestamp, "UTC", TimeProvider.System));
@@ -41,6 +43,7 @@ public sealed class TodayCalendarTests
     [Theory]
     [InlineData("2026-11-20", "2026-11-20T00:00:00+08:00")]
     [InlineData("2026-11-20t10:00", "2026-11-20T10:00:00+08:00")]
+    [InlineData("2026-11-20T10:00:00.5", "2026-11-20T10:00:00.5+08:00")]
     [InlineData("2026-11-20T10:00:00.1234567", "2026-11-20T10:00:00.1234567+08:00")]
     [InlineData("2026-11-20T10:00:00.1234567Z", "2026-11-20T10:00:00.1234567Z")]
     public void RunAtAcceptsIsoDateAndTimeForms(string timestamp, string expected)
