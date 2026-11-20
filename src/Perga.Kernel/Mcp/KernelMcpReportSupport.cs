@@ -129,8 +129,7 @@ internal static class KernelMcpReportSupport
                     "type": "array",
                     "minItems": 1,
                     "items": { "type": "string", "minLength": 1 }
-                  },
-                  "isMultiSelect": { "type": "boolean" }
+                  }
                 }
               }
             }

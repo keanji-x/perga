@@ -16,13 +16,19 @@ describe('session permission mode', () => {
   it('writes the mode to the unified /api/v1/sessions/{sessionId}/permission-mode endpoint', () => {
     const op = setPlannerPermissionModeOperation('ses/1', 'ask');
     expect(op).toMatchObject({
-      method: 'PUT', path: '/api/v1/sessions/ses%2F1/permission-mode', body: { permission_mode: 'ask' },
+      method: 'PUT', path: '/api/v1/sessions/ses%2F1/permission-mode', body: { permissionMode: 'ask' },
     });
     expect(op.responseSchema.parse({
       id: 'ses/1', trackId: 'trk_1', isLead: false, provider: 'claude',
       epoch: 1, status: 'idle', contextUsage: null, createdAtMs: 1, updatedAtMs: 2,
       permissionMode: 'acceptEdits',
-    })).toEqual({ card_id: 'ses/1', permission_mode: 'acceptEdits' });
+    })).toMatchObject({ id: 'ses/1', permissionMode: 'acceptEdits' });
+  });
+
+  it('rejects the retired card response', () => {
+    expect(setPlannerPermissionModeOperation('ses/1', 'ask').responseSchema.safeParse({
+      card_id: 'ses/1', permission_mode: 'ask',
+    }).success).toBe(false);
   });
 
   it('production conversationRunOperation preserves Lead, Assistant, and task-bound session permissionMode', () => {

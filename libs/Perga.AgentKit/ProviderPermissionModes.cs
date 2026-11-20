@@ -127,15 +127,4 @@ public static class ProviderPermissionModes
     public static string? GetDefaultMode(string provider) =>
         GetProfile(provider).DefaultModeId;
 
-    public static bool IsSupported(string provider, string? mode)
-    {
-        if (string.IsNullOrWhiteSpace(mode))
-        {
-            return false;
-        }
-
-        var trimmed = mode.Trim();
-        return GetModesForProvider(provider)
-            .Any(m => string.Equals(m.Id, trimmed, StringComparison.Ordinal));
-    }
 }

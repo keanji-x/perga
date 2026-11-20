@@ -1250,7 +1250,7 @@ function trackNotifications(items: TrackActivity['attentionItems'], isRead: (key
   return items.map((item): TrackInputNotification => {
     const base = { key: item.key, text: item.text, atMs: item.atMs, read: isRead(item.key, item.atMs) };
     switch (item.source) {
-      case 'ask': return { ...base, kind: item.delivery === 'hold' ? 'approval' : 'ask', action: item.action };
+      case 'ask': return { ...base, kind: 'ask', action: item.action };
       case 'planner_down': return { ...base, kind: 'planner-down' };
       case 'planner_turn_timeout': return { ...base, kind: 'planner-turn-timeout' };
       case 'task_failed': return { ...base, kind: 'task-failed', blockId: item.blockId };

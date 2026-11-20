@@ -39,7 +39,7 @@ public sealed class KernelMcpReportTests
             .GetProperty("items").GetProperty("properties");
         Assert.True(askItemProps.TryGetProperty("question", out _));
         Assert.True(askItemProps.TryGetProperty("options", out _));
-        Assert.True(askItemProps.TryGetProperty("isMultiSelect", out _));
+        Assert.False(askItemProps.TryGetProperty("isMultiSelect", out _));
 
         var waitModes = tools[KernelMcpToolNames.TerminalRead].InputSchema
             .GetProperty("properties").GetProperty("waitFor").GetProperty("enum")

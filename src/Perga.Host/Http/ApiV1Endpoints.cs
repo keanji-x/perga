@@ -467,10 +467,10 @@ public static class ApiV1Endpoints
         v1.MapPut("/sessions/{sessionId}/permission-mode", async (string sessionId, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
         {
             var body = await ReadRequiredJsonBodyAsync<SetPermissionModeHttpBody>(ctx, ct).ConfigureAwait(false);
-            var mode = body.PermissionModeSnake ?? body.PermissionModeCamel;
+            var mode = body.PermissionMode;
             if (string.IsNullOrWhiteSpace(mode))
             {
-                return HttpErrorHandling.BadRequest("invalid_argument", "permission_mode is required.");
+                return HttpErrorHandling.BadRequest("invalid_argument", "permissionMode is required.");
             }
 
             var updated = await kernel.SetSessionPermissionModeAsync(sessionId, mode, ct).ConfigureAwait(false);
@@ -495,8 +495,6 @@ public static class ApiV1Endpoints
             string trackId, string executionId, string approvalId, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
         {
             var body = await ReadRequiredJsonBodyAsync<ApprovalDecisionRequest>(ctx, ct).ConfigureAwait(false);
-            if (string.IsNullOrWhiteSpace(body.OptionId))
-                return HttpErrorHandling.BadRequest("invalid_argument", "optionId is required.");
             var approval = await kernel.DecideApprovalAsync(trackId, executionId, approvalId, body.OptionId, ct).ConfigureAwait(false);
             return Results.Json(approval, PergaJsonDefaults.ApiOptions);
         });
@@ -653,6 +651,5 @@ public static class ApiV1Endpoints
     }
 
     private sealed record SetPermissionModeHttpBody(
-        [property: System.Text.Json.Serialization.JsonPropertyName("permission_mode")] string? PermissionModeSnake,
-        [property: System.Text.Json.Serialization.JsonPropertyName("permissionMode")] string? PermissionModeCamel);
+        string? PermissionMode);
 }

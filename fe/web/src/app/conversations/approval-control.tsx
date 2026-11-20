@@ -28,6 +28,7 @@ export function ConversationApprovalControl({ mode, options, disabled, authoriza
   const valid = /^[a-fA-F0-9]{64}$/.test(proof);
   return <>
     <PermissionModePill mode={mode} options={options} isDisabled={disabled} unavailableMode={unavailableMode ?? undefined}
+      unavailableReason="Restoring approval requests requires owner authorization over HTTPS."
       onChange={next => {
         if (next === authorizationMode) setRequested(next);
         else if (next !== unavailableMode) void change(next);

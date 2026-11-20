@@ -1,7 +1,7 @@
 // The Planner's questions use Astryx’s drawer above the message field.
 import { useLayoutEffect, useRef } from 'react';
 import { Button } from '@astryxdesign/core/Button';
-import { ChatComposerDrawer } from '@astryxdesign/core/Chat';
+import { PendingInputDrawer } from './pending-input-drawer.tsx';
 import { HStack } from '@astryxdesign/core/HStack';
 import { Icon as AstryxIcon } from '@astryxdesign/core/Icon';
 import { TextInput } from '@astryxdesign/core/TextInput';
@@ -22,38 +22,17 @@ type DraftState = Readonly<{ drafts: readonly AskDraft[]; page: number }>;
 
 /** The vendor owns the surface and disclosure; this feature owns question order and answers. */
 export function PlannerAskDrawer({ asks, onAnswer }: PlannerAskDrawerProps) {
-  const [settled, setSettled] = useState<ReadonlySet<string>>(() => new Set());
   const [states, setStates] = useState<Readonly<Record<string, DraftState>>>({});
-  const [selected, setSelected] = useState<AskId | null>(null);
-  const [queueOpen, setQueueOpen] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const open = asks.filter(ask => !settled.has(String(ask.askId)));
-  const current = open.find(ask => ask.askId === selected) ?? open[0];
-  if (current === undefined) return null;
-  const currentKey = String(current.askId);
-  return <ChatComposerDrawer count={current.questions.length} label="Questions" className={styles.drawer}>
-    <div className={styles.asks} data-nc-asks="">
-      <AskForm key={currentKey} ask={current} onAnswer={onAnswer}
-        state={states[currentKey] ?? { drafts: askDraftsFor(current.questions, current.delivery), page: 0 }}
-        onChange={state => setStates(previous => ({ ...previous, [currentKey]: state }))}
-        onBusy={setBusy}
-        onSettled={() => {
-          setSettled(previous => new Set(previous).add(currentKey));
-          setSelected(null);
-          setQueueOpen(false);
-        }} />
-      {open.length > 1 && <div className={styles.queue}>
-        <Button label={`${open.length - 1} more ${open.length === 2 ? 'ask' : 'asks'}`}
-          variant="secondary" size="sm" className={styles.queueToggle} isDisabled={busy}
-          aria-expanded={queueOpen} onClick={() => setQueueOpen(value => !value)} />
-        {queueOpen && <div className={styles.queueList} role="group" aria-label="Other Planner asks">
-          {open.filter(ask => ask.askId !== current.askId).map(ask => <Button key={String(ask.askId)}
-            label={ask.questions[0].title} variant="secondary" size="sm" className={styles.queueItem}
-            isDisabled={busy} onClick={() => { setSelected(ask.askId); setQueueOpen(false); }} />)}
-        </div>}
-      </div>}
-    </div>
-  </ChatComposerDrawer>;
+  return <PendingInputDrawer items={asks} idOf={ask => String(ask.askId)} titleOf={ask => ask.questions[0].title}
+    label="Questions" noun="ask" queueLabel="Other Planner asks" countOf={ask => ask.questions.length}>
+    {(current, onBusy, onSettled) => {
+      const key = String(current.askId);
+      return <AskForm key={key} ask={current} onAnswer={onAnswer}
+        state={states[key] ?? { drafts: askDraftsFor(current.questions), page: 0 }}
+        onChange={state => setStates(previous => ({ ...previous, [key]: state }))}
+        onBusy={onBusy} onSettled={onSettled} />;
+    }}
+  </PendingInputDrawer>;
 }
 
 function AskForm({ ask, state, onChange, onAnswer, onBusy, onSettled }: {
@@ -93,7 +72,7 @@ function AskForm({ ask, state, onChange, onAnswer, onBusy, onSettled }: {
     setBusy(true);
     onBusy(true);
     try {
-      const success = await feedback.run(onAnswer(ask.askId, answers), answerAskFailureText(ask.delivery));
+      const success = await feedback.run(onAnswer(ask.askId, answers), answerAskFailureText());
       if (success) onSettled();
     } finally {
       lock.current = false;
@@ -115,8 +94,6 @@ function AskForm({ ask, state, onChange, onAnswer, onBusy, onSettled }: {
     return advance(drafts.map((item, index) => index === page ? { ...item, own: answer } : item));
   };
   return <section role="group" aria-label="The Planner asks" className={styles.ask} data-nc-ask={ask.askId}>
-    {/* A `hold` ask is a provider request the running turn waits on (#2348). */}
-    {ask.delivery === 'hold' && <p className={styles.paused} data-nc-ask-paused="">Turn paused, waiting for your approval</p>}
     {ask.questions.length > 1 && <HStack justify="between" align="center" className={styles.meta}>
       <span className={styles.stepBadge}>{page + 1} / {ask.questions.length}</span>
       {page > 0 && <Button label="Previous question" tooltip="Previous question" icon={<Icon name="arrow-left" size="sm" />} isIconOnly size="sm" variant="secondary" className={styles.back}

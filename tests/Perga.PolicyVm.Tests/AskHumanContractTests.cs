@@ -45,6 +45,8 @@ public sealed class AskHumanContractTests
     [InlineData("options:null")]
     [InlineData("approveLabel:''")]
     [InlineData("denyLabel:'   '")]
+    [InlineData("approveLabel:'\\uFEFF'")]
+    [InlineData("title:'\\uFEFF '")]
     [InlineData("approveLabel:42")]
     [InlineData("denyLabel:null")]
     public void Parser_RejectsLegacyOptionsAndInvalidLabels(string properties)
@@ -52,6 +54,17 @@ public sealed class AskHumanContractTests
         var error = Assert.Throws<InvalidOperationException>(() => Evaluate(
             "({kind:'ask_human',title:'Proceed?'," + properties + "})"));
         Assert.Contains(properties.Split(':')[0], error.Message);
+    }
+
+    [Theory]
+    [InlineData("AskHuman('  Proceed?  ', {approve:' Ship ',deny:' Wait '})")]
+    [InlineData("({kind:'ask_human',title:'  Proceed?  ',approveLabel:' Ship ',denyLabel:' Wait '})")]
+    public void Parser_PreservesNonBlankLabels(string expression)
+    {
+        var ask = Assert.IsType<GuardDecision.AskHuman>(Evaluate(expression));
+        Assert.Equal("  Proceed?  ", ask.Title);
+        Assert.Equal(" Ship ", ask.ApproveLabel);
+        Assert.Equal(" Wait ", ask.DenyLabel);
     }
 
     private static GuardDecision Evaluate(string expression)

@@ -1369,6 +1369,10 @@ internal sealed class ScriptableFakeAgentSession : IAgentSession
     }
 
     private Action<IdleContextUsage>? _idleUsageHandler;
+    private readonly object _approvalLock = new();
+    private readonly HashSet<string> _seenApprovalRequests = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _pendingApprovalRequests = new(StringComparer.Ordinal);
+    private bool _approvalsActive;
 
     public HarnessLaunchSpec LaunchSpec { get; }
     public IReadOnlyList<PermissionModeOption> AvailablePermissionModes { get; set; } = [];
@@ -1393,27 +1397,66 @@ internal sealed class ScriptableFakeAgentSession : IAgentSession
     public ConcurrentQueue<(string RequestId, bool Approved, string? SelectedOptionId, string? Reason)> DetailedApprovals { get; } = new();
     public ConcurrentQueue<TurnInput> RecordedInputs { get; } = new();
 
-    public IAsyncEnumerable<UnifiedAgentEvent> StreamTurnAsync(TurnInput input, CancellationToken ct)
+    public async IAsyncEnumerable<UnifiedAgentEvent> StreamTurnAsync(
+        TurnInput input, [EnumeratorCancellation] CancellationToken ct)
     {
         RecordedInputs.Enqueue(input);
-        return _turnHandler(this, input, ct);
+        lock (_approvalLock)
+            _approvalsActive = !Disposed;
+        try
+        {
+            await foreach (var evt in _turnHandler(this, input, ct).ConfigureAwait(false))
+            {
+                lock (_approvalLock)
+                {
+                    if (evt is UnifiedAgentEvent.ApprovalRequested request
+                        && _seenApprovalRequests.Add(request.RequestId) && _approvalsActive)
+                        _pendingApprovalRequests.Add(request.RequestId);
+                    if (evt is UnifiedAgentEvent.TurnCompleted or UnifiedAgentEvent.TurnInterrupted)
+                        ExpireApprovals();
+                }
+                yield return evt;
+            }
+        }
+        finally
+        {
+            lock (_approvalLock)
+                ExpireApprovals();
+        }
+    }
+
+    // Called under _approvalLock, shared by stream completion, cancellation and disposal.
+    private void ExpireApprovals()
+    {
+        _approvalsActive = false;
+        _pendingApprovalRequests.Clear();
     }
 
     public Task CancelTurnAsync(CancellationToken ct)
     {
-        CancelCalled = true;
+        lock (_approvalLock)
+        {
+            ExpireApprovals();
+            CancelCalled = true;
+        }
         OnCancelTurn?.Invoke();
         return Task.CompletedTask;
     }
 
-    public Task RespondApprovalAsync(string requestId, bool approved, string? reason = null, CancellationToken ct = default) =>
-        RespondApprovalAsync(requestId, approved, selectedOptionId: null, reason, ct);
-
-    public Task RespondApprovalAsync(string requestId, bool approved, string? selectedOptionId, string? reason = null, CancellationToken ct = default)
+    public Func<Task>? TryClaimApprovalResponse(
+        string requestId, bool approved, string? selectedOptionId, string? reason, CancellationToken ct)
     {
-        Approvals.Enqueue((requestId, approved, reason));
-        DetailedApprovals.Enqueue((requestId, approved, selectedOptionId, reason));
-        return Task.CompletedTask;
+        lock (_approvalLock)
+        {
+            if (Disposed || !_approvalsActive || !_pendingApprovalRequests.Remove(requestId))
+                return null;
+        }
+        return () =>
+        {
+            Approvals.Enqueue((requestId, approved, reason));
+            DetailedApprovals.Enqueue((requestId, approved, selectedOptionId, reason));
+            return Task.CompletedTask;
+        };
     }
 
     public bool SupportsModelSwitch { get; set; }
@@ -1479,7 +1522,11 @@ internal sealed class ScriptableFakeAgentSession : IAgentSession
 
     public ValueTask DisposeAsync()
     {
-        Disposed = true;
+        lock (_approvalLock)
+        {
+            Disposed = true;
+            ExpireApprovals();
+        }
         return ValueTask.CompletedTask;
     }
 }

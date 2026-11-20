@@ -16337,10 +16337,8 @@
             "application/json": {
               "schema": {
                 "type": "object",
+                "required": ["permissionMode"],
                 "properties": {
-                  "permission_mode": {
-                    "type": "string"
-                  },
                   "permissionMode": {
                     "type": "string"
                   }

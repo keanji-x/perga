@@ -672,10 +672,14 @@ public sealed class ApiV1RestIntegrationTests
         var trackId = trackEl.GetProperty("id").GetString()!;
         var leadSessionId = trackEl.GetProperty("leadSessionId").GetString()!;
 
+        using var retiredAlias = await client.PutAsJsonAsync(
+            $"/api/v1/sessions/{leadSessionId}/permission-mode", new { permission_mode = "ask" }, PergaJsonDefaults.ApiOptions);
+        Assert.Equal(HttpStatusCode.BadRequest, retiredAlias.StatusCode);
+
         // 1. Lead session defaults to provider's default ("never" for codex) and can switch to "ask" and "full".
         using var putLeadAsk = await client.PutAsJsonAsync(
             $"/api/v1/sessions/{leadSessionId}/permission-mode",
-            new { permission_mode = "ask" },
+            new { permissionMode = "ask" },
             PergaJsonDefaults.ApiOptions);
         Assert.Equal(HttpStatusCode.OK, putLeadAsk.StatusCode);
         var updatedLead = (await putLeadAsk.Content.ReadFromJsonAsync<AgentSessionDto>(PergaJsonDefaults.ApiOptions))!;
@@ -695,7 +699,7 @@ public sealed class ApiV1RestIntegrationTests
         // 3. Switch Assistant session to "bypassPermissions" and verify persistence in GET /sessions.
         using var putSubBypass = await client.PutAsJsonAsync(
             $"/api/v1/sessions/{createdSub.Session.Id}/permission-mode",
-            new { permission_mode = "bypassPermissions" },
+            new { permissionMode = "bypassPermissions" },
             PergaJsonDefaults.ApiOptions);
         Assert.Equal(HttpStatusCode.OK, putSubBypass.StatusCode);
         var updatedSub = (await putSubBypass.Content.ReadFromJsonAsync<AgentSessionDto>(PergaJsonDefaults.ApiOptions))!;
@@ -709,7 +713,7 @@ public sealed class ApiV1RestIntegrationTests
         // 4. Unsupported mode for provider returns 400.
         using var putInvalid = await client.PutAsJsonAsync(
             $"/api/v1/sessions/{leadSessionId}/permission-mode",
-            new { permission_mode = "bypassPermissions" },
+            new { permissionMode = "bypassPermissions" },
             PergaJsonDefaults.ApiOptions);
         Assert.Equal(HttpStatusCode.BadRequest, putInvalid.StatusCode);
 

@@ -1241,6 +1241,9 @@ public sealed partial class TrackActor : IAsyncDisposable
             throw KernelException.InvalidArgument("At least one question is required for perga_user_ask.");
         }
 
+        if (questions.Any(question => question.IsMultiSelect))
+            throw KernelException.InvalidArgument("perga_user_ask does not support isMultiSelect: true.");
+
         Interlocked.Increment(ref _inFlightExternalOps);
         try
         {

@@ -43,11 +43,11 @@ it('publishes only the latest serialized permission ACK and cancels a stale run 
   const first = result.current.setPermissionMode('full');
   const second = result.current.setPermissionMode('never');
   expect(puts).toBe(1);
-  await act(async () => { writes[0].resolve(sessionReply({ card_id: 'a', permission_mode: 'full' })); await Promise.resolve(); });
+  await act(async () => { writes[0].resolve(sessionReply(fixtureSession('a', 't', { permissionMode: 'full' }))); await Promise.resolve(); });
   expect(client.getQueryData<ConversationRun>(options.queryKey)?.session.permissionMode).toBe('ask');
   expect(oldSignal?.aborted).toBe(true);
   expect(puts).toBe(2);
-  await act(async () => { writes[1].resolve(sessionReply({ card_id: 'a', permission_mode: 'never' })); await second; await first; });
+  await act(async () => { writes[1].resolve(sessionReply(fixtureSession('a', 't', { permissionMode: 'never' }))); await second; await first; });
   stale.resolve(sessionReply(sessionPage(fixtureSession('a', 't', { permissionMode: 'ask' }))));
   await reading;
   expect(client.getQueryData<ConversationRun>(options.queryKey)?.session.permissionMode).toBe('never');
@@ -106,10 +106,10 @@ it('scopes delayed ACKs to their original card across switching and unmounting',
   const first = result.current.setPermissionMode('full');
   rerender({ id: 'b' });
   const second = result.current.setPermissionMode('never');
-  writes[1].resolve(sessionReply({ card_id: 'b', permission_mode: 'never' }));
+  writes[1].resolve(sessionReply(fixtureSession('b', 't', { permissionMode: 'never' })));
   await second;
   unmount();
-  writes[0].resolve(sessionReply({ card_id: 'a', permission_mode: 'full' }));
+  writes[0].resolve(sessionReply(fixtureSession('a', 't', { permissionMode: 'full' })));
   await first;
   expect(client.getQueryData<ConversationRun>(plannerRunQueryOptions(transport, 'a', unauthorized).queryKey)?.session.permissionMode).toBe('full');
   expect(client.getQueryData<ConversationRun>(plannerRunQueryOptions(transport, 'b', unauthorized).queryKey)?.session.permissionMode).toBe('never');
@@ -161,11 +161,11 @@ it.each([false, true])('protects a newer confirmed GET from an old ACK across A 
   }
   await client.fetchQuery(plannerRunQueryOptions(transport, 'a', unauthorized));
   holdReads = true;
-  await act(async () => { writes[0].resolve(sessionReply({ card_id: 'a', permission_mode: 'full' })); await Promise.resolve(); });
+  await act(async () => { writes[0].resolve(sessionReply(fixtureSession('a', 't', { permissionMode: 'full' }))); await Promise.resolve(); });
   expect(client.getQueryData<ConversationRun>(plannerRunQueryOptions(transport, 'a', unauthorized).queryKey)?.session.permissionMode).toBe('never');
   if (newerWrite) {
     await waitFor(() => expect(puts).toBe(2));
-    await act(async () => { writes[1].resolve(sessionReply({ card_id: 'a', permission_mode: 'never' })); await Promise.resolve(); });
+    await act(async () => { writes[1].resolve(sessionReply(fixtureSession('a', 't', { permissionMode: 'never' }))); await Promise.resolve(); });
   }
   client.clear();
 });

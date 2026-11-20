@@ -60,6 +60,16 @@ describe('PermissionModePill', () => {
     expect(onChange).toHaveBeenLastCalledWith('full');
   });
 
+  it('uses the caller reason for an unavailable mode', () => {
+    const onChange = vi.fn();
+    render(<PermissionModePill mode="never" options={CODEX_OPTIONS} onChange={onChange}
+      unavailableMode="ask" unavailableReason="Unavailable in this conversation." />);
+    const row = within(openMenu('Approvals: Never')).getByRole('menuitem', { name: /^Ask me/ });
+    expect(row.textContent).toContain('Unavailable in this conversation.');
+    fireEvent.click(row);
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
   it('cannot be opened while disabled', () => {
     render(<PermissionModePill mode="ask" options={CODEX_OPTIONS} onChange={vi.fn()} isDisabled />);
     const button = screen.getByRole('button', { name: 'Approvals: Ask me' });

@@ -7,7 +7,7 @@ import { askQuestionDtoSchema } from '../api/perga-v1.js';
 import type { AskAction, AskAnswer } from '../api/generated/wire.js';
 import type { ApiOperation } from '../api/types.js';
 import type { ActivityItem, AskDelivery, AskId, AskQuestion } from './activity.js';
-import { writeClassOf, writeFailureText, type FailureTable, type WriteClass, type WriteText } from './failure-class.js';
+import { writeFailureText, type FailureTable, type WriteClass, type WriteText } from './failure-class.js';
 
 /**
  * One open durable ask as the questions drawer shows it: the answer route's id, its questions in order, and
@@ -23,7 +23,7 @@ function compareAskIds(left: AskId, right: AskId): number {
 }
 
 /**
- * The track's open asks: every `hold` ask first, then `wake` asks; oldest first within each.
+ * The track's open asks: oldest first.
  */
 export function openAsksOf(items: readonly ActivityItem[]): readonly OpenAsk[] {
   const asks: OpenAsk[] = [];
@@ -37,8 +37,7 @@ export function openAsksOf(items: readonly ActivityItem[]): readonly OpenAsk[] {
       });
     }
   }
-  const blocking = (ask: OpenAsk) => (ask.delivery === 'hold' ? 0 : 1);
-  return asks.sort((left, right) => blocking(left) - blocking(right) || compareAskIds(left.askId, right.askId));
+  return asks.sort((left, right) => compareAskIds(left.askId, right.askId));
 }
 
 export function normalizeAskQuestions(raw: unknown): readonly z.infer<typeof askQuestionSchema>[] {
@@ -57,7 +56,7 @@ export function normalizeAskQuestions(raw: unknown): readonly z.infer<typeof ask
 
 /** Whether an ask takes one of its options only, with no free-text input field. */
 export function takesOptionsOnly(ask: OpenAsk): boolean {
-  return ask.delivery === 'hold' || ask.action !== undefined;
+  return ask.action !== undefined;
 }
 
 /** What the reader has given for one question: the option picked (its index), and their own words. */
@@ -65,10 +64,10 @@ export type AskDraft = Readonly<{ choice: number | null; own: string }>;
 
 /**
  * A fresh draft per question: the first option, the recommended one, is picked; a question without options has no
- * pick. A `hold` ask starts with nothing picked until the reader picks one.
+ * pick.
  */
-export function askDraftsFor(questions: readonly AskQuestion[], delivery: AskDelivery): readonly AskDraft[] {
-  return questions.map((question) => ({ choice: delivery === 'wake' && question.options.length > 0 ? 0 : null, own: '' }));
+export function askDraftsFor(questions: readonly AskQuestion[]): readonly AskDraft[] {
+  return questions.map((question) => ({ choice: question.options.length > 0 ? 0 : null, own: '' }));
 }
 
 /**
@@ -132,10 +131,6 @@ export const ANSWER_ASK_TEXT: WriteText = Object.freeze({
   refused: 'Your answer was not sent.', unknown: 'Sending your answer is unconfirmed.',
 });
 
-export const HOLD_ASK_GONE_TEXT = 'This request is no longer pending.';
-
-export function answerAskFailureText(delivery: AskDelivery): (error: unknown) => string | null {
-  const read = writeFailureText(ANSWER_ASK_FAILURES, ANSWER_ASK_TEXT);
-  if (delivery === 'wake') return read;
-  return (error) => writeClassOf(error, ANSWER_ASK_FAILURES) === 'done' ? HOLD_ASK_GONE_TEXT : read(error);
+export function answerAskFailureText(): (error: unknown) => string | null {
+  return writeFailureText(ANSWER_ASK_FAILURES, ANSWER_ASK_TEXT);
 }

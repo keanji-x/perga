@@ -75,7 +75,7 @@ public sealed partial class TrackActor
         ExecutionControl control, Func<ApprovalChoiceDto, Func<Task>?> claimDelivery, Action expire, CancellationToken ct = default)
     {
         var dto = new ApprovalDto($"apr_{Guid.NewGuid():N}", executionId, sessionId, turnId,
-            title, options.Count > 0 ? options : DefaultBinaryChoices, NowMs());
+            title, options, NowMs());
         var pending = new PendingApproval(dto, control, claimDelivery, expire);
         // An already canceled token can run its callback inline during registration.
         pending.Cancellation = ct.UnsafeRegister(_ => ExpireApproval(pending), null);

@@ -3,14 +3,14 @@
 // Single authoritative resolver shared by new-track, new-conversation draft, and existing-session UIs.
 
 import { z } from 'zod';
-import { agentSessionDtoSchema, type PermissionModeOptionDto } from '../api/perga-v1.js';
+import { agentSessionDtoSchema, type AgentSessionDto, type PermissionModeOptionDto } from '../api/perga-v1.js';
 import type { AgentProvider } from '../api/generated/wire.js';
 import type { ApiOperation } from '../api/types.js';
 import { defaultPermissionModeFor } from './agent-providers.js';
 import type { FailureTable, WriteFailure, WriteText } from './failure-class.js';
 
 export type PlannerPermissionMode = string;
-export type SetPlannerPermissionModeResponse = Readonly<{ card_id: string; permission_mode: string }>;
+export type SetPlannerPermissionModeResponse = AgentSessionDto;
 
 /** Provider-declared mode ID; `null` on the run read means no mode is set / task-bound session. */
 export const plannerPermissionModeSchema: z.ZodType<PlannerPermissionMode> = z.string().min(1);
@@ -85,14 +85,8 @@ export function setPlannerPermissionModeOperation(
   return {
     method: 'PUT',
     path: `/api/v1/sessions/${encodeURIComponent(sessionId)}/permission-mode`,
-    body: { permission_mode: mode },
-    responseSchema: z.union([
-      agentSessionDtoSchema.transform((session): SetPlannerPermissionModeResponse => ({
-        card_id: session.id,
-        permission_mode: session.permissionMode ?? mode,
-      })),
-      z.object({ card_id: z.string(), permission_mode: plannerPermissionModeSchema }),
-    ]),
+    body: { permissionMode: mode },
+    responseSchema: agentSessionDtoSchema,
   };
 }
 
