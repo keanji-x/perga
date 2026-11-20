@@ -1230,6 +1230,7 @@ export type CompiledTemplateManifestDto = import('../perga-v1.js').CompiledTempl
 export type AreaDto = import('../perga-v1.js').AreaDto;
 export type BootstrapDto = import('../perga-v1.js').BootstrapDto;
 export type TrackDto = import('../perga-v1.js').TrackDto;
+export type TrackTemplateSnapshot = import('zod').infer<typeof import('../perga-v1.js').trackTemplateSnapshotSchema>;
 export type ReportDocumentDto = import('../perga-v1.js').ReportDocumentDto;
 export type TaskDto = import('../perga-v1.js').TaskDto;
 export type WorkerDispatchReceipt = import('../perga-v1.js').WorkerDispatchReceipt;
