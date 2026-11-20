@@ -26,6 +26,109 @@ public sealed class SessionLivenessTests
     }
 
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ActorShutdownJoinsOwnedCleanupWithoutConcurrentDisposal(bool lateLaunch)
+    {
+        await using var ctx = new KernelTestContext(new KernelOptions { SessionStartupTimeout = TimeSpan.FromMilliseconds(100) });
+        var (_, snap) = await ctx.CreateDefaultTrackAsync();
+        var id = snap.Track.LeadSessionId!;
+        var launch = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var disposing = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        void HoldDisposal(ScriptableFakeAgentSession agent)
+        {
+            agent.ShutdownConfirmed = false;
+            agent.DisposeHandler = async () =>
+            {
+                disposing.TrySetResult();
+                await release.Task;
+                agent.ShutdownConfirmed = true;
+            };
+        }
+        if (lateLaunch)
+        {
+            ctx.AgentRuntime.BeforeOpenAsync = () => launch.Task;
+            ctx.AgentRuntime.OnOpenedSession = HoldDisposal;
+            await ctx.Kernel.AcceptMessageAsync(id, new("slow", "slow"), default);
+            await ctx.Kernel.WaitForTrackIdleAsync(snap.Track.Id).WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        else
+        {
+            await ctx.SendAndWaitForTurnAsync(id, new("first", "first"));
+            HoldDisposal(ctx.AgentRuntime.OpenedSessions.Single());
+            await Assert.ThrowsAnyAsync<Exception>(() => ctx.Kernel.UpdateSessionModelAsync(id, new("B")));
+        }
+        var shutdown = ctx.Kernel.Actors.GetOrActivate(snap.Track.Id).DisposeAsync().AsTask();
+        try
+        {
+            Assert.False(shutdown.IsCompleted);
+            launch.TrySetResult();
+            await disposing.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.False(shutdown.IsCompleted);
+            Assert.Equal(1, ctx.AgentRuntime.OpenedSessions.Single().DisposeCalls);
+        }
+        finally { launch.TrySetResult(); release.TrySetResult(); }
+        await shutdown.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.True(ctx.AgentRuntime.OpenedSessions.Single().ShutdownConfirmed);
+        Assert.Equal(1, ctx.AgentRuntime.OpenedSessions.Single().DisposeCalls);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task IdleEvictionRetainsUnconfirmedOwnership(bool lateLaunch)
+    {
+        await using var ctx = new KernelTestContext(new KernelOptions
+        {
+            SessionStartupTimeout = TimeSpan.FromMilliseconds(100),
+            ActorIdleTimeout = TimeSpan.FromMinutes(1),
+            ActorEvictionSweepInterval = TimeSpan.Zero
+        });
+        var (_, snap) = await ctx.CreateDefaultTrackAsync();
+        var id = snap.Track.LeadSessionId!;
+        var actor = ctx.Kernel.Actors.GetOrActivate(snap.Track.Id);
+        var launch = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (lateLaunch)
+        {
+            ctx.AgentRuntime.BeforeOpenAsync = () => launch.Task;
+            ctx.AgentRuntime.OnOpenedSession = agent => { agent.ShutdownConfirmed = false; agent.FailDisposal = true; };
+            await ctx.Kernel.AcceptMessageAsync(id, new("slow", "slow"), default);
+            await ctx.Kernel.WaitForTrackIdleAsync(snap.Track.Id).WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        else
+        {
+            await ctx.SendAndWaitForTurnAsync(id, new("first", "first"));
+            var opened = ctx.AgentRuntime.OpenedSessions.Single();
+            opened.ShutdownConfirmed = false;
+            await Assert.ThrowsAnyAsync<Exception>(() => ctx.Kernel.UpdateSessionModelAsync(id, new("B")));
+        }
+        try
+        {
+            ctx.Time.Advance(TimeSpan.FromMinutes(2));
+            Assert.Equal(0, await ctx.Kernel.Actors.EvictIdleActorsAsync());
+            Assert.Same(actor, ctx.Kernel.Actors.GetOrActivate(snap.Track.Id));
+            if (lateLaunch)
+            {
+                launch.TrySetResult();
+                await Assert.ThrowsAnyAsync<Exception>(() => ctx.Kernel.RecoverSessionAsync(id, new("reset_context"), default));
+                ctx.Time.Advance(TimeSpan.FromMinutes(2));
+                Assert.Equal(0, await ctx.Kernel.Actors.EvictIdleActorsAsync());
+                Assert.Same(actor, ctx.Kernel.Actors.GetOrActivate(snap.Track.Id));
+            }
+            var agent = ctx.AgentRuntime.OpenedSessions.Single();
+            agent.FailDisposal = false;
+            agent.ShutdownConfirmed = true;
+            await ctx.Kernel.RecoverSessionAsync(id, new("reset_context"), default);
+            await Task.Run(async () => { while (actor.HasActiveWork) await Task.Delay(10); }).WaitAsync(TimeSpan.FromSeconds(5));
+            ctx.Time.Advance(TimeSpan.FromMinutes(2));
+            Assert.Equal(1, await ctx.Kernel.Actors.EvictIdleActorsAsync());
+            Assert.False(ctx.Kernel.Actors.IsTrackActiveInMemory(snap.Track.Id));
+        }
+        finally { launch.TrySetResult(); }
+    }
+
+    [Theory]
     [InlineData(false, false, false)]
     [InlineData(false, true, false)]
     [InlineData(false, false, true)]

@@ -65,3 +65,15 @@ it.each(['queued', 'starting', 'running'])('keeps %s lastTurn identity before ac
   expect(conversationStopTurn({ activeTurn: null, lastTurn: null }, 'accepted')).toBe('accepted');
   expect(conversationStopTurn({ activeTurn: null, lastTurn: { ...turn, status: 'completed' } }, 'startup')).toBeNull();
 });
+
+it.each(['idle', 'unknown'] as const)('retires skipped accepted turns only on authoritative %s reads', state => {
+  const lastTurn = { id: 'turn-2', sessionId: 'a', epoch: 1, turnIndex: 2, triggerKind: 'user', status: 'completed', startedAtMs: null };
+  const run = { state, activeTurn: null, lastTurn };
+  expect(conversationStopTurn(run, 'turn-1', true)).toBeNull();
+  expect(conversationStopTurn(run, 'turn-1', false)).toBe('turn-1');
+  expect(conversationStopTurn({ ...run, lastTurn: null }, 'turn-1', true)).toBeNull();
+});
+it.each(['queued', 'starting', 'running'])('retains %s startup on a post-ACK read', status => {
+  const lastTurn = { id: 'turn-1', sessionId: 'a', epoch: 1, turnIndex: 1, triggerKind: 'user', status, startedAtMs: null };
+  expect(conversationStopTurn({ state: 'running', activeTurn: null, lastTurn }, 'turn-1', true)).toBe('turn-1');
+});

@@ -109,9 +109,10 @@ it('denies Worker compact/reset discovery and execution in both menus', async ()
   expect(view.requests.filter(request => request.method === 'POST')).toEqual([]);
 });
 
-it('keeps a fresh post-reset send when the new epoch run read finishes later', async () => {
+it('keeps a fresh post-reset send across a stale skipped-turn read and hung post-ACK startup', async () => {
   await page.viewport(1280, 850);
   let reset = false;
+  let acknowledged = false;
   let releaseRun!: () => void;
   let releaseSend!: () => void;
   const runReady = new Promise<void>(resolve => { releaseRun = resolve; });
@@ -121,10 +122,12 @@ it('keeps a fresh post-reset send when the new epoch run read finishes later', a
       reset = true; view.sessions[0].epoch += 1; return sessionReply(view.sessions[0]);
     }
     if (reset && request.path.includes('view=run')) {
-      await runReady; return sessionReply(sessionPage(view.sessions[0]));
+      if (acknowledged) return new Promise(() => {});
+      await runReady;
+      return sessionReply({ ...sessionPage(view.sessions[0]), lastTurn: sessionTurn('daily-planner', 'older-turn-2', 'completed') });
     }
     if (request.method === 'POST' && request.path.endsWith('/messages')) {
-      await sendReady; return sessionReply(sessionInput('daily-planner'));
+      await sendReady; acknowledged = true; return sessionReply(sessionInput('daily-planner'));
     }
     return undefined;
   } });
@@ -142,4 +145,35 @@ it('keeps a fresh post-reset send when the new epoch run read finishes later', a
     await expect.element(page.getByRole('button', { name: 'Stop', exact: true })).toBeVisible();
     await expect.element(field).toHaveTextContent('');
   } finally { releaseRun(); releaseSend(); view.client.clear(); }
+});
+
+it.each(['idle', 'unknown'] as const)('retires accepted Stop after skipped-turn reconciliation reaches %s', async state => {
+  await page.viewport(1280, 850);
+  let accepted = false;
+  let release!: () => void;
+  const ready = new Promise<void>(resolve => { release = resolve; });
+  const view = renderSessionFixture({ initial: '/track/daily?panel=conversations', reply: async request => {
+    if (request.path.endsWith('/messages') && request.method === 'POST') {
+      accepted = true; return sessionReply(sessionInput('daily-planner'));
+    }
+    if (accepted && request.path.includes('view=run')) {
+      await ready;
+      return sessionReply({ ...sessionPage(view.sessions[0], [], null, state),
+        lastTurn: { ...sessionTurn('daily-planner', 'turn-2', 'completed'), turnIndex: 2 } });
+    }
+    return undefined;
+  } });
+  try {
+    await page.getByRole('button', { name: /Conversation Daily Planner conversation/ }).click();
+    const field = page.getByRole('combobox', { name: 'Message' });
+    await field.fill('Start and finish both turns'); await userEvent.keyboard('{Enter}');
+    await expect.element(page.getByRole('button', { name: 'Stop', exact: true })).toBeVisible();
+    release();
+    await expect.element(page.getByRole('button', { name: 'Stop', exact: true })).not.toBeInTheDocument();
+    if (state === 'idle') {
+      await field.fill('Next idle message');
+      await expect.element(page.getByRole('button', { name: 'Send', exact: true })).toBeEnabled();
+    }
+    expect(view.requests.filter(request => request.path.endsWith('/interrupt'))).toEqual([]);
+  } finally { release(); view.client.clear(); }
 });

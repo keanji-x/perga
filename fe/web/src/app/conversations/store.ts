@@ -70,11 +70,18 @@ export function useConversationStore(
   const runQuery = useMemo(
     () => {
       const options = plannerRunQueryOptions(transport, cardId, unauthorized);
-      return { ...options, queryFn: (context: Parameters<typeof options.queryFn>[0]) => options.queryFn(context).then(page => {
-        // Fence deferred work before query completion can release a permission/send continuation.
-        registry.observeEpoch(cardId, page.session.epoch);
-        return page;
-      }) };
+      return { ...options, queryFn: (context: Parameters<typeof options.queryFn>[0]) => {
+        // Capture the ACK identity at read start; older in-flight reads cannot retire a later ACK.
+        const acceptedAtStart = registry.acceptedTurnOf(cardId);
+        return options.queryFn(context).then(page => {
+          // Fence deferred work before query completion can release a permission/send continuation.
+          registry.observeEpoch(cardId, page.session.epoch);
+          if (acceptedAtStart !== null && registry.acceptedTurnOf(cardId) === acceptedAtStart
+            && conversationStopTurn(page, acceptedAtStart, true) === null)
+            registry.rememberAcceptedTurn(cardId, null);
+          return page;
+        });
+      } };
     }, [transport, cardId, unauthorized, registry],
   );
   const run = useQuery({ ...runQuery, enabled: scope !== null, refetchInterval: query =>

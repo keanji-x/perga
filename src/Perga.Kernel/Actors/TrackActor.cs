@@ -119,7 +119,8 @@ public sealed partial class TrackActor : IAsyncDisposable
         Volatile.Read(ref _sessionResumeHoldCount) > 0 ||
         Volatile.Read(ref _queuedMailboxOps) > 0 ||
         Volatile.Read(ref _inFlightExternalOps) > 0 ||
-        !_backgroundJobs.IsEmpty;
+        !_backgroundJobs.IsEmpty ||
+        HasPendingSessionOwnership;
 
     public bool IsSessionOrTaskRunning =>
         _scheduler.HasActiveTurns || _activeAttempts.Count > 0 || _scheduler.HasDispatchingInputs;
@@ -3437,19 +3438,7 @@ public sealed partial class TrackActor : IAsyncDisposable
             // Ignore shutdown cancellation.
         }
 
-        foreach (var kvp in _openSessionHandles.ToArray())
-        {
-            _openSessionHandles.Remove(kvp.Key);
-
-            try
-            {
-                await kvp.Value.Agent.DisposeAsync().ConfigureAwait(false);
-            }
-            catch
-            {
-                // Best-effort session disposal on eviction/shutdown.
-            }
-        }
+        await DisposeSessionOwnershipAsync().ConfigureAwait(false);
 
         _actorShutdownCts.Dispose();
     }

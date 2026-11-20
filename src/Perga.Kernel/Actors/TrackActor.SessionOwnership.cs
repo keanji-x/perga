@@ -11,6 +11,44 @@ public sealed partial class TrackActor
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, PendingSessionLaunch> _pendingSessionLaunches = new(StringComparer.Ordinal);
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _sessionShutdownPending = new(StringComparer.Ordinal);
 
+    private bool HasPendingSessionOwnership
+    {
+        get
+        {
+            if (!_sessionShutdownPending.IsEmpty || !_pendingSessionLaunches.IsEmpty) return true;
+            lock (_sessionDisposals) return _sessionDisposals.Values.Any(disposal => !disposal.Task.IsCompleted);
+        }
+    }
+
+    private async Task DisposeSessionOwnershipAsync()
+    {
+        foreach (var (sessionId, pending) in _pendingSessionLaunches.ToArray())
+        {
+            try
+            {
+                // Cleanup may already be disposing the late handle. Join it before retrying.
+                try { await pending.Cleanup.ConfigureAwait(false); }
+                catch when (pending.Cleanup.IsCompleted) { }
+                if (pending.Launch.IsCompletedSuccessfully &&
+                    (!pending.Cleanup.IsCompletedSuccessfully || !pending.Launch.Result.ShutdownConfirmed))
+                    await ConfirmProviderShutdownAsync(sessionId, pending.Launch.Result, CancellationToken.None).ConfigureAwait(false);
+                _pendingSessionLaunches.TryRemove(sessionId, out _);
+                _sessionShutdownPending.TryRemove(sessionId, out _);
+            }
+            catch { /* Keep unconfirmed ownership registered on shutdown failure. */ }
+        }
+        foreach (var (sessionId, handle) in _openSessionHandles.ToArray())
+        {
+            try
+            {
+                await ConfirmProviderShutdownAsync(sessionId, handle.Agent, CancellationToken.None).ConfigureAwait(false);
+                _openSessionHandles.Remove(sessionId);
+                _sessionShutdownPending.TryRemove(sessionId, out _);
+            }
+            catch { /* Keep unconfirmed ownership registered on shutdown failure. */ }
+        }
+    }
+
     private async Task DisposeOwnedSessionCoreAsync(string sessionId, IAgentSession agent)
     {
         using var deadline = new CancellationTokenSource(_options.SessionStartupTimeout);
@@ -43,17 +81,24 @@ public sealed partial class TrackActor
         // The launch task remains owned even if disposal fails or shutdown is unconfirmed.
     }
 
-    private readonly Dictionary<string, Task> _sessionDisposals = new(StringComparer.Ordinal);
+    private sealed record SessionDisposal(IAgentSession Agent, Task Task);
+
+    private readonly Dictionary<string, SessionDisposal> _sessionDisposals = new(StringComparer.Ordinal);
 
     private async Task ConfirmProviderShutdownAsync(string sessionId, IAgentSession agent, CancellationToken ct)
     {
         Task disposal;
         lock (_sessionDisposals)
         {
-            if (!_sessionDisposals.TryGetValue(sessionId, out disposal!) || disposal.IsCompleted)
+            if (_sessionDisposals.TryGetValue(sessionId, out var tracked) &&
+                (!tracked.Task.IsCompleted || (ReferenceEquals(tracked.Agent, agent) &&
+                    tracked.Task.IsCompletedSuccessfully && agent.ShutdownConfirmed)))
+                disposal = tracked.Task;
+            else
             {
                 async Task DisposeAsync() => await agent.DisposeAsync().ConfigureAwait(false);
-                _sessionDisposals[sessionId] = disposal = DisposeAsync();
+                disposal = DisposeAsync();
+                _sessionDisposals[sessionId] = new(agent, disposal);
                 ObserveTaskFault(disposal);
             }
         }

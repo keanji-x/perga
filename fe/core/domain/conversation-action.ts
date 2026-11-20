@@ -47,10 +47,11 @@ export function conversationCommandEnabled(command: 'stop' | 'compact' | 'reconn
 }
 
 /** Startup identity exists before the provider becomes an active turn. */
-export function conversationStopTurn(run: Pick<SessionItemsPageDto, 'activeTurn' | 'lastTurn'> | undefined,
-  acceptedTurnId: string | null): string | null {
+export function conversationStopTurn(run: (Pick<SessionItemsPageDto, 'activeTurn' | 'lastTurn'> & Partial<Pick<SessionItemsPageDto, 'state'>>) | undefined,
+  acceptedTurnId: string | null, readStartedAfterAck = false): string | null {
   if (run?.activeTurn?.status === 'running') return run.activeTurn.id;
   const last = run?.lastTurn;
   if (last?.status === 'queued' || last?.status === 'starting' || last?.status === 'running') return last.id;
+  if (readStartedAfterAck && (run?.state === 'idle' || run?.state === 'unknown')) return null;
   return last?.id === acceptedTurnId ? null : acceptedTurnId;
 }
