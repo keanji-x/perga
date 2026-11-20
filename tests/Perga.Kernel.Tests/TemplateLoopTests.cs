@@ -40,7 +40,7 @@ public sealed class TemplateLoopTests
         var caller = new McpSessionPrincipal("token", snap.Track.Id, snap.Track.LeadSessionId!, true, null, null, []);
         const string asking = """
             export default {id:'ask',title:'Ask',before(a,ctx) {
-              return a.type === 'task.dispatch' ? AskHuman('Approve dispatch?',['Approve','Reject']) : Allow();
+              return a.type === 'task.dispatch' ? AskHuman('Approve dispatch?',{approve:'Approve',deny:'Reject'}) : Allow();
             }};
             """;
         await KernelMcpDispatcher.ExecuteGuardedAsync(ctx.Kernel, caller, KernelMcpToolNames.TrackSet, TestJson.FromObject(new { source = asking }));
@@ -82,7 +82,7 @@ public sealed class TemplateLoopTests
             export default {id:'turn',title:'Turn',turnContext:()=> 'Policy context',before(a,ctx){
               if(a.type!=='turn.before') return Allow();
               ctx.state.calls=(ctx.state.calls||0)+1;
-              return AskHuman('Approve turn?',['Approve','Reject']);
+              return AskHuman('Approve turn?',{approve:'Approve',deny:'Reject'});
             }};
             """;
         await KernelMcpDispatcher.ExecuteGuardedAsync(ctx.Kernel, caller, KernelMcpToolNames.TrackSet, TestJson.FromObject(new { source }));

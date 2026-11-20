@@ -26,16 +26,20 @@ public sealed partial class PolicyVm : IPolicyVm
           }
           return { kind: "deny", reason };
         };
-        globalThis.AskHuman = function AskHuman(title, options) {
+        globalThis.AskHuman = function AskHuman(title, labels) {
           if (typeof title !== "string" || title.trim().length === 0) {
-            throw new TypeError("AskHuman(title, options?) requires a non-empty string title.");
+            throw new TypeError("AskHuman(title, labels?) requires a non-empty string title.");
           }
-          const normalized = options === undefined || options === null
-            ? []
-            : Array.isArray(options)
-              ? options.map((item) => String(item))
-              : (() => { throw new TypeError("AskHuman options must be an array of strings."); })();
-          return { kind: "ask_human", title, options: normalized };
+          if (labels !== undefined && (labels === null || typeof labels !== "object" || Array.isArray(labels))) {
+            throw new TypeError("AskHuman labels must be an object with optional approve and deny strings.");
+          }
+          const approveLabel = labels?.approve === undefined ? "Approve" : labels.approve;
+          const denyLabel = labels?.deny === undefined ? "Deny" : labels.deny;
+          if (typeof approveLabel !== "string" || approveLabel.trim().length === 0 ||
+              typeof denyLabel !== "string" || denyLabel.trim().length === 0) {
+            throw new TypeError("AskHuman labels must be non-empty strings.");
+          }
+          return { kind: "ask_human", title, approveLabel, denyLabel };
         };
         globalThis.defineTemplate = function defineTemplate(def) {
           if (def === null || typeof def !== "object" || Array.isArray(def)) {
@@ -495,7 +499,7 @@ public sealed partial class PolicyVm : IPolicyVm
         if (value is not ObjectInstance obj || value.IsArray())
         {
             throw new InvalidOperationException(
-                $"{hookName} must return a GuardDecision object (use Allow(), Deny(reason), or AskHuman(title, options?)).");
+                $"{hookName} must return a GuardDecision object (use Allow(), Deny(reason), or AskHuman(title, labels?)).");
         }
 
         if (!obj.Get("patch").IsUndefined()) throw new InvalidOperationException("GuardDecision does not support patches.");
@@ -505,12 +509,21 @@ public sealed partial class PolicyVm : IPolicyVm
             "allow" => new GuardDecision.Allow(),
             "deny" => new GuardDecision.Deny(
                 ReadRequiredNonEmptyString(obj, "reason", $"{hookName}.result.reason")),
-            "ask_human" => new GuardDecision.AskHuman(
-                ReadRequiredNonEmptyString(obj, "title", $"{hookName}.result.title"),
-                ReadOptionalStringList(obj, "options", $"{hookName}.result.options")),
+            "ask_human" => ParseAskHuman(obj, hookName),
             _ => throw new InvalidOperationException(
                 $"Unknown GuardDecision kind '{kind}' returned from {hookName}.")
         };
+    }
+
+    private static GuardDecision.AskHuman ParseAskHuman(ObjectInstance obj, string hookName)
+    {
+        if (obj.HasProperty("options"))
+            throw new InvalidOperationException("GuardDecision.AskHuman does not support options; use approveLabel and denyLabel.");
+
+        return new GuardDecision.AskHuman(
+            ReadRequiredNonEmptyString(obj, "title", $"{hookName}.result.title"),
+            obj.Get("approveLabel").IsUndefined() ? "Approve" : ReadRequiredNonEmptyString(obj, "approveLabel", $"{hookName}.result.approveLabel"),
+            obj.Get("denyLabel").IsUndefined() ? "Deny" : ReadRequiredNonEmptyString(obj, "denyLabel", $"{hookName}.result.denyLabel"));
     }
 
     private static string? ExtractOptionalStringResult(JsValue value, string hookName)

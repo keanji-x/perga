@@ -173,7 +173,7 @@ const devTemplate = {
       if (ctx.inputs.requirePrReview) {
         return AskHuman(
           `Approve merging PR into '${ctx.inputs.baseBranch}'?`,
-          ["Approve & Merge", "Hold for Manual Review"]
+          { approve: "Approve & Merge", deny: "Hold for Manual Review" }
         );
       }
       return Allow();
@@ -184,7 +184,7 @@ const devTemplate = {
         ctx.state.prPublished = true;
         return AskHuman(
           `High-risk track: publish PR against '${ctx.inputs.baseBranch}' now?`,
-          ["Publish PR", "Cancel"]
+          { approve: "Publish PR", deny: "Cancel" }
         );
       }
       ctx.state.prPublished = true;

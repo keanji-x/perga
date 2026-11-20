@@ -11,6 +11,9 @@ namespace Perga.Kernel.Actors;
 
 public sealed partial class TrackActor
 {
+    private static readonly IReadOnlyList<ApprovalChoiceDto> DefaultBinaryChoices =
+        [new("approve", "Approve", true), new("deny", "Deny", false)];
+
     private readonly object _approvalAdmission = new();
     private bool _approvalAdmissionClosed;
     private readonly ConcurrentDictionary<string, PendingApproval> _approvals = new(StringComparer.Ordinal);
@@ -72,7 +75,7 @@ public sealed partial class TrackActor
         ExecutionControl control, Func<ApprovalChoiceDto, Func<Task>?> claimDelivery, Action expire, CancellationToken ct = default)
     {
         var dto = new ApprovalDto($"apr_{Guid.NewGuid():N}", executionId, sessionId, turnId,
-            title, options.Count > 0 ? options : PolicyApprovalOptionClassifier.DefaultBinaryChoices, NowMs());
+            title, options.Count > 0 ? options : DefaultBinaryChoices, NowMs());
         var pending = new PendingApproval(dto, control, claimDelivery, expire);
         // An already canceled token can run its callback inline during registration.
         pending.Cancellation = ct.UnsafeRegister(_ => ExpireApproval(pending), null);
@@ -265,7 +268,7 @@ public sealed partial class TrackActor
         var hasProviderOptions = approval.Options is { Count: > 0 };
         var choices = hasProviderOptions
             ? approval.Options!.Select(option => new ApprovalChoiceDto(option.OptionId, option.Label, option.IsApproval)).ToArray()
-            : PolicyApprovalOptionClassifier.DefaultBinaryChoices;
+            : DefaultBinaryChoices;
         if (turn.Settings?.ApprovalMode != "deny" &&
             RegisterApproval(turn.TurnDto.Id, turn.SessionId, turn.TurnDto.Id, $"Approve tool '{approval.ToolName}'?",
                 choices, turn.Control, choice =>
@@ -329,7 +332,7 @@ public sealed partial class TrackActor
             throw KernelException.Forbidden("An approval requires an open Track and a session.");
 
         var waiter = new TaskCompletionSource<ApprovalChoiceDto>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var choices = PolicyApprovalOptionClassifier.BuildChoices(ask.Options);
+        ApprovalChoiceDto[] choices = [new("approve", ask.ApproveLabel, true), new("deny", ask.DenyLabel, false)];
         var pending = RegisterApproval($"op_{Guid.NewGuid():N}", sessionId, turn?.TurnDto.Id,
             ask.Title, choices, turn?.Control ?? new ExecutionControl(), choice =>
             {

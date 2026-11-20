@@ -45,7 +45,7 @@ public sealed class PolicyGuardMailTerminalScheduleBootTests
 
         // 4. Policy AskHuman -> suspends until human approves -> allows; if human denies -> throws PolicyDenied!
         ctx.PolicyVm.OnBefore = (_, action, _, state) =>
-            new PolicyEvalResult<GuardDecision>(state, new GuardDecision.AskHuman("Allow vcs_push?", ["Approve", "Reject"]));
+            new PolicyEvalResult<GuardDecision>(state, new GuardDecision.AskHuman("Allow vcs_push?", "拒绝", "Approve"));
 
         var guardTask = ctx.Kernel.GuardMcpToolCallAsync(trackId, leadId, "vcs", "vcs_publish_pr", TestJson.Parse("{}"));
         ApprovalDto? openAsk = null;
@@ -60,8 +60,11 @@ public sealed class PolicyGuardMailTerminalScheduleBootTests
 
         Assert.NotNull(openAsk);
         Assert.False(guardTask.IsCompleted);
+        Assert.Equal(["approve", "deny"], openAsk.Options.Select(o => o.Id));
+        Assert.Equal(["拒绝", "Approve"], openAsk.Options.Select(o => o.Label));
+        Assert.Equal([true, false], openAsk.Options.Select(o => o.IsApproval));
 
-        await ctx.Kernel.DecideApprovalAsync(trackId, openAsk!.ExecutionId, openAsk!.Id, openAsk.Options.Single(o => o.IsApproval).Id);
+        await ctx.Kernel.DecideApprovalAsync(trackId, openAsk!.ExecutionId, openAsk!.Id, "approve");
         await guardTask; // Completes cleanly!
 
         // Now verify human rejection throws PolicyDenied
@@ -77,7 +80,7 @@ public sealed class PolicyGuardMailTerminalScheduleBootTests
         }
 
         Assert.NotNull(rejectAsk);
-        await ctx.Kernel.DecideApprovalAsync(trackId, rejectAsk!.ExecutionId, rejectAsk!.Id, rejectAsk.Options.Single(o => !o.IsApproval).Id);
+        await ctx.Kernel.DecideApprovalAsync(trackId, rejectAsk!.ExecutionId, rejectAsk!.Id, "deny");
         var humanRejectEx = await Assert.ThrowsAsync<KernelException>(() => rejectGuardTask);
         Assert.Equal(KernelErrorCode.PolicyDenied, humanRejectEx.Code);
     }

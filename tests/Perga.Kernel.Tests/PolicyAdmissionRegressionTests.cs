@@ -22,7 +22,7 @@ public sealed class PolicyAdmissionRegressionTests
         await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
         var caller = Caller(snapshot);
-        await SetPolicy(ctx, caller, "export default {id:'ask',title:'Ask',before:a=>a.type==='report.commit'?AskHuman('Approve?',['Approve','Reject']):Allow()};");
+        await SetPolicy(ctx, caller, "export default {id:'ask',title:'Ask',before:a=>a.type==='report.commit'?AskHuman('Approve?',{approve:'Approve',deny:'Reject'}):Allow()};");
         var report = await ctx.Kernel.ReadReportAsync(caller.TrackId);
         using var cancellation = new CancellationTokenSource();
         var commit = ctx.Kernel.CommitReportAsync(caller.TrackId, caller.SessionId,
@@ -50,7 +50,7 @@ public sealed class PolicyAdmissionRegressionTests
         await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
         var caller = Caller(snapshot);
-        await SetPolicy(ctx, caller, "export default {id:'asks',title:'Asks',before:a=>a.type==='task.dispatch'||a.type==='report.commit'?AskHuman(a.type,['Approve','Reject']):Allow()};");
+        await SetPolicy(ctx, caller, "export default {id:'asks',title:'Asks',before:a=>a.type==='task.dispatch'||a.type==='report.commit'?AskHuman(a.type,{approve:'Approve',deny:'Reject'}):Allow()};");
         ctx.AgentRuntime.TurnScript = (_, _, ct) => BlockUntilStopped(ct);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var running = ctx.SendAndWaitForTurnAsync(caller.SessionId, new SendMessageRequest("Wait", "template-stop"), timeout.Token);
@@ -136,7 +136,7 @@ public sealed class PolicyAdmissionRegressionTests
         await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
         var caller = Caller(snapshot);
-        await SetPolicy(ctx, caller, "export default {id:'asks',title:'Asks',before:a=>a.type==='task.dispatch'||a.type==='report.commit'?AskHuman(a.type,['Approve','Reject']):Allow()};");
+        await SetPolicy(ctx, caller, "export default {id:'asks',title:'Asks',before:a=>a.type==='task.dispatch'||a.type==='report.commit'?AskHuman(a.type,{approve:'Approve',deny:'Reject'}):Allow()};");
         var report = await ctx.Kernel.ReadReportAsync(caller.TrackId);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var commit = ctx.Kernel.CommitReportAsync(caller.TrackId, caller.SessionId, new(report.Anchor, [
@@ -292,7 +292,7 @@ public sealed class PolicyAdmissionRegressionTests
         await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
         var caller = Caller(snapshot);
-        await SetPolicy(ctx, caller, "export default {id:'ask',title:'Ask',before(a,ctx){if(a.type==='tool.perga_track_set'){ctx.state.changed=true;return AskHuman('Approve?',['Approve','Reject']);}return Allow();}};");
+        await SetPolicy(ctx, caller, "export default {id:'ask',title:'Ask',before(a,ctx){if(a.type==='tool.perga_track_set'){ctx.state.changed=true;return AskHuman('Approve?',{approve:'Approve',deny:'Reject'});}return Allow();}};");
         var before = (await ctx.Kernel.GetTrackAggregateAsync(caller.TrackId)).Track.TemplateState.GetRawText();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
         var error = await Assert.ThrowsAsync<KernelException>(() => KernelMcpDispatcher.ExecuteGuardedAsync(ctx.Kernel, caller,
@@ -330,7 +330,7 @@ public sealed class PolicyAdmissionRegressionTests
                 task_key = "blocker", ready = false, access = "read_only", goal_or_cmd = "Block" })),
             new BlockOp.UpsertBlockOp("routed", ReportBlockKind.Task, null, TestJson.FromObject(new {
                 task_key = "routed", ready = true, access = "read_only", goal_or_cmd = "Inspect", depends_on = new[] { "blocker" } }))]));
-        await SetPolicy(ctx, caller, "export default {id:'ask',title:'Ask',tasks:{routing:[{when:{},provider:'codex',model:'gpt-5'}]},before:a=>a.type==='task.dispatch'?AskHuman('Approve?',['Approve','Reject']):Allow()};");
+        await SetPolicy(ctx, caller, "export default {id:'ask',title:'Ask',tasks:{routing:[{when:{},provider:'codex',model:'gpt-5'}]},before:a=>a.type==='task.dispatch'?AskHuman('Approve?',{approve:'Approve',deny:'Reject'}):Allow()};");
         var blocker = (await ctx.Kernel.ListTasksAsync(caller.TrackId)).Single(t => t.TaskKey == "blocker");
         await ctx.Store.UpsertTaskAndAttemptAsync(blocker with { Status = TaskRunStatus.Done }, null, null, null, default);
         await ctx.Kernel.Actors.RemoveAndDisposeAsync(caller.TrackId);
@@ -361,7 +361,7 @@ public sealed class PolicyAdmissionRegressionTests
                 task_key = "blocker", ready = false, access = "read_only", goal_or_cmd = "Block" })),
             new BlockOp.UpsertBlockOp("pending", ReportBlockKind.Task, null, TestJson.FromObject(new {
                 task_key = "pending", ready = true, access = "read_only", goal_or_cmd = "Inspect", depends_on = new[] { "blocker" } }))]));
-        await SetPolicy(ctx, caller, "export default {id:'ask',title:'Ask',before:a=>a.type==='task.dispatch'?AskHuman('Approve?',['Approve','Reject']):Allow()};");
+        await SetPolicy(ctx, caller, "export default {id:'ask',title:'Ask',before:a=>a.type==='task.dispatch'?AskHuman('Approve?',{approve:'Approve',deny:'Reject'}):Allow()};");
         var blocker = (await ctx.Kernel.ListTasksAsync(caller.TrackId)).Single(t => t.TaskKey == "blocker");
         await ctx.Store.UpsertTaskAndAttemptAsync(blocker with { Status = TaskRunStatus.Done }, null, null, null, default);
         await ctx.Kernel.Actors.RemoveAndDisposeAsync(caller.TrackId);

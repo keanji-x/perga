@@ -11,38 +11,6 @@ namespace Perga.Kernel.Tests;
 public sealed class UserJourneyAuditFixesTests
 {
     [Fact]
-    public void PolicyApprovalOptionClassifier_BuildsStructuredChoicesWithRecommendedPrefixAndChineseKeywords()
-    {
-        var standard = PolicyApprovalOptionClassifier.BuildChoices(["(Recommended) Approve", "Deny"]);
-        Assert.Equal(["option_0", "option_1"], standard.Select(c => c.Id));
-        Assert.Equal(["(Recommended) Approve", "Deny"], standard.Select(c => c.Label));
-        Assert.Equal([true, false], standard.Select(c => c.IsApproval));
-
-        var inverted = PolicyApprovalOptionClassifier.BuildChoices(["(Recommended) Deny", "Approve"]);
-        Assert.Equal([false, true], inverted.Select(c => c.IsApproval));
-
-        var chinese = PolicyApprovalOptionClassifier.BuildChoices(["(Recommended) 允许执行", "拒绝执行"]);
-        Assert.Equal([true, false], chinese.Select(c => c.IsApproval));
-
-        foreach (var yesWord in new[] { "同意", "允许", "批准", "继续", "是" })
-        {
-            var single = Assert.Single(PolicyApprovalOptionClassifier.BuildChoices([yesWord]));
-            Assert.True(single.IsApproval, $"Expected '{yesWord}' to classify as approval.");
-        }
-
-        foreach (var noWord in new[] { "拒绝", "不同意", "取消", "禁止", "否", "不同意执行", "不允许此操作" })
-        {
-            var pair = PolicyApprovalOptionClassifier.BuildChoices([noWord, "批准"]);
-            Assert.False(pair[0].IsApproval, $"Expected '{noWord}' to classify as denial.");
-            Assert.True(pair[1].IsApproval);
-        }
-
-        var fallback = PolicyApprovalOptionClassifier.BuildChoices([]);
-        Assert.Equal(["approve", "deny"], fallback.Select(c => c.Id));
-        Assert.Equal([true, false], fallback.Select(c => c.IsApproval));
-    }
-
-    [Fact]
     public async Task TaskBlockSynchronizer_NormalizesProviderAliasesInKindWhenProviderIsNull()
     {
         await using var ctx = new KernelTestContext();

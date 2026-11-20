@@ -104,7 +104,7 @@ public sealed class ImplicitTemplateToolsTests
               before: (call, ctx) => {
                 ctx.state.requests++;
                 return call.arguments.inputs?.suspend
-                  ? AskHuman('Approve replacement?', ['Approve', 'Reject']) : Allow();
+                  ? AskHuman('Approve replacement?', { approve: 'Approve', deny: 'Reject' }) : Allow();
               } });
             """;
         const string replacement = """

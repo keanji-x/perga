@@ -193,7 +193,8 @@ public sealed class PolicyVmTests
                 arguments = ParseJson("""{"prNumber":12}""")
             }), inputs, state);
         var askDecision = Assert.IsType<GuardDecision.AskHuman>(mergeAsk.Output);
-        Assert.Equal(2, askDecision.Options.Count);
+        Assert.Equal("Approve & Merge", askDecision.ApproveLabel);
+        Assert.Equal("Hold for Manual Review", askDecision.DenyLabel);
 
         // Dynamic schedule prompt
         var wakeRes = FireSchedule(compiled, "upstream-drift-check", inputs, state);
@@ -356,7 +357,7 @@ public sealed class PolicyVmTests
               if(a.type !== 'report.commit') return Allow();
               ctx.state.validations=(ctx.state.validations||0)+1;
               if(a.nextMarkdown.includes('FORBIDDEN')) return Deny('Contains forbidden marker.');
-              if(a.nextMarkdown.includes('SIGN_OFF')) return AskHuman('Approve edit?',['Approve','Reject']);
+              if(a.nextMarkdown.includes('SIGN_OFF')) return AskHuman('Approve edit?',{approve:'Approve',deny:'Reject'});
               return Allow();
             }};
             """);
@@ -519,7 +520,8 @@ public sealed class PolicyVmTests
             }), emptyInputs, state);
         var ask = Assert.IsType<GuardDecision.AskHuman>(askNoOpts.Output);
         Assert.Equal("Confirm on staging?", ask.Title);
-        Assert.Empty(ask.Options);
+        Assert.Equal("Approve", ask.ApproveLabel);
+        Assert.Equal("Deny", ask.DenyLabel);
 
         var denyRes = _vm.Before(compiled, "tool.deny_tool", "t1",
             JsonSerializer.SerializeToElement(new {
