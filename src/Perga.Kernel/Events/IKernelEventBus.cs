@@ -9,6 +9,7 @@ public static class KernelEventKinds
     // Persistent events (EventId != null)
     public const string AreaUpdated = "area.updated";
     public const string AreaDeleted = "area.deleted";
+    public const string TrackSchedulesUpdated = "track.schedules.updated";
     public const string TrackUpdated = "track.updated";
     public const string TrackDeleted = "track.deleted";
     public const string ReportUpdated = "report.updated";
@@ -41,6 +42,7 @@ public static class KernelEventKinds
         AreaUpdated,
         AreaDeleted,
         TrackUpdated,
+        TrackSchedulesUpdated,
         TrackDeleted,
         ReportUpdated,
         TaskUpdated,

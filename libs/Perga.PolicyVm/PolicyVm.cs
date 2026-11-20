@@ -62,8 +62,8 @@ public sealed partial class PolicyVm : IPolicyVm
             var description = ReadOptionalString(def, "description", "template.description");
             var defaultPlugins = ReadOptionalStringList(def, "plugins", "template.plugins");
             var inputsSchema = ExtractInputsSchema(engine, def);
-            var initialMarkdown = ReadOptionalString(def, "initialMarkdown", "template.initialMarkdown") ?? string.Empty;
 
+            EnsureOptionalFunction(def, "headerView", "template.headerView");
             EnsureOptionalFunction(def, "before", "template.before");
             EnsureOptionalFunction(def, "after", "template.after");
             EnsureOptionalFunction(def, "initialState", "template.initialState");
@@ -133,7 +133,6 @@ public sealed partial class PolicyVm : IPolicyVm
                 WorkspaceCloseCmd: workspaceCloseCmd,
                 AfterWorkerDoneCmd: afterWorkerDoneCmd,
                 Schedules: schedules,
-                InitialReportMarkdown: initialMarkdown,
                 WorkerDispatch: workerDispatch,
                 Extends: ReadOptionalString(def, "extends", "template.extends"),
                 HasHeaderView: !def.Get("headerView").IsUndefined(),
@@ -221,68 +220,6 @@ public sealed partial class PolicyVm : IPolicyVm
             var nextState = ExtractContextState(engine, templateCtx);
             var text = ExtractOptionalStringResult(result, "turnContext");
             return new PolicyEvalResult<string?>(nextState, text);
-        });
-    }
-
-    public PolicyEvalResult<string?> BuildScheduleWakePrompt(
-        CompiledPolicy policy,
-        string scheduleId,
-        JsonElement inputs,
-        JsonElement state)
-    {
-        ArgumentNullException.ThrowIfNull(policy);
-        ArgumentException.ThrowIfNullOrWhiteSpace(scheduleId);
-
-        return ExecuteSandboxed("BuildScheduleWakePrompt", () =>
-        {
-            using var engine = CreateSandboxedEngine();
-            var def = LoadDefaultTemplateObject(engine, policy.JsSource);
-
-            var schedulesVal = def.Get("schedules");
-            if (schedulesVal.IsUndefined() || schedulesVal.IsNull())
-            {
-                return new PolicyEvalResult<string?>(NormalizeStateJson(state), null);
-            }
-
-            if (!schedulesVal.IsArray())
-            {
-                throw new InvalidOperationException("template.schedules must be an array.");
-            }
-
-            var arr = schedulesVal.AsArray();
-            for (uint i = 0; i < arr.Length; i++)
-            {
-                var item = arr.Get(i);
-                if (item is not ObjectInstance schedObj)
-                {
-                    continue;
-                }
-
-                var idVal = schedObj.Get("id");
-                if (!idVal.IsString() || !string.Equals(idVal.AsString(), scheduleId, StringComparison.Ordinal))
-                {
-                    continue;
-                }
-
-                var wakePromptVal = schedObj.Get("wakePrompt");
-                if (wakePromptVal.IsString())
-                {
-                    return new PolicyEvalResult<string?>(NormalizeStateJson(state), wakePromptVal.AsString());
-                }
-
-                if (wakePromptVal is Function wakeFn)
-                {
-                    var templateCtx = BuildTemplateContextObject(engine, def, string.Empty, inputs, state);
-                    var outputVal = engine.Call(wakeFn, schedObj, [templateCtx]);
-                    var nextState = ExtractContextState(engine, templateCtx);
-                    var prompt = ExtractOptionalStringResult(outputVal, $"schedules[{scheduleId}].wakePrompt");
-                    return new PolicyEvalResult<string?>(nextState, prompt);
-                }
-
-                return new PolicyEvalResult<string?>(NormalizeStateJson(state), null);
-            }
-
-            return new PolicyEvalResult<string?>(NormalizeStateJson(state), null);
         });
     }
 
@@ -459,7 +396,15 @@ public sealed partial class PolicyVm : IPolicyVm
             }
         }
 
-        return JsValueToJsonElement(engine, inputsVal, defaultJson: "{}");
+        var schema = JsValueToJsonElement(engine, inputsVal, defaultJson: "{}");
+        foreach (var field in schema.EnumerateObject())
+        {
+            if (field.Value.GetProperty("type").GetString() == "enum" &&
+                (!field.Value.TryGetProperty("values", out var values) || values.ValueKind != JsonValueKind.Array ||
+                 values.GetArrayLength() == 0 || values.EnumerateArray().Any(v => v.ValueKind != JsonValueKind.String)))
+                throw new InvalidOperationException($"template.inputs.{field.Name}.values must be a nonempty array of strings.");
+        }
+        return schema;
     }
 
     private static List<SectionRule> ParseSectionRules(ObjectInstance reportObj)
@@ -528,23 +473,18 @@ public sealed partial class PolicyVm : IPolicyVm
             var cron = ReadRequiredNonEmptyString(schedObj, "cron", $"template.schedules[{i}].cron");
             var timezone = ReadOptionalString(schedObj, "timezone", $"template.schedules[{i}].timezone") ?? "UTC";
 
-            var wakeVal = schedObj.Get("wakePrompt");
-            string? staticWakePrompt;
-            if (wakeVal.IsString())
-            {
-                staticWakePrompt = wakeVal.AsString();
-            }
-            else if (wakeVal is Function)
-            {
-                staticWakePrompt = null;
-            }
-            else
-            {
-                throw new InvalidOperationException(
-                    $"template.schedules[{i}].wakePrompt must be a string or a function.");
-            }
-
-            list.Add(new ScheduleSpec(id, cron, timezone, staticWakePrompt));
+            if (schedObj.HasProperty("wakePrompt"))
+                throw new InvalidOperationException("Removed schedules.wakePrompt; use prompt and after(schedule.fired).");
+            var prompt = ReadRequiredNonEmptyString(schedObj, "prompt", $"template.schedules[{i}].prompt");
+            var title = ReadOptionalString(schedObj, "title", $"template.schedules[{i}].title");
+            if (id.Length > 128 || id.Any(char.IsWhiteSpace) || list.Any(s => s.Id == id))
+                throw new InvalidOperationException($"Invalid or duplicate schedule id '{id}'.");
+            var parts = cron.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+            if (!Cronos.CronExpression.TryParse(cron, parts.Length == 6 ? Cronos.CronFormat.IncludeSeconds : Cronos.CronFormat.Standard, out _))
+                throw new InvalidOperationException($"Invalid cron expression '{cron}'.");
+            if (!TimeZoneInfo.TryFindSystemTimeZoneById(timezone, out _))
+                throw new InvalidOperationException($"Unknown schedule timezone '{timezone}'.");
+            list.Add(new ScheduleSpec(id, cron, timezone, prompt, title));
         }
 
         return list;

@@ -89,7 +89,7 @@ public sealed class TemplateRulesTests
     {
         var parent = _vm.Compile("""
             export default {id:'base',title:'Base',plugins:['a','b'],inputs:{one:{type:'string',default:'base'}},
-              schedules:[{id:'pulse',cron:'0 9 * * *',wakePrompt:'base'}],
+              schedules:[{id:'pulse',cron:'0 9 * * *',prompt:'base'}],
               report:{maxProseChars:100,sections:[{h1:'Keep'},{h1:'Override',editableBy:['human']}]},
               tasks:{routing:[{when:{role:'review'},model:'base'},{when:{},provider:'codex'}]},
               before(){throw Error('parent before replaced');},after(){throw Error('parent after replaced');},
@@ -97,7 +97,7 @@ public sealed class TemplateRulesTests
             """);
         var policy = _vm.Compile(PolicyVm.Inherit(parent,"""
             export default {id:'child',title:'Child',plugins:['b','c'],inputs:{one:{type:'string',default:'child'},two:{type:'boolean'}},
-              schedules:[{id:'pulse',cron:'0 10 * * *',wakePrompt:'child'}],
+              schedules:[{id:'pulse',cron:'0 10 * * *',prompt:'child'}],
               report:{sections:[{h1:'Override',editableBy:['lead']}]},
               tasks:{routing:[{when:{role:'review'},model:'child'}]},
               before(a,ctx){ctx.state.order=['child'];return Allow();},after(e,ctx){ctx.state.after=['child'];},

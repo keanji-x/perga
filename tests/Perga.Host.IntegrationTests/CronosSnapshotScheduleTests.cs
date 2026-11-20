@@ -30,7 +30,7 @@ public sealed class CronosSnapshotScheduleTests
         await KernelMcpDispatcher.ExecuteGuardedAsync(kernel, caller, KernelMcpToolNames.TrackSet,
             JsonSerializer.SerializeToElement(new { source = """
                 export default defineTemplate({ id:'clashing', title:'Snapshot', schedules: [
-                  { id:'snapshot-pulse', cron:'* * * * *', timezone:'UTC', wakePrompt:'SNAPSHOT_PULSE' }
+                  { id:'snapshot-pulse', cron:'* * * * *', timezone:'UTC', prompt:'SNAPSHOT_PULSE' }
                 ] });
                 """ }));
         Assert.Empty(kernel.Templates.TryGetPolicy("clashing")!.Manifest.Schedules);

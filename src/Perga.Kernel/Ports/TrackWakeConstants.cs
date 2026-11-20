@@ -54,13 +54,13 @@ public static class TrackWakePresentations
 }
 
 // The fields a wake payload may carry, parsed once from track_wakes.payload_json.
-public sealed record TrackWakePayload(string? Prompt, string? Presentation, string? ScheduleId)
+public sealed record TrackWakePayload(string? Prompt, string? Presentation, string? ScheduleId, string? SourceKind = null)
 {
     public static TrackWakePayload Parse(string payloadJson)
     {
         using var document = JsonDocument.Parse(payloadJson);
         var root = document.RootElement;
-        return new(ReadString(root, "prompt"), ReadString(root, "presentation"), ReadString(root, "scheduleId"));
+        return new(ReadString(root, "prompt"), ReadString(root, "presentation"), ReadString(root, "scheduleId"), ReadString(root, "sourceKind"));
     }
 
     private static string? ReadString(JsonElement root, string name) =>

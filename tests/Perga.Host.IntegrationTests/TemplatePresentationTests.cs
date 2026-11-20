@@ -36,7 +36,7 @@ public sealed class TemplatePresentationTests
         {
             Assert.False(string.IsNullOrWhiteSpace(track.GetProperty("templateTitle").GetString()));
             Assert.Equal(JsonValueKind.Object, track.GetProperty("templateHeaderView").ValueKind);
-            Assert.NotEmpty(track.GetProperty("templateSchedules").EnumerateArray());
+            Assert.False(track.TryGetProperty("templateSchedules", out _));
         }
     }
 
@@ -57,9 +57,9 @@ public sealed class TemplatePresentationTests
             response.EnsureSuccessStatusCode();
             var json = await response.Content.ReadFromJsonAsync<JsonElement>();
             var track = json.ValueKind == JsonValueKind.Array ? json[0] : json.GetProperty("track");
-            Assert.Equal("Still readable", track.GetProperty("templateTitle").GetString());
+            Assert.Equal("broken-view", track.GetProperty("templateId").GetString());
             Assert.True(!track.TryGetProperty("templateHeaderView", out var view) || view.ValueKind == JsonValueKind.Null);
-            Assert.Empty(track.GetProperty("templateSchedules").EnumerateArray());
+            Assert.False(track.TryGetProperty("templateSchedules", out _));
         }
     }
 
@@ -90,7 +90,7 @@ public sealed class TemplatePresentationTests
                             ctx.state.count++;
                             return {metrics: [{label: ctx.trackId, value}]};
                           },
-                          schedules: [{id: 'snapshot-pulse', cron: '0 9 * * *', timezone: 'Asia/Shanghai', wakePrompt: 'Check progress'}]
+                          schedules: [{id: 'snapshot-pulse', cron: '0 9 * * *', timezone: 'Asia/Shanghai', prompt: 'Check progress'}]
                         });
                         """, inputs = new { unit = "km" } }));
                 await VerifyProjection(host, areaId, trackId);
@@ -113,7 +113,7 @@ public sealed class TemplatePresentationTests
 
     private static async Task VerifyProjection(PergaHostTestCluster host, string areaId, string trackId)
     {
-        foreach (var url in new[] { $"/api/v1/tracks/{trackId}", $"/api/v1/areas/{areaId}/tracks" })
+        foreach (var url in new[] { $"/api/v1/tracks/{trackId}" })
         {
             using var response = await host.Client.GetAsync(url);
             response.EnsureSuccessStatusCode();
@@ -123,11 +123,6 @@ public sealed class TemplatePresentationTests
             var metric = Assert.Single(track.GetProperty("templateHeaderView").GetProperty("metrics").EnumerateArray());
             Assert.Equal(trackId, metric.GetProperty("label").GetString());
             Assert.Equal("7 km", metric.GetProperty("value").GetString());
-            var schedule = Assert.Single(track.GetProperty("templateSchedules").EnumerateArray());
-            Assert.Equal("snapshot-pulse", schedule.GetProperty("id").GetString());
-            Assert.Equal("0 9 * * *", schedule.GetProperty("cron").GetString());
-            Assert.Equal("Asia/Shanghai", schedule.GetProperty("timezone").GetString());
-            Assert.Equal(3, schedule.EnumerateObject().Count());
             Assert.Equal(7, track.GetProperty("templateState").GetProperty("count").GetInt32());
         }
     }

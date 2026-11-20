@@ -4,16 +4,6 @@ namespace Perga.Kernel.Actors;
 
 public sealed partial class TrackActor
 {
-    public async Task TriggerScheduleWakeAsync(string scheduleId, CancellationToken ct = default)
-    {
-        await EnqueueAsync(async _ =>
-        {
-            await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
-            await _store.TrackWakes.EnqueueAsync(TrackWakeRequests.Schedule(TrackId, scheduleId), ct).ConfigureAwait(false);
-        }, ct).ConfigureAwait(false);
-        await PokeLeadAsync(ct).ConfigureAwait(false);
-    }
-
     public async Task PokeLeadAsync(CancellationToken ct = default, bool allowInline = true)
     {
         var run = await EnqueueAsync(async _ =>
@@ -31,24 +21,24 @@ public sealed partial class TrackActor
     {
         if (wake.Kind != TrackWakeKinds.Schedule)
             return payload.Prompt ?? throw new InvalidOperationException($"Track wake '{wake.Id}' has no prompt.");
-        if (TrackWakeRequests.IsTrackScheduleWake(wake))
-            return !string.IsNullOrWhiteSpace(payload.Prompt)
-                ? payload.Prompt
-                : throw new InvalidOperationException($"Track schedule wake '{wake.Id}' has no prompt.");
         var scheduleId = payload.ScheduleId ?? throw new InvalidOperationException($"Schedule wake '{wake.Id}' has no scheduleId.");
-        var fallback = $"Scheduled wake '{scheduleId}' triggered.";
+        var fallback = payload.Prompt ?? throw new InvalidOperationException($"Schedule wake '{wake.Id}' has no prompt.");
         if (_policy is null) return fallback;
-        var eval = _policyVm.BuildScheduleWakePrompt(_policy, scheduleId, _track.TemplateInputs, _track.TemplateState);
-        await UpdateTemplateStateIfChangedCoreAsync(eval.NextState, ct).ConfigureAwait(false);
-        if (!string.IsNullOrWhiteSpace(eval.Output)) return eval.Output;
-
-        // The policy produced no prompt. A static manifest prompt wins when present. Otherwise a
-        // non-null blank output is deliberate and suppresses the wake (the caller drops blank prompts),
-        // while a null output means the policy said nothing, so use the default prompt.
-        var staticPrompt = _policy.Manifest.Schedules.FirstOrDefault(s => s.Id == scheduleId)?.StaticWakePrompt;
-        if (staticPrompt is not null) return staticPrompt;
-        if (eval.Output is not null) return eval.Output;
-        return fallback;
+        Perga.PolicyVm.PolicyEvalResult<string?> eval;
+        try
+        {
+            eval = _policyVm.After(_policy, "schedule.fired", TrackId, System.Text.Json.JsonSerializer.SerializeToElement(new
+            {
+                scheduleId, sourceKind = payload.SourceKind, prompt = fallback
+            }), _track.TemplateInputs, _track.TemplateState);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            System.Diagnostics.Trace.TraceWarning("Policy after hook schedule.fired failed for Track {0}: {1}", TrackId, ex);
+            return fallback;
+        }
+        await UpdateTemplateStateIfChangedCoreAsync(eval.NextState, ct, emitEvent: true).ConfigureAwait(false);
+        return eval.Output ?? fallback;
     }, ct);
 
     private async Task RunReservedWakeAsync(string sessionId, IReadOnlyList<TrackWake> batch, Guid reservation, CancellationToken ct)

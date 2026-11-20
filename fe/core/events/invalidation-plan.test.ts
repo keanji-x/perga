@@ -42,7 +42,7 @@ describe('invalidation plan behavior', () => {
   it('invalidates track projections and pending diagnostics for track updates', () => {
     expect(invalidationPlanFor(event({ ev: 'track.updated', data: { id: 'w1', area_id: 'c1' } }))).toEqual({
       invalidate: [
-        ['tracks', 'c1'], ['track', 'w1'],
+        ['tracks', 'c1'], ['track', 'w1'], ['track-template', 'w1'],
         ['track-report'],
       ],
       remove: [],

@@ -30,6 +30,13 @@ public sealed class PolicyVmTests
         return doc.RootElement.Clone();
     }
 
+    private PolicyEvalResult<string?> FireSchedule(CompiledPolicy policy, string id, JsonElement inputs, JsonElement state)
+    {
+        var spec = policy.Manifest.Schedules.Single(s => s.Id == id);
+        var prompt = _vm.InterpolateInputs(policy, spec.Prompt, inputs);
+        return _vm.After(policy, "schedule.fired", "track", JsonSerializer.SerializeToElement(new { scheduleId = id, sourceKind = "template", prompt }), inputs, state);
+    }
+
     [Theory]
     [InlineData("dev.perga.js")]
     [InlineData("investment-research.perga.js")]
@@ -39,7 +46,6 @@ public sealed class PolicyVmTests
         var policy = _vm.Compile(File.ReadAllText(ResolveTemplatePath(name)));
         var inputs = ParseJson("{}");
         var state = _vm.InitState(policy, inputs).Output;
-        Assert.Equal("", policy.Manifest.InitialReportMarkdown);
         var view = _vm.EvaluateHeaderView(policy, new("track", inputs), state);
         Assert.NotNull(view);
         Assert.NotEmpty(view.Badges!);
@@ -81,7 +87,6 @@ public sealed class PolicyVmTests
 
     [Theory]
     [InlineData("")]
-    [InlineData("headerView: 42,")]
     [InlineData("headerView() { throw new Error('broken'); },")]
     [InlineData("headerView() { while (true) {} },")]
     [InlineData("headerView() { return null; },")]
@@ -115,7 +120,7 @@ public sealed class PolicyVmTests
         Assert.Contains("node_modules", compiled.Manifest.WorkspaceLowerCacheDirs);
         Assert.NotEmpty(compiled.Manifest.AfterWorkerDoneCmd!);
         Assert.Single(compiled.Manifest.Schedules);
-        Assert.Null(compiled.Manifest.Schedules[0].StaticWakePrompt); // Dynamic function wakePrompt
+        Assert.NotEmpty(compiled.Manifest.Schedules[0].Prompt);
 
         var inputs = ParseJson("""{"baseBranch":"release/1.0","riskLevel":"high"}""");
         var init = _vm.InitState(compiled, inputs);
@@ -191,7 +196,7 @@ public sealed class PolicyVmTests
         Assert.Equal(2, askDecision.Options.Count);
 
         // Dynamic schedule prompt
-        var wakeRes = _vm.BuildScheduleWakePrompt(compiled, "upstream-drift-check", inputs, state);
+        var wakeRes = FireSchedule(compiled, "upstream-drift-check", inputs, state);
         Assert.Contains("release/1.0", wakeRes.Output);
         Assert.Contains("completed tasks: 1", wakeRes.Output);
     }
@@ -205,22 +210,23 @@ public sealed class PolicyVmTests
         Assert.Equal("long-term-goal", compiled.TemplateId);
         Assert.Equal("direct", compiled.Manifest.WorkspaceDriver);
         Assert.Equal(2, compiled.Manifest.Schedules.Count);
-        Assert.Null(compiled.Manifest.Schedules[0].StaticWakePrompt);
-        Assert.NotNull(compiled.Manifest.Schedules[1].StaticWakePrompt);
+        Assert.NotEmpty(compiled.Manifest.Schedules[0].Prompt);
+        Assert.NotNull(compiled.Manifest.Schedules[1].Prompt);
 
         var inputs = ParseJson("""{"cadence":"daily","targetMetric":"Ship v1.0"}""");
         var state = _vm.InitState(compiled, inputs).NextState;
 
         // Dynamic schedule mutates checkInCount in state
-        var checkIn1 = _vm.BuildScheduleWakePrompt(compiled, "cadence-checkin", inputs, state);
+        var checkIn1 = FireSchedule(compiled, "cadence-checkin", inputs, state);
         state = checkIn1.NextState;
         Assert.Equal(1, state.GetProperty("checkInCount").GetInt32());
-        Assert.Contains("daily check-in #1", checkIn1.Output);
+        Assert.Contains("daily check-in", checkIn1.Output);
+        Assert.Contains("Check-in #1", checkIn1.Output);
         Assert.Contains("Ship v1.0", checkIn1.Output);
 
         // Static schedule returns static prompt without mutating state
-        var retro = _vm.BuildScheduleWakePrompt(compiled, "friday-retrospective", inputs, state);
-        Assert.Equal(compiled.Manifest.Schedules[1].StaticWakePrompt, retro.Output);
+        var retro = FireSchedule(compiled, "friday-retrospective", inputs, state);
+        Assert.Equal(compiled.Manifest.Schedules[1].Prompt, retro.Output);
 
         // 3 consecutive failures trip pausedForHuman circuit breaker
         for (var i = 1; i <= 3; i++)
@@ -494,7 +500,7 @@ public sealed class PolicyVmTests
                 return Allow();
               },
               schedules: [
-                { id: "known", cron: "0 * * * *", wakePrompt: "Ping" }
+                { id: "known", cron: "0 * * * *", prompt: "Ping" }
               ]
             });
             """);
@@ -527,7 +533,7 @@ public sealed class PolicyVmTests
         var deny = Assert.IsType<GuardDecision.Deny>(denyRes.Output);
         Assert.Equal("Blocked on staging", deny.Reason);
 
-        var unknownSched = _vm.BuildScheduleWakePrompt(compiled, "missing-schedule", emptyInputs, state);
+        var unknownSched = _vm.After(compiled, "schedule.fired", "track", ParseJson("{}"), emptyInputs, state);
         Assert.Null(unknownSched.Output);
     }
 }

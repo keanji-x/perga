@@ -99,7 +99,7 @@ public sealed class LegacyTemplateHydrationTests
                 var kernel = host.Services.GetRequiredService<IPergaKernel>();
                 kernel.Templates.RegisterTemplate("""
                     export default defineTemplate({ id:'healthy-sibling', title:'Healthy', schedules: [
-                      { id:'pulse', cron:'* * * * *', timezone:'UTC', wakePrompt:'HEALTHY_SIBLING_PULSE' }
+                      { id:'pulse', cron:'* * * * *', timezone:'UTC', prompt:'HEALTHY_SIBLING_PULSE' }
                     ] });
                     """);
                 areaId = (await kernel.CreateAreaAsync(new("Legacy siblings", DefaultCwd: directory.FullName))).Id;
@@ -132,9 +132,7 @@ public sealed class LegacyTemplateHydrationTests
             Assert.Equal(2, areaTracks!.Length);
             var legacy = Assert.Single(areaTracks, t => t.Id == legacyTrackId);
             Assert.Null(legacy.TemplateHeaderView);
-            Assert.NotNull(legacy.TemplateSchedules);
-            Assert.Empty(legacy.TemplateSchedules);
-            Assert.Single(Assert.Single(areaTracks, t => t.Id == healthyTrackId).TemplateSchedules!);
+            Assert.Contains(areaTracks, t => t.Id == healthyTrackId);
             var allTracks = await restarted.ListTracksAsync();
             Assert.Equal(2, allTracks.Count);
             Assert.Contains(allTracks, t => t.Id == legacyTrackId);

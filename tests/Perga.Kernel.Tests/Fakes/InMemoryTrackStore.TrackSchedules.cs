@@ -8,6 +8,39 @@ internal sealed partial class InMemoryTrackStore : ITrackScheduleStore, ITodayRe
     private readonly List<TrackScheduleDto> _trackSchedules = [];
     public ITrackScheduleStore? TrackSchedules => this;
 
+    private void SyncTemplateSchedulesLocked(string trackId, IReadOnlyList<TrackScheduleDto> schedules)
+    {
+        foreach (var s in schedules)
+            if (_trackSchedules.Any(old => old.TrackId == trackId && old.Id == s.Id && old.SourceKind != "template" && old.State == "active"))
+                throw KernelException.Conflict("Schedule id conflict.");
+        var ids = schedules.Select(s => s.Id).ToHashSet();
+        foreach (var old in _trackSchedules.Where(s => s.TrackId == trackId && s.SourceKind == "template" && !ids.Contains(s.Id)).ToArray())
+            CancelAsync(trackId, old.Id, default).GetAwaiter().GetResult();
+        foreach (var s in schedules)
+        {
+            var index = _trackSchedules.FindIndex(old => old.TrackId == trackId && old.Id == s.Id);
+            if (index < 0) _trackSchedules.Add(s);
+            else
+            {
+                var old = _trackSchedules[index];
+                _trackSchedules[index] = old.State == "active" && old.SourceKind == "template" && old.CronExpr == s.CronExpr && old.Timezone == s.Timezone
+                    ? old with { Title = s.Title, Prompt = s.Prompt, UpdatedAtMs = s.UpdatedAtMs } : s;
+            }
+        }
+    }
+
+    public Task<bool> TriggerAsync(string trackId, string scheduleId, CancellationToken ct)
+    {
+        lock (_gate)
+        {
+            var row = _trackSchedules.FirstOrDefault(s => s.TrackId == trackId && s.Id == scheduleId);
+            if (row is null) return Task.FromResult(false);
+            if (row.State != "active") throw KernelException.Conflict("Only active schedules can be triggered.");
+            EnqueueWakeLocked(TrackWakeRequests.DynamicSchedule(trackId, scheduleId, row.Prompt, row.SourceKind));
+            return Task.FromResult(true);
+        }
+    }
+
     public Task<TrackScheduleDto> UpsertAsync(TrackScheduleDto schedule, CancellationToken ct)
     {
         lock (_gate)
@@ -109,7 +142,7 @@ internal sealed partial class InMemoryTrackStore : ITrackScheduleStore, ITodayRe
                 }
             for (var i = 0; i < _trackWakes.Count; i++)
                 if (_trackWakes[i] is { State: TrackWakeStates.Pending, Kind: TrackWakeKinds.Schedule } w &&
-                    w.TrackId == trackId && TrackWakeRequests.IsTrackScheduleWake(w))
+                    w.TrackId == trackId)
                     _trackWakes[i] = w with { State = TrackWakeStates.Dropped, Reason = TrackWakeReasons.Canceled, UpdatedAtMs = now };
             return Task.FromResult(count);
         }
@@ -151,7 +184,7 @@ internal sealed partial class InMemoryTrackStore : ITrackScheduleStore, ITodayRe
                     State = nextState,
                     UpdatedAtMs = nowMs
                 };
-                EnqueueWakeLocked(TrackWakeRequests.DynamicSchedule(s.TrackId, s.Id, s.Prompt));
+                EnqueueWakeLocked(TrackWakeRequests.DynamicSchedule(s.TrackId, s.Id, s.Prompt, s.SourceKind));
                 fired.Add(new FiredTrackSchedule(s.TrackId, s.Id));
             }
             return Task.FromResult<IReadOnlyList<FiredTrackSchedule>>(fired);

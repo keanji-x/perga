@@ -420,6 +420,7 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                     "INSERT INTO track_workspace_preparations VALUES (@Id, @Intent);",
                     new { track.Id, Intent = JsonSerializer.Serialize(preparation) }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
                 await InsertResourceReceiptAsync(conn, tx, key, track.Id, track.CreatedAtMs, input?.Receipt.InputId, innerCt).ConfigureAwait(false);
+                await SyncTemplateSchedulesAsync(conn, tx, track.Id, creation.TemplateSchedules, track.CreatedAtMs, innerCt).ConfigureAwait(false);
                 foreach (var evt in events)
                     await InsertEventInternalAsync(conn, tx, evt, innerCt).ConfigureAwait(false);
                 return track.Id;
@@ -427,16 +428,6 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
             ct);
     }
 
-    public async Task<IReadOnlyList<OpenTrackScheduleSource>> ListOpenTrackScheduleSourcesAsync(CancellationToken ct)
-    {
-        EnsureInitialized();
-        await using var conn = await OpenReadConnectionAsync(ct).ConfigureAwait(false);
-        var rows = await conn.QueryAsync<OpenTrackScheduleSourceRow>(new CommandDefinition("""
-            SELECT id AS Id, template_id AS TemplateId, template_snapshot AS TemplateSnapshot, created_at_ms AS CreatedAtMs
-            FROM tracks WHERE closed_at_ms IS NULL
-            """, cancellationToken: ct)).ConfigureAwait(false);
-        return rows.Select(row => new OpenTrackScheduleSource(row.Id, row.TemplateId, row.TemplateSnapshot, row.CreatedAtMs)).ToArray();
-    }
 
     public async Task<IReadOnlyList<TrackDto>> ListTracksAsync(
         string? areaId = null,
@@ -635,10 +626,10 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
     public Task UpdateTrackAndEmitAsync(TrackDto track, EventEnvelopeDto? evt, CancellationToken ct) =>
         UpdateTrackCoreAsync(track, null, evt, ct);
 
-    public Task UpdateTrackTemplateAndEmitAsync(TrackDto track, string? templateSnapshot, EventEnvelopeDto evt, CancellationToken ct) =>
-        UpdateTrackCoreAsync(track, templateSnapshot, evt, ct, replaceTemplateSnapshot: true);
+    public Task UpdateTrackTemplateAndEmitAsync(TrackDto track, string? templateSnapshot, EventEnvelopeDto evt, CancellationToken ct, IReadOnlyList<TrackScheduleDto>? templateSchedules = null, bool refreshPromptsOnly = false) =>
+        UpdateTrackCoreAsync(track, templateSnapshot, evt, ct, replaceTemplateSnapshot: true, templateSchedules, refreshPromptsOnly);
 
-    private Task UpdateTrackCoreAsync(TrackDto track, string? templateSnapshot, EventEnvelopeDto? evt, CancellationToken ct, bool replaceTemplateSnapshot = false)
+    private Task UpdateTrackCoreAsync(TrackDto track, string? templateSnapshot, EventEnvelopeDto? evt, CancellationToken ct, bool replaceTemplateSnapshot = false, IReadOnlyList<TrackScheduleDto>? templateSchedules = null, bool refreshPromptsOnly = false)
     {
         ArgumentNullException.ThrowIfNull(track);
         EnsureInitialized();
@@ -699,21 +690,22 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                         transaction: tx,
                         cancellationToken: innerCt)).ConfigureAwait(false);
 
-                if (track.ClosedAtMs is not null || replaceTemplateSnapshot)
-                    await conn.ExecuteAsync(new CommandDefinition($"""
-                        UPDATE track_wakes SET state='{TrackWakeStates.Dropped}', reason=@Reason, updated_at_ms=@Now
-                        WHERE track_id=@TrackId AND
-                            ((@Closed=1 AND state IN ('{TrackWakeStates.Pending}','{TrackWakeStates.Delivering}')) OR
-                             (@Closed=0 AND state='{TrackWakeStates.Pending}' AND kind='{TrackWakeKinds.Schedule}'
-                              AND (coalesce_key IS NULL OR instr(coalesce_key, '{TrackWakeRequests.TrackScheduleKeyPrefix}') != 1)));
-                        """, new { TrackId = track.Id, Now = track.UpdatedAtMs, Closed = track.ClosedAtMs is not null,
-                            Reason = track.ClosedAtMs is not null ? TrackWakeReasons.TrackClosed : TrackWakeReasons.TemplateChanged }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
-
+                if (replaceTemplateSnapshot)
+                    await SyncTemplateSchedulesAsync(conn, tx, track.Id, templateSchedules ?? [], track.UpdatedAtMs, innerCt, refreshPromptsOnly).ConfigureAwait(false);
                 if (track.ClosedAtMs is not null)
                     await conn.ExecuteAsync(new CommandDefinition($"""
+                        UPDATE track_wakes SET state='{TrackWakeStates.Dropped}', reason='{TrackWakeReasons.TrackClosed}', updated_at_ms=@Now
+                        WHERE track_id=@TrackId AND state IN ('{TrackWakeStates.Pending}','{TrackWakeStates.Delivering}');
+                        """, new { TrackId = track.Id, Now = track.UpdatedAtMs }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
+
+                if (track.ClosedAtMs is not null)
+                {
+                    var canceled = await conn.ExecuteAsync(new CommandDefinition($"""
                         UPDATE track_schedules SET state='{TrackScheduleStates.Canceled}', next_fire_at_ms=NULL, updated_at_ms=@Now
                         WHERE track_id=@TrackId AND state='{TrackScheduleStates.Active}';
                         """, new { TrackId = track.Id, Now = track.UpdatedAtMs }, tx, cancellationToken: innerCt)).ConfigureAwait(false);
+                    if (canceled > 0) await InsertSchedulesEventAsync(conn, tx, track.Id, track.UpdatedAtMs, innerCt).ConfigureAwait(false);
+                }
 
                 if (evt is not null)
                 {
@@ -2363,13 +2355,6 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
         public long UpdatedAtMs { get; init; }
     }
 
-    private sealed class OpenTrackScheduleSourceRow
-    {
-        public string Id { get; init; } = string.Empty;
-        public string? TemplateId { get; init; }
-        public string? TemplateSnapshot { get; init; }
-        public long CreatedAtMs { get; init; }
-    }
 
     private sealed class ReportRow
     {

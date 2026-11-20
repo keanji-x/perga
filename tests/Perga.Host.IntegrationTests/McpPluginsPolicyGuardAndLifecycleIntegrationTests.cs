@@ -436,7 +436,7 @@ public sealed class McpPluginsPolicyGuardAndLifecycleIntegrationTests
                           id: "every-five-min",
                           cron: "*/5 * * * *",
                           timezone: "UTC",
-                          wakePrompt: (ctx) => `CRON_PULSE:${ctx.inputs.target ?? "default"}`
+                          prompt: "CRON_PULSE:${inputs.target}"
                         }
                       ]
                     });

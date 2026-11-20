@@ -19,12 +19,6 @@ internal sealed partial class InMemoryTrackStore : ISessionInputStore, ISessionM
     public ISessionInputStore SessionInputs => this;
     public ISessionMessageStore SessionMessages => this;
 
-    public Task<IReadOnlyList<OpenTrackScheduleSource>> ListOpenTrackScheduleSourcesAsync(CancellationToken ct)
-    {
-        lock (_gate)
-            return Task.FromResult<IReadOnlyList<OpenTrackScheduleSource>>(_tracks.Values.Where(t => t.ClosedAtMs is null)
-                .Select(t => new OpenTrackScheduleSource(t.Id, t.TemplateId, _templateSnapshots.GetValueOrDefault(t.Id), t.CreatedAtMs)).ToArray());
-    }
 
     public Task<IReadOnlyList<SessionTurnDto>> ListSessionTurnsAsync(string sessionId, CancellationToken ct) =>
         Task.FromResult(GetTurnsForSession(sessionId));

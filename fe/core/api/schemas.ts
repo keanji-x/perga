@@ -81,7 +81,6 @@ const trackObjectSchema = z.object({
   templateTitle: trackDtoSchema.shape.templateTitle,
   templateInputs: trackDtoSchema.shape.templateInputs.optional(),
   templateHeaderView: trackDtoSchema.shape.templateHeaderView,
-  templateSchedules: trackDtoSchema.shape.templateSchedules,
   template_id: z.string().nullable().default(null),
   plugin_scope: z.string().nullable().default(null),
   purpose: z.string().nullable().default(null),
@@ -1116,6 +1115,7 @@ export const pergaSessionToolProgressSchema = z.object({
 /** Keep this 1:1 with Perga `/api/v1/events` and historical event kinds. */
 export const wireEventSchema = z.discriminatedUnion('ev', [
   z.object({ ev: z.literal('system.upgrade_status'), data: systemUpgradeStatusPayloadSchema }),
+  z.object({ ev: z.literal('track.schedules.updated'), data: z.object({ trackId: z.string() }) }),
   areaUpdatedSchema,
   areaDeletedSchema,
   trackUpdatedSchema,
@@ -1324,6 +1324,8 @@ export function decodeWireEvent(input: unknown): WireEventDecodeResult {
         return { status: 'ready', value: { ev: 'area.deleted', data: { id: evt.payload.id } } };
       case 'track.deleted':
         return { status: 'ready', value: { ev: 'track.deleted', data: { id: evt.payload.id, area_id: evt.payload.areaId } } };
+      case 'track.schedules.updated':
+        return { status: 'ready', value: { ev: 'track.schedules.updated', data: evt.payload } };
       case 'track.updated': {
         const t = evt.payload;
         const spec = typeof t.workspaceSpec === 'object' && t.workspaceSpec !== null
@@ -1362,7 +1364,6 @@ export function decodeWireEvent(input: unknown): WireEventDecodeResult {
               templateTitle: t.templateTitle ?? null,
               templateInputs: t.templateInputs ?? {},
               templateHeaderView: t.templateHeaderView ?? null,
-              templateSchedules: t.templateSchedules ?? [],
               template_id: t.templateId ?? null,
               plugin_scope: null,
               purpose: null,

@@ -12,7 +12,6 @@ internal static class TemplatePresentation
         return track with
         {
             TemplateTitle = policy?.Manifest.Title,
-            TemplateSchedules = policy?.Manifest.Schedules.Select(s => new TemplateScheduleDto(s.Id, s.Cron, s.Timezone)).ToArray(),
             TemplateHeaderView = view is null ? null : new TemplateHeaderViewDto(
                 view.Badges?.Select(b => new TemplateHeaderBadgeDto(b.Label, b.Tone)).ToArray(),
                 view.Notice is { } n ? new TemplateHeaderNoticeDto(n.Text, n.Tone) : null,

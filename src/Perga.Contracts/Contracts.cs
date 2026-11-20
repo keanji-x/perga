@@ -32,7 +32,6 @@ public sealed record TemplateHeaderViewDto(
     TemplateHeaderNoticeDto? Notice = null,
     IReadOnlyList<TemplateHeaderMetricDto>? Metrics = null,
     IReadOnlyList<TemplateHeaderRuleDto>? Rules = null);
-public sealed record TemplateScheduleDto(string Id, string Cron, string Timezone);
 
 public sealed record TrackDto(
     string Id,
@@ -54,8 +53,7 @@ public sealed record TrackDto(
     long CreatedAtMs,
     long UpdatedAtMs,
     string? TemplateTitle = null,
-    TemplateHeaderViewDto? TemplateHeaderView = null,
-    IReadOnlyList<TemplateScheduleDto>? TemplateSchedules = null);
+    TemplateHeaderViewDto? TemplateHeaderView = null);
 
 public sealed record SessionContextUsage(
     long UsedTokens,

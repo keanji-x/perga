@@ -5,6 +5,7 @@ using Perga.Kernel.Internal;
 using Perga.Kernel.Events;
 using Perga.Kernel.Mcp;
 using Perga.PolicyVm;
+using Perga.Kernel.Templates;
 
 namespace Perga.Kernel.Actors;
 
@@ -55,21 +56,33 @@ public sealed partial class TrackActor
         return PresentTrackCore();
     }
 
-    public Task<TrackDto> UpdateTemplateInputsAsync(string sessionId, JsonElement patch, string generation, CancellationToken ct) => EnqueueAsync(async _ =>
+    public Task<TrackDto> UpdateTemplateInputsAsync(JsonElement patch, CancellationToken ct = default) =>
+        UpdateTemplateInputsCoreAsync(null, patch, null, ct);
+
+    public Task<TrackDto> UpdateTemplateInputsAsync(string sessionId, JsonElement patch, string generation, CancellationToken ct) =>
+        UpdateTemplateInputsCoreAsync(sessionId, patch, generation, ct);
+
+    private Task<TrackDto> UpdateTemplateInputsCoreAsync(string? sessionId, JsonElement patch, string? generation, CancellationToken ct) => EnqueueAsync(async _ =>
     {
         await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
-        RequireGovernanceSessionCore(sessionId, KernelMcpToolNames.TemplateUpdateInputs);
-        if (_policyGeneration != generation) throw KernelException.PolicyDenied("Active policy changed after authorization.");
+        if (sessionId is not null) RequireGovernanceSessionCore(sessionId, KernelMcpToolNames.TemplateUpdateInputs);
+        if (generation is not null && _policyGeneration != generation) throw KernelException.PolicyDenied("Active policy changed after authorization.");
         if (_track.ClosedAtMs is not null) throw KernelException.Conflict("Cannot update a closed track.");
         if (_policy is null) throw KernelException.Conflict("The track has no active template.");
         if (patch.ValueKind != JsonValueKind.Object) throw KernelException.InvalidArgument("inputs must be an object.");
         var merged = JsonNode.Parse(_track.TemplateInputs.GetRawText())!.AsObject();
-        foreach (var entry in patch.EnumerateObject()) merged[entry.Name] = JsonNode.Parse(entry.Value.GetRawText());
+        foreach (var entry in patch.EnumerateObject())
+        {
+            if (entry.Value.ValueKind == JsonValueKind.Null) merged.Remove(entry.Name);
+            else merged[entry.Name] = JsonNode.Parse(entry.Value.GetRawText());
+        }
         var next = _track with { TemplateInputs = JsonHelpers.ParseClone(merged.ToJsonString()), UpdatedAtMs = NowMs() };
+        TemplateSchedules.ValidateInputs(_policyVm, _policy, next.TemplateInputs);
+        var schedules = TemplateSchedules.Materialize(_policy, next.TemplateInputs, TrackId, next.UpdatedAtMs, _policyVm, _scheduleCronEvaluator);
         var evt = new EventEnvelopeDto(null, next.AreaId, TrackId, KernelEventKinds.TrackUpdated,
             JsonHelpers.ToElement(Templates.TemplatePresentation.Project(next, _policy, _policyVm)), next.UpdatedAtMs);
         await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
-        await _store.UpdateTrackTemplateAndEmitAsync(next, _templateSnapshotSource ?? _policy.JsSource, evt, ct).ConfigureAwait(false);
+        await _store.UpdateTrackTemplateAndEmitAsync(next, _templateSnapshotSource ?? _policy.JsSource, evt, ct, schedules, refreshPromptsOnly: true).ConfigureAwait(false);
         _track = next;
         _policyGeneration = Guid.NewGuid().ToString("N");
         await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, evt, ct).ConfigureAwait(false);

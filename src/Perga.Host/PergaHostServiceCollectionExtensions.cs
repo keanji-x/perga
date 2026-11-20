@@ -282,7 +282,7 @@ public static class PergaHostServiceCollectionExtensions
                   id: "_perga_jit_warmup",
                   title: "Warmup",
                   before() { return Allow(); },
-                  schedules: [{ id: "w", cron: "* * * * *", wakePrompt: () => "ok" }]
+                  schedules: [{ id: "w", cron: "* * * * *", prompt: "ok" }]
                 });
                 """;
 

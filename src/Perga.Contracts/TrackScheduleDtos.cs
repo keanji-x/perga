@@ -28,3 +28,16 @@ public sealed record SetTrackScheduleRequest(
     int? MaxOccurrences = null,
     string? SourceKind = null,
     string? RunAt = null);
+
+public sealed record TrackScheduleRunDto(
+    string WakeId,
+    string? ScheduleId,
+    string State,
+    string? Reason,
+    string? TurnId,
+    long CreatedAtMs,
+    long UpdatedAtMs);
+
+public sealed record TrackSchedulesSnapshot(
+    IReadOnlyList<TrackScheduleDto> Schedules,
+    IReadOnlyList<TrackScheduleRunDto> RecentRuns);

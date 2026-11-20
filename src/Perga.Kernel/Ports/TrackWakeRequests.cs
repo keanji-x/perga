@@ -13,12 +13,8 @@ public static class TrackWakeRequests
     public const string SystemUpgradeMailKeyPrefix = MailKeyPrefix + SystemUpgradeMailIdPrefix;
 
     public static string MailKey(string mailId) => MailKeyPrefix + mailId;
-    public static string ScheduleKey(string scheduleId) => "schedule:" + scheduleId;
     public static string TrackScheduleKey(string scheduleId) =>
         TrackScheduleKeyPrefix + scheduleId;
-    public static bool IsTrackScheduleWake(TrackWake wake) =>
-        wake.Kind == TrackWakeKinds.Schedule &&
-        wake.CoalesceKey?.StartsWith(TrackScheduleKeyPrefix, StringComparison.Ordinal) == true;
     public static string SystemUpgradeMailId(string jobId) => SystemUpgradeMailIdPrefix + jobId;
     public static bool IsSystemUpgradeMail(TrackWake wake) => TryGetSystemUpgradeMailId(wake, out _);
 
@@ -34,11 +30,9 @@ public static class TrackWakeRequests
     public static TrackWakeRequest Prompt(string trackId, string kind, string? key, string prompt,
         string presentation = TrackWakePresentations.System) =>
         new(trackId, kind, key, JsonSerializer.SerializeToElement(new { prompt, presentation }));
-    public static TrackWakeRequest Schedule(string trackId, string scheduleId) =>
-        new(trackId, TrackWakeKinds.Schedule, ScheduleKey(scheduleId), JsonSerializer.SerializeToElement(new { scheduleId }));
-    public static TrackWakeRequest DynamicSchedule(string trackId, string scheduleId, string prompt) =>
+    public static TrackWakeRequest DynamicSchedule(string trackId, string scheduleId, string prompt, string sourceKind) =>
         new(trackId, TrackWakeKinds.Schedule, TrackScheduleKey(scheduleId),
-            JsonSerializer.SerializeToElement(new { scheduleId, prompt, presentation = TrackWakePresentations.System }),
+            JsonSerializer.SerializeToElement(new { scheduleId, sourceKind, prompt, presentation = TrackWakePresentations.System }),
             TargetSessionId: null);
     public static TrackWakeRequest Mail(MailDto mail) => Prompt(mail.ToTrackId, TrackWakeKinds.Mail, MailKey(mail.Id),
         $"New cross-track mail '{mail.Id}' from track '{mail.FromTrackId}': {mail.Summary}\n\n{mail.Body}", TrackWakePresentations.SystemMail);

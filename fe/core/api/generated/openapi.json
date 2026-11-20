@@ -14851,25 +14851,11 @@
       "get": {
         "responses": {
           "200": {
-            "description": "Current template snapshot, manifest, inputs, state and headerView (including unavailable snapshots)",
+            "description": "Success",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "snapshot": {
-                      "type": [
-                        "string",
-                        "null"
-                      ]
-                    },
-                    "manifest": {},
-                    "inputs": {
-                      "type": "object"
-                    },
-                    "state": {},
-                    "headerView": {}
-                  }
+                  "$ref": "#/components/schemas/TrackTemplateSnapshot"
                 }
               }
             }
@@ -16453,6 +16439,166 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/SystemReloadRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tracks/{trackId}/schedules": {
+      "parameters": [
+        {
+          "name": "trackId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "get": {
+        "parameters": [
+          {
+            "name": "includeTerminal",
+            "in": "query",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          {
+            "name": "runsLimit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 200,
+              "default": 20
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrackSchedulesSnapshot"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetTrackScheduleRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrackScheduleDto"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tracks/{trackId}/schedules/{scheduleId}": {
+      "parameters": [
+        {
+          "name": "trackId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "scheduleId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "delete": {
+        "responses": {
+          "204": {
+            "description": "Success"
+          }
+        }
+      }
+    },
+    "/api/v1/tracks/{trackId}/schedules/{scheduleId}/trigger": {
+      "parameters": [
+        {
+          "name": "trackId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "name": "scheduleId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "responses": {
+          "202": {
+            "description": "Success"
+          }
+        }
+      }
+    },
+    "/api/v1/tracks/{trackId}/template/inputs": {
+      "parameters": [
+        {
+          "name": "trackId",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "patch": {
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrackDto"
+                }
               }
             }
           }
@@ -25915,35 +26061,6 @@
               }
             ]
           },
-          "templateSchedules": {
-            "anyOf": [
-              {
-                "type": "array",
-                "items": {
-                  "type": "object",
-                  "properties": {
-                    "id": {
-                      "type": "string"
-                    },
-                    "cron": {
-                      "type": "string"
-                    },
-                    "timezone": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "id",
-                    "cron",
-                    "timezone"
-                  ]
-                }
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
           "templateInputs": {
             "type": "object"
           },
@@ -27690,6 +27807,435 @@
           "createdAtMs": {
             "type": "integer",
             "format": "int64"
+          }
+        }
+      },
+      "TrackScheduleDto": {
+        "type": "object",
+        "required": [
+          "id",
+          "trackId",
+          "sourceKind",
+          "scheduleKind",
+          "title",
+          "prompt",
+          "timezone",
+          "state",
+          "cronExpr",
+          "runAtMs",
+          "nextFireAtMs",
+          "lastFiredAtMs",
+          "maxOccurrences",
+          "firedCount",
+          "createdAtMs",
+          "updatedAtMs"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "trackId": {
+            "type": "string"
+          },
+          "sourceKind": {
+            "type": "string"
+          },
+          "scheduleKind": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "prompt": {
+            "type": "string"
+          },
+          "timezone": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "cronExpr": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "runAtMs": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "nextFireAtMs": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "lastFiredAtMs": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "maxOccurrences": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "firedCount": {
+            "type": "integer"
+          },
+          "createdAtMs": {
+            "type": "integer"
+          },
+          "updatedAtMs": {
+            "type": "integer"
+          }
+        }
+      },
+      "TrackScheduleRunDto": {
+        "type": "object",
+        "required": [
+          "wakeId",
+          "state",
+          "scheduleId",
+          "reason",
+          "turnId",
+          "createdAtMs",
+          "updatedAtMs"
+        ],
+        "properties": {
+          "wakeId": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "scheduleId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "turnId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "createdAtMs": {
+            "type": "integer"
+          },
+          "updatedAtMs": {
+            "type": "integer"
+          }
+        }
+      },
+      "TrackSchedulesSnapshot": {
+        "type": "object",
+        "required": [
+          "schedules",
+          "recentRuns"
+        ],
+        "properties": {
+          "schedules": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TrackScheduleDto"
+            }
+          },
+          "recentRuns": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TrackScheduleRunDto"
+            }
+          }
+        }
+      },
+      "SetTrackScheduleRequest": {
+        "type": "object",
+        "required": [
+          "title",
+          "prompt"
+        ],
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "prompt": {
+            "type": "string"
+          },
+          "id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "cronExpr": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "timezone": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sourceKind": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "runAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "runAtMs": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "maxOccurrences": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        }
+      },
+      "TrackTemplateSnapshot": {
+        "type": "object",
+        "required": [
+          "snapshot",
+          "manifest",
+          "inputs",
+          "state",
+          "headerView"
+        ],
+        "properties": {
+          "snapshot": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "manifest": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CompiledTemplateManifestDto"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "inputs": {},
+          "state": {},
+          "headerView": {
+            "anyOf": [
+              {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "badges": {
+                        "anyOf": [
+                          {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "label": {
+                                  "type": "string"
+                                },
+                                "tone": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "neutral",
+                                        "accent",
+                                        "success",
+                                        "warn",
+                                        "error"
+                                      ]
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "label"
+                              ]
+                            }
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "notice": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "text": {
+                                "type": "string"
+                              },
+                              "tone": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "enum": [
+                                      "info",
+                                      "warn",
+                                      "error"
+                                    ]
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              }
+                            },
+                            "required": [
+                              "text"
+                            ]
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "metrics": {
+                        "anyOf": [
+                          {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "label": {
+                                  "type": "string"
+                                },
+                                "value": {
+                                  "type": "string"
+                                },
+                                "delta": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "tone": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string",
+                                      "enum": [
+                                        "neutral",
+                                        "accent",
+                                        "success",
+                                        "warn",
+                                        "error"
+                                      ]
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "sub": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "spark": {
+                                  "anyOf": [
+                                    {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "number"
+                                      }
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "label",
+                                "value"
+                              ]
+                            }
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "rules": {
+                        "anyOf": [
+                          {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "label": {
+                                  "type": "string"
+                                },
+                                "text": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "label",
+                                "text"
+                              ]
+                            }
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "required": []
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         }
       }

@@ -37,6 +37,9 @@ public sealed partial class SqliteTrackStore : ITrackScheduleStore
                 ScheduleSelect + " WHERE track_id=@TrackId AND id=@Id;",
                 new { schedule.TrackId, schedule.Id }, tx, cancellationToken: token)).ConfigureAwait(false);
 
+            if (existing is not null && existing.State == TrackScheduleStates.Active &&
+                (existing.SourceKind == TrackScheduleSources.Template || schedule.SourceKind == TrackScheduleSources.Template) && existing.SourceKind != schedule.SourceKind)
+                throw KernelException.Conflict($"Schedule ID '{schedule.Id}' belongs to another source.");
             var toPersist = schedule;
             if (existing is not null &&
                 existing.State is TrackScheduleStates.Active)
@@ -82,6 +85,7 @@ public sealed partial class SqliteTrackStore : ITrackScheduleStore
             var row = await conn.QuerySingleAsync<TrackScheduleRow>(new CommandDefinition(
                 ScheduleSelect + " WHERE track_id=@TrackId AND id=@Id;",
                 new { schedule.TrackId, schedule.Id }, tx, cancellationToken: token)).ConfigureAwait(false);
+            await InsertSchedulesEventAsync(conn, tx, schedule.TrackId, schedule.UpdatedAtMs, token).ConfigureAwait(false);
             return row.ToDto();
         }, ct);
     }
@@ -129,6 +133,7 @@ public sealed partial class SqliteTrackStore : ITrackScheduleStore
                 UPDATE track_wakes SET state='{TrackWakeStates.Dropped}', reason='{TrackWakeReasons.Canceled}', updated_at_ms=@Now
                 WHERE track_id=@TrackId AND kind='{TrackWakeKinds.Schedule}' AND coalesce_key=@CoalesceKey AND json_extract(payload_json,'$.scheduleId')=@Id AND state='{TrackWakeStates.Pending}';
                 """, new { TrackId = trackId, Id = scheduleId, CoalesceKey = coalesceKey, Now = now }, tx, cancellationToken: token)).ConfigureAwait(false);
+            await InsertSchedulesEventAsync(conn, tx, trackId, now, token).ConfigureAwait(false);
             return true;
         }, ct);
     }
@@ -145,8 +150,9 @@ public sealed partial class SqliteTrackStore : ITrackScheduleStore
                 """, new { TrackId = trackId, Now = now }, tx, cancellationToken: token)).ConfigureAwait(false);
             await conn.ExecuteAsync(new CommandDefinition($"""
                 UPDATE track_wakes SET state='{TrackWakeStates.Dropped}', reason='{TrackWakeReasons.Canceled}', updated_at_ms=@Now
-                WHERE track_id=@TrackId AND kind='{TrackWakeKinds.Schedule}' AND instr(coalesce_key, '{TrackWakeRequests.TrackScheduleKeyPrefix}') = 1 AND state='{TrackWakeStates.Pending}';
+                WHERE track_id=@TrackId AND kind='{TrackWakeKinds.Schedule}' AND state='{TrackWakeStates.Pending}';
                 """, new { TrackId = trackId, Now = now }, tx, cancellationToken: token)).ConfigureAwait(false);
+            if (updated > 0) await InsertSchedulesEventAsync(conn, tx, trackId, now, token).ConfigureAwait(false);
             return updated;
         }, ct);
     }
@@ -195,6 +201,7 @@ public sealed partial class SqliteTrackStore : ITrackScheduleStore
                         UPDATE track_schedules SET state='canceled', next_fire_at_ms=NULL, updated_at_ms=@Now
                         WHERE track_id=@TrackId AND id=@Id AND state='active';
                         """, new { row.TrackId, row.Id, Now = nowMs }, tx, cancellationToken: token)).ConfigureAwait(false);
+                    await InsertSchedulesEventAsync(conn, tx, row.TrackId, nowMs, token).ConfigureAwait(false);
                     continue;
                 }
                 var schedule = row.ToDto();
@@ -227,8 +234,9 @@ public sealed partial class SqliteTrackStore : ITrackScheduleStore
                 var wakeRequest = TrackWakeRequests.DynamicSchedule(
                     schedule.TrackId,
                     schedule.Id,
-                    schedule.Prompt);
+                    schedule.Prompt, schedule.SourceKind);
                 await EnqueueWakeInternalAsync(conn, tx, wakeRequest, nowMs, token).ConfigureAwait(false);
+                await InsertSchedulesEventAsync(conn, tx, schedule.TrackId, nowMs, token).ConfigureAwait(false);
                 fired.Add(new FiredTrackSchedule(schedule.TrackId, schedule.Id));
             }
 

@@ -166,6 +166,33 @@ export const templateHeaderViewDtoSchema = z.object({
   rules: z.array(z.object({ label: z.string(), text: z.string() })).nullish(),
 });
 
+export const trackScheduleDtoSchema = z.object({
+  id: z.string(), trackId: z.string(), sourceKind: z.string(), scheduleKind: z.enum(['once', 'cron']),
+  title: z.string(), prompt: z.string(), cronExpr: z.string().nullable(), timezone: z.string(),
+  runAtMs: z.number().nullable(), nextFireAtMs: z.number().nullable(), lastFiredAtMs: z.number().nullable(),
+  maxOccurrences: z.number().nullable(), firedCount: z.number(), state: z.enum(['active', 'done', 'canceled']),
+  createdAtMs: z.number(), updatedAtMs: z.number(),
+});
+export type TrackScheduleDto = z.infer<typeof trackScheduleDtoSchema>;
+export const trackScheduleRunDtoSchema = z.object({
+  wakeId: z.string(), scheduleId: z.string().nullable(), state: z.string(), reason: z.string().nullable(),
+  turnId: z.string().nullable(), createdAtMs: z.number(), updatedAtMs: z.number(),
+});
+export const trackSchedulesSnapshotSchema = z.object({
+  schedules: z.array(trackScheduleDtoSchema), recentRuns: z.array(trackScheduleRunDtoSchema),
+});
+export type TrackSchedulesSnapshot = z.infer<typeof trackSchedulesSnapshotSchema>;
+export const setTrackScheduleRequestSchema = z.object({
+  title: z.string(), prompt: z.string(), id: z.string().optional(), cronExpr: z.string().optional(),
+  runAtMs: z.number().optional(), runAt: z.string().optional(), timezone: z.string().optional(),
+  maxOccurrences: z.number().optional(), sourceKind: z.string().optional(),
+});
+export type SetTrackScheduleRequest = z.infer<typeof setTrackScheduleRequestSchema>;
+export const trackTemplateSnapshotSchema = z.object({
+  snapshot: z.string().nullable(), manifest: compiledTemplateManifestDtoSchema.nullable(),
+  inputs: z.unknown(), state: z.unknown(), headerView: templateHeaderViewDtoSchema.nullable(),
+});
+
 export const trackDtoSchema = z.object({
   id: z.string(),
   areaId: z.string(),
@@ -181,7 +208,6 @@ export const trackDtoSchema = z.object({
   templateState: z.unknown().default({}),
   templateTitle: z.string().nullish(),
   templateHeaderView: templateHeaderViewDtoSchema.nullish(),
-  templateSchedules: z.array(z.object({ id: z.string(), cron: z.string(), timezone: z.string() })).nullish(),
   enabledPlugins: z.array(z.string()).default([]),
   closedAtMs: z.number().nullish(),
   pinnedAtMs: z.number().nullish(),
@@ -606,6 +632,7 @@ export const pergaPersistentEventKindSchema = z.enum([
   'area.deleted',
   'track.updated',
   'track.deleted',
+  'track.schedules.updated',
   'report.updated',
   'task.updated',
   'session.updated',
@@ -671,6 +698,7 @@ export type PergaStreamDelta =
 export type PergaPersistentEvent =
   | Readonly<{ kind: 'area.updated'; eventId: number; areaId: string | null; trackId: string | null; payload: AreaDto; createdAtMs: number }>
   | Readonly<{ kind: 'area.deleted'; eventId: number; areaId: string | null; trackId: string | null; payload: Readonly<{ id: string }>; createdAtMs: number }>
+  | Readonly<{ kind: 'track.schedules.updated'; eventId: number; areaId: string | null; trackId: string; payload: { trackId: string }; createdAtMs: number }>
   | Readonly<{ kind: 'track.updated'; eventId: number; areaId: string | null; trackId: string | null; payload: TrackDto; createdAtMs: number }>
   | Readonly<{ kind: 'track.deleted'; eventId: number; areaId: string | null; trackId: string | null; payload: Readonly<{ id: string; areaId: string }>; createdAtMs: number }>
   | Readonly<{ kind: 'report.updated'; eventId: number; areaId: string | null; trackId: string | null; payload: Readonly<{ docRev?: number; summary?: string | null }>; createdAtMs: number }>
@@ -762,6 +790,11 @@ export function decodePergaEventEnvelope(input: unknown): PergaEventDecodeResult
       const id = (parsed.success ? (parsed.data.id ?? parsed.data.areaId) : undefined) ?? resolvedArea;
       if (!id) return { status: 'failed', error: { kind: 'decode', message: 'Invalid area.deleted payload', cause: payload } };
       return { status: 'ready', kind: 'persistent', event: { kind, eventId: resolvedId, areaId: id, trackId: resolvedTrack, payload: { id }, createdAtMs } };
+    }
+    case 'track.schedules.updated': {
+      const parsed = z.object({ trackId: z.string().min(1) }).safeParse(payload);
+      if (!parsed.success) return { status: 'failed', error: { kind: 'decode', message: 'Invalid track.schedules.updated payload', cause: parsed.error } };
+      return { status: 'ready', kind: 'persistent', event: { kind, eventId: resolvedId, areaId: resolvedArea, trackId: parsed.data.trackId, payload: parsed.data, createdAtMs } };
     }
     case 'track.updated': {
       const parsed = trackDtoSchema.safeParse(payload);

@@ -139,6 +139,32 @@ public static class ApiV1Endpoints
             return Results.Json(track, PergaJsonDefaults.ApiOptions);
         }).Produces<TrackDto>();
 
+        v1.MapPatch("/tracks/{trackId}/template/inputs", async (string trackId, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
+        {
+            var patch = await ReadRequiredJsonBodyAsync<JsonElement>(ctx, ct).ConfigureAwait(false);
+            var track = await kernel.Actors.GetOrActivate(trackId).UpdateTemplateInputsAsync(patch, ct).ConfigureAwait(false);
+            return Results.Json(track, PergaJsonDefaults.ApiOptions);
+        }).Produces<TrackDto>();
+
+        v1.MapGet("/tracks/{trackId}/schedules", async (string trackId, bool? includeTerminal, int? runsLimit, IPergaKernel kernel, CancellationToken ct) =>
+            Results.Json(await kernel.GetTrackSchedulesAsync(trackId, includeTerminal ?? false, runsLimit ?? 20, ct).ConfigureAwait(false), PergaJsonDefaults.ApiOptions))
+            .Produces<TrackSchedulesSnapshot>();
+
+        v1.MapPost("/tracks/{trackId}/schedules", async (string trackId, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
+        {
+            var req = await ReadRequiredJsonBodyAsync<SetTrackScheduleRequest>(ctx, ct).ConfigureAwait(false);
+            if (req.SourceKind is not null and not "user")
+                throw KernelException.InvalidArgument("HTTP schedules must use sourceKind 'user'.");
+            var schedule = await kernel.SetTrackScheduleAsync(trackId, req with { SourceKind = "user" }, ct).ConfigureAwait(false);
+            return Results.Json(schedule, PergaJsonDefaults.ApiOptions);
+        }).Produces<TrackScheduleDto>();
+
+        v1.MapDelete("/tracks/{trackId}/schedules/{scheduleId}", async (string trackId, string scheduleId, IPergaKernel kernel, CancellationToken ct) =>
+            await kernel.CancelTrackScheduleAsync(trackId, scheduleId, ct).ConfigureAwait(false) ? Results.NoContent() : Results.NotFound());
+
+        v1.MapPost("/tracks/{trackId}/schedules/{scheduleId}/trigger", async (string trackId, string scheduleId, IPergaKernel kernel, CancellationToken ct) =>
+            await kernel.TriggerTrackScheduleAsync(trackId, scheduleId, ct).ConfigureAwait(false) ? Results.Accepted() : Results.NotFound());
+
         v1.MapPost("/tracks/{trackId}/workspace/retry", async (string trackId, IPergaKernel kernel, CancellationToken ct) =>
         {
             await kernel.RetryWorkspaceAsync(trackId, ct).ConfigureAwait(false);

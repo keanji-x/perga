@@ -1,5 +1,7 @@
 using Perga.Contracts;
 using Perga.Kernel.Ports;
+using Perga.Kernel.Events;
+using Perga.Kernel.Internal;
 
 namespace Perga.Kernel;
 
@@ -103,7 +105,10 @@ public sealed partial class PergaKernelService
             CreatedAtMs: nowMs,
             UpdatedAtMs: nowMs);
 
-        return await scheduleStore.UpsertAsync(dto, ct).ConfigureAwait(false);
+        await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
+        var result = await scheduleStore.UpsertAsync(dto, ct).ConfigureAwait(false);
+        await PublishScheduleEventsAsync(trackId).ConfigureAwait(false);
+        return result;
     }
 
     public async Task<IReadOnlyList<TrackScheduleDto>> ListTrackSchedulesAsync(
@@ -114,6 +119,7 @@ public sealed partial class PergaKernelService
         ArgumentException.ThrowIfNullOrWhiteSpace(trackId);
         var scheduleStore = _store.TrackSchedules
             ?? throw KernelException.PreconditionFailed("Track schedules are not enabled on this store.");
+        await RequireScheduleTrackAsync(trackId, ct).ConfigureAwait(false);
         return await scheduleStore.ListForTrackAsync(trackId, includeTerminal, ct).ConfigureAwait(false);
     }
 
@@ -126,6 +132,65 @@ public sealed partial class PergaKernelService
         ArgumentException.ThrowIfNullOrWhiteSpace(scheduleId);
         var scheduleStore = _store.TrackSchedules
             ?? throw KernelException.PreconditionFailed("Track schedules are not enabled on this store.");
-        return await scheduleStore.CancelAsync(trackId, scheduleId.Trim(), ct).ConfigureAwait(false);
+        await RequireScheduleTrackAsync(trackId, ct).ConfigureAwait(false);
+        await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
+        var canceled = await scheduleStore.CancelAsync(trackId, scheduleId.Trim(), ct).ConfigureAwait(false);
+        if (canceled) await PublishScheduleEventsAsync(trackId).ConfigureAwait(false);
+        return canceled;
+    }
+
+    public async Task<TrackSchedulesSnapshot> GetTrackSchedulesAsync(string trackId, bool includeTerminal = false, int runsLimit = 20, CancellationToken ct = default)
+    {
+        if (runsLimit is < 0 or > 200) throw KernelException.InvalidArgument("runsLimit must be between 0 and 200.");
+        var schedules = await ListTrackSchedulesAsync(trackId, includeTerminal, ct).ConfigureAwait(false);
+        var runs = await _store.TrackWakes.ListScheduleRunsAsync(trackId, runsLimit, ct).ConfigureAwait(false);
+        return new(schedules, runs.Select(wake => new TrackScheduleRunDto(
+            wake.Id, TrackWakePayload.Parse(wake.PayloadJson).ScheduleId, wake.State, wake.Reason,
+            wake.TurnId, wake.CreatedAtMs, wake.UpdatedAtMs)).ToArray());
+    }
+
+    public async Task<bool> TriggerTrackScheduleAsync(string trackId, string scheduleId, CancellationToken ct = default)
+    {
+        await RequireScheduleTrackAsync(trackId, ct).ConfigureAwait(false);
+        await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
+        var store = _store.TrackSchedules ?? throw KernelException.PreconditionFailed("Track schedules are not enabled on this store.");
+        var triggered = await store.TriggerAsync(trackId, scheduleId, ct).ConfigureAwait(false);
+        if (triggered)
+        {
+            await PublishScheduleEventsAsync(trackId).ConfigureAwait(false);
+            await Actors.GetOrActivate(trackId).PokeLeadAsync(ct).ConfigureAwait(false);
+        }
+        return triggered;
+    }
+
+    public async Task<IReadOnlyList<FiredTrackSchedule>> FireDueTrackSchedulesAsync(long nowMs, CancellationToken ct = default)
+    {
+        if (_store.TrackSchedules is not { } store) return [];
+        await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
+        var fired = await store.FireDueAsync(nowMs, schedule => schedule.CronExpr is null ? null :
+            _scheduleCronEvaluator?.GetNextOccurrenceMs(schedule.CronExpr, schedule.Timezone, nowMs), ct).ConfigureAwait(false);
+        foreach (var trackId in fired.Select(s => s.TrackId).Distinct())
+            await PublishScheduleEventsAsync(trackId).ConfigureAwait(false);
+        return fired;
+    }
+
+    private async Task RequireScheduleTrackAsync(string trackId, CancellationToken ct)
+    {
+        if (await _store.GetTrackAsync(trackId, ct).ConfigureAwait(false) is null)
+            throw KernelException.NotFound($"Track '{trackId}' not found.");
+    }
+
+    private async Task PublishScheduleEventsAsync(string trackId)
+    {
+        try
+        {
+            await _eventHub.PublishSyncedAfterStoreWriteAsync(_store,
+                new EventEnvelopeDto(null, null, trackId, KernelEventKinds.TrackSchedulesUpdated, JsonHelpers.ToElement(new { trackId }), NowMs()),
+                CancellationToken.None, allowFallback: false).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            System.Diagnostics.Trace.TraceWarning("Could not publish committed schedule events for Track {0}: {1}", trackId, ex);
+        }
     }
 }

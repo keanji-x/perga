@@ -34,8 +34,8 @@ export interface PergaTemplateDefinition<TState = Record<string, any>, TInputs =
   extends?: string;
   /** Child hooks replace the inherited slot; omitted hooks inherit. */
   before?: (action: { type: string; role?: string; access?: string; provider?: string; model?: string; arguments?: Record<string, any>; [key: string]: any }, ctx: TemplateContext<TState, TInputs>) => GuardDecision;
-  /** Events include task.settled, report.commit, turn.after, and tool.<name>. */
-  after?: (event: { type: string; [key: string]: any }, ctx: TemplateContext<TState, TInputs>) => string | void;
+  /** Events include schedule.fired ({scheduleId, sourceKind, prompt}), task.settled, report.commit, turn.after, and tool.<name>. */
+  after?: (event: { type: string; [key: string]: any }, ctx: TemplateContext<TState, TInputs>) => string | null | void;
   plugins?: string[];
   inputs?: Record<string, { type: "string" | "number" | "boolean" | "enum"; values?: string[]; default?: any; optional?: boolean; label?: string }>;
   initialState?: (inputs: TInputs) => TState;
@@ -64,11 +64,13 @@ export interface PergaTemplateDefinition<TState = Record<string, any>, TInputs =
     boundAttemptId?: string;
     contextUsageRatio: number;
   } }) => string | void;
+  /** Declarative prompts support ${inputs.key}; use after(schedule.fired) for stateful decisions. */
   schedules?: Array<{
     id: string;
     cron: string;
     timezone?: string;
-    wakePrompt: string | ((ctx: TemplateContext<TState, TInputs>) => string);
+    title?: string;
+    prompt: string;
   }>;
 }
 

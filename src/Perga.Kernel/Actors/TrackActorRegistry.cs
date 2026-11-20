@@ -25,6 +25,7 @@ public sealed class TrackActorRegistry : IAsyncDisposable
     private readonly EventHub _eventHub;
     private readonly KernelOptions _options;
     private readonly TimeProvider _timeProvider;
+    private readonly IScheduleCronEvaluator? _scheduleCronEvaluator;
     private readonly ITimer? _evictionTimer;
     private int _evicting;
     private bool _disposed;
@@ -41,9 +42,10 @@ public sealed class TrackActorRegistry : IAsyncDisposable
         IShellCommandRunner commandRunner,
         EventHub eventHub,
         KernelOptions options,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null, IScheduleCronEvaluator? scheduleCronEvaluator = null)
     {
         _store = store;
+        _scheduleCronEvaluator = scheduleCronEvaluator;
         _reportEngine = reportEngine;
         _policyVm = policyVm;
         _templateCatalog = templateCatalog;
@@ -170,7 +172,7 @@ public sealed class TrackActorRegistry : IAsyncDisposable
             _commandRunner,
             _eventHub,
             _options,
-            _timeProvider);
+            _timeProvider, _scheduleCronEvaluator);
     }
 
     public async ValueTask DisposeAsync()

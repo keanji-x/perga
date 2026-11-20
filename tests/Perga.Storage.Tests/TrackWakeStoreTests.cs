@@ -104,7 +104,7 @@ public sealed class TrackWakeStoreTests
     }
 
     [Fact]
-    public async Task TemplateChangeDropsOnlyPendingSchedulesAndCloseDropsAllActive()
+    public async Task TemplateChangePreservesUnownedWakesAndCloseDropsAllActive()
     {
         await using var h = await SeedAsync();
         await h.Store.TrackWakes.EnqueueAsync(Wake("schedule", "first"), default);
@@ -115,7 +115,7 @@ public sealed class TrackWakeStoreTests
         await h.Store.UpdateTrackTemplateAndEmitAsync(track, "new", StorageTestHarness.CreateEvent("track.updated", track.Id, track.AreaId), default);
         var rows = await h.Store.TrackWakes.ListAsync("trk_1", default);
         Assert.Equal("delivering", rows[0].State);
-        Assert.Equal(("dropped", "template_changed"), (rows[1].State, rows[1].Reason));
+        Assert.Equal(("pending", (string?)null), (rows[1].State, rows[1].Reason));
         Assert.Equal("pending", rows[2].State);
         await h.Store.UpdateTrackAndEmitAsync(track with { ClosedAtMs = 1 }, null, default);
         rows = await h.Store.TrackWakes.ListAsync("trk_1", default);

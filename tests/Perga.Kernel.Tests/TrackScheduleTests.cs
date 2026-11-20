@@ -34,6 +34,39 @@ public sealed class TrackScheduleTests
         Assert.Equal("done", wake.State);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task PostCommitPublicationFailurePreservesScheduleResultAndDelivery(bool trigger)
+    {
+        await using var ctx = new KernelTestContext();
+        var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
+        var id = snapshot.Track.Id;
+        await ctx.Kernel.SetTrackScheduleAsync(id, new("Reminder", "COMMITTED_PROMPT", Id: "reminder", RunAtMs: 1));
+        var faults = 0;
+        ctx.Store.BeforeEventPublication = async _ =>
+        {
+            // Assert the fault is after the durable wake write, and fail only publication.
+            Assert.Single(await ctx.Store.TrackWakes.ListAsync(id, default));
+            if (faults++ == 0) throw new IOException("post-commit event read failed");
+        };
+        if (trigger)
+            Assert.True(await ctx.Kernel.TriggerTrackScheduleAsync(id, "reminder"));
+        else
+        {
+            var fired = Assert.Single(await ctx.Kernel.FireDueTrackSchedulesAsync(2));
+            Assert.Equal((id, "reminder"), (fired.TrackId, fired.ScheduleId));
+            Assert.Equal(1, (await ctx.Store.TrackSchedules!.GetAsync(id, "reminder", default))!.FiredCount);
+            // The hosted scheduler pokes the returned tracks.
+            await ctx.Kernel.Actors.GetOrActivate(fired.TrackId).PokeLeadAsync();
+        }
+        await ctx.Kernel.WaitForTrackIdleAsync(id);
+        Assert.True(faults > 0);
+        Assert.Contains("COMMITTED_PROMPT", Assert.Single(ctx.Store.GetTurnsForSession(snapshot.Track.LeadSessionId!))
+            .Input.GetProperty("prompt").GetString());
+        Assert.Equal("done", Assert.Single(await ctx.Store.TrackWakes.ListAsync(id, default)).State);
+    }
+
     [Fact]
     public async Task SetTrackScheduleValidatesInputs()
     {
@@ -69,25 +102,26 @@ public sealed class TrackScheduleTests
     }
 
     [Fact]
-    public async Task DynamicScheduleWakeUsesCustomPromptAndTemplateScheduleUsesPolicyPrompt()
+    public async Task AllScheduleSourcesUseAfterPolicy()
     {
         await using var ctx = new KernelTestContext();
         ctx.Kernel.Templates.RegisterTemplate("""export default defineTemplate({ id: "ops", title: "Ops" });""");
-        ctx.PolicyVm.OnBuildScheduleWake = (_, scheduleId, _, state) => new(state, $"POLICY:{scheduleId}");
+        ctx.PolicyVm.OnScheduleFired = (_, scheduleId, _, state) => new(state, $"POLICY:{scheduleId}");
         var (_, snap) = await ctx.CreateDefaultTrackAsync(templateId: "ops");
         var trackId = snap.Track.Id;
         var leadId = snap.Track.LeadSessionId!;
 
         await ctx.Store.TrackWakes.EnqueueAsync(
-            TrackWakeRequests.DynamicSchedule(trackId, "sch_dyn", "CUSTOM_DYNAMIC_PROMPT"),
+            TrackWakeRequests.DynamicSchedule(trackId, "sch_dyn", "CUSTOM_DYNAMIC_PROMPT", "user"),
             default);
         await ctx.Kernel.Actors.GetOrActivate(trackId).PokeLeadAsync(default);
         await ctx.Kernel.WaitForTrackIdleAsync(trackId);
 
         Assert.Contains(ctx.Store.GetTurnsForSession(leadId),
-            t => t.Input.GetProperty("prompt").GetString()!.Contains("CUSTOM_DYNAMIC_PROMPT", StringComparison.Ordinal));
+            t => t.Input.GetProperty("prompt").GetString()!.Contains("POLICY:sch_dyn", StringComparison.Ordinal));
 
-        await ctx.Kernel.TriggerScheduleWakeAsync(trackId, "tpl_sched");
+        await ctx.Kernel.SetTrackScheduleAsync(trackId, new("Template", "Template prompt", Id: "tpl_sched", RunAtMs: 1));
+        await ctx.Kernel.TriggerTrackScheduleAsync(trackId, "tpl_sched");
         await ctx.Kernel.WaitForTrackIdleAsync(trackId);
         Assert.Contains(ctx.Store.GetTurnsForSession(leadId),
             t => t.Input.GetProperty("prompt").GetString()!.Contains("POLICY:tpl_sched", StringComparison.Ordinal));
