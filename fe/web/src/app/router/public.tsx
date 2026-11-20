@@ -792,7 +792,7 @@ function useConversationPane(
     conversationCommandEnabled(command, store.sessionState, store.readonlyReason, store.unknownDetail, store.recovering, {
       canStop: store.canStop, manualCompactSupported: store.manualCompactSupported,
       canResetContext: store.session?.boundTaskId == null && store.session?.boundAttemptId == null,
-    }), [store.sessionState, store.readonlyReason, store.unknownDetail, store.recovering, store.canStop,
+    }, store.providerCleanup), [store.sessionState, store.readonlyReason, store.unknownDetail, store.providerCleanup, store.recovering, store.canStop,
       store.manualCompactSupported, store.session?.boundTaskId, store.session?.boundAttemptId]);
   const paneCommands = useMemo(() => composerCommands({
     ...conversationCommandBindings({
@@ -901,7 +901,7 @@ function useConversationPane(
   const action = deriveConversationAction({
     readError: store.historyError ?? store.runError,
     readonlyReason: store.readonlyReason, canReopen: store.canReopen,
-    state: store.sessionState, unknownDetail: store.unknownDetail,
+    state: store.sessionState, unknownDetail: store.unknownDetail, providerCleanup: store.providerCleanup,
     hasAsks: conversationAsks.length > 0 || conversationApprovals.length > 0,
     localSend: store.failedSend !== null ? 'failed' : store.sending ? 'sending' : 'idle',
     sendUnconfirmed: store.failedSend?.delivery === 'unknown',
@@ -929,6 +929,11 @@ function useConversationPane(
           {action.detail?.canReconnect && <ChatFooterRemedy disabled={store.recovering} onClick={() => store.recover('reconnect')}>重连原会话</ChatFooterRemedy>}
           {action.detail?.canResetContext && <ChatFooterRemedy disabled={store.recovering} onClick={() => store.recover('reset_context')}>重置上下文并继续</ChatFooterRemedy>}
           {store.recovering && <span>正在恢复会话…</span>}
+        </> : action.kind === 'providerCleanup' ? <>
+          <span>{store.recovering ? '正在恢复会话…' : '正在等待模型进程关闭确认。'}</span>
+          {store.actionError !== null && <ChatFooterError message={store.actionError} />}
+          {action.detail.canReconnect && <ChatFooterRemedy disabled={store.recovering} onClick={() => store.recover('reconnect')}>重连原会话</ChatFooterRemedy>}
+          <ChatFooterRemedy disabled={store.recovering} onClick={() => store.recover('reset_context')}>重置上下文并继续</ChatFooterRemedy>
         </> : action.kind === 'sendFailed' ? <>
           <span>{action.unconfirmed ? '发送结果未确认。' : `消息未发送。${store.failedSend?.message ?? ''}`}</span>
           <ChatFooterRemedy disabled={store.sending} onClick={retrySend}>{action.unconfirmed ? '安全重试（同幂等键）' : '重试'}</ChatFooterRemedy>

@@ -162,5 +162,9 @@ public interface IAgentRuntime : IAsyncDisposable
 {
     bool CanResumeSession(string provider) => false;
     Task<IReadOnlyList<ProviderStatus>> ProbeProvidersAsync(CancellationToken ct);
+    /// <summary>Returns the open session or cleans up the provider before failing.</summary>
+    /// <exception cref="ProviderOpenShutdownUnconfirmedException">
+    /// The open failed and the provider may still be running.
+    /// </exception>
     Task<IAgentSession> OpenSessionAsync(HarnessLaunchSpec spec, CancellationToken ct);
 }

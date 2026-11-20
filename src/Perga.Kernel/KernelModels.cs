@@ -130,6 +130,8 @@ public sealed record RecoverSessionRequest(string Mode);
 public sealed record SessionUnknownDetailDto(string Reason, string Detail, bool CanReconnect,
     bool CanResetContext, bool Recovering, string? LastError);
 
+public sealed record SessionProviderCleanupDto(bool CanReconnect, bool Recovering);
+
 public sealed record SessionItemsPageDto(
     IReadOnlyList<SessionItemDto> Items,
     SessionTurnDto? ActiveTurn,
@@ -145,7 +147,8 @@ public sealed record SessionItemsPageDto(
     SessionTurnDto? LastTurn,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] SessionUnknownDetailDto? UnknownDetail,
     WorkerActivityDto? Worker = null,
-    IReadOnlyList<PermissionModeOption>? PermissionModes = null);
+    IReadOnlyList<PermissionModeOption>? PermissionModes = null,
+    SessionProviderCleanupDto? ProviderCleanup = null);
 
 public sealed record WorkerActivityEvent(long Sequence, string Kind, JsonElement Payload, long CreatedAtMs);
 

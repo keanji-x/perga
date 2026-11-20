@@ -8,6 +8,10 @@ import { classifyFailure, type FailureTable } from './failure-class.js';
  */
 export type SendFailureKind = 'unknown' | 'refused' | 'dormant' | 'rejected';
 
+export function isSessionRecoveryRequired(failure: ApiFailure | null): boolean {
+  return failure?.kind === 'http' && failure.code === 'session_recovery_required';
+}
+
 /**
  * What one failed attempt of `POST /planner/input` says, taken alone. `rejected`: answered before
  * the request was handled, for a reason that can pass (429, 401), so the same send may be tried again.
@@ -31,6 +35,7 @@ export const SEND_FAILURES: FailureTable<SendFailureKind> = Object.freeze({
     Object.freeze({ code: 'planner_harness_dormant', is: 'dormant' as const }),
     Object.freeze({ code: 'planner_turn_not_replaceable', is: 'refused' as const }),
     Object.freeze({ code: 'idempotency_key_reused', is: 'refused' as const }),
+    Object.freeze({ code: 'session_recovery_required', is: 'refused' as const }),
     Object.freeze({ status: Object.freeze([400, 403, 404, 413, 422]), is: 'refused' as const }),
     Object.freeze({ status: Object.freeze([429]), is: 'rejected' as const }),
   ]),

@@ -67,7 +67,9 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
     public Func<HarnessLaunchSpec, CancellationToken, Task>? BeforeOpenAsync { get; set; }
     public bool MismatchNativeThreadId { get; set; }
     public Func<HarnessLaunchSpec, Exception?>? OpenError { get; set; }
-    public bool ShutdownConfirmed { get; set; } = true;
+    public Func<IAgentSession, Exception>? AfterOpenError { get; set; }
+    public Func<int, bool>? ConfirmShutdownAttempt { get; set; }
+    public Action? BeforeConfirmSessionResume { get; set; }
     private int _probeCount;
     private int _forceRefreshProbeCount;
 
@@ -128,6 +130,7 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
         if (OpenError?.Invoke(spec) is { } error) throw error;
         IAgentSession session = new ScriptableAgentSession(this, spec);
         _openedSessions.Enqueue(new RecordedSessionOpen(spec, DateTimeOffset.UtcNow, session.NativeThreadId));
+        if (AfterOpenError is { } after) throw after(session);
         return session;
     }
 
@@ -166,6 +169,8 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
         private readonly HashSet<string> _pendingApprovalRequests = new(StringComparer.Ordinal);
         private bool _approvalsActive;
         private bool _disposed;
+        private bool _shutdownConfirmed;
+        private int _shutdownAttempts;
 
         public ScriptableAgentSession(ScriptableAgentRuntime owner, HarnessLaunchSpec spec)
         {
@@ -188,8 +193,15 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
                 new WorkerModelOption("gpt-5.4-mini", "GPT 5.4 Mini", ["low"], "low"),
             ], "gpt-5.4", "low")
             : null;
-        public bool SupportsSessionResume => true;
-        public bool ShutdownConfirmed => _owner.ShutdownConfirmed;
+        public bool SupportsSessionResume
+        {
+            get
+            {
+                _owner.BeforeConfirmSessionResume?.Invoke();
+                return true;
+            }
+        }
+        public bool ShutdownConfirmed => Volatile.Read(ref _shutdownConfirmed);
         public bool CanReuseContextWindow => true;
         public bool SupportsScopedClose => _owner.CloseHandler is not null;
 
@@ -300,6 +312,7 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
                 _disposed = true;
                 ExpireApprovals();
             }
+            Volatile.Write(ref _shutdownConfirmed, _owner.ConfirmShutdownAttempt?.Invoke(Interlocked.Increment(ref _shutdownAttempts)) ?? true);
             _owner.DisposedSessions.Enqueue(NativeThreadId);
             return ValueTask.CompletedTask;
         }

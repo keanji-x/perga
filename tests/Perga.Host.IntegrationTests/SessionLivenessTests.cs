@@ -13,9 +13,11 @@ namespace Perga.Host.IntegrationTests;
 public sealed class SessionLivenessTests
 {
     [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public async Task StartupIsBoundedAndStopCancelsStartup(bool stop)
+    [InlineData(true, true, true)]
+    [InlineData(false, true, true)]
+    [InlineData(true, false, true)]
+    [InlineData(true, true, false)]
+    public async Task StartupIsBoundedAndStopCancelsStartup(bool stop, bool lateHandle, bool shutdownConfirmed)
     {
         await using var host = new PergaHostTestCluster(configureHostOptions: o => o.SessionStartupTimeout = TimeSpan.FromMilliseconds(250));
         var (track, _) = await host.CreateTrackAsync();
@@ -28,8 +30,9 @@ public sealed class SessionLivenessTests
         {
             using var registration = ct.Register(() => canceled.TrySetResult());
             entered.TrySetResult();
-            // Deliberately ignore cancellation to verify the kernel's finite wait.
+            // Keep the open pending until after the kernel settles the canceled turn.
             await release.Task;
+            if (!lateHandle) ct.ThrowIfCancellationRequested();
         };
         try
         {
@@ -42,12 +45,184 @@ public sealed class SessionLivenessTests
             }
             await canceled.Task.WaitAsync(TimeSpan.FromSeconds(5));
             await kernel.WaitForTrackIdleAsync(track).WaitAsync(TimeSpan.FromSeconds(5));
-            var page = await kernel.GetSessionItemsAsync(session.Id);
+            var page = (await host.Client.GetFromJsonAsync<SessionItemsPageDto>($"/api/v1/sessions/{session.Id}/items"))!;
             Assert.Equal("idle", page.State);
+            Assert.Equal("idle", page.Session.Status);
+            Assert.Null(page.UnknownDetail);
+            Assert.NotNull(page.ProviderCleanup);
             Assert.Equal("interrupted", page.LastTurn?.Status);
+            var original = await kernel.GetSessionInputAsync(session.Id, accepted.Receipt!.InputId, default);
+            Assert.Equal("rejected", original.DeliveryState);
             Assert.DoesNotContain(host.AgentRuntime.ExecutedTurns, t => t.Input.Prompt == "launch");
+
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            using var blocked = await SendAfterCleanupAsync(host.Client, session.Id, deadline.Token);
+            Assert.Equal(HttpStatusCode.Conflict, blocked.StatusCode);
+            Assert.Equal("session_recovery_required", (await blocked.Content.ReadFromJsonAsync<Http.ApiErrorResponse>(deadline.Token))?.Code);
+
+            if (!shutdownConfirmed)
+            {
+                host.AgentRuntime.ConfirmShutdownAttempt = attempt => attempt >= 2;
+                host.AgentRuntime.AfterOpenError = agent => new ProviderOpenShutdownUnconfirmedException(agent, new OperationCanceledException());
+            }
+            release.TrySetResult();
+            if (!shutdownConfirmed)
+            {
+                while (host.AgentRuntime.DisposedSessions.IsEmpty)
+                    await Task.Delay(10, deadline.Token);
+                Assert.NotNull((await kernel.GetSessionItemsAsync(session.Id)).ProviderCleanup);
+                using var stillBlocked = await SendAfterCleanupAsync(host.Client, session.Id, deadline.Token);
+                Assert.Equal(HttpStatusCode.Conflict, stillBlocked.StatusCode);
+                Assert.Single(host.AgentRuntime.OpenedSessions);
+
+                await kernel.RecoverSessionAsync(session.Id, new("reset_context"), deadline.Token);
+            }
+            while ((await kernel.GetSessionItemsAsync(session.Id, ct: deadline.Token)).ProviderCleanup is not null)
+                await Task.Delay(10, deadline.Token);
+            host.AgentRuntime.BeforeOpenAsync = null;
+            host.AgentRuntime.AfterOpenError = null;
+
+            using var next = await SendAfterCleanupAsync(host.Client, session.Id, deadline.Token);
+            Assert.True(next.StatusCode == HttpStatusCode.Accepted,
+                $"Expected a new message to be accepted after provider cleanup. Received {(int)next.StatusCode}: {await next.Content.ReadAsStringAsync()}");
+            await kernel.WaitForTrackIdleAsync(track).WaitAsync(deadline.Token);
+            Assert.Equal("completed", (await kernel.GetSessionItemsAsync(session.Id, ct: deadline.Token)).LastTurn?.Status);
+            Assert.Equal("after provider cleanup", Assert.Single(host.AgentRuntime.ExecutedTurns).Input.Prompt);
         }
         finally { release.TrySetResult(); }
+    }
+
+    [Fact]
+    public async Task LateCleanupUnblocksIdleSessionAfterRecoveryTimesOut()
+    {
+        await using var host = new PergaHostTestCluster(configureHostOptions: o => o.SessionStartupTimeout = TimeSpan.FromMilliseconds(250));
+        var (track, sessionId) = await host.CreateTrackAsync();
+        var kernel = host.Services.GetRequiredService<IPergaKernel>();
+        var opening = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        host.AgentRuntime.BeforeOpenAsync = async (_, _) =>
+        {
+            opening.TrySetResult();
+            await release.Task;
+        };
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var ct = deadline.Token;
+        try
+        {
+            var accepted = await kernel.AcceptMessageAsync(sessionId, new("launch", "launch"), ct);
+            await opening.Task.WaitAsync(ct);
+            await kernel.InterruptSessionAsync(sessionId, ct, accepted.Receipt!.TurnId);
+            await kernel.WaitForTrackIdleAsync(track).WaitAsync(ct);
+            var failure = await Assert.ThrowsAsync<KernelException>(() => kernel.RecoverSessionAsync(sessionId, new("reset_context"), ct));
+            Assert.Equal(KernelErrorCode.SessionRecoveryRequired, failure.Code);
+            Assert.Equal("Provider recovery timed out.", failure.Message);
+            var blocked = await kernel.GetSessionItemsAsync(sessionId, ct: ct);
+            Assert.NotNull(blocked.ProviderCleanup);
+            Assert.Null(blocked.Session.UnknownLastError);
+            var store = host.Services.GetRequiredService<ITrackStore>();
+            var beforeCleanup = await store.ListEventsSinceAsync(0, track, ct: ct);
+
+            host.AgentRuntime.BeforeOpenAsync = null;
+            release.TrySetResult();
+            while ((await kernel.GetSessionItemsAsync(sessionId, ct: ct)).ProviderCleanup is not null)
+                await Task.Delay(10, ct);
+            var afterCleanup = await store.ListEventsSinceAsync(0, track, ct: ct);
+            Assert.Equal(beforeCleanup.Select(evt => evt.EventId), afterCleanup.Select(evt => evt.EventId));
+            using var sent = await SendAfterCleanupAsync(host.Client, sessionId, ct);
+            Assert.Equal(HttpStatusCode.Accepted, sent.StatusCode);
+        }
+        finally { release.TrySetResult(); }
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task FailedReconnectWhileCleaningUpKeepsTheOriginalSessionFenced(bool wrongNativeId)
+    {
+        const string originalThread = "original-provider-thread";
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var ct = deadline.Token;
+        var directory = Directory.CreateTempSubdirectory("perga-reconnect-cleanup-");
+        try
+        {
+            string trackId;
+            string sessionId;
+            await using (var initial = new PergaHostTestCluster(directory.FullName))
+            {
+                (trackId, sessionId) = await initial.CreateTrackAsync();
+                var kernel = initial.Services.GetRequiredService<IPergaKernel>();
+                var session = Assert.Single(await kernel.ListSessionsAsync(trackId, ct));
+                var store = initial.Services.GetRequiredService<ITrackStore>();
+                await store.UpsertSessionAsync(session with { NativeThreadId = originalThread }, null, ct);
+            }
+            await using var host = new PergaHostTestCluster(directory.FullName);
+            var live = host.Services.GetRequiredService<IPergaKernel>();
+            var opening = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var validating = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            using var releaseValidation = new ManualResetEventSlim();
+            host.AgentRuntime.BeforeOpenAsync = async (_, _) =>
+            {
+                if (opening.TrySetResult())
+                {
+                    await release.Task;
+                    return;
+                }
+                host.AgentRuntime.ConfirmShutdownAttempt = _ => false;
+                host.AgentRuntime.MismatchNativeThreadId = wrongNativeId;
+                host.AgentRuntime.LaunchConfirmationHandler = _ => new(SessionConfiguration.FromNullable("wrong-model", null, null));
+                host.AgentRuntime.BeforeConfirmSessionResume = () =>
+                {
+                    validating.TrySetResult();
+                    releaseValidation.Wait(ct);
+                };
+            };
+            try
+            {
+                var accepted = await live.AcceptMessageAsync(sessionId, new("launch", "launch"), ct);
+                await opening.Task.WaitAsync(ct);
+                await live.InterruptSessionAsync(sessionId, ct, accepted.Receipt!.TurnId);
+                await live.WaitForTrackIdleAsync(trackId).WaitAsync(ct);
+
+                var recovery = live.RecoverSessionAsync(sessionId, new("reconnect"), ct);
+                while ((await live.GetSessionItemsAsync(sessionId, ct: ct)).ProviderCleanup?.Recovering != true)
+                    await Task.Delay(10, ct);
+                release.TrySetResult();
+                await validating.Task.WaitAsync(ct);
+                using var model = await host.Client.PutAsJsonAsync($"/api/v1/sessions/{sessionId}/model", new { model = "next-model" }, ct);
+                model.EnsureSuccessStatusCode();
+                Assert.Empty(host.AgentRuntime.Configurations);
+                releaseValidation.Set();
+                var refusedRecovery = await Assert.ThrowsAsync<KernelException>(() => recovery);
+                Assert.Equal(KernelErrorCode.SessionRecoveryRequired, refusedRecovery.Code);
+                var blocked = await live.GetSessionItemsAsync(sessionId, ct: ct);
+                Assert.Equal(wrongNativeId ? "unknown" : "idle", blocked.State);
+                Assert.Equal(wrongNativeId ? "session_lost" : null, blocked.UnknownDetail?.Reason);
+                Assert.Equal(!wrongNativeId, blocked.ProviderCleanup is not null);
+                if (!wrongNativeId) Assert.Null(blocked.Session.UnknownLastError);
+                Assert.Equal(originalThread, blocked.Session.NativeThreadId);
+                Assert.Equal("next-model", blocked.Session.Model);
+                using var refused = await SendAfterCleanupAsync(host.Client, sessionId, ct);
+                Assert.Equal(HttpStatusCode.Conflict, refused.StatusCode);
+                Assert.Empty(host.AgentRuntime.ExecutedTurns);
+            }
+            finally
+            {
+                release.TrySetResult();
+                releaseValidation.Set();
+            }
+        }
+        finally { directory.Delete(recursive: true); }
+    }
+
+    private static async Task<HttpResponseMessage> SendAfterCleanupAsync(HttpClient client, string sessionId, CancellationToken ct)
+    {
+        using var message = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/sessions/{sessionId}/messages")
+        {
+            Content = JsonContent.Create(new { content = "after provider cleanup" })
+        };
+        message.Headers.Add("Idempotency-Key", "after-cleanup");
+        return await client.SendAsync(message, ct);
     }
 
     [Theory]

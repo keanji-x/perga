@@ -1,6 +1,7 @@
+import { isSessionRecoveryRequired } from '../../../../core/domain/conversation-delivery.ts';
 import { conversationStopTurn } from '../../../../core/domain/conversation-action.ts';
 import { sessionContextUsage } from '../../../../core/domain/session-context-usage.ts';
-import { NotSentError } from '../../../../core/domain/failure-class.ts';
+import { ApiError, NotSentError } from '../../../../core/domain/failure-class.ts';
 import { withTaskMessageFailures, workerModelCatalog } from '../../../../core/domain/worker-session.ts';
 import type { PermissionModeOptionDto, WorkerSettings } from '../../../../core/api/perga-v1.ts';
 import { pendingQueueWithCurrentHumanVersions, pendingQueueOwnsHumanEntry } from '../../../../core/domain/conversation-queue-controls.ts';
@@ -85,7 +86,8 @@ export function useConversationStore(
     }, [transport, cardId, unauthorized, registry],
   );
   const run = useQuery({ ...runQuery, enabled: scope !== null, refetchInterval: query =>
-    query.state.data?.worker?.phase === 'running' || query.state.data?.worker?.phase === 'interrupting' ? 1000 : false });
+    query.state.data?.providerCleanup != null || query.state.data?.unknownDetail?.recovering === true
+    || query.state.data?.worker?.phase === 'running' || query.state.data?.worker?.phase === 'interrupting' ? 1000 : false });
   const [readFailure, setReadFailure] = useState(() => ({ cardId, error: run.error }));
   const runReadError = run.error ?? (run.isFetching && readFailure.cardId === cardId ? readFailure.error : null);
   if (readFailure.cardId !== cardId || (run.error !== readFailure.error && (run.error !== null || !run.isFetching)))
@@ -149,7 +151,8 @@ export function useConversationStore(
   const compactLeases = useRef(new Set<string>());
   const recoveryLeases = useRef(new Set<string>());
   const [recoveryPending, setRecoveryPending] = useState<ReadonlySet<string>>(() => new Set());
-  const recoveryHoldsSend = sessionState === 'unknown' || recoveryPending.has(cardId);
+  const providerCleanup = run.data?.providerCleanup ?? null;
+  const recoveryHoldsSend = sessionState === 'unknown' || providerCleanup !== null || recoveryPending.has(cardId);
   const [actionError, setActionError] = useState<Readonly<{ cardId: string; message: string }> | null>(null);
   /** The card shown now; a model write's answer is that of the card it was made in. */
   const shownCardId = useRef(cardId);
@@ -201,6 +204,7 @@ export function useConversationStore(
     cardId, transport, send: mutations.send, serverEntries, liveReplies,
     stalled: false, target, queuesInput: kernelQueuesInput(phase), queueIfBusy: canQueueWhileRunning,
     pressed: () => { setActionError(null); stop.clearFeedback(); },
+    recoveryRequired: () => { void run.refetch(); },
   });
   const { view, accountQueueDisplay } = outbox;
   const presentation = useMemo(() => presentPendingMessages(view.transcript, pendingQueue, queueOps),
@@ -312,12 +316,13 @@ export function useConversationStore(
     workerPaused: run.data?.workerPaused ?? false,
     lastTurn: run.data?.lastTurn ?? null,
     unknownDetail: run.data?.unknownDetail ?? null,
-    recovering: recoveryPending.has(cardId) || run.data?.unknownDetail?.recovering === true,
+    providerCleanup,
+    recovering: recoveryPending.has(cardId) || providerCleanup?.recovering === true || run.data?.unknownDetail?.recovering === true,
     dismissActionError: () => { setActionError(null); stop.clearFeedback(); },
     recover: (mode: 'reconnect' | 'reset_context') => {
       const detail = run.data?.unknownDetail;
-      if (workerSession || readonlyReason !== null || recoveryLeases.current.has(cardId) || detail?.recovering === true
-        || (mode === 'reconnect' ? sessionState !== 'unknown' || !detail?.canReconnect
+      if (workerSession || readonlyReason !== null || recoveryLeases.current.has(cardId) || detail?.recovering === true || providerCleanup?.recovering === true
+        || (mode === 'reconnect' ? !(detail?.canReconnect ?? providerCleanup?.canReconnect)
           : sessionState !== 'idle' && !(sessionState === 'unknown' && detail?.canResetContext))) return;
       const id = cardId;
       if (mode === 'reset_context') registry.invalidateSends(id);
@@ -329,7 +334,8 @@ export function useConversationStore(
         registry.observeEpoch(id, session.epoch);
       }).catch((error: unknown) => {
         if (shownCardId.current === id) setActionError({ cardId: id,
-          message: error instanceof Error ? error.message : '恢复失败，请重试。' });
+          message: error instanceof ApiError && isSessionRecoveryRequired(error.failure) ? '暂时无法恢复会话，请稍后重试。'
+            : error instanceof Error ? error.message : '恢复失败，请重试。' });
       }).finally(() => {
         recoveryLeases.current.delete(id);
         setRecoveryPending(current => new Set([...current].filter(value => value !== id)));
@@ -371,12 +377,12 @@ export function useConversationStore(
       if (worker !== null && (!workerEditable || attachments.length > 0)) return null;
       return outbox.send(id, content, attachments, fromComposer, key);
     },
-    manualCompactSupported: sessionState === 'idle' && readonlyReason === null && !workerSession,
+    manualCompactSupported: sessionState === 'idle' && !recoveryHoldsSend && readonlyReason === null && !workerSession,
     contextUsage: run.data === undefined ? null : sessionContextUsage(run.data.session),
     uploadAttachment: mutations.uploadAttachment,
     compacting: compactPending.has(cardId) || phase === 'compacting',
     compact: () => {
-      if (workerSession || sessionState !== 'idle' || readonlyReason !== null || compactLeases.current.has(cardId) || cardId === '') return;
+      if (workerSession || sessionState !== 'idle' || recoveryHoldsSend || readonlyReason !== null || compactLeases.current.has(cardId) || cardId === '') return;
       const compactFor = cardId;
       compactLeases.current.add(compactFor);
       setCompactPending((current) => new Set([...current, compactFor]));

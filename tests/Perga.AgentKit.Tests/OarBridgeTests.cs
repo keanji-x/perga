@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Perga.AgentKit;
 using Perga.AgentKit.Internal;
 using Xunit;
@@ -48,6 +49,73 @@ public sealed class OarBridgeTests : IDisposable
     public void ParseNodeVersionParsesSemverStrings(string raw, int major, int minor, int build)
     {
         Assert.Equal(new Version(major, minor, build), OarNodeResolver.ParseNodeVersion(raw));
+    }
+
+    [Fact]
+    public async Task FailedOpenCanRetryShutdownOfTheSameRealSubprocess()
+    {
+        var node = OarNodeResolver.ResolveNode24Executable(null, null);
+        var script = Path.Combine(_tempDir, "hold-open.mjs");
+        File.WriteAllText(script, "setInterval(() => {}, 1000);");
+        Process? child = null;
+        var attempts = 0;
+        try
+        {
+            var error = await Assert.ThrowsAsync<ProviderOpenShutdownUnconfirmedException>(() =>
+                OarAgentSession.OpenAsync(new(node, [script], _workspaceDir, new Dictionary<string, string>()),
+                    new("codex", null, _workspaceDir, null, null, new Dictionary<string, McpServerConfig>()),
+                    "codex", null, TimeSpan.FromMilliseconds(100), null, CancellationToken.None, process =>
+                    {
+                        if (Interlocked.Increment(ref attempts) == 1)
+                        {
+                            child = Process.GetProcessById(process.Id);
+                            throw new System.ComponentModel.Win32Exception("Scripted first kill failure");
+                        }
+                        process.Kill(entireProcessTree: true);
+                    }));
+            Assert.False(error.Session.ShutdownConfirmed);
+            Assert.False(child!.HasExited);
+
+            await Task.WhenAll(error.Session.DisposeAsync().AsTask(), error.Session.DisposeAsync().AsTask());
+
+            Assert.True(error.Session.ShutdownConfirmed);
+            Assert.True(child!.HasExited);
+            Assert.Equal(2, attempts);
+        }
+        finally
+        {
+            if (child is not null)
+            {
+                using (child)
+                    if (!child.HasExited) child.Kill(entireProcessTree: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task ShutdownLeavesBridgeOutputOpenWhileItHandlesEndOfInput()
+    {
+        var node = OarNodeResolver.ResolveNode24Executable(null, null);
+        var script = Path.Combine(_tempDir, "shutdown-output.mjs");
+        var sentinel = Path.Combine(_tempDir, "provider-closed");
+        File.WriteAllText(script, """
+            import { writeFileSync } from 'node:fs';
+            process.stdin.resume();
+            process.stdin.on('end', () => {
+              process.stdout.write('final response\n', error => {
+                if (!error) writeFileSync(process.argv[2], 'closed');
+              });
+            });
+            console.log('ready');
+            """);
+        await using var child = StdioSubprocess.Start(new(node, [script, sentinel], _workspaceDir, new Dictionary<string, string>()));
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        Assert.Equal("ready", await child.ReadStdoutLineAsync(deadline.Token));
+
+        await child.DisposeAsync();
+
+        Assert.True(child.ShutdownConfirmed);
+        Assert.True(File.Exists(sentinel));
     }
 
     [Fact]

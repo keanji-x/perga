@@ -12,7 +12,7 @@ afterEach(() => { cleanup(); vi.useRealTimers(); });
 function setup(send = vi.fn().mockResolvedValue({ card_id: 'a', worker_session_id: 'a', entry_id: 'input', turnId: 'accepted-turn' })) {
   return { send, ...renderHook(() => ({ registry: useConversationCommands(), outbox: useConversationOutbox({
     cardId: 'a', transport, send, serverEntries: [], liveReplies: [], stalled: false, queuesInput: false,
-    queueIfBusy: false, pressed: () => {},
+    queueIfBusy: false, pressed: () => {}, recoveryRequired: () => {},
   }) }), { wrapper: ({ children }: { children: ReactNode }) => <ConversationProvider>{children}</ConversationProvider> }) };
 }
 it('preserves the accepted turn identity from the wire through outbox settlement', async () => {

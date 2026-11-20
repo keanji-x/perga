@@ -182,6 +182,7 @@ public sealed partial class TrackActor
             current.BoundAttemptId is not null ||
             current.Epoch != expectedEpoch ||
             _scheduler.HasResumeHold(sessionId) ||
+            (!bindPending && (HasOutstandingProviderOwnershipCore(sessionId) || _recoveringSessions.Contains(sessionId))) ||
             !_openSessionHandles.TryGetValue(sessionId, out var openSession) ||
             !ReferenceEquals(openSession.Agent, expectedSession))
         {

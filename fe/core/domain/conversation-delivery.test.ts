@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { ApiFailure } from '../api/types.js';
 import {
@@ -69,6 +69,15 @@ describe('retrying an unknown send', () => {
   it('settles a refusal as refused while nothing was unknown', async () => {
     const { run } = failures(['refused']);
     expect((await run.catch((error: unknown) => error) as KeyedSendFailure).delivery).toBe('refused');
+  });
+
+  it.each([false, true])('does not retry a recovery-required refusal with prior uncertainty %s', async (unknown) => {
+    const attempt = vi.fn().mockRejectedValue(new Error('Recover the provider session before sending more input.'));
+    const result = retryUnknownSend(attempt, () => ({
+      kind: 'http', status: 409, code: 'session_recovery_required', message: 'Recover the provider session before sending more input.',
+    }), () => Promise.resolve(), unknown);
+    await expect(result).rejects.toMatchObject({ delivery: unknown ? 'unknown' : 'refused' });
+    expect(attempt).toHaveBeenCalledTimes(1);
   });
 
   /* #2192: told apart by its code alone, so the notice offers a fresh session instead of showing the server's words. */

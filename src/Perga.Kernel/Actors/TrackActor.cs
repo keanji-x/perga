@@ -430,7 +430,7 @@ public sealed partial class TrackActor : IAsyncDisposable
             if (_deletingTrack)
                 throw KernelException.Conflict("This Track is already being deleted.");
             RequireAttemptsOutsideVerification(_activeAttempts.Values);
-            if (_scheduler.ResumeHolds.Any(hold => hold.Busy))
+            if (_recoveringSessions.Count != 0)
                 throw KernelException.Conflict("Wait for provider recovery before deleting this Track.");
             ct.ThrowIfCancellationRequested();
             _deletingTrack = true;
@@ -804,8 +804,8 @@ public sealed partial class TrackActor : IAsyncDisposable
     }
 
     private IAgentSession? FindOpenSessionForSettingsCore(string sessionId, string provider) =>
-        !_scheduler.HasResumeHold(sessionId) &&
-            _openSessionHandles.TryGetValue(sessionId, out var handle) &&
+        !_scheduler.HasResumeHold(sessionId) && !_recoveringSessions.Contains(sessionId) &&
+            !HasOutstandingProviderOwnershipCore(sessionId) && _openSessionHandles.TryGetValue(sessionId, out var handle) &&
             string.Equals(handle.LaunchSpec.Provider, provider, StringComparison.OrdinalIgnoreCase)
             ? handle.Agent : null;
 
@@ -944,7 +944,8 @@ public sealed partial class TrackActor : IAsyncDisposable
                 session.ArchivedAtMs is not null ? "archived" : _track.ClosedAtMs is not null ? "track_closed" :
                     worker is not null && worker.Phase is not ("running" or "paused" or "interrupting" or "interrupt_unknown" or "verifying") ? "worker_finished" : null,
                 session.ArchivedAtMs is not null && _track.ClosedAtMs is null && worker is null,
-                worker?.Phase == "paused", lastTurn, ReadUnknownDetailCore(session), worker, settingsSession?.AvailablePermissionModes);
+                worker?.Phase == "paused", lastTurn, ReadUnknownDetailCore(session), worker, settingsSession?.AvailablePermissionModes,
+                ReadProviderCleanupCore(session));
         }, ct);
     }
 
@@ -977,9 +978,8 @@ public sealed partial class TrackActor : IAsyncDisposable
                     InvalidateContextBindingCore(sessionId);
             }
 
-            // Never change the provider underneath an active turn. Its next reuse reconciles.
-            if (!_scheduler.HasActive(sessionId) && !_scheduler.IsCompacting(sessionId) &&
-                !_scheduler.HasResumeHold(sessionId) && _openSessionHandles.ContainsKey(sessionId))
+            // An occupied session applies the desired configuration on its next reuse.
+            if (!_scheduler.IsOccupied(session) && _openSessionHandles.ContainsKey(sessionId))
             {
                 // Persist even during Drain; the next admitted turn reconciles the cache.
                 using var admission = _options.DispatchAdmission.TryEnter();
@@ -1065,7 +1065,7 @@ public sealed partial class TrackActor : IAsyncDisposable
                 return session;
             }
 
-            var idle = !_scheduler.HasActive(sessionId) && !_scheduler.IsCompacting(sessionId) && !_scheduler.HasResumeHold(sessionId);
+            var idle = !_scheduler.IsOccupied(session);
             _openSessionHandles.TryGetValue(sessionId, out var cached);
             var next = session with
             {
@@ -2732,8 +2732,8 @@ public sealed partial class TrackActor : IAsyncDisposable
         string? overrideSystemPrompt,
         CancellationToken ct)
     {
-        if (_sessionShutdownPending.ContainsKey(session.Id))
-            throw KernelException.PreconditionFailed("Confirm provider shutdown through session recovery before reuse.");
+        if (HasOutstandingProviderOwnershipCore(session.Id) || _recoveringSessions.Contains(session.Id))
+            throw KernelException.SessionRecoveryRequired("Confirm provider shutdown through session recovery before reuse.");
         var desired = SessionConfiguration.FromNullable(session.Model, session.ReasoningEffort, session.PermissionMode);
         if (_openSessionHandles.TryGetValue(session.Id, out var handle))
         {

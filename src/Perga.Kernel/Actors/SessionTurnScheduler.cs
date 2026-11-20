@@ -28,7 +28,6 @@ public sealed partial class TrackActor
         private SessionState State(string id) => _sessions.GetOrAdd(id, _ => new());
 
         public IEnumerable<ActiveTurnState> ActiveTurns => _sessions.Values.Select(s => s.Active).OfType<ActiveTurnState>();
-        public IEnumerable<SessionResumeHold> ResumeHolds => _sessions.Values.Select(s => s.Resume).OfType<SessionResumeHold>();
         public bool HasActiveTurns => ActiveTurns.Any();
         public bool HasDispatchingInputs => _sessions.Values.Any(s => Volatile.Read(ref s.DispatchInputId) is not null);
 
@@ -167,7 +166,7 @@ public sealed partial class TrackActor
 
         public bool IsOccupied(AgentSessionDto session, PersistedSessionInput? input = null, Guid? reservation = null, bool allowFinishingDispatch = false)
         {
-            if (actor._sessionShutdownPending.ContainsKey(session.Id)) return true;
+            if (actor.HasOutstandingProviderOwnershipCore(session.Id) || actor._recoveringSessions.Contains(session.Id)) return true;
             if (!_sessions.TryGetValue(session.Id, out var state))
                 return input is null && session.Status is "queued" or "running" or "unknown";
             return state.Active is not null || state.Compacting || state.Steering is not null || state.Resume is not null ||

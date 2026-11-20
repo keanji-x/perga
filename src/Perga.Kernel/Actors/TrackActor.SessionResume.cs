@@ -10,22 +10,18 @@ public sealed partial class TrackActor
     private int _sessionResumeHoldCount;
     // Registered by the mailbox; shutdown joins these after the mailbox stops producing work.
     private readonly List<Task> _sessionRecoveryJobs = [];
+    private readonly HashSet<string> _recoveringSessions = new(StringComparer.Ordinal);
 
     private sealed class SessionResumeHold(string turnId, string nativeId)
     {
         public string TurnId { get; } = turnId;
         public string NativeId { get; } = nativeId;
-        public bool Busy { get; set; }
         public bool Quiescent { get; set; }
     }
 
     private SessionUnknownDetailDto? ReadUnknownDetailCore(AgentSessionDto session)
     {
         if (session.Status != "unknown") return null;
-        _scheduler.TryGetResumeHold(session.Id, out var hold);
-        var worker = session.BoundTaskId is not null || session.BoundAttemptId is not null;
-        var supports = _openSessionHandles.TryGetValue(session.Id, out var handle)
-            ? handle.Agent.SupportsSessionResume : _agentRuntime.CanResumeSession(session.Provider);
         var reason = session.UnknownReason ?? "stream_lost";
         var detail = reason switch
         {
@@ -35,15 +31,36 @@ public sealed partial class TrackActor
             _ => "The provider stream ended without a confirmed outcome."
         };
         if (string.IsNullOrWhiteSpace(session.NativeThreadId)) detail += " No original provider session ID is available.";
-        return new(reason, detail, !worker && supports && !session.ReconnectInvalidated &&
-            !string.IsNullOrWhiteSpace(session.NativeThreadId), !worker, hold?.Busy == true, session.UnknownLastError);
+        return new(reason, detail, CanReconnectProviderCore(session), !IsWorkerSession(session),
+            _recoveringSessions.Contains(session.Id), session.UnknownLastError);
     }
+
+    private SessionProviderCleanupDto? ReadProviderCleanupCore(AgentSessionDto session)
+    {
+        if (session.Status != "idle" || IsWorkerSession(session)) return null;
+        var recovering = _recoveringSessions.Contains(session.Id);
+        if (!recovering && !HasOutstandingProviderOwnershipCore(session.Id)) return null;
+        return new(CanReconnectProviderCore(session), recovering);
+    }
+
+    private static bool IsWorkerSession(AgentSessionDto session) =>
+        session.BoundTaskId is not null || session.BoundAttemptId is not null;
+
+    private bool CanReconnectProviderCore(AgentSessionDto session)
+    {
+        if (IsWorkerSession(session) || session.ReconnectInvalidated || string.IsNullOrWhiteSpace(session.NativeThreadId)) return false;
+        return !_recoveringSessions.Contains(session.Id) && _openSessionHandles.TryGetValue(session.Id, out var handle)
+            ? handle.Agent.SupportsSessionResume : _agentRuntime.CanResumeSession(session.Provider);
+    }
+
+    private bool HasOutstandingProviderOwnershipCore(string sessionId) =>
+        _sessionShutdownPending.ContainsKey(sessionId) || _pendingSessionLaunches.ContainsKey(sessionId);
 
     private void RequireSessionDispatchAvailableCore(string sessionId)
     {
-        if (_sessionShutdownPending.ContainsKey(sessionId) || _pendingSessionLaunches.ContainsKey(sessionId) ||
+        if (HasOutstandingProviderOwnershipCore(sessionId) || _recoveringSessions.Contains(sessionId) ||
             _scheduler.HasResumeHold(sessionId) || RequireSessionCore(sessionId).Status == "unknown")
-            throw KernelException.PreconditionFailed("Recover the provider session before sending more input.");
+            throw KernelException.SessionRecoveryRequired("Recover the provider session before sending more input.");
     }
 
     private void ReleaseSessionResumeCore(string sessionId)
@@ -85,30 +102,26 @@ public sealed partial class TrackActor
             if (_scheduler.HasActive(sessionId) || _scheduler.IsCompacting(sessionId) ||
                 _scheduler.HasReservation(sessionId) || _scheduler.IsSteering(sessionId))
                 throw KernelException.Conflict("Wait for the current session operation before recovering.");
-            if (session.Status != "unknown" && !(request.Mode == "reset_context" && session.Status == "idle"))
+            if (_recoveringSessions.Contains(sessionId))
+                throw KernelException.SessionRecoveryRequired("Session recovery is already in progress.");
+            var cleanupPending = HasOutstandingProviderOwnershipCore(sessionId);
+            if (session.Status != "unknown" && !(session.Status == "idle" && (cleanupPending || request.Mode == "reset_context")))
                 throw KernelException.Conflict("Recovery is unavailable in this session state.");
-            _scheduler.TryGetResumeHold(sessionId, out var hold);
-            if (hold?.Busy == true) throw KernelException.Conflict("Session recovery is already in progress.");
-            if (request.Mode == "reconnect" && ReadUnknownDetailCore(session)?.CanReconnect != true)
+            if (request.Mode == "reconnect" && !CanReconnectProviderCore(session))
             {
-                if (string.IsNullOrWhiteSpace(session.NativeThreadId))
+                if (session.Status == "unknown" && string.IsNullOrWhiteSpace(session.NativeThreadId))
                     await PersistAndEmitSessionUpdatedCoreAsync(session with { ReconnectInvalidated = true,
                         UnknownLastError = "No original provider session ID is available.", UpdatedAtMs = NowMs() }, NowMs(), CancellationToken.None).ConfigureAwait(false);
-                throw KernelException.PreconditionFailed("The original provider session cannot be reconnected.");
+                throw KernelException.SessionRecoveryRequired("The original provider session cannot be reconnected.");
             }
-            if (hold is null)
-            {
-                hold = new SessionResumeHold(session.UnknownTurnId ?? "", session.NativeThreadId ?? "");
-                _scheduler.HoldResume(sessionId, hold);
-                Interlocked.Increment(ref _sessionResumeHoldCount);
-            }
-            hold.Busy = true;
-            NotifyQueueChangedCore(sessionId);
+
+            var originalProviderId = _scheduler.TryGetResumeHold(sessionId, out var resume) ? resume.NativeId : session.NativeThreadId;
+            _recoveringSessions.Add(sessionId);
             var completion = new TaskCompletionSource<AgentSessionDto>(TaskCreationOptions.RunContinuationsAsynchronously);
             _sessionRecoveryJobs.RemoveAll(job => job.IsCompleted);
             _sessionRecoveryJobs.Add(actor.TrackBackgroundJob(async () =>
             {
-                try { completion.TrySetResult(await RunSessionRecoveryAsync(sessionId, request.Mode, hold, session.Epoch).ConfigureAwait(false)); }
+                try { completion.TrySetResult(await RunSessionRecoveryAsync(sessionId, request.Mode, originalProviderId, session.Epoch).ConfigureAwait(false)); }
                 catch (Exception error) { completion.TrySetException(error); }
             }));
             return completion.Task;
@@ -126,7 +139,7 @@ public sealed partial class TrackActor
             throw KernelException.PreconditionFailed("Reopen this conversation before recovering its provider session.");
     }
 
-    private async Task<AgentSessionDto> RunSessionRecoveryAsync(string sessionId, string mode, SessionResumeHold hold, int opEpoch)
+    private async Task<AgentSessionDto> RunSessionRecoveryAsync(string sessionId, string mode, string? originalProviderId, int opEpoch)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(_actorShutdownCts.Token);
         deadline.CancelAfter(KernelOptions.SessionResumeTimeout);
@@ -139,10 +152,7 @@ public sealed partial class TrackActor
                 _pendingSessionLaunches.GetValueOrDefault(sessionId)), ct).ConfigureAwait(false);
             if (pending is not null)
             {
-                IAgentSession? late = null;
-                try { late = await pending.Launch.WaitAsync(ct).ConfigureAwait(false); }
-                catch (Exception) when (pending.Launch.IsFaulted || pending.Launch.IsCanceled) { /* No handle was created. */ }
-                if (late is not null)
+                if (await ReadPendingLaunchAgentAsync(pending.Launch, ct).ConfigureAwait(false) is { } late)
                 {
                     // Join the original cleanup before deciding whether another disposal is needed.
                     try { await pending.Cleanup.WaitAsync(ct).ConfigureAwait(false); }
@@ -182,7 +192,7 @@ public sealed partial class TrackActor
                     _pendingSessionLaunches.TryRemove(sessionId, out var transferredLaunch);
                     return Task.CompletedTask;
                 }, CancellationToken.None).ConfigureAwait(false);
-                if (!replacement.SupportsSessionResume || replacement.NativeThreadId != hold.NativeId)
+                if (!replacement.SupportsSessionResume || replacement.NativeThreadId != originalProviderId)
                     throw new ProviderSessionNotFoundException("The provider did not restore the original session.");
                 var launched = await EnqueueAsync(_ => Task.FromResult(RequireSessionCore(sessionId) with
                     { Model = spec.Model, ReasoningEffort = spec.ReasoningEffort, PermissionMode = spec.PermissionMode }), ct).ConfigureAwait(false);
@@ -215,7 +225,6 @@ public sealed partial class TrackActor
                         ReasoningEffort = spec.ReasoningEffort, PermissionMode = spec.PermissionMode }, replacement,
                         spec, replacement.ConfigurationState, CancellationToken.None).ConfigureAwait(false);
                 await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, evt, CancellationToken.None).ConfigureAwait(false);
-                if (mode != "reset_context") await PokeSessionCoreAsync(sessionId).ConfigureAwait(false);
                 return updated;
             }, CancellationToken.None).ConfigureAwait(false);
             return restored;
@@ -227,13 +236,15 @@ public sealed partial class TrackActor
                 {
                     var session = RequireSessionCore(sessionId);
                     if (session.Epoch != opEpoch) return;
-                    var updated = session with { UnknownLastError = error.Message,
-                        UnknownReason = error is ProviderSessionNotFoundException ? "session_lost" : session.UnknownReason,
-                        ReconnectInvalidated = session.ReconnectInvalidated || error is ProviderSessionNotFoundException,
+                    var lost = error is ProviderSessionNotFoundException;
+                    if (!lost && session.Status != "unknown") return;
+                    var updated = session with { Status = lost ? "unknown" : session.Status, UnknownLastError = error.Message,
+                        UnknownReason = lost ? "session_lost" : session.UnknownReason,
+                        ReconnectInvalidated = session.ReconnectInvalidated || lost,
                         UpdatedAtMs = NowMs() };
                     await PersistAndEmitSessionUpdatedCoreAsync(updated, updated.UpdatedAtMs, CancellationToken.None).ConfigureAwait(false);
                 }, CancellationToken.None).ConfigureAwait(false);
-            throw KernelException.PreconditionFailed(error is OperationCanceledException ? "Provider recovery timed out." : error.Message);
+            throw KernelException.SessionRecoveryRequired(error is OperationCanceledException ? "Provider recovery timed out." : error.Message);
         }
         finally
         {
@@ -251,16 +262,19 @@ public sealed partial class TrackActor
             if (!_actorShutdownCts.IsCancellationRequested)
                 await EnqueueAsync(async _ =>
                 {
-                    hold.Busy = false;
+                    _recoveringSessions.Remove(sessionId);
                     if (RequireSessionCore(sessionId).Epoch != (success && mode == "reset_context" ? opEpoch + 1 : opEpoch)) return;
                     if (!success) _mcpBridge.RevokeSession(sessionId);
-                    if (RequireSessionCore(sessionId).Status == "idle" && !_sessionShutdownPending.ContainsKey(sessionId)) ReleaseSessionResumeCore(sessionId);
-                    if (!success && replacementShutdownConfirmed &&
+                    if (!success && replacement is not null &&
                         _openSessionHandles.TryGetValue(sessionId, out var current) && ReferenceEquals(current.Agent, replacement))
-                        _openSessionHandles.Remove(sessionId);
-                    NotifyQueueChangedCore(sessionId);
-                    var session = RequireSessionCore(sessionId);
-                    await PersistAndEmitSessionUpdatedCoreAsync(session, session.UpdatedAtMs, CancellationToken.None).ConfigureAwait(false);
+                    {
+                        if (replacementShutdownConfirmed)
+                            _openSessionHandles.Remove(sessionId);
+                        else
+                            _sessionShutdownPending.TryAdd(sessionId, 0);
+                    }
+                    if (RequireSessionCore(sessionId).Status == "idle" && (!success || mode != "reset_context"))
+                        await PokeSessionCoreAsync(sessionId).ConfigureAwait(false);
                 }, CancellationToken.None).ConfigureAwait(false);
         }
     }

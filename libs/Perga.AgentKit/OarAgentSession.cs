@@ -33,6 +33,7 @@ public sealed class OarAgentSession : IAgentSession
     private readonly JsonRpcStdioConnection _rpc;
     private readonly Action<IAgentSession>? _onDispose;
     private readonly bool _configureWorker;
+    private readonly SemaphoreSlim _shutdownLock = new(1, 1);
     private readonly SemaphoreSlim _turnLock = new(1, 1);
     private readonly object _idleUsageLock = new();
     private Action<IdleContextUsage>? _idleUsageHandler;
@@ -78,9 +79,9 @@ public sealed class OarAgentSession : IAgentSession
         string? executableOverride,
         TimeSpan handshakeTimeout,
         Action<IAgentSession>? onDispose,
-        CancellationToken ct)
+        CancellationToken ct, Action<System.Diagnostics.Process>? killProcess = null)
     {
-        var session = new OarAgentSession(StdioSubprocess.Start(invocation), spec.ResumeNativeThreadId, spec.ConfigureWorker, onDispose);
+        var session = new OarAgentSession(StdioSubprocess.Start(invocation, killProcess), spec.ResumeNativeThreadId, spec.ConfigureWorker, onDispose);
         try
         {
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -88,11 +89,22 @@ public sealed class OarAgentSession : IAgentSession
             await session.InitializeSessionAsync(spec, oarRuntimeId, executableOverride, cts.Token).ConfigureAwait(false);
             return session;
         }
-        catch
+        catch (Exception error)
         {
-            await session.DisposeAsync().ConfigureAwait(false);
+            await session.ShutdownAfterFailedOpenAsync(error).ConfigureAwait(false);
             throw;
         }
+    }
+
+    internal async Task ShutdownAfterFailedOpenAsync(Exception openError)
+    {
+        try { await DisposeAsync().ConfigureAwait(false); }
+        catch (Exception cleanupError)
+        {
+            throw new ProviderOpenShutdownUnconfirmedException(this, new AggregateException(openError, cleanupError));
+        }
+        if (!ShutdownConfirmed)
+            throw new ProviderOpenShutdownUnconfirmedException(this, openError);
     }
 
     public async ValueTask<bool> ResolveNativeCompactSupportAsync(CancellationToken ct)
@@ -310,21 +322,30 @@ public sealed class OarAgentSession : IAgentSession
 
     public async ValueTask DisposeAsync()
     {
-        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
-
-        lock (_idleUsageLock) { _idleUsageHandler = null; _pendingIdleUsage = null; }
-        _onDispose?.Invoke(this);
-        Interlocked.Exchange(ref _currentTurn, null)?.CompleteQuietly();
-
+        await _shutdownLock.WaitAsync().ConfigureAwait(false);
         try
         {
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(1));
-            await _rpc.SendRequestAsync("session/close", new { }, cts.Token).ConfigureAwait(false);
-        }
-        catch { }
+            if (ShutdownConfirmed) return;
+            var firstAttempt = Interlocked.Exchange(ref _disposed, 1) == 0;
+            if (firstAttempt)
+            {
+                lock (_idleUsageLock) { _idleUsageHandler = null; _pendingIdleUsage = null; }
+                Interlocked.Exchange(ref _currentTurn, null)?.CompleteQuietly();
+                try
+                {
+                    using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(1));
+                    await _rpc.SendRequestAsync("session/close", new { }, cts.Token).ConfigureAwait(false);
+                }
+                catch { /* Process shutdown remains authoritative. */ }
+            }
 
-        await _rpc.DisposeAsync().ConfigureAwait(false);
-        _turnLock.Dispose();
+            try { await _rpc.DisposeAsync().ConfigureAwait(false); }
+            finally
+            {
+                if (ShutdownConfirmed) _onDispose?.Invoke(this);
+            }
+        }
+        finally { _shutdownLock.Release(); }
     }
 
     private async Task InitializeSessionAsync(

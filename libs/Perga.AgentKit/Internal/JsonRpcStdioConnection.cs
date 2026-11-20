@@ -20,6 +20,7 @@ internal sealed class JsonRpcRemoteException : Exception
 internal sealed class JsonRpcStdioConnection : IAsyncDisposable
 {
     private readonly StdioSubprocess _process;
+    private readonly SemaphoreSlim _shutdownLock = new(1, 1);
     private readonly Action<string, JsonElement> _onNotification;
     private readonly Action<JsonElement, string, JsonElement> _onServerRequest;
     private readonly Action<Exception?> _onDisconnected;
@@ -153,25 +154,25 @@ internal sealed class JsonRpcStdioConnection : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        if (Interlocked.Exchange(ref _disposed, 1) != 0)
-        {
-            return;
-        }
-
-        await _pumpCts.CancelAsync().ConfigureAwait(false);
-        await _process.DisposeAsync().ConfigureAwait(false);
-
+        await _shutdownLock.WaitAsync().ConfigureAwait(false);
         try
         {
-            await _pumpTask.WaitAsync(TimeSpan.FromSeconds(1)).ConfigureAwait(false);
+            var firstAttempt = Interlocked.Exchange(ref _disposed, 1) == 0;
+            if (firstAttempt)
+                await _pumpCts.CancelAsync().ConfigureAwait(false);
+            try { await _process.DisposeAsync().ConfigureAwait(false); }
+            finally
+            {
+                if (firstAttempt)
+                {
+                    try { await _pumpTask.WaitAsync(TimeSpan.FromSeconds(1)).ConfigureAwait(false); }
+                    catch { /* Pump failure cannot prevent shutdown. */ }
+                    FailAllPending(new ObjectDisposedException(nameof(JsonRpcStdioConnection)));
+                    _pumpCts.Dispose();
+                }
+            }
         }
-        catch
-        {
-            // Ignore pump shutdown exception.
-        }
-
-        FailAllPending(new ObjectDisposedException(nameof(JsonRpcStdioConnection)));
-        _pumpCts.Dispose();
+        finally { _shutdownLock.Release(); }
     }
 
     private async Task PumpStdoutAsync()

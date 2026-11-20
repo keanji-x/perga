@@ -13,7 +13,8 @@ public enum KernelErrorCode
     IdempotencyKeyReused,
     IdempotencyKeyExhausted,
     WorkerTurnChanged,
-    SystemUpgradeLeadRequired
+    SystemUpgradeLeadRequired,
+    SessionRecoveryRequired
 }
 
 public sealed class KernelException : Exception
@@ -45,6 +46,9 @@ public sealed class KernelException : Exception
 
     public static KernelException PolicyDenied(string reason) =>
         new(KernelErrorCode.PolicyDenied, reason);
+
+    public static KernelException SessionRecoveryRequired(string message, Exception? inner = null) =>
+        new(KernelErrorCode.SessionRecoveryRequired, message, innerException: inner);
 
     public static KernelException PreconditionFailed(string message) =>
         new(KernelErrorCode.PreconditionFailed, message);

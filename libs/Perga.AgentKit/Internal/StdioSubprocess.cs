@@ -12,15 +12,19 @@ internal sealed class StdioSubprocess : IAsyncDisposable
     private static readonly Encoding Utf8NoBom = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
 
     private readonly Process _process;
+    private readonly Action<Process> _killProcess;
+    private readonly SemaphoreSlim _shutdownLock = new(1, 1);
     private readonly SemaphoreSlim _stdinLock = new(1, 1);
     private readonly ConcurrentQueue<string> _stderrTail = new();
     private readonly CancellationTokenSource _disposeCts = new();
     private readonly Task _stderrPumpTask;
     private int _disposed;
+    private bool _shutdownConfirmed;
 
-    private StdioSubprocess(Process process)
+    private StdioSubprocess(Process process, Action<Process>? killProcess)
     {
         _process = process;
+        _killProcess = killProcess ?? (static child => child.Kill(entireProcessTree: true));
         _stderrPumpTask = Task.Run(PumpStderrAsync);
     }
 
@@ -53,7 +57,7 @@ internal sealed class StdioSubprocess : IAsyncDisposable
         }
     }
 
-    public static StdioSubprocess Start(CommandInvocation invocation)
+    public static StdioSubprocess Start(CommandInvocation invocation, Action<Process>? killProcess = null)
     {
         ArgumentNullException.ThrowIfNull(invocation);
 
@@ -102,7 +106,7 @@ internal sealed class StdioSubprocess : IAsyncDisposable
                 ex);
         }
 
-        return new StdioSubprocess(process);
+        return new StdioSubprocess(process, killProcess);
     }
 
     public async Task WriteLineAsync(string line, CancellationToken ct)
@@ -166,80 +170,66 @@ internal sealed class StdioSubprocess : IAsyncDisposable
         }
     }
 
-    internal bool ShutdownConfirmed { get; private set; }
+    internal bool ShutdownConfirmed => Volatile.Read(ref _shutdownConfirmed);
 
     public async ValueTask DisposeAsync()
     {
-        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        await _shutdownLock.WaitAsync().ConfigureAwait(false);
+        try
         {
-            return;
-        }
+            if (ShutdownConfirmed) return;
+            var firstAttempt = Interlocked.Exchange(ref _disposed, 1) == 0;
+            if (firstAttempt)
+                await CloseInputAsync().ConfigureAwait(false);
 
+            if (firstAttempt)
+                await WaitForExitAsync(TimeSpan.FromMilliseconds(250)).ConfigureAwait(false);
+            if (!TryConfirmExit())
+            {
+                try { _killProcess(_process); }
+                catch (System.ComponentModel.Win32Exception) { /* A later attempt can retry the same process. */ }
+                catch (InvalidOperationException) { /* The process may have exited concurrently. */ }
+                await WaitForExitAsync(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
+            }
+
+            // Retain the original process handle until exit is observed. Reopening by PID
+            // could signal an unrelated process after the identifier has been recycled.
+            if (!TryConfirmExit()) return;
+            Volatile.Write(ref _shutdownConfirmed, true);
+            try
+            {
+                _process.StandardOutput.Dispose();
+                _process.StandardError.Dispose();
+            }
+            finally { _process.Dispose(); }
+        }
+        finally { _shutdownLock.Release(); }
+    }
+
+    private async Task CloseInputAsync()
+    {
         await _disposeCts.CancelAsync().ConfigureAwait(false);
-
-        try
-        {
-            _process.StandardInput.Close();
-        }
-        catch
-        {
-            // Ignore stdin close errors during shutdown.
-        }
-
-        try
-        {
-            if (!_process.HasExited)
-            {
-                using var graceCts = new CancellationTokenSource(TimeSpan.FromMilliseconds(250));
-                try
-                {
-                    await _process.WaitForExitAsync(graceCts.Token).ConfigureAwait(false);
-                }
-                catch (OperationCanceledException)
-                {
-                    // Proceed to force kill below.
-                }
-            }
-
-            if (!_process.HasExited)
-            {
-                _process.Kill(entireProcessTree: true);
-                using var killWaitCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
-                try
-                {
-                    await _process.WaitForExitAsync(killWaitCts.Token).ConfigureAwait(false);
-                }
-                catch
-                {
-                    // Best-effort wait after kill.
-                }
-            }
-        }
-        catch
-        {
-            // Process may have exited concurrently.
-        }
-
-        try
-        {
-            await _stderrPumpTask.WaitAsync(TimeSpan.FromMilliseconds(500)).ConfigureAwait(false);
-        }
-        catch
-        {
-            // Best-effort drain.
-        }
-
-        try
-        {
-            ShutdownConfirmed = _process.HasExited;
-        }
-        catch (InvalidOperationException)
-        {
-            ShutdownConfirmed = false;
-        }
-        _process.Dispose();
-        _stdinLock.Dispose();
+        _process.StandardInput.BaseStream.Dispose();
+        // Keep the read ends open while the bridge handles stdin EOF and shuts down its provider.
+        try { await _stderrPumpTask.WaitAsync(TimeSpan.FromMilliseconds(500)).ConfigureAwait(false); }
+        catch (TimeoutException) { /* Cancellation was requested. Keep the pipe open until exit. */ }
         _disposeCts.Dispose();
+    }
+
+    private async Task WaitForExitAsync(TimeSpan timeout)
+    {
+        using var deadline = new CancellationTokenSource(timeout);
+        try { await _process.WaitForExitAsync(deadline.Token).ConfigureAwait(false); }
+        catch (OperationCanceledException) when (deadline.IsCancellationRequested) { }
+        catch (InvalidOperationException) { /* No exit evidence from this wait. */ }
+        catch (System.ComponentModel.Win32Exception) { /* No exit evidence from this wait. */ }
+    }
+
+    private bool TryConfirmExit()
+    {
+        try { return _process.HasExited; }
+        catch (InvalidOperationException) { return false; }
+        catch (System.ComponentModel.Win32Exception) { return false; }
     }
 
     private async Task PumpStderrAsync()

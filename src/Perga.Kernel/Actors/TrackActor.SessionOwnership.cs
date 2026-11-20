@@ -32,8 +32,8 @@ public sealed partial class TrackActor
                 // Cleanup may already be disposing the late handle. Join it before retrying.
                 try { await pending.Cleanup.ConfigureAwait(false); }
                 catch when (pending.Cleanup.IsCompleted) { }
-                if (pending.Launch.IsCompletedSuccessfully)
-                    await ConfirmProviderShutdownAsync(sessionId, pending.Launch.Result, CancellationToken.None).ConfigureAwait(false);
+                if (await ReadPendingLaunchAgentAsync(pending.Launch, CancellationToken.None).ConfigureAwait(false) is { } agent)
+                    await ConfirmProviderShutdownAsync(sessionId, agent, CancellationToken.None).ConfigureAwait(false);
                 _pendingSessionLaunches.TryRemove(sessionId, out _);
                 _sessionShutdownPending.TryRemove(sessionId, out _);
             }
@@ -88,7 +88,7 @@ public sealed partial class TrackActor
             // The caller removes the pending entry only after installing the open handle.
             return agent;
         }
-        catch (OperationCanceledException)
+        catch (Exception error) when (error is OperationCanceledException or ProviderOpenShutdownUnconfirmedException)
         {
             _sessionShutdownPending.TryAdd(sessionId, 0);
             needsCleanup.TrySetResult(true);
@@ -104,10 +104,27 @@ public sealed partial class TrackActor
 
     private async Task DisposeLateLaunchAsync(string sessionId, Task<IAgentSession> launch)
     {
-        var agent = await launch.ConfigureAwait(false);
-        using var deadline = new CancellationTokenSource(_options.SessionStartupTimeout);
-        await ConfirmProviderShutdownAsync(sessionId, agent, deadline.Token).ConfigureAwait(false);
-        // The launch task remains owned even if disposal fails or shutdown is unconfirmed.
+        if (await ReadPendingLaunchAgentAsync(launch, CancellationToken.None).ConfigureAwait(false) is { } agent)
+            await ConfirmProviderShutdownAsync(sessionId, agent, CancellationToken.None).ConfigureAwait(false);
+
+        if (_actorShutdownCts.IsCancellationRequested) return;
+        await EnqueueAsync(async actor =>
+        {
+            if (!_pendingSessionLaunches.TryGetValue(sessionId, out var current) ||
+                !ReferenceEquals(current.Launch, launch) ||
+                !_pendingSessionLaunches.TryRemove(new(sessionId, current)))
+                return;
+            _sessionShutdownPending.TryRemove(sessionId, out _);
+            _mcpBridge.RevokeSession(sessionId);
+            await PokeSessionCoreAsync(sessionId, allowWorker: false).ConfigureAwait(false);
+        }, _actorShutdownCts.Token).ConfigureAwait(false);
+    }
+
+    private static async Task<IAgentSession?> ReadPendingLaunchAgentAsync(Task<IAgentSession> launch, CancellationToken ct)
+    {
+        try { return await launch.WaitAsync(ct).ConfigureAwait(false); }
+        catch (ProviderOpenShutdownUnconfirmedException error) { return error.Session; }
+        catch when (!ct.IsCancellationRequested && (launch.IsFaulted || launch.IsCanceled)) { return null; }
     }
 
     private sealed record SessionDisposal(IAgentSession Agent, Task Task);
@@ -131,9 +148,15 @@ public sealed partial class TrackActor
                 ObserveTaskFault(disposal);
             }
         }
-        await disposal.WaitAsync(ct).ConfigureAwait(false);
+        const string shutdownUnconfirmed = "The previous provider subprocess shutdown was not confirmed.";
+        try { await disposal.WaitAsync(ct).ConfigureAwait(false); }
+        catch (Exception error) when (!ct.IsCancellationRequested && (disposal.IsFaulted || disposal.IsCanceled))
+        {
+            if (!agent.ShutdownConfirmed)
+                throw KernelException.SessionRecoveryRequired(shutdownUnconfirmed, error);
+        }
         if (!agent.ShutdownConfirmed)
-            throw KernelException.PreconditionFailed("The previous provider subprocess shutdown was not confirmed.");
+            throw KernelException.SessionRecoveryRequired(shutdownUnconfirmed);
     }
 
 }

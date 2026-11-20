@@ -4,6 +4,7 @@ export type ConversationAction = Readonly<
   | { kind: 'readError'; message: string }
   | { kind: 'readonly'; reason: NonNullable<SessionItemsPageDto['readonlyReason']>; canReopen: boolean }
   | { kind: 'unknown'; detail: SessionItemsPageDto['unknownDetail'] }
+  | { kind: 'providerCleanup'; detail: NonNullable<SessionItemsPageDto['providerCleanup']> }
   | { kind: 'ask' }
   | { kind: 'sendFailed'; unconfirmed: boolean }
   | { kind: 'actionError'; message: string }
@@ -17,6 +18,7 @@ export function deriveConversationAction(input: Readonly<{
   canReopen: boolean;
   state: SessionItemsPageDto['state'] | null;
   unknownDetail: SessionItemsPageDto['unknownDetail'];
+  providerCleanup?: SessionItemsPageDto['providerCleanup'];
   hasAsks: boolean;
   localSend: 'idle' | 'sending' | 'failed';
   sendUnconfirmed: boolean;
@@ -26,6 +28,7 @@ export function deriveConversationAction(input: Readonly<{
   if (input.readError !== null) return { kind: 'readError', message: input.readError };
   if (input.readonlyReason !== null) return { kind: 'readonly', reason: input.readonlyReason, canReopen: input.canReopen };
   if (input.state === 'unknown') return { kind: 'unknown', detail: input.unknownDetail };
+  if (input.providerCleanup != null) return { kind: 'providerCleanup', detail: input.providerCleanup };
   if (input.hasAsks) return { kind: 'ask' };
   if (input.localSend === 'failed') return { kind: 'sendFailed', unconfirmed: input.sendUnconfirmed };
   if (input.actionError !== null) return { kind: 'actionError', message: input.actionError };
@@ -37,12 +40,13 @@ export function deriveConversationAction(input: Readonly<{
 export function conversationCommandEnabled(command: 'stop' | 'compact' | 'reconnect' | 'reset' | 'new',
   state: SessionItemsPageDto['state'] | null, readonlyReason: SessionItemsPageDto['readonlyReason'],
   detail: SessionItemsPageDto['unknownDetail'], recovering: boolean,
-  capabilities: Readonly<{ canStop: boolean; manualCompactSupported: boolean; canResetContext: boolean }>): boolean {
+  capabilities: Readonly<{ canStop: boolean; manualCompactSupported: boolean; canResetContext: boolean }>,
+  providerCleanup?: SessionItemsPageDto['providerCleanup']): boolean {
   if (command === 'new') return true;
   if (readonlyReason !== null || recovering) return false;
   if (command === 'stop') return capabilities.canStop;
   if (command === 'compact') return state === 'idle' && capabilities.manualCompactSupported;
-  if (command === 'reconnect') return state === 'unknown' && detail?.canReconnect === true;
+  if (command === 'reconnect') return state === 'unknown' ? detail?.canReconnect === true : providerCleanup?.canReconnect === true;
   return capabilities.canResetContext && (state === 'idle' || (state === 'unknown' && detail?.canResetContext === true));
 }
 

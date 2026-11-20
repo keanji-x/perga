@@ -6,7 +6,7 @@ import type { PlannerAttachment } from '../../../../core/api/generated/wire.ts';
 import {
   type SentPlannerInput, type TranscriptEntry
 } from '../../../../core/domain/conversation.ts';
-import { KeyedSendFailure, retryUnknownSend, SEND_FAILURES, SEND_RETRIES } from '../../../../core/domain/conversation-delivery.ts';
+import { isSessionRecoveryRequired, KeyedSendFailure, retryUnknownSend, SEND_FAILURES, SEND_RETRIES } from '../../../../core/domain/conversation-delivery.ts';
 import {
   outboxFacts,
   queueDisplayAccounting,
@@ -31,7 +31,7 @@ import { useConversationCommands, useConversationSendOps } from './public.tsx';
  */
 export function useConversationOutbox({
   cardId, transport, send, serverEntries, liveReplies, stalled,
-  queuesInput, queueIfBusy, pressed, target,
+  queuesInput, queueIfBusy, pressed, target, recoveryRequired,
 }: {
   cardId: string;
   transport: ApiTransportPort;
@@ -47,6 +47,7 @@ export function useConversationOutbox({
   queueIfBusy: boolean;
   /** A send of the conversation shown went out. */
   pressed: () => void;
+  recoveryRequired: () => void;
 }) {
   const registry = useConversationCommands();
   const { editOutbox, beginSend } = registry;
@@ -114,7 +115,11 @@ export function useConversationOutbox({
     }, (error: unknown) => {
       if (!current()) return;
       const failed = error instanceof KeyedSendFailure ? error : new KeyedSendFailure(error, 'unknown');
-      const message = failed.cause instanceof Error && failed.cause.message !== '' ? failed.cause.message : 'Could not send the message.';
+      const cause = failed.cause;
+      const needsRecovery = cause instanceof ApiError && isSessionRecoveryRequired(cause.failure);
+      if (needsRecovery && shownCardId.current === sentTo) recoveryRequired();
+      const message = needsRecovery ? '请等待会话清理完成，或恢复会话后重试。'
+        : cause instanceof Error && cause.message !== '' ? cause.message : 'Could not send the message.';
       /* `message` is shown only for an op that was not sent: an unknown op's footer says no more than that it is unconfirmed. */
       settle({ key, target, echo, fromComposer, phase: 'failed', delivery: failed.delivery, message });
     });

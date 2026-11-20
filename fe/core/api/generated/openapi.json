@@ -15329,7 +15329,7 @@
             }
           },
           "409": {
-            "description": "Session busy, conflicting request key, or changed Worker turn. Explicit stale steering returns worker_turn_changed when no matching receipt exists."
+            "description": "Session busy, conflicting request key, or changed Worker turn. Explicit stale steering returns worker_turn_changed when no matching receipt exists. session_recovery_required rejects a new input before admission while provider cleanup or recovery is required."
           }
         }
       }
@@ -16519,7 +16519,7 @@
     },
     "/api/v1/sessions/{sessionId}/recover": {
       "post": {
-        "summary": "Recover an unknown session or reset idle context",
+        "summary": "Recover a session with an unknown outcome or pending provider cleanup, or reset idle context",
         "parameters": [
           {
             "name": "sessionId",
@@ -16558,7 +16558,7 @@
             "description": "Session not found"
           },
           "409": {
-            "description": "Session state forbids recovery, recovery is busy, or provider recovery failed"
+            "description": "Session state forbids recovery, or session_recovery_required reports that recovery is busy or could not finish"
           }
         },
         "description": "reset_context atomically archives unresolved queued/dispatching/unknown messages as interrupted and drops pending/delivering wakes before an epoch_boundary. It clears scheduler slots and never automatically dispatches into the new epoch. Reconnect is unavailable for session_lost."
@@ -26761,6 +26761,15 @@
                 "type": "null"
               }
             ]
+          },
+          "providerCleanup": {
+            "type": ["object", "null"],
+            "description": "Provider ownership is awaiting cleanup or recovery for an idle conversation. The durable session and turn states are unchanged.",
+            "required": ["canReconnect", "recovering"],
+            "properties": {
+              "canReconnect": { "type": "boolean" },
+              "recovering": { "type": "boolean" }
+            }
           }
         }
       },

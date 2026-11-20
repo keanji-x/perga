@@ -144,8 +144,9 @@ public sealed class AgentRuntime : IAgentRuntime
         if (Volatile.Read(ref _disposed) != 0)
         {
             _activeSessions.TryRemove(session, out _);
-            await session.DisposeAsync().ConfigureAwait(false);
-            throw new ObjectDisposedException(nameof(AgentRuntime));
+            var error = new ObjectDisposedException(nameof(AgentRuntime));
+            await session.ShutdownAfterFailedOpenAsync(error).ConfigureAwait(false);
+            throw error;
         }
 
         return session;

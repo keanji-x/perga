@@ -90,15 +90,15 @@ public sealed class SessionRecoveryTests
         await kernel.AcceptMessageAsync(id, new("unknown", "unknown"), default);
         await kernel.WaitForTrackIdleAsync(track);
         var before = await kernel.GetSessionItemsAsync(id);
-        host.AgentRuntime.ShutdownConfirmed = false;
+        host.AgentRuntime.ConfirmShutdownAttempt = attempt => attempt >= 2;
         using var failed = await host.Client.PostAsJsonAsync($"/api/v1/sessions/{id}/recover", new { mode = "reset_context" });
         Assert.Equal(HttpStatusCode.Conflict, failed.StatusCode);
+        Assert.Equal("session_recovery_required", (await failed.Content.ReadFromJsonAsync<Http.ApiErrorResponse>())?.Code);
         var after = await kernel.GetSessionItemsAsync(id);
         Assert.Equal("unknown", after.State);
         Assert.Equal(before.Session.Epoch, after.Session.Epoch);
         Assert.Equal(before.Session.NativeThreadId, after.Session.NativeThreadId);
         Assert.DoesNotContain(after.Items, item => item.Kind == "epoch_boundary");
-        host.AgentRuntime.ShutdownConfirmed = true;
         using var retry = await host.Client.PostAsJsonAsync($"/api/v1/sessions/{id}/recover", new { mode = "reset_context" });
         retry.EnsureSuccessStatusCode();
         Assert.Null((await kernel.GetSessionItemsAsync(id)).Session.NativeThreadId);

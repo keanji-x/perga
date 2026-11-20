@@ -466,6 +466,7 @@ export const sessionItemsPageDtoSchema = z.object({
   lastTurn: sessionTurnDtoSchema.nullish().transform(value => value ?? null),
   unknownDetail: z.object({ reason: z.string(), detail: z.string(), canReconnect: z.boolean(),
     canResetContext: z.boolean(), recovering: z.boolean(), lastError: z.string().nullable() }).nullable(),
+  providerCleanup: z.object({ canReconnect: z.boolean(), recovering: z.boolean() }).nullish(),
   queuedMessages: z.array(z.object({ id: z.string(), text: z.string(), queuedAtMs: z.number(),
     state: z.enum(['waiting', 'steering', 'sending', 'processing', 'unconfirmed']) })).optional(),
   canSteer: z.boolean().optional(),
