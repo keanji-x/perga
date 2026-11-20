@@ -183,7 +183,7 @@ def handle_prompt(req_id, params):
                     "name": "write_file",
                     "rawInput": {"path": "README.md"}
                 },
-                "options": [
+                "options": json.loads(prompt_text.split("OPTIONS:", 1)[1]) if "OPTIONS:" in prompt_text else [
                     {"optionId": "opt_allow_once", "kind": "allow_once", "name": "Allow once"},
                     {"optionId": "opt_allow_always", "kind": "allow_always", "name": "Always allow"},
                     {"optionId": "opt_reject_once", "kind": "reject_once", "name": "Reject once"}
@@ -200,7 +200,7 @@ def handle_prompt(req_id, params):
                 "sessionId": state["session_id"],
                 "update": {
                     "sessionUpdate": "agent_message_chunk",
-                    "content": {"type": "text", "text": f"acp-selected:{selected}"}
+                    "content": {"type": "text", "text": f"acp-selected:{selected}" if selected != "none" else f"acp-outcome:{(res.get('outcome') or {}).get('outcome')}"}
                 }
             }
         })

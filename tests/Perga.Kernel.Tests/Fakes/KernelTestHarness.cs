@@ -1406,15 +1406,14 @@ internal sealed class ScriptableFakeAgentSession : IAgentSession
         return Task.CompletedTask;
     }
 
-    public Task RespondApprovalAsync(string requestId, bool approved, string? reason = null, CancellationToken ct = default) =>
-        RespondApprovalAsync(requestId, approved, selectedOptionId: null, reason, ct);
-
-    public Task RespondApprovalAsync(string requestId, bool approved, string? selectedOptionId, string? reason = null, CancellationToken ct = default)
-    {
-        Approvals.Enqueue((requestId, approved, reason));
-        DetailedApprovals.Enqueue((requestId, approved, selectedOptionId, reason));
-        return Task.CompletedTask;
-    }
+    public Func<Task>? TryClaimApprovalResponse(
+        string requestId, bool approved, string? selectedOptionId, string? reason, CancellationToken ct) =>
+        () =>
+        {
+            Approvals.Enqueue((requestId, approved, reason));
+            DetailedApprovals.Enqueue((requestId, approved, selectedOptionId, reason));
+            return Task.CompletedTask;
+        };
 
     public bool SupportsModelSwitch { get; set; }
     public ConcurrentQueue<string?> ModelSwitches { get; } = new();

@@ -521,9 +521,20 @@ public sealed partial class PolicyVm : IPolicyVm
             throw new InvalidOperationException("GuardDecision.AskHuman does not support options; use approveLabel and denyLabel.");
 
         return new GuardDecision.AskHuman(
-            ReadRequiredNonEmptyString(obj, "title", $"{hookName}.result.title"),
-            obj.Get("approveLabel").IsUndefined() ? "Approve" : ReadRequiredNonEmptyString(obj, "approveLabel", $"{hookName}.result.approveLabel"),
-            obj.Get("denyLabel").IsUndefined() ? "Deny" : ReadRequiredNonEmptyString(obj, "denyLabel", $"{hookName}.result.denyLabel"));
+            ReadAskHumanString(obj, "title", $"{hookName}.result.title"),
+            obj.Get("approveLabel").IsUndefined() ? "Approve" : ReadAskHumanString(obj, "approveLabel", $"{hookName}.result.approveLabel"),
+            obj.Get("denyLabel").IsUndefined() ? "Deny" : ReadAskHumanString(obj, "denyLabel", $"{hookName}.result.denyLabel"));
+    }
+
+    private static string ReadAskHumanString(ObjectInstance obj, string prop, string path)
+    {
+        var value = obj.Get(prop);
+        // ECMAScript trim whitespace includes FEFF and excludes .NET's NEL (0085).
+        if (!value.IsString() || value.AsString().All(c =>
+            c is '\u0009' or '\u000A' or '\u000B' or '\u000C' or '\u000D' or '\u0020' or '\u00A0' or '\u1680' or
+                >= '\u2000' and <= '\u200A' or '\u2028' or '\u2029' or '\u202F' or '\u205F' or '\u3000' or '\uFEFF'))
+            throw new InvalidOperationException($"{path} must be a non-blank string.");
+        return value.AsString();
     }
 
     private static string? ExtractOptionalStringResult(JsValue value, string hookName)

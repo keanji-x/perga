@@ -11,6 +11,18 @@ namespace Perga.Kernel.Tests;
 public sealed class PolicyGuardMailTerminalScheduleBootTests
 {
     [Fact]
+    public async Task AskUserRejectsMultiSelectBeforePersistingAnAsk()
+    {
+        await using var ctx = new KernelTestContext();
+        var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
+        var error = await Assert.ThrowsAsync<KernelException>(() => ctx.Kernel.AskUserAsync(
+            snapshot.Track.Id, snapshot.Track.LeadSessionId,
+            [new AskQuestionDto("Choose", ["One", "Two"], IsMultiSelect: true)]));
+        Assert.Equal(KernelErrorCode.InvalidArgument, error.Code);
+        Assert.Empty((await ctx.Kernel.GetTrackAggregateAsync(snapshot.Track.Id)).OpenAsks);
+    }
+
+    [Fact]
     public async Task GuardMcpToolCall_EnforcesAllowDenyAndAskHumanSuspension()
     {
         await using var ctx = new KernelTestContext();

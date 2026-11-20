@@ -12,8 +12,8 @@ public sealed partial class AcpAgentSession : IAgentSession
 {
     private sealed record PendingAcpPermission(
         JsonElement RawId,
-        string AllowOptionId,
-        string RejectOptionId,
+        string? AllowOptionId,
+        string? RejectOptionId,
         IReadOnlySet<string> ValidOptionIds);
 
     private sealed record CompletedContextPrompt(long Id, long? Revision);
@@ -413,19 +413,20 @@ public sealed partial class AcpAgentSession : IAgentSession
         string requestId, bool approved, string? selectedOptionId, string? reason, CancellationToken ct)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(requestId);
-        if (Volatile.Read(ref _disposed) != 0 || !_pendingPermissions.TryRemove(requestId, out var pending))
+        if (Volatile.Read(ref _disposed) != 0 || !_pendingPermissions.TryGetValue(requestId, out var pending))
             return null;
-
-        var optionId = !string.IsNullOrWhiteSpace(selectedOptionId) && pending.ValidOptionIds.Contains(selectedOptionId)
-            ? selectedOptionId
-            : approved ? pending.AllowOptionId : pending.RejectOptionId;
+        if (selectedOptionId is not null && !pending.ValidOptionIds.Contains(selectedOptionId))
+            throw new ArgumentException("The selected option was not advertised by the provider.", nameof(selectedOptionId));
+        var optionId = selectedOptionId ?? (approved ? pending.AllowOptionId : pending.RejectOptionId);
+        if (approved && optionId is null)
+            throw new InvalidOperationException("The provider advertised no approval option.");
+        if (!_pendingPermissions.TryRemove(requestId, out pending))
+            return null;
         var resultPayload = new Dictionary<string, object?>
         {
-            ["outcome"] = new Dictionary<string, object?>
-            {
-                ["outcome"] = "selected",
-                ["optionId"] = optionId
-            },
+            ["outcome"] = optionId is null
+                ? new Dictionary<string, object?> { ["outcome"] = "cancelled" }
+                : new Dictionary<string, object?> { ["outcome"] = "selected", ["optionId"] = optionId },
             ["approved"] = approved,
             ["reason"] = reason
         };
@@ -1084,12 +1085,12 @@ public sealed partial class AcpAgentSession : IAgentSession
             IsRetryable: false));
     }
 
-    private static (IReadOnlyList<ApprovalOption> Options, string AllowOptionId, string RejectOptionId) ExtractPermissionOptions(JsonElement parameters)
+    private static (IReadOnlyList<ApprovalOption> Options, string? AllowOptionId, string? RejectOptionId) ExtractPermissionOptions(JsonElement parameters)
     {
         var options = new List<ApprovalOption>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
-        var allowId = "allow_once";
-        var rejectId = "reject_once";
+        string? allowId = null;
+        string? rejectId = null;
         var foundAllow = false;
         var foundReject = false;
 
@@ -1110,15 +1111,10 @@ public sealed partial class AcpAgentSession : IAgentSession
                     continue;
                 }
 
-                var kind = TryGetString(opt, "kind") ?? optionId;
+                var kind = TryGetString(opt, "kind") ?? string.Empty;
                 var label = TryGetString(opt, "name") ?? TryGetString(opt, "label") ?? optionId;
-                var isReject = kind.StartsWith("reject", StringComparison.OrdinalIgnoreCase) ||
-                               kind.StartsWith("deny", StringComparison.OrdinalIgnoreCase) ||
-                               optionId.Contains("reject", StringComparison.OrdinalIgnoreCase) ||
-                               optionId.Contains("deny", StringComparison.OrdinalIgnoreCase);
-                var isAllow = !isReject &&
-                              (kind.StartsWith("allow", StringComparison.OrdinalIgnoreCase) ||
-                               optionId.Contains("allow", StringComparison.OrdinalIgnoreCase));
+                var isReject = kind.StartsWith("reject", StringComparison.OrdinalIgnoreCase);
+                var isAllow = kind.StartsWith("allow", StringComparison.OrdinalIgnoreCase);
 
                 options.Add(new ApprovalOption(optionId, label, isAllow));
 

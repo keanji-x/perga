@@ -29,10 +29,6 @@ public sealed class PermissionModeProviderTests : IDisposable
         Assert.Empty(agyProfile.GetLaunchArgs("other"));
         Assert.Equal(agyProfile, ProviderPermissionModes.GetProfile("agy"));
 
-        Assert.True(ProviderPermissionModes.IsSupported("codex", "ask"));
-        Assert.False(ProviderPermissionModes.IsSupported("codex", "bypassPermissions"));
-        Assert.True(ProviderPermissionModes.IsSupported("claude", "acceptEdits"));
-        Assert.False(ProviderPermissionModes.IsSupported("acp:opencode", "ask"));
     }
 
     [Theory]

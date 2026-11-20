@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { ActivityItem, AskQuestion } from './activity.js';
 import {
   answerAskFailureText, answerAskOperation, ASK_ANSWER_MAX_CHARS, askAnswers, askDraftsFor, clampAskAnswer,
-  HOLD_ASK_GONE_TEXT, openAsksOf, takesOptionsOnly,
+  openAsksOf, takesOptionsOnly,
 } from './ask.js';
 import { ApiError } from './failure-class.js';
 
@@ -24,24 +24,19 @@ describe('openAsksOf', () => {
     ]);
   });
 
-  it('puts every paused request before the wake asks, oldest first within each (#2348)', () => {
+  it('orders asks by age regardless of stored delivery', () => {
     const ask = (askId: number, delivery: 'wake' | 'hold'): ActivityItem => ({
       source: 'ask', key: `ask:${askId}`, text: 'Why?', atMs: askId, askId, questions: [WHY], delivery,
     });
     expect(openAsksOf([ask(40, 'hold'), ask(30, 'wake'), ask(20, 'hold'), ask(10, 'wake')]).map((open) => open.askId))
-      .toEqual([20, 40, 10, 30]);
+      .toEqual([10, 20, 30, 40]);
   });
 });
 
 describe('askAnswers', () => {
   it('starts on the recommended option, and a question without options on nothing', () => {
-    expect(askDraftsFor([BRANCH, WHY], 'wake')).toEqual([{ choice: 0, own: '' }, { choice: null, own: '' }]);
-    expect(askAnswers([BRANCH], askDraftsFor([BRANCH], 'wake'))).toEqual([{ option: 0 }]);
-  });
-
-  it('starts a paused request\'s approval on no option at all (#2348)', () => {
-    expect(askDraftsFor([BRANCH], 'hold')).toEqual([{ choice: null, own: '' }]);
-    expect(askAnswers([BRANCH], askDraftsFor([BRANCH], 'hold'))).toBeNull();
+    expect(askDraftsFor([BRANCH, WHY])).toEqual([{ choice: 0, own: '' }, { choice: null, own: '' }]);
+    expect(askAnswers([BRANCH], askDraftsFor([BRANCH]))).toEqual([{ option: 0 }]);
   });
 
   it('sends the picked option as its index, not its label', () => {
@@ -61,7 +56,7 @@ describe('askAnswers', () => {
   });
 
   it('has no answers while a free-text question is blank', () => {
-    expect(askAnswers([BRANCH, WHY], askDraftsFor([BRANCH, WHY], 'wake'))).toBeNull();
+    expect(askAnswers([BRANCH, WHY], askDraftsFor([BRANCH, WHY]))).toBeNull();
     expect(askAnswers([BRANCH, WHY], [{ choice: 0, own: '' }, { choice: null, own: '   ' }])).toBeNull();
   });
 
@@ -101,24 +96,21 @@ describe('clampAskAnswer', () => {
 describe('answerAskFailureText', () => {
   const http = (status: number) => new ApiError({ kind: 'http', status, code: 'error', message: 'server words' });
 
-  it('settles a wake ask on 409 and says that a paused request went away for a hold ask (#2348)', () => {
-    expect(answerAskFailureText('wake')(http(409))).toBeNull();
-    expect(answerAskFailureText('hold')(http(409))).toBe(HOLD_ASK_GONE_TEXT);
+  it('settles a durable ask on 409', () => {
+    expect(answerAskFailureText()(http(409))).toBeNull();
   });
 
-  it('reads every other failure alike for both deliveries', () => {
-    for (const delivery of ['wake', 'hold'] as const) {
-      const read = answerAskFailureText(delivery);
-      expect(read(http(400))).toBe('server words');
-      expect(read(new ApiError({ kind: 'transport', message: 'dropped' }))).toBe('Sending your answer is unconfirmed.');
-    }
+  it('reports refused and unconfirmed writes', () => {
+    const read = answerAskFailureText();
+    expect(read(http(400))).toBe('server words');
+    expect(read(new ApiError({ kind: 'transport', message: 'dropped' }))).toBe('Sending your answer is unconfirmed.');
   });
 });
 
 describe('takesOptionsOnly', () => {
-  it('holds a paused request (#2348) and an ask with an action (#2410) to their options, and nothing else', () => {
+  it('requires explicit choices only for lifecycle actions', () => {
     expect(takesOptionsOnly({ askId: 1, questions: [BRANCH], delivery: 'wake' })).toBe(false);
-    expect(takesOptionsOnly({ askId: 1, questions: [BRANCH], delivery: 'hold' })).toBe(true);
+    expect(takesOptionsOnly({ askId: 1, questions: [BRANCH], delivery: 'hold' })).toBe(false);
     expect(takesOptionsOnly({ askId: 1, questions: [BRANCH], delivery: 'wake', action: { kind: 'reopen_track', closed_at: 42 } }))
       .toBe(true);
   });

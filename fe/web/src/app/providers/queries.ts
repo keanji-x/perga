@@ -72,7 +72,7 @@ import {
   type ModelCatalogScope, type ModelSelection, type ModelSelectionResult,
   type PlannerQueueWriteOutcome, type PlannerQueueEditOutcome, type PendingQueueEntry, type PlannerInputMutation,
 } from '../../../../core/domain/conversation.ts';
-import { setPlannerPermissionModeOperation } from '../../../../core/domain/planner-permission-mode.ts';
+import { setPlannerPermissionModeOperation, type SetPlannerPermissionModeResponse } from '../../../../core/domain/planner-permission-mode.ts';
 import { sendWorkerMessageOperation, updateWorkerSettingsOperation } from '../../../../core/domain/worker-session.ts';
 import { recoverConversationOperation, abandonConversationOperation, restartPlannerOperation, type RunRecovery } from '../../../../core/domain/conversation-restart.ts';
 import {
@@ -82,7 +82,7 @@ import { useState } from '../../ui/state/public.ts';
 import { useCommittedCallback } from '../../ui/state/committed-callback.ts';
 import { WEB_COMPAT_VERSION, type ServerVersionInfo } from './public.tsx';
 import type {
-  AskAnswer, PlannerPermissionMode, SetPlannerPermissionModeResponse, UploadAttachmentResponse,
+  AskAnswer, PlannerPermissionMode, UploadAttachmentResponse,
 } from '../../../../core/api/generated/wire.ts';
 import type { ConversationRegistry } from '../conversations/registry-model.ts';
 import { cancelThenInvalidate } from '../events/query-refresh.ts';
@@ -204,7 +204,7 @@ export function usePlannerMutations(transport: ApiTransportPort, cardId: string,
           // Cancellation reverts a pending GET synchronously, before the ACK is published.
           void cancelThenInvalidate(client, queryKeys.plannerRun(cardId));
           client.setQueryData<ConversationRun>(key,
-            current => current === undefined ? current : { ...current, session: { ...current.session, permissionMode: result.permission_mode } });
+            current => current === undefined ? current : { ...current, session: { ...current.session, permissionMode: result.permissionMode } });
         } else {
           void cancelThenInvalidate(client, queryKeys.plannerRun(cardId));
         }

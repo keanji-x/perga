@@ -545,20 +545,21 @@ type SettingOption = Readonly<{ label: string; description: string; tone?: Setti
 const PERMISSION_NOTE = 'Applies from the next turn.';
 
 /** A session's approval setting: renders backend-declared modes only. */
-export function PermissionModePill({ mode, options, onChange, isDisabled = false, unavailableMode, placement = 'above' }: Readonly<{
+export function PermissionModePill({ mode, options, onChange, isDisabled = false, unavailableMode, unavailableReason, placement = 'above' }: Readonly<{
   /** What the session has stored (or selected in draft). */
   mode: string;
   options: readonly PermissionModeOptionDto[];
   onChange: (mode: string) => void;
   isDisabled?: boolean;
   unavailableMode?: string;
+  unavailableReason?: string;
   placement?: 'above' | 'below';
 }>) {
   if (options.length === 0) return null;
   const optionMap: Readonly<Record<string, SettingOption>> = Object.fromEntries(options.map((opt) => [
       opt.id,
-      { label: opt.label, description: opt.id === unavailableMode
-        ? 'Restoring approval requests requires owner authorization over HTTPS.' : opt.description,
+      { label: opt.label, description: opt.id === unavailableMode && unavailableReason !== undefined
+        ? unavailableReason : opt.description,
       ...(opt.tone === 'neutral' ? {} : { tone: opt.tone }) },
     ]));
   const effectiveMode = Object.prototype.hasOwnProperty.call(optionMap, mode)

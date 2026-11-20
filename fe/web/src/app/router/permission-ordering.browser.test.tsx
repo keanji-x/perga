@@ -7,6 +7,7 @@ import { page } from 'vitest/browser';
 import type { ApiTransportResponse } from '../../../../core/api/types.ts';
 import { renderSessionFixture } from './conversation-session-fixture.tsx';
 import { sessionInput, sessionReply, sessionTurn } from './conversation-session-data.ts';
+import { fixtureSession } from './session-contract-fixture.ts';
 
 afterEach(() => { cleanup(); document.getElementById('root')?.remove(); });
 
@@ -37,7 +38,7 @@ it.each([false, true])('orders permission ACK before a browser send, without wai
     await field.fill('Send after permission');
     await page.getByRole('button', { name: 'Send', exact: true }).click();
     expect(view.requests.filter(request => request.method === 'POST')).toHaveLength(0);
-    await act(async () => { answer(sessionReply({ card_id: 'daily-planner', permission_mode: 'full' })); await put; });
+    await act(async () => { answer(sessionReply(fixtureSession('daily-planner', 'daily', { permissionMode: 'full' }))); await put; });
     await expect.element(page.getByRole('button', { name: 'Approvals: Full' })).toBeVisible();
     await expect.poll(() => view.requests.filter(request => request.method === 'POST').length).toBe(1);
     expect(view.requests.find(request => request.method === 'POST')?.body).toMatchObject({ content: 'Send after permission', ...(running ? { queueIfBusy: true } : {}) });
@@ -165,7 +166,7 @@ it('keeps three generations of A B A permission writes ahead of a queued browser
     await expect.element(page.getByText('Sending…', { exact: true })).toBeVisible();
     await expect.element(page.getByRole('combobox', { name: 'Message', exact: true })).toHaveTextContent('');
     expect(view.requests.filter(request => request.method === 'POST')).toHaveLength(0);
-    await act(async () => { answers[2](sessionReply({ card_id: 'daily-planner', permission_mode: 'full' })); await Promise.resolve(); });
+    await act(async () => { answers[2](sessionReply(fixtureSession('daily-planner', 'daily', { permissionMode: 'full' }))); await Promise.resolve(); });
     await expect.element(page.getByRole('button', { name: 'Send', exact: true })).toBeEnabled();
   } finally { view.client.clear(); }
 });
@@ -190,7 +191,7 @@ it('keeps a newer GET permission visible when an old A B A PUT answers', async (
     holdReads = true;
     // Hold reconciliation so an incorrect ACK cannot be concealed by a following GET.
     view.sessions[0].permissionMode = 'never';
-    await act(async () => { answer(sessionReply({ card_id: 'daily-planner', permission_mode: 'full' })); await put; });
+    await act(async () => { answer(sessionReply(fixtureSession('daily-planner', 'daily', { permissionMode: 'full' }))); await put; });
     expect(page.getByRole('button', { name: 'Approvals: Never' }).elements()).toHaveLength(1);
   } finally { view.client.clear(); }
 });
@@ -212,10 +213,10 @@ it('serializes A B A writes and publishes only the newest permission ACK', async
     await page.getByRole('menuitem', { name: /^Never/ }).click();
     expect(answers).toHaveLength(1);
     holdReads = true;
-    await act(async () => { answers[0](sessionReply({ card_id: 'daily-planner', permission_mode: 'full' })); await Promise.resolve(); });
+    await act(async () => { answers[0](sessionReply(fixtureSession('daily-planner', 'daily', { permissionMode: 'full' }))); await Promise.resolve(); });
     await expect.poll(() => answers.length).toBe(2);
     await expect.element(page.getByRole('button', { name: 'Approvals: Ask' })).toBeVisible();
-    await act(async () => { answers[1](sessionReply({ card_id: 'daily-planner', permission_mode: 'never' })); await Promise.resolve(); });
+    await act(async () => { answers[1](sessionReply(fixtureSession('daily-planner', 'daily', { permissionMode: 'never' }))); await Promise.resolve(); });
     await expect.element(page.getByRole('button', { name: 'Approvals: Never' })).toBeVisible();
   } finally { view.client.clear(); }
 });

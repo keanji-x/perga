@@ -1068,6 +1068,41 @@ public sealed class AcpProviderTests : IDisposable
         Assert.Equal($"direct-http:{mcpServer.EndpointUrl}", directText);
     }
 
+    [Theory]
+    [InlineData("[{\"optionId\":\"reject_named\",\"kind\":\"allow_once\"},{\"optionId\":\"allow_named\",\"kind\":\"reject_once\"}]", true, "acp-selected:reject_named")]
+    [InlineData("[{\"optionId\":\"allow_named\",\"kind\":\"reject_once\"}]", false, "acp-selected:allow_named")]
+    [InlineData("[{\"optionId\":\"opaque\",\"kind\":\"allow_always\"}]", false, "acp-outcome:cancelled")]
+    [InlineData("[]", false, "acp-outcome:cancelled")]
+    [InlineData("[{\"optionId\":\"allow_named\",\"kind\":\"unknown\"}]", false, "acp-outcome:cancelled")]
+    public async Task PermissionOptionsUseAdvertisedKindsAndNeverInventIds(string options, bool approved, string expected)
+    {
+        await using var runtime = new AgentRuntime();
+        await using var session = await runtime.OpenSessionAsync(new HarnessLaunchSpec(
+            Provider: $"acp:{_fixture.MockAcpPath}", Model: null, Cwd: _fixture.WorkspaceDir,
+            ResumeNativeThreadId: null, SystemPrompt: null, McpServers: new Dictionary<string, McpServerConfig>()), CancellationToken.None);
+        var events = new List<UnifiedAgentEvent>();
+        await foreach (var evt in session.StreamTurnAsync(new TurnInput("REQUIRE_PERMISSION OPTIONS:" + options, "permission_kinds"), CancellationToken.None))
+        {
+            events.Add(evt);
+            if (evt is UnifiedAgentEvent.ApprovalRequested request)
+            {
+                using var advertised = JsonDocument.Parse(options);
+                foreach (var option in request.Options ?? [])
+                {
+                    var kind = advertised.RootElement.EnumerateArray().Single(item => item.GetProperty("optionId").GetString() == option.OptionId).GetProperty("kind").GetString()!;
+                    Assert.Equal(kind.StartsWith("allow", StringComparison.OrdinalIgnoreCase), option.IsApproval);
+                }
+                foreach (var invalid in new[] { "missing", "", " " })
+                    Assert.Throws<ArgumentException>(() => session.TryClaimApprovalResponse(request.RequestId, approved, invalid, null, CancellationToken.None));
+                if (request.Options?.Any(option => option.IsApproval) != true)
+                    Assert.Throws<InvalidOperationException>(() => session.TryClaimApprovalResponse(request.RequestId, true, null, null, CancellationToken.None));
+                await session.RespondApprovalAsync(request.RequestId, approved, ct: CancellationToken.None);
+                Assert.Null(session.TryClaimApprovalResponse(request.RequestId, approved, null, null, CancellationToken.None));
+            }
+        }
+        Assert.Contains(events.OfType<UnifiedAgentEvent.TextDelta>(), delta => delta.Delta == expected);
+    }
+
     [Fact]
     public async Task AcpGenericExecutableSurface_PermissionRequestCancelAndRpcError()
     {

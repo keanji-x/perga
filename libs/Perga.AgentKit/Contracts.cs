@@ -160,20 +160,21 @@ public interface IAgentSession : IAsyncDisposable
 
     IAsyncEnumerable<UnifiedAgentEvent> StreamTurnAsync(TurnInput input, CancellationToken ct);
     Task CancelTurnAsync(CancellationToken ct);
-    Task RespondApprovalAsync(string requestId, bool approved, string? reason = null, CancellationToken ct = default);
+    Task RespondApprovalAsync(string requestId, bool approved, string? reason = null, CancellationToken ct = default) =>
+        RespondApprovalAsync(requestId, approved, selectedOptionId: null, reason, ct);
     Task RespondApprovalAsync(
         string requestId,
         bool approved,
         string? selectedOptionId,
         string? reason = null,
         CancellationToken ct = default) =>
-        RespondApprovalAsync(requestId, approved, reason, ct);
+        (TryClaimApprovalResponse(requestId, approved, selectedOptionId, reason, ct)
+            ?? throw new InvalidOperationException($"No pending approval request with id '{requestId}'."))();
     // Sessions with a pending request registry claim the response in memory here.
     // A null result means that the request already ended.
     // Invoke the returned sender at most once, outside the execution lock.
     Func<Task>? TryClaimApprovalResponse(
-        string requestId, bool approved, string? selectedOptionId, string? reason, CancellationToken ct) =>
-        () => RespondApprovalAsync(requestId, approved, selectedOptionId, reason, ct);
+        string requestId, bool approved, string? selectedOptionId, string? reason, CancellationToken ct);
     SessionConfigurationCapabilities ConfigurationCapabilities { get; }
     ConfirmedConfiguration? ConfigurationState { get; }
     Task<SessionConfigurationOutcome> ConfigureAsync(SessionConfiguration configuration, CancellationToken ct = default);

@@ -3,7 +3,7 @@
 
 import { useRef } from 'react';
 import { Button } from '@astryxdesign/core/Button';
-import { ChatComposerDrawer } from '@astryxdesign/core/Chat';
+import { PendingInputDrawer } from './pending-input-drawer.tsx';
 
 import {
   approvalDecisionFailureText, type PendingApproval,
@@ -19,53 +19,11 @@ export type ApprovalDrawerProps = Readonly<{
 }>;
 
 export function ApprovalDrawer({ approvals, onDecide }: ApprovalDrawerProps) {
-  const [settled, setSettled] = useState<ReadonlySet<string>>(() => new Set());
-  const [selected, setSelected] = useState<string | null>(null);
-  const [queueOpen, setQueueOpen] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const open = approvals.filter((approval) => !settled.has(approval.id));
-  const current = open.find((approval) => approval.id === selected) ?? open[0];
-  if (current === undefined) return null;
-
-  return <ChatComposerDrawer count={open.length} label="Approval" className={styles.drawer}>
-    <div className={styles.asks} data-nc-asks="">
-      <ApprovalForm
-        key={current.id}
-        approval={current}
-        onDecide={onDecide}
-        onBusy={setBusy}
-        onSettled={() => {
-          setSettled((previous) => new Set(previous).add(current.id));
-          setSelected(null);
-          setQueueOpen(false);
-        }}
-      />
-      {open.length > 1 && <div className={styles.queue}>
-        <Button
-          label={`${open.length - 1} more ${open.length === 2 ? 'approval' : 'approvals'}`}
-          variant="secondary"
-          size="sm"
-          className={styles.queueToggle}
-          isDisabled={busy}
-          aria-expanded={queueOpen}
-          onClick={() => setQueueOpen((value) => !value)}
-        />
-        {queueOpen && <div className={styles.queueList} role="group" aria-label="Other pending approvals">
-          {open.filter((approval) => approval.id !== current.id).map((approval) => (
-            <Button
-              key={approval.id}
-              label={approval.title}
-              variant="secondary"
-              size="sm"
-              className={styles.queueItem}
-              isDisabled={busy}
-              onClick={() => { setSelected(approval.id); setQueueOpen(false); }}
-            />
-          ))}
-        </div>}
-      </div>}
-    </div>
-  </ChatComposerDrawer>;
+  return <PendingInputDrawer items={approvals} idOf={approval => approval.id} titleOf={approval => approval.title}
+    label="Approval" noun="approval" queueLabel="Other pending approvals">
+    {(current, onBusy, onSettled) => <ApprovalForm key={current.id} approval={current}
+      onDecide={onDecide} onBusy={onBusy} onSettled={onSettled} />}
+  </PendingInputDrawer>;
 }
 
 function ApprovalForm({ approval, onDecide, onBusy, onSettled }: Readonly<{

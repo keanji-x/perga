@@ -213,13 +213,6 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
             return Task.CompletedTask;
         }
 
-        public Task RespondApprovalAsync(string requestId, bool approved, string? reason = null, CancellationToken ct = default)
-        {
-            var send = TryClaimApprovalResponse(requestId, approved, null, reason, ct)
-                ?? throw new InvalidOperationException("The approval response was already claimed.");
-            return send();
-        }
-
         public Func<Task>? TryClaimApprovalResponse(
             string requestId, bool approved, string? selectedOptionId, string? reason, CancellationToken ct)
         {
