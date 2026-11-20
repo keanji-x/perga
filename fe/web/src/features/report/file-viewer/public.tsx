@@ -1,6 +1,6 @@
 import { LayerDepthProvider, useLayerDismissal } from '@astryxdesign/core/Layer';
 import { ReadOnlyCode } from '../../../ui/code/public.tsx';
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, type ReactNode } from 'react';
 
 import type { WorkspaceFilePort } from '../../../../../core/domain/fs.ts';
 import type { TrackReport } from '../../../../../core/domain/report.ts';
@@ -29,7 +29,7 @@ function parentDirectory(path: string): string {
  * card board.
  */
 export function ReportFileViewer({
-  path, files, fileRoot, wide, onClose, onFileOpened, onOpenFileLink, onOpenSourceLink, linkPreview,
+  path, files, fileRoot, wide, onClose, onFileOpened, onOpenFileLink, onOpenSourceLink, linkPreview, leadingContent,
 }: Readonly<{
   path: string;
   files: WorkspaceFilePort;
@@ -41,6 +41,7 @@ export function ReportFileViewer({
   onOpenFileLink?: (target: ReportFileLinkTarget) => void;
   onOpenSourceLink?: (target: ReportSourceLinkTarget) => void;
   linkPreview?: ReportLinkPreviewResources;
+  leadingContent?: ReactNode;
 }>) {
   const layerRef = useRef<HTMLDivElement | null>(null);
   const resource = useReportFileResource(path, files, onFileOpened);
@@ -104,6 +105,7 @@ export function ReportFileViewer({
             <ReportDocument
               report={report}
               empty={<></>}
+              leadingContent={leadingContent}
               fileRoot={fileRoot}
               fileBasePath={parentDirectory(resource.path)}
               onOpenFileLink={onOpenFileLink}

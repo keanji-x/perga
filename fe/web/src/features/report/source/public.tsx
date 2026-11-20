@@ -2,6 +2,8 @@
 // Captured evidence has an inert reading view and an exact original-text view.
 
 import { useEffect, useRef } from 'react';
+import { IconButton } from '@astryxdesign/core/IconButton';
+import { isImeKeyEvent } from '@astryxdesign/core/utils';
 
 import type {
   ReportSourceLinkTarget, SourceResolution, TrackSourceDetail,
@@ -11,6 +13,8 @@ import { readFailureText } from '../../../../../core/domain/read-failure.ts';
 import { useState } from '../../../ui/state/public.ts';
 import { ProseBlock } from '../document/content.tsx';
 import { ErrorBox } from '../../../ui/error-box/public.tsx';
+import { CardFrame } from '../../../ui/card-frame/public.tsx';
+import { Icon } from '../../../ui/icon/public.tsx';
 import { SOURCE_PANEL_COPY, SOURCE_PROVENANCE_COPY } from './copy.ts';
 import styles from './source.module.css';
 
@@ -34,6 +38,32 @@ export type ReportSourcePanelProps = Readonly<{
 /** The drawer's accessible name for this state: the row's title once known, the generic word until then. */
 export function reportSourcePanelTitle(resolution: SourceResolution): string {
   return resolution.status === 'ok' ? resolution.source.title : SOURCE_PANEL_COPY.panelTitle;
+}
+
+/** An explicitly opened citation in the document's reading column. */
+export function ReportSourceReader({ selection, onClose, ...panel }: Omit<ReportSourcePanelProps, 'target'> & Readonly<{
+  selection: Readonly<{ target: ReportSourceLinkTarget; opener: HTMLElement | null }>;
+  onClose: () => void;
+}>) {
+  const reader = useRef<HTMLDivElement>(null);
+  useEffect(() => { reader.current?.focus(); }, [selection]);
+  const close = () => {
+    const { opener } = selection;
+    if (reader.current?.contains(document.activeElement) && opener?.isConnected) opener.focus();
+    onClose();
+  };
+  return <CardFrame ref={reader} role="region" aria-label={reportSourcePanelTitle(panel.resolution)} tabIndex={-1}
+    elevation="flat" className={styles.reader}
+    onKeyDown={event => {
+      if (event.key !== 'Escape' || event.defaultPrevented || isImeKeyEvent(event.nativeEvent)) return;
+      event.preventDefault();
+      close();
+    }}>
+    <div className={styles.readerActions}>
+      <IconButton label={SOURCE_PANEL_COPY.closeLabel} variant="ghost" icon={<Icon name="close" size="sm" />} onClick={close} />
+    </div>
+    <div className={styles.readerScroll}><ReportSourcePanel {...panel} target={selection.target} /></div>
+  </CardFrame>;
 }
 
 export function ReportSourcePanel({ target, resolution, onRetry, scrollToQuote = true, initialView }: ReportSourcePanelProps) {
@@ -93,7 +123,8 @@ function Source({ source, target, scrollToQuote, initialView }: { source: TrackS
   const placed = highlight !== null;
   useEffect(() => {
     if (!placed || !original || !scrollToQuote) return;
-    markRef.current?.scrollIntoView({ block: 'center' });
+    const options = { block: 'center', container: 'nearest' } as const;
+    markRef.current?.scrollIntoView(options);
   }, [placed, original, quoteId, source.source_id, scrollToQuote]);
 
   return (

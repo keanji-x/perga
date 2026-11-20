@@ -2,7 +2,7 @@ import { fixtureTrack, fixtureSession, fixtureSnapshot, fixtureReport } from './
 import type { SessionItemsPageDto } from '../../../../core/api/perga-v1.ts';
 import { prepareReportDocument } from '../../features/report/document/preparation.ts';
 import '../../styles/entry.css';
-import { page } from 'vitest/browser';
+import { page, userEvent } from 'vitest/browser';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { RouterProvider, createMemoryHistory } from '@tanstack/react-router';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
@@ -150,8 +150,8 @@ describe('the source panel on the track page', () => {
     const preview = await screen.findByRole('dialog', { name: 'Preview: File evidence' });
     await within(preview).findByText('智堡摘要，非机构原文');
     fireEvent.click(within(preview).getByRole('button', { name: 'Open in workspace' }));
-    const drawer = await screen.findByRole('complementary', { name: SOURCE_ROW.title });
-    expect(drawer.querySelector('mark')?.textContent).toBe('9月加息概率接近九成');
+    const source = await within(file).findByRole('region', { name: SOURCE_ROW.title });
+    expect(source.querySelector('mark')?.textContent).toBe('9月加息概率接近九成');
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Preview: File evidence' })).toBeNull());
     expect(requests.every(request => request.method === 'GET')).toBe(true);
   });
@@ -187,6 +187,10 @@ describe('the source panel on the track page', () => {
     expect(preview.querySelector('[data-nc-report-source-reading]')).not.toBeNull();
     fireEvent.click(within(preview).getByRole('button', { name: '原文' }));
     expect(preview.querySelector('mark')?.textContent).toBe('9月加息概率接近九成');
+    fireEvent.click(within(preview).getByRole('button', { name: 'Open in workspace' }));
+    const report = screen.getByRole('region', { name: 'Track report' });
+    const source = await within(report).findByRole('region', { name: SOURCE_ROW.title });
+    expect(source.querySelector('mark')?.textContent).toBe('9月加息概率接近九成');
   });
 
   it.each(['旧引用', '未追加的锚点'])('explains unresolved evidence on hover for %s', async label => {
@@ -251,8 +255,8 @@ describe('the source panel on the track page', () => {
     const nested = await screen.findByRole('dialog', { name: 'Preview: Other evidence' });
     await within(nested).findByText('Other track evidence.');
     fireEvent.click(within(nested).getByRole('button', { name: 'Open in workspace' }));
-    const drawer = await screen.findByRole('complementary', { name: SOURCE_ROW.title });
-    await within(drawer).findByText('Other track evidence.');
+    const source = await screen.findByRole('region', { name: SOURCE_ROW.title });
+    await within(source).findByText('Other track evidence.');
     expect(screen.queryByRole('dialog', { name: 'Preview: Other evidence' })).toBeNull();
     expect(screen.queryByRole('dialog', { name: 'Preview: Other report' })).toBeNull();
     expect(requests.some(request => request.path === '/api/tracks/w1/sources/src_2c9e0a1b')).toBe(false);
@@ -273,8 +277,8 @@ describe('the source panel on the track page', () => {
     expect(scrollIntoView).not.toHaveBeenCalled();
     expect(requests.filter(request => request.path.includes('/sources/'))).toHaveLength(1);
     fireEvent.click(within(preview).getByRole('button', { name: 'Open in workspace' }));
-    const drawer = await screen.findByRole('complementary', { name: SOURCE_ROW.title });
-    expect(drawer.querySelector('mark')?.textContent).toBe('9月加息概率接近九成');
+    const source = await screen.findByRole('region', { name: SOURCE_ROW.title });
+    expect(source.querySelector('mark')?.textContent).toBe('9月加息概率接近九成');
     expect(requests.filter(request => request.method !== 'GET')).toHaveLength(0);
   });
 
@@ -282,40 +286,47 @@ describe('the source panel on the track page', () => {
     await page.viewport(390, 844);
     try {
       const { requests } = setup();
-      fireEvent.click(await screen.findByRole('button', { name: 'Mikko 日志' }, { timeout: 5_000 }));
-      const drawer = await screen.findByRole('complementary', { name: 'Mikko 全球市场日志 9-13' });
-      expect(drawer.querySelector('mark')?.textContent).toBe('9月加息概率接近九成');
+      const citation = page.getByRole('button', { name: 'Mikko 日志' });
+      await citation.click();
+      const source = page.getByRole('region', { name: SOURCE_ROW.title });
+      await expect.element(source.getByText('9月加息概率接近九成', { exact: true })).toBeVisible();
+      await expect.element(page.getByRole('textbox', { name: 'Chat message', exact: true })).toBeVisible();
       expect(requests.filter((request) => request.path === '/api/tracks/w1/sources/src_2c9e0a1b')).toHaveLength(1);
-      fireEvent.click(within(drawer).getByRole('button', { name: 'Back to Report' }));
-      await waitFor(() => expect(drawer.isConnected).toBe(false));
+      await source.getByRole('button', { name: SOURCE_PANEL_COPY.closeLabel }).click();
+      await expect.element(source).not.toBeInTheDocument();
+      await expect.element(citation).toHaveFocus();
       expect(requests.filter((request) => request.method !== 'GET')).toHaveLength(0);
     } finally {
       await page.viewport(1400, 900);
     }
   });
 
-  it('opens the right-rail drawer with the row the citation names, quote highlighted, and closes on Escape', async () => {
+  it('opens the source in the report, highlights the quote, and returns focus on Escape', async () => {
     const { requests } = setup();
-    fireEvent.click(await screen.findByRole('button', { name: 'Mikko 日志' }, { timeout: 5_000 }));
-    const drawer = await screen.findByRole('complementary', { name: 'Mikko 全球市场日志 9-13' });
+    const citation = page.getByRole('button', { name: 'Mikko 日志' });
+    await citation.click();
+    const report = screen.getByRole('region', { name: 'Track report' });
+    const source = await within(report).findByRole('region', { name: SOURCE_ROW.title });
     expect(requests.filter((request) => request.path === '/api/tracks/w1/sources/src_2c9e0a1b')).toHaveLength(1);
-    expect(within(drawer).getByText('智堡摘要，非机构原文')).toBeTruthy();
-    const mark = drawer.querySelector('mark');
+    expect(within(source).getByText('智堡摘要，非机构原文')).toBeTruthy();
+    const mark = source.querySelector('mark');
     expect(mark?.textContent).toBe('9月加息概率接近九成');
     expect(scrollIntoView.mock.instances).toContain(mark);
-    expect(within(drawer).getByRole('button', { name: SOURCE_PANEL_COPY.closeLabel })).toBeTruthy();
-    fireEvent.keyDown(drawer, { key: 'Escape' });
-    // Closing revokes Escape ownership immediately, before retained paint exits.
-    await waitFor(() => expect(drawer.hasAttribute('data-nc-escape-layer')).toBe(false));
+    expect(source).toHaveFocus();
+    await citation.click();
+    await expect.element(page.getByRole('region', { name: SOURCE_ROW.title })).toHaveFocus();
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => expect(source.isConnected).toBe(false));
+    await expect.element(citation).toHaveFocus();
   });
 
   it('says a dangling citation is missing, with its destination, instead of failing', async () => {
     const { requests } = setup();
     fireEvent.click(await screen.findByRole('button', { name: '旧引用' }, { timeout: 5_000 }));
-    const drawer = await screen.findByRole('complementary', { name: SOURCE_PANEL_COPY.panelTitle });
-    await within(drawer).findByRole('heading', { name: SOURCE_PANEL_COPY.missingTitle });
-    expect(within(drawer).getByText('neige://source/src_0badf00d')).toBeTruthy();
-    expect(within(drawer).queryByRole('alert')).toBeNull();
+    const source = await screen.findByRole('region', { name: SOURCE_PANEL_COPY.panelTitle });
+    await within(source).findByRole('heading', { name: SOURCE_PANEL_COPY.missingTitle });
+    expect(within(source).getByText('neige://source/src_0badf00d')).toBeTruthy();
+    expect(within(source).queryByRole('alert')).toBeNull();
     // One read, no retry: the 404 is data.
     expect(requests.filter((request) => request.path === '/api/tracks/w1/sources/src_0badf00d')).toHaveLength(1);
   });
@@ -323,30 +334,29 @@ describe('the source panel on the track page', () => {
   it('shows the source with the missing-anchor state and its destination when the anchor is not on the row', async () => {
     setup();
     fireEvent.click(await screen.findByRole('button', { name: '未追加的锚点' }, { timeout: 5_000 }));
-    const drawer = await screen.findByRole('complementary', { name: 'Mikko 全球市场日志 9-13' });
-    expect(within(drawer).getByText('智堡摘要，非机构原文')).toBeTruthy();
-    expect(drawer.querySelector('mark')).toBeNull();
-    expect(drawer.querySelector('pre[data-nc-report-source-body]')?.textContent).toBe(SOURCE_ROW.body);
-    const notice = drawer.querySelector('[data-nc-report-source-missing="anchor"]');
-    expect(within(drawer).getByRole('heading', { level: 3 }).textContent).toBe(SOURCE_PANEL_COPY.anchorMissingTitle);
+    const source = await screen.findByRole('region', { name: SOURCE_ROW.title });
+    expect(within(source).getByText('智堡摘要，非机构原文')).toBeTruthy();
+    expect(source.querySelector('mark')).toBeNull();
+    expect(source.querySelector('pre[data-nc-report-source-body]')?.textContent).toBe(SOURCE_ROW.body);
+    const notice = source.querySelector('[data-nc-report-source-missing="anchor"]');
+    expect(within(source).getByRole('heading', { level: 3 }).textContent).toBe(SOURCE_PANEL_COPY.anchorMissingTitle);
     expect(notice?.querySelector('code')?.textContent).toBe('neige://source/src_2c9e0a1b#q7');
   });
 
-  it('paints the source card over the conversation, which goes inert until the source closes', async () => {
+  it('keeps the conversation list and composer usable while reading a source', async () => {
     setup();
-    fireEvent.click(await screen.findByRole('button', { name: /Conversation Planner chat/ }));
-    const conversation = await screen.findByRole('complementary', { name: 'Planner chat' });
-    const host = conversation.closest('[data-nc-conversation-drawer-host]');
-    expect(host?.hasAttribute('inert')).toBe(false);
-    fireEvent.click(await screen.findByRole('button', { name: 'Mikko 日志' }, { timeout: 5_000 }));
-    const source = await screen.findByRole('complementary', { name: 'Mikko 全球市场日志 9-13' });
-    expect(screen.getByRole('complementary', { name: 'Planner chat' })).toBe(conversation);
-    expect(host?.hasAttribute('inert')).toBe(true);
-    // The source is later in the DOM, so it paints over and owns Escape.
-    expect(conversation.compareDocumentPosition(source) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    fireEvent.click(within(source).getByRole('button', { name: SOURCE_PANEL_COPY.closeLabel }));
-    await waitFor(() => expect(host?.hasAttribute('inert')).toBe(false));
-    expect(screen.getByRole('complementary', { name: 'Planner chat' })).toBe(conversation);
+    const citation = page.getByRole('button', { name: 'Mikko 日志' });
+    const conversationRow = page.getByRole('button', { name: /Conversation Planner chat/ });
+    await citation.click();
+    await expect.element(page.getByText('9月加息概率接近九成', { exact: true })).toBeVisible();
+    await expect.element(conversationRow).toBeVisible();
+    await conversationRow.click();
+    const conversation = page.getByRole('complementary', { name: 'Planner chat' });
+    const composer = conversation.getByRole('combobox', { name: 'Message', exact: true });
+    await composer.fill('A note about the source');
+    await expect.element(page.getByText('9月加息概率接近九成', { exact: true })).toBeVisible();
+    await page.getByRole('button', { name: SOURCE_PANEL_COPY.closeLabel }).click();
+    await expect.element(composer).toHaveTextContent('A note about the source');
   });
 
   it('does not let an Escape inside the source card interrupt a running planner turn', async () => {
@@ -358,9 +368,9 @@ describe('the source panel on the track page', () => {
     await screen.findByRole('complementary', { name: 'Planner chat' });
     await waitFor(() => expect(requests.some((request) => request.path.includes('&view=run'))).toBe(true));
     fireEvent.click(await screen.findByRole('button', { name: 'Mikko 日志' }, { timeout: 5_000 }));
-    const source = await screen.findByRole('complementary', { name: 'Mikko 全球市场日志 9-13' });
+    const source = await screen.findByRole('region', { name: SOURCE_ROW.title });
     fireEvent.keyDown(source, { key: 'Escape' });
-    await waitFor(() => expect(source.hasAttribute('data-nc-escape-layer')).toBe(false));
+    await waitFor(() => expect(source.isConnected).toBe(false));
     expect(requests.filter((request) => request.path.endsWith('/interrupt'))).toHaveLength(0);
     const conversation = screen.getByRole('complementary', { name: 'Planner chat' });
     expect(conversation.hasAttribute('data-nc-escape-layer')).toBe(true);

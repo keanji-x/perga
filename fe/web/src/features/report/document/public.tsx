@@ -47,6 +47,8 @@ export type ReportDocumentProps = Readonly<{
   rail?: ReactNode;
   /** The byline row (`Planner Agent · 2h`), composed by `app/router`. */
   byline?: ReactNode;
+  /** Optional content above the report body, aligned with the reading column. */
+  leadingContent?: ReactNode;
   /** How many backlinks land on each block, for the sidenote markers. */
   backlinkCounts?: ReadonlyMap<string, number>;
   /** A `neige://wave/…` link was activated. Absent ⇒ links render as plain text. */
@@ -82,7 +84,7 @@ export type ReportDocumentProps = Readonly<{
 
 /** Agent-authored destinations become admitted preview controls. Navigation stays behind typed callbacks or explicit external activation. */
 export function ReportDocument({
-  report, preparation, empty, outlineEmpty, rail, byline, backlinkCounts, onOpenLink, onOpenFileLink, onOpenSourceLink, fileRoot, fileBasePath, linkPreview,
+  report, preparation, empty, outlineEmpty, rail, byline, leadingContent, backlinkCounts, onOpenLink, onOpenFileLink, onOpenSourceLink, fileRoot, fileBasePath, linkPreview,
   resolveOverlay, resolveSeries, resolvePreview, previewViewports, onSaveProseBlock,
   arrivalAnchorId, taskVerdicts, taskRows, renderTaskExecution,
 }: ReportDocumentProps) {
@@ -104,6 +106,7 @@ export function ReportDocument({
       {outlineOnly && <div className={styles.mobileEmpty}><EmptyState icon={<Icon name="file" />} title="进展会整理在这里" description="说说想做的事，计划与结论会随对话整理。" /></div>}
       {rail}
       {byline !== undefined && <div className={styles.byline}>{byline}</div>}
+      {leadingContent != null && <div className={styles.block}>{leadingContent}</div>}
       {prepared.kind === 'legacy'
         ? (
           <div className={styles.row}>
