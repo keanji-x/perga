@@ -121,6 +121,9 @@ public interface ITrackStore : ITrackReadStore
 
     Task<StoredWorkerDispatch?> FindWorkerDispatchAsync(WorkerDispatchIntent dispatch, CancellationToken ct) =>
         Task.FromResult<StoredWorkerDispatch?>(null);
+    Task<string?> FindWorkerDispatchAuthorAsync(string trackId, string taskId, CancellationToken ct) =>
+        Task.FromResult<string?>(null);
+
     Task<IReadOnlyList<string>> ListPendingWorkerDispatchTracksAsync(CancellationToken ct) =>
         Task.FromResult<IReadOnlyList<string>>([]);
 

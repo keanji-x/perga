@@ -171,7 +171,8 @@ public sealed class PolicyGuardMailTerminalScheduleBootTests
         Assert.Equal(turnsBeforeHumanEdit + 1, ctx.Store.GetTurnsForSession(leadId).Count);
 
         // 4. Verify the catalog exposes Worker controls only to Lead.
-        Assert.Equal(35, KernelMcpToolNames.All.Count);
+        Assert.Equal(36, KernelMcpToolNames.All.Count);
+        Assert.Contains(KernelMcpToolNames.ApprovalDecide, KernelMcpToolNames.All);
         Assert.Contains(KernelMcpCatalog.GetToolsForSession(boundAttemptId: null, isLead: true), tool => tool.Name == KernelMcpToolNames.SessionSend);
         Assert.Equal(23, KernelMcpCatalog.GetToolsForSession(boundAttemptId: null).Count);
         Assert.Equal(13, KernelMcpCatalog.GetToolsForSession(boundAttemptId: "att_1").Count);

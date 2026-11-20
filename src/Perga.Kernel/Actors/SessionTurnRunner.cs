@@ -12,7 +12,7 @@ public sealed partial class TrackActor
 {
     private sealed class SessionTurnRunner(TrackActor actor)
     {
-        private sealed record TurnStart(ActiveTurnState Active, string EffectivePrompt);
+        private sealed record TurnStart(ActiveTurnState Active, string Prompt, string EffectivePrompt);
 
         private sealed record PreparedDispatch(IAgentSession AgentSession, string EffectivePrompt);
 
@@ -49,7 +49,7 @@ public sealed partial class TrackActor
                     return work.CreateUnstartedTurn();
 
                 var outcome = await StreamTurnAsync(work, start.Active, start.EffectivePrompt, ct).ConfigureAwait(false);
-                var settled = await SettleTurnAsync(work, start.Active, prompt, outcome).ConfigureAwait(false);
+                var settled = await SettleTurnAsync(work, start.Active, start.Prompt, outcome).ConfigureAwait(false);
                 if (settled.ShouldAutoCompact)
                     await TryAutoCompactAsync(work.SessionId).ConfigureAwait(false);
                 await actor.EnqueueAsync(async _ =>
@@ -86,6 +86,14 @@ public sealed partial class TrackActor
             actor.RequireSessionDispatchAvailableCore(sessionId);
             if (work.IsOccupiedCore(session))
                 throw KernelException.Conflict($"Session '{sessionId}' already has an active or unresolved turn.");
+
+            if (work is TrackWakeBatchWorkItem wakeBatch)
+            {
+                var admittedPrompt = await wakeBatch.RefreshApprovalNotificationsCoreAsync(prompt, ct).ConfigureAwait(false);
+                if (admittedPrompt is null)
+                    return null;
+                prompt = admittedPrompt;
+            }
 
             var workerSettings = session.BoundAttemptId is null ? null
                 : await actor.ReadWorkerSettingsCoreAsync(session, ct).ConfigureAwait(false);
@@ -127,7 +135,7 @@ public sealed partial class TrackActor
             actor._scheduler.SetActive(sessionId, active);
             onActivated(active);
             await work.OnTurnActivatedCoreAsync(runningSession, runningEvent, now, ct).ConfigureAwait(false);
-            return new TurnStart(active, prepared.EffectivePrompt);
+            return new TurnStart(active, prompt, prepared.EffectivePrompt);
         }, actor._actorShutdownCts.Token);
 
         private async Task<PreparedDispatch> PrepareDispatchCoreAsync(ITurnWorkItem work, AgentSessionDto session,
@@ -258,7 +266,7 @@ public sealed partial class TrackActor
                     break;
 
                 case UnifiedAgentEvent.ApprovalRequested approval:
-                    actor.AdmitProviderApproval(active, approval);
+                    await actor.AdmitProviderApprovalAsync(active, approval).ConfigureAwait(false);
                     break;
 
                 case UnifiedAgentEvent.ContextUsageUpdated contextUsage:

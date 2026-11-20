@@ -170,6 +170,7 @@ public static class PergaHostServiceCollectionExtensions
             {
                 Version = opts.Version,
                 WorkerApprovalAuthorizationConfigured = sp.GetRequiredService<Perga.Host.Http.WorkerApprovalAuthorization>().IsConfigured,
+                DispatcherWorkerApprovalOptions = opts.DispatcherWorkerApprovalOptions,
                 TemplatesDirectory = opts.TemplatesDirectory,
                 WorkspacesRootDirectory = paths.WorkspacesRootDir,
                 DefaultProvider = opts.DefaultProvider,

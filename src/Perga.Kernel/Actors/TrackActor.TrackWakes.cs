@@ -17,8 +17,10 @@ public sealed partial class TrackActor
     public Task<bool> CancelPendingWakeAsync(string wakeId, CancellationToken ct = default) =>
         _store.TrackWakes.CancelPendingWakeAsync(TrackId, wakeId, ct);
 
-    private Task<string> PrepareWakePromptAsync(TrackWake wake, TrackWakePayload payload, CancellationToken ct) => EnqueueAsync(async _ =>
+    private Task<string?> PrepareWakePromptAsync(string sessionId, TrackWake wake, TrackWakePayload payload, CancellationToken ct) => EnqueueAsync<string?>(async _ =>
     {
+        if (payload.ApprovalId is { } approvalId)
+            return PrepareDispatcherApprovalPrompt(approvalId, sessionId);
         if (wake.Kind != TrackWakeKinds.Schedule)
             return payload.Prompt ?? throw new InvalidOperationException($"Track wake '{wake.Id}' has no prompt.");
         var scheduleId = payload.ScheduleId ?? throw new InvalidOperationException($"Schedule wake '{wake.Id}' has no scheduleId.");

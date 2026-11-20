@@ -18,6 +18,16 @@ public sealed partial class SqliteTrackStore : IWorkerSettingsStore
             """, dispatch, cancellationToken: ct)).ConfigureAwait(false);
     }
 
+    public async Task<string?> FindWorkerDispatchAuthorAsync(string trackId, string taskId, CancellationToken ct)
+    {
+        await using var conn = await OpenReadConnectionAsync(ct).ConfigureAwait(false);
+        return await conn.QuerySingleAsync<string?>(new CommandDefinition("""
+            SELECT CASE WHEN count(DISTINCT author_id) = 1 THEN min(author_id) END
+            FROM creation_receipts
+            WHERE operation = 'worker-dispatch' AND scope_id = @TrackId AND resource_id = @TaskId;
+            """, new { TrackId = trackId, TaskId = taskId }, cancellationToken: ct)).ConfigureAwait(false);
+    }
+
     public async Task<IReadOnlyList<string>> ListPendingWorkerDispatchTracksAsync(CancellationToken ct)
     {
         await using var conn = await OpenReadConnectionAsync(ct).ConfigureAwait(false);

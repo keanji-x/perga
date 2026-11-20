@@ -10,6 +10,8 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Perga.AgentKit;
 using Perga.Contracts;
 using Perga.Host.IntegrationTests.Fixtures;
+using Perga.Host.Mcp;
+using Perga.Kernel.Mcp;
 using Perga.Host.Serialization;
 using Perga.Kernel;
 using Perga.Kernel.Ports;
@@ -19,6 +21,131 @@ namespace Perga.Host.IntegrationTests;
 
 public sealed class PausedApprovalTests
 {
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, false)]
+    [InlineData(true, true)]
+    public async Task WorkerApprovalWakesOnlyItsAuthorizedDispatcher(bool dispatchByLead, bool stopDispatcher)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        var ct = timeout.Token;
+        await using var host = new PergaHostTestCluster(configureHostOptions: options =>
+            options.DispatcherWorkerApprovalOptions["shell"] = ["approve"]);
+        var workerAnswered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var dispatcherPrompt = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var dispatcherFinished = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        host.AgentRuntime.ApprovalHandler = () => workerAnswered.TrySetResult();
+        var cancelSent = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (stopDispatcher)
+        {
+            host.AgentRuntime.RequiresTerminalStop = true;
+            host.AgentRuntime.CancelHandler = _ =>
+            {
+                cancelSent.TrySetResult();
+                return Task.CompletedTask;
+            };
+        }
+
+        async IAsyncEnumerable<UnifiedAgentEvent> Turns(HarnessLaunchSpec spec, TurnInput input,
+            [EnumeratorCancellation] CancellationToken token)
+        {
+            if (spec.ConfigureWorker)
+            {
+                yield return new UnifiedAgentEvent.ApprovalRequested("worker-request", "shell",
+                    JsonSerializer.SerializeToElement(new { command = "echo review" }));
+                await workerAnswered.Task.WaitAsync(token);
+            }
+            else if (input.Prompt.Contains("A Worker you dispatched requested approval.", StringComparison.Ordinal))
+            {
+                dispatcherPrompt.TrySetResult(input.Prompt);
+                await dispatcherFinished.Task.WaitAsync(token);
+                if (stopDispatcher)
+                {
+                    yield return new UnifiedAgentEvent.TurnInterrupted();
+                    yield break;
+                }
+            }
+            yield return new UnifiedAgentEvent.TurnCompleted(new TokenUsage(1, 1, 0, 1000));
+        }
+
+        host.AgentRuntime.SetTurnHandler(Turns);
+        var (trackId, sessionId) = await host.CreateTrackAsync();
+        await StartTurn(host, sessionId);
+        var kernel = host.Services.GetRequiredService<IPergaKernel>();
+        await kernel.WaitForTrackIdleAsync(trackId, ct);
+        var bridge = host.Services.GetRequiredService<HostMcpSessionBridge>();
+        string LeadToken() => bridge.GetTokenForSession(sessionId)!;
+
+        if (dispatchByLead)
+        {
+            var dispatch = await McpKernelAndVcsIntegrationTests.CallToolAsync(host, "/mcp/kernel", LeadToken(),
+                KernelMcpToolNames.TaskDispatch, new { goal = "Inspect the report", requestKey = "dispatch-approval" }, ct);
+            Assert.False(dispatch.IsError, dispatch.Text);
+        }
+        else
+        {
+            await kernel.DispatchWorkerAsync(trackId, new("Inspect the report"), "owner-dispatch", caller: null, ct);
+        }
+
+        try
+        {
+            var approval = await WaitForApproval(host, trackId);
+            Assert.NotEqual(sessionId, approval.SessionId);
+            Task<(string Text, bool IsError)> Decide(string optionId) => McpKernelAndVcsIntegrationTests.CallToolAsync(
+                host, "/mcp/kernel", LeadToken(), KernelMcpToolNames.ApprovalDecide,
+                new { executionId = approval.ExecutionId, approvalId = approval.Id, optionId }, ct);
+
+            if (dispatchByLead)
+            {
+                var prompt = await dispatcherPrompt.Task.WaitAsync(ct);
+                Assert.Contains(approval.Id, prompt);
+                Assert.Contains("echo review", prompt);
+                Assert.True((await Decide("deny")).IsError);
+                Assert.Empty(host.AgentRuntime.ApprovalResponses);
+                if (stopDispatcher)
+                {
+                    var page = await host.Client.GetFromJsonAsync<SessionItemsPageDto>(
+                        $"/api/v1/sessions/{sessionId}/items", PergaJsonDefaults.ApiOptions, ct);
+                    var stopping = host.Client.PostAsJsonAsync($"/api/v1/sessions/{sessionId}/interrupt",
+                        new { turnId = page!.ActiveTurn!.Id }, ct);
+                    await cancelSent.Task.WaitAsync(ct);
+                    Assert.True((await Decide("approve")).IsError);
+                    Assert.Empty(host.AgentRuntime.ApprovalResponses);
+                    using var decision = await host.Client.PostAsJsonAsync(ApprovalPath(trackId, approval),
+                        new { optionId = "deny" }, ct);
+                    decision.EnsureSuccessStatusCode();
+                    dispatcherFinished.TrySetResult();
+                    using var stopped = await stopping;
+                    stopped.EnsureSuccessStatusCode();
+                    Assert.Equal(("worker-request", false), Assert.Single(host.AgentRuntime.ApprovalResponses));
+                }
+                else
+                {
+                    var decision = await Decide("approve");
+                    Assert.False(decision.IsError, decision.Text);
+                    Assert.True((await Decide("approve")).IsError);
+                    Assert.Equal(("worker-request", true), Assert.Single(host.AgentRuntime.ApprovalResponses));
+                }
+            }
+            else
+            {
+                Assert.True((await Decide("approve")).IsError);
+                Assert.Empty(host.AgentRuntime.ApprovalResponses);
+                using var decision = await host.Client.PostAsJsonAsync(ApprovalPath(trackId, approval),
+                    new { optionId = "deny" }, ct);
+                decision.EnsureSuccessStatusCode();
+                Assert.Equal(("worker-request", false), Assert.Single(host.AgentRuntime.ApprovalResponses));
+                Assert.False(dispatcherPrompt.Task.IsCompleted);
+            }
+        }
+        finally
+        {
+            dispatcherFinished.TrySetResult();
+        }
+
+        await kernel.WaitForTrackIdleAsync(trackId, ct);
+    }
+
     [Theory]
     [InlineData("approve", true)]
     [InlineData("deny", false)]

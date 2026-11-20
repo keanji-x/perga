@@ -59,6 +59,7 @@ public sealed partial class TrackActor
         public ExecutionControl Control { get; } = control;
         public Func<ApprovalChoiceDto, Func<Task>?> ClaimDelivery { get; } = claimDelivery;
         public Action Expire { get; } = expire;
+        public DispatcherApproval? Dispatcher { get; init; }
         public bool RecordingDecision { get; set; }
         public CancellationTokenRegistration Cancellation { get; set; }
     }
@@ -72,11 +73,12 @@ public sealed partial class TrackActor
 
     private PendingApproval? RegisterApproval(
         string executionId, string sessionId, string? turnId, string title, IReadOnlyList<ApprovalChoiceDto> options,
-        ExecutionControl control, Func<ApprovalChoiceDto, Func<Task>?> claimDelivery, Action expire, CancellationToken ct = default)
+        ExecutionControl control, Func<ApprovalChoiceDto, Func<Task>?> claimDelivery, Action expire,
+        CancellationToken ct = default, DispatcherApproval? dispatcher = null)
     {
         var dto = new ApprovalDto($"apr_{Guid.NewGuid():N}", executionId, sessionId, turnId,
             title, options.Count > 0 ? options : DefaultBinaryChoices, NowMs());
-        var pending = new PendingApproval(dto, control, claimDelivery, expire);
+        var pending = new PendingApproval(dto, control, claimDelivery, expire) { Dispatcher = dispatcher };
         // An already canceled token can run its callback inline during registration.
         pending.Cancellation = ct.UnsafeRegister(_ => ExpireApproval(pending), null);
         bool admitted;
@@ -95,6 +97,8 @@ public sealed partial class TrackActor
         }
 
         NotifyApprovalsChanged(sessionId);
+        if (dispatcher is not null)
+            _ = TrackBackgroundJob(() => NotifyApprovalDispatcherAsync(pending, dispatcher));
         return pending;
     }
 
@@ -179,7 +183,7 @@ public sealed partial class TrackActor
             JsonHelpers.ToElement(new { sessionId }), NowMs());
 
     internal async Task<ApprovalDto> DecideApprovalAsync(
-        string executionId, string approvalId, string optionId, CancellationToken ct)
+        string executionId, string approvalId, string optionId, CancellationToken ct, McpSessionPrincipal? dispatcher = null)
     {
         ct.ThrowIfCancellationRequested();
         if (string.IsNullOrWhiteSpace(optionId))
@@ -187,7 +191,7 @@ public sealed partial class TrackActor
         if (!_approvals.TryGetValue(approvalId, out var pending) || pending.Dto.ExecutionId != executionId)
             throw KernelException.Conflict("This approval is no longer pending.");
 
-        var normalizedOptionId = optionId.Trim();
+        var normalizedOptionId = dispatcher is null ? optionId.Trim() : optionId;
         var choice = pending.Dto.Options.FirstOrDefault(
             option => string.Equals(option.Id, normalizedOptionId, StringComparison.Ordinal))
             ?? throw KernelException.InvalidArgument($"Unknown approval option '{optionId}'.");
@@ -198,13 +202,14 @@ public sealed partial class TrackActor
             if (_approvalAdmissionClosed || pending.Control.Phase != ExecutionPhase.Running ||
                 !_approvals.ContainsKey(approvalId) || pending.RecordingDecision)
                 throw KernelException.Conflict("This approval is no longer available for a decision.");
+            RequireDispatcherApprovalChoice(pending, choice, dispatcher);
             pending.RecordingDecision = true;
         }
 
         try
         {
             await RecordApprovalAsync(KernelEventKinds.ApprovalDecided, pending.Dto,
-                JsonHelpers.ToElement(new { optionId = choice.Id, label = choice.Label, isApproval = choice.IsApproval }))
+                JsonHelpers.ToElement(new { optionId = choice.Id, label = choice.Label, isApproval = choice.IsApproval, decidedBy = dispatcher?.SessionId ?? InstallationAuthor }))
                 .ConfigureAwait(false);
         }
         catch
@@ -221,6 +226,11 @@ public sealed partial class TrackActor
             lock (_approvalAdmission)
             lock (pending.Control.Sync)
             {
+                if (dispatcher is not null)
+                {
+                    pending.RecordingDecision = false;
+                    RequireDispatcherApprovalChoice(pending, choice, dispatcher);
+                }
                 if (_approvalAdmissionClosed || pending.Control.Phase != ExecutionPhase.Running ||
                     !TryDetachApprovalLocked(pending))
                     throw KernelException.Conflict("The execution ended before the decision could be delivered.");
@@ -263,12 +273,15 @@ public sealed partial class TrackActor
         _store.AppendEventAsync(new(null, _track.AreaId, TrackId, kind,
             JsonHelpers.ToElement(new { approval, detail }), NowMs()), _actorShutdownCts.Token);
 
-    private void AdmitProviderApproval(ActiveTurnState turn, UnifiedAgentEvent.ApprovalRequested approval)
+    private async Task AdmitProviderApprovalAsync(ActiveTurnState turn, UnifiedAgentEvent.ApprovalRequested approval)
     {
         var hasProviderOptions = approval.Options is { Count: > 0 };
         var choices = hasProviderOptions
             ? approval.Options!.Select(option => new ApprovalChoiceDto(option.OptionId, option.Label, option.IsApproval)).ToArray()
             : DefaultBinaryChoices;
+        var dispatcher = turn.Settings is { ApprovalMode: not "deny" }
+            ? await ResolveApprovalDispatcherAsync(turn, approval, choices).ConfigureAwait(false)
+            : null;
         if (turn.Settings?.ApprovalMode != "deny" &&
             RegisterApproval(turn.TurnDto.Id, turn.SessionId, turn.TurnDto.Id, $"Approve tool '{approval.ToolName}'?",
                 choices, turn.Control, choice =>
@@ -294,7 +307,7 @@ public sealed partial class TrackActor
                             throw;
                         }
                     };
-                }, static () => { }) is not null)
+                }, static () => { }, turn.TurnCts.Token, dispatcher) is not null)
             return;
 
         _ = TrackBackgroundJob(async () =>

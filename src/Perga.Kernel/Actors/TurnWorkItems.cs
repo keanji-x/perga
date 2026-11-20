@@ -49,7 +49,7 @@ public sealed partial class TrackActor
             CancellationToken ct);
         Task OnTurnCreatedAsync(SessionTurnDto turn);
         Task OnTurnActivatedCoreAsync(AgentSessionDto runningSession, EventEnvelopeDto runningEvent, long now, CancellationToken ct);
-        SessionTurnDto CreateUnstartedTurn();
+        SessionTurnDto? CreateUnstartedTurn();
         Task OnProviderDeliveredAsync(SessionTurnDto turn, UnifiedAgentEvent evt, string? nativeThreadId);
         Task PersistSettlementCoreAsync(bool delivered, bool rejectedBeforePrompt, SessionTurnDto turn, IReadOnlyList<SessionItemDto> items,
             AgentSessionDto session);
@@ -200,7 +200,7 @@ public sealed partial class TrackActor
             await Actor.PersistAndEmitSessionUpdatedCoreAsync(runningSession, now, ct).ConfigureAwait(false);
         }
 
-        public SessionTurnDto CreateUnstartedTurn() =>
+        public virtual SessionTurnDto? CreateUnstartedTurn() =>
             throw new InvalidOperationException("A reserved turn either starts or fails its setup.");
 
         public abstract Task OnProviderDeliveredAsync(SessionTurnDto turn, UnifiedAgentEvent evt, string? nativeThreadId);
@@ -290,6 +290,7 @@ public sealed partial class TrackActor
         private string? _turnId;
         private IReadOnlyList<TrackWake>? _preparedBatch;
         private IReadOnlyList<TrackWakePayload>? _preparedPayloads;
+        private IReadOnlyList<string>? _preparedPrompts;
         private IReadOnlyList<TrackWake> DispatchBatch => _preparedBatch ?? batch;
 
         // Wakes whose prompt is blank are suppressed. With none left the batch is acknowledged without a turn.
@@ -301,7 +302,7 @@ public sealed partial class TrackActor
             foreach (var wake in batch)
             {
                 var payload = TrackWakePayload.Parse(wake.PayloadJson);
-                var prompt = await Actor.PrepareWakePromptAsync(wake, payload, ct).ConfigureAwait(false);
+                var prompt = await Actor.PrepareWakePromptAsync(SessionId, wake, payload, ct).ConfigureAwait(false);
                 if (string.IsNullOrWhiteSpace(prompt))
                     await Actor._store.TrackWakes.MarkDroppedAsync([wake], TrackWakeReasons.Canceled, null, CancellationToken.None).ConfigureAwait(false);
                 else
@@ -313,6 +314,7 @@ public sealed partial class TrackActor
             }
             _preparedBatch = dispatch;
             _preparedPayloads = payloads;
+            _preparedPrompts = prompts;
             if (dispatch.Count == 0)
             {
                 _acked = true;
@@ -320,6 +322,43 @@ public sealed partial class TrackActor
             }
             return string.Join("\n\n", prompts);
         }
+        public async Task<string?> RefreshApprovalNotificationsCoreAsync(string prompt, CancellationToken ct)
+        {
+            if (_preparedPayloads is null || !_preparedPayloads.Any(payload => payload.ApprovalId is not null))
+                return prompt;
+
+            var wakes = new List<TrackWake>();
+            var payloads = new List<TrackWakePayload>();
+            var prompts = new List<string>();
+            for (var index = 0; index < DispatchBatch.Count; index++)
+            {
+                var wake = DispatchBatch[index];
+                var payload = _preparedPayloads[index];
+                var current = payload.ApprovalId is { } approvalId
+                    ? Actor.PrepareDispatcherApprovalPrompt(approvalId, SessionId)
+                    : _preparedPrompts![index];
+                if (current is null)
+                {
+                    await Actor._store.TrackWakes.MarkDroppedAsync([wake], TrackWakeReasons.Canceled, null, ct).ConfigureAwait(false);
+                    continue;
+                }
+                wakes.Add(wake);
+                payloads.Add(payload);
+                prompts.Add(current);
+            }
+
+            _preparedBatch = wakes;
+            _preparedPayloads = payloads;
+            _preparedPrompts = prompts;
+            if (wakes.Count > 0)
+                return string.Join("\n\n", prompts);
+            _acked = true;
+            return null;
+        }
+
+        public override SessionTurnDto? CreateUnstartedTurn() =>
+            _acked && DispatchBatch.Count == 0 ? null : base.CreateUnstartedTurn();
+
         public override async Task OnTurnCreatedAsync(SessionTurnDto turn)
         {
             _turnId = turn.Id;
@@ -369,7 +408,7 @@ public sealed partial class TrackActor
             if (_acked) return;
             if (_turnId is not null)
                 await Actor._store.TrackWakes.LinkTurnAsync(DispatchBatch, _turnId, CancellationToken.None).ConfigureAwait(false);
-            await Actor._store.TrackWakes.MarkDroppedAsync(DispatchBatch.Where(w => !w.IsCritical).ToArray(),
+            await Actor._store.TrackWakes.MarkDroppedAsync(DispatchBatch.Where(w => !w.IsCritical || TrackWakePayload.Parse(w.PayloadJson).ApprovalId is not null).ToArray(),
                 TrackWakeReasons.RuntimeFailed, _turnId, CancellationToken.None).ConfigureAwait(false);
         }
     }

@@ -11,6 +11,8 @@ public sealed record KernelOptions
     public string DefaultProvider { get; init; } = "codex";
     public string? DefaultModel { get; init; }
     public bool WorkerApprovalAuthorizationConfigured { get; init; }
+    public IReadOnlyDictionary<string, string[]> DispatcherWorkerApprovalOptions { get; init; } =
+        new Dictionary<string, string[]>(StringComparer.Ordinal);
     public string DefaultWorkspaceDriver { get; init; } = "direct";
     public TimeSpan ActorIdleTimeout { get; init; } = TimeSpan.FromMinutes(10);
     public TimeSpan ActorEvictionSweepInterval { get; init; } = TimeSpan.FromMinutes(1);

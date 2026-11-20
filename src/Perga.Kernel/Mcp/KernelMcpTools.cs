@@ -50,6 +50,7 @@ public static class KernelMcpToolNames
     public const string SessionInterrupt = "perga_session_interrupt";
     public const string SessionUpdateSettings = "perga_session_update_settings";
     public const string TaskDispatch = "perga_task_dispatch";
+    public const string ApprovalDecide = "perga_approval_decide";
 
     public static readonly IReadOnlyList<string> All =
     [
@@ -85,7 +86,8 @@ public static class KernelMcpToolNames
         SessionSteerQueued,
         SessionInterrupt,
         SessionUpdateSettings,
-        TaskDispatch
+        TaskDispatch,
+        ApprovalDecide
     ];
 }
 
@@ -130,7 +132,7 @@ public static class KernelMcpCatalog
     public static bool IsWorkerOperatorOnly(string toolName) => toolName is
         KernelMcpToolNames.SessionRead or KernelMcpToolNames.SessionSend or KernelMcpToolNames.SessionWithdraw or
         KernelMcpToolNames.SessionSteerQueued or KernelMcpToolNames.SessionInterrupt or
-        KernelMcpToolNames.SessionUpdateSettings or KernelMcpToolNames.TaskDispatch or
+        KernelMcpToolNames.SessionUpdateSettings or KernelMcpToolNames.TaskDispatch or KernelMcpToolNames.ApprovalDecide or
         KernelMcpToolNames.SystemUpgradeCheck or KernelMcpToolNames.SystemUpgradeApply or KernelMcpToolNames.SystemUpgradeRollback;
 
     private static IReadOnlyList<McpToolDescriptor> BuildDescriptors()
@@ -207,6 +209,8 @@ public static class KernelMcpCatalog
                 Schema("""{"type":"object","required":["sessionId","attemptId","turnId"],"properties":{"sessionId":{"type":"string"},"attemptId":{"type":"string"},"turnId":{"type":"string"}}}""")),
             new(KernelMcpToolNames.SessionUpdateSettings, "Set a Worker's configuration for the next turn. Read the latest providerConfiguration and settings first. Use null for a reported provider default. Restoring approval requests after deny requires installation owner authorization through the human HTTP interface.",
                 Schema("""{"type":"object","required":["sessionId","attemptId","version","model","reasoningEffort","approvalMode"],"properties":{"sessionId":{"type":"string"},"attemptId":{"type":"string"},"version":{"type":"integer","minimum":0},"model":{"type":["string","null"]},"reasoningEffort":{"type":["string","null"]},"approvalMode":{"enum":["ask","deny"]}}}""")),
+            new(KernelMcpToolNames.ApprovalDecide, "Select an authorized option for a pending Worker approval delegated to this dispatcher.",
+                Schema("""{"type":"object","additionalProperties":false,"required":["executionId","approvalId","optionId"],"properties":{"executionId":{"type":"string"},"approvalId":{"type":"string"},"optionId":{"type":"string"}}}""")),
             new(KernelMcpToolNames.TaskDispatch, "Dispatch a Worker on the current Track. Only the goal is required. Reuse an optional requestKey to retry safely.",
                 Schema("""{"type":"object","required":["goal"],"properties":{"goal":{"type":"string"},"requestKey":{"type":"string"},"access":{"enum":["read_only","read_write"]},"acceptance":{"type":"string"},"dependsOn":{"type":"array","items":{"type":"string"}},"gate":{"type":"string"},"provider":{"type":"string"},"model":{"type":"string"},"role":{"type":"string"}}}"""))
         ];
@@ -265,6 +269,15 @@ public static class KernelMcpDispatcher
             {
                 var tasks = await kernel.ListTasksAsync(caller.TrackId, ct).ConfigureAwait(false);
                 return JsonHelpers.ToElement(tasks);
+            }
+
+            case KernelMcpToolNames.ApprovalDecide:
+            {
+                RejectUnknownArgs(args, ["executionId", "approvalId", "optionId"]);
+                var approval = await kernel.Actors.GetOrActivate(caller.TrackId).DecideApprovalAsync(
+                    RequireStringArg(args, ["executionId"]), RequireStringArg(args, ["approvalId"]),
+                    RequireStringArg(args, ["optionId"]), ct, caller).ConfigureAwait(false);
+                return JsonHelpers.ToElement(approval);
             }
 
             case KernelMcpToolNames.TaskDispatch:

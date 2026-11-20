@@ -29,6 +29,7 @@ public sealed class PergaHostOptions
     public string? CodexSandboxApiKey { get; set; }
     public string? CodexWorkerHomeDirectory { get; set; }
     public string? WorkerApprovalAuthorizationSha256 { get; set; }
+    public Dictionary<string, string[]> DispatcherWorkerApprovalOptions { get; set; } = new(StringComparer.Ordinal);
     public string DefaultWorkspaceDriver { get; set; } = "direct";
     public bool DispatchWakesInBackground { get; set; } = true;
 
