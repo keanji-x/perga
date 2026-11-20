@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using Perga.AgentKit;
 using Perga.Kernel.Tests.Fakes;
 
@@ -23,6 +24,76 @@ public sealed class SessionLivenessTests
             Assert.Empty(ctx.AgentRuntime.OpenedSessions);
         }
         finally { ctx.Kernel.DispatchAdmission.SetDraining(false); }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ActorShutdownJoinsActivelyPendingReconnectLaunch(bool synchronousOpen)
+    {
+        await using var ctx = new KernelTestContext();
+        var (_, snap) = await ctx.CreateDefaultTrackAsync();
+        var id = snap.Track.LeadSessionId!;
+        ctx.AgentRuntime.SupportsSessionResume = true;
+        ctx.AgentRuntime.TurnScript = LostStream;
+        static async IAsyncEnumerable<UnifiedAgentEvent> LostStream(ScriptableFakeAgentSession session,
+            TurnInput input, [EnumeratorCancellation] CancellationToken ct)
+        {
+            await Task.Yield();
+            yield return new UnifiedAgentEvent.TextDelta("accepted");
+            yield return new UnifiedAgentEvent.TurnError("stream_lost", "Disconnected", false);
+        }
+        await ctx.SendAndWaitForTurnAsync(id, new("first", "first"));
+        Assert.True((await ctx.Kernel.GetSessionItemsAsync(id)).UnknownDetail?.CanReconnect);
+        var opening = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var launch = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var disposing = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseDisposal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var releaseOpen = new ManualResetEventSlim();
+        ctx.AgentRuntime.BeforeOpenAsync = () =>
+        {
+            opening.TrySetResult();
+            if (synchronousOpen && !releaseOpen.Wait(TimeSpan.FromSeconds(10))) throw new TimeoutException();
+            return launch.Task;
+        };
+        ctx.AgentRuntime.OnOpenedSession = agent =>
+        {
+            agent.ShutdownConfirmed = false;
+            agent.DisposeHandler = async () =>
+            {
+                disposing.TrySetResult();
+                await releaseDisposal.Task;
+                agent.ShutdownConfirmed = true;
+            };
+        };
+        var recovery = ctx.Kernel.RecoverSessionAsync(id, new("reconnect"), default);
+        Task? shutdown = null;
+        try
+        {
+            await opening.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            shutdown = ctx.Kernel.Actors.GetOrActivate(snap.Track.Id).DisposeAsync().AsTask();
+            // Keep OpenSessionAsync pending while shutdown has time to drain the mailbox.
+            Assert.NotSame(shutdown, await Task.WhenAny(shutdown, Task.Delay(100)));
+            releaseOpen.Set();
+            launch.TrySetResult();
+            await disposing.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.False(shutdown.IsCompleted);
+            var joinedShutdown = ctx.Kernel.Actors.GetOrActivate(snap.Track.Id).DisposeAsync().AsTask();
+            Assert.Same(shutdown, joinedShutdown);
+            Assert.Equal(1, ctx.AgentRuntime.OpenedSessions.Last().DisposeCalls);
+        }
+        finally
+        {
+            releaseOpen.Set();
+            launch.TrySetResult();
+            releaseDisposal.TrySetResult();
+            await Assert.ThrowsAnyAsync<Exception>(() => recovery);
+            if (shutdown is not null) await shutdown.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        var replacement = ctx.AgentRuntime.OpenedSessions.Last();
+        Assert.True(replacement.ShutdownConfirmed);
+        Assert.True(replacement.Disposed);
+        Assert.Equal(1, replacement.DisposeCalls);
     }
 
     [Theory]

@@ -5,6 +5,9 @@ namespace Perga.Kernel.Actors;
 
 public sealed partial class TrackActor
 {
+    private readonly object _disposeSync = new();
+    private Task? _disposeTask;
+
     private sealed record PendingSessionLaunch(Task<IAgentSession> Launch, Task Cleanup);
 
     // Tasks and handles stay associated with their session until shutdown is verified.
@@ -29,8 +32,7 @@ public sealed partial class TrackActor
                 // Cleanup may already be disposing the late handle. Join it before retrying.
                 try { await pending.Cleanup.ConfigureAwait(false); }
                 catch when (pending.Cleanup.IsCompleted) { }
-                if (pending.Launch.IsCompletedSuccessfully &&
-                    (!pending.Cleanup.IsCompletedSuccessfully || !pending.Launch.Result.ShutdownConfirmed))
+                if (pending.Launch.IsCompletedSuccessfully)
                     await ConfirmProviderShutdownAsync(sessionId, pending.Launch.Result, CancellationToken.None).ConfigureAwait(false);
                 _pendingSessionLaunches.TryRemove(sessionId, out _);
                 _sessionShutdownPending.TryRemove(sessionId, out _);
@@ -61,14 +63,41 @@ public sealed partial class TrackActor
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
         deadline.CancelAfter(_options.SessionStartupTimeout);
-        var launchTask = _agentRuntime.OpenSessionAsync(spec, deadline.Token);
-        try { return await launchTask.WaitAsync(deadline.Token).ConfigureAwait(false); }
+        var launched = new TaskCompletionSource<IAgentSession>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var needsCleanup = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        async Task CleanupAsync()
+        {
+            if (await needsCleanup.Task.ConfigureAwait(false))
+                await DisposeLateLaunchAsync(sessionId, launched.Task).ConfigureAwait(false);
+        }
+        var cleanup = CleanupAsync();
+        // Own both the launch and its cleanup before invoking any external provider code,
+        // including providers that block synchronously before returning their Task.
+        _pendingSessionLaunches[sessionId] = new(launched.Task, cleanup);
+        ObserveTaskFault(cleanup);
+        async Task LaunchAsync()
+        {
+            try { launched.TrySetResult(await _agentRuntime.OpenSessionAsync(spec, deadline.Token).ConfigureAwait(false)); }
+            catch (Exception error) { launched.TrySetException(error); }
+        }
+        _ = LaunchAsync();
+        try
+        {
+            var agent = await launched.Task.WaitAsync(deadline.Token).ConfigureAwait(false);
+            needsCleanup.TrySetResult(false);
+            // The caller removes the pending entry only after installing the open handle.
+            return agent;
+        }
         catch (OperationCanceledException)
         {
             _sessionShutdownPending.TryAdd(sessionId, 0);
-            var cleanup = DisposeLateLaunchAsync(sessionId, launchTask);
-            _pendingSessionLaunches[sessionId] = new(launchTask, cleanup);
-            ObserveTaskFault(cleanup);
+            needsCleanup.TrySetResult(true);
+            throw;
+        }
+        catch
+        {
+            needsCleanup.TrySetResult(false);
+            _pendingSessionLaunches.TryRemove(sessionId, out _);
             throw;
         }
     }

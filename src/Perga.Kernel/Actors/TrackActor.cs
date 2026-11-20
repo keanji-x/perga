@@ -2830,6 +2830,7 @@ public sealed partial class TrackActor : IAsyncDisposable
         catch (SessionConfigurationException error)
         { throw KernelException.PreconditionFailed(error.Message); }
         _openSessionHandles[session.Id] = new(opened, spec, SessionConfiguration.FromLaunch(spec), opened.ConfigurationState);
+        _pendingSessionLaunches.TryRemove(session.Id, out _);
         try
         {
             if (spec.ResumeNativeThreadId is not null && opened.NativeThreadId != spec.ResumeNativeThreadId)
@@ -3417,13 +3418,14 @@ public sealed partial class TrackActor : IAsyncDisposable
         Volatile.Write(ref _lastActivityAtMs, NowMs());
     }
 
-    public async ValueTask DisposeAsync()
+    public ValueTask DisposeAsync()
     {
-        if (_disposed)
-        {
-            return;
-        }
+        lock (_disposeSync)
+            return new ValueTask(_disposeTask ??= DisposeCoreAsync());
+    }
 
+    private async Task DisposeCoreAsync()
+    {
         _disposed = true;
         _mailbox.Writer.TryComplete();
         _actorShutdownCts.Cancel();
@@ -3438,6 +3440,11 @@ public sealed partial class TrackActor : IAsyncDisposable
             // Ignore shutdown cancellation.
         }
 
+        // Recovery runs outside the mailbox and can still create or transfer ownership.
+        // Quiesce those producers before taking the final ownership snapshots, and keep
+        // the shutdown token source alive until their cancellation/finally paths finish.
+        try { await Task.WhenAll(_sessionRecoveryJobs).ConfigureAwait(false); }
+        catch { /* Failed recoveries still leave their provider ownership registered. */ }
         await DisposeSessionOwnershipAsync().ConfigureAwait(false);
 
         _actorShutdownCts.Dispose();

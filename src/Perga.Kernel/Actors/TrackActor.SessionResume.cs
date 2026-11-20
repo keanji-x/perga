@@ -8,6 +8,8 @@ namespace Perga.Kernel.Actors;
 public sealed partial class TrackActor
 {
     private int _sessionResumeHoldCount;
+    // Registered by the mailbox; shutdown joins these after the mailbox stops producing work.
+    private readonly List<Task> _sessionRecoveryJobs = [];
 
     private sealed class SessionResumeHold(string turnId, string nativeId)
     {
@@ -103,11 +105,12 @@ public sealed partial class TrackActor
             hold.Busy = true;
             NotifyQueueChangedCore(sessionId);
             var completion = new TaskCompletionSource<AgentSessionDto>(TaskCreationOptions.RunContinuationsAsynchronously);
-            _ = actor.TrackBackgroundJob(async () =>
+            _sessionRecoveryJobs.RemoveAll(job => job.IsCompleted);
+            _sessionRecoveryJobs.Add(actor.TrackBackgroundJob(async () =>
             {
                 try { completion.TrySetResult(await RunSessionRecoveryAsync(sessionId, request.Mode, hold, session.Epoch).ConfigureAwait(false)); }
                 catch (Exception error) { completion.TrySetException(error); }
-            });
+            }));
             return completion.Task;
         }, ct).ConfigureAwait(false);
         return await operation.WaitAsync(ct).ConfigureAwait(false);
@@ -176,6 +179,7 @@ public sealed partial class TrackActor
                 await EnqueueAsync(_ =>
                 {
                     _openSessionHandles[sessionId] = new(replacement, spec, SessionConfiguration.FromLaunch(spec), replacement.ConfigurationState);
+                    _pendingSessionLaunches.TryRemove(sessionId, out var transferredLaunch);
                     return Task.CompletedTask;
                 }, CancellationToken.None).ConfigureAwait(false);
                 if (!replacement.SupportsSessionResume || replacement.NativeThreadId != hold.NativeId)
