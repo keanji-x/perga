@@ -98,6 +98,8 @@ public sealed partial class TrackActor
             var idle = actor.RequireSessionCore(SessionId) with { Status = lost ? "unknown" : "idle",
                 UnknownReason = lost ? "session_lost" : null, UnknownTurnId = lost ? turn.Id : null,
                 ReconnectInvalidated = lost, UpdatedAtMs = actor.NowMs() };
+            if (failed.Status == "failed" && failed.CompletedAtMs is { } completedAt)
+                idle = idle with { LastNotifiableTurnAtMs = Math.Max(idle.LastNotifiableTurnAtMs ?? 0, completedAt) };
             var outcome = new SessionItemDto(0, SessionId, turn.Id, "turn_outcome",
                 JsonHelpers.ToElement(new { v = 1, status, error = failed.ErrorText }), idle.UpdatedAtMs);
             await actor.SettleDurableTurnCoreAsync(input, lost ? "unknown" : "rejected", failed, [outcome], idle).ConfigureAwait(false);
@@ -183,6 +185,8 @@ public sealed partial class TrackActor
             var idle = Actor.RequireSessionCore(SessionId) with { Status = lost ? "unknown" : "idle",
                 UnknownReason = lost ? "session_lost" : null, UnknownTurnId = lost ? turn.Id : null,
                 ReconnectInvalidated = lost, UpdatedAtMs = Actor.NowMs() };
+            if (failed.Status == "failed" && failed.CompletedAtMs is { } completedAt)
+                idle = idle with { LastNotifiableTurnAtMs = Math.Max(idle.LastNotifiableTurnAtMs ?? 0, completedAt) };
             await Actor._store.RecordTurnAndItemsAsync(failed, [], idle, CancellationToken.None).ConfigureAwait(false);
             Actor._sessions[SessionId] = idle;
             await OnTurnCreatedAsync(failed).ConfigureAwait(false);

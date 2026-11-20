@@ -7,7 +7,7 @@ import { ReportDocument, type ReportDocumentProps } from '../../features/report/
 import { useReportPreparation } from '../../features/report/document/resource.ts';
 import type { ReportPreparationPort } from '../../features/report/document/preparation.ts';
 import { revealReportAnchor } from '../../features/report/anchor/public.ts';
-import { useReadReceipt } from '../providers/read-receipts.tsx';
+import { useViewReadReceipt } from '../providers/read-receipts.tsx';
 import { useTrackReportCache } from './track-view-state.tsx';
 
 /** Queries and controls remain live while this report's pure preparation is pending. */
@@ -35,27 +35,26 @@ type Presentation = ReturnType<typeof useTrackReportPresentation>;
 type ReportRegionProps = Omit<ReportDocumentProps, 'report' | 'preparation' | 'arrivalAnchorId'> & Readonly<{
   presentation: Presentation;
   trackId: string;
-  activityAt: number | null;
   openedAt: number;
   children?: ReactNode;
 }>;
 
 /** The read effect belongs to the actual mounted report/empty state, never the early shell. */
-function ReportRead({ trackId, activityAt, openedAt, enabled, children }: Readonly<{
-  trackId: string; activityAt: number | null; openedAt: number; enabled: boolean; children: ReactNode;
+function ReportRead({ trackId, openedAt, enabled, children }: Readonly<{
+  trackId: string; openedAt: number; enabled: boolean; children: ReactNode;
 }>) {
-  useReadReceipt('track', trackId, activityAt, enabled, openedAt);
+  useViewReadReceipt('track', trackId, enabled, openedAt);
   return <>{children}</>;
 }
 
-export function TrackReportRegion({ presentation, trackId, activityAt, openedAt, children, ...documentProps }: ReportRegionProps) {
+export function TrackReportRegion({ presentation, trackId, openedAt, children, ...documentProps }: ReportRegionProps) {
   const { resource, visible, presentable, current } = presentation;
   return <section aria-label="Track report" tabIndex={-1} aria-busy={resource.status !== 'failed' && !current}>
     {resource.status === 'failed'
       ? <ErrorBox message="The report could not be loaded." onRetry={resource.retry}
         description={presentable ? 'The last available report is still shown.' : undefined} />
       : !current && resource.status !== 'ready' && <p role="status">{presentable ? 'Updating report…' : 'Loading report…'}</p>}
-    {presentable && visible !== null && <ReportRead trackId={trackId} activityAt={activityAt}
+    {presentable && visible !== null && <ReportRead trackId={trackId}
       openedAt={openedAt} enabled={current}>
       <ReportDocument {...documentProps} report={visible.preparation.report} preparation={visible.preparation} />
       {children}

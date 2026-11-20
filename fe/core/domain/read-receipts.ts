@@ -1,7 +1,9 @@
 // Read receipts (#2596): the kernel keeps what the one user has read, so a refresh or a second
 // device reads the same state. This module is the one unread rule and the receipt operations.
 
-import { z } from 'zod';
+import type { z } from 'zod';
+import { readReceiptDtoSchema, readReceiptsResponseDtoSchema } from '../api/perga-v1.js';
+import type { NotifiableSessionWatermark } from '../api/perga-v1.js';
 import type { ApiOperation } from '../api/types.js';
 import type { FailureTable, WriteClass, WriteText } from './failure-class.js';
 import type {
@@ -11,17 +13,8 @@ import type {
 export type ReadReceiptKind = ReadReceiptKindWire;
 export type ReadReceipt = ReadReceiptWire;
 
-export const readReceiptSchema: z.ZodType<ReadReceipt> = z.object({
-  kind: z.enum(['track', 'conversation']),
-  targetId: z.string(),
-  readThroughMs: z.number().int().nonnegative(),
-  manualUnread: z.boolean(),
-});
-
-export const readReceiptsSchema: z.ZodType<ReadReceiptsWire> = z.object({
-  baselineMs: z.number().int(),
-  receipts: z.array(readReceiptSchema),
-});
+export const readReceiptSchema: z.ZodType<ReadReceipt> = readReceiptDtoSchema;
+export const readReceiptsSchema: z.ZodType<ReadReceiptsWire> = readReceiptsResponseDtoSchema;
 
 /**
  * The reader's view of the kernel's receipts: the cutover baseline, and each receipt under
@@ -71,11 +64,11 @@ export function withReceipt(state: ReadState, receipt: ReadReceipt): ReadState {
 }
 
 export function readReceiptsOperation(): ApiOperation<ReadReceiptsWire> {
-  return { method: 'GET', path: '/api/read-receipts', responseSchema: readReceiptsSchema };
+  return { method: 'GET', path: '/api/v1/read-receipts', responseSchema: readReceiptsSchema };
 }
 
 const receiptPath = (kind: ReadReceiptKind, targetId: string) =>
-  `/api/read-receipts/${kind}/${encodeURIComponent(targetId)}`;
+  `/api/v1/read-receipts/${kind}/${encodeURIComponent(targetId)}`;
 
 /** Idempotent; the kernel keeps the larger instant and answers the stored receipt. */
 export function markReadOperation(kind: ReadReceiptKind, targetId: string, readThroughMs: number): ApiOperation<ReadReceipt> {
@@ -102,3 +95,9 @@ export const READ_RECEIPT_FAILURES: FailureTable<WriteClass> = Object.freeze({
 export const MARK_UNREAD_TEXT: WriteText = Object.freeze({
   refused: 'The track was not marked unread.', unknown: 'Marking the track unread is unconfirmed.',
 });
+
+/** Track receipts only supply manual unread; output belongs to each eligible conversation. */
+export function isTrackUnread(state: ReadState, trackId: string, notifiableSessions: readonly NotifiableSessionWatermark[]): boolean {
+  return state.receipts[receiptKey('track', trackId)]?.manualUnread === true
+    || notifiableSessions.some(s => isUnread(state, 'conversation', s.sessionId, s.lastNotifiableTurnAtMs));
+}

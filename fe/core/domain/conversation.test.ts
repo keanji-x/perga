@@ -111,7 +111,7 @@ describe('track conversations', () => {
   it('maps session identity, role, provider and timestamps into a unified conversation', () => {
     expect(agentSessionDtoToConversation(row)).toEqual({
       id: 'card-3', trackId: 'track-1', title: null, kind: 'agent', isLead: false,
-      provider: 'codex', state: 'starting', updatedAt: 7, archivedAt: null, lastTurnCompletedAt: 7,
+      provider: 'codex', state: 'starting', updatedAt: 7, archivedAt: null, lastTurnCompletedAt: null,
     });
     expect(agentSessionDtoToConversation({ ...row, isLead: true, provider: 'acp:opencode', status: 'queued' }))
       .toMatchObject({ kind: 'agent', isLead: true, provider: 'opencode', state: 'turn_pending' });

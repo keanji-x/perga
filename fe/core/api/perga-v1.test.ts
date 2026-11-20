@@ -860,7 +860,7 @@ describe('Perga /api/v1 protocol contracts', () => {
     ]);
 
     const overlaysOp = overlaysByKindOperation('track');
-    expect(overlaysOp.path).toBe('/api/v1/overlays?entity_kind=track');
+    expect(overlaysOp.path).toBe('/api/v1/overlays?entity_kind=track&includeClosed=true');
     const overlays = overlaysOp.responseSchema.parse({
       tracks: [{
         trackId: 'trk_1',

@@ -588,6 +588,8 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                        updated_at_ms AS UpdatedAtMs,
                        permission_mode AS PermissionMode,
                        unknown_reason AS UnknownReason, unknown_turn_id AS UnknownTurnId,
+                       (SELECT MAX(t.completed_at_ms) FROM session_turns t WHERE t.session_id = agent_sessions.id
+                        AND LOWER(t.status) IN ('completed', 'failed') AND t.completed_at_ms IS NOT NULL) AS LastNotifiableTurnAtMs,
                        unknown_last_error AS UnknownLastError, reconnect_invalidated AS ReconnectInvalidated
                 FROM agent_sessions
                 WHERE track_id = @TrackId
@@ -1729,19 +1731,27 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                 """
                 SELECT tr.id AS TrackId,
                        tr.area_id AS AreaId,
+                       tr.closed_at_ms AS ClosedAtMs,
                        CASE WHEN EXISTS (
-                           SELECT 1 FROM agent_sessions s
-                           WHERE s.track_id = tr.id AND LOWER(s.status) IN ('queued', 'running')
+                           SELECT 1 FROM agent_sessions s WHERE s.track_id = tr.id AND s.archived_at_ms IS NULL
+                           AND LOWER(s.status) IN ('queued', 'running', 'stopping', 'compacting')
                        ) OR EXISTS (
-                           SELECT 1 FROM tasks t
-                           WHERE t.track_id = tr.id AND LOWER(t.status) IN ('running', 'verifying')
+                           SELECT 1 FROM tasks t WHERE t.track_id = tr.id AND LOWER(t.status) IN ('running', 'verifying')
+                       ) OR EXISTS (
+                           SELECT 1 FROM track_workspace_preparations p WHERE p.track_id = tr.id
+                           AND json_extract(p.intent_json, '$.Phase') IN (0, 1, 2, 3, 7)
                        ) THEN 1 ELSE 0 END AS IsWorking,
                        (SELECT COUNT(1) FROM asks a WHERE a.track_id = tr.id AND LOWER(a.status) = 'open') AS OpenAskCount,
                        CASE WHEN EXISTS (
-                           SELECT 1 FROM tasks tf
-                           WHERE tf.track_id = tr.id AND LOWER(tf.status) = 'failed'
-                       ) THEN 1 ELSE 0 END AS HasFailedTask,
-                       (SELECT COUNT(1) FROM mails m WHERE m.to_track_id = tr.id AND m.read_at_ms IS NULL) AS UnreadMailCount,
+                           SELECT 1 FROM agent_sessions s WHERE s.track_id = tr.id AND s.archived_at_ms IS NULL
+                           AND LOWER(s.status) = 'unknown' AND (s.bound_task_id IS NULL OR EXISTS (
+                               SELECT 1 FROM task_attempts a WHERE a.attempt_id = s.bound_attempt_id AND a.finished_at_ms IS NULL
+                           ))
+                       ) THEN 1 ELSE 0 END AS HasBlockedSession,
+                       CASE WHEN EXISTS (
+                           SELECT 1 FROM track_workspace_preparations p WHERE p.track_id = tr.id
+                           AND json_extract(p.intent_json, '$.Phase') IN (4, 5)
+                       ) THEN 1 ELSE 0 END AS WorkspaceFailed,
                        MAX(
                            tr.updated_at_ms,
                            COALESCE((SELECT MAX(s2.updated_at_ms) FROM agent_sessions s2 WHERE s2.track_id = tr.id), tr.updated_at_ms),
@@ -1756,16 +1766,29 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                 new { IncludeClosed = includeClosed ? 1 : 0 },
                 cancellationToken: ct)).ConfigureAwait(false);
 
-        return rows
-            .Select(static r => new TrackOverlayDto(
-                TrackId: r.TrackId,
-                AreaId: r.AreaId,
-                IsWorking: r.IsWorking != 0,
-                OpenAskCount: (int)r.OpenAskCount,
-                HasFailedTask: r.HasFailedTask != 0,
-                UnreadMailCount: (int)r.UnreadMailCount,
-                UpdatedAtMs: r.UpdatedAtMs))
-            .ToList();
+        var watermarks = (await conn.QueryAsync<OverlayWatermarkRow>(new CommandDefinition("""
+            SELECT s.track_id AS TrackId, s.id AS SessionId, MAX(t.completed_at_ms) AS LastNotifiableTurnAtMs
+            FROM agent_sessions s JOIN session_turns t ON t.session_id = s.id
+            JOIN tracks tr ON tr.id = s.track_id
+            WHERE s.archived_at_ms IS NULL AND s.bound_task_id IS NULL
+              AND LOWER(t.status) IN ('completed', 'failed') AND t.completed_at_ms IS NOT NULL
+              AND (@IncludeClosed = 1 OR tr.closed_at_ms IS NULL)
+            GROUP BY s.track_id, s.id ORDER BY s.id;
+            """, new { IncludeClosed = includeClosed ? 1 : 0 }, cancellationToken: ct)).ConfigureAwait(false))
+            .ToLookup(r => r.TrackId);
+        return rows.Select(r => new TrackOverlayDto(r.TrackId, r.AreaId,
+            r.ClosedAtMs is null && r.IsWorking != 0,
+            r.ClosedAtMs is null ? (int)r.OpenAskCount : 0, 0,
+            r.ClosedAtMs is null && r.HasBlockedSession != 0,
+            r.ClosedAtMs is null && r.WorkspaceFailed != 0, r.UpdatedAtMs,
+            watermarks[r.TrackId].Select(w => new NotifiableSessionWatermarkDto(w.SessionId, w.LastNotifiableTurnAtMs)).ToArray())).ToList();
+    }
+
+    private sealed class OverlayWatermarkRow
+    {
+        public string TrackId { get; init; } = "";
+        public string SessionId { get; init; } = "";
+        public long LastNotifiableTurnAtMs { get; init; }
     }
 
     // -------------------------------------------------------------------------
@@ -2236,7 +2259,7 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
             UpdatedAtMs: r.UpdatedAtMs,
             ReasoningEffort: r.ReasoningEffort,
             PermissionMode: r.PermissionMode, UnknownReason: r.UnknownReason, UnknownTurnId: r.UnknownTurnId,
-            UnknownLastError: r.UnknownLastError, ReconnectInvalidated: r.ReconnectInvalidated);
+            UnknownLastError: r.UnknownLastError, ReconnectInvalidated: r.ReconnectInvalidated, LastNotifiableTurnAtMs: r.LastNotifiableTurnAtMs);
 
     private static SessionTurnDto MapTurn(SessionTurnRow r) =>
         new(
@@ -2418,6 +2441,7 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
 
     private sealed class SessionRow
     {
+        public long? LastNotifiableTurnAtMs { get; init; }
         public string? UnknownReason { get; init; }
         public string? UnknownTurnId { get; init; }
         public string? UnknownLastError { get; init; }
@@ -2566,8 +2590,9 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
         public string AreaId { get; init; } = string.Empty;
         public long IsWorking { get; init; }
         public long OpenAskCount { get; init; }
-        public long HasFailedTask { get; init; }
-        public long UnreadMailCount { get; init; }
+        public long? ClosedAtMs { get; init; }
+        public long HasBlockedSession { get; init; }
+        public long WorkspaceFailed { get; init; }
         public long UpdatedAtMs { get; init; }
     }
 

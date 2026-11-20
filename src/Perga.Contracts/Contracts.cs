@@ -87,7 +87,8 @@ public sealed record AgentSessionDto(
     string? UnknownReason = null,
     string? UnknownTurnId = null,
     string? UnknownLastError = null,
-    bool ReconnectInvalidated = false);
+    bool ReconnectInvalidated = false,
+    long? LastNotifiableTurnAtMs = null);
 
 public sealed record SessionTurnDto(
     string Id,
@@ -256,6 +257,13 @@ public sealed record TrackOverlayDto(
     string AreaId,
     bool IsWorking,
     int OpenAskCount,
-    bool HasFailedTask,
-    int UnreadMailCount,
-    long UpdatedAtMs);
+    int PendingApprovalCount,
+    bool HasBlockedSession,
+    bool WorkspaceFailed,
+    long UpdatedAtMs,
+    IReadOnlyList<NotifiableSessionWatermarkDto>? NotifiableSessions = null);
+
+public sealed record NotifiableSessionWatermarkDto(string SessionId, long LastNotifiableTurnAtMs);
+public sealed record ReadReceiptDto(string Kind, string TargetId, long ReadThroughMs, bool ManualUnread);
+public sealed record ReadReceiptsResponseDto(long BaselineMs, IReadOnlyList<ReadReceiptDto> Receipts);
+public sealed record MarkReadRequest(long? ReadThroughMs = null);

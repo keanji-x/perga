@@ -7,7 +7,7 @@ export function fixtureTrack(id: string, overrides: Partial<TrackDto> = {}): Tra
 
 export function fixtureSession(id: string, trackId: string, overrides: Partial<AgentSessionDto> = {}): AgentSessionDto {
   return { id, trackId, isLead: false, provider: 'codex', title: null, model: null, nativeThreadId: null, epoch: 1,
-    status: 'idle', contextUsage: null, archivedAtMs: null, createdAtMs: 1, updatedAtMs: 2, ...overrides };
+    status: 'idle', lastNotifiableTurnAtMs: null, contextUsage: null, archivedAtMs: null, createdAtMs: 1, updatedAtMs: 2, ...overrides };
 }
 
 export function fixtureReport(markdown = '', docRev = 1): ReportDocumentDto {

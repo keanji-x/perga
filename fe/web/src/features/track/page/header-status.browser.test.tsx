@@ -1,3 +1,4 @@
+import { activityLabelOf } from '../../../../../core/domain/activity.ts';
 import { useTrackClosedControl } from './closed-control.ts';
 import { page as browserPage, userEvent } from 'vitest/browser';
 import { cleanup, render, waitFor } from '@testing-library/react';
@@ -38,10 +39,6 @@ function contrast(first: Rgb, second: Rgb): number {
   const [high, low] = [luminance(first), luminance(second)].sort((a, b) => b - a);
   return (high + 0.05) / (low + 0.05);
 }
-
-const plannerNotification = [{
-  key: 'ask:1', kind: 'ask' as const, text: 'Merge PR #1811 now, or hold it?', atMs: 1,
-}];
 
 it('keeps Referenced by readable without a decorative heading icon and retains its source link', async () => {
   await browserPage.viewport(1280, 900);
@@ -169,143 +166,6 @@ describe('the track closed status in the page header', () => {
     expect(paintedRgb(getComputedStyle(actions).color)).toEqual(paintedRgb(text2));
   });
 
-  it('floats a Planner ask at the viewport corner; the whole row answers it and its × dismisses it', async () => {
-    await browserPage.viewport(1200, 800);
-    const onReply = vi.fn();
-    const onDismiss = vi.fn(() => Promise.resolve());
-    renderPage({
-      inputNotifications: [{
-        key: 'ask:1', kind: 'ask', atMs: Date.now(),
-        text: 'Merge PR #1811 now? See [the PR](https://example.com/pr/1811).',
-      }],
-      onReply,
-      onDismiss,
-    });
-
-    const notice = document.querySelector<HTMLElement>('[data-nc-needs-input-notice]')!;
-    const noticeBox = notice.getBoundingClientRect();
-    expect(window.innerWidth - noticeBox.right).toBeGreaterThanOrEqual(20);
-    expect(window.innerWidth - noticeBox.right).toBeLessThanOrEqual(28);
-    expect(window.innerHeight - noticeBox.bottom).toBeGreaterThanOrEqual(20);
-    expect(window.innerHeight - noticeBox.bottom).toBeLessThanOrEqual(28);
-
-    const row = notice.querySelector<HTMLElement>('[data-nc-notification-state="ask"]')!;
-    const open = row.querySelector<HTMLButtonElement>('[aria-label^="Answer the Planner: "]')!;
-    const dismiss = row.querySelector<HTMLButtonElement>('[aria-label^="Dismiss: Needs your answer: "]')!;
-    const link = row.querySelector<HTMLAnchorElement>('a')!;
-    const time = row.querySelector<HTMLElement>('time')!;
-    const label = [...row.querySelectorAll<HTMLElement>('span')].find((el) => el.textContent === 'Needs your answer')!;
-    const action = [...row.querySelectorAll<HTMLElement>('span')].find((el) => el.textContent === 'Answer in Planner')!;
-    /* The row button covers the whole row inside its divider; the body text is under it, the link and
-       the × are above it. */
-    const rowBox = row.getBoundingClientRect();
-    const openBox = open.getBoundingClientRect();
-    const inner = [rowBox.left + row.clientLeft, rowBox.top + row.clientTop, row.clientWidth, row.clientHeight];
-    [openBox.left, openBox.top, openBox.width, openBox.height]
-      .forEach((edge, i) => expect(Math.abs(edge - inner[i])).toBeLessThan(1));
-    const centre = (el: Element) => {
-      const box = el.getBoundingClientRect();
-      return document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
-    };
-    const body = row.querySelector(':scope > div')!;
-    expect(centre(body.firstElementChild!)).toBe(open);
-    expect(centre(link)).toBe(link);
-    expect(centre(dismiss)?.closest('button')).toBe(dismiss);
-    expect(dismiss.title).toBe('Dismiss');
-    /* The × is alone after the time; the label and the action share one slot at the start of the line. */
-    expect(dismiss.getBoundingClientRect().left).toBeGreaterThanOrEqual(time.getBoundingClientRect().right);
-    expect(action.getBoundingClientRect().left).toBe(label.getBoundingClientRect().left);
-    /* The body is the row's last line: bottom padding equals top padding. */
-    const rowStyle = getComputedStyle(row);
-    expect(rowStyle.paddingBottom).toBe(rowStyle.paddingTop);
-
-    /* At rest the label shows; hovering puts the action in its place. The time, the × corner and the
-       row's height do not move. */
-    const restHeight = row.getBoundingClientRect().height;
-    const restTime = time.getBoundingClientRect().left;
-    expect(getComputedStyle(label).visibility).toBe('visible');
-    expect(getComputedStyle(action).visibility).toBe('hidden');
-    expect(getComputedStyle(dismiss).opacity).toBe('0');
-    await userEvent.hover(open);
-    expect(getComputedStyle(label).visibility).toBe('hidden');
-    expect(getComputedStyle(action).visibility).toBe('visible');
-    const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent');
-    expect(paintedRgb(getComputedStyle(action).color)).toEqual(paintedRgb(accent));
-    expect(getComputedStyle(time).visibility).toBe('visible');
-    expect(time.getBoundingClientRect().left).toBe(restTime);
-    expect(getComputedStyle(dismiss).opacity).toBe('1');
-    expect(row.getBoundingClientRect().height).toBe(restHeight);
-    expect(getComputedStyle(open).cursor).toBe('pointer');
-
-    await userEvent.click(open);
-    expect(onReply).toHaveBeenCalledOnce();
-    await userEvent.click(dismiss);
-    expect(onDismiss).toHaveBeenCalledWith('ask:1');
-    expect(onReply).toHaveBeenCalledOnce();
-  });
-
-  it('clamps a planner-down reason to three lines and never an ask', async () => {
-    await browserPage.viewport(1200, 800);
-    const long = Array.from({ length: 12 }, (_, i) => `Line ${i} of a long upstream error body.`).join(' ');
-    renderPage({
-      inputNotifications: [
-        { key: 'ask:1', kind: 'ask', atMs: 2, text: long },
-        { key: 'planner_down:2', kind: 'planner-down', atMs: 1, text: long },
-      ],
-      onReply: vi.fn(),
-    });
-    /* A row's body is its one direct `div` child. */
-    const lines = (body: HTMLElement) => body.getBoundingClientRect().height / parseFloat(getComputedStyle(body).lineHeight);
-    const down = document.querySelector<HTMLElement>('[data-nc-notification-state="planner-down"] > div')!;
-    const ask = document.querySelector<HTMLElement>('[data-nc-notification-state="ask"] > div')!;
-    expect(lines(down)).toBeGreaterThan(2.5);
-    expect(lines(down)).toBeLessThanOrEqual(3.05);
-    expect(lines(ask)).toBeGreaterThan(3.5);
-  });
-
-  it('keeps three type steps: the title largest, the body at body size, the meta line smallest', async () => {
-    await browserPage.viewport(1200, 800);
-    renderPage({
-      inputNotifications: [{ key: 'ask:1', kind: 'ask', atMs: 1, text: '# Heading\n\nRun `deploy.sh` now?' }],
-      onReply: vi.fn(),
-    });
-    const notice = document.querySelector<HTMLElement>('[data-nc-needs-input-notice]')!;
-    const row = notice.querySelector<HTMLElement>('[data-nc-notification-state]')!;
-    const size = (el: Element) => getComputedStyle(el).fontSize;
-    const tokens = getComputedStyle(document.documentElement);
-    const token = (name: string) => {
-      const value = tokens.getPropertyValue(name).trim();
-      return value.endsWith('rem') ? `${parseFloat(value) * parseFloat(tokens.fontSize)}px` : value;
-    };
-    expect(size([...notice.querySelectorAll('strong')].find((el) => el.textContent === 'Waiting on you')!)).toBe(token('--font-step-3-size'));
-    expect(size(row.querySelector('h3')!)).toBe(token('--font-step-2-size'));
-    expect(getComputedStyle(row.querySelector('h3')!).fontWeight).toBe(token('--weight-semibold'));
-    expect(size(row.querySelector('code')!)).toBe(token('--font-step-1-size'));
-    expect(size(row.querySelector('time')!)).toBe(token('--font-step-1-size'));
-    expect(size(row.querySelector(':scope > div')!.querySelector('h3')!.nextElementSibling!)).toBe(token('--font-step-2-size'));
-    expect(parseFloat(size([...notice.querySelectorAll('strong')].find((el) => el.textContent === 'Waiting on you')!)))
-      .toBeGreaterThan(parseFloat(size(row.querySelector('h3')!)));
-    expect(parseFloat(size(row.querySelector('h3')!))).toBeGreaterThan(parseFloat(size(row.querySelector('time')!)));
-  });
-
-  it('compacts an input notification beside an open conversation drawer', async () => {
-    await browserPage.viewport(1200, 800);
-    renderPage({
-      inputNotifications: plannerNotification,
-      conversationOpen: true,
-    });
-
-    const notice = document.querySelector<HTMLElement>('[data-nc-needs-input-notice]')!;
-    const launcher = document.querySelector<HTMLButtonElement>('[data-nc-notification-launcher]')!;
-    const box = notice.getBoundingClientRect();
-    expect(notice.dataset.ncNotificationMode).toBe('compact');
-    expect(box.width).toBe(40);
-    expect(window.innerWidth - box.right).toBeGreaterThan(250);
-    expect(notice.querySelector('strong')).toBeNull();
-    await userEvent.click(launcher);
-    expect(notice.dataset.ncNotificationMode).toBe('expanded');
-  });
-
   it('returns focus to the Track actions button when Escape closes its menu', async () => {
     await browserPage.viewport(1200, 800);
     renderPage({ track: track({ closedAt: 5 }), canReopenTrack: true });
@@ -387,32 +247,6 @@ describe('the track closed status in the page header', () => {
     expect(popover()?.matches(':popover-open')).toBe(true);
     await userEvent.click(document.body);
     expect(popover()?.matches(':popover-open')).toBe(false);
-  });
-
-  it('truncates a long title while the input notice stays out of the header', async () => {
-    /* Stay just above the 60rem mobile navigation cutover: below it the
-       desktop PageHeader is intentionally replaced by MobileHeader. */
-    await browserPage.viewport(1000, 600);
-    renderPage({
-      track: track({
-        title: 'A deliberately long track title '.repeat(12),
-        closedAt: 5,
-      }),
-      inputNotifications: plannerNotification,
-    });
-
-    const title = document.querySelector<HTMLElement>('[aria-label="Rename track"]')!;
-    const status = document.querySelector<HTMLElement>('[aria-label="Track closed"]')!;
-    const actions = document.querySelector<HTMLElement>('[aria-label^="Track actions for "]')!;
-    const notice = document.querySelector<HTMLElement>('[data-nc-needs-input-notice]')!;
-    const titleBox = title.getBoundingClientRect();
-    const statusBox = status.getBoundingClientRect();
-
-    expect(title.scrollWidth).toBeGreaterThan(title.clientWidth);
-    expect(statusBox.left - titleBox.right).toBeGreaterThanOrEqual(4);
-    expect(statusBox.left - titleBox.right).toBeLessThanOrEqual(12);
-    expect(statusBox.right).toBeLessThan(actions.getBoundingClientRect().left);
-    expect(notice.getBoundingClientRect().top).toBeGreaterThan(actions.getBoundingClientRect().bottom);
   });
 
   it('keeps the subdued closed colour readable in both themes', async () => {
@@ -506,27 +340,6 @@ describe('the Track conversation entry', () => {
   });
 });
 
-
-for (const width of [1200, 390]) {
-  it(`keeps timeout text and open/dismiss controls visible with none attention at ${width}px`, async () => {
-    await browserPage.viewport(width, 844);
-    const onReply = vi.fn();
-    const onDismiss = vi.fn().mockResolvedValue(undefined);
-    renderPage({ track: track({ attention: 'none', working: false }), onReply, onDismiss,
-      inputNotifications: [{ key: 'planner_turn_timeout:9', kind: 'planner-turn-timeout', atMs: Date.UTC(2026, 9, 14, 12),
-        text: 'Turn stopped at 2026-10-14 12:00 UTC. Execution: 30 minutes; hold time excluded.' }] });
-    await expect.element(browserPage.getByText('Planner turn timed out')).toBeVisible();
-    await expect.element(browserPage.getByText(/Turn stopped at/)).toBeVisible();
-    await expect.element(browserPage.getByText('2026-10-14T12:00:00.000Z', { exact: true })).toBeVisible();
-    await userEvent.click(browserPage.getByRole('button', { name: /^Open the Planner:/ }));
-    expect(onReply).toHaveBeenCalledTimes(1);
-    await userEvent.click(browserPage.getByRole('button', { name: /^Dismiss: Planner turn timed out:/ }));
-    expect(onDismiss).toHaveBeenCalledWith('planner_turn_timeout:9');
-    expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(width);
-    await browserPage.screenshot({ path: `../../../../../test-results/timeout-${width}-${matchMedia('(pointer: coarse)').matches ? 'coarse' : 'desktop'}.png` });
-  });
-}
-
 it('uses the generic navigation header contract without an app host', async () => {
   await browserPage.viewport(1200, 800);
   renderPage();
@@ -574,4 +387,20 @@ it('keeps owner sharing controls and the share-link group off the mobile surface
   expect(document.querySelector('section[aria-label="分享链接"]')).toBeNull();
   await browserPage.getByRole('button', { name: 'Track actions', exact: true }).click();
   expect(document.querySelector('[role="menu"]')?.textContent).not.toContain('Share track');
+});
+
+it.each(['failed', 'input', 'working', 'unread'] as const)('shows %s at the closed desktop chat entry without a floating panel', async state => {
+  await browserPage.viewport(1200, 800);
+  const onReply = vi.fn();
+  renderPage({ track: track({ attention: state === 'failed' ? 'failed' : state === 'input' ? 'input' : 'none',
+    working: state === 'working' }), unread: state === 'unread', onReply });
+  const trigger = browserPage.getByRole('button', { name: '讨论这项工作' });
+  await expect.element(trigger).toBeVisible();
+  expect(trigger.element().querySelector('[data-nc-activity]')?.getAttribute('data-nc-activity'))
+    .toBe(state === 'input' ? 'attention' : state);
+  await expect.element(trigger).toHaveAccessibleDescription(activityLabelOf(state === 'input' ? 'attention' : state)!);
+  expect(document.querySelector('[data-nc-notification-launcher]')).toBeNull();
+  expect(document.querySelector('aside[aria-label="Notifications"]')).toBeNull();
+  await trigger.click();
+  expect(onReply).toHaveBeenCalledOnce();
 });

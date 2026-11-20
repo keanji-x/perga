@@ -371,6 +371,7 @@ export const agentSessionDtoSchema = z.object({
   createdAtMs: z.number(),
   updatedAtMs: z.number(),
   permissionMode: z.string().nullish(),
+  lastNotifiableTurnAtMs: z.number().nullish().transform(v => v ?? null),
 });
 export type AgentSessionDto = z.infer<typeof agentSessionDtoSchema>;
 
@@ -618,13 +619,23 @@ export const diffSummaryDtoSchema = z.object({
 });
 export type DiffSummaryDto = z.infer<typeof diffSummaryDtoSchema>;
 
+export const notifiableSessionWatermarkSchema = z.object({ sessionId: z.string(), lastNotifiableTurnAtMs: z.number() });
+export type NotifiableSessionWatermark = z.infer<typeof notifiableSessionWatermarkSchema>;
+export const readReceiptDtoSchema = z.object({
+  kind: z.enum(['track', 'conversation']), targetId: z.string(),
+  readThroughMs: z.number().int().nonnegative(), manualUnread: z.boolean(),
+});
+export const readReceiptsResponseDtoSchema = z.object({ baselineMs: z.number().int().nonnegative(), receipts: z.array(readReceiptDtoSchema) });
+
 export const trackOverlayItemDtoSchema = z.object({
   trackId: z.string(),
-  areaId: z.string().nullish(),
+  areaId: z.string(),
   isWorking: z.boolean().default(false),
   openAskCount: z.number().int().default(0),
-  hasFailedTask: z.boolean().default(false),
-  unreadMailCount: z.number().int().default(0),
+  pendingApprovalCount: z.number().int().default(0),
+  hasBlockedSession: z.boolean().default(false),
+  workspaceFailed: z.boolean().default(false),
+  notifiableSessions: z.array(notifiableSessionWatermarkSchema).nullish().transform(v => v ?? []),
   updatedAtMs: z.number().default(0),
 });
 export type TrackOverlayItemDto = z.infer<typeof trackOverlayItemDtoSchema>;
@@ -658,6 +669,7 @@ export const pergaTransientEventKindSchema = z.enum([
   'session.thinking_delta',
   'session.tool_progress',
   'approval.changed',
+  'read_receipt.updated',
 ]);
 export type PergaTransientEventKind = z.infer<typeof pergaTransientEventKindSchema>;
 
@@ -717,6 +729,7 @@ export type PergaPersistentEvent =
   | Readonly<{ kind: 'terminal.changed'; eventId: number; areaId: string | null; trackId: string | null; payload: TerminalDto; createdAtMs: number }>;
 
 export type PergaEventDecodeResult =
+  | Readonly<{ status: 'ready'; kind: 'read-receipt'; payload: z.infer<typeof readReceiptDtoSchema> }>
   | Readonly<{ status: 'ready'; kind: 'approvals'; trackId: string; sessionId: string }>
   | Readonly<{ status: 'ready'; kind: 'approval-audit' }>
   | Readonly<{ status: 'ready'; kind: 'upgrade-status'; payload: SystemUpgradeStatusPayload }>
@@ -742,6 +755,11 @@ export function decodePergaEventEnvelope(input: unknown): PergaEventDecodeResult
     };
   }
   const { eventId, areaId, trackId, kind, payload, createdAtMs } = base.data;
+  if (kind === 'read_receipt.updated') {
+    const parsed = readReceiptDtoSchema.safeParse(payload);
+    if (!parsed.success) return { status: 'failed', error: { kind: 'decode', message: 'Invalid read receipt', cause: parsed.error } };
+    return { status: 'ready', kind: 'read-receipt', payload: parsed.data };
+  }
   if (kind === 'approval.changed') {
     const parsed = z.object({ sessionId: z.string() }).safeParse(payload);
     if (trackId == null || !parsed.success) return { status: 'failed', error: { kind: 'decode', message: 'Invalid approval change' } };

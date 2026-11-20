@@ -141,6 +141,7 @@ function policies(): PolicyMap {
   /* The report key is deliberately broad: a root track's tree budget changes the admission
        diagnosis of its child tracks, but the event carries only the updated root id. */
   'track.updated': plan((event) => result([
+    eventKeys.overlaysByKind('track'),
     eventKeys.tracksInArea(event.data.area_id), eventKeys.trackDetail(event.data.id), eventKeys.trackTemplate(event.data.id),
     eventKeys.trackReportPrefix(),
   ])),
@@ -277,6 +278,7 @@ function policies(): PolicyMap {
     ...(event.data.track_id ? [eventKeys.trackDetail(event.data.track_id)] : []),
   ])),
   'task.updated': plan((event) => result([
+    eventKeys.overlaysByKind('track'),
     ...taskVerdicts(event.data.track_id ?? null),
     ...(event.data.track_id
       ? [eventKeys.trackDetail(event.data.track_id), eventKeys.taskAttemptsPrefix(event.data.track_id)]
@@ -286,6 +288,7 @@ function policies(): PolicyMap {
   'session.updated': plan((event) => {
     const sessionId = event.data.session?.id;
     return result([
+      eventKeys.overlaysByKind('track'),
       trackSnapshots(event.data.track_id ?? null),
       ...(sessionId ? [eventKeys.plannerRun(sessionId), eventKeys.transcript(sessionId)] : []),
     ]);
@@ -295,6 +298,7 @@ function policies(): PolicyMap {
     const turnId = event.data.turn?.id;
     const trackId = event.data.track_id ?? (sessionId ? context.findTrackOwningCard(sessionId) : null);
     return result([
+      eventKeys.overlaysByKind('track'),
       ...(sessionId ? [eventKeys.plannerRun(sessionId), eventKeys.transcript(sessionId)] : []),
       ...(trackId === null ? [eventKeys.trackDetailPrefix()] : [
         eventKeys.trackDetail(trackId),
@@ -306,13 +310,16 @@ function policies(): PolicyMap {
     }] : []);
   }),
   'approval.changed': plan((event) => result([
+    eventKeys.overlaysByKind('track'),
     eventKeys.trackDetail(event.data.trackId),
     eventKeys.trackLists(),
     eventKeys.plannerRun(event.data.sessionId),
     eventKeys.transcript(event.data.sessionId),
   ])),
+  'read_receipt.updated': plan(() => result([eventKeys.readReceipts()])),
   'approval.audit': plan(() => result([])),
   'ask.changed': plan((event) => result([
+    eventKeys.overlaysByKind('track'),
     eventKeys.trackDetail(event.data.track_id),
     eventKeys.trackLists(),
   ])),

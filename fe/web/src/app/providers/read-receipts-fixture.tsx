@@ -1,4 +1,4 @@
-// Test-only: the production `ReadReceiptsProvider` over a transport fake of `/api/read-receipts`. The fake
+// Test-only: the production `ReadReceiptsProvider` over a transport fake of `/api/v1/read-receipts`. The fake
 // stores what is posted as posted (a read replaces the instant); the kernel's own rule is pinned by its route tests.
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
@@ -29,7 +29,7 @@ export function createReadReceiptsKernel({ baselineMs = Number.MAX_SAFE_INTEGER,
   let holdingAnswers = false;
   const answerGates: Array<() => void> = [];
   const reply = async (request: ApiRequest): Promise<ApiTransportResponse | undefined> => {
-    if (!request.path.startsWith('/api/read-receipts')) return undefined;
+    if (!request.path.startsWith('/api/v1/read-receipts')) return undefined;
     requests.push(request);
     if (request.method === 'GET') {
       if (failRead) return { status: 500, statusText: 'Error', body: { error: 'unavailable', code: 'internal' } };
@@ -42,7 +42,7 @@ export function createReadReceiptsKernel({ baselineMs = Number.MAX_SAFE_INTEGER,
     if (holdingWrites) await new Promise<void>((resolve) => { writeGates.push(resolve); });
     if (writeDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, writeDelayMs));
     if (fail) return { status: 500, statusText: 'Error', body: { error: 'unavailable', code: 'internal' } };
-    const [, , , kind, encoded, verb] = request.path.split('/');
+    const [, , , , kind, encoded, verb] = request.path.split('/');
     const targetId = decodeURIComponent(encoded);
     const key = `${kind}:${targetId}`;
     const receipt: ReadReceipt = verb === 'read'

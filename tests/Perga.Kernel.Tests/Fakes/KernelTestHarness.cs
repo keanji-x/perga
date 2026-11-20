@@ -303,9 +303,7 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
                 var isWorking = _sessions.Values.Any(s => s.TrackId == tr.Id && s.Status is "queued" or "running")
                                 || (_tasksByTrack.TryGetValue(tr.Id, out var tl) && tl.Any(t => t.Status is TaskRunStatus.Running or TaskRunStatus.Verifying));
                 var openAsks = _asks.Values.Count(a => a.TrackId == tr.Id && a.Status == AskStatus.Open);
-                var hasFailed = _tasksByTrack.TryGetValue(tr.Id, out var tfl) && tfl.Any(t => t.Status == TaskRunStatus.Failed);
-                var unreadMails = _mailsByToTrack.TryGetValue(tr.Id, out var ml) ? ml.Count(m => m.ReadAtMs is null) : 0;
-                list.Add(new TrackOverlayDto(tr.Id, tr.AreaId, isWorking, openAsks, hasFailed, unreadMails, tr.UpdatedAtMs));
+                list.Add(new TrackOverlayDto(tr.Id, tr.AreaId, tr.ClosedAtMs is null && isWorking, tr.ClosedAtMs is null ? openAsks : 0, 0, false, false, tr.UpdatedAtMs));
             }
 
             return Task.FromResult<IReadOnlyList<TrackOverlayDto>>(list);

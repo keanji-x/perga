@@ -30,3 +30,5 @@ export const taskAttemptsPrefix = (trackId: string) => ['task-attempts', trackId
 
 export const trackSchedules = (trackId: string) => ['track-schedules', trackId] as const;
 export const trackTemplate = (trackId: string) => ['track-template', trackId] as const;
+
+export const readReceipts = () => ['read-receipts'] as const;

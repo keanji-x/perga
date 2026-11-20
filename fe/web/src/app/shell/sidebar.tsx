@@ -106,7 +106,7 @@ export function Sidebar({
   const userAreas = visibleAreas(areas);
   const userTracks = userVisibleTracks(tracks, areas);
   const receipts = useReadReceipts();
-  const isUnread = (track: Track) => receipts.isUnread('track', track.id, track.activityAt);
+  const isUnread = (track: Track) => receipts.isTrackUnread(track.id, track.notifiableSessions);
   const waiting = memberships.waiting;
   const groups: ReadonlyArray<{ id: Exclude<SidebarSectionId, 'areas'>; title: string; icon: 'star' | 'pin'; tracks: readonly Track[] }> = [
     { id: 'focus', title: 'Focus', icon: 'star', tracks: memberships.focus },

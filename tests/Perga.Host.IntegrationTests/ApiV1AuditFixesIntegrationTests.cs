@@ -565,7 +565,7 @@ public sealed class ApiV1AuditFixesIntegrationTests
         var kernel = cluster.Services.GetRequiredService<IPergaKernel>();
         await kernel.WaitForTrackIdleAsync(trackId, cts.Token);
 
-        // Verify GET /api/v1/overlays reflects hasFailedTask == true!
+        // Historical task failures do not make the Track blocked.
         using var overlaysBefore = await client.GetAsync("/api/v1/overlays", cts.Token);
         var overlaysRaw = await overlaysBefore.Content.ReadAsStringAsync(cts.Token);
         Assert.True(overlaysBefore.StatusCode == HttpStatusCode.OK, $"Expected 200 OK from /overlays, got {overlaysBefore.StatusCode}: {overlaysRaw}");
@@ -573,7 +573,12 @@ public sealed class ApiV1AuditFixesIntegrationTests
         var trackOverlay1 = overlaysDoc1.RootElement.GetProperty("tracks")
             .EnumerateArray()
             .Single(t => t.GetProperty("trackId").GetString() == trackId);
-        Assert.True(trackOverlay1.GetProperty("hasFailedTask").GetBoolean());
+        Assert.False(trackOverlay1.TryGetProperty("hasFailedTask", out _));
+        Assert.False(trackOverlay1.TryGetProperty("unreadMailCount", out _));
+        Assert.False(trackOverlay1.GetProperty("hasBlockedSession").GetBoolean());
+        Assert.False(trackOverlay1.GetProperty("workspaceFailed").GetBoolean());
+        Assert.Equal(0, trackOverlay1.GetProperty("pendingApprovalCount").GetInt32());
+        Assert.Equal(JsonValueKind.Array, trackOverlay1.GetProperty("notifiableSessions").ValueKind);
 
         // Human governance REST endpoints: /cancel, /accept, /reject!
         using var cancelResp = await client.PostAsJsonAsync(

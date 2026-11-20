@@ -1,5 +1,5 @@
+import { activityLabelOf } from '../../../../../core/domain/activity.ts';
 import inventoryStyles from './inventory.module.css';
-import notificationStyles from './notification.module.css';
 import { LayerDismissal } from '../../../ui/dialog/public.tsx';
 import { LayerDepthProvider } from '@astryxdesign/core/Layer';
 import type { TrackClosedControl } from './closed-control.ts';
@@ -14,14 +14,11 @@ import { TrackTitle } from '../title/public.tsx';
 
 import { Button as AstryxButton } from '@astryxdesign/core/Button';
 import { DropdownMenu as AstryxDropdownMenu } from '@astryxdesign/core/DropdownMenu';
-import { Markdown } from '@astryxdesign/core/Markdown';
 import { MoreMenu as AstryxMoreMenu } from '@astryxdesign/core/MoreMenu';
-import { VisuallyHidden } from '@astryxdesign/core/VisuallyHidden';
-import { useCallback, useEffect, useId, useLayoutEffect, useRef, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useCompactViewport } from '../../../ui/viewport/public.ts';
 
-import { DISMISS_FAILURES, DISMISS_TEXT, notificationPlainText } from '../../../../../core/domain/activity.ts';
 import { DELETE_FAILURES, DELETE_TEXT, writeFailureText } from '../../../../../core/domain/failure-class.ts';
 import type { ReportOutlineItem, ReportTaskRow } from '../../../../../core/domain/report.ts';
 import {
@@ -35,10 +32,9 @@ import { MobileList, MobileListItem, MobileListPage } from '../../../ui/mobile-l
 import { MobileHeader } from '../../../ui/mobile-header/public.tsx';
 import { PageHeader } from '../../../ui/page-header/public.tsx';
 import {
-  OperationFeedback, DeleteConfirmDialog, useDeleteConfirm, useOperationFeedback,
+  OperationFeedback, DeleteConfirmDialog, useDeleteConfirm,
 } from '../../../ui/operation-feedback/public.tsx';
 import { PanelCard } from '../../../ui/panel-card/public.tsx';
-import { relativeTime } from '../row/public.tsx';
 import { useState } from '../../../ui/state/public.ts';
 import { deriveTrackPageView } from '../../../../../core/view/track-page.ts';
 import type { RowModuleView, TrackPageView } from '../../../../../core/view/panel.ts';
@@ -51,50 +47,6 @@ import styles from './page.module.css';
 
 /** The mobile drill-down pages: two that are not row modules, plus one per row module the view model names. The renderer special-cases exactly those two and sends every other member through `paintMobileModule`. */
 type MobilePanelKind = 'outline' | Exclude<RowModuleView['key'], 'work' | 'temporary'> | 'conversations';
-
-/** One row of the Notifications aside — the route's projection of one item of `TrackActivity.attentionItems`. */
-export type TrackInputNotification = Readonly<{
-  /** The kernel's item key; the row's key. */
-  key: string;
-  /** The question or the recorded reason execution stopped. */
-  text: string;
-  atMs: number;
-  read?: boolean;
-  /** Owning session ID when an approval belongs to a specific Lead, Subagent, or Worker session. */
-  sessionId?: string;
-  action?: import('../../../../../core/api/generated/wire.ts').AskAction;
-}> & (Readonly<{ kind: 'ask' | 'approval' | 'planner-down' | 'planner-turn-timeout' }>
-  | Readonly<{ kind: 'task-failed'; blockId: string }>);
-
-/** A row's meta line: what kind of thing is waiting, in plain words; only its dot carries colour. */
-const NOTIFICATION_LABEL = Object.freeze({
-  ask: 'Needs your answer', approval: 'Waiting for your approval', 'planner-down': "Planner can't continue",
-  'planner-turn-timeout': 'Planner turn timed out', 'task-failed': 'Task failed',
-} as const);
-
-/** Whether a row offers Dismiss. A paused turn's request stays until it is answered or goes away, so dismissing it would do nothing. */
-const NOTIFICATION_DISMISSABLE = Object.freeze({ ask: true, approval: false, 'planner-down': true, 'planner-turn-timeout': true, 'task-failed': false } as const);
-
-/**
- * What clicking a row does: shown in the label's place while the row is hovered or focused, and the start of its
- * accessible name. A Planner question and a paused turn's request are both answered in the Planner.
- */
-const NOTIFICATION_ACTION = Object.freeze({
-  answer: Object.freeze({ hint: 'Answer in Planner', name: 'Answer the Planner' }),
-  open: Object.freeze({ hint: 'Open Planner', name: 'Open the Planner' }),
-  task: Object.freeze({ hint: 'View task', name: 'Open task' }),
-} as const);
-
-function notificationAction(kind: TrackInputNotification['kind']) {
-  if (kind === 'task-failed') return NOTIFICATION_ACTION.task;
-  return NOTIFICATION_ACTION[kind === 'ask' || kind === 'approval' ? 'answer' : 'open'];
-}
-
-/** The start of a row's words, as plain text, for its accessible names; the whole text is in the Planner conversation. */
-function notificationGist(text: string): string {
-  const chars = [...notificationPlainText(text)];
-  return chars.length > 80 ? `${chars.slice(0, 80).join('')}…` : chars.join('');
-}
 
 export type TrackPageProps = Readonly<{
   track: Pick<Track, 'id' | 'title' | 'closedAt' | 'working' | 'attention' | 'cards'> & Partial<Pick<Track, 'isolation'>>;
@@ -129,18 +81,8 @@ export type TrackPageProps = Readonly<{
   conversationContextList?: ReactNode;
   /** The conversation module head's `+`, composed by `app/router`. */
   mobileChatComposer?: ReactNode;
-  /** Everything the kernel says is addressed to the user on this track, projected by
-   *  the route from the activity overlay's items (`attentionItems`). */
-  inputNotifications?: readonly TrackInputNotification[];
-  onNotificationReadChange?: (item: TrackInputNotification, read: boolean) => void;
-  /** Opens the Planner or the approval's owning conversation. */
-  onReply?: (sessionId?: string) => void;
-  /** Dismiss the row's item by its kernel key. The row stays until the overlay no longer lists it. */
-  onDismiss?: (key: string) => Promise<void>;
-  /** The clock the rows' relative times read; the current time when omitted. */
-  nowMs?: number;
-  /** The route's conversation drawer is open. Input notifications compact
-   *  beside it instead of covering its composer. */
+  unread?: boolean;
+  onReply?: () => void;
   conversationOpen?: boolean;
   /** Any active foreground drawer makes the painted mobile panel inaccessible. */
   mobilePanelObscured: boolean;
@@ -196,7 +138,7 @@ function rowModule(view: TrackPageView, key: RowModuleView['key']): RowModuleVie
 
 export function TrackPage({ fillReading = false, showWorkspaceIsolation = true, mobileReportIntro, mobileChatComposer,
   panelHeader, panelContent, progressDisclosure, track, cards, existingCardIds, tasks, openableCards, outlineItems = [], report, backlinks, conversationList, conversationContextList,
-  shareLinks, onShareTrack, onStartConversation, showConversationAction = true, conversationOpen = false, mobilePanelObscured, inputNotifications = [], onNotificationReadChange, onReply, onDismiss, nowMs,
+  shareLinks, onShareTrack, onStartConversation, showConversationAction = true, conversationOpen = false, mobilePanelObscured, unread = false, onReply,
   cardsAction, recentFiles, onOpenCard, onDeleteCard, onSetWorkbench, onOpenTask, onOpenOutline, board, onCloseBoard,
   panel = null, onOpenPanel, onClosePanel,
   mobileBackLabel = 'Pages', onMobileBack, mobileHeaderActionsHost = null, mobileHeaderTitleHost = null, mobileTitleReadView,
@@ -241,36 +183,9 @@ export function TrackPage({ fillReading = false, showWorkspaceIsolation = true, 
   }, [mobileHeaderTitleHost, titleContainer, titleInHeader]);
 
   const deletion = useDeleteConfirm((_id, signal) => onDeleteTrack?.(signal), writeFailureText(DELETE_FAILURES, DELETE_TEXT), onTrackDeleted);
-  const dismissFeedback = useOperationFeedback();
-  const notificationSignature = inputNotifications.map(({ key }) => key).join('|');
-  const hasTurnTimeout = inputNotifications.some(({ kind }) => kind === 'planner-turn-timeout');
-  const hasTaskFailure = inputNotifications.some(({ kind }) => kind === 'task-failed');
-  const unreadCount = inputNotifications.filter(({ read }) => read !== true).length;
-  const unreadCountId = useId();
-  const autoExpandNotice = !conversationOpen && (!compactViewport || hasTurnTimeout);
-  const [noticeExpanded, setNoticeExpanded] = useState(inputNotifications.length > 0 && autoExpandNotice);
-  const [notificationAnnouncement, setNotificationAnnouncement] = useState('');
   const offeredClosedAction = closedControl === undefined ? null : canReopenTrack ? 'reopen' : (canCloseTrack ? 'close' : null);
-  const previousNotificationSignatureRef = useRef('');
-  const previousNotificationCountRef = useRef(0);
-  const previousConversationOpenRef = useRef(conversationOpen);
-  useEffect(() => {
-    if (notificationSignature === previousNotificationSignatureRef.current) return;
-    const count = inputNotifications.length;
-    setNotificationAnnouncement(count > 0
-      ? `${count} ${count === 1 ? 'notification needs' : 'notifications need'} your attention.`
-      : (previousNotificationCountRef.current > 0 ? 'All notifications cleared.' : ''));
-    if (count > 0 && autoExpandNotice) setNoticeExpanded(true);
-    previousNotificationSignatureRef.current = notificationSignature;
-    previousNotificationCountRef.current = count;
-  }, [autoExpandNotice, inputNotifications.length, notificationSignature]);
-  useEffect(() => {
-    if (conversationOpen && !previousConversationOpenRef.current) setNoticeExpanded(false);
-    previousConversationOpenRef.current = conversationOpen;
-  }, [conversationOpen]);
   const boardOpen = onCloseBoard !== undefined;
   const mobilePanelOpen = panel !== null;
-  const noticePanelOpen = noticeExpanded;
   const mobilePanelKind: MobilePanelKind = panel ?? 'cards';
   const trackWorkActions = [
     ...(offeredClosedAction === 'reopen' ? [
@@ -403,10 +318,10 @@ export function TrackPage({ fillReading = false, showWorkspaceIsolation = true, 
               <AstryxButton
                 className={styles.desktopChatAction}
                 label="讨论这项工作"
-                tooltip={onReply === undefined ? 'Open conversation' : 'Open Planner conversation'}
+                tooltip={activityLabelOf(trackActivityState(track, unread)) ?? (onReply === undefined ? 'Open conversation' : 'Open Planner conversation')}
                 variant="ghost"
                 size="sm"
-                icon={<Icon name="chat" />}
+                icon={<><Icon name="chat" /><ActivityIndicator state={trackActivityState(track, unread)} /></>}
                 onClick={onReply === undefined ? onStartConversation : () => { onReply(); }}
               />
             )}
@@ -455,8 +370,8 @@ export function TrackPage({ fillReading = false, showWorkspaceIsolation = true, 
         {showWorkspaceIsolation && track.isolation === 'none' && <ExplanationBadge label={NO_ISOLATION_LABEL}>{NO_ISOLATION_EXPLANATION}</ExplanationBadge>}
         {!titleInHeader && <TrackClosedBadge closedAt={track.closedAt} />}
         {!titleInHeader && <TrackAdminBadge adminGrantedAt={adminGrantedAt} />}
-        {/* The same indicator the rail paints. `unread` is `false` by construction: the page is the reader, and its receipt clears the moment it is visible. The mobile page head carries no indicator. */}
-        {!titleInHeader && <ActivityIndicator state={trackActivityState(track, false)} />}
+        {/* Shared track activity and conversation unread state. */}
+        {!titleInHeader && <ActivityIndicator state={trackActivityState(track, unread)} />}
       </div>, titleContainer)}
       {headerActionsHost !== null && mobileActions !== undefined && createPortal(mobileActions, headerActionsHost)}
       {titleInHeader && !boardOpen ? null : <div className={styles.mobileTrackHeader}>
@@ -579,143 +494,24 @@ export function TrackPage({ fillReading = false, showWorkspaceIsolation = true, 
       {compactViewport && !conversationOpen && !mobilePanelObscured
         && !boardOpen && !mobilePanelOpen && (mobileChatComposer !== undefined || onStartConversation !== undefined) && (
         mobileChatComposer !== undefined ? <div className={styles.mobileReportChatDock} data-nc-mobile-report-chat="">
+          <AstryxButton label="Open conversation" aria-description={activityLabelOf(trackActivityState(track, unread)) ?? undefined} isIconOnly variant="ghost" onClick={onReply ?? onStartConversation}
+            icon={<><Icon name="chat" /><ActivityIndicator state={trackActivityState(track, unread)} /></>} />
           <div className={styles.mobileChatInput}>{mobileChatComposer}</div>
         </div> : (
         <AstryxButton
           className={styles.mobileReportChatFab}
           data-nc-mobile-report-chat=""
           label="Chat"
+          aria-description={activityLabelOf(trackActivityState(track, unread)) ?? undefined}
           variant="primary"
           size="lg"
-          icon={<Icon name="chat" />}
-          onClick={onStartConversation}
+          icon={<><Icon name="chat" /><ActivityIndicator state={trackActivityState(track, unread)} /></>}
+          onClick={onReply ?? onStartConversation}
         />
       ))}
 
-      <VisuallyHidden
-        role="status"
-        aria-label="Input notifications"
-        aria-live="polite"
-        aria-atomic="true"
-      >{notificationAnnouncement}</VisuallyHidden>
-
-      {inputNotifications.length > 0 && (
-        <aside
-          className={`${notificationStyles.needsInputNotice} ${noticePanelOpen
-            ? notificationStyles.needsInputNoticeExpanded
-            : notificationStyles.needsInputNoticeCompact} ${conversationOpen ? notificationStyles.needsInputNoticeBesideDrawer : ''}
-            ${conversationOpen || mobilePanelObscured || boardOpen || mobilePanelOpen ? notificationStyles.noticeBehindMobileSurface : ''}`}
-          data-nc-needs-input-notice=""
-          data-nc-notification-mode={noticePanelOpen ? 'expanded' : 'compact'}
-          role="region"
-          aria-label="Notifications"
-        >
-          {noticePanelOpen ? (
-            <>
-              <span className={notificationStyles.needsInputNoticeHeader}>
-                <span className={notificationStyles.needsInputNoticeIcon}><Icon name="notification" size="sm" /></span>
-                <strong className={notificationStyles.needsInputNoticeTitle}>{hasTurnTimeout || hasTaskFailure ? 'Notifications' : 'Waiting on you'}</strong>
-                {unreadCount > 0 && <span className={notificationStyles.needsInputCount} title={`${unreadCount} unread`}>{unreadCount}</span>}
-                <button
-                  type="button"
-                  className={notificationStyles.needsInputCollapse}
-                  aria-label="Collapse notifications"
-                  title="Collapse notifications"
-                  onClick={() => setNoticeExpanded(false)}
-                ><Icon name="chevron-right" size="sm" /></button>
-              </span>
-              <ul className={notificationStyles.needsInputNoticeList}>
-                {inputNotifications.map((notification) => {
-                  const open = notification.kind !== 'task-failed'
-                    ? (onReply === undefined ? undefined : () => onReply(notification.sessionId))
-                    : onOpenTask && (() => onOpenTask(notification.blockId));
-                  const gist = notificationGist(notification.text);
-                  return <li
-                    key={notification.key}
-                    className={`${notificationStyles.notice} ${open === undefined ? '' : notificationStyles.noticeActionable}`}
-                    data-nc-notification-state={notification.kind}
-                  >
-                    {/* A stretched button opens the row. The status, dismiss and link controls sit above it. */}
-                    {open !== undefined && (
-                      <button
-                        type="button"
-                        className={notificationStyles.noticeOpen}
-                        aria-label={`${notificationAction(notification.kind).name}: ${gist}`}
-                        onClick={() => {
-                          if (!notification.read) onNotificationReadChange?.(notification, true);
-                          open();
-                        }}
-                      />
-                    )}
-                    <span className={notificationStyles.noticeMeta}>
-                      <span
-                        className={`${notificationStyles.noticeDot} ${notification.kind === 'planner-down' ? notificationStyles.noticeDotDown
-                          : notification.kind === 'planner-turn-timeout' ? notificationStyles.noticeDotTimeout : notificationStyles.noticeDotAsk}`}
-                        aria-hidden="true"
-                      />
-                      {/* One slot, two spans: the label, and the row's action in its place while the row is hovered
-                          or focused. Stacked in one grid cell, so the swap does not move the time. */}
-                      <span className={notificationStyles.noticeLabel}>
-                        <span className={notificationStyles.noticeLabelText}>{NOTIFICATION_LABEL[notification.kind]}</span>
-                        {open !== undefined && (
-                          <span className={notificationStyles.noticeAction} aria-hidden="true">{notificationAction(notification.kind).hint}</span>
-                        )}
-                      </span>
-                      <time className={notificationStyles.noticeTime} dateTime={new Date(notification.atMs).toISOString()}>
-                        {relativeTime(notification.atMs, nowMs ?? Date.now())}
-                      </time>
-                      {onNotificationReadChange !== undefined && <button
-                        type="button"
-                        className={notificationStyles.noticeReadState}
-                        data-nc-notification-unread={notification.read !== true || undefined}
-                        aria-label={`${notification.read ? 'Read, mark as unread' : 'Unread, mark as read'}: ${gist}`}
-                        onClick={() => onNotificationReadChange(notification, !notification.read)}
-                      >{notification.read ? 'Read' : 'Unread'}</button>}
-                    </span>
-                    {/* The kernel's words are markdown, rendered as the chat renders a reply. An ask is read whole;
-                        a failure is clamped, its full text is in the Planner conversation. */}
-                    <div className={`${notificationStyles.noticeBody} ${notification.kind === 'planner-down' ? notificationStyles.noticeBodyClamped : ''}`}>
-                      <Markdown density="compact" headingLevelStart={3}>{notification.text}</Markdown>
-                      {notification.kind === 'planner-turn-timeout' && <p className={notificationStyles.noticeTimestamp}>
-                        Recorded at <time dateTime={new Date(notification.atMs).toISOString()}>{new Date(notification.atMs).toISOString()}</time>
-                      </p>}
-                    </div>
-                    {onDismiss !== undefined && notification.action === undefined && NOTIFICATION_DISMISSABLE[notification.kind] && (
-                      <button
-                        type="button"
-                        className={notificationStyles.noticeDismiss}
-                        aria-label={`Dismiss: ${NOTIFICATION_LABEL[notification.kind]}: ${gist}`}
-                        title="Dismiss"
-                        onClick={() => {
-                          void dismissFeedback.run(onDismiss(notification.key), writeFailureText(DISMISS_FAILURES, DISMISS_TEXT));
-                        }}
-                      ><Icon name="close" size="sm" /></button>
-                    )}
-                  </li>;
-                })}
-              </ul>
-            </>
-          ) : (
-            <button
-              type="button"
-              className={notificationStyles.needsInputLauncher}
-              data-nc-notification-launcher=""
-              aria-label={`Open ${inputNotifications.length} ${inputNotifications.length === 1 ? 'notification' : 'notifications'}`}
-              aria-describedby={unreadCountId}
-              title="Open notifications"
-              onClick={() => setNoticeExpanded(true)}
-            >
-              <Icon name="notification" />
-              <VisuallyHidden id={unreadCountId}>{unreadCount} unread</VisuallyHidden>
-              {unreadCount > 0 && <span className={notificationStyles.needsInputIndicator} aria-hidden="true">{unreadCount}</span>}
-            </button>
-          )}
-        </aside>
-      )}
-
       <DeleteConfirmDialog confirm={deletion} copy={DELETE_TRACK_COPY} />
       {closedControl !== undefined && <OperationFeedback feedback={closedControl.feedback} />}
-      <OperationFeedback feedback={dismissFeedback} />
     </section>
   );
 }

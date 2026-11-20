@@ -1,3 +1,4 @@
+import { priorityConversation } from '../../../../core/domain/activity.ts';
 import { trackSchedulesOperation, setTrackScheduleOperation, cancelTrackScheduleOperation, triggerTrackScheduleOperation, trackTemplateOperation, updateTrackTemplateInputsOperation } from '../../../../core/domain/track-schedules.ts';
 import { trackSchedules, trackTemplate, trackDetail } from '../../../../core/events/query-keys.ts';
 import { useRecoveryMutation } from '../providers/recovery-mutation.ts';
@@ -62,7 +63,7 @@ import {
 } from '../../features/planner/attachments.tsx';
 import {
   trackOverlayPayload, toTrack, trackActivityFrom, trackDisplayTitle,
-  trackDtoToWire, snapshotActivityOverlays, type TrackActivity, retryTrackWorkspaceOperation,
+  trackDtoToWire, snapshotActivityOverlays, retryTrackWorkspaceOperation,
 } from '../../../../core/domain/track.ts';
 import { cardActivityOf, type CardActivity } from '../../../../core/domain/activity.ts';
 import { parkedWorkerNotices, workbenchTerminalCardIds } from '../../../../core/view/track-page.ts';
@@ -74,7 +75,7 @@ import {
 } from '../../systems/cards/public.js';
 import { mintIdempotencyKey, useKeyedIntent, type KeyedRequest } from '../providers/idempotency-key.ts';
 import footerStyles from './composer-footer.module.css';
-import { TrackPage, type TrackInputNotification } from '../../features/track/page/public.tsx';
+import { TrackPage } from '../../features/track/page/public.tsx';
 import { CardGridOverlay, TrackStage } from '../../features/track/grid/public.tsx';
 import { AddCardMenu, NewCardForm, type NewCardValues } from '../../features/track/new-card/public.tsx';
 import {
@@ -142,7 +143,7 @@ import { agentSessionDtoToConversation } from '../../../../core/domain/conversat
 import { NewTrackDraftProvider } from './new-track-drafts.tsx';
 import { RecipesRoute } from './recipes-route.tsx';
 import { createUiPreferences, UiPreferencesProvider, useUiPreferences, type UiPreferences } from '../providers/ui-preferences.tsx';
-import { ReadReceiptsProvider, useReadReceipt, useReadReceipts } from '../providers/read-receipts.tsx';
+import { ReadReceiptsProvider, useReadReceipt, useReadReceipts, useViewReadReceipt } from '../providers/read-receipts.tsx';
 import { TrackSelector } from '../shell/track-selector.tsx';
 import { AppShell, MobileConversationProvider, useMobileConversationOwner, useConversationDrawerResize, useOpenMobileSection, useMobileHeaderActionsHost, useMobileHeaderTitleHost } from '../shell/public.tsx';
 import {
@@ -227,7 +228,7 @@ export function createRouteTree(deps: AppRouterDeps): AnyRoute {
   const recentFiles = deps.recentFiles ?? createRecentFileHistory();
   const preferences = deps.uiPreferences ?? createUiPreferences();
   const rootRoute = createRootRouteWithContext<DraftBackContext>()({ component: () => (
-    <ShareScopeProvider value={deps.shareScope == null || deps.shareLinkId === undefined ? null : { scope: deps.shareScope, shareLinkId: deps.shareLinkId }}><UiPreferencesProvider preferences={preferences}><ReadReceiptsProvider transport={transport} unauthorized={unauthorized} localOnly={pergaMode}>
+    <ShareScopeProvider value={deps.shareScope == null || deps.shareLinkId === undefined ? null : { scope: deps.shareScope, shareLinkId: deps.shareLinkId }}><UiPreferencesProvider preferences={preferences}><ReadReceiptsProvider transport={transport} unauthorized={unauthorized}>
       <TrackViewProvider><DraftBackLifecycle><MobileConversationProvider><ShellRoute submittedStorage={deps.submittedStorage} shareScope={deps.shareScope ?? null} transport={transport} unauthorized={unauthorized} onSignOut={onSignOut} pergaMode={pergaMode} /></MobileConversationProvider></DraftBackLifecycle></TrackViewProvider>
     </ReadReceiptsProvider></UiPreferencesProvider></ShareScopeProvider>
   ) });
@@ -494,7 +495,10 @@ function useConversationPane(
   const panePresented = options?.presented !== false;
   const compactViewport = useCompactViewport();
   const compactComposer = options?.reportComposer !== undefined && compactViewport && options?.enabled !== false && options?.inline !== true;
-  const dockRowId = compactComposer ? options?.reportComposer?.conversationId ?? null : null;
+  const receipts = useReadReceipts();
+  const preferredConversation = priorityConversation(source.rows, source.cards,
+    row => receipts.isUnread('conversation', row.id, row.lastTurnCompletedAt ?? null));
+  const dockRowId = compactComposer ? preferredConversation?.id ?? options?.reportComposer?.conversationId ?? null : null;
   const composerRowId = openRowId ?? dockRowId;
   const managed = useManagedProviders(transport, unauthorized, openTarget?.kind === 'draft');
   // The app owns provider metadata reads (permission modes and capabilities).
@@ -595,8 +599,10 @@ function useConversationPane(
   // Receipts compare the row's completion time, not `updatedAt`, which also moves
   // when the reader queues a message. `null` is never unread.
   const openActivity = rows.find(row => row.id === open?.id);
-  useReadReceipt('conversation', openActivity?.id ?? null, openActivity?.lastTurnCompletedAt ?? null,
-    panePresented && threadPresented && store.historyReady && !store.historyLoading && store.historyError === null);
+  const visibleConversation = panePresented && threadPresented && store.historyReady && !store.historyLoading && store.historyError === null;
+  useViewReadReceipt('track', panePresented && openRowId !== null ? imageTrackId : null, visibleConversation, openRowId ?? undefined);
+  useReadReceipt('conversation', openActivity?.id ?? null, openActivity?.lastTurnCompletedAt ?? 0,
+    visibleConversation && receipts.ready);
 
   /* Only this route's slot is visible, reopenable or sendable here. */
   const draft = useConversationDraft(sourceScopeId);
@@ -1110,20 +1116,17 @@ function useConversationPane(
     requestComposerFocus(conversation.id);
     setOpenTarget({ kind: 'row', id: conversation.id });
   });
-  const receipts = useReadReceipts();
   const unreadIds = useMemo(() => new Set(rows.filter(row => receipts.isUnread('conversation', row.id,
     row.lastTurnCompletedAt ?? null)).map(row => row.id)), [rows, receipts]);
   const awaitingInputIds = useMemo(() => {
     const ids = new Set<string>(source.pendingApprovals.map((approval) => approval.sessionId));
-    if (source.planner !== null && source.planner.asks.length > 0) ids.add(source.planner.cardId);
     return ids;
-  }, [source.pendingApprovals, source.planner]);
+  }, [source.pendingApprovals]);
   const listProps = useMemo(() => ({
     conversations: store.conversations, cards: source.cards, unreadIds, activeId: existingId,
     awaitingInputIds,
-    local: existingId === null ? null : { id: existingId, working: store.working, stalled: (store.sessionState === 'unknown') },
     showTrack: options?.showTrack ?? true, onOpen: openConversation, onArchive: options?.onArchive,
-  }), [store.conversations, source.cards, unreadIds, awaitingInputIds, existingId, store.working, store.sessionState, options?.showTrack, options?.onArchive, openConversation]);
+  }), [store.conversations, source.cards, unreadIds, awaitingInputIds, existingId, options?.showTrack, options?.onArchive, openConversation]);
   const listNode = useMemo(() => <ChatList {...listProps} />, [listProps]);
   const contextList = useMemo(() => <ChatList {...listProps} context />, [listProps]);
 
@@ -1231,19 +1234,6 @@ function TrackRoute({ transport, unauthorized, cardRuntime, recentFiles, prepare
       pergaMode={pergaMode}
     />
   );
-}
-
-/** The Notifications aside shows where the reader can follow up on each activity item. */
-function trackNotifications(items: TrackActivity['attentionItems'], isRead: (key: string, atMs: number) => boolean): readonly TrackInputNotification[] {
-  return items.map((item): TrackInputNotification => {
-    const base = { key: item.key, text: item.text, atMs: item.atMs, read: isRead(item.key, item.atMs) };
-    switch (item.source) {
-      case 'ask': return { ...base, kind: 'ask', action: item.action };
-      case 'planner_down': return { ...base, kind: 'planner-down' };
-      case 'planner_turn_timeout': return { ...base, kind: 'planner-turn-timeout' };
-      case 'task_failed': return { ...base, kind: 'task-failed', blockId: item.blockId };
-    }
-  });
 }
 
 function TrackRouteBody({
@@ -1356,6 +1346,7 @@ function TrackRouteBody({
     [isPergaTrack, cardRegistry, transport, unauthorized, track.id, track.agentCwd, shareAccess?.shareLinkId, cardRuntime.host],
   );
   // Role and conversation metadata come directly from the aggregate sessions.
+  const trackReceipts = useReadReceipts();
   const plannerCard = snapshot.sessions.find(session => session.isLead);
   const registry = useConversationCommands();
   const trackTitle = trackDisplayTitle(track.title);
@@ -1476,14 +1467,6 @@ function TrackRouteBody({
   );
   useMobileConversationOwner({ track, conversations: rows, onArchive: conversationMutations.archive, onNew: chat.startConversation,
     selectedConversationId: chat.selectedConversationId, onClose: chat.close, onOpen: chat.openConversation, conversationOpen: chat.isOpen });
-  const notificationIsRead = (key: string, atMs: number) => preferences.trackNotificationRead(track.id, key, atMs);
-  const inputNotifications: readonly TrackInputNotification[] = [
-    ...pendingApprovals.map(approval => ({
-      key: approval.id, kind: 'approval' as const, text: approval.title || 'Approval required',
-      atMs: approval.createdAtMs, sessionId: approval.sessionId, read: notificationIsRead(approval.id, approval.createdAtMs),
-    })),
-    ...trackNotifications(track.attentionItems, notificationIsRead),
-  ];
   /* Stable across renders that do not change the overlays, so a live table is
      not handed a new resolver identity on every keystroke elsewhere. */
   const resolveOverlay = useCallback(
@@ -1727,7 +1710,6 @@ function TrackRouteBody({
         <TrackReportRegion
         presentation={reportPresentation}
         trackId={track.id}
-        activityAt={track.activityAt}
         openedAt={navigationCompletedAt}
         /* `overlay.set` already invalidates this track's detail, so a plugin push
                    re-renders the block without the report being rewritten. */
@@ -1887,15 +1869,14 @@ function TrackRouteBody({
       onStartConversation={!pergaMode || !centerActive || rows.length > 1 ? chat.startConversation : undefined}
       showConversationAction={!centerActive}
       conversationOpen={!centerActive && chat.isOpen}
-      inputNotifications={inputNotifications}
-      onNotificationReadChange={(item, read) => preferences.setTrackNotificationRead(track.id, item.key, item.atMs, read)}
-      onReply={plannerCard === undefined && pendingApprovals.length === 0 ? undefined : (targetSessionId) => {
-        const destination = targetSessionId ?? plannerCard?.id;
-        if (destination === undefined) return;
+      unread={trackReceipts.isTrackUnread(track.id, track.notifiableSessions)}
+      onReply={() => {
+        const destination = priorityConversation(rows, track.cards,
+          row => trackReceipts.isUnread('conversation', row.id, row.lastTurnCompletedAt ?? null));
+        if (destination === undefined) { chat.startConversation(); return; }
         center?.onOpenAssistant();
-        registry.requestOpen(destination, { focusComposer: true });
+        chat.openConversation(destination);
       }}
-      onDismiss={(key) => trackMutations.dismissActivityItem(track.id, key)}
       onRenameTrack={(title) => trackMutations.patch(track.id, track.areaId, { title }).then(() => undefined)}
       closedControl={closedControl}
       onDeleteTrack={shareAccess === null ? (signal) => trackMutations.remove(track.id, track.areaId, signal) : undefined}

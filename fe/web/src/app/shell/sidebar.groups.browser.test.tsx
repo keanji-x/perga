@@ -17,7 +17,7 @@ afterEach(() => { cleanup(); vi.useRealTimers(); delete document.documentElement
 async function scene(areaName = 'Work') {
   await page.viewport(1400, 900);
   const preferences = createUiPreferences();
-  /* The kernel's baseline is 1, so a Track whose `activityAt` is later reads as unread. */
+  /* The kernel baseline is 1; eligible conversation output supplies unread. */
   const kernel = createReadReceiptsKernel({ baselineMs: 1 });
   const { wrap } = readReceiptsFixture(kernel);
   const area: Area = { id: 'work', name: areaName, color: '#5B8DEF', sort: 1, kind: 'user',
@@ -28,7 +28,7 @@ async function scene(areaName = 'Work') {
     { id: 'running', title: 'Build frontend', attention: 'none' as const, working: true, pinnedAt: 10 },
     { id: 'loose', title: 'Next task', attention: 'none' as const, working: false, pinnedAt: null, activityAt: null },
   ].map((row) => ({ areaId: area.id, sort: 1, cwd: '/tmp', isolation: 'none', agentCwd: '/tmp',
-    closedAt: null, createdAt: 1, updatedAt: 10, ...NEUTRAL_ACTIVITY, activityAt: 10, ...row }));
+    closedAt: null, createdAt: 1, updatedAt: 10, ...NEUTRAL_ACTIVITY, notifiableSessions: row.activityAt === null ? [] : [{ sessionId: `session-${row.id}`, lastNotifiableTurnAtMs: 10 }], ...row }));
   const onGo = vi.fn();
   const onSetPinned = vi.fn();
   const sidebar = (tracks: Track[]) => wrap(<UiPreferencesProvider preferences={preferences}>
@@ -385,7 +385,7 @@ it('preserves keyboard focus when pinning from Focus or unpinning from Pinned re
   const focusGroup = page.getByRole('group', { name: 'Focus', exact: true });
   await expect.element(focusGroup.getByRole('button', { name: /^Track Review result/ })).toHaveFocus();
 
-  current = current.map((track) => track.id === 'running' ? { ...track, working: false, activityAt: null } : track);
+  current = current.map((track) => track.id === 'running' ? { ...track, working: false, activityAt: null, notifiableSessions: [] } : track);
   view.rerender(sidebar(current));
   const pinnedRunningMenu = page.getByRole('group', { name: 'Pinned', exact: true })
     .getByRole('button', { name: 'Actions for track Build frontend', exact: true });

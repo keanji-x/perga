@@ -1,5 +1,5 @@
 import {
-  areas,
+  areas, readReceipts,
   trackLists, tracksInArea, trackDetail, trackBacklinksPrefix,
   trackBacklinks, trackReport, trackReportPrefix, overlaysByKind,
   plugins, pluginDataPrefix, trackTemplates,
@@ -41,7 +41,7 @@ export const queryKeys = Object.freeze({
   overlaysByKind,
   settings: () => ['settings'] as const,
   /* The user's read receipts (#2596). Writes emit no event: the read refetches on focus and after each write. */
-  readReceipts: () => ['read-receipts'] as const,
+  readReceipts,
   /* Settings › Plugins. `plugin.state` invalidates; transient-state polling remains a supplement. */
   plugins,
   /* Plugin data changes invalidate every cached window belonging to that plugin. */

@@ -14,9 +14,6 @@ import { ActivityIndicator } from '../../../ui/activity-indicator/public.tsx';
 import { EmptyState } from '../../../ui/empty-state/public.tsx';
 import styles from './list.module.css';
 
-/** The open conversation's own send: `working` is its in-flight turn, `stalled` the drawer's own wedge detection. Neither is read off `Conversation.state`. */
-export type ChatListLocalEcho = Readonly<{ id: string; working: boolean; stalled: boolean }>;
-
 export type ChatListProps = Readonly<{
   conversations: readonly Conversation[];
   /** The kernel's per-card verdicts keyed by card id (a row's id is its card id); a caller with no overlay passes `{}`. */
@@ -30,14 +27,12 @@ export type ChatListProps = Readonly<{
   unreadIds?: ReadonlySet<string>;
   /** Explicit question ownership from the host, independent of per-card execution activity. */
   awaitingInputIds?: ReadonlySet<string>;
-  /** `null` when no row is open. */
-  local?: ChatListLocalEcho | null;
   onOpen: (conversation: Conversation) => void;
   onArchive?: (cardId: string, archived: boolean) => Promise<void>;
 }>;
 
 export function ChatList({
-  conversations, cards, activeId = null, showTrack = true, onOpen, onArchive, unreadIds, awaitingInputIds, local = null, context = false,
+  conversations, cards, activeId = null, showTrack = true, onOpen, onArchive, unreadIds, awaitingInputIds, context = false,
 }: ChatListProps) {
   const descriptionPrefix = useId();
   if (conversations.length === 0) return context ? null : <EmptyState variant="compact" icon={<Icon name="chat" />} title="还没有对话" description="在这里发起的对话会显示在列表中。" />;
@@ -46,7 +41,7 @@ export function ChatList({
   return (
     <ConversationGroups enabled={onArchive !== undefined || conversations.some(row => row.archivedAt != null)} conversations={conversations} emptyActive={context ? null : <EmptyState variant="compact" icon={<Icon name="chat" />} title="暂无活跃对话" description="活跃对话会显示在这里。" />}>
     {shown => <List className={context ? undefined : styles.list}>
-      {deriveConversationList({ conversations: shown, cards, unreadIds, awaitingInputIds, local }).map(({ conversation, activity, unread, name }) => {
+      {deriveConversationList({ conversations: shown, cards, unreadIds, awaitingInputIds }).map(({ conversation, activity, unread, name }) => {
         const description = activity === 'working' ? null : activityLabelOf(activity);
         const descriptionId = `${descriptionPrefix}-${encodeURIComponent(conversation.id)}`;
         const active = conversation.id === activeId;

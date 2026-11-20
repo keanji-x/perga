@@ -8,6 +8,6 @@ export type SidebarFixtureProps = Omit<ViewProps, 'trackGroups'>;
 export function SidebarFixture(props: SidebarFixtureProps) {
   const receipts = useReadReceipts();
   const trackGroups = sidebarTrackGroups(props.tracks, props.areas,
-    track => receipts.isUnread('track', track.id, track.activityAt));
+    track => receipts.isTrackUnread(track.id, track.notifiableSessions));
   return <SidebarView {...props} trackGroups={trackGroups} />;
 }

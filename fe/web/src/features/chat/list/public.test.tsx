@@ -49,7 +49,7 @@ describe('conversation rows read activity.cards, not session state', () => {
     expect(indicator).toBe('failed');
     expect(label).toBe('Conversation Assistant');
     expect(label).not.toMatch(/, (live|working)$/);
-    expect(description).toBe('Needs attention');
+    expect(description).toBe('Needs repair');
   });
 
   it('describes a card waiting for input as needing input', () => {
@@ -72,18 +72,13 @@ describe('conversation rows read activity.cards, not session state', () => {
     expect(working.indicator).toBe('working');
   });
 
-  it('keeps only the open row’s declared local echoes: the sender’s send and the drawer’s wedge', () => {
-    const sending = draw({ cards: {}, activeId: 'c1', local: { id: 'c1', working: true, stalled: false } });
-    expect(sending.indicator).toBe('working');
-    expect(sending.label).toBe('Conversation Assistant, working');
-    cleanup();
-    const stalled = draw({ cards: { c1: 'working' }, activeId: 'c1', local: { id: 'c1', working: false, stalled: true } });
-    expect(stalled.indicator).toBe('failed');
-    expect(stalled.description).toBe('Needs attention');
-    cleanup();
-    /* An echo for some other row is not this row's. */
-    const elsewhere = draw({ cards: {}, activeId: 'c2', local: { id: 'c2', working: true, stalled: false } });
-    expect(elsewhere.indicator).toBeUndefined();
+  it('keeps a blocked row red whether it is open or closed', () => {
+    for (const activeId of ['c1', 'c2', null]) {
+      const blocked = draw({ cards: { c1: 'failed' }, activeId, awaitingInputIds: new Set(['c1']) });
+      expect(blocked.indicator).toBe('failed');
+      expect(blocked.description).toBe('Needs repair');
+      cleanup();
+    }
   });
 });
 

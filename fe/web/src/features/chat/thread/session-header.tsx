@@ -17,7 +17,7 @@ export function ConversationSessionHeader({ session, state, readonlyReason, work
 }>) {
   return <div className={styles.header} data-nc-session-header="">
     {session !== null && <span className={styles.epoch}>{session.boundTaskId ? 'Worker' : session.isLead ? 'Planner' : 'Assistant'} · Epoch {session.epoch}</span>}
-    {state !== null && <Badge variant={state === 'unknown' ? 'error' : state === 'stopping' || workerPaused ? 'warning' : state === 'running' || state === 'compacting' ? 'info' : 'neutral'} label={state === 'idle' ? workerPaused ? '已暂停' : '空闲' : state === 'running' ? '运行中' : state === 'stopping' ? '停止中' : state === 'compacting' ? '压缩中' : '状态未知'} />}
+    {state !== null && <Badge variant={state === 'unknown' ? 'error' : state === 'stopping' || workerPaused ? 'warning' : 'neutral'} label={state === 'idle' ? workerPaused ? '已暂停' : '空闲' : state === 'running' ? '运行中' : state === 'stopping' ? '停止中' : state === 'compacting' ? '压缩中' : '状态未知'} />}
     {readonlyReason !== null && <Badge label={readonlyReason === 'archived' ? '已归档' : readonlyReason === 'track_closed' ? 'Track 已关闭' : '已结束'} />}
     <DropdownMenu placement="below" alignment="end" button={{ label: '会话操作', icon: <Icon name="more" size="sm" />, isIconOnly: true, variant: 'ghost', size: 'sm' }}>
       <DropdownMenuItem label="压缩上下文 /compact" isDisabled={!compactEnabled} onClick={onCompact} />

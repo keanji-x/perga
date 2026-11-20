@@ -1,13 +1,15 @@
-import { Badge } from '@astryxdesign/core/Badge';
+import { activityLabelOf } from '../../../../core/domain/activity.ts';
 import { Button } from '@astryxdesign/core/Button';
-import { useMemo } from 'react';
+import { useId, useMemo } from 'react';
 
 import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { visibleAreas } from '../../../../core/domain/area.ts';
 import { readErrorText } from '../../../../core/domain/read-failure.ts';
-import { trackDisplayTitle, userVisibleTracks } from '../../../../core/domain/track.ts';
+import { trackDisplayTitle, userVisibleTracks, hasFailed, needsUserAttention, trackActivityState } from '../../../../core/domain/track.ts';
 import { ErrorBox } from '../../ui/error-box/public.tsx';
+import { ActivityIndicator } from '../../ui/activity-indicator/public.tsx';
+import { useReadReceipts } from '../providers/read-receipts.tsx';
 import { useWorkspace } from '../providers/queries.ts';
 import { useRequestCreateArea } from '../shell/public.tsx';
 import { useGo } from './navigation.ts';
@@ -20,6 +22,8 @@ export function PergaOverviewRoute({
   transport: ApiTransportPort;
   unauthorized: UnauthorizedChannel;
 }>) {
+  const activityDescriptionId = useId();
+  const receipts = useReadReceipts();
   const workspace = useWorkspace(transport, unauthorized);
   const go = useGo();
   const requestCreateArea = useRequestCreateArea();
@@ -29,7 +33,7 @@ export function PergaOverviewRoute({
   const tracks = useMemo(() => userVisibleTracks(workspace.tracks, workspace.areas), [workspace.tracks, workspace.areas]);
 
   const waitingTracks = useMemo(
-    () => tracks.filter((track) => track.closedAt === null && (track.attention === 'input' || track.attentionItems.length > 0)),
+    () => tracks.filter((track) => track.closedAt === null && (hasFailed(track) || needsUserAttention(track))),
     [tracks],
   );
   const openTracks = useMemo(
@@ -92,11 +96,13 @@ export function PergaOverviewRoute({
                     key={track.id}
                     type="button"
                     className={styles.trackButton}
+                    aria-describedby={`${activityDescriptionId}-waiting-${track.id}`}
                     onClick={() => go({ name: 'track', trackId: track.id, openPlanner: true })}
                   >
                     <span className={styles.trackTitle}>{trackDisplayTitle(track.title)}</span>
+                    <span id={`${activityDescriptionId}-waiting-${track.id}`} hidden>{activityLabelOf(trackActivityState(track, receipts.isTrackUnread(track.id, track.notifiableSessions)))}</span>
                     <span className={styles.trackMeta}>
-                      <Badge variant="warning" label="Needs input" />
+                      <ActivityIndicator state={trackActivityState(track, receipts.isTrackUnread(track.id, track.notifiableSessions))} />
                       {area !== undefined && <span>{area.name}</span>}
                     </span>
                   </button>
@@ -142,13 +148,13 @@ export function PergaOverviewRoute({
                     key={track.id}
                     type="button"
                     className={styles.trackButton}
+                    aria-describedby={`${activityDescriptionId}-active-${track.id}`}
                     onClick={() => go({ name: 'track', trackId: track.id })}
                   >
                     <span className={styles.trackTitle}>{trackDisplayTitle(track.title)}</span>
+                    <span id={`${activityDescriptionId}-active-${track.id}`} hidden>{activityLabelOf(trackActivityState(track, receipts.isTrackUnread(track.id, track.notifiableSessions)))}</span>
                     <span className={styles.trackMeta}>
-                      {track.working && <Badge variant="success" label="Working" />}
-                      {track.attention === 'input' && <Badge variant="warning" label="Needs input" />}
-                      {track.attention === 'failed' && <Badge variant="error" label="Failed" />}
+                      <ActivityIndicator state={trackActivityState(track, receipts.isTrackUnread(track.id, track.notifiableSessions))} />
                       {area !== undefined && <span>{area.name}</span>}
                     </span>
                   </button>

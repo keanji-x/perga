@@ -277,7 +277,7 @@ describe('the rendered mobile Tasks page projects its view model faithfully', ()
 
 /* The projection checker does not read `PanelRow.activity`, so the indicator is held by a same-set comparison over the two panel subtrees; the page head is excluded because the mobile head paints no indicator. */
 describe('mobile and desktop paint the same data-nc-activity set', () => {
-  const VOCABULARY = /^(Working|Needs input|Needs attention|Unread updates|Execution failed|Execution awaiting input)$/;
+  const VOCABULARY = /^(Working|Needs input|Needs repair|Unread updates|Execution failed|Execution awaiting input)$/;
   const activityByRow = (root: Element): Record<string, [string | null, string | null]> => Object.fromEntries(
     [...root.querySelectorAll('[data-nc-row]')].map((row): [string, [string | null, string | null]] => {
       const state = row.querySelector('[data-nc-activity]')?.getAttribute('data-nc-activity') ?? null;

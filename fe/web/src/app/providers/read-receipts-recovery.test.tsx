@@ -68,7 +68,7 @@ it('acknowledges the open target on a bundled cold start once the workspace is c
   expect(kernel.posts()).toEqual([]);
   await app.connect();
   await waitFor(() => expect(kernel.posts().map((request) => [request.path, request.body])).toEqual([
-    ['/api/read-receipts/track/t/read', { readThroughMs: 150 }],
+    ['/api/v1/read-receipts/track/t/read', { readThroughMs: 150 }],
   ]));
   await screen.findByText('t: read');
 });

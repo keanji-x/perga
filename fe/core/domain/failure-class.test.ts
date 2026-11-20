@@ -9,7 +9,6 @@ import {
 import { SEND_FAILURES } from './conversation-delivery.js';
 import { PLANNER_INTERRUPT_FAILURES } from './conversation-stop.js';
 import { AREA_CREATE_FAILURES, AREA_PATCH_FAILURES } from './area.js';
-import { DISMISS_FAILURES } from './activity.js';
 import { READ_RECEIPT_FAILURES } from './read-receipts.js';
 import { ANSWER_ASK_FAILURES } from './ask.js';
 import {
@@ -161,15 +160,6 @@ const cases: ReadonlyArray<readonly [string, FailureTable<string>, ReadonlyArray
     [http(403), 'unknown'], [http(429), 'unknown'], [http(500, 'db_error'), 'unknown'],
     [transport, 'unknown'], [decode, 'unknown'], [null, 'unknown'],
   ]],
-  ['POST /tracks/{id}/activity/dismissals', DISMISS_FAILURES, [
-    /* The track is gone, and its notification with it. */
-    [http(404, 'not_found'), 'done'],
-    [http(400, 'bad_request'), 'refused'], [http(403, 'forbidden'), 'refused'], [http(422), 'refused'],
-    [unauthorized, 'refused'],
-    [http(409), 'unknown'], [http(500), 'unknown'],
-    [transport, 'unknown'], [decode, 'unknown'], [null, 'unknown'],
-  ]],
-  /* #2596: idempotent receipt writes; a refusal is final, anything else may have stored it. */
   ['POST /read-receipts/{kind}/{target_id}/read|unread', READ_RECEIPT_FAILURES, [
     [http(400, 'bad_request'), 'refused'], [http(403, 'forbidden'), 'refused'], [http(422), 'refused'], [unauthorized, 'refused'],
     [http(404), 'unknown'], [http(500), 'unknown'],

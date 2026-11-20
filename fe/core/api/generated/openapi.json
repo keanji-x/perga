@@ -8551,7 +8551,7 @@
         }
       }
     },
-    "/api/read-receipts": {
+    "/api/v1/read-receipts": {
       "get": {
         "tags": [
           "read_receipts"
@@ -8564,7 +8564,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ReadReceipts"
+                  "$ref": "#/components/schemas/ReadReceiptsResponseDto"
                 }
               }
             }
@@ -8592,7 +8592,7 @@
         }
       }
     },
-    "/api/read-receipts/{kind}/{target_id}/read": {
+    "/api/v1/read-receipts/{kind}/{targetId}/read": {
       "post": {
         "tags": [
           "read_receipts"
@@ -8610,7 +8610,7 @@
             }
           },
           {
-            "name": "target_id",
+            "name": "targetId",
             "in": "path",
             "description": "The track or conversation id",
             "required": true,
@@ -8635,20 +8635,13 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ReadReceipt"
+                  "$ref": "#/components/schemas/ReadReceiptDto"
                 }
               }
             }
           },
           "400": {
-            "description": "Unknown kind, or a negative instant",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
+            "description": "Invalid kind, target ID, JSON body or negative readThroughMs"
           },
           "401": {
             "description": "`unauthorized`: no valid session cookie.",
@@ -8713,7 +8706,7 @@
         }
       }
     },
-    "/api/read-receipts/{kind}/{target_id}/unread": {
+    "/api/v1/read-receipts/{kind}/{targetId}/unread": {
       "post": {
         "tags": [
           "read_receipts"
@@ -8731,7 +8724,7 @@
             }
           },
           {
-            "name": "target_id",
+            "name": "targetId",
             "in": "path",
             "description": "The track or conversation id",
             "required": true,
@@ -8746,20 +8739,13 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ReadReceipt"
+                  "$ref": "#/components/schemas/ReadReceiptDto"
                 }
               }
             }
           },
           "400": {
-            "description": "Unknown kind",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
+            "description": "Invalid kind, target ID, JSON body or negative readThroughMs"
           },
           "401": {
             "description": "`unauthorized`: no valid session cookie.",
@@ -11053,121 +11039,6 @@
           },
           "409": {
             "description": "Workspace is frozen, attached, or no longer empty",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "413": {
-            "description": "`payload_too_large`: the body is over the request size limit.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "415": {
-            "description": "`unsupported_media_type`: the request does not say `Content-Type: application/json`.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "`invalid_body`: the JSON is not the body's shape (a field missing or of the wrong type).",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Internal error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/tracks/{id}/activity/dismissals": {
-      "post": {
-        "tags": [
-          "tracks"
-        ],
-        "summary": "Dismiss one notification item. Idempotent: a key already dismissed keeps its first time. No event\nis written; the projector is woken in-process and its `overlay.set` is what the client sees.",
-        "operationId": "dismiss_activity_item",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "Track id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/DismissActivityItemRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "204": {
-            "description": "Dismissed (or already dismissed)"
-          },
-          "400": {
-            "description": "The key is not an item key",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "`unauthorized`: no valid session cookie.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "The actor is not the authenticated user",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Track not found",
             "content": {
               "application/json": {
                 "schema": {
@@ -16246,7 +16117,9 @@
             "application/json": {
               "schema": {
                 "type": "object",
-                "required": ["permissionMode"],
+                "required": [
+                  "permissionMode"
+                ],
                 "properties": {
                   "permissionMode": {
                     "type": "string"
@@ -19001,19 +18874,6 @@
           }
         }
       },
-      "DismissActivityItemRequest": {
-        "type": "object",
-        "required": [
-          "key"
-        ],
-        "properties": {
-          "key": {
-            "type": "string",
-            "description": "The item's `key` as the activity overlay lists it: `ask:<ask_id>`, `planner_down:<id>` or `planner_turn_timeout:<row_id>`.\nWhether the item is still open is not checked."
-          }
-        },
-        "additionalProperties": false
-      },
       "EditPlannerInputBody": {
         "type": "object",
         "required": [
@@ -20302,13 +20162,14 @@
       },
       "MarkReadRequest": {
         "type": "object",
-        "description": "`POST /api/read-receipts/{kind}/{target_id}/read`: the activity instant the reader has seen.",
-        "required": [
-          "readThroughMs"
-        ],
+        "description": "`POST /api/v1/read-receipts/{kind}/{targetId}/read`: the activity instant the reader has seen.",
+        "required": [],
         "properties": {
           "readThroughMs": {
-            "type": "integer",
+            "type": [
+              "integer",
+              "null"
+            ],
             "format": "int64"
           }
         },
@@ -21896,7 +21757,7 @@
       },
       "ReadReceipts": {
         "type": "object",
-        "description": "`GET /api/read-receipts`: the cutover baseline (activity at or before it is read) and every\nstored receipt.",
+        "description": "`GET /api/v1/read-receipts`: the cutover baseline (activity at or before it is read) and every\nstored receipt.",
         "required": [
           "baselineMs",
           "receipts"
@@ -26329,6 +26190,13 @@
           },
           "reconnectInvalidated": {
             "type": "boolean"
+          },
+          "lastNotifiableTurnAtMs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
           }
         }
       },
@@ -27186,9 +27054,10 @@
           "areaId",
           "isWorking",
           "openAskCount",
-          "hasFailedTask",
-          "unreadMailCount",
-          "updatedAtMs"
+          "updatedAtMs",
+          "pendingApprovalCount",
+          "hasBlockedSession",
+          "workspaceFailed"
         ],
         "properties": {
           "trackId": {
@@ -27203,14 +27072,26 @@
           "openAskCount": {
             "type": "integer"
           },
-          "hasFailedTask": {
-            "type": "boolean"
-          },
-          "unreadMailCount": {
-            "type": "integer"
-          },
           "updatedAtMs": {
             "type": "integer"
+          },
+          "pendingApprovalCount": {
+            "type": "integer"
+          },
+          "hasBlockedSession": {
+            "type": "boolean"
+          },
+          "workspaceFailed": {
+            "type": "boolean"
+          },
+          "notifiableSessions": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/NotifiableSessionWatermarkDto"
+            }
           }
         }
       },
@@ -28343,6 +28224,100 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "NotifiableSessionWatermarkDto": {
+        "type": "object",
+        "required": [
+          "sessionId",
+          "lastNotifiableTurnAtMs"
+        ],
+        "properties": {
+          "sessionId": {
+            "type": "string"
+          },
+          "lastNotifiableTurnAtMs": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "ReadReceiptDto": {
+        "type": "object",
+        "description": "One target's receipt. `readThroughMs` only rises; `manualUnread` is the reader's explicit\n\"mark unread\", cleared by the next mark read.",
+        "required": [
+          "kind",
+          "targetId",
+          "readThroughMs",
+          "manualUnread"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/ReadReceiptKind"
+          },
+          "manualUnread": {
+            "type": "boolean"
+          },
+          "readThroughMs": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "targetId": {
+            "type": "string"
+          }
+        }
+      },
+      "ReadReceiptsResponseDto": {
+        "type": "object",
+        "description": "`GET /api/v1/read-receipts`: the cutover baseline (activity at or before it is read) and every\nstored receipt.",
+        "required": [
+          "baselineMs",
+          "receipts"
+        ],
+        "properties": {
+          "baselineMs": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "receipts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReadReceiptDto"
+            }
+          }
+        }
+      },
+      "ReadReceiptUpdatedEvent": {
+        "type": "object",
+        "description": "Transient event published after a receipt write commits. Reconcile through GET /api/v1/read-receipts after reconnect.",
+        "required": [
+          "kind",
+          "payload",
+          "createdAtMs"
+        ],
+        "properties": {
+          "kind": {
+            "const": "read_receipt.updated"
+          },
+          "eventId": {
+            "type": "null"
+          },
+          "trackId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "areaId": {
+            "type": "null"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/ReadReceiptDto"
+          },
+          "createdAtMs": {
+            "type": "integer",
+            "format": "int64"
           }
         }
       }

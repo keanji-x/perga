@@ -3,13 +3,11 @@ import { act, cleanup, fireEvent, render, screen, within } from '@testing-librar
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { ApiError } from '../../../../../core/domain/failure-class.ts';
 import type { ReportTaskRow } from '../../../../../core/domain/report.ts';
 import { NEUTRAL_ACTIVITY } from '../../../../../core/domain/track.ts';
 import { deriveTrackPageView } from '../../../../../core/view/track-page.ts';
-import { useState } from '../../../ui/state/public.ts';
 import { Dialog } from '../../../ui/dialog/public.tsx';
-import { TrackPage, type TrackInputNotification, type TrackPageProps } from './public.tsx';
+import { TrackPage, type TrackPageProps } from './public.tsx';
 import { openInventoryDisclosures, manualCard as card, renderPage, track } from './test-fixtures.tsx';
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
@@ -167,178 +165,6 @@ describe('TrackPage header', () => {
     });
     await userEvent.click(screen.getByRole('button', { name: 'Back to track' }));
     expect(onCloseBoard).toHaveBeenCalledOnce();
-  });
-
-  it('turns a Planner ask into a bottom-right notification whose whole row answers it', async () => {
-    const onReply = vi.fn();
-    const now = 1_790_000_000_000;
-    renderPage({
-      inputNotifications: [{
-        key: 'ask:7', kind: 'ask', text: 'Merge PR #1811 now, or hold it?', atMs: now - 3 * 60_000,
-      }],
-      onReply,
-      nowMs: now,
-    });
-    const notice = screen.getByRole('region', { name: 'Notifications' });
-    expect(screen.getByRole('status', { name: 'Input notifications' }).textContent)
-      .toBe('1 notification needs your attention.');
-    expect(within(notice).getByText('Waiting on you').tagName).toBe('STRONG');
-    expect(within(notice).getByText('Waiting on you').nextElementSibling?.textContent).toBe('1');
-    const row = within(notice).getByRole('listitem');
-    expect(row.getAttribute('data-nc-notification-state')).toBe('ask');
-    /* Meta line (the label and, in its slot, the row's action; the time), then the body; no text buttons. */
-    expect(row.textContent).toBe('Needs your answerAnswer in Planner3mMerge PR #1811 now, or hold it?');
-    expect(within(row).getAllByRole('button').map((button) => button.getAttribute('aria-label')))
-      .toEqual(['Answer the Planner: Merge PR #1811 now, or hold it?']);
-    expect(screen.queryByText('Needs input')).toBeNull();
-    await userEvent.click(screen.getByRole('button', { name: 'Collapse notifications' }));
-    expect(notice.getAttribute('data-nc-notification-mode')).toBe('compact');
-    expect(notice.querySelector('strong')).toBeNull();
-    expect(notice.textContent).toContain('1');
-    await userEvent.click(screen.getByRole('button', { name: 'Open 1 notification' }));
-    expect(notice.getAttribute('data-nc-notification-mode')).toBe('expanded');
-    await userEvent.click(screen.getByRole('button', { name: 'Answer the Planner: Merge PR #1811 now, or hold it?' }));
-    expect(onReply).toHaveBeenCalledOnce();
-  });
-
-  it('names a row by the first 80 characters of its text', () => {
-    const long = `${'a'.repeat(80)}${'b'.repeat(40)}`;
-    renderPage({
-      inputNotifications: [{ key: 'planner_down:9', kind: 'planner-down', text: long, atMs: 1 }],
-      onReply: vi.fn(),
-    });
-    expect(screen.getByRole('button', { name: `Open the Planner: ${'a'.repeat(80)}…` })).toBeTruthy();
-    expect(screen.getByText(long)).toBeTruthy();
-  });
-
-  it('renders an item as markdown under a plain-words label, and nests no control inside another', async () => {
-    const onDismiss = vi.fn(() => Promise.resolve());
-    renderPage({
-      inputNotifications: [
-        { key: 'ask:7', kind: 'ask', atMs: 2, text: 'Merge **PR #1811** now?\n\n- hold it for the release\n'
-          + '- ship it today\n\nRun `deploy.sh` after; see [the PR](https://example.com/pr/1811).' },
-        { key: 'planner_down:9', kind: 'planner-down', atMs: 1,
-          text: "400: The 'gpt-6-astra' model requires a newer version of Codex." },
-      ],
-      onReply: vi.fn(),
-      onDismiss,
-    });
-    const [ask, down] = screen.getByRole('region', { name: 'Notifications' })
-      .querySelectorAll<HTMLElement>('[data-nc-notification-state]');
-    expect(within(ask).getByText('PR #1811').tagName).toBe('STRONG');
-    expect(within(ask).getAllByRole('listitem').map((item) => item.textContent))
-      .toEqual(['hold it for the release', 'ship it today']);
-    expect(within(ask).getByText('deploy.sh').tagName).toBe('CODE');
-    expect(within(ask).getByRole('link', { name: 'the PR' }).getAttribute('href')).toBe('https://example.com/pr/1811');
-    expect(down.getAttribute('data-nc-notification-state')).toBe('planner-down');
-    expect(within(down).getByText("400: The 'gpt-6-astra' model requires a newer version of Codex.")).toBeTruthy();
-    expect(within(ask).getByText('Needs your answer')).toBeTruthy();
-    expect(within(down).getByText("Planner can't continue")).toBeTruthy();
-    expect(down.textContent).not.toContain('Fix the cause');
-    /* The row button is empty and stretched over the row; the × and the link are its siblings, not its children. */
-    expect(ask.querySelectorAll('button button, button a, a button')).toHaveLength(0);
-    await userEvent.click(within(down).getByRole('button', {
-      name: "Dismiss: Planner can't continue: 400: The 'gpt-6-astra' model requires a newer version of Codex.",
-    }));
-    /* The names carry the words, not the markdown syntax. */
-    expect(within(ask).getByRole('button', {
-      name: 'Dismiss: Needs your answer: Merge PR #1811 now? hold it for the release ship it today Run deploy.sh after; s…',
-    }).title).toBe('Dismiss');
-    expect(within(ask).getByRole('button', { name: /^Answer the Planner: Merge PR #1811 now\? hold it/ })).toBeTruthy();
-    expect(onDismiss).toHaveBeenCalledWith('planner_down:9');
-  });
-
-  /* #2348: a paused turn's request ends only when it is answered or goes away, so its row offers no Dismiss. */
-  it('labels a paused turn\'s request as waiting for approval and offers no Dismiss for it', async () => {
-    const onReply = vi.fn();
-    renderPage({
-      inputNotifications: [
-        { key: 'ask:12', kind: 'approval', atMs: 2, text: 'Run `cargo test` (cwd /work)?' },
-        { key: 'ask:7', kind: 'ask', atMs: 1, text: 'Merge now?' },
-      ],
-      onReply,
-      onDismiss: vi.fn(() => Promise.resolve()),
-    });
-    const [approval, ask] = screen.getByRole('region', { name: 'Notifications' })
-      .querySelectorAll<HTMLElement>('[data-nc-notification-state]');
-    expect(approval.getAttribute('data-nc-notification-state')).toBe('approval');
-    expect(within(approval).getByText('Waiting for your approval')).toBeTruthy();
-    expect(within(approval).getAllByRole('button').map((button) => button.getAttribute('aria-label')))
-      .toEqual(['Answer the Planner: Run cargo test (cwd /work)?']);
-    expect(within(ask).getByRole('button', { name: 'Dismiss: Needs your answer: Merge now?' })).toBeTruthy();
-    await userEvent.click(within(approval).getByRole('button', { name: 'Answer the Planner: Run cargo test (cwd /work)?' }));
-    expect(onReply).toHaveBeenCalledOnce();
-  });
-
-  it('names a short markdown row by its plain words, without syntax or the link address', () => {
-    renderPage({
-      inputNotifications: [{
-        key: 'ask:3', kind: 'ask', atMs: 1,
-        text: 'Ship **now**? See [the PR](https://example.com/a/very/long/path/that/must/not/be/read/out/pulls/1811).',
-      }],
-      onReply: vi.fn(),
-      onDismiss: vi.fn(() => Promise.resolve()),
-    });
-    expect(screen.getByRole('button', { name: 'Answer the Planner: Ship now? See the PR.' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Dismiss: Needs your answer: Ship now? See the PR.' })).toBeTruthy();
-  });
-
-  /* #2131: the dismissal's own table reads its failure. A 404 means the track is gone with its notification: done. */
-  it.each([
-    ['a lost answer', new ApiError({ kind: 'transport', message: 'Transport request failed' }), 'Dismissing the notification is unconfirmed.'],
-    ['an unreadable answer', new ApiError({ kind: 'decode', message: 'API response did not match its schema' }), 'Dismissing the notification is unconfirmed.'],
-    ['a refusal', new ApiError({ kind: 'http', status: 403, code: 'forbidden', message: 'not yours to dismiss' }), 'not yours to dismiss'],
-    ['a 404', new ApiError({ kind: 'http', status: 404, code: 'not_found', message: 'track not found' }), null],
-  ] as const)('reads %s through the dismissal’s table', async (_name, error, shown) => {
-    renderPage({
-      inputNotifications: [{ key: 'ask:3', kind: 'ask', atMs: 1, text: 'Ship now?' }],
-      onDismiss: vi.fn(() => Promise.reject(error)),
-    });
-    await userEvent.click(screen.getByRole('button', { name: 'Dismiss: Needs your answer: Ship now?' }));
-    await act(async () => { await new Promise((done) => { setTimeout(done, 10); }); });
-    if (shown === null) expect(screen.queryByRole('alert')).toBeNull();
-    else expect(within(await screen.findByRole('alert')).getByText(shown)).toBeTruthy();
-  });
-
-  it('reopens a collapsed center when another notification arrives', async () => {
-    const ask: TrackInputNotification = {
-      key: 'ask:1', kind: 'ask', text: 'Which branch?', atMs: 1,
-    };
-    const down: TrackInputNotification = {
-      key: 'planner_down:2', kind: 'planner-down', text: 'unexpected status 403 Forbidden', atMs: 2,
-    };
-    function NotificationHarness() {
-      const [notifications, setNotifications] = useState<readonly TrackInputNotification[]>([ask]);
-      return (
-        <>
-          <button type="button" onClick={() => setNotifications([down, ask])}>Add notification</button>
-          <TrackPage
-            mobilePanelObscured={false}
-            track={track()}
-            cards={[]}
-            tasks={[]}
-            openableCards={new Set()}
-            inputNotifications={notifications}
-            canReopenTrack={false}
-            canCloseTrack={false} adminGrantedAt={null}
-            onRenameTrack={vi.fn()}
-            closedControl={{ pending: false, setClosed: () => Promise.resolve(true), feedback: { error: null, clear: () => undefined, run: () => Promise.resolve(true) } }}
-            onDeleteTrack={vi.fn()} onTrackDeleted={vi.fn()} existingCardIds={new Set<string>()}
-          />
-        </>
-      );
-    }
-
-    render(<NotificationHarness />);
-    await userEvent.click(screen.getByRole('button', { name: 'Collapse notifications' }));
-    expect(screen.getByRole('region', { name: 'Notifications' })
-      .getAttribute('data-nc-notification-mode')).toBe('compact');
-    await userEvent.click(screen.getByRole('button', { name: 'Add notification' }));
-    expect(screen.getByRole('region', { name: 'Notifications' })
-      .getAttribute('data-nc-notification-mode')).toBe('expanded');
-    expect(screen.getByText('Waiting on you').nextElementSibling?.textContent).toBe('2');
-    expect(screen.getByRole('status', { name: 'Input notifications' }).textContent)
-      .toBe('2 notifications need your attention.');
   });
 
   it('makes the compact header return an open overlay to the Report', async () => {
@@ -921,7 +747,6 @@ describe('TrackPage delete', () => {
   });
 });
 
-
 describe('the desktop Planner entry', () => {
   it('opens the existing Planner through its supplied callback', async () => {
     const onReply = vi.fn();
@@ -942,7 +767,6 @@ describe('the desktop Planner entry', () => {
     expect(screen.queryByRole('button', { name: '讨论这项工作' })).toBeNull();
   });
 });
-
 
 it('does not mount the mobile Chat entry on desktop', () => {
   renderPage({ onStartConversation: vi.fn() });

@@ -88,6 +88,9 @@ public interface IPergaKernel : IAsyncDisposable
     Task<TaskDto> CompleteAttemptFailAsync(string trackId, string callerSessionId, string reason, JsonElement? workerResult = null, CancellationToken ct = default, WorkerCompletionOrigin? origin = null);
 
     // Sessions, Messages & Epoch Compaction
+    Task<ReadReceiptsResponseDto> GetReadReceiptsAsync(CancellationToken ct = default);
+    Task<ReadReceiptDto> MarkReadAsync(string kind, string targetId, long readThroughMs, CancellationToken ct = default);
+    Task<ReadReceiptDto> MarkUnreadAsync(string kind, string targetId, CancellationToken ct = default);
     Task<IReadOnlyList<AgentSessionDto>> ListSessionsAsync(string trackId, CancellationToken ct = default);
     Task<AgentSessionDto> CreateSubagentSessionAsync(string trackId, CreateSessionRequest req, CancellationToken ct = default);
     Task<(SessionCreationReceipt Receipt, bool Replay)> CreateSessionWithReceiptAsync(
@@ -288,20 +291,63 @@ public sealed partial class PergaKernelService : IPergaKernel
         var merged = new List<TrackOverlayDto>(stored.Count);
         foreach (var item in stored)
         {
-            if (Actors.TryGetActive(item.TrackId, out var actor) && actor is not null)
-            {
-                var isWorking = item.IsWorking || actor.IsSessionOrTaskRunning;
-                var updatedAtMs = Math.Max(item.UpdatedAtMs, actor.LastActivityAtMs);
-                merged.Add(item with { IsWorking = isWorking, UpdatedAtMs = updatedAtMs, OpenAskCount = item.OpenAskCount + actor.PendingApprovalCount });
-            }
-            else
-            {
-                merged.Add(item);
-            }
+            merged.Add(await MergeActiveOverlayAsync(item,
+                () => Actors.TryGetActive(item.TrackId, out var actor) ? actor : null, ct).ConfigureAwait(false));
         }
 
         return new TrackOverlaysResponseDto(merged);
     }
+
+    // A registry lookup is not a lease: eviction can complete the actor's mailbox before enqueue.
+    // Retry only a newer active actor, once; otherwise the durable overlay remains authoritative.
+    internal static async Task<TrackOverlayDto> MergeActiveOverlayAsync(
+        TrackOverlayDto stored, Func<TrackActor?> getActive, CancellationToken ct)
+    {
+        var actor = getActive();
+        for (var attempt = 0; actor is not null && attempt < 2; attempt++)
+        {
+            try { return await actor.MergeOverlayAsync(stored, ct).ConfigureAwait(false); }
+            catch (ObjectDisposedException ex) when (ex.ObjectName == nameof(TrackActor) || ex.ObjectName == typeof(TrackActor).FullName)
+            {
+                ct.ThrowIfCancellationRequested();
+                if (attempt == 1) break;
+                var next = getActive();
+                if (ReferenceEquals(next, actor)) break;
+                actor = next;
+            }
+        }
+        return stored;
+    }
+
+    public Task<ReadReceiptsResponseDto> GetReadReceiptsAsync(CancellationToken ct = default) =>
+        _store.GetReadReceiptsAsync(ct);
+
+    public async Task<ReadReceiptDto> MarkReadAsync(string kind, string targetId, long readThroughMs, CancellationToken ct = default)
+    {
+        ValidateReadReceipt(kind, targetId);
+        if (readThroughMs < 0) throw KernelException.InvalidArgument("readThroughMs must be nonnegative.");
+        var receipt = await _store.MarkReadAsync(kind, targetId, readThroughMs, ct).ConfigureAwait(false);
+        PublishReadReceipt(receipt);
+        return receipt;
+    }
+
+    public async Task<ReadReceiptDto> MarkUnreadAsync(string kind, string targetId, CancellationToken ct = default)
+    {
+        ValidateReadReceipt(kind, targetId);
+        var receipt = await _store.MarkUnreadAsync(kind, targetId, ct).ConfigureAwait(false);
+        PublishReadReceipt(receipt);
+        return receipt;
+    }
+
+    private static void ValidateReadReceipt(string kind, string targetId)
+    {
+        if (kind is not ("track" or "conversation") || string.IsNullOrWhiteSpace(targetId))
+            throw KernelException.InvalidArgument("A track or conversation kind and nonempty targetId are required.");
+    }
+
+    private void PublishReadReceipt(ReadReceiptDto receipt) =>
+        _eventHub.PublishTransient(null, receipt.Kind == "track" ? receipt.TargetId : null,
+            KernelEventKinds.ReadReceiptUpdated, JsonHelpers.ToElement(receipt), NowMs());
 
     public HostListDirResultDto ListHostDirectory(string? path = null)
     {

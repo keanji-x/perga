@@ -475,13 +475,13 @@ describe('collapse toggle', () => {
 });
 
 
-it('reads the track receipt against the activity high-water mark, not updatedAt', async () => {
+it('reads each conversation completion watermark, not track metadata', async () => {
   /* `updatedAt` moves on a rename or a pin; the receipt compares the kernel's
    * completion high-water mark, and `activityAt: null` is never unread. The kernel's baseline is 100. */
   renderSidebar({
     tracks: [
-      track({ id: 'fresh', title: 'Fresh', updatedAt: 1, activityAt: 150 }),
-      track({ id: 'seen', title: 'Seen', updatedAt: 1_000, activityAt: 50 }),
+      track({ id: 'fresh', title: 'Fresh', updatedAt: 1, notifiableSessions: [{ sessionId: 's1', lastNotifiableTurnAtMs: 150 }] }),
+      track({ id: 'seen', title: 'Seen', updatedAt: 1_000, notifiableSessions: [{ sessionId: 's2', lastNotifiableTurnAtMs: 50 }] }),
       track({ id: 'never', title: 'Never', updatedAt: 1_000, activityAt: null }),
     ],
   }, createUiPreferences(memoryStorage()), createReadReceiptsKernel({ baselineMs: 100 }));
@@ -786,7 +786,7 @@ it('keeps manually unread until the selected Track view acknowledges it', async 
   await waitFor(() => expect(screen.getByRole('button', { name: 'Track Task' }).getAttribute('aria-describedby')).toBeTruthy());
   await userEvent.click(screen.getByRole('button', { name: 'Track Task' }));
   expect(kernel.stored('track', 'w1')?.manualUnread).toBe(true);
-  expect(kernel.posts().map((request) => request.path)).toEqual(['/api/read-receipts/track/w1/unread']);
+  expect(kernel.posts().map((request) => request.path)).toEqual(['/api/v1/read-receipts/track/w1/unread']);
 });
 
 it('does not claim an empty activity shortcut after its read fails', () => {

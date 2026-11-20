@@ -1222,7 +1222,7 @@ it.each([false, true])('selects a model before the first conversation message an
 it('uses a spinner while a closed conversation runs, a blue unread dot on completion, and no dot after reading', async () => {
   /* Unread follows `lastTurnCompletedAt`: `updatedAt` also moves when a message is
        queued. Working follows the kernel's per-card verdict, not the row's session state. */
-  let rows = [assistantRow({ updatedAtMs: 30 })];
+  let rows = [assistantRow({ updatedAtMs: 30, lastNotifiableTurnAtMs: 30 })];
   const { client } = setup(request => {
     if (request.method === 'GET' && request.path === '/api/v1/tracks/w1') return ok(fixtureSnapshot(TRACK, [PLANNER_CARD, ...rows]));
     return undefined;
@@ -1237,16 +1237,16 @@ it('uses a spinner while a closed conversation runs, a blue unread dot on comple
   fireEvent.click(screen.getByRole('button', { name: /^Conversation Assistant(?:,|$)/ }));
   await waitFor(() => expect(indicator()).toBeNull());
   fireEvent.click(screen.getByRole('button', { name: 'Close conversation' }));
-  rows = [{ ...assistantRow(), status: 'running', updatedAtMs: 30 }];
+  rows = [{ ...assistantRow(), status: 'running', updatedAtMs: 30, lastNotifiableTurnAtMs: 30 }];
   await refetch();
   await waitFor(() => expect(screen.getByRole('button', { name: /^Conversation Assistant/ }).closest('li')
     ?.querySelector('[data-nc-activity]')?.getAttribute('data-nc-activity')).toBe('working'));
   // A newer `updatedAt` alone (the reader queued something) is not unread…
-  rows = [{ ...assistantRow(), status: 'idle', updatedAtMs: 30 }];
+  rows = [{ ...assistantRow(), status: 'idle', updatedAtMs: 30, lastNotifiableTurnAtMs: 30 }];
   await refetch();
   await waitFor(() => expect(indicator()).toBeNull());
   // …a newer completion is.
-  rows = [{ ...assistantRow(), status: 'idle', updatedAtMs: 50 }];
+  rows = [{ ...assistantRow(), status: 'idle', updatedAtMs: 50, lastNotifiableTurnAtMs: 50 }];
   await refetch();
   await waitFor(() => expect(indicator()?.getAttribute('data-nc-activity')).toBe('unread'));
   fireEvent.click(screen.getByRole('button', { name: /^Conversation Assistant(?:,|$)/ }));
@@ -1279,7 +1279,7 @@ it('keeps the first-message model fixed when a menu opened before sending is sel
 });
 
 it('keeps new replies unread while reopening cached history is still loading', async () => {
-  let rows = [assistantRow({ updatedAtMs: 30 })];
+  let rows = [assistantRow({ updatedAtMs: 30, lastNotifiableTurnAtMs: 30 })];
   let holdHistory = false;
   let release!: (response: ApiTransportResponse) => void;
   const pending = new Promise<ApiTransportResponse>(resolve => { release = resolve; });
@@ -1294,7 +1294,7 @@ it('keeps new replies unread while reopening cached history is still loading', a
   fireEvent.click(await screen.findByRole('button', { name: 'Conversation Assistant' }));
   await waitFor(() => expect(unread()).toBeNull());
   fireEvent.click(screen.getByRole('button', { name: 'Close conversation' }));
-  rows = [{ ...assistantRow(), updatedAtMs: 50 }];
+  rows = [{ ...assistantRow(), updatedAtMs: 50, lastNotifiableTurnAtMs: 50 }];
   await act(async () => { await client.invalidateQueries({ queryKey: queryKeys.trackDetail('w1') }); });
   await waitFor(() => expect(unread()).toBeTruthy());
   const previousReads = requests.filter(request => isHistoryPath(request.path)).length;
@@ -1312,7 +1312,7 @@ it('keeps new replies unread while reopening cached history is still loading', a
 
 it('keeps a nonempty conversation read after closing when activity is newer than the last reply', async () => {
   setup(request => {
-    if (request.path === '/api/v1/tracks/w1') return ok(fixtureSnapshot(TRACK, [PLANNER_CARD, ...[assistantRow({ title: 'Review receipt', updatedAtMs: 50 })]]));
+    if (request.path === '/api/v1/tracks/w1') return ok(fixtureSnapshot(TRACK, [PLANNER_CARD, ...[assistantRow({ title: 'Review receipt', updatedAtMs: 50, lastNotifiableTurnAtMs: 50 })]]));
     if (isHistoryPath(request.path)) return ok(historyPage(conversationCardId(request.path), [sessionItem(ASSISTANT_CARD.id, 20, 'Read this completed answer.')]));
     return undefined;
   });
@@ -1857,3 +1857,42 @@ async function reopenAssistant() {
   fireEvent.click(screen.getByRole('button', { name: 'Close conversation' }));
   await pickAssistant();
 }
+
+it('does not loop failed acknowledgements when a conversation with no output is presented', async () => {
+  const receipts = createReadReceiptsKernel({ fail: true, writeDelayMs: 10, receipts: [
+    { kind: 'track', targetId: 'w1', readThroughMs: 0, manualUnread: true },
+    { kind: 'conversation', targetId: ASSISTANT_CARD.id, readThroughMs: 0, manualUnread: true },
+  ] });
+  receipts.capWrites(8);
+  const { client } = setup(request => request.path === '/api/v1/tracks/w1'
+    ? ok(fixtureSnapshot(TRACK, [PLANNER_CARD, assistantRow({ lastNotifiableTurnAtMs: null })])) : undefined,
+  undefined, undefined, receipts);
+  fireEvent.click(await screen.findByRole('button', { name: /^Conversation Assistant(?:,|$)/ }));
+  await screen.findByRole('combobox', { name: 'Message' });
+  await waitFor(() => expect(receipts.posts().some(request => request.path.includes('/conversation/'))).toBe(true));
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 300)); });
+  expect(receipts.posts().filter(request => request.path.includes('/conversation/'))).toHaveLength(1);
+  const count = receipts.posts().length;
+  await act(async () => { await client.invalidateQueries({ queryKey: queryKeys.readReceipts() }); });
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 150)); });
+  expect(receipts.posts()).toHaveLength(count);
+});
+
+it('keeps a visible conversation without output manually unread after receipt reconciliation', async () => {
+  const receipts = createReadReceiptsKernel({ writeDelayMs: 10, receipts: [
+    { kind: 'conversation', targetId: ASSISTANT_CARD.id, readThroughMs: 0, manualUnread: true },
+  ] });
+  const { client } = setup(request => request.path === '/api/v1/tracks/w1'
+    ? ok(fixtureSnapshot(TRACK, [PLANNER_CARD, assistantRow({ lastNotifiableTurnAtMs: null })])) : undefined,
+  undefined, undefined, receipts);
+  fireEvent.click(await screen.findByRole('button', { name: /^Conversation Assistant(?:,|$)/ }));
+  await screen.findByRole('combobox', { name: 'Message' });
+  await waitFor(() => expect(receipts.stored('conversation', ASSISTANT_CARD.id)?.manualUnread).toBe(false));
+  await waitFor(() => expect(client.isFetching()).toBe(0));
+  const before = receipts.posts().length;
+  receipts.store({ kind: 'conversation', targetId: ASSISTANT_CARD.id, readThroughMs: 0, manualUnread: true });
+  await act(async () => { await client.invalidateQueries({ queryKey: queryKeys.readReceipts() }); });
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 150)); });
+  expect(receipts.posts()).toHaveLength(before);
+  expect(receipts.stored('conversation', ASSISTANT_CARD.id)?.manualUnread).toBe(true);
+});
