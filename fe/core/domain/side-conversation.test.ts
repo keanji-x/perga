@@ -5,7 +5,7 @@ import type { ConversationTurn, OptimisticConversationTurn, TranscriptEntry } fr
 const speech = (id: string, author: 'you' | 'agent', text: string): ConversationTurn => ({ id, author, text, atMs: 1 });
 describe('discussion context', () => {
   it('carries delivered speech while excluding system, tools, images and optimistic prompts', () => {
-    const optimistic: OptimisticConversationTurn = { ...speech('echo', 'you', 'unsent'), serverHighWaterBefore: 1, queued: false, entryId: null };
+    const optimistic: OptimisticConversationTurn = { ...speech('echo', 'you', 'unsent'), localSend: true, queued: false };
     const entries: TranscriptEntry[] = [speech('user', 'you', 'question'),
       { id: 'system', author: 'system', label: 'Context', text: 'hidden', atMs: 1 },
       { id: 'tool', author: 'activity', verb: 'Read', target: '/secret', state: 'done', durationMs: 1, detail: 'secret', tool: 'Read', atMs: 1 },

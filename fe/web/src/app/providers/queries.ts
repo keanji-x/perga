@@ -3,9 +3,8 @@ import { KeyedSendFailure } from '../../../../core/domain/conversation-delivery.
 import { retireAreaQueries } from './area-query-lifecycle.ts';
 import { queryKeys } from './query-keys.ts';
 export { queryKeys } from './query-keys.ts';
-import { conversationItemsOperation, conversationRunOperation, keepConversationInputOperation, retryConversationInputOperation, type ConversationRun } from '../../../../core/domain/conversation-display.ts';
+import { conversationItemsOperation, conversationRunOperation, type ConversationRun } from '../../../../core/domain/conversation-display.ts';
 import { conversationLiveOperation } from '../../../../core/domain/conversation-live.ts';
-import { editQueuedMessageOperation, withdrawQueuedMessageOperation, steerQueuedMessageOperation } from '../../../../core/domain/conversation-queue-controls.ts';
 import type { ConversationCursor, ConversationLiveReplies } from '../../../../core/api/generated/wire.ts';
 // Query and mutation wiring shared by app/router, app/shell and every feature slice. It lives under
 // app/providers because the router renders the shell and both need the same reads (`no-circular`).
@@ -64,17 +63,15 @@ import {
   type Track, type TrackPatchBody, type TrackRecipe,
 } from '../../../../core/domain/track.ts';
 import {
-  abandonSessionInputOperation, resumeProviderSessionOperation, compactPlannerOperation, interruptPlannerOperation, sendPlannerInputOperation, steerQueuedSessionMessageOperation, removeQueuedSessionMessageOperation,
+  recoverSessionOperation, compactPlannerOperation, interruptPlannerOperation, sendPlannerInputOperation, steerQueuedSessionMessageOperation, removeQueuedSessionMessageOperation,
   createTrackConversationOperation, setConversationArchiveOperation,
-  createSerialWriter, deletePlannerInputOperation, editPlannerInputOperation, steerPlannerInputOperation,
-  modelCatalogOperation, plannerQueueWriteFailure, setPlannerModelOperation,
+  createSerialWriter,
+  modelCatalogOperation, setPlannerModelOperation,
   uploadPlannerAttachmentOperation, PLANNER_ATTACHMENT_FAILURES, UPLOAD_TEXT,
   type ModelCatalogScope, type ModelSelection, type ModelSelectionResult,
-  type PlannerQueueWriteOutcome, type PlannerQueueEditOutcome, type PendingQueueEntry, type PlannerInputMutation,
 } from '../../../../core/domain/conversation.ts';
 import { setPlannerPermissionModeOperation, type SetPlannerPermissionModeResponse } from '../../../../core/domain/planner-permission-mode.ts';
 import { sendWorkerMessageOperation, updateWorkerSettingsOperation } from '../../../../core/domain/worker-session.ts';
-import { recoverConversationOperation, abandonConversationOperation, restartPlannerOperation, type RunRecovery } from '../../../../core/domain/conversation-restart.ts';
 import {
   ApiError, classifyFailure, DELETE_FAILURES, DELETE_TEXT, refusalText, writeFailureOf, writeFailureText,
 } from '../../../../core/domain/failure-class.ts';
@@ -86,6 +83,9 @@ import type {
 } from '../../../../core/api/generated/wire.ts';
 import type { ConversationRegistry } from '../conversations/registry-model.ts';
 import { cancelThenInvalidate } from '../events/query-refresh.ts';
+import type { SideConversation, CreatedConversation } from '../../../../core/domain/conversation.ts';
+
+
 
 /** A failed capability preflight guarantees no Area POST was submitted. */
 export class AreaCreatePreflightError extends Error {
@@ -245,32 +245,11 @@ export function usePlannerMutations(transport: ApiTransportPort, cardId: string,
     refreshInputMetadata();
     return result;
   };
-  const refreshAfterQueueWrite = <T extends Readonly<{ kind: string }>>(result: T): T => {
-    if (result.kind === 'done') return refreshAfterInput(result, false);
-    refreshInputMetadata();
-    return refreshAfter(result);
-  };
   return {
-    keep: (args: import('../../../../core/api/generated/wire.ts').KeepConversationInputRequest, key: string) =>
-      Promise.resolve().then(() => admitTransport(transport))
-        .then(admitted => runOperation(admitted, keepConversationInputOperation(cardId, args, key), unauthorized))
-        .then(result => refreshAfterInput(result, false), (error: unknown) => {
-          refreshAfterInput(undefined, false);
-          throw error;
-        }),
-    retry: (args: import('../../../../core/api/generated/wire.ts').RetryConversationInputRequest, key: string) =>
-      Promise.resolve().then(() => admitTransport(transport))
-        .then(admitted => runOperation(admitted, retryConversationInputOperation(cardId, args, key), unauthorized))
-        .then(result => refreshAfterInput(result, false), (error: unknown) => {
-          refreshAfterInput(undefined, false);
-          throw error;
-        }),
-    /* `admitted` is the caller's: a keyed send is admitted at the press, and each retry is admitted again.
-       `answered` runs when the 200 is in hand, before the refresh starts its reads. */
-    send: (text: string, attachments: readonly string[], idempotencyKey: string, replacesTurn: string | null,
-      admitted: ApiTransportPort, answered: () => void, queueIfBusy = false, target?: ConversationSendTarget) => {
+    send: (text: string, attachments: readonly string[], idempotencyKey: string,
+      admitted: ApiTransportPort, queueIfBusy = false, target?: ConversationSendTarget) => {
       const sent = target === undefined
-        ? runOperation(admitted, sendPlannerInputOperation(cardId, text, attachments, idempotencyKey, replacesTurn, false, queueIfBusy), unauthorized)
+        ? runOperation(admitted, sendPlannerInputOperation(cardId, text, attachments, idempotencyKey, false, queueIfBusy), unauthorized)
         : runOperation(admitted, sendWorkerMessageOperation(cardId, idempotencyKey, {
           attemptId: target.attemptId, content: text, ...(target.queue ? { mode: 'queue' as const } : {}),
         }), unauthorized).then(receipt => {
@@ -284,7 +263,7 @@ export function usePlannerMutations(transport: ApiTransportPort, cardId: string,
           return { card_id: cardId, worker_session_id: cardId, entry_id: receipt.messageId ?? receipt.inputId,
             queued: receipt.delivery === 'queued' };
         });
-      return sent.then((receipt) => { answered(); return refreshAfterInput(receipt, replacesTurn !== null); }, (error: unknown) => {
+      return sent.then((receipt) => refreshAfterInput(receipt, false), (error: unknown) => {
         refreshInputMetadata(admitted, error);
         if (target !== undefined) refreshAfter(undefined);
         throw error;
@@ -298,16 +277,9 @@ export function usePlannerMutations(transport: ApiTransportPort, cardId: string,
       Promise.resolve().then(() => admitTransport(transport))
         .then(admitted => runOperation(admitted, removeQueuedSessionMessageOperation(cardId, inputId), unauthorized))
         .finally(() => { refreshAfterInput(undefined, false); }),
-    resumeProviderSession: (turnId: string) => Promise.resolve().then(() => admitTransport(transport))
-      .then(admitted => runOperation(admitted, resumeProviderSessionOperation(cardId, turnId), unauthorized))
-      .finally(async () => {
-        void cancelThenInvalidate(client, transcriptKey);
-        refreshInputMetadata();
-        await cancelThenInvalidate(client, queryKeys.plannerRun(cardId));
-      }),
-    abandonSessionInput: (inputId: string) => Promise.resolve().then(() => admitTransport(transport))
-      .then(admitted => runOperation(admitted, abandonSessionInputOperation(cardId, inputId), unauthorized))
-      .then(result => refreshAfterInput(result, false)),
+    recover: (mode: 'reconnect' | 'reset_context') => Promise.resolve().then(() => admitTransport(transport))
+      .then(admitted => runOperation(admitted, recoverSessionOperation(cardId, mode), unauthorized))
+      .finally(() => { refreshAfterInput(undefined, false); }),
     /* Admitted at the press, as every chat write is: a stop that cannot leave the browser is not sent (#2068). */
     compact: () => Promise.resolve().then(() => admitTransport(transport))
       .then((admitted) => runOperation(admitted, compactPlannerOperation(cardId), unauthorized)).then(refreshAfter),
@@ -317,60 +289,13 @@ export function usePlannerMutations(transport: ApiTransportPort, cardId: string,
       Promise.resolve().then(() => admitTransport(transport))
         .then(admitted => runOperation(admitted, updateWorkerSettingsOperation(cardId, settings, approvalKey), unauthorized))
         .finally(() => cancelThenInvalidate(client, queryKeys.plannerRun(cardId))),
-    /* Settles once the run read started after the answer has landed, so what follows reads the new session, not the
-       wedge it replaced (#2192). A failure refreshes too: one whose outcome is unknown may have started a session. */
-    restart: (recovery?: RunRecovery | null) => {
-      const reread = () => {
-        void refreshTranscript().catch(() => undefined);
-        return cancelThenInvalidate(client, queryKeys.plannerRun(cardId));
-      };
-      return Promise.resolve().then(() => admitTransport(transport))
-        .then((admitted): Promise<unknown> => recovery?.action === 'recover_session'
-          ? runOperation(admitted, recoverConversationOperation(cardId, recovery), unauthorized)
-          : recovery?.action === 'abandon_session'
-          ? runOperation(admitted, abandonConversationOperation(cardId, recovery), unauthorized)
-          : runOperation(admitted, restartPlannerOperation(cardId), unauthorized))
-        .then(async (restarted) => { await reread(); return restarted; }, async (error: unknown) => { await reread(); throw error; });
-    },
-    /* Resolves rather than rejects on a refusal: a lost compare-and-swap and a drained entry are answers
-     * the reader has to be shown. The refresh runs on every path — a 409 proves the cached page is behind. */
-    editCanonicalQueued: (entry: PendingQueueEntry, text: string, carrier: string, answered: (saved: PlannerInputMutation & Readonly<{ text: string }>) => void): Promise<PlannerQueueEditOutcome> =>
-      runOperation(transport,editQueuedMessageOperation(cardId,carrier,entry.entry_id,entry.rev,text),unauthorized)
-        .then((saved):PlannerQueueEditOutcome => { answered(saved); return {kind:'done',entry:{...entry,text:saved.text,rev:saved.rev}}; })
-        .catch((error:unknown) => plannerQueueWriteFailure(error instanceof ApiError ? error.failure : null,'Could not edit the queued message.')).then(refreshAfterQueueWrite),
-    withdrawCanonicalQueued: (entryId:string,rev:number,carrier:string,answered:(saved:PlannerInputMutation)=>void):Promise<PlannerQueueWriteOutcome> =>
-      runOperation(transport,withdrawQueuedMessageOperation(cardId,carrier,entryId,rev),unauthorized)
-        .then((saved):PlannerQueueWriteOutcome => { answered(saved); return {kind:'done'}; })
-        .catch((error:unknown) => plannerQueueWriteFailure(error instanceof ApiError ? error.failure : null,'Could not withdraw the queued message.')).then(refreshAfterQueueWrite),
-    steerCanonicalQueued: (entry:PendingQueueEntry,carrier:string,turn:string,answered:()=>void):Promise<PlannerQueueWriteOutcome> =>
-      runOperation(transport,steerQueuedMessageOperation(cardId,carrier,entry.entry_id,entry.rev,turn),unauthorized)
-        .then((result):PlannerQueueWriteOutcome => {
-          if (result.delivery === 'not_dispatched') return {kind:'failed',message:'The message was not delivered to this response. Checking its current state.'};
-          answered(); return {kind:'done'};
-        }).catch((error:unknown) => plannerQueueWriteFailure(error instanceof ApiError ? error.failure : null,
-          'Delivery could not be confirmed. Checking the message’s current state.')).then(refreshAfterQueueWrite),
-    editQueued: (entry: PendingQueueEntry, text: string, answered: (saved: PlannerInputMutation & Readonly<{ text: string }>) => void): Promise<PlannerQueueEditOutcome> =>
-      runOperation(transport, editPlannerInputOperation(cardId, entry.entry_id, text, entry.rev), unauthorized)
-        .then((saved): PlannerQueueEditOutcome => { answered(saved); return { kind: 'done', entry: { ...entry, text: saved.text, rev: saved.rev } }; })
-        .catch((error: unknown) => plannerQueueWriteFailure(
-          error instanceof ApiError ? error.failure : null, 'Could not edit the queued message.',
-        )).then(refreshAfterQueueWrite),
-    deleteQueued: (entryId: string, ifEntryRev: number, answered: (removed: PlannerInputMutation) => void): Promise<PlannerQueueWriteOutcome> =>
-      runOperation(transport, deletePlannerInputOperation(cardId, entryId, ifEntryRev), unauthorized)
-        .then((removed): PlannerQueueWriteOutcome => { answered(removed); return { kind: 'done' }; })
-        .catch((error: unknown) => plannerQueueWriteFailure(
-          error instanceof ApiError ? error.failure : null, 'Could not remove the queued message.',
-        ))
-        .then(refreshAfterQueueWrite),
-    /* Same classification as the delete, plus the steer's own 409s (`not_running`, `unanswered`); on a
-     * 200 the refresh is what makes the transcript pick up the row the kernel wrote. */
-    steerQueued: (entryId: string, ifEntryRev: number, answered: () => void): Promise<PlannerQueueWriteOutcome> =>
-      runOperation(transport, steerPlannerInputOperation(cardId, entryId, ifEntryRev), unauthorized)
-        .then((): PlannerQueueWriteOutcome => { answered(); return { kind: 'done' }; })
-        .catch((error: unknown) => plannerQueueWriteFailure(
-          error instanceof ApiError ? error.failure : null, 'Could not send the queued message now.',
-        ))
-        .then(refreshAfterQueueWrite),
+    answerWorkerAsk: (trackId: string, askId: AskId, answers: readonly AskAnswer[], questions: readonly AskQuestion[]) =>
+      Promise.resolve().then(() => admitTransport(transport))
+        .then(admitted => runOperation(admitted, answerAskOperation(trackId, askId, answers, questions), unauthorized))
+        .finally(() => {
+          refreshAfter(undefined);
+          void client.invalidateQueries({ queryKey: queryKeys.trackDetail(trackId) });
+        }),
     /* The stored selection is read back from `planner-run`; the catalog goes with it because the default
      * this card follows is part of that answer. */
     setModel: (selection: ModelSelection): Promise<ModelSelectionResult> =>
@@ -404,7 +329,7 @@ export function usePlannerMutations(transport: ApiTransportPort, cardId: string,
   };
 }
 
-import type { SideConversation, CreatedConversation } from '../../../../core/domain/conversation.ts';
+
 
 export type ConversationMutations = Readonly<{
   archive: (cardId: string, archived: boolean) => Promise<void>;

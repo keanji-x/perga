@@ -5,15 +5,16 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { ApiTransportResponse } from '../../../../core/api/types.ts';
 import { fixtureBootstrap } from './session-contract-fixture.ts';
 import { sessionPage, sessionTurn } from './conversation-session-data.ts';
-import { buildTranscript, harnessItemToTurns as toTranscriptTurns } from '../../../../core/domain/conversation.ts';
+
 import { groupTranscriptActivities } from '../../../../core/domain/conversation-groups.ts';
 import { currentResponseMessage } from '../../../../core/domain/conversation-actions.ts';
 import { renderDailyFixture } from './daily-planner-fixture.tsx';
+import { buildConversationTranscript } from '../../../../core/domain/conversation-display.ts';
 
 // Count the canonical production derivations, without replacing their behavior.
-vi.mock(import('../../../../core/domain/conversation.ts'), async original => {
+vi.mock(import('../../../../core/domain/conversation-display.ts'), async original => {
   const actual = await original();
-  return { ...actual, buildTranscript: vi.fn(actual.buildTranscript), harnessItemToTurns: vi.fn(actual.harnessItemToTurns) };
+  return { ...actual, buildConversationTranscript: vi.fn(actual.buildConversationTranscript) };
 });
 vi.mock(import('../../../../core/domain/conversation-groups.ts'), async original => {
   const actual = await original();
@@ -66,26 +67,25 @@ it('keeps unchanged stored history derivation and grouping out of composer updat
     await openExisting();
     // The first nonempty character legitimately withdraws Edit's empty-composer affordance.
     await type('A');
-    vi.mocked(buildTranscript).mockClear(); vi.mocked(toTranscriptTurns).mockClear(); vi.mocked(groupTranscriptActivities).mockClear();
+    vi.mocked(buildConversationTranscript).mockClear(); vi.mocked(groupTranscriptActivities).mockClear();
     vi.mocked(currentResponseMessage).mockClear();
     const stored = document.querySelector('[data-nc-turn="agent"]');
     await type('A draft'); await type('A draft with more words');
     expect(field().textContent).toBe('A draft with more words');
     expect(document.querySelector('[data-nc-turn="agent"]')).toBe(stored);
-    expect(buildTranscript).not.toHaveBeenCalled();
-    expect(toTranscriptTurns).not.toHaveBeenCalled();
+    expect(buildConversationTranscript).not.toHaveBeenCalled();
     expect(groupTranscriptActivities).not.toHaveBeenCalled();
     expect(currentResponseMessage).not.toHaveBeenCalled();
     // Real new server content still invalidates the projection without touching the draft.
     await act(async () => {
       view.client.setQueryData<History>(['harness-items', 'second-planner', 'conversation_v1'], previous => previous === undefined ? previous : ({
-        ...previous, latest: { ...previous.latest, rows: previous.latest.rows.map(row => row.source.kind === 'native' && row.source.item.id === 120
-          ? { ...row, source: { ...row.source, item: { ...row.source.item, params: JSON.stringify({ item: { text: 'The server updated the last reply.' } }) } } } : row) },
+        ...previous, latest: { ...previous.latest, rows: previous.latest.rows.map(row => row.cursor.position === 120 && row.source.kind === 'entry'
+          ? { ...row, source: { ...row.source, entry: { ...row.source.entry, text: 'The server updated the last reply.' } } } : row) },
       }));
       await Promise.resolve();
     });
     await screen.findByText('The server updated the last reply.');
-    expect(buildTranscript).toHaveBeenCalled();
+    expect(buildConversationTranscript).toHaveBeenCalled();
     expect(groupTranscriptActivities).toHaveBeenCalled();
     expect(field().textContent).toBe('A draft with more words');
   } finally { cleanup(); view.client.clear(); }
@@ -96,14 +96,13 @@ it('shows the local sending state before a held request answers', async () => {
   const view = mount({ input: response.promise });
   try {
     await openExisting(); await type('Send without waiting for the server');
-    vi.mocked(buildTranscript).mockClear(); vi.mocked(toTranscriptTurns).mockClear();
+    vi.mocked(buildConversationTranscript).mockClear();
     fireEvent.keyDown(field(), { key: 'Enter' });
     await waitFor(() => expect(view.requests.filter(request => request.path.endsWith('/messages'))).toHaveLength(1));
     const localMessage = document.querySelector('[data-nc-thread] [data-nc-entry] [data-nc-turn="you"]');
     expect(localMessage?.textContent).toContain('Send without waiting for the server');
-    expect(screen.getByText('Sending…')).toBeDefined();
-    expect(buildTranscript).not.toHaveBeenCalled();
-    expect(toTranscriptTurns).not.toHaveBeenCalled();
+    expect(screen.getByText('正在发送…')).toBeDefined();
+    expect(buildConversationTranscript).not.toHaveBeenCalled();
     // Local dispatch is not a confirmed queued entry.
     expect(screen.queryByText('Queued · sends when this turn ends')).toBeNull();
     expect(screen.getByRole('button', { name: 'Send' }).hasAttribute('disabled')).toBe(true);
@@ -124,7 +123,7 @@ it('shows first-message sending feedback while conversation creation is held', a
     fireEvent.keyDown(field(), { key: 'Enter' });
     await waitFor(() => expect(view.requests.some(request => request.method === 'POST' && request.path.endsWith('/sessions'))).toBe(true));
     expect(document.querySelector('[data-nc-turn="you"]')?.textContent).toBe('The first local message');
-    expect(screen.getByText('Sending…')).toBeDefined();
+    expect(screen.getByText('正在发送…')).toBeDefined();
     expect(screen.getByRole('button', { name: 'Send' }).hasAttribute('disabled')).toBe(true);
   } finally { await response.release(fixtureCreation(fixtureSession('created', 'daily'))); cleanup(); view.client.clear(); }
 });

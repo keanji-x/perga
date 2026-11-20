@@ -24,6 +24,7 @@ public sealed partial class TrackActor
     // notifications and audit writes run outside the execution and admission locks.
     private sealed class ExecutionControl(bool starting = false)
     {
+        public volatile bool StopTimedOut;
         public object Sync { get; } = new();
         public ExecutionPhase Phase { get; set; } = starting ? ExecutionPhase.Starting : ExecutionPhase.Running;
         public bool StopRequested { get; set; }

@@ -36,7 +36,7 @@ it.each([false, true])('orders permission ACK before a browser send, without wai
     await page.getByRole('menuitem', { name: /^Full/ }).click();
     const field = page.getByRole('combobox', { name: 'Message', exact: true });
     await field.fill('Send after permission');
-    await page.getByRole('button', { name: 'Send', exact: true }).click();
+    await page.getByRole('button', { name: /^(Send|排队发送)$/, exact: true }).click();
     expect(view.requests.filter(request => request.method === 'POST')).toHaveLength(0);
     await act(async () => { answer(sessionReply(fixtureSession('daily-planner', 'daily', { permissionMode: 'full' }))); await put; });
     await expect.element(page.getByRole('button', { name: 'Approvals: Full' })).toBeVisible();
@@ -67,20 +67,21 @@ it('restores a refused browser send and keeps another conversation independent',
     await page.getByRole('menuitem', { name: /^Full/ }).click();
     const field = page.getByRole('combobox', { name: 'Message', exact: true });
     await field.fill('Keep this draft');
-    await page.getByRole('button', { name: 'Send', exact: true }).click();
+    await page.getByRole('button', { name: /^(Send|排队发送)$/, exact: true }).click();
     expect(view.requests.filter(request => request.method === 'POST')).toHaveLength(0);
     await page.getByRole('button', { name: 'Close conversation', exact: true }).click();
     await page.getByRole('button', { name: 'Conversation Other conversation', exact: true }).click();
     await field.fill('Independent message');
-    await page.getByRole('button', { name: 'Send', exact: true }).click();
+    await page.getByRole('button', { name: /^(Send|排队发送)$/, exact: true }).click();
     await expect.poll(() => view.requests.filter(request => request.method === 'POST').length).toBe(1);
     await act(async () => { answer({ status: 409, statusText: 'Conflict', body: { code: 'precondition_failed', error: 'Permission denied' } }); await put; });
     await expect.element(page.getByRole('button', { name: 'Approvals: Ask' })).toBeVisible();
     await expect.element(page.getByText('Permission denied', { exact: false })).not.toBeInTheDocument();
     await page.getByRole('button', { name: 'Close conversation', exact: true }).click();
     await page.getByRole('button', { name: 'Conversation Daily Planner conversation', exact: true }).click();
+    await expect.element(page.getByText('消息未发送。', { exact: false })).toBeVisible();
+    await page.getByRole('button', { name: '放回输入框', exact: true }).click();
     await expect.element(field).toHaveTextContent('Keep this draft');
-    await expect.element(page.getByText('Not sent.', { exact: false })).toBeVisible();
     expect(view.requests.filter(request => request.method === 'POST').map(request => request.path)).toEqual(['/api/v1/sessions/second-planner/messages']);
   } finally { view.client.clear(); }
 });
@@ -128,13 +129,13 @@ it('preserves the unknown browser retry key after a permission failure', async (
     const field = page.getByRole('combobox', { name: 'Message', exact: true });
     await chooseFull();
     const key = 'unknown-original-key';
-    act(() => { registry.editOutbox('daily-planner', () => [{ key, phase: 'failed', delivery: 'unknown', message: '', fromComposer: true, replaces: null,
-      echo: { id: 'echo', text: 'Possibly persisted', author: 'you', atMs: 1, serverHighWaterBefore: 0, entryId: null, queued: true } }]); });
-    await page.getByRole('button', { name: 'Try again', exact: true }).click();
+    act(() => { registry.editOutbox('daily-planner', () => [{ key, phase: 'failed', delivery: 'unknown', message: '', fromComposer: true,
+      echo: { id: 'echo', text: 'Possibly persisted', author: 'you', atMs: 1, localSend: true, queued: true } }]); });
+    await page.getByRole('button', { name: '安全重试（同幂等键）', exact: true }).click();
     await act(async () => { answer(permissionFailure()); await put; });
-    await expect.element(page.getByRole('button', { name: 'Try again', exact: true })).toBeVisible();
+    await expect.element(page.getByRole('button', { name: '安全重试（同幂等键）', exact: true })).toBeVisible();
     await expect.element(field).toHaveTextContent('');
-    await page.getByRole('button', { name: 'Try again', exact: true }).click();
+    await page.getByRole('button', { name: '安全重试（同幂等键）', exact: true }).click();
     await expect.poll(() => view.requests.filter(request => request.method === 'POST').length).toBe(1);
     expect(view.requests.filter(request => request.method === 'POST').map(request => request.headers?.['Idempotency-Key'])).toEqual([key]);
   } finally { view.client.clear(); }
@@ -161,13 +162,14 @@ it('keeps three generations of A B A permission writes ahead of a queued browser
     await act(async () => { answers[1](permissionFailure()); await Promise.resolve(); });
     await expect.poll(() => answers.length).toBe(3);
     await page.getByRole('combobox', { name: 'Message', exact: true }).fill('Wait for every write');
-    await page.getByRole('button', { name: 'Send', exact: true }).click();
+    await page.getByRole('button', { name: /^(Send|排队发送)$/, exact: true }).click();
     // A refused send would also make no POST: it must remain pending, with no draft refill.
-    await expect.element(page.getByText('Sending…', { exact: true })).toBeVisible();
+    await expect.element(page.getByText('正在发送…', { exact: true })).toBeVisible();
     await expect.element(page.getByRole('combobox', { name: 'Message', exact: true })).toHaveTextContent('');
     expect(view.requests.filter(request => request.method === 'POST')).toHaveLength(0);
     await act(async () => { answers[2](sessionReply(fixtureSession('daily-planner', 'daily', { permissionMode: 'full' }))); await Promise.resolve(); });
-    await expect.element(page.getByRole('button', { name: 'Send', exact: true })).toBeEnabled();
+    await expect.element(page.getByRole('combobox', { name: 'Message', exact: true })).toHaveAttribute('contenteditable', 'true');
+    await expect.element(page.getByText('正在发送…', { exact: true })).not.toBeInTheDocument();
   } finally { view.client.clear(); }
 });
 

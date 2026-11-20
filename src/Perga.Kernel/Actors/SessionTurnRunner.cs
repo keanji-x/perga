@@ -32,19 +32,20 @@ public sealed partial class TrackActor
             public StringBuilder Thinking { get; } = new();
         }
 
-        public async Task<SessionTurnDto?> RunAsync(ITurnWorkItem work, CancellationToken ct, bool alreadyAdmitted = false)
+        public async Task<SessionTurnDto?> RunAsync(ITurnWorkItem work, CancellationToken ct, bool alreadyAdmitted = false, CancellationToken? startupCancellation = null)
         {
+            var preparationCt = startupCancellation ?? ct;
             if (work.WaitForWorkspacePreparation)
-                await actor.WaitForWorkspacePreparationAsync(ct).ConfigureAwait(false);
-            using var dispatch = alreadyAdmitted ? null : await actor._options.DispatchAdmission.EnterAsync(ct).ConfigureAwait(false);
-            if (await work.PreparePromptAsync(ct).ConfigureAwait(false) is not { } prompt)
+                await actor.WaitForWorkspacePreparationAsync(preparationCt).ConfigureAwait(false);
+            using var dispatch = alreadyAdmitted ? null : await actor._options.DispatchAdmission.EnterAsync(preparationCt).ConfigureAwait(false);
+            if (await work.PreparePromptAsync(preparationCt).ConfigureAwait(false) is not { } prompt)
                 return null;
 
             Interlocked.Increment(ref actor._inFlightExternalOps);
             ActiveTurnState? activated = null;
             try
             {
-                var policyAdmission = await actor.PreparePolicyTurnAdmissionAsync(work.SessionId, ct).ConfigureAwait(false);
+                var policyAdmission = await actor.PreparePolicyTurnAdmissionAsync(work.SessionId, preparationCt).ConfigureAwait(false);
                 if (await StartTurnAsync(work, prompt, policyAdmission, active => activated = active, ct).ConfigureAwait(false) is not { } start)
                     return work.CreateUnstartedTurn();
 
@@ -54,7 +55,8 @@ public sealed partial class TrackActor
                     await TryAutoCompactAsync(work.SessionId).ConfigureAwait(false);
                 await actor.EnqueueAsync(async _ =>
                 {
-                    await actor.PokeSessionCoreAsync(work.SessionId, allowWorker: outcome.Status == "completed").ConfigureAwait(false);
+                    if (actor.RequireSessionCore(work.SessionId).Epoch == start.Active.TurnDto.Epoch)
+                        await actor.PokeSessionCoreAsync(work.SessionId, allowWorker: outcome.Status == "completed").ConfigureAwait(false);
                 }, CancellationToken.None).ConfigureAwait(false);
 
                 return settled.Turn ?? throw new InvalidOperationException("The turn work item did not settle its turn.");
@@ -96,38 +98,49 @@ public sealed partial class TrackActor
             if (await work.ClaimCoreAsync(session, runningSession, runningEvent, ct).ConfigureAwait(false) is not { } executionSession)
                 return null;
 
-            PreparedDispatch prepared;
             try
             {
-                prepared = await PrepareDispatchCoreAsync(work, executionSession, prompt, policyAdmission, ct).ConfigureAwait(false);
-                // Preparation may persist identity and usage from a compacted or reopened
-                // provider. Activate that durable snapshot, rather than the pre-claim copy.
-                runningSession = actor.RequireSessionCore(sessionId) with { Status = "running", UpdatedAtMs = now };
-                runningEvent = actor.SessionUpdatedEvent(runningSession);
-                if (workerSettings is not null)
-                    workerSettings = actor.ResolveWorkerTurnSettingsCore(executionSession, workerSettings);
-            }
-            catch (Exception ex)
-            {
-                if (await work.TrySettleSetupFailureCoreAsync(ex, turn, runningSession).ConfigureAwait(false))
-                    return null;
-                throw;
-            }
+                PreparedDispatch prepared;
+                try
+                {
+                    var startup = actor._scheduler.BeginStartup(sessionId, turn.Id, session.BoundAttemptId is not null);
+                    startup.CancelAfter(actor._options.SessionStartupTimeout);
+                    using var startupDeadline = CancellationTokenSource.CreateLinkedTokenSource(ct, startup.Token);
+                    startupDeadline.Token.ThrowIfCancellationRequested();
+                    prepared = await PrepareDispatchCoreAsync(work, executionSession, prompt, policyAdmission, startupDeadline.Token).ConfigureAwait(false);
+                    // Preparation may persist identity and usage from a compacted or reopened
+                    // provider. Activate that durable snapshot, rather than the pre-claim copy.
+                    runningSession = actor.RequireSessionCore(sessionId) with { Status = "running", UpdatedAtMs = now };
+                    runningEvent = actor.SessionUpdatedEvent(runningSession);
+                    if (workerSettings is not null)
+                        workerSettings = actor.ResolveWorkerTurnSettingsCore(executionSession, workerSettings);
+                }
+                catch (Exception ex)
+                {
+                    if (await work.TrySettleSetupFailureCoreAsync(ex, turn, runningSession).ConfigureAwait(false))
+                        return null;
+                    throw;
+                }
 
-            turn = await work.RecordTurnStartCoreAsync(turn, prompt, runningSession, ct).ConfigureAwait(false);
-            await work.OnTurnCreatedAsync(turn).ConfigureAwait(false);
+                turn = await work.RecordTurnStartCoreAsync(turn, prompt, runningSession, ct).ConfigureAwait(false);
+                await work.OnTurnCreatedAsync(turn).ConfigureAwait(false);
 
-            actor._sessions[sessionId] = runningSession;
-            var turnCts = CancellationTokenSource.CreateLinkedTokenSource(ct, actor._actorShutdownCts.Token);
-            var active = new ActiveTurnState(sessionId, SessionConfiguration.FromNullable(executionSession.Model, executionSession.ReasoningEffort, executionSession.PermissionMode),
-                actor._liveContextUsage.GetOrCreateValue(prepared.AgentSession), turn, prepared.AgentSession, turnCts, true)
+                actor._sessions[sessionId] = runningSession;
+                var turnCts = CancellationTokenSource.CreateLinkedTokenSource(ct, actor._actorShutdownCts.Token);
+                var active = new ActiveTurnState(sessionId, SessionConfiguration.FromNullable(executionSession.Model, executionSession.ReasoningEffort, executionSession.PermissionMode),
+                    actor._liveContextUsage.GetOrCreateValue(prepared.AgentSession), turn, prepared.AgentSession, turnCts, true)
+                {
+                    Settings = workerSettings
+                };
+                actor._scheduler.SetActive(sessionId, active);
+                onActivated(active);
+                await work.OnTurnActivatedCoreAsync(runningSession, runningEvent, now, ct).ConfigureAwait(false);
+                return new TurnStart(active, prepared.EffectivePrompt);
+            }
+            finally
             {
-                Settings = workerSettings
-            };
-            actor._scheduler.SetActive(sessionId, active);
-            onActivated(active);
-            await work.OnTurnActivatedCoreAsync(runningSession, runningEvent, now, ct).ConfigureAwait(false);
-            return new TurnStart(active, prepared.EffectivePrompt);
+                actor._scheduler.EndStartup(sessionId);
+            }
         }, actor._actorShutdownCts.Token);
 
         private async Task<PreparedDispatch> PrepareDispatchCoreAsync(ITurnWorkItem work, AgentSessionDto session,
@@ -403,6 +416,9 @@ public sealed partial class TrackActor
             {
                 NativeThreadId = outcome.BoundThreadId ?? active.AgentSession.NativeThreadId ?? currentSession.NativeThreadId,
                 Status = outcome.Status == "unknown" ? "unknown" : "idle",
+                UnknownReason = outcome.Status == "unknown" ? (active.Control.StopTimedOut ? "stop_timeout" : "stream_lost") : null,
+                UnknownTurnId = outcome.Status == "unknown" ? active.TurnDto.Id : null,
+                UnknownLastError = null, ReconnectInvalidated = false,
                 UpdatedAtMs = endNow
             };
             var completedTurn = active.TurnDto with
@@ -480,7 +496,7 @@ public sealed partial class TrackActor
                                     CancellationToken.None).ConfigureAwait(false);
                             if (!work.IsDurable)
                             {
-                                var unknown = session with { Status = "unknown", UpdatedAtMs = actor.NowMs() };
+                                var unknown = session with { Status = "unknown", UnknownReason = "stream_lost", UnknownTurnId = active.TurnDto.Id, UpdatedAtMs = actor.NowMs() };
                                 await actor.PersistAndEmitSessionUpdatedCoreAsync(unknown, unknown.UpdatedAtMs, CancellationToken.None)
                                     .ConfigureAwait(false);
                             }

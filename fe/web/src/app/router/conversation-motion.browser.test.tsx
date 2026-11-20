@@ -21,7 +21,7 @@ it.each([false, true])('keeps the composer in place through v1 message acknowled
     await expect.element(message).toBeVisible();
     expect(Math.abs(field.element().getBoundingClientRect().top - before.top)).toBeLessThanOrEqual(1);
     view.release();
-    await expect.element(page.getByText('Sending…', { exact: true })).not.toBeInTheDocument();
+    await expect.element(page.getByText('正在发送…', { exact: true })).not.toBeInTheDocument();
     await expect.element(message).toBeVisible();
     expect(Math.abs(field.element().getBoundingClientRect().top - before.top)).toBeLessThanOrEqual(1);
     expect(page.getByText('A stable message through acknowledgement.', { exact: true }).elements()).toHaveLength(1);

@@ -118,7 +118,7 @@ export function useLiveReplies({ transport, unauthorized, cardId, enabled, phase
 
   /* Drawn from the copies the current transcript does not retire, plus any WS delta stream in `sessionLive`. */
   const wsPersistedInTranscript = useMemo(
-    () => wsLive !== undefined && items.some((item) => item.turn_id === wsLive.turnId && item.method === 'item/completed' && item.item_uuid?.startsWith('item-')),
+    () => wsLive !== undefined && items.some((item) => item.turnId === wsLive.turnId && item.completed && item.itemId?.startsWith('item-')),
     [items, wsLive],
   );
   useEffect(() => {
@@ -156,7 +156,7 @@ export function useLiveReplies({ transport, unauthorized, cardId, enabled, phase
     if (turnId == null || (wsLive?.turnId === turnId && (wsPersistedInTranscript || wsLive.completed === true))) return [];
     const stream = wsLive?.turnId === turnId ? wsLive : undefined;
     const activities: ConversationActivity[] = [];
-    if (stream !== undefined && stream.thinking.trim() !== '' && !items.some((item) => item.turn_id === turnId && item.item_uuid?.startsWith('thinking-'))) {
+    if (stream !== undefined && stream.thinking.trim() !== '' && !items.some((item) => item.turnId === turnId && item.itemId?.startsWith('thinking-'))) {
       const doneThinking = stream.text.trim() !== '' || stream.tools.length > 0;
       activities.push({
         id: `live-thinking-${turnId}`,
@@ -187,10 +187,10 @@ export function useLiveReplies({ transport, unauthorized, cardId, enabled, phase
     }
     for (const tool of tools.values()) {
       const doneTool = tool.phase === 'completed';
-      const stored = items.find(item => item.turn_id === turnId && item.item_uuid === tool.callId);
-      if (stored !== undefined && (stored.method === 'item/completed' || !doneTool)) continue;
+      const stored = items.find(item => item.turnId === turnId && item.itemId === tool.callId);
+      if (stored !== undefined && (stored.completed || !doneTool)) continue;
       const id = stored === undefined ? `live-tool-${tool.callId}`
-        : stored.thread_id !== undefined ? nativeTranscriptEntryId(stored.thread_id, tool.callId, 0)
+        : stored.threadId !== undefined ? nativeTranscriptEntryId(stored.threadId, tool.callId, 0)
           : `activity-${tool.callId}`;
       const input = tool.args == null ? null : `Input\n${typeof tool.args === 'string' ? tool.args : JSON.stringify(tool.args, null, 2)}`;
       const output = tool.output === null ? null : `Output\n${tool.output}`;

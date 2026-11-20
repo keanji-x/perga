@@ -23,7 +23,6 @@ public sealed record SendMessageHttpBody(
 
 public sealed record InterruptTurnHttpBody(string? AttemptId, string TurnId);
 
-public sealed record ResumeProviderSessionHttpBody(string TurnId);
 
 public sealed record SteerQueuedMessageHttpBody(string TurnId);
 
@@ -412,13 +411,6 @@ public static class ApiV1Endpoints
             return Results.Json(receipt, PergaJsonDefaults.ApiOptions);
         });
 
-        v1.MapPost("/sessions/{sessionId}/inputs/{inputId}/abandon", async (
-            string sessionId, string inputId, IPergaKernel kernel, CancellationToken ct) =>
-        {
-            var receipt = await kernel.ResolveUnknownInputAsync(sessionId, inputId, ct).ConfigureAwait(false);
-            return Results.Json(receipt, PergaJsonDefaults.ApiOptions);
-        });
-
         v1.MapPut("/sessions/{sessionId}/model", async (
             string sessionId, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
         {
@@ -427,13 +419,11 @@ public static class ApiV1Endpoints
             return Results.Json(session, PergaJsonDefaults.ApiOptions);
         });
 
-        v1.MapPost("/sessions/{sessionId}/resume", async (
+        v1.MapPost("/sessions/{sessionId}/recover", async (
             string sessionId, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
         {
-            var body = await ReadRequiredJsonBodyAsync<ResumeProviderSessionHttpBody>(ctx, ct).ConfigureAwait(false);
-            if (string.IsNullOrWhiteSpace(body.TurnId))
-                return HttpErrorHandling.BadRequest("invalid_argument", "A target turn is required.");
-            var session = await kernel.ResumeProviderSessionAsync(sessionId, body.TurnId, ct).ConfigureAwait(false);
+            var body = await ReadRequiredJsonBodyAsync<RecoverSessionRequest>(ctx, ct).ConfigureAwait(false);
+            var session = await kernel.RecoverSessionAsync(sessionId, body, ct).ConfigureAwait(false);
             return Results.Json(session, PergaJsonDefaults.ApiOptions);
         });
 

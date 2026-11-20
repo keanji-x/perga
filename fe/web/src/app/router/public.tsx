@@ -17,7 +17,7 @@ import { useTrackClosedControl } from '../../features/track/page/closed-control.
 import { TodayReportEmpty } from '../../features/today/public.tsx';
 import { PanelModule } from '../../ui/panel-card/public.tsx';
 import type { DialogOrigin } from '../../ui/dialog/public.tsx';
-import { PendingQueue, QueueWriteNotice } from '../../features/chat/thread/pending-queue.tsx';
+import { PendingQueue } from '../../features/chat/thread/pending-queue.tsx';
 import { useConversationLinks } from './conversation-links.tsx';
 import { useTerminalWorkbench, TerminalWorkbenchView, type TerminalWorkbench } from '../../features/track/workbench/public.tsx';
 import { TerminalCompanion } from './terminal-companion.tsx';
@@ -33,9 +33,9 @@ import { Button } from '@astryxdesign/core/Button';
 import type { PaneResizeGroup } from '../../ui/drawer/resize-group.ts';
 import { sideConversationSnapshot } from '../../../../core/domain/side-conversation.ts';
 import { writeClipboardText } from '../../ui/operation-feedback/clipboard.ts';
-import { useConversationEdit } from '../conversations/edit.ts';
+import { deriveConversationAction, conversationCommandEnabled } from '../../../../core/domain/conversation-action.ts';
+import { ConversationSessionHeader } from '../../features/chat/thread/session-header.tsx';
 import { readErrorText } from '../../../../core/domain/read-failure.ts';
-import { notSentMessage } from '../../../../core/domain/conversation-delivery.ts';
 import { permissionModesForProvider } from '../../../../core/domain/agent-providers.ts';
 import { permissionModeAfterProviderChange, resolvePermissionControl } from '../../../../core/domain/planner-permission-mode.ts';
 import { DELETE_FAILURES, DELETE_TEXT, NotSentError, writeFailureText } from '../../../../core/domain/failure-class.ts';
@@ -81,7 +81,7 @@ import {
   cardCreateEnded, cardCreateFailureText, keyedCardBodyOf, sameCardDraft, sendCardCreate,
   type CardCreatePort, type CardDraft, type KeyedCardBody,
 } from '../../features/track/new-card/create.ts';
-import { ArchivedConversationNotice, ChatList } from '../../features/chat/list/public.tsx';
+import { ChatList } from '../../features/chat/list/public.tsx';
 import { OutgoingMessage } from '../../features/chat/thread/outgoing-message.tsx';
 import {
   ChatFooterError, ChatFooterNotice, ChatFooterRemedy, ChatThread, ChatEmpty, type ComposerFocusHandle,
@@ -564,25 +564,8 @@ function useConversationPane(
   const focusComposer = useCommittedCallback(sourceScopeId, (conversationId: string) => {
     if (panePresented && shownComposer.current === conversationId) setComposerFocusRequest((count) => count + 1);
   });
-  const edit = useConversationEdit({ conversationId: composerId, transcript: composerId === null ? [] : store.turns,
-    historyReady: store.historyReady, focusComposer, changeComposer: setComposerText,
-    queue: { entries: store.pendingQueue, ready: store.runReady && store.runError === null,
-      busy: store.queueWriteOut || attachments.busy, save: store.editQueuedEntry } });
   /* The one readiness every response action and the continue guidance share. */
   const archived = rows.find(row => row.id === composerRowId)?.archivedAt != null;
-  const readError = (store.historyError !== null || store.runError !== null) && (
-              <ErrorBox
-                message={[store.historyError, store.runError].filter((text) => text !== null).join(' ')}
-                pending={(store.historyError !== null && store.historyLoading) || (store.runError !== null && store.runLoading)}
-                actionLabel={store.historyError !== null && store.runError !== null ? 'Reload conversation'
-                  : store.runError !== null ? 'Reload status' : 'Reload history'}
-                description={[store.historyError !== null && store.historyReady ? 'Earlier history is incomplete. Navigation covers loaded messages.' : null,
-                  store.runError === null ? null : 'The last known status may be out of date. Reloading does not restart the conversation.'].filter(Boolean).join(' ') || undefined}
-                onRetry={() => {
-                  if (store.historyError !== null) store.retryHistory();
-                  if (store.runError !== null) store.retryRun();
-                }} />
-            );
   const canContinue = !archived && store.runReady && store.runError === null && store.historyReady && !store.sendBlocked && !store.working && !store.stopping;
   /* A conversation's provider is fixed for its life; its model picker offers that provider's group alone. */
   const scopeProvider: AgentProvider = scope === null ? 'codex' : scope.provider;
@@ -605,10 +588,9 @@ function useConversationPane(
   const outgoingPreview = open === null || threadPresented ? undefined : openTurns.findLast((entry): entry is ConversationTurn & { author: 'you' | 'human' | 'unknown' } =>
     isUserConversationTurn(entry) && entry.text !== '' && (entry.attachments?.length ?? 0) === 0);
   const conversationBodyVisible = hasPendingMessages || (threadPresented ? openTurns.length > 0 : outgoingPreview !== undefined);
-  const threadStatusUnconfirmed = !store.runReady || store.runError !== null;
   const sideSourceReady = threadPresented && store.historyReady;
   /* While an Edit is held nothing else acts on the conversation; its replace, once sent, blocks as any send does. */
-  const respondable = canContinue && edit.held === null;
+  const respondable = canContinue;
   const drawerResize = useConversationDrawerResize();
   // Receipts compare the row's completion time, not `updatedAt`, which also moves
   // when the reader queues a message. `null` is never unread.
@@ -626,6 +608,7 @@ function useConversationPane(
     if (from.scopeId !== sourceScopeId || from.key !== draftFocus.key) return;
     if (openTarget?.kind === 'draft' && panePresented && options?.enabled !== false && draftFocus.handle.current?.ownsFocus()) {
       setComposerFocusFor(conversationId);
+      setComposerFocusRequest(count => count + 1);
     }
   });
   const discardUnsentDraft = registry.discardUnsentDraft;
@@ -671,7 +654,7 @@ function useConversationPane(
   useEffect(() => {
     if (pendingTrackInitialSend === undefined || open === null || open.id !== source.planner?.cardId) return;
     if (dispatchedInitialSendRef.current === source.scopeId) return;
-    const sent = store.send(open.id, pendingTrackInitialSend.text, [], false, null, pendingTrackInitialSend.key);
+    const sent = store.send(open.id, pendingTrackInitialSend.text, [], false, pendingTrackInitialSend.key);
     if (sent === null) return;
     dispatchedInitialSendRef.current = source.scopeId;
     pendingInitialFocusRef.current = open.id;
@@ -699,7 +682,6 @@ function useConversationPane(
   const interrupt = useCommittedCallback(existingId, store.interrupt);
   const compact = useCommittedCallback(existingId, store.compact);
   const deleteQueuedEntry = useCommittedCallback(existingId, store.deleteQueuedEntry);
-  const editQueuedEntry = useCommittedCallback(existingId, edit.startQueued);
   const steerQueuedEntry = useCommittedCallback(existingId, (entry: PendingQueueEntry) => {
     const steer = store.steerQueuedEntry;
     if (steer === undefined) return Promise.reject(new Error('Steering is no longer available in this view.'));
@@ -716,9 +698,9 @@ function useConversationPane(
     return sent;
   };
   const sendText = useCommittedCallback(existingId, (text: string) => open !== null
-    && (edit.queued !== null ? edit.saveQueued(text) : submitMessage(open.id, text, attachments.items, true, edit.replacesIn(open.id)) !== null));
+    && (submitMessage(open.id, text, attachments.items, true) !== null));
   const regenerateMessage = useCommittedCallback(existingId, async (message: ConversationTurn) => {
-    if (open !== null) await submitMessage(open.id, message.text, message.attachments ?? [], false, null);
+    if (open !== null) await submitMessage(open.id, message.text, message.attachments ?? [], false);
   });
   const sideQuestion = useCommittedCallback(existingId, (question: string) => {
     if (open === null || options?.onSide === undefined || !sideSourceReady) return false;
@@ -745,7 +727,6 @@ function useConversationPane(
     error: attachmentError, atCapacity, attach, remove: removeAttachment }),
   [attachmentItems, attachmentIds, attachmentBusy, attachmentError, atCapacity, attach, removeAttachment]);
   const canSteer = store.steerQueuedEntry !== undefined;
-  const refocusQueuedComposer = useCommittedCallback(existingId, () => { if (existingId !== null) focusComposer(existingId); });
   const [pendingPresentation, setPendingPresentation] = useState<Readonly<{ conversationId: string | null; visible: boolean }> | null>(null);
   const pendingPresenceChanged = useCallback((visible: boolean) => {
     if (shownComposer.current !== existingId) return;
@@ -754,11 +735,10 @@ function useConversationPane(
   }, [existingId]);
   const pendingMessages = useMemo(() => <PendingQueue key={existingId}
     entries={store.pendingQueue} pendingInputCount={0} overflow={0} sending={store.pendingSends} queueDisplayAccounting={store.queueDisplayAccounting}
-    busy={!threadPresented || store.sending || store.queueWriteOut} onDelete={deleteQueuedEntry} onEdit={editQueuedEntry}
-    canEdit={false} editingEntryId={edit.queued?.entry.entry_id ?? null}
-    savedEntry={edit.savedQueuedEntry} onFocusComposer={refocusQueuedComposer} onPresenceChange={pendingPresenceChanged} onSteer={canSteer ? steerQueuedEntry : undefined} />,
-  [existingId, threadPresented, store.pendingQueue, store.pendingSends, store.queueDisplayAccounting, store.sending, store.queueWriteOut,
-    deleteQueuedEntry, editQueuedEntry, edit.queued?.entry.entry_id, edit.savedQueuedEntry, refocusQueuedComposer, pendingPresenceChanged, canSteer, steerQueuedEntry]);
+    busy={!threadPresented || store.sending || store.queueWriteOut || store.readonlyReason !== null} onDelete={deleteQueuedEntry}
+    onPresenceChange={pendingPresenceChanged} onSteer={canSteer ? steerQueuedEntry : undefined} />,
+  [existingId, threadPresented, store.pendingQueue, store.pendingSends, store.queueDisplayAccounting, store.sending, store.queueWriteOut, store.readonlyReason,
+    deleteQueuedEntry, pendingPresenceChanged, canSteer, steerQueuedEntry]);
   const scopePermissionModes = useMemo(
     () => permissionModesForProvider(managedProvidersQuery.data, scopeProvider),
     [managedProvidersQuery.data, scopeProvider],
@@ -782,6 +762,7 @@ function useConversationPane(
     unavailablePermissionMode: store.unavailablePermissionMode,
     permissionMode: store.permissionMode,
     sendBlocked: store.sendBlocked,
+    composerBlocked: store.composerBlocked,
     sending: store.sending,
     canQueueWhileRunning: store.canQueueWhileRunning,
     setModel: setModel,
@@ -789,7 +770,7 @@ function useConversationPane(
     stopping: store.stopping,
     working: store.working
   }), [compact, store.compacting, store.manualCompactSupported, store.contextUsage, store.historyReady, store.runReady, interrupt, store.model, store.modelCatalog, store.modelDefaultAvailable, store.modelChangeDisabled, store.permissionChangeDisabled,
-    store.permissionAuthorizationMode, store.unavailablePermissionMode, store.permissionMode, store.sendBlocked, store.sending, store.canQueueWhileRunning, setModel, setPermissionMode, store.stopping, store.working]);
+    store.permissionAuthorizationMode, store.unavailablePermissionMode, store.permissionMode, store.sendBlocked, store.composerBlocked, store.sending, store.canQueueWhileRunning, setModel, setPermissionMode, store.stopping, store.working]);
   const permissionOptions = store.permissionOptions ?? scopePermissionModes;
   const permissionControl = useMemo(() => resolvePermissionControl({
     storedMode: composerView.permissionMode,
@@ -798,15 +779,15 @@ function useConversationPane(
     isDisabled: !composerView.historyReady || composerView.permissionChangeDisabled,
   }), [composerView.permissionMode, permissionOptions, store.permissionOptions, managedProvidersQuery.data,
     composerView.historyReady, composerView.permissionChangeDisabled]);
-  const { bar: editingBar } = edit;
-  const replacing = edit.replacing || edit.queuedSaving;
-  const editingQueue = edit.queued !== null;
-  const changeComposer = edit.onComposerChange;
-  const composerStop = !editingQueue && !composerView.compacting && (store.canStop || composerView.stopping) ? composerView.interrupt : undefined;
+  const replacing = false;
+  const editingQueue = false;
+  const changeComposer = setComposerText;
+  const composerStop = store.canStop ? composerView.interrupt : undefined;
   const plannerCommands = plannerRow?.commands;
   const switchPlanner = usePlannerSwitchControl(transport, unauthorized, scope);
   const plannerSwitchBinding = useMemo(() => scope !== null && scope.isLead !== true
     ? { execute: switchPlanner } : undefined, [scope, switchPlanner]);
+  const recover = useCommittedCallback(existingId, (mode: 'reconnect' | 'reset_context') => store.recover(mode));
   const paneCommands = useMemo(() => composerCommands({
     ...conversationCommandBindings({
       newConversation: options?.inline === true ? undefined : newConversation,
@@ -818,9 +799,15 @@ function useConversationPane(
     }),
     ...plannerCommands?.(composerStop),
     planner: plannerSwitchBinding,
+    ...Object.fromEntries((['stop', 'compact', 'reconnect', 'reset'] as const).map(command => [command, {
+      execute: () => { if (command === 'stop') interrupt(); else if (command === 'compact') compact();
+        else recover(command === 'reset' ? 'reset_context' : 'reconnect'); },
+      unavailableReason: conversationCommandEnabled(command, store.sessionState, store.readonlyReason, store.unknownDetail, store.recovering)
+        ? undefined : '当前会话状态下不可用',
+    }])),
   }), [options?.inline, options?.showSideCommand, newConversation, composerView.manualCompactSupported, composerView.historyReady,
-    composerView.compact, hasSideConversation, sideQuestion, sideSourceReady, onTerminal, compactComposer, plannerCommands, composerStop, plannerSwitchBinding]);
-  const draftOnly = options?.workspace?.waiting === true && composerView.sendBlocked;
+    composerView.compact, hasSideConversation, sideQuestion, sideSourceReady, onTerminal, compactComposer, plannerCommands, composerStop, plannerSwitchBinding, interrupt, compact, recover, store.sessionState, store.readonlyReason, store.unknownDetail, store.recovering]);
+  const draftOnly = options?.workspace?.waiting === true;
   const composerNode = useMemo(() => existingId === null ? null : (
             <ConversationComposer target={{ kind: 'card', id: existingId }} layout={compactComposer ? 'mobile' : 'standard'}
               /* Read at mount only, which is what makes it one-shot; the flag is dropped
@@ -828,9 +815,9 @@ function useConversationPane(
               focusOnMount={panePresented && composerFocusFor === existingId}
               focusRequest={composerFocusRequest}
               changeText={changeComposer}
-              disabled={(!draftOnly && composerView.sendBlocked) || !composerView.historyReady || !composerView.runReady || replacing}
-              sendDisabled={draftOnly}
-              sendWaiting={composerView.sending || edit.queuedSaving} {...(editingBar === undefined ? {} : { editing: editingBar })}
+              disabled={(!draftOnly && composerView.composerBlocked) || !composerView.historyReady || !composerView.runReady || replacing}
+              sendDisabled={draftOnly || composerView.sendBlocked}
+              sendWaiting={composerView.sending}
               /* The images stay with the composer until the store reports them delivered; the press waits out its Edit. */
               commands={paneCommands}
               onSend={sendText}
@@ -842,9 +829,6 @@ function useConversationPane(
               /* Questions and attachments belong to the composer; waiting messages follow the running status. */
               drawer={(
                 <>
-                  {/* Above the images: approvals and questions belong above message attachments. */}
-                  <ApprovalDrawer key={`approvals-${existingId}`} approvals={conversationApprovals} onDecide={decideApproval} />
-                  <PlannerAskDrawer key={`asks-${existingId}`} asks={conversationAsks} onAnswer={answerAsk} />
                   <PlannerAttachmentDrawer attachments={composerAttachments} />
                 </>
               )}
@@ -892,8 +876,65 @@ function useConversationPane(
               )}
             />
   ), [existingId, compactComposer, panePresented, composerFocusFor, composerFocusRequest, changeComposer, composerView, draftOnly,
-    paneCommands, composerStop, replacing, editingQueue, edit.queuedSaving, editingBar,
-    sendText, composerAttachments, mentionTrigger, scopeProvider, permissionControl, conversationApprovals, decideApproval, conversationAsks, answerAsk]);
+    paneCommands, composerStop, replacing, editingQueue,
+    sendText, composerAttachments, mentionTrigger, scopeProvider, permissionControl]);
+
+  const [archiveFailure, setArchiveFailure] = useState<Readonly<{ id: string; message: string }> | null>(null);
+  const archiveLease = useRef(new Set<string>());
+  const archiveError = archiveFailure?.id === existingId ? archiveFailure.message : null;
+  const changeArchive = (archived: boolean) => {
+    if (open === null || options?.onArchive === undefined || archiveLease.current.has(open.id)) return;
+    const id = open.id;
+    archiveLease.current.add(id);
+    setArchiveFailure(null);
+    void options.onArchive(id, archived).catch((error: unknown) => {
+      if (shownComposer.current === id) setArchiveFailure({ id, message: error instanceof Error ? error.message : '无法更新归档状态，请重试。' });
+    }).finally(() => { archiveLease.current.delete(id); });
+  };
+  const action = deriveConversationAction({
+    readError: store.historyError ?? store.runError,
+    readonlyReason: store.readonlyReason, canReopen: store.canReopen,
+    state: store.sessionState, unknownDetail: store.unknownDetail,
+    hasAsks: conversationAsks.length > 0 || conversationApprovals.length > 0,
+    localSend: store.failedSend !== null ? 'failed' : store.sending ? 'sending' : 'idle',
+    sendUnconfirmed: store.failedSend?.delivery === 'unknown',
+    actionError: store.actionError ?? archiveError ?? options?.sideError ?? null, workerPaused: store.workerPaused,
+  });
+  const [pausedDismissedFor, setPausedDismissedFor] = useState<string | null>(null);
+  useEffect(() => { if (!store.workerPaused) setPausedDismissedFor(null); }, [store.workerPaused]);
+  const actionArea = action === null || (action.kind === 'workerPaused' && pausedDismissedFor === existingId)
+    ? options?.workspace?.notice == null ? null : <section data-nc-conversation-action="workspace" aria-label="工作区状态">{options.workspace.notice}</section> :
+    <section data-nc-conversation-action={action.kind} aria-label="待处理操作">
+      {action.kind === 'ask' ? <><ApprovalDrawer approvals={conversationApprovals} onDecide={decideApproval} />
+        <PlannerAskDrawer asks={conversationAsks} onAnswer={answerAsk} /></> :
+      <ChatFooterNotice tone={action.kind === 'readonly' || action.kind === 'workerPaused' ? 'neutral' : 'error'}>
+        {action.kind === 'readError' ? <>
+          <span>无法同步最新对话状态</span><span>{action.message}</span><span>刷新仅重新读取数据。</span>
+          <ChatFooterRemedy pending={store.historyLoading || store.runLoading} onClick={() => { if (store.historyError !== null) store.retryHistory(); if (store.runError !== null) store.retryRun(); }}>刷新</ChatFooterRemedy>
+        </> : action.kind === 'readonly' ? <>
+          <span>{action.reason === 'archived' ? '对话已归档' : action.reason === 'track_closed' ? 'Track 已关闭' : '对话已结束'}</span>
+          {archiveError !== null && <ChatFooterError message={archiveError} />}
+          {action.canReopen && options?.onArchive !== undefined && <ChatFooterRemedy onClick={() => changeArchive(false)}>恢复对话</ChatFooterRemedy>}
+        </> : action.kind === 'unknown' ? <>
+          <span>会话状态未知</span><span>{action.detail?.detail}</span>
+          {action.detail?.lastError && <ChatFooterError message={action.detail.lastError} />}
+          {store.actionError !== null && <ChatFooterError message={store.actionError} />}
+          {action.detail?.canReconnect && <ChatFooterRemedy disabled={store.recovering} onClick={() => store.recover('reconnect')}>重连原会话</ChatFooterRemedy>}
+          {action.detail?.canResetContext && <ChatFooterRemedy disabled={store.recovering} onClick={() => store.recover('reset_context')}>重置上下文并继续</ChatFooterRemedy>}
+          {store.recovering && <span>正在恢复会话…</span>}
+        </> : action.kind === 'sendFailed' ? <>
+          <span>{action.unconfirmed ? '发送结果未确认。' : `消息未发送。${store.failedSend?.message ?? ''}`}</span>
+          <ChatFooterRemedy disabled={store.sending} onClick={retrySend}>{action.unconfirmed ? '安全重试（同幂等键）' : '重试'}</ChatFooterRemedy>
+          <ChatFooterRemedy onClick={() => { if (store.failedSend !== null) {
+            if (action.unconfirmed) store.dismissFailedSend(store.failedSend.key);
+            else { store.discardFailedSend(store.failedSend.key); if (existingId !== null) focusComposer(existingId); }
+          } }}>{action.unconfirmed ? '忽略' : '放回输入框'}</ChatFooterRemedy>
+        </> : <>
+          <span>{action.kind === 'actionError' ? action.message : '已暂停，发送消息即可继续。'}</span>
+          <ChatFooterRemedy onClick={() => { if (action.kind === 'workerPaused') setPausedDismissedFor(existingId); else { store.dismissActionError(); setArchiveFailure(null); } }}>关闭</ChatFooterRemedy>
+        </>}
+      </ChatFooterNotice>}
+    </section>;
 
   const centeredEmpty = options?.embedded?.active === true && open !== null && store.historyReady && openTurns.length === 0 && !hasPendingMessages && !(pendingPresentation?.conversationId === existingId && pendingPresentation.visible) && !store.sending && !store.working && store.failedSend === null;
 
@@ -904,6 +945,12 @@ function useConversationPane(
         mobileSheet={compactComposer}
         focusInput={panePresented && (draftOpen || (open !== null && composerFocusFor === open.id))}
         contextTitle={scope?.title}
+        sessionHeader={open === null ? undefined : <ConversationSessionHeader session={store.session} state={store.sessionState}
+          readonlyReason={store.readonlyReason} workerPaused={store.workerPaused}
+          compactEnabled={conversationCommandEnabled('compact', store.sessionState, store.readonlyReason, store.unknownDetail, store.recovering) && store.manualCompactSupported}
+          resetEnabled={conversationCommandEnabled('reset', store.sessionState, store.readonlyReason, store.unknownDetail, store.recovering)}
+          onCompact={compact} onReset={() => store.recover('reset_context')}
+          onArchive={store.session?.isLead === true || store.session?.boundTaskId != null || options?.onArchive === undefined || (store.readonlyReason !== null && !store.canReopen) ? undefined : () => changeArchive(store.readonlyReason !== 'archived')} />}
         resizeGroup={resizeGroup}
         id={open === null ? undefined : `conversation-${open.id}`}
         inline={options?.inline}
@@ -926,7 +973,10 @@ function useConversationPane(
               <ChatFooterNotice>
                 {draft.error != null && <ChatFooterError message={draft.error} />}
                 {draft.remedy === 'retry' && (
-                  <ChatFooterRemedy disabled={creating} onClick={() => { if (retryDraft()) setComposerFocusRequest(count => count + 1); }}>Try again</ChatFooterRemedy>
+                  <ChatFooterRemedy disabled={creating} onClick={() => {
+                    draftFocus.handle.current?.focus();
+                    if (retryDraft()) setComposerFocusRequest(count => count + 1);
+                  }}>Try again</ChatFooterRemedy>
                 )}
                 {draft.remedy === 'new-conversation' && (
                   <ChatFooterRemedy disabled={creating} onClick={() => { if (sendAsNewConversation()) setComposerFocusRequest(count => count + 1); }}>
@@ -984,74 +1034,10 @@ function useConversationPane(
                 );
               })()} />
           </>
-        ) : open === null ? undefined : archived ? (
-          <>{readError}<ArchivedConversationNotice key={open.id} conversation={open} onArchive={options?.onArchive} /></>
-        ) : (
+        ) : open === null ? undefined : (
           <>
-            {store.sending && !threadPresented && <ChatFooterNotice tone="neutral">Sending…</ChatFooterNotice>}
-            {store.awaitingConversationUpdate && <ChatFooterNotice tone="neutral">Waiting for conversation to update.</ChatFooterNotice>}
-            {/* Each query owns its read retry; accepted sends keep their reconciliation fence (#2068). */}
-            {readError}
-            {store.failedSend !== null && (
-              <ChatFooterNotice>
-                {/* An unknown send says only that: why the answer was lost is the global connection indicator's to say. */}
-                <ChatFooterError message={store.failedSend.delivery === 'unknown'
-                  ? 'Delivery is unconfirmed.' : notSentMessage(store.failedSend.message)} />
-                {store.failedSend.delivery === 'unknown' ? <>
-                  {/* Safe without asking: the retry reuses the send's key, so a message that did arrive is not queued twice.
-                     No Edit here — an edited message is a new send under a new key, and the first may have arrived. */}
-                  <ChatFooterRemedy disabled={store.sending || !store.historyReady}
-                    onClick={retrySend}>
-                    Try again
-                  </ChatFooterRemedy>
-                  {/* Nothing of it comes back to the composer: it may already be delivered, and a read then shows it. */}
-                  <ChatFooterRemedy onClick={() => { if (store.failedSend !== null) store.dismissFailedSend(store.failedSend.key); }}>
-                    Dismiss
-                  </ChatFooterRemedy>
-                </> : <>
-                  <ChatFooterRemedy disabled={store.sending || !store.historyReady}
-                    onClick={retrySend}>
-                    Try again
-                  </ChatFooterRemedy>
-                  {/* Its words and images go back to the composer together; nothing already there is lost. */}
-                  <ChatFooterRemedy onClick={() => { if (store.failedSend !== null) store.discardFailedSend(store.failedSend.key); }}>
-                    Edit
-                  </ChatFooterRemedy>
-                </>}
-              </ChatFooterNotice>
-            )}
-            {options?.sideError != null && (
-              <ChatFooterNotice><ChatFooterError message={options.sideError} /></ChatFooterNotice>
-            )}
-            {store.loadingEarlier && <ChatFooterNotice tone="neutral">Loading earlier messages… Navigation covers loaded history.</ChatFooterNotice>}
-            {store.compacting && <ChatFooterNotice>Compacting conversation context…</ChatFooterNotice>}
-            {store.statusNotice != null && <ChatFooterNotice tone="neutral">{store.statusNotice}</ChatFooterNotice>}
-            {store.actionError !== null && (
-              <ChatFooterNotice><ChatFooterError message={store.actionError} /></ChatFooterNotice>
-            )}
-            {edit.queueFailure !== null && <QueueWriteNotice outcome={edit.queueFailure} />}
-            {edit.queuedMissing && <ChatFooterNotice tone="neutral">This message is not available for editing. Cancel editing to keep your draft in the composer.</ChatFooterNotice>}
-            {edit.notice !== null && <ChatFooterNotice tone={edit.notice.tone}>{edit.notice.lines.map((line) =>
-              edit.notice?.tone === 'error' ? <ChatFooterError key={line} message={line} /> : <span key={line}>{line}</span>)}</ChatFooterNotice>}
-            {/* Not an `alert`: nothing just happened, the condition was already true when
-                            this page opened. */}
-            {!archived && store.providerResume !== null && (
-              <ChatFooterNotice tone="neutral">
-                {store.providerResume.state === 'resuming' ? 'Restoring the provider session…'
-                  : store.providerResume.state === 'paused' ? 'Provider recovery is paused.' : null}
-                {store.providerResume.state !== 'resuming' && <ChatFooterRemedy onClick={store.providerResume.start}>
-                  Resume provider session
-                </ChatFooterRemedy>}
-              </ChatFooterNotice>
-            )}
-            {!store.executionHeld && store.blockedReason !== null && (
-              <ChatFooterNotice>
-                <ChatFooterError message={store.blockedReason} />
-                {store.abandonUnknownInput !== null && <ChatFooterRemedy onClick={store.abandonUnknownInput}>Start a fresh provider session</ChatFooterRemedy>}
-              </ChatFooterNotice>
-            )}
-            {plannerRow !== null && <>{options?.workspace?.notice}<OperationFeedback feedback={plannerRow.role.feedback} /></>}
-            {composerNode}
+            {actionArea}
+            {store.readonlyReason === null && composerNode}
           </>
         )}
       >
@@ -1091,24 +1077,19 @@ function useConversationPane(
                 conversation={open}
                 imageFiles={imageFiles}
                 renderLink={chatLinks.renderLink}
-                turns={openTurns} editing={edit.marked}
+                turns={openTurns} lastSessionTurn={store.lastTurn}
                 sending={store.sending}
                 submissionRequest={submission?.conversationId === open.id ? submission.request : 0}
-                replacement={store.failedSend?.replaces == null ? null : store.failedSend.echo.id}
                 pending={store.working}
                 cards={source.cards}
-                stalled={store.executionHeld}
-                statusUnconfirmed={threadStatusUnconfirmed}
+                stalled={(store.sessionState === 'unknown')}
                 statusLoading={store.runLoading}
-                copyText={edit.held === null ? writeClipboardText : undefined}
+                copyText={writeClipboardText}
                 regenerateMessage={respondable
                   ? regenerateMessage
                   : undefined}
                 editMessage={undefined}
                 canContinue={canContinue}
-                stalledReason={store.blockedReason}
-                stopFeedback={store.stopFeedback}
-                runningAnchor={store.runningAnchor}
               />
             )}
           </>
@@ -1133,9 +1114,9 @@ function useConversationPane(
   const listProps = useMemo(() => ({
     conversations: store.conversations, cards: source.cards, unreadIds, activeId: existingId,
     awaitingInputIds,
-    local: existingId === null ? null : { id: existingId, working: store.working, stalled: store.executionHeld },
+    local: existingId === null ? null : { id: existingId, working: store.working, stalled: (store.sessionState === 'unknown') },
     showTrack: options?.showTrack ?? true, onOpen: openConversation, onArchive: options?.onArchive,
-  }), [store.conversations, source.cards, unreadIds, awaitingInputIds, existingId, store.working, store.executionHeld, options?.showTrack, options?.onArchive, openConversation]);
+  }), [store.conversations, source.cards, unreadIds, awaitingInputIds, existingId, store.working, store.sessionState, options?.showTrack, options?.onArchive, openConversation]);
   const listNode = useMemo(() => <ChatList {...listProps} />, [listProps]);
   const contextList = useMemo(() => <ChatList {...listProps} context />, [listProps]);
 
@@ -1152,7 +1133,7 @@ function useConversationPane(
   });
   const sendFromDock = useCommittedCallback(dockViewId, (text: string) => {
     if (dockRowId !== null) {
-      if (submitMessage(dockRowId, text, registry.composerOf(dockRowId).attachments, true, edit.replacesIn(dockRowId)) !== null) {
+      if (submitMessage(dockRowId, text, registry.composerOf(dockRowId).attachments, true) !== null) {
         setOpenTarget({ kind: 'row', id: dockRowId });
       }
     } else if (startWithMessage(text)) setNewConversationText('');
@@ -1162,7 +1143,7 @@ function useConversationPane(
     dock: compactComposer ? <ConversationDock target={dockRowId === null ? { kind: 'scope', id: sourceScopeId } : { kind: 'card', id: dockRowId }}
       commands={dockRowId === null ? conversationCommands({ compactViewport: true }) : paneCommands}
       onChange={setDockText} onSend={sendFromDock} onBeginInput={openDockHistory}
-      disabled={archived || options?.reportComposer?.ready === false || (dockRowId !== null && (store.sendBlocked || !store.historyReady || !store.runReady || edit.held !== null))} /> : undefined,
+      disabled={archived || options?.reportComposer?.ready === false || (dockRowId !== null && (store.sendBlocked || !store.historyReady || !store.runReady))} /> : undefined,
     selectedConversationId: draftOpen ? null : open?.id ?? dockRowId,
     isOpen: open !== null || draftOpen,
     close: closeDrawer,

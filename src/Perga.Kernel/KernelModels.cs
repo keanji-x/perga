@@ -125,18 +125,25 @@ public sealed record QueuedMessageReceipt(string SessionId, string InputId, bool
 public sealed record QueuedSessionMessageDto(string Id, string Text, long QueuedAtMs, string State);
 public sealed record MessageAcceptance(SessionInputReceipt? Receipt, SessionTurnDto? SteeredTurn, bool Replay, QueuedMessageReceipt? QueueReceipt = null);
 
-public sealed record ProviderSessionResumeDto(string TurnId, string State, bool CanStartFresh = false);
+public sealed record RecoverSessionRequest(string Mode);
+
+public sealed record SessionUnknownDetailDto(string Reason, string Detail, bool CanReconnect,
+    bool CanResetContext, bool Recovering, string? LastError);
 
 public sealed record SessionItemsPageDto(
     IReadOnlyList<SessionItemDto> Items,
     SessionTurnDto? ActiveTurn,
     AgentSessionDto Session,
-    SessionInputReceipt? UnknownInput,
     bool HasMoreBefore,
     IReadOnlyList<QueuedSessionMessageDto> QueuedMessages,
     bool CanSteer,
     IReadOnlyList<string> QueueHandoffIds,
-    ProviderSessionResumeDto? Resume,
+    string State,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? ReadonlyReason,
+    bool CanReopen,
+    bool WorkerPaused,
+    SessionTurnDto? LastTurn,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] SessionUnknownDetailDto? UnknownDetail,
     WorkerActivityDto? Worker = null,
     IReadOnlyList<PermissionModeOption>? PermissionModes = null);
 

@@ -56,7 +56,7 @@ export function conversationLiveOperation(cardId: string): ApiOperation<Conversa
 }
 
 /** A transcript row, as far as retiring a copy reads it. */
-export type LiveReplyTranscriptRow = Readonly<{ method: string; item_uuid: string | null; thread_id?:string; turn_id?:string|null }>;
+export type LiveReplyTranscriptRow = Readonly<{ completed: boolean; itemId: string | null; threadId?: string; turnId?: string | null; kind?: string }>;
 
 /** The client's copy of one streamed reply, item `itemId` of turn `turnId`. */
 export type LiveReplyCopy = Readonly<{
@@ -115,8 +115,8 @@ export function reconcileLiveReplies(
     case 'transcript': {
       const stored = storedItemIds(observation.items);
       const kept = copies.filter((copy) => !(copy.nativeThreadId === null ? stored.has(copy.itemId)
-        : observation.items.some(item=>item.method === 'item/completed' && item.item_uuid === copy.itemId
-          && item.thread_id === copy.nativeThreadId && item.turn_id === copy.turnId))
+        : observation.items.some(item=>item.completed && item.itemId === copy.itemId
+          && item.threadId === copy.nativeThreadId && item.turnId === copy.turnId))
         && (copy.settledAt === null || observation.readStart <= copy.settledAt));
       return kept.length === copies.length ? copies : kept;
     }
@@ -161,7 +161,7 @@ function withPoll(
 
 function storedItemIds(items: readonly LiveReplyTranscriptRow[]): ReadonlySet<string> {
   return new Set(items.flatMap((item) =>
-    item.method === 'item/completed' && item.item_uuid !== null ? [item.item_uuid] : []));
+    item.completed && item.itemId !== null ? [item.itemId] : []));
 }
 
 /** The copies the transcript does not yet stand for, as the agent turns they will become. */

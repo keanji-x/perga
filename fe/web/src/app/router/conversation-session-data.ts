@@ -17,6 +17,7 @@ export function sessionInput(sessionId: string, inputId = 'input-2'): SessionInp
 }
 
 export function sessionPage(session: AgentSessionDto, items: SessionItemDto[] = [], activeTurn: SessionTurnDto | null = null,
-  unknownInput: SessionInputReceipt | null = null): SessionItemsPageDto {
-  return { session, items, activeTurn, unknownInput };
+  state: SessionItemsPageDto['state'] = activeTurn?.status === 'running' ? 'running' : 'idle'): SessionItemsPageDto {
+  return { session, items, activeTurn, state, readonlyReason: session.archivedAtMs != null ? 'archived' : null,
+    canReopen: session.archivedAtMs != null, workerPaused: false, lastTurn: activeTurn, unknownDetail: null };
 }

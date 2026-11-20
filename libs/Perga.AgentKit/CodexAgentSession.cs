@@ -619,7 +619,11 @@ public sealed class CodexAgentSession : IAgentSession
             method = "thread/start";
         }
 
-        var response = await _rpc.SendRequestAsync(method, threadParams, ct).ConfigureAwait(false);
+        JsonElement response;
+        try { response = await _rpc.SendRequestAsync(method, threadParams, ct).ConfigureAwait(false); }
+        catch (JsonRpcRemoteException error) when (spec.ResumeNativeThreadId is not null &&
+            ProviderSessionNotFoundException.IsMissingSession(error.Message))
+        { throw new ProviderSessionNotFoundException(error.Message, error); }
         var resolvedThreadId = ExtractThreadId(response);
         if (string.IsNullOrWhiteSpace(resolvedThreadId))
         {

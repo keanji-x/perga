@@ -625,20 +625,28 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
     }
 
     public Task<IReadOnlyList<ProviderSessionResumeFence>> ListSessionResumeFencesAsync(string trackId, CancellationToken ct) =>
-        Task.FromResult<IReadOnlyList<ProviderSessionResumeFence>>(_resumeFences.Values.Where(f => _sessions[f.SessionId].TrackId == trackId).ToArray());
+        Task.FromResult<IReadOnlyList<ProviderSessionResumeFence>>(_sessions.Values.Where(s => s.TrackId == trackId && s.Status == "unknown")
+            .Select(s => new ProviderSessionResumeFence(s.Id, s.UnknownTurnId ?? "", s.NativeThreadId ?? "", true)).ToArray());
 
     public Task SaveSessionResumeFenceAsync(ProviderSessionResumeFence fence, CancellationToken ct)
     {
-        lock (_gate) _resumeFences[fence.SessionId] = fence;
+        lock (_gate)
+        {
+            var session = _sessions[fence.SessionId];
+            _sessions[fence.SessionId] = session with { Status = "unknown", UnknownTurnId = fence.TurnId,
+                UnknownReason = session.UnknownReason ?? "stream_lost" };
+        }
         return Task.CompletedTask;
     }
 
     public Task CompleteSessionResumeAsync(AgentSessionDto session, PersistedSessionInput? unresolved,
-        EventEnvelopeDto sessionEvent, CancellationToken ct)
+        EventEnvelopeDto sessionEvent, int expectedEpoch, CancellationToken ct, SessionItemDto? boundary = null)
     {
         lock (_gate)
         {
-            _resumeFences.Remove(session.Id);
+            if (_sessions[session.Id].Epoch != expectedEpoch)
+                throw new InvalidOperationException("Session epoch changed during recovery.");
+            if (boundary is not null) AppendSessionItemsAsync(session.Id, [boundary], ct).GetAwaiter().GetResult();
             if (unresolved is not null) return ResolveAsync(unresolved, session, sessionEvent, ct);
             _sessions[session.Id] = session;
             AppendEventLocked(sessionEvent);
@@ -1533,6 +1541,7 @@ internal sealed class ScriptableFakeAgentSession : IAgentSession
 
 internal sealed class ScriptableFakeAgentRuntime : IAgentRuntime
 {
+    public bool CanResumeSession(string provider) => SupportsSessionResume;
     private int _threadCounter;
     public bool SupportsSessionResume { get; set; }
 

@@ -6,11 +6,18 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  CONVERSATION_GAP_MS, buildTranscript,
+  CONVERSATION_GAP_MS,
   type Conversation, type ConversationActivity, type ConversationSystemEntry,
   type ConversationTurn, type ConversationTurnOutcome,
 } from '../../../../../core/domain/conversation.ts';
-import { ChatComposer, ChatThread } from './public.tsx';
+import { ChatComposer, ChatThread as SessionThread } from './public.tsx';
+
+function ChatThread(props: import('react').ComponentProps<typeof SessionThread>) {
+  const running = !props.stalled && !props.statusUnconfirmed && (props.pending || props.cards[props.conversation.id] === 'working');
+  return <SessionThread {...props} lastSessionTurn={props.lastSessionTurn ?? (running
+    ? { id: 'fixture-turn', sessionId: props.conversation.id, turnIndex: 1, epoch: 1, triggerKind: 'user', status: 'running', startedAtMs: null }
+    : null)} />;
+}
 
 afterEach(cleanup);
 
@@ -20,24 +27,6 @@ it('leaves ordinary pending input in the queue without duplicating the status li
   expect(screen.getByText('Queued message')).toBeTruthy();
   expect(screen.queryByRole('status', { name: 'Current response status' })).toBeNull();
   expect(screen.queryByText('Waiting for execution')).toBeNull();
-});
-
-it('keeps real execution refusals visible beside the pending queue', () => {
-  const reason = 'A current session must authorize this saved input.';
-  render(<ChatThread conversation={conversation()} turns={[turn()]} cards={{}} stalled={false}
-    canContinue pendingMessages={<p>Queued message</p>} hasPendingMessages hasPendingInputs stalledReason={reason} />);
-  expect(screen.getByRole('status', { name: 'Current response status' }).textContent).toContain('Execution blocked');
-  expect(screen.getByText('Queued message')).toBeTruthy();
-  // Details retain the real refusal, independently of the queue's normal presence.
-  fireEvent.click(screen.getByRole('button', { name: /Execution blocked/ }));
-  expect(screen.getByText(reason)).toBeTruthy();
-});
-
-it('does not label a previous terminal result as current while input is queued', () => {
-  render(<ChatThread conversation={conversation()} turns={[turn()]} cards={{}} stalled={false}
-    canContinue pendingMessages={<p>Queued message</p>} hasPendingMessages hasPendingInputs
-    currentResponseOutcome={{ turnId: 'prior', status: 'completed', elapsedMs: 20, atMs: NOW }} />);
-  expect(screen.queryByRole('status', { name: 'Current response status' })).toBeNull();
 });
 
 const RAIL_FIXTURE_EXCHANGES = 5;
@@ -140,8 +129,7 @@ describe('ChatThread', () => {
   it('does not call a pending conversation empty while the agent is working', () => {
     render(<ChatThread hasPendingMessages={false} canContinue={false} cards={{}} stalled={false} conversation={conversation()} turns={[]} pending />);
     expect(workingMarks()).toHaveLength(1);
-    expect(screen.getByText('正在整理你的想法')).toBeTruthy();
-    expect(screen.getByText('回复会显示在这里。')).toBeTruthy();
+    expect(screen.getByText('本轮生成中')).toBeTruthy();
     expect(screen.queryByText('聊聊你想做什么')).toBeNull();
   });
 
@@ -161,226 +149,6 @@ describe('ChatThread', () => {
     expect(system?.querySelector('p')?.textContent).toBe('The report changed in the kernel.');
     expect(container.querySelector('[data-nc-turn="you"]')).toBeNull();
     expect(container.querySelector('[data-nc-turn="agent"]')).toBeNull();
-  });
-
-  it('states a failed turn in the kernel\'s readable words, keeps the raw message as its tooltip, and gives a reason', () => {
-    const raw = '{"type":"error","status":400,"error":{"message":"The conversation exceeded the model\'s context window."}}';
-    const { container } = render(
-      <ChatThread hasPendingMessages={false} canContinue={false} cards={{}} stalled={false}
-        conversation={conversation()}
-        turns={[
-          turn({ id: 'you-1', text: 'Summarise everything.' }),
-          turnOutcome({
-            status: 'failed', message: raw,
-            text: '400: The conversation exceeded the model\'s context window.',
-            code: 'contextWindowExceeded',
-          }),
-        ]}
-      />,
-    );
-    const outcome = container.querySelector('[data-nc-turn-outcome="failed"]') as HTMLElement;
-    expect(outcome.getAttribute('data-nc-turn')).toBe('outcome');
-    expect(screen.getByRole('status', { name: 'Current response status' }).textContent).toContain('Failed');
-    fireEvent.click(screen.getByRole('button', { name: 'Failed', expanded: false }));
-    const line = outcome.querySelector('[data-nc-turn-outcome-message]');
-    expect(line?.textContent).toBe('400: The conversation exceeded the model\'s context window.');
-    expect(line?.getAttribute('title')).toBe(raw);
-    expect(outcome.querySelector('[data-nc-turn-outcome-hint]')?.textContent)
-      .toBe('The conversation no longer fits in the model’s context window.');
-    expect(container.querySelector('[data-nc-turn="agent"]')).toBeNull();
-    expect(container.querySelectorAll('[data-nc-exchange]')).toHaveLength(1);
-  });
-
-  it('shows a code it has no sentence for as the raw token, and an unknown status as such', () => {
-    const { container, rerender } = render(
-      <ChatThread hasPendingMessages={false} canContinue={false} cards={{}} stalled={false} conversation={conversation()} turns={[turnOutcome({ message: 'nope', code: 'internalServerError' })]} />,
-    );
-    expect(container.querySelector('[data-nc-turn-outcome-hint]')?.textContent).toBe('internalServerError');
-    rerender(
-      <ChatThread hasPendingMessages={false} canContinue={false} cards={{}} stalled={false} conversation={conversation()} turns={[turnOutcome({ rawStatus: 'inProgress' })]} />,
-    );
-    expect(container.querySelector('[data-nc-turn-outcome-message]')).toBeNull();
-    expect(container.querySelector('[data-nc-turn-outcome-hint]')?.textContent).toBe('Ended with status “inProgress”');
-  });
-
-  it.each([undefined, '', '   '])('keeps the same disclosure for missing details and an unusable code %s', (code) => {
-    const { container, rerender } = render(<ChatThread hasPendingMessages={false} canContinue={false} cards={{}} stalled={false} conversation={conversation()}
-      turns={[turnOutcome({ text: '   ', message: 'raw provider payload', code })]} />);
-    expect(screen.getByText('Failed', { exact: true })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Failed', expanded: false }));
-    expect(screen.getByText('No failure details are available.', { exact: true })).toBeTruthy();
-    expect(container.querySelector('[data-nc-turn-outcome]')?.getAttribute('data-nc-turn-outcome')).toBe('failed');
-    expect(screen.getByRole('button', { name: 'Failed', expanded: true })).toBeTruthy();
-    expect(container.textContent).not.toContain('raw provider payload');
-    rerender(<ChatThread hasPendingMessages={false} canContinue={false} cards={{}} stalled={false} conversation={conversation()}
-      turns={[turnOutcome({ code: 'rateLimitExceeded' })]} />);
-    expect(screen.getByText('Failed', { exact: true })).toBeTruthy();
-    expect(screen.queryByText('Unknown error')).toBeNull();
-    expect(screen.getByRole('button', { name: 'Failed' })).toBeTruthy();
-    expect(container.querySelector('[data-nc-turn-outcome-hint]')?.textContent).toBe('Requests are being rate-limited; try again in a moment.');
-    expect(container.querySelector('[data-nc-turn-outcome-fallback]')).toBeNull();
-  });
-
-  it.each(['interrupted', 'failed'] as const)('shows continuation guidance for a settled %s only when sending is available', (status) => {
-    const props = { cards: {}, stalled: false, conversation: conversation(), turns: [turnOutcome({ status })] };
-    const { rerender } = render(<ChatThread hasPendingMessages={false} {...props} canContinue={false} />);
-    expect(screen.queryByText('Send a message to continue.')).toBeNull();
-    rerender(<ChatThread hasPendingMessages={false} {...props} canContinue={true} />);
-    expect(screen.getByText('Send a message to continue.')).toBeTruthy();
-    rerender(<ChatThread hasPendingMessages={false} {...props} canContinue={false} />);
-    expect(screen.queryByText('Send a message to continue.')).toBeNull();
-  });
-
-  it('shows the restart reason from the production transcript wire', () => {
-    const text = 'neige restarted during this turn';
-    const turns = buildTranscript([{
-      id: 91, worker_session_id: 'r', card_id: 'c1', track_id: 'w1', thread_id: 'thread-1',
-      turn_id: 'turn-1', item_uuid: null, item_type: null, method: 'turn/completed',
-      params: JSON.stringify({ id: 'turn-1', status: 'interrupted', error: { message: text } }),
-      turn_error_text: text, created_at_ms: NOW,
-    }]);
-    const { container } = render(<ChatThread hasPendingMessages={false} canContinue={true} cards={{}} stalled={false} conversation={conversation()} turns={turns} />);
-    const details = screen.getByRole('button', { name: /^Interrupted/, expanded: false });
-    fireEvent.click(details);
-    expect(details.getAttribute('aria-expanded')).toBe('true');
-    const line = container.querySelector('[data-nc-turn-outcome-message]');
-    expect(line?.textContent).toBe(text);
-    expect(line?.getAttribute('title')).toBe(text);
-    expect(screen.getByRole('status', { name: 'Current response status' }).textContent).toContain('Interrupted');
-    expect(screen.getByText('Interrupted', { exact: true })).toBeTruthy();
-    expect(screen.getByText('Send a message to continue.')).toBeTruthy();
-    // The row records no `durationMs`: unknown, so no number.
-    expect(container.querySelector('[data-nc-meta-duration]')).toBeNull();
-  });
-
-  it('shows a provider timeout delivered by the production transcript wire', () => {
-    const reason = 'The request timed out before the model provider returned a response.';
-    const turns = buildTranscript([{
-      id: 92, worker_session_id: 'r', card_id: 'c1', track_id: 'w1', thread_id: 'thread-1',
-      turn_id: 'turn-timeout', item_uuid: null, item_type: null, method: 'turn/completed',
-      params: JSON.stringify({ id: 'turn-timeout', status: 'failed', error: { message: reason } }),
-      turn_error_text: reason, created_at_ms: NOW,
-    }]);
-    render(<ChatThread hasPendingMessages={false} canContinue={false} cards={{}} stalled={false} conversation={conversation()} turns={turns} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Failed', expanded: false }));
-    expect(screen.getByText(reason, { exact: true })).toBeTruthy();
-    expect(screen.queryByText('No failure details are available.', { exact: true })).toBeNull();
-  });
-
-  it('keeps recorded failure evidence without claiming current execution when status is unconfirmed', () => {
-    const regenerate = vi.fn();
-    const edit = vi.fn();
-    const { container, rerender } = render(<ChatThread hasPendingMessages={false} canContinue cards={{ c1: 'working' }} stalled={false}
-      statusUnconfirmed conversation={conversation()} regenerateMessage={regenerate} editMessage={edit}
-      turns={[turn({ text: 'Try this.' }), turnOutcome({ text: 'Actual failure reason.' })]} />);
-    expect(screen.getByRole('status', { name: 'Current response status' }).textContent).toContain('Status unconfirmed');
-    fireEvent.click(screen.getByRole('button', { name: 'Status unconfirmed', expanded: false }));
-    expect(screen.getByText('Last recorded response: failed.')).toBeTruthy();
-    expect(screen.getByText('Actual failure reason.')).toBeTruthy();
-    expect(screen.queryByText('Running', { exact: true })).toBeNull();
-    expect(screen.queryByText('Send a message to continue.')).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Regenerate response' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Edit message' })).toBeNull();
-    expect(container.querySelector('[data-nc-meta-duration]')).toBeNull();
-    rerender(<ChatThread hasPendingMessages={false} canContinue={false} cards={{}} stalled={false} statusUnconfirmed
-      conversation={conversation()} turns={[]} />);
-    expect(screen.getByText('Status unconfirmed', { exact: true })).toBeTruthy();
-    expect(screen.queryByText('聊聊你想做什么')).toBeNull();
-  });
-
-  it.each([
-    ['failed', 'Stop failed', 'The stop request was refused.'],
-    ['unconfirmed', 'Stop unconfirmed', 'The stop may not have taken effect: the response may still be running or may already have ended.'],
-    ['requesting', 'Requesting stop', 'Waiting for the stop request to finish.'],
-    ['stopping', 'Stopping', 'Waiting for the response to end.'],
-  ] as const)('retains %s stop request feedback when execution status cannot be confirmed', (kind, heading, reason) => {
-    render(<ChatThread hasPendingMessages={false} canContinue={false} cards={{}} stalled={false} statusUnconfirmed
-      conversation={conversation()} turns={[]}
-      stopFeedback={kind === 'failed' ? { kind, message: reason } : { kind }} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Status unconfirmed', expanded: false }));
-    expect(screen.getByText(heading, { exact: true })).toBeTruthy();
-    expect(screen.getByText(reason, { exact: true })).toBeTruthy();
-    expect(screen.queryByText('Running', { exact: true })).toBeNull();
-  });
-
-  it('does not guess the cause or substitute raw errors for a missing readable reason', () => {
-    const raw = '{"internal":"raw error payload"}';
-    const { container } = render(<ChatThread hasPendingMessages={false} canContinue={false} cards={{}} stalled={false} conversation={conversation()}
-      turns={[turnOutcome({ status: 'interrupted', message: raw })]} />);
-    expect(screen.getByRole('status', { name: 'Current response status' }).textContent).toContain('Interrupted');
-    expect(screen.getByText('Interrupted', { exact: true })).toBeTruthy();
-    expect(container.querySelector('[data-nc-turn-outcome-message]')).toBeNull();
-    expect(container.textContent).not.toContain(raw);
-    expect(container.textContent).not.toContain('restarted');
-  });
-
-  it('shows one current meta for a completed response and never fabricates elapsed duration', () => {
-    const { container } = render(<ChatThread hasPendingMessages={false} canContinue={false} cards={{}} stalled={false} conversation={conversation()}
-      turns={[turnOutcome({ id: 'old-failure', status: 'failed' }), turnOutcome({ id: 'current-complete', status: 'completed' })]} />);
-    expect(screen.getByText('Completed', { exact: true })).toBeTruthy();
-    expect(container.querySelectorAll('[data-nc-current-meta]')).toHaveLength(1);
-    expect(screen.queryByText('Failed', { exact: true })).toBeNull();
-    expect(container.querySelector('[data-nc-meta-duration]')).toBeNull();
-  });
-
-  it('shows one current meta for a running response above older failures', () => {
-    const { container } = render(<ChatThread hasPendingMessages={false} canContinue={false} cards={{ c1: 'working' }} stalled={false} conversation={conversation()}
-      turns={[turnOutcome({ status: 'failed' }), turn({ id: 'current-reply', author: 'agent' })]} />);
-    expect(screen.getByText('Running', { exact: true })).toBeTruthy();
-    expect(container.querySelectorAll('[data-nc-current-meta]')).toHaveLength(1);
-    expect(screen.queryByText('Failed', { exact: true })).toBeNull();
-  });
-
-  it('hides historical outcomes while retaining the later response', () => {
-    const interrupted = turnOutcome({ id: 'old-stop', status: 'interrupted', text: 'Old interrupted reason.' });
-    const failed = turnOutcome({ id: 'old-failure', status: 'failed', text: 'Old failed reason.' });
-    render(<ChatThread hasPendingMessages={false} canContinue={false} cards={{}} stalled={false} conversation={conversation()}
-      turns={[interrupted, failed, turn({ id: 'next-response', text: 'The later response.' })]} />);
-    expect(screen.queryByText('Old interrupted reason.')).toBeNull();
-    expect(screen.getByText('The later response.')).toBeTruthy();
-    expect(screen.queryByText('Old failed reason.')).toBeNull();
-  });
-
-  it.each(['interrupted', 'failed'] as const)('shows only current paused status over a prior %s result', (status) => {
-    const reason = 'The stop request timed out before the model confirmed that this turn had stopped.';
-    const { rerender } = render(<ChatThread hasPendingMessages={false} canContinue={false} cards={{}} stalled stalledReason={reason}
-      conversation={conversation()} turns={[turnOutcome({ status, text: 'Previous outcome reason.' })]} />);
-    expect(screen.getAllByRole('status', { name: 'Current response status' })).toHaveLength(1);
-    expect(screen.queryByText('Previous outcome reason.')).toBeNull();
-    expect(screen.getByRole('button', { name: 'Paused' })).toBeTruthy();
-    rerender(<ChatThread hasPendingMessages={false} canContinue={false} cards={{}} stalled={false} conversation={conversation()}
-      turns={[turnOutcome({ status, text: 'Previous outcome reason.' })]} />);
-    expect(screen.getByText('Previous outcome reason.')).toBeTruthy();
-  });
-
-  it('shows an interruption only at the settled tail and hides it during a new response or pause', () => {
-    const interrupted = turnOutcome({ status: 'interrupted', text: 'Connection ended.' });
-    const props = { cards: {}, stalled: false, conversation: conversation() };
-    const { rerender } = render(<ChatThread hasPendingMessages={false} canContinue={true} {...props} turns={[interrupted, turn({ id: 'new-turn' })]} />);
-    expect(screen.queryByText('Connection ended.')).toBeNull();
-    expect(screen.queryByText('Send a message to continue.')).toBeNull();
-    rerender(<ChatThread hasPendingMessages={false} canContinue={true} {...props} turns={[interrupted]} pending />);
-    expect(screen.queryByText('Send a message to continue.')).toBeNull();
-    rerender(<ChatThread hasPendingMessages={false} canContinue={true} {...props} turns={[interrupted]} stalled />);
-    expect(screen.queryByText('Send a message to continue.')).toBeNull();
-  });
-
-  it('switches the single current row from Interrupted to Completed', () => {
-    const { container, rerender } = render(
-      <ChatThread hasPendingMessages={false} canContinue={false} cards={{}} stalled={false} conversation={conversation()} turns={[turnOutcome({ status: 'interrupted' })]} />,
-    );
-    expect(container.querySelector('[data-nc-turn-outcome="interrupted"]')).not.toBeNull();
-    expect(screen.getByRole('status', { name: 'Current response status' }).textContent).toContain('Interrupted');
-    expect(screen.getByText('Interrupted', { exact: true })).toBeTruthy();
-    rerender(
-      <ChatThread hasPendingMessages={false} canContinue={false} cards={{}} stalled={false}
-        conversation={conversation()}
-        turns={[turn(), turnOutcome({ status: 'completed' })]}
-      />,
-    );
-    expect(container.querySelector('[data-nc-turn="outcome"]')).not.toBeNull();
-    expect(container.querySelector('[data-nc-turn-outcome]')?.getAttribute('data-nc-turn-outcome')).toBe('completed');
-    expect(screen.getByRole('status', { name: 'Current response status' }).textContent).toContain('Completed');
   });
 
   it('keeps the live mark logic untouched by a trailing outcome', () => {
@@ -519,7 +287,7 @@ describe('ChatThread', () => {
     pane.remove();
   });
 
-  it.each([true, false])('follows a new pause only when the reader is at the end (%s)', (atEnd) => {
+  it.each([true, false])('follows a new Turn result only when the reader is at the end (%s)', (atEnd) => {
     const { pane, writes, scrollTo, grow } = followPane();
     const turns = exchangeTurns(3);
     const { rerender } = render(<ChatThread hasPendingMessages={false} canContinue={false} cards={{}} stalled={false}
@@ -527,7 +295,7 @@ describe('ChatThread', () => {
     const position = atEnd ? PANE_SCROLL_HEIGHT - PANE_CLIENT_HEIGHT : 100;
     scrollTo(position);
     grow();
-    rerender(<ChatThread hasPendingMessages={false} canContinue={false} cards={{}} stalled stalledReason="Stopping is unconfirmed."
+    rerender(<ChatThread hasPendingMessages={false} canContinue={false} cards={{}} stalled={false} lastSessionTurn={{ id: 't', sessionId: 'c1', turnIndex: 1, epoch: 1, triggerKind: 'user', status: 'unknown', startedAtMs: null }}
       conversation={conversation()} turns={turns} />);
     expect(writes).toEqual(atEnd ? [PANE_SCROLL_HEIGHT, PANE_SCROLL_HEIGHT + 100] : [PANE_SCROLL_HEIGHT]);
     if (!atEnd) expect(pane.scrollTop).toBe(position);
@@ -560,7 +328,7 @@ describe('ChatThread', () => {
     pane.remove();
   });
 
-  /* `buildTranscript` collapses a trailing `Thought` into the reply that answers it, so the count can stay the same while the last id changes. */
+  /* The transcript projection collapses a trailing `Thought` into the reply that answers it, so the count can stay the same while the last id changes. */
   it('follows a turn that replaced the last one without changing the count', () => {
     const { pane, writes, scrollTo, grow } = followPane();
     const thinking = [
@@ -1365,10 +1133,10 @@ describe('ChatComposer', () => {
       <ChatComposer
         onSend={onSend}
         allowEmptyText
-        drawer={<button type="button" onKeyDown={pressed}>Delete this message</button>}
+        drawer={<button type="button" onKeyDown={pressed}>撤回</button>}
       />,
     );
-    const button = screen.getByRole('button', { name: 'Delete this message' });
+    const button = screen.getByRole('button', { name: '撤回' });
     button.focus();
     fireEvent.keyDown(button, { key: 'Enter' });
     expect(onSend).not.toHaveBeenCalled();
@@ -1436,18 +1204,6 @@ describe('ChatComposer', () => {
   });
 });
 
-it('shows a paused runtime with the same disclosure and separator, even without transcript rows', () => {
-  const reason = 'The stop request timed out before the model confirmed that this turn had stopped.';
-  const { container } = render(<ChatThread hasPendingMessages={false} canContinue={false} cards={{}} stalled stalledReason={reason}
-    conversation={conversation()} turns={[]} />);
-  expect(screen.getByRole('button', { name: 'Paused', expanded: false })).toBeTruthy();
-  expect(screen.getByRole('separator')).toBeTruthy();
-  expect(screen.getByText(reason, { exact: true })).toBeTruthy();
-  expect(screen.queryByText('聊聊你想做什么')).toBeNull();
-  expect(screen.queryByRole('button', { name: 'Start a new conversation' })).toBeNull();
-  expect(container.querySelector('[data-nc-turn-outcome]')).toBeNull();
-});
-
 it('selects compact as an operation, without sending a chat message', async () => {
   const onCompact = vi.fn();
   const onSend = vi.fn();
@@ -1481,21 +1237,6 @@ it.each(['drop', 'paste'] as const)('accepts files from %s only while the compos
   expect(onFiles).toHaveBeenCalledExactlyOnceWith([file]);
 });
 
-
-it('shows current canonical terminal metadata without a transcript row and clears it on the next response', () => {
-  const props = {conversation:conversation(),turns:[turn(),turn({id:'reply',author:'agent',text:'Partial reply'})],
-    cards:{},hasPendingMessages:false,stalled:false,canContinue:true};
-  const fact = {turnId:'native-turn',status:'interrupted' as const,elapsedMs:12,atMs:NOW};
-  const view = render(<ChatThread {...props} currentResponseOutcome={fact} />);
-  expect(screen.getByRole('status', {name:'Current response status'}).textContent).toContain('Interrupted');
-  expect(screen.getByText('Partial reply')).toBeTruthy();
-  view.rerender(<ChatThread {...props} currentResponseOutcome={fact} stopFeedback={{kind:'unconfirmed'}} />);
-  expect(screen.getByRole('status', {name:'Current response status'}).textContent).toContain('Stop unconfirmed');
-  view.rerender(<ChatThread {...props} currentResponseOutcome={null} pending />);
-  expect(screen.getByRole('status', {name:'Current response status'}).textContent).toContain('Running');
-  view.rerender(<ChatThread {...props} currentResponseOutcome={null} />);
-  expect(screen.queryByRole('status', {name:'Current response status'})).toBeNull();
-});
 
 it('shows mobile conversation options only when footer actions are supplied', () => {
   const { rerender } = render(<ChatComposer layout="mobile" onSend={vi.fn()} />);

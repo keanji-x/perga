@@ -467,14 +467,16 @@ public sealed class SqliteTrackStoreRoundTripAndCascadeTests
         Assert.NotNull(updatedAttempts[0].FinishedAtMs);
 
         var updatedTurnsOpen1 = await store.ListSessionTurnsAsync("sess_open_1", ct);
-        Assert.Equal("interrupted", updatedTurnsOpen1[0].Status);
+        Assert.Equal("unknown", updatedTurnsOpen1[0].Status);
         Assert.NotNull(updatedTurnsOpen1[0].CompletedAtMs);
 
         var updatedTurnsClosed = await store.ListSessionTurnsAsync("sess_closed", ct);
-        Assert.Equal("interrupted", updatedTurnsClosed[0].Status);
+        Assert.Equal("unknown", updatedTurnsClosed[0].Status);
 
         var aggOpen1 = await store.LoadTrackAggregateAsync("trk_open_1", ct);
-        Assert.Equal("idle", aggOpen1!.Sessions[0].Status);
+        Assert.Equal("unknown", aggOpen1!.Sessions[0].Status);
+        Assert.Equal("host_restarted", aggOpen1.Sessions[0].UnknownReason);
+        Assert.Equal(updatedTurnsOpen1[0].Id, aggOpen1.Sessions[0].UnknownTurnId);
     }
 
     [Fact]

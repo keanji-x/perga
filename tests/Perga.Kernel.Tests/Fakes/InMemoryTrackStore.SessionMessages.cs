@@ -9,7 +9,6 @@ internal sealed partial class InMemoryTrackStore : ISessionInputStore, ISessionM
     private readonly Dictionary<(string SessionId, bool Worker, string Id), SessionMessage> _messages = new();
     private readonly Dictionary<(string Track, string Key), StoredSessionCreation> _sessionCreations = new();
     private readonly Dictionary<(string Id, string Turn), string> _queuedSteers = new();
-    private readonly Dictionary<string, ProviderSessionResumeFence> _resumeFences = new();
 
     private static (string SessionId, bool Worker, string Id) Key(SessionMessage message) =>
         (message.SessionId, message.AttemptId is not null, message.Id);

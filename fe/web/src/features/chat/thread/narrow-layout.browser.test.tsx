@@ -47,7 +47,7 @@ it.each([[192, 20], [232, 32], [288, 16]])('separates status text and actions at
   document.documentElement.style.fontSize = `${font}px`;
   render(<div style={{ width }}><ThreadStatusNotice heading="Interrupted" clock={{ elapsedMs: 27000, timestamp: { kind: 'finished', atMs: 1000 } }}
     copyAction={{ id: 'copy', text: 'Reply', run: vi.fn().mockResolvedValue(undefined) }}
-    editAction={{ id: 'edit', run: vi.fn() }} regenerateAction={{ id: 'regenerate', run: vi.fn().mockResolvedValue(undefined) }}>
+    regenerateAction={{ id: 'regenerate', run: vi.fn().mockResolvedValue(undefined) }}>
     <p>Interrupted details</p>
   </ThreadStatusNotice></div>);
   const meta = screen.getByRole('status', { name: 'Current response status' });

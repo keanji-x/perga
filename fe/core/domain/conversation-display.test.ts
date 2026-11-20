@@ -1,182 +1,5 @@
 import { describe,it,expect } from 'vitest';
-import { conversationItemsOperation, conversationRunOperation, heldConversationInputs, keepConversationInputOperation, retryConversationInputOperation, buildConversationTranscript, conversationPageSchema, removedHumanIds } from './conversation-display.js';
-import { outboxFactsWithRemovedInputs, matchSendOps, reportedInputSource, type SendOp } from './conversation-outbox.js';
-import type { ConversationDisplayItem, HarnessItem as HistoricalRow } from '../api/generated/wire.js';
-import { isConversationMessage, SYSTEM_PRESENTATION_LABELS } from './conversation.js';
-const cursor = (position:number) => ({ contract:'conversation_v1',source:'presentation',card_id:'card',position } as const);
-const human = (id:string,uid:string,position:number): ConversationDisplayItem => ({cursor:cursor(position),source:{
-  kind:'human',message_id:id,revision:1,author:{user_id:uid,display_name:uid},text:'same words',attachments:[],created_at_ms:position,
-}});
-const op:SendOp = { key:'key',phase:'confirmed',queueRevision:null,fromComposer:true,replaces:null,echo:{
-  id:'echo',author:'you',authorUserId:'jian',entryId:'message-a',text:'same words',atMs:1,
-  serverHighWaterBefore:0,queued:false,
-}};
-
-describe('canonical conversation display',()=>{
-  it('projects a frozen System source with its own identity, time and cursor without acknowledging Human input',()=>{
-    const system:ConversationDisplayItem={cursor:cursor(3),source:{kind:'system',observation_id:'message-a',
-      presentation:'system_report_edited',text:'same words',created_at_ms:123}};
-    expect(conversationPageSchema.safeParse({contract:'conversation_v1',source:'presentation',items:[system],next_cursor:null}).success).toBe(true);
-    const entries=buildConversationTranscript([system],'jian');
-    // A single observation has no report-only batch fact to grant a quiet reply fold.
-    expect(entries).toEqual([{id:'system:message-a',author:'system',label:'Report edited',text:'same words',atMs:123,
-      displayPosition:3}]);
-    expect(matchSendOps(entries.filter(isConversationMessage),[op],[],'card').size).toBe(0);
-    expect(removedHumanIds([{cursor:cursor(4),source:{kind:'removed',identity:{kind:'system',observation_id:'message-a'}}}]).size).toBe(0);
-  });
-  it('hands an accepted first input to its exact canonical Human identity and revision',()=>{
-    const accepted:SendOp={...op,phase:'confirmed',queueRevision:1,echo:{...op.echo,entryId:'message-a',authorUserId:'jian'}};
-    const entries=buildConversationTranscript([human('message-a','jian',1)],'jian');
-    const facts=outboxFactsWithRemovedInputs({cardId:'card',serverEntries:entries,serverTurns:entries.filter(isConversationMessage),
-      queuedEntryIds:new Set(),stalled:false,ops:[accepted],spent:[],landed:{transcript:1,run:1}},new Set());
-    expect(facts.shown).toEqual([]);
-    const report=reportedInputSource(entries[0]);
-    expect(report).toEqual({kind:'source',entryId:'message-a',rev:1,text:'same words'});
-    for(const [id,uid] of [['other','jian'],['message-a','alice']] as const){
-      const turns=buildConversationTranscript([human(id,uid,1)],'jian').filter(isConversationMessage);
-      expect(matchSendOps(turns,[accepted],[],'card').size).toBe(0);
-    }
-    const newer:SendOp={...accepted,queueRevision:2};
-    expect(matchSendOps(entries.filter(isConversationMessage),[newer],[],'card').size).toBe(0);
-  });
-  it('accepts only the owning non-Human System presentation and required frozen facts',()=>{
-    const source={kind:'system',observation_id:'observation',presentation:'system',text:'System fact',created_at_ms:12};
-    const parse=(value:unknown)=>conversationPageSchema.safeParse({contract:'conversation_v1',source:'presentation',items:[{cursor:cursor(1),source:value}],next_cursor:null}).success;
-    for(const presentation of Object.keys(SYSTEM_PRESENTATION_LABELS))expect(parse({...source,presentation})).toBe(true);
-    expect(parse({...source,presentation:'user'})).toBe(false);
-    expect(parse({...source,presentation:'system_unknown'})).toBe(false);
-    expect(parse({...source,presentation:12})).toBe(false);
-    expect(parse({...source,presentation:null})).toBe(false);
-    expect(parse({...source,created_at_ms:undefined})).toBe(false);
-    expect(parse({...source,observation_id:undefined})).toBe(false);
-  });
-  it('keeps two actual authors and reconciles only the exact message and UID',()=>{
-    const turns=buildConversationTranscript([human('message-b','alice',1),human('message-a','jian',2)],'jian').filter(isConversationMessage);
-    expect(turns.map(turn=>turn.author)).toEqual(['human','you']);
-    expect(matchSendOps(turns.slice(0,1),[op],[],'card').size).toBe(0);
-    expect([...matchSendOps(turns,[op],[],'card')]).toEqual([['key','human:message-a']]);
-    expect(buildConversationTranscript([human('message-a','jian',1)],null)[0].author).toBe('human');
-  });
-  it('does not acknowledge a known Human version from an older display revision',()=>{
-    const known:SendOp={...op,phase:'confirmed',queueRevision:2};
-    const older=human('message-a','jian',1);
-    expect(matchSendOps(buildConversationTranscript([older],'jian').filter(isConversationMessage),[known],[],'card').size).toBe(0);
-    if(older.source.kind !== 'human')throw new Error('Human fixture');
-    const current={...older,source:{...older.source,revision:2}};
-    expect([...matchSendOps(buildConversationTranscript([current],'jian').filter(isConversationMessage),[known],[],'card')]).toEqual([['key','human:message-a']]);
-  });
-  it('retires acknowledged optimistic text when the first GET already sees a removal',()=>{
-    const item:ConversationDisplayItem={cursor:cursor(2),source:{kind:'removed',identity:{kind:'human',message_id:'message-a'}}};
-    const entries=buildConversationTranscript([item],'jian');
-    const facts=outboxFactsWithRemovedInputs({cardId:'card',serverEntries:entries,serverTurns:[],queuedEntryIds:new Set(),
-      stalled:false,ops:[op],spent:[],landed:{transcript:1,run:1}},removedHumanIds([item]));
-    expect(facts.shown).toEqual([]);expect(facts.confirmed).toEqual([]);expect(facts.echoes).toEqual([]);
-    expect(facts.retire).toEqual([{key:'key',row:null}]);
-    expect(facts.blocked).toBe(false);
-  });
-  it('orders actual native sources by presentation and scopes identical item IDs to their threads',()=>{
-    const raw=(id:number,thread:string,text:string):HistoricalRow=>({id,worker_session_id:'runtime',card_id:'card',track_id:'track',thread_id:thread,
-      turn_id:'turn',item_uuid:'same-id',item_type:'agentMessage',method:'item/completed',params:JSON.stringify({item:{type:'agentMessage',text}}),
-      created_at_ms:id,turn_error_text:null});
-    const entries=buildConversationTranscript([
-      {cursor:cursor(2),source:{kind:'native',item:raw(1,'thread-b','second')}},
-      {cursor:cursor(1),source:{kind:'native',item:raw(500,'thread-a','first')}},
-    ],'jian');
-    expect(entries.map(entry=>'text' in entry ? entry.text:null)).toEqual(['first','second']);
-    expect(entries[0].id).not.toBe(entries[1].id);
-  });
-  it('requires the contract and typed tombstone instead of accepting an old raw array',()=>{
-    expect(conversationPageSchema.safeParse([]).success).toBe(false);
-    expect(conversationPageSchema.safeParse({contract:'conversation_v1',source:'presentation',items:[{
-      cursor:cursor(1),source:{kind:'removed',source_identity:'message-a'},
-    }],next_cursor:null}).success).toBe(false);
-  });
-});
-
-
-
-it('Keep preserves its owned operation key and exact CAS arguments and refuses a crossed receipt', () => {
-  const args={carrier_id:'carrier',submission_id:'submission',attempt_id:'attempt',revision:'7'};
-  const operation=keepConversationInputOperation('card /',args,'owned-key');
-  expect(operation).toMatchObject({method:'POST',path:'/api/cards/card%20%2F/conversation/input/keep',headers:{'Idempotency-Key':'owned-key'},body:args});
-  const result={...args,revision:'8',waiting_for_settlement:true};
-  expect(operation.responseSchema.parse(result)).toEqual(result);
-  expect(operation.responseSchema.safeParse({...result,attempt_id:'different-attempt'}).success).toBe(false);
-  expect(operation.responseSchema.safeParse({...result,revision:'9'}).success).toBe(false);
-});
-
-it('retry operation preserves exact CAS and key', () => {
-  const args={carrier_id:'carrier',submission_id:'submission',attempt_id:'attempt',revision:'7'};
-  const operation=retryConversationInputOperation('card /',args,'owned-key');
-  expect(operation).toMatchObject({method:'POST',path:'/api/cards/card%20%2F/conversation/input/retry',headers:{'Idempotency-Key':'owned-key'},body:args});
-  const result={...args,revision:'8',retry_intent_id:'intent',waiting_for_settlement:true};
-  expect(operation.responseSchema.parse(result)).toEqual(result);
-  expect(operation.responseSchema.safeParse({...result,attempt_id:'other'}).success).toBe(false);
-  expect(operation.responseSchema.safeParse({...result,revision:'9'}).success).toBe(false);
-  expect(operation.responseSchema.safeParse({...result,retry_intent_id:undefined}).success).toBe(false);
-});
-
-it('u2_imported_no_human_author_from_viewer_text_or_folded_segments',()=>{
-  const raw:HistoricalRow={id:77,worker_session_id:'original',card_id:'card',track_id:'track',thread_id:'thread',
-    turn_id:null,item_uuid:null,item_type:'userMessage',method:'item/completed',
-    params:JSON.stringify({item:{type:'userMessage',content:[{type:'inputText',text:'same words'}]}}),
-    created_at_ms:1,turn_error_text:null};
-  const provenance={kind:'unknown_legacy' as const,original_row_id:77,worker_session_id:'original',card_id:'card',
-    track_id:'track',thread_id:'thread',turn_id:null,item_uuid:null,item_type:'userMessage',method:'item/completed',
-    created_at_ms:1,original_digest:`sha256-v1:${'a'.repeat(64)}`,import_boundary_sequence:2};
-  for(const viewer of ['jian','alice',null])for(const folded of [false,true]){
-    const item:ConversationDisplayItem={cursor:cursor(3),source:{kind:'imported_item',provenance,item:folded ? {...raw,
-      input_segments:[1,2].map(()=>({presentation:'user' as const,text:'same words',attachments:[],
-        origin:{observation:'user_message',event_id:null,queue_entry:{id:'message-a',rev:1}}}))} : raw}};
-    const entries=buildConversationTranscript([item],viewer);
-    expect(entries).toHaveLength(folded ? 2 : 1);
-    expect(entries.every(entry=>entry.author === 'unknown')).toBe(true);
-    for(const entry of entries){expect(entry).not.toHaveProperty('human');expect(entry).not.toHaveProperty('queueEntryId');
-      expect(entry).not.toHaveProperty('inputSource');expect(reportedInputSource(entry)).toBeNull();}
-    expect(matchSendOps(entries.filter(isConversationMessage),[op],[],'card').size).toBe(0);
-  }
-});
-
-it.each(['failed','interrupted','completed'])('u2_imported_outcome_keeps_historical_source_%s',status=>{
-  const raw:HistoricalRow={id:90,worker_session_id:'old',card_id:'card',track_id:'track',thread_id:'thread',turn_id:'old-turn',
-    item_uuid:null,item_type:null,method:'turn/completed',params:JSON.stringify({status,error:{message:'Old failure'}}),created_at_ms:1,turn_error_text:'Old reason'};
-  const provenance={kind:'unknown_legacy' as const,original_row_id:90,worker_session_id:'old',card_id:'card',track_id:'track',thread_id:'thread',
-    turn_id:'old-turn',item_uuid:null,item_type:null,method:'turn/completed',created_at_ms:1,original_digest:`sha256-v1:${'a'.repeat(64)}`,import_boundary_sequence:0};
-  expect(buildConversationTranscript([{cursor:cursor(1),source:{kind:'imported_item',item:raw,provenance}}],'jian'))
-    .toMatchObject([{author:'turn',status,imported:true,turnId:'old-turn',message:'Old failure',text:'Old reason'}]);
-});
-
-it('separates pending native acknowledgement from unresolved delivery without changing its facts',()=>{
-  const submission: import('../api/generated/wire.js').ConversationSubmissionDelivery={
-    carrier_id:'carrier',logical_turn_id:'logical',ordinal:0,submission_id:'submission',attempt:{
-      attempt_id:'attempt',revision:'1',delivery:'crossing_unknown',target:{provider:'opencode',thread_id:'thread',native_session_id:null,native_turn_id:null,local_turn_id:'local',rpc_request_id:null},
-      invocation:{kind:'recorded',configuration:{model:null,effort:null,permission:'never'}},resolution:null,
-      actions:{keep:{kind:'available'},retry:{kind:'unavailable',reason:'invocation_not_fully_frozen'}},
-    },
-  };
-  const input={current_execution_id:'logical',submissions:[submission]};
-  const before=JSON.stringify(input);
-  expect(heldConversationInputs(input,true)).toEqual([]);
-  const supplemental={...submission,ordinal:1};
-  expect(heldConversationInputs({...input,submissions:[supplemental]},true)).toEqual([supplemental]);
-  expect(JSON.stringify(input)).toBe(before);
-  expect(heldConversationInputs(input,false)).toEqual([submission]);
-  expect(heldConversationInputs({...input,current_execution_id:null},true)).toEqual([submission]);
-  expect(heldConversationInputs({...input,current_execution_id:'another'},true)).toEqual([submission]);
-  expect(heldConversationInputs(null,true)).toEqual([]);
-  expect(heldConversationInputs({...input,submissions:[{...submission,attempt:null}]},true)).toEqual([]);
-  const attempt=submission.attempt!;
-  for(const delivery of ['accepted','not_dispatched'] as const) {
-    expect(heldConversationInputs({current_execution_id:null,submissions:[{...submission,attempt:{...attempt,delivery}}]},true)).toEqual([]);
-  }
-  const resolved={...submission,attempt:{...attempt,resolution:{kind:'keep' as const,result:{
-    carrier_id:'carrier',submission_id:'submission',attempt_id:'attempt',revision:'2',waiting_for_settlement:true,
-  }}}};
-  expect(heldConversationInputs({...input,submissions:[resolved]},true)).toEqual([resolved]);
-});
-
-
-
+import { buildConversationTranscript, conversationItemsOperation, conversationRunOperation } from './conversation-display.js';
 describe('system wake projection', () => {
   it.each([
     ['system', undefined, 'system'],
@@ -188,7 +11,7 @@ describe('system wake projection', () => {
   ])('renders %s with presentation %s as a System observation', (triggerKind, presentation, expected) => {
     const page = conversationItemsOperation('session', null).responseSchema.parse({
       session: { id: 'session', trackId: 'track', provider: 'codex', contextUsage: null, createdAtMs: 1, updatedAtMs: 1 },
-      unknownInput: null, items: [{ id: 1, sessionId: 'session', turnId: 'turn', kind: 'user',
+      state: 'idle', readonlyReason: null, canReopen: false, workerPaused: false, lastTurn: null, unknownDetail: null, items: [{ id: 1, sessionId: 'session', turnId: 'turn', kind: 'user',
         payload: { content: 'Wake notice', triggerKind, presentation }, createdAtMs: 2 }],
     });
     expect(page.items[0].source).toEqual({ kind: 'system', observation_id: '1', presentation: expected,
@@ -202,9 +25,128 @@ it('rejects old run objects and raw arrays at the canonical run boundary', () =>
   for (const value of [[], { card_id: 'card', phase: 'idle' }]) expect(operation.responseSchema.safeParse(value).success).toBe(false);
 });
 
-it.each(['-1', '01', 'abc', '18446744073709551616'])('rejects non-u64 CAS revision %s in standalone keep/retry receipts', revision => {
-  const args = { carrier_id: 'carrier', submission_id: 'submission', attempt_id: 'attempt', revision: '7' };
-  const receipt = { ...args, revision, waiting_for_settlement: false };
-  expect(keepConversationInputOperation('card', args, 'key').responseSchema.safeParse(receipt).success).toBe(false);
-  expect(retryConversationInputOperation('card', args, 'key').responseSchema.safeParse({ ...receipt, retry_intent_id: 'intent' }).success).toBe(false);
+
+it('preserves a nullable epoch boundary as a visible memory divider', () => {
+  const page = conversationItemsOperation('session', null).responseSchema.parse({
+    session: { id: 'session', trackId: 'track', provider: 'codex', contextUsage: null, createdAtMs: 1, updatedAtMs: 2 },
+    state: 'idle', readonlyReason: null, canReopen: false, workerPaused: false, lastTurn: null, unknownDetail: null,
+    items: [{ id: 2, sessionId: 'session', turnId: null, kind: 'epoch_boundary',
+      payload: { epoch: 2, reason: 'reset_context' }, createdAtMs: 2 }],
+  });
+  expect(buildConversationTranscript(page.items, null)).toMatchObject([
+    { id: 'system:epoch-2', author: 'system', text: '已重置上下文 · Epoch 2' },
+  ]);
+});
+
+it('retains archived interrupted inputs in order before the reset boundary', () => {
+  const content = 'Original\n  exact text <@person>'; const wake = '{"event":"mail","text":"Wake\\nbody"}';
+  const page = conversationItemsOperation('session', null).responseSchema.parse({
+    session: { id: 'session', trackId: 'track', provider: 'codex', contextUsage: null, createdAtMs: 1, updatedAtMs: 2 },
+    state: 'idle', readonlyReason: null, canReopen: false, workerPaused: false, lastTurn: null, unknownDetail: null,
+    items: [
+      { id: 1, sessionId: 'session', turnId: null, kind: 'user', payload: { v: 1, content, inputId: 'input', epoch: 1, status: 'interrupted', archived: true, reason: 'session_reset' }, createdAtMs: 1 },
+      { id: 2, sessionId: 'session', turnId: null, kind: 'system', payload: { v: 1, content: wake, wakeId: 'wake', wakeKind: 'mail', epoch: 1, status: 'interrupted', archived: true, reason: 'session_reset' }, createdAtMs: 2 },
+      { id: 3, sessionId: 'session', turnId: null, kind: 'epoch_boundary', payload: { epoch: 2, reason: 'reset_context' }, createdAtMs: 3 },
+    ],
+  });
+  expect(buildConversationTranscript(page.items, null)).toMatchObject([
+    { author: 'human', text: content, deliveryError: 'Interrupted · Unsent' },
+    { author: 'system', text: wake, label: 'Interrupted · Unsent' },
+    { id: 'system:epoch-3', text: '已重置上下文 · Epoch 2' },
+  ]);
+});
+
+it('keeps an exhausted wake visible with its original payload and failure reason', () => {
+  const content = '{"event":"task_settled"}';
+  const page = conversationItemsOperation('session', null).responseSchema.parse({
+    session: { id: 'session', trackId: 'track', provider: 'codex', contextUsage: null, createdAtMs: 1, updatedAtMs: 2 },
+    state: 'idle', readonlyReason: null, canReopen: false, workerPaused: false, lastTurn: null, unknownDetail: null,
+    items: [{ id: 1, sessionId: 'session', turnId: null, kind: 'system', payload: { v: 1, content, wakeId: 'wake', wakeKind: 'task_settled', status: 'interrupted', archived: true, reason: 'max_attempts_exceeded' }, createdAtMs: 1 }],
+  });
+  expect(buildConversationTranscript(page.items, null)).toMatchObject([
+    { author: 'system', text: content, label: 'Wake delivery failed · Retry limit reached' },
+  ]);
+});
+
+const pergaPage = (items: unknown[], extra = {}) => ({
+  session: { id: 'session', trackId: 'track', provider: 'codex', nativeThreadId: 'native-thread', epoch: 2,
+    contextUsage: null, createdAtMs: 1, updatedAtMs: 10 },
+  state: 'idle', readonlyReason: null, canReopen: false, workerPaused: false, lastTurn: null, unknownDetail: null, items, ...extra,
+});
+const item = (id: number, kind: string, payload: unknown, turnId: string | null = 'turn') =>
+  ({ id, sessionId: 'session', turnId, kind, payload, createdAtMs: id });
+
+it('projects SessionItemDto speech, thinking, tools and outcomes directly without provider envelopes', () => {
+  const page = conversationItemsOperation('session', null).responseSchema.parse(pergaPage([
+    item(1, 'user', { inputId: 'message', content: '  exact\nwords  ', steered: true }),
+    item(2, 'thinking', { text: 'Reasoning\nverbatim' }),
+    item(3, 'tool_call', { callId: 'call', name: 'custom_tool', args: { query: 'input' } }),
+    item(4, 'tool_result', { callId: 'call', output: 'Tool result', isError: false }),
+    item(5, 'assistant_text', { text: '  Exact\nreply  ' }),
+    item(6, 'turn_outcome', { status: 'completed' }),
+  ]));
+  const entries = buildConversationTranscript(page.items, 'local-owner');
+  expect(entries).toMatchObject([
+    { author: 'you', text: '  exact\nwords  ', supplemental: true, human: { messageId: 'message' } },
+    { author: 'activity', verb: 'Thought', content: 'Reasoning\nverbatim' },
+    { author: 'activity', verb: 'Called', tool: 'custom_tool', state: 'done', atMs: 4,
+      content: 'Input\n{\n  "query": "input"\n}\n\nOutput\nTool result' },
+    { author: 'agent', text: '  Exact\nreply  ', nativeTurn: { threadId: 'native-thread', turnId: 'turn' } },
+    { author: 'turn', status: 'completed', turnId: 'turn' },
+  ]);
+  for (const row of page.items) {
+    expect(row.source).not.toHaveProperty('item.method');
+    expect(row.source).not.toHaveProperty('item.params');
+    expect(row.source.kind).not.toBe('native');
+  }
+});
+
+it('keeps a running tool identity stable when its result arrives and preserves failed output', () => {
+  const call = item(1, 'tool_call', { callId: 'call', name: 'custom', args: {} });
+  const read = (items: unknown[]) => buildConversationTranscript(conversationItemsOperation('session', null).responseSchema.parse(pergaPage(items)).items, null);
+  const running = read([call])[0];
+  const failed = read([call, item(2, 'tool_result', { callId: 'call', output: 'Failure\nverbatim', isError: true })])[0];
+  expect(running).toMatchObject({ author: 'activity', state: 'running' });
+  expect(failed).toMatchObject({ id: running.id, author: 'activity', state: 'failed', content: 'Error\nFailure\nverbatim' });
+});
+
+it('projects active-turn failures only when their persisted outcome is missing', () => {
+  const activeTurn = { id: 'turn', sessionId: 'session', turnIndex: 1, epoch: 2, triggerKind: 'user',
+    status: 'interrupted', errorText: 'Stopped', startedAtMs: 1, completedAtMs: 9 };
+  for (const items of [[], [item(1, 'turn_outcome', { status: 'interrupted', error: 'Stopped' })]]) {
+    const page = conversationItemsOperation('session', null).responseSchema.parse(pergaPage(items, { activeTurn }));
+    expect(buildConversationTranscript(page.items, null)).toMatchObject([{ author: 'turn', status: 'interrupted', text: 'Stopped' }]);
+    expect(page.items).toHaveLength(1);
+  }
+});
+
+it('keeps cursor ordering and page boundaries without fabricating persisted item identities', () => {
+  const data = pergaPage(Array.from({ length: 65 }, (_, index) => item(index + 1, 'assistant_text', { text: String(index + 1) })));
+  const latest = conversationItemsOperation('session', null).responseSchema.parse(data);
+  expect(latest.items).toHaveLength(60);
+  expect(latest.next_cursor?.position).toBe(6);
+  const earlier = conversationItemsOperation('session', latest.next_cursor).responseSchema.parse(data);
+  expect(buildConversationTranscript(earlier.items, null).map(entry => 'text' in entry ? entry.text : '')).toEqual(['1', '2', '3', '4', '5']);
+  expect(earlier.next_cursor).toBeNull();
+});
+
+it('keeps successful application questions as speech and incomplete or refused calls as activities', () => {
+  const call = item(1, 'tool_call', { callId: 'ask', name: 'perga_user_ask', args: { questions: [{ title: ' Choose ', options: [' A ', 'B'] }] } });
+  const read = (items: unknown[]) => buildConversationTranscript(conversationItemsOperation('session', null).responseSchema.parse(pergaPage(items)).items, null);
+  expect(read([call])).toMatchObject([{ author: 'activity', state: 'running' }]);
+  expect(read([call, item(2, 'tool_result', { callId: 'ask', output: {}, isError: false })]))
+    .toMatchObject([{ author: 'agent', origin: 'ask', text: 'Choose (A / B)' }]);
+  expect(read([call, item(2, 'tool_result', { callId: 'ask', output: 'Refused', isError: true })]))
+    .toMatchObject([{ author: 'activity', state: 'failed', detail: 'Refused' }]);
+});
+
+it('bounds thinking and tool disclosures without losing failure evidence', () => {
+  const rows = [item(1, 'thinking', { text: 'x'.repeat(40_000) }),
+    item(2, 'tool_call', { callId: 'call', name: 'custom' }), item(3, 'tool_result', { callId: 'call', isError: true, output: 'y'.repeat(40_000) })];
+  const entries = buildConversationTranscript(conversationItemsOperation('session', null).responseSchema.parse(pergaPage(rows)).items, null);
+  for (const entry of entries) {
+    if (entry.author !== 'activity') throw new Error('Expected activity');
+    expect(entry.content?.length).toBeLessThan(33_000);
+    expect(entry.content).toContain('(truncated)');
+  }
 });

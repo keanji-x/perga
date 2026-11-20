@@ -313,8 +313,9 @@ public sealed class DurableSessionInputTests
             Assert.Empty(reopened.AgentRuntime.ExecutedTurns);
             using var busy = await SendAsync(reopened.Client, $"/api/v1/sessions/{sessionId}/messages", "new-key", new { content = "Next" });
             Assert.Equal(HttpStatusCode.Conflict, busy.StatusCode);
-            using var resolve = await reopened.Client.PostAsync(path + "/abandon", null);
-            var resolved = await resolve.Content.ReadFromJsonAsync<SessionInputReceipt>(PergaJsonDefaults.ApiOptions);
+            using var resolve = await reopened.Client.PostAsJsonAsync($"/api/v1/sessions/{sessionId}/recover", new { mode = "reset_context" });
+            resolve.EnsureSuccessStatusCode();
+            var resolved = await reopened.Client.GetFromJsonAsync<SessionInputReceipt>(path, PergaJsonDefaults.ApiOptions);
             Assert.NotNull(resolved!.ResolvedAtMs);
             Assert.Equal("unknown", resolved.TurnStatus);
             using var next = await SendAsync(reopened.Client, $"/api/v1/sessions/{sessionId}/messages", "new-key", new { content = "Next" });
@@ -622,8 +623,8 @@ public sealed class DurableSessionInputTests
             {
                 Assert.Equal("unconfirmed", Assert.Single(final.QueuedMessages).State);
                 using var removed = await host.Client.DeleteAsync($"{messages}/queue/{first.InputId}");
-                Assert.Equal(HttpStatusCode.Conflict, removed.StatusCode);
-                Assert.Equal("unconfirmed", Assert.Single((await ReadPageAsync()).QueuedMessages).State);
+                Assert.Equal(HttpStatusCode.NoContent, removed.StatusCode);
+                Assert.Empty((await ReadPageAsync()).QueuedMessages);
             }
             else
                 Assert.Empty(final.QueuedMessages);

@@ -4,6 +4,7 @@ import { userEvent } from 'vitest/browser';
 
 import '../../../styles/entry.css';
 import { ChatThread } from './public.tsx';
+const RUNNING_TURN = Object.freeze({ id: 't1', sessionId: 'chat', turnIndex: 1, epoch: 1, triggerKind: 'user', status: 'running', startedAtMs: null });
 import type { Conversation, ConversationActivity } from '../../../../../core/domain/conversation.ts';
 
 afterEach(cleanup);
@@ -15,7 +16,7 @@ function action(id: string, state: 'running' | 'done'): ConversationActivity {
 }
 
 it('uses the execution mark in a collapsed and expanded tool group and removes it when the turn ends', () => {
-  const { container, rerender } = render(<ChatThread hasPendingMessages={false} canContinue={false} conversation={conversation} turns={[action('first', 'done'), action('second', 'running')]} pending cards={{}} stalled={false} />);
+  const { container, rerender } = render(<ChatThread hasPendingMessages={false} canContinue={false} conversation={conversation} turns={[action('first', 'done'), action('second', 'running')]} lastSessionTurn={RUNNING_TURN} cards={{}} stalled={false} />);
   const status = container.querySelector<HTMLElement>('[role="status"]')!;
   expect(status.querySelector('[data-nc-motion="execution"]')!.checkVisibility()).toBe(true);
   expect(getComputedStyle(status.querySelector(':scope > svg:not([data-nc-motion])')!).display).toBe('none');
@@ -28,7 +29,7 @@ it('uses the execution mark in a collapsed and expanded tool group and removes i
 
 it('replaces the running animation with a visible completion icon', () => {
   const props = { hasPendingMessages: false, canContinue: false, conversation, cards: {}, stalled: false };
-  const { container, rerender } = render(<ChatThread {...props} turns={[action('first', 'done'), action('second', 'running')]} pending />);
+  const { container, rerender } = render(<ChatThread {...props} turns={[action('first', 'done'), action('second', 'running')]} lastSessionTurn={RUNNING_TURN} />);
   expect(container.querySelector('[data-nc-motion]')!.checkVisibility()).toBe(true);
   rerender(<ChatThread {...props} turns={[action('first', 'done'), action('second', 'done')]} />);
   const icon = container.querySelector('[aria-expanded="false"] > span:first-child')!;
@@ -38,13 +39,13 @@ it('replaces the running animation with a visible completion icon', () => {
 });
 
 it('keeps the tool group toggle clickable through the decorative execution animation', async () => {
-  const { container } = render(<ChatThread hasPendingMessages={false} canContinue={false} conversation={conversation} turns={[action('first', 'done'), action('second', 'running')]} pending cards={{}} stalled={false} />);
+  const { container } = render(<ChatThread hasPendingMessages={false} canContinue={false} conversation={conversation} turns={[action('first', 'done'), action('second', 'running')]} lastSessionTurn={RUNNING_TURN} cards={{}} stalled={false} />);
   await userEvent.click(container.querySelector<HTMLElement>('[role="status"]')!);
   expect(container.querySelector('[aria-expanded="true"]')).not.toBeNull();
 });
 
 it('places the lone execution mark before the verb and centers it within the row', () => {
-  const { container } = render(<ChatThread hasPendingMessages={false} canContinue={false} conversation={conversation} turns={[action('single', 'running')]} pending cards={{}} stalled={false} />);
+  const { container } = render(<ChatThread hasPendingMessages={false} canContinue={false} conversation={conversation} turns={[action('single', 'running')]} lastSessionTurn={RUNNING_TURN} cards={{}} stalled={false} />);
   const marker = container.querySelector<SVGElement>('[data-nc-motion="execution"]')!;
   const row = container.querySelector<HTMLElement>('[data-nc-entry] > div')!;
   expect(marker.checkVisibility()).toBe(true);

@@ -31,7 +31,7 @@ it.each([1280, 390])('selects a dynamically registered backend through the keybo
   const field = page.getByRole('combobox', { name: 'Message' });
   await field.fill('Frozen first message');
   await userEvent.keyboard('{Enter}');
-  await expect.element(page.getByRole('button', { name: 'Try again', exact: true })).toBeVisible();
+  await expect.element(page.getByRole('button', { name: /^(Try again|重试|安全重试（同幂等键）)$/, exact: true })).toBeVisible();
   await expect.element(model).toBeDisabled();
   const posts = () => fixture.requests.filter(request => request.method === 'POST' && request.path.endsWith('/sessions'));
   expect(posts()).toHaveLength(1);
@@ -39,7 +39,7 @@ it.each([1280, 390])('selects a dynamically registered backend through the keybo
   bootstrap.providers[0] = { ...bootstrap.providers[0], available: false, reason: 'Now unavailable' };
   await fixture.client.invalidateQueries({ queryKey: ['managed-providers'] });
   if (width < 600) await page.getByLabelText('对话选项').click();
-  await page.getByRole('button', { name: 'Try again', exact: true }).click();
+  await page.getByRole('button', { name: /^(Try again|重试|安全重试（同幂等键）)$/, exact: true }).click();
   await expect.poll(() => posts().length).toBe(2);
   expect(posts()[1].body).toEqual(posts()[0].body);
   expect(posts()[1].headers).toEqual(posts()[0].headers);
@@ -84,10 +84,10 @@ it('refreshes owner metadata before retrying a draft that never dispatched', asy
   await page.getByRole('button', { name: 'New conversation', exact: true }).click();
   await page.getByRole('combobox', { name: 'Message' }).fill('Retry after registration');
   await userEvent.keyboard('{Enter}');
-  await expect.element(page.getByRole('button', { name: 'Try again', exact: true })).toBeVisible();
+  await expect.element(page.getByRole('button', { name: /^(Try again|重试|安全重试（同幂等键）)$/, exact: true })).toBeVisible();
   expect(fixture.requests.filter(request => request.method === 'POST' && request.path.endsWith('/sessions'))).toHaveLength(0);
   options.bootstrap = fixtureBootstrap();
-  await page.getByRole('button', { name: 'Try again', exact: true }).click();
+  await page.getByRole('button', { name: /^(Try again|重试|安全重试（同幂等键）)$/, exact: true }).click();
   await expect.poll(() => fixture.requests.filter(request => request.method === 'POST' && request.path.endsWith('/sessions')).length).toBe(1);
   expect(fixture.requests.some(request => request.path === '/api/v1/bootstrap?scope=managed&refresh=true')).toBe(true);
 });

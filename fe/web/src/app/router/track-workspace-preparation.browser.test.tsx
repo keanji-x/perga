@@ -20,14 +20,17 @@ it.each([1280, 390])('keeps a saved first message and an editable composer durin
       const ok = (body: unknown) => ({ status: 200, statusText: 'OK', body });
       const session = {
         id: 'ses_lead', trackId: 'daily', isLead: true, title: 'Lead', provider: 'codex',
-        status: 'queued', createdAtMs: 1, updatedAtMs: 1,
+        status: 'queued', contextUsage: null, createdAtMs: 1, updatedAtMs: 1,
       };
       if (request.path === '/api/v1/tracks/daily' || request.path === '/api/v1/tracks' && request.method === 'POST') return ok({
         track: { id: 'daily', areaId: 'project-area', title: 'Real Track', leadSessionId: session.id, createdAtMs: 1, updatedAtMs: 1 },
         report: {}, sessions: [session], workspacePreparation: workspace,
       });
+      if (request.method === 'POST' && request.path === '/api/v1/sessions/ses_lead/messages') return ok({
+        sessionId: session.id, inputId: 'inp_first', queued: true, delivery: 'queued',
+      });
       if (request.path.startsWith('/api/v1/sessions/ses_lead/items?')) return ok({
-        session, activeTurn: null, unknownInput: null,
+        session, activeTurn: null, state: 'idle', readonlyReason: null, canReopen: false, workerPaused: false, lastTurn: null, unknownDetail: null,
         items: [{
           id: 1, sessionId: session.id, turnId: 'turn_first', kind: 'user', createdAtMs: 1,
           payload: { content: message, inputId: 'inp_first' },

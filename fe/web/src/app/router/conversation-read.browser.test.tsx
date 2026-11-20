@@ -25,18 +25,18 @@ it.each([390, 1280])('retains history and draft through a failed v1 status read 
   await userEvent.type(field, 'Keep this draft.');
   unavailable = true;
   await act(async () => { await fixture.client.invalidateQueries({ queryKey: queryKeys.plannerRun('daily-planner') }); });
-  await expect.element(page.getByText('Status unconfirmed', { exact: true })).toBeVisible();
+  await expect.element(page.getByText('无法同步最新对话状态', { exact: true })).toBeVisible();
   expect(screen.queryByText('private transport diagnostic')).toBeNull();
   unavailable = false;
   responseGate.held = new Promise<void>(resolve => { release = resolve; });
   const before = fixture.requests.length;
   try {
-    await page.getByRole('button', { name: 'Reload status' }).click();
-    await expect.element(page.getByRole('button', { name: 'Reload status' })).toHaveAttribute('aria-busy', 'true');
+    await page.getByRole('button', { name: '刷新' }).click();
+    await expect.element(page.getByRole('button', { name: '刷新' })).toHaveAttribute('aria-busy', 'true');
     expect(fixture.requests.slice(before).filter(request => request.path.endsWith('&view=run'))).toHaveLength(1);
     await expect.element(field).toHaveTextContent('Keep this draft.');
   } finally { release?.(); }
-  await expect.element(page.getByText('Status unconfirmed', { exact: true })).not.toBeInTheDocument();
+  await expect.element(page.getByText('无法同步最新对话状态', { exact: true })).not.toBeInTheDocument();
   await expect.element(page.getByText('Retained reply.', { exact: true })).toBeVisible();
   await expect.element(field).toHaveTextContent('Keep this draft.');
   expect(fixture.requests.slice(before).every(request => request.method === 'GET')).toBe(true);
@@ -75,5 +75,5 @@ it.each([
   await act(async () => { await fixture.client.invalidateQueries({ queryKey: queryKeys.plannerRun('daily-planner') }); });
   await expect.element(page.getByRole('button', { name: /^Model:.*high/ })).toBeVisible();
   await page.getByRole('button', { name: /^Model:.*high/ }).click();
-  await expect.element(page.getByRole('slider', { name: 'Reasoning effort' })).toHaveAttribute('aria-valuenow', '1');
+  await expect.element(page.getByRole('slider', { name: 'Reasoning effort' })).toHaveAttribute('aria-valuetext', 'high');
 });

@@ -425,7 +425,7 @@ public sealed class AcpPermissionSwitchTests
         var closing = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var releaseClose = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         original.CloseSessionHandler = ct => { closing.TrySetResult(); return releaseClose.Task.WaitAsync(ct); };
-        var resume = ctx.Kernel.ResumeProviderSessionAsync(id, turn.Id, default);
+        var resume = ctx.Kernel.RecoverSessionAsync(id, new("reconnect"), default);
         await closing.Task.WaitAsync(TimeSpan.FromSeconds(10));
         try
         {

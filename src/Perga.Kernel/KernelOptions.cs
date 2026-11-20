@@ -24,6 +24,17 @@ public sealed record KernelOptions
     public int DefaultHookTimeoutSecs { get; init; } = 300;
     public static readonly TimeSpan DefaultProviderCancelDispatchGrace = TimeSpan.FromSeconds(2);
     public static readonly TimeSpan DefaultProviderTerminalStopGrace = TimeSpan.FromSeconds(10);
+    public TimeSpan SessionStartupTimeout
+    {
+        get;
+        init => field = NormalizeStopGrace(value, MaxTimerDelay, TimeSpan.FromSeconds(30));
+    } = TimeSpan.FromSeconds(30);
+    public TimeSpan SessionCompactionTimeout
+    {
+        get;
+        init => field = NormalizeStopGrace(value, MaxTimerDelay, TimeSpan.FromSeconds(60));
+    } = TimeSpan.FromSeconds(60);
+
     internal static readonly TimeSpan SessionResumeTimeout = TimeSpan.FromSeconds(20);
     private static readonly TimeSpan MaxTimerDelay = TimeSpan.FromMilliseconds(uint.MaxValue - 1);
 

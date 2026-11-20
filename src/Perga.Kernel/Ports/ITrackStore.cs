@@ -138,7 +138,7 @@ public interface ITrackStore : ITrackReadStore
     Task<IReadOnlyList<(string TrackId, PersistedSessionInput Input)>> RecoverSessionInputsAsync(CancellationToken ct);
     Task UpsertSessionAsync(AgentSessionDto session, EventEnvelopeDto? evt, CancellationToken ct);
     Task SaveSessionResumeFenceAsync(ProviderSessionResumeFence fence, CancellationToken ct);
-    Task CompleteSessionResumeAsync(AgentSessionDto session, PersistedSessionInput? unresolved, EventEnvelopeDto sessionEvent, CancellationToken ct);
+    Task CompleteSessionResumeAsync(AgentSessionDto session, PersistedSessionInput? unresolved, EventEnvelopeDto sessionEvent, int expectedEpoch, CancellationToken ct, SessionItemDto? boundary = null);
     Task RecordTurnAndItemsAsync(SessionTurnDto turn, IReadOnlyList<SessionItemDto> newItems, AgentSessionDto? updatedSession, CancellationToken ct);
     Task<(SessionTurnDto Turn, IReadOnlyList<long> ItemIds)> RecordTurnAndItemsWithIdsAsync(
         SessionTurnDto turn,

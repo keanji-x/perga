@@ -73,7 +73,7 @@ it('shows registry order and filters by command-name prefix', async () => {
   renderCommandFixture(); const input = await open();
   await type(input, '/');
   await waitFor(() => expect(screen.getAllByRole('option').map(option => option.querySelectorAll('span')[1]?.textContent))
-    .toEqual(['new', 'side', 'compact', 'terminal', 'close']));
+    .toEqual(['reset', 'new', 'side', 'compact', 'terminal', 'close']));
   await type(input, '/cl');
   await waitFor(() => expect(screen.getAllByRole('option').map(option => option.textContent)).toEqual(['closeClose this Track']));
 });

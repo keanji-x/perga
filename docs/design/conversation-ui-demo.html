@@ -1,0 +1,1182 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Perga 对话 5 区 1-to-1 数据绑定原型</title>
+  <style>
+    :root {
+      --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      --font-serif: "New York", "Iowan Old Style", Charter, Georgia, "Songti SC", SimSun, "Noto Serif CJK SC", serif;
+      --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+      --bg: oklch(96% 0.005 90);
+      --paper: oklch(99.4% 0.004 90);
+      --surface-sub: oklch(94.5% 0.005 89);
+      --surface-chip: oklch(92.5% 0.005 89);
+      --surface-code: oklch(0% 0 0 / 0.04);
+      --hairline: oklch(86% 0.006 87);
+      --hairline-strong: oklch(76% 0.006 86);
+      --text: oklch(22% 0.004 250);
+      --text-2: oklch(40% 0.005 248);
+      --text-3: oklch(50% 0.005 245);
+      --accent: oklch(45% 0.11 267);
+      --accent-soft: oklch(49% 0.11 267 / 0.12);
+      --warn: oklch(56% 0.12 75);
+      --warn-soft: oklch(76% 0.13 80 / 0.16);
+      --warn-border: oklch(83% 0.07 80);
+      --warn-text: oklch(41% 0.10 75);
+      --error: oklch(51% 0.15 25);
+      --error-soft: oklch(55% 0.14 25 / 0.11);
+      --error-border: oklch(84% 0.06 25);
+      --error-text: oklch(42% 0.17 25);
+      --success: oklch(50% 0.13 145);
+      --success-soft: oklch(60% 0.13 145 / 0.14);
+      --bubble-user: oklch(93% 0.006 90);
+      --shadow-float: 0 1px 2px oklch(0% 0 0 / 0.05), 0 10px 28px oklch(0% 0 0 / 0.07);
+      --radius-sm: 6px;
+      --radius-md: 12px;
+      --radius-lg: 16px;
+      --radius-pill: 999px;
+
+      /* Distinct soft colors for the 5 regions (1 region = 1 data object) */
+      --z1: oklch(46% 0.12 265); /* Header ← session.state */
+      --z2: oklch(46% 0.11 160); /* Thread ← turns[] / turn.status */
+      --z3: oklch(50% 0.12 300); /* Queue ← queue[] */
+      --z4: oklch(52% 0.14 45);  /* Action ← single-slot action */
+      --z5: oklch(42% 0.04 240); /* Composer ← input + /cmd */
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) {
+        --bg: oklch(21% 0.014 250);
+        --paper: oklch(27.5% 0.013 251);
+        --surface-sub: oklch(23.5% 0.014 250);
+        --surface-chip: oklch(32% 0.014 250);
+        --surface-code: oklch(100% 0 0 / 0.06);
+        --hairline: oklch(38% 0.01 253);
+        --hairline-strong: oklch(47% 0.008 254);
+        --text: oklch(92% 0.003 258);
+        --text-2: oklch(82% 0.004 257);
+        --text-3: oklch(68% 0.005 256);
+        --accent: oklch(76% 0.11 267);
+        --accent-soft: oklch(74% 0.11 267 / 0.18);
+        --warn: oklch(79% 0.15 80);
+        --warn-soft: oklch(74% 0.14 80 / 0.17);
+        --warn-border: oklch(45% 0.06 80);
+        --warn-text: oklch(88% 0.11 80);
+        --error: oklch(74% 0.14 25);
+        --error-soft: oklch(74% 0.13 25 / 0.17);
+        --error-border: oklch(45% 0.06 25);
+        --error-text: oklch(87% 0.08 25);
+        --success: oklch(74% 0.13 145);
+        --success-soft: oklch(70% 0.13 145 / 0.16);
+        --bubble-user: oklch(33.5% 0.014 252);
+        --shadow-float: 0 1px 2px oklch(0% 0 0 / 0.3), 0 10px 28px oklch(0% 0 0 / 0.42);
+        --z1: oklch(76% 0.12 265);
+        --z2: oklch(74% 0.11 160);
+        --z3: oklch(76% 0.12 300);
+        --z4: oklch(78% 0.14 45);
+        --z5: oklch(74% 0.04 240);
+      }
+    }
+
+    [data-theme="dark"] {
+      --bg: oklch(21% 0.014 250);
+      --paper: oklch(27.5% 0.013 251);
+      --surface-sub: oklch(23.5% 0.014 250);
+      --surface-chip: oklch(32% 0.014 250);
+      --surface-code: oklch(100% 0 0 / 0.06);
+      --hairline: oklch(38% 0.01 253);
+      --hairline-strong: oklch(47% 0.008 254);
+      --text: oklch(92% 0.003 258);
+      --text-2: oklch(82% 0.004 257);
+      --text-3: oklch(68% 0.005 256);
+      --accent: oklch(76% 0.11 267);
+      --accent-soft: oklch(74% 0.11 267 / 0.18);
+      --warn: oklch(79% 0.15 80);
+      --warn-soft: oklch(74% 0.14 80 / 0.17);
+      --warn-border: oklch(45% 0.06 80);
+      --warn-text: oklch(88% 0.11 80);
+      --error: oklch(74% 0.14 25);
+      --error-soft: oklch(74% 0.13 25 / 0.17);
+      --error-border: oklch(45% 0.06 25);
+      --error-text: oklch(87% 0.08 25);
+      --success: oklch(74% 0.13 145);
+      --success-soft: oklch(70% 0.13 145 / 0.16);
+      --bubble-user: oklch(33.5% 0.014 252);
+      --shadow-float: 0 1px 2px oklch(0% 0 0 / 0.3), 0 10px 28px oklch(0% 0 0 / 0.42);
+      --z1: oklch(76% 0.12 265);
+      --z2: oklch(74% 0.11 160);
+      --z3: oklch(76% 0.12 300);
+      --z4: oklch(78% 0.14 45);
+      --z5: oklch(74% 0.04 240);
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; }
+    body {
+      font-family: var(--font-sans);
+      font-size: 14px; line-height: 1.45;
+      background: var(--bg); color: var(--text);
+      display: flex; flex-direction: column; overflow: hidden;
+    }
+
+    /* ── Top Bar ── */
+    .topbar {
+      height: 46px; padding: 0 14px;
+      border-bottom: 1px solid var(--hairline); background: var(--paper);
+      display: flex; align-items: center; justify-content: space-between; gap: 10px; flex: none;
+    }
+    .topbar-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
+    .badge {
+      font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: var(--radius-pill);
+      background: var(--accent-soft); color: var(--accent); flex: none;
+    }
+    .topbar-title { font-size: 13.5px; font-weight: 600; white-space: nowrap; }
+    .topbar-controls { display: flex; align-items: center; gap: 6px; flex: none; }
+    .toggle-btn {
+      height: 28px; padding: 0 10px; border-radius: var(--radius-sm);
+      border: 1px solid var(--hairline); background: var(--paper); color: var(--text-2);
+      font-size: 12px; font-weight: 500; cursor: pointer;
+    }
+    .toggle-btn:hover { background: var(--surface-chip); color: var(--text); }
+    .toggle-btn.active { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+
+    /* ── Main Grid: Left Scenarios | Center Dialog (5 Clean Bands) | Right Data Binding Map ── */
+    .workspace {
+      flex: 1; min-height: 0;
+      display: grid;
+      grid-template-columns: 238px 1fr 310px;
+    }
+
+    /* Left Scenarios */
+    .scenarios {
+      border-right: 1px solid var(--hairline); background: var(--paper);
+      overflow-y: auto; padding: 10px;
+      display: flex; flex-direction: column; gap: 11px;
+    }
+    .group-label { font-size: 11px; font-weight: 600; color: var(--text-3); padding: 0 6px 4px; }
+    .scenario-list { display: flex; flex-direction: column; gap: 2px; }
+    .scenario-btn {
+      width: 100%; text-align: left; padding: 6px 8px; border-radius: var(--radius-sm);
+      border: 1px solid transparent; background: transparent; color: var(--text);
+      cursor: pointer; display: flex; align-items: flex-start; gap: 7px;
+    }
+    .scenario-btn:hover { background: var(--surface-sub); }
+    .scenario-btn.active {
+      background: var(--accent-soft);
+      border-color: color-mix(in srgb, var(--accent) 32%, transparent);
+    }
+    .s-dot { width: 7px; height: 7px; border-radius: 50%; margin-top: 5px; flex: none; }
+    .s-name { font-size: 12.5px; font-weight: 500; line-height: 1.3; }
+    .s-desc { font-size: 11px; color: var(--text-3); margin-top: 1px; line-height: 1.3; }
+
+    .toggles-box {
+      border-top: 1px solid var(--hairline); padding-top: 9px;
+      display: flex; flex-direction: column; gap: 5px;
+    }
+    .chk {
+      display: flex; align-items: flex-start; gap: 7px; padding: 3px 5px;
+      border-radius: var(--radius-sm); font-size: 12px; color: var(--text-2); cursor: pointer;
+    }
+    .chk:hover { background: var(--surface-sub); }
+    .chk input { margin-top: 2px; accent-color: var(--accent); }
+
+    /* Center Stage */
+    .stage {
+      background: var(--bg); padding: 14px 18px;
+      display: flex; justify-content: center; align-items: stretch;
+      min-height: 0; overflow: hidden;
+    }
+    .dialog-shell {
+      width: 100%; max-width: 620px;
+      background: var(--paper);
+      border: 1px solid var(--hairline);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-float);
+      display: flex; flex-direction: column;
+      overflow: hidden; min-height: 0;
+    }
+
+    /* Clean Region Framing (left color bar + small data label when show-map is ON) */
+    .region {
+      position: relative;
+      transition: background 0.15s;
+    }
+    .region-banner {
+      display: none;
+      align-items: center; justify-content: space-between; gap: 8px;
+      font-size: 11px; font-weight: 600;
+      padding: 3px 12px;
+      background: color-mix(in srgb, var(--r-color) 10%, var(--paper));
+      color: var(--r-color);
+      border-bottom: 1px solid color-mix(in srgb, var(--r-color) 22%, transparent);
+    }
+    .region-banner code {
+      font-family: var(--font-mono); font-size: 10.5px; font-weight: 600;
+      padding: 0 5px; border-radius: 4px;
+      background: color-mix(in srgb, var(--r-color) 14%, transparent);
+    }
+    body.show-map .region {
+      box-shadow: inset 3px 0 0 0 var(--r-color);
+    }
+    body.show-map .region > .region-banner { display: flex; }
+
+    /* ── ① Header ← Session ── */
+    .r1 { --r-color: var(--z1); border-bottom: 1px solid var(--hairline); flex: none; }
+    .header-inner {
+      padding: 10px 16px;
+      display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    }
+    .header-left { display: flex; align-items: center; gap: 8px; min-width: 0; }
+    .header-title { font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .meta-tag { font-size: 11px; color: var(--text-3); white-space: nowrap; }
+    .header-right { display: flex; align-items: center; gap: 6px; position: relative; flex: none; }
+
+    .state-pill {
+      display: inline-flex; align-items: center; gap: 6px;
+      height: 24px; padding: 0 9px; border-radius: var(--radius-pill);
+      font-size: 11.5px; font-weight: 600;
+    }
+    .state-pill.st-idle { background: var(--success-soft); color: var(--success); }
+    .state-pill.st-running, .state-pill.st-compacting { background: var(--accent-soft); color: var(--accent); }
+    .state-pill.st-stopping, .state-pill.st-paused { background: var(--warn-soft); color: var(--warn-text); }
+    .state-pill.st-unknown { background: var(--error-soft); color: var(--error-text); }
+    .state-pill.st-ro { background: var(--surface-chip); color: var(--text-2); font-weight: 500; }
+
+    .dot-solid { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+    .spinner {
+      width: 9px; height: 9px; border-radius: 50%;
+      border: 1.6px solid color-mix(in srgb, currentColor 28%, transparent);
+      border-top-color: currentColor;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .icon-btn {
+      width: 26px; height: 26px; border-radius: var(--radius-sm);
+      border: none; background: transparent; color: var(--text-3);
+      cursor: pointer; font-size: 14px;
+    }
+    .icon-btn:hover { background: var(--surface-chip); color: var(--text); }
+    .menu-pop {
+      position: absolute; top: 30px; right: 0; width: 196px; padding: 4px;
+      background: var(--paper); border: 1px solid var(--hairline);
+      border-radius: var(--radius-sm); box-shadow: var(--shadow-float);
+      z-index: 30; display: none; flex-direction: column; gap: 2px;
+    }
+    .menu-pop.open { display: flex; }
+    .menu-item {
+      border: none; background: transparent; color: var(--text); text-align: left;
+      padding: 7px 9px; border-radius: 4px; font-size: 12.5px; cursor: pointer;
+    }
+    .menu-item:hover { background: var(--surface-sub); }
+    .menu-item small { display: block; font-size: 11px; color: var(--text-3); }
+    .menu-item.danger { color: var(--error-text); }
+
+    /* ── ② Thread ← Turns[] & Turn Status Line ── */
+    .r2 {
+      --r-color: var(--z2);
+      flex: 1; min-height: 0;
+      display: flex; flex-direction: column;
+    }
+    .thread-scroll {
+      flex: 1; min-height: 0; overflow-y: auto;
+      padding: 16px 18px 14px;
+      display: flex; flex-direction: column; gap: 14px;
+    }
+    .msg-user-wrap { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
+    .msg-user {
+      max-width: 84%; padding: 8px 13px; border-radius: 14px 14px 4px 14px;
+      background: var(--bubble-user); font-size: 13.5px; line-height: 1.48;
+    }
+    .msg-sub { font-size: 11px; color: var(--warn-text); padding-right: 4px; }
+    .msg-agent { font-family: var(--font-serif); font-size: 15px; line-height: 1.62; }
+    .msg-agent p + p { margin-top: 8px; }
+    .tool-chip {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-size: 12px; color: var(--text-3);
+      padding: 4px 9px; border-radius: var(--radius-sm); background: var(--surface-code);
+    }
+    .epoch-sep {
+      display: flex; align-items: center; gap: 10px;
+      font-size: 11.5px; color: var(--text-3); margin: 2px 0;
+    }
+    .epoch-sep::before, .epoch-sep::after { content: ""; flex: 1; height: 1px; background: var(--hairline); }
+
+    /* The Bottom Turn Line (strictly Turn.status ONLY) */
+    .turn-line {
+      margin-top: 2px;
+      border-top: 1px solid var(--hairline);
+      padding-top: 8px;
+      font-size: 12px; color: var(--text-3);
+    }
+    .turn-line-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 24px; }
+    .turn-line-left { display: flex; align-items: center; gap: 7px; }
+    .turn-status-pill {
+      font-family: var(--font-mono); font-size: 10.5px;
+      padding: 1px 6px; border-radius: 4px; background: var(--surface-code); color: var(--text-3);
+    }
+    .t-warn { color: var(--warn-text); font-weight: 500; }
+    .t-err { color: var(--error-text); font-weight: 500; }
+    .turn-toggle {
+      border: none; background: transparent; color: inherit; cursor: pointer;
+      display: inline-flex; align-items: center; gap: 6px; font-size: 12px; padding: 0;
+    }
+    .turn-details {
+      margin-top: 6px; padding: 8px 10px; border-radius: var(--radius-sm);
+      background: var(--surface-code); color: var(--text-2); font-size: 12px; line-height: 1.45;
+    }
+    .turn-details .hint { color: var(--text-3); margin-top: 4px; }
+    .mini-btn {
+      border: none; background: transparent; color: var(--text-3);
+      font-size: 11.5px; padding: 3px 7px; border-radius: 4px; cursor: pointer;
+    }
+    .mini-btn:hover:not(:disabled) { background: var(--surface-chip); color: var(--text); }
+    .mini-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+    /* ── ③ Queue ← queue[] ── */
+    .r3 { --r-color: var(--z3); border-top: 1px solid var(--hairline); background: var(--surface-sub); flex: none; }
+    .queue-inner { padding: 8px 16px; display: flex; flex-direction: column; gap: 6px; }
+    .queue-row {
+      display: flex; align-items: center; justify-content: space-between; gap: 10px;
+      padding: 6px 10px; border-radius: var(--radius-sm);
+      background: var(--paper); border: 1px dashed var(--hairline-strong);
+      font-size: 12.5px;
+    }
+    .queue-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .queue-acts { display: flex; align-items: center; gap: 6px; flex: none; font-size: 11.5px; color: var(--text-3); }
+    .q-link {
+      border: none; background: transparent; color: var(--accent);
+      font-size: 11.5px; font-weight: 500; cursor: pointer; padding: 2px 5px; border-radius: 4px;
+    }
+    .q-link:hover { background: var(--accent-soft); }
+    .q-link.muted { color: var(--text-3); }
+    .q-link.muted:hover { background: var(--surface-chip); color: var(--text); }
+
+    /* ── ④ Action Area ← Single-Slot Action / Banner / Ask ── */
+    .r4 { --r-color: var(--z4); border-top: 1px solid var(--hairline); flex: none; }
+    .action-inner { padding: 10px 14px; }
+    .action-card {
+      border-radius: var(--radius-md); padding: 10px 12px;
+      display: flex; flex-direction: column; gap: 8px;
+      border: 1px solid var(--hairline); background: var(--surface-sub); font-size: 12.5px;
+    }
+    .action-card.tone-warn { background: var(--warn-soft); border-color: var(--warn-border); color: var(--warn-text); }
+    .action-card.tone-error { background: var(--error-soft); border-color: var(--error-border); color: var(--error-text); }
+    .action-card.tone-neutral { background: var(--surface-sub); border-color: var(--hairline); color: var(--text-2); }
+    .ac-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+    .ac-title { font-weight: 600; font-size: 13px; }
+    .ac-desc { font-size: 12px; opacity: 0.92; margin-top: 2px; line-height: 1.45; }
+    .ac-err { margin-top: 4px; padding: 5px 8px; border-radius: 6px; background: oklch(0% 0 0 / 0.06); font-size: 11.5px; }
+    .ac-pri { font-family: var(--font-mono); font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 4px; background: oklch(0% 0 0 / 0.08); flex: none; }
+    .ac-btns { display: flex; flex-wrap: wrap; gap: 6px; }
+    .btn {
+      height: 28px; padding: 0 11px; border-radius: var(--radius-sm);
+      font-size: 12px; font-weight: 500; cursor: pointer;
+      border: 1px solid var(--hairline-strong); background: var(--paper); color: var(--text);
+    }
+    .btn:hover:not(:disabled) { background: var(--surface-chip); }
+    .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+    .btn-primary { background: var(--text); color: var(--paper); border-color: var(--text); }
+    .btn-primary:hover:not(:disabled) { opacity: 0.88; background: var(--text); }
+
+    /* ── ⑤ Composer ← Input + / Commands ── */
+    .r5 { --r-color: var(--z5); border-top: 1px solid var(--hairline); flex: none; background: var(--paper); }
+    .composer-wrap { padding: 10px 14px 12px; position: relative; }
+    .composer-box {
+      border: 1px solid var(--hairline-strong); border-radius: var(--radius-md);
+      padding: 8px 10px; display: flex; flex-direction: column; gap: 7px; background: var(--paper);
+    }
+    .composer-box:focus-within { border-color: var(--accent); }
+    .composer-box.disabled { opacity: 0.6; background: var(--surface-sub); }
+    .composer-input {
+      width: 100%; border: none; outline: none; resize: none; background: transparent; color: var(--text);
+      font-family: var(--font-sans); font-size: 13.5px; line-height: 1.45; min-height: 22px; max-height: 68px;
+    }
+    .composer-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .composer-left { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+    .pill {
+      height: 24px; padding: 0 8px; border-radius: var(--radius-pill);
+      border: 1px solid var(--hairline); background: var(--surface-sub);
+      color: var(--text-2); font-size: 11.5px; cursor: pointer;
+    }
+    .composer-right { display: flex; align-items: center; gap: 7px; }
+    .ctx-lbl { font-size: 11px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+    .ctx-lbl.warn { color: var(--warn-text); font-weight: 600; }
+    .send-btn {
+      width: 28px; height: 28px; border-radius: 50%; border: none; cursor: pointer;
+      display: inline-flex; align-items: center; justify-content: center;
+      font-size: 13px; font-weight: 700; background: var(--text); color: var(--paper);
+    }
+    .send-btn:disabled { opacity: 0.32; cursor: not-allowed; }
+    .send-btn.stop { background: var(--error); color: white; border-radius: 7px; }
+    .q-send-btn {
+      height: 26px; padding: 0 9px; border-radius: var(--radius-pill);
+      border: 1px solid var(--hairline-strong); background: var(--paper); color: var(--text);
+      font-size: 11.5px; font-weight: 500; cursor: pointer;
+    }
+
+    .slash-pop {
+      position: absolute; left: 14px; right: 14px; bottom: calc(100% + 4px);
+      background: var(--paper); border: 1px solid var(--hairline-strong);
+      border-radius: var(--radius-md); box-shadow: var(--shadow-float);
+      padding: 6px; z-index: 25; display: none; flex-direction: column; gap: 2px;
+    }
+    .slash-pop.open { display: flex; }
+    .slash-head { font-size: 11px; color: var(--text-3); padding: 2px 8px 4px; }
+    .slash-row {
+      border: none; background: transparent; color: var(--text); text-align: left;
+      padding: 6px 8px; border-radius: 6px; font-size: 12px; cursor: pointer;
+      display: flex; justify-content: space-between; gap: 8px;
+    }
+    .slash-row:hover:not(:disabled) { background: var(--accent-soft); }
+    .slash-row:disabled { opacity: 0.38; cursor: not-allowed; }
+    .slash-cmd { font-family: var(--font-mono); font-weight: 600; color: var(--accent); }
+
+    /* ── Right Panel: Clean 1-to-1 Data Binding Cards ── */
+    .inspector {
+      border-left: 1px solid var(--hairline); background: var(--paper);
+      overflow-y: auto; padding: 12px;
+      display: flex; flex-direction: column; gap: 10px;
+    }
+    .bind-card {
+      border: 1px solid var(--hairline);
+      border-left: 3px solid var(--bc);
+      border-radius: var(--radius-sm);
+      padding: 8px 10px; background: var(--bg);
+    }
+    .bind-head {
+      display: flex; align-items: center; justify-content: space-between; gap: 6px;
+      margin-bottom: 5px; font-size: 11.5px; font-weight: 600;
+    }
+    .bind-key { font-family: var(--font-mono); font-size: 10.5px; color: var(--bc); }
+    .json-pre {
+      font-family: var(--font-mono); font-size: 11px; line-height: 1.45;
+      color: var(--text); white-space: pre-wrap; word-break: break-word;
+    }
+    .suppressed {
+      margin-top: 6px; padding: 5px 7px; border-radius: 5px;
+      background: var(--warn-soft); color: var(--warn-text); font-size: 11px; line-height: 1.4;
+    }
+    .log-box {
+      font-family: var(--font-mono); font-size: 11px; color: var(--text-2);
+      display: flex; flex-direction: column; gap: 3px; max-height: 110px; overflow-y: auto;
+    }
+    .log-box div { padding: 2px 6px; background: var(--paper); border-radius: 4px; }
+
+    @media (max-width: 1060px) {
+      .workspace { grid-template-columns: 208px 1fr; }
+      .stage { padding: 10px 12px; }
+      .inspector { display: none; }
+    }
+    @media (max-width: 600px) {
+      .badge { display: none; }
+      .workspace { grid-template-columns: 1fr; grid-template-rows: 155px 1fr; }
+      .scenarios { border-right: none; border-bottom: 1px solid var(--hairline); padding: 8px; }
+      .stage { padding: 6px; }
+    }
+  </style>
+</head>
+<body class="show-map">
+  <header class="topbar">
+    <div class="topbar-left">
+      <span class="badge">5 区 · 1 对 1 数据绑定</span>
+      <span class="topbar-title">① 顶栏=Session状态 · ② 底部线=Turn状态 · ③ 排队 · ④ Action区 · ⑤ 输入</span>
+    </div>
+    <div class="topbar-controls">
+      <button type="button" class="toggle-btn active" id="btn-map">显示数据绑定色条</button>
+      <button type="button" class="toggle-btn" id="btn-theme">深色模式</button>
+    </div>
+  </header>
+
+  <div class="workspace">
+    <!-- Left: Scenarios -->
+    <aside class="scenarios">
+      <div>
+        <div class="group-label">Session 5 态（看 ① 顶栏）</div>
+        <div class="scenario-list" id="g-session"></div>
+      </div>
+      <div>
+        <div class="group-label">Turn 终态（看 ② 底部线）</div>
+        <div class="scenario-list" id="g-turn"></div>
+      </div>
+      <div>
+        <div class="group-label">unknown / 只读 / 断网（看 ④ Action）</div>
+        <div class="scenario-list" id="g-action"></div>
+      </div>
+
+      <div class="toggles-box">
+        <div class="group-label">交互模拟开关</div>
+        <label class="chk"><input type="checkbox" id="ov-stop-timeout" /><span>点「停止」超时 → 转 unknown</span></label>
+        <label class="chk"><input type="checkbox" id="ov-fail-reconnect" /><span>点「重连」失败 → 收起重连</span></label>
+        <label class="chk"><input type="checkbox" id="ov-read-err" /><span>叠加 P1 读状态失败</span></label>
+      </div>
+    </aside>
+
+    <!-- Center: Clean 5-Band Dialog -->
+    <main class="stage">
+      <section class="dialog-shell">
+        <!-- ① Header ← session -->
+        <header class="region r1">
+          <div class="region-banner"><span>① 顶栏 Header（会话状态）</span><code>session.state + readonlyReason</code></div>
+          <div class="header-inner">
+            <div class="header-left">
+              <span class="header-title" id="hdr-title">重构对话状态机</span>
+              <span class="meta-tag" id="hdr-meta">Planner · Epoch 1</span>
+            </div>
+            <div class="header-right">
+              <span id="hdr-pills" style="display:inline-flex;gap:5px;align-items:center"></span>
+              <button type="button" class="icon-btn" id="btn-more" title="会话菜单">⋯</button>
+              <div class="menu-pop" id="hdr-menu">
+                <button type="button" class="menu-item" id="m-compact">压缩上下文 (/compact)<small>保留记录与压缩后上下文</small></button>
+                <button type="button" class="menu-item danger" id="m-reset">重置上下文 (/reset)<small>保留记录，清空模型记忆</small></button>
+                <button type="button" class="menu-item" id="m-archive">归档对话<small>设 readonlyReason=archived</small></button>
+              </div>
+            </div>
+          </div>
+        </header>
+
+        <!-- ② Thread ← turns[] + lastTurn.status -->
+        <section class="region r2">
+          <div class="region-banner"><span>② 对话区 Thread（最下面那根线 = Turn 状态）</span><code>items[] + lastTurn.status</code></div>
+          <div class="thread-scroll" id="thread-body"></div>
+        </section>
+
+        <!-- ③ Queue ← queue[] -->
+        <section class="region r3" id="region-queue" style="display:none">
+          <div class="region-banner"><span>③ 排队区 Queue（尚未开成 Turn）</span><code>queue[]</code></div>
+          <div class="queue-inner" id="queue-body"></div>
+        </section>
+
+        <!-- ④ Action Bar ← single-slot pending action -->
+        <section class="region r4" id="region-action" style="display:none">
+          <div class="region-banner"><span id="r4-label">④ Action 区（单槽待处理）</span><code id="r4-bind">action</code></div>
+          <div class="action-inner" id="action-body"></div>
+        </section>
+
+        <!-- ⑤ Composer ← input + / commands -->
+        <footer class="region r5" id="region-composer">
+          <div class="region-banner"><span>⑤ 输入区 Composer（受 session.state 门控）</span><code>input + /commands</code></div>
+          <div class="composer-wrap">
+            <div class="slash-pop" id="slash-pop"></div>
+            <div class="composer-box" id="composer-box">
+              <textarea id="composer-input" class="composer-input" rows="1" placeholder="输入消息，或输入 / 呼出命令…"></textarea>
+              <div class="composer-bar">
+                <div class="composer-left">
+                  <select class="pill" aria-label="模型"><option>Claude Sonnet 4</option><option>GPT-5.3 Codex</option></select>
+                  <select class="pill" aria-label="权限"><option>自动审批安全命令</option><option>每次询问</option></select>
+                  <button type="button" class="pill" id="btn-slash">/ 命令</button>
+                </div>
+                <div class="composer-right">
+                  <span class="ctx-lbl" id="ctx-lbl">32%</span>
+                  <button type="button" class="q-send-btn" id="btn-qsend" style="display:none">排队发送</button>
+                  <button type="button" class="send-btn" id="btn-send" title="发送">↑</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </footer>
+      </section>
+    </main>
+
+    <!-- Right: 1-to-1 Data Map Inspector -->
+    <aside class="inspector">
+      <div class="bind-card" style="--bc: var(--z1)">
+        <div class="bind-head"><span>① 顶栏绑定数据</span><span class="bind-key">session</span></div>
+        <pre class="json-pre" id="i-session"></pre>
+      </div>
+      <div class="bind-card" style="--bc: var(--z2)">
+        <div class="bind-head"><span>② 底部那根线绑定数据</span><span class="bind-key">lastTurn</span></div>
+        <pre class="json-pre" id="i-turn"></pre>
+      </div>
+      <div class="bind-card" style="--bc: var(--z3)">
+        <div class="bind-head"><span>③ 排队区绑定数据</span><span class="bind-key">queue[]</span></div>
+        <pre class="json-pre" id="i-queue"></pre>
+      </div>
+      <div class="bind-card" style="--bc: var(--z4)">
+        <div class="bind-head"><span>④ Action 区单槽裁决</span><span class="bind-key" id="i-act-pri">none</span></div>
+        <pre class="json-pre" id="i-action"></pre>
+        <div class="suppressed" id="i-suppressed" style="display:none"></div>
+      </div>
+      <div class="bind-card" style="--bc: var(--z5)">
+        <div class="bind-head"><span>操作日志</span><span class="bind-key">events</span></div>
+        <div class="log-box" id="log-box"><div>点击左侧场景或对话框内按钮体验</div></div>
+      </div>
+    </aside>
+  </div>
+
+  <script>
+    const BASE = [
+      { kind: 'user', text: '帮我梳理下对话框每个区域分别绑定什么数据？' },
+      { kind: 'assistant', text: '现在每个区严格绑定 1 份数据：\n\n- **① 顶栏**只看 `session.state` 和 `readonlyReason`；\n- **② 最下面那根线**只看 `lastTurn.status`；\n- **③ 排队区**只看 `queue[]`；\n- **④ Action 区**只在需要你点按钮时出现。' },
+    ];
+
+    const SCENARIOS = [
+      // Session 5 states
+      {
+        id: 'idle', g: 'session', dot: 'var(--success)', name: 'idle（空闲）', desc: '顶栏=空闲，底部线=Turn完成，无Action',
+        session: { role: 'Planner', epoch: 1, contextPct: 32, readonlyReason: null, canReopen: false, state: 'idle', workerPaused: false },
+        lastTurn: { turnId: 'trn_02', status: 'completed', elapsed: '8s', finishedAt: '13:10' },
+        items: BASE, queue: [], unknownDetail: null, asks: [],
+        transport: { readError: null, localSend: { kind: 'idle' }, actionError: null },
+      },
+      {
+        id: 'running', g: 'session', dot: 'var(--accent)', name: 'running（运行中 + 排队）', desc: '顶栏=运行中，线=本轮生成中，③有排队',
+        session: { role: 'Planner', epoch: 1, contextPct: 46, readonlyReason: null, canReopen: false, state: 'running', workerPaused: false },
+        lastTurn: { turnId: 'trn_03', status: 'running', elapsed: '14s' },
+        items: [...BASE, { kind: 'user', text: '按新方案跑一遍单测。' }, { kind: 'tool', label: '正在执行 dotnet test Perga.Kernel.Tests' }],
+        queue: [{ id: 'msg_q1', text: '顺便删掉旧的 conversation-restart.ts', state: 'queued', canSteer: true, canWithdraw: true }],
+        unknownDetail: null, asks: [],
+        transport: { readError: null, localSend: { kind: 'idle' }, actionError: null },
+      },
+      {
+        id: 'stopping', g: 'session', dot: 'var(--warn)', name: 'stopping（停止中）', desc: '顶栏=停止中，底部线仍是本轮 Turn=running',
+        session: { role: 'Planner', epoch: 1, contextPct: 46, readonlyReason: null, canReopen: false, state: 'stopping', workerPaused: false },
+        lastTurn: { turnId: 'trn_03', status: 'running', elapsed: '18s' },
+        items: [...BASE, { kind: 'user', text: '扫描整个仓库死代码。' }, { kind: 'assistant', text: '正在扫描 `fe/core/domain/`…' }],
+        queue: [], unknownDetail: null, asks: [],
+        transport: { readError: null, localSend: { kind: 'idle' }, actionError: null },
+      },
+      {
+        id: 'compacting', g: 'session', dot: 'var(--accent)', name: 'compacting（压缩中）', desc: '顶栏=压缩中，底部线保持上轮 Turn=completed',
+        session: { role: 'Planner', epoch: 1, contextPct: 86, readonlyReason: null, canReopen: false, state: 'compacting', workerPaused: false },
+        lastTurn: { turnId: 'trn_02', status: 'completed', elapsed: '8s', finishedAt: '13:10' },
+        items: BASE, queue: [], unknownDetail: null, asks: [],
+        transport: { readError: null, localSend: { kind: 'idle' }, actionError: null },
+      },
+      {
+        id: 'unknown', g: 'session', dot: 'var(--error)', name: 'unknown（状态未知）', desc: '顶栏=状态未知，④弹出「重连」+「重置上下文」',
+        session: { role: 'Planner', epoch: 1, contextPct: 50, readonlyReason: null, canReopen: false, state: 'unknown', workerPaused: false },
+        lastTurn: { turnId: 'trn_03', status: 'unknown', elapsed: '22s' },
+        items: [...BASE, { kind: 'user', text: '把迁移脚本应用到测试环境。', sub: '本条结果未确认' }],
+        queue: [],
+        unknownDetail: {
+          reason: 'stop_timeout',
+          detail: '停止指令超时未收到确认，底层进程状态未知。为避免重复执行已暂停发送。',
+          canReconnect: true, recovering: false, lastError: null,
+        },
+        asks: [],
+        transport: { readError: null, localSend: { kind: 'idle' }, actionError: null },
+      },
+
+      // Turn outcomes (Session stays idle!)
+      {
+        id: 'turn-interrupted', g: 'turn', dot: 'var(--warn)', name: 'Turn=interrupted（不阻塞）', desc: '顶栏=空闲，底部线=本轮已中断，无 Action',
+        session: { role: 'Planner', epoch: 1, contextPct: 40, readonlyReason: null, canReopen: false, state: 'idle', workerPaused: false },
+        lastTurn: { turnId: 'trn_03', status: 'interrupted', elapsed: '11s', finishedAt: '13:11', errorText: '你已手动停止本轮回复。' },
+        items: [...BASE, { kind: 'user', text: '把所有文档重写成英文。' }, { kind: 'assistant', text: '好的，先从第一篇开始…' }],
+        queue: [], unknownDetail: null, asks: [],
+        transport: { readError: null, localSend: { kind: 'idle' }, actionError: null },
+      },
+      {
+        id: 'turn-failed', g: 'turn', dot: 'var(--error)', name: 'Turn=failed（不阻塞）', desc: '顶栏=空闲，底部线=本轮失败可展开，可直接续聊',
+        session: { role: 'Planner', epoch: 1, contextPct: 96, readonlyReason: null, canReopen: false, state: 'idle', workerPaused: false },
+        lastTurn: { turnId: 'trn_03', status: 'failed', elapsed: '2s', finishedAt: '13:12', errorCode: 'context_window_exceeded', errorText: '上下文超出模型窗口限制。', hint: '可点顶栏 ⋯ 或输入 /compact、/reset 后继续。' },
+        items: [...BASE, { kind: 'user', text: '把 800KB 完整日志贴进来分析。' }],
+        queue: [], unknownDetail: null, asks: [],
+        transport: { readError: null, localSend: { kind: 'idle' }, actionError: null },
+      },
+
+      // Action-zone edge cases
+      {
+        id: 'unknown-no-id', g: 'action', dot: 'var(--error)', name: 'unknown · 重连失效/ID丢了', desc: '展示 lastError，自动收起「重连」，只留重置上下文',
+        session: { role: 'Planner', epoch: 1, contextPct: 50, readonlyReason: null, canReopen: false, state: 'unknown', workerPaused: false },
+        lastTurn: { turnId: 'trn_03', status: 'unknown', elapsed: '16s' },
+        items: [...BASE, { kind: 'user', text: '继续执行第二步迁移。', sub: '本条结果未确认' }],
+        queue: [],
+        unknownDetail: {
+          reason: 'stream_lost',
+          detail: '无法重连原会话，请使用「重置上下文」继续（保留本对话记录，清空模型记忆）。',
+          canReconnect: false, recovering: false,
+          lastError: 'Provider 返回 session_not_found：原线程 ID 已丢失或过期。',
+        },
+        asks: [],
+        transport: { readError: null, localSend: { kind: 'idle' }, actionError: null },
+      },
+      {
+        id: 'archived-unknown', g: 'action', dot: 'var(--text-3)', name: '已归档 + 保留 unknown', desc: '顶栏同时显示「状态未知 + 已归档」；恢复后仍是 unknown',
+        session: { role: 'Assistant', epoch: 1, contextPct: 50, readonlyReason: 'archived', canReopen: true, state: 'unknown', workerPaused: false },
+        lastTurn: { turnId: 'trn_03', status: 'unknown', elapsed: '15s' },
+        items: [...BASE, { kind: 'user', text: '归档前未确认的一条消息。', sub: '本条结果未确认' }],
+        queue: [],
+        unknownDetail: { reason: 'stream_lost', detail: '归档前连接异常断开，恢复后需重连或重置上下文。', canReconnect: true, recovering: false, lastError: null },
+        asks: [],
+        transport: { readError: null, localSend: { kind: 'idle' }, actionError: null },
+      },
+      {
+        id: 'ask-open', g: 'action', dot: 'var(--warn)', name: '待人工确认 Ask', desc: '顶栏=空闲，④ Action 区直接承接 Ask 选项',
+        session: { role: 'Planner', epoch: 1, contextPct: 38, readonlyReason: null, canReopen: false, state: 'idle', workerPaused: false },
+        lastTurn: { turnId: 'trn_02', status: 'completed', elapsed: '6s', finishedAt: '13:12' },
+        items: [...BASE, { kind: 'assistant', text: '开始改代码前请先确认下方选项：' }],
+        queue: [], unknownDetail: null,
+        asks: [{ question: '空闲态下是否开放 /reset 清空上下文命令？', options: ['允许（推荐：保记录、清记忆）', '仅 unknown 态提供'] }],
+        transport: { readError: null, localSend: { kind: 'idle' }, actionError: null },
+      },
+      {
+        id: 'send-net-unknown', g: 'action', dot: 'var(--warn)', name: '前端发包断网未确认', desc: '顶栏仍是空闲（后端没收到），④ 弹出「安全重试/忽略」',
+        session: { role: 'Planner', epoch: 1, contextPct: 32, readonlyReason: null, canReopen: false, state: 'idle', workerPaused: false },
+        lastTurn: { turnId: 'trn_02', status: 'completed', elapsed: '8s', finishedAt: '13:10' },
+        items: BASE, queue: [], unknownDetail: null, asks: [],
+        transport: { readError: null, actionError: null, localSend: { kind: 'failed', key: 'idem_8842', text: '清空测试库并重跑迁移。', delivery: 'unknown', reason: 'HTTP 收到 200 前断网，服务端可能已收下。' } },
+      },
+    ];
+
+    let cur = null;
+    let turnDetailsOpen = false;
+    let slashOpen = false;
+    let ovStopTimeout = false;
+    let ovFailReconnect = false;
+    let ovReadErr = false;
+
+    const $ = id => document.getElementById(id);
+    const clone = x => JSON.parse(JSON.stringify(x));
+    const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    const nowHHMM = () => new Date().toTimeString().slice(0, 5);
+
+    function log(msg) {
+      const box = $('log-box');
+      const d = document.createElement('div');
+      d.textContent = `[${new Date().toTimeString().slice(0, 8)}] ${msg}`;
+      box.prepend(d);
+      while (box.children.length > 12) box.lastChild.remove();
+    }
+
+    // ── Single-Slot ④ Action Area Derivation: P1 > P2 > P3 > P4 > P5 > P6 ──
+    function deriveAction(m) {
+      const list = [];
+      const readErr = ovReadErr ? '无法连接 Perga 宿主机（请求超时）。' : m.transport.readError;
+      if (readErr) {
+        list.push({
+          pri: 'P1', source: 'transport.readError', tone: 'warn',
+          title: '无法同步最新对话状态', desc: `${readErr} 刷新只重拉数据，不重启会话。`,
+          btns: [{ id: 'refresh', label: '刷新', primary: true }],
+          lockInput: true,
+        });
+      }
+      if (m.session.readonlyReason) {
+        list.push({
+          pri: 'P2', source: 'session.readonlyReason', tone: 'neutral',
+          title: m.session.readonlyReason === 'archived' ? '对话已归档（只读）' : '只读对话',
+          desc: `原会话状态 state="${m.session.state}" 保持不变，恢复后可继续处理。`,
+          btns: m.session.canReopen ? [{ id: 'reopen', label: '恢复对话', primary: true }] : [],
+          lockInput: true, hideInput: true,
+        });
+      }
+      if (m.session.state === 'unknown' && m.unknownDetail) {
+        const u = m.unknownDetail;
+        const btns = [];
+        if (u.canReconnect) btns.push({ id: 'reconnect', label: u.recovering ? '正在重连…' : '重连原会话', primary: true, disabled: u.recovering });
+        btns.push({ id: 'reset', label: u.recovering ? '正在处理…' : '重置上下文并继续', primary: !u.canReconnect, disabled: u.recovering });
+        list.push({
+          pri: 'P3', source: 'session.state = "unknown"', tone: u.canReconnect ? 'warn' : 'error',
+          title: u.reason === 'stop_timeout' ? '停止超时 · 会话状态未知' : '会话状态未知',
+          desc: u.detail, lastError: u.lastError, btns, lockInput: true,
+        });
+      }
+      if (m.asks.length > 0) {
+        const a = m.asks[0];
+        list.push({
+          pri: 'P4', source: 'openAsks[0]', tone: 'warn',
+          title: '待你确认', desc: a.question,
+          btns: a.options.map((o, i) => ({ id: `ask:${i}`, label: o, primary: i === 0 })),
+          lockInput: false,
+        });
+      }
+      if (m.transport.localSend.kind === 'failed') {
+        const f = m.transport.localSend;
+        const unk = f.delivery === 'unknown';
+        list.push({
+          pri: 'P5', source: 'transport.localSend', tone: unk ? 'warn' : 'error',
+          title: unk ? '网络中断 · 发送结果未确认' : '消息未发送',
+          desc: `${f.reason}（“${f.text}”）`,
+          btns: unk
+            ? [{ id: 'retry-send', label: '安全重试（同幂等键）', primary: true }, { id: 'dismiss-send', label: '忽略' }]
+            : [{ id: 'retry-send', label: '重试', primary: true }, { id: 'refill-send', label: '放回输入框' }],
+          lockInput: unk,
+        });
+      }
+      if (m.transport.actionError) {
+        list.push({
+          pri: 'P6', source: 'transport.actionError', tone: 'error',
+          title: '操作未生效', desc: m.transport.actionError,
+          btns: [{ id: 'close-err', label: '关闭' }], lockInput: false,
+        });
+      }
+      return { active: list[0] || null, suppressed: list.slice(1) };
+    }
+
+    function slashCommands(m) {
+      const ro = m.session.readonlyReason !== null;
+      const st = m.session.state;
+      const rec = m.unknownDetail?.recovering === true;
+      return [
+        { cmd: '/stop', desc: '停止当前 Turn', ok: !ro && st === 'running', run: () => doSendOrStop(true) },
+        { cmd: '/reconnect', desc: '重连原会话（保上下文）', ok: !ro && st === 'unknown' && m.unknownDetail?.canReconnect && !rec, run: doReconnect },
+        { cmd: '/reset', desc: '重置上下文（保记录，清记忆）', ok: !ro && (st === 'idle' || (st === 'unknown' && !rec)), run: doReset },
+        { cmd: '/compact', desc: '压缩上下文', ok: !ro && st === 'idle', run: doCompact },
+        { cmd: '/new', desc: '另起一条全新对话', ok: true, run: () => log('/new：新建独立对话') },
+      ];
+    }
+
+    function render() {
+      const m = cur;
+      const { active: act, suppressed } = deriveAction(m);
+
+      document.querySelectorAll('.scenario-btn').forEach(b => b.classList.toggle('active', b.dataset.id === m.id));
+
+      // ① Header ← session
+      $('hdr-title').textContent = '重构对话状态机';
+      $('hdr-meta').textContent = `${m.session.role} · Epoch ${m.session.epoch}`;
+      const stMap = {
+        idle: { cls: 'st-idle', icon: '<span class="dot-solid"></span>', text: '空闲 idle' },
+        running: { cls: 'st-running', icon: '<span class="spinner"></span>', text: '运行中 running' },
+        stopping: { cls: 'st-stopping', icon: '<span class="spinner"></span>', text: '停止中 stopping' },
+        compacting: { cls: 'st-compacting', icon: '<span class="spinner"></span>', text: '压缩中 compacting' },
+        unknown: { cls: 'st-unknown', icon: '<span>⚠</span>', text: '状态未知 unknown' },
+      };
+      const stInfo = stMap[m.session.state];
+      $('hdr-pills').innerHTML =
+        `<span class="state-pill ${stInfo.cls}">${stInfo.icon}${stInfo.text}</span>` +
+        (m.session.readonlyReason ? `<span class="state-pill st-ro">${m.session.readonlyReason === 'archived' ? '已归档' : '只读'}</span>` : '');
+
+      // ② Thread ← items[] + lastTurn.status (ONLY Turn status!)
+      const itemsHtml = m.items.map(it => {
+        if (it.kind === 'sep') return `<div class="epoch-sep">${esc(it.text)}</div>`;
+        if (it.kind === 'user') return `<div class="msg-user-wrap"><div class="msg-user">${esc(it.text)}</div>${it.sub ? `<div class="msg-sub">${esc(it.sub)}</div>` : ''}</div>`;
+        if (it.kind === 'tool') return `<div><span class="tool-chip">⚙ ${esc(it.label)}</span></div>`;
+        return `<div class="msg-agent">${it.text.split('\n\n').map(p => `<p>${esc(p).replace(/\n/g, '<br>')}</p>`).join('')}</div>`;
+      }).join('');
+
+      let turnLineHtml = '';
+      const t = m.lastTurn;
+      if (t) {
+        const canCopy = m.items.some(i => i.kind === 'assistant');
+        const canRegen = !m.session.readonlyReason && m.session.state === 'idle' && !act?.lockInput;
+        let left = '';
+        let det = '';
+        if (t.status === 'running') {
+          left = `<span class="spinner" style="color:var(--accent)"></span><span>本轮生成中 · ${t.elapsed}</span><span class="turn-status-pill">turn: running</span>`;
+        } else if (t.status === 'completed') {
+          left = `<span>完成 · ${t.elapsed}（${t.finishedAt}）</span><span class="turn-status-pill">turn: completed</span>`;
+        } else if (t.status === 'unknown') {
+          left = `<span class="t-warn">⚠ 本轮结果未确认</span><span class="turn-status-pill">turn: unknown</span>`;
+        } else {
+          const isFail = t.status === 'failed';
+          left = `<button type="button" class="turn-toggle" id="btn-tdet">
+            <span class="${isFail ? 't-err' : 't-warn'}">${isFail ? '✕ 本轮执行失败' : '⚠ 本轮已中断'} · ${t.elapsed} ${turnDetailsOpen ? '▴' : '▾'}</span>
+            <span class="turn-status-pill">turn: ${t.status}</span>
+          </button>`;
+          if (turnDetailsOpen) {
+            det = `<div class="turn-details"><div>${esc(t.errorText || '无详情')}</div>${t.errorCode ? `<div class="hint">错误码：<code>${esc(t.errorCode)}</code></div>` : ''}${t.hint ? `<div class="hint">${esc(t.hint)}</div>` : ''}</div>`;
+          }
+        }
+        turnLineHtml = `<div class="turn-line">
+          <div class="turn-line-row">
+            <div class="turn-line-left">${left}</div>
+            <div>
+              <button type="button" class="mini-btn" id="btn-copy" ${canCopy ? '' : 'disabled'}>复制</button>
+              <button type="button" class="mini-btn" id="btn-regen" ${canRegen ? '' : 'disabled'}>重新生成</button>
+            </div>
+          </div>${det}
+        </div>`;
+      }
+      $('thread-body').innerHTML = itemsHtml + turnLineHtml;
+      if ($('btn-tdet')) $('btn-tdet').onclick = () => { turnDetailsOpen = !turnDetailsOpen; render(); };
+      if ($('btn-copy')) $('btn-copy').onclick = () => log('复制最新回复');
+      if ($('btn-regen')) $('btn-regen').onclick = () => startTurn('（重新生成上一条请求）');
+
+      // ③ Queue ← queue[]
+      const rq = $('region-queue');
+      if (m.queue.length === 0) {
+        rq.style.display = 'none';
+      } else {
+        rq.style.display = 'block';
+        $('queue-body').innerHTML = m.queue.map(q => `
+          <div class="queue-row">
+            <span class="queue-text">${esc(q.text)}</span>
+            <span class="queue-acts">
+              <span>${q.state === 'queued' ? '排队中' : '插队中…'}</span>
+              ${q.canSteer ? `<button type="button" class="q-link" data-steer="${q.id}">立即插队</button>` : ''}
+              ${q.canWithdraw ? `<button type="button" class="q-link muted" data-wd="${q.id}">撤回</button>` : ''}
+            </span>
+          </div>
+        `).join('');
+        $('queue-body').querySelectorAll('[data-steer]').forEach(el => el.onclick = () => doSteer(el.dataset.steer));
+        $('queue-body').querySelectorAll('[data-wd]').forEach(el => el.onclick = () => doWithdraw(el.dataset.wd));
+      }
+
+      // ④ Action Area ← single-slot action
+      const ra = $('region-action');
+      if (!act) {
+        ra.style.display = 'none';
+      } else {
+        ra.style.display = 'block';
+        $('r4-bind').textContent = act.source;
+        $('action-body').innerHTML = `
+          <div class="action-card tone-${act.tone}">
+            <div class="ac-top">
+              <div>
+                <div class="ac-title">${esc(act.title)}</div>
+                <div class="ac-desc">${esc(act.desc)}</div>
+                ${act.lastError ? `<div class="ac-err"><b>上次失败：</b>${esc(act.lastError)}</div>` : ''}
+              </div>
+              <span class="ac-pri">${act.pri}</span>
+            </div>
+            ${act.btns.length ? `<div class="ac-btns">${act.btns.map(b => `<button type="button" class="btn ${b.primary ? 'btn-primary' : ''}" data-act="${b.id}" ${b.disabled ? 'disabled' : ''}>${esc(b.label)}</button>`).join('')}</div>` : ''}
+          </div>
+        `;
+        $('action-body').querySelectorAll('[data-act]').forEach(el => el.onclick = () => doAction(el.dataset.act));
+      }
+
+      // ⑤ Composer ← input + /commands
+      const rc = $('region-composer');
+      if (act?.hideInput) {
+        rc.style.display = 'none';
+      } else {
+        rc.style.display = 'block';
+        const isRun = m.session.state === 'running';
+        const locked = Boolean(act?.lockInput) || m.session.state === 'stopping' || m.session.state === 'compacting' || m.session.state === 'unknown';
+        $('composer-box').classList.toggle('disabled', locked);
+        const inp = $('composer-input');
+        inp.disabled = locked;
+        inp.placeholder = locked ? '请先完成上方状态或操作…' : (isRun ? '输入内容可排队发送，或输入 /stop…' : '输入消息，或输入 / 呼出命令…');
+
+        const cl = $('ctx-lbl');
+        cl.className = `ctx-lbl ${m.session.contextPct >= 80 ? 'warn' : ''}`;
+        cl.textContent = `上下文 ${m.session.contextPct}%`;
+
+        const sb = $('btn-send');
+        const qb = $('btn-qsend');
+        if (isRun) {
+          sb.className = 'send-btn stop'; sb.textContent = '■'; sb.title = '停止当前 Turn'; sb.disabled = false;
+          qb.style.display = inp.value.trim() ? 'inline-block' : 'none';
+        } else {
+          sb.className = 'send-btn'; sb.textContent = '↑'; sb.title = '发送';
+          sb.disabled = locked || inp.value.trim() === '';
+          qb.style.display = 'none';
+        }
+
+        const showSlash = slashOpen || inp.value.trim().startsWith('/');
+        const sp = $('slash-pop');
+        sp.classList.toggle('open', showSlash);
+        if (showSlash) {
+          const cmds = slashCommands(m);
+          sp.innerHTML = `<div class="slash-head">同源 / 命令（当前 session.state = <b>${m.session.state}</b>）</div>` + cmds.map(c => `
+            <button type="button" class="slash-row" data-cmd="${c.cmd}" ${c.ok ? '' : 'disabled'}>
+              <span class="slash-cmd">${c.cmd}</span>
+              <span style="color:var(--text-3)">${c.desc}${c.ok ? '' : '（当前不可用）'}</span>
+            </button>
+          `).join('');
+          sp.querySelectorAll('[data-cmd]').forEach(el => el.onclick = () => {
+            const found = cmds.find(x => x.cmd === el.dataset.cmd);
+            slashOpen = false; inp.value = '';
+            if (found && found.ok) found.run();
+            render();
+          });
+        }
+      }
+
+      // Right 1-to-1 Data Binding Inspector
+      $('i-session').textContent = JSON.stringify({ state: m.session.state, readonlyReason: m.session.readonlyReason, epoch: m.session.epoch, contextPct: m.session.contextPct }, null, 2);
+      $('i-turn').textContent = JSON.stringify(m.lastTurn, null, 2);
+      $('i-queue').textContent = m.queue.length ? JSON.stringify(m.queue.map(q => ({ id: q.id, state: q.state, text: q.text })), null, 2) : '[]  // ③ 排队区自动隐藏';
+      $('i-act-pri').textContent = act ? `${act.pri} · ${act.source}` : 'null';
+      $('i-action').textContent = act ? JSON.stringify({ priority: act.pri, source: act.source, title: act.title, buttons: act.btns.map(b => b.label) }, null, 2) : 'null  // ④ Action 区自动隐藏';
+      const sup = $('i-suppressed');
+      if (suppressed.length) {
+        sup.style.display = 'block';
+        sup.innerHTML = `<b>已压制 ${suppressed.length} 条低优动作：</b>` + suppressed.map(x => `[${x.pri}] ${esc(x.title)}`).join('；');
+      } else sup.style.display = 'none';
+    }
+
+    function doAction(id) {
+      if (id === 'refresh') { ovReadErr = false; $('ov-read-err').checked = false; cur.transport.readError = null; log('刷新完成（仅重拉数据）'); render(); }
+      else if (id === 'reopen') { cur.session.readonlyReason = null; log(`恢复归档：原 state="${cur.session.state}" 完整保留`); render(); }
+      else if (id === 'reconnect') doReconnect();
+      else if (id === 'reset') doReset();
+      else if (id.startsWith('ask:')) {
+        const picked = cur.asks[0].options[Number(id.split(':')[1])];
+        cur.asks = [];
+        cur.items.push({ kind: 'user', text: `已确认：${picked}` });
+        log(`回答 Ask：${picked}`);
+        render();
+      } else if (id === 'retry-send') {
+        const text = cur.transport.localSend.text;
+        cur.transport.localSend = { kind: 'idle' };
+        log('复用幂等键重试发送');
+        startTurn(text);
+      } else if (id === 'refill-send') {
+        $('composer-input').value = cur.transport.localSend.text;
+        cur.transport.localSend = { kind: 'idle' };
+        render();
+      } else if (id === 'dismiss-send') { cur.transport.localSend = { kind: 'idle' }; log('忽略未确认发包'); render(); }
+      else if (id === 'close-err') { cur.transport.actionError = null; render(); }
+    }
+
+    function doReconnect() {
+      if (!cur.unknownDetail?.canReconnect) return;
+      cur.unknownDetail.recovering = true;
+      log('POST /recover { mode: "reconnect" }');
+      render();
+      setTimeout(() => {
+        if (ovFailReconnect) {
+          cur.unknownDetail = { ...cur.unknownDetail, recovering: false, canReconnect: false, lastError: 'session_not_found：原线程 ID 已失效，已自动收起「重连」。' };
+          log('重连失败 → 留在 unknown，只剩「重置上下文」');
+        } else {
+          cur.items.forEach(i => delete i.sub);
+          cur.session.state = 'idle';
+          cur.unknownDetail = null;
+          log('重连成功 → ① 顶栏回到 idle（② 末轮仍记录为 turn: unknown）');
+        }
+        render();
+      }, 650);
+    }
+
+    function doReset() {
+      if (cur.unknownDetail) { cur.unknownDetail.recovering = true; render(); }
+      log('POST /recover { mode: "reset_context" }（强杀旧进程 + Epoch+1）');
+      setTimeout(() => {
+        cur.session.epoch += 1;
+        cur.session.contextPct = 0;
+        cur.session.state = 'idle';
+        cur.unknownDetail = null;
+        cur.lastTurn = null;
+        cur.items.forEach(i => delete i.sub);
+        cur.items.push({ kind: 'sep', text: `已重置上下文 · Epoch ${cur.session.epoch}（保留以上记录，不继承此前记忆）` });
+        log(`重置完成 → Epoch ${cur.session.epoch}, state=idle`);
+        render();
+      }, 550);
+    }
+
+    function doCompact() {
+      if (cur.session.state !== 'idle') { cur.transport.actionError = '仅空闲态可执行压缩上下文。'; render(); return; }
+      cur.session.state = 'compacting';
+      log('POST /compact → ① 顶栏变为 compacting（② 底部线仍显示上轮 Turn）');
+      render();
+      setTimeout(() => {
+        cur.session.contextPct = Math.max(12, Math.round(cur.session.contextPct * 0.35));
+        cur.session.state = 'idle';
+        cur.items.push({ kind: 'sep', text: '已压缩上下文' });
+        log('压缩完成 → state=idle');
+        render();
+      }, 700);
+    }
+
+    function startTurn(text) {
+      cur.items.push({ kind: 'user', text });
+      cur.session.state = 'running';
+      cur.lastTurn = { turnId: 'trn_sim', status: 'running', elapsed: '1s' };
+      log('POST /messages → session=running, turn=running');
+      render();
+      setTimeout(() => {
+        if (cur.session.state !== 'running' || cur.lastTurn?.turnId !== 'trn_sim') return;
+        cur.items.push({ kind: 'assistant', text: `已收到：“${text}”。现在 ① 顶栏回到 idle，② 底部线标记为 turn: completed。` });
+        cur.session.contextPct = Math.min(99, cur.session.contextPct + 6);
+        cur.session.state = 'idle';
+        cur.lastTurn = { turnId: 'trn_sim', status: 'completed', elapsed: '1s', finishedAt: nowHHMM() };
+        log('Turn 完成 → session=idle, turn=completed');
+        render();
+      }, 950);
+    }
+
+    function doSendOrStop(forceStop = false) {
+      if (forceStop || cur.session.state === 'running') {
+        cur.session.state = 'stopping';
+        log('POST /stop → ① 顶栏=stopping（② 底部线仍是 turn: running）');
+        render();
+        setTimeout(() => {
+          if (ovStopTimeout) {
+            cur.session.state = 'unknown';
+            cur.lastTurn = { turnId: cur.lastTurn?.turnId || 'trn_03', status: 'unknown', elapsed: '15s' };
+            cur.unknownDetail = { reason: 'stop_timeout', detail: '停止超时未确认，底层进程状态未知。', canReconnect: true, recovering: false, lastError: null };
+            log('stopping 超时 → ① 顶栏=unknown，② 底部线=turn: unknown，④ 弹出重连/重置');
+          } else {
+            cur.session.state = 'idle';
+            cur.lastTurn = { turnId: cur.lastTurn?.turnId || 'trn_03', status: 'interrupted', elapsed: '14s', finishedAt: nowHHMM(), errorText: 'Provider 已确认停止本轮。' };
+            log('停止成功 → ① 顶栏=idle，② 底部线=turn: interrupted');
+          }
+          render();
+        }, 700);
+        return;
+      }
+      const inp = $('composer-input');
+      const txt = inp.value.trim();
+      if (!txt) return;
+      inp.value = ''; slashOpen = false;
+      if (txt === '/compact') return doCompact();
+      if (txt === '/reset') return doReset();
+      if (txt === '/reconnect') return doReconnect();
+      if (txt === '/new') { log('/new：新建独立对话'); return; }
+      startTurn(txt);
+    }
+
+    function doQueueSend() {
+      const inp = $('composer-input');
+      const txt = inp.value.trim();
+      if (!txt) return;
+      inp.value = '';
+      cur.queue.push({ id: `msg_${Date.now().toString().slice(-3)}`, text: txt, state: 'queued', canSteer: true, canWithdraw: true });
+      log('加入 ③ 排队区');
+      render();
+    }
+
+    function doSteer(id) {
+      const q = cur.queue.find(x => x.id === id);
+      if (!q) return;
+      q.state = 'steering'; q.canSteer = false; q.canWithdraw = false;
+      log(`插队 ${id}`); render();
+      setTimeout(() => { cur.queue = cur.queue.filter(x => x.id !== id); cur.items.push({ kind: 'user', text: q.text }); render(); }, 450);
+    }
+    function doWithdraw(id) { cur.queue = cur.queue.filter(x => x.id !== id); log(`撤回 ${id}`); render(); }
+
+    function mountScenarios() {
+      const gs = { session: $('g-session'), turn: $('g-turn'), action: $('g-action') };
+      SCENARIOS.forEach(s => {
+        const b = document.createElement('button');
+        b.type = 'button'; b.className = 'scenario-btn'; b.dataset.id = s.id;
+        b.innerHTML = `<span class="s-dot" style="background:${s.dot}"></span><div><div class="s-name">${s.name}</div><div class="s-desc">${s.desc}</div></div>`;
+        b.onclick = () => { cur = clone(s); turnDetailsOpen = s.id === 'turn-failed'; slashOpen = false; $('hdr-menu').classList.remove('open'); log(`切换：${s.name}`); render(); };
+        gs[s.g].appendChild(b);
+      });
+    }
+
+    function isDark() {
+      const ex = document.documentElement.getAttribute('data-theme');
+      if (ex === 'dark') return true;
+      if (ex === 'light') return false;
+      return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+    }
+    function syncTheme() { const d = isDark(); $('btn-theme').classList.toggle('active', d); $('btn-theme').textContent = d ? '浅色模式' : '深色模式'; }
+    $('btn-theme').onclick = () => { document.documentElement.setAttribute('data-theme', isDark() ? 'light' : 'dark'); syncTheme(); };
+    syncTheme();
+
+    $('btn-map').onclick = () => { const on = document.body.classList.toggle('show-map'); $('btn-map').classList.toggle('active', on); };
+    $('ov-stop-timeout').onchange = e => { ovStopTimeout = e.target.checked; };
+    $('ov-fail-reconnect').onchange = e => { ovFailReconnect = e.target.checked; };
+    $('ov-read-err').onchange = e => { ovReadErr = e.target.checked; render(); };
+    $('btn-send').onclick = () => doSendOrStop(false);
+    $('btn-qsend').onclick = doQueueSend;
+    $('btn-slash').onclick = e => { e.stopPropagation(); slashOpen = !slashOpen; render(); };
+    $('composer-input').oninput = () => { if (!$('composer-input').value.startsWith('/')) slashOpen = false; render(); };
+    $('composer-input').onkeydown = e => {
+      if (e.key === 'Escape') { slashOpen = false; render(); return; }
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        if (cur.session.state === 'running' && !$('composer-input').value.trim().startsWith('/')) doQueueSend();
+        else doSendOrStop(false);
+      }
+    };
+    $('btn-more').onclick = e => { e.stopPropagation(); $('hdr-menu').classList.toggle('open'); };
+    document.addEventListener('click', () => { $('hdr-menu').classList.remove('open'); if (slashOpen) { slashOpen = false; render(); } });
+    $('m-compact').onclick = doCompact;
+    $('m-reset').onclick = doReset;
+    $('m-archive').onclick = () => { cur.session.readonlyReason = 'archived'; cur.session.canReopen = true; log(`归档：readonlyReason=archived，原 state="${cur.session.state}" 保留`); render(); };
+
+    mountScenarios();
+    cur = clone(SCENARIOS[4]); // Start on unknown so ① Header + ② Turn Line + ④ Action are all clear
+    render();
+  </script>
+</body>
+</html>

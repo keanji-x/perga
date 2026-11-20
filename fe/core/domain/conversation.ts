@@ -1,10 +1,9 @@
 import { z } from 'zod';
-import { activityContent } from './conversation-activity-content.js';
+
 import {
   agentSessionDtoSchema,
   bootstrapDtoSchema,
   normalizeWireAgentProvider,
-  sessionItemsPageDtoSchema,
   sessionTurnDtoSchema,
   toWireAgentProvider,
   type AgentSessionDto,
@@ -13,16 +12,14 @@ import {
 import { sessionCreationReceiptSchema, sessionInputReceiptSchema, type SessionInputReceipt } from '../api/perga-v1.js';
 
 import type {
-  AgentProvider, HarnessInputPresentation, HarnessInputSegment, HarnessItem, HarnessPhaseTag,
-  HarnessInterruptionReason, HarnessTimeoutEvidence,
+  AgentProvider, HarnessInputPresentation,
+  HarnessInterruptionReason,
+  HarnessPhaseTag,
+  HarnessTimeoutEvidence,
   PlannerAttachment, SystemInputPresentation, UploadAttachmentResponse,
 } from '../api/generated/wire.js';
 import type { ApiFailure, ApiOperation } from '../api/types.js';
-import {
-  TASK_LS_TOOL, REPORT_DELETE_TOOL, REPORT_READ_TOOLS, REPORT_WRITE_TOOLS,
-  TASK_ACCEPT_TOOL, TASK_REJECT_TOOL, DEV_PUBLISH_TOOL, TRACK_RENAME_TOOL, TRACK_TOOL_PREFIX, USER_ASK_TOOL,
-  MAIL_SEND_TOOL,
-} from '../keys/mcp-tools.js';
+
 import { classifyFailure, failureReason, refusedText, type FailureTable, type WriteFailure, type WriteText } from './failure-class.js';
 import { sha256Hex } from './sha256.js';
 
@@ -108,6 +105,7 @@ export type TurnAuthor = 'you' | 'agent' | 'human' | 'unknown';
 
 /** Known native execution identity; absent for application inputs and unknown historical sources. */
 export type NativeTurnContext = Readonly<{
+  displayPosition?: number;
   nativeTurn?: Readonly<{ threadId: string; turnId: string }>;
 }>;
 
@@ -134,24 +132,11 @@ export type ConversationTurn = NativeTurnContext & Readonly<{
   inputSource?: Readonly<{ cardId: string; threadId: string; itemId: number; segmentIndex: number; turnId: string | null; entryRev: number | null }>;
 }>;
 
-/**
- * A user turn accepted optimistically, carrying the newest persisted item the sender had observed
- * before that request.
- */
+/** A local message while its request is unanswered; receipts end this state. */
 export type OptimisticConversationTurn = ConversationTurn & Readonly<{
-  serverHighWaterBefore: number;
-  authorUserId?: string;
-  /**
-   * True when the kernel put this message on the harness `pending_queue` instead of issuing it
-   * as a turn. Required rather than optional: an absent flag would read as *not* queued, and an
-   * echo the client believes it issued but the kernel queued is a composer that goes dead.
-   */
+  localSend: true;
   queued: boolean;
-  /**
-   * The pending-queue entry this send landed in once the server has said so, and `null` until
-   * then or when there is none to name; `null` means this side keeps drawing the message.
-   */
-  entryId: string | null;
+  /** Queue-only sends wait for the server to publish an accepted identity. */
   waitForIdentity?: boolean;
 }>;
 
@@ -191,38 +176,6 @@ const harnessInputPresentationSchema: z.ZodType<HarnessInputPresentation> = z.en
 /** The presentation owner supplies the closed set; System cannot acquire User presentation. */
 export const systemInputPresentationSchema = z.custom<SystemInputPresentation>(value =>
   harnessInputPresentationSchema.safeParse(value).success && value !== 'user');
-
-const plannerAttachmentSchema: z.ZodType<PlannerAttachment> = z.object({
-  id: z.string(), contentType: z.string(), size: z.number(), url: z.string(),
-});
-
-// Released origins contained only observation/event_id. Normalize their absent pair to unknown;
-// a present queue_entry still has to satisfy the current required nullable contract.
-const harnessInputOriginSchema = z.preprocess(value => {
-  if (value !== null && typeof value === 'object' && !Array.isArray(value) && !Object.hasOwn(value, 'queue_entry')
-    && Object.keys(value).every(key => key === 'observation' || key === 'event_id')) return { ...value, queue_entry: null };
-  return value;
-}, z.object({ observation: z.string(), event_id: z.number().nullable(),
-  queue_entry: z.object({ id: z.string().min(1), rev: z.number().int().nonnegative() }).nullable() }));
-
-export const harnessInputSegmentSchema: z.ZodType<HarnessInputSegment> = z.object({
-  presentation: harnessInputPresentationSchema,
-  text: z.string(),
-  /* Defaulted rather than required: older segments have no such key, and a row that fails to decode disappears. */
-  attachments: z.array(plannerAttachmentSchema).optional().default([]),
-  /* Absent on segments recorded before the kernel named each segment's observation and event. */
-  origin: harnessInputOriginSchema.optional(),
-});
-
-export const harnessItemSchema: z.ZodType<HarnessItem> = z.object({
-  id: z.number(), worker_session_id: z.string(), card_id: z.string(), track_id: z.string(),
-  thread_id: z.string(), turn_id: z.string().nullable(), item_uuid: z.string().nullable(),
-  item_type: z.string().nullable(), method: z.string(), params: z.string(), created_at_ms: z.number(),
-  input_segments: z.array(harnessInputSegmentSchema).optional(),
-  /* Required and nullable: the kernel always sends it, `null` on a row with no turn error. */
-  turn_error_text: z.string().nullable(),
-});
-
 
 /**
  * Whether a message posted *now* goes on the harness pending queue rather than straight into
@@ -283,57 +236,6 @@ export type PlannerRunTokenUsage = Readonly<{
 
 /** Reversible retained-DOM commit budget, shared by requests and cursor termination. */
 export const HARNESS_ITEMS_PAGE_LIMIT = 60;
-
-export function harnessItemsOperation(cardId: string, afterId = 0, direction: 'asc' | 'desc' = 'desc'):
-ApiOperation<HarnessItem[]> {
-  return {
-    method: 'GET',
-    path: `/api/v1/sessions/${encodeURIComponent(cardId)}/items?afterId=${afterId}&limit=${HARNESS_ITEMS_PAGE_LIMIT}&direction=${direction}`,
-    responseSchema: sessionItemsPageDtoSchema.transform((page) => {
-      const threadId = page.session.nativeThreadId || `epoch-${page.session.epoch}`;
-      return page.items.flatMap((item): HarnessItem[] => {
-        const payloadObj = typeof item.payload === 'object' && item.payload !== null
-          ? (item.payload as Record<string, unknown>)
-          : {};
-        if (item.kind === 'user') {
-          const content = typeof payloadObj.content === 'string' ? payloadObj.content : '';
-          return [{
-            id: item.id,
-            worker_session_id: item.sessionId,
-            card_id: cardId,
-            track_id: page.session.trackId,
-            thread_id: threadId,
-            turn_id: item.turnId || null,
-            item_uuid: `item-${item.id}`,
-            item_type: 'userMessage',
-            method: 'item/completed',
-            params: JSON.stringify({ completedAtMs: item.createdAtMs, item: { type: 'userMessage', content: [{ text: content }] } }),
-            created_at_ms: item.createdAtMs,
-            turn_error_text: null,
-          }];
-        }
-        if (item.kind === 'assistant_text') {
-          const text = typeof payloadObj.text === 'string' ? payloadObj.text : '';
-          return [{
-            id: item.id,
-            worker_session_id: item.sessionId,
-            card_id: cardId,
-            track_id: page.session.trackId,
-            thread_id: threadId,
-            turn_id: item.turnId || null,
-            item_uuid: `item-${item.id}`,
-            item_type: 'agentMessage',
-            method: 'item/completed',
-            params: JSON.stringify({ completedAtMs: item.createdAtMs, item: { type: 'agentMessage', text } }),
-            created_at_ms: item.createdAtMs,
-            turn_error_text: null,
-          }];
-        }
-        return [];
-      });
-    }),
-  };
-}
 
 /** Composer selection; `null` follows the provider default. Session updates persist model and reasoning effort. */
 export type ModelSelection = Readonly<{ model: string | null; reasoning_effort: string | null }>;
@@ -559,16 +461,13 @@ export type SentPlannerInput = Readonly<{
 
 /**
  * One send, keyed: the same `idempotencyKey` on a retry is answered with the first request's answer
- * and queues nothing, so a send whose answer was lost can be sent again safely. `replacesTurn` is the
- * latest turn an Edit replaces (#2043): the server removes it and queues this message in one commit,
- * or answers 409 `planner_turn_not_replaceable` and changes nothing; `null` for an ordinary send.
+ * and queues nothing, so a send whose answer was lost can be retried safely.
  */
 export function sendPlannerInputOperation(
   cardId: string,
   text: string,
   attachments: readonly string[],
   idempotencyKey: string,
-  replacesTurn: string | null,
   steerIfRunning = false,
   queueIfBusy = false,
 ): ApiOperation<SentPlannerInput> {
@@ -582,7 +481,6 @@ export function sendPlannerInputOperation(
       ...(queueIfBusy ? { queueIfBusy } : {}),
       text,
       ...(attachments.length === 0 ? {} : { attachments }),
-      ...(replacesTurn === null ? {} : { replaces_turn: replacesTurn }),
     },
     headers: { 'Idempotency-Key': idempotencyKey },
     responseSchema: z.union([
@@ -610,19 +508,11 @@ export function sendPlannerInputOperation(
   };
 }
 
-export function resumeProviderSessionOperation(sessionId: string, turnId: string) {
-  return {
-    method: 'POST',
-    path: `/api/v1/sessions/${encodeURIComponent(sessionId)}/resume`,
-    body: { turnId },
-    timeoutMs: 30_000,
+export function recoverSessionOperation(sessionId: string, mode: 'reconnect' | 'reset_context') {
+  return { method: 'POST', path: `/api/v1/sessions/${encodeURIComponent(sessionId)}/recover`,
+    body: { mode }, timeoutMs: 30_000,
     responseSchema: agentSessionDtoSchema.refine(session => session.id === sessionId),
   } satisfies ApiOperation<unknown>;
-}
-
-export function abandonSessionInputOperation(sessionId: string, inputId: string): ApiOperation<SessionInputReceipt> {
-  return { method: 'POST', path: `/api/v1/sessions/${encodeURIComponent(sessionId)}/inputs/${encodeURIComponent(inputId)}/abandon`,
-    responseSchema: sessionInputReceiptSchema };
 }
 
 /** The image formats the upload endpoint accepts; the server's magic-number sniff is the judgement. */
@@ -971,10 +861,6 @@ export function conversationCreateFailure(failure: ApiFailure | null): Conversat
   return { kind, message: kind === 'retry' ? CONVERSATION_CREATE_TEXT.unknown : refusedText(failure, CONVERSATION_CREATE_TEXT.refused) };
 }
 
-const DIFF_PREFIX = '## Track state changes since your last turn';
-const DIFF_END = '\n\n---\n\n';
-const USER_SAYS = 'User says:\n';
-
 export const SYSTEM_PRESENTATION_LABELS: Readonly<
 Record<SystemInputPresentation, string>
 > = Object.freeze({
@@ -988,154 +874,11 @@ Record<SystemInputPresentation, string>
   system_planner_context_usage: 'Planner context usage',
 });
 
-/* Live data uses the camelCase spellings; snake_case is accepted as a precaution since the kernel
-   stores `item.type` verbatim. */
-const AGENT_MESSAGE = 'agentMessage';
-const AGENT_MESSAGE_SNAKE_CASE = 'agent_message';
-const USER_MESSAGE = 'userMessage';
-const USER_MESSAGE_SNAKE_CASE = 'user_message';
-
-function isAgentMessage(itemType: string | null): boolean {
-  return itemType === AGENT_MESSAGE || itemType === AGENT_MESSAGE_SNAKE_CASE;
-}
-
+/** Legacy event spelling, used only by event invalidation. */
 export function isUserMessage(itemType: string | null): boolean {
-  return itemType === USER_MESSAGE || itemType === USER_MESSAGE_SNAKE_CASE;
+  return itemType === 'userMessage' || itemType === 'user_message';
 }
 
-/** One line per question: its title, then its options when it offers a choice. */
-function askText(questions: unknown): string {
-  if (!Array.isArray(questions)) return '';
-  return questions.flatMap((question: unknown) => {
-    if (typeof question !== 'object' || question === null) return [];
-    const { title, options } = question as { title?: unknown; options?: unknown };
-    if (typeof title !== 'string' || title.trim() === '') return [];
-    const choices = Array.isArray(options)
-      ? options.filter((option): option is string => typeof option === 'string' && option.trim() !== '')
-        .map((option) => option.trim())
-      : [];
-    return [choices.length > 0 ? `${title.trim()} (${choices.join(' / ')})` : title.trim()];
-  }).join('\n');
-}
-
-/*
- * `neige_user_ask` is speech: the row is an agent turn whose text is its questions. Only a
- * SUCCESSFUL `item/completed` mints it; a refused call falls through to the failed activity line.
- */
-function userAskToTurn(
-  item: Readonly<{
-    id: number; item_uuid: string | null; item_type: string | null; method: string; params: string;
-    created_at_ms: number;
-  }>,
-): ConversationTurn | null {
-  if (item.item_type !== 'mcpToolCall') return null;
-  if (item.method !== 'item/completed') return null;
-  let parsed: unknown;
-  try { parsed = JSON.parse(item.params); } catch { return null; }
-  if (typeof parsed !== 'object' || parsed === null) return null;
-  const envelope = parsed as { completedAtMs?: unknown; item?: unknown };
-  if (typeof envelope.item !== 'object' || envelope.item === null) return null;
-  const payload = envelope.item as {
-    tool?: unknown; arguments?: unknown; error?: unknown; status?: unknown;
-  };
-  if (payload.tool !== USER_ASK_TOOL) return null;
-  /* The same failure reading as the activity line: an MCP error member, or a failed status. */
-  if ((payload.error !== undefined && payload.error !== null) || payload.status === 'failed') {
-    return null;
-  }
-  const args = payload.arguments;
-  if (typeof args !== 'object' || args === null) return null;
-  const text = askText((args as { questions?: unknown }).questions);
-  if (text === '') return null;
-  return {
-    id: `ask-${item.item_uuid ?? item.id}`,
-    author: 'agent',
-    text,
-    atMs: typeof envelope.completedAtMs === 'number' && Number.isFinite(envelope.completedAtMs)
-      ? envelope.completedAtMs : item.created_at_ms,
-    origin: 'ask',
-  };
-}
-
-/** The words one input segment shows: a user segment loses the kernel's `User says:` lead. */
-export function inputSegmentText(segment: HarnessInputSegment): string {
-  const text = segment.presentation === 'user' && segment.text.startsWith(USER_SAYS)
-    ? segment.text.slice(USER_SAYS.length) : segment.text;
-  return text.trim();
-}
-
-export function harnessItemToTurns(item: HarnessItem): readonly ConversationMessage[] {
-  const ask = userAskToTurn(item);
-  if (ask !== null) return [ask];
-  if (item.method !== 'item/completed' ||
-      (!isAgentMessage(item.item_type) && !isUserMessage(item.item_type))) return [];
-
-  if (isUserMessage(item.item_type) && item.input_segments !== undefined) {
-    const segments = item.input_segments;
-    let completedAtMs: unknown;
-    try {
-      const parsed = JSON.parse(item.params) as unknown;
-      if (typeof parsed === 'object' && parsed !== null) {
-        completedAtMs = (parsed as { completedAtMs?: unknown }).completedAtMs;
-      }
-    } catch {
-      // The structured segments remain usable even when the upstream notification cannot be decoded.
-    }
-    const atMs = typeof completedAtMs === 'number' && Number.isFinite(completedAtMs)
-      ? completedAtMs : item.created_at_ms;
-    /* Regenerable context is not a wakeup. At least one real report edit must remain. */
-    const observations = segments.filter((segment) => segment.presentation !== 'system_planner_turn_budget' && segment.presentation !== 'system_planner_context_usage');
-    const quiet = observations.length > 0
-      && observations.every((segment) => segment.presentation === 'system_report_edited');
-    return segments.flatMap<ConversationMessage>((segment, index) => {
-      const text = inputSegmentText(segment);
-      const attachments = segment.attachments;
-      /* An image with no words is a message. */
-      if (text === '' && attachments.length === 0) return [];
-      const id = segments.length === 1
-        ? String(item.id) : `${item.id}:${index}`;
-      if (segment.presentation === 'user') {
-        return [{ id, author: 'you' as const, text, atMs, attachments,
-          inputSource: { cardId: item.card_id, threadId: item.thread_id, itemId: item.id, segmentIndex: index, turnId: item.turn_id, entryRev: segment.origin?.queue_entry?.rev ?? null },
-          ...(segment.origin === undefined ? {} : { queueEntryId: segment.origin.queue_entry?.id ?? null }) }];
-      }
-      return [{
-        id, author: 'system' as const,
-        label: SYSTEM_PRESENTATION_LABELS[segment.presentation], text, atMs,
-        ...(quiet ? { quiet: true as const } : {}),
-      }];
-    });
-  }
-
-  let parsed: unknown;
-  try { parsed = JSON.parse(item.params); } catch { return []; }
-  if (typeof parsed !== 'object' || parsed === null) return [];
-  const envelope = parsed as { completedAtMs?: unknown; item?: unknown };
-  if (typeof envelope.item !== 'object' || envelope.item === null) return [];
-  const payload = envelope.item as { text?: unknown; content?: unknown };
-  let text = isAgentMessage(item.item_type)
-    ? (typeof payload.text === 'string' ? payload.text : '')
-    : (Array.isArray(payload.content) ? payload.content.map((part: unknown) => (
-      typeof part === 'object' && part !== null && typeof (part as { text?: unknown }).text === 'string'
-        ? (part as { text: string }).text : ''
-    )).join('') : '');
-  if (isUserMessage(item.item_type) && text.startsWith(DIFF_PREFIX)) {
-    const end = text.indexOf(DIFF_END);
-    if (end >= 0) text = text.slice(end + DIFF_END.length);
-  }
-  if (isUserMessage(item.item_type) && text.startsWith(USER_SAYS)) {
-    text = text.slice(USER_SAYS.length);
-  }
-  text = text.trim();
-  if (text === '') return [];
-  return [{
-    id: String(item.id), author: isUserMessage(item.item_type) ? 'you' : 'agent', text,
-    atMs: typeof envelope.completedAtMs === 'number' && Number.isFinite(envelope.completedAtMs)
-      ? envelope.completedAtMs : item.created_at_ms,
-  }];
-}
-
-/** The decoder's exact structured presentation label, never inferred from input text. */
 export function isPlannerTurnContext(entry: TranscriptEntry): entry is ConversationSystemEntry {
   return entry.author === 'system' && (entry.label === SYSTEM_PRESENTATION_LABELS.system_planner_turn_budget
     || entry.label === SYSTEM_PRESENTATION_LABELS.system_planner_context_usage);
@@ -1212,334 +955,9 @@ export function readableCommand(command: string): string {
   return (match?.[2] ?? command).trim();
 }
 
-const ACTIVITY_TARGET_MAX = 64;
-
-function clip(text: string): string | null {
-  const line = text.trim().split('\n', 1)[0]?.trim() ?? '';
-  if (line === '') return null;
-  return line.length <= ACTIVITY_TARGET_MAX
-    ? line
-    : `${line.slice(0, ACTIVITY_TARGET_MAX - 1).trimEnd()}…`;
-}
-
-type ActivityShape = Readonly<{ running: string; done: string; target: string | null }>;
-
-/**
- * The tools whose names are worth saying in English; an unknown tool keeps its wire name rather
- * than an invented phrase. `args` is the call's `arguments`, read only by a tool whose line names one.
- */
-function toolShape(tool: string, args: unknown): ActivityShape {
-  if (REPORT_WRITE_TOOLS.includes(tool)) {
-    return { running: 'Writing report', done: 'Wrote report', target: null };
-  }
-  if (tool === REPORT_DELETE_TOOL) {
-    return { running: 'Deleting blocks', done: 'Deleted blocks', target: null };
-  }
-  if (REPORT_READ_TOOLS.includes(tool)) {
-    return { running: 'Reading report', done: 'Read report', target: null };
-  }
-  if (tool === TASK_ACCEPT_TOOL) {
-    return { running: 'Accepting task', done: 'Accepted task', target: null };
-  }
-  if (tool === TASK_REJECT_TOOL) {
-    return { running: 'Rejecting task', done: 'Rejected task', target: null };
-  }
-  if (tool === TASK_LS_TOOL) {
-    return { running: 'Reading plan', done: 'Read plan', target: null };
-  }
-  // The `neige_track_*` tools that change the track; they must be tested before the prefix fallback below.
-  if (tool === TRACK_RENAME_TOOL) {
-    return { running: 'Naming the track', done: 'Named the track', target: null };
-  }
-  if (tool === DEV_PUBLISH_TOOL) {
-    return { running: 'Publishing the PR', done: 'Published the PR', target: null };
-  }
-  if (tool === MAIL_SEND_TOOL) {
-    const summary = typeof args === 'object' && args !== null ? (args as { summary?: unknown }).summary : undefined;
-    return { running: 'Sending mail', done: 'Sent mail', target: typeof summary === 'string' ? clip(summary) : null };
-  }
-  // `cat`, `ls`, `state`, `log`, `diff` are looks; any new `neige_track_*` WRITE needs its own branch ahead of this one.
-  if (tool.startsWith(TRACK_TOOL_PREFIX)) {
-    return { running: 'Reading the track', done: 'Read the track', target: null };
-  }
-  return { running: 'Calling', done: 'Called', target: clip(tool) };
-}
-
-function activityShape(itemType: string, item: Record<string, unknown>): ActivityShape | null {
-  switch (itemType) {
-    case 'reasoning':
-      // No summary text on the line: the point is that time is passing.
-      return { running: 'Thinking', done: 'Thought', target: null };
-    case 'commandExecution':
-      return {
-        running: 'Running', done: 'Ran',
-        target: typeof item.command === 'string' ? clip(readableCommand(item.command)) : null,
-      };
-    case 'fileChange': {
-      const changes = Array.isArray(item.changes) ? item.changes.length : 0;
-      return {
-        running: 'Editing', done: 'Edited',
-        target: changes === 0 ? null : (changes === 1 ? '1 file' : `${changes} files`),
-      };
-    }
-    case 'mcpToolCall':
-      return toolShape(typeof item.tool === 'string' ? item.tool : '', item.arguments);
-    // Curated subset of codex's `ThreadItem` union; unknown variants fall through to the generic line.
-    case 'webSearch':
-      return { running: 'Searching the web', done: 'Searched the web', target: null };
-    case 'imageGeneration':
-      return { running: 'Generating image', done: 'Generated image', target: null };
-    case 'sleep':
-      return { running: 'Waiting', done: 'Waited', target: null };
-    case 'collabAgentToolCall':
-      return { running: 'Calling agent', done: 'Called agent', target: null };
-    case 'subAgentActivity':
-      return { running: 'Delegating', done: 'Delegated', target: null };
-    case 'dynamicToolCall':
-      return { running: 'Calling tool', done: 'Called tool', target: typeof item.tool === 'string' ? clip(item.tool) : null };
-    case 'hookPrompt':
-      return { running: 'Prompting', done: 'Prompted', target: null };
-    case 'imageView':
-      return { running: 'Viewing image', done: 'Viewed image', target: null };
-    case 'enteredReviewMode':
-      return { running: 'Entering review mode', done: 'Entered review mode', target: null };
-    case 'exitedReviewMode':
-      return { running: 'Exiting review mode', done: 'Exited review mode', target: null };
-    case 'contextCompaction':
-      return { running: 'Compacting', done: 'Compacted', target: null };
-    default:
-      return { running: 'Working', done: 'Worked', target: clip(itemType) };
-  }
-}
-
-/* `aggregatedOutput` is kilobytes on a normal build; clipped here so "one short line, never a payload" is a property of the type. `error` outranks its tail. */
-/** The last non-empty line of a machine string, clipped; `null` when there is no such line. */
-function informativeLine(text: string): string | null {
-  const lines = text.split('\n');
-  for (let index = lines.length - 1; index >= 0; index -= 1) {
-    const line = clip(lines[index] ?? '');
-    if (line !== null) return line;
-  }
-  return null;
-}
-
-function failureDetail(payload: Record<string, unknown>): string | null {
-  // What the machine said, in both wire spellings; a blank one falls through to the tail.
-  const error = payload.error;
-  const stated = typeof error === 'string' ? error
-    : (typeof error === 'object' && error !== null
-      && typeof (error as { message?: unknown }).message === 'string'
-      ? (error as { message: string }).message : null);
-  if (stated !== null) {
-    const line = informativeLine(stated);
-    if (line !== null) return line;
-  }
-  // Otherwise the tail: a shell puts its error there and a test runner its count.
-  const output = payload.aggregatedOutput;
-  if (typeof output === 'string') return informativeLine(output);
-  return null;
-}
-
-export function harnessItemToActivity(item: HarnessItem): ConversationActivity | null {
-  if (isAgentMessage(item.item_type) || isUserMessage(item.item_type)) return null;
-  if (item.method !== 'item/started' && item.method !== 'item/completed') return null;
-  if (item.item_type === null) return null;
-  let parsed: unknown;
-  try { parsed = JSON.parse(item.params); } catch { return null; }
-  if (typeof parsed !== 'object' || parsed === null) return null;
-  const envelope = parsed as { completedAtMs?: unknown; item?: unknown };
-  if (typeof envelope.item !== 'object' || envelope.item === null) return null;
-  const payload = envelope.item as Record<string, unknown>;
-  const shape = activityShape(item.item_type, payload);
-  if (shape === null) return null;
-
-  const done = item.method === 'item/completed';
-  /* Failure is read from the action's own report, never guessed: a non-zero
-     exit, an MCP error member, or a status the wire itself calls failed. */
-  const failed = done && (
-    (typeof payload.exitCode === 'number' && payload.exitCode !== 0)
-    || (payload.error !== undefined && payload.error !== null)
-    || payload.status === 'failed'
-  );
-  return {
-    id: `activity-${item.id}`,
-    author: 'activity',
-    verb: done ? shape.done : shape.running,
-    target: shape.target,
-    state: failed ? 'failed' : (done ? 'done' : 'running'),
-    /* `done &&` is deliberate: a line still saying `Running` must not print an interval that has not ended. */
-    durationMs: done && typeof payload.durationMs === 'number'
-      && Number.isFinite(payload.durationMs)
-      ? payload.durationMs : null,
-    detail: failed ? failureDetail(payload) : null,
-    ...activityContent(item.item_type, payload),
-    tool: item.item_type === 'mcpToolCall' && typeof payload.tool === 'string' ? payload.tool : null,
-    atMs: typeof envelope.completedAtMs === 'number' && Number.isFinite(envelope.completedAtMs)
-      ? envelope.completedAtMs : item.created_at_ms,
-  };
-}
-
-/* The stored `turn/completed` params: codex's `Turn` minus its items. Lenient below `status`:
-   a malformed `error` costs only the detail, never the line, and `status` is `z.unknown()` so a
-   non-string status still renders as a turn that ended in an unknown way. */
-const turnOutcomeParamsSchema = z.object({
-  id: z.string().optional().catch(undefined),
-  status: z.unknown(),
-  error: z.object({
-    message: z.string().optional().catch(undefined),
-    codexErrorInfo: z.union([z.string(), z.record(z.string(), z.unknown())]).nullish().catch(undefined),
-  }).nullish().catch(undefined),
-  durationMs: z.unknown().optional(),
-  harness_interruption_reason: z.unknown().optional(),
-});
-
-/** The released cause-only string and complete v1 proof; never read unprotected `harness_timeout`. */
-export const harnessTimeoutEvidenceSchema: z.ZodType<HarnessTimeoutEvidence> = z.object({
-  version: z.literal('v1'),
-  request: z.strictObject({
-    session_id: z.string(), card_id: z.string(), track_id: z.string(), thread_id: z.string(), turn_id: z.string(),
-    reason: z.literal('max_turn_duration'), requested_at_ms: z.number().int(),
-    effective_elapsed_ms: z.number().int().nonnegative(), budget_ms: z.number().int().nonnegative(),
-  }),
-  ended_at_ms: z.number().int(),
-});
-const harnessInterruptionSchema = z.union([z.literal('max_turn_duration'), harnessTimeoutEvidenceSchema]);
-
-/** A recorded duration only when it is a finite, non-negative integer; anything else is unknown, not 0. */
-function recordedDurationMs(value: unknown): number | null {
-  return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : null;
-}
-
-function codexErrorCode(info: string | Readonly<Record<string, unknown>> | null | undefined): string | undefined {
-  if (info === null || info === undefined) return undefined;
-  if (typeof info === 'string') return info;
-  const [key] = Object.keys(info);
-  return key;
-}
-
-/**
- * The outcome line for one `turn/completed` row; `null` only when it is not an outcome row at all
- * or has no turn id. `atMs` is the kernel's `created_at_ms`, the same clock every other row uses,
- * not codex's whole-second `completedAt`.
- */
-export function transcriptRowToTurnOutcome(item: HarnessItem): ConversationTurnOutcome | null {
-  if (item.method !== 'turn/completed') return null;
-  let parsed: unknown;
-  try { parsed = JSON.parse(item.params); } catch { return null; }
-  const result = turnOutcomeParamsSchema.safeParse(parsed);
-  if (!result.success) return null;
-  const { status: wireStatus, error, durationMs } = result.data;
-  if (wireStatus === undefined) return null;
-  const turnId = item.turn_id ?? result.data.id;
-  if (turnId === undefined) return null;
-  const message = error?.message;
-  const code = codexErrorCode(error?.codexErrorInfo);
-  const interruption = wireStatus === 'interrupted'
-    ? harnessInterruptionSchema.safeParse(result.data.harness_interruption_reason) : null;
-  const base = {
-    id: `outcome-${item.id}`, author: 'turn' as const, turnId, atMs: item.created_at_ms,
-    elapsedMs: recordedDurationMs(durationMs),
-    ...(message === undefined ? {} : { message }),
-    ...(item.turn_error_text === null ? {} : { text: item.turn_error_text }),
-    ...(code === undefined ? {} : { code }),
-    ...(interruption?.success ? { harnessInterruption: interruption.data } : {}),
-  };
-  if (wireStatus === 'completed' || wireStatus === 'interrupted' || wireStatus === 'failed') {
-    return { ...base, status: wireStatus };
-  }
-  // Not a string: show what the wire actually said, as text.
-  const rawStatus = typeof wireStatus === 'string' ? wireStatus : JSON.stringify(wireStatus);
-  return { ...base, status: 'failed', rawStatus };
-}
-
-/**
- * The only notification methods the transcript renders. A fail-closed backstop: the server
- * narrows `GET …/harness/items` to the same methods so the page limit is a budget of renderable
- * rows, and the converters check the method themselves too.
- */
-function isTranscriptMethod(method: string): boolean {
-  return method === 'item/started' || method === 'item/completed' || method === 'turn/completed';
-}
-
-/**
- * The transcript: messages and actions in one list. `started` and `completed` pair on `item_uuid`
- * into one line in the started row's position, and a finished `Thought` survives only as the tail.
- */
-export function buildTranscript(items: readonly HarnessItem[]): readonly TranscriptEntry[] {
-  const order: string[] = [];
-  const byKey = new Map<string, TranscriptEntry>();
-  /** The turn of the row that placed each entry; `null` for a row that belongs to no turn. */
-  const turnOf = new Map<string, string | null>();
-
-  for (const item of [...items].sort((left, right) => left.id - right.id)) {
-    if (!isTranscriptMethod(item.method)) continue;
-    // A turn outcome is its own line, keyed by its own row: nothing pairs with or overwrites it.
-    const outcome = transcriptRowToTurnOutcome(item);
-    if (outcome !== null) {
-      order.push(outcome.id);
-      byKey.set(outcome.id, outcome);
-      turnOf.set(outcome.id, outcome.turnId);
-      continue;
-    }
-    const turns = harnessItemToTurns(item);
-    if (turns.length > 0) {
-      for (const turn of turns) {
-        /* An ask bubble takes the key of the activity line its own `item/started` row minted, so
-           the bubble replaces the line in place. */
-        const key = turn.author === 'agent' && turn.origin === 'ask'
-          ? `activity-${item.item_uuid ?? item.id}` : `turn-${turn.id}`;
-        if (!byKey.has(key)) { order.push(key); turnOf.set(key, item.turn_id); }
-        byKey.set(key, turn);
-      }
-      continue;
-    }
-    const activity = harnessItemToActivity(item);
-    if (activity === null) continue;
-    // Pair on the wire's own item id when it has one; a row without one is its own line.
-    const key = `activity-${item.item_uuid ?? item.id}`;
-    if (!byKey.has(key)) { order.push(key); turnOf.set(key, item.turn_id); }
-    byKey.set(key, { ...activity, id: key });
-  }
-
-  const entries = placeTurnOutcomes(order, turnOf, (key) => byKey.get(key)?.author === 'turn').flatMap((key) => {
-    const entry = byKey.get(key);
-    return entry === undefined ? [] : [entry];
-  });
-
-  return retireFollowedThoughts(entries);
-}
-
-/**
- * Each outcome moves to just after the last entry of its own turn, never past the first entry of a
- * later turn; a row with no turn id belongs to no turn. A provider can store a turn's outcome before
- * its last reply (the Claude driver does), and the reply still reads above the line that ends it.
- */
-function placeTurnOutcomes(
-  order: readonly string[], turnOf: ReadonlyMap<string, string | null>, isOutcome: (key: string) => boolean,
-): readonly string[] {
-  const placed = [...order];
-  for (const key of order) {
-    const turn = turnOf.get(key) ?? null;
-    if (!isOutcome(key) || turn === null) continue;
-    const from = placed.indexOf(key);
-    let to = from;
-    for (let index = from + 1; index < placed.length; index += 1) {
-      const other = placed[index];
-      const otherTurn = turnOf.get(other) ?? null;
-      if (otherTurn === null) continue;
-      if (otherTurn !== turn || isOutcome(other)) break;
-      to = index;
-    }
-    if (to === from) continue;
-    placed.splice(from, 1);
-    placed.splice(to, 0, key);
-  }
-  return placed;
-}
-
 /**
  * Readable thoughts remain available; an empty `Thought` status survives only until later activity. Shared by
- * `buildTranscript` and `mergeTranscript` so the two agree on which thought is "followed".
+ * stored projection and live display so they agree on which thought is followed.
  */
 export function retireFollowedThoughts(entries: readonly TranscriptEntry[]): readonly TranscriptEntry[] {
   return entries.filter((entry, index) => {
@@ -1556,56 +974,10 @@ export function mergeTranscript(
   return echoes.length === 0 ? serverEntries : retireFollowedThoughts([...serverEntries, ...echoes]);
 }
 
-const ECHO_RECONCILIATION_LOOKBACK = 50;
-
-function userTextMatchesEcho(userText: string, echoText: string): boolean {
-  const user = userText.trim();
-  const echo = echoText.trim();
-  return user !== '' && echo !== '' && (user === echo || user.startsWith(`${echo}\n`));
-}
-
-/**
- * Whether a persisted row is the same send as an echo that had no words: attachment ids are server-
- * minted, one per upload.
- */
-function userAttachmentsMatchEcho(
-  turn: ConversationTurn, echo: ConversationTurn,
-): boolean {
-  const echoIds = echo.attachments ?? [];
-  if (echo.text.trim() !== '' || echoIds.length === 0) return false;
-  const rowIds = new Set((turn.attachments ?? []).map((attachment) => attachment.id));
-  return echoIds.every((attachment) => rowIds.has(attachment.id));
-}
-
-/** Body qualification is separate from identity, attribution and source-version evidence. */
-export function inputBodyMatchesEcho(turn: ConversationTurn, echo: ConversationTurn): boolean {
-  return userTextMatchesEcho(turn.text, echo.text) || userAttachmentsMatchEcho(turn, echo);
-}
-
-/** Reconcile recent persisted user rows with optimistic echoes one-to-one. */
-export function reconcileUserEchoes(
-  serverTurns: readonly ConversationMessage[],
-  echoes: readonly ConversationTurn[],
-): readonly ConversationTurn[] {
-  const userTurns = serverTurns.filter((turn): turn is ConversationTurn => turn.author === 'you')
-    .slice(-ECHO_RECONCILIATION_LOOKBACK);
-  const matchedUserIndexes = new Set<number>();
-  return echoes.filter((echo) => {
-    const match = userTurns.findIndex((turn, index) =>
-      !matchedUserIndexes.has(index)
-      && inputBodyMatchesEcho(turn, echo));
-    if (match < 0) return true;
-    matchedUserIndexes.add(match);
-    return false;
-  });
-}
-
 export function isOptimisticConversationTurn(
   entry: TranscriptEntry,
 ): entry is OptimisticConversationTurn {
-  if (entry.author !== 'you' || !('serverHighWaterBefore' in entry)) return false;
-  const before = entry.serverHighWaterBefore;
-  return typeof before === 'number' && Number.isFinite(before);
+  return entry.author === 'you' && 'localSend' in entry && entry.localSend === true;
 }
 
 /**
@@ -1614,11 +986,6 @@ export function isOptimisticConversationTurn(
  */
 export function isQueuedConversationTurn(entry: TranscriptEntry): boolean {
   return isOptimisticConversationTurn(entry) && entry.queued;
-}
-
-/** Highest persisted item id observed before an optimistic send. */
-export function serverItemHighWater(items: readonly Readonly<{ id: number }>[]): number {
-  return items.reduce((highest, item) => Math.max(highest, item.id), 0);
 }
 
 /** User-role display data includes unknown historical authors; this is never an ownership test. */

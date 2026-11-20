@@ -62,13 +62,8 @@ it.each(['completed', 'interrupted', 'failed'])('keeps recorded text when the ac
     { ...sessionTurn(SESSION), status, completedAtMs: Date.now() }));
   await fixture.refresh();
   await waitFor(() => expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull());
-  if (status === 'completed') {
-    expect(historyTexts()).toEqual(['question', 'Stored answer']);
-    expect(document.querySelector('[data-nc-current-meta]')).toBeNull();
-  } else {
-    expect(historyTexts().slice(0, 2)).toEqual(['question', 'Stored answer']);
-    expect(historyTexts()[2]).toContain(status === 'interrupted' ? 'Interrupted' : 'Failed');
-  }
+  expect(historyTexts().slice(0, 2)).toEqual(['question', 'Stored answer']);
+  expect(historyTexts()[2]).toContain(status === 'completed' ? '完成' : status === 'interrupted' ? '本轮已中断' : '本轮执行失败');
 });
 it('never shows one session’s persisted replies in another', async () => {
   setup(runningPage());

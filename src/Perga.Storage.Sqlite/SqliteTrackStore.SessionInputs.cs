@@ -292,7 +292,8 @@ public sealed partial class SqliteTrackStore : ISessionInputStore
                 InputSelect + "\nWHERE i.source = 'session' AND t.status = 'running' ORDER BY i.ordinal;", transaction: tx, cancellationToken: innerCt)).ConfigureAwait(false);
             await conn.ExecuteAsync(new CommandDefinition(
                 """
-                UPDATE agent_sessions SET status = 'unknown', updated_at_ms = @Now
+                UPDATE agent_sessions SET status = 'unknown', unknown_reason = 'host_restarted',
+                    unknown_turn_id = (SELECT id FROM session_turns WHERE session_id = agent_sessions.id ORDER BY turn_index DESC LIMIT 1), updated_at_ms = @Now
                 WHERE id IN (
                     SELECT i.session_id FROM session_messages i JOIN session_turns t ON t.id = i.turn_id
                     WHERE i.source = 'session' AND t.status = 'running');

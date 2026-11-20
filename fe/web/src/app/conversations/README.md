@@ -10,16 +10,16 @@ layout, then calls this one assembly; it contains no copy or re-export of it.
 | Transport and recovery/unauthorized handling | app/providers and core/api |
 | Scoped query facts and invalidation | QueryClient via app/providers/queries |
 | Read numbering and live/history handoff | conversations/read-order and live-replies |
-| Cross-mount input, drafts, send records, restart lease and confirmed memory | ConversationProvider |
+| Cross-mount input, drafts, local sends and accepted history | ConversationProvider |
 | Outbox delivery and view projection | conversations/outbox and core/domain/conversation-outbox |
 | Stop feedback and request lease | conversations/stop |
-| Fresh-session restart strip | conversations/restart and core/domain/conversation-restart |
+| Single action slot and command policy | core/domain/conversation-action |
 | Summary/name/state projection | core/domain/conversation-summary |
 | Queue revision visibility | core/domain/conversation-outbox |
 
 Initialization and cleanup retain the existing React hook order: tab registry,
 transcript/read tracking, history and run observations, model catalog and
-view-local state, live handoff, stop lease, restart strip, then outbox reconciliation. One
+view-local state, live handoff, stop lease, then local send state. One
 mounted view observes one card. Changing scope disables/rekeys its queries and
 resets view-local state under the existing hooks. Closing/unmounting does not
 clear the provider's drafts, inputs or dispatched sends; late results remain
@@ -62,8 +62,7 @@ receives a new outer snapshot. This eligibility check never supplies a read numb
 Admission, loading, error and result acceptance share the same current-window
 snapshot/read/cursor check. Public mutation cache state serializes all observers
 of that window; obsolete HTTP may finish but cannot lock or contaminate its successor.
-Clear, rewind, restored-input deletion and replay boundaries reset retained windows;
-a successful local replacement resets them after its ACK. These invalidations
+Clear, rewind, restored-input deletion and replay boundaries reset retained windows. These invalidations
 read the latest window rather than replay old cursors. Unknown older edits require
 such an invalidation or an explicit read; a latest window cannot certify them.
 
@@ -118,17 +117,19 @@ existing transcript and command alignment. See the
 [admission contract](../../ui/content-presentation/README.md), the Chat thread README
 for feature integration and the production `conversation-switch` browser regression.
 
-History derivation and confirmed-memory effects depend on the registry's stable
+History derivation and accepted-history effects depend on the registry's stable
 history/remember operations and relevant rows, rather than its whole context
 value. Typing still updates the one retained composer; it does not invalidate
 unchanged history. Outbox operations remain authoritative for dispatch, keyed
 retry, queue visibility, refusal/unknown restoration and attachments. The app
 keeps local Sending feedback separate from run/activity evidence of execution.
 
-The outbox's `awaitingReconciliation` shares the existing input-blocking predicate;
-the app declares waiting feedback from that fact and leaves read errors on their
-existing retry surface. The sentence does not claim an active fetch or delivery
-after an ambiguous replay, and successful POST handling still does not await reads.
+Local sends have three states: idle (no operation), sending and failed. The exact
+body, task target and idempotency key survive retries, including uncertain delivery.
+A successful receipt removes the operation immediately; refetch errors cannot turn
+an acknowledged write into a failed send. The session run response owns accepted
+queue entries, and history owns delivered messages. No replay fences, spent-row
+claims, placement memory or queue tombstones are retained in the outbox.
 
 Recovery methods return whether the local owner took the recovery intent, never
 whether the server accepted it. Only a taken action requests composer focus.
@@ -151,11 +152,9 @@ Initial admission also passes its actual text to the held-draft owner: recovery
 capture can refuse the POST without erasing the first sentence or inventing a send.
 
 First-message creation uses the v1 SessionCreationReceipt path. Its required
-`sessionInput` identifies the confirmed outbox echo by input ID. Adoption and the
-local echo publish together before the canonical session row. Only matching
-session history takes over the bubble. Unknown results replay the frozen POST
-under its original key; an explicit new-conversation choice starts a new key.
-There is no initial-input inspector, polling query or capability switch.
+`sessionInput` identifies the accepted message remembered at draft adoption.
+Adoption and the accepted entry publish together. Unknown results retry the frozen
+POST under its original key; an explicit new-conversation choice starts a new key.
 
 The Registry exposes raw `rememberedTurnsOf` separately from display `turnsOf`.
 Only raw source enters the store's history fallback and memory writes: a local
@@ -165,24 +164,20 @@ queue-filtered display and uses the existing pure `OutgoingMessage`; `ChatThread
 replaces it in the admission commit. This adds no second transcript or presentation
 acknowledgement state, and grants no read receipt, source snapshot or history action.
 
-Ordinary input receipts identify an entry but do not report its queue revision.
-Their exact provenance fast path therefore requires an actually known queue revision
-and an eligible raw source revision. With an unknown revision, the existing bounded
-text/high-water reconciliation remains authoritative; different known identities
-cannot consume one another, and known older sources cannot bypass their version
-fence merely because words repeat.
+Queue display accounting derives versioned references only from final displayed
+canonical sources. A pre-receipt local send cannot claim a queue identity or suppress
+a live server queue entry. Queue steer and withdraw refetch the owning run response.
 
-Queue display accounting derives versioned references from final displayed
-canonical sources and confirmed echoes with an actual queue revision. Unknown
-versions emit no reference. PendingQueue compares them with the effective saved
-departing revision; an older historical carrier cannot remove a newer ghost,
-while live rows keep their controls.
+SessionItemDto projects directly into typed thread entries. Speech, thinking, tool
+results, outcomes, archived inputs and epoch boundaries share this projection;
+provider JSON-RPC methods and params are absent. Live retirement consumes explicit
+persisted identity and completion facts from the same projection.
 
 History model verification uses the real history hook's HTTP paths, sparse overlap,
 omission, short/empty response, compaction and request-lifecycle cases in
 `history.test.tsx`, plus the actual read ledger in `read-order.test.ts`. Router
 `live-replies`, `first-message-continuity`, `track-conversation` and
-`conversation-input-response` tests exercise source handoff, ACK/read fences,
+`conversation-input-response` tests exercise source handoff, local send recovery,
 stop and unchanged derivation. `conversation-switch.browser.test.tsx` asserts zero
 implicit earlier HTTP, latest visibility and retained DOM through real routing;
 `chat-performance.browser.test.tsx` counts rows through the owner selector. These

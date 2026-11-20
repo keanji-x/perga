@@ -586,7 +586,9 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                        archived_at_ms AS ArchivedAtMs,
                        created_at_ms AS CreatedAtMs,
                        updated_at_ms AS UpdatedAtMs,
-                       permission_mode AS PermissionMode
+                       permission_mode AS PermissionMode,
+                       unknown_reason AS UnknownReason, unknown_turn_id AS UnknownTurnId,
+                       unknown_last_error AS UnknownLastError, reconnect_invalidated AS ReconnectInvalidated
                 FROM agent_sessions
                 WHERE track_id = @TrackId
                 ORDER BY created_at_ms ASC, id ASC;
@@ -1322,7 +1324,7 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                             ELSE json_object('v', 1, 'content', input.content, 'triggerKind', 'user', 'inputId', input.id)
                        END AS PayloadJson,
                        item.created_at_ms AS CreatedAtMs,
-                       turn.status AS TurnStatus,
+                       CASE WHEN item.turn_id IS NULL AND json_extract(item.payload_json,'$.archived') = 1 THEN json_extract(item.payload_json,'$.status') ELSE turn.status END AS TurnStatus,
                        CASE WHEN input.delivery = 'queued' THEN 'accepted' ELSE input.delivery END AS InputDelivery
                 FROM session_items item
                 LEFT JOIN session_messages input ON input.ordinal = item.message_ordinal
@@ -1869,7 +1871,7 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                     new CommandDefinition(
                         """
                         UPDATE session_turns
-                        SET status = 'interrupted',
+                        SET status = 'unknown',
                             completed_at_ms = COALESCE(completed_at_ms, @NowMs)
                         WHERE LOWER(status) IN ('running', 'verifying');
                         """,
@@ -1881,9 +1883,10 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                     new CommandDefinition(
                         """
                         UPDATE agent_sessions
-                        SET status = 'idle',
+                        SET status = 'unknown', unknown_reason = 'host_restarted',
+                            unknown_turn_id = (SELECT id FROM session_turns WHERE session_id = agent_sessions.id ORDER BY turn_index DESC LIMIT 1),
                             updated_at_ms = @NowMs
-                        WHERE LOWER(status) IN ('running', 'verifying');
+                        WHERE LOWER(status) IN ('running', 'verifying', 'stopping', 'compacting');
                         """,
                         new { NowMs = nowMs },
                         transaction: tx,
@@ -2031,13 +2034,15 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                     id, track_id, bound_task_id, bound_attempt_id, title,
                     provider, model, reasoning_effort, native_thread_id, epoch, status,
                     context_used_tokens, context_window_tokens, context_usage_at_ms,
-                    archived_at_ms, created_at_ms, updated_at_ms, permission_mode
+                    archived_at_ms, created_at_ms, updated_at_ms, permission_mode,
+                    unknown_reason, unknown_turn_id, unknown_last_error, reconnect_invalidated
                 )
                 VALUES (
                     @Id, @TrackId, @BoundTaskId, @BoundAttemptId, @Title,
                     @Provider, @Model, @ReasoningEffort, @NativeThreadId, @Epoch, @Status,
                     @ContextUsedTokens, @ContextWindowTokens, @ContextUsageAtMs,
-                    @ArchivedAtMs, @CreatedAtMs, @UpdatedAtMs, @PermissionMode
+                    @ArchivedAtMs, @CreatedAtMs, @UpdatedAtMs, @PermissionMode,
+                    @UnknownReason, @UnknownTurnId, @UnknownLastError, @ReconnectInvalidated
                 )
                 ON CONFLICT(id) DO UPDATE SET
                     bound_task_id = excluded.bound_task_id,
@@ -2054,7 +2059,9 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                     context_usage_at_ms = excluded.context_usage_at_ms,
                     archived_at_ms = excluded.archived_at_ms,
                     updated_at_ms = excluded.updated_at_ms,
-                    permission_mode = excluded.permission_mode;
+                    permission_mode = excluded.permission_mode,
+                    unknown_reason = excluded.unknown_reason, unknown_turn_id = excluded.unknown_turn_id,
+                    unknown_last_error = excluded.unknown_last_error, reconnect_invalidated = excluded.reconnect_invalidated;
                 """,
                 new
                 {
@@ -2075,7 +2082,8 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                     session.ArchivedAtMs,
                     session.CreatedAtMs,
                     session.UpdatedAtMs,
-                    session.PermissionMode
+                    session.PermissionMode, session.UnknownReason, session.UnknownTurnId,
+                    session.UnknownLastError, session.ReconnectInvalidated
                 },
                 transaction: tx,
                 cancellationToken: ct));
@@ -2227,7 +2235,8 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
             CreatedAtMs: r.CreatedAtMs,
             UpdatedAtMs: r.UpdatedAtMs,
             ReasoningEffort: r.ReasoningEffort,
-            PermissionMode: r.PermissionMode);
+            PermissionMode: r.PermissionMode, UnknownReason: r.UnknownReason, UnknownTurnId: r.UnknownTurnId,
+            UnknownLastError: r.UnknownLastError, ReconnectInvalidated: r.ReconnectInvalidated);
 
     private static SessionTurnDto MapTurn(SessionTurnRow r) =>
         new(
@@ -2409,6 +2418,10 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
 
     private sealed class SessionRow
     {
+        public string? UnknownReason { get; init; }
+        public string? UnknownTurnId { get; init; }
+        public string? UnknownLastError { get; init; }
+        public bool ReconnectInvalidated { get; init; }
         public string Id { get; init; } = string.Empty;
         public string TrackId { get; init; } = string.Empty;
         public string? BoundTaskId { get; init; }
@@ -2448,7 +2461,7 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
     {
         public long Id { get; init; }
         public string SessionId { get; init; } = string.Empty;
-        public string TurnId { get; init; } = string.Empty;
+        public string? TurnId { get; init; }
         public string Kind { get; init; } = string.Empty;
         public string PayloadJson { get; init; } = "{}";
         public long CreatedAtMs { get; init; }

@@ -209,6 +209,9 @@ public sealed class ClaudeAgentSession : IAgentSession
             catch (Exception error)
             {
                 await session.DisposeAsync().ConfigureAwait(false);
+                if (spec.ResumeNativeThreadId is not null &&
+                    ProviderSessionNotFoundException.IsMissingSession(error.Message))
+                    throw new ProviderSessionNotFoundException(error.Message, error);
                 if (error is SessionConfigurationException) throw;
                 throw new SessionConfigurationException(new SessionConfigurationOutcome.Rejected(
                     ConfigurationFailureCode.OperationFailed, error.Message, new(null, null, false)));

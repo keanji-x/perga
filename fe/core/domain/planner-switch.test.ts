@@ -33,7 +33,7 @@ it('keeps unknown refusal text but never mistakes uncertain outcomes for refusal
 });
 
 it.each([true, false])('v1 run controls reflect session capabilities regardless of lead role (%s)', (isLead) => {
-  const page = { items: [], activeTurn: null, unknownInput: null,
+  const page = { items: [], activeTurn: null, state: 'idle', readonlyReason: null, canReopen: false, workerPaused: false, lastTurn: null, unknownDetail: null,
     session: { id: 'session', trackId: 'track', isLead, provider: 'codex', model: 'model',
       contextUsage: null, createdAtMs: 1, updatedAtMs: 2 } };
   for (const operation of [conversationRunOperation('session')]) {

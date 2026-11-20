@@ -1,10 +1,10 @@
 import { useTestConversationRegistry } from './permission-registry-fixture.ts';
 import { fixtureSession } from '../router/session-contract-fixture.ts';
 import { sessionPage, sessionItem } from '../router/conversation-session-data.ts';
-import { historicalConversationPage } from '../router/conversation-read-data.ts';
+
 // @vitest-environment jsdom
 // Invariants owned by the shared query layer.
-import { observedWindow, type History } from '../conversations/history.ts';
+
 import { onlineManager, QueryClient, QueryClientProvider, QueryObserver } from '@tanstack/react-query';
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -645,31 +645,6 @@ describe('delete mutation wiring', () => {
     expect(client.getQueryState(queryKeys.areas())?.status).toBe('error');
   });
 
-  it('expires loaded history only after a successful replacement ACK before its source refresh', async () => {
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    const key = queryKeys.harnessItems('card-1');
-    const rows = Array.from({ length: 120 }, (_, index) => ({
-      id: index + 1, worker_session_id: 'runtime', card_id: 'card-1', track_id: 'track-1', thread_id: 'thread',
-      turn_id: null, turn_error_text: null, item_uuid: null, item_type: 'agentMessage', method: 'item/completed',
-      params: '{}', created_at_ms: index,
-    }));
-    client.setQueryData<History>(key, { latest: observedWindow(historicalConversationPage('card-1', rows.slice(60), {contract:'conversation_v1',source:'historical_raw',card_id:'card-1',position:61}), { kind: 'latest' }),
-      retained: [observedWindow(historicalConversationPage('card-1', rows.slice(0, 60), null), { kind: 'before', cursor: {contract:'conversation_v1',source:'historical_raw',card_id:'card-1',position:61} })] });
-    const order: string[] = [];
-    const reset = vi.spyOn(client, 'resetQueries');
-    reset.mockImplementation(filters => {
-      order.push('reset');
-      expect(filters).toEqual({ queryKey: key });
-      return Promise.resolve();
-    });
-    const transport: ApiTransportPort = { send: () => Promise.resolve(ok({ card_id: 'card-1', worker_session_id: 'runtime-1' })) };
-    const { result } = renderHook(() => usePlannerMutations(transport, 'card-1', null, unauthorized, useTestConversationRegistry()), { wrapper: mutationWrapper(client) });
-    await result.current.send('replacement', [], 'replace-key', 'old-turn', transport, () => { order.push('answered'); });
-    expect(order).toEqual(['answered', 'reset']);
-    expect(reset).toHaveBeenCalledOnce();
-    client.clear();
-  });
-
   it('does not turn an acknowledged planner send into a send failure when refresh fails', async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const order: string[] = [];
@@ -683,11 +658,11 @@ describe('delete mutation wiring', () => {
       wrapper: mutationWrapper(client),
     });
 
-    await expect(result.current.send('accepted by the server', [], 'send-key', null, transport, () => { order.push('answered'); }))
+    await expect(result.current.send('accepted by the server', [], 'send-key', transport))
       .resolves.toMatchObject({ card_id: 'card-1' });
     await waitFor(() => expect(invalidate).toHaveBeenCalledTimes(2));
     /* The answer is noted before any refresh read starts, and a read still out from before it is cancelled first. */
-    expect(order).toEqual(['answered', 'cancel', 'cancel', 'refresh', 'refresh']);
+    expect(order).toEqual(['cancel', 'cancel', 'refresh', 'refresh']);
   });
 });
 
@@ -1038,21 +1013,19 @@ describe('input metadata mutation reconciliation', () => {
       const release = observer.subscribe(() => undefined);
       const admitted = transport.recovery!.scope(transport.recovery!.capture());
       if (outcome === 'local denial') access.invalidate('offline');
-      const answered = vi.fn();
       const cancel = vi.spyOn(client, 'cancelQueries');
       const { result, unmount } = renderHook(() => usePlannerMutations(transport, 'card-1', 'w1', channel, useTestConversationRegistry()), {
         wrapper: ({ children }: { children: ReactNode }) => createElement(QueryClientProvider, { client }, children),
       });
       let failure: unknown;
       await act(async () => {
-        try { await result.current.send('Keep my words', [], 'key', null, admitted, answered); }
+        try { await result.current.send('Keep my words', [], 'key', admitted); }
         catch (error) { failure = error; }
       });
       expect(failure).toBeInstanceOf(Error);
       // runOperation's checkpoint remains authoritative; reconciliation cannot replace it.
       expect((failure as Error).message).toBe('连接状态已改变，请重新操作。');
       expect(cancel.mock.calls.filter(([filters]) => filters?.queryKey !== undefined)).toEqual([]);
-      expect(answered).not.toHaveBeenCalled();
       expect(paths).toEqual(['/api/v1/tracks/w1', ...(outcome === 'local denial' ? [] : ['/api/v1/sessions/card-1/messages'])]);
       expect(client.getQueryState(queryKeys.trackDetail('w1'))).toMatchObject({ status: 'success', isInvalidated: true });
       // The existing recovery coordinator, rather than a retained write or custom retry, resumes stale reads.
@@ -1072,17 +1045,15 @@ describe('input metadata mutation reconciliation', () => {
     const { result } = renderHook(() => usePlannerMutations(transport, 'card-1', 'w1', channel, useTestConversationRegistry()), {
       wrapper: ({ children }: { children: ReactNode }) => createElement(QueryClientProvider, { client }, children),
     });
-    const answered = vi.fn();
-    await expect(result.current.send('Kept', [], 'key', null, transport, answered))
+    await expect(result.current.send('Kept', [], 'key', transport))
       .rejects.toMatchObject({ failure: { kind: 'unauthorized', status: 401 } });
-    expect(answered).not.toHaveBeenCalled();
     expect(cancel).not.toHaveBeenCalled();
     expect(invalidate.mock.calls).toEqual([
       [{ queryKey: queryKeys.trackDetail('w1'), refetchType: 'none' }],
     ]);
   });
 
-  it.each(['edit', 'delete', 'steer', 'send'] as const)(
+  it.each(['send'] as const)(
     'refreshes owned input metadata after %s outcomes and preserves the existing run/history policy', async action => {
       for (const outcome of ['success', 'stale', 'gone', 'unknown'] as const) {
         const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
@@ -1119,17 +1090,12 @@ describe('input metadata mutation reconciliation', () => {
         });
         await waitFor(() => expect(reads).toEqual({ run: 1, history: 1 }));
         const cancel = vi.spyOn(client, 'cancelQueries');
-        const answered = vi.fn();
         const { result, unmount } = renderHook(() => usePlannerMutations(transport, 'card-1', 'w1', unauthorized, useTestConversationRegistry()), {
           wrapper: ({ children }: { children: ReactNode }) => createElement(QueryClientProvider, { client }, children),
         });
-        const entry = { entry_id: 'entry', text: 'Original', rev: 0, queued_at_ms: 1 };
         await act(async () => {
           try {
-            if (action === 'edit') await result.current.editQueued(entry, 'Edited', () => undefined);
-            if (action === 'delete') await result.current.deleteQueued('entry', 0, () => undefined);
-            if (action === 'steer') await result.current.steerQueued('entry', 0, () => undefined);
-            if (action === 'send') await result.current.send('Edited', [], 'key', null, transport, answered);
+            if (action === 'send') await result.current.send('Edited', [], 'key', transport);
           } catch { /* Sends reject on refusal/unknown; reconciliation is still required. */ }
         });
         await waitFor(() => expect(detail.getCurrentResult().data?.sessions[0]?.title).toBe('Edited'));
@@ -1143,7 +1109,6 @@ describe('input metadata mutation reconciliation', () => {
           ...(outcome === 'success' ? [transcriptKey, queryKeys.plannerRun('card-1')] : []),
           queryKeys.trackDetail('w1'),
         ]);
-        expect(answered).toHaveBeenCalledTimes(action === 'send' && outcome === 'success' ? 1 : 0);
         for (const release of releases) release();
         expect(paths.some(path => path.includes('/harness/items'))).toBe(false);
         expect(clear).not.toHaveBeenCalled();
@@ -1151,27 +1116,4 @@ describe('input metadata mutation reconciliation', () => {
       }
     },
   );
-});
-
-it.each([200,409])('Keep reconciles the run and history on status %s without caching its response as delivery', async status => {
-  const args = {carrier_id:'carrier',submission_id:'submission',attempt_id:'attempt',revision:'7'};
-  const requests:ApiRequest[]=[];
-  const transport:ApiTransportPort={send:request=>{
-    requests.push(request);
-    return Promise.resolve(status === 200 ? ok({...args,revision:'8',waiting_for_settlement:true})
-      : {status:409,statusText:'Conflict',body:{code:'conflict',message:'Revision changed'}});
-  }};
-  const client = new QueryClient();
-  const runKey=queryKeys.plannerRun('card'); const historyKey=transcriptQueryOptions(transport,'card',unauthorized).queryKey;
-  const before={unchanged:true}; client.setQueryData(runKey,before); client.setQueryData(historyKey,before);
-  const {result}=renderHook(()=>usePlannerMutations(transport,'card','track',unauthorized, useTestConversationRegistry()),{
-    wrapper:({children}:{children:ReactNode})=>createElement(QueryClientProvider,{client},children),
-  });
-  if(status === 200) await result.current.keep(args,'same-key');
-  else await expect(result.current.keep(args,'same-key')).rejects.toThrow();
-  expect(requests).toMatchObject([{method:'POST',path:'/api/cards/card/conversation/input/keep',headers:{'Idempotency-Key':'same-key'},body:args}]);
-  await waitFor(()=>expect(client.getQueryState(runKey)?.isInvalidated).toBe(true));
-  expect(client.getQueryState(historyKey)?.isInvalidated).toBe(true);
-  expect(client.getQueryData(runKey)).toBe(before);
-  client.clear();
 });

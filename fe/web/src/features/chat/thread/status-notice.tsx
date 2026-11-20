@@ -13,8 +13,6 @@ export type CopyResponseAction = Readonly<{ id: string; text: string; run: () =>
  * Regenerate is a send, whose failure the outbox reads through its table and shows above the composer.
  */
 export type ResponseAction = Readonly<{ id: string; run: () => Promise<void> }>;
-/** Edit answers at once (the composer receives the message); its replace and any failure are the caller's. */
-export type EditAction = Readonly<{ id: string; run: () => void }>;
 
 type ActionView = { readonly key: string; active: boolean };
 type ActionResult = Readonly<{ view: ActionView; kind: 'pending' | 'done' | 'failed' }>;
@@ -23,7 +21,7 @@ type ActionResult = Readonly<{ view: ActionView; kind: 'pending' | 'done' | 'fai
  * One run at a time per view; a completion speaks only while its run is still the latest one. A failure is only a
  * state: its rejection's text is never shown.
  */
-function useFencedAction(key: string | null) {
+export function useFencedAction(key: string | null) {
   const view = useMemo<ActionView | null>(() => key === null ? null : { key, active: false }, [key]);
   const [result, setResult] = useState<ActionResult | null>(null);
   const perform = async (run: () => Promise<void>) => {
@@ -49,7 +47,7 @@ function elapsedText(ms: number): string {
 }
 
 /** One native metadata row; clocks are evidence, never inferred from transcript gaps. */
-export function ThreadStatusNotice({ historical = false, messageActions = 'all', heading, leading, children, clock, sending = false, tone = 'neutral', outcome, copyAction = null, editAction = null, regenerateAction = null, detailsExpanded, onDetailsExpandedChange }: {
+export function ThreadStatusNotice({ historical = false, messageActions = 'all', heading, leading, children, clock, sending = false, tone = 'neutral', outcome, copyAction = null, regenerateAction = null, detailsExpanded, onDetailsExpandedChange }: {
   detailsExpanded?: boolean;
   onDetailsExpandedChange?: (expanded: boolean) => void;
   historical?: boolean;
@@ -62,7 +60,6 @@ export function ThreadStatusNotice({ historical = false, messageActions = 'all',
   tone?: 'neutral' | 'warning' | 'error';
   outcome?: 'completed' | 'interrupted' | 'failed';
   copyAction?: CopyResponseAction | null;
-  editAction?: EditAction | null;
   regenerateAction?: ResponseAction | null;
 }) {
   const stateRef = useRef<HTMLDivElement | null>(null);
@@ -108,15 +105,12 @@ export function ThreadStatusNotice({ historical = false, messageActions = 'all',
       </div>
       {!historical && <MessageActions actions={[
         { id: 'copy', kind: feedback?.kind === 'done' ? 'copied' : 'copy',
-          label: copyAction === null ? 'Copy response (not available yet)' : feedback === null || feedback.kind === 'pending' ? 'Copy response'
-            : feedback.kind === 'done' ? 'Copied response' : 'Could not copy response',
+          label: copyAction === null ? '复制回复（暂不可用）' : feedback === null || feedback.kind === 'pending' ? '复制回复'
+            : feedback.kind === 'done' ? '已复制回复' : '复制失败',
           disabled: copyAction === null || feedback?.kind === 'pending',
           run: () => { if (copyAction !== null) void copy.perform(copyAction.run); } },
-        ...(messageActions === 'copy-only' ? [] : [{ id: 'edit', kind: 'edit' as const, label: editAction === null ? 'Edit message (not available now)' : 'Edit message',
-          tooltip: 'Edit this message. Files are not reverted.', disabled: editAction === null,
-          run: () => { editAction?.run(); } },
-        { id: 'regenerate', kind: 'regenerate' as const, label: regenerateAction === null ? 'Regenerate response (not available now)' : 'Regenerate response',
-          tooltip: 'Send the original prompt again in this conversation; keep existing history.',
+        ...(messageActions === 'copy-only' ? [] : [{ id: 'regenerate', kind: 'regenerate' as const, label: regenerateAction === null ? '重新生成（暂不可用）' : '重新生成',
+          tooltip: '在当前对话中重新发送原消息，保留记录。',
           disabled: regenerateAction === null || regenerate.feedback?.kind === 'pending',
           run: () => { if (regenerateAction !== null) void regenerate.perform(regenerateAction.run); } }]),
       ]} />}

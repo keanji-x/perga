@@ -38,8 +38,8 @@ public sealed class SqliteMigratorTests
         {
             var dbPath = Path.Combine(tempDir, "fresh.db");
             var migrator = new SqliteMigrator();
-            Assert.Equal(Enumerable.Range(1, 18), migrator.Migrations.Select(m => m.Version));
-            Assert.Equal("0018_track_schedules.sql", migrator.Migrations[^1].Name);
+            Assert.Equal(Enumerable.Range(1, 19), migrator.Migrations.Select(m => m.Version));
+            Assert.Equal("0019_session_unknown_state.sql", migrator.Migrations[^1].Name);
             await migrator.MigrateAsync(dbPath);
 
             // Idempotent re-run on already-initialized v1 database must not create a spurious backup.
@@ -54,7 +54,7 @@ public sealed class SqliteMigratorTests
             }.ToString());
             await conn.OpenAsync();
 
-            Assert.Equal(18L, await conn.ExecuteScalarAsync<long>("SELECT MAX(version) FROM schema_migrations;"));
+            Assert.Equal(19L, await conn.ExecuteScalarAsync<long>("SELECT MAX(version) FROM schema_migrations;"));
             Assert.Equal(13L, await conn.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM pragma_table_info('track_wakes');"));
             Assert.Equal(0L, await conn.ExecuteScalarAsync<long>("SELECT [unique] FROM pragma_index_list('session_messages') WHERE name='idx_session_messages_input_turn';"));
             Assert.Equal(2L, await conn.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM pragma_table_info('agent_sessions') WHERE name IN ('reasoning_effort', 'permission_mode');"));
@@ -89,7 +89,6 @@ public sealed class SqliteMigratorTests
                 "track_workspace_preparations",
                 "asks",
                 "mails",
-                "provider_session_resume",
                 "terminals",
                 "events",
                 "worker_messages",

@@ -26,6 +26,7 @@ public sealed class AgentRuntime : IAgentRuntime
     private readonly OsSandboxWrapper _sandboxWrapper;
     private readonly string? _codexWorkerHome;
     private readonly ConcurrentDictionary<IAgentSession, byte> _activeSessions = new();
+    private readonly ConcurrentDictionary<string, bool> _resumeCapabilities = new(StringComparer.Ordinal);
     private readonly SemaphoreSlim _probeLock = new(1, 1);
     private IReadOnlyList<ProviderStatus>? _cachedProbeStatuses;
     private DateTimeOffset _cachedProbeExpiresAt = DateTimeOffset.MinValue;
@@ -46,6 +47,13 @@ public sealed class AgentRuntime : IAgentRuntime
     }
 
     public OsSandboxWrapper SandboxWrapper => _sandboxWrapper;
+
+    public bool CanResumeSession(string provider)
+    {
+        var name = NormalizeProviderName(provider);
+        return _resumeCapabilities.TryGetValue(name, out var supported) ? supported :
+            name is "codex" or "claude" || name.StartsWith("acp:", StringComparison.Ordinal);
+    }
 
     public static string NormalizeProviderName(string provider)
     {
@@ -249,6 +257,7 @@ public sealed class AgentRuntime : IAgentRuntime
                 $"Unsupported AgentKit provider '{provider}'. Supported surfaces: 'codex', 'claude', 'acp:antigravity', 'acp:opencode', 'acp:<cmd>'.");
         }
 
+        _resumeCapabilities[provider] = session.SupportsSessionResume;
         _activeSessions.TryAdd(session, 0);
         if (Volatile.Read(ref _disposed) != 0)
         {

@@ -21,11 +21,6 @@ export type PendingQueueProps = Readonly<{
   overflow: number;
   busy: boolean;
   onDelete: (entry: PendingQueueEntry) => Promise<PlannerQueueWriteOutcome>;
-  onEdit: (entry: PendingQueueEntry) => void;
-  canEdit: boolean;
-  editingEntryId: string | null;
-  savedEntry: PendingQueueEntry | null;
-  onFocusComposer: () => void;
   /** Includes the existing departing-row lifetime so an empty view cannot reposition its exit. */
   onPresenceChange?: (present: boolean) => void;
   onSteer?: (entry: PendingQueueEntry) => Promise<PlannerQueueWriteOutcome>;
@@ -74,38 +69,23 @@ function noticeStatus(outcome: PlannerQueueWriteOutcome): 'warning' | 'info' | '
 }
 
 
-export function PendingQueue({ entries, pendingInputCount, queueDisplayAccounting, sending = NO_SENDS, overflow, busy, onDelete, onEdit, canEdit, editingEntryId, savedEntry, onFocusComposer, onPresenceChange, onSteer }: PendingQueueProps) {
+export function PendingQueue({ entries, pendingInputCount, queueDisplayAccounting, sending = NO_SENDS, overflow, busy, onDelete, onPresenceChange, onSteer }: PendingQueueProps) {
   const mobile = useCompactViewport();
   const [refusal, setRefusal] = useState<Refusal | null>(null);
   const [writing, setWriting] = useState(false);
   const writeLease = useRef(false);
-  const [saved, setSaved] = useState<ReadonlyMap<string, PendingQueueEntry>>(() => new Map());
-  const [observedSave, setObservedSave] = useState(savedEntry);
-  if (savedEntry !== observedSave) {
-    setObservedSave(savedEntry);
-    if (savedEntry !== null) setSaved(previous => new Map(previous).set(savedEntry.entry_id, savedEntry));
-  }
-  const [snapshot, setSnapshot] = useState(() => ({ source: entries, saved, queueDisplayAccounting, rows: entries }));
-  if (snapshot.source !== entries || snapshot.saved !== saved || snapshot.queueDisplayAccounting !== queueDisplayAccounting) {
+  const [snapshot, setSnapshot] = useState(() => ({ source: entries, queueDisplayAccounting, rows: entries }));
+  if (snapshot.source !== entries || snapshot.queueDisplayAccounting !== queueDisplayAccounting) {
     const activeIds = new Set(entries.map(entry => entry.entry_id));
-    const effective = (entry: PendingQueueEntry) => {
-      const accepted = saved.get(entry.entry_id);
-      return accepted !== undefined && accepted.rev >= entry.rev ? accepted : entry;
-    };
     // Active rows follow server order. Only departing ghosts retain their old neighbor.
-    const rows = entries.map(effective);
+    const rows = [...entries];
     snapshot.rows.forEach((row, index) => {
-      if (activeIds.has(row.entry_id) || queueEntryIsAccounted(queueDisplayAccounting, effective(row))) return;
+      if (activeIds.has(row.entry_id) || queueEntryIsAccounted(queueDisplayAccounting, row)) return;
       const next = snapshot.rows.slice(index + 1).find(candidate => activeIds.has(candidate.entry_id));
       const position = next === undefined ? rows.length : rows.findIndex(candidate => candidate.entry_id === next.entry_id);
-      rows.splice(position, 0, effective(row));
+      rows.splice(position, 0, row);
     });
-    // A source handoff removes its old words immediately, instead of animating a duplicate carrier.
-    // Ordinary removals still retain their departing neighbor and spring; active entries always win.
-    if ([...saved.values()].some(entry => !activeIds.has(entry.entry_id) && queueEntryIsAccounted(queueDisplayAccounting, entry))) {
-      setSaved(previous => new Map([...previous].filter(([id, entry]) => activeIds.has(id) || !queueEntryIsAccounted(queueDisplayAccounting, entry))));
-    }
-    setSnapshot({ source: entries, saved, queueDisplayAccounting, rows });
+    setSnapshot({ source: entries, queueDisplayAccounting, rows });
   }
   const root = useRef<HTMLElement>(null);
   const [focus, requestFocus] = useState<Readonly<{ kind: 'button' | 'header'; id: string }> | null>(null);
@@ -130,52 +110,48 @@ export function PendingQueue({ entries, pendingInputCount, queueDisplayAccountin
     try {
       const outcome = await action();
       if (outcome.kind !== 'done') setRefusal({ entryId: entry.entry_id, outcome });
-      else if (editingEntryId !== null) onFocusComposer();
       else requestFocus({ kind: 'header', id: '' });
     } catch (error) {
       setRefusal({ entryId: entry.entry_id, outcome: { kind: 'failed', message: error instanceof Error ? error.message : 'Could not change this message.' } });
     } finally { writeLease.current = false; setWriting(false); }
   };
   return <SizeMotion motionKey={visible}>
-    {visible && <section ref={root} className={styles.queue} data-nc-pending-queue="" aria-label="Queued messages" tabIndex={-1}>
+    {visible && <section ref={root} className={styles.queue} data-nc-pending-queue="" aria-label="排队消息" tabIndex={-1}>
       <div className={styles.list}>
           {snapshot.rows.map(entry => {
-            const isEditing = editingEntryId === entry.entry_id;
+            const isEditing = false;
             const alive = ids.has(entry.entry_id);
             const failed = refusal?.entryId === entry.entry_id ? refusal.outcome : null;
-            const canWithdraw = entry.state === undefined || entry.state === 'waiting';
+            const canWithdraw = entry.state === undefined || entry.state === 'waiting' || entry.state === 'unconfirmed';
             const current = failed?.kind === 'stale' ? { ...entry, text: failed.text, rev: failed.rev } : entry;
             return <CollapsePresence key={entry.entry_id} present={alive || isEditing} onExited={() => {
               setSnapshot(previous => ({ ...previous, rows: previous.rows.filter(row => row.entry_id !== entry.entry_id) }));
-              setSaved(previous => { const next = new Map(previous); next.delete(entry.entry_id); return next; });
             }}>
               <SizeMotion motionKey={isEditing}><div className={styles.rowSpace}><div className={styles.row} data-nc-pending-entry={alive || isEditing ? entry.entry_id : undefined}>
                 <div className={styles.content}>
                   <div className={styles.line}>
                     <div data-nc-pending-entry-text=""><OutgoingMessage speaker="unknown" text={current.text} mobile={mobile} edited={isEditing} /></div>
                     <div className={styles.actions}>
-                      <MessageActions label="Queued message actions" actions={[
-                        { id: 'edit', kind: 'edit', label: 'Edit queued message', tooltip: 'Edit this message in the composer.', disabled: blocked || !canEdit || !alive || !canWithdraw,
-                          run: () => { onEdit(current); } },
-                        { id: 'undo', kind: 'undo', label: 'Delete this message', tooltip: 'Remove this queued message.', disabled: blocked || isEditing || !canWithdraw,
+                      <MessageActions label="排队消息操作" actions={[
+                        { id: 'undo', kind: 'undo', label: '撤回', tooltip: '撤回这条排队消息。', disabled: blocked || isEditing || !canWithdraw,
                           run: () => { void run(current, () => onDelete(current)); } },
-                        ...(onSteer === undefined || (current.state !== undefined && current.state !== 'waiting') ? [] : [{ id: 'steer', kind: 'return' as const, label: 'Say it now', tooltip: 'Send to the current response.', disabled: blocked || isEditing,
+                        ...(onSteer === undefined || (current.state !== undefined && current.state !== 'waiting') ? [] : [{ id: 'steer', kind: 'return' as const, label: '立即插队', tooltip: '发送到当前回复。', disabled: blocked || isEditing,
                           run: () => { void run(current, () => onSteer(current)); } }]),
                       ]} />
                     </div>
                   </div>
-                  {current.state === 'waiting' && <p className={styles.notice} role="status">Queued</p>}
-                  {(current.state === 'steering' || current.state === 'sending') && <p className={styles.notice} role="status">Sending…</p>}
-                  {current.state === 'processing' && <p className={styles.notice} role="status">Processing</p>}
-                  {current.state === 'unconfirmed' && <p className={styles.notice} role="status">Delivery not confirmed. This message is paused.</p>}
+                  {current.state === 'waiting' && <p className={styles.notice} role="status">排队中</p>}
+                  {(current.state === 'steering' || current.state === 'sending') && <p className={styles.notice} role="status">发送中…</p>}
+                  {current.state === 'processing' && <p className={styles.notice} role="status">处理中</p>}
+                  {current.state === 'unconfirmed' && <p className={styles.notice} role="status">发送结果未确认，消息已暂停。</p>}
                   {failed !== null && <QueueWriteNotice outcome={failed} />}
                 </div>
               </div></div></SizeMotion>
             </CollapsePresence>;
           })}
           {sending.map(message => <div key={message.id} className={styles.sending} data-nc-pending-send={message.id}>
-            <div data-nc-queued={message.delivery === 'waiting' ? '' : undefined}><OutgoingMessage speaker={message.author === 'you' ? 'you' : message.author === 'human' ? 'human' : 'unknown'} text={message.text} mobile={mobile} /></div>
-            <span className={styles.delivery} role="status" data-nc-queued-note={message.delivery === 'waiting' ? '' : undefined}>{message.delivery === 'failed' ? '发送未完成' : message.delivery === 'paused' ? '已暂停' : message.delivery === 'checking' ? '等待确认…' : message.delivery === 'waiting' ? '等待处理…' : '正在发送…'}</span>
+            <div><OutgoingMessage speaker={message.author === 'you' ? 'you' : message.author === 'human' ? 'human' : 'unknown'} text={message.text} mobile={mobile} /></div>
+            <span className={styles.delivery} role="status">{message.delivery === 'failed' ? '发送未完成' : '正在发送…'}</span>
           </div>)}
           {pendingInputCount > 0 && <p className={styles.notice} role="status">
             {`${pendingInputCount} ${pendingInputCount === 1 ? 'input is' : 'inputs are'} waiting for execution.`}

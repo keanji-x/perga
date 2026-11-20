@@ -412,8 +412,8 @@ export type SessionCreationReceipt = z.infer<typeof sessionCreationReceiptSchema
 export const sessionItemDtoSchema = z.object({
   id: z.number().int(),
   sessionId: z.string(),
-  turnId: z.string().nullish().transform((v) => v ?? ''),
-  kind: z.enum(['user', 'thinking', 'assistant_text', 'tool_call', 'tool_result', 'turn_outcome', 'turn_error']).or(z.string()),
+  turnId: z.string().nullable(),
+  kind: z.enum(['user', 'thinking', 'assistant_text', 'tool_call', 'tool_result', 'turn_outcome', 'turn_error', 'epoch_boundary']).or(z.string()),
   payload: z.unknown(),
   createdAtMs: z.number(),
   messageStatus: z.enum(['queued', 'sending', 'processing', 'completed', 'failed', 'unconfirmed']).nullish(),
@@ -456,22 +456,20 @@ export const workerActivitySchema = z.object({
     turnId: z.string().nullish(), delivery: z.string(), createdAtMs: z.number() })),
 });
 export type WorkerActivity = z.infer<typeof workerActivitySchema>;
-export const providerSessionResumeSchema = z.object({
-  turnId: z.string().min(1),
-  state: z.enum(['available', 'resuming', 'paused']),
-  canStartFresh: z.boolean().optional(),
-});
-export type ProviderSessionResume = z.infer<typeof providerSessionResumeSchema>;
-
 export const sessionItemsPageDtoSchema = z.object({
   items: z.array(sessionItemDtoSchema).nullish().transform((v) => v ?? []),
   activeTurn: sessionTurnDtoSchema.nullish(),
-  unknownInput: sessionInputReceiptSchema.nullable(),
+  state: z.enum(['idle', 'running', 'stopping', 'compacting', 'unknown']),
+  readonlyReason: z.enum(['archived', 'track_closed', 'worker_finished']).nullable(),
+  canReopen: z.boolean(),
+  workerPaused: z.boolean(),
+  lastTurn: sessionTurnDtoSchema.nullish().transform(value => value ?? null),
+  unknownDetail: z.object({ reason: z.string(), detail: z.string(), canReconnect: z.boolean(),
+    canResetContext: z.boolean(), recovering: z.boolean(), lastError: z.string().nullable() }).nullable(),
   queuedMessages: z.array(z.object({ id: z.string(), text: z.string(), queuedAtMs: z.number(),
     state: z.enum(['waiting', 'steering', 'sending', 'processing', 'unconfirmed']) })).optional(),
   canSteer: z.boolean().optional(),
   queueHandoffIds: z.array(z.string()).optional(),
-  resume: providerSessionResumeSchema.nullish(),
   session: agentSessionDtoSchema,
   hasMoreBefore: z.boolean().optional(),
   worker: workerActivitySchema.nullish(),

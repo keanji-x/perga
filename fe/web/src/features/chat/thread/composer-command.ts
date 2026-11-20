@@ -20,11 +20,13 @@ export type CommandBinding = Pick<ComposerCommand, 'execute' | 'unavailableReaso
 
 // The sole display order, shared by every surface. Bindings supply policy and effects, never ordering.
 const COMMANDS = Object.freeze([
-  Object.freeze({ id: 'track-stop', name: 'stop', icon: 'status-exited', hint: 'Stop the current turn', arguments: 'none' }),
-  Object.freeze({ id: 'new-conversation', name: 'new', icon: 'plus', hint: 'This one stays in the list', arguments: 'none' }),
+  Object.freeze({ id: 'track-stop', name: 'stop', icon: 'status-exited', hint: '停止当前回复', arguments: 'none' }),
+  Object.freeze({ id: 'reconnect-conversation', name: 'reconnect', icon: 'chat', hint: '重连原会话，保留上下文', arguments: 'none' }),
+  Object.freeze({ id: 'reset-conversation', name: 'reset', icon: 'chat', hint: '重置上下文，保留聊天记录', arguments: 'none' }),
+  Object.freeze({ id: 'new-conversation', name: 'new', icon: 'plus', hint: '新建对话，当前对话保留', arguments: 'none' }),
   Object.freeze({ id: 'side-conversation', name: 'side', icon: 'chat', hint: 'Discuss with a text snapshot', arguments: 'optional' }),
   Object.freeze({ id: 'planner-switch', name: 'planner', icon: 'chat', hint: 'Promote this Assistant to Planner', arguments: 'none', argumentError: PLANNER_SWITCH_ARGUMENTS }),
-  Object.freeze({ id: 'compact-conversation', name: 'compact', icon: 'compact', hint: 'Compress this conversation’s context', arguments: 'none' }),
+  Object.freeze({ id: 'compact-conversation', name: 'compact', icon: 'compact', hint: '压缩当前对话上下文', arguments: 'none' }),
   Object.freeze({ id: 'terminal-workbench', name: 'terminal', icon: 'terminal', hint: 'Open the Track terminal workbench', arguments: 'none', argumentError: TERMINAL_ARGUMENTS_MESSAGE }),
   Object.freeze({ id: 'track-close', name: 'close', icon: 'status-done', hint: 'Close this Track', arguments: 'none' }),
   Object.freeze({ id: 'track-open', name: 'open', icon: 'status-running', hint: 'Reopen this Track', arguments: 'none' }),

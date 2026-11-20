@@ -104,13 +104,15 @@ public sealed class L2ConfigurationRecoveryRegressionTests
                 yield return new UnifiedAgentEvent.TextDelta("accepted");
                 started.TrySetResult();
                 await end.Task.WaitAsync(ct);
-                yield return new UnifiedAgentEvent.TurnInterrupted();
+                yield return new UnifiedAgentEvent.TurnError("stream_lost", "Disconnected", false);
             }
             else yield return new UnifiedAgentEvent.TurnCompleted(null);
         }
         await ctx.Kernel.AcceptMessageAsync(id, new("old", "old"), default);
         await started.Task.WaitAsync(TimeSpan.FromSeconds(10));
-        var turnId = (await ctx.Kernel.GetSessionItemsAsync(id)).Resume!.TurnId;
+        end.TrySetResult();
+        await ctx.Kernel.WaitForTrackIdleAsync(snap.Track.Id);
+        var turnId = (await ctx.Kernel.GetSessionItemsAsync(id)).LastTurn!.Id;
         ctx.AgentRuntime.OnBeforeOpenSession = _ =>
         {
             launched.TrySetResult();
@@ -122,7 +124,7 @@ public sealed class L2ConfigurationRecoveryRegressionTests
             session.SupportsScopedClose = true;
             if (unconfirmed) session.ConfigurationState = null;
         };
-        var resume = ctx.Kernel.ResumeProviderSessionAsync(id, turnId, default);
+        var resume = ctx.Kernel.RecoverSessionAsync(id, new("reconnect"), default);
         try
         {
             await launched.Task.WaitAsync(TimeSpan.FromSeconds(10));
@@ -133,7 +135,7 @@ public sealed class L2ConfigurationRecoveryRegressionTests
         {
             await Assert.ThrowsAsync<KernelException>(() => resume);
             Assert.Single(await ctx.Store.ListSessionResumeFencesAsync(snap.Track.Id, default));
-            Assert.Equal("paused", (await ctx.Kernel.GetSessionItemsAsync(id)).Resume?.State);
+            Assert.Equal("unknown", (await ctx.Kernel.GetSessionItemsAsync(id)).State);
         }
         else
         {

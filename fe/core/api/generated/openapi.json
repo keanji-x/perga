@@ -15571,97 +15571,6 @@
         }
       }
     },
-    "/api/v1/sessions/{sessionId}/inputs/{inputId}/abandon": {
-      "parameters": [
-        {
-          "name": "sessionId",
-          "in": "path",
-          "required": true,
-          "schema": {
-            "type": "string"
-          }
-        },
-        {
-          "name": "inputId",
-          "in": "path",
-          "required": true,
-          "schema": {
-            "type": "string"
-          }
-        }
-      ],
-      "post": {
-        "responses": {
-          "200": {
-            "description": "Unknown outcome acknowledged",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SessionInputReceipt"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Input outcome is not unknown"
-          }
-        }
-      }
-    },
-    "/api/v1/sessions/{sessionId}/resume": {
-      "post": {
-        "summary": "Resume the original provider session after stopping the observed turn",
-        "parameters": [
-          {
-            "name": "sessionId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "required": [
-                  "turnId"
-                ],
-                "properties": {
-                  "turnId": {
-                    "type": "string"
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Provider context restored",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AgentSessionDto"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Missing target turn"
-          },
-          "404": {
-            "description": "Session not found"
-          },
-          "409": {
-            "description": "Recovery is in progress, the target is stale, or safe stop could not be confirmed"
-          }
-        }
-      }
-    },
     "/api/v1/sessions/{sessionId}/interrupt": {
       "parameters": [
         {
@@ -16606,6 +16515,53 @@
             }
           }
         }
+      }
+    },
+    "/api/v1/sessions/{sessionId}/recover": {
+      "post": {
+        "summary": "Recover an unknown session or reset idle context",
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecoverSessionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Session recovered",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentSessionDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid recovery mode"
+          },
+          "404": {
+            "description": "Session not found"
+          },
+          "409": {
+            "description": "Session state forbids recovery, recovery is busy, or provider recovery failed"
+          }
+        },
+        "description": "reset_context atomically archives unresolved queued/dispatching/unknown messages as interrupted and drops pending/delivering wakes before an epoch_boundary. It clears scheduler slots and never automatically dispatches into the new epoch. Reconnect is unavailable for session_lost."
       }
     }
   },
@@ -26352,6 +26308,27 @@
               "string",
               "null"
             ]
+          },
+          "unknownReason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "unknownTurnId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "unknownLastError": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reconnectInvalidated": {
+            "type": "boolean"
           }
         }
       },
@@ -26570,7 +26547,11 @@
             "type": "string"
           },
           "turnId": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Null for epoch_boundary and archived interrupted user/system items."
           },
           "kind": {
             "type": "string"
@@ -26586,7 +26567,9 @@
               null
             ]
           },
-          "payload": {},
+          "payload": {
+            "description": "Reset archives preserve exact user content or critical wake content, with status=interrupted, archived=true, reason=session_reset, and source epoch. Exhausted wakes use reason=max_attempts_exceeded."
+          },
           "createdAtMs": {
             "type": "integer"
           }
@@ -26665,7 +26648,11 @@
         "required": [
           "items",
           "session",
-          "unknownInput"
+          "state",
+          "readonlyReason",
+          "canReopen",
+          "workerPaused",
+          "unknownDetail"
         ],
         "properties": {
           "items": {
@@ -26687,16 +26674,6 @@
           "session": {
             "$ref": "#/components/schemas/AgentSessionDto"
           },
-          "unknownInput": {
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/SessionInputReceipt"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
           "hasMoreBefore": {
             "type": "boolean"
           },
@@ -26712,35 +26689,6 @@
               "type": "string"
             },
             "description": "Recent queue identities whose user rows were committed to history."
-          },
-          "resume": {
-            "oneOf": [
-              {
-                "type": "object",
-                "required": [
-                  "turnId",
-                  "state"
-                ],
-                "properties": {
-                  "turnId": {
-                    "type": "string"
-                  },
-                  "state": {
-                    "enum": [
-                      "available",
-                      "resuming",
-                      "paused"
-                    ]
-                  },
-                  "canStartFresh": {
-                    "type": "boolean"
-                  }
-                }
-              },
-              {
-                "type": "null"
-              }
-            ]
           },
           "canSteer": {
             "type": "boolean",
@@ -26760,6 +26708,54 @@
             "anyOf": [
               {
                 "$ref": "#/components/schemas/WorkerActivityDto"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "idle",
+              "running",
+              "stopping",
+              "compacting",
+              "unknown"
+            ]
+          },
+          "readonlyReason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              null,
+              "archived",
+              "track_closed",
+              "worker_finished"
+            ]
+          },
+          "canReopen": {
+            "type": "boolean"
+          },
+          "workerPaused": {
+            "type": "boolean"
+          },
+          "lastTurn": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SessionTurnDto"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "unknownDetail": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SessionUnknownDetailDto"
               },
               {
                 "type": "null"
@@ -28290,6 +28286,62 @@
               {
                 "type": "null"
               }
+            ]
+          }
+        }
+      },
+      "RecoverSessionRequest": {
+        "type": "object",
+        "required": [
+          "mode"
+        ],
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "reconnect",
+              "reset_context"
+            ]
+          }
+        }
+      },
+      "SessionUnknownDetailDto": {
+        "type": "object",
+        "required": [
+          "reason",
+          "detail",
+          "canReconnect",
+          "canResetContext",
+          "recovering",
+          "lastError"
+        ],
+        "properties": {
+          "reason": {
+            "type": "string",
+            "enum": [
+              "stop_timeout",
+              "stream_lost",
+              "host_restarted",
+              "session_lost"
+            ],
+            "description": "session_lost invalidates reconnect and fences queue/wake dispatch until explicit reset_context."
+          },
+          "detail": {
+            "type": "string"
+          },
+          "canReconnect": {
+            "type": "boolean"
+          },
+          "canResetContext": {
+            "type": "boolean"
+          },
+          "recovering": {
+            "type": "boolean"
+          },
+          "lastError": {
+            "type": [
+              "string",
+              "null"
             ]
           }
         }

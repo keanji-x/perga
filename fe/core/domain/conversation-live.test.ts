@@ -16,7 +16,7 @@ const transcript = (readStart: number, items: readonly LiveReplyTranscriptRow[] 
   ({ kind: 'transcript', items, readStart });
 
 function completed(itemUuid: string, method = 'item/completed'): LiveReplyTranscriptRow {
-  return { method, item_uuid: itemUuid };
+  return { completed: method === 'item/completed', itemId: itemUuid };
 }
 
 function run(...observations: readonly LiveReplyObservation[]): readonly LiveReplyCopy[] {
@@ -131,9 +131,9 @@ it('canonical live copies retire only against the actual thread, turn and item t
     thread_id:'B',turn_id:'T',items:[{item_id:'X',text:'B partial'}],
   }},atMs:1};
   const held=reconcileLiveReplies([],observed);
-  expect(reconcileLiveReplies(held,transcript(2,[{method:'item/completed',item_uuid:'X',thread_id:'A',turn_id:'T'}]))).toBe(held);
-  expect(reconcileLiveReplies(held,transcript(2,[{method:'item/completed',item_uuid:'X',thread_id:'B',turn_id:'other'}]))).toBe(held);
-  expect(reconcileLiveReplies(held,transcript(2,[{method:'item/completed',item_uuid:'X',thread_id:'B',turn_id:'T'}]))).toEqual([]);
+  expect(reconcileLiveReplies(held,transcript(2,[{completed:true,itemId:'X',threadId:'A',turnId:'T'}]))).toBe(held);
+  expect(reconcileLiveReplies(held,transcript(2,[{completed:true,itemId:'X',threadId:'B',turnId:'other'}]))).toBe(held);
+  expect(reconcileLiveReplies(held,transcript(2,[{completed:true,itemId:'X',threadId:'B',turnId:'T'}]))).toEqual([]);
   const switched=reconcileLiveReplies(held,{kind:'native-poll',reply:{contract:'conversation_v1',turn:{
     thread_id:'C',turn_id:'T',items:[{item_id:'X',text:'C'}],
   }},atMs:2});
