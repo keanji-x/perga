@@ -68,7 +68,7 @@ public sealed class UnifiedTemplateScheduleTests
                 var snapshot = await kernel.GetTrackSchedulesAsync(id);
                 Assert.Single(snapshot.RecentRuns);
                 Assert.Equal("done", snapshot.RecentRuns[0].State);
-                Assert.Equal("template", TrackWakePayload.Parse(snapshot.RecentRuns[0].PayloadJson).SourceKind);
+                Assert.Equal(expected.Id, snapshot.RecentRuns[0].ScheduleId);
             }
         }
         finally { Directory.Delete(directory,true); }
@@ -102,7 +102,11 @@ public sealed class UnifiedTemplateScheduleTests
         Assert.Equal(turns,host.AgentRuntime.ExecutedTurns.Count);
         using var runsResponse = await host.Client.GetAsync(url+"?runsLimit=1");
         var runs = await runsResponse.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.Equal("dropped",Assert.Single(runs.GetProperty("recentRuns").EnumerateArray()).GetProperty("state").GetString());
+        var run = Assert.Single(runs.GetProperty("recentRuns").EnumerateArray());
+        Assert.Equal("dropped", run.GetProperty("state").GetString());
+        Assert.Equal(new[] { "createdAtMs", "reason", "scheduleId", "state", "turnId", "updatedAtMs", "wakeId" },
+            run.EnumerateObject().Select(p => p.Name).Order().ToArray());
+        Assert.Equal("user", run.GetProperty("scheduleId").GetString());
         using var canceled = await host.Client.DeleteAsync(url+"/user");
         Assert.Equal(HttpStatusCode.NoContent,canceled.StatusCode);
         using var invalidTrigger = await host.Client.PostAsync(url+"/user/trigger",null);

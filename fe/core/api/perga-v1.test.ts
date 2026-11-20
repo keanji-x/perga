@@ -83,14 +83,12 @@ describe('Perga /api/v1 protocol contracts', () => {
       metrics: Array.from({ length: 9 }, () => ({ label: 'Sources', value: '7', spark: [1, 4, 7] })),
       rules: [{ label: 'Evidence', text: 'Verify sources' }],
     };
-    const schedules = [{ id: 'daily', cron: '0 9 * * *', timezone: 'UTC' }];
     const track = trackDtoSchema.parse({
       id: 'track', areaId: 'area', createdAtMs: 0, updatedAtMs: 0,
-      templateTitle: 'Research', templateHeaderView: header, templateSchedules: schedules,
+      templateTitle: 'Research', templateHeaderView: header,
     });
     expect(track.templateTitle).toBe('Research');
     expect(track.templateHeaderView).toEqual(header);
-    expect(track.templateSchedules).toEqual(schedules);
   });
 
   it('decodes historical mail and preserves the parent ID of a reply', () => {

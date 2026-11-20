@@ -1,3 +1,7 @@
+import { trackSchedulesOperation, setTrackScheduleOperation, cancelTrackScheduleOperation, triggerTrackScheduleOperation, trackTemplateOperation, updateTrackTemplateInputsOperation } from '../../../../core/domain/track-schedules.ts';
+import { trackSchedules, trackTemplate, trackDetail } from '../../../../core/events/query-keys.ts';
+import { useRecoveryMutation } from '../providers/recovery-mutation.ts';
+import type { ApiOperation } from '../../../../core/api/types.ts';
 import type { TrackAggregateSnapshotDto } from '../../../../core/api/schemas.ts';
 import { TemplateProtocolBar } from '../../features/report/template-protocol/public.tsx';
 import { ShareScopeProvider, useShareScope } from '../shell/public.tsx';
@@ -46,7 +50,7 @@ import { TrackReportRegion, useTrackReportPresentation, useTrackReportArrival } 
 import type { ReportPreparationPort } from '../../features/report/document/preparation.ts';
 import { TrackPending } from '../../features/track/page/pending.tsx';
 import { HStack } from '@astryxdesign/core/HStack';
-import { useMutation, useQuery, type QueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 
 import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import type { AgentProvider, AskAnswer } from '../../../../core/api/generated/wire.ts';
@@ -1686,8 +1690,33 @@ function TrackRouteBody({
     go({ name: 'track', trackId: track.id, blockId, from: routeFrom });
   };
 
+  const protocolClient = useQueryClient();
+  const schedulesQuery = useQuery({ queryKey: trackSchedules(track.id), enabled: pergaMode,
+    queryFn: ({ signal }) => runOperation(transport, { ...trackSchedulesOperation(track.id), signal }, unauthorized),
+    refetchInterval: query => query.state.data?.recentRuns.some(run => run.state === 'pending' || run.state === 'delivering') ? 2000 : false });
+  const templateQuery = useQuery({ queryKey: trackTemplate(track.id), enabled: pergaMode && !!track.templateId,
+    queryFn: ({ signal }) => runOperation(transport, { ...trackTemplateOperation(track.id), signal }, unauthorized) });
+  const protocolMutation = useRecoveryMutation(transport, {
+    mutationFn: (operation: ApiOperation<unknown>, admitted) => runOperation(admitted, operation, unauthorized),
+    onSuccess: async () => {
+      await Promise.all([
+        protocolClient.invalidateQueries({ queryKey: trackSchedules(track.id) }),
+        protocolClient.invalidateQueries({ queryKey: trackTemplate(track.id) }),
+        protocolClient.invalidateQueries({ queryKey: trackDetail(track.id) }),
+      ]);
+    },
+  });
+  const protocolWrite = async (operation: ApiOperation<unknown>) => { await protocolMutation.mutateAsync(operation); };
+  const protocolWritable = pergaMode && shareAccess === null && snapshot.track.closedAtMs == null;
+
   const reportRegion = <>
-    <TemplateProtocolBar track={track} />
+    <TemplateProtocolBar track={track} schedules={schedulesQuery.data} inputsSchema={templateQuery.data?.manifest?.inputsSchema}
+      loading={schedulesQuery.isLoading || templateQuery.isLoading}
+      error={schedulesQuery.error?.message ?? templateQuery.error?.message}
+      onSaveSchedule={protocolWritable ? request => protocolWrite(setTrackScheduleOperation(track.id, request)) : undefined}
+      onCancelSchedule={protocolWritable ? id => protocolWrite(cancelTrackScheduleOperation(track.id, id)) : undefined}
+      onTriggerSchedule={protocolWritable ? id => protocolWrite(triggerTrackScheduleOperation(track.id, id)) : undefined}
+      onSaveInputs={protocolWritable ? patch => protocolWrite(updateTrackTemplateInputsOperation(track.id, patch)) : undefined} />
     {pergaMode && centerActive && reportPresentation.visible?.preparation.kind === 'empty' ? null : (
         <TrackReportRegion
         presentation={reportPresentation}

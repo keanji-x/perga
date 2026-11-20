@@ -25,7 +25,7 @@ function track(overrides: Partial<Track>): Track {
   return {
     id: 'w', areaId: 'c', title: 't', sort: 1, cwd: '/tmp', isolation: 'none', agentCwd: '/tmp',
     pinnedAt: null, closedAt: null, createdAt: 0, updatedAt: 0,
-    templateId: null, templateTitle: null, templateInputs: {}, templateHeaderView: null, templateSchedules: [],
+    templateId: null, templateTitle: null, templateInputs: {}, templateHeaderView: null,
     ...NEUTRAL_ACTIVITY,
     ...overrides,
   };
@@ -653,7 +653,6 @@ describe('template report projection', () => {
   const template = {
     templateId: 'dev', templateTitle: 'Dev', templateInputs: { repository: 'perga' },
     templateHeaderView: { badges: [{ label: 'Ready', tone: 'success' }], rules: [{ label: 'Review', text: 'Check tests' }] },
-    templateSchedules: [{ id: 'daily', cron: '0 9 * * *', timezone: 'Asia/Shanghai' }],
   };
   const dto = () => trackDtoSchema.parse({ id: 'w1', areaId: 'c1', createdAtMs: 1, updatedAtMs: 2, ...template });
 
@@ -668,7 +667,7 @@ describe('template report projection', () => {
 
   it('defaults omitted template fields for historical rows', () => {
     expect(toTrack(trackWireSchema.parse(baseWire))).toMatchObject({
-      templateId: null, templateTitle: null, templateInputs: {}, templateHeaderView: null, templateSchedules: [],
+      templateId: null, templateTitle: null, templateInputs: {}, templateHeaderView: null,
     });
   });
 });

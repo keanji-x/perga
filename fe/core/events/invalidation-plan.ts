@@ -141,9 +141,10 @@ function policies(): PolicyMap {
   /* The report key is deliberately broad: a root track's tree budget changes the admission
        diagnosis of its child tracks, but the event carries only the updated root id. */
   'track.updated': plan((event) => result([
-    eventKeys.tracksInArea(event.data.area_id), eventKeys.trackDetail(event.data.id),
+    eventKeys.tracksInArea(event.data.area_id), eventKeys.trackDetail(event.data.id), eventKeys.trackTemplate(event.data.id),
     eventKeys.trackReportPrefix(),
   ])),
+  'track.schedules.updated': plan((event) => result([eventKeys.trackSchedules(event.data.trackId)])),
   'track.deleted': plan((event) => result(
     [
       eventKeys.tracksInArea(event.data.area_id), eventKeys.overlaysByKind('track'),

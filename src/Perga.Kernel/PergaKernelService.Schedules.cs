@@ -144,7 +144,9 @@ public sealed partial class PergaKernelService
         if (runsLimit is < 0 or > 200) throw KernelException.InvalidArgument("runsLimit must be between 0 and 200.");
         var schedules = await ListTrackSchedulesAsync(trackId, includeTerminal, ct).ConfigureAwait(false);
         var runs = await _store.TrackWakes.ListScheduleRunsAsync(trackId, runsLimit, ct).ConfigureAwait(false);
-        return new(schedules, runs);
+        return new(schedules, runs.Select(wake => new TrackScheduleRunDto(
+            wake.Id, TrackWakePayload.Parse(wake.PayloadJson).ScheduleId, wake.State, wake.Reason,
+            wake.TurnId, wake.CreatedAtMs, wake.UpdatedAtMs)).ToArray());
     }
 
     public async Task<bool> TriggerTrackScheduleAsync(string trackId, string scheduleId, CancellationToken ct = default)

@@ -38,5 +38,3 @@ public interface ITrackScheduleStore
         Func<TrackScheduleDto, long?> computeNextFireAtMs,
         CancellationToken ct);
 }
-
-public sealed record TrackSchedulesSnapshot(IReadOnlyList<TrackScheduleDto> Schedules, IReadOnlyList<TrackWake> RecentRuns);

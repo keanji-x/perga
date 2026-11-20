@@ -27,3 +27,6 @@ export const trackDetailPrefix = () => ['track'] as const;
 export const sessionLive = (sessionId: string) => ['session-live', sessionId] as const;
 export const trackTerminals = (trackId: string) => ['track-terminals', trackId] as const;
 export const taskAttemptsPrefix = (trackId: string) => ['task-attempts', trackId] as const;
+
+export const trackSchedules = (trackId: string) => ['track-schedules', trackId] as const;
+export const trackTemplate = (trackId: string) => ['track-template', trackId] as const;

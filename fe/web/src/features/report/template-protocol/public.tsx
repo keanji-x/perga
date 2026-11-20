@@ -3,11 +3,23 @@ import { useId, useRef } from 'react';
 import { useState } from '../../../ui/state/public.ts';
 
 import type { Track } from '../../../../../core/domain/track.js';
+import type { TrackSchedulesSnapshot } from '../../../../../core/api/perga-v1.ts';
+import { SchedulePanel, type ScheduleActions } from './schedules.tsx';
+import { InputsPanel } from './inputs.tsx';
 import styles from './protocol.module.css';
 
-/** Read-only projection of the server-owned template protocol; no template means no chrome. */
-export function TemplateProtocolBar({ track }: { track: Track }) {
-  return track.templateId ? <Protocol key={track.id} track={track} /> : null;
+export type TemplateProtocolProps = ScheduleActions & Readonly<{
+  track: Track;
+  schedules?: TrackSchedulesSnapshot;
+  inputsSchema?: unknown;
+  loading?: boolean;
+  error?: string;
+  onSaveInputs?: (patch: Readonly<Record<string, unknown>>) => Promise<void>;
+}>;
+
+/** The app owns reads and writes; this feature renders the protocol and captures edits. */
+export function TemplateProtocolBar(props: TemplateProtocolProps) {
+  return props.track.templateId || props.schedules?.schedules.length ? <Protocol key={props.track.id} {...props} /> : null;
 }
 
 function Sparkline({ values, label }: { values: readonly number[]; label: string }) {
@@ -20,31 +32,24 @@ function Sparkline({ values, label }: { values: readonly number[]; label: string
   </svg>;
 }
 
-function inputEntries(value: unknown): [string, unknown][] {
-  if (value === null || value === undefined) return [];
-  if (typeof value === 'object') return Object.entries(value);
-  return [['Input', value]];
-}
-
-function Protocol({ track }: { track: Track }) {
+function Protocol({ track, schedules: snapshot, inputsSchema, loading, error, onSaveInputs, ...actions }: TemplateProtocolProps) {
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState('rules');
   const id = useId();
   const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const header = track.templateHeaderView;
   const rules = header?.rules ?? [];
-  const schedules = track.templateSchedules ?? [];
-  const inputs = inputEntries(track.templateInputs);
+  const schedules = snapshot?.schedules ?? [];
   const tabs = [
     ...(rules.length ? [{ key: 'rules', label: 'Rules' }] : []),
-    ...(schedules.length ? [{ key: 'schedules', label: 'Schedules' }] : []),
-    ...(inputs.length ? [{ key: 'inputs', label: 'Inputs' }] : []),
+    { key: 'schedules', label: 'Schedules' },
+    ...(track.templateId ? [{ key: 'inputs', label: 'Inputs' }] : []),
   ];
   const active = tabs.some(tab => tab.key === selected) ? selected : tabs[0]?.key;
   return <section className={styles.protocol} aria-label="Template protocol">
     <div className={styles.bar}>
       <div className={styles.badges}>
-        <span className={styles.template}>{track.templateTitle || track.templateId}</span>
+        <span className={styles.template}>{track.templateTitle || track.templateId || 'Schedules'}</span>
         {header?.badges?.map((badge, i) => <span key={i} className={`${styles.pill} ${styles[badge.tone ?? 'neutral']}`}>{badge.label}</span>)}
         {schedules.length > 0 && <span className={styles.hint}>{schedules.length} {schedules.length === 1 ? 'schedule' : 'schedules'}</span>}
       </div>
@@ -76,8 +81,10 @@ function Protocol({ track }: { track: Track }) {
       </div>
       <div role="tabpanel" id={`${id}-panel`} aria-labelledby={`${id}-${active}`} tabIndex={0}>
         {active === 'rules' && <dl>{rules.map((rule, i) => <div key={i}><dt>{rule.label}</dt><dd>{rule.text}</dd></div>)}</dl>}
-        {active === 'schedules' && <dl>{schedules.map((schedule, i) => <div key={i}><dt>{schedule.id}</dt><dd><code>{schedule.cron}</code> · {schedule.timezone}</dd></div>)}</dl>}
-        {active === 'inputs' && <dl>{inputs.map(([name, value]) => <div key={name}><dt>{name}</dt><dd>{typeof value === 'string' ? value : JSON.stringify(value)}</dd></div>)}</dl>}
+        {loading && <p role="status">Loading protocol…</p>}
+        {error && <p role="alert">{error}</p>}
+        {active === 'schedules' && <SchedulePanel schedules={schedules} recentRuns={snapshot?.recentRuns ?? []} {...actions} />}
+        {active === 'inputs' && <InputsPanel schema={inputsSchema} inputs={track.templateInputs} onSave={onSaveInputs} />}
       </div>
     </div>}
   </section>;
