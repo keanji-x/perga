@@ -191,6 +191,7 @@ function NewTrackEditor({ transport, unauthorized, pergaMode = false, workspace,
   const configurationLocked = session.creating || session.request !== null || !available || createdTrackId !== null;
 
   const permissionControl = resolvePermissionControl({
+    source: 'draft',
     storedMode: session.permissionMode,
     providerModes: permissionModesForProvider(providers.data, session.provider),
     metadataLoaded: providers.data !== undefined,

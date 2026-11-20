@@ -21,6 +21,10 @@ mode or a conflicting reported current mode fails that execution. Bootstrap
 marks the configured mode as the default where the provider advertises that ID
 or declares it as a launch mode.
 
+Drafts can preselect that default. Existing conversations show the saved
+permission mode, using its ID while the workspace catalogue is unavailable.
+An unset selection displays the provider default without selecting a mode.
+
 The shared default selects native session permissions. Task workspace access
 still determines the outer sandbox. Perga's handling of approval requests is
 unchanged. Validate defaults for all three session creation paths, explicit

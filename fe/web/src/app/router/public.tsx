@@ -792,6 +792,7 @@ function useConversationPane(
     store.permissionAuthorizationMode, store.unavailablePermissionMode, store.permissionMode, store.sendBlocked, store.sending, store.canQueueWhileRunning, setModel, setPermissionMode, store.stopping, store.working]);
   const permissionOptions = store.permissionOptions ?? scopePermissionModes;
   const permissionControl = useMemo(() => resolvePermissionControl({
+    source: 'session',
     storedMode: composerView.permissionMode,
     providerModes: permissionOptions,
     metadataLoaded: store.permissionOptions !== null || managedProvidersQuery.data !== undefined,
@@ -943,6 +944,7 @@ function useConversationPane(
               /* Menu membership and readiness come from the managed backend declarations. */
               footerActions={(() => {
                 const draftPermissionControl = resolvePermissionControl({
+                  source: 'draft',
                   storedMode: draft?.permissionMode,
                   providerModes: draft === null ? [] : permissionModesForProvider(managed.answers, draft.provider),
                   metadataLoaded: managed.answers !== undefined,

@@ -547,7 +547,7 @@ const PERMISSION_NOTE = 'Applies from the next turn.';
 /** A session's approval setting: renders backend-declared modes only. */
 export function PermissionModePill({ mode, options, onChange, isDisabled = false, unavailableMode, unavailableReason, placement = 'above' }: Readonly<{
   /** What the session has stored (or selected in draft). */
-  mode: string;
+  mode: string | null;
   options: readonly PermissionModeOptionDto[];
   onChange: (mode: string) => void;
   isDisabled?: boolean;
@@ -555,18 +555,15 @@ export function PermissionModePill({ mode, options, onChange, isDisabled = false
   unavailableReason?: string;
   placement?: 'above' | 'below';
 }>) {
-  if (options.length === 0) return null;
+  if (options.length === 0 && mode === null) return null;
   const optionMap: Readonly<Record<string, SettingOption>> = Object.fromEntries(options.map((opt) => [
       opt.id,
       { label: opt.label, description: opt.id === unavailableMode && unavailableReason !== undefined
         ? unavailableReason : opt.description,
       ...(opt.tone === 'neutral' ? {} : { tone: opt.tone }) },
     ]));
-  const effectiveMode = Object.prototype.hasOwnProperty.call(optionMap, mode)
-    ? mode
-    : (options.find((opt) => opt.isDefault) ?? options[0]).id;
-  return <SettingPill name="Approvals" options={optionMap} value={effectiveMode} onChange={onChange}
-    note={PERMISSION_NOTE} isDisabled={isDisabled} unavailableOption={unavailableMode} placement={placement} />;
+  return <SettingPill name="Approvals" options={optionMap} value={mode} unselectedLabel="Provider default" onChange={onChange}
+    note={PERMISSION_NOTE} isDisabled={isDisabled || options.length === 0} unavailableOption={unavailableMode} placement={placement} />;
 }
 
 /** What a Track's Planner may do in its Area: an ordinary Planner, or an Area admin (`admin` on `POST`/`PATCH /api/tracks`). */
@@ -595,11 +592,12 @@ export function PlannerRolePill({ value, onChange, isDisabled = false, disabledR
 
 /** A short fixed setting: the trigger names it and its value, and each row explains itself. */
 function SettingPill<Value extends string>({
-  name, options, value, onChange, note, isDisabled, unavailableOption, tooltip, placement, alignment = 'start',
+  name, options, value, unselectedLabel = name, onChange, note, isDisabled, unavailableOption, tooltip, placement, alignment = 'start',
 }: Readonly<{
   name: string;
   options: Readonly<Record<Value, SettingOption>>;
-  value: Value;
+  value: Value | null;
+  unselectedLabel?: string;
   onChange: (value: Value) => void;
   note?: string;
   isDisabled: boolean;
@@ -612,9 +610,10 @@ function SettingPill<Value extends string>({
   const [open, setOpen] = useState(false);
   const hostRef = useRef<HTMLSpanElement | null>(null);
   const { onEscape, onOpenChange } = useEscapeFocus(open, setOpen, hostRef);
-  const current = options[value];
-  const tone = current.tone ?? 'neutral';
-  const label = `${name}: ${current.label}`;
+  const current = value !== null && Object.prototype.hasOwnProperty.call(options, value) ? options[value] : undefined;
+  const currentLabel = current?.label ?? value ?? unselectedLabel;
+  const tone = current?.tone ?? 'neutral';
+  const label = `${name}: ${currentLabel}`;
   return (
     <span ref={hostRef} className={styles.host} onKeyDownCapture={onEscape}>
       <DropdownMenu
@@ -628,7 +627,7 @@ function SettingPill<Value extends string>({
           label,
           children: <Text type="inherit" color="inherit" maxLines={1}>
             {`${name}: `}
-            <span className={styles.settingValue} data-nc-tone={tone}>{current.label}</span>
+            <span className={styles.settingValue} data-nc-tone={tone}>{currentLabel}</span>
           </Text>,
           'data-nc-tone': tone,
           variant: 'ghost',

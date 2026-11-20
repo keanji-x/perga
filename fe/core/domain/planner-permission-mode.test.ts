@@ -73,28 +73,37 @@ describe('session permission mode', () => {
     expect(conversationRunOperation('card-1').responseSchema.safeParse({ ...RUN, permission_mode: 'ask' }).success).toBe(false);
   });
 
-  it('resolves permission controls uniformly from backend metadata without inventing fallback modes', () => {
+  it('preselects the provider default in new drafts', () => {
     const agyModes = [
       { id: 'plan', label: 'Plan', description: 'Read first', tone: 'neutral' as const, isDefault: true },
       { id: 'bypassPermissions', label: 'Full access', description: 'Skip prompts', tone: 'danger' as const, isDefault: false },
     ];
-    expect(resolvePermissionControl({ storedMode: null, providerModes: agyModes, metadataLoaded: true, isDisabled: false }))
+    const draft = { source: 'draft', providerModes: agyModes, metadataLoaded: true, isDisabled: false } as const;
+    expect(resolvePermissionControl({ ...draft, storedMode: null }))
       .toEqual({ visible: true, mode: 'plan', options: agyModes, isDisabled: false });
-    expect(resolvePermissionControl({ storedMode: 'bypassPermissions', providerModes: agyModes, metadataLoaded: true, isDisabled: false }))
+    expect(resolvePermissionControl({ ...draft, storedMode: 'bypassPermissions' }))
       .toEqual({ visible: true, mode: 'bypassPermissions', options: agyModes, isDisabled: false });
-    expect(resolvePermissionControl({ storedMode: 'stale', providerModes: agyModes, metadataLoaded: true, isDisabled: false }))
+    expect(resolvePermissionControl({ ...draft, storedMode: 'stale' }))
       .toEqual({ visible: true, mode: 'plan', options: agyModes, isDisabled: false });
-    expect(resolvePermissionControl({ storedMode: 'bypassPermissions', providerModes: [], metadataLoaded: false, isDisabled: false }))
-      .toEqual({
-        visible: true,
-        mode: 'bypassPermissions',
-        options: [{ id: 'bypassPermissions', label: 'bypassPermissions', description: 'Provider approval options unavailable.', tone: 'neutral', isDefault: true }],
-        isDisabled: true,
-      });
-    expect(resolvePermissionControl({ storedMode: 'bypassPermissions', providerModes: [], metadataLoaded: true, isDisabled: false }))
+    expect(resolvePermissionControl({ ...draft, storedMode: 'bypassPermissions', providerModes: [], metadataLoaded: false }))
+      .toEqual({ visible: true, mode: 'bypassPermissions', options: [], isDisabled: true });
+    expect(resolvePermissionControl({ ...draft, storedMode: 'bypassPermissions', providerModes: [] }))
       .toEqual({ visible: false });
-    expect(resolvePermissionControl({ storedMode: null, providerModes: [], metadataLoaded: false, isDisabled: false }))
+    expect(resolvePermissionControl({ ...draft, storedMode: null, providerModes: [], metadataLoaded: false }))
       .toEqual({ visible: false });
+  });
+
+  it('keeps an existing session selection when the catalogue only contains the installation default', () => {
+    const launchModes = [
+      { id: 'bypassPermissions', label: 'Full access', description: '', tone: 'danger' as const, isDefault: true },
+    ];
+    const session = { source: 'session', providerModes: launchModes, metadataLoaded: true, isDisabled: false } as const;
+    expect(resolvePermissionControl({ ...session, storedMode: 'workspace-review' }))
+      .toEqual({ visible: true, mode: 'workspace-review', options: launchModes, isDisabled: false });
+    expect(resolvePermissionControl({ ...session, storedMode: null }))
+      .toEqual({ visible: true, mode: null, options: launchModes, isDisabled: false });
+    expect(resolvePermissionControl({ ...session, storedMode: 'workspace-review', providerModes: [] }))
+      .toEqual({ visible: true, mode: 'workspace-review', options: [], isDisabled: true });
   });
 
   it('clears permission mode when switching providers and preserves it otherwise', () => {

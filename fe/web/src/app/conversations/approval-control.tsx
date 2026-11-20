@@ -9,7 +9,7 @@ import { useState } from '../../ui/state/public.ts';
 
 /** The menu is shared; a protected approval change asks for proof only on selection. */
 export function ConversationApprovalControl({ mode, options, disabled, authorizationMode, unavailableMode, change }: {
-  mode: string;
+  mode: string | null;
   options: readonly PermissionModeOptionDto[];
   disabled: boolean;
   authorizationMode: string | null;

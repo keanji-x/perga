@@ -76,7 +76,7 @@ describe('PermissionModePill', () => {
     expect(button.hasAttribute('disabled') || button.getAttribute('aria-disabled') === 'true').toBe(true);
   });
 
-  it('renders provider-declared options and hides when empty', () => {
+  it('renders a saved mode read-only when its option catalogue is empty', () => {
     const onChange = vi.fn();
     const { rerender } = render(
       <PermissionModePill
@@ -94,6 +94,9 @@ describe('PermissionModePill', () => {
     expect(onChange).toHaveBeenCalledWith('bypassPermissions');
 
     rerender(<PermissionModePill mode="dontAsk" options={[]} onChange={onChange} />);
+    const saved = screen.getByRole('button', { name: 'Approvals: dontAsk' });
+    expect(saved.hasAttribute('disabled') || saved.getAttribute('aria-disabled') === 'true').toBe(true);
+    rerender(<PermissionModePill mode={null} options={[]} onChange={onChange} />);
     expect(screen.queryByRole('button')).toBeNull();
   });
 });

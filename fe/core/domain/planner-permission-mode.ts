@@ -19,7 +19,7 @@ export type ResolvedPermissionControl =
   | Readonly<{ visible: false }>
   | Readonly<{
       visible: true;
-      mode: string;
+      mode: string | null;
       options: readonly PermissionModeOptionDto[];
       isDisabled: boolean;
     }>;
@@ -27,11 +27,11 @@ export type ResolvedPermissionControl =
 const HIDDEN_PERMISSION_CONTROL: ResolvedPermissionControl = Object.freeze({ visible: false });
 
 /**
- * Resolves the exact pill presentation from stored intent and backend-declared provider options.
- * Never invents hardcoded provider modes: shows declared options when present, a disabled
- * read-only placeholder when metadata has not loaded for an already-stored mode, or hides otherwise.
+ * Drafts use a declared default until the user selects an option. Existing sessions
+ * retain the stored mode even when the current catalogue cannot describe it yet.
  */
 export function resolvePermissionControl(params: Readonly<{
+  source: 'draft' | 'session';
   storedMode: string | null | undefined;
   providerModes: readonly PermissionModeOptionDto[] | undefined;
   metadataLoaded: boolean;
@@ -40,7 +40,7 @@ export function resolvePermissionControl(params: Readonly<{
   const stored = params.storedMode ?? null;
   const declared = params.providerModes ?? [];
   if (declared.length > 0) {
-    const mode = stored !== null && declared.some((option) => option.id === stored)
+    const mode = params.source === 'session' || declared.some((option) => option.id === stored)
       ? stored
       : defaultPermissionModeFor(declared)!;
     return {
@@ -51,17 +51,11 @@ export function resolvePermissionControl(params: Readonly<{
     };
   }
 
-  if (!params.metadataLoaded && stored !== null) {
+  if (stored !== null && (params.source === 'session' || !params.metadataLoaded)) {
     return {
       visible: true,
       mode: stored,
-      options: [{
-        id: stored,
-        label: stored,
-        description: 'Provider approval options unavailable.',
-        tone: 'neutral',
-        isDefault: true,
-      }],
+      options: declared,
       isDisabled: true,
     };
   }
