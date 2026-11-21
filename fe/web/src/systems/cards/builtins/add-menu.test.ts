@@ -2,9 +2,9 @@
 //
 // The add menu as a projection of the registry, driven through `registerAvailableBuiltinCards` rather than a fixture registry.
 
-import { describe, expect, it } from 'vitest';
+import { describe,expect,it } from 'vitest';
 
-import { cardAddMenuEntries, createCardRegistry, type CardEntry } from '../public.js';
+import { cardAddMenuEntries,createCardRegistry,type CardEntry } from '../public.js';
 import { registerAvailableBuiltinCards } from './register.js';
 
 function builtinMenu() {
@@ -16,12 +16,12 @@ function builtinMenu() {
 describe('cardAddMenuEntries', () => {
   it('offers exactly the built-ins that declared an add-panel entry', () => {
     expect(builtinMenu().map((entry) => [entry.type, entry.label]))
-      .toEqual([['terminal', 'terminal'], ['codex', 'codex'], ['claude', 'claude'], ['file-viewer', 'file']]);
+      .toEqual([['terminal', 'terminal'], ['file-viewer', 'file']]);
   });
 
   it('keeps registration order, so terminal precedes codex as the built-in order says', () => {
     const types = builtinMenu().map((entry) => entry.type);
-    expect(types.indexOf('terminal')).toBeLessThan(types.indexOf('codex'));
+    expect(types.indexOf('terminal')).toBeLessThan(types.indexOf('file-viewer'));
   });
 
   it('never offers a kind only the kernel may mint', () => {

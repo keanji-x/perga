@@ -1,18 +1,12 @@
-import type { CardEntry, CardRegistry, RegisteredCard } from '../registry.js';
-import { CLAUDE_CARD_ENTRY } from './claude.js';
-import { CODEX_CARD_ENTRY } from './codex.js';
+import type { CardEntry,CardRegistry,RegisteredCard } from '../registry.js';
 import { FILE_VIEWER_CARD_ENTRY } from './file-viewer.js';
 import { TERMINAL_CARD_ENTRY } from './terminal.js';
 import { TRACK_REPORT_CARD_ENTRY } from './track-report.js';
 
 export const BUILTIN_CARD_ORDER = Object.freeze([
   'terminal',
-  'codex',
-  'claude',
   'track-report',
   'file-viewer',
-  'iframe',
-  'plugin-iframe',
 ] as const);
 
 export type BuiltinCardType = (typeof BUILTIN_CARD_ORDER)[number];
@@ -53,8 +47,6 @@ export type StructuralRegistrarIsNotAssignable = AssertTrue<SlotRejectsStructura
 export function registerAvailableBuiltinCards(registry: CardRegistry): void {
   const registrars: BuiltinRegistrarMap = {
     terminal: BuiltinRegistrar.of(TERMINAL_CARD_ENTRY),
-    codex: BuiltinRegistrar.of(CODEX_CARD_ENTRY),
-    claude: BuiltinRegistrar.of(CLAUDE_CARD_ENTRY),
     'track-report': BuiltinRegistrar.of(TRACK_REPORT_CARD_ENTRY),
     'file-viewer': BuiltinRegistrar.of(FILE_VIEWER_CARD_ENTRY),
   };

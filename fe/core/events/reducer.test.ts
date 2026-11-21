@@ -1,7 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { describe,expect,it } from 'vitest';
 
 import { decodeEventFrame } from './protocol.js';
-import { initialEventState, reduceEventFrame } from './reducer.js';
+import { initialEventState,reduceEventFrame } from './reducer.js';
 
 function readyFrame(input: unknown) {
   const decoded = decodeEventFrame(input);
@@ -26,37 +26,6 @@ describe('event reducer behavior', () => {
     );
     expect(result.state.cursor).toBe(10);
     expect(result.effects).toEqual([{ type: 'persist-cursor', id: 10 }]);
-  });
-
-  /* The union is strict: an unknown value rejects the frame, moves the cursor past it and
-   * invalidates nothing — a new value is a `WEB_COMPAT_VERSION` bump, not a tolerated unknown. */
-  it('skips a harness.queue.changed frame whose change value this bundle does not know, invalidating nothing', () => {
-    const result = reduceEventFrame(
-      { cursor: 9, syncEventVersion: 3 },
-      readyFrame({
-        ev: 'harness.queue.changed',
-        data: {
-          worker_session_id: 'rt', card_id: 'card-1', track_id: 'w1', entry_id: 'entry-9',
-          change: 'not-a-value-any-bundle-knows', actor: { kind: 'Kernel' },
-        },
-        _id: 10, eventVersion: 3,
-      }),
-    );
-    expect(result.state.cursor).toBe(10);
-    expect(result.effects).toEqual([{ type: 'persist-cursor', id: 10 }]);
-    const restored = reduceEventFrame(
-      { cursor: 10, syncEventVersion: 3 },
-      readyFrame({
-        ev: 'harness.queue.changed',
-        data: {
-          worker_session_id: 'rt', card_id: 'card-1', track_id: 'w1', entry_id: 'entry-9',
-          change: 'restored', actor: { kind: 'Kernel' },
-        },
-        _id: 11, eventVersion: 3,
-      }),
-    );
-    expect(restored.effects.some((effect) => effect.type === 'invalidate'
-      && effect.keys?.some((key) => key[0] === 'planner-run' && key[1] === 'card-1'))).toBe(true);
   });
 
   it('turns control frames into pure cache and reconnect effects', () => {

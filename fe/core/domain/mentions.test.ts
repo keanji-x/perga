@@ -1,42 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import { describe,expect,it } from 'vitest';
 
-import type { MentionCandidates } from '../api/generated/wire.js';
 import {
-  extractTemplateMentions, selectedReadyTemplateId, templateMentionSuggestions, sentMentionParts, mentionCandidatesSchema, mentionQueryOf, mentionSuggestionsOf, mentionsOperation, type MentionQuery,
+extractTemplateMentions,
+mentionQueryOf,
+selectedReadyTemplateId,
+sentMentionParts,
+templateMentionSuggestions
 } from './mentions.js';
-
-const CANDIDATES: MentionCandidates = {
-  tags: [
-    { label: '部署', track_count: 3, insert: '@`tag:部署`' },
-    { label: 'infra', track_count: 1, insert: '@`tag:infra`' },
-  ],
-  tracks: [
-    { label: 'Deploy notes', track_id: 't1', insert: '@`/研发/Deploy notes/report.md`' },
-  ],
-  blocks: [
-    {
-      label: 'Rollback', block_id: 'b_1a2b', track_title: 'Deploy notes', track_id: 't1',
-      insert: '@`/研发/Deploy notes/report.md#b_1a2b`',
-    },
-  ],
-};
-
-describe('mentionsOperation', () => {
-  it('always sends q, even empty, and the track hint only when there is one', () => {
-    expect(mentionsOperation('a 1', '', null).path).toBe('/api/areas/a%201/mentions?q=');
-    expect(mentionsOperation('a1', 'dé ploy&x', 't/1').path)
-      .toBe('/api/areas/a1/mentions?q=d%C3%A9%20ploy%26x&track=t%2F1');
-    expect(mentionsOperation('a1', 'x', null).method).toBe('GET');
-  });
-
-  it('decodes the three groups and rejects a response missing one', () => {
-    expect(mentionCandidatesSchema.parse(CANDIDATES)).toEqual(CANDIDATES);
-    expect(mentionCandidatesSchema.safeParse({ tags: [], tracks: [] }).success).toBe(false);
-  });
-});
-
-/** Plain `@` text: no type prefix. */
-const all = (text: string): MentionQuery => ({ kind: null, text });
 
 describe('mentionQueryOf', () => {
   it.each([
@@ -72,60 +42,6 @@ describe('mentionQueryOf', () => {
     expect(mentionQueryOf('dep')).toEqual({ kind: null, text: 'dep' });
     expect(mentionQueryOf('a/b#c>d')).toEqual({ kind: null, text: 'a/b#c>d' });
     expect(mentionQueryOf('//x')).toEqual({ kind: 'track', text: '/x' });
-  });
-});
-
-describe('mentionSuggestionsOf', () => {
-  it('lists tags, then tracks, then blocks for a typed query, in the server order, each carrying its insert verbatim', () => {
-    expect(mentionSuggestionsOf(CANDIDATES, all('dep'))).toEqual([
-      { id: 'tag:@`tag:部署`', kind: 'tag', label: '#部署', detail: '3 tracks', chip: '#部署', insert: '@`tag:部署`' },
-      { id: 'tag:@`tag:infra`', kind: 'tag', label: '#infra', detail: '1 track', chip: '#infra', insert: '@`tag:infra`' },
-      {
-        id: 'track:@`/研发/Deploy notes/report.md`', kind: 'track', label: 'Deploy notes', detail: null,
-        chip: 'Deploy notes', insert: '@`/研发/Deploy notes/report.md`',
-      },
-      {
-        id: 'block:@`/研发/Deploy notes/report.md#b_1a2b`', kind: 'block', label: 'Rollback',
-        detail: 'Deploy notes', chip: 'Deploy notes › Rollback', insert: '@`/研发/Deploy notes/report.md#b_1a2b`',
-      },
-    ]);
-  });
-
-  it('puts blocks first, then tracks, then tags, for bare @', () => {
-    expect(mentionSuggestionsOf(CANDIDATES, all('')).map((suggestion) => suggestion.kind))
-      .toEqual(['block', 'track', 'tag', 'tag']);
-    expect(mentionSuggestionsOf(CANDIDATES, all('')).map((suggestion) => suggestion.label))
-      .toEqual(['Rollback', 'Deploy notes', '#部署', '#infra']);
-  });
-
-  it('is empty for an area with nothing to mention', () => {
-    expect(mentionSuggestionsOf({ tags: [], tracks: [], blocks: [] }, all(''))).toEqual([]);
-  });
-
-  it('keeps ids unique when a tag and a report would otherwise collide', () => {
-    const ids = mentionSuggestionsOf({
-      tags: [{ label: 'x', track_count: 1, insert: '@`x`' }],
-      tracks: [{ label: 'x', track_id: 't', insert: '@`x`' }],
-      blocks: [],
-    }, all('x')).map((suggestion) => suggestion.id);
-    expect(new Set(ids).size).toBe(2);
-  });
-
-  it.each([
-    ['#dep', ['tag', 'tag']],
-    ['/dep', ['track']],
-    ['>roll', ['block']],
-    ['#', ['tag', 'tag']],
-    ['/', ['track']],
-    ['>', ['block']],
-  ] as const)('keeps only the prefix\'s group for %s', (typed, kinds) => {
-    expect(mentionSuggestionsOf(CANDIDATES, mentionQueryOf(typed)).map((suggestion) => suggestion.kind)).toEqual(kinds);
-  });
-
-  it('keeps the chip and the insert of a row found through a prefix', () => {
-    expect(mentionSuggestionsOf(CANDIDATES, mentionQueryOf('>roll'))).toEqual(
-      mentionSuggestionsOf(CANDIDATES, all('roll')).filter((suggestion) => suggestion.kind === 'block'),
-    );
   });
 });
 

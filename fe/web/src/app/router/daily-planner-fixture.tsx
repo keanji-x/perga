@@ -1,29 +1,29 @@
-import { sessionPage } from './conversation-session-data.ts';
-import { fixtureTrack, fixtureSession, fixtureSnapshot, fixtureReport, fixtureBootstrap } from './session-contract-fixture.ts';
+import { Profiler,StrictMode,type ReactNode } from 'react';
 import type { SessionIdentity } from '../../../../core/api/auth.ts';
+import type { AgentProvider } from '../../../../core/api/generated/wire.ts';
+import { prepareReportDocument,type ReportPreparationPort } from '../../features/report/document/preparation.ts';
 import { SessionGate } from '../auth/session-gate.tsx';
 import { conversationCardId } from './conversation-read-data.ts';
-import { prepareReportDocument, type ReportPreparationPort } from '../../features/report/document/preparation.ts';
-import type { AgentProvider } from '../../../../core/api/generated/wire.ts';
-import { Profiler, StrictMode, type ReactNode } from 'react';
+import { sessionPage } from './conversation-session-data.ts';
+import { fixtureBootstrap,fixtureReport,fixtureSession,fixtureSnapshot,fixtureTrack } from './session-contract-fixture.ts';
 // Test-only transport for the complete daily homepage composition; no model or live API.
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { RouterProvider, createMemoryHistory, type AnyRoute, type RouterHistory } from '@tanstack/react-router';
+import { QueryClient,QueryClientProvider } from '@tanstack/react-query';
+import { RouterProvider,createMemoryHistory,type AnyRoute,type RouterHistory } from '@tanstack/react-router';
 import { render } from '@testing-library/react';
-import type { ApiRequest, ApiTransportPort, ApiTransportResponse } from '../../../../core/api/types.ts';
-import { trackReportLinkUrl } from '../../../../core/domain/report.ts';
+import type { ApiRequest,ApiTransportPort,ApiTransportResponse } from '../../../../core/api/types.ts';
 import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
-import { createAppRouter } from './public.tsx';
-import { bootTestCardRuntime } from './test-card-runtime.ts';
+import { trackReportLinkUrl } from '../../../../core/domain/report.ts';
+import { withReadReceipts,type ReadReceiptsKernel } from '../providers/read-receipts-fixture.tsx';
 import type { UiPreferences } from '../providers/ui-preferences.tsx';
 import { ThemeProvider } from '../theme/public.tsx';
-import { withReadReceipts, type ReadReceiptsKernel } from '../providers/read-receipts-fixture.tsx';
+import { createAppRouter } from './public.tsx';
+import { bootTestCardRuntime } from './test-card-runtime.ts';
 
-export function renderDailyFixture({ history, identity, routeProbe, withTransport, strict = false, initial = '/', plannerProvider = 'codex', failChanges = false, emptyWorkspace = false, extraPlanner = false, projectTitle = 'Project evidence', reportBody, reply, onCommit, uiPreferences, receipts, prepareReport = prepareReportDocument, pergaMode }: Readonly<{ history?: RouterHistory; identity?: SessionIdentity; routeProbe?: ReactNode; withTransport?: (transport: ApiTransportPort) => ApiTransportPort; strict?: boolean; prepareReport?: ReportPreparationPort; plannerProvider?: AgentProvider; uiPreferences?: UiPreferences; receipts?: ReadReceiptsKernel; initial?: string; failChanges?: boolean; emptyWorkspace?: boolean; extraPlanner?: boolean; projectTitle?: string; reportBody?: string; reply?: (request: ApiRequest) => ApiTransportResponse | undefined | Promise<ApiTransportResponse | undefined>; onCommit?: () => void; pergaMode?: boolean }> = {}) {
+export function renderDailyFixture({ history, identity, routeProbe, withTransport, strict = false, initial = '/', plannerProvider = 'codex', failChanges = false, emptyWorkspace = false, extraPlanner = false, projectTitle = 'Project evidence', reportBody, reply, onCommit, uiPreferences, receipts, prepareReport = prepareReportDocument, }: Readonly<{ history?: RouterHistory; identity?: SessionIdentity; routeProbe?: ReactNode; withTransport?: (transport: ApiTransportPort) => ApiTransportPort; strict?: boolean; prepareReport?: ReportPreparationPort; plannerProvider?: AgentProvider; uiPreferences?: UiPreferences; receipts?: ReadReceiptsKernel; initial?: string; failChanges?: boolean; emptyWorkspace?: boolean; extraPlanner?: boolean; projectTitle?: string; reportBody?: string; reply?: (request: ApiRequest) => ApiTransportResponse | undefined | Promise<ApiTransportResponse | undefined>; onCommit?: () => void;  }> = {}) {
   const requests: ApiRequest[] = [];
   const area = { id: 'daily-area', name: 'system', color: '#6574cd', sortOrder: 0, kind: 'system', createdAtMs: 1, updatedAtMs: 1 };
   const projectArea = { ...area, id: 'project-area', name: 'Project', kind: 'user' };
-  const track = fixtureTrack('daily', { title: 'Renamed daily Track', leadSessionId: 'daily-planner', ...(pergaMode ? { workspace: { isolation: 'none', kind: 'attached', path: '/tmp', frozenAt: null } } : {}) });
+  const track = fixtureTrack('daily', { title: 'Renamed daily Track', leadSessionId: 'daily-planner', ...({ workspace: { isolation: 'none', kind: 'attached', path: '/tmp', frozenAt: null } }) });
   const project = fixtureTrack('project', { areaId: projectArea.id, title: projectTitle });
   const card = fixtureSession('daily-planner', track.id, { title: 'Daily Planner conversation', isLead: true, provider: plannerProvider });
   const sessions = [card, ...(extraPlanner ? [fixtureSession('second-planner', track.id, { title: 'Other conversation', provider: plannerProvider })] : [])];
@@ -36,6 +36,7 @@ export function renderDailyFixture({ history, identity, routeProbe, withTranspor
     if (response !== undefined) return response;
     if (request.path === '/api/v1/bootstrap?scope=whoami' && identity !== undefined) return ok(identity);
     if (request.path.startsWith('/api/v1/bootstrap') && !request.path.includes('scope=whoami')) return ok(fixtureBootstrap([plannerProvider]));
+    if (request.path.includes('/workspace-options')) return ok({ defaultId: 'direct', options: [{ id: 'direct', label: 'Direct folder', description: 'Use this folder' }] });
     if (request.path === '/api/v1/areas') return ok(emptyWorkspace ? [] : [projectArea]);
     if (request.path === '/api/v1/areas/daily-area/tracks?includeClosed=true') return ok([track]);
     if (request.path === '/api/v1/areas/project-area/tracks?includeClosed=true') return ok([project]);
@@ -78,7 +79,7 @@ export function renderDailyFixture({ history, identity, routeProbe, withTranspor
   const unauthorized = createUnauthorizedChannel({ enqueue: (task) => task() });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const fixtureTransport = withReadReceipts(transport, receipts);
-  const router = createAppRouter({ prepareReport, transport: withTransport?.(fixtureTransport) ?? fixtureTransport, unauthorized, client, cards: bootTestCardRuntime(), uiPreferences, pergaMode, onSignOut: () => undefined });
+  const router = createAppRouter({ prepareReport, transport: withTransport?.(fixtureTransport) ?? fixtureTransport, unauthorized, client, cards: bootTestCardRuntime(), uiPreferences, onSignOut: () => undefined });
   // Observe commits inside the existing provider via declared child routes. Each
   // wrapper delegates the original component and adds only a nonvisual test probe.
   if (routeProbe !== undefined) for (const route of (router.routeTree.children ?? []) as readonly AnyRoute[]) {

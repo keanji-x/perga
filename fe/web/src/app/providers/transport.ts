@@ -1,7 +1,7 @@
 // The browser half of core/api's injected transport port. core never touches
 // `fetch`; this is the only place the web end hands it one.
 
-import type { ApiRequest, ApiTransportPort, ApiTransportResponse } from '../../../../core/api/types.ts';
+import type { ApiRequest,ApiTransportPort,ApiTransportResponse } from '../../../../core/api/types.ts';
 
 const REQUEST_TIMEOUT_MS = 30_000;
 
@@ -17,7 +17,7 @@ async function readBody(response: Response): Promise<unknown> {
   }
 }
 
-export function createFetchTransport({ shareLinkId }: Readonly<{ shareLinkId?: string }> = {}): ApiTransportPort {
+export function createFetchTransport(): ApiTransportPort {
   return {
     async send(request: ApiRequest): Promise<ApiTransportResponse> {
       const controller = new AbortController();
@@ -31,9 +31,7 @@ export function createFetchTransport({ shareLinkId }: Readonly<{ shareLinkId?: s
           method: request.method,
           credentials: request.credentials,
           ...(request.redirect === undefined ? {} : { redirect: request.redirect }),
-          ...(request.headers === undefined && shareLinkId === undefined ? {} : {
-            headers: { ...request.headers, ...(shareLinkId === undefined ? {} : { 'X-Calm-Share-Link': shareLinkId }) },
-          }),
+          ...(request.headers === undefined ? {} : { headers: request.headers }),
           /* A `Uint8Array` body is the bytes themselves: `JSON.stringify` of a typed array is `{"0":137,…}`,
            * which no type would catch. `content-type` comes from the operation's own headers. */
           ...(request.body === undefined || request.method === 'GET' ? {} : {

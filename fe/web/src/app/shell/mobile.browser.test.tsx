@@ -180,43 +180,6 @@ describe('Track mobile presentation', () => {
     await expect.element(page.getByRole('heading', { name: 'Tools', exact: true })).toBeVisible();
   });
 
-  it('presents Settings as an inline mobile page and retains an install draft across viewport changes', async () => {
-    await page.viewport(390, 844);
-    const router = setup('/settings/plugins');
-    await page.getByRole('heading', { name: 'Plugins', exact: true }).findElement();
-    expect(document.querySelector('[role="dialog"][aria-label="Settings"]')).toBeNull();
-    const pageRoot = document.querySelector<HTMLElement>('[data-nc-settings-page]')!;
-    expect(pageRoot.closest('main')).not.toBeNull();
-    expect(pageRoot.closest('[inert]')).toBeNull();
-    expect(document.querySelector('[data-nc-workspace-header]')).toBeNull();
-    await page.getByRole('button', { name: /^Add a plugin/ }).click();
-    await page.getByRole('heading', { name: 'Add a plugin', exact: true }).findElement();
-    const name = await page.getByRole('textbox', { name: 'MCP configuration', exact: true }).findElement();
-    await page.getByRole('textbox', { name: 'MCP configuration', exact: true }).fill('{"url":"https://draft.example/mcp"}');
-    await page.viewport(1400, 900);
-    const dialog = await page.getByRole('dialog', { name: 'Settings' }).findElement();
-    expect(dialog.contains(name)).toBe(true);
-    expect((name as HTMLTextAreaElement).value).toBe('{"url":"https://draft.example/mcp"}');
-    const focusable = Array.from(dialog.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex="0"]'))
-      .filter((element) => element.getClientRects().length > 0);
-    const first = focusable[0];
-    const last = focusable.at(-1)!;
-    last.focus();
-    await userEvent.keyboard('{Tab}');
-    expect(document.activeElement).toBe(first);
-    await userEvent.keyboard('{Shift>}{Tab}{/Shift}');
-    expect(document.activeElement).toBe(last);
-    await page.viewport(390, 844);
-    await expect.poll(() => document.querySelector('[role="dialog"][aria-label="Settings"]')).toBeNull();
-    expect(page.getByRole('textbox', { name: 'MCP configuration', exact: true }).element()).toBe(name);
-    expect(name.closest('[inert]')).toBeNull();
-    expect(document.body.style.overflow).not.toBe('hidden');
-    await page.getByRole('button', { name: 'Back to Settings' }).click();
-    await expect.poll(() => router.state.location.pathname).toBe('/settings');
-    await page.getByRole('button', { name: 'Back to workspace' }).click();
-    await expect.poll(() => router.state.location.pathname).toBe('/');
-  });
-
   it('keeps Area selection and settings navigation clear at the narrow phone width', async () => {
     await page.viewport(320, 740);
     const router = setup('/area/c2/new');
@@ -300,8 +263,8 @@ describe('Track mobile presentation', () => {
     await page.getByRole('dialog', { name: 'Settings' }).findElement();
     await page.getByRole('button', { name: 'About', exact: true }).click();
     await page.getByRole('heading', { name: 'About', exact: true }).findElement();
-    await page.getByRole('button', { name: 'Appearance', exact: true }).click();
-    await page.getByRole('heading', { name: 'Appearance', exact: true }).findElement();
+    await page.getByRole('button', { name: 'Planners', exact: true }).click();
+    await page.getByRole('heading', { name: 'Planners', exact: true }).findElement();
     expect(router.history.location.state.__TSR_index).toBe(3);
     await page.viewport(390, 844);
     await page.getByRole('button', { name: 'Back to Settings' }).click();
@@ -316,18 +279,18 @@ describe('Track mobile presentation', () => {
     await page.viewport(390, 844);
     setup('/settings');
     await page.getByRole('heading', { name: 'Settings', exact: true }).findElement();
-    const network = await page.getByRole('button', { name: 'Network', exact: true }).findElement();
+    const network = await page.getByRole('button', { name: 'Planners', exact: true }).findElement();
     const appearance = await page.getByRole('button', { name: 'Appearance', exact: true }).findElement();
-    expect(appearance.getBoundingClientRect().top).toBeGreaterThanOrEqual(network.getBoundingClientRect().bottom);
+    expect(network.getBoundingClientRect().top).toBeGreaterThanOrEqual(appearance.getBoundingClientRect().bottom);
     expect(page.getByRole('textbox', { name: 'HTTP proxy', exact: true }).query()).toBeNull();
     expect(page.getByRole('heading', { name: 'Network', exact: true }).query()).toBeNull();
     await page.screenshot({ path: '../../../../test-results/mobile-settings-index.png' });
   });
 
   it.each([
-    { label: 'Network', path: '/settings/network' },
+    { label: 'Planners', path: '/settings/planners' },
     { label: 'Appearance', path: '/settings/appearance' },
-    { label: 'Plugins', path: '/settings/plugins' },
+    { label: 'About', path: '/settings/about' },
   ] as const)('opens the $label category from the index and returns through browser Back', async ({ label, path }) => {
     await page.viewport(390, 844);
     const router = setup('/settings');
@@ -337,15 +300,13 @@ describe('Track mobile presentation', () => {
     expect(page.getByRole('heading', { name: label, exact: true }).all()).toHaveLength(1);
     expect(page.getByRole('navigation', { name: 'Settings categories' }).query()).toBeNull();
     expect(page.getByRole('navigation', { name: 'Settings sections' }).query()).toBeNull();
-    if (label === 'Plugins') await page.getByRole('button', { name: /^Add a plugin/ }).findElement();
-    if (label === 'Network') await page.screenshot({ path: '../../../../test-results/mobile-settings-network-page.png' });
     router.history.back();
     await expect.poll(() => router.state.location.pathname).toBe('/settings');
     await page.getByRole('navigation', { name: 'Settings categories' }).findElement();
     expect(router.history.location.state.__TSR_index).toBe(0);
   });
 
-  it.each(['network', 'appearance', 'plugins'] as const)('returns a cold %s detail link safely to the index', async (section) => {
+  it.each(['planners', 'appearance', 'about'] as const)('returns a cold %s detail link safely to the index', async (section) => {
     await page.viewport(390, 844);
     const router = setup(`/settings/${section}`);
     await page.getByRole('button', { name: 'Back to Settings' }).click();

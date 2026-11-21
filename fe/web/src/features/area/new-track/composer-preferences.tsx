@@ -90,6 +90,9 @@ export function ComposerPreferences({ folder, browsing }: Props) {
         // A selection may change while its directory dialog hides the popover.
         // Measure the single live pair inline before the next paint, then fold
         // it again if necessary. Width never depends on the overflow trigger.
+        // A workspace-option read can change the label after focus returned.
+        // Carry that ownership through the temporary inline measurement.
+        if (collapsed) restoreFocus.current = items.contains(document.activeElement) || moreRef.current === document.activeElement;
         setCollapsed(false);
         return;
       }

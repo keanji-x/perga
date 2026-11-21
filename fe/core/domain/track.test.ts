@@ -1,21 +1,39 @@
-import { describe, expect, it } from 'vitest';
+import { describe,expect,it } from 'vitest';
+import { trackDtoToWire } from '../api/track-projection.js';
+import { terminalDtoToCardWire } from './track.js';
 
-import {
-  activeTracksOn, createCardOperation, createCodexCardOperation, createTerminalCardOperation,
-  createTrackOperation, deleteCardOperation, hasFailed, isBlankForKernel, isClosed,
-  isWorking, needsUserAttention, toTrack, trackActivityFromOverlay, trackActivitiesFromOverlays,
-  sortAreaTracksByRecent, trackRecentAt, limitAreaTracks, railAreaTracks, AREA_TRACK_LIMIT,
-  trackActivityState, updateTrackOperation, trackWorkspaceOptionsOperation,
-  NEUTRAL_ACTIVITY, UNTITLED_TRACK_LABEL, trackDisplayTitle, trackWireSchema, tracksInAreaOperation,
-  trackDtoToWire, userVisibleTracks, trackOverlayPayload,
-  trackDetailOperation, terminalDtoToCardWire, type Track, type OverlayWire,
-} from './track.js';
-import { terminalPresentation } from './terminal-presentation.js';
-import type { Area } from './area.js';
-import { overlaySchema } from '../api/schemas.js';
-import { trackDtoSchema, decodeWireEvent } from '../api/schemas.js';
 import { performApiRequest } from '../api/client.js';
 import type { TrackOverlayItemDto } from '../api/perga-v1.js';
+import { trackDtoSchema } from "../api/perga-v1.js";
+import { decodeWireEvent,overlaySchema } from '../api/schemas.js';
+import type { Area } from './area.js';
+import { terminalPresentation } from './terminal-presentation.js';
+import {
+AREA_TRACK_LIMIT,
+NEUTRAL_ACTIVITY,UNTITLED_TRACK_LABEL,
+activeTracksOn,
+createTerminalCardOperation,
+createTrackOperation,
+hasFailed,isBlankForKernel,isClosed,
+isWorking,
+limitAreaTracks,
+needsUserAttention,
+railAreaTracks,
+sortAreaTracksByRecent,
+toTrack,
+trackActivitiesFromOverlays,
+trackActivityFromOverlay,
+trackActivityState,
+trackDetailOperation,trackWorkspaceOptionsOperation,
+trackDisplayTitle,
+trackOverlayPayload,
+trackRecentAt,
+trackWireSchema,tracksInAreaOperation,
+updateTrackOperation,
+userVisibleTracks,
+type OverlayWire,
+type Track
+} from './track.js';
 
 const baseWire = { workspace: { isolation: 'none' as const, kind: 'attached' as const, path: '', frozen_at: null },
   id: 'w1', area_id: 'c1', title: 'Ship it', sort: 1,
@@ -49,22 +67,6 @@ describe('track aggregate HTTP decode', () => {
 });
 
 describe('independent tool and overlay decode', () => {
-  const card = { id: 'card', track_id: 'w1', kind: 'note', sort: 0,
-    payload: { arbitrary: ['kept'] }, created_at: 1, updated_at: 2 };
-
-  it('defaults tool metadata and strips unknown fields on the create receipt', () => {
-    expect(createCardOperation('w1', { kind: card.kind, payload: card.payload }, 'key')
-      .responseSchema.parse({ ...card, future_field: 'ignored' }))
-      .toEqual({ ...card, title: null, deletable: true });
-  });
-
-  it('preserves explicit tool titles and deletion policy', () => {
-    for (const title of ['Named', null]) {
-      const input = { ...card, title, deletable: false };
-      expect(createCardOperation('w1', { kind: card.kind, payload: card.payload }, 'key')
-        .responseSchema.parse(input)).toEqual(input);
-    }
-  });
 
   it('keeps opaque overlay payloads and open kinds while stripping unknown fields', () => {
     const overlay = { id: 'overlay', plugin_id: 'plugin', entity_kind: 'future-entity', entity_id: 'w1',
@@ -133,35 +135,10 @@ describe('track create operation', () => {
 describe('card operations', () => {
   const theme = { fg: [1, 2, 3], bg: [4, 5, 6] } as const;
 
-  it('deletes a card by id on DELETE /api/cards/:id', () => {
-    const operation = deleteCardOperation('card 1/2');
-    expect(operation.method).toBe('DELETE');
-    expect(operation.path).toBe('/api/cards/card%201%2F2');
-    expect('body' in operation).toBe(false);
-  });
-
-  it('mints a codex card on the kind\'s own atomic endpoint, carrying the body verbatim', () => {
-    const body = { theme, title: 'Codex', cwd: '/srv' };
-    const operation = createCodexCardOperation('w/1', body, 'intent-key');
-    expect(operation.method).toBe('POST');
-    expect(operation.path).toBe('/api/tracks/w%2F1/codex-cards');
-    expect(operation.body).toBe(body);
-    expect(operation.headers).toEqual({ 'Idempotency-Key': 'intent-key' });
-  });
-
   it('mints a terminal card on its own atomic endpoint, not the generic one', () => {
     const operation = createTerminalCardOperation('w1', { theme }, 'intent-key');
     expect(operation.method).toBe('POST');
     expect(operation.path).toBe('/api/v1/tracks/w1/terminals');
-    expect(operation.headers).toEqual({ 'Idempotency-Key': 'intent-key' });
-  });
-
-  it('writes a runtime-less card through the generic create with its kind and payload', () => {
-    const body = { kind: 'file-viewer', payload: { path: '/repo/notes.md' }, title: 'Notes' };
-    const operation = createCardOperation('w/1', body, 'intent-key');
-    expect(operation.method).toBe('POST');
-    expect(operation.path).toBe('/api/tracks/w%2F1/cards');
-    expect(operation.body).toBe(body);
     expect(operation.headers).toEqual({ 'Idempotency-Key': 'intent-key' });
   });
 });

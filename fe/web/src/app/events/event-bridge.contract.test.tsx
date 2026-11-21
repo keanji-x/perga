@@ -1,16 +1,16 @@
 // @vitest-environment jsdom
-import { QueryClient, QueryObserver } from '@tanstack/react-query';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { QueryClient,QueryObserver } from '@tanstack/react-query';
+import { cleanup,render,screen,waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach,describe,expect,it,vi } from 'vitest';
 
 import type { WireEvent } from '../../../../core/api/schemas.ts';
-import type { EventFrame, Topic } from '../../../../core/events/protocol.ts';
-import type {
-  ConfiguredEventStream, EventFrameHandler, EventStreamConfiguration, UnconfiguredEventStream,
-} from '../../systems/events/event-stream.ts';
+import type { EventFrame,Topic } from '../../../../core/events/protocol.ts';
 import type { SyncCursorPort } from '../../systems/events/cursor-port.ts';
-import { ServerCompatGate, WEB_COMPAT_VERSION, type ProviderRuntime } from '../providers/public.tsx';
+import type {
+ConfiguredEventStream,EventFrameHandler,EventStreamConfiguration,UnconfiguredEventStream,
+} from '../../systems/events/event-stream.ts';
+import { ServerCompatGate,WEB_COMPAT_VERSION,type ProviderRuntime } from '../providers/public.tsx';
 import { EventBridge } from './event-bridge.tsx';
 
 const compatible = {
@@ -265,11 +265,11 @@ describe('EventBridge contracts', () => {
     await waitFor(() => expect(record.startCalls).toBe(1));
 
     emit(eventFrame(10, {
-      ev: 'plan.updated',
+      ev: 'task.updated',
       data: { track_id: 'w1', changed_keys: ['task-1'], agent_message: 'canceled' },
     }));
     await waitFor(() => expect(invalidate.mock.calls.map(([filters]) => filters?.queryKey)).toEqual([
-        ['track-report', 'w1'],
+        ['overlays', 'track'], ['track-report', 'w1'], ['track', 'w1'], ['track-views', 'w1'],
       ]));
   });
 
@@ -292,7 +292,7 @@ describe('EventBridge contracts', () => {
     await waitFor(() => expect(record.startCalls).toBe(1));
 
     emit(eventFrame(11, {
-      ev: 'plan.updated',
+      ev: 'task.updated',
       data: { track_id: 'w1', changed_keys: ['task-1'], agent_message: 'canceled' },
     }));
     await waitFor(() => expect(calls).toBe(2));
@@ -328,19 +328,6 @@ describe('EventBridge contracts', () => {
     await new Promise((resolve) => { setTimeout(resolve, 0); });
     expect(calls).toBe(0);
     unsubscribe();
-  });
-
-  it('resolves a runtime card through cached track detail before invalidating', async () => {
-    const { record, stream, emit } = fakeStream();
-    const client = new QueryClient();
-    client.setQueryData(['track', 'w1'], { track: {}, report: {}, tasks: [], openAsks: [], sessions: [{ id: 'card-1' }] });
-    const invalidate = vi.spyOn(client, 'invalidateQueries').mockImplementation(() => Promise.resolve());
-    render(<EventBridge client={client} stream={stream} syncEventVersion={3} dbInstanceId="db-a" cursor={memoryCursor()} />);
-    await waitFor(() => expect(record.startCalls).toBe(1));
-
-    emit(eventFrame(10, { ev: 'worker_session.status_changed', data: { card_id: 'card-1' } }));
-    await waitFor(() => expect(invalidate.mock.calls.map(([filters]) => filters?.queryKey))
-      .toContainEqual(['track', 'w1']));
   });
 
   it('resumes from the persisted cursor rather than replaying from zero', async () => {

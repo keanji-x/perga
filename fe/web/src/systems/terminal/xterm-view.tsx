@@ -1,28 +1,27 @@
-import { parseShareBasePath } from '../../../../core/domain/share.ts';
 // Terminal protocol, rendering and connection lifecycle. Reconnect replaces only the WebSocket.
-import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
-import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
-import { useState } from '../../ui/state/public.ts';
+import { Terminal } from '@xterm/xterm';
+import { forwardRef,useEffect,useImperativeHandle,useRef } from 'react';
 import type { RecoveryAccess } from '../../../../core/domain/recovery/access.ts';
+import { DARK_TERMINAL_THEME as DARK_THEME,LIGHT_TERMINAL_THEME as LIGHT_THEME,TERMINAL_FONT_SIZE } from '../../styles/theme-values.ts';
 import { ErrorBox } from '../../ui/error-box/public.tsx';
+import { useState } from '../../ui/state/public.ts';
 import { MONO_STACK } from './font-stack.ts';
 import {
-  createXtermWheelTarget,
-  type XtermWheelTarget,
-} from './xterm-adapter.ts';
-import {
-  copyTextToClipboard,
-  createOsc52Handler,
-  osc52HostMayWrite,
+copyTextToClipboard,
+createOsc52Handler,
+osc52HostMayWrite,
 } from './osc52.ts';
 import {
-  decodeTerminalServerFrame,
-  encodeTerminalInputFrame,
-  encodeTerminalResizeFrame,
-  terminalWsUrl,
+decodeTerminalServerFrame,
+encodeTerminalInputFrame,
+encodeTerminalResizeFrame,
+terminalWsUrl,
 } from './protocol.ts';
-import { LIGHT_TERMINAL_THEME as LIGHT_THEME, DARK_TERMINAL_THEME as DARK_THEME, TERMINAL_FONT_SIZE } from '../../styles/theme-values.ts';
+import {
+createXtermWheelTarget,
+type XtermWheelTarget,
+} from './xterm-adapter.ts';
 
 /** Child exit info from the daemon; `exit_code` and `signal_killed` are mutually exclusive at the source. `null` clears a prior badge. */
 export interface ExitChange {
@@ -323,8 +322,7 @@ export const XtermView = forwardRef<XtermViewHandle, XtermViewProps>(function Xt
       let live = true;
       const current = () => live && permitted() && generation === recovery?.read().generation;
       let connectionReady = false;
-      const share = parseShareBasePath(window.location.pathname);
-      const scopedUrl = terminalWsUrl(terminalId, location, share?.shareId);
+      const scopedUrl = terminalWsUrl(terminalId, location);
       const ws = new WebSocket(scopedUrl);
       ws.binaryType = 'arraybuffer';
       let handshakeTimedOut = false;

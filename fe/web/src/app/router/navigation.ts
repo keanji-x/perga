@@ -1,15 +1,15 @@
 // Route targets and the single navigation exit.
 
-import { useNavigate, useRouter, useRouterState, type RouterHistory } from '@tanstack/react-router';
-import { useCallback, useMemo } from 'react';
+import { useNavigate,useRouter,useRouterState,type RouterHistory } from '@tanstack/react-router';
+import { useCallback,useMemo } from 'react';
 
-import { useDraftBackOwner, type NavigationSource } from './draft-back-owner.tsx';
+import { useDraftBackOwner,type NavigationSource } from './draft-back-owner.tsx';
+import type { MobilePanel,TrackSearch,TrackSource } from './track-search.ts';
 import { useTrackViews } from './track-view-state.tsx';
-import type { MobilePanel, TrackSource, TrackSearch } from './track-search.ts';
 
 import { parseWorkspaceRelativeFilePath } from '../../../../core/domain/report-file.ts';
 
-export type { MobilePanel, TrackSource, TrackSearch } from './track-search.ts';
+export type { MobilePanel,TrackSearch,TrackSource } from './track-search.ts';
 
 /** `ncPanelPushed` tells close to `back()` rather than `replace()`: `replace` never merges with the previous entry, and `back()` on a cold deep link would leave the app. */
 declare module '@tanstack/history' {
@@ -32,7 +32,6 @@ export const PLANNER_OPEN_STATE_KEY = 'ncOpenPlanner';
 
 export type NavTarget =
   | Readonly<{ name: 'today'; day?: string }>
-  | Readonly<{ name: 'today-legacy' }>
   /** Starting a track is a route, not a dialog; the track row is minted on submit, not on entering the route. */
   | Readonly<{ name: 'new-track'; areaId: string }>
   /** `blockId` rides in the hash; `cardId`/`filePath`/`panel`/`from` become `?card=`/`?file=`/`?panel=`/`?from=`. */
@@ -46,14 +45,10 @@ export type NavTarget =
     from?: TrackSource;
     openPlanner?: boolean;
   }>
-  | Readonly<{ name: 'recipes' }>
   | Readonly<{ name: 'settings' }>
-  | Readonly<{ name: 'settings-network' }>
   /** Settings › Plugins — the installed list and its enable/disable switch. */
-  | Readonly<{ name: 'settings-plugins' }>
   /** Settings › Planners — whether each Planner provider can run now (#1817). */
   | Readonly<{ name: 'settings-planners' }>
-  | Readonly<{ name: 'settings-mail' }>
   | Readonly<{ name: 'settings-appearance' }>
   | Readonly<{ name: 'settings-about' }>;
 
@@ -63,15 +58,10 @@ export type GoOptions = Readonly<{ replace?: boolean }>;
 export function pathFor(target: NavTarget): string {
   switch (target.name) {
     case 'today': return '/';
-    case 'today-legacy': return '/today/legacy';
     case 'new-track': return `/area/${encodeURIComponent(target.areaId)}/new`;
     case 'track': return `/track/${encodeURIComponent(target.trackId)}`;
-    case 'recipes': return '/recipes';
     case 'settings': return '/settings';
-    case 'settings-network': return '/settings/network';
-    case 'settings-plugins': return '/settings/plugins';
     case 'settings-planners': return '/settings/planners';
-    case 'settings-mail': return '/settings/mail';
     case 'settings-appearance': return '/settings/appearance';
     case 'settings-about': return '/settings/about';
   }

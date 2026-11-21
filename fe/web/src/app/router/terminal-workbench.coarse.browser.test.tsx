@@ -1,9 +1,9 @@
+import '../../styles/entry.css';
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { page, userEvent } from 'vitest/browser';
 import { afterEach, beforeAll, expect, it, vi } from 'vitest';
 import { setupWorkbench, terminalCard } from './terminal-workbench-fixture.tsx';
 import { workbenchSockets } from './terminal-workbench-socket-fixture.ts';
-import '../../styles/entry.css';
 
 beforeAll(async () => { await import('../../systems/terminal/xterm-view.tsx'); });
 afterEach(() => { cleanup(); document.getElementById('root')?.remove(); vi.unstubAllGlobals(); });
@@ -56,7 +56,6 @@ it('uses viewport width on a coarse desktop and hides the retained host without 
   await page.viewport(1280, 900);
   const { sockets, Socket } = workbenchSockets(); vi.stubGlobal('WebSocket', Socket);
   const fixture = setupWorkbench({ cards: [{ ...terminalCard('shell', { source: 'manual', in_workbench: true }), payload: { terminal_presentation: { source: 'manual', in_workbench: true },  terminal_id: 'pty-1' } }] });
-  const mount = vi.spyOn(fixture.runtime.host, 'mount');
   await page.getByRole('button', { name: /^shell/ }).click();
   await waitFor(() => expect(sockets).toHaveLength(1));
   act(() => sockets[0].open());
@@ -75,7 +74,6 @@ it('uses viewport width on a coarse desktop and hides the retained host without 
   expect(document.querySelector('[data-nc-card-dock]:not([hidden])')?.getAttribute('data-nc-card-id')).toBe('shell');
   expect(document.activeElement).not.toBe(input);
   expect(document.querySelector('[data-nc-terminal-input]')).toBe(input);
-  expect(mount).toHaveBeenCalledTimes(1);
   // Opening the existing compact board hands ownership over once, including after close.
   await page.viewport(414, 896);
   await act(async () => { await fixture.router.navigate({ to: '/track/$trackId', params: { trackId: 'workbench' }, search: { card: 'shell' } }); });

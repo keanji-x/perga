@@ -36,6 +36,7 @@ it('opens a confirmed Track after Chromium reloads the draft page', async () => 
       await heldCreate;
       return { status: 201, statusText: 'Created', body: track };
     }
+    if (request.path.includes('/workspace-options')) return ok({ defaultId: 'direct', options: [{ id: 'direct', label: 'Direct folder', description: 'Use this folder' }] });
     if (request.path === '/api/v1/areas') return ok([area]);
     if (request.path.startsWith('/api/v1/bootstrap')) return ok(fixtureBootstrap(['codex']));
     if (request.path === '/api/v1/tracks/confirmed') return ok(fixtureSnapshot(track, [planner]));

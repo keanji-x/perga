@@ -144,7 +144,7 @@ it('isolates subagent approvals to their owning session and routes the status en
   await expect.element(drawer).not.toBeInTheDocument();
 });
 
-it('opens Today Assistant for a subagent approval from Report changes', async () => {
+it('opens the owning Today conversation for a subagent approval', async () => {
   await page.viewport(1280, 844);
   let answered = false;
   const decisionPath = '/api/v1/sessions/second-planner/interactions/apr-sub/respond';
@@ -176,11 +176,6 @@ it('opens Today Assistant for a subagent approval from Report changes', async ()
 
   const assistant = page.getByRole('region', { name: 'Today Assistant', exact: true });
   await expect.element(assistant).toBeVisible();
-  await page.getByRole('button', { name: 'Report changes', exact: true }).click();
-  await expect.element(page.getByRole('heading', { name: /Report changes ·/ })).toBeVisible();
-  await expect.element(assistant).not.toBeInTheDocument();
-
-  await page.getByRole('button', { name: 'Back to Today Assistant', exact: true }).click();
   await page.getByRole('button', { name: /Conversation Other conversation/ }).click();
   await expect.element(assistant).toBeVisible();
   const drawer = assistant.getByRole('group', { name: 'Approval required' });

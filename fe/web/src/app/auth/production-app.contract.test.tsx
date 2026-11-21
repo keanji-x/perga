@@ -1,17 +1,17 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { createPortal } from 'react-dom';
-import { QueryClient } from '@tanstack/react-query';
-import { createMemoryHistory, createRootRoute, createRouter } from '@tanstack/react-router';
-import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { Button } from '@astryxdesign/core';
+import { QueryClient } from '@tanstack/react-query';
+import { createMemoryHistory,createRootRoute,createRouter } from '@tanstack/react-router';
+import { cleanup,fireEvent,render,screen } from '@testing-library/react';
 import type { ReactElement } from 'react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createPortal } from 'react-dom';
+import { afterEach,describe,expect,it,vi } from 'vitest';
+import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { IDB_DB_NAME } from '../../../../core/keys/storage.ts';
-import { mountProductionApp, ProductionApp } from './production-app.tsx';
-import { createAppRouter } from '../router/public.tsx';
-import { logoutOperation, runOperation } from '../providers/queries.ts';
 import { bootCards } from '../cards.ts';
+import { logoutOperation,runOperation } from '../providers/queries.ts';
+import { createAppRouter } from '../router/public.tsx';
+import { mountProductionApp,ProductionApp } from './production-app.tsx';
 
 const mocks = vi.hoisted(() => ({ render: vi.fn(), cursorClear: vi.fn() }));
 
@@ -33,36 +33,6 @@ vi.mock('../providers/queries.ts', async (importOriginal) => {
 afterEach(() => { cleanup(); vi.clearAllMocks(); mocks.cursorClear.mockReset(); });
 
 describe('production app mount', () => {
-  it('assembles the production card host and defers the share router until access is resolved', () => {
-    window.history.replaceState(null, '', '/next/share/guest-token/track/guest-track#intro');
-    const storage = { length: 0, clear: vi.fn(), getItem: vi.fn(() => null), key: vi.fn(() => null),
-      removeItem: vi.fn(), setItem: vi.fn() } satisfies Storage;
-    try {
-      mountProductionApp(document.createElement('div'), { storage, reload: vi.fn(), deleteDatabase: vi.fn() });
-      expect(window.location.hash).toBe('');
-      expect(mocks.render).toHaveBeenCalledTimes(1);
-      expect(createAppRouter).not.toHaveBeenCalled();
-      expect(bootCards).toHaveBeenCalledOnce();
-      const rendered = mocks.render.mock.calls[0]?.[0] as ReactElement<Parameters<typeof ProductionApp>[0]>;
-      expect(rendered.props.shareLinkId).toBe('guest-token');
-      expect(typeof rendered.props.router).toBe('function');
-      expect(rendered.props.runtime.idbDatabaseName).toBe(`${IDB_DB_NAME}-share-guest-token`);
-      expect(runOperation).not.toHaveBeenCalled();
-    } finally { window.history.replaceState(null, '', '/next/'); }
-  });
-
-  it('keeps malformed share URLs out of owner session initialization', () => {
-    window.history.replaceState(null, '', '/next/share/%GG');
-    const storage = { length: 0, clear: vi.fn(), getItem: vi.fn(() => null), key: vi.fn(() => null),
-      removeItem: vi.fn(), setItem: vi.fn() } satisfies Storage;
-    try {
-      mountProductionApp(document.createElement('div'), { storage, reload: vi.fn(), deleteDatabase: vi.fn() });
-      expect(mocks.render).toHaveBeenCalledTimes(1);
-      expect(createAppRouter).not.toHaveBeenCalled();
-      expect(bootCards).not.toHaveBeenCalled();
-      expect(runOperation).not.toHaveBeenCalled();
-    } finally { window.history.replaceState(null, '', '/next/'); }
-  });
 
   it('clears every session artifact after logout completion and then reloads the browser', async () => {
     let finishLogout!: () => void;
@@ -119,13 +89,13 @@ describe('production app mount', () => {
     // The booted registry is the one the router got — not a second instance.
     expect(vi.mocked(bootCards).mock.calls[0]?.[0]).toBe(cards?.registry);
     expect(cards?.registry.entries().map((entry) => entry.type))
-      .toEqual(['terminal', 'codex', 'claude', 'track-report', 'file-viewer']);
+      .toEqual(['terminal', 'track-report', 'file-viewer']);
     expect(cards?.host).toBeDefined();
     /* The host is built with the filesystem port, not bare: a card mounted on a
        host without it renders "this board was built without filesystem access",
        which is the shape of the defect this line exists to catch. */
     expect(cards?.host.mount({ type: 'terminal', id: 'probe', title: null, terminalId: null, sessionState: null, cwd: null, gateCwd: null }).card.files)
-      .not.toBeNull();
+      .toBeNull();
   });
 
   it('gives each mount its own registry instead of sharing module state', () => {

@@ -1,40 +1,36 @@
 import { Banner } from '@astryxdesign/core/Banner';
 import { useQuery } from '@tanstack/react-query';
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback,useEffect,useRef } from 'react';
 import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
-import { availabilityOf, permissionModesForProvider } from '../../../../core/domain/agent-providers.ts';
-import { resolvePermissionControl } from '../../../../core/domain/planner-permission-mode.ts';
+import { availabilityOf,permissionModesForProvider } from '../../../../core/domain/agent-providers.ts';
 import { folderConflictMessage } from '../../../../core/domain/area.ts';
-import { ApiError, classifyFailure, NotSentError, refusedText, writeFailureOf } from '../../../../core/domain/failure-class.ts';
-import { selectedReadyTemplateId } from '../../../../core/domain/mentions.ts';
-import {
-  isBlankForKernel, TRACK_CREATE_FAILURES, TRACK_CREATE_TEXT, trackCreateWorkspaceError,
-  trackWorkspaceOptionsOperation, type NewTrackBody, type TrackTemplate,
-} from '../../../../core/domain/track.ts';
+import { ApiError,classifyFailure,NotSentError,refusedText,writeFailureOf } from '../../../../core/domain/failure-class.ts';
+import { resolvePermissionControl } from '../../../../core/domain/planner-permission-mode.ts';
 import { readErrorText } from '../../../../core/domain/read-failure.ts';
-import { ModelPill, PermissionModePill, PlannerRolePill } from '../../features/chat/thread/model-pill.tsx';
+import {
+isBlankForKernel,TRACK_CREATE_FAILURES,TRACK_CREATE_TEXT,trackCreateWorkspaceError,
+trackWorkspaceOptionsOperation,type NewTrackBody,
+} from '../../../../core/domain/track.ts';
+import { NewTrackForm,type NewTrackDraft,type NewTrackFormState } from '../../features/area/new-track/public.tsx';
 import { useMentionTrigger } from '../../features/chat/thread/mention-trigger.tsx';
-import { NewTrackForm, type NewTrackDraft, type NewTrackFormState } from '../../features/area/new-track/public.tsx';
-import { useCompactViewport } from '../../ui/viewport/public.ts';
+import { ModelPill,PermissionModePill,PlannerRolePill } from '../../features/chat/thread/model-pill.tsx';
 import { ErrorBox } from '../../ui/error-box/public.tsx';
-import { managedProvidersQueryOptions } from '../providers/managed-providers.ts';
+import { useCompactViewport } from '../../ui/viewport/public.ts';
+import { useConversationCommands } from '../conversations/public.tsx';
 import { agentProvidersQueryOptions } from '../providers/agent-providers.ts';
 import { createDirectoryLister } from '../providers/directory.ts';
-import { useMentionSearch } from '../providers/mentions.ts';
-import {
-  executionTargetsQueryOptions, folderConflictOf, modelCatalogQueryOptions, runOperation,
-  useCreateExecutionTarget, useTrackMutations, useWorkspace, type Workspace,
-} from '../providers/queries.ts';
-import { readHostThemeRgb } from '../theme/host-rgb.ts';
 import { mintIdempotencyKey } from '../providers/idempotency-key.ts';
-import { useGo, useRouteParam } from './navigation.ts';
-import { useNewTrackSession, type NewTrackSession, type TrackCreationRequest } from './new-track-drafts.tsx';
-import { useConversationCommands } from '../conversations/public.tsx';
+import { managedProvidersQueryOptions } from '../providers/managed-providers.ts';
+import { useMentionSearch } from '../providers/mentions.ts';
+import { executionTargetsQueryOptions,useCreateExecutionTarget,folderConflictOf,modelCatalogQueryOptions,runOperation,useTrackMutations,useWorkspace,type Workspace } from '../providers/queries.ts';
+import { readHostThemeRgb } from '../theme/host-rgb.ts';
+import { useGo,useRouteParam } from './navigation.ts';
+import { useNewTrackSession,type NewTrackSession,type TrackCreationRequest } from './new-track-drafts.tsx';
 
-type RouteProps = { transport: ApiTransportPort; unauthorized: UnauthorizedChannel; pergaMode?: boolean };
+type RouteProps = { transport: ApiTransportPort; unauthorized: UnauthorizedChannel;  };
 
-export function NewTrackRoute({ transport, unauthorized, pergaMode = false }: RouteProps) {
+export function NewTrackRoute({ transport, unauthorized, }: RouteProps) {
   const areaId = useRouteParam('/area/');
   const workspace = useWorkspace(transport, unauthorized);
   const area = workspace.areas.find((candidate) => candidate.id === areaId);
@@ -46,11 +42,10 @@ export function NewTrackRoute({ transport, unauthorized, pergaMode = false }: Ro
     if (area !== undefined) return null; // The provider initializes the Area draft after this read.
     return <ErrorBox message="This area could not be found." onRetry={() => go({ name: 'today' })} />;
   }
-  return <NewTrackEditor key={session.area.id} transport={transport} unauthorized={unauthorized}
-    pergaMode={pergaMode} workspace={workspace} session={session} store={store} />;
+  return <NewTrackEditor key={session.area.id} transport={transport} unauthorized={unauthorized} workspace={workspace} session={session} store={store} />;
 }
 
-function NewTrackEditor({ transport, unauthorized, pergaMode = false, workspace, session, store }: RouteProps & {
+function NewTrackEditor({ transport, unauthorized, workspace, session, store }: RouteProps & {
   workspace: Workspace;
   session: NewTrackSession;
   store: ReturnType<typeof useNewTrackSession>['store'];
@@ -60,13 +55,12 @@ function NewTrackEditor({ transport, unauthorized, pergaMode = false, workspace,
   const targetId = session.form?.executionTargetId ?? session.area.executionTargetId ?? 'local';
   const executionTargetsQuery = useQuery({
     ...executionTargetsQueryOptions(transport, unauthorized),
-    enabled: pergaMode,
     retry: false,
   });
   const createExecutionTarget = useCreateExecutionTarget(transport, unauthorized);
   const listDirectoryForTarget = useCallback(
-    (nextTargetId: string) => createDirectoryLister(transport, unauthorized, pergaMode, nextTargetId),
-    [transport, unauthorized, pergaMode],
+    (nextTargetId: string) => createDirectoryLister(transport, unauthorized, nextTargetId),
+    [transport, unauthorized],
   );
   /* Availability has one cache owner; the managed response supplies only static creation capability.
      The server admits each submitted shape and renders any refusal through the existing error flow. */
@@ -82,7 +76,7 @@ function NewTrackEditor({ transport, unauthorized, pergaMode = false, workspace,
     queryKey: ['track-workspace-options', areaId, targetId, optionCwd],
     queryFn: ({ signal }: { signal: AbortSignal }) =>
       runOperation(transport, { ...trackWorkspaceOptionsOperation(areaId, optionCwd, undefined, targetId), signal }, unauthorized),
-    enabled: pergaMode && session.form !== null && session.request === null,
+    enabled: session.form !== null && session.request === null,
     retry: false,
   });
   const trackMutations = useTrackMutations(transport, unauthorized);
@@ -90,19 +84,20 @@ function NewTrackEditor({ transport, unauthorized, pergaMode = false, workspace,
   const go = useGo();
   const listDirectory = listDirectoryForTarget(targetId);
   /* The sentence is the new track's Planner's first message, and that Planner reads this Area's reports; there is no track yet to rank first. */
-  const templatesRef = useRef<readonly TrackTemplate[]>([]);
-  const onTemplates = useCallback((templates: readonly TrackTemplate[]) => { templatesRef.current = templates; }, []);
-  const mentionTrigger = useMentionTrigger(useMentionSearch(transport, unauthorized, areaId, null, onTemplates, pergaMode));
+  const mentionTrigger = useMentionTrigger(useMentionSearch(transport, unauthorized, areaId, null));
 
-  /* In Perga mode, if the default `codex` provider is unavailable and another provider is ready, seed to the first ready provider. */
+  const providerSeeded = useRef(false);
+  /* Seed once; later explicit choices may select an unavailable provider. */
   useEffect(() => {
-    if (!pergaMode || availability.data === undefined || session.request !== null || session.model.model !== null) return;
+    if (providerSeeded.current || availability.data === undefined) return;
+    providerSeeded.current = true;
+    if (session.request !== null || session.model.model !== null) return;
     if (availabilityOf(availability.data, session.provider)?.status === 'ready') return;
     const firstReady = availability.data.find((entry) => entry.status === 'ready');
     if (firstReady !== undefined && firstReady.provider !== session.provider) {
       store.update(areaId, { provider: firstReady.provider });
     }
-  }, [pergaMode, availability.data, session.provider, session.request, session.model.model, areaId, store]);
+  }, [ availability.data, session.provider, session.request, session.model.model, areaId, store]);
   const available = workspace.areasError === null && !workspace.areasLoading
     && workspace.areas.some((area) => area.id === areaId);
   const liveRef = useRef(true);
@@ -135,18 +130,14 @@ function NewTrackEditor({ transport, unauthorized, pergaMode = false, workspace,
       || current.canRetryAsNewTrack) return;
     const hadUnconfirmedRequest = replacementKey === undefined && current.request !== null;
     const attemptKey = replacementKey ?? current.key;
-    const templateId = pergaMode ? undefined : draft.templateId ?? selectedReadyTemplateId(draft.message, templatesRef.current);
     const body = {
-      ...(templateId === undefined ? {} : { template_id: templateId }),
-      ...(pergaMode || draft.templateInput === undefined ? {} : { template_input: draft.templateInput }),
       area_id: areaId,
       planner_provider: current.provider,
       ...(current.permissionMode === null ? {} : { permissionMode: current.permissionMode }),
       theme: readHostThemeRgb(),
       ...(current.model.model === null ? {} : { model: current.model.model }),
       ...(current.model.reasoning_effort === null ? {} : { reasoning_effort: current.model.reasoning_effort }),
-      ...(draft.cwd === undefined ? {} : { cwd: draft.cwd, attach_folder: true,
-        ...(pergaMode ? {} : { isolation: draft.isolation ?? 'worktree' }) }),
+      ...(draft.cwd === undefined ? {} : { cwd: draft.cwd, attach_folder: true }),
       ...(draft.workspaceOptionId === undefined ? {} : { cwd: draft.cwd ?? '', workspace_option_id: draft.workspaceOptionId }),
       ...(draft.executionTargetId === undefined ? {} : { execution_target_id: draft.executionTargetId }),
       ...(current.role === 'admin' ? { admin: true } : {}),
@@ -222,14 +213,11 @@ function NewTrackEditor({ transport, unauthorized, pergaMode = false, workspace,
   });
 
   return <NewTrackForm
-    workspaceOptions={pergaMode
-      ? { cwd: optionCwd,
-          targetId,
-          result: !workspaceOptionsQuery.isError ? workspaceOptionsQuery.data ?? null : null }
-      : undefined}
+    workspaceOptions={{ cwd: optionCwd, targetId,
+      result: !workspaceOptionsQuery.isError ? workspaceOptionsQuery.data ?? null : null }}
     readNotice={workspace.areasLoading ? <Banner status="info" title="Loading Area…"
       description="You can keep writing. Create track will be available when loading finishes." />
-      : pergaMode && workspaceOptionsQuery.isError && session.request === null
+      : workspaceOptionsQuery.isError && session.request === null
         ? <ErrorBox message={readErrorText(workspaceOptionsQuery.error, 'Workspace options could not be loaded.')}
           onRetry={() => { void workspaceOptionsQuery.refetch(); }} />
         : undefined}
@@ -279,10 +267,10 @@ function NewTrackEditor({ transport, unauthorized, pergaMode = false, workspace,
         : session.canRetryAsNewTrack ? { label: 'Start as a new track', onClick: retryAsNewTrack } : undefined}
     initialCwd={session.area.defaultCwd}
     initialExecutionTargetId={session.area.executionTargetId}
-    executionTargets={pergaMode ? executionTargetsQuery.data : undefined}
+    executionTargets={executionTargetsQuery.data}
     listDirectory={listDirectory}
-    listDirectoryForTarget={pergaMode ? listDirectoryForTarget : undefined}
-    onCreateExecutionTarget={pergaMode ? createExecutionTarget : undefined}
+    listDirectoryForTarget={listDirectoryForTarget}
+    onCreateExecutionTarget={createExecutionTarget}
     onSubmit={submit}
   />;
 }

@@ -1,8 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { describe,expect,it } from 'vitest';
 
 import {
-  minCompleteThrough, rebaseToFirst, resolvedSeriesSchema, seriesCurrencies, staleRevBodySchema,
-  trackReportSeriesOperation,
+minCompleteThrough,rebaseToFirst,resolvedSeriesSchema,seriesCurrencies,staleRevBodySchema
 } from './report-series.js';
 
 /* The design's own sample, as the route serves it. */
@@ -54,15 +53,6 @@ describe('resolvedSeriesSchema', () => {
   it('reads the 409 body', () => {
     expect(staleRevBodySchema.parse({ current_rev: 4 })).toEqual({ current_rev: 4 });
     expect(staleRevBodySchema.safeParse({}).success).toBe(false);
-  });
-});
-
-describe('trackReportSeriesOperation', () => {
-  it('binds the request to the block and its rev, and names the detail', () => {
-    const operation = trackReportSeriesOperation('w 1', 'b/1', 7, 'summary');
-    expect(operation.method).toBe('GET');
-    expect(operation.path).toBe('/api/tracks/w%201/report/series/b%2F1?rev=7&detail=summary');
-    expect(trackReportSeriesOperation('w', 'b', 0, 'full').path).toBe('/api/tracks/w/report/series/b?rev=0&detail=full');
   });
 });
 

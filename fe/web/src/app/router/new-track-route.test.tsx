@@ -1,26 +1,26 @@
 import type { SessionItemDto } from '../../../../core/api/perga-v1.ts';
-import { sessionPage, sessionItem } from './conversation-session-data.ts';
-import { fixtureSnapshot, fixtureSession, fixtureTrack } from './session-contract-fixture.ts';
-import { conversationCardId } from './conversation-read-data.ts';
 import { prepareReportDocument } from '../../features/report/document/preparation.ts';
+import { conversationCardId } from './conversation-read-data.ts';
+import { sessionItem,sessionPage } from './conversation-session-data.ts';
+import { fixtureSession,fixtureSnapshot,fixtureTrack } from './session-contract-fixture.ts';
 // @vitest-environment jsdom
 // The new-track page: `/area/{id}/new`, reached from each Area group's `+`.
-import { onlineManager, QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { onlineManager,QueryClient,QueryClientProvider } from '@tanstack/react-query';
 import { RouterProvider } from '@tanstack/react-router';
-import { StrictMode } from 'react';
-import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { act,cleanup,render,screen,waitFor,within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { StrictMode } from 'react';
+import { afterEach,describe,expect,it,vi } from 'vitest';
 
-import type { ApiRequest, ApiTransportPort, ApiTransportResponse } from '../../../../core/api/types.ts';
+import type { ApiRequest,ApiTransportPort,ApiTransportResponse } from '../../../../core/api/types.ts';
 import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
-import { APP_BASEPATH, createAppRouter } from './public.tsx';
-import { bootTestCardRuntime } from './test-card-runtime.ts';
 import { ThemeProvider } from '../theme/public.tsx';
 import { CurrentUserScope } from '../auth/current-user.tsx';
 import { createStorageKey } from '../../../../core/keys/storage.ts';
 import { PLANNER_OPEN_STATE_KEY } from './navigation.ts';
 import { createMemoryStorage } from './share-reuse-fixture.ts';
+import { APP_BASEPATH,createAppRouter } from './public.tsx';
+import { bootTestCardRuntime } from './test-card-runtime.ts';
 
 const IDENTITY = { userId: 'track-create-owner', displayName: 'Owner', role: 'owner', sessionId: 'one' } as const;
 const DRAFT_KEY = createStorageKey('track-create-v1', IDENTITY.userId, 'c1');
@@ -83,7 +83,7 @@ async function pick(trigger: string, group: 'Codex' | 'Claude', item: string | R
 function harness(options: {
   templates?: readonly import('../../../../core/domain/track.ts').TrackTemplate[];
   heldTemplates?: Promise<void>;
-  pergaMode?: boolean;
+
   areaDefaults?: Readonly<{ default_template_id: string | null; default_cwd: string | null }>;
   otherAreaDefaults?: Readonly<{ default_template_id: string | null; default_cwd: string | null }>;
   trackCreate?: ApiTransportResponse;
@@ -124,6 +124,7 @@ function harness(options: {
   const transport: ApiTransportPort = {
     send(request: ApiRequest): Promise<ApiTransportResponse> {
       sent.push(request);
+      if (request.path.includes('/workspace-options')) return Promise.resolve({ status: 200, statusText: 'OK', body: { defaultId: 'direct', options: [{ id: 'direct', label: 'Direct folder', description: 'Use this folder' }] } });
       if (request.path === '/api/v1/templates') {
         return (options.heldTemplates ?? Promise.resolve()).then(() => ({ status: 200, statusText: 'OK', body: options.templates ?? [] }));
       }
@@ -214,7 +215,7 @@ function harness(options: {
       const body = request.path === '/api/v1/areas' ? [
         { ...AREA, ...options.areaDefaults }, { ...OTHER, ...options.otherAreaDefaults },
       ]
-        : request.path.startsWith('/api/fs/listdir') ? LISTING
+        : request.path.startsWith('/api/v1/fs/listdir') ? LISTING
           : request.method === 'POST' && request.path === '/api/v1/tracks'
             ? { ...TRACK_ROW, area_id: posted?.area_id ?? 'c1' }
             : [];
@@ -224,7 +225,7 @@ function harness(options: {
   if (!options.reload) window.history.pushState({}, '', `${APP_BASEPATH}${options.path ?? '/'}`);
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const router = createAppRouter({ prepareReport: prepareReportDocument,
-    transport, unauthorized, client, cards: bootTestCardRuntime(), onSignOut: vi.fn(), pergaMode: options.pergaMode,
+    transport, unauthorized, client, cards: bootTestCardRuntime(), onSignOut: vi.fn(),
     submittedStorage: options.submittedStorage === undefined ? undefined : () => options.submittedStorage!,
   });
   /* `StrictMode`, because production runs it: its double-invoked effects are what
@@ -334,7 +335,7 @@ describe('New track model selection', () => {
     const { sent } = harness({ claudePlanner: true, codexUnavailable: reason });
     await userEvent.click(await screen.findByRole('button', { name: 'New track in Work' }));
     await findComposer();
-    await pick('Model: Codex Default', 'Codex', 'gpt-5');
+    await pick('Model: Claude Default', 'Codex', 'gpt-5');
     expect(await screen.findByRole('button', { name: 'Model: Codex gpt-5' })).toBeTruthy();
     await userEvent.type(screen.getByLabelText(TASK_LABEL), 'Plan while Codex is down');
     await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
@@ -347,7 +348,7 @@ describe('New track model selection', () => {
     const { sent } = harness({ claudePlanner: true, codexUnavailable: 'shared codex app-server is not running' });
     await userEvent.click(await screen.findByRole('button', { name: 'New track in Work' }));
     await findComposer();
-    await pick('Model: Codex Default', 'Claude', /^sonnet/);
+    await pick('Model: Claude Default', 'Claude', /^sonnet/);
     await pick('Model: Claude sonnet', 'Codex', /^Default/);
     expect(await screen.findByRole('button', { name: 'Model: Codex Default' })).toBeTruthy();
     await userEvent.type(screen.getByLabelText(TASK_LABEL), 'Back on Codex');
@@ -847,14 +848,14 @@ describe('the new-track page is a route reached from Area groups', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'New track in Work' }));
     await findComposer();
     expect(screen.queryByRole('button', { name: /^Template:/ })).toBeNull();
-    expect(screen.getByRole('button', { name: 'Repo: work-a (/srv/work-a)' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Repo: work-a · Direct folder (/srv/work-a)' })).toBeTruthy();
     await userEvent.type(screen.getByLabelText(TASK_LABEL), 'Draft for A');
 
     await userEvent.click(screen.getByRole('button', { name: 'New track in Reading' }));
     await waitFor(() => expect(window.location.pathname).toBe(`${APP_BASEPATH}/area/c2/new`));
     expect(composerText()).toBe('');
     expect(screen.queryByRole('button', { name: /^Template:/ })).toBeNull();
-    expect(screen.getByRole('button', { name: 'Repo: work-b (/srv/work-b)' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Repo: work-b · Direct folder (/srv/work-b)' })).toBeTruthy();
 
     await userEvent.type(screen.getByLabelText(TASK_LABEL), 'Draft for B');
     await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
@@ -937,9 +938,9 @@ describe('the new-track page is a route reached from Area groups', () => {
     expect(body).not.toHaveProperty('first_message');
     // The managed-workspace branch is keyed on *absence*, not on a value:
     // `cwd: null` and `attach_folder: false` are both a different kernel path.
-    expect(body).not.toHaveProperty('cwd');
+    expect(body).toHaveProperty('workspaceOptionId', 'direct');
     expect(body).not.toHaveProperty('attach_folder');
-    expect(sent.some((request) => request.path.startsWith('/api/fs/listdir'))).toBe(false);
+    expect(sent.some((request) => request.path.startsWith('/api/v1/fs/listdir'))).toBe(false);
     // Blank means the key is not on the wire at all: `template_id: null` or `''` is a 400 from the kernel.
     expect(body).not.toHaveProperty('template_id');
     expect(body).not.toHaveProperty('template_input');
@@ -954,8 +955,8 @@ describe('the new-track page is a route reached from Area groups', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'New track in Work' }));
     expect(await findComposer()).toBeTruthy();
     expect(screen.queryByRole('button', { name: /^Template:|^Recipe:/i })).toBeNull();
-    const folder = screen.getByRole('button', { name: 'Repo: area (/srv/ area )' });
-    expect(folder.getAttribute('aria-label')).toBe('Repo:  area  (/srv/ area )');
+    const folder = screen.getByRole('button', { name: 'Repo: area · Direct folder (/srv/ area )' });
+    expect(folder.getAttribute('aria-label')).toBe('Repo:  area  · Direct folder (/srv/ area )');
     await userEvent.type(screen.getByLabelText(TASK_LABEL), message);
     await userEvent.click(screen.getByRole('button', { name: 'Create track' }));
     await waitFor(() => expect(createdTrackBodies(sent)).toHaveLength(1));
@@ -983,7 +984,7 @@ describe('the new-track page is a route reached from Area groups', () => {
     await waitFor(() => expect(createdTrackBodies(sent)).toHaveLength(1));
     const body = createdTrackBodies(sent)[0] as Record<string, unknown>;
     expect(body).not.toHaveProperty('template_id');
-    expect(body).not.toHaveProperty('cwd');
+    expect(body).toHaveProperty('workspaceOptionId', 'direct');
     expect(body).not.toHaveProperty('attach_folder');
   });
 
@@ -1020,7 +1021,7 @@ describe('the new-track page is a route reached from Area groups', () => {
     expect(body).toMatchObject({
       area_id: 'c1', cwd: '/srv/app', attach_folder: true,
     });
-    expect(sent.some((request) => request.path === '/api/fs/listdir')).toBe(true);
+    expect(sent.some((request) => request.path === '/api/v1/fs/listdir')).toBe(true);
     expect(body).not.toHaveProperty('template_id');
   });
 
@@ -1181,7 +1182,7 @@ describe('the new-track page is a route reached from Area groups', () => {
     const retried = createdTrackRequests(sent)[1];
     expect(retried?.body).toMatchObject({ area_id: 'c2' });
     expect(retried?.body).not.toHaveProperty('first_message');
-    expect(retried?.body).not.toHaveProperty('cwd');
+    expect(retried?.body).toHaveProperty('workspaceOptionId', 'direct');
     expect(retried?.body).not.toHaveProperty('attach_folder');
   });
 
@@ -1551,14 +1552,14 @@ it.each([
 });
 
 it.each([
-  ['ready', undefined, 'use @`template:deploy`', true],
-  ['ready', { type: 'object' }, 'use @`template:deploy`', false],
-  ['ready', null, 'use @`template:deploy`', false],
-  ['requires_plugin', undefined, 'use @`template:deploy`', false],
-  ['ready', undefined, 'use @`template:unknown`', false],
-  ['ready', undefined, 'use @`template:deploy` @`template:other`', false],
-  ['ready', undefined, 'use @`template:deploy` @`template:deploy`', false],
-] as const)('creates from template only for one known ready reference without inputs (%s, %j, %s)', async (status, input_schema, message, selected) => {
+  ['ready', undefined, 'use @`template:deploy`'],
+  ['ready', { type: 'object' }, 'use @`template:deploy`'],
+  ['ready', null, 'use @`template:deploy`'],
+  ['requires_plugin', undefined, 'use @`template:deploy`'],
+  ['ready', undefined, 'use @`template:unknown`'],
+  ['ready', undefined, 'use @`template:deploy` @`template:other`'],
+  ['ready', undefined, 'use @`template:deploy` @`template:deploy`'],
+] as const)('keeps template mentions as message content without implicit template binding (%s, %j, %s)', async (status, input_schema, message) => {
   const { sent } = harness({ templates: [{ id: 'deploy', title: 'Deploy', description: null, tasks: [], input_schema,
     availability: status === 'ready' ? { status } : { status, plugin_id: 'example', plugin_name: 'Example' } }] });
   await userEvent.click(await screen.findByRole('button', { name: 'New track in Work' }));
@@ -1574,8 +1575,7 @@ it.each([
   await waitFor(() => expect(createdTrackBodies(sent)).toHaveLength(1));
   const body = createdTrackBodies(sent)[0];
   expect(body).not.toHaveProperty('first_message');
-  if (selected) expect(body).toHaveProperty('template_id', 'deploy');
-  else expect(body).not.toHaveProperty('template_id');
+  expect(body).not.toHaveProperty('template_id');
 });
 
 it('leaves a pasted template reference to the first message when no catalog was loaded', async () => {
@@ -1593,7 +1593,6 @@ it('leaves a pasted template reference to the first message when no catalog was 
 
 it('keeps Perga creation implicit even when templates and an Area default exist', async () => {
   const { sent } = harness({
-    pergaMode: true,
     path: '/area/c1/new',
     areaDefaults: { default_template_id: 'dev', default_cwd: null },
     templates: [{ id: 'dev', title: 'Development', description: null, tasks: [], availability: { status: 'ready' } }],

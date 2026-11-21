@@ -1,11 +1,23 @@
 import {
-  areas, readReceipts,
-  trackLists, tracksInArea, trackDetail, trackBacklinksPrefix,
-  trackBacklinks, trackReport, trackReportPrefix, trackViews, trackViewsPrefix, overlaysByKind,
-  plugins, pluginDataPrefix, trackTemplates,
-  transcriptPrefix, transcript as harnessItems, plannerRun, modelCatalog, modelCatalogForCard,
-  modelCatalogPrefix, trackDetailPrefix,
-  sessionLive, trackTerminals,
+areas,
+transcript as harnessItems,
+modelCatalog,modelCatalogForCard,
+modelCatalogPrefix,
+overlaysByKind,
+plannerRun,
+readReceipts,
+sessionLive,
+trackBacklinks,
+trackBacklinksPrefix,
+trackDetail,
+trackDetailPrefix,
+trackLists,
+trackReport,trackReportPrefix,
+tracksInArea,
+trackTemplates,
+trackTerminals,
+trackViews,trackViewsPrefix,
+transcriptPrefix,
 } from '../../../../core/events/query-keys.ts';
 
 // Key shapes match the legacy app so a cache dump reads the same in both.
@@ -41,19 +53,14 @@ export const queryKeys = Object.freeze({
   /** One captured source with its body. Not under `['track-report', …]`: the row is immutable with append-only anchors; freshness is the query's own. */
   trackSource: (trackId: string, sourceId: string) => ['track-source', trackId, sourceId] as const,
   overlaysByKind,
-  settings: () => ['settings'] as const,
   /* The user's read receipts (#2596). Writes emit no event: the read refetches on focus and after each write. */
   readReceipts,
   /* Settings › Plugins. `plugin.state` invalidates; transient-state polling remains a supplement. */
-  plugins,
   /* Plugin data changes invalidate every cached window belonging to that plugin. */
-  pluginDataPrefix,
   /* One plugin's detail, read only by its configuration pane; the list carries no manifest by design. */
-  pluginDetail: (id: string) => ['plugin-detail', id] as const,
   /* The New track picker: `plugin.state` changes owner availability and input schemas. */
   trackTemplates,
   /* The user's own recipes. Recipe writes emit no `Event`; the mutations below invalidate this key directly. */
-  trackRecipes: () => ['track-recipes'] as const,
   transcriptPrefix,
   harnessItems,
   /** The running turn's streamed reply text (#1923). Polled while a reply may stream; no event reaches it. */

@@ -1,173 +1,178 @@
-import { priorityConversation } from '../../../../core/domain/activity.ts';
-import { trackSchedulesOperation, setTrackScheduleOperation, cancelTrackScheduleOperation, triggerTrackScheduleOperation, trackTemplateOperation, updateTrackTemplateInputsOperation } from '../../../../core/domain/track-schedules.ts';
-import { trackSchedules, trackTemplate, trackDetail } from '../../../../core/events/query-keys.ts';
-import { useRecoveryMutation } from '../providers/recovery-mutation.ts';
-import type { ApiOperation } from '../../../../core/api/types.ts';
-import type { TrackAggregateSnapshotDto } from '../../../../core/api/schemas.ts';
-import { TemplateProtocolBar } from '../../features/report/template-protocol/public.tsx';
-import { ShareScopeProvider, useShareScope } from '../shell/public.tsx';
-import { terminalPresentation } from '../../../../core/domain/terminal-presentation.ts';
-import type { ShareScope } from '../../../../core/api/generated/wire.ts';
-import { TrackShareLinks } from '../providers/share-management.tsx';
-import { useShareManagement } from '../shell/public.tsx';
-import { createDraftBackOwner, DraftBackLifecycle, type DraftBackContext } from './draft-back-owner.tsx';
-import { usePlannerSwitchControl } from './planner-switch-control.ts';
-import { composerCommands, conversationCommands, conversationCommandBindings, type CommandBindings } from '../../features/chat/thread/composer-command.ts';
-import { trackCommandBindings } from './track-composer-command.ts';
-import { useTrackClosedControl } from '../../features/track/page/closed-control.ts';
-import { TodayReportEmpty } from '../../features/today/public.tsx';
-import { PanelModule } from '../../ui/panel-card/public.tsx';
-import type { DialogOrigin } from '../../ui/dialog/public.tsx';
-import { PendingQueue } from '../../features/chat/thread/pending-queue.tsx';
-import { useConversationLinks } from './conversation-links.tsx';
-import { useTerminalWorkbench, TerminalWorkbenchView, type TerminalWorkbench } from '../../features/track/workbench/public.tsx';
-import { TerminalCompanion } from './terminal-companion.tsx';
-import { managedProvidersQueryOptions, useManagedProviders } from '../providers/managed-providers.ts';
-import { useThreadReadingView } from '../../features/chat/thread/reading-view.tsx';
-import { useContentAdmission } from '../../ui/content-presentation/public.ts';
-import { useConversationDraftRetention, useConversationPaneTarget, useRequestedConversationOpen, useConversationEscape, useConversationDraftAutoSend } from '../conversations/pane-lifecycle.ts';
-import { createConversationDraftActions } from '../conversations/draft-actions.ts';
-import { useConversationStore } from '../conversations/store.ts';
-import { ConversationApprovalControl } from '../conversations/approval-control.tsx';
-import type { ConversationCreationSource, ConversationRouteIntent, PlannerConversationScope } from '../conversations/contracts.ts';
 import { Button } from '@astryxdesign/core/Button';
-import type { PaneResizeGroup } from '../../ui/drawer/resize-group.ts';
-import { sideConversationSnapshot } from '../../../../core/domain/side-conversation.ts';
-import { writeClipboardText } from '../../ui/operation-feedback/clipboard.ts';
-import { deriveConversationAction, conversationCommandEnabled } from '../../../../core/domain/conversation-action.ts';
-import { ConversationSessionHeader } from '../../features/chat/thread/session-header.tsx';
-import { readErrorText } from '../../../../core/domain/read-failure.ts';
+import type { TrackAggregateSnapshotDto } from "../../../../core/api/perga-v1.ts";
+import type { ApiOperation } from '../../../../core/api/types.ts';
+import { priorityConversation } from '../../../../core/domain/activity.ts';
 import { permissionModesForProvider } from '../../../../core/domain/agent-providers.ts';
-import { permissionModeAfterProviderChange, resolvePermissionControl } from '../../../../core/domain/planner-permission-mode.ts';
-import { DELETE_FAILURES, DELETE_TEXT, writeFailureText } from '../../../../core/domain/failure-class.ts';
+import { conversationCommandEnabled,deriveConversationAction } from '../../../../core/domain/conversation-action.ts';
+import { DELETE_FAILURES,DELETE_TEXT,writeFailureText } from '../../../../core/domain/failure-class.ts';
+import { permissionModeAfterProviderChange,resolvePermissionControl } from '../../../../core/domain/planner-permission-mode.ts';
+import { readErrorText } from '../../../../core/domain/read-failure.ts';
+import { sideConversationSnapshot } from '../../../../core/domain/side-conversation.ts';
+import { terminalPresentation } from '../../../../core/domain/terminal-presentation.ts';
+import { cancelTrackScheduleOperation,setTrackScheduleOperation,trackSchedulesOperation,trackTemplateOperation,triggerTrackScheduleOperation,updateTrackTemplateInputsOperation } from '../../../../core/domain/track-schedules.ts';
+import { trackDetail,trackSchedules,trackTemplate } from '../../../../core/events/query-keys.ts';
+import { composerCommands,conversationCommandBindings,conversationCommands,type CommandBindings } from '../../features/chat/thread/composer-command.ts';
+import { PendingQueue } from '../../features/chat/thread/pending-queue.tsx';
+import { useThreadReadingView } from '../../features/chat/thread/reading-view.tsx';
+import { ConversationSessionHeader } from '../../features/chat/thread/session-header.tsx';
+import { TemplateProtocolBar } from '../../features/report/template-protocol/public.tsx';
+import { useTrackClosedControl } from '../../features/track/page/closed-control.ts';
+import { TerminalWorkbenchView,useTerminalWorkbench,type TerminalWorkbench } from '../../features/track/workbench/public.tsx';
+import { useContentAdmission } from '../../ui/content-presentation/public.ts';
+import type { DialogOrigin } from '../../ui/dialog/public.tsx';
+import type { PaneResizeGroup } from '../../ui/drawer/resize-group.ts';
+import { writeClipboardText } from '../../ui/operation-feedback/clipboard.ts';
+import { PanelModule } from '../../ui/panel-card/public.tsx';
+import { ConversationApprovalControl } from '../conversations/approval-control.tsx';
+import type { ConversationCreationSource,ConversationRouteIntent,PlannerConversationScope } from '../conversations/contracts.ts';
+import { createConversationDraftActions } from '../conversations/draft-actions.ts';
+import { useConversationDraftAutoSend,useConversationDraftRetention,useConversationEscape,useConversationPaneTarget,useRequestedConversationOpen } from '../conversations/pane-lifecycle.ts';
+import { useConversationStore } from '../conversations/store.ts';
+import { managedProvidersQueryOptions,useManagedProviders } from '../providers/managed-providers.ts';
+import { useRecoveryMutation } from '../providers/recovery-mutation.ts';
+import { useConversationLinks } from './conversation-links.tsx';
+import { createDraftBackOwner,DraftBackLifecycle,type DraftBackContext } from './draft-back-owner.tsx';
+import { usePlannerSwitchControl } from './planner-switch-control.ts';
+import { TerminalCompanion } from './terminal-companion.tsx';
+import { trackCommandBindings } from './track-composer-command.ts';
 // Code-based TanStack Router setup, built inside a factory so a test can inject the
 // transport and QueryClient; also the composition point for route-owned surfaces.
 
+import { HStack } from '@astryxdesign/core/HStack';
+import { useMutation,useQuery,useQueryClient,type QueryClient } from '@tanstack/react-query';
 import {
-  createRootRouteWithContext, createRoute, createRouter, redirect, useLocation, useRouterState, type AnyRoute,
+createRootRouteWithContext,createRoute,createRouter,
+useLocation,useRouterState,type AnyRoute
 } from '@tanstack/react-router';
-import { createRef, useCallback, useEffect, useLayoutEffect, useMemo, useRef, type Dispatch, type ReactNode, type SetStateAction } from 'react';
-import { TrackViewProvider, useTrackViewState, useTrackViews } from './track-view-state.tsx';
-import { TrackReportRegion, useTrackReportPresentation, useTrackReportArrival } from './track-report-presentation.tsx';
+import { createRef,useCallback,useEffect,useLayoutEffect,useMemo,useRef,type Dispatch,type ReactNode,type SetStateAction } from 'react';
 import type { ReportPreparationPort } from '../../features/report/document/preparation.ts';
 import { TrackPending } from '../../features/track/page/pending.tsx';
-import { HStack } from '@astryxdesign/core/HStack';
-import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
+import { TrackReportRegion,useTrackReportArrival,useTrackReportPresentation } from './track-report-presentation.tsx';
+import { TrackViewProvider,useTrackViews,useTrackViewState } from './track-view-state.tsx';
 
+import { Banner } from '@astryxdesign/core/Banner';
+import type { AgentProvider,AskAnswer } from '../../../../core/api/generated/wire.ts';
+import { trackDtoToWire } from '../../../../core/api/track-projection.ts';
 import type { ApiTransportPort } from '../../../../core/api/types.ts';
-import type { AgentProvider, AskAnswer } from '../../../../core/api/generated/wire.ts';
 import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
+import { cardActivityOf,type CardActivity } from '../../../../core/domain/activity.ts';
+import { approvalsForSession,NO_PENDING_APPROVALS,type PendingApproval } from '../../../../core/domain/approval.ts';
+import { openAsksOf,type OpenAsk } from '../../../../core/domain/ask.ts';
 import {
-  ATTACHED_WORKSPACE_REASON, PlannerAttachButton, PlannerAttachmentDrawer,
-  type AttachmentStore, usePlannerAttachments,
-} from '../../features/planner/attachments.tsx';
+agentSessionDtoToConversation,
+conversationName,
+FOLLOW_INSTALLATION_DEFAULT,
+isUserConversationTurn,
+type Conversation,
+type ConversationTurn,
+type PendingQueueEntry,
+type TranscriptEntry,
+} from '../../../../core/domain/conversation.ts';
 import {
-  toTrack, trackActivityFromSnapshot, trackDisplayTitle,
-  trackDtoToWire, retryTrackWorkspaceOperation,
+parseWorkspaceRelativeFilePath,type ReportFileLinkTarget,
+} from '../../../../core/domain/report-file.ts';
+import type { ReportSourceLinkTarget } from '../../../../core/domain/report-source.ts';
+import {
+deriveReportTasks,type ReportLinkTarget
+} from '../../../../core/domain/report.ts';
+import {
+retryTrackWorkspaceOperation,
+toTrack,trackActivityFromSnapshot,trackDisplayTitle,
 } from '../../../../core/domain/track.ts';
-import { cardActivityOf, type CardActivity } from '../../../../core/domain/activity.ts';
-import { parkedWorkerNotices, workbenchTerminalCardIds } from '../../../../core/view/track-page.ts';
-import type {
-  BoardHostItem, CardAddMenuEntry, CardHost, CardRegistry,
-} from '../../systems/cards/public.js';
-import {
-  cardAddMenuEntries, createCardHost, partitionTrackCards,
-} from '../../systems/cards/public.js';
-import { mintIdempotencyKey, useKeyedIntent, type KeyedRequest } from '../providers/idempotency-key.ts';
-import footerStyles from './composer-footer.module.css';
-import { TrackPage } from '../../features/track/page/public.tsx';
-import { CardGridOverlay, TrackStage } from '../../features/track/grid/public.tsx';
-import { AddCardMenu, NewCardForm, type NewCardValues } from '../../features/track/new-card/public.tsx';
-import {
-  cardCreateEnded, cardCreateFailureText, keyedCardBodyOf, sameCardDraft, sendCardCreate,
-  type CardCreatePort, type CardDraft, type KeyedCardBody,
-} from '../../features/track/new-card/create.ts';
+import { parkedWorkerNotices,workbenchTerminalCardIds } from '../../../../core/view/track-page.ts';
 import { ChatList } from '../../features/chat/list/public.tsx';
-import { OutgoingMessage } from '../../features/chat/thread/outgoing-message.tsx';
-import {
-  ChatFooterError, ChatFooterNotice, ChatFooterRemedy, ChatThread, ChatEmpty, type ComposerFocusHandle,
-} from '../../features/chat/thread/public.tsx';
-import { ModelPill, PermissionModePill, PlannerRolePill } from '../../features/chat/thread/model-pill.tsx';
-import { usePlannerRoleControl, type PlannerRoleControl } from './planner-role.ts';
 import { ContextRing } from '../../features/chat/thread/context-ring.tsx';
 import { useMentionTrigger } from '../../features/chat/thread/mention-trigger.tsx';
-import { ReportBacklinks } from '../../features/report/backlinks/public.tsx';
-import { TaskRecovery, useCurrentTaskRows } from './task-recovery.tsx';
-import { WorkerDispatchControl } from './worker-controls.tsx';
-import { useReportPreviewResolver, useReportPreviewViewports } from './report-preview.ts';
-import { useReportSeriesResolver } from './report-series.ts';
-import { useTrackTemplateViews } from './report-views.ts';
-import { ReportReferencePreview } from './report-reference.tsx';
-import { ReportSourceInDocument, ReportSourcePreview } from './report-source.tsx';
-import { reportSourcePosition, type ReportSourcePosition } from '../../features/report/source/placement.ts';
+import { ModelPill,PermissionModePill } from '../../features/chat/thread/model-pill.tsx';
+import { OutgoingMessage } from '../../features/chat/thread/outgoing-message.tsx';
+import {
+ChatEmpty,
+ChatFooterError,ChatFooterNotice,ChatFooterRemedy,ChatThread,
+type ComposerFocusHandle,
+} from '../../features/chat/thread/public.tsx';
+import {
+ATTACHED_WORKSPACE_REASON,PlannerAttachButton,PlannerAttachmentDrawer,
+usePlannerAttachments,
+type AttachmentStore,
+} from '../../features/planner/attachments.tsx';
+import { ApprovalDrawer,PlannerAskDrawer } from '../../features/planner/public.ts';
 import { ReportEmpty } from '../../features/report/empty/public.tsx';
 import { ReportFileViewer } from '../../features/report/file-viewer/public.tsx';
 import { ReportOutline } from '../../features/report/outline/public.tsx';
 import { RecentFiles } from '../../features/report/recent-files/public.tsx';
+import { reportSourcePosition,type ReportSourcePosition } from '../../features/report/source/placement.ts';
+import { CardGridOverlay,TrackStage } from '../../features/track/grid/public.tsx';
 import {
-  backlinkCountsByBlock, deriveReportTasks, type ReportLinkTarget,
-} from '../../../../core/domain/report.ts';
+cardCreateEnded,cardCreateFailureText,keyedCardBodyOf,sameCardDraft,sendCardCreate,
+type CardCreatePort,type CardDraft,type KeyedCardBody,
+} from '../../features/track/new-card/create.ts';
+import { AddCardMenu,NewCardForm,type NewCardValues } from '../../features/track/new-card/public.tsx';
+import { TrackPage } from '../../features/track/page/public.tsx';
+import type {
+BoardHostItem,CardAddMenuEntry,CardHost,CardRegistry,
+} from '../../systems/cards/public.js';
 import {
-  parseWorkspaceRelativeFilePath, type ReportFileLinkTarget,
-} from '../../../../core/domain/report-file.ts';
-import type { ReportSourceLinkTarget } from '../../../../core/domain/report-source.ts';
-import {
-  conversationName,
-  isUserConversationTurn,
-  FOLLOW_INSTALLATION_DEFAULT,
-  type Conversation,
-  type ConversationTurn,
-  type PendingQueueEntry,
-  type TranscriptEntry,
-} from '../../../../core/domain/conversation.ts';
-import { Dialog } from '../../ui/dialog/public.tsx';
-import { createDirectoryLister, createTrackCardFilesPort, createTrackWorkspaceFilesPort } from '../providers/directory.ts';
-import { useMentionSearch } from '../providers/mentions.ts';
+cardAddMenuEntries,createCardHost,partitionTrackCards,
+} from '../../systems/cards/public.js';
 import { DELETE_CARD_COPY } from '../../ui/confirm-dialog/copy.ts';
-import { OperationFeedback, DeleteConfirmDialog, useDeleteConfirm, useOperationFeedback } from '../../ui/operation-feedback/public.tsx';
+import { Dialog } from '../../ui/dialog/public.tsx';
+import { ErrorBox } from '../../ui/error-box/public.tsx';
+import { DeleteConfirmDialog,OperationFeedback,useDeleteConfirm,useOperationFeedback } from '../../ui/operation-feedback/public.tsx';
 import { useCommittedCallback } from '../../ui/state/committed-callback.ts';
 import { useState } from '../../ui/state/public.ts';
-import {
-  serverVersionOperation, runOperation,
-  prefetchAreaList, areaListQueryOptions, tracksInAreaQueryOptions,
-
-  useTrackConversationMutations, useTrackMutations,
-  trackBacklinksQueryOptions, trackDetailQueryOptions, trackToolsQueryOptions,
-  trackTaskVerdictsQueryOptions,
-} from '../providers/queries.ts';
-import { NewTrackRoute } from './new-track-route.tsx';
-import { DailyTodayRoute, type DailyCenterPresentation } from './daily-planner.tsx';
-import { ConversationComposer, ConversationDock } from './conversation-composer.tsx';
-import mobileChatStyles from './mobile-chat.module.css';
-import dailyStyles from './daily-planner.module.css';
-import { ConversationSurface, type EmbeddedConversationPresentation } from './mobile-conversation-surface.tsx';
-import { agentSessionDtoToConversation } from '../../../../core/domain/conversation.ts';
-import { NewTrackDraftProvider } from './new-track-drafts.tsx';
-import { RecipesRoute } from './recipes-route.tsx';
-import { createUiPreferences, UiPreferencesProvider, useUiPreferences, type UiPreferences } from '../providers/ui-preferences.tsx';
-import { ReadReceiptsProvider, useReadReceipt, useReadReceipts, useViewReadReceipt } from '../providers/read-receipts.tsx';
-import { TrackSelector } from '../shell/track-selector.tsx';
-import { AppShell, MobileConversationProvider, useMobileConversationOwner, useConversationDrawerResize, useOpenMobileSection, useMobileHeaderActionsHost, useMobileHeaderTitleHost } from '../shell/public.tsx';
-import {
-  ConversationProvider, useConversationCommands, useConversationAttachments, useConversationDraft, useConversationOpenRequest, usePendingTrackInitialSend, useConversationUpload, type ConversationDraftId,
-} from '../conversations/public.tsx';
-import {
-  renderedMobilePanel,
-  useGo, useGoSameTrack, useRouteCardId, useRouteFilePath, useRouteFrom, useRouteHash,
-  useRoutePanel, useRouteParam, useTrackFileNavigation,
-  usePlannerOpenIntent, useTrackPanelNavigation, validateTrackSearch, type TrackSearch,
-} from './navigation.ts';
-import {
-  createRecentFileHistory, type RecentFileHistory,
-} from '../providers/recent-files.ts';
-import { readHostThemeRgb } from '../theme/host-rgb.ts';
-import { PendingRoute } from './pending-route.tsx';
-import { Banner } from '@astryxdesign/core/Banner';
-import { ErrorBox } from '../../ui/error-box/public.tsx';
-import { ApprovalDrawer, PlannerAskDrawer } from '../../features/planner/public.ts';
-import { approvalsForSession, NO_PENDING_APPROVALS, type PendingApproval } from '../../../../core/domain/approval.ts';
-import { openAsksOf, type OpenAsk } from '../../../../core/domain/ask.ts';
 import { useCompactViewport } from '../../ui/viewport/public.ts';
+import {
+ConversationProvider,
+useConversationAttachments,
+useConversationCommands,
+useConversationDraft,useConversationOpenRequest,
+useConversationUpload,
+usePendingTrackInitialSend,
+type ConversationDraftId,
+} from '../conversations/public.tsx';
+import { createDirectoryLister,createTrackCardFilesPort,createTrackWorkspaceFilesPort } from '../providers/directory.ts';
+import { mintIdempotencyKey,useKeyedIntent,type KeyedRequest } from '../providers/idempotency-key.ts';
+import { useMentionSearch } from '../providers/mentions.ts';
+import {
+prefetchAreaList,
+runOperation,
+serverVersionOperation,
+trackDetailQueryOptions,
+trackTaskVerdictsQueryOptions,
+trackToolsQueryOptions,
+useTrackConversationMutations,useTrackMutations
+} from '../providers/queries.ts';
+import { ReadReceiptsProvider,useReadReceipt,useReadReceipts,useViewReadReceipt } from '../providers/read-receipts.tsx';
+import {
+createRecentFileHistory,type RecentFileHistory,
+} from '../providers/recent-files.ts';
+import { createUiPreferences,UiPreferencesProvider,useUiPreferences,type UiPreferences } from '../providers/ui-preferences.tsx';
+import { AppShell,MobileConversationProvider,useConversationDrawerResize,useMobileConversationOwner,useMobileHeaderActionsHost,useMobileHeaderTitleHost,useOpenMobileSection } from '../shell/public.tsx';
+import { TrackSelector } from '../shell/track-selector.tsx';
+import { readHostThemeRgb } from '../theme/host-rgb.ts';
+import footerStyles from './composer-footer.module.css';
+import { ConversationComposer,ConversationDock } from './conversation-composer.tsx';
+import dailyStyles from './daily-planner.module.css';
+import { DailyTodayRoute,type DailyCenterPresentation } from './daily-planner.tsx';
+import mobileChatStyles from './mobile-chat.module.css';
+import { ConversationSurface,type EmbeddedConversationPresentation } from './mobile-conversation-surface.tsx';
+import {
+renderedMobilePanel,
+useGo,useGoSameTrack,
+usePlannerOpenIntent,
+useRouteCardId,useRouteFilePath,useRouteFrom,useRouteHash,
+useRoutePanel,useRouteParam,useTrackFileNavigation,
+useTrackPanelNavigation,validateTrackSearch,type TrackSearch,
+} from './navigation.ts';
+import { NewTrackDraftProvider } from './new-track-drafts.tsx';
+import { NewTrackRoute } from './new-track-route.tsx';
+import { PendingRoute } from './pending-route.tsx';
+import { useReportPreviewViewports } from './report-preview.ts';
+import { ReportReferencePreview } from './report-reference.tsx';
+import { ReportSourceInDocument,ReportSourcePreview } from './report-source.tsx';
+import { useTrackTemplateViews } from './report-views.ts';
+import { TaskRecovery,useCurrentTaskRows } from './task-recovery.tsx';
+import { WorkerDispatchControl } from './worker-controls.tsx';
 
 export const APP_BASEPATH = '/next';
 
@@ -182,7 +187,7 @@ type ConversationPanelSource = ConversationCreationSource & Readonly<{
     /** Default provider to seed new subagent drafts on this Track. */
     defaultProvider?: AgentProvider;
     /** Whether this surface runs against Perga v1 endpoints. */
-    pergaMode?: boolean;
+
     /** The kernel's per-card verdicts for the track these rows are on; required, because a caller that passes no overlay has a list on which nothing can ever be working. */
     cards: Readonly<Record<string, CardActivity>>;
     /** The Track these rows may be sent to. */
@@ -199,7 +204,6 @@ type ConversationPanelSource = ConversationCreationSource & Readonly<{
     planner: Readonly<{
       cardId: string; areaId: string; asks: readonly OpenAsk[];
       answerAsk: (askId: import('../../../../core/domain/activity.ts').AskId, answers: readonly AskAnswer[]) => Promise<void>;
-      role: PlannerRoleControl;
       commands?: (stop: (() => void) | undefined) => CommandBindings;
     }> | null;
   }>;
@@ -209,13 +213,11 @@ export type CardRuntime = Readonly<{ registry: CardRegistry; host: CardHost }>;
 
 export type AppRouterDeps = Readonly<{
   basepath?: string;
-  shareScope?: ShareScope | null;
-  shareLinkId?: string;
   transport: ApiTransportPort;
   unauthorized: UnauthorizedChannel;
   client: QueryClient;
   onSignOut: () => void;
-  pergaMode?: boolean;
+
   cards: CardRuntime;
   prepareReport: ReportPreparationPort;
   recentFiles?: RecentFileHistory;
@@ -226,42 +228,36 @@ export type AppRouterDeps = Readonly<{
 function renderNothing(): null { return null; }
 
 export function createRouteTree(deps: AppRouterDeps): AnyRoute {
-  const { transport, unauthorized, client, onSignOut, pergaMode = false, cards, prepareReport } = deps;
+  const { transport, unauthorized, client, onSignOut, cards, prepareReport } = deps;
   const recentFiles = deps.recentFiles ?? createRecentFileHistory();
   const preferences = deps.uiPreferences ?? createUiPreferences();
   const rootRoute = createRootRouteWithContext<DraftBackContext>()({ component: () => (
-    <ShareScopeProvider value={deps.shareScope == null || deps.shareLinkId === undefined ? null : { scope: deps.shareScope, shareLinkId: deps.shareLinkId }}><UiPreferencesProvider preferences={preferences}><ReadReceiptsProvider transport={transport} unauthorized={unauthorized}>
-      <TrackViewProvider><DraftBackLifecycle><MobileConversationProvider><ShellRoute submittedStorage={deps.submittedStorage} shareScope={deps.shareScope ?? null} transport={transport} unauthorized={unauthorized} onSignOut={onSignOut} pergaMode={pergaMode} /></MobileConversationProvider></DraftBackLifecycle></TrackViewProvider>
-    </ReadReceiptsProvider></UiPreferencesProvider></ShareScopeProvider>
+    <UiPreferencesProvider preferences={preferences}><ReadReceiptsProvider transport={transport} unauthorized={unauthorized}>
+      <TrackViewProvider><DraftBackLifecycle><MobileConversationProvider><ShellRoute submittedStorage={deps.submittedStorage} transport={transport} unauthorized={unauthorized} onSignOut={onSignOut} /></MobileConversationProvider></DraftBackLifecycle></TrackViewProvider>
+    </ReadReceiptsProvider></UiPreferencesProvider>
   ) });
 
   const indexRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: '/',
     /** The index loader primes only the areas list; awaiting the area → tracks fan-out here would let one slow area block the route commit. */
-    loader: deps.shareScope == null ? () => prefetchAreaList(client, transport, unauthorized) : async ({ location }) => {
-      const scope = deps.shareScope;
-      if (scope == null) return prefetchAreaList(client, transport, unauthorized);
-      const target = scope.kind === 'track' ? scope.id
-        : (await client.ensureQueryData(tracksInAreaQueryOptions(transport, scope.id, unauthorized)))[0]?.id;
-      return redirect({ href: `${deps.basepath ?? APP_BASEPATH}${target === undefined ? `/area/${encodeURIComponent(scope.id)}/new` : `/track/${encodeURIComponent(target)}`}${location.searchStr}${location.hash ? `#${location.hash}` : ''}`, replace: true });
-    },
+    loader: () => prefetchAreaList(client, transport, unauthorized),
     validateSearch: (search: Record<string, unknown>) => ({ day: typeof search.day === 'string' ? search.day : undefined }),
     component: function DailyRoute() {
       const day = new URLSearchParams(useLocation({ select: (location) => location.searchStr })).get('day') ?? undefined;
       const go = useGo();
-      return <DailyTodayRoute pergaMode={pergaMode} transport={transport} unauthorized={unauthorized} selectedDate={day}
+      return <DailyTodayRoute transport={transport} unauthorized={unauthorized} selectedDate={day}
         onOpenTrack={(trackId) => go({ name: 'track', trackId })}
         onSelectDate={(nextDay) => go({ name: 'today', day: nextDay })}
-        renderTrack={(detail, evidence, panelContent, intro, supervisor, center) => <TrackRouteBody showWorkspaceIsolation={false} center={center} reportHeader={supervisor} reportEmpty={pergaMode ? null : <TodayReportEmpty />} mobileReportIntro={intro} panelContent={panelContent} reportEvidence={evidence} key={detail.track.id} prepareReport={prepareReport} transport={transport} unauthorized={unauthorized}
-          snapshot={detail} cardRuntime={cards} recentFiles={recentFiles} pergaMode={pergaMode} />} />;
+        renderTrack={(detail, evidence, panelContent, intro, supervisor, center) => <TrackRouteBody showWorkspaceIsolation={false} center={center} reportHeader={supervisor} reportEmpty={null} mobileReportIntro={intro} panelContent={panelContent} reportEvidence={evidence} key={detail.track.id} prepareReport={prepareReport} transport={transport} unauthorized={unauthorized}
+          snapshot={detail} cardRuntime={cards} recentFiles={recentFiles} />} />;
     },
   });
 
   const newTrackRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: '/area/$areaId/new',
-    component: () => <NewTrackRoute transport={transport} unauthorized={unauthorized} pergaMode={pergaMode} />,
+    component: () => <NewTrackRoute transport={transport} unauthorized={unauthorized} />,
   });
 
   const trackRoute = createRoute({
@@ -274,14 +270,7 @@ export function createRouteTree(deps: AppRouterDeps): AnyRoute {
       unauthorized={unauthorized}
       cardRuntime={cards}
       recentFiles={recentFiles}
-      pergaMode={pergaMode}
     />,
-  });
-
-  const recipesRoute = createRoute({
-    getParentRoute: () => rootRoute,
-    path: '/recipes',
-    component: () => <RecipesRoute transport={transport} unauthorized={unauthorized} />,
   });
 
   /* Every settings route renders nothing: the URL is the state and `SettingsOverlay`
@@ -293,27 +282,9 @@ export function createRouteTree(deps: AppRouterDeps): AnyRoute {
     component: renderNothing,
   });
 
-  const networkRoute = createRoute({
-    getParentRoute: () => rootRoute,
-    path: '/settings/network',
-    component: renderNothing,
-  });
-
-  const pluginsRoute = createRoute({
-    getParentRoute: () => rootRoute,
-    path: '/settings/plugins',
-    component: renderNothing,
-  });
-
   const plannersRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: '/settings/planners',
-    component: renderNothing,
-  });
-
-  const mailRoute = createRoute({
-    getParentRoute: () => rootRoute,
-    path: '/settings/mail',
     component: renderNothing,
   });
 
@@ -328,13 +299,9 @@ export function createRouteTree(deps: AppRouterDeps): AnyRoute {
     path: '/settings/about',
     component: renderNothing,
   });
-
-  const legacyTodayRoute = createRoute({ getParentRoute: () => rootRoute, path: '/today/legacy',
-    validateSearch: (search: Record<string, unknown>) => ({ day: typeof search.day === 'string' ? search.day : undefined }),
-    beforeLoad: ({ search }) => redirect({ to: '/', search, replace: true }) });
   return rootRoute.addChildren([
-    indexRoute, legacyTodayRoute, newTrackRoute, trackRoute, recipesRoute, settingsRoute,
-    networkRoute, pluginsRoute, plannersRoute, mailRoute, appearanceRoute, aboutRoute,
+    indexRoute, newTrackRoute, trackRoute, settingsRoute,
+    plannersRoute, appearanceRoute, aboutRoute,
   ]);
 }
 
@@ -350,24 +317,23 @@ export function createAppRouter(deps: AppRouterDeps) {
   return router;
 }
 
-function ShellRoute({ transport, unauthorized, onSignOut, shareScope, submittedStorage, pergaMode = false }: { submittedStorage?: () => Storage; pergaMode?: boolean; shareScope: ShareScope | null; transport: ApiTransportPort; unauthorized: UnauthorizedChannel; onSignOut: () => void }) {
+function ShellRoute({ transport, unauthorized, onSignOut, submittedStorage, }: { submittedStorage?: () => Storage; transport: ApiTransportPort; unauthorized: UnauthorizedChannel; onSignOut: () => void }) {
   const go = useGo();
   const versionQuery = useQuery({
     queryKey: ['server-version'],
     queryFn: () => runOperation(transport, serverVersionOperation(), unauthorized),
-    enabled: pergaMode,
+    enabled: true,
     retry: false,
   });
-  const singleOwner = pergaMode && versionQuery.data?.authRequired !== true;
+  const singleOwner = versionQuery.data?.authRequired !== true;
   return (
     <ConversationProvider submittedStorage={submittedStorage}><NewTrackDraftProvider submittedStorage={submittedStorage}>
-      <AppShell shareScope={shareScope}
+      <AppShell
         transport={transport}
         unauthorized={unauthorized}
         onOpenSettings={() => go({ name: 'settings' })}
-        onOpenPlugins={pergaMode ? undefined : () => go({ name: 'settings-plugins' })}
+        onOpenPlugins={undefined}
         onSignOut={singleOwner ? undefined : onSignOut}
-        pergaMode={pergaMode}
       />
     </NewTrackDraftProvider></ConversationProvider>
   );
@@ -524,9 +490,8 @@ function useConversationPane(
   });
   const imageRoot = source.workspaceRoot
     ?? (imageTrack.data === undefined ? null : toTrack(trackDtoToWire(imageTrack.data.track)).agentCwd);
-  const shareAccess = useShareScope();
   const conversationFiles = useMemo(() => imageTrackId === null ? null
-    : createTrackWorkspaceFilesPort(transport, unauthorized, imageTrackId, shareAccess?.shareLinkId), [imageTrackId, transport, unauthorized, shareAccess?.shareLinkId]);
+    : createTrackWorkspaceFilesPort(transport, unauthorized, imageTrackId), [imageTrackId, transport, unauthorized]);
   const imageFiles = useMemo(() => imageRoot === null || conversationFiles === null ? null : ({
     root: imageRoot, files: conversationFiles,
   }), [imageRoot, conversationFiles]);
@@ -540,7 +505,7 @@ function useConversationPane(
   /* `@` and the Planner's questions only in the Planner's own row; the track the drawer is on ranks its blocks first. */
   const plannerRow = source.planner !== null && openRowId === source.planner.cardId ? source.planner : null;
   const mentionTrigger = useMentionTrigger(useMentionSearch(transport, unauthorized,
-    plannerRow === null ? null : plannerRow.areaId, source.scopeId, undefined, source.pergaMode ?? false));
+    plannerRow === null ? null : plannerRow.areaId, source.scopeId, undefined));
   /* The open conversation's own composer: words and images live in the registry per conversation,
        so closing keeps them and switching shows the other conversation's own. */
   const composerId = scope?.cardId ?? null;
@@ -722,16 +687,12 @@ function useConversationPane(
     return options.onSide(open, store.turns, question);
   });
   const conversationApprovals = useMemo(
-    () => shareAccess !== null ? NO_PENDING_APPROVALS : approvalsForSession(source.pendingApprovals, openRowId, store.pendingApprovals),
-    [shareAccess, source.pendingApprovals, openRowId, store.pendingApprovals],
+    () => approvalsForSession(source.pendingApprovals, openRowId, store.pendingApprovals),
+    [ source.pendingApprovals, openRowId, store.pendingApprovals],
   );
   const conversationAsks: readonly OpenAsk[] = store.pendingInteractions?.flatMap(interaction => interaction.kind === 'ask' && interaction.canRespond
     ? [{ askId: interaction.id, delivery: 'wake' as const, questions: interaction.questions?.map(question => ({ title: question.question, options: question.options })) ?? [] }] : []) ?? NO_ASKS;
   /* Read field by field: the control is rebuilt each render, and the composer's memo keys on what it shows. */
-  const roleValue = plannerRow?.role.value ?? null;
-  const roleDisabled = plannerRow?.role.isDisabled ?? true;
-  const roleDisabledReason = plannerRow?.role.disabledReason;
-  const roleChange = plannerRow?.role.onChange;
   const decideApproval = useCommittedCallback(existingId, (approval: PendingApproval, optionId: string) =>
     source.decideApproval(approval, optionId));
   const answerAsk = useCommittedCallback(existingId, (askId: import('../../../../core/domain/activity.ts').AskId, answers: readonly AskAnswer[]) =>
@@ -1049,10 +1010,7 @@ function useConversationPane(
                         isDisabled={draftPermissionControl.isDisabled}
                       />
                     )}
-                    {roleValue !== null && roleChange !== undefined && (
-                      <PlannerRolePill value={roleValue} onChange={roleChange} isDisabled={roleDisabled}
-                        disabledReason={roleDisabledReason} />
-                    )}
+
                   </HStack>
                 );
               })()} />
@@ -1067,10 +1025,7 @@ function useConversationPane(
           </>
         )}
       >
-        {open !== null && !draftOpen && !archived && roleValue !== null && roleChange !== undefined && (
-          <PlannerRolePill value={roleValue} onChange={roleChange} isDisabled={roleDisabled} placement="below"
-            disabledReason={roleDisabledReason} />
-        )}
+
         {(draft?.side !== undefined && draftOpen || open?.sourceCardId !== undefined) && (
           <p>From {contextSource === undefined ? 'an earlier conversation' : conversationName(contextSource)}.
             {' '}Uses a snapshot of loaded text, not complete history. Choose the backend before sending.</p>
@@ -1174,13 +1129,13 @@ function useConversationPane(
   };
 }
 
-function TrackRoute({ transport, unauthorized, cardRuntime, recentFiles, prepareReport, pergaMode = false }: {
+function TrackRoute({ transport, unauthorized, cardRuntime, recentFiles, prepareReport, }: {
   prepareReport: ReportPreparationPort;
   transport: ApiTransportPort;
   unauthorized: UnauthorizedChannel;
   cardRuntime: CardRuntime;
   recentFiles: RecentFileHistory;
-  pergaMode?: boolean;
+
 }) {
   const trackId = useRouteParam('/track/');
   const registry = useConversationCommands();
@@ -1239,13 +1194,12 @@ function TrackRoute({ transport, unauthorized, cardRuntime, recentFiles, prepare
         : undefined}
       cardRuntime={cardRuntime}
       recentFiles={recentFiles}
-      pergaMode={pergaMode}
     />
   );
 }
 
 function TrackRouteBody({
-  transport, unauthorized, snapshot, showWorkspaceIsolation = true, cardRuntime, recentFiles, reportEvidence, reportHeader, reportEmpty, panelContent, mobileReportIntro, prepareReport, center, pergaMode = false, workspaceWaiting = false, workspaceNotice,
+  transport, unauthorized, snapshot, showWorkspaceIsolation = true, cardRuntime, recentFiles, reportEvidence, reportHeader, reportEmpty, panelContent, mobileReportIntro, prepareReport, center, workspaceWaiting = false, workspaceNotice,
 }: {
   transport: ApiTransportPort;
   unauthorized: UnauthorizedChannel;
@@ -1262,20 +1216,17 @@ function TrackRouteBody({
   mobileReportIntro?: ReactNode;
   prepareReport: ReportPreparationPort;
   reportEmpty?: ReactNode;
-  pergaMode?: boolean;
+
 }) {
   const track = useMemo(() => toTrack(trackDtoToWire(snapshot.track), trackActivityFromSnapshot(snapshot)), [snapshot]);
   const canReopenTrack = snapshot.track.closedAtMs != null;
   const canCloseTrack = !canReopenTrack;
-  const adminGrantedAt = null;
-  const canAdminTrack = false;
   const toolsQuery = useQuery(trackToolsQueryOptions(transport, snapshot.track.id, unauthorized));
   const rawCards = useMemo(() => toolsQuery.data ?? [], [toolsQuery.data]);
   const [centerHost, setCenterHost] = useState<HTMLDivElement | null>(null);
-  const isPergaTrack = pergaMode;
   const preferences = useUiPreferences();
-  const cards = useMemo(() => {
-    if (!isPergaTrack) return rawCards;
+  const cards = (() => {
+
     const withPlacement = rawCards.map((card) => {
       if (card.kind !== 'terminal') return card;
       const visible = preferences.terminalWorkbench(track.id, card.id);
@@ -1286,11 +1237,7 @@ function TrackRouteBody({
       } };
     });
     return withPlacement.some((card, index) => card !== rawCards[index]) ? withPlacement : rawCards;
-  }, [isPergaTrack, preferences, rawCards, track.id]);
-  const shareAccess = useShareScope();
-  const openShare = useShareManagement();
-  const areasForShare = useQuery(areaListQueryOptions(transport, unauthorized));
-  const shareable = !isPergaTrack && shareAccess === null && areasForShare.data?.some(area => area.id === track.areaId && area.kind === 'user') === true;
+  })();
   const reportPresentation = useTrackReportPresentation(track.id, snapshot.report, prepareReport);
   const progressDisclosure = useTrackViewState(track.id, reportPresentation.presentable);
   // The same key and comparison point the rail uses: the overlay's completion
@@ -1298,8 +1245,6 @@ function TrackRouteBody({
   // A completed navigation also acknowledges a repeated selection of this already rendered Track.
   const navigationCompletedAt = useRouterState({ select: (state) => state.loadedAt });
   const trackMutations = useTrackMutations(transport, unauthorized);
-  const plannerRole = usePlannerRoleControl({ trackId: track.id, adminGrantedAt, canAdmin: canAdminTrack,
-    setAdmin: (admin) => trackMutations.patch(track.id, track.areaId, { admin }) });
   const closedControl = useTrackClosedControl({ trackId: track.id, canReopen: canReopenTrack, canClose: canCloseTrack,
     patch: closed => trackMutations.patch(track.id, track.areaId, { closed }) });
   const { pending: closedPending, setClosed } = closedControl;
@@ -1346,12 +1291,10 @@ function TrackRouteBody({
   const routeFrom = useRouteFrom() ?? undefined;
   const cardRegistry = cardRuntime.registry;
   const trackCardHost = useMemo(
-    () => isPergaTrack
-      ? createCardHost(cardRegistry, {
-          files: createTrackCardFilesPort(transport, unauthorized, track.id, track.agentCwd, shareAccess?.shareLinkId),
-        })
-      : cardRuntime.host,
-    [isPergaTrack, cardRegistry, transport, unauthorized, track.id, track.agentCwd, shareAccess?.shareLinkId, cardRuntime.host],
+    () => createCardHost(cardRegistry, {
+          files: createTrackCardFilesPort(transport, unauthorized, track.id, track.agentCwd),
+        }),
+    [cardRegistry, transport, unauthorized, track.id, track.agentCwd],
   );
   // Role and conversation metadata come directly from the aggregate sessions.
   const trackReceipts = useReadReceipts();
@@ -1438,7 +1381,6 @@ function TrackRouteBody({
       scopeId: track.id,
       rows,
       defaultProvider: plannerCard === undefined ? undefined : agentSessionDtoToConversation(plannerCard).provider,
-      pergaMode: isPergaTrack,
       /* The track's own overlay-derived verdicts (`toTrack(detail, detailActivity)`). */
       cards: track.cards,
       /* These rows are on a track the reader can be sent to, so Today may hold and
@@ -1465,7 +1407,6 @@ function TrackRouteBody({
           const ask = openAsks.find(item => item.askId === askId);
           return trackMutations.answerAsk(track.id, askId, answers, ask?.questions);
         },
-        role: plannerRole,
         commands: plannerCommands,
       },
     },
@@ -1477,10 +1418,9 @@ function TrackRouteBody({
     selectedConversationId: chat.selectedConversationId, onClose: chat.close, onOpen: chat.openConversation, conversationOpen: chat.isOpen });
   /* One query per `chart.series` block, keyed by the block's rev; opening the
        report is what makes the kernel fetch the data. */
-  const resolveSeries = useReportSeriesResolver(transport, track.id, reportBlocks, unauthorized);
   /* One polled read of the track's previews, only while the report has a `preview` block. */
-  const resolvePreview = useReportPreviewResolver(transport, track.id, reportBlocks, unauthorized, isPergaTrack);
-  const templateViews = useTrackTemplateViews(transport, track.id, reportBlocks, unauthorized, isPergaTrack);
+  const resolvePreview = () => ({ status: 'missing' as const });
+  const templateViews = useTrackTemplateViews(transport, track.id, reportBlocks, unauthorized);
   const previewViewports = useReportPreviewViewports(track.id);
   /* The cards this route can open, asked of the registry through the list the board
    * draws. A worker card whose kind no entry claims is `unknown` and its `?card=`
@@ -1524,24 +1464,21 @@ function TrackRouteBody({
    * `claim` kind. An unhandled strategy throws rather than creating nothing. */
   const addMenuEntries = useMemo(() => {
     const entries = cardAddMenuEntries(cardRegistry);
-    return isPergaTrack
-      ? entries.filter((entry) => entry.type === 'terminal' || entry.type === 'file-viewer')
-      : entries;
-  }, [cardRegistry, isPergaTrack]);
+    return entries.filter((entry) => entry.type === 'terminal');
+  }, [cardRegistry]);
   const listDirectory = useMemo(
-    () => createDirectoryLister(transport, unauthorized, isPergaTrack),
-    [transport, unauthorized, isPergaTrack],
+    () => createDirectoryLister(transport, unauthorized),
+    [transport, unauthorized],
   );
   const reportFiles = useMemo(
-    () => createTrackWorkspaceFilesPort(transport, unauthorized, track.id, shareAccess?.shareLinkId),
-    [track.id, transport, unauthorized, shareAccess?.shareLinkId],
+    () => createTrackWorkspaceFilesPort(transport, unauthorized, track.id),
+    [track.id, transport, unauthorized],
   );
   const [cardDraft, setCardDraft] = useState<(CardAddMenuEntry & { origin: DialogOrigin }) | null>(null);
   const [creatingCard, setCreatingCard] = useState(false);
   /* A failed create has to be sayable with no dialog on screen: a fieldless kind
    * never opens one, so the message gets a route-level surface. */
   const cardCreateFeedback = useOperationFeedback();
-  const terminalPlacementFeedback = useOperationFeedback();
   const newCardFieldRef = useRef<HTMLInputElement | null>(null);
   /* A create that lands after the reader has left must not steer them: one
    * `AbortController` per attempt, aborted on unmount, read before the navigation
@@ -1555,9 +1492,9 @@ function TrackRouteBody({
   const cardIntent = useKeyedIntent<CardDraft, KeyedCardBody>(sameCardDraft);
   const cardCreatePort: CardCreatePort = {
     createTerminal: (body, key) => trackMutations.createTerminal(track.id, body, key),
-    createCodex: (body, key) => trackMutations.createCodex(track.id, body, key),
-    createClaude: (body, key) => trackMutations.createClaude(track.id, body, key),
-    createCard: (body, key) => trackMutations.createCard(track.id, body, key),
+
+
+
   };
 
   /* The create navigates to the new card, the same landing `onOpenCard` gives. `resent`: the held request goes again. */
@@ -1595,7 +1532,7 @@ function TrackRouteBody({
     const draft: CardDraft = { entry, values };
     /* Read at click time from `<html data-theme>`, not `useTheme()`: subscribing
            would remount any live terminal on every theme toggle. A resent request keeps its first press's theme. */
-    const body = keyedCardBodyOf(draft, readHostThemeRgb(), cardRegistry);
+    const body = keyedCardBodyOf(draft, readHostThemeRgb());
     if (body === null) { runCardCreate(draft, null, false); return; }
     const resent = cardIntent.held !== null && sameCardDraft(cardIntent.held.draft, draft);
     runCardCreate(draft, cardIntent.request(draft, () => body), resent);
@@ -1611,14 +1548,12 @@ function TrackRouteBody({
     if (entry.fields.length === 0) submitNewCard(entry, {});
     else setCardDraft({ ...entry, origin });
   };
-  const backlinksQuery = useQuery(trackBacklinksQueryOptions(transport, track.id, unauthorized, { enabled: !isPergaTrack }));
-  const backlinks = backlinksQuery.data;
   const openableWorkerIds = useMemo(() => {
-    if (!isPergaTrack) return openableCards;
+
     const next = new Set(openableCards);
     for (const row of rows) next.add(row.id);
     return next;
-  }, [isPergaTrack, openableCards, rows]);
+  }, [openableCards, rows]);
 
   /* Every report arrival follows the current committed content boundary. */
   const arrivalAnchorId = useRouteHash();
@@ -1682,10 +1617,10 @@ function TrackRouteBody({
   };
 
   const protocolClient = useQueryClient();
-  const schedulesQuery = useQuery({ queryKey: trackSchedules(track.id), enabled: pergaMode,
+  const schedulesQuery = useQuery({ queryKey: trackSchedules(track.id), enabled: true,
     queryFn: ({ signal }) => runOperation(transport, { ...trackSchedulesOperation(track.id), signal }, unauthorized),
     refetchInterval: query => query.state.data?.recentRuns.some(run => run.state === 'pending' || run.state === 'delivering') ? 2000 : false });
-  const templateQuery = useQuery({ queryKey: trackTemplate(track.id), enabled: pergaMode && !!track.templateId,
+  const templateQuery = useQuery({ queryKey: trackTemplate(track.id), enabled: !!track.templateId,
     queryFn: ({ signal }) => runOperation(transport, { ...trackTemplateOperation(track.id), signal }, unauthorized) });
   const protocolMutation = useRecoveryMutation(transport, {
     mutationFn: (operation: ApiOperation<unknown>, admitted) => runOperation(admitted, operation, unauthorized),
@@ -1698,7 +1633,7 @@ function TrackRouteBody({
     },
   });
   const protocolWrite = async (operation: ApiOperation<unknown>) => { await protocolMutation.mutateAsync(operation); };
-  const protocolWritable = pergaMode && shareAccess === null && snapshot.track.closedAtMs == null;
+  const protocolWritable = snapshot.track.closedAtMs == null;
 
   const reportRegion = <>
     <TemplateProtocolBar track={track} schedules={schedulesQuery.data} inputsSchema={templateQuery.data?.manifest?.inputsSchema}
@@ -1708,14 +1643,14 @@ function TrackRouteBody({
       onCancelSchedule={protocolWritable ? id => protocolWrite(cancelTrackScheduleOperation(track.id, id)) : undefined}
       onTriggerSchedule={protocolWritable ? id => protocolWrite(triggerTrackScheduleOperation(track.id, id)) : undefined}
       onSaveInputs={protocolWritable ? patch => protocolWrite(updateTrackTemplateInputsOperation(track.id, patch)) : undefined} />
-    {pergaMode && centerActive && reportPresentation.visible?.preparation.kind === 'empty' ? null : (
+    {centerActive && reportPresentation.visible?.preparation.kind === 'empty' ? null : (
         <TrackReportRegion
         presentation={reportPresentation}
         sourceInsertion={requestedFilePath === null ? sourceInsertion : undefined}
         trackId={track.id}
         openedAt={navigationCompletedAt}
         templateViews={templateViews}
-        resolveSeries={resolveSeries}
+
         resolvePreview={resolvePreview}
         previewViewports={previewViewports}
         taskVerdicts={verdicts}
@@ -1723,10 +1658,10 @@ function TrackRouteBody({
         renderTaskExecution={(task, expanded) => <TaskRecovery
           key={`${track.id}:${task.key}`} trackId={track.id} taskKey={task.key} expanded={expanded}
           transport={transport} unauthorized={unauthorized}
-          enableTaskActions={isPergaTrack}
+          enableTaskActions
           openableWorkerIds={openableWorkerIds}
           openWorker={(cardId) => {
-            if (isPergaTrack && rows.some((row) => row.id === cardId)) {
+            if (rows.some((row) => row.id === cardId)) {
               registry.requestOpen(cardId, { focusComposer: false });
               return;
             }
@@ -1734,12 +1669,12 @@ function TrackRouteBody({
           }}
         />}
         rail={<ReportOutline items={outline} />}
-        backlinkCounts={backlinks === undefined ? undefined : backlinkCountsByBlock(backlinks.backlinks)}
+
         onOpenLink={openReportLink}
         onOpenFileLink={openReportFile}
         onOpenWorker={(cardId) => {
           if (!openableWorkerIds.has(cardId)) return;
-          if (isPergaTrack && rows.some((row) => row.id === cardId)) {
+          if (rows.some((row) => row.id === cardId)) {
             registry.requestOpen(cardId, { focusComposer: false });
             return;
           }
@@ -1771,21 +1706,20 @@ function TrackRouteBody({
     <TrackPage
       fillReading={centerActive}
       showWorkspaceIsolation={showWorkspaceIsolation}
-      shareLinks={!isPergaTrack && shareAccess === null ? <TrackShareLinks trackId={track.id} areaId={track.areaId} shareable={shareable} transport={transport} unauthorized={unauthorized} /> : undefined}
-      onShareTrack={shareable && openShare !== null ? origin => openShare({ scope: { kind: 'track', id: track.id }, title: track.title, origin }) : undefined}
+      shareLinks={undefined}
       progressDisclosure={progressDisclosure}
-      panelHeader={pergaMode && panelContent !== undefined ? <div className={dailyStyles.calendarPanel}>{panelContent}</div> : undefined}
-      panelContent={pergaMode ? (centerActive && reportPresentation.visible?.preparation.kind !== 'empty' ? <div className={dailyStyles.reportPanel}><PanelModule title="Daily report" icon="file">{reportRegion}</PanelModule></div> : undefined) : panelContent}
+      panelHeader={panelContent !== undefined ? <div className={dailyStyles.calendarPanel}>{panelContent}</div> : undefined}
+      panelContent={(centerActive && reportPresentation.visible?.preparation.kind !== 'empty' ? <div className={dailyStyles.reportPanel}><PanelModule title="Daily report" icon="file">{reportRegion}</PanelModule></div> : undefined)}
       mobileReportIntro={mobileReportIntro}
       mobilePanelObscured={!centerActive && chat.isOpen}
       mobileHeaderActionsHost={mobileHeaderActionsHost}
       mobileHeaderTitleHost={mobileHeaderTitleHost}
-      mobileTitleReadView={shareAccess?.scope.kind === 'track' ? undefined : (controls) => <TrackSelector track={track} controls={controls}
+      mobileTitleReadView={(controls) => <TrackSelector track={track} controls={controls}
         onOpenTracks={() => openMobileSection({ kind: 'tracks', areaId: track.areaId, returnTo: 'report' })} />}
       track={track}
       canReopenTrack={canReopenTrack}
       canCloseTrack={canCloseTrack}
-      adminGrantedAt={adminGrantedAt}
+      adminGrantedAt={null}
       cards={panelCards}
       /* Derived from the report's own blocks, so the panel and the document
          cannot disagree about what tasks exist. */
@@ -1805,12 +1739,10 @@ function TrackRouteBody({
       onOpenCard={(cardId) => { if (!compactViewport && workbench.cardIds.has(cardId)) { workbench.reveal(cardId); return; } go({ name: 'track', trackId: track.id, cardId, from: routeFrom }); }}
       onDeleteCard={cardDeletion.request}
       onSetWorkbench={(cardId, inWorkbench) => {
-        if (isPergaTrack) {
+
           preferences.setTerminalWorkbench(track.id, cardId, inWorkbench);
           return;
-        }
-        void terminalPlacementFeedback.run(trackMutations.setTerminalWorkbench(track.id, cardId, inWorkbench),
-          () => 'Could not move this terminal. Try again.');
+
       }}
       board={
         <CardGridOverlay
@@ -1851,37 +1783,24 @@ function TrackRouteBody({
       onClosePanel={() => { closePanel(track.id); }}
       /* `?from=` is the whole memory of how the reader got here; absent means Pages. */
       mobileBackLabel={routeFrom === 'area' ? 'Tracks' : 'Pages'}
-      onMobileBack={shareAccess?.scope.kind === 'track' ? undefined : () => {
+      onMobileBack={() => {
         if (routeFrom === 'area') openMobileSection({ kind: 'tracks', areaId: track.areaId });
         else openMobileSection({ kind: 'pages' });
       }}
       report={<>
-        {pergaMode && reportHeader}
+        {reportHeader}
         {center !== undefined && <div className={mobileChatStyles.embeddedSlot} hidden={!centerActive}>
           {center.render(<div ref={setCenterHost} className={mobileChatStyles.embeddedSlot} />)}
         </div>}
-        {!centerActive && <>{!pergaMode && reportHeader}{(!chat.isOpen || chat.selectedConversationId !== plannerCard?.id) && workspaceNotice}
-        {canCloseTrack && shareAccess === null && !(report?.blocks?.some((block) => block.kind === 'checkpoints' || block.kind === 'widget') ?? false) &&
+        {!centerActive && <>{false}{(!chat.isOpen || chat.selectedConversationId !== plannerCard?.id) && workspaceNotice}
+        {canCloseTrack && !(report?.blocks?.some((block) => block.kind === 'checkpoints' || block.kind === 'widget') ?? false) &&
           <WorkerDispatchControl key={track.id} trackId={track.id} transport={transport} unauthorized={unauthorized} />}
         {reportRegion}</>}
       </>}
-      backlinks={backlinks !== undefined && (backlinks.backlinks.length > 0 || backlinks.truncated || backlinks.skipped_sources > 0)
-        ? (
-          <ReportBacklinks inline
-            trackId={track.id}
-            backlinks={backlinks}
-            onOpen={(trackId, blockId) => {
-              // Same track keeps the return surface; a backlink into another track
-              // is a departure and carries nothing.
-              go({ name: 'track', trackId, blockId, from: trackId === track.id ? routeFrom : undefined });
-            }}
-          />
-        )
-        : undefined}
       mobileChatComposer={chat.dock}
-      conversationContextList={!pergaMode || !centerActive || rows.length > 1 ? chat.contextList : undefined}
-      conversationList={!pergaMode || !centerActive || rows.length > 1 ? chat.list : undefined}
-      onStartConversation={!pergaMode || !centerActive || rows.length > 1 ? chat.startConversation : undefined}
+      conversationContextList={!centerActive || rows.length > 1 ? chat.contextList : undefined}
+      conversationList={!centerActive || rows.length > 1 ? chat.list : undefined}
+      onStartConversation={!centerActive || rows.length > 1 ? chat.startConversation : undefined}
       showConversationAction={!centerActive}
       conversationOpen={!centerActive && chat.isOpen}
       unread={trackReceipts.isTrackUnread(track.id, track.notifiableSessions)}
@@ -1894,7 +1813,7 @@ function TrackRouteBody({
       }}
       onRenameTrack={(title) => trackMutations.patch(track.id, track.areaId, { title }).then(() => undefined)}
       closedControl={closedControl}
-      onDeleteTrack={shareAccess === null ? (signal) => trackMutations.remove(track.id, track.areaId, signal) : undefined}
+      onDeleteTrack={(signal) => trackMutations.remove(track.id, track.areaId, signal)}
       onTrackDeleted={() => go({ name: 'today' })}
     />
     </TrackStage>
@@ -1921,7 +1840,6 @@ function TrackRouteBody({
       )}
     </Dialog>
     <DeleteConfirmDialog confirm={cardDeletion} copy={DELETE_CARD_COPY} />
-    <OperationFeedback feedback={terminalPlacementFeedback} />
     {/* Only while the dialog is closed: `NewCardForm` renders the same `error` inline. */}
     {cardDraft === null && <OperationFeedback feedback={cardCreateFeedback}
       action={retryCardCreate === null ? undefined : <Button label="Try again" variant="ghost" onClick={retryCardCreate} />} />}

@@ -16,8 +16,6 @@ export const trackReportPrefix = () => ['track-report'] as const;
 export const trackViews = (trackId: string) => ['track-views', trackId] as const;
 export const trackViewsPrefix = () => ['track-views'] as const;
 export const overlaysByKind = (entityKind: 'track' | 'card') => ['overlays', entityKind] as const;
-export const plugins = () => ['plugins'] as const;
-export const pluginDataPrefix = (id: string) => ['plugin-data', id] as const;
 export const trackTemplates = () => ['track-templates'] as const;
 export const transcriptPrefix = () => ['harness-items'] as const;
 export const transcript = (cardId: string) => ['harness-items', cardId] as const;

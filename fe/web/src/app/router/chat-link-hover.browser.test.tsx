@@ -62,7 +62,7 @@ async function setup({ streaming = false, historySuffix = '', narrow = false, fi
   const root = document.createElement('div'); root.id = 'root'; document.body.append(root);
   render(<Profiler id="source-isolation" onRender={() => {
     if (observing && document.getElementById('conversation-chat-card') === null
-      && page.getByRole('complementary', { name: '来源正文预览 · 示例摘要', exact: true }).query() !== null) stale.push('source survived switch');
+      && page.getByRole('complementary', { name: '来源', exact: true }).query() !== null) stale.push('source survived switch');
   }}><QueryClientProvider client={client}><ThemeProvider><RouterProvider router={router} /></ThemeProvider></QueryClientProvider></Profiler>, { container: root });
   await page.getByRole('button', { name: /^Conversation Link chat/ }).click();
   return { requests, router, client, stale, switchTo: (id: string) => {
@@ -74,36 +74,19 @@ async function setup({ streaming = false, historySuffix = '', narrow = false, fi
   } };
 }
 
-it('previews chat evidence through the production router in the conversation track', async () => {
+it('shows missing captured sources without ghost requests and previews real Track files', async () => {
   const { requests } = await setup();
-  await expect.element(page.getByRole('button', { name: 'Chat source', exact: true })).toBeVisible();
-  expect(requests.filter(request => request.path.includes('/sources/') || request.path.includes('/files') || request.path === '/api/v1/tracks/reference-demo')).toHaveLength(0);
   await page.getByRole('button', { name: 'Chat source', exact: true }).hover();
-  await expect.element(page.getByRole('heading', { name: '来源正文预览 · 示例摘要', exact: true })).toBeVisible();
-  const trigger = page.getByRole('button', { name: 'Chat source', exact: true }).element().getBoundingClientRect();
-  const preview = page.getByRole('dialog', { name: 'Preview: Chat source' }).element().getBoundingClientRect();
-  const gap = Math.max(preview.left - trigger.right, trigger.left - preview.right, preview.top - trigger.bottom, trigger.top - preview.bottom);
-  expect(gap).toBeGreaterThanOrEqual(0);
-  expect(gap).toBeLessThanOrEqual(14);
-  expect(requests.filter(request => request.path.includes('/sources/')).map(request => request.path))
-    .toEqual(['/api/tracks/link-preview/sources/src_0971fbde']);
-  await page.getByRole('button', { name: 'Chat report', exact: true }).hover();
-  await expect.element(page.getByRole('button', { name: '另一报告的来源', exact: true })).toBeVisible();
-  await page.getByRole('button', { name: '另一报告的来源', exact: true }).hover();
-  await expect.element(page.getByRole('heading', { name: '另一报告保存的来源 · 示例', exact: true })).toBeVisible();
-  expect(requests.some(request => request.path === '/api/tracks/reference-demo/sources/src_0971fbde')).toBe(true);
-  await page.getByRole('button', { name: '另一报告的来源', exact: true }).click();
-  await expect.element(page.getByRole('complementary', { name: '另一报告保存的来源 · 示例', exact: true })).toBeVisible();
-  await page.getByRole('button', { name: '关闭来源', exact: true }).click();
+  await expect.element(page.getByRole('heading', { name: '来源缺失', exact: true })).toBeVisible();
+  expect(requests.some(request => request.path.includes('/sources/'))).toBe(false);
   await page.getByRole('button', { name: 'Chat file', exact: true }).hover();
   await expect.element(page.getByRole('heading', { name: 'Chat file contents', exact: true })).toBeVisible();
   expect(requests.some(request => request.path === '/api/v1/tracks/link-preview/files?path=notes.md')).toBe(true);
-  // Nearby previews may cover other links; Escape restores the reading surface.
   await userEvent.keyboard('{Escape}');
   await expect.poll(() => page.getByRole('dialog', { name: 'Preview: Chat file' }).query()).toBeNull();
   await page.getByRole('button', { name: 'Chat source', exact: true }).click();
-  await expect.element(page.getByRole('complementary', { name: '来源正文预览 · 示例摘要', exact: true })).toBeVisible();
-  await expect.poll(() => page.getByRole('dialog', { name: 'Preview: Chat file' }).query()).toBeNull();
+  await expect.element(page.getByRole('complementary', { name: '来源', exact: true })).toBeVisible();
+  expect(requests.some(request => request.path.includes('/sources/'))).toBe(false);
 });
 
 it.each(['history', 'incremental'])('rejects malformed navigation hrefs without losing the %s reply', async mode => {
@@ -180,13 +163,13 @@ it.each([['Today', '/'], ['Legacy Today', '/today']])('preserves application nav
 it('clears source selection synchronously across same-Track A to B to A', async () => {
   const { switchTo, stale } = await setup();
   await page.getByRole('button', { name: 'Chat source', exact: true }).click();
-  await expect.element(page.getByRole('complementary', { name: '来源正文预览 · 示例摘要', exact: true })).toBeVisible();
+  await expect.element(page.getByRole('complementary', { name: '来源', exact: true })).toBeVisible();
   switchTo('chat-b');
   await expect.poll(() => document.getElementById('conversation-chat-b')?.querySelector('[data-nc-thread]') ?? null).not.toBeNull();
-  expect(page.getByRole('complementary', { name: '来源正文预览 · 示例摘要', exact: true }).query()).toBeNull();
+  expect(page.getByRole('complementary', { name: '来源', exact: true }).query()).toBeNull();
   switchTo('chat-card');
   await expect.poll(() => document.getElementById('conversation-chat-card')?.querySelector('[data-nc-thread]') ?? null).not.toBeNull();
-  expect(page.getByRole('complementary', { name: '来源正文预览 · 示例摘要', exact: true }).query()).toBeNull();
+  expect(page.getByRole('complementary', { name: '来源', exact: true }).query()).toBeNull();
   expect(stale).toEqual([]);
 });
 

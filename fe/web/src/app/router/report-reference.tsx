@@ -1,23 +1,23 @@
-import type { TrackAggregateSnapshotDto } from '../../../../core/api/schemas.ts';
+import { useQuery } from '@tanstack/react-query';
+import { useMemo } from 'react';
+import type { TrackAggregateSnapshotDto } from "../../../../core/api/perga-v1.ts";
 import { EmptyState } from '../../ui/empty-state/public.tsx';
 import { Icon } from '../../ui/icon/public.tsx';
-import { useMemo } from 'react';
-import { useQuery } from '@tanstack/react-query';
 
+import { trackDtoToWire } from '../../../../core/api/track-projection.ts';
 import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
-import { readFailureOf, readFailureText } from '../../../../core/domain/read-failure.ts';
-import { readReportDocument, type ReportLinkTarget, type TrackReport } from '../../../../core/domain/report.ts';
-import type { ReportSourceLinkTarget } from '../../../../core/domain/report-source.ts';
+import { readFailureOf,readFailureText } from '../../../../core/domain/read-failure.ts';
 import type { ReportFileLinkTarget } from '../../../../core/domain/report-file.ts';
-import { toTrack, trackDtoToWire } from '../../../../core/domain/track.ts';
+import type { ReportSourceLinkTarget } from '../../../../core/domain/report-source.ts';
+import { readReportDocument,type ReportLinkTarget,type TrackReport } from '../../../../core/domain/report.ts';
+import { toTrack,} from '../../../../core/domain/track.ts';
 import { ReportDocument } from '../../features/report/document/public.tsx';
 import { ErrorBox } from '../../ui/error-box/public.tsx';
 import { createTrackWorkspaceFilesPort } from '../providers/directory.ts';
 import { trackDetailQueryOptions } from '../providers/queries.ts';
-import { useReportSeriesResolver } from './report-series.ts';
-import { useTrackTemplateViews } from './report-views.ts';
 import { ReportSourcePreview } from './report-source.tsx';
+import { useTrackTemplateViews } from './report-views.ts';
 
 type Navigation = Readonly<{
   onOpenLink: (target: ReportLinkTarget) => void;
@@ -55,13 +55,12 @@ function ReferenceDocument({ transport, unauthorized, target, detail, report, on
 }>) {
   const files = useMemo(() => createTrackWorkspaceFilesPort(transport, unauthorized, target.trackId),
     [transport, unauthorized, target.trackId]);
-  const resolveSeries = useReportSeriesResolver(transport, target.trackId, report.blocks, unauthorized);
   const templateViews = useTrackTemplateViews(transport, target.trackId, report.blocks, unauthorized);
   return <ReportDocument report={report} empty={<EmptyReportReference />} fileRoot={toTrack(trackDtoToWire(detail.track)).agentCwd}
     onOpenLink={onOpenLink} onOpenSourceLink={source => onOpenSource(target.trackId, source)}
     onOpenFileLink={file => onOpenFile(target.trackId, file)}
     templateViews={templateViews}
-    resolveSeries={resolveSeries}
+
     linkPreview={{ files, trackId: target.trackId, report,
       renderSource: source => <ReportSourcePreview transport={transport} unauthorized={unauthorized} trackId={target.trackId} target={source} />,
       renderReference: reference => <ReportReferencePreview transport={transport} unauthorized={unauthorized} target={reference}

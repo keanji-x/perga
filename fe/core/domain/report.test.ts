@@ -1,12 +1,14 @@
-import { describe, expect, it } from 'vitest';
+import { describe,expect,it } from 'vitest';
 
-import type { CardWire } from './track.js';
 import {
-  backlinkCountsByBlock, deriveReportOutline, deriveReportTasks, groupBacklinks, hasLiveTaskRun,
-  parseReportLink, readTrackReport, TASK_STATUS_DETAIL_LIMIT, TRACK_REPORT_CARD_KIND, trackPreviewsOperation,
-  trackTaskVerdictsOperation, taskBlockPayloadSchema,
-  type TaskVerdict, type TrackBacklink,
+backlinkCountsByBlock,deriveReportOutline,deriveReportTasks,groupBacklinks,hasLiveTaskRun,
+parseReportLink,readTrackReport,TASK_STATUS_DETAIL_LIMIT,
+taskBlockPayloadSchema,
+TRACK_REPORT_CARD_KIND,
+trackTaskVerdictsOperation,
+type TaskVerdict,type TrackBacklink
 } from './report.js';
+import type { CardWire } from './track.js';
 
 function card(overrides: Partial<CardWire> = {}): CardWire {
   return {
@@ -230,17 +232,6 @@ describe('preview blocks', () => {
     ['a field the kernel refuses', { key: 'fe', port: 4050 }],
   ])('degrades a preview block with %s to unsupported', (_label, payload) => {
     expect(firstBlock(payload)).toEqual({ id: 'b-1', kind: 'unsupported', declaredKind: 'preview' });
-  });
-});
-
-describe('trackPreviewsOperation', () => {
-  it('GETs the previews route with the id escaped and reads the list', () => {
-    const operation = trackPreviewsOperation('w/1');
-    expect(operation.method).toBe('GET');
-    expect(operation.path).toBe('/api/tracks/w%2F1/previews');
-    const previews = [{ key: 'fe', title: 'FE', port: 4050, live: true }];
-    expect(operation.responseSchema.parse({ previews })).toEqual({ previews });
-    expect(() => operation.responseSchema.parse({ previews: [{ key: 'fe', title: 'FE', port: 4050 }] })).toThrow();
   });
 });
 

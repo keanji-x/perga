@@ -1,13 +1,13 @@
 /** One typed read contract over the existing transcript resource. Display identities are not native turns. */
 
 import { DEPLOYMENT_OWNER_USER_ID } from '../api/auth.js';
+import type { ConversationCursor,ConversationDisplayItem as WireDisplayItem } from '../api/generated/wire.js';
+import { sessionItemsPageDtoSchema,type SessionItemsPageDto } from "../api/perga-v1.js";
 import type { ApiOperation } from '../api/types.js';
-import { sessionItemsPageDtoSchema, type SessionItemsPageDto } from '../api/schemas.js';
-import type { ConversationCursor, ConversationDisplayItem as WireDisplayItem } from '../api/generated/wire.js';
-import { retireFollowedThoughts, SYSTEM_PRESENTATION_LABELS, systemInputPresentationSchema, type TranscriptEntry } from './conversation.js';
-import { thinkingActivityContent, toolActivityContent } from './conversation-activity-content.js';
+import { thinkingActivityContent,toolActivityContent } from './conversation-activity-content.js';
 import type { LiveReplyTranscriptRow } from './conversation-live.js';
-import { conversationToolQuestion, conversationToolShape } from './conversation-tool.js';
+import { conversationToolQuestion,conversationToolShape } from './conversation-tool.js';
+import { retireFollowedThoughts,SYSTEM_PRESENTATION_LABELS,systemInputPresentationSchema,type TranscriptEntry } from './conversation.js';
 
 /** Authored fixtures and canonical human/system metadata use the same renderer contract. */
 type AuthoredSource = Exclude<Extract<WireDisplayItem['source'], { kind: 'human' | 'system' | 'removed' }>, { kind: 'system' }>

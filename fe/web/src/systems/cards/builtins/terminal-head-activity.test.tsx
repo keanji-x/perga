@@ -1,5 +1,5 @@
-import { cleanup, render, screen, within } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { cleanup,render,screen,within } from '@testing-library/react';
+import { afterEach,describe,expect,it,vi } from 'vitest';
 
 import type { CardActivity } from '../../../../../core/domain/activity.ts';
 import { cardWireSchema } from '../../../../../core/domain/track.ts';
@@ -45,7 +45,7 @@ function mountConnected(kind: string, activity: CardActivity | null) {
   ]} visible activeCardId="card-1" />);
 }
 
-describe.each(['terminal', 'codex', 'claude'])('%s terminal head, connected', (kind) => {
+describe.each(['terminal'])('%s terminal head, connected', (kind) => {
   it('speaks the kernel verdict beside its marker', async () => {
     mountConnected(kind, 'working');
     await screen.findByTestId('connected-surface');

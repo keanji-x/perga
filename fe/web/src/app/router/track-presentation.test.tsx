@@ -1,14 +1,14 @@
-import { fixtureTrack, fixtureSnapshot, fixtureReport } from './session-contract-fixture.ts';
-import { act, cleanup, screen, waitFor } from '@testing-library/react';
-import { afterEach, expect, it, vi } from 'vitest';
-import { prepareReportDocument, type PreparedReport, type ReportPreparationPort } from '../../features/report/document/preparation.ts';
+import { act,cleanup,screen,waitFor } from '@testing-library/react';
+import { afterEach,expect,it,vi } from 'vitest';
+import type { TrackAggregateSnapshotDto } from "../../../../core/api/perga-v1.ts";
+import type { ApiRequest,ApiTransportResponse } from '../../../../core/api/types.ts';
 import type { TrackReport } from '../../../../core/domain/report.ts';
-import type { ApiRequest, ApiTransportResponse } from '../../../../core/api/types.ts';
-import type { TrackAggregateSnapshotDto } from '../../../../core/api/schemas.ts';
-import { queryKeys } from '../providers/queries.ts';
 import * as markdown from '../../../../core/markdown/public.ts';
-import { renderDailyFixture } from './daily-planner-fixture.tsx';
+import { prepareReportDocument,type PreparedReport,type ReportPreparationPort } from '../../features/report/document/preparation.ts';
+import { queryKeys } from '../providers/queries.ts';
 import { createReadReceiptsKernel } from '../providers/read-receipts-fixture.tsx';
+import { renderDailyFixture } from './daily-planner-fixture.tsx';
+import { fixtureReport,fixtureSnapshot,fixtureTrack } from './session-contract-fixture.ts';
 
 const SOURCE = '# Staged report\n\nCurrent **evidence** and report content.';
 function setup(prepareReport: ReportPreparationPort = prepareReportDocument, initial = '/track/daily', reply?: (request: ApiRequest) => ApiTransportResponse | undefined | Promise<ApiTransportResponse | undefined>) {

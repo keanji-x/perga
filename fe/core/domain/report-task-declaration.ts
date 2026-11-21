@@ -1,4 +1,4 @@
-import type { ReportBlockDto } from '../api/schemas.js';
+import type { ReportBlockDto } from "../api/perga-v1.js";
 
 function jsonObject(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value)

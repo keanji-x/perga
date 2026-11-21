@@ -30,6 +30,7 @@ export function setup(path: string, areaName: string = AREA.name, onRequest: (re
       onRequest(request);
       const receipt = await receipts?.reply(request);
       if (receipt !== undefined) return receipt;
+      if (request.path.includes('/workspace-options')) return ok({ defaultId: 'direct', options: [{ id: 'direct', label: 'Direct folder', description: 'Use this folder' }] });
       if (request.path.startsWith('/api/v1/bootstrap')) return ok(fixtureBootstrap());
       if (request.path === '/api/v1/areas' && request.method === 'POST') {
         const body = request.body as { name: string; color: string; defaultCwd?: string | null };

@@ -356,7 +356,7 @@ describe('taskStatusPhrase', () => {
 /* The card's task status is keyed by the worker's identity, so it holds for a card the board cannot draw too. */
 it('groups a completed task’s card as completed even while its worker process remains alive', () => {
   const view = deriveTrackPageView({ existingCardIds: new Set(["finished-worker"]),
-    cards: [card({ id: 'finished-worker', runtime: { worker_session_id: 'runtime', kind: 'codex', status: 'running' } })],
+    cards: [card({ id: 'finished-worker', runtime: { worker_session_id: 'runtime', kind: 'managed-assistant', status: 'running' } })],
     tasks: [task({ status: 'done', kind: 'codex', workerCardId: 'finished-worker' })], activity: NEUTRAL_ACTIVITY,
     openableCards: new Set(),
   });
@@ -368,8 +368,8 @@ it('groups a completed task’s card as completed even while its worker process 
 it('labels a superseded worker card’s live status as its session’s, leaving the current worker’s task status bare', () => {
   const [stale, current] = deriveTrackPageView({ existingCardIds: new Set(["old-worker","new-worker"]),
     cards: [
-      card({ id: 'old-worker', title: 'alpha-task', kind: 'codex', runtime: { worker_session_id: 's1', kind: 'codex', status: 'running' } }),
-      card({ id: 'new-worker', title: 'alpha-task', kind: 'codex', runtime: { worker_session_id: 's2', kind: 'codex', status: 'running' } }),
+      card({ id: 'old-worker', title: 'alpha-task', kind: 'codex', runtime: { worker_session_id: 's1', kind: 'managed-assistant', status: 'running' } }),
+      card({ id: 'new-worker', title: 'alpha-task', kind: 'codex', runtime: { worker_session_id: 's2', kind: 'managed-assistant', status: 'running' } }),
     ],
     tasks: [{ ...task({ key: 'alpha-task', status: 'done', kind: 'codex', workerCardId: 'old-worker' }), execution: {
       sessionId: 'a2', runCount: 2, createdAtMs: 1000, finishedAtMs: null, status: 'done', label: 'Done', statusDetail: null, workerCardId: 'new-worker', blockingReason: null,
@@ -546,7 +546,7 @@ it('retains zero timestamps and stable ties without a request-time substitute', 
 
 
 it('does not describe a live harness turn_pending state as queued work', () => {
-  const view = deriveTrackPageView({ existingCardIds: new Set(["card-1"]), cards: [card({ runtime: { worker_session_id: 'live', kind: 'codex', status: 'turn_pending' } })],
+  const view = deriveTrackPageView({ existingCardIds: new Set(["card-1"]), cards: [card({ runtime: { worker_session_id: 'live', kind: 'managed-assistant', status: 'turn_pending' } })],
     tasks: [], activity: NEUTRAL_ACTIVITY, openableCards: new Set() });
   const row = view.desktop.rowModules[1].rows[0];
   expect(row.status?.token).toBe('turn_pending');

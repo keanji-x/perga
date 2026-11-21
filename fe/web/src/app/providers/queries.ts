@@ -1,90 +1,89 @@
+import type { ConversationCursor,ConversationLiveReplies,UploadAttachmentResponse } from '../../../../core/api/generated/wire.ts';
 import { KeyedSendFailure } from '../../../../core/domain/conversation-delivery.ts';
+import { conversationItemsOperation,conversationRunOperation,type ConversationRun } from '../../../../core/domain/conversation-display.ts';
+import { conversationLiveOperation } from '../../../../core/domain/conversation-live.ts';
 import type { ConversationSendTarget } from '../../../../core/domain/conversation-outbox.ts';
 import { retireAreaQueries } from './area-query-lifecycle.ts';
 import { queryKeys } from './query-keys.ts';
 export { queryKeys } from './query-keys.ts';
-import { conversationItemsOperation, conversationRunOperation, type ConversationRun } from '../../../../core/domain/conversation-display.ts';
-import { conversationLiveOperation } from '../../../../core/domain/conversation-live.ts';
-import type { ConversationCursor, ConversationLiveReplies } from '../../../../core/api/generated/wire.ts';
 // Query and mutation wiring shared by app/router, app/shell and every feature slice. It lives under
 // app/providers because the router renders the shell and both need the same reads (`no-circular`).
 
-import { conversationInputMetadata } from '../../../../core/events/invalidation-plan.ts';
 import {
-  keepPreviousData, useQueries, useQuery, useQueryClient, type QueryClient, type UseQueryResult,
+keepPreviousData,useQueries,useQuery,useQueryClient,type QueryClient,type UseQueryResult,
 } from '@tanstack/react-query';
-import { hasReadFailure } from './query-read-feedback.ts';
-import { useMemo, useRef } from 'react';
-import { admitTransport, useRecoveryMutation } from './recovery-mutation.ts';
+import { useMemo,useRef } from 'react';
 import { z } from 'zod';
-import { bootstrapDtoSchema, type AgentProvider, type TrackAggregateSnapshotDto, type ReportReadResultDto } from '../../../../core/api/schemas.ts';
 import type { TrackOverlayItemDto } from '../../../../core/api/perga-v1.ts';
+import { bootstrapDtoSchema,type ReportReadResultDto,type TrackAggregateSnapshotDto } from "../../../../core/api/perga-v1.ts";
+import { type AgentProvider } from "../../../../core/api/schemas.ts";
+import { conversationInputMetadata } from '../../../../core/events/invalidation-plan.ts';
+import { admitTransport,useRecoveryMutation } from './recovery-mutation.ts';
 
 import { performApiRequest } from '../../../../core/api/client.ts';
-import type { ApiOperation, ApiTransportPort } from '../../../../core/api/types.ts';
+import type {
+AskAnswer,PlannerPermissionMode
+} from '../../../../core/api/generated/wire.ts';
+import type { ApiOperation,ApiTransportPort } from '../../../../core/api/types.ts';
 import type { UnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
+import { type AskId,type AskQuestion } from '../../../../core/domain/activity.ts';
+import { decideApprovalOperation,type PendingApproval } from '../../../../core/domain/approval.ts';
 import {
-  asFolderConflict, areaListOperation, areaCreationCapabilityOperation, createAreaOperation,
+  asFolderConflict, areaListOperation, createAreaOperation,
   createExecutionTargetOperation, deleteAreaOperation,
   executionTargetsOperation, newestArea, sortedAreas, toArea, updateAreaOperation, visibleAreas,
   type Area, type AreaPatchBody, type CreateExecutionTargetBody, type ExecutionTargetDto, type FolderConflict, type NewAreaBody,
 } from '../../../../core/domain/area.ts';
+import { answerAskOperation } from '../../../../core/domain/ask.ts';
+import type { CreatedConversation,SideConversation } from '../../../../core/domain/conversation.ts';
 import {
-  deriveReportTasks, hasLiveTaskRun, readTrackViewsOperation, trackBacklinksOperation, trackPreviewsOperation, trackTaskVerdictsOperation,
-  updateTrackReportBlockOperation,
-  type HumanReportBlockUpdateBody, type ReportBlock, type TaskVerdict, type TemplateViewsProjection, type TrackBacklinks, type TrackPreviews,
+compactPlannerOperation,
+createSerialWriter,
+createTrackConversationOperation,
+interruptPlannerOperation,
+modelCatalogOperation,
+recoverSessionOperation,
+removeQueuedSessionMessageOperation,
+sendPlannerInputOperation,
+setConversationArchiveOperation,
+setPlannerModelOperation,
+steerQueuedSessionMessageOperation,
+type ModelCatalogScope,type ModelSelection,type ModelSelectionResult
+} from '../../../../core/domain/conversation.ts';
+import {
+ApiError,classifyFailure,DELETE_FAILURES
+} from '../../../../core/domain/failure-class.ts';
+import { setPlannerPermissionModeOperation,type SetPlannerPermissionModeResponse } from '../../../../core/domain/planner-permission-mode.ts';
+import {
+type ResolvedSeries
+} from '../../../../core/domain/report-series.ts';
+import { type TrackSourceDetail } from '../../../../core/domain/report-source.ts';
+import {
+deriveReportTasks,hasLiveTaskRun,readTrackViewsOperation,
+trackTaskVerdictsOperation,
+updateTrackReportBlockOperation,
+type HumanReportBlockUpdateBody,type ReportBlock,type TaskVerdict,type TemplateViewsProjection
 } from '../../../../core/domain/report.ts';
 import {
-  staleRevBodySchema, trackReportSeriesOperation, type ResolvedSeries, type SeriesDetail,
-} from '../../../../core/domain/report-series.ts';
-import { trackSourceOperation, type TrackSourceDetail } from '../../../../core/domain/report-source.ts';
-import { type AskId, type AskQuestion } from '../../../../core/domain/activity.ts';
-import { answerAskOperation } from '../../../../core/domain/ask.ts';
-import { decideApprovalOperation, type PendingApproval } from '../../../../core/domain/approval.ts';
-import { probeFailureText, readErrorText } from '../../../../core/domain/read-failure.ts';
-import {
-  checkConnectorOperation, CONNECTOR_CHECK_TEXT, type ConnectorCheckResult,
-  installConnectorOperation, installLocalPathOperation, patchPluginConfigOperation,
-  pluginDetailOperation, pluginsOperation, reloadPluginOperation, setPluginEnabledOperation,
-  uninstallPluginOperation, PLUGIN_TOGGLE_FAILURES, PLUGIN_TOGGLE_TEXT, PLUGIN_UNINSTALL_FAILURES,
-  type ConnectorInstallDraft, type InstalledPlugin, type PluginConfigApplyResult,
-  type PluginConfigSaveResult, type PluginConfigValue, type PluginDetail, type PluginListItem,
-  type PluginRestartFacts,
-} from '../../../../core/domain/plugins.ts';
-import {
-  putSettingsOperation, settingsOperation, type SettingsBag, type SettingsPatch,
-} from '../../../../core/domain/settings.ts';
-import {
-  createCardOperation, createClaudeCardOperation, createCodexCardOperation, createTerminalCardOperation, setTerminalWorkbenchOperation, createTrackOperation,
-  createTrackRecipeOperation, deleteTerminalOperation, deleteTrackOperation, deleteTrackRecipeOperation,
-  listTrackTerminalsOperation, trackOverlaysOperation, recipeSaveAttempts, recipeSaveLanded, toTrack, updateTrackOperation, updateTrackRecipeOperation,
-  NEUTRAL_ACTIVITY, sortAreaTracksByRecent, trackActivitiesFromOverlays, trackDetailOperation, trackRecipeOperation, trackRecipesOperation,
-  tracksInAreaOperation,
-  type CardWire, type NewCardBody, type NewClaudeCardBody, type NewCodexCardBody, type NewTerminalCardBody,
-  type NewTrackBody,
-  type Track, type TrackPatchBody, type TrackRecipe,
+createTerminalCardOperation,
+createTrackOperation,
+deleteTerminalOperation,deleteTrackOperation,
+listTrackTerminalsOperation,
+NEUTRAL_ACTIVITY,sortAreaTracksByRecent,
+toTrack,
+trackActivitiesFromOverlays,trackDetailOperation,
+trackOverlaysOperation,
+tracksInAreaOperation,
+updateTrackOperation,
+type CardWire,
+type NewTerminalCardBody,
+type NewTrackBody,
+type Track,type TrackPatchBody
 } from '../../../../core/domain/track.ts';
-import {
-  recoverSessionOperation, compactPlannerOperation, interruptPlannerOperation, sendPlannerInputOperation, steerQueuedSessionMessageOperation, removeQueuedSessionMessageOperation,
-  createTrackConversationOperation, setConversationArchiveOperation,
-  createSerialWriter,
-  modelCatalogOperation, setPlannerModelOperation,
-  uploadPlannerAttachmentOperation, PLANNER_ATTACHMENT_FAILURES, UPLOAD_TEXT,
-  type ModelCatalogScope, type ModelSelection, type ModelSelectionResult,
-} from '../../../../core/domain/conversation.ts';
-import { setPlannerPermissionModeOperation, type SetPlannerPermissionModeResponse } from '../../../../core/domain/planner-permission-mode.ts';
-import {
-  ApiError, classifyFailure, DELETE_FAILURES, DELETE_TEXT, refusalText, writeFailureOf, writeFailureText,
-} from '../../../../core/domain/failure-class.ts';
-import { useState } from '../../ui/state/public.ts';
 import { useCommittedCallback } from '../../ui/state/committed-callback.ts';
-import { WEB_COMPAT_VERSION, type ServerVersionInfo } from './public.tsx';
-import type {
-  AskAnswer, PlannerPermissionMode, UploadAttachmentResponse,
-} from '../../../../core/api/generated/wire.ts';
 import type { ConversationRegistry } from '../conversations/registry-model.ts';
 import { cancelThenInvalidate } from '../events/query-refresh.ts';
-import type { SideConversation, CreatedConversation } from '../../../../core/domain/conversation.ts';
+import { WEB_COMPAT_VERSION,type ServerVersionInfo } from './public.tsx';
 
 
 
@@ -325,22 +324,7 @@ export function usePlannerMutations(transport: ApiTransportPort, cardId: string,
       setPermissionModeWrite(mode),
     /* No `refreshAfter`: an upload changes nothing any query holds until a send names it. Every failure, the
      * admission's included, rejects with the sentence the strip shows, read against the route's table. */
-    uploadAttachment: async (readBytes: () => Promise<Uint8Array>, contentType: string) => {
-      const failed = (error: unknown) => new Error(
-        refusalText(writeFailureOf(error), PLANNER_ATTACHMENT_FAILURES, UPLOAD_TEXT.refused) ?? UPLOAD_TEXT.unknown);
-      let admitted: ApiTransportPort;
-      let uploaded: UploadAttachmentResponse;
-      try {
-        admitted = admitTransport(transport);
-        const bytes = await readBytes();
-        uploaded = await runOperation(admitted, uploadPlannerAttachmentOperation(cardId, bytes, contentType), unauthorized);
-      } catch (error) { throw failed(error); }
-      // Keep admission attached to the value until the feature actually consumes it.
-      return () => {
-        try { admitted.recovery?.checkpoint()(); } catch (error) { throw failed(error); }
-        return uploaded;
-      };
-    },
+    uploadAttachment: (() => Promise.reject(new Error('Image attachments are unavailable.'))) as (readBytes: () => Promise<Uint8Array>, contentType: string) => Promise<() => UploadAttachmentResponse>,
   };
 }
 
@@ -503,40 +487,6 @@ export function trackToolsQueryOptions(transport: ApiTransportPort, trackId: str
   };
 }
 
-/** Who cites this track. Its own cache entry: backlinks are written by OTHER tracks, so they go stale on edits this track never sees. */
-export function trackBacklinksQueryOptions(
-  transport: ApiTransportPort,
-  trackId: string,
-  unauthorized: UnauthorizedChannel,
-  options?: Readonly<{ enabled?: boolean }>,
-) {
-  return {
-    queryKey: queryKeys.trackBacklinks(trackId),
-    queryFn: ({ signal }: { signal: AbortSignal }): Promise<TrackBacklinks> =>
-      runOperation(transport, { ...trackBacklinksOperation(trackId), signal }, unauthorized),
-    ...(options?.enabled !== undefined ? { enabled: options.enabled } : {}),
-  };
-}
-
-/** How often an open report with a `preview` block re-reads the registrations and their liveness. */
-export const TRACK_PREVIEWS_POLL_MS = 5000;
-
-/** The track's registered previews, each with a just-probed `live` bit. Polled: nothing announces a registration or a dev server coming up. */
-export function trackPreviewsQueryOptions(
-  transport: ApiTransportPort,
-  trackId: string,
-  unauthorized: UnauthorizedChannel,
-  options?: Readonly<{ enabled?: boolean }>,
-) {
-  return {
-    queryKey: queryKeys.trackPreviews(trackId),
-    queryFn: ({ signal }: { signal: AbortSignal }): Promise<TrackPreviews> =>
-      runOperation(transport, { ...trackPreviewsOperation(trackId), signal }, unauthorized),
-    refetchInterval: TRACK_PREVIEWS_POLL_MS,
-    ...(options?.enabled !== undefined ? { enabled: options.enabled } : {}),
-  };
-}
-
 export function trackViewsQueryOptions(
   transport: ApiTransportPort,
   trackId: string,
@@ -594,96 +544,6 @@ export function taskVerdictsRefetchInterval(blocks: readonly ReportBlock[] | nul
     return errorUpdateCount > 0 && errorUpdateCount <= TASK_VERDICT_RECOVERY_ATTEMPTS
       ? TASK_VERDICT_RECOVERY_POLL_MS
       : false;
-  };
-}
-
-export function settingsQueryOptions(transport: ApiTransportPort, unauthorized: UnauthorizedChannel) {
-  return {
-    queryKey: queryKeys.settings(),
-    queryFn: (): Promise<SettingsBag> => runOperation(transport, settingsOperation(), unauthorized),
-    // Settings writes emit no event. Poll only while this query is observed so
-    // another client's change reaches the open pane without a browser refresh.
-    refetchInterval: 15_000,
-  };
-}
-
-/** The user's own recipes for the independent management screen. Failed reads remain explicitly retryable. */
-export function trackRecipesQueryOptions(transport: ApiTransportPort, unauthorized: UnauthorizedChannel) {
-  return {
-    queryKey: queryKeys.trackRecipes(),
-    queryFn: (): Promise<TrackRecipe[]> => runOperation(transport, trackRecipesOperation(), unauthorized),
-    retry: false,
-  };
-}
-
-export type TrackRecipes = Readonly<{
-  refreshing: boolean;
-  refetch: () => void;
-  /** Never `undefined`: pending and failed are distinguished by loaded and error. */
-  recipes: TrackRecipe[];
-  /** A notice, not a blocker. Retained during a retry after the first failure. */
-  error: string | null;
-  /** `false` while the first read is in flight OR after it failed: "no recipes yet" is a claim about the server. */
-  loaded: boolean;
-}>;
-
-export function useTrackRecipes(transport: ApiTransportPort, unauthorized: UnauthorizedChannel): TrackRecipes {
-  const query = useQuery(trackRecipesQueryOptions(transport, unauthorized));
-  return {
-    refreshing: query.isFetching,
-    refetch: () => { void query.refetch(); },
-    recipes: query.data ?? [],
-    error: hasReadFailure(query) ? readErrorText(query.error, 'Could not load your recipes.') : null,
-    loaded: !query.isPending && !query.isError,
-  };
-}
-
-export type TrackRecipeMutations = Readonly<{
-  /** Keyed per save intent: a retry under the key answers with the recipe its first attempt saved. */
-  create: (body: { title: string; body: string }, idempotencyKey: string) => Promise<TrackRecipe>;
-  /**
-   * Whole-document `PUT` gated on `if_revision`. Resolves with the STORED row, which may differ from the
-   * bytes sent; rejects as `RECIPE_SAVE_FAILURES` reads it, a 409 being stale unless it answers a retry of a save
-   * whose outcome was unknown and the recipe read back holds exactly what that save sent.
-   */
-  save: (recipeId: string, body: { title: string; body: string; if_revision: number }) => Promise<TrackRecipe>;
-  remove: (recipeId: string) => Promise<void>;
-}>;
-
-export function useTrackRecipeMutations(
-  transport: ApiTransportPort,
-  unauthorized: UnauthorizedChannel,
-): TrackRecipeMutations {
-  const client = useQueryClient();
-  const [saves] = useState(() => recipeSaveAttempts());
-  const invalidate = () => { void client.invalidateQueries({ queryKey: queryKeys.trackRecipes() }); };
-  const create = useRecoveryMutation(transport, {
-    mutationFn: ({ body, key }: { body: { title: string; body: string }; key: string }, transport: ApiTransportPort) => runOperation(
-      transport, createTrackRecipeOperation(body, key), unauthorized,
-    ),
-    /* `onSettled`: a create whose answer was lost may have made the recipe, and the list is how the reader finds it. */
-    onSettled: invalidate,
-  });
-  const save = useRecoveryMutation(transport, {
-    mutationFn: ({ recipeId, body }: { recipeId: string; body: { title: string; body: string; if_revision: number } }, transport: ApiTransportPort) =>
-      saves(
-        { recipeId, body },
-        () => runOperation(transport, updateTrackRecipeOperation(recipeId, body), unauthorized),
-        async () => recipeSaveLanded(await runOperation(transport, trackRecipeOperation(recipeId), unauthorized), body),
-      ),
-    /* Invalidate but do not write the response through: it reaches the editor as the promise's value, and
-           two homes for one fact would drift. `onSettled` so a 409 also refetches the current revision. */
-    onSettled: invalidate,
-  });
-  const remove = useRecoveryMutation(transport, {
-    mutationFn: (recipeId: string, transport: ApiTransportPort) => runOperation(transport, deleteTrackRecipeOperation(recipeId), unauthorized),
-    /* `onSettled`: a delete that failed because the row was already gone still needs the list refetched. */
-    onSettled: invalidate,
-  });
-  return {
-    create: (body, key) => create.mutateAsync({ body, key }),
-    save: (recipeId, body) => save.mutateAsync({ recipeId, body }),
-    remove: async (recipeId) => { await remove.mutateAsync(recipeId); },
   };
 }
 
@@ -792,15 +652,6 @@ export function useAreaMutations(transport: ApiTransportPort, unauthorized: Unau
   const client = useQueryClient();
   const create = useRecoveryMutation(transport, {
     mutationFn: async ({ body, idempotencyKey }: { body: NewAreaBody; idempotencyKey: string }, transport: ApiTransportPort) => {
-      try {
-        const capability = await runOperation(transport, areaCreationCapabilityOperation(), unauthorized);
-        if (capability !== 'supported') {
-          throw new AreaCreatePreflightError('Update the server to enable safe Area creation.');
-        }
-      } catch (failure: unknown) {
-        if (failure instanceof AreaCreatePreflightError) throw failure;
-        throw new AreaCreatePreflightError('Could not check Area creation support.');
-      }
       return runOperation(transport, createAreaOperation(body, idempotencyKey), unauthorized);
     },
     onSuccess: (wire) => {
@@ -863,10 +714,6 @@ export type TrackMutations = Readonly<{
   patch: (trackId: string, areaId: string, body: TrackPatchBody) => Promise<Track>;
   setPinned: (trackId: string, areaId: string, pinned: boolean, nowMs: number) => Promise<Track>;
   createTerminal: (trackId: string, body: NewTerminalCardBody, idempotencyKey: string) => Promise<CardWire>;
-  setTerminalWorkbench: (trackId: string, cardId: string, inWorkbench: boolean) => Promise<CardWire>;
-  createCodex: (trackId: string, body: NewCodexCardBody, idempotencyKey: string) => Promise<CardWire>;
-  createClaude: (trackId: string, body: NewClaudeCardBody, idempotencyKey: string) => Promise<CardWire>;
-  createCard: (trackId: string, body: NewCardBody, idempotencyKey: string) => Promise<CardWire>;
   removeCard: (trackId: string, cardId: string, signal?: AbortSignal) => Promise<void>;
   remove: (trackId: string, areaId: string, signal?: AbortSignal) => Promise<void>;
   /** Answer one durable ask, one answer per question in order. A `409` rejects too: `ANSWER_ASK_FAILURES` reads it as done. */
@@ -935,33 +782,6 @@ export function useTrackMutations(transport: ApiTransportPort, unauthorized: Una
       runOperation(transport, createTerminalCardOperation(trackId, body, key), unauthorized),
     onSuccess: addToolToCache,
   });
-  const setTerminalWorkbench = useRecoveryMutation(transport, {
-    mutationFn: ({ cardId, inWorkbench }: { trackId: string; cardId: string; inWorkbench: boolean }, port: ApiTransportPort) =>
-      runOperation(port, setTerminalWorkbenchOperation(cardId, inWorkbench), unauthorized),
-    onSuccess: (card) => {
-      void client.cancelQueries({ queryKey: queryKeys.trackTools(card.track_id), exact: true });
-      client.setQueryData(queryKeys.trackTools(card.track_id), (previous: CardWire[] | undefined) => previous === undefined ? previous
-        : previous.map(existing => existing.id === card.id ? card : existing));
-    },
-    onSettled: (_card, _error, { trackId }) => {
-      void cancelThenInvalidate(client, queryKeys.trackTools(trackId));
-    },
-  });
-  const createCodex = useRecoveryMutation(transport, {
-    mutationFn: ({ trackId, body, key }: { trackId: string; body: NewCodexCardBody; key: string }, transport: ApiTransportPort) =>
-      runOperation(transport, createCodexCardOperation(trackId, body, key), unauthorized),
-    onSuccess: addToolToCache,
-  });
-  const createClaude = useRecoveryMutation(transport, {
-    mutationFn: ({ trackId, body, key }: { trackId: string; body: NewClaudeCardBody; key: string }, transport: ApiTransportPort) =>
-      runOperation(transport, createClaudeCardOperation(trackId, body, key), unauthorized),
-    onSuccess: addToolToCache,
-  });
-  const createCard = useRecoveryMutation(transport, {
-    mutationFn: ({ trackId, body, key }: { trackId: string; body: NewCardBody; key: string }, transport: ApiTransportPort) =>
-      runOperation(transport, createCardOperation(trackId, body, key), unauthorized),
-    onSuccess: addToolToCache,
-  });
   /* Delete drops the row from the tool cache before the refetch lands: leaving it on screen would keep
    * a PTY attached to a card the kernel has torn down. A delete answered done (404, `DELETE_FAILURES`) is gone the same
    * way. `onSettled`: an aborted wait says nothing about commit. */
@@ -1026,10 +846,6 @@ export function useTrackMutations(transport: ApiTransportPort, unauthorized: Una
     create: async (body, idempotencyKey) => toTrack(await create.mutateAsync({ body, idempotencyKey })),
     patch: patchTrack,
     createTerminal: async (trackId, body, key) => createTerminal.mutateAsync({ trackId, body, key }),
-    setTerminalWorkbench: async (trackId, cardId, inWorkbench) => setTerminalWorkbench.mutateAsync({ trackId, cardId, inWorkbench }),
-    createCodex: async (trackId, body, key) => createCodex.mutateAsync({ trackId, body, key }),
-    createClaude: async (trackId, body, key) => createClaude.mutateAsync({ trackId, body, key }),
-    createCard: async (trackId, body, key) => createCard.mutateAsync({ trackId, body, key }),
     removeCard: async (trackId, cardId, signal) => {
       await removeCard.mutateAsync({ trackId, cardId, signal });
     },
@@ -1044,306 +860,8 @@ export function useTrackMutations(transport: ApiTransportPort, unauthorized: Una
   };
 }
 
-/**
- * Settings › Plugins — the installed list. `retry: false` so a failed read says so and offers Retry.
- * `plugin.state` actively invalidates this list; 2-second polling while a row is spawning/installing
- * supplements event-driven refresh.
- */
-/* Frozen array, not a `Set`: `no-module-runtime-state` rejects a module-level `new`. */
-const PLUGIN_TRANSIENT_STATES = Object.freeze(['spawning', 'installing'] as const);
-
-export function pluginsQueryOptions(transport: ApiTransportPort, unauthorized: UnauthorizedChannel) {
-  return {
-    queryKey: queryKeys.plugins(),
-    queryFn: (): Promise<PluginListItem[]> => runOperation(transport, pluginsOperation(), unauthorized),
-    retry: false,
-    /* Polls only while a row is in motion and only while this pane holds the query. A counted cap was
-     * worse: `dataUpdateCount` also counts every enable/disable invalidation and never resets. */
-    refetchInterval: (query: { state: { data?: PluginListItem[] } }) =>
-      (query.state.data ?? []).some((plugin) =>
-        (PLUGIN_TRANSIENT_STATES as readonly string[]).includes(plugin.state))
-        ? PLUGIN_POLL_MS
-        : false as const,
-  };
-}
-
-const PLUGIN_POLL_MS = 2000;
-
-export type PluginMutations = Readonly<{
-  /** The plugins a lifecycle write is in flight for. */
-  pendingIds: ReadonlySet<string>;
-  /** The last failure per plugin, so one plugin's error cannot label another. */
-  errors: ReadonlyMap<string, string>;
-  /** The plugins whose LAST enable/disable succeeded. Per plugin, last-write-wins, disjoint from `errors` by construction. */
-  effectBoundaryIds: ReadonlySet<string>;
-  setEnabled: (id: string, enabled: boolean) => void;
-  /** Remove the plugin. The confirmation is the pane's. */
-  uninstall: (id: string) => void;
-}>;
-
-/**
- * Enable / disable, tracked PER PLUGIN: a single `useMutation` exposes only the latest call's state,
- * so two quick toggles mislabel each other. The response is not written through — enable answers while
- * the supervisor is still bringing the process up. `effectBoundaryIds` says a successful write did not
- * reach an already-running conversation (codex binds `dynamicTools` at thread start); set on success only, both directions.
- */
-export function usePluginMutations(transport: ApiTransportPort, unauthorized: UnauthorizedChannel): PluginMutations {
-  const client = useQueryClient();
-  /* A COUNT per id, not membership: the switch stays usable while a write is in flight, so one plugin can have two. */
-  const [pending, setPending] = useState<ReadonlyMap<string, number>>(() => new Map());
-  const [errors, setErrors] = useState<ReadonlyMap<string, string>>(() => new Map());
-  /* Membership, not a count: "has this plugin's last write settled successfully" is a yes/no. */
-  const [boundary, setBoundary] = useState<ReadonlySet<string>>(() => new Set());
-  const acquirePending = (id: string) => {
-    setPending((current) => new Map(current).set(id, (current.get(id) ?? 0) + 1));
-    return () => setPending((current) => {
-      const next = new Map(current);
-      const left = (current.get(id) ?? 1) - 1;
-      if (left <= 0) next.delete(id); else next.set(id, left);
-      return next;
-    });
-  };
-  /* `null` is `done`: the answer proves the intent already holds, so the row shows nothing. */
-  const showFailure = (id: string, text: string | null) => {
-    if (text !== null) setErrors((current) => new Map(current).set(id, text));
-  };
-  const write = useRecoveryMutation(transport, {
-    acquireLocal: ({ id }) => acquirePending(id),
-    mutationFn: ({ id, enabled }: { id: string; enabled: boolean }, transport: ApiTransportPort) =>
-      runOperation(transport, setPluginEnabledOperation(id, enabled), unauthorized),
-    onMutate: ({ id }) => {
-      setErrors((current) => {
-        if (!current.has(id)) return current;
-        const next = new Map(current);
-        next.delete(id);
-        return next;
-      });
-      /* Withdrawn while the next write is out: the sentence is about a SETTLED change. */
-      setBoundary((current) => {
-        if (!current.has(id)) return current;
-        const next = new Set(current);
-        next.delete(id);
-        return next;
-      });
-    },
-    onSuccess: (_data, { id }) => {
-      setBoundary((current) => (current.has(id) ? current : new Set(current).add(id)));
-    },
-    onError: (error, { id }) => { showFailure(id, writeFailureText(PLUGIN_TOGGLE_FAILURES, PLUGIN_TOGGLE_TEXT)(error)); },
-    onSettled: () => {
-      void client.invalidateQueries({ queryKey: queryKeys.plugins() });
-    },
-  });
-  /* Uninstall shares the per-id `pending` and `errors` maps: the row has one place to put a sentence. A
-   * separate mutation because a removal must not set the effect-boundary line. */
-  const remove = useRecoveryMutation(transport, {
-    acquireLocal: acquirePending,
-    mutationFn: (id: string, transport: ApiTransportPort) => runOperation(transport, uninstallPluginOperation(id), unauthorized),
-    onMutate: (id) => {
-      setErrors((current) => {
-        if (!current.has(id)) return current;
-        const next = new Map(current);
-        next.delete(id);
-        return next;
-      });
-    },
-    onError: (error, id) => { showFailure(id, writeFailureText(PLUGIN_UNINSTALL_FAILURES, DELETE_TEXT)(error)); },
-    onSettled: () => {
-      void client.invalidateQueries({ queryKey: queryKeys.plugins() });
-    },
-  });
-  return {
-    pendingIds: new Set(pending.keys()),
-    errors,
-    effectBoundaryIds: boundary,
-    setEnabled: (id, enabled) => { write.mutate({ id, enabled }); },
-    uninstall: (id) => { remove.mutate(id); },
-  };
-}
-
-/**
- * The two install sources, as one write through the recovery runner: refused at the press while offline, rejecting
- * with the write's error for the form to read through its table. The credential rides only in the request: a settled
- * mutation is reset and kept by no cache (`gcTime: 0`).
- */
-export type PluginInstallMutation = Readonly<{
-  pending: boolean;
-  checkConnector: (draft: ConnectorInstallDraft) => Promise<ConnectorCheckResult>;
-  installConnector: (draft: ConnectorInstallDraft) => Promise<void>;
-  installLocalPath: (path: string) => Promise<void>;
-}>;
-
-export function usePluginInstall(
-  transport: ApiTransportPort,
-  unauthorized: UnauthorizedChannel,
-): PluginInstallMutation {
-  const client = useQueryClient();
-  const install = useRecoveryMutation(transport, {
-    gcTime: 0,
-    mutationFn: (operation: ApiOperation<InstalledPlugin>, admitted: ApiTransportPort) => runOperation(admitted, operation, unauthorized),
-    onSettled: () => { void client.invalidateQueries({ queryKey: queryKeys.plugins() }); },
-  });
-  const run = (operation: ApiOperation<InstalledPlugin>) => install.mutateAsync(operation)
-    .finally(() => { install.reset(); }).then(() => undefined);
-  return {
-    pending: install.isPending,
-    checkConnector: async (draft) => {
-      try {
-        const result = await runOperation(transport, checkConnectorOperation(draft), unauthorized);
-        return { ok: true, tools: result.tools };
-      } catch (error) {
-        return { ok: false, message: probeFailureText(error, CONNECTOR_CHECK_TEXT) };
-      }
-    },
-    installConnector: (draft) => run(installConnectorOperation(draft)),
-    installLocalPath: (path) => run(installLocalPathOperation(path)),
-  };
-}
-
-/**
- * One plugin's configuration — the detail read. No poll and no focus refetch: the pane holds a draft of
- * the operator's edits, and a background refetch would re-seed it mid-typing.
- */
-export function pluginDetailQueryOptions(
-  transport: ApiTransportPort,
-  id: string,
-  unauthorized: UnauthorizedChannel,
-) {
-  return {
-    queryKey: queryKeys.pluginDetail(id),
-    queryFn: (): Promise<PluginDetail> => runOperation(transport, pluginDetailOperation(id), unauthorized),
-    retry: false,
-    refetchOnWindowFocus: false,
-  };
-}
-
-export type PluginConfigMutations = Readonly<{
-  save: (
-    id: string,
-    patch: Readonly<Record<string, PluginConfigValue | null>>,
-    options: Readonly<{ reset: boolean }>,
-  ) => Promise<PluginConfigSaveResult>;
-  applyRestart: (
-    id: string,
-    patch: Readonly<Record<string, PluginConfigValue | null>>,
-    options: Readonly<{ reset: boolean }>,
-  ) => Promise<PluginConfigApplyResult>;
-}>;
-
-/**
- * The two configuration writes, each through the recovery runner: refused at the press while offline, never sent. Both
- * resolve rather than reject, carrying the rejection as thrown for the pane to read through the route's table, and the
- * plugin's state afterwards. A settled mutation is reset and kept by no cache: a value may be a credential.
- */
-export function usePluginConfigMutations(
-  transport: ApiTransportPort,
-  unauthorized: UnauthorizedChannel,
-): PluginConfigMutations {
-  const client = useQueryClient();
-  type ConfigWrite = Readonly<{ id: string; patch: Readonly<Record<string, PluginConfigValue | null>>; options: Readonly<{ reset: boolean }> }>;
-  /* Settles after the re-read, which the runner skips for an intent that lost ownership (and then rejects it). */
-  const refresh = (id: string) => Promise.all([
-    client.invalidateQueries({ queryKey: queryKeys.plugins() }),
-    client.invalidateQueries({ queryKey: queryKeys.pluginDetail(id) }),
-  ]);
-  const write = useRecoveryMutation(transport, {
-    gcTime: 0,
-    mutationFn: ({ id, patch, options }: ConfigWrite, admitted: ApiTransportPort) =>
-      runOperation(admitted, patchPluginConfigOperation(id, patch, options), unauthorized),
-    onSettled: (_data, _error, { id }) => refresh(id),
-  });
-  const restart = useRecoveryMutation(transport, {
-    gcTime: 0,
-    mutationFn: async (id: string, admitted: ApiTransportPort): Promise<PluginRestartFacts> => {
-      /* Read the plugin's state back after the attempt on BOTH branches: a 2xx `reload` answers as of the
-       * handler's return, and a connector's bring-up can fail after it. Best-effort; falls back to what is known. */
-      const readBack = async (fallback: PluginRestartFacts): Promise<PluginRestartFacts> => {
-        try {
-          const after = await runOperation(admitted, pluginDetailOperation(id), unauthorized);
-          return { ...fallback, state: after.state, lastError: after.last_error };
-        } catch {
-          return fallback;
-        }
-      };
-      try {
-        const detail = await runOperation(admitted, reloadPluginOperation(id), unauthorized);
-        return await readBack({ rejection: null, state: detail.state, lastError: detail.last_error });
-      } catch (error) {
-        /* The refusal is not the verdict: a non-200 covers a held lock, a failed bring-up sitting in
-         * `unavailable`, or a stopped `app`, and only the plugin's own state tells them apart. */
-        return readBack({ rejection: { error }, state: 'unknown' });
-      }
-    },
-    onSettled: (_data, _error, id) => refresh(id),
-  });
-
-  return {
-    save: async (id, patch, options) => {
-      try {
-        await write.mutateAsync({ id, patch, options });
-        return { ok: true };
-      } catch (error) {
-        return { ok: false, error };
-      } finally { write.reset(); }
-    },
-    applyRestart: async (id, patch, options) => {
-      /* An empty patch with no reset is not a write: PATCHing `{}` would take the lifecycle lock for nothing and could 409 the restart. */
-      if (Object.keys(patch).length > 0 || options.reset) {
-        try { await write.mutateAsync({ id, patch, options }); }
-        catch (error) { return { saved: false, error }; }
-        finally { write.reset(); }
-      }
-      try {
-        return { saved: true, restart: await restart.mutateAsync(id) };
-      } catch (error) {
-        // A restart never sent reads as one that did not run. A previous acknowledgement does not prove the plugin's current state once this attempt lost ownership of its readback.
-        return { saved: true, restart: { rejection: { error }, state: 'unknown' } };
-      } finally { restart.reset(); }
-    },
-  };
-}
-
-export function useSettingsMutation(transport: ApiTransportPort, unauthorized: UnauthorizedChannel): (patch: SettingsPatch) => Promise<SettingsBag> {
-  const client = useQueryClient();
-  const save = useRecoveryMutation(transport, {
-    mutationFn: (patch: SettingsPatch, transport: ApiTransportPort) => runOperation(transport, putSettingsOperation(patch), unauthorized),
-    /* Invalidate; do not write the response through. Settings › Network commits per field, so an older
-     * PUT response can land last and would revert the field under a green tick. */
-    onSettled: () => { void client.invalidateQueries({ queryKey: queryKeys.settings() }); },
-  });
-  return (patch) => save.mutateAsync(patch);
-}
-
 /** The wire, or the 409 turned into a value: `stale-rev` is a condition the next `['track', id]` refetch fixes, not an error. */
 export type SeriesRead = ResolvedSeries | Readonly<{ status: 'stale-rev'; current_rev: number }>;
-
-/** A resolved row does not move for at least this long. */
-const SERIES_STALE_MS = 5 * 60 * 1000;
-/** While the row is `pending`: the kernel's lane usually answers within a
- *  few seconds of the first read. */
-const SERIES_PENDING_POLL_MS = 3000;
-/** …and after two minutes of that, something is slow (a lane backed up, a
- *  plugin restarting) and the poll backs off. */
-const SERIES_PENDING_SLOW_POLL_MS = 30_000;
-/** Two minutes, counted in polls rather than wall time: react-query pauses the timer while the tab is hidden. */
-const SERIES_PENDING_FAST_POLLS = 120_000 / SERIES_PENDING_POLL_MS;
-
-function staleRevOf(error: unknown): SeriesRead | null {
-  if (!(error instanceof ApiError)) return null;
-  const { failure } = error;
-  if (failure.kind !== 'http' || failure.status !== 409) return null;
-  const body = staleRevBodySchema.safeParse(failure.body);
-  return body.success ? { status: 'stale-rev', current_rev: body.data.current_rev } : null;
-}
-
-/** Poll only while the row is `pending`: row writes emit no event. Every other state stops the timer. */
-export function seriesRefetchInterval(
-  query: { state: { data?: SeriesRead; dataUpdateCount: number } },
-): number | false {
-  const { data, dataUpdateCount } = query.state;
-  if (data === undefined || data.status !== 'pending') return false;
-  return dataUpdateCount > SERIES_PENDING_FAST_POLLS ? SERIES_PENDING_SLOW_POLL_MS : SERIES_PENDING_POLL_MS;
-}
 
 /** The row, or the 404 turned into a value: a dangling citation is a state the design admits, not an error to retry. */
 export type SourceRead =
@@ -1352,46 +870,4 @@ export type SourceRead =
 
 function isNotFound(error: unknown): boolean {
   return error instanceof ApiError && error.failure.kind === 'http' && error.failure.status === 404;
-}
-
-/** One captured source. Default `staleTime`: anchors are append-only, so every open re-reads behind the cached copy. No focus refetch. */
-export function trackSourceQueryOptions(
-  transport: ApiTransportPort, trackId: string, sourceId: string, unauthorized: UnauthorizedChannel,
-) {
-  return {
-    queryKey: queryKeys.trackSource(trackId, sourceId),
-    queryFn: async ({ signal }: { signal: AbortSignal }): Promise<SourceRead> => {
-      try {
-        const source = await runOperation(transport, { ...trackSourceOperation(trackId, sourceId), signal }, unauthorized);
-        return { status: 'found', source };
-      } catch (error) {
-        if (!isNotFound(error)) throw error;
-        return { status: 'missing' };
-      }
-    },
-    refetchOnWindowFocus: false,
-  };
-}
-
-/** One `chart.series` block's resolved data. `detail` defaults to `full`; the key carries `rev`, not `detail`. */
-export function trackReportSeriesQueryOptions(
-  transport: ApiTransportPort, trackId: string, blockId: string, rev: number,
-  unauthorized: UnauthorizedChannel, detail: SeriesDetail = 'full',
-) {
-  return {
-    queryKey: queryKeys.trackReportSeries(trackId, blockId, rev),
-    queryFn: async ({ signal }: { signal: AbortSignal }): Promise<SeriesRead> => {
-      try {
-        return await runOperation(
-          transport, { ...trackReportSeriesOperation(trackId, blockId, rev, detail), signal }, unauthorized,
-        );
-      } catch (error) {
-        const stale = staleRevOf(error);
-        if (stale === null) throw error;
-        return stale;
-      }
-    },
-    staleTime: SERIES_STALE_MS,
-    refetchInterval: seriesRefetchInterval,
-  };
 }

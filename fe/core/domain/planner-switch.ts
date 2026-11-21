@@ -1,6 +1,6 @@
+import { trackDtoSchema,type TrackDto } from "../api/perga-v1.js";
+import type { ApiFailure,ApiOperation } from '../api/types.js';
 import { NotSentError } from './failure-class.js';
-import { trackDtoSchema, type TrackDto } from '../api/schemas.js';
-import type { ApiFailure, ApiOperation } from '../api/types.js';
 
 /** The v1 Track patch returns the persisted Track, without a separate role revision. */
 export function plannerSwitchOperation(trackId: string, leadSessionId: string): ApiOperation<TrackDto> {

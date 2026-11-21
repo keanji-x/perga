@@ -6,9 +6,9 @@
 
 import { z } from 'zod';
 
-import type { ApiFailure, ApiOperation } from '../api/types.js';
-import type { SourceProvenance, TrackSourceDetail } from '../api/generated/wire.js';
-import { parse, sanitizeAstPolicy, type SafeInline } from '../markdown/public.js';
+import type { SourceProvenance,TrackSourceDetail } from '../api/generated/wire.js';
+import type { ApiFailure } from '../api/types.js';
+import { parse,sanitizeAstPolicy,type SafeInline } from '../markdown/public.js';
 
 const SOURCE_LINK_PREFIX = 'neige://source/';
 
@@ -126,15 +126,7 @@ export const trackSourceDetailSchema: z.ZodType<TrackSourceDetail> = z.object({
   body: z.string(),
 });
 
-export type { SourceProvenance, TrackSourceDetail };
-
-export function trackSourceOperation(trackId: string, sourceId: string): ApiOperation<TrackSourceDetail> {
-  return {
-    method: 'GET',
-    path: `/api/tracks/${encodeURIComponent(trackId)}/sources/${encodeURIComponent(sourceId)}`,
-    responseSchema: trackSourceDetailSchema,
-  };
-}
+export type { SourceProvenance,TrackSourceDetail };
 
 /** `missing` is data, not an error: a dangling citation is a state the design admits. */
 export type SourceResolution =

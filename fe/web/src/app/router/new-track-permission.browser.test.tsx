@@ -25,6 +25,7 @@ function mount(refuseDiscovery = false) {
     { provider: 'claude', available: true, models: ['haiku'], permissionModes: [] },
   ] };
   const transport: ApiTransportPort = { send(request) {
+    if (request.path.includes('/workspace-options')) return Promise.resolve({ status: 200, statusText: 'OK', body: { defaultId: 'direct', options: [{ id: 'direct', label: 'Direct folder', description: 'Use this folder' }] } });
     if (request.method === 'POST' && request.path === '/api/v1/tracks') {
       creates.push(request);
       if (refuseDiscovery) return Promise.resolve({ status: 409, statusText: 'Conflict',

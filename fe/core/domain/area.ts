@@ -2,12 +2,10 @@
 
 import { z } from 'zod';
 
-import {
-  areaDtoSchema, areaSchema, executionTargetDtoSchema,
-  type AreaDto, type ExecutionTargetDto,
-} from '../api/schemas.js';
+import { areaDtoSchema,executionTargetDtoSchema,type AreaDto,type ExecutionTargetDto } from "../api/perga-v1.js";
+import { areaSchema } from "../api/schemas.js";
 import type { ApiOperation } from '../api/types.js';
-import type { FailureTable, WriteClass, WriteText } from './failure-class.js';
+import type { FailureTable,WriteClass,WriteText } from './failure-class.js';
 
 export type AreaKind = z.infer<typeof areaSchema>['kind'];
 export type AreaWire = z.infer<typeof areaSchema>;
@@ -15,26 +13,6 @@ export type PergaAreaWire = AreaWire & Readonly<{
   execution_target_id?: string;
 }>;
 export type { ExecutionTargetDto };
-
-export function areaDtoToWire(dto: AreaDto): PergaAreaWire {
-  return {
-    id: dto.id,
-    name: dto.name,
-    color: dto.color,
-    sort: dto.sortOrder,
-    kind: 'user',
-    default_template_id: null,
-    default_cwd: dto.defaultCwd ?? null,
-    ...(dto.executionTargetId !== undefined ? { execution_target_id: dto.executionTargetId } : {}),
-    created_at: dto.createdAtMs,
-    updated_at: dto.updatedAtMs,
-  };
-}
-
-export const areaWireOrDtoSchema: z.ZodType<PergaAreaWire> = z.union([
-  areaDtoSchema.transform(areaDtoToWire),
-  areaSchema.extend({ execution_target_id: z.string().optional() }),
-]);
 
 export type Area = Readonly<{
   id: string;
@@ -49,7 +27,13 @@ export type Area = Readonly<{
   updatedAt: number;
 }>;
 
-export function toArea(wire: PergaAreaWire): Area {
+export function toArea(wire: PergaAreaWire | AreaDto): Area {
+  if ('sortOrder' in wire) return {
+    id: wire.id, name: wire.name, color: wire.color, sort: wire.sortOrder,
+    kind: 'user', defaultTemplateId: null, defaultCwd: wire.defaultCwd ?? null,
+    ...(wire.executionTargetId !== undefined ? { executionTargetId: wire.executionTargetId } : {}),
+    createdAt: wire.createdAtMs, updatedAt: wire.updatedAtMs,
+  };
   return {
     id: wire.id,
     name: wire.name,
@@ -76,8 +60,8 @@ export function newestArea(current: Area, incoming: Area): Area {
   return incoming;
 }
 
-export function areaListOperation(): ApiOperation<PergaAreaWire[]> {
-  return { method: 'GET', path: '/api/v1/areas', responseSchema: z.array(areaWireOrDtoSchema) };
+export function areaListOperation(): ApiOperation<(PergaAreaWire | AreaDto)[]> {
+  return { method: 'GET', path: '/api/v1/areas', responseSchema: z.array(z.union([areaDtoSchema, areaSchema.extend({ execution_target_id: z.string().optional() })])) };
 }
 
 /** The system area must never reach a user-visible surface; this is the client-side half of the server filter. */
@@ -139,19 +123,6 @@ export function createExecutionTargetOperation(body: CreateExecutionTargetBody):
   };
 }
 
-/** Perga `/api/v1/bootstrap` always supports keyed Area creation; legacy responses check `areaCreateIdempotency`. */
-export function areaCreationCapabilityOperation(): ApiOperation<'supported' | 'unsupported'> {
-  return {
-    method: 'GET', path: '/api/v1/bootstrap',
-    responseSchema: z.object({
-      version: z.string().optional(),
-      areaCreateIdempotency: z.unknown().optional(),
-    }).transform((value) => (typeof value.version === 'string' || value.areaCreateIdempotency === true)
-      ? 'supported' as const
-      : 'unsupported' as const),
-  };
-}
-
 /**
  * What one failed `POST /api/areas` means for its draft.
  * - `key-spent`: the key is invalid, bound to another request (`idempotency_key_reused`) or its Area
@@ -179,7 +150,7 @@ export const AREA_CREATE_TEXT: WriteText = Object.freeze({
 });
 
 /** One key identifies one exact creation intent, including every retry. */
-export function createAreaOperation(body: NewAreaBody, idempotencyKey: string): ApiOperation<PergaAreaWire> {
+export function createAreaOperation(body: NewAreaBody, idempotencyKey: string): ApiOperation<PergaAreaWire | AreaDto> {
   const wireBody = {
     name: body.name,
     color: body.color,
@@ -193,11 +164,11 @@ export function createAreaOperation(body: NewAreaBody, idempotencyKey: string): 
     path: '/api/v1/areas',
     body: wireBody,
     headers: { 'Idempotency-Key': idempotencyKey },
-    responseSchema: areaWireOrDtoSchema,
+    responseSchema: z.union([areaDtoSchema, areaSchema.extend({ execution_target_id: z.string().optional() })]),
   };
 }
 
-export function updateAreaOperation(areaId: string, body: AreaPatchBody): ApiOperation<PergaAreaWire> {
+export function updateAreaOperation(areaId: string, body: AreaPatchBody): ApiOperation<PergaAreaWire | AreaDto> {
   const wireBody = {
     ...(body.name !== undefined ? { name: body.name } : {}),
     ...(body.color !== undefined ? { color: body.color } : {}),
@@ -214,7 +185,7 @@ export function updateAreaOperation(areaId: string, body: AreaPatchBody): ApiOpe
     method: 'PATCH',
     path: `/api/v1/areas/${encodeURIComponent(areaId)}`,
     body: wireBody,
-    responseSchema: areaWireOrDtoSchema,
+    responseSchema: z.union([areaDtoSchema, areaSchema.extend({ execution_target_id: z.string().optional() })]),
   };
 }
 

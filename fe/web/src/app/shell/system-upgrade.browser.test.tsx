@@ -1,8 +1,9 @@
+import '../../styles/entry.css';
 import { SystemUpgradeProvider } from '../providers/connection-status.tsx';
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
-import { QueryClient } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { SystemInfoDto } from '../../../../core/api/perga-v1.ts';
 import { EventStream, type EventStreamSink } from '../../systems/events/event-stream.ts';
 import { EventBridge } from '../events/event-bridge.tsx';
@@ -11,7 +12,6 @@ import { SystemUpgradeMonitor, useSystemUpgrade } from '../providers/system-upgr
 import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { SystemUpgradeBannerHost } from './system-upgrade-banner.tsx';
 import { AboutPane } from '../../features/settings/public.tsx';
-import '../../styles/entry.css';
 
 afterEach(cleanup);
 function VersionCard() { return <AboutPane system={useSystemUpgrade()} />; }
@@ -25,11 +25,11 @@ it('keeps draft text through draining, restart, and build changes and displays t
   const stream = EventStream.create('ws://test.invalid', { start: (_configuration, _url, next) => { sink = next; next.connectionState('connected'); }, stop: vi.fn() });
   const client = new QueryClient();
   const cursor = { read: () => null, write: vi.fn(), adopt: vi.fn(), clear: vi.fn() };
-  render(<SystemUpgradeProvider><LiveConnectionProvider>
+  render(<QueryClientProvider client={client}><SystemUpgradeProvider><LiveConnectionProvider>
     <EventBridge client={client} stream={stream} cursor={cursor} syncEventVersion={1} dbInstanceId="test" />
     <SystemUpgradeMonitor transport={transport} unauthorized={unauthorized} />
     <SystemUpgradeBannerHost /><textarea aria-label="Unsent message" /><VersionCard />
-  </LiveConnectionProvider></SystemUpgradeProvider>);
+  </LiveConnectionProvider></SystemUpgradeProvider></QueryClientProvider>);
   await waitFor(() => expect(screen.getByText('w1')).toBeTruthy());
   await userEvent.fill(screen.getByRole('textbox'), 'Keep my unsent draft');
   act(() => sink.frame({ type: 'event', meta: { id: 0, eventVersion: 1 }, event: { ev: 'system.upgrade_status', data: { draining: true, activeDispatches: 2 } } }));

@@ -1,13 +1,13 @@
-import type { ReportDocumentDto } from '../../../../../core/api/schemas.ts';
+import type { ReportDocumentDto } from "../../../../../core/api/perga-v1.ts";
+import { reportDocumentReferenceRepository,reportReferenceRepository,type ReferenceRepository } from '../../../../../core/domain/report-references.ts';
 import {
-  extractOutline, parse, REPORT_MAX_DEPTH, reportHeadingIdPolicy, sanitizeAstPolicy,
-  type MarkdownParseResult,
-} from '../../../../../core/markdown/public.ts';
-import {
-  deriveReportOutline, readReportDocument,
-  type ReportBlock, type ReportOutlineItem, type TrackReport,
+deriveReportOutline,readReportDocument,
+type ReportBlock,type ReportOutlineItem,type TrackReport,
 } from '../../../../../core/domain/report.ts';
-import { reportDocumentReferenceRepository, reportReferenceRepository, type ReferenceRepository } from '../../../../../core/domain/report-references.ts';
+import {
+extractOutline,parse,REPORT_MAX_DEPTH,reportHeadingIdPolicy,sanitizeAstPolicy,
+type MarkdownParseResult,
+} from '../../../../../core/markdown/public.ts';
 
 export type PreparedProse = Readonly<{
   source: string;

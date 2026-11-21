@@ -4,11 +4,11 @@
 // because `core` may not import `ui`; this is the half that proves the wiring
 // hands the owner's function in, and that the two agree about where a row is.
 
-import { describe, expect, it } from 'vitest';
+import { describe,expect,it } from 'vitest';
 
-import type { ApiRequest, ApiTransportPort } from '../../../../core/api/types.ts';
+import type { ApiRequest,ApiTransportPort } from '../../../../core/api/types.ts';
 import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
-import { createCardFilesPort, createDirectoryLister, createTrackWorkspaceFilesPort } from './directory.ts';
+import { createDirectoryLister,createTrackWorkspaceFilesPort } from './directory.ts';
 
 const unauthorized = createUnauthorizedChannel({ enqueue: (task: () => void) => task() });
 
@@ -38,7 +38,7 @@ describe('createDirectoryLister', () => {
     const { sent, listDirectory } = harness({ path: '/home/kenji', parent: '/home', entries: [] });
     await listDirectory();
     expect(sent).toHaveLength(1);
-    expect(sent[0]).toMatchObject({ method: 'GET', path: '/api/fs/listdir', credentials: 'include' });
+    expect(sent[0]).toMatchObject({ method: 'GET', path: '/api/v1/fs/listdir', credentials: 'include' });
   });
 
   it('places every entry at an absolute path built by the browser\'s own join', async () => {
@@ -53,7 +53,7 @@ describe('createDirectoryLister', () => {
       ],
     });
     const listing = await listDirectory('/home/kenji');
-    expect(sent[0]?.path).toBe('/api/fs/listdir?path=%2Fhome%2Fkenji');
+    expect(sent[0]?.path).toBe('/api/v1/fs/listdir?path=%2Fhome%2Fkenji');
     expect(listing).toEqual({
       path: '/home/kenji',
       parent: '/home',
@@ -84,28 +84,6 @@ describe('createDirectoryLister', () => {
   });
 });
 
-describe('createCardFilesPort', () => {
-  it('uses the same default-visible listing contract as the directory picker', async () => {
-    const { sent, listDirectory } = harness({ path: '/repo', parent: '/', entries: [] });
-    await listDirectory('/repo');
-    expect(sent[0]?.path).toBe('/api/fs/listdir?path=%2Frepo');
-
-    const files = createCardFilesPort({
-      send(request) {
-        sent.push(request);
-        return Promise.resolve({
-          status: 200,
-          statusText: 'OK',
-          body: { path: '/repo', parent: '/', entries: [{ name: '.git', is_dir: true }] },
-        });
-      },
-    }, unauthorized);
-    const listing = await files.listDirectory('/repo');
-    expect(sent[1]?.path).toBe('/api/fs/listdir?path=%2Frepo');
-    expect(listing.entries).toEqual([{ name: '.git', is_dir: true }]);
-  });
-});
-
 describe('createTrackWorkspaceFilesPort', () => {
   it('binds every read and raw URL to one Track instead of accepting an absolute root', async () => {
     const sent: ApiRequest[] = [];
@@ -127,6 +105,22 @@ describe('createTrackWorkspaceFilesPort', () => {
       credentials: 'include',
     });
     expect(files.rawUrl('img/a.png'))
-      .toBe('/api/v1/tracks/track%2F1/files?path=img%2Fa.png');
+      .toBe('/api/v1/tracks/track%2F1/files/raw?path=img%2Fa.png');
   });
+});
+
+
+it('keeps remote directory reads on their selected target including the initial home read', async () => {
+  const paths: string[] = [];
+  const transport: ApiTransportPort = { send: (request) => {
+    paths.push(request.path);
+    return Promise.resolve({ status: 200, statusText: 'OK', body: { path: '/srv', parent: '/', entries: [] } });
+  } };
+  const list = createDirectoryLister(transport, unauthorized, 'ssh/user &host');
+  await list();
+  await list('/srv/a &b');
+  expect(paths).toEqual([
+    '/api/v1/fs/listdir?targetId=ssh%2Fuser%20%26host',
+    '/api/v1/fs/listdir?path=%2Fsrv%2Fa%20%26b&targetId=ssh%2Fuser%20%26host',
+  ]);
 });

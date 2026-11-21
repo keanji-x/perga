@@ -26,7 +26,7 @@ const CARDS: readonly CardWire[] = [
   /* Kernel-owned with a live session no task names, as the planner card is: both badges, a session status. */
   card({
     id: 'card-3', kind: 'claude', title: 'Planner', deletable: false,
-    runtime: { worker_session_id: 'session-3', kind: 'claude', status: 'running' },
+    runtime: { worker_session_id: 'session-3', kind: 'managed-assistant', status: 'running' },
   }),
 ];
 

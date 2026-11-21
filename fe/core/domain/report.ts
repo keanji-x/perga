@@ -3,39 +3,32 @@
 // deep link addresses); `body` is the flat fallback. Everything here is fail-soft.
 
 import { z } from 'zod';
-import { objectiveBlockPayloadSchema, type ObjectiveBlockPayload } from './report-objective.js';
-import { max2048CodePoints, inlineTableBlockPayloadSchema } from './report-table.js';
+import { checkpointsBlockPayloadSchema,type CheckpointsBlockPayload } from './report-checkpoints.js';
 import { isCalendarDate } from './report-date.js';
-import { nativeViewPayloadSchema, type NativeViewPayload } from './report-view.js';
+import { htmlBlockPayloadSchema,type HtmlBlockPayload } from './report-html.js';
+import { objectiveBlockPayloadSchema,type ObjectiveBlockPayload } from './report-objective.js';
 import { sameOriginPath } from './report-src.js';
-import { htmlBlockPayloadSchema, type HtmlBlockPayload } from './report-html.js';
-import { reportTaskKey, reportTaskPayload } from './report-task-declaration.js';
-import { checkpointsBlockPayloadSchema, type CheckpointsBlockPayload } from './report-checkpoints.js';
+import { inlineTableBlockPayloadSchema,max2048CodePoints } from './report-table.js';
+import { reportTaskKey,reportTaskPayload } from './report-task-declaration.js';
+import { nativeViewPayloadSchema,type NativeViewPayload } from './report-view.js';
 import {
-  widgetBlockPayloadSchema,
-  templateViewsProjectionSchema,
-  type WidgetBlockPayload,
-  type TemplateViewsProjection,
+templateViewsProjectionSchema,
+widgetBlockPayloadSchema,
+type TemplateViewsProjection,
+type WidgetBlockPayload,
 } from './report-widget.js';
-export { inlineTableBlockPayloadSchema } from './report-table.js';
+export type { CheckpointCheck,CheckpointItem,CheckpointRule,CheckpointsBlockPayload,CheckpointStatus } from './report-checkpoints.js';
 export { isCalendarDate } from './report-date.js';
-export type { CheckpointsBlockPayload, CheckpointItem, CheckpointRule, CheckpointCheck, CheckpointStatus } from './report-checkpoints.js';
-export type { WidgetBlockPayload, TemplateViewsProjection, TemplateViewsState } from './report-widget.js';
+export { inlineTableBlockPayloadSchema } from './report-table.js';
+export type { TemplateViewsProjection,TemplateViewsState,WidgetBlockPayload } from './report-widget.js';
 
-import type { CurrentTaskExecution } from './task-execution.js';
-import type { ApiFailure, ApiOperation } from '../api/types.js';
+import { reportReadResultDtoSchema,taskDtoSchema,type ReportBlockKind,type ReportDocumentDto,type ReportReadResultDto,type TaskDto } from "../api/perga-v1.js";
+import { normalizeWireAgentProvider } from "../api/schemas.js";
+import type { ApiFailure,ApiOperation } from '../api/types.js';
 import {
-  normalizeWireAgentProvider,
-  reportReadResultDtoSchema,
-  taskDtoSchema,
-  type ReportDocumentDto,
-  type ReportBlockKind,
-  type ReportReadResultDto,
-  type TaskDto,
-} from '../api/schemas.js';
-import {
-  extractOutline, markdownExcerpt, parse, REPORT_MAX_DEPTH, reportHeadingIdPolicy,
+extractOutline,markdownExcerpt,parse,REPORT_MAX_DEPTH,reportHeadingIdPolicy,
 } from '../markdown/public.js';
+import type { CurrentTaskExecution } from './task-execution.js';
 import type { CardWire } from './track.js';
 
 /** The card kind the kernel reserves for the report. One per track, undeletable. */
@@ -921,14 +914,6 @@ export type BacklinkQuote = z.infer<typeof backlinkQuoteSchema>;
 export type TrackBacklink = z.infer<typeof trackBacklinkSchema>;
 export type TrackBacklinks = z.infer<typeof trackBacklinksSchema>;
 
-export function trackBacklinksOperation(trackId: string): ApiOperation<TrackBacklinks> {
-  return {
-    method: 'GET',
-    path: `/api/tracks/${encodeURIComponent(trackId)}/backlinks`,
-    responseSchema: trackBacklinksSchema,
-  };
-}
-
 /* A track's registered previews (`GET /api/tracks/{id}/previews`, #1780). In-memory on the
    kernel: a restart empties the list until the Planner registers again. */
 export const trackPreviewSchema = z.object({
@@ -944,14 +929,6 @@ export const trackPreviewsSchema = z.object({ previews: z.array(trackPreviewSche
 
 export type TrackPreview = z.infer<typeof trackPreviewSchema>;
 export type TrackPreviews = z.infer<typeof trackPreviewsSchema>;
-
-export function trackPreviewsOperation(trackId: string): ApiOperation<TrackPreviews> {
-  return {
-    method: 'GET',
-    path: `/api/tracks/${encodeURIComponent(trackId)}/previews`,
-    responseSchema: trackPreviewsSchema,
-  };
-}
 
 /** What a `preview` block knows about its key: still loading, unreadable, not registered, or registered. */
 export type PreviewResolution =

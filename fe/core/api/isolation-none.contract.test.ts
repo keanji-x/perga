@@ -1,13 +1,11 @@
-import { describe, expectTypeOf, it } from 'vitest';
-import type { Event, EventWire, TrackWire, WorkspaceIsolation } from './generated/wire.ts';
+import { describe,expectTypeOf,it } from 'vitest';
+import type { TrackWire,WorkspaceIsolation } from './generated/wire.ts';
+import type { WireEvent } from './schemas.ts';
 
 describe('workspace isolation wire contracts', () => {
-  it('isolation_none_track_and_event_responses_require_the_projected_level', () => {
+  it('requires the projected isolation for track reads and events', () => {
     expectTypeOf<TrackWire['workspace']['isolation']>().toEqualTypeOf<WorkspaceIsolation>();
-    expectTypeOf<Extract<EventWire, { ev: 'track.updated' }>['data']['workspace']['isolation']>()
+    expectTypeOf<Extract<WireEvent, { ev: 'track.updated' }>['data']['workspace']['isolation']>()
       .toEqualTypeOf<WorkspaceIsolation>();
-    expectTypeOf<EventWire['ev']>().toEqualTypeOf<Event['ev']>();
-    expectTypeOf<Exclude<EventWire, { ev: 'track.updated' }>>()
-      .toEqualTypeOf<Exclude<Event, { ev: 'track.updated' }>>();
   });
 });

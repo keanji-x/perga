@@ -1,18 +1,18 @@
-import { fixtureTrack, fixtureSession, fixtureSnapshot, fixtureBootstrap } from './session-contract-fixture.ts';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { createMemoryHistory, RouterProvider } from '@tanstack/react-router';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import type { ApiRequest, ApiTransportPort, ApiTransportResponse } from '../../../../core/api/types.ts';
+import { QueryClient,QueryClientProvider } from '@tanstack/react-query';
+import { createMemoryHistory,RouterProvider } from '@tanstack/react-router';
+import { fireEvent,render,screen,waitFor } from '@testing-library/react';
+import type { ApiRequest,ApiTransportPort,ApiTransportResponse } from '../../../../core/api/types.ts';
+import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import type { TerminalPresentation } from '../../../../core/domain/terminal-presentation.ts';
 import type { CardWire } from '../../../../core/domain/track.ts';
-import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { prepareReportDocument } from '../../features/report/document/preparation.ts';
 import { createReadReceiptsKernel } from '../providers/read-receipts-fixture.tsx';
-import { sessionPage, sessionItem } from './conversation-session-data.ts';
 import { ThemeProvider } from '../theme/public.tsx';
-import { createAppRouter, APP_BASEPATH } from './public.tsx';
-import { bootTestCardRuntime } from './test-card-runtime.ts';
 import { conversationCardId } from './conversation-read-data.ts';
+import { sessionItem,sessionPage } from './conversation-session-data.ts';
+import { APP_BASEPATH,createAppRouter } from './public.tsx';
+import { fixtureBootstrap,fixtureSession,fixtureSnapshot,fixtureTrack } from './session-contract-fixture.ts';
+import { bootTestCardRuntime } from './test-card-runtime.ts';
 
 export function terminalCard(id: string, presentation: TerminalPresentation, trackId = 'workbench'): CardWire {
   return { id, track_id: trackId, kind: 'terminal', title: id, sort: 1, payload: { terminal_presentation: presentation }, deletable: true, created_at: 1, updated_at: 2 };
@@ -28,7 +28,7 @@ export function setupWorkbench({ cards: initial = [] as CardWire[], defer = fals
   const releases: (() => void)[] = [];
   const keys = new Map<string, CardWire>();
   const track = fixtureTrack('workbench', { areaId: 'area', title: 'Workbench track' });
-  const parent = fixtureSession('parent', track.id, { title: 'Main discussion' });
+  const parent = fixtureSession('parent', track.id, { title: 'Main discussion', isLead: true });
   const rows = [parent];
   let lose = lost;
   const ok = (body: unknown): ApiTransportResponse => ({ status: 200, statusText: 'OK', body });
@@ -101,8 +101,13 @@ export function setupWorkbench({ cards: initial = [] as CardWire[], defer = fals
 /** Use the public composer command after removal of the redundant header shortcut. */
 export async function terminalCommandInput(): Promise<HTMLElement> {
   if (screen.queryAllByRole('combobox', { name: 'Message' }).length === 0) {
-    const conversation = screen.queryByRole('button', { name: 'Conversation Main discussion' });
-    fireEvent.click(conversation ?? await screen.findByRole('button', { name: /^New conversation$/u }));
+    await waitFor(() => {
+      const conversation = screen.queryByRole('button', { name: 'Conversation Main discussion' });
+      const create = screen.queryByRole('button', { name: /^New conversation$/u });
+      if (screen.queryByRole('combobox', { name: 'Message' })) return;
+      if (!(conversation ?? create)) throw new Error('Conversation entry is not ready');
+      fireEvent.click((conversation ?? create)!);
+    });
   }
   const input = (await screen.findAllByRole('combobox', { name: 'Message' }))[0];
   await waitFor(() => { if (input.getAttribute('contenteditable') !== 'true') throw new Error('Composer is not ready'); });

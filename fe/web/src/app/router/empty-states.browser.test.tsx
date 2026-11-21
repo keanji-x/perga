@@ -1,5 +1,5 @@
-import { fixtureSnapshot, fixtureTrack } from './session-contract-fixture.ts';
 import '../../styles/entry.css';
+import { fixtureSnapshot, fixtureTrack } from './session-contract-fixture.ts';
 import { cleanup } from '@testing-library/react';
 import { afterEach, expect, it } from 'vitest';
 import { page } from 'vitest/browser';
@@ -14,11 +14,10 @@ async function settle() {
 it.each([1440, 390, 320])('keeps the empty daily report and conversation reachable at %i', async (width) => {
   await page.viewport(width, 900);
   renderDailyFixture({ reportBody: '' });
-  await expect.element(page.getByRole('heading', { name: width >= 960 ? '今天想推进什么？' : '今天还没有记录' })).toBeVisible();
+  await expect.element(page.getByRole('heading', { name: width >= 960 ? '今天想推进什么？' : '今天的重点' })).toBeVisible();
   await settle();
   await page.screenshot({ path: `./__screenshots__/empty-audit/daily-${width}.png` });
   if (width >= 960) {
-    await page.getByRole('button', { name: /Conversation Daily Planner conversation/ }).click();
     const assistant = page.getByRole('region', { name: 'Today Assistant', exact: true });
     await expect.element(assistant.getByRole('heading', { name: '今天想推进什么？' })).toBeVisible();
     await expect.element(assistant.getByRole('combobox', { name: 'Message' })).toBeVisible();
@@ -69,23 +68,4 @@ it.each([1440, 390])('uses the fixed report schema without actions at %i', async
   await settle();
   await page.screenshot({ path: `./__screenshots__/empty-audit/track-${width}.png` });
   expect(requests.every(request => request.method === 'GET')).toBe(true);
-});
-
-it('keeps recipe creation in the page header outside the empty state', async () => {
-  await page.viewport(1440, 900);
-  renderDailyFixture({ initial: '/recipes' });
-  await expect.element(page.getByRole('heading', { name: '还没有保存的模板' })).toBeVisible();
-  await settle();
-  await page.screenshot({ path: './__screenshots__/empty-audit/recipes-1440.png' });
-  expect(page.getByRole('button', { name: '创建模板', exact: true }).elements()).toHaveLength(0);
-  await page.getByRole('button', { name: 'New recipe', exact: true }).click();
-  await expect.element(page.getByRole('textbox', { name: 'Recipe title', exact: true })).toBeVisible();
-});
-
-it('shows a compact empty plugin list with its existing add action', async () => {
-  await page.viewport(1440, 900);
-  renderDailyFixture({ initial: '/settings/plugins', reply: request => request.path === '/api/plugins' ? { status: 200, statusText: 'OK', body: [] } : undefined });
-  await expect.element(page.getByRole('heading', { name: '还没有添加插件' })).toBeVisible();
-  await settle();
-  await page.screenshot({ path: './__screenshots__/empty-audit/plugins-1440.png' });
 });

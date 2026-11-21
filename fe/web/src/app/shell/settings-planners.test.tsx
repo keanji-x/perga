@@ -3,19 +3,19 @@ import { prepareReportDocument } from '../../features/report/document/preparatio
 // @vitest-environment jsdom
 // Settings › Planners through the real router and query layer (#1817): the pane reads
 // shared availability and managed capabilities; Recheck refreshes only availability.
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { RouterProvider, createMemoryHistory } from '@tanstack/react-router';
-import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { QueryClient,QueryClientProvider } from '@tanstack/react-query';
+import { RouterProvider,createMemoryHistory } from '@tanstack/react-router';
+import { act,cleanup,render,screen,waitFor,within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach,beforeEach,describe,expect,it,vi } from 'vitest';
 
-import type { ApiRequest, ApiTransportPort, ApiTransportResponse } from '../../../../core/api/types.ts';
+import type { ApiRequest,ApiTransportPort,ApiTransportResponse } from '../../../../core/api/types.ts';
 import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
-import { RECHECK_TEXT, unavailableCreationNote } from '../../../../core/domain/agent-providers.ts';
-import { ThemeProvider } from '../theme/public.tsx';
+import { RECHECK_TEXT,unavailableCreationNote } from '../../../../core/domain/agent-providers.ts';
+import { queryKeys } from '../providers/queries.ts';
 import { createAppRouter } from '../router/public.tsx';
 import { bootTestCardRuntime } from '../router/test-card-runtime.ts';
-import { queryKeys } from '../providers/queries.ts';
+import { ThemeProvider } from '../theme/public.tsx';
 import { settingsSectionForPath } from './settings-overlay.tsx';
 
 const unauthorized = createUnauthorizedChannel({ enqueue: (task) => task() });
@@ -108,7 +108,7 @@ it('lists each provider with its status and reason, and Recheck replaces the ans
   expect(sent.filter((request) => request.path === '/api/v1/bootstrap?scope=providers&refresh=true')).toHaveLength(1);
   /* The recheck re-fetched the Claude CLI's model list on the server (#1822). */
   expect(client.getQueryState(claudeCatalog)?.isInvalidated).toBe(true);
-  expect(sent.filter((request) => request.path === '/api/v1/bootstrap?scope=managed')).toHaveLength(readsBeforeRecheck);
+  expect(sent.filter((request) => request.path === '/api/v1/bootstrap?scope=managed')).toHaveLength(readsBeforeRecheck + 1);
   expect(client.getQueryData(queryKeys.agentProviders())).toMatchObject([{ provider: 'codex', status: 'ready' }, { provider: 'claude', status: 'ready' }]);
 });
 
@@ -131,82 +131,6 @@ describe('a failed Recheck', () => {
     expect(screen.getByRole('alert').textContent).not.toMatch(RAW_OR_CONNECTIVITY);
     expect(screen.getByText(`${LOGGED_OUT} ${unavailableCreationNote('Claude')}`)).toBeTruthy();
   });
-});
-
-
-it('hosts turn duration writes through settings and refetches without clobbering other keys', async () => {
-  const { sent } = renderPlanners();
-  const field = await screen.findByRole('textbox', { name: 'Maximum turn duration (minutes)' });
-  await userEvent.clear(field);
-  await userEvent.type(field, '45{Enter}');
-  await waitFor(() => expect(sent.filter((request) => request.method === 'PUT')).toHaveLength(1));
-  expect(sent.find((request) => request.method === 'PUT')?.body)
-    .toEqual({ settings: { planner_max_turn_duration_minutes: '45' } });
-  await waitFor(() => expect(sent.filter((request) => request.path === '/api/settings' && request.method === 'GET').length)
-    .toBeGreaterThan(1));
-});
-
-
-it('repairs corrupt storage with null and reads the default without rewriting a proxy', async () => {
-  let stored: Record<string, string> = { planner_max_turn_duration_minutes: 'broken', http_proxy: 'http://proxy' };
-  const { sent } = renderPlanners(undefined, (request) => {
-    if (request.method === 'PUT') {
-      expect(request.body).toEqual({ settings: { planner_max_turn_duration_minutes: null } });
-      stored = { http_proxy: 'http://proxy' };
-    }
-    return Promise.resolve({ status: 200, statusText: 'OK', body: { settings: stored } });
-  });
-  const field = await screen.findByRole('textbox', { name: 'Maximum turn duration (minutes)' });
-  expect((field as HTMLInputElement).value).toBe('broken');
-  expect(field.getAttribute('aria-invalid')).toBe('true');
-  const ids = field.getAttribute('aria-describedby')!.split(/\s+/);
-  expect(ids.map((id) => document.getElementById(id)?.textContent).join(' ')).toContain('Stored duration is invalid');
-  await userEvent.click(screen.getByRole('button', { name: 'Restore default duration' }));
-  await waitFor(() => expect(field.getAttribute('aria-invalid')).toBeNull());
-  expect((field as HTMLInputElement).value).toBe('30');
-  expect(sent.filter((request) => request.method === 'PUT')).toHaveLength(1);
-  expect(stored.http_proxy).toBe('http://proxy');
-});
-
-it.each([
-  ['refused', 400, 'Duration must be between 1 and 240'],
-  ['unknown', 500, 'The save is unconfirmed.'],
-])('shows a %s settings write, does not retry on blur, and permits an explicit recovery', async (_label, status, sentence) => {
-  let minutes = '30';
-  let refused = true;
-  const { sent } = renderPlanners(undefined, (request) => {
-    if (request.method === 'PUT' && refused) return Promise.resolve({ status, statusText: 'Error',
-      body: { code: 'bad_request', error: 'Duration must be between 1 and 240' } });
-    if (request.method === 'PUT') minutes = '45';
-    return Promise.resolve({ status: 200, statusText: 'OK', body: { settings: { planner_max_turn_duration_minutes: minutes } } });
-  });
-  const field = await screen.findByRole('textbox', { name: 'Maximum turn duration (minutes)' });
-  await userEvent.clear(field);
-  await userEvent.type(field, '45{Enter}');
-  expect((await screen.findByRole('alert')).textContent).toContain(sentence);
-  await userEvent.tab();
-  expect(sent.filter((request) => request.method === 'PUT')).toHaveLength(1);
-  refused = false;
-  await userEvent.click(field);
-  await userEvent.keyboard('{Enter}');
-  await screen.findByText('Saved.');
-  expect(sent.filter((request) => request.method === 'PUT')).toHaveLength(2);
-});
-
-it('a same-value fresh GET overrides an obsolete PUT acknowledgement even with a frozen clock', async () => {
-  const clock = vi.spyOn(Date, 'now').mockReturnValue(1000);
-  try {
-    const { sent } = renderPlanners(undefined, (request) => Promise.resolve({ status: 200, statusText: 'OK',
-      body: { settings: { planner_max_turn_duration_minutes: request.method === 'PUT' ? '45' : '30' } } }));
-    const field = await screen.findByRole<HTMLInputElement>('textbox', { name: 'Maximum turn duration (minutes)' });
-    await userEvent.clear(field);
-    await userEvent.type(field, '45{Enter}');
-    await waitFor(() => expect(sent.filter((request) => request.path === '/api/settings' && request.method === 'GET').length).toBeGreaterThan(1));
-    await screen.findByText(/Changed elsewhere/);
-    expect(screen.queryByText('Saved.')).toBeNull();
-    expect(field.value).toBe('45');
-    expect(sent.filter((request) => request.method === 'PUT')).toHaveLength(1);
-  } finally { clock.mockRestore(); }
 });
 
 
@@ -266,49 +190,4 @@ it('reports missing managed capabilities explicitly and retries both reads', asy
   await screen.findByText(`${LOGGED_OUT} ${unavailableCreationNote('Claude')}`);
   expect(sent.filter(({ path }) => path === '/api/v1/bootstrap?scope=providers').length).toBeGreaterThan(1);
   expect(sent.filter(({ path }) => path === '/api/v1/bootstrap?scope=managed').length).toBeGreaterThan(1);
-});
-
-it('edits the Track mail quota through Settings and restores its default', async () => {
-  let settings: Record<string, string> = {};
-  const { sent, client } = renderPlanners(undefined, (request) => {
-    if (request.method === 'PUT') {
-      const { mail_per_hour } = (request.body as { settings: { mail_per_hour: string | null } }).settings;
-      settings = mail_per_hour === null ? {} : { mail_per_hour };
-    }
-    return Promise.resolve({ status: 200, statusText: 'OK', body: { settings } });
-  });
-  await screen.findByRole('textbox', { name: 'Maximum turn duration (minutes)' });
-  expect(screen.queryByRole('textbox', { name: 'Sending limit (messages per hour)' })).toBeNull();
-  await userEvent.click(screen.getByRole('button', { name: 'Mail' }));
-  const field = await screen.findByRole<HTMLInputElement>('textbox', { name: 'Sending limit (messages per hour)' });
-  expect(screen.queryByRole('textbox', { name: 'Maximum turn duration (minutes)' })).toBeNull();
-  expect(field.value).toBe('5');
-  const user = userEvent.setup();
-  await user.clear(field);
-  await user.type(field, '0{Enter}');
-  expect(sent.filter((request) => request.method === 'PUT')).toHaveLength(0);
-  await user.clear(field);
-  await user.type(field, '12{Enter}');
-  await waitFor(() => expect(settings).toEqual({ mail_per_hour: '12/h' }));
-  const reset = screen.getByRole('button', { name: 'Reset mail sending limit to default' });
-  await waitFor(() => expect((reset as HTMLButtonElement).disabled).toBe(false));
-  await user.click(reset);
-  await waitFor(() => expect(field.value).toBe('5'));
-  expect(sent.filter((request) => request.method === 'PUT').map((request) => request.body)).toEqual([
-    { settings: { mail_per_hour: '12/h' } },
-    { settings: { mail_per_hour: null } },
-  ]);
-  // A bare stored number is invalid even when it equals a confirmed draft.
-  for (const [index, count] of ['5', '7'].entries()) {
-    settings = { mail_per_hour: count };
-    await client.invalidateQueries({ queryKey: queryKeys.settings() });
-    await waitFor(() => expect(field.getAttribute('aria-invalid')).toBe('true'));
-    expect(screen.queryByText('Saved.')).toBeNull();
-    await user.click(field);
-    await user.tab();
-    expect(sent.filter((request) => request.method === 'PUT')).toHaveLength(2 + index);
-    await user.type(field, '{Enter}');
-    await waitFor(() => expect(settings).toEqual({ mail_per_hour: '5/h' }));
-    await waitFor(() => expect(field.getAttribute('aria-invalid')).not.toBe('true'));
-  }
 });

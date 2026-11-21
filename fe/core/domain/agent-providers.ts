@@ -2,19 +2,11 @@
 
 import { z } from 'zod';
 
-import {
-  agentProviderSchema,
-  bootstrapDtoSchema,
-  normalizeWireAgentProvider,
-  permissionModeOptionDtoSchema,
-  providerStatusDtoSchema,
-  type AgentProvider,
-  type PermissionModeOptionDto,
-  type ProviderStatusDto,
-} from '../api/schemas.js';
+import { bootstrapDtoSchema,permissionModeOptionDtoSchema,providerStatusDtoSchema,type PermissionModeOptionDto,type ProviderStatusDto } from "../api/perga-v1.js";
+import { agentProviderSchema,normalizeWireAgentProvider,type AgentProvider } from "../api/schemas.js";
 import type { ApiOperation } from '../api/types.js';
+import { NotSentError,writeClassOf,writeFailureOf,type FailureTable,type WriteClass,type WriteText } from './failure-class.js';
 import type { ProbeText } from './read-failure.js';
-import { NotSentError, writeClassOf, writeFailureOf, type FailureTable, type WriteClass, type WriteText } from './failure-class.js';
 
 const checkedAtSchema = z.number();
 const authenticationNoticeSchema = z.object({
@@ -105,11 +97,6 @@ export const authenticationRetryResponseSchema = z.object({
   recovery_notices: z.array(z.object({ card_id: z.string(), track_id: z.string(), title: z.string(), text: z.string() })),
 });
 export type AuthenticationRetryResponse = z.infer<typeof authenticationRetryResponseSchema>;
-/** Owner authorizes the original queued messages to retry after server-side sign-in. */
-export function codexAuthenticationRetryOperation(revision: string): ApiOperation<AuthenticationRetryResponse> {
-  return { method: 'POST', path: '/api/agent-providers/codex/retry',
-    body: { expected_revision: revision }, responseSchema: authenticationRetryResponseSchema };
-}
 
 /** Definite refusals precede the durable rearm. A 503 may follow its commit, so it is unknown. */
 export const AUTHENTICATION_RETRY_FAILURES: FailureTable<WriteClass> = Object.freeze({

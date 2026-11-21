@@ -1,21 +1,21 @@
-import { fixtureSnapshot, fixtureSession, fixtureTrack, fixtureBootstrap } from './session-contract-fixture.ts';
-import { conversationCardId } from './conversation-read-data.ts';
-import { sessionInput, sessionPage } from './conversation-session-data.ts';
 import { prepareReportDocument } from '../../features/report/document/preparation.ts';
+import { conversationCardId } from './conversation-read-data.ts';
+import { sessionInput,sessionPage } from './conversation-session-data.ts';
+import { fixtureBootstrap,fixtureSession,fixtureSnapshot,fixtureTrack } from './session-contract-fixture.ts';
 // @vitest-environment jsdom
 // A track that starts with no name and no words in it: creating lands in the planner
 // conversation with the caret in it, and clearing the title is a request, not a cancel.
 
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClient,QueryClientProvider } from '@tanstack/react-query';
 import { RouterProvider } from '@tanstack/react-router';
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act,cleanup,render,screen,waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach,beforeEach,describe,expect,it,vi } from 'vitest';
 
-import type { ApiRequest, ApiTransportPort, ApiTransportResponse } from '../../../../core/api/types.ts';
+import type { ApiRequest,ApiTransportPort,ApiTransportResponse } from '../../../../core/api/types.ts';
 import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { ThemeProvider } from '../theme/public.tsx';
-import { APP_BASEPATH, createAppRouter } from './public.tsx';
+import { APP_BASEPATH,createAppRouter } from './public.tsx';
 import { bootTestCardRuntime } from './test-card-runtime.ts';
 
 const unauthorized = createUnauthorizedChannel({ enqueue: (task) => task() });
@@ -61,6 +61,7 @@ function setup(options: Options = {}) {
   const values = new Map<string, string>();
   const transport: ApiTransportPort = {
     send(request) {
+      if (request.path.includes('/workspace-options')) return Promise.resolve({ status: 200, statusText: 'OK', body: { defaultId: 'direct', options: [{ id: 'direct', label: 'Direct folder', description: 'Use this folder' }] } });
       requests.push(request);
       if (request.path === '/api/v1/areas') return Promise.resolve(ok([AREA]));
       if (request.path === '/api/v1/areas/c1/tracks?includeClosed=true') {

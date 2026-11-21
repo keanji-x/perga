@@ -1,10 +1,10 @@
 // Turns reducer effects into TanStack cache operations using the shared resource addresses.
 
-import { newestArea, toArea } from '../../../../core/domain/area.ts';
-import type { PergaStreamDelta } from '../../../../core/api/schemas.ts';
+import type { PergaStreamDelta } from "../../../../core/api/perga-v1.ts";
+import { newestArea,toArea } from '../../../../core/domain/area.ts';
 import type { EventEffect } from '../../../../core/events/reducer.ts';
+import { retireAreaQueries,type AreaQueryLifecyclePort } from '../providers/area-query-lifecycle.ts';
 import { queryKeys } from '../providers/query-keys.ts';
-import { retireAreaQueries, type AreaQueryLifecyclePort } from '../providers/area-query-lifecycle.ts';
 import { cancelThenInvalidate } from './query-refresh.ts';
 
 export type SessionLiveToolState = Readonly<{

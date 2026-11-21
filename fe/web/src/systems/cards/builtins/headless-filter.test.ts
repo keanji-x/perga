@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe,expect,it } from 'vitest';
 
 import type { CardWire } from '../../../../../core/domain/track.ts';
 import { createCardRegistry } from '../registry.js';
@@ -28,18 +28,6 @@ describe('headless card filtering', () => {
     expect(visible).toEqual([]);
     expect(unknown.map((slot) => slot.wire.id)).toEqual(['term-1']);
     expect(unknown[0]?.originalIndex).toBe(1);
-  });
-
-  it('[INV-CARD-226] keeps ordinary codex cards visible, never headless', () => {
-    const { visible, unknown } = partitionTrackCards(bootedRegistry(), [
-      wire({ id: 'codex-1', kind: 'codex', payload: {} }),
-      wire({ id: 'codex-2', kind: 'codex', payload: null }),
-      wire({ id: 'codex-3', kind: 'codex', payload: { planner_harness: false } }),
-    ]);
-    expect(visible.map((slot) => slot.wire.id)).toEqual(['codex-1', 'codex-2', 'codex-3']);
-    expect(visible.map((slot) => slot.card.type)).toEqual(['codex', 'codex', 'codex']);
-    expect(visible.map((slot) => slot.originalIndex)).toEqual([0, 1, 2]);
-    expect(unknown).toEqual([]);
   });
 
   it('routes cards with a surface into the visible branch with their wire and index', () => {

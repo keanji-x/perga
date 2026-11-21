@@ -1,19 +1,17 @@
+import { sessionItem,sessionPage } from '../router/conversation-session-data.ts';
 import { fixtureSession } from '../router/session-contract-fixture.ts';
-import { sessionPage, sessionItem } from '../router/conversation-session-data.ts';
 // @vitest-environment jsdom
-import { createElement, type ReactNode } from 'react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
-import { afterEach, expect, it } from 'vitest';
-import { wireEventSchema } from '../../../../core/api/schemas.ts';
-import { invalidationPlanFor } from '../../../../core/events/invalidation-plan.ts';
-import { applyEventEffects } from '../events/query-invalidation-adapter.ts';
+import { QueryClient,QueryClientProvider } from '@tanstack/react-query';
+import { act,cleanup,renderHook,waitFor } from '@testing-library/react';
+import { createElement,type ReactNode } from 'react';
+import { afterEach,expect,it } from 'vitest';
 import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
+import { applyEventEffects } from '../events/query-invalidation-adapter.ts';
 import { conversationHistoryQueryOptions as pageOptions } from '../providers/queries.ts';
-import { earlierReadingPosition, historyRows, latestHistory as applyLatestPage, observedWindow as observePage, useTranscriptReads, useTranscriptHistory, type History } from './history.ts';
+import { latestHistory as applyLatestPage,earlierReadingPosition,historyRows,observedWindow as observePage,useTranscriptHistory,useTranscriptReads,type History } from './history.ts';
 
 import type { ConversationCursor } from '../../../../core/api/generated/wire.ts';
-import type { ConversationDisplayItem, ConversationPage } from '../../../../core/domain/conversation-display.ts';
+import type { ConversationDisplayItem,ConversationPage } from '../../../../core/domain/conversation-display.ts';
 type Row = ConversationDisplayItem;
 function cursor(position: number): ConversationCursor {
   return { contract: 'conversation_v1', source: 'presentation', card_id: 'card', position };
@@ -165,7 +163,7 @@ it.each([0, 3])('records the actual earlier short response as read-to-start (%i 
   view.client.clear();
 });
 
-it.each(['clear', 'rewind', 'restored', 'replay'] as const)('expires retained windows and a pending old cursor on %s', async kind => {
+it.each(['replay'] as const)('expires retained windows and a pending old cursor on %s', async kind => {
   const view = setup();
   await waitFor(() => expect(view.result.current.history.isSuccess).toBe(true));
   act(() => { view.result.current.history.loadEarlier(); });
@@ -176,16 +174,8 @@ it.each(['clear', 'rewind', 'restored', 'replay'] as const)('expires retained wi
   // Still a full latest page: reset must expire older rows even when a short page cannot prove it.
   view.newest(rows(181));
   act(() => {
-    if (kind === 'replay') applyEventEffects(view.client, [{ type: 'invalidate', keys: null }]);
-    else {
-      const data = { worker_session_id: 'worker', card_id: 'card', track_id: 'track' };
-      const event = wireEventSchema.parse(kind === 'restored'
-        ? { ev: 'harness.queue.changed', data: { ...data, entry_id: 'input', change: 'restored', actor: { kind: 'Kernel' } } } : kind === 'clear'
-        ? { ev: 'harness.transcript.cleared', data: { ...data, cleared_item_count: 120, cleared_params_bytes: 0, card_age_ms_at_clear: 1 } }
-        : { ev: 'harness.transcript.rewound', data: { ...data, turn_id: 'turn', removed_item_count: 120 } });
-      const plan = invalidationPlanFor(event);
-      applyEventEffects(view.client, [{ type: 'write-through', writes: plan.writeThrough }, { type: 'invalidate', keys: plan.invalidate }]);
-    }
+    expect(kind).toBe('replay');
+    applyEventEffects(view.client, [{ type: 'invalidate', keys: null }]);
   });
   await waitFor(() => expect(historyRows(view.result.current.history.data).map(row => row.cursor.position)).toEqual(rows(181).map(row => row.cursor.position)));
   act(() => { held.resolve(rows(1)); });

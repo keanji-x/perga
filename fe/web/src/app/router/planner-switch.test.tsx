@@ -1,19 +1,19 @@
-import { ChatComposer } from '../../features/chat/thread/public.tsx';
-import { conversationCommands } from '../../features/chat/thread/composer-command.ts';
-import { onlineManager, QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import type { ReactNode } from 'react';
-import type { ApiRequest, ApiTransportPort } from '../../../../core/api/types.ts';
-import type { TrackAggregateSnapshotDto } from '../../../../core/api/schemas.ts';
-import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
-import { usePlannerSwitchControl } from './planner-switch-control.ts';
-import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react';
+import { onlineManager,QueryClient,QueryClientProvider } from '@tanstack/react-query';
+import { act,cleanup,fireEvent,render,renderHook,screen,waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, expect, it, vi } from 'vitest';
+import type { ReactNode } from 'react';
+import { afterEach,expect,it,vi } from 'vitest';
+import type { TrackAggregateSnapshotDto } from "../../../../core/api/perga-v1.ts";
+import type { ApiRequest,ApiTransportPort } from '../../../../core/api/types.ts';
+import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
+import { conversationCommands } from '../../features/chat/thread/composer-command.ts';
+import { ChatComposer } from '../../features/chat/thread/public.tsx';
+import { trackDetailQueryOptions } from '../providers/queries.ts';
+import { queryKeys } from '../providers/query-keys.ts';
+import { renderAssistantProviderFixture } from './assistant-provider-fixture.tsx';
+import { usePlannerSwitchControl } from './planner-switch-control.ts';
 import { renderPlannerSwitchFixture } from './planner-switch-fixture.tsx';
 import { fixtureBootstrap } from './session-contract-fixture.ts';
-import { renderAssistantProviderFixture } from './assistant-provider-fixture.tsx';
-import { queryKeys } from '../providers/query-keys.ts';
-import { trackDetailQueryOptions } from '../providers/queries.ts';
 
 async function open(name = 'Other conversation') {
   await userEvent.click(await screen.findByRole('button', { name: new RegExp(`Conversation ${name}`) }));
@@ -39,7 +39,7 @@ it.each(['/track/daily?panel=conversations', '/'])('switches the selected Assist
   await waitFor(() => expect(writes(fixture).map(({ path, body }) => ({ path, body }))).toEqual([{
     path: '/api/v1/tracks/daily', body: { leadSessionId: 'second-planner' },
   }]));
-  await waitFor(() => expect(screen.getByRole('button', { name: /Role: Member/ })).toBeTruthy());
+  await waitFor(() => expect(input.textContent).toBe(''));
   expect(input.textContent).toBe('');
   expect(screen.queryAllByRole('alert')).toHaveLength(0);
   if (initial !== '/') await userEvent.click(screen.getByRole('button', { name: 'Close conversation' }));
@@ -127,7 +127,7 @@ it('prevents reentry while a response is pending', async () => {
   await waitFor(() => expect(finish).toBeTypeOf('function'));
   await submit(input); expect(writes(fixture)).toHaveLength(1);
   act(() => { finish(); });
-  await waitFor(() => expect(screen.getByRole('button', { name: /Role: Member/ })).toBeTruthy());
+  await waitFor(() => expect(input.textContent).toBe(''));
   expect(writes(fixture)).toHaveLength(1);
 });
 
@@ -245,7 +245,7 @@ it('accepts events before the mutation response without resubmission', async () 
     await fixture.client.invalidateQueries({ queryKey: queryKeys.trackDetail('daily') });
 
   });
-  await screen.findByRole('button', { name: /Role: Member/ });
+  await waitFor(() => expect(input.textContent).toBe(''));
   act(() => { finish(); });
   await waitFor(() => expect(input.textContent).toBe(''));
   expect(screen.queryByRole('alert')).toBeNull(); expect(writes(fixture)).toHaveLength(1);

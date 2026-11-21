@@ -1,80 +1,75 @@
-import { taskDtoSchema } from './perga-v1.js';
-import hostPayloads from './fixtures/unified-host-payloads.json';
+import { describe,expect,it } from 'vitest';
+import { agentProvidersOperation,managedProvidersOperation } from '../domain/agent-providers.js';
 import { sessionContextUsage } from '../domain/session-context-usage.js';
-import { describe, expect, it } from 'vitest';
+import { trackTemplatesOperation } from '../domain/track.js';
+import { bootstrapOperation,whoamiOperation } from './auth.js';
+import hostPayloads from './fixtures/unified-host-payloads.json';
+import { taskDtoSchema } from './perga-v1.js';
 
-import { bootstrapOperation, DEPLOYMENT_OWNER_USER_ID, loginOperation, whoamiOperation } from './auth.js';
 import {
-  bootstrapDtoSchema,
-  decodePergaEventEnvelope,
-  trackAggregateSnapshotDtoSchema,
-  agentSessionDtoSchema,
-  sessionCreationReceiptSchema,
-  trackDtoSchema,
-  trackDataPatchResultSchema,
+areaFoldersOperation,
+areaListOperation,
+createAreaOperation,
+deleteAreaOperation,
+updateAreaOperation
+} from '../domain/area.js';
+import { answerAskOperation,openAsksOf } from '../domain/ask.js';
+import { buildConversationTranscript,conversationItemsOperation,conversationRunOperation } from '../domain/conversation-display.js';
+import {
+agentSessionDtoToConversation,
+compactPlannerOperation,
+createTrackConversationOperation,
+interruptPlannerOperation,
+modelCatalogOperation,
+sendPlannerInputOperation,
+setConversationArchiveOperation,
+setPlannerModelOperation,
+} from '../domain/conversation.js';
+import { decodeEventFrame } from '../events/protocol.js';
+import { initialEventState,reduceEventFrame } from '../events/reducer.js';
+import { DEPLOYMENT_OWNER_USER_ID,loginOperation } from './auth.js';
+import {
+agentSessionDtoSchema,
+bootstrapDtoSchema,
+decodePergaEventEnvelope,
+sessionCreationReceiptSchema,
+trackAggregateSnapshotDtoSchema,
+trackDataPatchResultSchema,
+trackDtoSchema,
 } from './perga-v1.js';
 import { decodeWireEvent } from './schemas.js';
-import { decodeEventFrame } from '../events/protocol.js';
-import { initialEventState, reduceEventFrame } from '../events/reducer.js';
-import {
-  areaCreationCapabilityOperation,
-  areaFoldersOperation,
-  areaListOperation,
-  createAreaOperation,
-  deleteAreaOperation,
-  updateAreaOperation,
-} from '../domain/area.js';
-import { agentProvidersOperation, managedProvidersOperation } from '../domain/agent-providers.js';
-import { answerAskOperation, openAsksOf } from '../domain/ask.js';
-import {
-  compactPlannerOperation,
-  createTrackConversationOperation,
-  interruptPlannerOperation,
-  modelCatalogOperation,
-  setPlannerModelOperation,
-  setConversationArchiveOperation,
-  sendPlannerInputOperation,
-  agentSessionDtoToConversation,
-} from '../domain/conversation.js';
-import { buildConversationTranscript, conversationItemsOperation, conversationRunOperation } from '../domain/conversation-display.js';
 
+import { trackDtoToWire } from '../api/track-projection.js';
 import {
-  listDirectoryOperation,
-  listTrackWorkspaceDirectoryOperation,
-  readTrackWorkspaceFileOperation,
-  trackVcsDiffOperation,
-  trackWorkspaceRawFileUrl,
+listDirectoryOperation,
+listTrackWorkspaceDirectoryOperation,
+readTrackWorkspaceFileOperation,
+trackVcsDiffOperation,
+trackWorkspaceRawFileUrl,
 } from '../domain/fs.js';
 import { selectedReadyTemplateId } from '../domain/mentions.js';
-import { trackDtoToWire, trackActivityFromSnapshot } from '../domain/track.js';
 import { plannerSwitchOperation } from '../domain/planner-switch.js';
 import {
-  readReportDocument,
-  readTrackReportOperation,
-  readTrackViewsOperation,
-  trackTaskVerdictsOperation,
-  updateTrackReportBlockOperation,
+readReportDocument,
+readTrackReportOperation,
+readTrackViewsOperation,
+trackTaskVerdictsOperation,
+updateTrackReportBlockOperation,
 } from '../domain/report.js';
 import {
-  acceptTaskOperation,
-  cancelTaskOperation,
-  taskEvidence,
-  rejectTaskOperation,
+acceptTaskOperation,
+cancelTaskOperation,
+rejectTaskOperation,
+taskEvidence,
 } from '../domain/task-recovery.js';
-import { compilePergaTemplateInputs, parsePergaInputsSchema } from '../domain/template-input.js';
+import { compilePergaTemplateInputs,parsePergaInputsSchema } from '../domain/template-input.js';
 import {
-  createTerminalCardOperation,
-  createTrackOperation,
-  deleteTerminalOperation,
-  deleteTrackOperation,
-  listTrackTerminalsOperation,
-  trackOverlaysOperation,
-  terminalDtoToCardWire,
-  trackActivitiesFromOverlays,
-  trackDetailOperation,
-  tracksInAreaOperation,
-  trackTemplatesOperation,
-  updateTrackOperation,
+createTerminalCardOperation,
+createTrackOperation,
+deleteTerminalOperation,
+deleteTrackOperation,
+listTrackTerminalsOperation,terminalDtoToCardWire,
+trackActivitiesFromOverlays,trackActivityFromSnapshot,trackDetailOperation,trackOverlaysOperation,tracksInAreaOperation,updateTrackOperation
 } from '../domain/track.js';
 
 describe('Perga /api/v1 protocol contracts', () => {
@@ -148,9 +143,6 @@ describe('Perga /api/v1 protocol contracts', () => {
     const parsed = bootstrapDtoSchema.parse(sampleBootstrap);
     expect(parsed.version).toBe('0.1.0');
 
-    const cap = areaCreationCapabilityOperation();
-    expect(cap.path).toBe('/api/v1/bootstrap');
-    expect(cap.responseSchema.parse(sampleBootstrap)).toBe('supported');
 
     const providers = agentProvidersOperation(false).responseSchema.parse(sampleBootstrap);
     expect(providers).toHaveLength(4);
@@ -243,7 +235,7 @@ describe('Perga /api/v1 protocol contracts', () => {
     const listOp = areaListOperation();
     expect(listOp).toMatchObject({ method: 'GET', path: '/api/v1/areas' });
     const areas = listOp.responseSchema.parse(sampleBootstrap.areas);
-    expect(areas[0]).toMatchObject({ id: 'area_1', sort: 1, default_cwd: '/repo' });
+    expect(areas[0]).toMatchObject({ id: 'area_1', sortOrder: 1, defaultCwd: '/repo' });
 
     const createOp = createAreaOperation({ name: 'Infra', color: '#10b981', default_cwd: '/infra', sort: 3 }, 'idem-a1');
     expect(createOp).toMatchObject({
@@ -751,7 +743,7 @@ describe('Perga /api/v1 protocol contracts', () => {
       terminal_presentation: { source: 'unrecorded', in_workbench: true },
     });
 
-    const hostListOp = listDirectoryOperation('/srv', { perga: true });
+    const hostListOp = listDirectoryOperation('/srv');
     expect(hostListOp.path).toBe('/api/v1/fs/listdir?path=%2Fsrv');
     expect(hostListOp.responseSchema.parse({
       path: '/srv',

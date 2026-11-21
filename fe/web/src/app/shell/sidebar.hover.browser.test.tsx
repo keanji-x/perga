@@ -1,10 +1,10 @@
+import '../../styles/entry.css';
 import { cleanup, render, waitFor } from '@testing-library/react';
 import { page } from 'vitest/browser';
 import { afterEach, expect, it, vi } from 'vitest';
 
 import type { Area } from '../../../../core/domain/area.ts';
 import { NEUTRAL_ACTIVITY, type Track } from '../../../../core/domain/track.ts';
-import '../../styles/entry.css';
 import { ThemeProvider } from '../theme/public.tsx';
 import { SidebarFixture as Sidebar } from './sidebar-fixture.tsx';
 import { readReceiptsFixture } from '../providers/read-receipts-fixture.tsx';
@@ -163,9 +163,7 @@ it('keeps the clickable Area quieter and uses the same cadence as its Track rows
   expect(areaRect.height).toBeCloseTo(firstRect.height, 0);
   expect(firstRect.top - areaRect.top).toBeCloseTo(31, 1);
   expect(secondRect.top - firstRect.top).toBeCloseTo(30, 1);
-  const todayRect = page.getByRole('button', { name: 'Today', exact: true }).element().getBoundingClientRect();
-  const recipesRect = page.getByRole('button', { name: 'Recipes', exact: true }).element().getBoundingClientRect();
-  expect(nextRect.top - secondRect.bottom).toBeCloseTo(recipesRect.top - todayRect.bottom, 2);
+  expect(nextRect.top - secondRect.bottom).toBeCloseTo(areaRect.top - emptyGroup.getBoundingClientRect().bottom, 2);
   for (const theme of ['light', 'dark']) {
     document.documentElement.dataset.theme = theme;
     const railBackground = getComputedStyle(areaRow.closest('nav')!).backgroundColor;
