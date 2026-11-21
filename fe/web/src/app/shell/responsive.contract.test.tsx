@@ -115,7 +115,7 @@ describe('compact navigation interaction contracts', () => {
    * decides which receipt that prop is. */
   it('hands the Track list the rail’s read receipt, so a newer completion is unread until it is read', async () => {
     compactViewport();
-    workspaceTracks = [{ ...TRACK, activityAt: 150 }];
+    workspaceTracks = [{ ...TRACK, notifiableSessions: [{ sessionId: 's1', lastNotifiableTurnAtMs: 150 }] }];
     // The kernel's baseline is 100.
     receipts = createReadReceiptsKernel({ baselineMs: 100 });
     const preferences = createUiPreferences(memoryStorage());
@@ -131,7 +131,7 @@ describe('compact navigation interaction contracts', () => {
     expect(screen.getByRole('button', { name: 'Responsive mobile UI' })).toBeTruthy();
 
     // Read elsewhere; this tab sees it when it is shown again.
-    await receipts.transport.send({ method: 'POST', path: '/api/v1/read-receipts/track/w1/read', credentials: 'include', body: { readThroughMs: 150 } });
+    await receipts.transport.send({ method: 'POST', path: '/api/v1/read-receipts/conversation/s1/read', credentials: 'include', body: { readThroughMs: 150 } });
     act(() => { window.dispatchEvent(new Event('visibilitychange')); });
     await waitFor(() => expect(marker()).toBeNull());
   });

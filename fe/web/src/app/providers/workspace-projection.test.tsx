@@ -5,7 +5,8 @@ import { type ReactNode } from 'react';
 import type { ApiTransportPort } from '../../../../core/api/types.ts';
 import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { type Area } from '../../../../core/domain/area.ts';
-import { NEUTRAL_ACTIVITY, type OverlayWire, type Track } from '../../../../core/domain/track.ts';
+import type { TrackOverlayItemDto } from '../../../../core/api/perga-v1.ts';
+import { NEUTRAL_ACTIVITY, type Track } from '../../../../core/domain/track.ts';
 import { queryKeys, useWorkspace } from './queries.ts';
 
 afterEach(cleanup);
@@ -16,7 +17,7 @@ const track = (id: string, areaId = 'a'): Track => ({ ...NEUTRAL_ACTIVITY,
   id, areaId, title: id, sort: 0, cwd: '/tmp', isolation: 'none', agentCwd: '/tmp', pinnedAt: null, closedAt: null,
   createdAt: 1, updatedAt: 1 });
 
-function setup(areas: readonly Area[], rows: readonly Track[], overlays: readonly OverlayWire[]) {
+function setup(areas: readonly Area[], rows: readonly Track[], overlays: readonly TrackOverlayItemDto[]) {
   const client = new QueryClient({ defaultOptions: { queries: { retryDelay: 0, retry: false, staleTime: Infinity, structuralSharing: false } } });
   client.setQueryData(queryKeys.areas(), areas);
   for (const owner of areas) client.setQueryData(queryKeys.tracksInArea(owner.id), rows.filter(row => row.areaId === owner.id));
@@ -29,10 +30,18 @@ function setup(areas: readonly Area[], rows: readonly Track[], overlays: readonl
   return { ...view, client };
 }
 
-function activity(id: string, at: number): OverlayWire {
-  return { id: `activity-${id}`, plugin_id: 'kernel', entity_kind: 'track', entity_id: id,
-    kind: 'activity', payload: { schemaVersion: 4, working: false, attention: 'none',
-      activity_at_ms: at, items: [], cards: [] }, updated_at: at };
+function activity(id: string, at: number): TrackOverlayItemDto {
+  return {
+    trackId: id,
+    areaId: 'a',
+    isWorking: false,
+    openAskCount: 0,
+    pendingApprovalCount: 0,
+    hasBlockedSession: false,
+    workspaceFailed: false,
+    notifiableSessions: [{ sessionId: `s-${id}`, lastNotifiableTurnAtMs: at }],
+    updatedAtMs: at,
+  };
 }
 
 it('reads overlay membership linearly across the actual workspace projection', () => {
@@ -40,12 +49,12 @@ it('reads overlay membership linearly across the actual workspace projection', (
   let reads = 0;
   const overlays = rows.map((row, index) => {
     const value = activity(row.id, index + 2);
-    Object.defineProperty(value, 'entity_id', { enumerable: true, get: () => { reads++; return row.id; } });
+    Object.defineProperty(value, 'trackId', { enumerable: true, get: () => { reads++; return row.id; } });
     return value;
   });
   const view = setup([area('a')], rows, overlays);
   try {
-    expect(view.result.current.tracks.map(row => row.activityAt)).toEqual(rows.map((_, index) => index + 2));
+    expect(view.result.current.tracks.map(row => row.recentAt)).toEqual(rows.map((_, index) => index + 2));
     expect(reads).toBeLessThanOrEqual(overlays.length * 4);
   } finally { view.unmount(); view.client.clear(); }
 });
@@ -66,7 +75,7 @@ it('keeps data projections stable across shell renders and failed refetches, but
     act(() => { view.client.setQueryData(queryKeys.overlaysByKind('track'), [activity('one', 30)]); });
     await waitFor(() => expect(view.result.current.tracksByArea.get('a')?.map(row => row.id)).toEqual(['one', 'two']));
     expect(view.result.current.tracks).not.toBe(before.tracks);
-    expect(view.result.current.tracks.find(row => row.id === 'two')?.activityAt).toBeNull();
+    expect(view.result.current.tracks.find(row => row.id === 'two')?.recentAt).toBeNull();
     act(() => { view.client.setQueryData(queryKeys.areas(), [b, a]); });
     await waitFor(() => expect(view.result.current.tracks.map(row => row.id)).toEqual(['other', 'one', 'two']));
     act(() => { view.client.setQueryData(queryKeys.tracksInArea('b'), [track('renamed', 'b')]); });

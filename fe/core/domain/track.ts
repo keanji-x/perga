@@ -1,4 +1,4 @@
-import { notifiableSessionWatermarkSchema, type NotifiableSessionWatermark } from '../api/perga-v1.js';
+import { type NotifiableSessionWatermark, type TrackOverlayItemDto } from '../api/perga-v1.js';
 import type { TerminalPresentation } from './terminal-presentation.js';
 // Track: the unit of work the product is organised around — wire decode, open or closed,
 // and the pure predicates several surfaces must agree on.
@@ -6,8 +6,6 @@ import type { TerminalPresentation } from './terminal-presentation.js';
 import { z } from 'zod';
 
 import {
-  askActionSchema,
-  askQuestionSchema,
   cardSchema,
   compiledTemplateManifestDtoSchema,
   overlaySchema,
@@ -18,7 +16,9 @@ import {
   trackDtoSchema,
   trackWorkspaceSchema,
   trackWorkspaceOptionsDtoSchema,
+  type AgentSessionDto,
   type AskDto,
+  type TaskDto,
   type TerminalDto,
   type TrackAggregateSnapshotDto,
   type TrackWorkspaceOptionsDto,
@@ -60,23 +60,16 @@ export const trackWireSchema = z.object({
 });
 export type TrackWire = z.infer<typeof trackWireSchema>;
 
-/** Plugin-written activity on top of the kernel row; the neutral values mean "nothing posted", not "unknown". */
+/** Live activity projection for a track; neutral values mean idle/quiet. */
 export type TrackActivity = Readonly<{
   notifiableSessions: readonly NotifiableSessionWatermark[];
-  progress: number;
-  eta: string;
-  now: string;
-  /** From the kernel `activity` overlay: something dispatched is still running. */
   working: boolean;
-  /** Same overlay: whether the Track needs input or has a failure. */
   attention: AttentionKind;
-  /** Same overlay: high-water mark of completion-class evidence; the read receipt compares against it. */
-  activityAt: number | null;
-  /** Latest finite write/evidence time from the kernel activity overlay; used for recent-activity ordering. */
+  /** Latest finite server timestamp from the overlay/snapshot; used for recent-activity ordering. */
   recentAt: number | null;
-  /** Same overlay: questions, failures and turn timeouts with their recorded details. */
+  /** Open asks requiring user input on this track. */
   attentionItems: readonly ActivityItem[];
-  /** Same overlay: the per-card verdicts, keyed by card id. Read through `cardActivityOf`. */
+  /** Per-session activity verdicts, keyed by session id. Read through `cardActivityOf`. */
   cards: Readonly<Record<string, CardActivity>>;
 }>;
 
@@ -84,9 +77,11 @@ export type TrackActivity = Readonly<{
  * and a `new Map()` here would be rejected — hence `cards` is a `Record`. */
 export const NEUTRAL_ACTIVITY: TrackActivity = Object.freeze({
   notifiableSessions: Object.freeze([]),
-  progress: 0, eta: '', now: '',
-  working: false, attention: 'none', activityAt: null, recentAt: null,
-  attentionItems: Object.freeze([]), cards: Object.freeze({}),
+  working: false,
+  attention: 'none',
+  recentAt: null,
+  attentionItems: Object.freeze([]),
+  cards: Object.freeze({}),
 });
 
 export type Track = Readonly<{
@@ -135,6 +130,9 @@ export function toTrack(wire: TrackWire, activity: TrackActivity = NEUTRAL_ACTIV
 
 export type OverlayWire = z.infer<typeof overlaySchema>;
 
+/** Scheme prefix of a live table `source`. Mirrors `report_blocks::LIVE_SOURCE_PREFIX`. */
+const LIVE_TABLE_SOURCE_PREFIX = 'neige://plugin/';
+
 /**
  * Resolves a report's `neige://plugin/<plugin_id>/<kind>` source to at most one overlay's
  * payload, unvalidated (the renderer decodes it); `undefined` when nothing matches.
@@ -152,8 +150,6 @@ export function trackOverlayPayload(
   if (slash <= 0 || slash === rest.length - 1) return undefined;
   const pluginId = rest.slice(0, slash);
   const kind = rest.slice(slash + 1);
-  // `indexOf` above splits at the FIRST slash, so a three-segment source would
-  // otherwise resolve as a kind containing a slash. Overlay kinds never do.
   if (kind.includes('/')) return undefined;
   const match = overlays.find((overlay) => overlay.entity_kind === 'track'
     && overlay.entity_id === trackId
@@ -162,119 +158,47 @@ export function trackOverlayPayload(
   return match?.payload;
 }
 
-/** Scheme prefix of a live table `source`. Mirrors `report_blocks::LIVE_SOURCE_PREFIX`. */
-const LIVE_TABLE_SOURCE_PREFIX = 'neige://plugin/';
-
-function payloadField(payload: unknown, key: string): unknown {
-  return typeof payload === 'object' && payload !== null
-    ? (payload as Record<string, unknown>)[key]
-    : undefined;
+function finiteOrNull(value: number): number | null {
+  return Number.isFinite(value) ? value : null;
 }
 
-const attentionKindSchema = z.enum(['none', 'input', 'failed']);
-const activityItemWireSchema = z.discriminatedUnion('source', [
-  z.object({
-    source: z.literal('ask'),
-    key: z.string(),
-    text: z.string(),
-    at_ms: z.number(),
-    ask_id: z.union([z.number(), z.string()]),
-    questions: z.array(askQuestionSchema),
-    delivery: z.enum(['wake', 'hold']),
-    action: askActionSchema.optional(),
-  }),
-]);
-const activityCardWireSchema = z.object({
-  card_id: z.string(),
-  state: z.enum(['working', 'input', 'failed']),
-});
+const WORKING_SESSION_STATUSES: readonly string[] = Object.freeze(['queued', 'running', 'stopping', 'compacting']);
 
-/** Mirrors `calm_truth::validation::KERNEL_OVERLAY_PLUGIN_ID`. */
-const KERNEL_OVERLAY_PLUGIN_ID = 'kernel';
-const activityOverlayWireSchema = z.object({
-  schemaVersion: z.literal(4),
-  working: z.boolean(),
-  attention: attentionKindSchema,
-  activity_at_ms: z.number().nullable(),
-  notifiableSessions: z.array(notifiableSessionWatermarkSchema).default([]),
-  items: z.array(z.unknown()),
-  cards: z.array(z.unknown()),
-});
+function isWorkingSessionStatus(status: string): boolean {
+  return WORKING_SESSION_STATUSES.includes(status);
+}
 
-function activityOverlayFields(payload: unknown): Partial<TrackActivity> | null {
-  const parsed = activityOverlayWireSchema.safeParse(payload);
-  if (!parsed.success) return null;
-  const attentionItems: ActivityItem[] = [];
-  for (const row of parsed.data.items) {
-    const item = activityItemWireSchema.safeParse(row);
-    if (!item.success) continue;
-    const base = { key: item.data.key, text: item.data.text, atMs: item.data.at_ms };
-    attentionItems.push({ ...base, source: 'ask', askId: item.data.ask_id, questions: item.data.questions,
-      delivery: item.data.delivery, ...(item.data.action === undefined ? {} : { action: item.data.action }) });
-  }
-  const cards: Record<string, CardActivity> = {};
-  for (const row of parsed.data.cards) {
-    const card = activityCardWireSchema.safeParse(row);
-    if (card.success) cards[card.data.card_id] = card.data.state;
-  }
+/** Shared rule for both Track-level and per-session red indicators. */
+function isSessionBlockingTrack(session: AgentSessionDto, tasks: readonly TaskDto[]): boolean {
+  if (session.status !== 'unknown') return false;
+  if (session.boundTaskId == null) return true;
+  return session.boundAttemptId != null && tasks.some(
+    task => task.id === session.boundTaskId
+      && task.latestAttemptId === session.boundAttemptId
+      && (task.status === 'running' || task.status === 'verifying'),
+  );
+}
+
+/** Direct projection of one `/api/v1/overlays` item into `TrackActivity`. */
+export function trackActivityFromOverlay(item: TrackOverlayItemDto): TrackActivity {
+  const attention: AttentionKind = item.hasBlockedSession || item.workspaceFailed
+    ? 'failed'
+    : item.openAskCount + item.pendingApprovalCount > 0
+      ? 'input'
+      : 'none';
   return {
-    notifiableSessions: parsed.data.notifiableSessions,
-    working: parsed.data.working,
-    attention: parsed.data.attention,
-    activityAt: parsed.data.activity_at_ms,
-    attentionItems,
-    cards,
+    notifiableSessions: item.notifiableSessions,
+    working: item.isWorking,
+    attention,
+    recentAt: finiteOrNull(item.updatedAtMs),
+    attentionItems: Object.freeze([]),
+    cards: Object.freeze({}),
   };
 }
 
-function newerFinite(current: number | null, candidate: number): number | null {
-  if (!Number.isFinite(candidate)) return current;
-  return current === null || candidate > current ? candidate : current;
-}
-
-/**
- * Folds a track's overlays into its activity fields; junk payloads are ignored, not rejected.
- * Only the kernel-written `activity` row is the verdict — any plugin may write a row of any kind under its own id.
- */
-export function trackActivityFrom(trackId: string, overlays: readonly OverlayWire[]): TrackActivity {
-  let activity = NEUTRAL_ACTIVITY;
-  for (const overlay of overlays) {
-    if (overlay.entity_kind !== 'track' || overlay.entity_id !== trackId) continue;
-    const value = payloadField(overlay.payload, 'value');
-    const text = payloadField(overlay.payload, 'text');
-    if (overlay.kind === 'progress' && typeof value === 'number') activity = { ...activity, progress: value };
-    else if (overlay.kind === 'eta' && typeof text === 'string') activity = { ...activity, eta: text };
-    else if (overlay.kind === 'now' && typeof text === 'string') activity = { ...activity, now: text };
-    else if (overlay.kind === 'activity' && overlay.plugin_id === KERNEL_OVERLAY_PLUGIN_ID) {
-      const recentAt = newerFinite(activity.recentAt, overlay.updated_at);
-      const fields = activityOverlayFields(overlay.payload);
-      activity = fields === null ? { ...activity, recentAt } : {
-        ...activity,
-        ...fields,
-        recentAt: fields.activityAt === null || fields.activityAt === undefined
-          ? recentAt
-          : newerFinite(recentAt, fields.activityAt),
-      };
-    }
-  }
-  return activity;
-}
-
-/** Bulk projection keeps each entity's original overlay order and the single-track fold's policy. */
-export function trackActivitiesFrom(overlays: readonly OverlayWire[]): ReadonlyMap<string, TrackActivity> {
-  const byTrack = new Map<string, OverlayWire[]>();
-  for (const overlay of overlays) {
-    if (overlay.entity_kind !== 'track') continue;
-    const id = overlay.entity_id;
-    const rows = byTrack.get(id);
-    if (rows === undefined) byTrack.set(id, [overlay]);
-    else rows.push(overlay);
-  }
-  return new Map([...byTrack].map(([id, rows]) => [id, trackActivityFrom(id, rows)]));
-}
-
-function finiteOrNull(value: number): number | null {
-  return Number.isFinite(value) ? value : null;
+/** Bulk projection of `/api/v1/overlays` items keyed by track id. */
+export function trackActivitiesFromOverlays(items: readonly TrackOverlayItemDto[]): ReadonlyMap<string, TrackActivity> {
+  return new Map(items.map(item => [item.trackId, trackActivityFromOverlay(item)] as const));
 }
 
 /** Effective recency for a track row. Malformed fixtures fail closed onto the remaining finite evidence. */
@@ -634,14 +558,14 @@ const trackWireOrDtoSchema: z.ZodType<TrackWire> = z.union([
   trackWireSchema,
 ]);
 
-function askDtoToActivityItem(ask: AskDto): z.infer<typeof activityItemWireSchema> {
+function askDtoToActivityItem(ask: AskDto): ActivityItem {
   const questions = normalizeAskQuestions(ask.questions);
   return {
     source: 'ask',
     key: `ask:${ask.id}`,
     text: questions.map((question) => question.title).join('\n') || 'Question waiting for your answer',
-    at_ms: ask.createdAtMs,
-    ask_id: ask.id,
+    atMs: ask.createdAtMs,
+    askId: ask.id,
     questions: [...questions],
     delivery: ask.delivery,
   };
@@ -675,46 +599,56 @@ export function terminalDtoToCardWire(dto: TerminalDto, sort = 100, inWorkbench 
   };
 }
 
-/** Activity facts read from the same aggregate as sessions and tasks. */
-export function snapshotActivityOverlays(snapshot: TrackAggregateSnapshotDto): OverlayWire[] {
-  const openAskItems = snapshot.openAsks
-    .filter((ask) => ask.status === 'open')
-    .map(askDtoToActivityItem);
+/** Direct activity projection from a Track aggregate snapshot. */
+export function trackActivityFromSnapshot(snapshot: TrackAggregateSnapshotDto): TrackActivity {
+  const openAsks = snapshot.openAsks.filter((ask) => ask.status === 'open');
+  const openAskItems = openAsks.map(askDtoToActivityItem);
   const closed = snapshot.track.closedAtMs != null;
   const sessions = snapshot.sessions.filter(s => s.archivedAtMs == null);
-  const workingStates = ['queued', 'running', 'stopping', 'compacting'];
-  const blocked = sessions.some(s => s.status === 'unknown' && (s.boundTaskId == null
-    || (s.boundAttemptId != null && snapshot.tasks.some(t => t.id === s.boundTaskId && t.latestAttemptId === s.boundAttemptId && ['running', 'verifying'].includes(t.status)))));
-  const failed = blocked || snapshot.workspacePreparation === 'failed' || snapshot.workspacePreparation === 'unknown';
-  const working = !closed && (snapshot.tasks.some(t => t.status === 'running' || t.status === 'verifying')
-    || sessions.some(s => workingStates.includes(s.status)) || snapshot.workspacePreparation === 'pending');
-  const attention = closed ? 'none' : failed ? 'failed'
-    : openAskItems.length > 0 || (snapshot.pendingApprovals?.length ?? 0) > 0 ? 'input' : 'none';
-  const inputIds = new Set([...(snapshot.pendingApprovals ?? []).map(a => a.sessionId),
-    ...snapshot.openAsks.filter(a => a.status === 'open').map(a => a.sessionId ?? snapshot.sessions.find(s => s.isLead)?.id)]);
-  return [{
-    id: `activity-${snapshot.track.id}`,
-    plugin_id: KERNEL_OVERLAY_PLUGIN_ID,
-    entity_kind: 'track',
-    entity_id: snapshot.track.id,
-    kind: 'activity',
-    payload: {
-      schemaVersion: 4,
-      working,
-      attention,
-      activity_at_ms: null,
-      notifiableSessions: sessions.filter(s => s.boundTaskId == null && s.lastNotifiableTurnAtMs != null)
-        .map(s => ({ sessionId: s.id, lastNotifiableTurnAtMs: s.lastNotifiableTurnAtMs })),
-      items: closed ? [] : openAskItems,
-      cards: closed ? [] : sessions.flatMap(s => {
-        const state = s.status === 'unknown' ? 'failed' : inputIds.has(s.id) ? 'input'
-          : workingStates.includes(s.status) ? 'working' : null;
-        return state === null ? [] : [{ card_id: s.id, state }];
-      }),
-    },
-    updated_at: snapshot.track.updatedAtMs,
-  }];
-
+  const blockedSessionIds = new Set(
+    sessions.filter(s => isSessionBlockingTrack(s, snapshot.tasks)).map(s => s.id),
+  );
+  const failed = blockedSessionIds.size > 0
+    || snapshot.workspacePreparation === 'failed'
+    || snapshot.workspacePreparation === 'unknown';
+  const working = !closed && (
+    snapshot.tasks.some(t => t.status === 'running' || t.status === 'verifying')
+    || sessions.some(s => isWorkingSessionStatus(s.status))
+    || snapshot.workspacePreparation === 'pending'
+  );
+  const attention: AttentionKind = closed
+    ? 'none'
+    : failed
+      ? 'failed'
+      : openAskItems.length > 0 || (snapshot.pendingApprovals?.length ?? 0) > 0
+        ? 'input'
+        : 'none';
+  const leadSessionId = snapshot.sessions.find(s => s.isLead)?.id;
+  const inputIds = new Set<string>([
+    ...(snapshot.pendingApprovals ?? []).map(a => a.sessionId),
+    ...openAsks.flatMap(a => {
+      const target = a.sessionId ?? leadSessionId;
+      return target === undefined ? [] : [target];
+    }),
+  ]);
+  const cards: Record<string, CardActivity> = {};
+  if (!closed) {
+    for (const session of sessions) {
+      if (blockedSessionIds.has(session.id)) cards[session.id] = 'failed';
+      else if (inputIds.has(session.id)) cards[session.id] = 'input';
+      else if (isWorkingSessionStatus(session.status)) cards[session.id] = 'working';
+    }
+  }
+  return {
+    notifiableSessions: sessions
+      .filter((s): s is AgentSessionDto & { lastNotifiableTurnAtMs: number } => s.boundTaskId == null && s.lastNotifiableTurnAtMs != null)
+      .map(s => ({ sessionId: s.id, lastNotifiableTurnAtMs: s.lastNotifiableTurnAtMs })),
+    working,
+    attention,
+    recentAt: finiteOrNull(snapshot.track.updatedAtMs),
+    attentionItems: closed ? Object.freeze([]) : openAskItems,
+    cards,
+  };
 }
 
 export function tracksInAreaOperation(areaId: string, includeClosed = true): ApiOperation<TrackWire[]> {
@@ -1030,34 +964,11 @@ export function deleteCardOperation(cardId: string): ApiOperation<undefined> {
   };
 }
 
-export function overlaysByKindOperation(entityKind: 'track' | 'card'): ApiOperation<OverlayWire[]> {
+export function trackOverlaysOperation(): ApiOperation<TrackOverlayItemDto[]> {
   return {
     method: 'GET',
-    path: `/api/v1/overlays?entity_kind=${entityKind}${entityKind === 'track' ? '&includeClosed=true' : ''}`,
-    responseSchema: z.union([
-      overlaysListDtoSchema.transform((dto): OverlayWire[] => {
-        if (entityKind !== 'track') return [];
-        return dto.tracks.map((item): OverlayWire => ({
-          id: `activity-${item.trackId}`,
-          plugin_id: KERNEL_OVERLAY_PLUGIN_ID,
-          entity_kind: 'track',
-          entity_id: item.trackId,
-          kind: 'activity',
-          payload: {
-            schemaVersion: 4,
-            working: item.isWorking,
-            attention: item.hasBlockedSession || item.workspaceFailed ? 'failed'
-              : item.openAskCount + item.pendingApprovalCount > 0 ? 'input' : 'none',
-            activity_at_ms: null,
-            notifiableSessions: item.notifiableSessions,
-            items: [],
-            cards: [],
-          },
-          updated_at: item.updatedAtMs,
-        }));
-      }),
-      z.array(overlaySchema),
-    ]),
+    path: '/api/v1/overlays?entity_kind=track&includeClosed=true',
+    responseSchema: overlaysListDtoSchema.transform((dto) => dto.tracks),
   };
 }
 

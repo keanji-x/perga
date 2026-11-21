@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   activeTracksOn, createCardOperation, createCodexCardOperation, createTerminalCardOperation,
   createTrackOperation, deleteCardOperation, hasFailed, isBlankForKernel, isClosed,
-  isWorking, needsUserAttention, toTrack, trackActivityFrom, trackActivitiesFrom,
+  isWorking, needsUserAttention, toTrack, trackActivityFromOverlay, trackActivitiesFromOverlays,
   sortAreaTracksByRecent, trackRecentAt, limitAreaTracks, railAreaTracks, AREA_TRACK_LIMIT,
   trackActivityState, updateTrackOperation,
   NEUTRAL_ACTIVITY, UNTITLED_TRACK_LABEL, trackDisplayTitle, trackWireSchema, tracksInAreaOperation,
@@ -15,6 +15,7 @@ import type { Area } from './area.js';
 import { overlaySchema } from '../api/schemas.js';
 import { trackDtoSchema, decodeWireEvent } from '../api/schemas.js';
 import { performApiRequest } from '../api/client.js';
+import type { TrackOverlayItemDto } from '../api/perga-v1.js';
 
 const baseWire = { workspace: { isolation: 'none' as const, kind: 'attached' as const, path: '', frozen_at: null },
   id: 'w1', area_id: 'c1', title: 'Ship it', sort: 1,
@@ -210,189 +211,47 @@ describe('activity predicates read only the kernel activity overlay (INV-APP-118
   });
 });
 
-describe('trackActivityFrom: the kernel activity overlay', () => {
-  const overlay = (payload: unknown, over: Partial<OverlayWire> = {}): OverlayWire => ({
-    id: 'a1', plugin_id: 'kernel', entity_kind: 'track', entity_id: 't1', kind: 'activity',
-    payload, updated_at: 1, ...over,
-  });
-  const payload = {
-    schemaVersion: 4, working: true, attention: 'failed', activity_at_ms: 1_789_460_968_837,
-    items: [
-      { source: 'ask', key: 'ask:22801', text: 'Which branch?', at_ms: 10, ask_id: 22801,
-        questions: [{ title: 'Which branch?', options: [] }], delivery: 'wake' },
-      { source: 'ask', key: 'ask:28475', text: 'Run `cargo test`?', at_ms: 5, ask_id: 28475,
-        questions: [{ title: 'Run `cargo test`?', options: ['Allow', 'Deny'] }], delivery: 'hold' },
-    ],
-    cards: [{ card_id: 'worker-1', state: 'failed' }, { card_id: 'planner', state: 'input' }, { card_id: 'w2', state: 'working' }],
-  };
-
-  it('bulk-folds interleaved entities in original order without weakening activity authority', () => {
-    const rows = Object.freeze([
-      overlay({ value: 0.1 }, { kind: 'progress' }),
-      overlay({ ...payload, activity_at_ms: 80 }, { updated_at: 100 }),
-      overlay({ ...payload, activity_at_ms: 999 }, { entity_kind: 'card' }),
-      overlay({ ...payload, working: false, activity_at_ms: 2 }, { entity_id: 't2', updated_at: 3 }),
-      overlay({ value: 0.9 }, { kind: 'progress', plugin_id: 'plugin' }),
-      overlay({ schemaVersion: 4 }, { updated_at: 150 }),
-      overlay({ ...payload, working: false, attention: 'none', activity_at_ms: 40, cards: [], items: [] }, { updated_at: 30 }),
-      overlay({ ...payload, activity_at_ms: 999 }, { plugin_id: 'impostor', updated_at: 999 }),
-    ].map(row => Object.freeze(row)));
-    const before = JSON.stringify(rows);
-    const all = trackActivitiesFrom(rows);
-    expect(all.get('t1')).toEqual({ ...NEUTRAL_ACTIVITY, progress: 0.9, activityAt: 40, recentAt: 150 });
-    expect(all.get('t2')).toMatchObject({ working: false, activityAt: 2, recentAt: 3 });
-    expect(all.has('missing')).toBe(false);
-    for (const ordered of [rows, rows.toReversed()]) {
-      const bulk = trackActivitiesFrom(ordered);
-      for (const id of ['t1', 't2']) expect(bulk.get(id)).toEqual(trackActivityFrom(id, ordered));
-    }
-    expect(JSON.stringify(rows)).toBe(before);
+describe('trackActivityFromOverlay & trackActivitiesFromOverlays', () => {
+  const item = (over: Partial<TrackOverlayItemDto> = {}): TrackOverlayItemDto => ({
+    trackId: 't1',
+    areaId: 'a1',
+    isWorking: false,
+    openAskCount: 0,
+    pendingApprovalCount: 0,
+    hasBlockedSession: false,
+    workspaceFailed: false,
+    notifiableSessions: [],
+    updatedAtMs: 100,
+    ...over,
   });
 
-  it('ignores retired timeout notices and unknown sources', () => {
-    const activity = trackActivityFrom('t1', [overlay({ ...payload, attention: 'none', working: false,
-      items: [
-        { source: 'planner_turn_timeout', key: 'planner_turn_timeout:9', text: 'Stopped at 12:00 UTC', at_ms: 20 },
-        { source: 'future', key: 'future:1', text: 'Unknown', at_ms: 1 },
-      ], cards: [],
-    })]);
-    expect(activity.attention).toBe('none');
-    expect(activity.attentionItems).toEqual([]);
-  });
-
-  it('decodes working, attention, the high-water mark, the items and the per-card verdicts', () => {
-    const activity = trackActivityFrom('t1', [overlay(payload)]);
-    expect(activity.working).toBe(true);
-    expect(activity.attention).toBe('failed');
-    expect(activity.activityAt).toBe(1_789_460_968_837);
-    expect(activity.recentAt).toBe(1_789_460_968_837);
-    expect(activity.attentionItems).toEqual([
-      { source: 'ask', key: 'ask:22801', text: 'Which branch?', atMs: 10, askId: 22801,
-        questions: [{ title: 'Which branch?', options: [] }], delivery: 'wake' },
-      { source: 'ask', key: 'ask:28475', text: 'Run `cargo test`?', atMs: 5, askId: 28475,
-        questions: [{ title: 'Run `cargo test`?', options: ['Allow', 'Deny'] }], delivery: 'hold' },
-    ]);
-    expect(activity.cards).toEqual({ 'worker-1': 'failed', planner: 'input', w2: 'working' });
-    expect(activity.progress).toBe(0);
-  });
-
-  it('shows a forge approval ask with its action, and drops an ask whose action it cannot read', () => {
-    const action = { kind: 'forge_action', idempotency_key: 'gitforge:t1:p:gh.run.rerun_failed:v1:[]', payload_hash: 'h' };
-    const ask = { source: 'ask', key: 'ask:7', text: 'Re-run?', at_ms: 30, ask_id: 7,
-      questions: [{ title: 'Re-run?', options: ['Approve', 'Decline'] }], delivery: 'wake' };
-    const activity = trackActivityFrom('t1', [overlay({ ...payload, items: [
-      { ...ask, action },
-      { ...ask, key: 'ask:8', ask_id: 8, action: { kind: 'forge_action', idempotency_key: 'k' } },
-    ] })]);
-    expect(activity.attentionItems).toEqual([
-      { source: 'ask', key: 'ask:7', text: 'Re-run?', atMs: 30, askId: 7,
-        questions: [{ title: 'Re-run?', options: ['Approve', 'Decline'] }], delivery: 'wake', action },
-    ]);
-  });
-
-  it('preserves frozen objective details through the activity overlay decoder', () => {
-    const detail = `${'完整验收条件'.repeat(500)} LAST CRITERION`;
-    const question = { title: '批准此 KR 的验收标准？', detail, options: ['批准', '不批准'] };
-    const action = { kind: 'objective_approval_v2', objective: 'kr', standard_hash: 'hash' };
-    const activity = trackActivityFrom('t1', [overlay({ ...payload, items: [{
-      source: 'ask', key: 'ask:7', text: question.title, at_ms: 10, ask_id: 7,
-      questions: [question], delivery: 'wake', action,
-    }] })]);
-    expect(activity.attentionItems).toEqual([{
-      source: 'ask', key: 'ask:7', text: question.title, atMs: 10, askId: 7,
-      questions: [question], delivery: 'wake', action,
-    }]);
-  });
-
-  it('keeps the neutral values for a track the kernel has not written yet', () => {
-    const activity = trackActivityFrom('t2', [overlay(payload)]);
-    expect(activity).toEqual(NEUTRAL_ACTIVITY);
-    expect(activity.activityAt).toBeNull();
-  });
-
-  it('drops a malformed row and keeps the rest of the payload', () => {
-    const activity = trackActivityFrom('t1', [overlay({
-      ...payload,
-      items: [
-        { source: 'ask', key: 'ask:1' },
-        { source: 'ask', key: 'ask:2', text: 'An ask without its questions?', at_ms: 1, ask_id: 2 },
-        { source: 'ask', key: 'ask:3', text: 'An ask without its delivery?', at_ms: 1, ask_id: 3,
-          questions: [{ title: 'An ask without its delivery?', options: [] }] },
-        { source: 'ask', key: 'ask:4', text: 'An ask of no known delivery?', at_ms: 1, ask_id: 4,
-          questions: [{ title: 'An ask of no known delivery?', options: [] }], delivery: 'later' },
-        ...payload.items,
-      ],
-      cards: [{ card_id: 'w9', state: 'sleeping' }, { card_id: 'w2', state: 'working' }],
-    })]);
-    expect(activity.attentionItems).toHaveLength(2);
-    expect(activity.cards).toEqual({ w2: 'working' });
-    expect(activity.working).toBe(true);
-  });
-
-  it('ignores a payload that is not the v4 shape at all', () => {
-    for (const junk of [null, 'working', { schemaVersion: 4, working: true }, { working: 'yes' }]) {
-      expect(trackActivityFrom('t1', [overlay(junk)])).toEqual({ ...NEUTRAL_ACTIVITY, recentAt: 1 });
-    }
-  });
-
-  /* An older kernel's row: its items meant something else, so the whole row reads as no overlay. */
-  it('v1 activity overlay is ignored', () => {
-    const v1 = {
-      schemaVersion: 1, working: true, attention: 'failed', activity_at_ms: 1_789_460_968_837,
-      items: [{ kind: 'failed', source: 'session', id: 'ws-1', card_id: 'planner', at_ms: 20 }],
-      cards: [{ card_id: 'planner', state: 'failed' }],
-    };
-    expect(trackActivityFrom('t1', [overlay(v1)])).toEqual({ ...NEUTRAL_ACTIVITY, recentAt: 1 });
-  });
-
-  /* #2209: a v2 row's asks carry no ask id or questions; the kernel rewrites it on its next pass. */
-  it('v2 activity overlay is ignored', () => {
-    const v2 = {
-      schemaVersion: 2, working: false, attention: 'input', activity_at_ms: 1_789_460_968_837,
-      items: [{ source: 'ask', key: 'ask:ratify:28475', text: 'Merge the PR?', at_ms: 5 }],
-      cards: [],
-    };
-    expect(trackActivityFrom('t1', [overlay(v2)])).toEqual({ ...NEUTRAL_ACTIVITY, recentAt: 1 });
-  });
-
-  /* #2348: a v3 row's asks carry no delivery; the kernel rewrites it on its next pass. */
-  it('v3 activity overlay is ignored', () => {
-    const v3 = { ...payload, schemaVersion: 3 };
-    expect(trackActivityFrom('t1', [overlay(v3)])).toEqual({ ...NEUTRAL_ACTIVITY, recentAt: 1 });
-  });
-
-  it('uses every matching row time and valid activity time without trusting input order', () => {
-    const olderPayload = overlay({ ...payload, activity_at_ms: 40 }, { id: 'older', updated_at: 50 });
-    const newerRow = overlay({ schemaVersion: 4 }, { id: 'newer', updated_at: 90 });
-    const nonFinite = overlay({ ...payload, activity_at_ms: Number.POSITIVE_INFINITY }, {
-      id: 'non-finite', updated_at: Number.NaN,
+  it('maps blocked sessions and workspace failures to failed, asks/approvals to input, and otherwise none', () => {
+    expect(trackActivityFromOverlay(item({ hasBlockedSession: true, openAskCount: 1, isWorking: true }))).toMatchObject({
+      attention: 'failed', working: true, recentAt: 100,
     });
-    for (const rows of [[olderPayload, newerRow, nonFinite], [nonFinite, newerRow, olderPayload]]) {
-      expect(trackActivityFrom('t1', rows).recentAt).toBe(90);
-    }
+    expect(trackActivityFromOverlay(item({ workspaceFailed: true }))).toMatchObject({
+      attention: 'failed', working: false,
+    });
+    expect(trackActivityFromOverlay(item({ pendingApprovalCount: 1 }))).toMatchObject({
+      attention: 'input', working: false,
+    });
+    expect(trackActivityFromOverlay(item())).toMatchObject({
+      attention: 'none', working: false,
+    });
   });
 
-  it('is a plain per-track object, not a shared container', () => {
-    const first = trackActivityFrom('t1', [overlay(payload)]);
-    const second = trackActivityFrom('t1', [overlay({ ...payload, cards: [] })]);
-    expect(first.cards).not.toBe(second.cards);
-    expect(second.cards).toEqual({});
-    expect(NEUTRAL_ACTIVITY.cards).toEqual({});
-  });
-
-  it('applies only the kernel-owned activity row; a plugin-owned one leaves the track quiet', () => {
-    // A plugin can write `kind: 'activity'` under its own id; that row is not the verdict.
-    const impostor = overlay(payload, { id: 'a2', plugin_id: 'dev.echo' });
-    expect(trackActivityFrom('t1', [impostor])).toEqual(NEUTRAL_ACTIVITY);
-    expect(trackActivityFrom('t1', [impostor]).working).toBe(false);
-    const kernel = overlay({ ...payload, working: false, attention: 'none', items: [], cards: [] });
-    for (const rows of [[impostor, kernel], [kernel, impostor]]) {
-      const activity = trackActivityFrom('t1', rows);
-      expect(activity.working).toBe(false);
-      expect(activity.attention).toBe('none');
-      expect(activity.cards).toEqual({});
-    }
-    expect(trackActivityFrom('t1', [overlay({ value: 0.5 }, { kind: 'progress', plugin_id: 'dev.echo' })]).progress).toBe(0.5);
+  it('indexes overlays by trackId without mutating the input or sharing containers', () => {
+    const rows = [
+      item({ trackId: 't1', isWorking: true, updatedAtMs: 150, notifiableSessions: [{ sessionId: 's1', lastNotifiableTurnAtMs: 120 }] }),
+      item({ trackId: 't2', updatedAtMs: Number.NaN }),
+    ];
+    const map = trackActivitiesFromOverlays(rows);
+    expect(map.get('t1')).toMatchObject({
+      working: true, attention: 'none', recentAt: 150,
+      notifiableSessions: [{ sessionId: 's1', lastNotifiableTurnAtMs: 120 }],
+    });
+    expect(map.get('t2')).toEqual(NEUTRAL_ACTIVITY);
+    expect(map.has('missing')).toBe(false);
   });
 });
 

@@ -126,13 +126,13 @@ describe('MobileTracks', () => {
     expect(name()).toBe('Responsive mobile UI, needs attention');
 
     // Unread: a blue dot, nothing added to the name, and the fact is the button's description.
-    view.rerender(mount({ activityAt: 150 }, (candidate) => (candidate.activityAt ?? 0) > 100));
+    view.rerender(mount({ notifiableSessions: [{ sessionId: 's1', lastNotifiableTurnAtMs: 150 }] }, (candidate) => candidate.notifiableSessions.some((item) => item.lastNotifiableTurnAtMs > 100)));
     expect(marker()).toBe('unread');
     expect(name()).toBe('Responsive mobile UI');
     expect(description()).toBe('Unread updates');
 
     // The description hangs on the FOLDED state, not on the receipt: unread under working is "working" and nothing describes it.
-    view.rerender(mount({ activityAt: 150, working: true }, (candidate) => (candidate.activityAt ?? 0) > 100));
+    view.rerender(mount({ notifiableSessions: [{ sessionId: 's1', lastNotifiableTurnAtMs: 150 }], working: true }, (candidate) => candidate.notifiableSessions.some((item) => item.lastNotifiableTurnAtMs > 100)));
     expect(marker()).toBe('working');
     expect(name()).toBe('Responsive mobile UI, working');
     expect(description()).toBeNull();

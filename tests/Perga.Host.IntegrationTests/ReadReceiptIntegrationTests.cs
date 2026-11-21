@@ -22,6 +22,8 @@ public sealed class ReadReceiptIntegrationTests
         await using var cluster = new PergaHostTestCluster();
         var response = await cluster.Client.PostAsJsonAsync($"/api/v1/read-receipts/track//{action}", new { });
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var unknown = await cluster.Client.PostAsJsonAsync($"/api/v1/read-receipts/track/a/b/{action}", new { });
+        Assert.Equal(HttpStatusCode.NotFound, unknown.StatusCode);
     }
 
     [Fact]

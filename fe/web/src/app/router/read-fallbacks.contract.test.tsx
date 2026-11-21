@@ -27,7 +27,8 @@ const fail = (message: string): ApiTransportResponse => ({ status: 500, statusTe
 
 function renderRoute(path: string, reply: (request: ApiRequest) => ApiTransportResponse | Promise<ApiTransportResponse>) {
   const transport: ApiTransportPort = {
-    send: (request) => Promise.resolve(reply(request)),
+    send: (request) => Promise.resolve(request.path === '/api/v1/overlays?entity_kind=track&includeClosed=true'
+      ? ok({ tracks: [] }) : reply(request)),
   };
   const client = new QueryClient({ defaultOptions: { queries: { retryDelay: 0, retry: false } } });
   const router = createAppRouter({ prepareReport: prepareReportDocument, transport: withReadReceipts(transport), unauthorized, client, cards: bootTestCardRuntime(), onSignOut: () => undefined });

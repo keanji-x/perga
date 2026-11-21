@@ -184,6 +184,8 @@ export function TrackPage({ fillReading = false, showWorkspaceIsolation = true, 
 
   const deletion = useDeleteConfirm((_id, signal) => onDeleteTrack?.(signal), writeFailureText(DELETE_FAILURES, DELETE_TEXT), onTrackDeleted);
   const offeredClosedAction = closedControl === undefined ? null : canReopenTrack ? 'reopen' : (canCloseTrack ? 'close' : null);
+  const activity = trackActivityState(track, unread);
+  const activityLabel = activityLabelOf(activity);
   const boardOpen = onCloseBoard !== undefined;
   const mobilePanelOpen = panel !== null;
   const mobilePanelKind: MobilePanelKind = panel ?? 'cards';
@@ -318,10 +320,10 @@ export function TrackPage({ fillReading = false, showWorkspaceIsolation = true, 
               <AstryxButton
                 className={styles.desktopChatAction}
                 label="讨论这项工作"
-                tooltip={activityLabelOf(trackActivityState(track, unread)) ?? (onReply === undefined ? 'Open conversation' : 'Open Planner conversation')}
+                tooltip={activityLabel ?? (onReply === undefined ? 'Open conversation' : 'Open Planner conversation')}
                 variant="ghost"
                 size="sm"
-                icon={<><Icon name="chat" /><ActivityIndicator state={trackActivityState(track, unread)} /></>}
+                icon={<><Icon name="chat" /><ActivityIndicator state={activity} /></>}
                 onClick={onReply === undefined ? onStartConversation : () => { onReply(); }}
               />
             )}
@@ -371,7 +373,7 @@ export function TrackPage({ fillReading = false, showWorkspaceIsolation = true, 
         {!titleInHeader && <TrackClosedBadge closedAt={track.closedAt} />}
         {!titleInHeader && <TrackAdminBadge adminGrantedAt={adminGrantedAt} />}
         {/* Shared track activity and conversation unread state. */}
-        {!titleInHeader && <ActivityIndicator state={trackActivityState(track, unread)} />}
+        {!titleInHeader && <ActivityIndicator state={activity} />}
       </div>, titleContainer)}
       {headerActionsHost !== null && mobileActions !== undefined && createPortal(mobileActions, headerActionsHost)}
       {titleInHeader && !boardOpen ? null : <div className={styles.mobileTrackHeader}>
@@ -494,18 +496,18 @@ export function TrackPage({ fillReading = false, showWorkspaceIsolation = true, 
       {compactViewport && !conversationOpen && !mobilePanelObscured
         && !boardOpen && !mobilePanelOpen && (mobileChatComposer !== undefined || onStartConversation !== undefined) && (
         mobileChatComposer !== undefined ? <div className={styles.mobileReportChatDock} data-nc-mobile-report-chat="">
-          <AstryxButton label="Open conversation" aria-description={activityLabelOf(trackActivityState(track, unread)) ?? undefined} isIconOnly variant="ghost" onClick={onReply ?? onStartConversation}
-            icon={<><Icon name="chat" /><ActivityIndicator state={trackActivityState(track, unread)} /></>} />
+          <AstryxButton label="Open conversation" aria-description={activityLabel ?? undefined} isIconOnly variant="ghost" onClick={onReply ?? onStartConversation}
+            icon={<><Icon name="chat" /><ActivityIndicator state={activity} /></>} />
           <div className={styles.mobileChatInput}>{mobileChatComposer}</div>
         </div> : (
         <AstryxButton
           className={styles.mobileReportChatFab}
           data-nc-mobile-report-chat=""
           label="Chat"
-          aria-description={activityLabelOf(trackActivityState(track, unread)) ?? undefined}
+          aria-description={activityLabel ?? undefined}
           variant="primary"
           size="lg"
-          icon={<><Icon name="chat" /><ActivityIndicator state={trackActivityState(track, unread)} /></>}
+          icon={<><Icon name="chat" /><ActivityIndicator state={activity} /></>}
           onClick={onReply ?? onStartConversation}
         />
       ))}

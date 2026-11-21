@@ -141,11 +141,11 @@ CREATE TABLE read_receipts (
        - `WorkspaceFailed`：`track_workspace_preparations.intent_json.Phase` 为 `Failed / Unknown`（数值 `4, 5`）。
        - `OpenAskCount`：`asks` 中 `LOWER(status) = 'open'` 的数量。
        - `NotifiableSessions`：单次查询加载所有满足 `s.archived_at_ms IS NULL AND s.bound_task_id IS NULL` 且 `MAX(t.completed_at_ms WHERE LOWER(t.status) IN ('completed', 'failed') AND t.completed_at_ms IS NOT NULL) IS NOT NULL` 的 `(trackId, sessionId, lastNotifiableTurnAtMs)` 分组挂载。
-     - `PergaKernelService.GetOverlaysAsync` 与活跃 `TrackActor` 内存态合并（仅对未关闭 Track）：
-       - `IsWorking |= actor.IsSessionOrTaskRunning || actor.WorkspacePreparationStatus == "pending"`（在 actor mailbox 中读取）
-       - `PendingApprovalCount = actor.PendingApprovalCount`
-       - `WorkspaceFailed = actor.WorkspacePreparationStatus is "failed" or "unknown"`（内存权威优先于旧库状态）
-       - `HasBlockedSession |= actor.HasBlockedSession`（内存会话状态即时反映）
+     - `PergaKernelService.GetOverlaysAsync` 与活跃 `TrackActor` 内存态合并（在 actor mailbox 中 hydrate 后读取；已关闭 Track 清除工作、红点和黄点字段，保留会话高水位）：
+       - `IsWorking` 由 actor 的运行中会话、任务及 `_workspacePreparation.Phase` 计算；工作区工作阶段与 SQLite 相同，不保留旧库标记
+       - `OpenAskCount` 由 actor 的 open asks 计算；`PendingApprovalCount = actor.PendingApprovalCount`
+       - `WorkspaceFailed` 由 actor 的 `_workspacePreparation.Phase is Failed or Unknown` 计算（内存权威优先于旧库状态）
+       - `HasBlockedSession` 由 actor 的未归档 unknown 会话及活跃 attempt 计算，不保留旧库标记
 
 ### 3.3 REST API 与实时事件
 
@@ -153,6 +153,7 @@ CREATE TABLE read_receipts (
    - `GET /api/v1/read-receipts` → `200 OK` 返回 `ReadReceiptsResponseDto`
    - `POST /api/v1/read-receipts/{kind}/{targetId}/read` → body `MarkReadRequest`（校验 `kind ∈ {'track', 'conversation'}`，`targetId` 非空，`readThroughMs >= 0`；非法参数返回 `400`），写入后返回 `200 OK` `ReadReceiptDto`
    - `POST /api/v1/read-receipts/{kind}/{targetId}/unread` → 同上校验，写入后返回 `200 OK` `ReadReceiptDto`
+   - 空目标路径由 `/read-receipts/{kind}/{**emptyTarget:regex(^/(?:read|unread)$)}` 单独匹配并返回 `400`，不捕获其他未知路径。
 2. **新增跨端实时同步事件 `read_receipt.updated`**：
    - `KernelEventKinds.ReadReceiptUpdated = "read_receipt.updated"`（加入 `TransientKinds`）。
    - `MarkReadAsync` / `MarkUnreadAsync` 在 SQLite 事务提交成功后，通过 `_eventBus.PublishTransient(areaId: null, trackId: kind == "track" ? targetId : null, KernelEventKinds.ReadReceiptUpdated, JsonHelpers.ToElement(receipt), nowMs)` 广播到全局（无 Track 过滤）WebSocket 订阅。Track 过滤订阅仅接收相同 `trackId` 的 Track 回执，不接收 `trackId: null` 的 Conversation 回执；需要跨 Track/Conversation 同步的客户端必须使用全局订阅。
@@ -195,16 +196,16 @@ CREATE TABLE read_receipts (
    - 保持唯一 4 态优先级：`failed > attention > working > unread > quiet`。
    - 修正可读语义标签，确保 `failed`（阻断异常）与 `attention`（等你操作）语义清晰不倒置。
 3. **`fe/core/domain/track.ts`**：
-   - `TrackActivity` 增加 `notifiableSessions: readonly NotifiableSessionWatermark[]`；不再以 `updatedAtMs` 伪造 `activityAt`。
-   - `overlaysByKindOperation('track')` 与 `snapshotActivityOverlays(snapshot)` **100% 统一计算规则**：
+   - `TrackActivity` 使用 `notifiableSessions: readonly NotifiableSessionWatermark[]`；删除 `activityAt`、`progress`、`eta`、`now` 与 `NotificationSource`。`trackOverlaysOperation()` 直接读取原生 `TrackOverlayItemDto[]`。
+   - `trackActivityFromOverlay(item)` / `trackActivitiesFromOverlays(items)` 与 `trackActivityFromSnapshot(snapshot)` **100% 统一计算规则**：
      - **红点优先于黄点**：`attention = (hasBlockedSession || workspaceFailed) ? 'failed' : (openAskCount + pendingApprovalCount > 0) ? 'input' : 'none'`（彻底修复原先 `openAsk > failed` 反向覆盖 Bug！）。
      - `working`：包含 `queued | running | stopping | compacting`、`task running | verifying`、`workspacePreparation === 'pending'`。
      - `cards`（每条对话的状态映射）：
-       - `session.status === 'unknown'`（且未归档）→ `'failed'`（**全对话生效，彻底移除“仅当前打开对话才红”的局部补丁**！）
+       - `session.status === 'unknown'`（且未归档，Worker 还须绑定当前运行/验证任务的最新 attempt）→ `'failed'`；不依赖该对话是否打开
        - 该会话存在 `pendingApproval` 或 `openAsk` → `'input'`（注：若同会话同时 `unknown`，按 `failed > input` 保持 `'failed'`）
        - `session.status ∈ {'queued', 'running', 'stopping', 'compacting'}` → `'working'`
      - `notifiableSessions`：过滤 `s.archivedAtMs == null && s.boundTaskId == null && s.lastNotifiableTurnAtMs != null`，输出 `{ sessionId, lastNotifiableTurnAtMs }`。
-     - 不再伪造 `"Question waiting for your answer"` 假 `attentionItems`。
+     - Track 活动直接投影原生 DTO；`OverlayWire` / `trackOverlayPayload` 仅供插件 report-view live tables，不再伪造 Track 通知载荷。
 4. **`fe/core/domain/conversation.ts`**：
    - `agentSessionDtoToConversation`：`lastTurnCompletedAt: dto.lastNotifiableTurnAtMs ?? null`（彻底停止误用 `dto.updatedAtMs`！）。
 
@@ -217,7 +218,7 @@ CREATE TABLE read_receipts (
 2. **`fe/web/src/app/providers/ui-preferences.tsx`**：
    - 删除 `readReceiptsJson` / `setReadReceiptsJson` 与 `trackNotificationRead` / `setTrackNotificationRead`。
 3. **精准消除时机**：
-   - **对话未读消除**（`router/public.tsx` 中 `useConversationPanel`）：当某对话抽屉可见（`panePresented && threadPresented && store.historyReady && !store.historyLoading && store.historyError === null`）且页面 `document.visibilityState === 'visible'`，且 `openActivity.lastTurnCompletedAt !== null`（或该对话存在 `manualUnread`）时，调用 `markRead('conversation', sessionId, lastTurnCompletedAt)`；若当前 Track 存在 `manualUnread`，一并清除 Track 的 `manualUnread`。
+   - **对话未读消除**（`router/public.tsx` 中 `useConversationPane`）：当某对话抽屉可见（`panePresented && threadPresented && store.historyReady && !store.historyLoading && store.historyError === null`）且页面 `document.visibilityState === 'visible'`，且 `openActivity.lastTurnCompletedAt !== null`（或该对话存在 `manualUnread`）时，调用 `markRead('conversation', sessionId, lastTurnCompletedAt)`；若当前 Track 存在 `manualUnread`，一并清除 Track 的 `manualUnread`。
    - **Track 手动未读消除**（`TrackReportRegion`）：打开 Track 页面时，**仅当** `receipts.hasManualUnread('track', trackId)` 为 `true` 时调用 `markRead('track', trackId, 0)` 清除手动标记；**绝不**自动消掉尚未打开的对话未读！
 
 ### 4.4 砍掉右下角悬浮铃铛 & 统一 UI 入口（`fe/web/src/features/track/` & `app/shell/`）
@@ -233,7 +234,7 @@ CREATE TABLE read_receipts (
 3. **统一全站所有分组与标题口径**：
    - `TrackPage` 标题旁 `ActivityIndicator` 使用真实 `isTrackUnread(track)`（不再硬编码 `false`），与侧边栏保持 100% 一致。
    - `Today / PergaOverview`（`fe/web/src/app/router/perga-overview.tsx`）与侧边栏 `waiting` 统一口径：`track.closedAt === null && (hasFailed(track) || needsUserAttention(track))`（红 + 黄）。
-   - 对话列表 `ChatList`（`router/public.tsx`）直接由 `track.cards` + `awaitingInputIds` + `unreadIds` 驱动，移除仅限打开态的 `local.stalled` 补丁，使所有 `unknown` 对话无论是否打开都稳定显示红点。
+   - 对话列表 `ChatList`（`router/public.tsx`）直接由 `track.cards` + `unreadIds` 驱动（审批和 Ask 已投影入 `cards`），移除仅限打开态的 `local.stalled` 补丁，使符合阻断条件的 `unknown` 对话无论是否打开都稳定显示红点。
    - 清理 `session-header.tsx` 颜色冲突：`running` / `compacting` 徽章改用 `neutral`（配合运转态语义）而非 `info` 蓝色，让蓝色在全站明确归属“未读/主交互”。
 
 ---

@@ -42,7 +42,7 @@ import {
   trackWorkspaceRawFileUrl,
 } from '../domain/fs.js';
 import { selectedReadyTemplateId } from '../domain/mentions.js';
-import { trackDtoToWire, snapshotActivityOverlays } from '../domain/track.js';
+import { trackDtoToWire, trackActivityFromSnapshot } from '../domain/track.js';
 import { plannerSwitchOperation } from '../domain/planner-switch.js';
 import {
   readReportDocument,
@@ -65,9 +65,9 @@ import {
   deleteTerminalOperation,
   deleteTrackOperation,
   listTrackTerminalsOperation,
-  overlaysByKindOperation,
+  trackOverlaysOperation,
   terminalDtoToCardWire,
-  trackActivitiesFrom,
+  trackActivitiesFromOverlays,
   trackDetailOperation,
   tracksInAreaOperation,
   trackTemplatesOperation,
@@ -392,15 +392,15 @@ describe('Perga /api/v1 protocol contracts', () => {
     expect(agentSessionDtoToConversation(acpDetail.sessions[0]))
       .toMatchObject({ kind: 'agent', isLead: true, provider: 'antigravity' });
 
-    const activity = trackActivitiesFrom(snapshotActivityOverlays(detail)).get('trk_1');
-    expect(activity?.working).toBe(true);
-    expect(activity?.attention).toBe('input');
-    const asks = openAsksOf(activity?.attentionItems ?? []);
+    const activity = trackActivityFromSnapshot(detail);
+    expect(activity.working).toBe(true);
+    expect(activity.attention).toBe('input');
+    const asks = openAsksOf(activity.attentionItems);
     expect(asks[0]).toMatchObject({ askId: 'ask_abc123', delivery: 'wake' });
     const holdAsk = { ...snapshotRaw.openAsks[0], delivery: 'hold', sessionId: 'lead_1', turnId: 'turn_1' };
     const heldDetail = detailOp.responseSchema.parse({ ...snapshotRaw, openAsks: [holdAsk] });
-    const heldActivity = trackActivitiesFrom(snapshotActivityOverlays(heldDetail)).get('trk_1');
-    expect(openAsksOf(heldActivity?.attentionItems ?? [])[0]).toMatchObject({ askId: 'ask_abc123', delivery: 'hold' });
+    const heldActivity = trackActivityFromSnapshot(heldDetail);
+    expect(openAsksOf(heldActivity.attentionItems)[0]).toMatchObject({ askId: 'ask_abc123', delivery: 'hold' });
     const holdEvent = { eventId: 44, kind: 'ask.changed', areaId: 'area_1', trackId: 'trk_1', payload: holdAsk, createdAtMs: 2300 };
     expect(decodeWireEvent(holdEvent)).toMatchObject({ status: 'ready', value: {
       ev: 'ask.changed', data: { ask: holdAsk },
@@ -859,7 +859,7 @@ describe('Perga /api/v1 protocol contracts', () => {
       { id: 'b_oc', kind: 'task', payload: { key: 'audit-oc', kind: 'opencode', goal: 'Inspect workspace', ready: false } },
     ]);
 
-    const overlaysOp = overlaysByKindOperation('track');
+    const overlaysOp = trackOverlaysOperation();
     expect(overlaysOp.path).toBe('/api/v1/overlays?entity_kind=track&includeClosed=true');
     const overlays = overlaysOp.responseSchema.parse({
       tracks: [{
@@ -872,7 +872,7 @@ describe('Perga /api/v1 protocol contracts', () => {
         updatedAtMs: 5000,
       }],
     });
-    const trackAct = trackActivitiesFrom(overlays).get('trk_1');
+    const trackAct = trackActivitiesFromOverlays(overlays).get('trk_1');
     expect(trackAct?.working).toBe(true);
     expect(trackAct?.attention).toBe('input');
   });

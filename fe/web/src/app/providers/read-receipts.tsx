@@ -173,9 +173,10 @@ export function useReadReceipt(kind: ReadReceiptKind, id: string | null, activit
   }, [markRead, kind, id, activityAt, enabled, openedAt]);
 }
 
-/** Clear manual intent once on admission of a view visit, including initial receipt readiness.
- * Cache updates and temporary presentation/loading changes cannot create another visit. */
+/** Clear manual unread once on admission of a view visit when the cached receipt actually carries it.
+ * Reads cache imperatively so receipt updates and transient presentation/loading changes never loop. */
 export function useViewReadReceipt(kind: ReadReceiptKind, id: string | null, enabled: boolean, visitKey?: string | number) {
+  const client = useQueryClient();
   const { ready, markRead } = useReadReceipts();
   const seen = useRef<Readonly<{ kind: ReadReceiptKind; id: string; visitKey?: string | number }> | null>(null);
   useEffect(() => {
@@ -185,10 +186,11 @@ export function useViewReadReceipt(kind: ReadReceiptKind, id: string | null, ena
       if (document.visibilityState !== 'visible') return;
       if (seen.current?.kind === kind && seen.current.id === id && seen.current.visitKey === visitKey) return;
       seen.current = { kind, id, visitKey };
-      markRead(kind, id, 0);
+      const cached = client.getQueryData<ReadState>(queryKeys.readReceipts());
+      if (cached?.receipts[receiptKey(kind, id)]?.manualUnread === true) markRead(kind, id, 0);
     };
     record();
     document.addEventListener('visibilitychange', record);
     return () => document.removeEventListener('visibilitychange', record);
-  }, [kind, id, enabled, ready, visitKey, markRead]);
+  }, [client, kind, id, enabled, ready, visitKey, markRead]);
 }

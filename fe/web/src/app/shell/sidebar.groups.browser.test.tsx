@@ -24,11 +24,11 @@ async function scene(areaName = 'Work') {
     defaultTemplateId: null, defaultCwd: null, createdAt: 1, updatedAt: 1 };
   const reading: Area = { ...area, id: 'reading', name: 'Reading', sort: 2 };
   const tracks: Track[] = [
-    { id: 'review', title: 'Review result', attention: 'input' as const, working: false, pinnedAt: null },
-    { id: 'running', title: 'Build frontend', attention: 'none' as const, working: true, pinnedAt: 10 },
-    { id: 'loose', title: 'Next task', attention: 'none' as const, working: false, pinnedAt: null, activityAt: null },
-  ].map((row) => ({ areaId: area.id, sort: 1, cwd: '/tmp', isolation: 'none', agentCwd: '/tmp',
-    closedAt: null, createdAt: 1, updatedAt: 10, ...NEUTRAL_ACTIVITY, notifiableSessions: row.activityAt === null ? [] : [{ sessionId: `session-${row.id}`, lastNotifiableTurnAtMs: 10 }], ...row }));
+    { id: 'review', title: 'Review result', attention: 'input' as const, working: false, pinnedAt: null, hasOutput: true },
+    { id: 'running', title: 'Build frontend', attention: 'none' as const, working: true, pinnedAt: 10, hasOutput: true },
+    { id: 'loose', title: 'Next task', attention: 'none' as const, working: false, pinnedAt: null, hasOutput: false },
+  ].map(({ hasOutput, ...row }) => ({ areaId: area.id, sort: 1, cwd: '/tmp', isolation: 'none', agentCwd: '/tmp',
+    closedAt: null, createdAt: 1, updatedAt: 10, ...NEUTRAL_ACTIVITY, notifiableSessions: hasOutput ? [{ sessionId: `session-${row.id}`, lastNotifiableTurnAtMs: 10 }] : [], ...row }));
   const onGo = vi.fn();
   const onSetPinned = vi.fn();
   const sidebar = (tracks: Track[]) => wrap(<UiPreferencesProvider preferences={preferences}>
@@ -385,7 +385,7 @@ it('preserves keyboard focus when pinning from Focus or unpinning from Pinned re
   const focusGroup = page.getByRole('group', { name: 'Focus', exact: true });
   await expect.element(focusGroup.getByRole('button', { name: /^Track Review result/ })).toHaveFocus();
 
-  current = current.map((track) => track.id === 'running' ? { ...track, working: false, activityAt: null, notifiableSessions: [] } : track);
+  current = current.map((track) => track.id === 'running' ? { ...track, working: false, notifiableSessions: [] } : track);
   view.rerender(sidebar(current));
   const pinnedRunningMenu = page.getByRole('group', { name: 'Pinned', exact: true })
     .getByRole('button', { name: 'Actions for track Build frontend', exact: true });
