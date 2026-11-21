@@ -76,9 +76,11 @@ internal sealed class SessionRuntime
             source = _launchCts;
         }
         // Cancellation callbacks are external code and must not run under the snapshot lock.
-        try { _ = source.CancelAsync(); } catch (ObjectDisposedException) { }
+        try { source.Cancel(); } catch (ObjectDisposedException) { }
         return true;
     }
+    public void ThrowIfStartupCanceled() { lock (_sync) _launchCts?.Token.ThrowIfCancellationRequested(); }
+
     public void EndLaunch(CancellationTokenSource? expected = null)
     {
         lock (_sync)
@@ -193,7 +195,7 @@ internal sealed class SessionRuntime
         {
             try
             {
-                var outcome = handle.LaunchSpec.Provider == provider
+                var outcome = string.Equals(handle.LaunchSpec.Provider, provider, StringComparison.OrdinalIgnoreCase)
                     ? await handle.Agent.ConfigureAsync(desired, ct).WaitAsync(ct).ConfigureAwait(false)
                     : new SessionConfigurationOutcome.RequiresReopen("The provider changed.");
                 if (outcome is SessionConfigurationOutcome.Applied applied)
@@ -268,6 +270,14 @@ internal sealed class SessionRuntimeRegistry
     public bool HasActiveWork => _sessions.Values.Any(runtime => runtime.HasActiveWork);
     public bool IsRecovering(string id) => _sessions.TryGetValue(id, out var runtime) && runtime.IsRecovering;
     public bool IsShutdownUnconfirmed(string id) => _sessions.TryGetValue(id, out var runtime) && runtime.IsShutdownUnconfirmed;
+    public async Task CloseAllAsync(TimeSpan timeout)
+    {
+        SessionRuntime[] runtimes;
+        lock (_sync) runtimes = _sessions.Values.ToArray();
+        foreach (var runtime in runtimes) runtime.CancelLaunch();
+        await Task.WhenAll(runtimes.Select(runtime => runtime.CloseAsync(timeout, CancellationToken.None))).ConfigureAwait(false);
+    }
+
     public async Task DisposeAllAsync(TimeSpan timeout)
     {
         SessionRuntime[] runtimes;

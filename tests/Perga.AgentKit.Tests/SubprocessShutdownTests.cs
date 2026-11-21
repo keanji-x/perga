@@ -6,6 +6,34 @@ namespace Perga.AgentKit.Tests;
 public sealed class SubprocessShutdownTests
 {
     [Fact]
+    public async Task BlockedStdinWriterDoesNotPreventProcessKill()
+    {
+        var process = StdioSubprocess.Start(new CommandInvocation("/bin/sh",
+            ["-c", "sleep 30"], Path.GetTempPath(), new Dictionary<string, string>()));
+        process.GracefulShutdownTimeout = TimeSpan.FromMilliseconds(25);
+        process.KillWaitTimeout = TimeSpan.FromSeconds(2);
+        using var child = Process.GetProcessById(process.ProcessId);
+        var writing = process.WriteLineAsync(new string('x', 4 * 1024 * 1024), CancellationToken.None);
+        try
+        {
+            Assert.False(writing.IsCompleted);
+            await process.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.True(process.ShutdownConfirmed);
+            Assert.True(child.HasExited);
+            // The writer may fail with a broken pipe, but must release its live semaphore.
+            var error = await Record.ExceptionAsync(() => writing.WaitAsync(TimeSpan.FromSeconds(2)));
+            Assert.IsNotType<ObjectDisposedException>(error);
+            Assert.IsNotType<TimeoutException>(error);
+        }
+        finally
+        {
+            if (!child.HasExited) child.Kill(entireProcessTree: true);
+            await process.DisposeAsync();
+            try { await writing; } catch { }
+        }
+    }
+
+    [Fact]
     public async Task FailedOpenCanRetryShutdownOfTheSameRealSubprocess()
     {
         var directory = Path.Combine(Path.GetTempPath(), $"perga-shutdown-{Guid.NewGuid():N}");

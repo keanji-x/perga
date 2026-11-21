@@ -1503,8 +1503,11 @@ internal sealed class ScriptableFakeAgentSession : IAgentSession
             ? ResolveNativeCompactSupportHandler(this, ct)
             : ValueTask.FromResult(SupportsNativeCompact);
 
+    public Action? OnAttachIdleContextUsage { get; set; }
+
     public IReadOnlyList<IdleContextUsage> AttachIdleContextUsageHandler(Action<IdleContextUsage>? handler)
     {
+        if (handler is not null) OnAttachIdleContextUsage?.Invoke();
         _idleUsageHandler = handler;
         if (handler is null)
         {
@@ -1629,6 +1632,7 @@ internal sealed class SpyWorkspaceDriver : IWorkspaceDriver
     public bool VerifyMountOnAccess { get; set; }
     public bool CreateLeaseDirectories { get; set; }
     public Task? ProvisionGate { get; set; }
+    public Exception? TeardownError { get; set; }
 
     public ConcurrentQueue<WorkspaceProvisionRequest> ProvisionCalls { get; } = new();
     public ConcurrentQueue<WorkspaceSpec> EnsureMountedCalls { get; } = new();
@@ -1692,6 +1696,7 @@ internal sealed class SpyWorkspaceDriver : IWorkspaceDriver
 
     public Task TeardownTrackAsync(WorkspaceSpec spec, CancellationToken ct = default)
     {
+        if (TeardownError is { } error) throw error;
         TeardownCalls.Enqueue(spec);
         LifecycleTimeline.Enqueue($"teardown:{spec.MergedCwd}");
         return Task.CompletedTask;

@@ -6,7 +6,7 @@ namespace Perga.Kernel.Actors;
 public sealed partial class TrackActor
 {
     private static bool HasCurrentContextConfigurationCore(AgentSessionDto session, OpenSessionHandle open) =>
-        open.LaunchSpec.Provider == session.Provider && (session.BoundAttemptId is not null ||
+        string.Equals(open.LaunchSpec.Provider, session.Provider, StringComparison.OrdinalIgnoreCase) && (session.BoundAttemptId is not null ||
         (open.Selection == SessionConfiguration.FromNullable(session.Model, session.ReasoningEffort, session.PermissionMode) &&
          open.Confirmation is not null && open.Confirmation == open.Agent.ConfigurationState));
 

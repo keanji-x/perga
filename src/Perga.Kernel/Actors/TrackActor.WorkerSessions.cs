@@ -73,7 +73,7 @@ public sealed partial class TrackActor
             string? error = null;
             try
             {
-                var turn = await _turnRunner.RunAsync(new WorkerMessageWorkItem(this, next, attempt, reservation), attempt.Cts.Token).ConfigureAwait(false);
+                var turn = await _turnRunner.RunAsync(new WorkerMessageWorkItem(this, next, attempt, reservation), attempt.Token).ConfigureAwait(false);
                 shouldContinue = turn?.Status == "completed";
                 if (turn?.Status is "failed" or "unknown")
                     error = turn.ErrorText;

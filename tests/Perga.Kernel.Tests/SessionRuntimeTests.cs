@@ -14,6 +14,44 @@ public sealed class SessionRuntimeTests
         runtime.EnsureOpenAsync(provider, SessionConfiguration.FromLaunch(Spec), Spec.Provider,
             () => Task.FromResult(Spec), _ => { }, Timeout, ct);
 
+    [Fact]
+    public async Task CancelLaunchRunsCallbacksSynchronouslyOutsideSnapshotLock()
+    {
+        var runtime = new SessionRuntime();
+        var launch = runtime.BeginLaunch(default, "turn");
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var release = new ManualResetEventSlim();
+        using var registration = launch.Token.Register(() =>
+        {
+            // A different thread must be able to take the snapshot lock during the callback.
+            Assert.True(Task.Run(() => runtime.HasActiveWork).Wait(Timeout));
+            entered.TrySetResult();
+            release.Wait(Timeout);
+        });
+        var cancel = Task.Run(() => runtime.CancelLaunch("turn"));
+        try
+        {
+            await entered.Task.WaitAsync(Timeout);
+            Assert.False(cancel.IsCompleted);
+        }
+        finally { release.Set(); }
+        Assert.True(await cancel.WaitAsync(Timeout));
+        runtime.EndLaunch(launch);
+    }
+
+    [Fact]
+    public async Task ProviderCasingDoesNotReopenExistingSession()
+    {
+        var runtime = new SessionRuntime();
+        var provider = new ScriptableFakeAgentRuntime();
+        var first = await Open(runtime, provider, default);
+        var second = await runtime.EnsureOpenAsync(provider, SessionConfiguration.FromLaunch(Spec), "CODEX",
+            () => Task.FromResult(Spec), _ => { }, Timeout, default);
+        Assert.Same(first.Agent, second.Agent);
+        Assert.Single(provider.OpenedSessions);
+        await runtime.CloseAsync(Timeout, default);
+    }
+
     [Theory]
     [InlineData(true)]
     [InlineData(false)]

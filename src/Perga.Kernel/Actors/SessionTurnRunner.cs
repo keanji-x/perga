@@ -117,6 +117,7 @@ public sealed partial class TrackActor
                 startupAgent = agent;
                 return await actor.EnqueueAsync(async _ =>
                 {
+                    claimed.Startup.Token.ThrowIfCancellationRequested();
                     startupDeadline.Token.ThrowIfCancellationRequested();
                     var current = actor.RequireSessionCore(work.SessionId);
                     actor.RequireSessionDispatchAvailableCore(work.SessionId);

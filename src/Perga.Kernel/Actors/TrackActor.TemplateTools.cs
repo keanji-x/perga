@@ -160,7 +160,7 @@ public sealed partial class TrackActor
             {
                 var provider = route.Provider ?? GetDefaultProviderCore();
                 var model = route.Model;
-                if (!providers.Any(p => p.Available && p.Provider == provider && (model is null || p.Models.Contains(model, StringComparer.Ordinal))))
+                if (!providers.Any(p => p.Available && string.Equals(p.Provider, provider, StringComparison.OrdinalIgnoreCase) && (model is null || p.Models.Contains(model, StringComparer.Ordinal))))
                     warnings.Add($"Template provider/model is unavailable: {provider}/{model}.");
             }
         }

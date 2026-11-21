@@ -42,6 +42,7 @@ public sealed partial class TrackActor
         public bool HasActive(string id) => _sessions.TryGetValue(id, out var state) && state.Active is not null;
         public void SetActive(string id, ActiveTurnState active)
         {
+            actor._runtimes.Get(id).ThrowIfStartupCanceled();
             var state = State(id);
             state.Active = active;
             actor._runtimes.Get(id).SetBusy("turn");

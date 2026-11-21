@@ -168,7 +168,7 @@ public sealed partial class TrackActor
                     var session = RequireSessionCore(sessionId);
                     if (session.Epoch != opEpoch) return;
                     var updated = session with { UnknownLastError = error.Message,
-                        Status = "unknown",
+                        Status = _runtimes.IsShutdownUnconfirmed(sessionId) || error is ProviderSessionNotFoundException ? "unknown" : session.Status,
                         UnknownReason = _runtimes.IsShutdownUnconfirmed(sessionId) ? "shutdown_unconfirmed" :
                             error is ProviderSessionNotFoundException ? "session_lost" : session.UnknownReason,
                         ReconnectInvalidated = session.ReconnectInvalidated || error is ProviderSessionNotFoundException,

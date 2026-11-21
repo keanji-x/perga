@@ -88,7 +88,7 @@ public sealed partial class TrackActor
                 ReasoningEffort = request.ReasoningEffort.IsSet ? new(string.IsNullOrWhiteSpace(request.ReasoningEffort.Value) ? null : request.ReasoningEffort.Value.Trim()) : default
             };
             var provider = request.Provider ?? session.Provider;
-            var providerChanged = provider != session.Provider;
+            var providerChanged = !string.Equals(provider, session.Provider, StringComparison.OrdinalIgnoreCase);
             if (providerChanged && _scheduler.IsOccupied(session))
                 throw KernelException.Conflict("Provider changes require an idle session.");
             var modelChanged = providerChanged || request.Model.IsSet && request.Model.Value != session.Model ||

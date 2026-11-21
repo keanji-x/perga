@@ -11,6 +11,146 @@ public sealed class SessionRuntimeIntegrationTests
     private static readonly InteropPrincipal Human = new InteropPrincipal.Human();
 
     [Theory]
+    [InlineData("task")]
+    [InlineData("close")]
+    [InlineData("delete")]
+    public async Task CanceledWriterRetainsLeaseAndExcludesSecondWriterUntilShutdownConfirmed(string operation)
+    {
+        await using var ctx = new KernelTestContext();
+        var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
+        var trackId = snapshot.Track.Id;
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var disposing = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        ctx.AgentRuntime.TurnScript = (_, _, ct) => HoldUntilCanceled(entered, ct);
+        ctx.AgentRuntime.OnOpenedSession = agent =>
+        {
+            agent.ShutdownConfirmed = false;
+            agent.DisposeHandler = async () => { disposing.TrySetResult(); await release.Task; };
+        };
+        var first = await ctx.Kernel.CreateSessionAsync(trackId,
+            new(Prompt: "first writer", Task: new(Access: "read_write")), "first", Human, default);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        var second = await ctx.Kernel.CreateSessionAsync(trackId,
+            new(Prompt: "second writer", Task: new(Access: "read_write")), "second", Human, default);
+        Task cancel = operation switch
+        {
+            "close" => ctx.Kernel.CloseTrackAsync(trackId, snapshot.Track.LeadSessionId!),
+            "delete" => ctx.Kernel.DeleteTrackAsync(trackId),
+            _ => ctx.Kernel.CancelTaskAsync(trackId, null, first.Receipt.Task!.Id)
+        };
+        try
+        {
+            await disposing.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            // Shutdown must leave the mailbox available for provider callbacks and reads.
+            await ctx.Kernel.ReadReportAsync(trackId).WaitAsync(TimeSpan.FromSeconds(2));
+            Assert.Equal(TaskRunStatus.Pending, second.Receipt.Task!.Status);
+            Assert.Single(ctx.AgentRuntime.OpenedSessions);
+            Assert.Empty(ctx.DirectDriver.SettleLeaseCalls);
+            Assert.False(cancel.IsCompleted);
+            release.SetResult();
+            var error = await Assert.ThrowsAsync<KernelException>(() => cancel);
+            Assert.Equal(KernelErrorCode.SessionRecoveryRequired, error.Code);
+            Assert.Empty(ctx.DirectDriver.SettleLeaseCalls);
+            var report = await ctx.Kernel.ReadReportAsync(trackId);
+            Assert.Equal(TaskRunStatus.Running, report.Tasks.Single(t => t.Id == first.Receipt.Task!.Id).Status);
+            Assert.Equal(TaskRunStatus.Pending, report.Tasks.Single(t => t.Id == second.Receipt.Task.Id).Status);
+            Assert.Single(ctx.AgentRuntime.OpenedSessions);
+            var agent = ctx.AgentRuntime.OpenedSessions.Single();
+            agent.ShutdownConfirmed = true;
+            ctx.AgentRuntime.OnOpenedSession = null;
+            ctx.AgentRuntime.TurnScript = null;
+            await ctx.Kernel.CancelTaskAsync(trackId, null, first.Receipt.Task!.Id);
+            await ctx.Kernel.WaitForTrackIdleAsync(trackId).WaitAsync(TimeSpan.FromSeconds(3));
+            Assert.Single(ctx.DirectDriver.SettleLeaseCalls);
+            Assert.Equal(2, ctx.AgentRuntime.OpenedSessions.Count);
+        }
+        finally { release.TrySetResult(); }
+    }
+
+    [Fact]
+    public async Task StopBetweenProviderOpenAndActivationNeverSendsPrompt()
+    {
+        await using var ctx = new KernelTestContext();
+        var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
+        var id = snapshot.Track.LeadSessionId!;
+        Task? stopping = null;
+        ctx.AgentRuntime.OnOpenedSession = agent => agent.OnAttachIdleContextUsage = () =>
+        {
+            stopping ??= ctx.Kernel.ControlSessionAsync(id, new("stop", TurnId: ctx.Store.GetTurnsForSession(id).Single().Id), Human, default);
+        };
+        await ctx.Kernel.SendSessionMessageAsync(id, new(Content: "stop before activation", RequestKey: "stop"), Human, default);
+        await ctx.Kernel.WaitForTrackIdleAsync(snapshot.Track.Id).WaitAsync(TimeSpan.FromSeconds(3));
+        Assert.NotNull(stopping);
+        await stopping;
+        var provider = Assert.Single(ctx.AgentRuntime.OpenedSessions);
+        Assert.Empty(provider.RecordedInputs);
+        Assert.Equal(1, provider.DisposeCalls);
+        var page = await ctx.Kernel.GetSessionItemsAsync(id, new(), Human, default);
+        Assert.Equal("interrupted", page.LastTurn!.Status);
+    }
+
+    [Fact]
+    public async Task FailedTrackDeletionLeavesExistingAndNewSessionsUsable()
+    {
+        await using var ctx = new KernelTestContext();
+        var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
+        var id = snapshot.Track.LeadSessionId!;
+        await ctx.SendAndWaitForTurnAsync(id, new("before delete", "before"));
+        ctx.DirectDriver.TeardownError = new InvalidOperationException("deliberate teardown failure");
+        await Assert.ThrowsAsync<InvalidOperationException>(() => ctx.Kernel.DeleteTrackAsync(snapshot.Track.Id));
+        await ctx.SendAndWaitForTurnAsync(id, new("after delete failure", "after"));
+        var created = await ctx.Kernel.CreateSessionAsync(snapshot.Track.Id, new(Prompt: "new session"), "new", Human, default);
+        await ctx.Kernel.WaitForTrackIdleAsync(snapshot.Track.Id).WaitAsync(TimeSpan.FromSeconds(3));
+        Assert.Equal("completed", ctx.Store.GetTurnsForSession(id).Last().Status);
+        Assert.Equal("completed", ctx.Store.GetTurnsForSession(created.Receipt.Session.Id).Last().Status);
+        Assert.Equal(3, ctx.AgentRuntime.OpenedSessions.Count);
+    }
+
+    [Fact]
+    public async Task FailedIdleResetPreservesIdleWhenShutdownWasConfirmed()
+    {
+        await using var ctx = new KernelTestContext();
+        var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
+        var id = snapshot.Track.LeadSessionId!;
+        await ctx.SendAndWaitForTurnAsync(id, new("before reset", "before"));
+        ctx.AgentRuntime.OpenedSessions.Single().DisposeHandler = () => throw new IOException("deliberate cleanup failure");
+        await Assert.ThrowsAsync<KernelException>(() => ctx.Kernel.ControlSessionAsync(id, new("reset_context"), Human, default));
+        var page = await ctx.Kernel.GetSessionItemsAsync(id, new(), Human, default);
+        Assert.Equal("idle", page.State);
+        Assert.Null(page.UnknownDetail);
+        await ctx.SendAndWaitForTurnAsync(id, new("after failure", "after"));
+        Assert.Equal("completed", ctx.Store.GetTurnsForSession(id).Last().Status);
+    }
+
+    [Fact]
+    public async Task CompactionWithUnconfirmedShutdownPersistsUnknown()
+    {
+        await using var ctx = new KernelTestContext();
+        var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
+        var id = snapshot.Track.LeadSessionId!;
+        await ctx.SendAndWaitForTurnAsync(id, new("before compact", "before"));
+        var agent = ctx.AgentRuntime.OpenedSessions.Single();
+        agent.ShutdownConfirmed = false;
+        try
+        {
+            await Assert.ThrowsAsync<KernelException>(() => ctx.Kernel.ControlSessionAsync(id, new("compact"), Human, default));
+            var page = await ctx.Kernel.GetSessionItemsAsync(id, new(), Human, default);
+            Assert.Equal("unknown", page.State);
+            Assert.Equal("shutdown_unconfirmed", page.UnknownDetail!.Reason);
+        }
+        finally { agent.ShutdownConfirmed = true; }
+    }
+
+    private static async IAsyncEnumerable<UnifiedAgentEvent> HoldUntilCanceled(TaskCompletionSource entered,
+        [EnumeratorCancellation] CancellationToken ct)
+    {
+        entered.TrySetResult();
+        yield return new UnifiedAgentEvent.TextDelta("started");
+        await Task.Delay(Timeout.Infinite, ct);
+    }
+
+    [Theory]
     [InlineData(true)]
     [InlineData(false)]
     public async Task StartupCancelThenSendClosesInPlaceOrRequiresShutdownRetry(bool confirmed)

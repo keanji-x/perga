@@ -68,17 +68,15 @@ public sealed partial class TrackActor
     {
         _sessions[session.Id] = session;
         _nextTurnIndexBySession[session.Id] = input.TurnIndex;
-        _runtimes.Get(session.Id).BeginLaunch(_actorShutdownCts.Token, input.Receipt.TurnId);
         DispatchAcceptedInput(input);
     }
 
     internal void DispatchAcceptedInput(PersistedSessionInput input)
     {
+        if (!_scheduler.TryDispatch(input.Receipt.SessionId, input.Receipt.InputId)) return;
+        var startup = _runtimes.Get(input.Receipt.SessionId).BeginLaunch(_actorShutdownCts.Token, input.Receipt.TurnId);
         TrackBackgroundJob(async () =>
         {
-            if (!_scheduler.TryDispatch(input.Receipt.SessionId, input.Receipt.InputId))
-                return;
-            var startup = _runtimes.Get(input.Receipt.SessionId).BeginLaunch(_actorShutdownCts.Token, input.Receipt.TurnId);
             // Capture a token before activation can dispose the scheduler's source.
             var startupToken = startup.Token;
             var expectedEpoch = input.Epoch;
@@ -121,7 +119,6 @@ public sealed partial class TrackActor
     {
         if (input.Receipt.DeliveryState == "accepted")
         {
-            _runtimes.Get(input.Receipt.SessionId).BeginLaunch(_actorShutdownCts.Token, input.Receipt.TurnId);
             DispatchAcceptedInput(input);
         }
         else if (input.Receipt.TurnStatus == "running" && !_scheduler.IsDispatching(input.Receipt.SessionId, input.Receipt.InputId))

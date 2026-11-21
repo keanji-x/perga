@@ -250,7 +250,7 @@ public sealed partial class TrackActor
 
         public override Task<string?> PreparePromptAsync(CancellationToken ct)
         {
-            attempt.Cts.Token.ThrowIfCancellationRequested();
+            attempt.Token.ThrowIfCancellationRequested();
             return Task.FromResult<string?>(message.Content);
         }
 

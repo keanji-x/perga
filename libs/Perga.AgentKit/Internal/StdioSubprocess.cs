@@ -213,9 +213,11 @@ internal sealed class StdioSubprocess : IAsyncDisposable
     private async Task ShutdownAsync()
     {
         // Serialize closure with writers so no writer's finally can release a disposed lock.
-        await _stdinLock.WaitAsync().ConfigureAwait(false);
-        try { TryCloseStdinOnce(); }
-        finally { _stdinLock.Release(); }
+        if (await _stdinLock.WaitAsync(GracefulShutdownTimeout).ConfigureAwait(false))
+        {
+            try { TryCloseStdinOnce(); }
+            finally { _stdinLock.Release(); }
+        }
 
         if (!_process.HasExited)
             await WaitForExitAsync(GracefulShutdownTimeout).ConfigureAwait(false);
@@ -233,7 +235,8 @@ internal sealed class StdioSubprocess : IAsyncDisposable
         await _disposeCts.CancelAsync().ConfigureAwait(false);
         // Publish confirmation only after cleanup; concurrent disposals join this attempt.
         _process.Dispose();
-        _stdinLock.Dispose();
+        // A blocked writer may still release this semaphore after the child exits.
+        // Leave the managed semaphore alive until all references are collected.
         _disposeCts.Dispose();
         ShutdownConfirmed = true;
     }

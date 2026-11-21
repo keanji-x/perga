@@ -58,6 +58,7 @@ public sealed class KernelMcpBackend : IMcpToolBackend
                 KernelErrorCode.NotFound => 404,
                 KernelErrorCode.Gone or KernelErrorCode.IdempotencyKeyExhausted => 410,
                 KernelErrorCode.PreconditionFailed => 412,
+                KernelErrorCode.SessionRecoveryRequired => 409,
                 KernelErrorCode.Conflict or KernelErrorCode.IdempotencyKeyReused or KernelErrorCode.WorkerTurnChanged => 409,
                 _ => 400
             };
