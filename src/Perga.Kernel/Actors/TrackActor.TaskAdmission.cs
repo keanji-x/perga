@@ -1,6 +1,8 @@
 using System.Text.Json;
+using Perga.AgentKit;
 using Perga.Contracts;
 using Perga.Kernel.Internal;
+using Perga.Kernel.Ports;
 using Perga.Kernel.Tasks;
 using Perga.PolicyVm;
 using Perga.ReportDoc;
@@ -11,32 +13,46 @@ public sealed partial class TrackActor
 {
     private readonly Dictionary<string, (int Generation, string PolicyGeneration, string DispatchFields)> _taskDispatchApprovals = new(StringComparer.Ordinal);
     private readonly HashSet<string> _pendingTaskDispatchApprovals = new(StringComparer.Ordinal);
+    private bool _taskProviderProbePending;
+
+    private (TaskDto Task, PolicyTaskRoute Route)[] GetTaskDeclarationsCore(ReportCommitResult preview)
+    {
+        var changedIds = preview.Changes.Where(change => change.Kind == ReportBlockKind.Task && change.CurrentRev is not null && (change.PreviousRev is null || change.CurrentRev != change.PreviousRev))
+            .Select(change => change.Id).ToHashSet(StringComparer.Ordinal);
+        // Use exactly the same JSON/fence parser as report synchronization.
+        return preview.NextDocument.Blocks.Where(block => changedIds.Contains(block.Id))
+            .Select(block => TaskBlockSynchronizer.ParseTaskBlock(TrackId, block, NowMs()))
+            .Where(task => task.Ready)
+            .Select(task => (task, RouteTaskCore(task).Route))
+            .ToArray();
+    }
 
     private async Task<(List<GuardDecision.AskHuman> Asks, HashSet<string> ApprovedKeys)> AdmitTaskDeclarationsCoreAsync(
-        ReportCommitResult preview, CancellationToken ct)
+        IReadOnlyList<(TaskDto Task, PolicyTaskRoute Route)> declarations, WorkerDispatchIntent? dispatch,
+        IReadOnlyList<ProviderStatus>? providers, CancellationToken ct)
     {
         var asks = new List<GuardDecision.AskHuman>();
         var approvedKeys = new HashSet<string>(StringComparer.Ordinal);
-        var changedIds = preview.Changes.Where(change => change.Kind == ReportBlockKind.Task && change.CurrentRev is not null && (change.PreviousRev is null || change.CurrentRev != change.PreviousRev))
-            .Select(change => change.Id).ToHashSet(StringComparer.Ordinal);
-        foreach (var block in preview.NextDocument.Blocks.Where(block => changedIds.Contains(block.Id)))
+        foreach (var (task, declaredRoute) in declarations)
         {
-            // Use exactly the same JSON/fence parser as report synchronization.
-            var parsed = TaskBlockSynchronizer.ParseTaskBlock(TrackId, block, NowMs());
-            if (!parsed.Ready) continue;
-            var route = RouteTaskCore(parsed);
+            var isDispatch = task.TaskKey == dispatch?.TaskKey;
+            // For a declared model, authorize the ID that the preallocated Worker will launch with.
+            var route = isDispatch && declaredRoute.Model is not null && dispatch?.Session is { } session
+                ? declaredRoute with { Model = session.Model }
+                : declaredRoute;
             if (route.Denial is { } denial) throw KernelException.PolicyDenied(denial);
-            var eval = EvaluateTaskDispatchCore(parsed, route);
+            var eval = EvaluateTaskDispatchCore(task, route);
             await UpdateTemplateStateIfChangedCoreAsync(eval.NextState, ct).ConfigureAwait(false);
             if (eval.Output is GuardDecision.Deny denied) throw KernelException.PolicyDenied(denied.Reason);
             if (eval.Output is GuardDecision.AskHuman ask) asks.Add(ask);
-            await ValidateTaskProviderModelCoreAsync(route.Provider, route.Model, ct).ConfigureAwait(false);
-            approvedKeys.Add(parsed.TaskKey);
+            if (!isDispatch && NeedsTaskProviderCatalog(route))
+                ValidateTaskProviderModelCore(route, providers!);
+            approvedKeys.Add(task.TaskKey);
         }
         return (asks, approvedKeys);
     }
 
-    private PolicyTaskRoute RouteTaskCore(TaskDto task)
+    private (PolicyTaskRoute Route, bool UsesPreparedDefault) RouteTaskCore(TaskDto task)
     {
         RequirePolicyAvailableCore();
         var model = task.Context is { ValueKind: JsonValueKind.Object } context &&
@@ -44,7 +60,11 @@ public sealed partial class TrackActor
         var route = _policy is null ? new PolicyTaskRoute(task.Provider, model) : _policyVm.RouteTaskDispatch(_policy,
             task.Role, FormatAccessModeForPolicy(task.Access), task.Provider, model, _track.TemplateInputs);
         var session = _sessions.Values.FirstOrDefault(s => s.BoundTaskId == task.Id);
-        return session is null ? route : route with { Provider = session.Provider, Model = session.Model };
+        if (session is null) return (route, false);
+        // A preallocated session can carry a Track default that the catalog does not list.
+        var usesPreparedDefault = route.Model is null && task.LatestAttemptId is null &&
+            session is { BoundAttemptId: null, ConfigVersion: 0 };
+        return (route with { Provider = session.Provider, Model = session.Model }, usesPreparedDefault);
     }
 
     private PolicyEvalResult<GuardDecision> EvaluateTaskDispatchCore(TaskDto task, PolicyTaskRoute route) =>
@@ -78,23 +98,58 @@ public sealed partial class TrackActor
         return true;
     }
 
-    private async Task ValidateTaskProviderModelCoreAsync(string? provider, string? model, CancellationToken ct)
+    private static bool NeedsTaskProviderCatalog(PolicyTaskRoute route) =>
+        route.Provider is not null || route.Model is not null;
+
+    private void ValidateTaskProviderModelCore(PolicyTaskRoute route, IReadOnlyList<ProviderStatus> providers,
+        bool validateModel = true)
     {
-        if (provider is null && model is null) return;
-        IReadOnlyList<Perga.AgentKit.ProviderStatus> providers;
+        var provider = SessionLaunchValidator.NormalizeProvider(route.Provider ?? GetDefaultProviderCore());
         try
         {
-            providers = await _agentRuntime.ProbeProvidersAsync(ct).ConfigureAwait(false);
+            var status = SessionLaunchValidator.ValidateProvider(providers, provider, explicitlySelected: true, requireAvailable: true);
+            if (validateModel)
+                SessionLaunchValidator.ValidateModelAndEffort(provider, status, route.Model, route.Model, null);
+        }
+        catch (KernelException ex) when (ex.Code == KernelErrorCode.PreconditionFailed)
+        {
+            throw KernelException.Conflict(ex.Message, ex.NextStep);
+        }
+    }
+
+    private void StartTaskProviderProbeCore()
+    {
+        if (_taskProviderProbePending) return;
+        _taskProviderProbePending = true;
+        var ct = _actorShutdownCts.Token;
+        _ = TrackBackgroundJob(async () =>
+        {
+            IReadOnlyList<ProviderStatus>? providers = null;
+            try { providers = await ProbeSessionProvidersAsync(ct).ConfigureAwait(false); }
+            catch (KernelException ex) when (ex.Code == KernelErrorCode.PreconditionFailed) { }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { return; }
+
+            await EnqueueAsync(async _ =>
+            {
+                _taskProviderProbePending = false;
+                if (providers is not null)
+                    await ScheduleEligibleTasksCoreAsync(ct, providers).ConfigureAwait(false);
+            }, ct).ConfigureAwait(false);
+        });
+    }
+
+    private async Task<IReadOnlyList<ProviderStatus>> ProbeSessionProvidersAsync(CancellationToken ct,
+        KernelErrorCode failureCode = KernelErrorCode.PreconditionFailed)
+    {
+        try
+        {
+            return await _agentRuntime.ProbeProvidersAsync(ct).ConfigureAwait(false);
         }
         catch (Exception ex) when (!ct.IsCancellationRequested)
         {
-            throw new KernelException(KernelErrorCode.Conflict, "Task provider probe is temporarily unavailable.", innerException: ex);
+            throw new KernelException(failureCode, "The provider probe is temporarily unavailable.",
+                "Retry discovery with provider_list(refresh=true).", ex);
         }
-        var selected = providers.FirstOrDefault(p => string.Equals(p.Provider, provider ?? GetDefaultProviderCore(), StringComparison.OrdinalIgnoreCase));
-        if (selected is { Available: false })
-            throw KernelException.Conflict("The requested task provider is temporarily unavailable.");
-        if (selected is null || model is not null && !selected.Models.Contains(model, StringComparer.Ordinal))
-            throw KernelException.InvalidArgument("The requested task provider and model combination is unavailable.");
     }
 
     private static string TaskDispatchFields(TaskDto task) => JsonSerializer.Serialize(new {

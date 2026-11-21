@@ -56,7 +56,7 @@ public sealed partial class PergaKernelService
         {
             throw KernelException.InvalidArgument("sourceId is required.");
         }
-        await GuardMcpToolCallAsync(caller.TrackId, caller.SessionId, "perga", "perga_system_upgrade_" + operation,
+        await GuardMcpToolCallAsync(caller.TrackId, caller.SessionId, "perga", "system_upgrade_" + operation,
             JsonHelpers.ToElement(sourceId is null ? new Dictionary<string, string>() : new Dictionary<string, string> { ["sourceId"] = sourceId }), ct, caller.ExecutionOrigin).ConfigureAwait(false);
         if (_systemUpgradeController is null)
         {

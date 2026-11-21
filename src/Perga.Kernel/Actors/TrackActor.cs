@@ -46,6 +46,7 @@ public sealed partial class TrackActor : IAsyncDisposable
     private string? _policyUnavailableReason;
     private string _policyGeneration = Guid.NewGuid().ToString("N");
     private string? _templateSnapshotSource;
+    private string? _presentedTemplateSnapshotSource;
     private MountedWorkspace? _mountedWorkspace;
     private readonly List<TaskDto> _tasks = [];
     private readonly Dictionary<string, AgentSessionDto> _sessions = new(StringComparer.Ordinal);
@@ -292,7 +293,7 @@ public sealed partial class TrackActor : IAsyncDisposable
         return EnqueueAsync(async _ =>
         {
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
-            RequireGovernanceSessionCore(callerSessionId, "perga_track_rename");
+            RequireGovernanceSessionCore(callerSessionId, "track_rename");
 
             var now = NowMs();
             _track = _track with { Title = newTitle, UpdatedAtMs = now };
@@ -335,9 +336,12 @@ public sealed partial class TrackActor : IAsyncDisposable
             JsonElement state;
             try
             {
-                policy = templateId is not null
-                    ? _templateCatalog.GetRequiredPolicy(templateId)
-                    : _templateCatalog.GetOrCompileSnapshot(source!);
+                if (templateId is not null)
+                    policy = _templateCatalog.GetRequiredPolicy(templateId);
+                else if (_templateSnapshotSource is { } existing && source == _presentedTemplateSnapshotSource)
+                    policy = _templateCatalog.GetOrCompileSnapshot(existing);
+                else
+                    policy = _templateCatalog.CompileSource(source!);
                 TemplateSchedules.ValidateInputs(_policyVm, policy, nextInputs);
                 var init = _policyVm.InitState(policy, nextInputs);
                 state = (init.Output.ValueKind != JsonValueKind.Undefined ? init.Output : init.NextState).Clone();
@@ -363,11 +367,13 @@ public sealed partial class TrackActor : IAsyncDisposable
             var evt = new EventEnvelopeDto(null, nextTrack.AreaId, TrackId, KernelEventKinds.TrackUpdated,
                 JsonHelpers.ToElement(TemplatePresentation.Project(nextTrack, policy, _policyVm)), now);
             await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
-            await _store.UpdateTrackTemplateAndEmitAsync(nextTrack, policy.JsSource, evt, ct, schedules).ConfigureAwait(false);
+            var snapshotSource = TemplateHost.Freeze(policy);
+            await _store.UpdateTrackTemplateAndEmitAsync(nextTrack, snapshotSource, evt, ct, schedules).ConfigureAwait(false);
             _policy = policy;
             _policyUnavailableReason = null;
             _policyGeneration = Guid.NewGuid().ToString("N");
-            _templateSnapshotSource = policy.JsSource;
+            _templateSnapshotSource = snapshotSource;
+            _presentedTemplateSnapshotSource = TemplateHost.InspectSource(snapshotSource);
             var pluginsChanged = !_track.EnabledPlugins.SequenceEqual(nextTrack.EnabledPlugins, StringComparer.Ordinal);
             _track = nextTrack;
             if (pluginsChanged)
@@ -396,7 +402,7 @@ public sealed partial class TrackActor : IAsyncDisposable
             reserve: async () =>
             {
                 await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
-                RequireGovernanceSessionCore(callerSessionId, "perga_track_close");
+                RequireGovernanceSessionCore(callerSessionId, "track_close");
                 if (_closingTrack || _deletingTrack) throw KernelException.Conflict("Track teardown is already in progress.");
                 ct.ThrowIfCancellationRequested();
                 _closingTrack = true;
@@ -637,14 +643,16 @@ public sealed partial class TrackActor : IAsyncDisposable
         string callerSessionId,
         ReportCommitRequest req,
         CancellationToken ct = default,
-        McpExecutionOrigin? origin = null)
+        McpExecutionOrigin? origin = null,
+        string? expectedPolicyGeneration = null)
     {
         return CommitReportInternalAsync(
             actorKind: null,
             callerSessionId: callerSessionId,
             buildOps: _ => req,
             ct: ct,
-            origin: origin);
+            origin: origin,
+            expectedPolicyGeneration: expectedPolicyGeneration);
     }
 
     private async Task<ReportReadResult> CommitReportInternalAsync(
@@ -653,29 +661,48 @@ public sealed partial class TrackActor : IAsyncDisposable
         Func<ReportDocument, ReportCommitRequest> buildOps,
         CancellationToken ct,
         WorkerDispatchIntent? dispatch = null,
-        McpExecutionOrigin? origin = null)
+        McpExecutionOrigin? origin = null,
+        Func<IReadOnlyList<ProviderStatus>, AgentSessionDto>? prepareWorker = null,
+        string? expectedPolicyGeneration = null)
     {
         var approvalTurn = callerSessionId is not null && _scheduler.TryGetActive(callerSessionId, out var callingTurn)
             ? callingTurn : null;
         Interlocked.Increment(ref _inFlightExternalOps);
         try
         {
-            string? authorizedGeneration = null;
+            IReadOnlyList<ProviderStatus>? providers = null;
+            if (dispatch is not null)
+            {
+                var replay = await EnqueueAsync(async _ =>
+                {
+                    await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
+                    return await TryReplayWorkerDispatchCoreAsync(dispatch, ct).ConfigureAwait(false);
+                }, ct).ConfigureAwait(false);
+                if (replay is not null) return replay;
+                providers = await ProbeSessionProvidersAsync(ct).ConfigureAwait(false);
+            }
+
+            var authorizedGeneration = expectedPolicyGeneration;
             // Observe mailbox admission even after request cancellation so every approval is reclaimed.
-            var phase1 = await EnqueueAsync<(ReportReadResult? Completed, IReadOnlyList<PolicyApproval> Asks, ReportCommitRequest EffectiveRequest, HashSet<string> ApprovedKeys)>(async _ =>
+            Task<(ReportReadResult? Completed, IReadOnlyList<PolicyApproval> Asks, ReportCommitRequest? EffectiveRequest,
+                HashSet<string> ApprovedKeys, bool NeedsProviders)> AdmitReportAsync() => EnqueueAsync<(ReportReadResult?,
+                IReadOnlyList<PolicyApproval>, ReportCommitRequest?, HashSet<string>, bool)>(async _ =>
             {
                 await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
+                if (dispatch is not null && await TryReplayWorkerDispatchCoreAsync(dispatch, ct).ConfigureAwait(false) is { } replay)
+                    return (replay, [], null, [], false);
                 RequirePolicyAvailableCore();
-
-                if (dispatch is not null && await TryReplayWorkerDispatchCoreAsync(dispatch, callerSessionId, ct).ConfigureAwait(false) is { } replay)
-                    return (replay, [], null!, []);
+                if (authorizedGeneration is not null && authorizedGeneration != _policyGeneration)
+                    throw KernelException.PolicyDenied("Active policy changed after authorization.");
+                authorizedGeneration = _policyGeneration;
+                if (dispatch is not null)
+                    dispatch = dispatch with { Session = prepareWorker!(providers!) };
 
                 var (editorRole, boundAttemptId) = ResolveEditorIdentityCore(actorKind, callerSessionId);
                 var effectiveReq = buildOps(_report);
                 TaskBlockSynchronizer.ValidatePreCommitBoundAttemptFence(boundAttemptId, _report, effectiveReq.Ops);
                 var preview = _reportEngine.ApplyCommit(_report, effectiveReq.Anchor, effectiveReq.Ops, effectiveReq.Summary);
                 TaskBlockSynchronizer.ValidatePostCommitBoundAttemptFence(boundAttemptId, _report, preview);
-                authorizedGeneration = _policyGeneration;
 
                 var touchedSections = CollectTouchedSections(_report, preview, effectiveReq.Ops);
                 var nextProseChars = preview.NextDocument.Blocks
@@ -688,7 +715,10 @@ public sealed partial class TrackActor : IAsyncDisposable
                     _policy?.Manifest.RequireGateForReadWrite ?? false, NowMs());
                 RequireAttemptsOutsideVerification(_activeAttempts.Values.Where(attempt =>
                     taskPreview.SupersededOrRemovedActiveTaskIds.Contains(attempt.TaskId)));
-                var taskAdmission = await AdmitTaskDeclarationsCoreAsync(preview, ct).ConfigureAwait(false);
+                var declarations = GetTaskDeclarationsCore(preview);
+                if (providers is null && declarations.Any(entry => entry.Route.Denial is null && NeedsTaskProviderCatalog(entry.Route)))
+                    return (null, [], null, [], true);
+                var taskAdmission = await AdmitTaskDeclarationsCoreAsync(declarations, dispatch, providers, ct).ConfigureAwait(false);
                 var decisions = taskAdmission.Asks;
 
                 if (_policy is not null)
@@ -718,20 +748,28 @@ public sealed partial class TrackActor : IAsyncDisposable
                     throw;
                 }
                 if (asks.Count > 0 || taskPreview.SupersededOrRemovedActiveTaskIds.Count > 0)
-                    return (null, asks, effectiveReq, taskAdmission.ApprovedKeys);
+                    return (null, asks, effectiveReq, taskAdmission.ApprovedKeys, false);
 
                 var result = await FinalizeReportCommitCoreAsync(
                     preview,
                     callerSessionId,
                     effectiveReq.CommitMessage ?? $"Report commit ({editorRole})",
-                    ct, dispatch, taskAdmission.ApprovedKeys).ConfigureAwait(false);
-                return (result, [], effectiveReq, taskAdmission.ApprovedKeys);
-            }, CancellationToken.None).ConfigureAwait(false);
+                    ct, dispatch, taskAdmission.ApprovedKeys, providers).ConfigureAwait(false);
+                return (result, [], effectiveReq, taskAdmission.ApprovedKeys, false);
+            }, CancellationToken.None);
 
+            var phase1 = await AdmitReportAsync().ConfigureAwait(false);
+            if (phase1.NeedsProviders)
+            {
+                providers = await ProbeSessionProvidersAsync(ct, KernelErrorCode.Conflict).ConfigureAwait(false);
+                phase1 = await AdmitReportAsync().ConfigureAwait(false);
+            }
             if (phase1.Completed is not null)
             {
                 return phase1.Completed;
             }
+            var effectiveRequest = phase1.EffectiveRequest
+                ?? throw new InvalidOperationException("Report admission did not produce a commit request.");
 
             try
             {
@@ -754,7 +792,7 @@ public sealed partial class TrackActor : IAsyncDisposable
                 if (_policyGeneration != authorizedGeneration)
                     throw KernelException.PolicyDenied("Active policy changed during task/report approval.");
                 var (editorRole, boundAttemptId) = ResolveEditorIdentityCore(actorKind, callerSessionId);
-                var request = phase1.EffectiveRequest;
+                var request = effectiveRequest;
                 TaskBlockSynchronizer.ValidatePreCommitBoundAttemptFence(boundAttemptId, _report, request.Ops);
                 var preview = _reportEngine.ApplyCommit(_report, request.Anchor, request.Ops, request.Summary);
                 TaskBlockSynchronizer.ValidatePostCommitBoundAttemptFence(boundAttemptId, _report, preview);
@@ -772,28 +810,29 @@ public sealed partial class TrackActor : IAsyncDisposable
 
             return await EnqueueAsync(async _ =>
             {
-                if (dispatch is not null && await TryReplayWorkerDispatchCoreAsync(dispatch, callerSessionId, ct).ConfigureAwait(false) is { } replay)
+                if (dispatch is not null && await TryReplayWorkerDispatchCoreAsync(dispatch, ct).ConfigureAwait(false) is { } replay)
                     return replay;
                 if (_policyGeneration != authorizedGeneration)
                     throw KernelException.PolicyDenied("Active policy changed during task/report approval.");
+                var effectiveReq = effectiveRequest;
                 var (editorRole, boundAttemptId) = ResolveEditorIdentityCore(actorKind, callerSessionId);
-                TaskBlockSynchronizer.ValidatePreCommitBoundAttemptFence(boundAttemptId, _report, phase1.EffectiveRequest.Ops);
+                TaskBlockSynchronizer.ValidatePreCommitBoundAttemptFence(boundAttemptId, _report, effectiveReq.Ops);
                 var verifiedCommit = _reportEngine.ApplyCommit(
                     _report,
-                    phase1.EffectiveRequest.Anchor,
-                    phase1.EffectiveRequest.Ops,
-                    phase1.EffectiveRequest.Summary);
+                    effectiveReq.Anchor,
+                    effectiveReq.Ops,
+                    effectiveReq.Summary);
                 TaskBlockSynchronizer.ValidatePostCommitBoundAttemptFence(boundAttemptId, _report, verifiedCommit);
                 ValidateManifestReportRulesCore(
                     editorRole,
-                    CollectTouchedSections(_report, verifiedCommit, phase1.EffectiveRequest.Ops),
+                    CollectTouchedSections(_report, verifiedCommit, effectiveReq.Ops),
                     verifiedCommit.NextDocument.Blocks.Where(b => b.Kind == ReportBlockKind.Prose).Sum(b => b.Markdown?.Length ?? 0));
 
                 return await FinalizeReportCommitCoreAsync(
                     verifiedCommit,
                     callerSessionId,
-                    phase1.EffectiveRequest.CommitMessage ?? $"Report commit ({editorRole}, human-approved)",
-                    ct, dispatch, phase1.ApprovedKeys).ConfigureAwait(false);
+                    effectiveReq.CommitMessage ?? $"Report commit ({editorRole}, human-approved)",
+                    ct, dispatch, phase1.ApprovedKeys, providers).ConfigureAwait(false);
             }, ct).ConfigureAwait(false);
         }
         finally
@@ -804,41 +843,52 @@ public sealed partial class TrackActor : IAsyncDisposable
 
     // ------------------- Sessions, Streaming Turns & Epoch Compaction -------------------
 
-    private IAgentSession? FindOpenSessionForSettingsCore(string sessionId, string provider) =>
-        RequireSessionCore(sessionId).Status != "unknown" &&
-            _runtimes.TryGetOpen(sessionId, out var handle) &&
-            string.Equals(handle.LaunchSpec.Provider, provider, StringComparison.OrdinalIgnoreCase)
+    private IAgentSession? FindOpenSessionForSettingsCore(string sessionId, string provider)
+    {
+        var normalized = SessionLaunchValidator.NormalizeProvider(provider);
+        return _sessions.TryGetValue(sessionId, out var session) && session.ArchivedAtMs is null && session.Status != "unknown" &&
+            !_scheduler.IsRecovering(sessionId) && SessionLaunchValidator.NormalizeProvider(session.Provider) == normalized &&
+            _runtimes.TryGetOpenForSettings(sessionId, out var handle) &&
+            SessionLaunchValidator.NormalizeProvider(handle.LaunchSpec.Provider) == normalized
             ? handle.Agent : null;
+    }
 
-    private string? ResolveSessionPermissionModeCore(string provider, string? requested, string? sessionId = null) =>
-        RuntimePermissionModes.Resolve(provider, requested,
-            sessionId is null ? null : FindOpenSessionForSettingsCore(sessionId, provider)?.AvailablePermissionModes);
-
-    private async Task<AgentSessionDto> NewSubagentSessionCoreAsync(CreateSessionRequest req, CancellationToken ct)
+    private AgentSessionDto NewSubagentSessionCore(CreateSessionRequest request, IReadOnlyList<ProviderStatus> providers,
+        bool requireAvailable, AgentSessionDto? parent = null, string? sessionId = null)
     {
         var now = NowMs();
-        var provider = string.IsNullOrWhiteSpace(req.Provider)
-            ? GetDefaultProviderCore()
-            : (TaskBlockSynchronizer.NormalizeProviderId(req.Provider) ?? req.Provider!.Trim());
-        var permissionMode = ResolveSessionPermissionModeCore(provider, req.PermissionMode);
+        var provider = SessionLaunchValidator.NormalizeProvider(request.Provider ?? parent?.Provider ?? GetDefaultProviderCore());
+        var switchesParentProvider = parent is not null && provider != SessionLaunchValidator.NormalizeProvider(parent.Provider);
+        var requestedModel = SessionLaunchValidator.NormalizeRequestedModel(request.Model);
+        var model = requestedModel ?? (switchesParentProvider ? null : parent?.Model ?? GetDefaultModelCore(provider));
+        var canInheritReasoningEffort = !switchesParentProvider &&
+            (requestedModel is null || string.Equals(requestedModel, parent?.Model, StringComparison.Ordinal));
+        var effort = string.IsNullOrWhiteSpace(request.ReasoningEffort) ? null : request.ReasoningEffort.Trim();
+        var status = SessionLaunchValidator.ValidateProvider(providers, provider, request.Provider is not null, requireAvailable);
+        SessionLaunchValidator.ValidateModelAndEffort(provider, status, requestedModel, model, effort);
+        var permissionMode = request.PermissionMode is null && !switchesParentProvider && parent?.PermissionMode is { } inherited
+            ? inherited
+            : RuntimePermissionModes.Resolve(provider, request.PermissionMode, request.PermissionMode is null ? null :
+                ResolvePermissionCatalogCore(provider, status, parent?.Id));
 
         return new AgentSessionDto(
-            Id: $"ses_{Guid.NewGuid():N}",
+            Id: sessionId ?? $"ses_{Guid.NewGuid():N}",
             TrackId: TrackId,
             IsLead: false,
             BoundTaskId: null,
             BoundAttemptId: null,
-            Title: string.IsNullOrWhiteSpace(req.Title) ? "Subagent" : req.Title,
+            Title: string.IsNullOrWhiteSpace(request.Title) ? "Subagent" : request.Title,
             Provider: provider,
-            Model: req.Model ?? GetDefaultModelCore(provider),
+            Model: model,
             NativeThreadId: null,
             Epoch: 1,
             Status: "idle",
             ArchivedAtMs: null,
             CreatedAtMs: now,
             UpdatedAtMs: now,
-            ReasoningEffort: string.IsNullOrWhiteSpace(req.ReasoningEffort) ? null : req.ReasoningEffort.Trim(),
-            PermissionMode: permissionMode, SystemPrompt: req.SystemPrompt, NotifyParent: req.NotifyParent ?? "none");
+            ReasoningEffort: effort ?? (canInheritReasoningEffort ? parent?.ReasoningEffort : null),
+            ParentSessionId: parent?.Id, SpawnDepth: parent is null ? 0 : parent.SpawnDepth + 1,
+            PermissionMode: permissionMode, SystemPrompt: request.SystemPrompt, NotifyParent: request.NotifyParent ?? "none");
     }
 
     private Task<SessionItemsPageDto> ReadSessionItemsAsync(string sessionId, long afterId, int limit, CancellationToken ct,
@@ -1033,7 +1083,7 @@ public sealed partial class TrackActor : IAsyncDisposable
         var attemptId = await EnqueueAsync(async _ =>
         {
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
-            var caller = RequireBoundAttemptSessionCore(callerSessionId, "perga_task_done");
+            var caller = RequireBoundAttemptSessionCore(callerSessionId, "task_done");
             return caller.BoundAttemptId!;
         }, ct).ConfigureAwait(false);
 
@@ -1049,7 +1099,7 @@ public sealed partial class TrackActor : IAsyncDisposable
         var attemptId = await EnqueueAsync(async _ =>
         {
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
-            var caller = RequireBoundAttemptSessionCore(callerSessionId, "perga_task_fail");
+            var caller = RequireBoundAttemptSessionCore(callerSessionId, "task_fail");
             return caller.BoundAttemptId!;
         }, ct).ConfigureAwait(false);
 
@@ -1065,11 +1115,11 @@ public sealed partial class TrackActor : IAsyncDisposable
     {
         if (questions.Count == 0)
         {
-            throw KernelException.InvalidArgument("At least one question is required for perga_user_ask.");
+            throw KernelException.InvalidArgument("At least one question is required for user_ask.");
         }
 
         if (questions.Any(question => question.IsMultiSelect))
-            throw KernelException.InvalidArgument("perga_user_ask does not support isMultiSelect: true.");
+            throw KernelException.InvalidArgument("user_ask does not support isMultiSelect: true.");
 
         Interlocked.Increment(ref _inFlightExternalOps);
         try
@@ -1179,7 +1229,7 @@ public sealed partial class TrackActor : IAsyncDisposable
         var mail = await EnqueueAsync(async _ =>
         {
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
-            RequireGovernanceSessionCore(callerSessionId, "perga_mail_send");
+            RequireGovernanceSessionCore(callerSessionId, "mail_send");
             if ((toTrackId is null) == (replyToMailId is null) ||
                 string.IsNullOrWhiteSpace(toTrackId ?? replyToMailId))
                 throw KernelException.InvalidArgument("Specify exactly one of toTrackId and replyToMailId.");
@@ -1515,7 +1565,8 @@ public sealed partial class TrackActor : IAsyncDisposable
                         throw KernelException.Forbidden("Only the current Track Lead can use this tool.");
                 }
 
-                var previewOnly = false;
+                var providerDiscovery = mcpServer == "perga" && toolName == KernelMcpToolNames.ProviderList;
+                var previewOnly = providerDiscovery;
                 if (mcpServer == "perga" && toolName == KernelMcpToolNames.TrackSet)
                     previewOnly = ValidateTemplateSetArguments(arguments);
                 if (!(mcpServer == "perga" && toolName == KernelMcpToolNames.TrackSet))
@@ -1525,10 +1576,13 @@ public sealed partial class TrackActor : IAsyncDisposable
                     return null;
                 }
 
-                var eval = _policyVm.Before(_policy, "tool." + toolName, TrackId, JsonHelpers.ToElement(new {
+                var policyToolName = GetPolicyToolName(mcpServer, toolName, _policy.UsesLegacyBeforeToolNames);
+                var eval = _policyVm.Before(_policy, "tool." + policyToolName, TrackId, JsonHelpers.ToElement(new {
                     sessionId = caller.Id, isLead = caller.IsLead, boundAttemptId = caller.BoundAttemptId,
-                    mcpServer, toolName, arguments = arguments.ValueKind == JsonValueKind.Undefined ? JsonHelpers.EmptyObject : arguments
+                    mcpServer, toolName = policyToolName, arguments = arguments.ValueKind == JsonValueKind.Undefined ? JsonHelpers.EmptyObject : arguments
                 }), _track.TemplateInputs, _track.TemplateState);
+                if (providerDiscovery && eval.Output is GuardDecision.AskHuman)
+                    throw KernelException.PolicyDenied("Provider discovery is read-only and cannot request approval.");
                 if (eval.Output is GuardDecision.AskHuman)
                     RequireApprovalOrigin(sessionId, approvalTurn, origin);
                 // An allowed replacement initializes its own state atomically. Denied or
@@ -1603,6 +1657,7 @@ public sealed partial class TrackActor : IAsyncDisposable
         _track = snapshot.Track;
         _report = snapshot.Report;
         _templateSnapshotSource = snapshot.TemplateSnapshotSource;
+        _presentedTemplateSnapshotSource = TemplateHost.InspectSource(_templateSnapshotSource);
 
         try
         {
@@ -1706,7 +1761,8 @@ public sealed partial class TrackActor : IAsyncDisposable
         string? authorSessionId,
         string commitMessage,
         CancellationToken ct,
-        WorkerDispatchIntent? dispatch = null, IReadOnlySet<string>? approvedKeys = null)
+        WorkerDispatchIntent? dispatch = null, IReadOnlySet<string>? approvedKeys = null,
+        IReadOnlyList<ProviderStatus>? providers = null)
     {
         var now = NowMs();
         var requireGate = _policy?.Manifest.RequireGateForReadWrite ?? false;
@@ -1782,7 +1838,7 @@ public sealed partial class TrackActor : IAsyncDisposable
         await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, taskEvt, committedCt).ConfigureAwait(false);
 
         await AfterPolicyEventCoreAsync("report.commit", reportPayload, committedCt).ConfigureAwait(false);
-        await ScheduleEligibleTasksCoreAsync(committedCt).ConfigureAwait(false);
+        await ScheduleEligibleTasksCoreAsync(committedCt, providers).ConfigureAwait(false);
 
         var rendered = _reportEngine.RenderMarkdown(_report, withMarkers: true);
         var knownRevs = _report.Blocks.ToDictionary(b => b.Id, b => b.Rev, StringComparer.Ordinal);
@@ -1806,7 +1862,7 @@ public sealed partial class TrackActor : IAsyncDisposable
         }, ct);
     }
 
-    private async Task ScheduleEligibleTasksCoreAsync(CancellationToken ct)
+    private async Task ScheduleEligibleTasksCoreAsync(CancellationToken ct, IReadOnlyList<ProviderStatus>? providers = null)
     {
         if (_policyUnavailableReason is not null || _options.DispatchAdmission.Draining || _deletingTrack || _closingTrack || _track.ClosedAtMs is not null || !WorkspaceReady)
         {
@@ -1825,9 +1881,18 @@ public sealed partial class TrackActor : IAsyncDisposable
                 PolicyTaskRoute route;
                 try
                 {
-                    route = RouteTaskCore(task);
+                    var taskRoute = RouteTaskCore(task);
+                    route = taskRoute.Route;
                     if (!await EnsureTaskDispatchApprovedCoreAsync(task, route, ct).ConfigureAwait(false)) continue;
-                    await ValidateTaskProviderModelCoreAsync(route.Provider, route.Model, ct).ConfigureAwait(false);
+                    if (NeedsTaskProviderCatalog(route))
+                    {
+                        if (providers is null)
+                        {
+                            StartTaskProviderProbeCore();
+                            continue;
+                        }
+                        ValidateTaskProviderModelCore(route, providers, validateModel: !taskRoute.UsesPreparedDefault);
+                    }
                 }
                 catch (KernelException ex) when (ex.Code == KernelErrorCode.Conflict && !ct.IsCancellationRequested)
                 {
@@ -3090,7 +3155,7 @@ public sealed partial class TrackActor : IAsyncDisposable
             Tasks: _tasks.ToArray(),
             Sessions: OrderedSessionsCore(),
             OpenAsks: _asks.Values.Where(a => a.Status == AskStatus.Open).OrderBy(a => a.CreatedAtMs).ToArray(),
-            TemplateSnapshotSource: _templateSnapshotSource,
+            TemplateSnapshotSource: _presentedTemplateSnapshotSource,
             WorkspacePreparation: WorkspacePreparationStatus) { PendingApprovals = ReadPendingApprovals() };
     }
 
@@ -3114,14 +3179,15 @@ public sealed partial class TrackActor : IAsyncDisposable
 
     private string? GetDefaultModelCore(string provider)
     {
+        var normalized = SessionLaunchValidator.NormalizeProvider(provider);
         if (_track.LeadSessionId is { } leadId &&
             _sessions.TryGetValue(leadId, out var lead) &&
-            string.Equals(lead.Provider, provider, StringComparison.OrdinalIgnoreCase))
+            SessionLaunchValidator.NormalizeProvider(lead.Provider) == normalized)
         {
             return lead.Model;
         }
 
-        return string.Equals(_options.DefaultProvider, provider, StringComparison.OrdinalIgnoreCase)
+        return SessionLaunchValidator.NormalizeProvider(_options.DefaultProvider) == normalized
             ? _options.DefaultModel
             : null;
     }
@@ -3144,11 +3210,11 @@ public sealed partial class TrackActor : IAsyncDisposable
                 : "Collaborative Subagent (Unbound)";
 
         var templateNote = session.IsLead
-            ? "\n\nTemplates are optional and implicit. If useful, discover them with perga_template_ls, inspect a template or the authoring contract with perga_template_cat, inspect the active snapshot with perga_template_cat(__current__), apply or preview with perga_track_set (templateId or JSON/.perga.js source, inputs, dryRun), detach with clear, and update inputs with perga_template_update_inputs (preserves state)."
+            ? "\n\nTemplates are optional and implicit. If useful, discover them with template_list, inspect a template or the authoring contract with template_read, inspect the active snapshot with template_read(__current__), apply or preview with track_set (templateId or JSON/.perga.js source, inputs, dryRun), detach with clear, and update inputs with template_update_inputs (preserves state)."
             : string.Empty;
         var sessionNote = session.BoundAttemptId is null
-            ? "Use perga_session_list/create/read/update/send/withdraw/control/respond to manage child conversations. Create accepts an optional task contract; reuse requestKey for retries. Only control your direct children; the Lead can also manage other sessions. Never stop, reset or archive yourself. Answer delegated asks and approvals with session_respond; the human can always take over."
-            : "Use perga_session_list/read to observe conversations. Submit your task with perga_task_done or perga_task_fail; bound Workers cannot spawn or control sessions.";
+            ? "Use session_list/create/read/update/send/withdraw/control/respond to manage child conversations. Create accepts an optional task contract; reuse requestKey for retries. Use provider_list to discover available providers, models, reasoning efforts, and permission modes. Only control your direct children; the Lead can also manage other sessions. Never stop, reset or archive yourself. Answer delegated asks and approvals with session_respond; the human can always take over."
+            : "Use session_list/read to observe conversations. Submit your task with task_done or task_fail; bound Workers cannot spawn or control sessions.";
         return $"You are operating in Perga Track '{_track.Title}' ({TrackId}) as {role}.{templateNote}\n\n{sessionNote}\n\n## Current Report\n{reportMd}";
     }
 
@@ -3197,7 +3263,7 @@ public sealed partial class TrackActor : IAsyncDisposable
         }
 
         sb.AppendLine();
-        sb.AppendLine("When finished, call `perga_task_done` with your structured result, or `perga_task_fail` if blocked.");
+        sb.AppendLine("When finished, call `task_done` with your structured result, or `task_fail` if blocked.");
         return sb.ToString();
     }
 

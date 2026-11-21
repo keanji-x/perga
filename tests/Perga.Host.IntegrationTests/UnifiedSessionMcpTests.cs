@@ -45,8 +45,8 @@ public sealed class UnifiedSessionMcpTests
         var childToken = await StartCaller(host, kernel, child.Session.Id, ct);
         await Error(host, childToken, KernelMcpToolNames.SessionCreate, new { }, "forbidden", ct);
         var tools = await ListToolNamesAsync(host, "/mcp/kernel", parentToken, ct);
-        Assert.Equal(8, tools.Count(t => t.StartsWith("perga_session_", StringComparison.Ordinal)));
-        Assert.DoesNotContain("perga_task_dispatch", tools);
+        Assert.Equal(8, tools.Count(t => t.StartsWith("session_", StringComparison.Ordinal)));
+        Assert.DoesNotContain("task_dispatch", tools);
         Assert.DoesNotContain(KernelMcpToolNames.SystemUpgradeApply, tools);
         Assert.Contains(KernelMcpToolNames.TaskAccept, tools);
         Assert.DoesNotContain(KernelMcpToolNames.TaskDone, tools);
@@ -77,6 +77,132 @@ public sealed class UnifiedSessionMcpTests
         Assert.Equal(updated.Epoch + 1, reset.Epoch);
         await Error(host, parentToken, KernelMcpToolNames.SessionControl,
             new { sessionId = child.Session.Id, action = "reconnect" }, "conflict", ct);
+    }
+
+    [Fact]
+    public async Task CrossProviderChildUsesTargetDefaults()
+    {
+        await using var host = new PergaHostTestCluster();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var ct = deadline.Token;
+        var kernel = host.Services.GetRequiredService<IPergaKernel>();
+        var (trackId, _) = await host.CreateTrackAsync();
+        var parent = (await kernel.CreateSessionAsync(trackId,
+            new(Provider: "acp:antigravity", Model: "gemini-3.1-pro", ReasoningEffort: "high", PermissionMode: "bypassPermissions"),
+            "acp-parent", Human, ct)).Receipt.Session;
+        host.AgentRuntime.SetTurnHandler(HoldTurns);
+        var token = await StartCaller(host, kernel, parent.Id, ct);
+
+        var child = (await Success<SessionCreationReceipt>(host, token, KernelMcpToolNames.SessionCreate,
+            new { provider = "codex" }, ct)).Session;
+
+        Assert.Equal("codex", child.Provider);
+        Assert.Null(child.Model);
+        Assert.Null(child.ReasoningEffort);
+        Assert.Equal("never", child.PermissionMode);
+
+        var inherited = (await Success<SessionCreationReceipt>(host, token, KernelMcpToolNames.SessionCreate,
+            new { provider = "agy" }, ct)).Session;
+        Assert.Equal((parent.Provider, parent.Model, parent.ReasoningEffort, parent.PermissionMode),
+            (inherited.Provider, inherited.Model, inherited.ReasoningEffort, inherited.PermissionMode));
+        var switched = await Success<AgentSessionDto>(host, token, KernelMcpToolNames.SessionUpdate,
+            new { sessionId = inherited.Id, expectedConfigVersion = inherited.ConfigVersion, provider = "codex" }, ct);
+        Assert.Equal((child.Provider, child.Model, child.ReasoningEffort, child.PermissionMode),
+            (switched.Provider, switched.Model, switched.ReasoningEffort, switched.PermissionMode));
+        Assert.Equal(switched, (await kernel.GetSessionItemsAsync(switched.Id, new(), Human, ct)).Session);
+    }
+
+    [Fact]
+    public async Task ProviderDiscoveryFiltersAndReusesBootstrapCache()
+    {
+        await using var host = new PergaHostTestCluster();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var ct = deadline.Token;
+        var kernel = host.Services.GetRequiredService<IPergaKernel>();
+        var (_, lead) = await host.CreateTrackAsync();
+        host.AgentRuntime.ProviderStatuses = LaunchTestCatalog;
+        host.AgentRuntime.SetTurnHandler(HoldTurns);
+        var token = await StartCaller(host, kernel, lead, ct);
+        Assert.Contains(KernelMcpToolNames.ProviderList, await ListToolNamesAsync(host, "/mcp/kernel", token, ct));
+
+        await kernel.GetBootstrapAsync(ct);
+        var probes = host.AgentRuntime.ProbeCount;
+        var first = await Success<TrackProvidersDto>(host, token, KernelMcpToolNames.ProviderList, new { }, ct);
+        Assert.Equal("codex", first.DefaultProvider);
+        Assert.Equal(new[] { "codex", "acp:antigravity" }, first.Providers.Select(provider => provider.Provider));
+        var all = await Success<TrackProvidersDto>(host, token, KernelMcpToolNames.ProviderList, new { includeUnavailable = true }, ct);
+        Assert.Equal("missing binary", Assert.Single(all.Providers, provider => !provider.Available).Reason);
+        var filtered = await Success<TrackProvidersDto>(host, token, KernelMcpToolNames.ProviderList, new { provider = "agy" }, ct);
+        Assert.Equal("acp:antigravity", Assert.Single(filtered.Providers).Provider);
+        var unavailable = await Success<TrackProvidersDto>(host, token, KernelMcpToolNames.ProviderList, new { provider = "opencode" }, ct);
+        Assert.False(Assert.Single(unavailable.Providers).Available);
+        Assert.Equal(first.ObservedAtMs, filtered.ObservedAtMs);
+        Assert.Equal(probes, host.AgentRuntime.ProbeCount);
+
+        await AssertLaunchValidationError(host, token, KernelMcpToolNames.ProviderList, new { provider = "missing" }, "invalid_argument", "codex", ct);
+        await Error(host, token, KernelMcpToolNames.ProviderList, new { extra = true }, "invalid_argument", ct);
+        var refreshes = host.AgentRuntime.ForceRefreshProbeCount;
+        host.TimeProvider.Advance(TimeSpan.FromSeconds(1));
+        var refreshed = await Success<TrackProvidersDto>(host, token, KernelMcpToolNames.ProviderList, new { refresh = true }, ct);
+        Assert.True(refreshed.ObservedAtMs > first.ObservedAtMs);
+        Assert.Equal(probes + 1, host.AgentRuntime.ProbeCount);
+        Assert.Equal(refreshes + 1, host.AgentRuntime.ForceRefreshProbeCount);
+    }
+
+    [Theory]
+    [InlineData("provider", "missing", "invalid_argument", "codex")]
+    [InlineData("provider", "opencode", "precondition_failed", "missing binary")]
+    [InlineData("model", "unknown-model", "invalid_argument", "gpt-5.4")]
+    [InlineData("reasoningEffort", "ultra", "invalid_argument", "medium")]
+    [InlineData("permissionMode", "full_access", "invalid_argument", "never (Never, default)")]
+    public async Task InvalidLaunchSettingsFailBeforeSessionOrTaskWrites(string field, string value, string code, string choice)
+    {
+        await using var host = new PergaHostTestCluster();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var ct = deadline.Token;
+        var kernel = host.Services.GetRequiredService<IPergaKernel>();
+        var (track, lead) = await host.CreateTrackAsync();
+        host.AgentRuntime.ProviderStatuses = LaunchTestCatalog;
+        host.AgentRuntime.SetTurnHandler(HoldTurns);
+        var token = await StartCaller(host, kernel, lead, ct);
+        var child = (await Success<SessionCreationReceipt>(host, token, KernelMcpToolNames.SessionCreate, new { }, ct)).Session;
+        var report = await kernel.ReadReportAsync(track, ct: ct);
+
+        var create = new Dictionary<string, object> { [field] = value };
+        await AssertLaunchValidationError(host, token, KernelMcpToolNames.SessionCreate, create, code, choice, ct);
+        create["prompt"] = "inspect";
+        create["task"] = new { };
+        await AssertLaunchValidationError(host, token, KernelMcpToolNames.SessionCreate, create, code, choice, ct);
+
+        var update = new Dictionary<string, object>
+        {
+            ["sessionId"] = child.Id, ["expectedConfigVersion"] = child.ConfigVersion, [field] = value
+        };
+        await AssertLaunchValidationError(host, token, KernelMcpToolNames.SessionUpdate, update, code, choice, ct);
+        var stored = await kernel.GetTrackAggregateAsync(track, ct);
+        Assert.Equal(2, stored.Sessions.Count);
+        Assert.Empty(stored.Tasks);
+        Assert.Equal(report.DocRev, stored.Report.DocRev);
+        Assert.Equal(child, Assert.Single(stored.Sessions, session => session.Id == child.Id));
+    }
+
+    private static IReadOnlyList<ProviderStatus> LaunchTestCatalog { get; } =
+    [
+        new("codex", true, "1", null, ["gpt-5.4"], ModelCatalog:
+            [new("gpt-5.4", "GPT-5.4", "", true, "medium", [new("medium", ""), new("high", "")])]),
+        new("acp:antigravity", true, "1", null, ["gemini-3.1-pro"]),
+        new("acp:opencode", false, null, "missing binary", [])
+    ];
+
+    private static async Task AssertLaunchValidationError(PergaHostTestCluster host, string token, string tool,
+        object args, string code, string choice, CancellationToken ct)
+    {
+        var (text, error) = await CallToolAsync(host, "/mcp/kernel", token, tool, args, ct);
+        Assert.True(error, text);
+        using var document = JsonDocument.Parse(text);
+        Assert.Equal(code, document.RootElement.GetProperty("code").GetString());
+        Assert.Contains(choice, document.RootElement.GetProperty("error").GetString());
+        Assert.Contains(KernelMcpToolNames.ProviderList, document.RootElement.GetProperty("nextStep").GetString());
     }
 
     [Theory]
@@ -320,7 +446,7 @@ public sealed class UnifiedSessionMcpTests
         var kernel = host.Services.GetRequiredService<IPergaKernel>();
         kernel.Templates.RegisterTemplate("""
             export default defineTemplate({id:"slow-approval",title:"Slow approval",
-              before(call) { return call.toolName === "perga_session_list" ? AskHuman("Allow list?") : Allow(); }
+              before(call) { return call.toolName === "session_list" ? AskHuman("Allow list?") : Allow(); }
             });
             """);
         var area = await kernel.CreateAreaAsync(new("Approvals", DefaultCwd: host.DataDir));
@@ -388,7 +514,7 @@ public sealed class UnifiedSessionMcpTests
         var kernel = host.Services.GetRequiredService<IPergaKernel>();
         kernel.Templates.RegisterTemplate("""
             export default defineTemplate({id:"approval-routing",title:"Approval routing",
-              before(call) { return call.toolName === "perga_session_list" ? AskHuman("Allow list?") : Allow(); }
+              before(call) { return call.toolName === "session_list" ? AskHuman("Allow list?") : Allow(); }
             });
             """);
         var area = await kernel.CreateAreaAsync(new("Approvals", DefaultCwd: host.DataDir));

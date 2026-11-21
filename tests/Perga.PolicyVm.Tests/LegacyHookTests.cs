@@ -4,6 +4,32 @@ namespace Perga.PolicyVm.Tests;
 
 public sealed class LegacyHookTests
 {
+    [Theory]
+    [InlineData("0")]
+    [InlineData("3")]
+    [InlineData("1.5")]
+    [InlineData("'2'")]
+    [InlineData("null")]
+    [InlineData("undefined")]
+    public void Compile_RejectsInvalidToolNameVersion(string value)
+    {
+        var source = "export default {id:'invalid',title:'Invalid',toolNameVersion:" + value + "};";
+        var error = Assert.Throws<InvalidOperationException>(() => new PolicyVm().Compile(source));
+        Assert.Contains("template.toolNameVersion must be the integer 1 or 2.", error.Message);
+    }
+
+    [Theory]
+    [InlineData(1, true)]
+    [InlineData(2, false)]
+    public void Compile_ExplicitToolNameVersionOverridesSnapshotDefault(int version, bool legacy)
+    {
+        var vm = new PolicyVm();
+        var source = JsonSerializer.Serialize(new { id = "versioned", title = "Versioned", toolNameVersion = version });
+        var compiled = vm.Compile(PolicyVm.WithToolNameVersion(source, legacy: !legacy));
+        Assert.Equal(legacy, compiled.UsesLegacyBeforeToolNames);
+        Assert.Equal(legacy, compiled.UsesLegacyAfterToolNames);
+    }
+
     public static TheoryData<string, string> LegacyHooks => new()
     {
         { "guardToolCall", "guardToolCall: VALUE" },

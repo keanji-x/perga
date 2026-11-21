@@ -228,11 +228,12 @@ public sealed class McpKernelAndVcsIntegrationTests
 
         // 1. Lead gets shared, governance and unified session tools.
         var leadTools = await ListToolNamesAsync(cluster, "/mcp/kernel", leadToken, ct);
-        Assert.Equal(34, leadTools.Count);
+        Assert.Equal(35, leadTools.Count);
+        Assert.Contains(KernelMcpToolNames.ProviderList, leadTools);
         Assert.Contains(KernelMcpToolNames.TaskAccept, leadTools);
         Assert.Contains(KernelMcpToolNames.TrackClose, leadTools);
-        Assert.Contains(KernelMcpToolNames.TemplateLs, leadTools);
-        Assert.Contains(KernelMcpToolNames.TemplateCat, leadTools);
+        Assert.Contains(KernelMcpToolNames.TemplateList, leadTools);
+        Assert.Contains(KernelMcpToolNames.TemplateRead, leadTools);
         Assert.Contains(KernelMcpToolNames.TrackSet, leadTools);
         Assert.DoesNotContain(KernelMcpToolNames.TaskDone, leadTools);
         Assert.DoesNotContain(KernelMcpToolNames.TaskFail, leadTools);
@@ -243,7 +244,7 @@ public sealed class McpKernelAndVcsIntegrationTests
         var (_, failByLeadErr) = await CallToolAsync(cluster, "/mcp/kernel", leadToken, KernelMcpToolNames.TaskFail, new { reason = "nope" }, ct);
         Assert.True(failByLeadErr);
 
-        // 2. Exercise shared tools on Lead: perga_report_read, perga_report_commit, perga_task_ls, perga_track_status
+        // 2. Exercise shared tools on Lead: report_read, report_commit, task_list, track_status
         var (readText, readErr) = await CallToolAsync(cluster, "/mcp/kernel", leadToken, KernelMcpToolNames.ReportRead, new { }, ct);
         Assert.False(readErr);
         using var reportReadDoc = JsonDocument.Parse(readText);
@@ -272,7 +273,7 @@ public sealed class McpKernelAndVcsIntegrationTests
             yield return new UnifiedAgentEvent.TurnCompleted(new TokenUsage(20, 10, 0, 100_000));
         }
 
-        // Commit two tasks via perga_report_commit: 'work-1' (ready=true) and 'work-cancel' (ready=false)
+        // Commit two tasks via report_commit: 'work-1' (ready=true) and 'work-cancel' (ready=false)
         var (commitText, commitErr) = await CallToolAsync(
             cluster,
             "/mcp/kernel",
@@ -317,9 +318,9 @@ public sealed class McpKernelAndVcsIntegrationTests
             ct);
         Assert.False(commitErr, commitText);
 
-        var (taskLsText, taskLsErr) = await CallToolAsync(cluster, "/mcp/kernel", leadToken, KernelMcpToolNames.TaskLs, new { }, ct);
-        Assert.False(taskLsErr);
-        Assert.Contains("\"access\":\"read_write\"", taskLsText, StringComparison.Ordinal);
+        var (taskListText, taskListErr) = await CallToolAsync(cluster, "/mcp/kernel", leadToken, KernelMcpToolNames.TaskList, new { }, ct);
+        Assert.False(taskListErr);
+        Assert.Contains("\"access\":\"read_write\"", taskListText, StringComparison.Ordinal);
 
         var (statusText, statusErr) = await CallToolAsync(cluster, "/mcp/kernel", leadToken, KernelMcpToolNames.TrackStatus, new { }, ct);
         Assert.False(statusErr);
@@ -328,7 +329,8 @@ public sealed class McpKernelAndVcsIntegrationTests
         // Bound Workers observe sessions and submit their own task results.
         var contractToken = await contractSubagentTokenTcs.Task.WaitAsync(ct);
         var subTools = await ListToolNamesAsync(cluster, "/mcp/kernel", contractToken, ct);
-        Assert.Equal(15, subTools.Count);
+        Assert.Equal(16, subTools.Count);
+        Assert.Contains(KernelMcpToolNames.ProviderList, subTools);
         Assert.Contains(KernelMcpToolNames.TaskDone, subTools);
         Assert.Contains(KernelMcpToolNames.TaskFail, subTools);
         Assert.DoesNotContain(KernelMcpToolNames.TaskAccept, subTools);
@@ -346,8 +348,8 @@ public sealed class McpKernelAndVcsIntegrationTests
                      (KernelMcpToolNames.MailSend, new { toTrackId = trackBId, summary = "hi", body = "hi" }),
                      (KernelMcpToolNames.TrackRename, new { title = "Hijack" }),
                      (KernelMcpToolNames.TrackClose, new { }),
-                     (KernelMcpToolNames.TemplateLs, new { }),
-                     (KernelMcpToolNames.TemplateCat, new { }),
+                     (KernelMcpToolNames.TemplateList, new { }),
+                     (KernelMcpToolNames.TemplateRead, new { }),
                      (KernelMcpToolNames.TrackSet, new { templateId = "dev" })
                  })
         {
@@ -355,7 +357,7 @@ public sealed class McpKernelAndVcsIntegrationTests
             Assert.True(isFenceErr, $"Expected governance tool '{govTool}' to be fenced for Contract Subagent.");
         }
 
-        // Contract Subagent editing a 'task' block via perga_report_commit -> fenced with isError: true!
+        // Contract Subagent editing a 'task' block via report_commit -> fenced with isError: true!
         var (subReadText, _) = await CallToolAsync(cluster, "/mcp/kernel", contractToken, KernelMcpToolNames.ReportRead, new { }, ct);
         using var subReadDoc = JsonDocument.Parse(subReadText);
         var subAnchor = subReadDoc.RootElement.GetProperty("anchor");
@@ -393,7 +395,7 @@ public sealed class McpKernelAndVcsIntegrationTests
             ct);
         Assert.False(proseEditErr);
 
-        // Contract Subagent submits work via perga_task_done!
+        // Contract Subagent submits work via task_done!
         var (doneText, doneErr) = await CallToolAsync(
             cluster,
             "/mcp/kernel",
@@ -406,7 +408,7 @@ public sealed class McpKernelAndVcsIntegrationTests
 
         await kernel.WaitForTrackIdleAsync(trackAId, ct);
 
-        // Also test perga_task_fail on a dedicated bound attempt session!
+        // Also test task_fail on a dedicated bound attempt session!
         using var failSubReadDoc = JsonDocument.Parse(
             (await CallToolAsync(cluster, "/mcp/kernel", leadToken, KernelMcpToolNames.ReportRead, new { }, ct)).Text);
         var failTaskTriggeredTcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -463,10 +465,10 @@ public sealed class McpKernelAndVcsIntegrationTests
         await kernel.WaitForTrackIdleAsync(trackAId, ct);
 
         // 4. Exercise remaining shared & governance tools on Lead:
-        //    perga_user_ask, perga_terminal_open/read/input, perga_mail_send/ls/cat,
-        //    perga_task_accept, perga_task_reject, perga_task_cancel, perga_track_rename, perga_track_close!
+        //    user_ask, terminal_open/read/input, mail_send/ls/cat,
+        //    task_accept, task_reject, task_cancel, track_rename, track_close!
 
-        // perga_user_ask (suspends until /asks/{askId}/answer)
+        // user_ask (suspends until /asks/{askId}/answer)
         var userAskCallTask = CallToolAsync(
             cluster,
             "/mcp/kernel",
@@ -496,7 +498,7 @@ public sealed class McpKernelAndVcsIntegrationTests
         Assert.False(askOutErr, askOutText);
         Assert.Contains("Yes", askOutText, StringComparison.Ordinal);
 
-        // perga_terminal_open + perga_terminal_input + perga_terminal_read
+        // terminal_open + terminal_input + terminal_read
         var (termOpenText, termOpenErr) = await CallToolAsync(
             cluster,
             "/mcp/kernel",
@@ -527,7 +529,7 @@ public sealed class McpKernelAndVcsIntegrationTests
         Assert.False(termReadErr, termReadText);
         Assert.Contains("MCP_PTY_777", termReadText, StringComparison.Ordinal);
 
-        // perga_mail_send (Track A -> Track B) + perga_mail_ls & perga_mail_cat on Track B!
+        // mail_send (Track A -> Track B) + mail_list & mail_read on Track B!
         var (mailSendText, mailSendErr) = await CallToolAsync(
             cluster,
             "/mcp/kernel",
@@ -539,25 +541,25 @@ public sealed class McpKernelAndVcsIntegrationTests
         using var sentMailDoc = JsonDocument.Parse(mailSendText);
         var mailId = sentMailDoc.RootElement.GetProperty("id").GetString()!;
 
-        var (mailLsText, mailLsErr) = await CallToolAsync(
+        var (mailListText, mailListErr) = await CallToolAsync(
             cluster,
             "/mcp/kernel",
             peerLeadToken,
-            KernelMcpToolNames.MailLs,
+            KernelMcpToolNames.MailList,
             new { unreadOnly = true },
             ct);
-        Assert.False(mailLsErr);
-        Assert.Contains(mailId, mailLsText, StringComparison.Ordinal);
+        Assert.False(mailListErr);
+        Assert.Contains(mailId, mailListText, StringComparison.Ordinal);
 
-        var (mailCatText, mailCatErr) = await CallToolAsync(
+        var (mailReadText, mailReadErr) = await CallToolAsync(
             cluster,
             "/mcp/kernel",
             peerLeadToken,
-            KernelMcpToolNames.MailCat,
+            KernelMcpToolNames.MailRead,
             new { mailId },
             ct);
-        Assert.False(mailCatErr);
-        Assert.Contains("All 24 routes are live.", mailCatText, StringComparison.Ordinal);
+        Assert.False(mailReadErr);
+        Assert.Contains("All 24 routes are live.", mailReadText, StringComparison.Ordinal);
 
         var (replyText, replyError) = await CallToolAsync(cluster, "/mcp/kernel", peerLeadToken,
             KernelMcpToolNames.MailSend, new { replyToMailId = mailId, summary = "Received", body = "Review underway" }, ct);
@@ -574,7 +576,7 @@ public sealed class McpKernelAndVcsIntegrationTests
         Assert.True(twoAddressesError);
         Assert.Single(await kernel.ListMailsAsync(trackAId, ct: ct));
 
-        // perga_task_accept, perga_task_reject, perga_task_cancel, perga_track_rename, perga_track_close!
+        // task_accept, task_reject, task_cancel, track_rename, track_close!
         var (accText, accErr) = await CallToolAsync(
             cluster,
             "/mcp/kernel",
@@ -662,7 +664,7 @@ public sealed class McpKernelAndVcsIntegrationTests
             Assert.Contains(expected, vcsTools);
         }
 
-        // 1. vcs_status (captures initial OpId!)
+        // 1. status (captures initial OpId!)
         var (status1Text, status1Err) = await CallToolAsync(cluster, "/mcp/vcs", token, VcsMcpToolNames.Status, new { }, ct);
         Assert.False(status1Err, status1Text);
         using var status1Doc = JsonDocument.Parse(status1Text);
@@ -670,12 +672,12 @@ public sealed class McpKernelAndVcsIntegrationTests
         var checkpointOpId = status1Doc.RootElement.GetProperty("opId").GetString()!;
         Assert.False(string.IsNullOrWhiteSpace(checkpointOpId));
 
-        // 2. vcs_diff
+        // 2. diff
         var (diffText, diffErr) = await CallToolAsync(cluster, "/mcp/vcs", token, VcsMcpToolNames.Diff, new { }, ct);
         Assert.False(diffErr, diffText);
         Assert.Contains("feature.txt", diffText, StringComparison.Ordinal);
 
-        // 3. Mutate working copy & snapshot, then roll back via vcs_restore_op (JJ time machine)!
+        // 3. Mutate working copy & snapshot, then roll back via restore_op (JJ time machine)!
         await File.WriteAllTextAsync(Path.Combine(jjRepo, "accidental.txt"), "oops\n", ct);
         _ = await CallToolAsync(cluster, "/mcp/vcs", token, VcsMcpToolNames.Status, new { }, ct);
         Assert.True(File.Exists(Path.Combine(jjRepo, "accidental.txt")));
@@ -690,7 +692,7 @@ public sealed class McpKernelAndVcsIntegrationTests
         Assert.False(restoreErr, restoreText);
         Assert.False(File.Exists(Path.Combine(jjRepo, "accidental.txt")));
 
-        // 4. vcs_rebase_upstream onto 'main'
+        // 4. rebase_upstream onto 'main'
         var (rebaseText, rebaseErr) = await CallToolAsync(
             cluster,
             "/mcp/vcs",
@@ -700,7 +702,7 @@ public sealed class McpKernelAndVcsIntegrationTests
             ct);
         Assert.False(rebaseErr, rebaseText);
 
-        // 5-9. GitHub Forge tools: vcs_publish_pr, vcs_pr_checks, vcs_ci_evidence, vcs_pr_merge, vcs_issue_view
+        // 5-9. GitHub Forge tools: publish_pr, pr_checks, ci_evidence, pr_merge, issue_view
         var (prText, prErr) = await CallToolAsync(
             cluster,
             "/mcp/vcs",

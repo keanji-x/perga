@@ -8,6 +8,7 @@ import { SYSTEM_PRESENTATION_LABELS,
   type Conversation, type ConversationActivity, type ConversationSystemEntry,
   type ConversationTurnOutcome,
 } from '../../../../../core/domain/conversation.ts';
+import { conversationToolShape } from '../../../../../core/domain/conversation-tool.ts';
 
 afterEach(cleanup);
 
@@ -34,6 +35,14 @@ function outcome(status: ConversationTurnOutcome['status']): ConversationTurnOut
 }
 
 describe('tool groups alongside quiet syncs and turn outcomes', () => {
+  it('renders historical task lists as Read plan', () => {
+    const tool = 'perga_task_ls';
+    const shape = conversationToolShape(tool, {});
+    render(<ChatThread hasPendingMessages={false} canContinue={false} cards={{}} stalled={false} conversation={conversation}
+      turns={[{ ...activity('plan'), tool, verb: shape.done, target: shape.target }]} />);
+    expect(screen.getByText('Read plan').checkVisibility()).toBe(true);
+  });
+
   it('keeps quiet tools inside their own disclosure without joining ordinary groups across it', () => {
     const { container } = render(<ChatThread hasPendingMessages={false} canContinue={false} cards={{}} stalled={false} conversation={conversation} turns={[
       activity('before-1'), activity('before-2'), wake,

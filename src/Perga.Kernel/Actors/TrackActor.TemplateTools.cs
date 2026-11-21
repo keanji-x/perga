@@ -14,8 +14,8 @@ public sealed partial class TrackActor
     public Task<JsonElement> InspectCurrentTemplateAsync(string sessionId, CancellationToken ct) => EnqueueAsync(async _ =>
     {
         await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
-        RequireGovernanceSessionCore(sessionId, KernelMcpToolNames.TemplateCat);
-        return InspectCurrentTemplateCore();
+        RequireGovernanceSessionCore(sessionId, KernelMcpToolNames.TemplateRead);
+        return InspectCurrentTemplateCore(TemplateHost.LegacyReapplySource(_policy));
     }, ct);
 
     public Task<JsonElement> InspectCurrentTemplateAsync(CancellationToken ct = default) => EnqueueAsync(async _ =>
@@ -24,9 +24,10 @@ public sealed partial class TrackActor
         return InspectCurrentTemplateCore();
     }, ct);
 
-    private JsonElement InspectCurrentTemplateCore() => JsonHelpers.ToElement(new
+    private JsonElement InspectCurrentTemplateCore(string? legacyReapply = null) => JsonHelpers.ToElement(new
     {
-        snapshot = _templateSnapshotSource, manifest = _policy?.Manifest,
+        snapshot = legacyReapply ?? _presentedTemplateSnapshotSource, manifest = _policy?.Manifest,
+        editableSource = legacyReapply is null ? null : _presentedTemplateSnapshotSource,
         inputs = _track.TemplateInputs, state = _track.TemplateState, headerView = PresentTrackCore().TemplateHeaderView
     });
 
@@ -50,6 +51,7 @@ public sealed partial class TrackActor
         _policy = null;
         _policyUnavailableReason = null;
         _templateSnapshotSource = null;
+        _presentedTemplateSnapshotSource = null;
         _policyGeneration = Guid.NewGuid().ToString("N");
         await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, evt, CancellationToken.None).ConfigureAwait(false);
         await ScheduleEligibleTasksCoreAsync(CancellationToken.None).ConfigureAwait(false);
@@ -82,26 +84,48 @@ public sealed partial class TrackActor
         var evt = new EventEnvelopeDto(null, next.AreaId, TrackId, KernelEventKinds.TrackUpdated,
             JsonHelpers.ToElement(Templates.TemplatePresentation.Project(next, _policy, _policyVm)), next.UpdatedAtMs);
         await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
-        await _store.UpdateTrackTemplateAndEmitAsync(next, _templateSnapshotSource ?? _policy.JsSource, evt, ct, schedules, refreshPromptsOnly: true).ConfigureAwait(false);
+        await _store.UpdateTrackTemplateAndEmitAsync(next, _templateSnapshotSource ?? TemplateHost.Freeze(_policy), evt, ct, schedules, refreshPromptsOnly: true).ConfigureAwait(false);
         _track = next;
         _policyGeneration = Guid.NewGuid().ToString("N");
         await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, evt, ct).ConfigureAwait(false);
         return PresentTrackCore();
     }, ct);
 
-    public async Task AfterPolicyEventAsync(string eventName, JsonElement data, CancellationToken ct)
+    private static string GetPolicyToolName(string mcpServer, string toolName, bool useLegacyToolNames)
+    {
+        if (!useLegacyToolNames || mcpServer is not ("perga" or "vcs")) return toolName;
+        if (mcpServer == "perga")
+        {
+            toolName = toolName switch
+            {
+                KernelMcpToolNames.TaskList => "task_ls",
+                KernelMcpToolNames.MailList => "mail_ls",
+                KernelMcpToolNames.MailRead => "mail_cat",
+                KernelMcpToolNames.ScheduleList => "schedule_ls",
+                KernelMcpToolNames.ScheduleCancel => "schedule_rm",
+                KernelMcpToolNames.TemplateList => "template_ls",
+                KernelMcpToolNames.TemplateRead => "template_cat",
+                _ => toolName
+            };
+        }
+        return mcpServer + "_" + toolName;
+    }
+
+    public async Task AfterMcpToolCallAsync(string mcpServer, string toolName, JsonElement data, CancellationToken ct)
     {
         try
         {
             await EnqueueAsync(async _ =>
             {
                 await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
-                await AfterPolicyEventCoreAsync(eventName, data, ct).ConfigureAwait(false);
+                var policyToolName = GetPolicyToolName(mcpServer, toolName, _policy?.UsesLegacyAfterToolNames == true);
+                await AfterPolicyEventCoreAsync("tool." + policyToolName, data, ct).ConfigureAwait(false);
             }, ct).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
-            System.Diagnostics.Trace.TraceWarning("Could not deliver policy after event {0} for Track {1}: {2}", eventName, TrackId, ex);
+            System.Diagnostics.Trace.TraceWarning("Could not deliver policy after event for {0}.{1} on Track {2}: {3}",
+                mcpServer, toolName, TrackId, ex);
         }
     }
 
@@ -159,8 +183,10 @@ public sealed partial class TrackActor
             foreach (var route in _policyVm.ResolveRoutingTargets(policy, inputs))
             {
                 var provider = route.Provider ?? GetDefaultProviderCore();
+                var normalizedProvider = SessionLaunchValidator.NormalizeProvider(provider);
                 var model = route.Model;
-                if (!providers.Any(p => p.Available && string.Equals(p.Provider, provider, StringComparison.OrdinalIgnoreCase) && (model is null || p.Models.Contains(model, StringComparer.Ordinal))))
+                if (!providers.Any(p => p.Available && SessionLaunchValidator.NormalizeProvider(p.Provider) == normalizedProvider &&
+                    (model is null || p.Models.Contains(model, StringComparer.Ordinal))))
                     warnings.Add($"Template provider/model is unavailable: {provider}/{model}.");
             }
         }

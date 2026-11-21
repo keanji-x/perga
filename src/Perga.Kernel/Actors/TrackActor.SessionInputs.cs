@@ -8,7 +8,7 @@ namespace Perga.Kernel.Actors;
 
 public sealed partial class TrackActor
 {
-    private Task<(SessionCreationReceipt Receipt, bool Replay)> CreateConversationAsync(
+    private async Task<(SessionCreationReceipt Receipt, bool Replay)> CreateConversationAsync(
         CreateSessionRequest request, string key, CancellationToken ct, InteropPrincipal? principal = null)
     {
         ValidateRequestKey(key);
@@ -18,50 +18,73 @@ public sealed partial class TrackActor
         var hash = RequestIdentity.Hash(request);
         var intent = new SessionCreateIntent(TrackId, key, hash,
             principal is InteropPrincipal.Session identity ? identity.SessionId : InstallationAuthor);
-        return EnqueueAsync<(SessionCreationReceipt, bool)>(async _ =>
+        var caller = principal ?? new InteropPrincipal.Human();
+        Interlocked.Increment(ref _inFlightExternalOps);
+        try
         {
-            if (principal is InteropPrincipal.Session)
+            var initialReplay = await EnqueueAsync(async _ =>
             {
+                AgentSessionDto? parent = null;
+                if (caller is InteropPrincipal.Session)
+                {
+                    await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
+                    parent = RequireInteropCore(caller, write: true);
+                }
+
+                // Installation receipts can outlive the Track and return Gone without hydrating it.
+                var replay = await ReplayCreationCoreAsync(intent, ct).ConfigureAwait(false);
+                if (replay is not null) return replay;
                 await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
-                RequireInteropCore(principal, write: true);
-            }
-            var existing = await _store.SessionInputs.FindCreationAsync(intent, ct).ConfigureAwait(false);
-            if (existing is not null)
-            {
-                RequireMatchingHash(existing.RequestHash, hash);
-                var created = existing.Session ?? throw KernelException.Gone("The created session was deleted.");
-                var replayedInput = existing.FirstInput is { } originalInput
-                    ? await ReplayInputCoreAsync(originalInput, ct).ConfigureAwait(false)
-                    : null;
-                return (new(created, replayedInput, RequestKey: key), true);
-            }
+                SessionPolicy.RequireCreate(caller, parent, TrackId, _options.MaxSessionSpawnDepth);
+                return null;
+            }, ct).ConfigureAwait(false);
+            if (initialReplay is not null) return (initialReplay, true);
 
-            await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
-            var parent = RequireInteropCore(principal ?? new InteropPrincipal.Human(), write: true);
-            SessionPolicy.RequireCreate(principal ?? new InteropPrincipal.Human(), parent, TrackId, _options.MaxSessionSpawnDepth);
-            var session = await NewSubagentSessionCoreAsync(parent is null ? request : request with
-            { Provider = request.Provider ?? parent.Provider, Model = request.Model ?? parent.Model,
-                ReasoningEffort = request.ReasoningEffort ?? parent.ReasoningEffort,
-                PermissionMode = request.PermissionMode ?? parent.PermissionMode }, ct).ConfigureAwait(false);
-            session = session with { ParentSessionId = parent?.Id, SpawnDepth = parent is null ? 0 : parent.SpawnDepth + 1 };
-            SessionInputRequest? first = null;
-            if (request.Prompt is { } content)
+            var providers = await ProbeSessionProvidersAsync(ct).ConfigureAwait(false);
+            return await EnqueueAsync<(SessionCreationReceipt, bool)>(async _ =>
             {
-                var firstHash = RequestIdentity.Hash(new { version = 3, Content = content, Mode = "default", TurnId = (string?)null, ExpectedAttemptId = (string?)null });
-                first = new(key, firstHash, content, intent.AuthorId);
-                session = session with { Status = "queued" };
-            }
+                var parent = RequireInteropCore(caller, write: true);
+                var replay = await ReplayCreationCoreAsync(intent, ct).ConfigureAwait(false);
+                if (replay is not null) return (replay, true);
+                SessionPolicy.RequireCreate(caller, parent, TrackId, _options.MaxSessionSpawnDepth);
+                var session = NewSubagentSessionCore(request, providers,
+                    requireAvailable: caller is InteropPrincipal.Session || request.Prompt is not null, parent);
+                SessionInputRequest? first = null;
+                if (request.Prompt is { } content)
+                {
+                    var firstHash = RequestIdentity.Hash(new { version = 3, Content = content, Mode = "default", TurnId = (string?)null, ExpectedAttemptId = (string?)null });
+                    first = new(key, firstHash, content, intent.AuthorId);
+                    session = session with { Status = "queued" };
+                }
 
-            var sessionEvent = SessionUpdatedEvent(session);
-            await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
-            var input = await _store.SessionInputs.CreateAsync(intent, session, first, sessionEvent, ct).ConfigureAwait(false);
-            if (input is null)
-                _sessions[session.Id] = session;
-            else
-                RegisterAcceptedInput(session, input);
-            await PublishInputEventAsync(sessionEvent).ConfigureAwait(false);
-            return (new(session, input?.Receipt, RequestKey: key), false);
-        }, ct);
+                var sessionEvent = SessionUpdatedEvent(session);
+                await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
+                var input = await _store.SessionInputs.CreateAsync(intent, session, first, sessionEvent, ct).ConfigureAwait(false);
+                if (input is null)
+                    _sessions[session.Id] = session;
+                else
+                    RegisterAcceptedInput(session, input);
+                await PublishInputEventAsync(sessionEvent).ConfigureAwait(false);
+                return (new(session, input?.Receipt, RequestKey: key), false);
+            }, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            Interlocked.Decrement(ref _inFlightExternalOps);
+        }
+    }
+
+    private async Task<SessionCreationReceipt?> ReplayCreationCoreAsync(SessionCreateIntent intent, CancellationToken ct)
+    {
+        var existing = await _store.SessionInputs.FindCreationAsync(intent, ct).ConfigureAwait(false);
+        if (existing is null) return null;
+
+        RequireMatchingHash(existing.RequestHash, intent.Hash);
+        var session = existing.Session ?? throw KernelException.Gone("The created session was deleted.");
+        var replayedInput = existing.FirstInput is { } originalInput
+            ? await ReplayInputCoreAsync(originalInput, ct).ConfigureAwait(false)
+            : null;
+        return new(session, replayedInput, RequestKey: intent.Key);
     }
 
     private void RegisterAcceptedInput(AgentSessionDto session, PersistedSessionInput input)

@@ -130,14 +130,37 @@ it('keeps cursor ordering and page boundaries without fabricating persisted item
   expect(earlier.next_cursor).toBeNull();
 });
 
-it('keeps successful application questions as speech and incomplete or refused calls as activities', () => {
-  const call = item(1, 'tool_call', { callId: 'ask', name: 'perga_user_ask', args: { questions: [{ title: ' Choose ', options: [' A ', 'B'] }] } });
-  const read = (items: unknown[]) => buildConversationTranscript(conversationItemsOperation('session', null).responseSchema.parse(pergaPage(items)).items, null);
-  expect(read([call])).toMatchObject([{ author: 'activity', state: 'running' }]);
-  expect(read([call, item(2, 'tool_result', { callId: 'ask', output: {}, isError: false })]))
-    .toMatchObject([{ author: 'agent', origin: 'ask', text: 'Choose (A / B)' }]);
-  expect(read([call, item(2, 'tool_result', { callId: 'ask', output: 'Refused', isError: true })]))
-    .toMatchObject([{ author: 'activity', state: 'failed', detail: 'Refused' }]);
+it.each(['user_ask', 'perga_user_ask', 'perga:user_ask', 'perga:perga_user_ask'])(
+  'renders successful %s questions as speech and incomplete or refused calls as activities', (name) => {
+    const call = item(1, 'tool_call', { callId: 'ask', name, args: { questions: [{ title: ' Choose ', options: [' A ', 'B'] }] } });
+    const read = (items: unknown[]) => buildConversationTranscript(conversationItemsOperation('session', null).responseSchema.parse(pergaPage(items)).items, null);
+    expect(read([call])).toMatchObject([{ author: 'activity', state: 'running' }]);
+    expect(read([call, item(2, 'tool_result', { callId: 'ask', output: {}, isError: false })]))
+      .toMatchObject([{ author: 'agent', origin: 'ask', text: 'Choose (A / B)' }]);
+    expect(read([call, item(2, 'tool_result', { callId: 'ask', output: 'Refused', isError: true })]))
+      .toMatchObject([{ author: 'activity', state: 'failed', detail: 'Refused' }]);
+  },
+);
+
+it.each(['publish_pr', 'vcs_publish_pr', 'vcs:publish_pr', 'vcs:vcs_publish_pr'])(
+  'renders %s as a PR publication', (name) => {
+    const page = conversationItemsOperation('session', null).responseSchema.parse(
+      pergaPage([item(1, 'tool_call', { callId: 'publish', name })]),
+    );
+    expect(buildConversationTranscript(page.items, null)).toMatchObject([
+      { author: 'activity', verb: 'Publishing the PR', tool: name },
+    ]);
+  },
+);
+
+it.each(['task_list', 'task_ls', 'perga_task_ls', 'perga:perga_task_ls'])('renders %s as reading the plan', (name) => {
+  const page = conversationItemsOperation('session', null).responseSchema.parse(pergaPage([
+    item(1, 'tool_call', { callId: 'tasks', name }),
+    item(2, 'tool_result', { callId: 'tasks', output: [], isError: false }),
+  ]));
+  expect(buildConversationTranscript(page.items, null)).toMatchObject([
+    { author: 'activity', verb: 'Read plan', state: 'done', tool: name },
+  ]);
 });
 
 it('bounds thinking and tool disclosures without losing failure evidence', () => {

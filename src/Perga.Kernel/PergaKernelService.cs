@@ -31,6 +31,8 @@ public partial interface IPergaKernel : IAsyncDisposable
     // System & Bootstrap
     Task<BootstrapDto> GetBootstrapAsync(CancellationToken ct = default);
     Task<BootstrapDto> GetBootstrapAsync(string? scope, bool refresh = false, CancellationToken ct = default);
+    Task<TrackProvidersDto> ListProvidersForTrackAsync(string trackId, string? provider = null,
+        bool refresh = false, bool includeUnavailable = false, CancellationToken ct = default);
     Task<TrackOverlaysResponseDto> GetOverlaysAsync(bool includeClosed = false, CancellationToken ct = default);
     HostListDirResultDto ListHostDirectory(string? path = null);
     IReadOnlyList<CompiledTemplateManifest> ListTemplates();
@@ -75,7 +77,8 @@ public partial interface IPergaKernel : IAsyncDisposable
     Task<ReportReadResult> ReadReportAsync(string trackId, string? callerSessionId = null, CancellationToken ct = default);
     Task<IReadOnlyList<ReportBlock>> GetReportRevisionBlocksAsync(string trackId, int docRev, CancellationToken ct = default);
     Task<ReportReadResult> UpdateReportBlockByHumanAsync(string trackId, string blockId, HumanBlockUpdateRequest req, CancellationToken ct = default);
-    Task<ReportReadResult> CommitReportAsync(string trackId, string callerSessionId, ReportCommitRequest req, CancellationToken ct = default, McpExecutionOrigin? origin = null);
+    Task<ReportReadResult> CommitReportAsync(string trackId, string callerSessionId, ReportCommitRequest req,
+        CancellationToken ct = default, McpExecutionOrigin? origin = null, string? expectedPolicyGeneration = null);
 
     // Tasks, Governance & Completion
     Task<IReadOnlyList<TaskDto>> ListTasksAsync(string trackId, CancellationToken ct = default);
@@ -148,8 +151,8 @@ public sealed partial class PergaKernelService : IPergaKernel
     private readonly string _fallbackDatabaseId = Guid.NewGuid().ToString("N");
     private readonly SemaphoreSlim _providerProbeLock = new(1, 1);
 
-    private IReadOnlyList<ProviderStatus>? _cachedProviders;
-    private long _cachedProvidersAtMs;
+    private sealed record ProviderObservation(IReadOnlyList<ProviderStatus> Providers, long ObservedAtMs);
+    private ProviderObservation? _cachedProviders;
     private bool _disposed;
 
     public PergaKernelService(
@@ -237,7 +240,7 @@ public sealed partial class PergaKernelService : IPergaKernel
         {
             var providersTask = GetCachedOrProbeProvidersAsync(refresh, ct);
             await Task.WhenAll(providersTask, areasTask).ConfigureAwait(false);
-            providers = await providersTask.ConfigureAwait(false);
+            providers = (await providersTask.ConfigureAwait(false)).Providers;
         }
 
         var databaseId = !string.IsNullOrWhiteSpace(_store.DatabaseId)
@@ -455,14 +458,14 @@ public sealed partial class PergaKernelService : IPergaKernel
         return new HostListDirResultDto(fullPath, parent, entries);
     }
 
-    private async Task<IReadOnlyList<ProviderStatus>> GetCachedOrProbeProvidersAsync(
+    private async Task<ProviderObservation> GetCachedOrProbeProvidersAsync(
         bool forceRefresh,
         CancellationToken ct)
     {
         var nowMs = NowMs();
         if (!forceRefresh &&
-            _cachedProviders is { } cached &&
-            (nowMs - Volatile.Read(ref _cachedProvidersAtMs)) < ProviderProbeCacheTtlMs)
+            Volatile.Read(ref _cachedProviders) is { } cached &&
+            (nowMs - cached.ObservedAtMs) < ProviderProbeCacheTtlMs)
         {
             return cached;
         }
@@ -473,7 +476,7 @@ public sealed partial class PergaKernelService : IPergaKernel
             nowMs = NowMs();
             if (!forceRefresh &&
                 _cachedProviders is { } cachedInside &&
-                (nowMs - _cachedProvidersAtMs) < ProviderProbeCacheTtlMs)
+                (nowMs - cachedInside.ObservedAtMs) < ProviderProbeCacheTtlMs)
             {
                 return cachedInside;
             }
@@ -499,9 +502,9 @@ public sealed partial class PergaKernelService : IPergaKernel
                 probed = await _agentRuntime.ProbeProvidersAsync(ct).ConfigureAwait(false);
             }
 
-            _cachedProviders = probed;
-            Volatile.Write(ref _cachedProvidersAtMs, NowMs());
-            return probed;
+            var observation = new ProviderObservation(probed, NowMs());
+            Volatile.Write(ref _cachedProviders, observation);
+            return observation;
         }
         finally
         {
@@ -529,7 +532,9 @@ public sealed partial class PergaKernelService : IPergaKernel
             return JsonHelpers.ToElement(new { contract });
         }
         var policy = Templates.GetRequiredPolicy(templateId);
-        return JsonHelpers.ToElement(new { policy.Manifest, policy.JsSource });
+        var source = TemplateHost.InspectSource(policy.JsSource);
+        var reapply = TemplateHost.LegacyReapplySource(policy);
+        return JsonHelpers.ToElement(new { policy.Manifest, JsSource = reapply ?? source, EditableSource = reapply is null ? null : source });
     }
 
     public Task<JsonElement> InspectCurrentTemplateAsync(string trackId, string sessionId, CancellationToken ct = default) =>
@@ -783,7 +788,9 @@ public sealed partial class PergaKernelService : IPergaKernel
 
         await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
         var id = await _store.CreateTrackAsync(
-            new(track, initialReport, policy?.JsSource, leadSession, initialTasks, null, preparation, events, dailyDate, systemArea) { TemplateSchedules = TemplateSchedules.Materialize(policy, templateInputs, trackId, now, _policyVm, _scheduleCronEvaluator) },
+            new(track, initialReport, policy is null ? null : TemplateHost.Freeze(policy), leadSession,
+                initialTasks, null, preparation, events, dailyDate, systemArea)
+            { TemplateSchedules = TemplateSchedules.Materialize(policy, templateInputs, trackId, now, _policyVm, _scheduleCronEvaluator) },
             key, ct).ConfigureAwait(false);
         var snapshot = await ReadCreatedTrackAsync(id, CancellationToken.None).ConfigureAwait(false);
         if (id == track.Id)
@@ -1094,8 +1101,8 @@ public sealed partial class PergaKernelService : IPergaKernel
         string trackId,
         string callerSessionId,
         ReportCommitRequest req,
-        CancellationToken ct = default, McpExecutionOrigin? origin = null) =>
-        Actors.GetOrActivate(trackId).CommitReportBySessionAsync(callerSessionId, req, ct, origin);
+        CancellationToken ct = default, McpExecutionOrigin? origin = null, string? expectedPolicyGeneration = null) =>
+        Actors.GetOrActivate(trackId).CommitReportBySessionAsync(callerSessionId, req, ct, origin, expectedPolicyGeneration);
 
     // ------------------- Tasks, Governance & Completion -------------------
 

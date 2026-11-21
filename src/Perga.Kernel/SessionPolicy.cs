@@ -7,7 +7,10 @@ public abstract record InteropPrincipal
 {
     public sealed record Human : InteropPrincipal;
     public sealed record Session(string TrackId, string SessionId, bool IsLead, string? BoundAttemptId,
-        int SpawnDepth, string Token, McpExecutionOrigin? ExecutionOrigin) : InteropPrincipal;
+        int SpawnDepth, string Token, McpExecutionOrigin? ExecutionOrigin) : InteropPrincipal
+    {
+        internal string? AuthorizedPolicyGeneration { get; init; }
+    }
 }
 
 public static class SessionPolicy

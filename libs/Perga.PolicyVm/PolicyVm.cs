@@ -59,7 +59,8 @@ public sealed partial class PolicyVm : IPolicyVm
         return ExecuteSandboxed("Compile", () =>
         {
             using var engine = CreateSandboxedEngine(CompileTimeoutMs);
-            var def = LoadDefaultTemplateObject(engine, jsModuleSource);
+            var loaded = LoadDefinition(engine, jsModuleSource);
+            var def = ValidateDefaultTemplateObject(loaded.Definition);
 
             var id = ReadRequiredNonEmptyString(def, "id", "template.id");
             var title = ReadRequiredNonEmptyString(def, "title", "template.title");
@@ -142,7 +143,8 @@ public sealed partial class PolicyVm : IPolicyVm
                 HasHeaderView: !def.Get("headerView").IsUndefined(),
                 Routing: ReadRoutingRules(engine, def));
 
-            return new CompiledPolicy(id, jsModuleSource, manifest);
+            return new CompiledPolicy(id, jsModuleSource, manifest,
+                loaded.LegacyBefore, loaded.LegacyAfter);
         }, CompileTimeoutMs);
     }
 
@@ -247,9 +249,11 @@ public sealed partial class PolicyVm : IPolicyVm
         return engine;
     }
 
-    private static ObjectInstance LoadDefaultTemplateObject(Engine engine, string jsModuleSource)
+    private static ObjectInstance LoadDefaultTemplateObject(Engine engine, string jsModuleSource) =>
+        ValidateDefaultTemplateObject(LoadDefinition(engine, jsModuleSource).Definition);
+
+    private static ObjectInstance ValidateDefaultTemplateObject(JsValue defaultExport)
     {
-        var defaultExport = LoadDefinition(engine, jsModuleSource);
         if (defaultExport.IsUndefined() || defaultExport.IsNull() || defaultExport is not ObjectInstance obj || defaultExport.IsArray())
         {
             throw new InvalidOperationException(

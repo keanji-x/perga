@@ -225,15 +225,16 @@ public sealed class AcpPermissionSwitchTests
                 ctx.DirectDriver.OverrideMountedMergedCwd = "/changed";
                 break;
         }
+        var probesBeforePermissionEdit = ctx.AgentRuntime.ProviderProbeCalls;
         ctx.Kernel.DispatchAdmission.SetDraining(true);
         try
         {
             await ctx.Kernel.UpdateSessionAsync(id, new(PermissionMode: new("plan")), new InteropPrincipal.Human(), default);
-            Assert.Equal(0, ctx.AgentRuntime.ProviderProbeCalls);
+            Assert.Equal(probesBeforePermissionEdit, ctx.AgentRuntime.ProviderProbeCalls);
         }
         finally { ctx.Kernel.DispatchAdmission.SetDraining(false); }
         await ctx.Kernel.UpdateSessionAsync(id, new(PermissionMode: new("plan")), new InteropPrincipal.Human(), default);
-        Assert.Equal(0, ctx.AgentRuntime.ProviderProbeCalls);
+        Assert.Equal(probesBeforePermissionEdit, ctx.AgentRuntime.ProviderProbeCalls);
     }
 
     [Fact]

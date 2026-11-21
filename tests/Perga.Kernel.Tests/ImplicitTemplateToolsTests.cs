@@ -24,22 +24,41 @@ public sealed class ImplicitTemplateToolsTests
         string tool, object args) => KernelMcpDispatcher.ExecuteGuardedAsync(ctx.Kernel, caller, tool, TestJson.FromObject(args));
 
     [Fact]
+    public async Task TrackSetPreviewRecognizesProviderAliasInRouting()
+    {
+        await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
+        ctx.AgentRuntime.Providers = [new("acp:antigravity", true, "1", null, ["gemini"])];
+        var (_, snap) = await ctx.CreateDefaultTrackAsync();
+        var result = await Call(ctx, Caller(snap), KernelMcpToolNames.TrackSet, new
+        {
+            dryRun = true,
+            source = """
+                export default defineTemplate({ id: "routed", title: "Routed",
+                  tasks: { routing: [{ when: {}, provider: "agy", model: "gemini" }] } });
+                """
+        });
+
+        Assert.Empty(result.GetProperty("warnings").EnumerateArray());
+    }
+
+    [Fact]
     public async Task Discovery_ListsCompiledManifest_InspectsSourceAndEmbeddedContract()
     {
         await using var ctx = new KernelTestContext(policyVm: new global::Perga.PolicyVm.PolicyVm());
         ctx.Kernel.Templates.RegisterTemplate(Source);
         var (_, snap) = await ctx.CreateDefaultTrackAsync();
         var caller = Caller(snap);
-        var listed = await Call(ctx, caller, KernelMcpToolNames.TemplateLs, new { });
+        var listed = await Call(ctx, caller, KernelMcpToolNames.TemplateList, new { });
         Assert.Equal("authored", Assert.Single(listed.EnumerateArray()).GetProperty("id").GetString());
-        var inspected = await Call(ctx, caller, KernelMcpToolNames.TemplateCat, new { templateId = "authored" });
+        var inspected = await Call(ctx, caller, KernelMcpToolNames.TemplateRead, new { templateId = "authored" });
         Assert.Equal(Source, inspected.GetProperty("jsSource").GetString());
         Assert.Equal("Authored", inspected.GetProperty("manifest").GetProperty("title").GetString());
-        var contract = await Call(ctx, caller, KernelMcpToolNames.TemplateCat, new { });
+        var contract = await Call(ctx, caller, KernelMcpToolNames.TemplateRead, new { });
         Assert.Contains("defineTemplate", contract.GetProperty("contract").GetString());
-        Assert.Equal(contract.GetRawText(), (await Call(ctx, caller, KernelMcpToolNames.TemplateCat,
+        Assert.Contains("editableSource", contract.GetProperty("contract").GetString());
+        Assert.Equal(contract.GetRawText(), (await Call(ctx, caller, KernelMcpToolNames.TemplateRead,
             new { templateId = "__contract__" })).GetRawText());
-        var ex = await Assert.ThrowsAsync<KernelException>(() => Call(ctx, caller, KernelMcpToolNames.TemplateCat,
+        var ex = await Assert.ThrowsAsync<KernelException>(() => Call(ctx, caller, KernelMcpToolNames.TemplateRead,
             new { templateId = "missing" }));
         Assert.Equal(KernelErrorCode.NotFound, ex.Code);
     }
@@ -75,7 +94,7 @@ public sealed class ImplicitTemplateToolsTests
             : (object)new { source = Source, inputs = new { marker = "initialized" } });
         Assert.Equal("authored", result.GetProperty("templateId").GetString());
         var persisted = (await ctx.Store.LoadTrackAggregateAsync(snap.Track.Id, default))!;
-        Assert.Equal(Source, persisted.TemplateSnapshotSource);
+        Assert.Equal(Source, TestJson.Parse(persisted.TemplateSnapshotSource!).GetProperty("source").GetString());
         Assert.Equal("initialized", persisted.Track.TemplateInputs.GetProperty("marker").GetString());
         Assert.Equal("initialized", persisted.Track.TemplateState.GetProperty("marker").GetString());
         Assert.Equal(["existing", "search", "new-plugin"], persisted.Track.EnabledPlugins);
@@ -88,7 +107,7 @@ public sealed class ImplicitTemplateToolsTests
         Assert.False(ctx.Kernel.Actors.IsTrackActiveInMemory(snap.Track.Id));
         var reloaded = await ctx.Kernel.GetTrackAggregateAsync(snap.Track.Id);
         Assert.Equal(Source, reloaded.TemplateSnapshotSource);
-        var denied = await Assert.ThrowsAsync<KernelException>(() => Call(ctx, caller, KernelMcpToolNames.TemplateLs, new { }));
+        var denied = await Assert.ThrowsAsync<KernelException>(() => Call(ctx, caller, KernelMcpToolNames.TemplateList, new { }));
         Assert.Equal(KernelErrorCode.PolicyDenied, denied.Code);
     }
 
@@ -131,7 +150,7 @@ public sealed class ImplicitTemplateToolsTests
         Assert.Equal(KernelErrorCode.PolicyDenied, ex.Code);
         var persisted = (await ctx.Store.LoadTrackAggregateAsync(snap.Track.Id, default))!;
         Assert.Equal("replacement", persisted.Track.TemplateId);
-        Assert.Equal(replacement, persisted.TemplateSnapshotSource);
+        Assert.Equal(replacement, TestJson.Parse(persisted.TemplateSnapshotSource!).GetProperty("source").GetString());
         Assert.Equal(events, ctx.Store.PersistedEvents.Count(e => e.Kind == "track.updated"));
     }
 
@@ -266,7 +285,7 @@ public sealed class ImplicitTemplateToolsTests
         Assert.Null(unchanged.TemplateSnapshotSource);
         Assert.Equal(events, ctx.Store.PersistedEvents.Count);
         // This would be denied if the candidate policy had been adopted prematurely.
-        await Call(ctx, Caller(snap), KernelMcpToolNames.TemplateLs, new { });
+        await Call(ctx, Caller(snap), KernelMcpToolNames.TemplateList, new { });
         ctx.Store.FailTemplateUpdate = false;
         await Call(ctx, Caller(snap), KernelMcpToolNames.TrackSet, new { source = Source, inputs = new { marker = "retry" } });
         Assert.Equal("authored", (await ctx.Kernel.GetTrackAggregateAsync(snap.Track.Id)).Track.TemplateId);
@@ -293,7 +312,7 @@ public sealed class ImplicitTemplateToolsTests
         // Seed before actor hydration in a fresh actor.
         await ctx.Kernel.WaitForTrackIdleAsync(snap.Track.Id);
         await ctx.Kernel.Actors.RemoveAndDisposeAsync(snap.Track.Id);
-        foreach (var name in new[] { KernelMcpToolNames.TemplateLs, KernelMcpToolNames.TemplateCat, KernelMcpToolNames.TrackSet })
+        foreach (var name in new[] { KernelMcpToolNames.TemplateList, KernelMcpToolNames.TemplateRead, KernelMcpToolNames.TrackSet })
         {
             Assert.Contains(name, KernelMcpToolNames.All);
             Assert.True(KernelMcpCatalog.IsGovernanceOnly(name));
@@ -312,9 +331,9 @@ public sealed class ImplicitTemplateToolsTests
         await ctx.SendAndWaitForTurnAsync(snap.Track.LeadSessionId!, new SendSessionMessageRequest("hello", "hint"));
         var prompt = Assert.Single(ctx.AgentRuntime.OpenedSessions).LaunchSpec.SystemPrompt;
         Assert.Contains("Templates are optional and implicit", prompt);
-        Assert.Contains("perga_template_ls", prompt);
-        Assert.Contains("perga_template_cat", prompt);
-        Assert.Contains("perga_track_set", prompt);
+        Assert.Contains("template_list", prompt);
+        Assert.Contains("template_read", prompt);
+        Assert.Contains("track_set", prompt);
         Assert.Contains(".perga.js source", prompt);
     }
 }

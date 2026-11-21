@@ -42,7 +42,7 @@ public sealed partial class TrackActor
         {
             var live = pending.Where(a => Actor._approvals.ContainsKey(a.Dto.Id)).Select(a => a.Dto).ToArray();
             return live.Length == 0 ? null :
-                "Pending approvals delegated to you. Use perga_session_respond to decide, or leave them for the human:\n" +
+                "Pending approvals delegated to you. Use session_respond to decide, or leave them for the human:\n" +
                 JsonHelpers.ToElement(live).GetRawText();
         }
         public override SessionTurnDto? CreateUnstartedTurn() => null;

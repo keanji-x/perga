@@ -495,7 +495,7 @@ describe('Perga /api/v1 protocol contracts', () => {
     const pageDto = {
       items: [
         { id: 1, sessionId: 'ses_lead', turnId: 'turn_1', kind: 'user', payload: { v: 1, content: 'Hello Perga', triggerKind: 'user' }, createdAtMs: 1000 },
-        { id: 2, sessionId: 'ses_lead', turnId: 'turn_1', kind: 'tool_call', payload: { v: 1, callId: 'c1', name: 'perga_report_read', args: {} }, createdAtMs: 1100 },
+        { id: 2, sessionId: 'ses_lead', turnId: 'turn_1', kind: 'tool_call', payload: { v: 1, callId: 'c1', name: 'report_read', args: {} }, createdAtMs: 1100 },
         { id: 3, sessionId: 'ses_lead', turnId: 'turn_1', kind: 'tool_result', payload: { v: 1, callId: 'c1', output: 'ok', isError: false }, createdAtMs: 1200 },
         { id: 4, sessionId: 'ses_lead', turnId: 'turn_1', kind: 'thinking', payload: { v: 1, text: 'Planning...' }, createdAtMs: 1250 },
         { id: 5, sessionId: 'ses_lead', turnId: 'turn_1', kind: 'assistant_text', payload: { v: 1, text: 'Report inspected.' }, createdAtMs: 1300 },

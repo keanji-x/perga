@@ -1116,7 +1116,7 @@ internal sealed class InMemoryReportDocEngine : IReportDocEngine
             throw new ReportConflictException(
                 "DOC_REV_CONFLICT",
                 $"Expected docRev {callerAnchor.DocRev} but current is {current.DocRev}.",
-                "Call perga_report_read to refresh anchor.");
+                "Call report_read to refresh anchor.");
         }
 
         var nextBlocks = current.Blocks.ToList();
@@ -1134,7 +1134,7 @@ internal sealed class InMemoryReportDocEngine : IReportDocEngine
                 throw new ReportConflictException(
                     "BLOCK_REV_CONFLICT",
                     $"Block '{target.Id}' is at rev {target.Rev}, caller anchor had {(callerAnchor.KnownBlockRevs.TryGetValue(target.Id, out var kr) ? kr.ToString() : "none")}.",
-                    "Call perga_report_read before retrying.");
+                    "Call report_read before retrying.");
             }
         }
 
@@ -1294,18 +1294,19 @@ internal sealed class ConfigurableFakePolicyVm : IPolicyVm
     public CompiledPolicy Compile(string jsModuleSource)
     {
         Interlocked.Increment(ref _compileCount);
+        var source = global::Perga.PolicyVm.PolicyVm.ReadToolNameVersion(jsModuleSource)?.Source ?? jsModuleSource;
         CompiledTemplateManifest manifest;
         if (CustomManifestFactory is not null)
         {
-            manifest = CustomManifestFactory(jsModuleSource);
+            manifest = CustomManifestFactory(source);
         }
         else
         {
-            var idMatch = Regex.Match(jsModuleSource, @"id\s*:\s*[""']([^""']+)[""']");
-            var titleMatch = Regex.Match(jsModuleSource, @"title\s*:\s*[""']([^""']+)[""']");
-            var afterCmdMatch = Regex.Match(jsModuleSource, @"afterWorkerDoneCmd\s*:\s*[""']([^""']+)[""']");
-            var createCmdMatch = Regex.Match(jsModuleSource, @"onCreateCmd\s*:\s*[""']([^""']+)[""']");
-            var closeCmdMatch = Regex.Match(jsModuleSource, @"onCloseCmd\s*:\s*[""']([^""']+)[""']");
+            var idMatch = Regex.Match(source, @"id\s*:\s*[""']([^""']+)[""']");
+            var titleMatch = Regex.Match(source, @"title\s*:\s*[""']([^""']+)[""']");
+            var afterCmdMatch = Regex.Match(source, @"afterWorkerDoneCmd\s*:\s*[""']([^""']+)[""']");
+            var createCmdMatch = Regex.Match(source, @"onCreateCmd\s*:\s*[""']([^""']+)[""']");
+            var closeCmdMatch = Regex.Match(source, @"onCloseCmd\s*:\s*[""']([^""']+)[""']");
 
             var id = idMatch.Success ? idMatch.Groups[1].Value : $"tpl_{_compileCount}";
             var title = titleMatch.Success ? titleMatch.Groups[1].Value : $"Template {id}";
@@ -1577,8 +1578,14 @@ internal sealed class ScriptableFakeAgentRuntime : IAgentRuntime
 
     public Func<CancellationToken, Task<IReadOnlyList<ProviderStatus>>>? ProbeScript { get; set; }
 
+    // Most kernel tests use synthetic model IDs. Tests of discovery and validation supply a catalog.
     public IReadOnlyList<ProviderStatus> Providers { get; set; } =
-        [new ProviderStatus("codex", true, "1.0.0", null, ["gpt-5"])];
+    [
+        new("codex", true, "1.0.0", null, []),
+        new("claude", true, "1.0.0", null, []),
+        new("acp:custom", true, "1.0.0", null, []),
+        new("acp:other", true, "1.0.0", null, [])
+    ];
 
     public int ProviderProbeCalls { get; private set; }
     public Task<IReadOnlyList<ProviderStatus>> ProbeProvidersAsync(CancellationToken ct)

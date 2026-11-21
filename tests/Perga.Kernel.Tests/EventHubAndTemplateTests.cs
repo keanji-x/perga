@@ -84,6 +84,9 @@ public sealed class EventHubAndTemplateTests
             var p2 = catalog.GetOrCompileSnapshot(customSnapshot);
             Assert.Same(p1, p2);
             Assert.Equal(3, vm.CompileCallCount);
+            Assert.NotSame(p2, catalog.CompileSource(customSnapshot));
+            Assert.Same(p2, catalog.GetOrCompileSnapshot(customSnapshot));
+            Assert.Equal(4, vm.CompileCallCount);
         }
         finally
         {

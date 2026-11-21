@@ -140,7 +140,7 @@ public sealed class AttemptExecutionAndGateTests
 
         var leadTurnsBefore = ctx.Store.GetTurnsForSession(leadId).Count;
 
-        // Subagent calls perga_task_done!
+        // Subagent calls task_done!
         var doneTask = await ctx.Kernel.CompleteAttemptDoneAsync(
             trackId,
             subagent1.Id,
@@ -290,7 +290,7 @@ public sealed class AttemptExecutionAndGateTests
         Assert.Equal(TaskRunStatus.Running, tasks.Single(t => t.TaskKey == "parallel-rw-2").Status);
         Assert.Equal(TaskRunStatus.Done, tasks.Single(t => t.TaskKey == "cmd-task").Status);
 
-        // Fail parallel-rw-1 via perga_task_fail -> discards lease & wakes Lead!
+        // Fail parallel-rw-1 via task_fail -> discards lease & wakes Lead!
         var sessions = (await ctx.Kernel.ListSessionsAsync(trackId, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray();
         var rw1Id = tasks.Single(t => t.TaskKey == "parallel-rw-1").Id;
         var sub1 = sessions.Single(s => s.BoundTaskId == rw1Id);

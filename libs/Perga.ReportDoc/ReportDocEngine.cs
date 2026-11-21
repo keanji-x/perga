@@ -259,7 +259,7 @@ public sealed partial class ReportDocEngine : IReportDocEngine
                             throw new ReportConflictException(
                                 "block_deleted",
                                 $"Block '{upsertOp.Id}' was deleted concurrently before docRev {current.DocRev}.",
-                                "Call perga_report_read to refresh the latest report blocks before retrying.");
+                                "Call report_read to refresh the latest report blocks before retrying.");
                         }
 
                         var newId = !string.IsNullOrWhiteSpace(upsertOp.Id) && usedIds.Add(upsertOp.Id)
@@ -430,7 +430,7 @@ public sealed partial class ReportDocEngine : IReportDocEngine
             throw new ReportConflictException(
                 "stale_block_rev",
                 $"Conflict on block '{targetBlock.Id}': caller read rev {knownRev}, but current block rev is {targetBlock.Rev} (docRev {current.DocRev}).",
-                $"Call perga_report_read to inspect block '{targetBlock.Id}' at rev {targetBlock.Rev} before retrying.");
+                $"Call report_read to inspect block '{targetBlock.Id}' at rev {targetBlock.Rev} before retrying.");
         }
 
         if (callerAnchor.WholeDocumentRead && callerAnchor.DocRev != current.DocRev)
@@ -438,13 +438,13 @@ public sealed partial class ReportDocEngine : IReportDocEngine
             throw new ReportConflictException(
                 "stale_doc_rev",
                 $"Conflict on block '{targetBlock.Id}': caller whole-document read anchor is at docRev {callerAnchor.DocRev}, but current docRev is {current.DocRev}.",
-                "Call perga_report_read to fetch the latest report revision before retrying.");
+                "Call report_read to fetch the latest report revision before retrying.");
         }
 
         throw new ReportConflictException(
             "unread_block",
             $"Cannot modify or delete block '{targetBlock.Id}' (rev {targetBlock.Rev}) without reading it first.",
-            $"Call perga_report_read to obtain a valid ReadAnchor covering block '{targetBlock.Id}'.");
+            $"Call report_read to obtain a valid ReadAnchor covering block '{targetBlock.Id}'.");
     }
 
     private static void EnsureMissingBlockConflictOrNotFound(ReportDocument current, ReadAnchor callerAnchor, string blockId)
@@ -454,7 +454,7 @@ public sealed partial class ReportDocEngine : IReportDocEngine
             throw new ReportConflictException(
                 "block_deleted",
                 $"Conflict on block '{blockId}': block was deleted prior to docRev {current.DocRev}.",
-                "Call perga_report_read to refresh the current block list.");
+                "Call report_read to refresh the current block list.");
         }
 
         if (!callerAnchor.WholeDocumentRead || callerAnchor.DocRev != current.DocRev)
@@ -462,7 +462,7 @@ public sealed partial class ReportDocEngine : IReportDocEngine
             throw new ReportConflictException(
                 "stale_doc_rev",
                 $"Block '{blockId}' not found; caller anchor (docRev {callerAnchor.DocRev}, wholeRead={callerAnchor.WholeDocumentRead}) is stale relative to docRev {current.DocRev}.",
-                "Call perga_report_read to fetch the latest report state.");
+                "Call report_read to fetch the latest report state.");
         }
     }
 

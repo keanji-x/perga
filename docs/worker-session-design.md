@@ -54,7 +54,7 @@ Kernel 负责派发、目标校验、会话操作和审批规则。Host 把 HTTP
 | 能力 | HTTP / UI | Lead MCP |
 | --- | --- | --- |
 | 派发 | `POST /api/v1/tracks/{trackId}/tasks/dispatch` | `perga_task_dispatch` |
-| 找到 Worker | Track 的 Task 状态及 Attempt 列表 | 扩展 `perga_task_ls` 返回当前 Attempt 与 Session 关联 |
+| 找到 Worker | Track 的 Task 状态及 Attempt 列表 | 扩展 `task_list` 返回当前 Attempt 与 Session 关联 |
 | 读会话 | 扩展 `GET /api/v1/sessions/{sessionId}/items` 并复用事件 WebSocket | `perga_session_read` |
 | 发消息或 Steer | 扩展会话 `messages` 接口 | `perga_session_send` |
 | 中断 | 扩展会话 `interrupt` 接口 | `perga_session_interrupt` |

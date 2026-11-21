@@ -136,14 +136,14 @@ public sealed class PolicyVmTests
         Assert.Contains("release/1.0", turnRes.Output.Context);
         Assert.Contains("Epoch handover", turnRes.Output.Context);
 
-        // Before tool: vcs_pr_merge is denied before read_write gate verification
-        var prematureMerge = _vm.Before(compiled, "tool.vcs_pr_merge", "trk_dev",
+        // Before tool: pr_merge is denied before read_write gate verification
+        var prematureMerge = _vm.Before(compiled, "tool.pr_merge", "trk_dev",
             JsonSerializer.SerializeToElement(new {
                 sessionId = "ses_lead",
                 isLead = true,
                 boundAttemptId = (object?)null,
                 mcpServer = "vcs",
-                toolName = "vcs_pr_merge",
+                toolName = "pr_merge",
                 arguments = ParseJson("""{"prNumber":12}""")
             }), inputs, state);
         var denyMerge = Assert.IsType<GuardDecision.Deny>(prematureMerge.Output);
@@ -167,14 +167,14 @@ public sealed class PolicyVmTests
         Assert.True(state.GetProperty("ciVerified").GetBoolean());
         Assert.Contains("impl-core", settled.Output);
 
-        // Before tool: high-risk vcs_publish_pr triggers AskHuman and mutates prPublished=true
-        var publishRes = _vm.Before(compiled, "tool.vcs_publish_pr", "trk_dev",
+        // Before tool: high-risk publish_pr triggers AskHuman and mutates prPublished=true
+        var publishRes = _vm.Before(compiled, "tool.publish_pr", "trk_dev",
             JsonSerializer.SerializeToElement(new {
                 sessionId = "ses_lead",
                 isLead = true,
                 boundAttemptId = (object?)null,
                 mcpServer = "vcs",
-                toolName = "vcs_publish_pr",
+                toolName = "publish_pr",
                 arguments = ParseJson("{}")
             }), inputs, state);
         state = publishRes.NextState;
@@ -182,14 +182,14 @@ public sealed class PolicyVmTests
         Assert.Contains("release/1.0", askPublish.Title);
         Assert.True(state.GetProperty("prPublished").GetBoolean());
 
-        // Before tool: now that ciVerified=true and requirePrReview=true (default), vcs_pr_merge returns AskHuman
-        var mergeAsk = _vm.Before(compiled, "tool.vcs_pr_merge", "trk_dev",
+        // Before tool: now that ciVerified=true and requirePrReview=true (default), pr_merge returns AskHuman
+        var mergeAsk = _vm.Before(compiled, "tool.pr_merge", "trk_dev",
             JsonSerializer.SerializeToElement(new {
                 sessionId = "ses_lead",
                 isLead = true,
                 boundAttemptId = (object?)null,
                 mcpServer = "vcs",
-                toolName = "vcs_pr_merge",
+                toolName = "pr_merge",
                 arguments = ParseJson("""{"prNumber":12}""")
             }), inputs, state);
         var askDecision = Assert.IsType<GuardDecision.AskHuman>(mergeAsk.Output);
@@ -247,25 +247,25 @@ public sealed class PolicyVmTests
         Assert.True(state.GetProperty("pausedForHuman").GetBoolean());
 
         // Cross-track mail blocked while pausedForHuman is active
-        var mailGuard = _vm.Before(compiled, "tool.perga_mail_send", "trk_ltg",
+        var mailGuard = _vm.Before(compiled, "tool.mail_send", "trk_ltg",
             JsonSerializer.SerializeToElement(new {
                 sessionId = "ses_1",
                 isLead = true,
                 boundAttemptId = (object?)null,
                 mcpServer = "perga",
-                toolName = "perga_mail_send",
+                toolName = "mail_send",
                 arguments = ParseJson("{}")
             }), inputs, state);
         Assert.IsType<GuardDecision.Deny>(mailGuard.Output);
 
         // Closing track asks human confirmation
-        var closeGuard = _vm.Before(compiled, "tool.perga_track_close", "trk_ltg",
+        var closeGuard = _vm.Before(compiled, "tool.track_close", "trk_ltg",
             JsonSerializer.SerializeToElement(new {
                 sessionId = "ses_1",
                 isLead = true,
                 boundAttemptId = (object?)null,
                 mcpServer = "perga",
-                toolName = "perga_track_close",
+                toolName = "track_close",
                 arguments = ParseJson("{}")
             }), inputs, state);
         Assert.IsType<GuardDecision.AskHuman>(closeGuard.Output);
@@ -384,13 +384,13 @@ public sealed class PolicyVmTests
             """);
 
         var loopEx = Assert.Throws<InvalidOperationException>(() =>
-            _vm.Before(loopPolicy, "tool.perga_task_ls", "t1",
+            _vm.Before(loopPolicy, "tool.task_list", "t1",
                 JsonSerializer.SerializeToElement(new {
                     sessionId = "s1",
                     isLead = true,
                     boundAttemptId = (object?)null,
                     mcpServer = "perga",
-                    toolName = "perga_task_ls",
+                    toolName = "task_list",
                     arguments = ParseJson("{}")
                 }), ParseJson("{}"), ParseJson("{}")));
         Assert.Contains("sandbox", loopEx.Message, StringComparison.OrdinalIgnoreCase);

@@ -411,7 +411,7 @@ public sealed class UnifiedSessionLifecycleTests
             "child", Caller(ctx, parent, page.ActiveTurn!.Id), default)).Receipt;
         await WaitForPage(ctx, child.Session.Id, p => p.LastTurn?.Status == "completed");
         await ctx.Kernel.CompleteAttemptDoneAsync(snapshot.Track.Id, child.Session.Id);
-        await ctx.Kernel.GuardMcpToolCallAsync(snapshot.Track.Id, parent.Id, "perga", "perga_task_" + action,
+        await ctx.Kernel.GuardMcpToolCallAsync(snapshot.Track.Id, parent.Id, "perga", "task_" + action,
             TestJson.FromObject(new { taskId = child.Task!.Id }));
         var caller = role switch { "human" => null, "parent" => parent.Id, "lead" => snapshot.Track.LeadSessionId,
             "peer" => peer.Id, _ => child.Session.Id };

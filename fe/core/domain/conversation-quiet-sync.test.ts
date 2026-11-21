@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  TASK_LS_TOOL, REPORT_DELETE_TOOL, REPORT_READ_TOOLS, REPORT_TOOL_PREFIX,
+  TASK_LIST_TOOL, REPORT_DELETE_TOOL, REPORT_READ_TOOLS, REPORT_TOOL_PREFIX,
   REPORT_WRITE_TOOLS, TRACK_TOOL_PREFIX, USER_ASK_TOOL,
 } from '../keys/mcp-tools.js';
 import {
@@ -191,7 +191,7 @@ describe('foldQuietSyncs outcome', () => {
       reportEdited('s1'), ...REPORT_READ_TOOLS.map((tool, index) => activity(`r${index}`, { tool })), outcome('o1'),
     ]);
     expect(group(reads[0]).outcome).toBe('accepted');
-    const other = foldQuietSyncs([reportEdited('s1'), activity('t1', { tool: TASK_LS_TOOL }), outcome('o1')]);
+    const other = foldQuietSyncs([reportEdited('s1'), activity('t1', { tool: TASK_LIST_TOOL }), outcome('o1')]);
     expect(group(other[0]).outcome).toBe('accepted');
     const shell = foldQuietSyncs([reportEdited('s1'), activity('sh', { verb: 'Ran', tool: null }), outcome('o1')]);
     expect(group(shell[0]).outcome).toBe('accepted');
@@ -204,6 +204,13 @@ describe('foldQuietSyncs outcome', () => {
     expect(isReportWriteTool(USER_ASK_TOOL)).toBe(false);
     expect(isReportWriteTool(`${TRACK_TOOL_PREFIX}cat`)).toBe(false);
     expect(isReportWriteTool(`${REPORT_TOOL_PREFIX.slice(0, -1)}ing.x`)).toBe(false);
+  });
+
+  it.each(['', 'perga_', 'perga:', 'perga:perga_'])('classifies report activity with prefix %s', (prefix) => {
+    const read = activity('r1', { tool: `${prefix}report_read` });
+    const write = wrote('w1', { tool: `${prefix}report_commit` });
+    expect(group(foldQuietSyncs([reportEdited('s1'), read, outcome('o1')])[0]).outcome).toBe('accepted');
+    expect(group(foldQuietSyncs([reportEdited('s1'), write, outcome('o1')])[0]).outcome).toBe('updated');
   });
 
 });

@@ -104,7 +104,7 @@ public sealed class BoundAttemptFenceAndGovernanceTests
 
         var boundSubagent = Assert.Single((await ctx.Kernel.ListSessionsAsync(trackId, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray(), s => s.BoundAttemptId is not null);
 
-        // A. Unbound sessions (Lead & free Subagent) CANNOT call perga_task_done or perga_task_fail
+        // A. Unbound sessions (Lead & free Subagent) CANNOT call task_done or task_fail
         foreach (var unboundId in new[] { leadId, freeSubagent.Id })
         {
             var doneEx = await Assert.ThrowsAsync<KernelException>(() =>

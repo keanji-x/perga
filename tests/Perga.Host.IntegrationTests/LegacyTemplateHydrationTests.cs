@@ -10,12 +10,248 @@ using Perga.Host.Serialization;
 using Perga.Kernel;
 using Perga.Kernel.Ports;
 using Perga.Kernel.Mcp;
+using static Perga.Host.IntegrationTests.McpKernelAndVcsIntegrationTests;
 
 namespace Perga.Host.IntegrationTests;
 
 [Collection("Template policy sandbox")]
 public sealed class LegacyTemplateHydrationTests
 {
+    [Fact]
+    public async Task CatalogUpgradePreservesUnmarkedGuardsAndInheritedHookNames()
+    {
+        var directory = Directory.CreateTempSubdirectory("perga-custom-catalog-");
+        try
+        {
+            await File.WriteAllTextAsync(Path.Combine(directory.FullName, "a-legacy.perga.js"), """
+                export default {
+                  id: "legacy", title: "Existing catalog template",
+                  get before() {
+                    return call => call.toolName === ["vcs", "pr_merge"].join("_") ? Deny("Legacy guard") : Allow();
+                  },
+                  get after() {
+                    return (event, ctx) => {
+                      if (event.type === "tool.vcs_pr_checks") ctx.state.received = "legacy";
+                    };
+                  }
+                };
+                """);
+            await File.WriteAllTextAsync(Path.Combine(directory.FullName, "b-current.perga.js"), """
+                // @ts-check
+                export default {
+                  id: "current", title: "Updated catalog template", extends: "legacy",
+                  toolNameVersion: 2,
+                  before: call => call.toolName === "pr_merge" ? Deny("Canonical guard") : Allow()
+                };
+                """);
+            await File.WriteAllTextAsync(Path.Combine(directory.FullName, "declarative.perga.json"), """
+                {"id":"declarative","title":"JSON template","toolNameVersion":2}
+                """);
+            await File.WriteAllTextAsync(Path.Combine(directory.FullName, "settings.json"), "{}");
+            await using var host = new PergaHostTestCluster(configureHostOptions: options => options.TemplatesDirectory = directory.FullName);
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            var ct = deadline.Token;
+            var kernel = host.Services.GetRequiredService<IPergaKernel>();
+            Assert.False(kernel.Templates.GetRequiredPolicy("declarative").UsesLegacyBeforeToolNames);
+            var bridge = host.Services.GetRequiredService<IMcpSessionBridge>();
+            var area = await kernel.CreateAreaAsync(new("Custom catalog", DefaultCwd: host.DataDir), ct);
+
+            foreach (var (template, guard) in new[] { ("legacy", "Legacy guard"), ("current", "Canonical guard") })
+            {
+                var track = (await kernel.CreateTrackAsync(new(area.Id, TemplateId: template), ct)).Track;
+                var token = bridge.RegisterSession(track.Id, track.LeadSessionId!, isLead: true, null, null, []).Principal.Token;
+                var (merge, mergeError) = await CallToolAsync(host, "/mcp/vcs", token, "pr_merge", new { prNumber = 42, expectedHeadSha = "abc1234def5678" }, ct);
+                Assert.True(mergeError, merge);
+                Assert.Contains(guard, merge, StringComparison.Ordinal);
+                var (checks, checksError) = await CallToolAsync(host, "/mcp/vcs", token, "pr_checks", new { prNumber = 42 }, ct);
+                Assert.False(checksError, checks);
+                var state = (await kernel.GetTrackAggregateAsync(track.Id, ct)).Track.TemplateState;
+                Assert.Equal("legacy", state.GetProperty("received").GetString());
+
+                var templateId = template == "legacy" ? "legacy" : "__current__";
+                var (inspection, inspectError) = await CallToolAsync(host, "/mcp/kernel", token, "template_read", new { templateId }, ct);
+                Assert.False(inspectError, inspection);
+                using var templateDocument = JsonDocument.Parse(inspection);
+                var result = templateDocument.RootElement;
+                var source = result.GetProperty(templateId == "__current__" ? "snapshot" : "jsSource").GetString();
+                Assert.True(result.TryGetProperty("editableSource", out _));
+                var (applied, applyError) = await CallToolAsync(host, "/mcp/kernel", token, "track_set", new { source }, ct);
+                Assert.False(applyError, applied);
+                var (reappliedMerge, reappliedError) = await CallToolAsync(host, "/mcp/vcs", token, "pr_merge",
+                    new { prNumber = 42, expectedHeadSha = "abc1234def5678" }, ct);
+                Assert.True(reappliedError, reappliedMerge);
+                Assert.Contains(guard, reappliedMerge, StringComparison.Ordinal);
+            }
+            Assert.Empty(host.ForgeService.MergedPrs);
+        }
+        finally { directory.Delete(recursive: true); }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CanonicalMcpCallsHonorFrozenLegacyPolicyAfterHostRestart(bool inherited)
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var ct = deadline.Token;
+        var dataDir = Directory.CreateTempSubdirectory("perga-legacy-mcp-");
+        try
+        {
+            const string legacySource = """
+                const merge = "vcs_pr_merge";
+                const close = "perga_track_close";
+                export default defineTemplate({
+                  id: "legacy-tools", title: "Legacy tools",
+                  before(call, ctx) {
+                    if (call.type === "tool.perga_task_ls" && call.toolName === "perga_task_ls") ctx.state.taskListBefore = true;
+                    if (call.type === "tool." + merge && call.toolName === merge)
+                      return Deny("Frozen merge guard");
+                    if (call.type === "tool." + close && call.toolName === close)
+                      return AskHuman("Frozen close guard");
+                    return Allow();
+                  },
+                  after(event, ctx) {
+                    if (event.type === "tool.perga_task_ls") ctx.state.taskListAfter = true;
+                    if (event.type === ["tool.perga", "track", "status"].join("_")) ctx.state.pergaDelivered = true;
+                    if (event.type === ["tool.vcs", "pr", "checks"].join("_")) ctx.state.vcsDelivered = true;
+                  }
+                });
+                """;
+            var legacySnapshot = inherited
+                ? JsonSerializer.Serialize(new
+                {
+                    format = "perga.snapshot.v1",
+                    sources = new[]
+                    {
+                        legacySource.Replace("\"vcs_pr_merge\"", """["vcs", "pr", "merge"].join("_")""", StringComparison.Ordinal)
+                            .Replace("\"perga_track_close\"", """["perga", "track", "close"].join("_")""", StringComparison.Ordinal),
+                        "export default {id:'legacy-tools',title:'Legacy tools'};"
+                    }
+                })
+                : legacySource;
+            string trackId;
+            string leadId;
+            string currentTrackId;
+            string currentLeadId;
+            await using (var initial = new PergaHostTestCluster(explicitDataDir: dataDir.FullName))
+            {
+                var kernel = initial.Services.GetRequiredService<IPergaKernel>();
+                var area = await kernel.CreateAreaAsync(new("Legacy policies", DefaultCwd: dataDir.FullName), ct);
+                var legacy = await kernel.CreateTrackAsync(new(area.Id), ct);
+                trackId = legacy.Track.Id;
+                leadId = legacy.Track.LeadSessionId!;
+                await kernel.WaitForTrackIdleAsync(trackId, ct);
+
+                kernel.Templates.RegisterTemplate("""
+                    export default defineTemplate({
+                      id: "current-tools", title: "Current tools", description: "vcs_pr_merge",
+                      before(call) {
+                        if (call.type === "tool.pr_merge" && call.toolName === "pr_merge")
+                          return Deny("Current merge guard");
+                        return Allow();
+                      },
+                      after(event, ctx) {
+                        if (event.type === "tool.pr_checks") ctx.state.vcsDelivered = true;
+                      }
+                    });
+                    """);
+                var current = await kernel.CreateTrackAsync(new(area.Id, TemplateId: "current-tools"), ct);
+                currentTrackId = current.Track.Id;
+                currentLeadId = current.Track.LeadSessionId!;
+                Assert.StartsWith("export default", current.TemplateSnapshotSource);
+                await kernel.WaitForTrackIdleAsync(currentTrackId, ct);
+            }
+            await using (var db = new SqliteConnection($"Data Source={Path.Combine(dataDir.FullName, "perga.db")};Pooling=False"))
+            {
+                await db.OpenAsync(ct);
+                using var command = db.CreateCommand();
+                command.CommandText = "UPDATE tracks SET template_id = 'legacy-tools', template_snapshot = $source WHERE id = $id";
+                command.Parameters.AddWithValue("$source", legacySnapshot);
+                command.Parameters.AddWithValue("$id", trackId);
+                Assert.Equal(1, await command.ExecuteNonQueryAsync(ct));
+            }
+
+            await using var restored = new PergaHostTestCluster(explicitDataDir: dataDir.FullName);
+            var restoredKernel = restored.Services.GetRequiredService<IPergaKernel>();
+            var bridge = restored.Services.GetRequiredService<IMcpSessionBridge>();
+            var token = bridge.RegisterSession(trackId, leadId, isLead: true, null, null, []).Principal.Token;
+
+            var kernelTools = await ListToolNamesAsync(restored, "/mcp/kernel", token, ct);
+            var vcsTools = await ListToolNamesAsync(restored, "/mcp/vcs", token, ct);
+            Assert.Contains("report_read", kernelTools);
+            Assert.Contains("provider_list", kernelTools);
+            Assert.Contains("task_list", kernelTools);
+            Assert.Contains("status", vcsTools);
+            Assert.DoesNotContain(kernelTools, name => name.StartsWith("perga_", StringComparison.Ordinal));
+            Assert.DoesNotContain(vcsTools, name => name.StartsWith("vcs_", StringComparison.Ordinal));
+
+            foreach (var (path, legacyTool) in new[]
+            {
+                ("/mcp/kernel", "perga_track_status"), ("/mcp/vcs", "vcs_pr_checks"), ("/mcp/kernel", "task_ls")
+            })
+            {
+                var (unknown, isError) = await CallToolAsync(restored, path, token, legacyTool, new { prNumber = 42 }, ct);
+                Assert.True(isError, unknown);
+                Assert.Contains("Unknown", unknown, StringComparison.Ordinal);
+                Assert.Contains(legacyTool, unknown, StringComparison.Ordinal);
+            }
+
+            var (status, statusError) = await CallToolAsync(restored, "/mcp/kernel", token, "track_status", new { }, ct);
+            Assert.False(statusError, status);
+            var (tasks, tasksError) = await CallToolAsync(restored, "/mcp/kernel", token, "task_list", new { }, ct);
+            Assert.False(tasksError, tasks);
+            var (checks, checksError) = await CallToolAsync(restored, "/mcp/vcs", token, "pr_checks", new { prNumber = 42 }, ct);
+            Assert.False(checksError, checks);
+            var track = await restoredKernel.GetTrackAggregateAsync(trackId, ct);
+            Assert.Equal(legacySnapshot, track.TemplateSnapshotSource);
+            var state = track.Track.TemplateState;
+            Assert.True(state.GetProperty("taskListBefore").GetBoolean());
+            Assert.True(state.GetProperty("taskListAfter").GetBoolean());
+            Assert.True(state.GetProperty("pergaDelivered").GetBoolean());
+            Assert.True(state.GetProperty("vcsDelivered").GetBoolean());
+
+            var (merge, mergeError) = await CallToolAsync(restored, "/mcp/vcs", token, "pr_merge",
+                new { prNumber = 42, expectedHeadSha = "abc1234def5678" }, ct);
+            Assert.True(mergeError, merge);
+            Assert.Contains("Frozen merge guard", merge, StringComparison.Ordinal);
+            Assert.Empty(restored.ForgeService.MergedPrs);
+
+            var close = CallToolAsync(restored, "/mcp/kernel", token, "track_close", new { }, ct);
+            ApprovalDto? approval;
+            do
+            {
+                approval = (await restoredKernel.GetTrackAggregateAsync(trackId, ct)).PendingApprovals.SingleOrDefault();
+                if (approval is null)
+                {
+                    Assert.False(close.IsCompleted);
+                    await Task.Delay(10, ct);
+                }
+            } while (approval is null);
+            Assert.Equal("Frozen close guard", approval.Title);
+            await restoredKernel.RespondInteractionAsync(leadId, approval.Id,
+                new(ExecutionId: approval.ExecutionId, OptionId: "deny"), new InteropPrincipal.Human(), ct);
+            var (denied, closeError) = await close;
+            Assert.True(closeError, denied);
+            Assert.Contains("denied by human", denied, StringComparison.OrdinalIgnoreCase);
+            Assert.Null((await restoredKernel.GetTrackAggregateAsync(trackId, ct)).Track.ClosedAtMs);
+
+            var currentToken = bridge.RegisterSession(currentTrackId, currentLeadId, isLead: true, null, null, []).Principal.Token;
+            var (currentChecks, currentChecksError) = await CallToolAsync(restored, "/mcp/vcs", currentToken, "pr_checks", new { prNumber = 42 }, ct);
+            Assert.False(currentChecksError, currentChecks);
+            var currentState = (await restoredKernel.GetTrackAggregateAsync(currentTrackId, ct)).Track.TemplateState;
+            Assert.True(currentState.GetProperty("vcsDelivered").GetBoolean());
+            var (currentMerge, currentMergeError) = await CallToolAsync(restored, "/mcp/vcs", currentToken, "pr_merge",
+                new { prNumber = 42, expectedHeadSha = "abc1234def5678" }, ct);
+            Assert.True(currentMergeError, currentMerge);
+            Assert.Contains("Current merge guard", currentMerge, StringComparison.Ordinal);
+            Assert.Empty(restored.ForgeService.MergedPrs);
+        }
+        finally
+        {
+            dataDir.Delete(recursive: true);
+        }
+    }
+
     [Fact]
     public async Task Restart_PendingTaskWaitsForHttpTemplateRecovery()
     {
@@ -158,17 +394,19 @@ public sealed class LegacyTemplateHydrationTests
     }
 
     [Theory]
-    [InlineData("guardToolCall", "guardToolCall:()=>Deny('legacy rule')", false)]
-    [InlineData("guardToolCall", "guardToolCall:()=>Deny('legacy rule')", true)]
-    [InlineData("buildTurnContext", "buildTurnContext:()=> 'legacy context'", false)]
-    [InlineData("buildTurnContext", "buildTurnContext:()=> 'legacy context'", true)]
-    [InlineData("report.customValidate", "report:{customValidate:()=>Deny('legacy rule')}", false)]
-    [InlineData("report.customValidate", "report:{customValidate:()=>Deny('legacy rule')}", true)]
-    [InlineData("tasks.onSettled", "tasks:{onSettled:()=> 'legacy settlement'}", false)]
-    [InlineData("tasks.onSettled", "tasks:{onSettled:()=> 'legacy settlement'}", true)]
-    [InlineData("template.before", "before:42", false)]
-    [InlineData("template.before", "before:42", true)]
-    public async Task Restart_UnavailableSnapshotAllowsInspectionAndRecoveryButDeniesGovernedWork(string key, string member, bool clear)
+    [InlineData("guardToolCall", "guardToolCall:()=>Deny('legacy rule')", false, false)]
+    [InlineData("guardToolCall", "guardToolCall:()=>Deny('legacy rule')", true, false)]
+    [InlineData("buildTurnContext", "buildTurnContext:()=> 'legacy context'", false, false)]
+    [InlineData("buildTurnContext", "buildTurnContext:()=> 'legacy context'", true, false)]
+    [InlineData("report.customValidate", "report:{customValidate:()=>Deny('legacy rule')}", false, false)]
+    [InlineData("report.customValidate", "report:{customValidate:()=>Deny('legacy rule')}", true, false)]
+    [InlineData("tasks.onSettled", "tasks:{onSettled:()=> 'legacy settlement'}", false, false)]
+    [InlineData("tasks.onSettled", "tasks:{onSettled:()=> 'legacy settlement'}", true, false)]
+    [InlineData("template.before", "before:42", false, false)]
+    [InlineData("template.before", "before:42", true, false)]
+    [InlineData("template.before", "before:42", false, true)]
+    public async Task Restart_UnavailableSnapshotAllowsInspectionAndRecoveryButDeniesGovernedWork(
+        string key, string member, bool clear, bool versioned)
     {
         var directory = Directory.CreateTempSubdirectory("perga-legacy-hooks-");
         try
@@ -188,12 +426,15 @@ public sealed class LegacyTemplateHydrationTests
                 "export default {id:'legacy',title:'Legacy'," + member + "};",
                 "export default {id:'child',title:'Child',before:" + (key == "template.before" ? "42" : "()=>Allow()") + ",report:{},tasks:{}};"
             } });
+            var storedSnapshot = versioned
+                ? JsonSerializer.Serialize(new { format = "perga.snapshot.v2", toolNameVersion = 2, source = snapshot })
+                : snapshot;
             await using (var db = new SqliteConnection($"Data Source={Path.Combine(directory.FullName, "perga.db")};Pooling=False"))
             {
                 await db.OpenAsync();
                 using var command = db.CreateCommand();
                 command.CommandText = "UPDATE tracks SET template_id = 'child', template_snapshot = $source WHERE id = $id";
-                command.Parameters.AddWithValue("$source", snapshot);
+                command.Parameters.AddWithValue("$source", storedSnapshot);
                 command.Parameters.AddWithValue("$id", trackId);
                 Assert.Equal(1, await command.ExecuteNonQueryAsync());
             }
@@ -201,6 +442,11 @@ public sealed class LegacyTemplateHydrationTests
             await using var reopened = new PergaHostTestCluster(explicitDataDir: directory.FullName);
             var restarted = reopened.Services.GetRequiredService<IPergaKernel>();
             var aggregate = await restarted.GetTrackAggregateAsync(trackId);
+            Assert.Equal(snapshot, aggregate.TemplateSnapshotSource);
+            using var inspect = await reopened.Client.GetAsync($"/api/v1/tracks/{trackId}/template");
+            inspect.EnsureSuccessStatusCode();
+            var current = await inspect.Content.ReadFromJsonAsync<JsonElement>();
+            Assert.Equal(snapshot, current.GetProperty("snapshot").GetString());
             Assert.Equal(HttpStatusCode.OK, (await reopened.Client.GetAsync($"/api/v1/tracks/{trackId}")).StatusCode);
             var dispatchError = await Assert.ThrowsAsync<KernelException>(() =>
                 restarted.CreateSessionAsync(trackId, new(Prompt: "Must not dispatch", Task: new()), "plain", new InteropPrincipal.Human(), default));
@@ -216,7 +462,7 @@ public sealed class LegacyTemplateHydrationTests
             var persisted = await reopened.Services.GetRequiredService<ITrackStore>().LoadTrackAggregateAsync(trackId, default);
             Assert.Empty(persisted!.Tasks);
             Assert.Empty(persisted.OpenAsks);
-            Assert.Equal(snapshot, persisted.TemplateSnapshotSource);
+            Assert.Equal(storedSnapshot, persisted.TemplateSnapshotSource);
             // Clear and replacement each work directly against the unavailable snapshot.
             await KernelMcpDispatcher.ExecuteGuardedAsync(restarted, caller, KernelMcpToolNames.TrackSet,
                 clear ? JsonSerializer.SerializeToElement(new { clear = true }) :

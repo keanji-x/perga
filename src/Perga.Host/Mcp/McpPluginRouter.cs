@@ -374,7 +374,7 @@ public sealed class McpPluginRouter : IAsyncDisposable
 
                 var client = await _router.GetOrOpenClientAsync(_pluginId, ct).ConfigureAwait(false);
                 var result = await client.CallToolAsync(toolName, normalizedArgs, ct).ConfigureAwait(false);
-                await _router._kernel.Actors.GetOrActivate(caller.TrackId).AfterPolicyEventAsync("tool." + toolName,
+                await _router._kernel.Actors.GetOrActivate(caller.TrackId).AfterMcpToolCallAsync(_pluginId, toolName,
                     JsonSerializer.SerializeToElement(new { mcpServer = _pluginId, arguments = normalizedArgs, result }), ct).ConfigureAwait(false);
                 return result;
             }

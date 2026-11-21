@@ -41,7 +41,7 @@ public sealed class PolicyGuardMailTerminalScheduleBootTests
         // 1. Allow
         ctx.PolicyVm.OnBefore = (_, action, _, state) =>
             new PolicyEvalResult<GuardDecision>(state, new GuardDecision.Allow());
-        await ctx.Kernel.GuardMcpToolCallAsync(trackId, leadId, "vcs", "vcs_status", TestJson.Parse("{}"));
+        await ctx.Kernel.GuardMcpToolCallAsync(trackId, leadId, "vcs", "status", TestJson.Parse("{}"));
 
         // 2. Disabled plugin rejected immediately
         var disabledEx = await Assert.ThrowsAsync<KernelException>(() =>
@@ -52,14 +52,14 @@ public sealed class PolicyGuardMailTerminalScheduleBootTests
         ctx.PolicyVm.OnBefore = (_, action, call, state) =>
             new PolicyEvalResult<GuardDecision>(state, new GuardDecision.Deny($"Blocked tool {call.GetProperty("toolName").GetString()}"));
         var denyEx = await Assert.ThrowsAsync<KernelException>(() =>
-            ctx.Kernel.GuardMcpToolCallAsync(trackId, leadId, "vcs", "vcs_pr_merge", TestJson.Parse("{}")));
+            ctx.Kernel.GuardMcpToolCallAsync(trackId, leadId, "vcs", "pr_merge", TestJson.Parse("{}")));
         Assert.Equal(KernelErrorCode.PolicyDenied, denyEx.Code);
 
         // 4. Policy AskHuman -> suspends until human approves -> allows; if human denies -> throws PolicyDenied!
         ctx.PolicyVm.OnBefore = (_, action, _, state) =>
             new PolicyEvalResult<GuardDecision>(state, new GuardDecision.AskHuman("Allow vcs_push?", "拒绝", "Approve"));
 
-        var guardTask = ctx.Kernel.GuardMcpToolCallAsync(trackId, leadId, "vcs", "vcs_publish_pr", TestJson.Parse("{}"));
+        var guardTask = ctx.Kernel.GuardMcpToolCallAsync(trackId, leadId, "vcs", "publish_pr", TestJson.Parse("{}"));
         ApprovalDto? openAsk = null;
         for (var i = 0; i < 50 && openAsk is null; i++)
         {
@@ -80,7 +80,7 @@ public sealed class PolicyGuardMailTerminalScheduleBootTests
         await guardTask; // Completes cleanly!
 
         // Now verify human rejection throws PolicyDenied
-        var rejectGuardTask = ctx.Kernel.GuardMcpToolCallAsync(trackId, leadId, "vcs", "vcs_pr_merge", TestJson.Parse("{}"));
+        var rejectGuardTask = ctx.Kernel.GuardMcpToolCallAsync(trackId, leadId, "vcs", "pr_merge", TestJson.Parse("{}"));
         ApprovalDto? rejectAsk = null;
         for (var i = 0; i < 50 && rejectAsk is null; i++)
         {
@@ -183,11 +183,13 @@ public sealed class PolicyGuardMailTerminalScheduleBootTests
         Assert.Equal(turnsBeforeHumanEdit + 1, ctx.Store.GetTurnsForSession(leadId).Count);
 
         // 4. Independent sessions get unified controls; bound Workers retain observation and completion.
-        Assert.Equal(36, KernelMcpToolNames.All.Count);
+        Assert.Equal(37, KernelMcpToolNames.All.Count);
         Assert.Contains(KernelMcpCatalog.GetToolsForSession(boundAttemptId: null, isLead: true), tool => tool.Name == KernelMcpToolNames.SessionSend);
-        Assert.Equal(31, KernelMcpCatalog.GetToolsForSession(boundAttemptId: null).Count);
+        Assert.Equal(32, KernelMcpCatalog.GetToolsForSession(boundAttemptId: null).Count);
         Assert.Contains(KernelMcpCatalog.GetToolsForSession(boundAttemptId: null), tool => tool.Name == KernelMcpToolNames.SessionCreate);
-        Assert.Equal(15, KernelMcpCatalog.GetToolsForSession(boundAttemptId: "att_1").Count);
+        var workerTools = KernelMcpCatalog.GetToolsForSession(boundAttemptId: "att_1");
+        Assert.Equal(16, workerTools.Count);
+        Assert.Contains(workerTools, tool => tool.Name == KernelMcpToolNames.ProviderList);
 
         var reg = ctx.Kernel.McpSessionBridge.RegisterSession(trackId, leadId, isLead: true, null, null, ["market"]);
         var statusJson = await ctx.Kernel.InvokeKernelMcpToolAsync(reg.Principal, KernelMcpToolNames.TrackStatus, TestJson.Parse("{}"));

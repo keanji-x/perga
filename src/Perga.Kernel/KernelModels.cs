@@ -92,6 +92,22 @@ public sealed record HumanBlockUpdateRequest(
     string? Summary = null,
     string? CommitMessage = null);
 
+public sealed record TrackProvidersDto(
+    string DefaultProvider, long ObservedAtMs, IReadOnlyList<TrackProviderEntryDto> Providers);
+
+public sealed record TrackProviderEntryDto(
+    string Provider, bool Available,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Version,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Reason,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? DefaultModel,
+    string PermissionCatalogSource, IReadOnlyList<TrackProviderModelDto> Models,
+    IReadOnlyList<PermissionModeOption> PermissionModes);
+
+public sealed record TrackProviderModelDto(
+    string Id, string DisplayName, bool IsDefault,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? DefaultReasoningEffort,
+    IReadOnlyList<string> ReasoningEfforts);
+
 public sealed record CreateSessionRequest(
     string? Title = null,
     string? Provider = null,

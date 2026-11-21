@@ -20,6 +20,7 @@
 /** @type {import("./perga-template.d.ts").PergaTemplateDefinition<LongTermGoalState, LongTermGoalInputs>} */
 const longTermGoalTemplate = {
   id: "long-term-goal",
+  toolNameVersion: 2,
   title: "Long-Term Goal & Milestone Track",
   description:
     "Sustained multi-week goal execution with scheduled check-ins, milestone tracking, failure circuit-breakers, and structured retrospectives.",
@@ -135,11 +136,11 @@ const longTermGoalTemplate = {
     }
     if (!action.type.startsWith("tool.")) return Allow();
     const call = action;
-    if (ctx.state.pausedForHuman && call.mcpServer === "perga" && call.toolName === "perga_mail_send") {
+    if (ctx.state.pausedForHuman && call.mcpServer === "perga" && call.toolName === "mail_send") {
       return Deny("Track is paused after repeated task failures; resolve blockers with the user before sending cross-track mail.");
     }
 
-    if (call.mcpServer === "perga" && call.toolName === "perga_track_close") {
+    if (call.mcpServer === "perga" && call.toolName === "track_close") {
       if (ctx.state.milestonesCompleted === 0) {
         return AskHuman(
           "Close long-term goal track before any milestone task has completed?",

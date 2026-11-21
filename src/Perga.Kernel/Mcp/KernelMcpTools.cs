@@ -9,63 +9,65 @@ namespace Perga.Kernel.Mcp;
 
 public static class KernelMcpToolNames
 {
-    public const string SystemUpgradeCheck = "perga_system_upgrade_check";
-    public const string SystemUpgradeApply = "perga_system_upgrade_apply";
-    public const string SystemUpgradeRollback = "perga_system_upgrade_rollback";
+    public const string SystemUpgradeCheck = "system_upgrade_check";
+    public const string SystemUpgradeApply = "system_upgrade_apply";
+    public const string SystemUpgradeRollback = "system_upgrade_rollback";
 
     // Shared across all sessions (Lead, free Subagent, contract Subagent)
-    public const string ReportRead = "perga_report_read";
-    public const string ReportCommit = "perga_report_commit";
-    public const string TaskLs = "perga_task_ls";
-    public const string UserAsk = "perga_user_ask";
-    public const string MailLs = "perga_mail_ls";
-    public const string MailCat = "perga_mail_cat";
-    public const string TrackStatus = "perga_track_status";
-    public const string TerminalOpen = "perga_terminal_open";
-    public const string TerminalRead = "perga_terminal_read";
-    public const string TerminalInput = "perga_terminal_input";
-    public const string ScheduleLs = "perga_schedule_ls";
+    public const string ReportRead = "report_read";
+    public const string ReportCommit = "report_commit";
+    public const string TaskList = "task_list";
+    public const string UserAsk = "user_ask";
+    public const string MailList = "mail_list";
+    public const string MailRead = "mail_read";
+    public const string ProviderList = "provider_list";
+    public const string TrackStatus = "track_status";
+    public const string TerminalOpen = "terminal_open";
+    public const string TerminalRead = "terminal_read";
+    public const string TerminalInput = "terminal_input";
+    public const string ScheduleList = "schedule_list";
 
     // Governance tools (BoundAttemptId == null ONLY)
-    public const string TaskCancel = "perga_task_cancel";
-    public const string TaskAccept = "perga_task_accept";
-    public const string TaskReject = "perga_task_reject";
-    public const string MailSend = "perga_mail_send";
-    public const string TrackRename = "perga_track_rename";
-    public const string TemplateLs = "perga_template_ls";
-    public const string TemplateCat = "perga_template_cat";
-    public const string TemplateUpdateInputs = "perga_template_update_inputs";
-    public const string TrackSet = "perga_track_set";
-    public const string TrackClose = "perga_track_close";
-    public const string ScheduleSet = "perga_schedule_set";
-    public const string ScheduleRm = "perga_schedule_rm";
+    public const string TaskCancel = "task_cancel";
+    public const string TaskAccept = "task_accept";
+    public const string TaskReject = "task_reject";
+    public const string MailSend = "mail_send";
+    public const string TrackRename = "track_rename";
+    public const string TemplateList = "template_list";
+    public const string TemplateRead = "template_read";
+    public const string TemplateUpdateInputs = "template_update_inputs";
+    public const string TrackSet = "track_set";
+    public const string TrackClose = "track_close";
+    public const string ScheduleSet = "schedule_set";
+    public const string ScheduleCancel = "schedule_cancel";
 
     // Contract completion tools (BoundAttemptId != null ONLY)
-    public const string TaskDone = "perga_task_done";
-    public const string TaskFail = "perga_task_fail";
-    public const string SessionRespond = "perga_session_respond";
-    public const string SessionRead = "perga_session_read";
-    public const string SessionSend = "perga_session_send";
-    public const string SessionWithdraw = "perga_session_withdraw";
-    public const string SessionList = "perga_session_list";
-    public const string SessionCreate = "perga_session_create";
-    public const string SessionUpdate = "perga_session_update";
-    public const string SessionControl = "perga_session_control";
+    public const string TaskDone = "task_done";
+    public const string TaskFail = "task_fail";
+    public const string SessionRespond = "session_respond";
+    public const string SessionRead = "session_read";
+    public const string SessionSend = "session_send";
+    public const string SessionWithdraw = "session_withdraw";
+    public const string SessionList = "session_list";
+    public const string SessionCreate = "session_create";
+    public const string SessionUpdate = "session_update";
+    public const string SessionControl = "session_control";
 
     public static readonly IReadOnlyList<string> All =
     [
         SystemUpgradeCheck, SystemUpgradeApply, SystemUpgradeRollback,
         ReportRead,
         ReportCommit,
-        TaskLs,
+        TaskList,
         UserAsk,
-        MailLs,
-        MailCat,
+        MailList,
+        MailRead,
         TrackStatus,
+        ProviderList,
         TerminalOpen,
         TerminalRead,
         TerminalInput,
-        ScheduleLs,
+        ScheduleList,
         TaskCancel,
         TaskAccept,
         TaskReject,
@@ -73,9 +75,9 @@ public static class KernelMcpToolNames
         TrackRename,
         TrackClose,
         ScheduleSet,
-        ScheduleRm,
-        TemplateLs,
-        TemplateCat,
+        ScheduleCancel,
+        TemplateList,
+        TemplateRead,
         TemplateUpdateInputs,
         TrackSet,
         TaskDone,
@@ -118,12 +120,12 @@ public static class KernelMcpCatalog
         KernelMcpToolNames.MailSend or
         KernelMcpToolNames.TrackRename or
         KernelMcpToolNames.TrackClose or
-        KernelMcpToolNames.TemplateLs or
-        KernelMcpToolNames.TemplateCat or
+        KernelMcpToolNames.TemplateList or
+        KernelMcpToolNames.TemplateRead or
         KernelMcpToolNames.TemplateUpdateInputs or
         KernelMcpToolNames.TrackSet or
         KernelMcpToolNames.ScheduleSet or
-        KernelMcpToolNames.ScheduleRm;
+        KernelMcpToolNames.ScheduleCancel;
 
     public static bool IsCompletionOnly(string toolName) => toolName is
         KernelMcpToolNames.TaskDone or
@@ -148,27 +150,36 @@ public static class KernelMcpCatalog
                 Schema(KernelMcpReportSupport.ReportReadSchemaJson)),
             new(KernelMcpToolNames.ReportCommit, "Atomically apply block operations (replace_section, upsert, delete, move) to the track report using a ReadAnchor. Returns a compact commit receipt by default; set includeDocument=true for full renderedMarkdown and blocks.",
                 Schema(KernelMcpReportSupport.ReportCommitSchemaJson)),
-            new(KernelMcpToolNames.TaskLs, "List all tasks declared in the track.",
+            new(KernelMcpToolNames.TaskList, "List all tasks declared in the track.",
                 Schema("""{"type":"object","properties":{}}""")),
             new(KernelMcpToolNames.UserAsk, "Suspend and ask the human user one or more structured multiple-choice questions.",
                 Schema(KernelMcpReportSupport.UserAskSchemaJson)),
-            new(KernelMcpToolNames.MailLs, "List cross-track mails delivered to this track.",
+            new(KernelMcpToolNames.MailList, "List cross-track mails delivered to this track.",
                 Schema("""{"type":"object","properties":{"unreadOnly":{"type":"boolean"}}}""")),
-            new(KernelMcpToolNames.MailCat, "Read a specific mail by ID and mark it as read.",
+            new(KernelMcpToolNames.MailRead, "Read a specific mail by ID and mark it as read.",
                 Schema("""{"type":"object","required":["mailId"],"properties":{"mailId":{"type":"string"}}}""")),
             new(KernelMcpToolNames.TrackStatus, "Inspect track status, active sessions, tasks, open asks, terminals, and unread mail count.",
                 Schema("""{"type":"object","properties":{}}""")),
+            new(KernelMcpToolNames.ProviderList, "List providers, models, supported reasoning efforts, and permission modes for this Track. " +
+                "If permissionCatalogSource is dynamic and permissionModes is empty, the Track has no observed modes for that provider yet. Omit permissionMode to use its workspace default.",
+                Schema("""
+                {"type":"object","additionalProperties":false,"properties":{
+                  "provider":{"type":"string","description":"Filter to one provider, including if unavailable. Accepts canonical IDs and aliases such as agy or opencode."},
+                  "refresh":{"type":"boolean","description":"Bypass the 60-second probe cache. Defaults to false."},
+                  "includeUnavailable":{"type":"boolean","description":"Include unavailable providers and their diagnostic reasons. Defaults to false."}
+                }}
+                """)),
             new(KernelMcpToolNames.TerminalOpen, "Open or reuse an idempotent PTY terminal in the workspace.",
                 Schema("""{"type":"object","properties":{"title":{"type":"string"},"program":{"type":"string"},"args":{"type":"array","items":{"type":"string"}},"cwd":{"type":"string"},"idempotencyKey":{"type":"string"},"cols":{"type":"integer"},"rows":{"type":"integer"}}}""")),
             new(KernelMcpToolNames.TerminalRead, "Observe terminal screen frame and optional wait condition.",
                 Schema(KernelMcpReportSupport.TerminalReadSchemaJson)),
             new(KernelMcpToolNames.TerminalInput, "Send text, keys, paste, or submit action to a terminal.",
                 Schema(KernelMcpReportSupport.TerminalInputSchemaJson)),
-            new(KernelMcpToolNames.ScheduleLs, "List durable schedules and reminders configured on this track.",
+            new(KernelMcpToolNames.ScheduleList, "List durable schedules and reminders configured on this track.",
                 Schema("""{"type":"object","additionalProperties":false,"properties":{"includeTerminal":{"type":"boolean"}}}""")),
             new(KernelMcpToolNames.ScheduleSet, "Create or update a persistent one-shot reminder or recurring cron schedule that wakes this track (governance only).",
                 Schema("""{"type":"object","additionalProperties":false,"required":["title","prompt"],"properties":{"id":{"type":"string"},"title":{"type":"string"},"prompt":{"type":"string"},"runAt":{"type":"string"},"runAtMs":{"type":"integer"},"cron":{"type":"string"},"timezone":{"type":"string"},"maxOccurrences":{"type":"integer","minimum":1}}}""")),
-            new(KernelMcpToolNames.ScheduleRm, "Cancel an active schedule on this track and drop any pending wake for it (governance only).",
+            new(KernelMcpToolNames.ScheduleCancel, "Cancel an active schedule on this track and drop any pending wake for it (governance only).",
                 Schema("""{"type":"object","additionalProperties":false,"required":["scheduleId"],"properties":{"scheduleId":{"type":"string"}}}""")),
             new(KernelMcpToolNames.TaskCancel, "Cancel a task and discard any active attempt lease (task parent or Track Lead).",
                 Schema("""{"type":"object","required":["taskKey"],"properties":{"taskKey":{"type":"string"},"reason":{"type":"string"}}}""")),
@@ -180,9 +191,9 @@ public static class KernelMcpCatalog
                 Schema("""{"type":"object","required":["summary","body"],"properties":{"replyToMailId":{"type":"string"},"toTrackId":{"type":"string"},"summary":{"type":"string"},"body":{"type":"string"}}}""")),
             new(KernelMcpToolNames.TrackRename, "Rename the current track (governance only).",
                 Schema("""{"type":"object","required":["title"],"properties":{"title":{"type":"string"}}}""")),
-            new(KernelMcpToolNames.TemplateLs, "List concise template summaries (governance only).",
+            new(KernelMcpToolNames.TemplateList, "List concise template summaries (governance only).",
                 Schema("""{"type":"object","properties":{}}""")),
-            new(KernelMcpToolNames.TemplateCat, "Inspect a template manifest and source; use __current__ for the active snapshot, inputs, state and headerView; omit templateId or use __contract__ for the authoring contract (governance only).",
+            new(KernelMcpToolNames.TemplateRead, "Inspect a template manifest and source; use __current__ for the active snapshot, inputs, state, and headerView; omit templateId or use __contract__ for the authoring contract (governance only).",
                 Schema("""{"type":"object","properties":{"templateId":{"type":"string"}}}""")),
             new(KernelMcpToolNames.TemplateUpdateInputs, "Merge inputs into the active template, preserving state (governance only).",
                 Schema("""{"type":"object","required":["inputs"],"properties":{"inputs":{"type":"object"}}}""")),
@@ -195,21 +206,104 @@ public static class KernelMcpCatalog
             new(KernelMcpToolNames.TaskFail, "Report failure for the bound task attempt and discard lease (contract subagent only).",
                 Schema("""{"type":"object","required":["reason"],"properties":{"reason":{"type":"string"},"result":{}}}""")),
             new(KernelMcpToolNames.SessionList, "List conversations in this Track.",
-                Schema("""{"type":"object","additionalProperties":false,"properties":{"includeArchived":{"type":"boolean"},"parentSessionId":{"type":"string"}}}""")),
-            new(KernelMcpToolNames.SessionCreate, "Create a child conversation with an optional task contract. Reuse requestKey to retry safely.",
-                Schema("""{"type":"object","additionalProperties":false,"properties":{"title":{"type":"string"},"provider":{"type":"string"},"model":{"type":"string"},"reasoningEffort":{"type":"string"},"permissionMode":{"type":"string"},"role":{"type":"string"},"systemPrompt":{"type":"string"},"prompt":{"type":"string"},"requestKey":{"type":"string"},"notifyParent":{"enum":["none","turn_end","task_settled"]},"task":{"type":"object","additionalProperties":false,"properties":{"access":{"enum":["read_only","read_write"]},"acceptance":{"type":"string"},"gate":{"type":"string"},"dependsOn":{"type":"array","items":{"type":"string"}}}}}}""")),
+                Schema("""
+                {"type":"object","additionalProperties":false,"properties":{
+                  "includeArchived":{"type":"boolean","description":"Set true to include archived conversations."},
+                  "parentSessionId":{"type":"string","description":"Filter to direct children of this conversation."}
+                }}
+                """)),
+            new(KernelMcpToolNames.SessionCreate,
+                "Create a child conversation. Omit task for a lightweight multi-turn collaborator sharing the Track workspace. Avoid concurrent writers. " +
+                "Provide task for a formal Task Worker with a Report block, read_only isolation or a read_write lease, dependsOn scheduling, " +
+                "task_done/task_fail completion, gate verification, and task_accept/task_reject review. " +
+                "Call provider_list if unsure of provider, model, reasoningEffort, or permissionMode. Reuse requestKey to retry safely.",
+                Schema("""
+                {"type":"object","additionalProperties":false,"properties":{
+                  "title":{"type":"string","description":"Human-readable conversation title."},
+                  "provider":{"type":"string","description":"Provider ID from provider_list. Omit to use the parent provider for a plain child or the routed Track default for a Worker."},
+                  "model":{"type":"string","description":"Model ID for the target provider. Omit to use inherited or default settings."},
+                  "reasoningEffort":{"type":"string","description":"Reasoning effort supported by the selected model. Omit to use inherited or default settings."},
+                  "permissionMode":{"type":"string","description":"Use a native permission mode ID from provider_list. If permissionCatalogSource is dynamic and permissionModes is empty, omit this field to use the provider's workspace default or an applicable inherited mode. Task workspace isolation is controlled by task.access."},
+                  "role":{"type":"string","description":"Worker role used for Track template routing."},
+                  "systemPrompt":{"type":"string","description":"Additional system instructions for this conversation."},
+                  "prompt":{"type":"string","description":"Initial instruction. Omit to create an idle plain child. Required for a Task Worker."},
+                  "requestKey":{"type":"string","description":"Idempotency key scoped to the calling session and Track. Reuse with the same arguments."},
+                  "notifyParent":{"enum":["none","turn_end","task_settled"],"description":"Parent wakeup policy. Notify after a turn or when the task settles. Defaults to none for plain children and task_settled for Workers."},
+                  "task":{"type":"object","additionalProperties":false,"description":"Formal task contract. Omit for a shared-workspace collaborator.","properties":{
+                    "access":{"enum":["read_only","read_write"],"description":"Workspace access. read_only enforces filesystem isolation. read_write requires a write lease."},
+                    "acceptance":{"type":"string","description":"Acceptance criteria recorded in the Report task block."},
+                    "gate":{"type":"string","description":"Verification command run after task completion, subject to Track template policy."},
+                    "dependsOn":{"type":"array","items":{"type":"string"},"description":"Task keys that must complete before this Worker starts."}
+                  }}
+                }}
+                """)),
             new(KernelMcpToolNames.SessionRead, "Read conversation state, history, progress and pending interactions.",
-                Schema("""{"type":"object","additionalProperties":false,"properties":{"sessionId":{"type":"string"},"beforeId":{"type":"integer"},"afterId":{"type":"integer"},"limit":{"type":"integer","minimum":1,"maximum":100},"activityTurnId":{"type":"string"},"afterSequence":{"type":"integer","minimum":0},"waitMs":{"type":"integer","minimum":0,"maximum":10000}},"required":["sessionId"]}""")),
-            new(KernelMcpToolNames.SessionUpdate, "Update a child conversation. Omit fields to preserve them; null restores defaults. Configuration changes require expectedConfigVersion.",
-                Schema("""{"type":"object","additionalProperties":false,"properties":{"sessionId":{"type":"string"},"expectedConfigVersion":{"type":"integer"},"expectedAttemptId":{"type":"string"},"title":{"type":"string"},"archived":{"type":"boolean"},"provider":{"type":"string"},"model":{"type":["string","null"]},"reasoningEffort":{"type":["string","null"]},"permissionMode":{"type":["string","null"]}},"required":["sessionId"]}""")),
+                Schema("""
+                {"type":"object","additionalProperties":false,"properties":{
+                  "sessionId":{"type":"string","description":"ID of the conversation to read."},
+                  "beforeId":{"type":"integer","description":"Read history items older than this item ID."},
+                  "afterId":{"type":"integer","description":"Read history items newer than this item ID, or omit to page backward from the latest items."},
+                  "limit":{"type":"integer","minimum":1,"maximum":100,"description":"Maximum history items to return, defaulting to 20."},
+                  "activityTurnId":{"type":"string","description":"ID of the active turn whose activity you last observed."},
+                  "afterSequence":{"type":"integer","minimum":0,"description":"Last activity sequence observed for activityTurnId, used to request incremental updates."},
+                  "waitMs":{"type":"integer","minimum":0,"maximum":10000,"description":"Wait up to this many milliseconds for a relevant update when the current state permits waiting."}
+                },"required":["sessionId"]}
+                """)),
+            new(KernelMcpToolNames.SessionUpdate,
+                "Update a child conversation. Configuration changes require expectedConfigVersion. Use provider_list to discover supported values.",
+                Schema("""
+                {"type":"object","additionalProperties":false,"properties":{
+                  "sessionId":{"type":"string","description":"ID of the conversation to update."},
+                  "expectedConfigVersion":{"type":"integer","description":"Current configuration version from session read or list. Required for provider, model, effort, or permission changes."},
+                  "expectedAttemptId":{"type":"string","description":"Current Worker attempt ID, when fencing an update to a particular attempt."},
+                  "title":{"type":"string","description":"New title. Omit to keep the current title."},
+                  "archived":{"type":"boolean","description":"Set true to archive or false to reopen. Omit to preserve the current state."},
+                  "provider":{"type":"string","description":"Provider ID for an idle session. Omit to keep the current provider. Changing providers resets omitted model, reasoningEffort, and permissionMode."},
+                  "model":{"type":["string","null"],"description":"Omit to keep the current model on the same provider, use null for the provider default, or pass a model ID."},
+                  "reasoningEffort":{"type":["string","null"],"description":"Omit to keep the current effort on the same provider, use null for the model default, or pass a supported effort."},
+                  "permissionMode":{"type":["string","null"],"description":"Omit to keep the current mode on the same provider, use null for the provider default, or pass a native mode ID."}
+                },"required":["sessionId"]}
+                """)),
             new(KernelMcpToolNames.SessionSend, "Send content with requestKey, or steer a queued messageId into turnId. Default requires idle; queue waits; steer targets a running turn.",
-                Schema("""{"type":"object","additionalProperties":false,"properties":{"sessionId":{"type":"string"},"expectedAttemptId":{"type":"string"},"content":{"type":"string"},"requestKey":{"type":"string"},"messageId":{"type":"string"},"turnId":{"type":"string"},"mode":{"enum":["default","queue","steer"]}},"required":["sessionId"]}""")),
+                Schema("""
+                {"type":"object","additionalProperties":false,"properties":{
+                  "sessionId":{"type":"string","description":"ID of the conversation that should receive the message."},
+                  "expectedAttemptId":{"type":"string","description":"Require the target Worker to still be on this attempt."},
+                  "content":{"type":"string","description":"Text for a new message, supplied with requestKey in place of messageId."},
+                  "requestKey":{"type":"string","description":"Idempotency key required with new content and reused for identical retries."},
+                  "messageId":{"type":"string","description":"ID of a queued message to steer into the active turn."},
+                  "turnId":{"type":"string","description":"ID of the active turn targeted by steer mode."},
+                  "mode":{"enum":["default","queue","steer"],"description":"Choose default for idle delivery, queue to wait for dispatch, or steer to target the active turn."}
+                },"required":["sessionId"]}
+                """)),
             new(KernelMcpToolNames.SessionWithdraw, "Withdraw a queued or unresolved conversation message.",
-                Schema("""{"type":"object","additionalProperties":false,"properties":{"sessionId":{"type":"string"},"expectedAttemptId":{"type":"string"},"messageId":{"type":"string"}},"required":["sessionId","messageId"]}""")),
+                Schema("""
+                {"type":"object","additionalProperties":false,"properties":{
+                  "sessionId":{"type":"string","description":"ID of the conversation that owns the message."},
+                  "expectedAttemptId":{"type":"string","description":"Require the target Worker to still be on this attempt."},
+                  "messageId":{"type":"string","description":"ID of the queued or unresolved message to withdraw."}
+                },"required":["sessionId","messageId"]}
+                """)),
             new(KernelMcpToolNames.SessionControl, "Stop a specific turn, reconnect an unknown session, reset context, or compact an idle conversation.",
-                Schema("""{"type":"object","additionalProperties":false,"properties":{"sessionId":{"type":"string"},"expectedAttemptId":{"type":"string"},"action":{"enum":["stop","reconnect","reset_context","compact"]},"turnId":{"type":"string"},"expectedEpoch":{"type":"integer"}},"required":["sessionId","action"]}""")),
+                Schema("""
+                {"type":"object","additionalProperties":false,"properties":{
+                  "sessionId":{"type":"string","description":"ID of the conversation to control."},
+                  "expectedAttemptId":{"type":"string","description":"Require the target Worker to still be on this attempt."},
+                  "action":{"enum":["stop","reconnect","reset_context","compact"],"description":"Lifecycle operation to perform on the target conversation."},
+                  "turnId":{"type":"string","description":"ID of the observed turn, required for stop."},
+                  "expectedEpoch":{"type":"integer","description":"Require this conversation epoch when reconnecting or resetting context."}
+                },"required":["sessionId","action"]}
+                """)),
             new(KernelMcpToolNames.SessionRespond, "Answer a pending ask with answers, or an approval with executionId and optionId.",
-                Schema("""{"type":"object","additionalProperties":false,"properties":{"sessionId":{"type":"string"},"interactionId":{"type":"string"},"executionId":{"type":"string"},"optionId":{"type":"string"},"answers":{}},"required":["sessionId","interactionId"]}"""))
+                Schema("""
+                {"type":"object","additionalProperties":false,"properties":{
+                  "sessionId":{"type":"string","description":"ID of the conversation with the pending interaction."},
+                  "interactionId":{"type":"string","description":"ID of the pending ask or approval."},
+                  "executionId":{"type":"string","description":"Execution ID from the pending approval, required for approval responses."},
+                  "optionId":{"type":"string","description":"ID of the option selected for the pending approval."},
+                  "answers":{"description":"Answers to the pending ask in the format specified by that interaction."}
+                },"required":["sessionId","interactionId"]}
+                """))
         ];
     }
 }
@@ -224,6 +318,8 @@ public static class KernelMcpDispatcher
         CancellationToken ct = default)
     {
         var args = arguments.ValueKind == JsonValueKind.Undefined ? JsonHelpers.EmptyObject : arguments;
+        if (!KernelMcpToolNames.All.Contains(toolName))
+            throw KernelException.NotFound($"Unknown kernel MCP tool '{toolName}'.");
         if (toolName is KernelMcpToolNames.SystemUpgradeCheck or KernelMcpToolNames.SystemUpgradeApply or KernelMcpToolNames.SystemUpgradeRollback)
         {
             return await kernel.InvokeSystemUpgradeAsync(caller,
@@ -236,8 +332,9 @@ public static class KernelMcpDispatcher
             .ConfigureAwait(false);
 
         var result = await ExecuteAuthorizedAsync(kernel, caller, toolName, args, expectedPolicyGeneration, origin, ct).ConfigureAwait(false);
-        if (!(toolName == KernelMcpToolNames.TrackSet && args.TryGetProperty("dryRun", out var dry) && dry.ValueKind == JsonValueKind.True))
-            await kernel.Actors.GetOrActivate(caller.TrackId).AfterPolicyEventAsync("tool." + toolName,
+        if (toolName != KernelMcpToolNames.ProviderList &&
+            !(toolName == KernelMcpToolNames.TrackSet && args.TryGetProperty("dryRun", out var dry) && dry.ValueKind == JsonValueKind.True))
+            await kernel.Actors.GetOrActivate(caller.TrackId).AfterMcpToolCallAsync("perga", toolName,
                 JsonHelpers.ToElement(new { arguments = args, result }), ct).ConfigureAwait(false);
         return result;
     }
@@ -257,12 +354,12 @@ public static class KernelMcpDispatcher
             {
                 var commitReq = ParseReportCommitArgs(args);
                 var includeDocument = KernelMcpReportSupport.ParseIncludeDocumentArg(args);
-                var res = await kernel.CommitReportAsync(caller.TrackId, caller.SessionId, commitReq, ct, caller.ExecutionOrigin)
+                var res = await kernel.CommitReportAsync(caller.TrackId, caller.SessionId, commitReq, ct, caller.ExecutionOrigin, expectedPolicyGeneration)
                     .ConfigureAwait(false);
                 return KernelMcpReportSupport.FormatReportCommitResponse(res, includeDocument);
             }
 
-            case KernelMcpToolNames.TaskLs:
+            case KernelMcpToolNames.TaskList:
             {
                 var tasks = await kernel.ListTasksAsync(caller.TrackId, ct).ConfigureAwait(false);
                 return JsonHelpers.ToElement(tasks);
@@ -280,7 +377,7 @@ public static class KernelMcpDispatcher
                 return await kernel.AskUserAsync(caller.TrackId, caller.SessionId, questions, ct).ConfigureAwait(false);
             }
 
-            case KernelMcpToolNames.MailLs:
+            case KernelMcpToolNames.MailList:
             {
                 var unreadOnly = JsonHelpers.TryGetPropertyIgnoreCase(args, ["unreadOnly", "unread_only"], out var u) &&
                                  u.ValueKind == JsonValueKind.True;
@@ -288,7 +385,7 @@ public static class KernelMcpDispatcher
                 return JsonHelpers.ToElement(mails);
             }
 
-            case KernelMcpToolNames.MailCat:
+            case KernelMcpToolNames.MailRead:
             {
                 var mailId = RequireStringArg(args, ["mailId", "mail_id", "id"]);
                 var mail = await kernel.ReadMailAsync(caller.TrackId, mailId, ct).ConfigureAwait(false);
@@ -301,6 +398,15 @@ public static class KernelMcpDispatcher
                 return JsonHelpers.ToElement(status);
             }
 
+            case KernelMcpToolNames.ProviderList:
+            {
+                var query = ParseSessionArgs<ProviderListArgs>(args, toolName);
+                if (query.Provider is null && JsonHelpers.TryGetPropertyIgnoreCase(args, ["provider"], out _))
+                    throw KernelException.InvalidArgument("'provider' must be a string.");
+                return JsonHelpers.ToElement(await kernel.ListProvidersForTrackAsync(caller.TrackId, query.Provider,
+                    query.Refresh, query.IncludeUnavailable, ct).ConfigureAwait(false));
+            }
+
             case KernelMcpToolNames.SessionList:
                 return JsonHelpers.ToElement(await kernel.ListSessionsAsync(caller.TrackId,
                     ParseSessionArgs<SessionListFilter>(args, toolName), Principal(caller), ct).ConfigureAwait(false));
@@ -309,7 +415,8 @@ public static class KernelMcpDispatcher
             {
                 var request = ParseSessionArgs<CreateSessionRequest>(args, toolName);
                 var created = await kernel.CreateSessionAsync(caller.TrackId, request,
-                    OptionalTypedStringArg(args, ["requestKey"]) ?? Guid.NewGuid().ToString("N"), Principal(caller), ct).ConfigureAwait(false);
+                    OptionalTypedStringArg(args, ["requestKey"]) ?? Guid.NewGuid().ToString("N"),
+                    Principal(caller) with { AuthorizedPolicyGeneration = expectedPolicyGeneration }, ct).ConfigureAwait(false);
                 return JsonHelpers.ToElement(created.Receipt);
             }
 
@@ -327,7 +434,7 @@ public static class KernelMcpDispatcher
             case KernelMcpToolNames.SessionUpdate:
                 return JsonHelpers.ToElement(await kernel.UpdateSessionAsync(RequireStringArg(args, ["sessionId"]),
                     ParseSessionArgs<UpdateSessionRequest>(args, toolName),
-                    Principal(caller), ct).ConfigureAwait(false));
+                    Principal(caller) with { AuthorizedPolicyGeneration = expectedPolicyGeneration }, ct).ConfigureAwait(false));
 
             case KernelMcpToolNames.SessionSend:
                 return JsonHelpers.ToElement(await kernel.SendSessionMessageAsync(RequireStringArg(args, ["sessionId"]),
@@ -431,12 +538,12 @@ public static class KernelMcpDispatcher
                 return JsonHelpers.ToElement(res);
             }
 
-            case KernelMcpToolNames.TemplateLs:
+            case KernelMcpToolNames.TemplateList:
                 return JsonHelpers.ToElement(kernel.ListTemplates().Select(m => new { id = m.Id, title = m.Title,
                     description = m.Description, inputKeys = m.InputsSchema.EnumerateObject().Select(p => p.Name).ToArray(),
                     plugins = m.DefaultPlugins, hasSchedules = m.Schedules.Count > 0, hasHeaderView = m.HasHeaderView }));
 
-            case KernelMcpToolNames.TemplateCat:
+            case KernelMcpToolNames.TemplateRead:
                 return TemplateStringArg(args, "templateId") == "__current__"
                     ? await kernel.InspectCurrentTemplateAsync(caller.TrackId, caller.SessionId, ct).ConfigureAwait(false)
                     : kernel.InspectTemplate(TemplateStringArg(args, "templateId"));
@@ -466,7 +573,7 @@ public static class KernelMcpDispatcher
                 return JsonHelpers.ToElement(res);
             }
 
-            case KernelMcpToolNames.ScheduleLs:
+            case KernelMcpToolNames.ScheduleList:
             {
                 RejectUnknownArgs(args, ToolSchema(toolName));
                 var includeTerminal = false;
@@ -489,7 +596,7 @@ public static class KernelMcpDispatcher
                 return JsonHelpers.ToElement(schedule);
             }
 
-            case KernelMcpToolNames.ScheduleRm:
+            case KernelMcpToolNames.ScheduleCancel:
             {
                 RejectUnknownArgs(args, ToolSchema(toolName));
                 var scheduleId = RequireStringArg(args, ["scheduleId"]);
@@ -523,8 +630,10 @@ public static class KernelMcpDispatcher
         }
     }
 
-    private static InteropPrincipal Principal(McpSessionPrincipal caller) => new InteropPrincipal.Session(
+    private static InteropPrincipal.Session Principal(McpSessionPrincipal caller) => new(
         caller.TrackId, caller.SessionId, caller.IsLead, caller.BoundAttemptId, 0, caller.Token, caller.ExecutionOrigin);
+
+    private sealed record ProviderListArgs(string? Provider = null, bool Refresh = false, bool IncludeUnavailable = false);
 
     private static T ParseSessionArgs<T>(JsonElement args, string toolName)
     {
@@ -616,7 +725,7 @@ public static class KernelMcpDispatcher
             anchorElem.ValueKind != JsonValueKind.Object)
         {
             throw KernelException.InvalidArgument(
-                "Missing 'anchor' object. Pass the ReadAnchor returned by perga_report_read, e.g. {\"docRev\":0,\"knownBlockRevs\":{\"b_1234\":1},\"wholeDocumentRead\":true}.");
+                "Missing 'anchor' object. Pass the ReadAnchor returned by report_read, e.g. {\"docRev\":0,\"knownBlockRevs\":{\"b_1234\":1},\"wholeDocumentRead\":true}.");
         }
 
         var anchor = JsonHelpers.Deserialize<ReadAnchor>(anchorElem)

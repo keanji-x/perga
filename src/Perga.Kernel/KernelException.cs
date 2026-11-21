@@ -35,8 +35,8 @@ public sealed class KernelException : Exception
     public static KernelException Gone(string message) =>
         new(KernelErrorCode.Gone, message);
 
-    public static KernelException InvalidArgument(string message) =>
-        new(KernelErrorCode.InvalidArgument, message);
+    public static KernelException InvalidArgument(string message, string? nextStep = null) =>
+        new(KernelErrorCode.InvalidArgument, message, nextStep);
 
     public static KernelException Conflict(string message, string? nextStep = null) =>
         new(KernelErrorCode.Conflict, message, nextStep);
@@ -47,6 +47,6 @@ public sealed class KernelException : Exception
     public static KernelException PolicyDenied(string reason) =>
         new(KernelErrorCode.PolicyDenied, reason);
 
-    public static KernelException PreconditionFailed(string message) =>
-        new(KernelErrorCode.PreconditionFailed, message);
+    public static KernelException PreconditionFailed(string message, string? nextStep = null) =>
+        new(KernelErrorCode.PreconditionFailed, message, nextStep);
 }
