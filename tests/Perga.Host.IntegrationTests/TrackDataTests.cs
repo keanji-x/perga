@@ -197,6 +197,74 @@ public sealed class TrackDataTests
         var current = (await kernel.GetTrackAggregateAsync(created.Id)).Track;
         Assert.Equal(1, current.DataRev);
         Assert.Equal("updated", current.Data.GetProperty("value").GetString());
+
+        // Input updates validate the effective schema even when Track.Data is empty (metadata-only).
+        const string emptyDataTemplate = """
+            export default defineTemplate({
+              id: 'empty-input-gated', title: 'Empty Input Gated',
+              inputs: { mode: { type: 'string', default: 'optional' } },
+              setup(inputs) {
+                return {
+                  data: {
+                    schema: t => inputs.mode === 'invalid'
+                      ? { label: 'not-a-schema' }
+                      : { label: inputs.mode === 'required' ? t.string() : t.string().optional() },
+                    initial: () => ({})
+                  }
+                };
+              }
+            });
+            """;
+        kernel.Templates.RegisterTemplate(emptyDataTemplate);
+        var emptyTrack = (await kernel.CreateTrackAsync(new(area.Id, TemplateId: "empty-input-gated"))).Track;
+        using var reqMode = await host.Client.PatchAsJsonAsync($"/api/v1/tracks/{emptyTrack.Id}/template/inputs", new { mode = "required" });
+        Assert.Equal(HttpStatusCode.Conflict, reqMode.StatusCode);
+        using var badMode = await host.Client.PatchAsJsonAsync($"/api/v1/tracks/{emptyTrack.Id}/template/inputs", new { mode = "invalid" });
+        Assert.Equal(HttpStatusCode.BadRequest, badMode.StatusCode);
+    }
+
+    [Fact]
+    public async Task LargeEquityResearchEventHistorySupportsKeyedUpsertAndNoopRetry()
+    {
+        await using var host = NewHost();
+        var kernel = host.Services.GetRequiredService<IPergaKernel>();
+        var package = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../../templates/equity-research"));
+        kernel.Templates.RegisterTemplate(Perga.PolicyVm.TemplateBundle.PackDirectory(package));
+        var area = await kernel.CreateAreaAsync(new("Research", DefaultCwd: host.DataDir));
+        var track = (await kernel.CreateTrackAsync(new(area.Id, TemplateId: "equity-research"))).Track;
+        var url = $"/api/v1/tracks/{track.Id}/data";
+
+        var seedEvents = Enumerable.Range(1, 400).Select(i => new
+        {
+            id = $"evt-{i:D3}",
+            date = "2026-01-15",
+            title = $"Event {i}",
+            verdict = "inline",
+            summary = "Quarterly check",
+            expects = Array.Empty<object>(),
+        }).ToArray();
+
+        using var seeded = await host.Client.PatchAsJsonAsync(url, new { expectedDataRev = 0, patch = new { events = seedEvents } });
+        seeded.EnsureSuccessStatusCode();
+
+        using var updated = await host.Client.PatchAsJsonAsync(url, new
+        {
+            expectedDataRev = 1,
+            patch = new { events = new Dictionary<string, object> { ["$upsert"] = new[] { new { id = "evt-200", title = "Event 200 Revised" } } } }
+        });
+        updated.EnsureSuccessStatusCode();
+        var updatedBody = await updated.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(2, updatedBody.GetProperty("dataRev").GetInt64());
+        Assert.Equal("Event 200 Revised", updatedBody.GetProperty("data").GetProperty("events")[199].GetProperty("title").GetString());
+
+        using var noop = await host.Client.PatchAsJsonAsync(url, new
+        {
+            expectedDataRev = 2,
+            patch = new { events = new Dictionary<string, object> { ["$upsert"] = new[] { new { id = "evt-200", title = "Event 200 Revised" } } } }
+        });
+        noop.EnsureSuccessStatusCode();
+        var noopBody = await noop.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(2, noopBody.GetProperty("dataRev").GetInt64());
     }
 
     private static JsonElement Parse(string json) => JsonSerializer.Deserialize<JsonElement>(json);

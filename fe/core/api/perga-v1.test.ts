@@ -291,6 +291,12 @@ describe('Perga /api/v1 protocol contracts', () => {
     expect(operation.path).toBe('/api/v1/tracks/trk_1/views');
     expect(views.dataRev).toBe(receipt.dataRev);
     expect(views.views.ledger).toEqual(receipt.data);
+
+    const reportOp = readTrackReportOperation('trk_1');
+    const report = reportOp.responseSchema.parse({
+      docRev: 1, dataRev: 2, summary: 'Ledger', renderedMarkdown: '# Ledger', blocks: [], tasks: [], diagnostics: [],
+    });
+    expect(report.dataRev).toBe(2);
   });
 
   it('maps Track aggregate snapshot, tasks, report blocks, asks, and planner switch to /api/v1', () => {

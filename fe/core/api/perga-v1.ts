@@ -341,6 +341,7 @@ export type ValidationDiagnosticDto = z.infer<typeof validationDiagnosticDtoSche
 
 export const reportReadResultDtoSchema = z.object({
   docRev: z.number().int().default(0),
+  dataRev: z.number().int().nonnegative().nullish(),
   summary: z.string().nullish().transform((v) => v ?? ''),
   renderedMarkdown: z.string().nullish().transform((v) => v ?? ''),
   blocks: z.array(reportBlockDtoSchema).nullish().transform((v) => v ?? []),

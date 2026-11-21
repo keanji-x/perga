@@ -14681,6 +14681,7 @@
                   {
                     "type": "object",
                     "required": ["patch"],
+                    "additionalProperties": false,
                     "properties": {
                       "patch": { "type": "object", "additionalProperties": true },
                       "expectedDataRev": { "type": "integer", "format": "int64", "minimum": 0 }
@@ -26337,6 +26338,11 @@
         "properties": {
           "docRev": {
             "type": "integer"
+          },
+          "dataRev": {
+            "type": ["integer", "null"],
+            "format": "int64",
+            "minimum": 0
           },
           "summary": {
             "type": "string"
