@@ -19,6 +19,7 @@ import type {
 } from '../../../../../core/domain/report-widget.ts';
 import { useState } from '../../../ui/state/public.ts';
 import { ReportCheckpointsBlock } from '../checkpoints/public.tsx';
+import { ReportFlowBlock } from '../flow/public.tsx';
 import { composeItemMarkdown, EditorialByline, EditorialGateStrip } from '../editorial/primitives.tsx';
 import { EditorialMetricsStrip } from '../editorial/metrics.tsx';
 import { SeamlessHtmlWidget } from './seamless-html.tsx';
@@ -203,6 +204,7 @@ export function ReportWidgetBlock({
   renderMarkdown,
   onOpenFile,
   onOpenWorker,
+  onCancelFlowNode,
 }: Readonly<{
   payload: WidgetBlockPayload;
   projection?: TemplateViewsProjection | TemplateViewsState;
@@ -213,6 +215,7 @@ export function ReportWidgetBlock({
   renderMarkdown?: (markdown: string, key: string) => ReactNode;
   onOpenFile?: (path: string) => void;
   onOpenWorker?: (sessionId: string) => void;
+  onCancelFlowNode?: (nodeId: string) => Promise<void> | void;
 }>) {
   if (isTemplateViewsState(rawProjection)) {
     if (rawProjection.status === 'loading') {
@@ -252,6 +255,30 @@ export function ReportWidgetBlock({
         <div className={styles.diagnosticTitle}>视图投影失败：{payload.view}</div>
         <div>{diag.message}</div>
       </div>
+    );
+  }
+
+  // Native Unified Track Flow (`builtin:flow`) reads directly from `projection.flow`.
+  if (payload.use === 'builtin:flow') {
+    const flow = projection.flow;
+    if (flow == null || (flow.nodes.length === 0 && flow.archived.length === 0)) {
+      return (
+        <div className={styles.diagnostic} role="note">
+          <div className={styles.diagnosticTitle}>{payload.title ?? '调度流程'}</div>
+          <div>当前暂无活跃或已归档的流程步骤。</div>
+        </div>
+      );
+    }
+    return (
+      <ReportFlowBlock
+        flow={flow}
+        title={payload.title ?? undefined}
+        taskRows={taskRows}
+        renderText={renderText}
+        renderMarkdown={renderMarkdown}
+        onOpenWorker={onOpenWorker}
+        onCancelFlowNode={onCancelFlowNode}
+      />
     );
   }
 

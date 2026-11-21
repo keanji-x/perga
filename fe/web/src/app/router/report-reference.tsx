@@ -56,7 +56,8 @@ function ReferenceDocument({ transport, unauthorized, target, detail, report, on
   const files = useMemo(() => createTrackWorkspaceFilesPort(transport, unauthorized, target.trackId),
     [transport, unauthorized, target.trackId]);
   const resolveSeries = useReportSeriesResolver(transport, target.trackId, report.blocks, unauthorized);
-  const templateViews = useTrackTemplateViews(transport, target.trackId, report.blocks, unauthorized);
+  const hasWidget = (report.blocks ?? []).some((block) => block.kind === 'widget');
+  const templateViews = useTrackTemplateViews(transport, target.trackId, unauthorized, hasWidget);
   return <ReportDocument report={report} empty={<EmptyReportReference />} fileRoot={toTrack(trackDtoToWire(detail.track)).agentCwd}
     onOpenLink={onOpenLink} onOpenSourceLink={source => onOpenSource(target.trackId, source)}
     onOpenFileLink={file => onOpenFile(target.trackId, file)}

@@ -1,6 +1,6 @@
 import { priorityConversation } from '../../../../core/domain/activity.ts';
 import { trackSchedulesOperation, setTrackScheduleOperation, cancelTrackScheduleOperation, triggerTrackScheduleOperation, trackTemplateOperation, updateTrackTemplateInputsOperation } from '../../../../core/domain/track-schedules.ts';
-import { trackSchedules, trackTemplate, trackDetail } from '../../../../core/events/query-keys.ts';
+import { trackSchedules, trackTemplate, trackDetail, trackViews as trackViewsKey, trackReport } from '../../../../core/events/query-keys.ts';
 import { useRecoveryMutation } from '../providers/recovery-mutation.ts';
 import type { ApiOperation } from '../../../../core/api/types.ts';
 import type { TrackAggregateSnapshotDto } from '../../../../core/api/schemas.ts';
@@ -105,7 +105,7 @@ import { ReportFileViewer } from '../../features/report/file-viewer/public.tsx';
 import { ReportOutline } from '../../features/report/outline/public.tsx';
 import { RecentFiles } from '../../features/report/recent-files/public.tsx';
 import {
-  backlinkCountsByBlock, deriveReportTasks, type ReportLinkTarget,
+  backlinkCountsByBlock, cancelFlowNodeOperation, deriveReportTasks, type ReportLinkTarget,
 } from '../../../../core/domain/report.ts';
 import {
   parseWorkspaceRelativeFilePath, type ReportFileLinkTarget,
@@ -1480,7 +1480,7 @@ function TrackRouteBody({
   const resolveSeries = useReportSeriesResolver(transport, track.id, reportBlocks, unauthorized);
   /* One polled read of the track's previews, only while the report has a `preview` block. */
   const resolvePreview = useReportPreviewResolver(transport, track.id, reportBlocks, unauthorized, isPergaTrack);
-  const templateViews = useTrackTemplateViews(transport, track.id, reportBlocks, unauthorized, isPergaTrack);
+  const templateViews = useTrackTemplateViews(transport, track.id, unauthorized, isPergaTrack);
   const previewViewports = useReportPreviewViewports(track.id);
   /* The cards this route can open, asked of the registry through the list the board
    * draws. A worker card whose kind no entry claims is `unknown` and its `?card=`
@@ -1694,6 +1694,8 @@ function TrackRouteBody({
         protocolClient.invalidateQueries({ queryKey: trackSchedules(track.id) }),
         protocolClient.invalidateQueries({ queryKey: trackTemplate(track.id) }),
         protocolClient.invalidateQueries({ queryKey: trackDetail(track.id) }),
+        protocolClient.invalidateQueries({ queryKey: trackViewsKey(track.id) }),
+        protocolClient.invalidateQueries({ queryKey: trackReport(track.id) }),
       ]);
     },
   });
@@ -1715,6 +1717,7 @@ function TrackRouteBody({
         trackId={track.id}
         openedAt={navigationCompletedAt}
         templateViews={templateViews}
+        onCancelFlowNode={protocolWritable ? (nodeId) => protocolWrite(cancelFlowNodeOperation(track.id, nodeId)) : undefined}
         resolveSeries={resolveSeries}
         resolvePreview={resolvePreview}
         previewViewports={previewViewports}

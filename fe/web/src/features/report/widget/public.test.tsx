@@ -1,7 +1,11 @@
-import { fireEvent, render, screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { TemplateViewsProjection } from '../../../../../core/domain/report-widget.ts';
+import type { TrackReport } from '../../../../../core/domain/report.ts';
+import { ReportDocument } from '../document/public.tsx';
 import { ReportWidgetBlock } from './public.tsx';
+
+afterEach(() => { cleanup(); });
 
 describe('ReportWidgetBlock (Scheme B Unified VO)', () => {
   it('renders builtin:stepper and builtin:table natively from projected views', () => {
@@ -22,6 +26,7 @@ describe('ReportWidgetBlock (Scheme B Unified VO)', () => {
       },
       widgets: {},
       dataRev: 0,
+      flowRev: 0,
       diagnostics: [],
       humanReadOnly: false,
     };
@@ -59,6 +64,7 @@ describe('ReportWidgetBlock (Scheme B Unified VO)', () => {
         './widgets/range-axis.html': '<!doctype html><html><body>axis</body></html>',
       },
       dataRev: 0,
+      flowRev: 0,
       diagnostics: [],
       humanReadOnly: true,
     };
@@ -118,6 +124,7 @@ describe('ReportWidgetBlock (Scheme B Unified VO)', () => {
       },
       widgets: {},
       dataRev: 4,
+      flowRev: 0,
       diagnostics: [{ view: 'brokenView', message: 'boom' }],
       humanReadOnly: true,
     };
@@ -191,6 +198,7 @@ describe('ReportWidgetBlock (Scheme B Unified VO)', () => {
       },
       widgets: { './widgets/delivery-flow.html': '<!doctype html><html><body>dag</body></html>' },
       dataRev: 0,
+      flowRev: 0,
       diagnostics: [],
       humanReadOnly: true,
     };
@@ -264,5 +272,142 @@ describe('ReportWidgetBlock (Scheme B Unified VO)', () => {
     expect(fallbackEntries.textContent).toContain('待关注');
     expect(fallbackEntries.textContent).not.toContain('[]');
     expect(fallbackEntries.textContent).toContain('无参与者记录');
+  });
+
+  it('dispatches builtin:flow widget from projection.flow and handles empty flow cleanly', () => {
+    const onCancelFlowNode = vi.fn();
+    const projection: TemplateViewsProjection = {
+      templateId: '',
+      views: {},
+      widgets: {},
+      dataRev: 0,
+      flowRev: 2,
+      flow: {
+        rev: 2,
+        nodes: [
+          {
+            id: 'build',
+            title: '编译与单测',
+            source: 'agent',
+            whenKind: 'immediate',
+            after: [],
+            doKind: 'run',
+            canceled: false,
+            status: 'running',
+            outcome: 'none',
+            runCount: 1,
+            firedCount: 0,
+            waitingOn: [],
+            gates: [],
+          },
+        ],
+        archived: [],
+      },
+      diagnostics: [],
+      humanReadOnly: false,
+    };
+
+    const { rerender } = render(
+      <ReportWidgetBlock
+        payload={{ use: 'builtin:flow', view: 'flow', title: '交付流水线' }}
+        projection={{ status: 'ready', projection }}
+        renderText={(text) => <span>{text}</span>}
+        onCancelFlowNode={onCancelFlowNode}
+      />,
+    );
+
+    expect(screen.getByRole('region', { name: '交付流水线' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '取消节点' }));
+    expect(onCancelFlowNode).toHaveBeenCalledWith('build');
+
+    rerender(
+      <ReportWidgetBlock
+        payload={{ use: 'builtin:flow', view: 'flow', title: '空流程' }}
+        projection={{ status: 'ready', projection: { ...projection, flow: { rev: 2, nodes: [], archived: [] } } }}
+        renderText={(text) => <span>{text}</span>}
+      />,
+    );
+    expect(screen.getByRole('note').textContent).toContain('当前暂无活跃或已归档的流程步骤。');
+  });
+
+  it('auto-renders flow in ReportDocument for template-less tracks without duplicating explicit builtin:flow', () => {
+    const projection: TemplateViewsProjection = {
+      templateId: '',
+      views: {},
+      widgets: {},
+      dataRev: 0,
+      flowRev: 1,
+      flow: {
+        rev: 1,
+        nodes: [
+          {
+            id: 'step-1',
+            title: '零配置自动调度步骤',
+            source: 'agent',
+            whenKind: 'immediate',
+            after: [],
+            doKind: 'run',
+            canceled: false,
+            status: 'running',
+            outcome: 'none',
+            runCount: 1,
+            firedCount: 0,
+            waitingOn: [],
+            gates: [],
+          },
+        ],
+        archived: [],
+      },
+      diagnostics: [],
+      humanReadOnly: false,
+    };
+
+    const templateLessReport: TrackReport = {
+      summary: '',
+      body: '',
+      blocks: [
+        { id: 'b_target', kind: 'prose', payload: { markdown: '# Target\n\nShip Unified Track Flow.' } },
+        { id: 'b_notes', kind: 'prose', payload: { markdown: '# Notes\n\nDetails below.' } },
+      ],
+    };
+
+    const { container, rerender } = render(
+      <ReportDocument
+        report={templateLessReport}
+        empty={<p>Empty</p>}
+        templateViews={{ status: 'ready', projection }}
+      />,
+    );
+
+    // Auto-rendered right after `# Target` and before `# Notes`
+    const rows = [...container.querySelectorAll('[data-nc-report] > div')];
+    const targetIdx = rows.findIndex((el) => el.textContent?.includes('Ship Unified Track Flow.'));
+    const flowIdx = rows.findIndex((el) => el.hasAttribute('data-nc-auto-flow'));
+    const notesIdx = rows.findIndex((el) => el.textContent?.includes('Details below.'));
+    expect(targetIdx).toBeGreaterThanOrEqual(0);
+    expect(flowIdx).toBe(targetIdx + 1);
+    expect(notesIdx).toBeGreaterThan(flowIdx);
+    expect(screen.getAllByRole('region', { name: '调度流程' })).toHaveLength(1);
+
+    // When an explicit `builtin:flow` widget block exists, do NOT duplicate auto-flow
+    const explicitFlowReport: TrackReport = {
+      summary: '',
+      body: '',
+      blocks: [
+        { id: 'b_target', kind: 'prose', payload: { markdown: '# Target\n\nExplicit flow.' } },
+        { id: 'b_flow', kind: 'widget', payload: { use: 'builtin:flow', view: 'flow', title: '显式流程' } },
+      ],
+    };
+
+    rerender(
+      <ReportDocument
+        report={explicitFlowReport}
+        empty={<p>Empty</p>}
+        templateViews={{ status: 'ready', projection }}
+      />,
+    );
+
+    expect(container.querySelector('[data-nc-auto-flow]')).toBeNull();
+    expect(screen.getAllByRole('region', { name: '显式流程' })).toHaveLength(1);
   });
 });
