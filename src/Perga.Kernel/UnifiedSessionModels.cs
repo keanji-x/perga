@@ -5,16 +5,16 @@ using Perga.Contracts;
 namespace Perga.Kernel;
 
 [JsonConverter(typeof(OptionalStringConverter))]
-public readonly record struct Optional<T>(T Value)
+public readonly record struct OptionalString(string? Value)
 {
     public bool IsSet { get; } = true;
 }
 
-public sealed class OptionalStringConverter : JsonConverter<Optional<string?>>
+public sealed class OptionalStringConverter : JsonConverter<OptionalString>
 {
     public override bool HandleNull => true;
-    public override Optional<string?> Read(ref Utf8JsonReader reader, Type type, JsonSerializerOptions options) => new(reader.GetString());
-    public override void Write(Utf8JsonWriter writer, Optional<string?> value, JsonSerializerOptions options) => writer.WriteStringValue(value.Value);
+    public override OptionalString Read(ref Utf8JsonReader reader, Type type, JsonSerializerOptions options) => new(reader.GetString());
+    public override void Write(Utf8JsonWriter writer, OptionalString value, JsonSerializerOptions options) => writer.WriteStringValue(value.Value);
 }
 
 public sealed record SessionListFilter(bool IncludeArchived = false, string? ParentSessionId = null);
@@ -23,8 +23,8 @@ public sealed record SessionReadQuery(long AfterId = 0, long? BeforeId = null, i
 public sealed record SessionTaskRequest(string? Access = null, string? Acceptance = null, string? Gate = null,
     IReadOnlyList<string>? DependsOn = null);
 public sealed record UpdateSessionRequest(long? ExpectedConfigVersion = null, string? Title = null, bool? Archived = null,
-    string? Provider = null, Optional<string?> Model = default, Optional<string?> ReasoningEffort = default,
-    Optional<string?> PermissionMode = default, string? ExpectedAttemptId = null);
+    string? Provider = null, OptionalString Model = default, OptionalString ReasoningEffort = default,
+    OptionalString PermissionMode = default, string? ExpectedAttemptId = null);
 public sealed record SendSessionMessageRequest(string? Content = null, string? RequestKey = null, string Mode = "default",
     string? TurnId = null, string? MessageId = null, string? ExpectedAttemptId = null);
 public sealed record SessionMessageReceipt(string MessageId, string SessionId, string? TurnId, string Delivery, bool Replay = false);

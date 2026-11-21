@@ -17,14 +17,25 @@ public static class SessionPolicy
     public static void RequireAccess(InteropPrincipal principal, AgentSessionDto target,
         AgentSessionDto? caller, bool write, bool activeTurn = false, bool destructive = false)
     {
-        if (principal is InteropPrincipal.Human) return;
+        if (AccessError(principal, target, caller, write, activeTurn, destructive) is { } error)
+            throw KernelException.Forbidden(error);
+    }
+
+    public static bool CanAccess(InteropPrincipal principal, AgentSessionDto target,
+        AgentSessionDto? caller, bool write, bool activeTurn = false, bool destructive = false) =>
+        AccessError(principal, target, caller, write, activeTurn, destructive) is null;
+
+    private static string? AccessError(InteropPrincipal principal, AgentSessionDto target,
+        AgentSessionDto? caller, bool write, bool activeTurn, bool destructive)
+    {
+        if (principal is InteropPrincipal.Human) return null;
         if (caller is null || caller.TrackId != target.TrackId || caller.ArchivedAtMs is not null)
-            throw KernelException.Forbidden("The session is outside the caller's ownership tree.");
+            return "The session is outside the caller's ownership tree.";
         var self = caller.Id == target.Id;
         if (self && write && (activeTurn || destructive))
-            throw KernelException.Forbidden("A session cannot modify or interrupt its own execution.");
-        if ((!write && self) || target.ParentSessionId == caller.Id || caller.IsLead && !self) return;
-        throw KernelException.Forbidden("The session is outside the caller's ownership tree.");
+            return "A session cannot modify or interrupt its own execution.";
+        if ((!write && self) || target.ParentSessionId == caller.Id || caller.IsLead && !self) return null;
+        return "The session is outside the caller's ownership tree.";
     }
 
     public static void RequireCreate(InteropPrincipal principal, AgentSessionDto? caller, string trackId,

@@ -80,6 +80,46 @@ public sealed class UnifiedSessionMcpTests
     }
 
     [Theory]
+    [InlineData(KernelMcpToolNames.SessionList, "{\"extra\":true}")]
+    [InlineData(KernelMcpToolNames.SessionCreate, "{\"task\":{\"extra\":true}}")]
+    [InlineData(KernelMcpToolNames.SessionCreate, "{\"TASK\":{\"extra\":true}}")]
+    public async Task SessionToolsRejectPropertiesOutsideTheirSchema(string tool, string arguments)
+    {
+        await using var host = new PergaHostTestCluster();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var kernel = host.Services.GetRequiredService<IPergaKernel>();
+        var (_, lead) = await host.CreateTrackAsync();
+        host.AgentRuntime.SetTurnHandler(HoldTurns);
+        var token = await StartCaller(host, kernel, lead, deadline.Token);
+        await Error(host, token, tool, JsonSerializer.Deserialize<JsonElement>(arguments), "invalid_argument", deadline.Token);
+    }
+
+    [Fact]
+    public async Task SessionUpdateHonorsExpectedAttemptId()
+    {
+        await using var host = new PergaHostTestCluster();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var ct = deadline.Token;
+        var kernel = host.Services.GetRequiredService<IPergaKernel>();
+        var (_, lead) = await host.CreateTrackAsync();
+        host.AgentRuntime.SetTurnHandler(HoldTurns);
+        var token = await StartCaller(host, kernel, lead, ct);
+        var child = await Success<SessionCreationReceipt>(host, token, KernelMcpToolNames.SessionCreate,
+            new { title = "original", prompt = "work", task = new { access = "read_only" } }, ct);
+        var page = await WaitPage(kernel, child.Session.Id, p => p.State == "running", ct);
+        var attemptId = Assert.IsType<string>(page.Session.BoundAttemptId);
+        await Error(host, token, KernelMcpToolNames.SessionUpdate,
+            new { sessionId = child.Session.Id, title = "stale", expectedAttemptId = "stale-attempt" }, "conflict", ct);
+        Assert.Equal("original", (await kernel.GetSessionItemsAsync(child.Session.Id, new(), Human, ct)).Session.Title);
+        var updated = await Success<AgentSessionDto>(host, token, KernelMcpToolNames.SessionUpdate,
+            new { sessionId = child.Session.Id, title = "renamed", expectedAttemptId = attemptId }, ct);
+        Assert.Equal("renamed", updated.Title);
+        Assert.Equal(attemptId, updated.BoundAttemptId);
+        var schema = KernelMcpCatalog.GetAllTools().Single(t => t.Name == KernelMcpToolNames.SessionUpdate).InputSchema;
+        Assert.Equal("string", schema.GetProperty("properties").GetProperty("expectedAttemptId").GetProperty("type").GetString());
+    }
+
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task ReadObservesErrorsAndControlRecoversBothKindsOfConversation(bool taskBound)
@@ -375,6 +415,10 @@ public sealed class UnifiedSessionMcpTests
         Assert.Equal(KernelMcpToolNames.SessionList, approval.ToolName);
         Assert.True(approval.Arguments!.Value.GetProperty("includeArchived").GetBoolean());
         Assert.Equal(archivedParent ? track.LeadSessionId : parent.Id, approval.DelegateSessionId);
+        if (!archivedParent)
+            Assert.True(Assert.Single((await Success<SessionItemsPageDto>(host, parentToken, KernelMcpToolNames.SessionRead,
+                new { sessionId = child.Id }, ct)).PendingInteractions!).CanRespond);
+        Assert.True(Assert.Single((await kernel.GetSessionItemsAsync(child.Id, new(), Human, ct)).PendingInteractions!).CanRespond);
         Assert.False(Assert.Single((await Success<SessionItemsPageDto>(host, token, KernelMcpToolNames.SessionRead,
             new { sessionId = child.Id }, ct)).PendingInteractions!).CanRespond);
         if (expire)

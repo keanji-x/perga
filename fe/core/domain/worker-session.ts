@@ -6,17 +6,17 @@ import type { ModelCatalog } from './conversation.js';
 /** A task-bound provider can declare a different model catalog from the installation. */
 export function sessionModelCatalog(config: SessionCapabilities): ModelCatalog | null {
   const efforts = (choices: readonly string[]) => choices.map(reasoning_effort => ({ reasoning_effort, description: null }));
-  const defaultModel = config?.defaultModel ?? null;
-  const models = config?.models ?? [];
+  const defaultModel = config.defaultModel ?? null;
+  const models = config.models ?? [];
   return {
     models: models.map(model => ({
       id: model.id, model: model.id, display_name: model.name, description: '', resolved_model: null, is_default: model.id === defaultModel,
       supported_reasoning_efforts: efforts(model.reasoningEfforts),
       default_reasoning_effort: model.id === defaultModel || models.length === 0
-        ? config?.defaultReasoningEffort ?? null : model.defaultReasoningEffort ?? null,
+        ? config.defaultReasoningEffort ?? null : model.defaultReasoningEffort ?? null,
     })),
     default: {
-      model: defaultModel, reasoning_effort: config?.defaultReasoningEffort ?? null,
+      model: defaultModel, reasoning_effort: config.defaultReasoningEffort ?? null,
       supported_reasoning_efforts: efforts(models.find(model => model.id === defaultModel)?.reasoningEfforts ?? []),
     },
     default_source: defaultModel === null ? 'unknown' : 'config_read',

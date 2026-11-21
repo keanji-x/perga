@@ -201,7 +201,7 @@ public static class KernelMcpCatalog
             new(KernelMcpToolNames.SessionRead, "Read conversation state, history, progress and pending interactions.",
                 Schema("""{"type":"object","additionalProperties":false,"properties":{"sessionId":{"type":"string"},"beforeId":{"type":"integer"},"afterId":{"type":"integer"},"limit":{"type":"integer","minimum":1,"maximum":100},"activityTurnId":{"type":"string"},"afterSequence":{"type":"integer","minimum":0},"waitMs":{"type":"integer","minimum":0,"maximum":10000}},"required":["sessionId"]}""")),
             new(KernelMcpToolNames.SessionUpdate, "Update a child conversation. Omit fields to preserve them; null restores defaults. Configuration changes require expectedConfigVersion.",
-                Schema("""{"type":"object","additionalProperties":false,"properties":{"sessionId":{"type":"string"},"expectedConfigVersion":{"type":"integer"},"title":{"type":"string"},"archived":{"type":"boolean"},"provider":{"type":"string"},"model":{"type":["string","null"]},"reasoningEffort":{"type":["string","null"]},"permissionMode":{"type":["string","null"]}},"required":["sessionId"]}""")),
+                Schema("""{"type":"object","additionalProperties":false,"properties":{"sessionId":{"type":"string"},"expectedConfigVersion":{"type":"integer"},"expectedAttemptId":{"type":"string"},"title":{"type":"string"},"archived":{"type":"boolean"},"provider":{"type":"string"},"model":{"type":["string","null"]},"reasoningEffort":{"type":["string","null"]},"permissionMode":{"type":["string","null"]}},"required":["sessionId"]}""")),
             new(KernelMcpToolNames.SessionSend, "Send content with requestKey, or steer a queued messageId into turnId. Default requires idle; queue waits; steer targets a running turn.",
                 Schema("""{"type":"object","additionalProperties":false,"properties":{"sessionId":{"type":"string"},"expectedAttemptId":{"type":"string"},"content":{"type":"string"},"requestKey":{"type":"string"},"messageId":{"type":"string"},"turnId":{"type":"string"},"mode":{"enum":["default","queue","steer"]}},"required":["sessionId"]}""")),
             new(KernelMcpToolNames.SessionWithdraw, "Withdraw a queued or unresolved conversation message.",
@@ -303,14 +303,11 @@ public static class KernelMcpDispatcher
 
             case KernelMcpToolNames.SessionList:
                 return JsonHelpers.ToElement(await kernel.ListSessionsAsync(caller.TrackId,
-                    ParseSessionArgs<SessionListFilter>(args, ["includeArchived", "parentSessionId"]), Principal(caller), ct).ConfigureAwait(false));
+                    ParseSessionArgs<SessionListFilter>(args, toolName), Principal(caller), ct).ConfigureAwait(false));
 
             case KernelMcpToolNames.SessionCreate:
             {
-                var request = ParseSessionArgs<CreateSessionRequest>(args,
-                    ["title", "provider", "model", "reasoningEffort", "permissionMode", "role", "systemPrompt", "prompt", "notifyParent", "task", "requestKey"]);
-                if (args.TryGetProperty("task", out var task) && task.ValueKind != JsonValueKind.Null)
-                    RejectUnknownArgs(task, ["access", "acceptance", "gate", "dependsOn"]);
+                var request = ParseSessionArgs<CreateSessionRequest>(args, toolName);
                 var created = await kernel.CreateSessionAsync(caller.TrackId, request,
                     OptionalTypedStringArg(args, ["requestKey"]) ?? Guid.NewGuid().ToString("N"), Principal(caller), ct).ConfigureAwait(false);
                 return JsonHelpers.ToElement(created.Receipt);
@@ -318,7 +315,7 @@ public static class KernelMcpDispatcher
 
             case KernelMcpToolNames.SessionRead:
             {
-                RejectUnknownArgs(args, ["sessionId", "beforeId", "afterId", "limit", "activityTurnId", "afterSequence", "waitMs"]);
+                RejectUnknownArgs(args, ToolSchema(toolName));
                 var query = new SessionReadQuery(IntegerArg(args, "afterId", 0, long.MaxValue) ?? 0,
                     IntegerArg(args, "beforeId", 0, long.MaxValue), (int)(IntegerArg(args, "limit", 1, 100) ?? 20),
                     !args.TryGetProperty("afterId", out _), OptionalTypedStringArg(args, ["activityTurnId"]),
@@ -329,29 +326,28 @@ public static class KernelMcpDispatcher
 
             case KernelMcpToolNames.SessionUpdate:
                 return JsonHelpers.ToElement(await kernel.UpdateSessionAsync(RequireStringArg(args, ["sessionId"]),
-                    ParseSessionArgs<UpdateSessionRequest>(args, ["sessionId", "expectedConfigVersion", "title", "archived", "provider", "model", "reasoningEffort", "permissionMode"]),
+                    ParseSessionArgs<UpdateSessionRequest>(args, toolName),
                     Principal(caller), ct).ConfigureAwait(false));
 
             case KernelMcpToolNames.SessionSend:
                 return JsonHelpers.ToElement(await kernel.SendSessionMessageAsync(RequireStringArg(args, ["sessionId"]),
-                    ParseSessionArgs<SendSessionMessageRequest>(args, ["sessionId", "content", "requestKey", "messageId", "turnId", "mode", "expectedAttemptId"]),
+                    ParseSessionArgs<SendSessionMessageRequest>(args, toolName),
                     Principal(caller), ct).ConfigureAwait(false));
 
             case KernelMcpToolNames.SessionWithdraw:
-                RejectUnknownArgs(args, ["sessionId", "messageId", "expectedAttemptId"]);
+                RejectUnknownArgs(args, ToolSchema(toolName));
                 await kernel.WithdrawSessionMessageAsync(RequireStringArg(args, ["sessionId"]), RequireStringArg(args, ["messageId"]),
                     OptionalTypedStringArg(args, ["expectedAttemptId"]), Principal(caller), ct).ConfigureAwait(false);
                 return JsonHelpers.ToElement(new { ok = true });
 
             case KernelMcpToolNames.SessionControl:
                 return JsonHelpers.ToElement(await kernel.ControlSessionAsync(RequireStringArg(args, ["sessionId"]),
-                    ParseSessionArgs<SessionControlRequest>(args, ["sessionId", "action", "turnId", "expectedEpoch", "expectedAttemptId"]),
+                    ParseSessionArgs<SessionControlRequest>(args, toolName),
                     Principal(caller), ct).ConfigureAwait(false));
 
             case KernelMcpToolNames.SessionRespond:
                 return JsonHelpers.ToElement(await kernel.RespondInteractionAsync(RequireStringArg(args, ["sessionId"]),
-                    RequireStringArg(args, ["interactionId"]), ParseSessionArgs<RespondInteractionRequest>(args,
-                        ["sessionId", "interactionId", "executionId", "optionId", "answers"]), Principal(caller), ct).ConfigureAwait(false));
+                    RequireStringArg(args, ["interactionId"]), ParseSessionArgs<RespondInteractionRequest>(args, toolName), Principal(caller), ct).ConfigureAwait(false));
 
             case KernelMcpToolNames.TerminalOpen:
             {
@@ -472,7 +468,7 @@ public static class KernelMcpDispatcher
 
             case KernelMcpToolNames.ScheduleLs:
             {
-                RejectUnknownArgs(args, ["includeTerminal"]);
+                RejectUnknownArgs(args, ToolSchema(toolName));
                 var includeTerminal = false;
                 if (JsonHelpers.TryGetPropertyIgnoreCase(args, ["includeTerminal"], out var inc) &&
                     inc.ValueKind != JsonValueKind.Null)
@@ -488,14 +484,14 @@ public static class KernelMcpDispatcher
 
             case KernelMcpToolNames.ScheduleSet:
             {
-                var req = ParseScheduleSetArgs(args);
+                var req = ParseScheduleSetArgs(args, toolName);
                 var schedule = await kernel.SetTrackScheduleAsync(caller.TrackId, req, ct).ConfigureAwait(false);
                 return JsonHelpers.ToElement(schedule);
             }
 
             case KernelMcpToolNames.ScheduleRm:
             {
-                RejectUnknownArgs(args, ["scheduleId"]);
+                RejectUnknownArgs(args, ToolSchema(toolName));
                 var scheduleId = RequireStringArg(args, ["scheduleId"]);
                 var canceled = await kernel.CancelTrackScheduleAsync(caller.TrackId, scheduleId, ct).ConfigureAwait(false);
                 return JsonHelpers.ToElement(new { scheduleId, canceled });
@@ -530,9 +526,9 @@ public static class KernelMcpDispatcher
     private static InteropPrincipal Principal(McpSessionPrincipal caller) => new InteropPrincipal.Session(
         caller.TrackId, caller.SessionId, caller.IsLead, caller.BoundAttemptId, 0, caller.Token, caller.ExecutionOrigin);
 
-    private static T ParseSessionArgs<T>(JsonElement args, string[] keys)
+    private static T ParseSessionArgs<T>(JsonElement args, string toolName)
     {
-        RejectUnknownArgs(args, keys);
+        RejectUnknownArgs(args, ToolSchema(toolName));
         try { return JsonHelpers.Deserialize<T>(args) ?? throw KernelException.InvalidArgument("Tool arguments are required."); }
         catch (JsonException error) { throw KernelException.InvalidArgument(error.Message); }
     }
@@ -545,25 +541,23 @@ public static class KernelMcpDispatcher
         return number;
     }
 
-    private static void RejectUnknownArgs(JsonElement args, ReadOnlySpan<string> allowedKeys)
+    private static JsonElement ToolSchema(string toolName) =>
+        KernelMcpCatalog.GetAllTools().Single(tool => tool.Name == toolName).InputSchema;
+
+    private static void RejectUnknownArgs(JsonElement args, JsonElement schema)
     {
         if (args.ValueKind != JsonValueKind.Object)
             throw KernelException.InvalidArgument("Tool arguments must be a JSON object.");
+        var properties = schema.GetProperty("properties").EnumerateObject().ToArray();
         foreach (var prop in args.EnumerateObject())
         {
-            var matched = false;
-            foreach (var allowed in allowedKeys)
-            {
-                if (string.Equals(prop.Name, allowed, StringComparison.OrdinalIgnoreCase))
-                {
-                    matched = true;
-                    break;
-                }
-            }
-
-            if (!matched)
+            var allowed = properties.FirstOrDefault(p => string.Equals(prop.Name, p.Name, StringComparison.OrdinalIgnoreCase));
+            if (allowed.Value.ValueKind == JsonValueKind.Undefined)
                 throw KernelException.InvalidArgument(
-                    $"Unknown argument '{prop.Name}'. Allowed arguments: {string.Join(", ", allowedKeys.ToArray())}.");
+                    $"Unknown argument '{prop.Name}'. Allowed arguments: {string.Join(", ", properties.Select(p => p.Name))}.");
+            if (prop.Value.ValueKind != JsonValueKind.Null &&
+                allowed.Value.TryGetProperty("additionalProperties", out var additional) && additional.ValueKind == JsonValueKind.False)
+                RejectUnknownArgs(prop.Value, allowed.Value);
         }
     }
 
@@ -576,9 +570,9 @@ public static class KernelMcpDispatcher
         return elem.GetString();
     }
 
-    private static SetTrackScheduleRequest ParseScheduleSetArgs(JsonElement args)
+    private static SetTrackScheduleRequest ParseScheduleSetArgs(JsonElement args, string toolName)
     {
-        RejectUnknownArgs(args, ["id", "title", "prompt", "runAt", "runAtMs", "cron", "timezone", "maxOccurrences"]);
+        RejectUnknownArgs(args, ToolSchema(toolName));
         var id = OptionalTypedStringArg(args, ["id"]);
         var title = RequireStringArg(args, ["title"]);
         var prompt = RequireStringArg(args, ["prompt"]);
