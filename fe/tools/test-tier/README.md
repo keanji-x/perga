@@ -27,6 +27,3 @@ Schema and partition checks remain active for pending and skipped entries.
 
 When migrating an oracle contract, change `migration: pending` to `migration: migrated` and point
 `authoritative_test` at its current `fe/` test in the same change. All other oracle fields remain frozen.
-
-For the retained manual mutation proofs, run `tools/test-tier/p0b-tier-mutations.sh <case>` from
-`fe` (run it without an argument to list the available cases).

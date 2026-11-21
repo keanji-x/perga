@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 
 const allowedWebEntries = new Set(['app', 'features', 'main.tsx', 'styles', 'systems', 'ui']);
 // `view` is the panel derivation: the one view model both viewports paint.
-const allowedCoreEntries = new Set(['api', 'domain', 'events', 'keys', 'markdown', 'schemas', 'state', 'types', 'view', 'AGENTS.md', 'platform-independent.ts']);
+const allowedCoreEntries = new Set(['api', 'domain', 'events', 'keys', 'markdown', 'state', 'view', 'AGENTS.md', 'platform-independent.ts']);
 
 export function checkTopLevel(rootPath = '.') {
   const root = resolve(rootPath);

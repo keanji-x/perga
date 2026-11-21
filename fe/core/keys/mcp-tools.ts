@@ -6,19 +6,12 @@ export function normalizeMcpToolName(tool: string): string {
 
 /** Everything that changes the report. `report_commit` is the canonical Perga batch/block writer. */
 export const REPORT_WRITE_TOOLS: readonly string[] = Object.freeze([
-  'report_write',
-  'report_upsert',
   'report_commit',
 ]);
 
-/** Single-op block delete in stored history. */
-export const REPORT_DELETE_TOOL = 'report_delete';
 /** Governance decisions on a task attempt. */
 export const TASK_ACCEPT_TOOL = 'task_accept';
 export const TASK_REJECT_TOOL = 'task_reject';
-export const TASK_CANCEL_TOOL = 'task_cancel';
-export const TASK_DONE_TOOL = 'task_done';
-export const TASK_FAIL_TOOL = 'task_fail';
 export const TASK_LIST_TOOL = 'task_list';
 
 /** Reads of the report. */
@@ -33,7 +26,7 @@ export const TRACK_TOOL_PREFIX = 'track_';
 
 /** A `track_*` tool that is a WRITE — keep it out of the `TRACK_TOOL_PREFIX` read bucket. */
 export const TRACK_RENAME_TOOL = 'track_rename';
-export const TRACK_CLOSE_TOOL = 'track_close';
+export const TRACK_SET_TOOL = 'track_set';
 
 /** VCS publication: pushes the candidate branch and opens or reuses its PR (`/mcp/vcs`). */
 export const DEV_PUBLISH_TOOL = 'publish_pr';

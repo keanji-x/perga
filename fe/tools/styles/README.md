@@ -4,8 +4,10 @@ These checks make cascade boundaries observable: `entry.css` supplies the only l
 
 Path ownership must always use anchored prefixes, never substring matching such as `includes`.
 
-The `neige-calm/unlayered-cm-scope` stylelint rule runs under `npm run lint:css`. Its
-`unlayeredExceptions` is loaded from `web/src/styles/unlayered-exceptions.yaml`; stylelint enforces the rightmost `.cm-*` selector scope for every listed path, while `repository-check.mjs` is the exact selector/property/expiry/usage gate.
+`npm run lint:css` runs standard Stylelint checks. The repository audit rejects
+unlayered rules; the retired empty exception list and its no-op plugin are removed.
+The two local aggregate imports in entry.css are inspected at their top-level
+layer positions. All other imports still require an explicit layer.
 
 The runtime page is a harness, not a full-site scan. It deliberately injects one unlayered `<style>` rule so the test proves the audit fails when runtime CSS escapes the layer system. The audit function also checks readable `document.styleSheets` and `[style]` elements.
 

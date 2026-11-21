@@ -7,7 +7,6 @@ import { createMemoryHistory, RouterProvider } from '@tanstack/react-router';
 import { render } from '@testing-library/react';
 import type { AgentProvider } from '../../../../core/api/generated/wire.ts';
 import type { ApiRequest, ApiTransportPort } from '../../../../core/api/types.ts';
-import { trackConversationCardId } from '../../../../core/domain/conversation.ts';
 import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
 import { createAppRouter, APP_BASEPATH } from './public.tsx';
 import { bootTestCardRuntime } from './test-card-runtime.ts';
@@ -48,7 +47,7 @@ export function renderAssistantProviderFixture(options: {
         attempts += 1;
         if (options.failFirstCreate && !options.landFirstCreate && attempts === 1) return { status: 503, statusText: 'Unavailable', body: { code: 'service_unavailable', error: 'Unconfirmed' } };
         const input = request.body as { provider: AgentProvider; side?: { source_card_id: string } };
-        const created = fixtureSession(trackConversationCardId(track.id, request.headers?.['Idempotency-Key'] ?? ''), track.id, { provider: input.provider, title: 'Created Assistant', updatedAtMs: 3 });
+        const created = fixtureSession(fixtureConversationCardId(track.id, request.headers?.['Idempotency-Key'] ?? ''), track.id, { provider: input.provider, title: 'Created Assistant', updatedAtMs: 3 });
         const existing = rows.find(row => row.id === created.id);
         if (existing === undefined) rows.push(created);
         body = fixtureCreation(existing ?? created); status = 201;
@@ -94,3 +93,5 @@ export function renderAssistantProviderFixture(options: {
   render(<QueryClientProvider client={client}><ThemeProvider><RouterProvider router={router} /></ThemeProvider></QueryClientProvider>, { container });
   return { requests, client, rows };
 }
+
+function fixtureConversationCardId(trackId: string, key: string): string { return `conv-${trackId}-${key}`; }

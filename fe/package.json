@@ -9,16 +9,11 @@
   "scripts": {
     "postinstall": "patch-package --error-on-fail",
     "dev": "vite",
-    "benchmark:code": "node tools/benchmark-code.mjs",
     "build": "npm run theme:check && tsc -b && vite build",
     "typecheck": "tsc -b",
     "test": "vitest run --project platform-independent --project web-dom --maxWorkers=8",
     "gen:api": "node -e \"console.log('Perga /api/v1 OpenAPI contract is maintained in core/api/generated/openapi.json')\"",
     "test:browser": "vitest run --project browser --project browser-coarse",
-    "test:mutation": "npm run test:mutation:fixtures && node tools/mutation/run.mjs",
-    "test:mutation:run": "node tools/mutation/run.mjs",
-    "test:mutation:fixtures": "node tools/mutation/fixture-e2e.mjs && node tools/mutation/plan-purity.mjs",
-    "test:mutation:plan": "node tools/mutation/run.mjs --plan",
     "lint": "npm run lint:js && npm run lint:css && npm run lint:depcruise",
     "lint:js": "eslint . --max-warnings=0 && node tools/architecture/check-eslint-hygiene.mjs && node tools/architecture/check-tracked-fixtures.mjs && node tools/architecture/check-breakpoint-literals.mjs && node tools/ownership/check-readonly-change-requests.mjs && node tools/test-tier/check-test-tier.mjs",
     "lint:css": "npm run theme:check && stylelint 'web/**/*.css' '!web/dist/**' && node tools/styles/check-contrast.mjs && node tools/styles/check-custom-properties.mjs",
@@ -40,7 +35,6 @@
     "@radix-ui/react-slider": "^1.6.1",
     "@tanstack/react-query": "^5.100.11",
     "@tanstack/react-router": "^1.170.4",
-    "@uiw/codemirror-extensions-langs": "^4.25.11",
     "@uiw/codemirror-theme-github": "^4.25.11",
     "@uiw/react-codemirror": "^4.25.11",
     "@xterm/addon-fit": "^0.11.0",
@@ -58,7 +52,6 @@
     "react-dom": "^19.2.4",
     "react-grid-layout": "^2.2.4",
     "react-resizable": "^3.2.0",
-    "temporal-polyfill": "1.0.1",
     "zod": "^4.4.3"
   },
   "devDependencies": {
@@ -89,6 +82,8 @@
     "typescript-eslint": "^8.59.4",
     "vite": "^8.0.4",
     "vitest": "^4.1.6",
-    "yaml": "^2.9.0"
+    "yaml": "^2.9.0",
+    "postcss-selector-parser": "^7.1.4",
+    "@typescript-eslint/parser": "^8.65.0"
   }
 }

@@ -1,4 +1,4 @@
-// Generated from calm-types presentation DTOs; run node tools/report-view/generate.mjs.
+// Retained report-view presentation DTOs; checked by tools/report-view/conformance.test.ts.
 import { z } from 'zod';
 import { isCalendarDate } from './report-date.js';
 

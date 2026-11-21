@@ -21,12 +21,10 @@
 - { path: fe/vite.config.ts, type: file, owner: tooling/architecture, readonly: true, basis: "build configuration; frozen enforcement control (#997)" }
 - { path: fe/vitest.config.ts, type: file, owner: tooling/test-tier, readonly: true, basis: "test partition configuration; frozen enforcement control (#997)" }
 - { path: fe/tools/architecture, type: directory, owner: tooling/architecture, readonly: false, basis: "architecture §5 repository tree; enforcement infrastructure" }
-- { path: fe/tools/oracle, type: directory, owner: tooling/architecture, readonly: false, basis: "architecture §5 repository tree; oracle enforcement infrastructure" }
 - { path: fe/tools/ownership, type: directory, owner: tooling/architecture, readonly: false, basis: "architecture §5 repository tree; ownership enforcement infrastructure" }
 - { path: fe/tools/projection, type: directory, owner: tooling/architecture, readonly: false, basis: "#1234 忠实投影检查器；验证域，故不入 core/web 运行时" }
 - { path: fe/tools/report-view, type: directory, owner: tooling/report-view, readonly: false, basis: "#1769 native view schema generation and cross-language conformance; no runtime dependencies" }
 - { path: fe/tools/styles, type: directory, owner: tooling/architecture, readonly: false, basis: "architecture §5 repository tree; styles enforcement infrastructure" }
-- { path: fe/tools/mutation, type: directory, owner: tooling/mutation-evidence, readonly: false, basis: "#997 tracked, replayable mutation evidence" }
 - { path: fe/tools/test-tier, type: directory, owner: tooling/test-tier, readonly: false, basis: "test-tier policy enforcement infrastructure (#997)" }
 - { path: fe/tools/vitest, type: directory, owner: tooling/test-tier, readonly: false, basis: "test-run setup; supplies §0.5's build-time constants Vitest cannot get from vite.config.ts (#997)" }
 - { path: fe/web/index.html, type: file, owner: app/bootstrap, readonly: false, basis: "architecture §5 repository tree; web bootstrap shell" }
@@ -47,9 +45,7 @@
 - { path: fe/core/events, type: directory, owner: core/events, readonly: true, basis: "frozen interface §6.5a" }
 - { path: fe/core/keys, type: directory, owner: core/keys, readonly: true, basis: "frozen interface §6.2" }
 - { path: fe/core/markdown, type: directory, owner: core/markdown, readonly: true, basis: "frozen interface §6.5c; duplication manifest INV-DUP-004 and INV-DUP-005" }
-- { path: fe/core/schemas, type: directory, owner: core/schemas, readonly: false, basis: "architecture §2" }
 - { path: fe/core/state, type: directory, owner: core/state, readonly: true, basis: "frozen interface §6.1a" }
-- { path: fe/core/types, type: directory, owner: core/types, readonly: false, basis: "architecture §8.7" }
 - { path: fe/core/view, type: directory, owner: core/view, readonly: false, basis: "#1234 视口一致性：面板派生层，桌面与手机的唯一视图来源" }
 
 # App composition (§2: router/providers/theme/shell/DI and §4.7 events).
@@ -75,15 +71,11 @@
 - { path: fe/web/src/features/planner, type: directory, owner: features/planner, readonly: false, basis: "architecture §4 layer graph (authoritative over §5 abbreviated tree)" }
 - { path: fe/web/src/features/settings, type: directory, owner: features/settings, readonly: false, basis: "architecture §2/§4" }
 - { path: fe/web/src/features/auth, type: directory, owner: features/auth, readonly: false, basis: "architecture §2/§4" }
-- { path: fe/web/src/features/.gitkeep, type: file, owner: architecture, readonly: false, basis: "stage-1 placeholder" }
 
 # Resource-owning systems (§2/§2.0). Editor's listed submodules are fixed by §8.3.
-- { path: fe/web/src/systems/.gitkeep, type: file, owner: architecture, readonly: false, basis: "stage-1 placeholder" }
 - { path: fe/web/src/systems/events, type: directory, owner: systems/events, readonly: true, basis: "frozen interface §6.5b" }
 - { path: fe/web/src/systems/terminal, type: directory, owner: systems/terminal, readonly: false, basis: "architecture §2/§2.0" }
-- { path: fe/web/src/systems/wheel, type: directory, owner: systems/wheel, readonly: false, basis: "architecture §2/§2.0" }
 - { path: fe/web/src/systems/fs-viewers, type: directory, owner: systems/fs-viewers, readonly: false, basis: "architecture §2/§4.9" }
-- { path: fe/web/src/systems/editor, type: directory, owner: systems/editor, readonly: false, basis: "architecture §8.3: public/model/adapters/ui/generated" }
 - { path: fe/web/src/systems/cards/public.ts, type: file, owner: systems/cards/interface, readonly: true, basis: "frozen interface §6.6; INV-DUP manifest" }
 - { path: fe/web/src/systems/cards/public.contract.test.ts, type: file, owner: systems/cards/interface, readonly: true, basis: "frozen interface §6.6" }
 - { path: fe/web/src/systems/cards/public.test.ts, type: file, owner: systems/cards/interface, readonly: true, basis: "frozen interface §6.6" }
@@ -100,7 +92,6 @@
 # README, public entry, contract/behavior tests and colocated CSS Module.
 - { path: fe/web/src/ui/typography-scope, type: directory, owner: ui/typography-scope, readonly: false, basis: "generic generated font-scope adapter (#2713)" }
 - { path: fe/web/src/ui/markdown, type: directory, owner: ui/markdown, readonly: false, basis: "shared presentation of sanitized Markdown syntax" }
-- { path: fe/web/src/ui/.gitkeep, type: file, owner: architecture, readonly: false, basis: "stage-1 placeholder" }
 - { path: fe/web/src/ui/public-consumer.contract.test.tsx, type: file, owner: ui/contracts, readonly: true, basis: "frozen interfaces §6.7" }
 - { path: fe/web/src/ui/state, type: directory, owner: ui/state, readonly: true, basis: "frozen interface §6.1b" }
 - { path: fe/web/src/ui/directory-browser, type: directory, owner: ui/directory-browser, readonly: true, basis: "frozen interface §6.7a" }
@@ -108,8 +99,6 @@
 - { path: fe/web/src/ui/dialog, type: directory, owner: ui/dialog, readonly: true, basis: "frozen interface §6.7c" }
 - { path: fe/web/src/ui/menu, type: directory, owner: ui/menu, readonly: true, basis: "frozen interface §6.7c" }
 - { path: fe/web/src/ui/focus, type: directory, owner: ui/focus, readonly: true, basis: "frozen interface §6.7c" }
-- { path: fe/web/src/ui/roving, type: directory, owner: ui/roving, readonly: true, basis: "architecture §2 interaction primitive" }
-- { path: fe/web/src/ui/calm-select, type: directory, owner: ui/calm-select, readonly: true, basis: "INV-DUP-002" }
 - { path: fe/web/src/ui/editable-title, type: directory, owner: ui/editable-title, readonly: true, basis: "INV-DUP-008" }
 - { path: fe/web/src/ui/confirm-dialog, type: directory, owner: ui/confirm-dialog, readonly: true, basis: "INV-DUP-010" }
 - { path: fe/web/src/ui/error-box, type: directory, owner: ui/error-box, readonly: false, basis: "shared non-blocking and blocking read failure surface" }
@@ -152,7 +141,6 @@
 - { path: fe/web/src/systems/github-links, type: directory, owner: systems/github-links, readonly: false, basis: "Desktop GitHub citation lifecycle; docs/design/github-link-preview.md" }
 
 - { path: fe/web/src/ui/code, type: directory, owner: ui/code, readonly: false, basis: "#2474 domain-free language metadata and read-only code presentation" }
-- { path: fe/tools/benchmark-code.mjs, type: file, owner: tooling/preview, readonly: false, basis: "#2474 standalone production reader performance comparison" }
 
 - { path: fe/web/src/ui/navigation-row, type: directory, owner: ui/navigation-row, readonly: false, basis: "User-approved shared navigation content schema and icon, label and action column geometry" }
 

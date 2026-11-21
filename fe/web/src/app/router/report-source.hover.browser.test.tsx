@@ -19,7 +19,7 @@ import { ReportReferencePreview } from './report-reference.tsx';
 import { placePreview } from '../../ui/hover-preview/placement.ts';
 vi.mock('../../ui/hover-preview/placement.ts', { spy: true });
 import { createEvidencePreviewTransport, evidenceExamples } from '../shell/link-preview-data.ts';
-import styles from '../shell/link-preview.module.css';
+import styles from './report-source-hover.module.css';
 import '../../styles/entry.css';
 
 afterEach(async () => { cleanup(); document.getElementById('root')?.remove(); vi.restoreAllMocks(); await commands.emulateReducedMotion(false); });

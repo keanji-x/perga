@@ -16,7 +16,7 @@ const setupFiles = [
 
 // Use the real repository documents in route regressions. Vite checks both the
 // plain filename and its ?raw module ID; leave all other filesystem rules intact.
-const readmeFixtureFiles = Object.freeze(['.', '../docs/README.md', '../docs/README.md?raw', '../README.md', '../README.md?raw']);
+const readmeFixtureFiles = Object.freeze(['.', '../README.md', '../README.md?raw']);
 
 export default defineConfig({
   resolve: {

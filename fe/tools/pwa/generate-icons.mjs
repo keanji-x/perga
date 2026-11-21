@@ -22,10 +22,6 @@ const icon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role
 const output = new URL('../../web/public/icons/', import.meta.url);
 await mkdir(output, { recursive: true });
 await writeFile(new URL('../../web/src/ui/brand/neige-app.svg', import.meta.url), icon);
-await writeFile(new URL('../../../mobile/www/neige-app.svg', import.meta.url), icon);
-// Android uses a 108dp layer with a central 72dp viewport: inset the whole icon.
-const androidForeground = icon.replace('viewBox="0 0 512 512"', 'viewBox="-128 -128 768 768"');
-await writeFile(new URL('../../../mobile/app-icon-foreground.svg', import.meta.url), androidForeground);
 const browser = await chromium.launch();
 try {
   for (const size of [192, 512]) {

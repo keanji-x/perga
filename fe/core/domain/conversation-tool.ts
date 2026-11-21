@@ -2,11 +2,11 @@ import {
     DEV_PUBLISH_TOOL,
     MAIL_SEND_TOOL,
     normalizeMcpToolName,
-    REPORT_DELETE_TOOL, REPORT_READ_TOOLS, REPORT_WRITE_TOOLS,
+    REPORT_READ_TOOLS, REPORT_WRITE_TOOLS,
     TASK_ACCEPT_TOOL,
     TASK_LIST_TOOL,
     TASK_REJECT_TOOL,
-    TRACK_RENAME_TOOL, TRACK_TOOL_PREFIX,
+    TRACK_RENAME_TOOL, TRACK_SET_TOOL, TRACK_TOOL_PREFIX,
     USER_ASK_TOOL,
 } from '../keys/mcp-tools.js';
 const ACTIVITY_TARGET_MAX = 64;
@@ -30,9 +30,6 @@ export function conversationToolShape(recordedTool: string, args: unknown): Acti
   if (REPORT_WRITE_TOOLS.includes(tool)) {
     return { running: 'Writing report', done: 'Wrote report', target: null };
   }
-  if (tool === REPORT_DELETE_TOOL) {
-    return { running: 'Deleting blocks', done: 'Deleted blocks', target: null };
-  }
   if (REPORT_READ_TOOLS.includes(tool)) {
     return { running: 'Reading report', done: 'Read report', target: null };
   }
@@ -48,6 +45,9 @@ export function conversationToolShape(recordedTool: string, args: unknown): Acti
   // Recognize track writes before the track prefix fallback.
   if (tool === TRACK_RENAME_TOOL) {
     return { running: 'Naming the track', done: 'Named the track', target: null };
+  }
+  if (tool === TRACK_SET_TOOL) {
+    return { running: 'Updating the track', done: 'Updated the track', target: null };
   }
   if (tool === DEV_PUBLISH_TOOL) {
     return { running: 'Publishing the PR', done: 'Published the PR', target: null };

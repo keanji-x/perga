@@ -13,7 +13,7 @@ const cases = [
   { label: 'raw replacement-character path', path: 'fe/core/api/bad\uFFFD.ts', sourceApproved: true, finalTrailer: true, association: false, apiFailure: false, status: 1, error: 'non-canonical changed path' },
 ] as const;
 
-it.each(cases)('audits $label through both CLI entry points', ({
+it.each(cases)('audits $label through the ownership CLI', ({
   path, sourceApproved, finalTrailer, association, apiFailure, status, error,
 }) => {
   const repository = mkdtempSync(join(tmpdir(), 'ownership-cli-'));
@@ -63,12 +63,12 @@ it.each(cases)('audits $label through both CLI entry points', ({
       + `if (!(path in pages)) throw new Error('unexpected API request: ' + path);\n`
       + `return new Response(JSON.stringify(pages[path]), { status: 200 });\n};\n`);
     symlinkSync(join(feRoot, 'node_modules'), join(repository, 'fe/node_modules'), 'dir');
-    for (const checker of ['check-readonly-change-requests.mjs', 'check-ownership-trailers.mjs']) {
+    for (const checker of ['check-readonly-change-requests.mjs']) {
       const result = spawnSync(process.execPath, ['--import', shim, join(repository, 'fe/tools/ownership', checker)], {
         cwd: repository, encoding: 'utf8',
         env: {
           PATH: process.env.PATH,
-          // The checkers mkdtemp under os.tmpdir(); without TMPDIR it falls back to /tmp.
+          // The fixtures use os.tmpdir(); without TMPDIR it falls back to /tmp.
           ...(process.env.TMPDIR === undefined ? {} : { TMPDIR: process.env.TMPDIR }),
           OWNERSHIP_EVENT_NAME: 'push', OWNERSHIP_BASE_SHA: base, OWNERSHIP_HEAD_SHA: head,
           OWNERSHIP_PUSH_FORCED: 'false', GITHUB_REPOSITORY: 'fixture/repo',
