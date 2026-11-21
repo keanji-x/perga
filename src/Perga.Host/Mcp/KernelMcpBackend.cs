@@ -21,7 +21,7 @@ public sealed class KernelMcpBackend : IMcpToolBackend
         var isLead = caller.BoundTaskId is null &&
             await _kernel.GetTrackLeadSessionIdAsync(caller.TrackId, ct).ConfigureAwait(false) == caller.SessionId;
         return KernelMcpCatalog.GetToolsForSession(caller.BoundTaskId, isLead)
-            .Select(static t => new McpToolWireDescriptor(t.Name, t.Description, t.InputSchema))
+            .Select(static t => new McpToolWireDescriptor(t.Name, t.Description, t.InputSchema, t.Annotations))
             .ToArray();
     }
 

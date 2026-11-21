@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Perga.Host.Serialization;
 using Perga.Kernel;
+using Perga.Kernel.Mcp;
 using Perga.Kernel.Ports;
 using Perga.ReportDoc;
 
@@ -10,7 +11,8 @@ namespace Perga.Host.Mcp;
 public sealed record McpToolWireDescriptor(
     string Name,
     string Description,
-    JsonElement InputSchema);
+    JsonElement InputSchema,
+    [property: JsonPropertyName("annotations"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] McpToolAnnotations? Annotations = null);
 
 public sealed record McpContentBlock(
     string Type,

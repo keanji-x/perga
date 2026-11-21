@@ -3269,9 +3269,13 @@ public sealed partial class TrackActor : IAsyncDisposable
         var templateNote = session.IsLead
             ? "\n\nTemplates are optional and implicit. If useful, discover them with template_list, inspect a template or the authoring contract with template_read, inspect the active snapshot with template_read(__current__), apply or preview with track_set (templateId or JSON/.perga.js source, inputs, dryRun), detach with clear, and update inputs with template_update_inputs (preserves state)."
             : string.Empty;
+        const string unboundGovernanceNote =
+            "Use session_list/create/read/update/send/withdraw/control/respond to manage child conversations. Create accepts an optional task contract; reuse requestKey for retries. Use provider_list to discover available providers, models, reasoning efforts, and permission modes. Only control your direct children; the Lead can also manage other sessions. Never stop, reset or archive yourself. Answer delegated asks and approvals with session_respond; the human can always take over.";
         var sessionNote = boundTask is null
-            ? "Use session_list/create/read/update/send/withdraw/control/respond to manage child conversations. Create accepts an optional task contract; reuse requestKey for retries. Use provider_list to discover available providers, models, reasoning efforts, and permission modes. Only control your direct children; the Lead can also manage other sessions. Never stop, reset or archive yourself. Answer delegated asks and approvals with session_respond; the human can always take over."
-            : "Use session_list/read to observe conversations. Submit your task with task_done or task_fail; bound Workers cannot spawn or control sessions.";
+            ? session.IsLead
+                ? unboundGovernanceNote
+                : unboundGovernanceNote + " If blocked by missing permissions or sandbox restrictions (such as EPERM, blocked local ports/network, or denied actions), do not loop or silently skip checks: report the exact permission gap in your reply so your parent/Lead can adjust permissionMode via session_update (takes effect on the next turn) or run the restricted step; only call user_ask when pausing for explicit human/parent input (it does not auto-wake an idle parent)."
+            : "Use session_list/read to observe conversations. Submit your task with task_done or task_fail; bound Workers cannot spawn or control sessions. If blocked by missing permissions or sandbox restrictions (such as EPERM, blocked local ports/network, or denied actions), do not loop or silently skip required checks: report the exact permission gap clearly via task_fail (or in your turn output if pausing for Lead follow-up) so the Lead can adjust permissionMode via session_update (takes effect on the next turn) or run the restricted check; only call user_ask when waiting for explicit human/parent input (it does not auto-wake an idle parent).";
         var templateDataSection = BuildActiveTemplateDataSectionCore();
         return $"You are operating in Perga Track '{_track.Title}' ({TrackId}) as {role}.{templateNote}\n\n{sessionNote}\n\n## Current Report\n{reportMd}{templateDataSection}";
     }
@@ -3365,7 +3369,7 @@ public sealed partial class TrackActor : IAsyncDisposable
         }
 
         sb.AppendLine();
-        sb.AppendLine("When finished, call `task_done` with your structured result, or `task_fail` if blocked.");
+        sb.AppendLine("When finished, call `task_done` with your structured result, or `task_fail` if blocked. If blocked by missing permissions or sandbox restrictions (e.g. `EPERM`, blocked local ports, or denied tool calls), do not loop or silently skip checks: report the exact missing permission clearly via `task_fail` (so the Lead can adjust `permissionMode` for the next turn or run the restricted check), or call `user_ask` only when waiting for explicit human/parent input.");
         return sb.ToString();
     }
 

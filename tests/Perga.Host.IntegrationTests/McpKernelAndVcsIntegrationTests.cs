@@ -664,13 +664,25 @@ public sealed class McpKernelAndVcsIntegrationTests
         var bridge = cluster.Services.GetRequiredService<IMcpSessionBridge>();
         var token = bridge.RegisterSession(trackId, leadId, isLead: true, null, null, []).Principal.Token;
 
-        // Verify tools/list exposes all 9 vcs_* tools!
-        var vcsTools = await ListToolNamesAsync(cluster, "/mcp/vcs", token, ct);
-        Assert.Equal(9, vcsTools.Count);
+        // Verify tools/list exposes all 9 vcs_* tools with truthful MCP annotations!
+        var vcsToolEntries = await ListToolsAsync(cluster, "/mcp/vcs", token, ct);
+        var vcsTools = vcsToolEntries.Keys.ToArray();
+        Assert.Equal(9, vcsTools.Length);
         foreach (var expected in VcsMcpToolNames.All)
         {
             Assert.Contains(expected, vcsTools);
+            Assert.True(vcsToolEntries[expected].TryGetProperty("annotations", out _), $"Missing annotations on vcs.{expected}");
         }
+
+        AssertToolAnnotations(vcsToolEntries[VcsMcpToolNames.Status], readOnly: false, destructive: false, openWorld: false, idempotent: false);
+        AssertToolAnnotations(vcsToolEntries[VcsMcpToolNames.Diff], readOnly: false, destructive: false, openWorld: false, idempotent: false);
+        AssertToolAnnotations(vcsToolEntries[VcsMcpToolNames.PrChecks], readOnly: true, destructive: false, openWorld: true, idempotent: true);
+        AssertToolAnnotations(vcsToolEntries[VcsMcpToolNames.CiEvidence], readOnly: true, destructive: false, openWorld: true, idempotent: true);
+        AssertToolAnnotations(vcsToolEntries[VcsMcpToolNames.IssueView], readOnly: true, destructive: false, openWorld: true, idempotent: true);
+        AssertToolAnnotations(vcsToolEntries[VcsMcpToolNames.RestoreOp], readOnly: false, destructive: true, openWorld: false, idempotent: false);
+        AssertToolAnnotations(vcsToolEntries[VcsMcpToolNames.RebaseUpstream], readOnly: false, destructive: true, openWorld: true, idempotent: false);
+        AssertToolAnnotations(vcsToolEntries[VcsMcpToolNames.PublishPr], readOnly: false, destructive: true, openWorld: true, idempotent: false);
+        AssertToolAnnotations(vcsToolEntries[VcsMcpToolNames.PrMerge], readOnly: false, destructive: true, openWorld: true, idempotent: false);
 
         // 1. status (captures initial OpId!)
         var (status1Text, status1Err) = await CallToolAsync(cluster, "/mcp/vcs", token, VcsMcpToolNames.Status, new { }, ct);
@@ -762,7 +774,70 @@ public sealed class McpKernelAndVcsIntegrationTests
         Assert.Contains("Issue #7", issueText, StringComparison.Ordinal);
     }
 
-    internal static async Task<IReadOnlyList<string>> ListToolNamesAsync(
+    [Fact]
+    public async Task McpKernel_ToolsList_PublishesTruthfulAnnotationsForLeadAndBoundWorkers()
+    {
+        await using var cluster = new PergaHostTestCluster();
+        var client = cluster.Client;
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        var ct = cts.Token;
+
+        var wsDir = Path.Combine(cluster.DataDir, "mcp-annotations-ws");
+        Directory.CreateDirectory(wsDir);
+
+        using var areaResp = await client.PostAsJsonAsync("/api/v1/areas", new { name = "Annotations Area", defaultCwd = wsDir }, ct);
+        var area = (await areaResp.Content.ReadFromJsonAsync<AreaDto>(PergaJsonDefaults.ApiOptions, ct))!;
+
+        using var trackResp = await client.PostAsJsonAsync("/api/v1/tracks", new { areaId = area.Id, title = "Annotations Track", cwd = wsDir }, ct);
+        trackResp.EnsureSuccessStatusCode();
+        using var snap = JsonDocument.Parse(await trackResp.Content.ReadAsStringAsync(ct));
+        var trackId = snap.RootElement.GetProperty("track").GetProperty("id").GetString()!;
+        var leadId = snap.RootElement.GetProperty("track").GetProperty("leadSessionId").GetString()!;
+
+        var bridge = cluster.Services.GetRequiredService<IMcpSessionBridge>();
+        var leadToken = bridge.RegisterSession(trackId, leadId, isLead: true, null, null, []).Principal.Token;
+        var workerToken = bridge.RegisterSession(trackId, "ses_worker_ann", isLead: false, "tsk_ann", 1, []).Principal.Token;
+
+        var leadTools = await ListToolsAsync(cluster, "/mcp/kernel", leadToken, ct);
+        foreach (var (name, tool) in leadTools)
+        {
+            Assert.True(tool.TryGetProperty("annotations", out _), $"Missing annotations on lead tool '{name}'.");
+        }
+
+        AssertToolAnnotations(leadTools[KernelMcpToolNames.ReportRead], readOnly: true, destructive: false, openWorld: false, idempotent: true);
+        AssertToolAnnotations(leadTools[KernelMcpToolNames.ReportCommit], readOnly: false, destructive: false, openWorld: false, idempotent: false);
+        AssertToolAnnotations(leadTools[KernelMcpToolNames.SessionCreate], readOnly: false, destructive: false, openWorld: false, idempotent: false);
+        AssertToolAnnotations(leadTools[KernelMcpToolNames.SystemUpgradeCheck], readOnly: true, destructive: false, openWorld: true, idempotent: true);
+        AssertToolAnnotations(leadTools[KernelMcpToolNames.SystemUpgradeApply], readOnly: false, destructive: true, openWorld: true, idempotent: false);
+        AssertToolAnnotations(leadTools[KernelMcpToolNames.TrackClose], readOnly: false, destructive: true, openWorld: false, idempotent: false);
+
+        var workerTools = await ListToolsAsync(cluster, "/mcp/kernel", workerToken, ct);
+        foreach (var (name, tool) in workerTools)
+        {
+            Assert.True(tool.TryGetProperty("annotations", out _), $"Missing annotations on worker tool '{name}'.");
+        }
+
+        AssertToolAnnotations(workerTools[KernelMcpToolNames.TaskDone], readOnly: false, destructive: false, openWorld: false, idempotent: false);
+        AssertToolAnnotations(workerTools[KernelMcpToolNames.TaskFail], readOnly: false, destructive: false, openWorld: false, idempotent: false);
+        AssertToolAnnotations(workerTools[KernelMcpToolNames.UserAsk], readOnly: false, destructive: false, openWorld: false, idempotent: false);
+        AssertToolAnnotations(workerTools[KernelMcpToolNames.TerminalOpen], readOnly: false, destructive: true, openWorld: true, idempotent: false);
+        AssertToolAnnotations(workerTools[KernelMcpToolNames.TerminalInput], readOnly: false, destructive: true, openWorld: true, idempotent: false);
+    }
+
+    internal static void AssertToolAnnotations(JsonElement tool, bool readOnly, bool destructive, bool openWorld, bool? idempotent = null)
+    {
+        Assert.True(tool.TryGetProperty("annotations", out var ann) && ann.ValueKind == JsonValueKind.Object);
+        Assert.Equal(readOnly, ann.GetProperty("readOnlyHint").GetBoolean());
+        Assert.Equal(destructive, ann.GetProperty("destructiveHint").GetBoolean());
+        Assert.Equal(openWorld, ann.GetProperty("openWorldHint").GetBoolean());
+        if (idempotent.HasValue)
+        {
+            Assert.Equal(idempotent.Value, ann.GetProperty("idempotentHint").GetBoolean());
+        }
+        Assert.False(ann.TryGetProperty("title", out _));
+    }
+
+    internal static async Task<IReadOnlyDictionary<string, JsonElement>> ListToolsAsync(
         PergaHostTestCluster cluster,
         string mcpPath,
         string token,
@@ -779,9 +854,15 @@ public sealed class McpKernelAndVcsIntegrationTests
             .GetProperty("result")
             .GetProperty("tools")
             .EnumerateArray()
-            .Select(t => t.GetProperty("name").GetString()!)
-            .ToArray();
+            .ToDictionary(t => t.GetProperty("name").GetString()!, t => t.Clone(), StringComparer.Ordinal);
     }
+
+    internal static async Task<IReadOnlyList<string>> ListToolNamesAsync(
+        PergaHostTestCluster cluster,
+        string mcpPath,
+        string token,
+        CancellationToken ct) =>
+        (await ListToolsAsync(cluster, mcpPath, token, ct).ConfigureAwait(false)).Keys.ToArray();
 
     internal static async Task<(string Text, bool IsError)> CallToolAsync(
         PergaHostTestCluster cluster,

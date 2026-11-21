@@ -72,7 +72,8 @@ public sealed class McpPluginsPolicyGuardAndLifecycleIntegrationTests
                             {
                                 name = "quote_fetch",
                                 description = "Fetch stock quote",
-                                inputSchema = new { type = "object", properties = new { ticker = new { type = "string" } } }
+                                inputSchema = new { type = "object", properties = new { ticker = new { type = "string" } } },
+                                annotations = new { readOnlyHint = true, destructiveHint = false, openWorldHint = true }
                             }
                         }
                     }
@@ -247,9 +248,11 @@ public sealed class McpPluginsPolicyGuardAndLifecycleIntegrationTests
                 ct);
             enablePatchResp.EnsureSuccessStatusCode();
 
-            // Verify stdio-calc tools/list and tools/call work end-to-end!
-            var stdioTools = await McpKernelAndVcsIntegrationTests.ListToolNamesAsync(cluster, "/mcp/p/stdio-calc", token, ct);
+            // Verify stdio-calc tools/list (omits annotations when upstream provides none) and tools/call work end-to-end!
+            var stdioToolEntries = await McpKernelAndVcsIntegrationTests.ListToolsAsync(cluster, "/mcp/p/stdio-calc", token, ct);
+            var stdioTools = stdioToolEntries.Keys.ToArray();
             Assert.Contains("calc_sum", stdioTools);
+            Assert.False(stdioToolEntries["calc_sum"].TryGetProperty("annotations", out _));
 
             var (sumText, sumErr) = await McpKernelAndVcsIntegrationTests.CallToolAsync(
                 cluster,
@@ -261,8 +264,10 @@ public sealed class McpPluginsPolicyGuardAndLifecycleIntegrationTests
             Assert.False(sumErr, sumText);
             Assert.Equal("SUM=42", sumText);
 
-            // 4. Test PolicyVm.GuardToolCall -> Allow on HTTP plugin ("http-quote")
-            var httpTools = await McpKernelAndVcsIntegrationTests.ListToolNamesAsync(cluster, "/mcp/p/http-quote", token, ct);
+            // 4. Test PolicyVm.GuardToolCall -> Allow on HTTP plugin ("http-quote"); do NOT forward untrusted plugin approval hints
+            var httpToolEntries = await McpKernelAndVcsIntegrationTests.ListToolsAsync(cluster, "/mcp/p/http-quote", token, ct);
+            var httpTools = httpToolEntries.Keys.ToArray();
+            Assert.False(httpToolEntries["quote_fetch"].TryGetProperty("annotations", out _));
             Assert.Contains("quote_fetch", httpTools);
 
             var (allowText, allowErr) = await McpKernelAndVcsIntegrationTests.CallToolAsync(

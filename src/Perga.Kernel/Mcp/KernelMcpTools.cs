@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Perga.Contracts;
 using Perga.Kernel.Internal;
 using Perga.Kernel.Ports;
@@ -95,10 +96,18 @@ public static class KernelMcpToolNames
     ];
 }
 
+public sealed record McpToolAnnotations(
+    [property: JsonPropertyName("title"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Title = null,
+    [property: JsonPropertyName("readOnlyHint"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? ReadOnlyHint = null,
+    [property: JsonPropertyName("destructiveHint"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? DestructiveHint = null,
+    [property: JsonPropertyName("idempotentHint"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? IdempotentHint = null,
+    [property: JsonPropertyName("openWorldHint"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? OpenWorldHint = null);
+
 public sealed record McpToolDescriptor(
     string Name,
     string Description,
-    JsonElement InputSchema);
+    JsonElement InputSchema,
+    McpToolAnnotations? Annotations = null);
 
 public static class KernelMcpCatalog
 {
@@ -140,30 +149,37 @@ public static class KernelMcpCatalog
     {
         static JsonElement Schema(string json) => JsonHelpers.ParseClone(json);
 
+        var readOnlyLocal = new McpToolAnnotations(ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false);
+        var readOnlyOpenWorld = new McpToolAnnotations(ReadOnlyHint: true, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: true);
+        var localWrite = new McpToolAnnotations(ReadOnlyHint: false, DestructiveHint: false, IdempotentHint: false, OpenWorldHint: false);
+        var localIdempotentWrite = new McpToolAnnotations(ReadOnlyHint: false, DestructiveHint: false, IdempotentHint: true, OpenWorldHint: false);
+        var localDestructive = new McpToolAnnotations(ReadOnlyHint: false, DestructiveHint: true, IdempotentHint: false, OpenWorldHint: false);
+        var openWorldDestructive = new McpToolAnnotations(ReadOnlyHint: false, DestructiveHint: true, IdempotentHint: false, OpenWorldHint: true);
+
         return
         [
             new(KernelMcpToolNames.SystemUpgradeCheck, "Check an installation-owner configured upgrade source (Lead only).",
-                Schema("""{"type":"object","additionalProperties":false,"properties":{"sourceId":{"type":"string"}}}""")),
+                Schema("""{"type":"object","additionalProperties":false,"properties":{"sourceId":{"type":"string"}}}"""), readOnlyOpenWorld),
             new(KernelMcpToolNames.SystemUpgradeApply, "Schedule a detached upgrade from a configured source ID and return immediately (Lead only).",
-                Schema("""{"type":"object","additionalProperties":false,"required":["sourceId"],"properties":{"sourceId":{"type":"string"}}}""")),
+                Schema("""{"type":"object","additionalProperties":false,"required":["sourceId"],"properties":{"sourceId":{"type":"string"}}}"""), openWorldDestructive),
             new(KernelMcpToolNames.SystemUpgradeRollback, "Schedule detached rollback to the previous release (Lead only).",
-                Schema("""{"type":"object","additionalProperties":false,"properties":{}}""")),
+                Schema("""{"type":"object","additionalProperties":false,"properties":{}}"""), localDestructive),
             new(KernelMcpToolNames.ReportRead, "Read the current track report document, block revisions, and read anchor. Supports optional format ('full'|'blocks'|'markdown'|'outline'), sectionH1/blockIds scoping, and includeContract for perga-block authoring specs.",
-                Schema(KernelMcpReportSupport.ReportReadSchemaJson)),
+                Schema(KernelMcpReportSupport.ReportReadSchemaJson), readOnlyLocal),
             new(KernelMcpToolNames.ReportCommit, "Atomically apply block operations (replace_section, upsert, delete, move) to the track report using a ReadAnchor. Returns a compact commit receipt by default; set includeDocument=true for full renderedMarkdown and blocks.",
-                Schema(KernelMcpReportSupport.ReportCommitSchemaJson)),
+                Schema(KernelMcpReportSupport.ReportCommitSchemaJson), localWrite),
             new(KernelMcpToolNames.DataPatch, "Patch the track's structured template data (validated Fail-Closed against template data.schema and stamped with _meta.updatedAt/source).",
-                Schema("""{"type":"object","required":["patch"],"properties":{"patch":{"type":"object","description":"Partial JSON object; array fields accept {$upsert: [{id|code, ...}], $delete: [key]}."},"expectedDataRev":{"type":"integer","minimum":0}}}""")),
+                Schema("""{"type":"object","required":["patch"],"properties":{"patch":{"type":"object","description":"Partial JSON object; array fields accept {$upsert: [{id|code, ...}], $delete: [key]}."},"expectedDataRev":{"type":"integer","minimum":0}}}"""), localWrite),
             new(KernelMcpToolNames.TaskList, "List all tasks declared in the track.",
-                Schema("""{"type":"object","properties":{}}""")),
+                Schema("""{"type":"object","properties":{}}"""), readOnlyLocal),
             new(KernelMcpToolNames.UserAsk, "Suspend and ask the human user one or more structured multiple-choice questions.",
-                Schema(KernelMcpReportSupport.UserAskSchemaJson)),
+                Schema(KernelMcpReportSupport.UserAskSchemaJson), localWrite),
             new(KernelMcpToolNames.MailList, "List cross-track mails delivered to this track.",
-                Schema("""{"type":"object","properties":{"unreadOnly":{"type":"boolean"}}}""")),
+                Schema("""{"type":"object","properties":{"unreadOnly":{"type":"boolean"}}}"""), readOnlyLocal),
             new(KernelMcpToolNames.MailRead, "Read a specific mail by ID and mark it as read.",
-                Schema("""{"type":"object","required":["mailId"],"properties":{"mailId":{"type":"string"}}}""")),
+                Schema("""{"type":"object","required":["mailId"],"properties":{"mailId":{"type":"string"}}}"""), localIdempotentWrite),
             new(KernelMcpToolNames.TrackStatus, "Inspect track status, active sessions, tasks, open asks, terminals, and unread mail count.",
-                Schema("""{"type":"object","properties":{}}""")),
+                Schema("""{"type":"object","properties":{}}"""), readOnlyLocal),
             new(KernelMcpToolNames.ProviderList, "List providers, models, supported reasoning efforts, and permission modes for this Track. " +
                 "If permissionCatalogSource is dynamic and permissionModes is empty, the Track has no observed modes for that provider yet. Omit permissionMode to use its workspace default.",
                 Schema("""
@@ -172,50 +188,50 @@ public static class KernelMcpCatalog
                   "refresh":{"type":"boolean","description":"Bypass the 60-second probe cache. Defaults to false."},
                   "includeUnavailable":{"type":"boolean","description":"Include unavailable providers and their diagnostic reasons. Defaults to false."}
                 }}
-                """)),
+                """), readOnlyLocal),
             new(KernelMcpToolNames.TerminalOpen, "Open or reuse an idempotent PTY terminal in the workspace.",
-                Schema("""{"type":"object","properties":{"title":{"type":"string"},"program":{"type":"string"},"args":{"type":"array","items":{"type":"string"}},"cwd":{"type":"string"},"idempotencyKey":{"type":"string"},"cols":{"type":"integer"},"rows":{"type":"integer"}}}""")),
+                Schema("""{"type":"object","properties":{"title":{"type":"string"},"program":{"type":"string"},"args":{"type":"array","items":{"type":"string"}},"cwd":{"type":"string"},"idempotencyKey":{"type":"string"},"cols":{"type":"integer"},"rows":{"type":"integer"}}}"""), openWorldDestructive),
             new(KernelMcpToolNames.TerminalRead, "Observe terminal screen frame and optional wait condition.",
-                Schema(KernelMcpReportSupport.TerminalReadSchemaJson)),
+                Schema(KernelMcpReportSupport.TerminalReadSchemaJson), readOnlyLocal),
             new(KernelMcpToolNames.TerminalInput, "Send text, keys, paste, or submit action to a terminal.",
-                Schema(KernelMcpReportSupport.TerminalInputSchemaJson)),
+                Schema(KernelMcpReportSupport.TerminalInputSchemaJson), openWorldDestructive),
             new(KernelMcpToolNames.ScheduleList, "List durable schedules and reminders configured on this track.",
-                Schema("""{"type":"object","additionalProperties":false,"properties":{"includeTerminal":{"type":"boolean"}}}""")),
+                Schema("""{"type":"object","additionalProperties":false,"properties":{"includeTerminal":{"type":"boolean"}}}"""), readOnlyLocal),
             new(KernelMcpToolNames.ScheduleSet, "Create or update a persistent one-shot reminder or recurring cron schedule that wakes this track (governance only).",
-                Schema("""{"type":"object","additionalProperties":false,"required":["title","prompt"],"properties":{"id":{"type":"string"},"title":{"type":"string"},"prompt":{"type":"string"},"runAt":{"type":"string"},"runAtMs":{"type":"integer"},"cron":{"type":"string"},"timezone":{"type":"string"},"maxOccurrences":{"type":"integer","minimum":1}}}""")),
+                Schema("""{"type":"object","additionalProperties":false,"required":["title","prompt"],"properties":{"id":{"type":"string"},"title":{"type":"string"},"prompt":{"type":"string"},"runAt":{"type":"string"},"runAtMs":{"type":"integer"},"cron":{"type":"string"},"timezone":{"type":"string"},"maxOccurrences":{"type":"integer","minimum":1}}}"""), localWrite),
             new(KernelMcpToolNames.ScheduleCancel, "Cancel an active schedule on this track and drop any pending wake for it (governance only).",
-                Schema("""{"type":"object","additionalProperties":false,"required":["scheduleId"],"properties":{"scheduleId":{"type":"string"}}}""")),
+                Schema("""{"type":"object","additionalProperties":false,"required":["scheduleId"],"properties":{"scheduleId":{"type":"string"}}}"""), localIdempotentWrite),
             new(KernelMcpToolNames.TaskCancel, "Cancel a task and stop any active execution (task parent or Track Lead).",
-                Schema("""{"type":"object","required":["taskKey"],"properties":{"taskKey":{"type":"string"},"reason":{"type":"string"}}}""")),
+                Schema("""{"type":"object","required":["taskKey"],"properties":{"taskKey":{"type":"string"},"reason":{"type":"string"}}}"""), localWrite),
             new(KernelMcpToolNames.TaskAccept, "Record semantic acceptance verdict on a task (task parent or Track Lead).",
-                Schema("""{"type":"object","required":["taskKey"],"properties":{"taskKey":{"type":"string"},"note":{"type":"string"}}}""")),
+                Schema("""{"type":"object","required":["taskKey"],"properties":{"taskKey":{"type":"string"},"note":{"type":"string"}}}"""), localIdempotentWrite),
             new(KernelMcpToolNames.TaskReject, "Reject a task with review feedback and optionally re-queue (task parent or Track Lead).",
-                Schema("""{"type":"object","required":["taskKey","note"],"properties":{"taskKey":{"type":"string"},"note":{"type":"string"},"reQueue":{"type":"boolean"}}}""")),
+                Schema("""{"type":"object","required":["taskKey","note"],"properties":{"taskKey":{"type":"string"},"note":{"type":"string"},"reQueue":{"type":"boolean"}}}"""), localWrite),
             new(KernelMcpToolNames.MailSend, "Wake the recipient Lead by specifying exactly one of toTrackId or replyToMailId (a message in your inbox). Governance only.",
-                Schema("""{"type":"object","required":["summary","body"],"properties":{"replyToMailId":{"type":"string"},"toTrackId":{"type":"string"},"summary":{"type":"string"},"body":{"type":"string"}}}""")),
+                Schema("""{"type":"object","required":["summary","body"],"properties":{"replyToMailId":{"type":"string"},"toTrackId":{"type":"string"},"summary":{"type":"string"},"body":{"type":"string"}}}"""), localWrite),
             new(KernelMcpToolNames.TrackRename, "Rename the current track (governance only).",
-                Schema("""{"type":"object","required":["title"],"properties":{"title":{"type":"string"}}}""")),
+                Schema("""{"type":"object","required":["title"],"properties":{"title":{"type":"string"}}}"""), localIdempotentWrite),
             new(KernelMcpToolNames.TemplateList, "List concise template summaries (governance only).",
-                Schema("""{"type":"object","properties":{}}""")),
+                Schema("""{"type":"object","properties":{}}"""), readOnlyLocal),
             new(KernelMcpToolNames.TemplateRead, "Inspect a template manifest and source; use __current__ for the active snapshot, inputs, state, and headerView; omit templateId or use __contract__ for the authoring contract (governance only).",
-                Schema("""{"type":"object","properties":{"templateId":{"type":"string"}}}""")),
+                Schema("""{"type":"object","properties":{"templateId":{"type":"string"}}}"""), readOnlyLocal),
             new(KernelMcpToolNames.TemplateUpdateInputs, "Merge inputs into the active template, preserving state (governance only).",
-                Schema("""{"type":"object","required":["inputs"],"properties":{"inputs":{"type":"object"}}}""")),
+                Schema("""{"type":"object","required":["inputs"],"properties":{"inputs":{"type":"object"}}}"""), localIdempotentWrite),
             new(KernelMcpToolNames.TrackSet, "Apply a templateId or JSON/.perga.js source with inputs. Use dryRun to preview or clear to detach while keeping the report (governance only).",
-                Schema("""{"type":"object","properties":{"templateId":{"type":"string","minLength":1},"source":{"type":"string","minLength":1},"inputs":{"type":"object"},"dryRun":{"type":"boolean"},"clear":{"type":"boolean"},"resetData":{"type":"boolean"}}}""")),
+                Schema("""{"type":"object","properties":{"templateId":{"type":"string","minLength":1},"source":{"type":"string","minLength":1},"inputs":{"type":"object"},"dryRun":{"type":"boolean"},"clear":{"type":"boolean"},"resetData":{"type":"boolean"}}}"""), localWrite),
             new(KernelMcpToolNames.TrackClose, "Close the current track and cancel active tasks (governance only).",
-                Schema("""{"type":"object","properties":{}}""")),
+                Schema("""{"type":"object","properties":{}}"""), localDestructive),
             new(KernelMcpToolNames.TaskDone, "Submit completed work for the bound task and trigger gate verification (contract subagent only).",
-                Schema("""{"type":"object","properties":{"result":{}}}""")),
+                Schema("""{"type":"object","properties":{"result":{}}}"""), localWrite),
             new(KernelMcpToolNames.TaskFail, "Report failure for the bound task (contract subagent only).",
-                Schema("""{"type":"object","required":["reason"],"properties":{"reason":{"type":"string"},"result":{}}}""")),
+                Schema("""{"type":"object","required":["reason"],"properties":{"reason":{"type":"string"},"result":{}}}"""), localWrite),
             new(KernelMcpToolNames.SessionList, "List conversations in this Track.",
                 Schema("""
                 {"type":"object","additionalProperties":false,"properties":{
                   "includeArchived":{"type":"boolean","description":"Set true to include archived conversations."},
                   "parentSessionId":{"type":"string","description":"Filter to direct children of this conversation."}
                 }}
-                """)),
+                """), readOnlyLocal),
             new(KernelMcpToolNames.SessionCreate,
                 "Create a child conversation. Omit task for a lightweight multi-turn collaborator sharing the Track workspace. Avoid concurrent writers. " +
                 "Provide task for a formal Task Worker with a Report block, read_only isolation or a read_write lease, dependsOn scheduling, " +
@@ -240,7 +256,7 @@ public static class KernelMcpCatalog
                     "dependsOn":{"type":"array","items":{"type":"string"},"description":"Task keys that must complete before this Worker starts."}
                   }}
                 }}
-                """)),
+                """), localWrite),
             new(KernelMcpToolNames.SessionRead, "Read conversation state, history, progress and pending interactions.",
                 Schema("""
                 {"type":"object","additionalProperties":false,"properties":{
@@ -252,7 +268,7 @@ public static class KernelMcpCatalog
                   "afterSequence":{"type":"integer","minimum":0,"description":"Last activity sequence observed for activityTurnId, used to request incremental updates."},
                   "waitMs":{"type":"integer","minimum":0,"maximum":10000,"description":"Wait up to this many milliseconds for a relevant update when the current state permits waiting."}
                 },"required":["sessionId"]}
-                """)),
+                """), readOnlyLocal),
             new(KernelMcpToolNames.SessionUpdate,
                 "Update a child conversation. Configuration changes require expectedConfigVersion. Use provider_list to discover supported values.",
                 Schema("""
@@ -266,7 +282,7 @@ public static class KernelMcpCatalog
                   "reasoningEffort":{"type":["string","null"],"description":"Omit to keep the current effort on the same provider, use null for the model default, or pass a supported effort."},
                   "permissionMode":{"type":["string","null"],"description":"Omit to keep the current mode on the same provider, use null for the provider default, or pass a native mode ID."}
                 },"required":["sessionId"]}
-                """)),
+                """), localIdempotentWrite),
             new(KernelMcpToolNames.SessionSend, "Send content with requestKey, or steer a queued messageId into turnId. Default requires idle; queue waits; steer targets a running turn.",
                 Schema("""
                 {"type":"object","additionalProperties":false,"properties":{
@@ -278,14 +294,14 @@ public static class KernelMcpCatalog
                   "turnId":{"type":"string","description":"ID of the active turn targeted by steer mode."},
                   "mode":{"enum":["default","queue","steer"],"description":"Choose default for idle delivery, queue to wait for dispatch, or steer to target the active turn."}
                 },"required":["sessionId"]}
-                """)),
+                """), localWrite),
             new(KernelMcpToolNames.SessionWithdraw, "Withdraw a queued or unresolved conversation message.",
                 Schema("""
                 {"type":"object","additionalProperties":false,"properties":{
                   "sessionId":{"type":"string","description":"ID of the conversation that owns the message."},
                   "messageId":{"type":"string","description":"ID of the queued or unresolved message to withdraw."}
                 },"required":["sessionId","messageId"]}
-                """)),
+                """), localIdempotentWrite),
             new(KernelMcpToolNames.SessionControl, "Stop a specific turn, reconnect an unknown session, reset context, or compact an idle conversation.",
                 Schema("""
                 {"type":"object","additionalProperties":false,"properties":{
@@ -294,7 +310,7 @@ public static class KernelMcpCatalog
                   "turnId":{"type":"string","description":"ID of the observed turn, required for stop."},
                   "expectedEpoch":{"type":"integer","description":"Require this conversation epoch when reconnecting or resetting context."}
                 },"required":["sessionId","action"]}
-                """)),
+                """), localWrite),
             new(KernelMcpToolNames.SessionRespond, "Answer a pending ask with answers, or an approval with executionId and optionId.",
                 Schema("""
                 {"type":"object","additionalProperties":false,"properties":{
@@ -304,7 +320,7 @@ public static class KernelMcpCatalog
                   "optionId":{"type":"string","description":"ID of the option selected for the pending approval."},
                   "answers":{"description":"Answers to the pending ask in the format specified by that interaction."}
                 },"required":["sessionId","interactionId"]}
-                """))
+                """), localWrite)
         ];
     }
 }

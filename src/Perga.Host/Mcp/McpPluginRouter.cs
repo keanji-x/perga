@@ -887,6 +887,7 @@ public sealed class McpPluginRouter : IAsyncDisposable
                 var schema = McpToolResultFormatter.TryGetPropertyIgnoreCase(item, ["inputSchema", "input_schema"], out var s)
                     ? s.Clone()
                     : McpToolResultFormatter.ParseClone("""{"type":"object","properties":{}}""");
+                // Do not forward self-declared approval hints from untrusted third-party plugins.
                 list.Add(new McpToolWireDescriptor(name, desc, schema));
             }
         }
