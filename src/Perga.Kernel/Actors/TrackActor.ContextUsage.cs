@@ -1,4 +1,3 @@
-using System.Runtime.CompilerServices;
 using Perga.AgentKit;
 using Perga.Contracts;
 
@@ -6,27 +5,16 @@ namespace Perga.Kernel.Actors;
 
 public sealed partial class TrackActor
 {
-    private readonly ConditionalWeakTable<IAgentSession, LiveContextUsage> _liveContextUsage = new();
-
-    private sealed class LiveContextUsage
-    {
-        public long? Revision { get; set; }
-        public long? WindowTokens { get; set; }
-        public SessionContextUsage? Latest { get; set; }
-        public IdleContextUsage? Trailing { get; set; }
-        public IdleContextUsage? TrailingWithWindow { get; set; }
-    }
-
     private static bool HasCurrentContextConfigurationCore(AgentSessionDto session, OpenSessionHandle open) =>
-        session.BoundAttemptId is not null ||
+        string.Equals(open.LaunchSpec.Provider, session.Provider, StringComparison.OrdinalIgnoreCase) && (session.BoundAttemptId is not null ||
         (open.Selection == SessionConfiguration.FromNullable(session.Model, session.ReasoningEffort, session.PermissionMode) &&
-         open.Confirmation is not null && open.Confirmation == open.Agent.ConfigurationState);
+         open.Confirmation is not null && open.Confirmation == open.Agent.ConfigurationState));
 
     private bool IsCurrentContextBindingCore(
         AgentSessionDto session, IAgentSession provider, LiveContextUsage state) =>
-        _openSessionHandles.TryGetValue(session.Id, out var open) && ReferenceEquals(provider, open.Agent) &&
+        _runtimes.TryGetOpen(session.Id, out var open) && ReferenceEquals(provider, open.Agent) &&
         HasCurrentContextConfigurationCore(session, open) &&
-        _liveContextUsage.TryGetValue(provider, out var current) && ReferenceEquals(state, current);
+        ReferenceEquals(state, open.ContextUsage);
 
     private AgentSessionDto ApplyContextUsageCore(
         AgentSessionDto session, IAgentSession provider, LiveContextUsage state, long? revision, TokenUsage usage, long atMs)
@@ -58,16 +46,12 @@ public sealed partial class TrackActor
         return ApplyContextUsageCore(session, provider, state, trailing.ContextUsageRevision, trailing.Usage, atMs);
     }
 
-    private void InvalidateContextBindingCore(string sessionId)
-    {
-        if (_openSessionHandles.TryGetValue(sessionId, out var provider))
-            _liveContextUsage.Remove(provider.Agent);
-    }
+    private void InvalidateContextBindingCore(string sessionId) => _runtimes.Get(sessionId).InvalidateContextUsage();
 
     private double? CurrentContextUsageRatioCore(AgentSessionDto session) =>
-        _openSessionHandles.TryGetValue(session.Id, out var provider) &&
+        _runtimes.TryGetOpen(session.Id, out var provider) &&
         HasCurrentContextConfigurationCore(session, provider) &&
-        _liveContextUsage.TryGetValue(provider.Agent, out var state) &&
+        provider.ContextUsage is { } state &&
         state.Revision == provider.Agent.ContextUsageRevision && ReferenceEquals(session.ContextUsage, state.Latest)
             ? state.Latest?.Ratio
             : null;
@@ -87,9 +71,6 @@ public sealed partial class TrackActor
     private async Task RegisterConfirmedOpenAgentSessionCoreAsync(
         AgentSessionDto session, IAgentSession agentSession, HarnessLaunchSpec launchSpec, ConfirmedConfiguration? confirmation, CancellationToken ct)
     {
-        _openSessionHandles[session.Id] = new(agentSession, launchSpec,
-            SessionConfiguration.FromLaunch(launchSpec), confirmation);
-
         if (session.BoundAttemptId is not null)
         {
             return;
@@ -181,8 +162,8 @@ public sealed partial class TrackActor
             current.ArchivedAtMs is not null ||
             current.BoundAttemptId is not null ||
             current.Epoch != expectedEpoch ||
-            _scheduler.HasResumeHold(sessionId) ||
-            !_openSessionHandles.TryGetValue(sessionId, out var openSession) ||
+            (current.Status == "unknown" || !bindPending && _scheduler.IsRecovering(sessionId)) ||
+            !_runtimes.TryGetOpen(sessionId, out var openSession) ||
             !ReferenceEquals(openSession.Agent, expectedSession))
         {
             return false;
@@ -204,7 +185,7 @@ public sealed partial class TrackActor
         {
             // The notification can arrive on the RPC reader before the actor settles the terminal event.
             if (idleUsage.CompletedPromptId is not null && idleUsage.ContextUsageRevision == expectedSession.ContextUsageRevision &&
-                _liveContextUsage.TryGetValue(expectedSession, out var state))
+                openSession.ContextUsage is { } state)
             {
                 state.Trailing = idleUsage;
                 if (idleUsage.Usage.ContextWindowTokens is > 0)
@@ -215,7 +196,7 @@ public sealed partial class TrackActor
         if (current.Status != "idle" && !(bindPending && current.Status == "running"))
             return false;
 
-        updated = ApplyContextUsageCore(current, expectedSession, _liveContextUsage.GetOrCreateValue(expectedSession),
+        updated = ApplyContextUsageCore(current, expectedSession, openSession.ContextUsage,
             idleUsage.ContextUsageRevision, idleUsage.Usage, NowMs());
         return !ReferenceEquals(updated, current);
     }

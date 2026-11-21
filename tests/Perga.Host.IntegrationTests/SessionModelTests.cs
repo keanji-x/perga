@@ -85,7 +85,10 @@ public sealed class SessionModelTests
                 host.AgentRuntime.ConfigureHandler = _ => new SessionConfigurationOutcome.Rejected(
                     ConfigurationFailureCode.InvalidAcknowledgement, "effort rejected", new(null, null, false));
                 using var response = await host.Client.PatchAsJsonAsync($"/api/v1/sessions/{sessionId}", new { model = "  ", reasoningEffort = " high " });
-                Assert.False(response.IsSuccessStatusCode);
+                response.EnsureSuccessStatusCode();
+                await kernel.SendSessionMessageAsync(sessionId, new(Content: "rebind", RequestKey: "rejected-rebind"), new InteropPrincipal.Human(), default);
+                await kernel.WaitForTrackIdleAsync(trackId);
+                Assert.Equal("failed", (await kernel.GetSessionItemsAsync(sessionId, new(), new InteropPrincipal.Human(), default)).LastTurn!.Status);
             }
             await using var restarted = new PergaHostTestCluster(data.FullName);
             var restored = Assert.Single((await restarted.Services.GetRequiredService<IPergaKernel>().ListSessionsAsync(trackId, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray());
@@ -113,7 +116,12 @@ public sealed class SessionModelTests
             ? new SessionConfigurationOutcome.Unsupported(ConfigurationDimension.Effort, "effort unavailable")
             : new SessionConfigurationOutcome.Rejected(ConfigurationFailureCode.InvalidAcknowledgement, "effort rejected", new(null, null, false));
         using var response = await host.Client.PatchAsJsonAsync($"/api/v1/sessions/{sessionId}", new { model = (string?)null, reasoningEffort = "high" });
-        Assert.False(response.IsSuccessStatusCode);
+        response.EnsureSuccessStatusCode();
+        Assert.Equal(opens, host.AgentRuntime.OpenedSessions.Count);
+        Assert.Equal(prompts, host.AgentRuntime.ExecutedTurns.Count);
+        await kernel.SendSessionMessageAsync(sessionId, new(Content: "rebind", RequestKey: "configuration-rebind"), new InteropPrincipal.Human(), default);
+        await kernel.WaitForTrackIdleAsync(trackId);
+        Assert.Equal("failed", (await kernel.GetSessionItemsAsync(sessionId, new(), new InteropPrincipal.Human(), default)).LastTurn!.Status);
         var desired = Assert.Single((await kernel.ListSessionsAsync(trackId, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray());
         Assert.Null(desired.Model);
         Assert.Equal("high", desired.ReasoningEffort);

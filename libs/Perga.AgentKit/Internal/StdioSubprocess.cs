@@ -18,6 +18,14 @@ internal sealed class StdioSubprocess : IAsyncDisposable
     private readonly CancellationTokenSource _disposeCts = new();
     private readonly Task _stderrPumpTask;
     private int _disposed;
+    private readonly object _sync = new();
+    private Task? _activeShutdownTask;
+    private int _stdinClosed;
+
+    // Internal bounds allow real-child tests to exercise an unconfirmed shutdown.
+    internal TimeSpan GracefulShutdownTimeout { get; set; } = TimeSpan.FromMilliseconds(250);
+    internal TimeSpan KillWaitTimeout { get; set; } = TimeSpan.FromSeconds(2);
+    internal Action<Process> KillProcessTree { get; set; } = process => process.Kill(entireProcessTree: true);
 
     private StdioSubprocess(Process process)
     {
@@ -103,13 +111,21 @@ internal sealed class StdioSubprocess : IAsyncDisposable
         return new StdioSubprocess(process);
     }
 
-    public async Task WriteLineAsync(string line, CancellationToken ct)
+    public Task WriteLineAsync(string line, CancellationToken ct)
     {
-        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        lock (_sync)
+        {
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+            return WriteLineCoreAsync(line, ct);
+        }
+    }
 
+    private async Task WriteLineCoreAsync(string line, CancellationToken ct)
+    {
         await _stdinLock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
             await _process.StandardInput.WriteLineAsync(line.AsMemory(), ct).ConfigureAwait(false);
             await _process.StandardInput.FlushAsync(ct).ConfigureAwait(false);
         }
@@ -166,78 +182,63 @@ internal sealed class StdioSubprocess : IAsyncDisposable
 
     internal bool ShutdownConfirmed { get; private set; }
 
-    public async ValueTask DisposeAsync()
+    public ValueTask DisposeAsync()
     {
-        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        lock (_sync)
         {
-            return;
+            if (ShutdownConfirmed) return ValueTask.CompletedTask;
+            if (_activeShutdownTask is null || _activeShutdownTask.IsCompleted)
+            {
+                Interlocked.Exchange(ref _disposed, 1);
+                _activeShutdownTask = ShutdownAsync();
+            }
+            return new ValueTask(_activeShutdownTask);
+        }
+    }
+
+    private void TryCloseStdinOnce()
+    {
+        if (Interlocked.Exchange(ref _stdinClosed, 1) != 0) return;
+        try { _process.StandardInput.Close(); }
+        catch { /* The child may already have closed its input. */ }
+    }
+
+    private async Task WaitForExitAsync(TimeSpan timeout)
+    {
+        using var cts = new CancellationTokenSource(timeout);
+        try { await _process.WaitForExitAsync(cts.Token).ConfigureAwait(false); }
+        catch { /* Retain ownership unless HasExited confirms exit below. */ }
+    }
+
+    private async Task ShutdownAsync()
+    {
+        // Serialize closure with writers so no writer's finally can release a disposed lock.
+        if (await _stdinLock.WaitAsync(GracefulShutdownTimeout).ConfigureAwait(false))
+        {
+            try { TryCloseStdinOnce(); }
+            finally { _stdinLock.Release(); }
         }
 
+        if (!_process.HasExited)
+            await WaitForExitAsync(GracefulShutdownTimeout).ConfigureAwait(false);
+        if (!_process.HasExited)
+        {
+            try { KillProcessTree(_process); }
+            catch { /* A later disposal retries the same process if it remains alive. */ }
+            await WaitForExitAsync(KillWaitTimeout).ConfigureAwait(false);
+        }
+
+        if (!_process.HasExited) return;
+
+        try { await _stderrPumpTask.WaitAsync(TimeSpan.FromMilliseconds(500)).ConfigureAwait(false); }
+        catch { /* Bound draining in case a descendant still owns the pipe. */ }
         await _disposeCts.CancelAsync().ConfigureAwait(false);
-
-        try
-        {
-            _process.StandardInput.Close();
-        }
-        catch
-        {
-            // Ignore stdin close errors during shutdown.
-        }
-
-        try
-        {
-            if (!_process.HasExited)
-            {
-                using var graceCts = new CancellationTokenSource(TimeSpan.FromMilliseconds(250));
-                try
-                {
-                    await _process.WaitForExitAsync(graceCts.Token).ConfigureAwait(false);
-                }
-                catch (OperationCanceledException)
-                {
-                    // Proceed to force kill below.
-                }
-            }
-
-            if (!_process.HasExited)
-            {
-                _process.Kill(entireProcessTree: true);
-                using var killWaitCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
-                try
-                {
-                    await _process.WaitForExitAsync(killWaitCts.Token).ConfigureAwait(false);
-                }
-                catch
-                {
-                    // Best-effort wait after kill.
-                }
-            }
-        }
-        catch
-        {
-            // Process may have exited concurrently.
-        }
-
-        try
-        {
-            await _stderrPumpTask.WaitAsync(TimeSpan.FromMilliseconds(500)).ConfigureAwait(false);
-        }
-        catch
-        {
-            // Best-effort drain.
-        }
-
-        try
-        {
-            ShutdownConfirmed = _process.HasExited;
-        }
-        catch (InvalidOperationException)
-        {
-            ShutdownConfirmed = false;
-        }
+        // Publish confirmation only after cleanup; concurrent disposals join this attempt.
         _process.Dispose();
-        _stdinLock.Dispose();
+        // A blocked writer may still release this semaphore after the child exits.
+        // Leave the managed semaphore alive until all references are collected.
         _disposeCts.Dispose();
+        ShutdownConfirmed = true;
     }
 
     private async Task PumpStderrAsync()

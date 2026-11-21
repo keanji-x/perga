@@ -6,20 +6,17 @@ namespace Perga.Kernel.Actors;
 
 public sealed partial class TrackActor
 {
-    // All scheduling decisions and slot transitions run on the Track mailbox. Dispatch
-    // identity and startup cancellation are synchronized because dispatch and Stop run outside that mailbox.
+    // Turn admission and scheduling run on the Track mailbox. Durable dispatch identity
+    // is atomic because dispatch begins outside that mailbox.
     private sealed class SessionTurnScheduler(TrackActor actor)
     {
         private sealed class SessionState
         {
-            public readonly object StartupSync = new();
-            public CancellationTokenSource? Startup;
-            public string? StartupTurnId;
             public volatile ActiveTurnState? Active;
+            public volatile bool Compacting;
+            public volatile bool Recovering;
             public Guid? Reservation;
-            public bool Compacting;
             public (string InputId, Task Attempt)? Steering;
-            public SessionResumeHold? Resume;
             public string? DispatchInputId;
         }
 
@@ -27,54 +24,38 @@ public sealed partial class TrackActor
         private SessionState State(string id) => _sessions.GetOrAdd(id, _ => new());
 
         public IEnumerable<ActiveTurnState> ActiveTurns => _sessions.Values.Select(s => s.Active).OfType<ActiveTurnState>();
-        public IEnumerable<SessionResumeHold> ResumeHolds => _sessions.Values.Select(s => s.Resume).OfType<SessionResumeHold>();
         public bool HasActiveTurns => ActiveTurns.Any();
         public bool HasDispatchingInputs => _sessions.Values.Any(s => Volatile.Read(ref s.DispatchInputId) is not null);
 
-        public CancellationTokenSource BeginStartup(string id, string? turnId = null)
-        {
-            var state = State(id);
-            lock (state.StartupSync)
-            {
-                state.StartupTurnId ??= turnId;
-                return state.Startup ??= CancellationTokenSource.CreateLinkedTokenSource(actor._actorShutdownCts.Token);
-            }
-        }
+        public bool HasRecoveringSessions => _sessions.Values.Any(s => s.Recovering);
+        public bool HasActiveWork => actor._runtimes.HasActiveWork || _sessions.Values.Any(s =>
+            s.Active is not null || s.Compacting || s.Recovering || s.Reservation is not null ||
+            s.Steering is not null || Volatile.Read(ref s.DispatchInputId) is not null);
 
-        public bool CancelStartup(string id, string? turnId = null)
+        public bool IsBusy(string id) => HasActive(id) || IsCompacting(id) || IsRecovering(id);
+        public bool IsCompacting(string id) => _sessions.TryGetValue(id, out var state) && state.Compacting;
+        public void BeginCompacting(string id) => State(id).Compacting = true;
+        public void EndCompacting(string id) => State(id).Compacting = false;
+        public bool IsRecovering(string id) => _sessions.TryGetValue(id, out var state) && state.Recovering;
+        public bool TryBeginRecovery(string id)
         {
-            if (!_sessions.TryGetValue(id, out var state)) return false;
-            lock (state.StartupSync)
-            {
-                if (state.Active is not null || state.Startup is null || (turnId is not null && state.StartupTurnId != turnId)) return false;
-                state.Startup.Cancel();
-                return true;
-            }
+            var runtime = actor._runtimes.Get(id);
+            if (IsBusy(id) || HasReservation(id) || IsSteering(id) ||
+                runtime.IsDisposing || runtime.HasInFlightOperation) return false;
+            State(id).Recovering = true;
+            return true;
         }
-
-        public void EndStartup(string id, CancellationTokenSource? expected = null)
-        {
-            var state = State(id);
-            lock (state.StartupSync)
-            {
-                if (expected is not null && !ReferenceEquals(state.Startup, expected)) return;
-                state.Startup?.Dispose();
-                state.Startup = null;
-                state.StartupTurnId = null;
-            }
-        }
+        public void EndRecovery(string id) => State(id).Recovering = false;
 
         public void Clear(string id)
         {
-            CancelStartup(id);
-            EndStartup(id);
+            actor._runtimes.Get(id).CancelLaunch();
+            actor._runtimes.Get(id).EndLaunch();
             if (_sessions.TryGetValue(id, out var state))
             {
                 state.Active = null;
                 state.Reservation = null;
-                state.Compacting = false;
                 state.Steering = null;
-                state.Resume = null;
                 Interlocked.Exchange(ref state.DispatchInputId, null);
             }
         }
@@ -83,14 +64,11 @@ public sealed partial class TrackActor
         public bool HasActive(string id) => _sessions.TryGetValue(id, out var state) && state.Active is not null;
         public void SetActive(string id, ActiveTurnState active)
         {
+            actor._runtimes.Get(id).ThrowIfStartupCanceled();
             var state = State(id);
-            lock (state.StartupSync)
-            {
-                state.Active = active;
-                if (state.Startup?.IsCancellationRequested == true)
-                    ObserveTaskFault(actor.RequestTurnStop(active));
-            }
+            state.Active = active;
         }
+
         public void RemoveActive(string id) => State(id).Active = null;
         public bool TryGetActive(string id, out ActiveTurnState active)
         {
@@ -114,11 +92,6 @@ public sealed partial class TrackActor
             State(id).Reservation = value;
         }
 
-        // Compaction
-        public bool IsCompacting(string id) => _sessions.TryGetValue(id, out var state) && state.Compacting;
-        public void StartCompacting(string id) => State(id).Compacting = true;
-        public void EndCompacting(string id) => State(id).Compacting = false;
-
         // Steering
         public bool IsSteering(string id) => _sessions.TryGetValue(id, out var state) && state.Steering is not null;
         public void SetSteering(string id, (string InputId, Task Attempt) value) => State(id).Steering = value;
@@ -130,30 +103,6 @@ public sealed partial class TrackActor
             return steer.HasValue;
         }
 
-        // Resume hold
-        public bool HasResumeHold(string id) => _sessions.TryGetValue(id, out var state) && state.Resume is not null;
-        public void HoldResume(string id, SessionResumeHold hold) => State(id).Resume = hold;
-        public bool TryGetResumeHold(string id, out SessionResumeHold hold)
-        {
-            hold = _sessions.TryGetValue(id, out var state) ? state.Resume! : null!;
-            return hold is not null;
-        }
-
-        public bool TryHoldResume(string id, SessionResumeHold hold)
-        {
-            if (HasResumeHold(id)) return false;
-            HoldResume(id, hold);
-            return true;
-        }
-
-        public bool ReleaseResumeHold(string id)
-        {
-            if (!_sessions.TryGetValue(id, out var state)) return false;
-            var held = state.Resume is not null;
-            state.Resume = null;
-            return held;
-        }
-
         // Durable input dispatch identity (atomic: a durable input starts outside the mailbox)
         public bool TryDispatch(string id, string inputId) =>
             Interlocked.CompareExchange(ref State(id).DispatchInputId, inputId, null) is null;
@@ -162,13 +111,12 @@ public sealed partial class TrackActor
         public void EndDispatch(string id, string inputId) =>
             Interlocked.CompareExchange(ref State(id).DispatchInputId, null, inputId);
 
-        public bool IsOccupied(AgentSessionDto session, PersistedSessionInput? input = null, Guid? reservation = null, bool allowFinishingDispatch = false, bool allowResumeHold = false)
+        public bool IsOccupied(AgentSessionDto session, PersistedSessionInput? input = null, Guid? reservation = null, bool allowFinishingDispatch = false)
         {
-            if (actor._sessionShutdownPending.ContainsKey(session.Id)) return true;
+            if (actor._runtimes.IsShutdownUnconfirmed(session.Id) || IsRecovering(session.Id)) return true;
             if (!_sessions.TryGetValue(session.Id, out var state))
                 return input is null && session.Status is "queued" or "running" or "unknown";
             return state.Active is not null || state.Compacting || state.Steering is not null ||
-                (state.Resume is { } hold && (!allowResumeHold || hold.Busy)) ||
                 (state.Reservation is not null && state.Reservation != reservation) ||
                 (!allowFinishingDispatch && Volatile.Read(ref state.DispatchInputId) is { } dispatch && dispatch != input?.Receipt.InputId) ||
                 (input is null && session.Status is "queued" or "running" or "unknown");

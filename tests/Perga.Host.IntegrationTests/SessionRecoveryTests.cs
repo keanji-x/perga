@@ -16,6 +16,52 @@ namespace Perga.Host.IntegrationTests;
 
 public sealed class SessionRecoveryTests
 {
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task StartupStopAllowsNextSendOrReturnsDedicatedRecoveryErrorUntilShutdownRetry(bool confirmed)
+    {
+        await using var host = new PergaHostTestCluster();
+        var (track, id) = await host.CreateTrackAsync();
+        var kernel = host.Services.GetRequiredService<IPergaKernel>();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        host.AgentRuntime.ShutdownConfirmed = confirmed;
+        host.AgentRuntime.BeforeOpenAsync = async (_, ct) =>
+        {
+            entered.TrySetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, ct);
+        };
+        var accepted = await kernel.SendSessionMessageAsync(id, new(Content: "cancel startup", RequestKey: "cancel-startup"),
+            new InteropPrincipal.Human(), default);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        using var stopped = await host.Client.PostAsJsonAsync($"/api/v1/sessions/{id}/control", new { action = "stop", turnId = accepted.TurnId });
+        stopped.EnsureSuccessStatusCode();
+        await kernel.WaitForTrackIdleAsync(track).WaitAsync(TimeSpan.FromSeconds(5));
+        var page = await kernel.GetSessionItemsAsync(id, new(), new InteropPrincipal.Human(), default);
+        Assert.Equal("interrupted", page.LastTurn!.Status);
+        if (!confirmed)
+        {
+            Assert.Equal("shutdown_unconfirmed", page.UnknownDetail!.Reason);
+            using var request = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/sessions/{id}/messages")
+            { Content = JsonContent.Create(new { content = "blocked" }) };
+            request.Headers.Add("Idempotency-Key", "blocked");
+            using var refused = await host.Client.SendAsync(request);
+            Assert.Equal(HttpStatusCode.Conflict, refused.StatusCode);
+            using var error = JsonDocument.Parse(await refused.Content.ReadAsStringAsync());
+            Assert.Equal("session_recovery_required", error.RootElement.GetProperty("code").GetString());
+            var store = host.Services.GetRequiredService<ITrackStore>();
+            Assert.Equal("shutdown_unconfirmed", (await store.LoadTrackAggregateAsync(track, default))!.Sessions.Single().UnknownReason);
+            host.AgentRuntime.ShutdownConfirmed = true;
+            using var reset = await host.Client.PostAsJsonAsync($"/api/v1/sessions/{id}/control", new { action = "reset_context" });
+            reset.EnsureSuccessStatusCode();
+        }
+        else Assert.Equal("idle", page.State);
+        host.AgentRuntime.BeforeOpenAsync = null;
+        await kernel.SendSessionMessageAsync(id, new(Content: "next", RequestKey: "next"), new InteropPrincipal.Human(), default);
+        await kernel.WaitForTrackIdleAsync(track);
+        Assert.Equal("completed", (await kernel.GetSessionItemsAsync(id, new(), new InteropPrincipal.Human(), default)).LastTurn!.Status);
+    }
+
     [Fact]
     public async Task IdleSessionCanResetContextAndRetainsBoundary()
     {

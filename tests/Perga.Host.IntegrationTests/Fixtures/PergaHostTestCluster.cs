@@ -122,14 +122,7 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
         return ProbeProvidersAsync(ct);
     }
 
-    public async Task<IAgentSession> OpenSessionAsync(HarnessLaunchSpec spec, CancellationToken ct)
-    {
-        if (BeforeOpenAsync is { } before) await before(spec, ct);
-        if (OpenError?.Invoke(spec) is { } error) throw error;
-        IAgentSession session = new ScriptableAgentSession(this, spec);
-        _openedSessions.Enqueue(new RecordedSessionOpen(spec, DateTimeOffset.UtcNow, session.NativeThreadId));
-        return session;
-    }
+    public IAgentSession CreateSession(HarnessLaunchSpec spec) => new ScriptableAgentSession(this, spec);
 
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 
@@ -177,6 +170,13 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
             NativeThreadId = _owner.MismatchNativeThreadId ? "wrong-native-id" : spec.ResumeNativeThreadId ?? $"thr_{Guid.NewGuid():N}";
         }
 
+        public async Task InitializeAsync(CancellationToken ct)
+        {
+            if (_owner.BeforeOpenAsync is { } before) await before(_spec, ct);
+            if (_owner.OpenError?.Invoke(_spec) is { } error) throw error;
+            _owner._openedSessions.Enqueue(new RecordedSessionOpen(_spec, DateTimeOffset.UtcNow, NativeThreadId));
+        }
+
         public string? NativeThreadId { get; }
         public bool SupportsNativeSteer => _owner.SupportsSteering;
         public bool SupportsNativeCompact => _owner.CompactHandler is not null;
@@ -190,7 +190,7 @@ public sealed class ScriptableAgentRuntime : IAgentRuntime
             ], "gpt-5.4", "low")
             : null;
         public bool SupportsSessionResume => true;
-        public bool ShutdownConfirmed => _owner.ShutdownConfirmed;
+        public bool ShutdownConfirmed => _disposed && _owner.ShutdownConfirmed;
         public bool CanReuseContextWindow => true;
         public bool SupportsScopedClose => _owner.CloseHandler is not null;
 

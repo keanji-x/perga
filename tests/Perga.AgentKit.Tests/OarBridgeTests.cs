@@ -85,9 +85,9 @@ public sealed class OarBridgeTests : IDisposable
                     new Dictionary<string, string> { ["Authorization"] = "Bearer pg_test" })
             };
 
-            await using var session = await runtime.OpenSessionAsync(
-                new HarnessLaunchSpec(provider, null, _workspaceDir, null, "Track instructions", mcpServers),
-                CancellationToken.None);
+            await using var session = runtime.CreateSession(
+                new HarnessLaunchSpec(provider, null, _workspaceDir, null, "Track instructions", mcpServers));
+            await session.InitializeAsync(CancellationToken.None);
 
             Assert.IsType<OarAgentSession>(session);
             Assert.NotNull(session.NativeThreadId);
@@ -147,47 +147,59 @@ public sealed class OarBridgeTests : IDisposable
         foreach (var provider in new[] { "codex", "claude", "acp:antigravity", "acp:opencode" })
         {
             var defaultMode = ProviderPermissionModes.GetDefaultMode(provider);
-            await using var defaultSession = await runtime.OpenSessionAsync(
-                new HarnessLaunchSpec(provider, null, _workspaceDir, null, null, new Dictionary<string, McpServerConfig>(), PermissionMode: defaultMode),
-                CancellationToken.None);
+            await using var defaultSession = runtime.CreateSession(
+                new HarnessLaunchSpec(provider, null, _workspaceDir, null, null, new Dictionary<string, McpServerConfig>(), PermissionMode: defaultMode));
+            await defaultSession.InitializeAsync(CancellationToken.None);
             Assert.NotNull(defaultSession.ConfigurationState);
         }
 
         // 2. Unsupported interactive permission modes are rejected instead of falsely acknowledged.
-        var askEx = await Assert.ThrowsAsync<SessionConfigurationException>(() => runtime.OpenSessionAsync(
-            new HarnessLaunchSpec("codex", null, _workspaceDir, null, null, new Dictionary<string, McpServerConfig>(), PermissionMode: "ask"),
-            CancellationToken.None));
+        var askEx = await Assert.ThrowsAsync<SessionConfigurationException>(async () =>
+        {
+            await using var rejected = runtime.CreateSession(
+                new HarnessLaunchSpec("codex", null, _workspaceDir, null, null, new Dictionary<string, McpServerConfig>(), PermissionMode: "ask"));
+            await rejected.InitializeAsync(CancellationToken.None);
+        });
         Assert.IsType<SessionConfigurationOutcome.Unsupported>(askEx.Outcome);
 
-        var claudeDefaultEx = await Assert.ThrowsAsync<SessionConfigurationException>(() => runtime.OpenSessionAsync(
-            new HarnessLaunchSpec("claude", null, _workspaceDir, null, null, new Dictionary<string, McpServerConfig>(), PermissionMode: "default"),
-            CancellationToken.None));
+        var claudeDefaultEx = await Assert.ThrowsAsync<SessionConfigurationException>(async () =>
+        {
+            await using var rejected = runtime.CreateSession(
+                new HarnessLaunchSpec("claude", null, _workspaceDir, null, null, new Dictionary<string, McpServerConfig>(), PermissionMode: "default"));
+            await rejected.InitializeAsync(CancellationToken.None);
+        });
         Assert.IsType<SessionConfigurationOutcome.Unsupported>(claudeDefaultEx.Outcome);
 
-        var claudeAutoEx = await Assert.ThrowsAsync<SessionConfigurationException>(() => runtime.OpenSessionAsync(
-            new HarnessLaunchSpec("claude", null, _workspaceDir, null, null, new Dictionary<string, McpServerConfig>(), PermissionMode: "auto"),
-            CancellationToken.None));
+        var claudeAutoEx = await Assert.ThrowsAsync<SessionConfigurationException>(async () =>
+        {
+            await using var rejected = runtime.CreateSession(
+                new HarnessLaunchSpec("claude", null, _workspaceDir, null, null, new Dictionary<string, McpServerConfig>(), PermissionMode: "auto"));
+            await rejected.InitializeAsync(CancellationToken.None);
+        });
         Assert.IsType<SessionConfigurationOutcome.Unsupported>(claudeAutoEx.Outcome);
 
         // 2b. Missing native resume session maps OAR SessionNotFoundError to ProviderSessionNotFoundException.
-        await Assert.ThrowsAsync<ProviderSessionNotFoundException>(() => runtime.OpenSessionAsync(
-            new HarnessLaunchSpec("codex", null, _workspaceDir, "missing-thread-id", null, new Dictionary<string, McpServerConfig>(), PermissionMode: "never"),
-            CancellationToken.None));
+        await Assert.ThrowsAsync<ProviderSessionNotFoundException>(async () =>
+        {
+            await using var rejected = runtime.CreateSession(
+                new HarnessLaunchSpec("codex", null, _workspaceDir, "missing-thread-id", null, new Dictionary<string, McpServerConfig>(), PermissionMode: "never"));
+            await rejected.InitializeAsync(CancellationToken.None);
+        });
 
         // 3. Claude supported modes propagate --permission-mode or bypassPermissions accurately.
         foreach (var claudeMode in new[] { "dontAsk", "acceptEdits", "plan", "bypassPermissions" })
         {
-            await using var claudeSession = await runtime.OpenSessionAsync(
-                new HarnessLaunchSpec("claude", null, _workspaceDir, null, null, new Dictionary<string, McpServerConfig>(), PermissionMode: claudeMode),
-                CancellationToken.None);
+            await using var claudeSession = runtime.CreateSession(
+                new HarnessLaunchSpec("claude", null, _workspaceDir, null, null, new Dictionary<string, McpServerConfig>(), PermissionMode: claudeMode));
+            await claudeSession.InitializeAsync(CancellationToken.None);
             Assert.Equal(claudeMode, claudeSession.ConfigurationState?.Selection.Permission.ValueOrNull);
         }
 
         // 4. Codex "never" propagates OAR_CODEX_SANDBOX=workspace-write, rejects mismatched per-turn model/effort,
         //    tracks mid-turn model_changed, and poisons on canceled compact while still returning RequiresReopen to ConfigureAsync.
-        await using var session = await runtime.OpenSessionAsync(
-            new HarnessLaunchSpec("codex", "gpt-5.4", _workspaceDir, null, null, new Dictionary<string, McpServerConfig>(), ReasoningEffort: "high", PermissionMode: "never"),
-            CancellationToken.None);
+        await using var session = runtime.CreateSession(
+            new HarnessLaunchSpec("codex", "gpt-5.4", _workspaceDir, null, null, new Dictionary<string, McpServerConfig>(), ReasoningEffort: "high", PermissionMode: "never"));
+        await session.InitializeAsync(CancellationToken.None);
 
         var modelMismatchEvents = new List<UnifiedAgentEvent>();
         await foreach (var evt in session.StreamTurnAsync(new TurnInput("hi", "c-1", Model: "other-model"), CancellationToken.None))
@@ -271,9 +283,9 @@ public sealed class OarBridgeTests : IDisposable
 
             var statuses = await runtime.ProbeProvidersAsync(CancellationToken.None);
             Assert.Contains(statuses, status => status.Provider == "codex" && status.Available);
-            await using var session = await runtime.OpenSessionAsync(
-                new HarnessLaunchSpec("codex", null, _workspaceDir, null, null, new Dictionary<string, McpServerConfig>()),
-                CancellationToken.None);
+            await using var session = runtime.CreateSession(
+                new HarnessLaunchSpec("codex", null, _workspaceDir, null, null, new Dictionary<string, McpServerConfig>()));
+            await session.InitializeAsync(CancellationToken.None);
 
             var calls = new List<(string? Method, string? Runtime)>();
             foreach (var line in await File.ReadAllLinesAsync(_logPath))

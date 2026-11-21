@@ -90,7 +90,7 @@ public sealed partial class TrackActor
         {
             throw new KernelException(KernelErrorCode.Conflict, "Task provider probe is temporarily unavailable.", innerException: ex);
         }
-        var selected = providers.FirstOrDefault(p => p.Provider == (provider ?? GetDefaultProviderCore()));
+        var selected = providers.FirstOrDefault(p => string.Equals(p.Provider, provider ?? GetDefaultProviderCore(), StringComparison.OrdinalIgnoreCase));
         if (selected is { Available: false })
             throw KernelException.Conflict("The requested task provider is temporarily unavailable.");
         if (selected is null || model is not null && !selected.Models.Contains(model, StringComparer.Ordinal))

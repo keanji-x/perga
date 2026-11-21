@@ -641,21 +641,6 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
         }
     }
 
-    public Task<IReadOnlyList<ProviderSessionResumeFence>> ListSessionResumeFencesAsync(string trackId, CancellationToken ct) =>
-        Task.FromResult<IReadOnlyList<ProviderSessionResumeFence>>(_sessions.Values.Where(s => s.TrackId == trackId && s.Status == "unknown")
-            .Select(s => new ProviderSessionResumeFence(s.Id, s.UnknownTurnId ?? "", s.NativeThreadId ?? "", true)).ToArray());
-
-    public Task SaveSessionResumeFenceAsync(ProviderSessionResumeFence fence, CancellationToken ct)
-    {
-        lock (_gate)
-        {
-            var session = _sessions[fence.SessionId];
-            _sessions[fence.SessionId] = session with { Status = "unknown", UnknownTurnId = fence.TurnId,
-                UnknownReason = session.UnknownReason ?? "stream_lost" };
-        }
-        return Task.CompletedTask;
-    }
-
     public Task CompleteSessionResumeAsync(AgentSessionDto session, PersistedSessionInput? unresolved,
         EventEnvelopeDto sessionEvent, int expectedEpoch, CancellationToken ct, SessionItemDto? boundary = null)
     {
@@ -1401,6 +1386,9 @@ internal sealed class ScriptableFakeAgentSession : IAgentSession
     private readonly HashSet<string> _pendingApprovalRequests = new(StringComparer.Ordinal);
     private bool _approvalsActive;
 
+    internal Func<CancellationToken, Task>? InitializeHandler { get; set; }
+    public Task InitializeAsync(CancellationToken ct) => InitializeHandler?.Invoke(ct) ?? Task.CompletedTask;
+
     public HarnessLaunchSpec LaunchSpec { get; }
     public IReadOnlyList<PermissionModeOption> AvailablePermissionModes { get; set; } = [];
     public string? NativeThreadId { get; set; }
@@ -1515,8 +1503,11 @@ internal sealed class ScriptableFakeAgentSession : IAgentSession
             ? ResolveNativeCompactSupportHandler(this, ct)
             : ValueTask.FromResult(SupportsNativeCompact);
 
+    public Action? OnAttachIdleContextUsage { get; set; }
+
     public IReadOnlyList<IdleContextUsage> AttachIdleContextUsageHandler(Action<IdleContextUsage>? handler)
     {
+        if (handler is not null) OnAttachIdleContextUsage?.Invoke();
         _idleUsageHandler = handler;
         if (handler is null)
         {
@@ -1549,12 +1540,16 @@ internal sealed class ScriptableFakeAgentSession : IAgentSession
         return Task.FromResult(SteerResult);
     }
 
-    public bool ShutdownConfirmed { get; set; } = true;
+    private bool? _shutdownConfirmed;
+    public bool ShutdownConfirmed { get => _shutdownConfirmed ?? Disposed; set => _shutdownConfirmed = value; }
     public bool FailDisposal { get; set; }
     public Func<Task>? DisposeHandler { get; set; }
     public int DisposeCalls { get; private set; }
 
-    public async ValueTask DisposeAsync()
+    public Task? DisposeTask { get; private set; }
+    public ValueTask DisposeAsync() => new(DisposeTask = DisposeCoreAsync());
+
+    private async Task DisposeCoreAsync()
     {
         DisposeCalls++;
         if (FailDisposal) throw new IOException("shutdown failed");
@@ -1592,9 +1587,8 @@ internal sealed class ScriptableFakeAgentRuntime : IAgentRuntime
         return ProbeScript?.Invoke(ct) ?? Task.FromResult(Providers);
     }
 
-    public async Task<IAgentSession> OpenSessionAsync(HarnessLaunchSpec spec, CancellationToken ct)
+    public IAgentSession CreateSession(HarnessLaunchSpec spec)
     {
-        if (BeforeOpenAsync is not null) await BeforeOpenAsync();
         OnBeforeOpenSession?.Invoke(spec);
         var threadId = spec.ResumeNativeThreadId ?? $"thr_{Interlocked.Increment(ref _threadCounter)}";
         var session = new ScriptableFakeAgentSession(
@@ -1602,6 +1596,10 @@ internal sealed class ScriptableFakeAgentRuntime : IAgentRuntime
             threadId,
             (s, inp, token) => (TurnScript ?? DefaultTurnScript)(s, inp, token));
         session.SupportsSessionResume = SupportsSessionResume;
+        session.InitializeHandler = async ct =>
+        {
+            if (BeforeOpenAsync is not null) await BeforeOpenAsync();
+        };
         OpenedSessions.Enqueue(session);
         OnOpenedSession?.Invoke(session);
         return session;
@@ -1638,6 +1636,7 @@ internal sealed class SpyWorkspaceDriver : IWorkspaceDriver
     public bool VerifyMountOnAccess { get; set; }
     public bool CreateLeaseDirectories { get; set; }
     public Task? ProvisionGate { get; set; }
+    public Exception? TeardownError { get; set; }
 
     public ConcurrentQueue<WorkspaceProvisionRequest> ProvisionCalls { get; } = new();
     public ConcurrentQueue<WorkspaceSpec> EnsureMountedCalls { get; } = new();
@@ -1701,6 +1700,7 @@ internal sealed class SpyWorkspaceDriver : IWorkspaceDriver
 
     public Task TeardownTrackAsync(WorkspaceSpec spec, CancellationToken ct = default)
     {
+        if (TeardownError is { } error) throw error;
         TeardownCalls.Enqueue(spec);
         LifecycleTimeline.Enqueue($"teardown:{spec.MergedCwd}");
         return Task.CompletedTask;

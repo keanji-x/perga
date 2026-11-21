@@ -88,7 +88,7 @@ public sealed partial class TrackActor
                 ReasoningEffort = request.ReasoningEffort.IsSet ? new(string.IsNullOrWhiteSpace(request.ReasoningEffort.Value) ? null : request.ReasoningEffort.Value.Trim()) : default
             };
             var provider = request.Provider ?? session.Provider;
-            var providerChanged = provider != session.Provider;
+            var providerChanged = !string.Equals(provider, session.Provider, StringComparison.OrdinalIgnoreCase);
             if (providerChanged && _scheduler.IsOccupied(session))
                 throw KernelException.Conflict("Provider changes require an idle session.");
             var modelChanged = providerChanged || request.Model.IsSet && request.Model.Value != session.Model ||
@@ -114,76 +114,31 @@ public sealed partial class TrackActor
             await PersistAndEmitSessionUpdatedCoreAsync(updated, updated.UpdatedAtMs, ct).ConfigureAwait(false);
             if (modelChanged) InvalidateContextBindingCore(sessionId);
             if (providerChanged) _mcpBridge.RevokeSession(sessionId);
-            var oldProvider = providerChanged ? _openSessionHandles.GetValueOrDefault(sessionId)?.Agent : null;
-            Guid? reservation = null;
-            if (oldProvider is not null || configChanged && !request.PermissionMode.IsSet && !_scheduler.IsOccupied(updated) &&
-                _openSessionHandles.ContainsKey(sessionId))
-            {
-                reservation = Guid.NewGuid();
-                _scheduler.Reserve(sessionId, reservation.Value);
-                Interlocked.Increment(ref _inFlightExternalOps);
-            }
-            if (oldProvider is not null) _sessionShutdownPending.TryAdd(sessionId, 0);
-            if (reservation is null) return Task.FromResult(updated);
-            var completion = new TaskCompletionSource<AgentSessionDto>(TaskCreationOptions.RunContinuationsAsynchronously);
-            _sessionRecoveryJobs.RemoveAll(job => job.IsCompleted);
-            _sessionRecoveryJobs.Add(actor.TrackBackgroundJob(async () =>
-            {
-                try { completion.TrySetResult(await RunSessionConfigurationAsync(updated, reservation.Value, oldProvider).ConfigureAwait(false)); }
-                catch (Exception error) { completion.TrySetException(error); }
-            }));
-            return completion.Task;
+            if (!providerChanged) return Task.FromResult(updated);
+            return actor.TrackProviderChangeCloseAsync(updated);
         }, ct).ConfigureAwait(false);
         return await operation.WaitAsync(ct).ConfigureAwait(false);
     }
 
-    private async Task<AgentSessionDto> RunSessionConfigurationAsync(AgentSessionDto session, Guid reservation,
-        Perga.AgentKit.IAgentSession? oldProvider)
+    private Task<AgentSessionDto> TrackProviderChangeCloseAsync(AgentSessionDto updated)
     {
-        var sessionId = session.Id;
-        try
+        var completion = new TaskCompletionSource<AgentSessionDto>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _ = TrackBackgroundJob(async () =>
         {
-            if (oldProvider is not null)
-                await DisposeOwnedSessionCoreAsync(sessionId, oldProvider, inMailbox: false).ConfigureAwait(false);
-            else
-            {
-                using var admission = _options.DispatchAdmission.TryEnter();
-                if (admission is not null)
-                {
-                    using var linked = CancellationTokenSource.CreateLinkedTokenSource(_actorShutdownCts.Token);
-                    linked.CancelAfter(_options.SessionStartupTimeout);
-                    try { await GetOrOpenAgentSessionCoreAsync(session, null, linked.Token, inMailbox: false).ConfigureAwait(false); }
-                    catch (Perga.AgentKit.ProviderSessionNotFoundException error) { throw KernelException.PreconditionFailed(error.Message); }
-                }
-            }
-            return session;
-        }
-        finally
-        {
-            void ReleaseReservation()
-            {
-                if (_scheduler.TryGetReservation(sessionId, out var held) && held == reservation)
-                    _scheduler.ReleaseReservation(sessionId);
-            }
             try
             {
-                try
-                {
-                    await EnqueueAsync(async _ =>
-                    {
-                        ReleaseReservation();
-                        await PokeSessionCoreAsync(sessionId).ConfigureAwait(false);
-                    }, CancellationToken.None).ConfigureAwait(false);
-                }
-                catch (ObjectDisposedException)
-                {
-                    // Shutdown joins this job after draining the mailbox, so direct release is safe.
-                    await _mailboxLoopTask.ConfigureAwait(false);
-                    ReleaseReservation();
-                }
+                await _runtimes.Get(updated.Id).CloseAsync(_options.SessionStartupTimeout,
+                    _actorShutdownCts.Token, shouldClose: () => !_scheduler.IsBusy(updated.Id)).ConfigureAwait(false);
+                completion.TrySetResult(updated);
             }
-            finally { Interlocked.Decrement(ref _inFlightExternalOps); }
-        }
+            catch (Exception error)
+            {
+                if (!_actorShutdownCts.IsCancellationRequested && _runtimes.IsShutdownUnconfirmed(updated.Id))
+                    await EnqueueAsync(_ => MarkShutdownUnconfirmedIfNeededAsync(updated.Id), CancellationToken.None).ConfigureAwait(false);
+                completion.TrySetException(error);
+            }
+        });
+        return completion.Task;
     }
 
     private async Task NotifyParentCoreAsync(AgentSessionDto child, string policy, string key, string prompt)

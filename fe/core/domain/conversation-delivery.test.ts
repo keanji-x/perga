@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
+import { ApiError } from './failure-class.js';
 import type { ApiFailure } from '../api/types.js';
 import {
-  KeyedSendFailure, retryUnknownSend, SEND_RETRIES, type SendFailureKind,
+  KeyedSendFailure, retryUnknownSend, sendFailureCode, sendFailureMessage, SEND_RETRIES, type SendFailureKind,
 } from './conversation-delivery.js';
 
 /** One failure the send table reads as each kind. */
@@ -77,4 +78,34 @@ describe('retrying an unknown send', () => {
     expect((await run.catch((error: unknown) => error) as KeyedSendFailure).delivery).toBe('dormant');
     expect(attempts()).toBe(1);
   });
+});
+
+it.each([false, true])('refuses recovery-required sends immediately and preserves prior uncertainty (%s)', async unknown => {
+  let attempts = 0;
+  let pauses = 0;
+  const failure: ApiFailure = { kind: 'http', status: 409, code: 'session_recovery_required', message: 'Session requires recovery.' };
+  const result = await retryUnknownSend(() => { attempts += 1; return Promise.reject(new Error(failure.message)); },
+    () => failure, () => { pauses += 1; return Promise.resolve(); }, unknown).catch((error: unknown) => error) as KeyedSendFailure;
+  expect(result.delivery).toBe(unknown ? 'unknown' : 'refused');
+  expect(attempts).toBe(1);
+  expect(pauses).toBe(0);
+});
+
+it('keeps a lost response unknown when the next attempt requires recovery', async () => {
+  let attempts = 0;
+  const result = await retryUnknownSend(() => { attempts += 1; return Promise.reject(new Error('send failed')); },
+    () => attempts === 1 ? null : { kind: 'http', status: 409, code: 'session_recovery_required', message: 'Recover first.' },
+    () => Promise.resolve(), false).catch((error: unknown) => error) as KeyedSendFailure;
+  expect(result.delivery).toBe('unknown');
+  expect(attempts).toBe(2);
+});
+
+it('exposes recovery codes and preserves ordinary refusal reasons for app presentation', () => {
+  const error = new ApiError({ kind: 'http', status: 409, code: 'session_recovery_required', message: 'Recover the provider session before sending more input.' });
+  expect(sendFailureCode(error)).toBe('session_recovery_required');
+  expect(sendFailureMessage(error)).toBe(error.message);
+  expect(sendFailureCode(new Error('Ordinary refusal'))).toBeUndefined();
+  expect(sendFailureCode(null)).toBeUndefined();
+  expect(sendFailureCode(new ApiError({ kind: 'transport', message: 'Offline' }))).toBeUndefined();
+  expect(sendFailureMessage(new Error('Ordinary refusal'))).toBe('Ordinary refusal');
 });

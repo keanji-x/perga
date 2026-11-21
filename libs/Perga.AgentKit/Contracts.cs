@@ -119,6 +119,8 @@ public enum SteerDelivery { Accepted, Declined, Unconfirmed }
 
 public interface IAgentSession : IAsyncDisposable
 {
+    /// <summary>Runs the protocol handshake. The caller retains ownership if initialization fails.</summary>
+    Task InitializeAsync(CancellationToken ct);
     IReadOnlyList<PermissionModeOption> AvailablePermissionModes => [];
     string? NativeThreadId { get; }
     bool SupportsNativeSteer { get; }
@@ -161,5 +163,6 @@ public interface IAgentRuntime : IAsyncDisposable
 {
     bool CanResumeSession(string provider) => false;
     Task<IReadOnlyList<ProviderStatus>> ProbeProvidersAsync(CancellationToken ct);
-    Task<IAgentSession> OpenSessionAsync(HarnessLaunchSpec spec, CancellationToken ct);
+    /// <summary>Starts and returns an owned session before initialization; the caller must dispose it.</summary>
+    IAgentSession CreateSession(HarnessLaunchSpec spec);
 }

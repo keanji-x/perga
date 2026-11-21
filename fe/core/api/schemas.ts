@@ -1182,6 +1182,7 @@ export const wireEventSchema = z.discriminatedUnion('ev', [
   pergaSessionUpdatedSchema,
   pergaTurnCompletedSchema,
   pergaAskChangedSchema,
+  z.object({ ev: z.literal('session.state_changed'), data: z.object({ trackId: z.string(), sessionId: z.string() }) }),
   z.object({ ev: z.literal('approval.changed'), data: z.object({ trackId: z.string(), sessionId: z.string() }) }),
   z.object({ ev: z.literal('read_receipt.updated'), data: readReceiptDtoSchema }),
   z.object({ ev: z.literal('approval.audit'), data: z.undefined() }),
@@ -1271,6 +1272,9 @@ export function decodeWireEvent(input: unknown): WireEventDecodeResult {
     const perga = decodePergaEventEnvelope(input);
     if (perga.status === 'failed') return perga;
     if (perga.kind === 'read-receipt') return { status: 'ready', value: { ev: 'read_receipt.updated', data: perga.payload } };
+    if (perga.kind === 'session-state') return { status: 'ready', value: {
+      ev: 'session.state_changed', data: { trackId: perga.trackId, sessionId: perga.sessionId },
+    } };
     if (perga.kind === 'approvals') return { status: 'ready', value: {
       ev: 'approval.changed', data: { trackId: perga.trackId, sessionId: perga.sessionId },
     } };

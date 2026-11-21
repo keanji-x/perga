@@ -33,7 +33,7 @@ public sealed class SessionContextUsageTests
         var switched = await ctx.Kernel.UpdateSessionAsync(id, new(Model: new("next-model")), new InteropPrincipal.Human(), default);
         Assert.Null(switched.ContextUsage);
         var native = Assert.Single(ctx.AgentRuntime.OpenedSessions);
-        Assert.Contains("next-model", native.ModelSwitches);
+        Assert.Empty(native.ModelSwitches);
 
         var compacted = await ctx.Kernel.ControlSessionAsync(id, new("compact"), new InteropPrincipal.Human(), default);
         Assert.Equal(1, native.CompactCalls);
@@ -285,7 +285,7 @@ public sealed class SessionContextUsageTests
         Assert.Equal(1200, synced.ContextUsage?.UsedTokens);
         Assert.Equal(1_048_576, synced.ContextUsage?.WindowTokens);
 
-        // Switch model to model-b; stale model-a reading must be rejected, model-b reading accepted.
+        // Lazy model change invalidates old observations until the next turn binds model-b.
         var switched = await ctx.Kernel.UpdateSessionAsync(id, new(Model: new("model-b")), new InteropPrincipal.Human(), default);
         Assert.Null(switched.ContextUsage);
 
@@ -297,6 +297,7 @@ public sealed class SessionContextUsageTests
         var stillInvalidated = ((await ctx.Kernel.ListSessionsAsync(snap.Track.Id, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray()).Single(s => s.Id == id);
         Assert.Null(stillInvalidated.ContextUsage);
 
+        await ctx.SendAndWaitForTurnAsync(id, new("bind model-b", "bind-model-b"));
         opened.EmitIdleContextUsage(new IdleContextUsage(
             new TokenUsage(0, 0, 0, 200_000, UsedTokens: 0),
             0,

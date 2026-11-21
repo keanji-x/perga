@@ -22,6 +22,7 @@ public sealed class AgentRuntime : IAgentRuntime
     private IReadOnlyList<ProviderStatus>? _cachedProbeStatuses;
     private DateTimeOffset _cachedProbeExpiresAt = DateTimeOffset.MinValue;
     private int _disposed;
+    private readonly object _sessionSync = new();
 
     public AgentRuntime() : this(new AgentRuntimeOptions()) { }
 
@@ -106,11 +107,10 @@ public sealed class AgentRuntime : IAgentRuntime
         }
     }
 
-    public async Task<IAgentSession> OpenSessionAsync(HarnessLaunchSpec spec, CancellationToken ct)
+    public IAgentSession CreateSession(HarnessLaunchSpec spec)
     {
         ArgumentNullException.ThrowIfNull(spec);
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-        ct.ThrowIfCancellationRequested();
 
         if (string.IsNullOrWhiteSpace(spec.Provider))
             throw new ArgumentException("HarnessLaunchSpec.Provider must not be empty.", nameof(spec));
@@ -131,33 +131,26 @@ public sealed class AgentRuntime : IAgentRuntime
         var nodeExe = OarNodeResolver.ResolveNode24Executable(_options.NodeExecutablePath, env);
 
         var invocation = new CommandInvocation(nodeExe, [bridgeScript], fullCwd, env);
-        var session = await OarAgentSession.OpenAsync(
-            invocation,
-            spec with { Provider = provider, Cwd = fullCwd },
-            oarRuntimeId,
-            exeOverride,
-            _options.HandshakeTimeout,
-            UnregisterSession,
-            ct).ConfigureAwait(false);
-
-        _resumeCapabilities[provider] = session.SupportsSessionResume;
-        _activeSessions.TryAdd(session, 0);
-        if (Volatile.Read(ref _disposed) != 0)
+        lock (_sessionSync)
         {
-            _activeSessions.TryRemove(session, out _);
-            await session.DisposeAsync().ConfigureAwait(false);
-            throw new ObjectDisposedException(nameof(AgentRuntime));
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+            var session = OarAgentSession.Create(
+                invocation, spec with { Provider = provider, Cwd = fullCwd }, oarRuntimeId,
+                exeOverride, _options.HandshakeTimeout, UnregisterSession,
+                initialized => _resumeCapabilities[provider] = initialized.SupportsSessionResume);
+            _activeSessions.TryAdd(session, 0);
+            return session;
         }
-
-        return session;
     }
 
     public async ValueTask DisposeAsync()
     {
-        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
-
-        var sessions = _activeSessions.Keys.ToArray();
-        _activeSessions.Clear();
+        IAgentSession[] sessions;
+        lock (_sessionSync)
+        {
+            Interlocked.Exchange(ref _disposed, 1);
+            sessions = _activeSessions.Keys.ToArray();
+        }
         foreach (var session in sessions)
         {
             try { await session.DisposeAsync().ConfigureAwait(false); } catch { }

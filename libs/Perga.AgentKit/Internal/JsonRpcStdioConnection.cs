@@ -30,6 +30,9 @@ internal sealed class JsonRpcStdioConnection : IAsyncDisposable
     private readonly Task _pumpTask;
     private long _nextRequestId;
     private int _disposed;
+    private readonly object _disposeSync = new();
+    private Task? _activeDisposeTask;
+    private bool _pumpDisposed;
 
     public JsonRpcStdioConnection(
         StdioSubprocess process,
@@ -64,6 +67,7 @@ internal sealed class JsonRpcStdioConnection : IAsyncDisposable
     public async Task<JsonElement> SendRequestAsync(string method, object? parameters, CancellationToken ct,
         Action<JsonElement>? observeResult = null)
     {
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         var numericId = Interlocked.Increment(ref _nextRequestId);
         var key = $"n:{numericId.ToString(CultureInfo.InvariantCulture)}";
         var tcs = new TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -73,6 +77,11 @@ internal sealed class JsonRpcStdioConnection : IAsyncDisposable
             throw new InvalidOperationException($"Duplicate JSON-RPC request id '{key}'.");
         }
 
+        if (Volatile.Read(ref _disposed) != 0)
+        {
+            _pendingRequests.TryRemove(key, out _);
+            throw new ObjectDisposedException(nameof(JsonRpcStdioConnection));
+        }
         if (_process.HasExited)
         {
             _pendingRequests.TryRemove(key, out _);
@@ -151,27 +160,35 @@ internal sealed class JsonRpcStdioConnection : IAsyncDisposable
 
     internal bool ShutdownConfirmed => _process.ShutdownConfirmed;
 
-    public async ValueTask DisposeAsync()
+    public ValueTask DisposeAsync()
     {
-        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        lock (_disposeSync)
         {
-            return;
+            if (_activeDisposeTask is null || _activeDisposeTask.IsCompleted)
+                _activeDisposeTask = DisposeCoreAsync();
+            return new ValueTask(_activeDisposeTask);
         }
+    }
 
-        await _pumpCts.CancelAsync().ConfigureAwait(false);
+    private async Task DisposeCoreAsync()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) == 0)
+            FailAllPending(new ObjectDisposedException(nameof(JsonRpcStdioConnection)));
+
         await _process.DisposeAsync().ConfigureAwait(false);
+        if (!_process.ShutdownConfirmed || _pumpDisposed) return;
 
         try
         {
+            // Give the reader its EOF before cancellation, including buffered final frames.
             await _pumpTask.WaitAsync(TimeSpan.FromSeconds(1)).ConfigureAwait(false);
         }
-        catch
-        {
-            // Ignore pump shutdown exception.
-        }
-
-        FailAllPending(new ObjectDisposedException(nameof(JsonRpcStdioConnection)));
+        catch { /* A descendant may still own stdout. */ }
+        await _pumpCts.CancelAsync().ConfigureAwait(false);
+        try { await _pumpTask.ConfigureAwait(false); }
+        catch { }
         _pumpCts.Dispose();
+        _pumpDisposed = true;
     }
 
     private async Task PumpStdoutAsync()

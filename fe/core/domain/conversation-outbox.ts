@@ -14,7 +14,7 @@ export type SendOp = Readonly<{
   fromComposer: boolean;
 } & (
   | { phase: 'sending'; unknown: boolean }
-  | { phase: 'failed'; delivery: SendFailureKind; message: string }
+  | { phase: 'failed'; delivery: SendFailureKind; message: string; code?: string }
 )>;
 export type ConversationOutboxOp = SendOp;
 export type FailedSendOp = Extract<SendOp, { phase: 'failed' }>;

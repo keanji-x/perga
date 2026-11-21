@@ -134,5 +134,5 @@ public sealed partial class TrackActor
         new(report.DocRev, report.Blocks.ToDictionary(block => block.Id, block => block.Rev, StringComparer.Ordinal), WholeDocumentRead: true);
 
     private string? ResolveTaskWorkerModelCore(string provider) =>
-        string.Equals(provider, GetDefaultProviderCore(), StringComparison.Ordinal) ? GetDefaultModelCore(provider) : null;
+        string.Equals(provider, GetDefaultProviderCore(), StringComparison.OrdinalIgnoreCase) ? GetDefaultModelCore(provider) : null;
 }

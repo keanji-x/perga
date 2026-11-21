@@ -309,6 +309,10 @@ function policies(): PolicyMap {
       turnId,
     }] : []);
   }),
+  'session.state_changed': plan((event) => result([
+    eventKeys.overlaysByKind('track'),
+    eventKeys.plannerRun(event.data.sessionId),
+  ])),
   'approval.changed': plan((event) => result([
     eventKeys.overlaysByKind('track'),
     eventKeys.trackDetail(event.data.trackId),

@@ -1,5 +1,5 @@
 import type { ApiFailure } from '../api/types.js';
-import { classifyFailure, type FailureTable } from './failure-class.js';
+import { writeFailureOf, classifyFailure, type FailureTable } from './failure-class.js';
 
 /**
  * What one failed attempt of a keyed send says about whether its message was stored. `dormant` is a refusal whose way
@@ -20,13 +20,14 @@ export type SendFailureKind = 'unknown' | 'refused' | 'dormant' | 'rejected';
  * so a retry under it replays that answer).
  * `planner_turn_not_replaceable` is an Edit's replace refused before anything was written (#2043).
  * `planner_harness_dormant` is told apart as `dormant`: refused the same way, but the reader is offered a fresh session.
- * `planner_harness_dormant`, `planner_harness_runtime_superseded` and `planner_turn_not_replaceable`
- * are a refusal only for an op with no unknown attempt yet: once one was unknown, a write of it may
+ * `session_recovery_required` refuses input until the session recovers. These codes
+ * prove a refusal only for an op with no unknown attempt yet: once one was unknown, a write of it may
  * still be queued and commit later while those codes come back, so {@link retryUnknownSend} keeps
  * such an op unknown.
  */
 export const SEND_FAILURES: FailureTable<SendFailureKind> = Object.freeze({
   rules: Object.freeze([
+    Object.freeze({ code: 'session_recovery_required', is: 'refused' as const }),
     Object.freeze({ code: 'planner_harness_runtime_superseded', is: 'refused' as const }),
     Object.freeze({ code: 'planner_harness_dormant', is: 'dormant' as const }),
     Object.freeze({ code: 'planner_turn_not_replaceable', is: 'refused' as const }),
@@ -41,6 +42,17 @@ export const SEND_FAILURES: FailureTable<SendFailureKind> = Object.freeze({
 /** What a send that was not stored says above the composer, with the reason it was refused or rejected. */
 export function notSentMessage(reason: string): string {
   return `Not sent. ${reason}`;
+}
+
+/** The server failure code, when an answered HTTP request carries one. */
+export function sendFailureCode(error: unknown): string | undefined {
+  const failure = writeFailureOf(error);
+  return failure !== null && 'kind' in failure && failure.kind === 'http' ? failure.code : undefined;
+}
+
+/** The ordinary refusal reason; localized presentation belongs to the app. */
+export function sendFailureMessage(error: unknown): string {
+  return error instanceof Error && error.message !== '' ? error.message : 'Could not send the message.';
 }
 
 /** Automatic retries of one keyed send after its first attempt; an attempt that cannot go out counts too. */

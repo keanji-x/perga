@@ -14890,7 +14890,27 @@
             }
           },
           "409": {
-            "description": "conflict or precondition_failed"
+            "description": "conflict, precondition_failed, or session_recovery_required. session_recovery_required refuses input before writing when the session is unknown, recovering, or provider shutdown is unconfirmed. Recover the session before retrying.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "code",
+                    "error"
+                  ],
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "description": "Includes session_recovery_required, conflict and precondition_failed."
+                    },
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
           }
         },
         "requestBody": {
@@ -27879,6 +27899,49 @@
           },
           "payload": {
             "$ref": "#/components/schemas/ReadReceiptDto"
+          },
+          "createdAtMs": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "SessionStateChangedEvent": {
+        "type": "object",
+        "description": "Transient session.state_changed event for queue, steering and recovery state changes. Never persisted; refresh track overlays and the session run.",
+        "required": [
+          "kind",
+          "eventId",
+          "trackId",
+          "payload",
+          "createdAtMs"
+        ],
+        "properties": {
+          "kind": {
+            "const": "session.state_changed"
+          },
+          "eventId": {
+            "type": "null"
+          },
+          "trackId": {
+            "type": "string"
+          },
+          "areaId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "payload": {
+            "type": "object",
+            "required": [
+              "sessionId"
+            ],
+            "properties": {
+              "sessionId": {
+                "type": "string"
+              }
+            }
           },
           "createdAtMs": {
             "type": "integer",
