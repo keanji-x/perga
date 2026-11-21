@@ -26,9 +26,25 @@ public sealed class UnifiedSessionTests
             ParentSessionId = null };
         target = target with { ParentSessionId = parent ? caller.Id : null };
         var principal = human ? Human : new InteropPrincipal.Session(target.TrackId, caller.Id, caller.IsLead, null, 0, "", null);
+        Assert.Equal(allowed, SessionPolicy.CanAccess(principal, target, caller, write, activeTurn: true));
         if (allowed) SessionPolicy.RequireAccess(principal, target, caller, write, activeTurn: true);
         else Assert.Equal(KernelErrorCode.Forbidden, Assert.Throws<KernelException>(() =>
             SessionPolicy.RequireAccess(principal, target, caller, write, activeTurn: true)).Code);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ArchivedParentOrLeadCannotAccessSessions(bool lead)
+    {
+        await using var ctx = new KernelTestContext();
+        var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
+        var caller = snapshot.Sessions.Single() with { ArchivedAtMs = 1, IsLead = lead };
+        var target = caller with { Id = "child", ParentSessionId = caller.Id, ArchivedAtMs = null, IsLead = false };
+        var principal = new InteropPrincipal.Session(caller.TrackId, caller.Id, lead, null, 0, "", null);
+        Assert.False(SessionPolicy.CanAccess(principal, target, caller, write: true));
+        Assert.Equal(KernelErrorCode.Forbidden, Assert.Throws<KernelException>(() =>
+            SessionPolicy.RequireAccess(principal, target, caller, write: true)).Code);
     }
 
     [Theory]

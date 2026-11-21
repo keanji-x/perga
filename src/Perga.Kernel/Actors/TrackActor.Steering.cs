@@ -11,7 +11,7 @@ public sealed partial class TrackActor
     private static readonly TimeSpan SteeringRequestTimeout = TimeSpan.FromSeconds(15);
 
     private async Task<SteeringResult> RunSteeringAsync(Task? previous, SessionMessage message,
-        string turnId, bool queued, bool allowQueueFallback, long startedAt)
+        string turnId, bool queued, long startedAt)
     {
         var ct = _actorShutdownCts.Token;
         if (previous is not null)
@@ -24,7 +24,7 @@ public sealed partial class TrackActor
             outcome = delivery switch
             {
                 SteerDelivery.Accepted => "delivered",
-                SteerDelivery.Declined when !allowQueueFallback => "rejected",
+                SteerDelivery.Declined when !queued => "rejected",
                 SteerDelivery.Declined when _timeProvider.GetElapsedTime(startedAt) < SteeringRequestTimeout => "queued",
                 null => "rejected",
                 _ => "unknown",

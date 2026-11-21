@@ -47,16 +47,20 @@ public sealed partial class TrackActor
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
             RequireInteropCore(caller);
             var summaries = new List<SessionSummaryDto>();
+            var pendingApprovals = ReadPendingApprovals();
             foreach (var session in OrderedSessionsCore().Where(s => (filter.IncludeArchived || s.ArchivedAtMs is null) &&
                          (filter.ParentSessionId is null || s.ParentSessionId == filter.ParentSessionId)))
             {
                 var last = (await _store.ListSessionTurnsAsync(session.Id, ct).ConfigureAwait(false)).MaxBy(t => t.TurnIndex);
                 _activeAttempts.TryGetValue(session.BoundAttemptId ?? "", out var attempt);
-                summaries.Add(new(session, session.Status == "queued" ? "running" : session.Status,
-                    session.ArchivedAtMs is not null ? "archived" : _track.ClosedAtMs is not null ? "track_closed" :
-                    session.BoundAttemptId is not null && attempt is null ? "worker_finished" : null,
-                    attempt?.Paused == true, last, ReadPendingApprovals().Count(a => a.SessionId == session.Id) +
-                    _asks.Values.Count(a => a.Status == AskStatus.Open && a.SessionId == session.Id)));
+                var state = session.Status == "queued" ? "running" : session.Status;
+                string? readonlyReason = null;
+                if (session.ArchivedAtMs is not null) readonlyReason = "archived";
+                else if (_track.ClosedAtMs is not null) readonlyReason = "track_closed";
+                else if (session.BoundAttemptId is not null && attempt is null) readonlyReason = "worker_finished";
+                var pendingInteractionCount = pendingApprovals.Count(a => a.SessionId == session.Id) +
+                    _asks.Values.Count(a => a.Status == AskStatus.Open && a.SessionId == session.Id);
+                summaries.Add(new(session, state, readonlyReason, attempt?.Paused == true, last, pendingInteractionCount));
             }
             return summaries;
         }, ct);
@@ -89,10 +93,13 @@ public sealed partial class TrackActor
                 throw KernelException.Conflict("Provider changes require an idle session.");
             var modelChanged = providerChanged || request.Model.IsSet && request.Model.Value != session.Model ||
                 request.ReasoningEffort.IsSet && request.ReasoningEffort.Value != session.ReasoningEffort;
+            var archivedAtMs = session.ArchivedAtMs;
+            if (request.Archived == true) archivedAtMs ??= NowMs();
+            else if (request.Archived == false) archivedAtMs = null;
             var updated = session with
             {
                 Title = request.Title?.Trim() ?? session.Title,
-                ArchivedAtMs = request.Archived is { } archived ? archived ? session.ArchivedAtMs ?? NowMs() : null : session.ArchivedAtMs,
+                ArchivedAtMs = archivedAtMs,
                 Provider = provider,
                 Model = request.Model.IsSet ? request.Model.Value : session.Model,
                 ReasoningEffort = request.ReasoningEffort.IsSet ? request.ReasoningEffort.Value : session.ReasoningEffort,

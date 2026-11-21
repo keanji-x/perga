@@ -120,15 +120,13 @@ public sealed partial class TrackActor
                 if (request.Mode == "steer" && (!active.AgentSession.SupportsNativeSteer ||
                     request.MessageId is not null && !active.CanSteerQueuedMessages))
                     throw KernelException.PreconditionFailed("The runtime does not support steering this turn.");
-                if (existing is not null && !active.CanSteerQueuedMessages)
-                    return Task.FromResult(new SessionMessageReceipt(existing.Id, sessionId, turnId, "queued"));
                 var message = existing ?? new SessionMessage($"inp_{Guid.NewGuid():N}", sessionId, session.BoundAttemptId,
                     author, request.RequestKey!, hash, turnId, null, request.Content!, "dispatching", NowMs(), worker ? "worker" : "steer");
                 if (existing is null) await Messages.InsertAsync(message, ct).ConfigureAwait(false);
                 else if (!await Messages.ClaimQueuedSteerAsync(message, turnId, ct).ConfigureAwait(false))
                     throw KernelException.Conflict("This message is already being sent or has been withdrawn.");
                 _scheduler.TryGetSteering(sessionId, out var previous);
-                var send = RunSteeringAsync(previous.Attempt, message, turnId, existing is not null, existing is not null, startedAt);
+                var send = RunSteeringAsync(previous.Attempt, message, turnId, existing is not null, startedAt);
                 _scheduler.SetSteering(sessionId, (message.Id, send));
                 _ = TrackBackgroundJob(() => send);
                 NotifyQueueChangedCore(sessionId);
