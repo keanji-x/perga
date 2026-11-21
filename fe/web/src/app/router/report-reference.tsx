@@ -16,6 +16,7 @@ import { ErrorBox } from '../../ui/error-box/public.tsx';
 import { createTrackWorkspaceFilesPort } from '../providers/directory.ts';
 import { trackDetailQueryOptions } from '../providers/queries.ts';
 import { useReportSeriesResolver } from './report-series.ts';
+import { useTrackTemplateViews } from './report-views.ts';
 import { ReportSourcePreview } from './report-source.tsx';
 
 type Navigation = Readonly<{
@@ -55,9 +56,11 @@ function ReferenceDocument({ transport, unauthorized, target, detail, report, on
   const files = useMemo(() => createTrackWorkspaceFilesPort(transport, unauthorized, target.trackId),
     [transport, unauthorized, target.trackId]);
   const resolveSeries = useReportSeriesResolver(transport, target.trackId, report.blocks, unauthorized);
+  const templateViews = useTrackTemplateViews(transport, target.trackId, report.blocks, unauthorized);
   return <ReportDocument report={report} empty={<EmptyReportReference />} fileRoot={toTrack(trackDtoToWire(detail.track)).agentCwd}
     onOpenLink={onOpenLink} onOpenSourceLink={source => onOpenSource(target.trackId, source)}
     onOpenFileLink={file => onOpenFile(target.trackId, file)}
+    templateViews={templateViews}
     resolveSeries={resolveSeries}
     linkPreview={{ files, trackId: target.trackId, report,
       renderSource: source => <ReportSourcePreview transport={transport} unauthorized={unauthorized} trackId={target.trackId} target={source} />,

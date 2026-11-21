@@ -1,0 +1,145 @@
+@layer features {
+  .host {
+    position: relative;
+    margin: 0;
+  }
+
+  .seamlessFrame {
+    display: block;
+    inline-size: 100%;
+    border: none;
+    background: transparent;
+    overflow: hidden;
+    transition: block-size 120ms ease;
+  }
+
+  .framedFrame {
+    display: block;
+    inline-size: 100%;
+    border: 1px solid var(--hairline);
+    border-radius: var(--radius-sm);
+    background: transparent;
+  }
+
+  .diagnostic {
+    padding: var(--space-3) var(--space-4);
+    border: 1px dashed var(--hairline);
+    border-radius: var(--radius-sm);
+    font-family: var(--font-sans);
+    font-size: var(--font-step-1-size);
+    color: var(--text-2);
+  }
+
+  .diagnosticTitle {
+    font-weight: 600;
+    color: var(--text);
+    margin-block-end: var(--space-1);
+  }
+
+  /* Native editorial detail panel linked to a graphic widget via selectionKey */
+  .detailArticle {
+    border-block-start: 1px solid var(--hairline);
+    padding-block-start: var(--space-4);
+  }
+
+  .detailHeader {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--space-2) var(--space-4);
+    margin-block-end: var(--space-3);
+  }
+
+  .detailTitle {
+    margin: 0;
+    font-family: var(--font-serif);
+    font-size: var(--font-step-5-size);
+    font-weight: var(--weight-bold);
+    line-height: var(--font-step-5-line);
+    letter-spacing: var(--font-step-5-tracking);
+    color: var(--text);
+  }
+
+  .detailProse {
+    font-family: var(--font-serif);
+    font-size: var(--font-step-3-size);
+    line-height: 1.75;
+    color: var(--text);
+  }
+
+  .detailBlockers {
+    margin-block-start: var(--space-3);
+    padding-inline-start: var(--space-3);
+    border-inline-start: 2px solid var(--error);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    font-family: var(--font-sans);
+    font-size: var(--font-step-2-size);
+    line-height: 1.6;
+    color: var(--text-2);
+  }
+
+  .detailBlockersTitle {
+    font-family: var(--font-mono);
+    font-size: var(--font-step-1-size);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--error-text);
+  }
+
+  .detailRounds {
+    margin-block-start: var(--space-4);
+    padding-block-start: var(--space-3);
+    border-block-start: 1px dashed var(--hairline);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+
+  .detailRoundsHead {
+    font-family: var(--font-mono);
+    font-size: var(--font-step-1-size);
+    color: var(--text-3);
+  }
+
+  .detailRoundRow {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-3);
+    font-family: var(--font-sans);
+    font-size: var(--font-step-2-size);
+    line-height: 1.55;
+    color: var(--text-2);
+  }
+
+  .detailRoundTag {
+    flex: 0 0 auto;
+    font-family: var(--font-mono);
+    font-size: var(--font-step-1-size);
+    font-weight: var(--weight-bold);
+    color: var(--text);
+  }
+
+  .detailRoundPass {
+    flex: 0 0 auto;
+    font-family: var(--font-mono);
+    font-size: var(--font-step-1-size);
+    color: var(--text);
+  }
+
+  .detailRoundFail {
+    flex: 0 0 auto;
+    font-family: var(--font-mono);
+    font-size: var(--font-step-1-size);
+    color: var(--error-text);
+  }
+
+  .detailRoundRun {
+    flex: 0 0 auto;
+    font-family: var(--font-mono);
+    font-size: var(--font-step-1-size);
+    color: var(--accent);
+  }
+}

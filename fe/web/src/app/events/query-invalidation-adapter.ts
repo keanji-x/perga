@@ -77,7 +77,7 @@ export interface QueryCachePort extends AreaQueryLifecyclePort {
  */
 function invalidateQuery(client: QueryCachePort, queryKey: readonly unknown[]): void {
   const cancelFirst = queryKey[0] === 'track' || queryKey[0] === 'track-conversations'
-    || queryKey[0] === 'track-report'
+    || queryKey[0] === 'track-report' || queryKey[0] === 'track-views'
     || queryKey[0] === 'harness-items' || queryKey[0] === 'planner-run'
     || queryKey[0] === 'track-backlinks' || queryKey[0] === 'plugins'
     || queryKey[0] === 'track-templates' || queryKey[0] === 'plugin-data'

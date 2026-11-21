@@ -8,7 +8,9 @@ public enum ReportBlockKind
     Task,
     Html,
     Table,
-    View
+    View,
+    Checkpoints,
+    Widget
 }
 
 public sealed record ReportBlock(

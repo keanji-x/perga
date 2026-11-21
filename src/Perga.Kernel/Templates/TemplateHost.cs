@@ -120,19 +120,17 @@ public class TemplateHost : ITemplateCatalog
         return compiled;
     }
 
-    public int LoadFromDirectory(string directoryPath)
+    public int LoadFromDirectory(string directoryPath) => LoadFromDirectory(directoryPath, includePlainJson: true);
+
+    public int LoadFromDirectory(string directoryPath, bool includePlainJson)
     {
-        if (string.IsNullOrWhiteSpace(directoryPath) || !Directory.Exists(directoryPath))
+        var sources = TemplateBundle.DiscoverDirectorySources(directoryPath, includePlainJson);
+        if (sources.Count == 0)
         {
             return 0;
         }
 
-        var files = Directory.GetFiles(directoryPath, "*", SearchOption.TopDirectoryOnly)
-            .Where(f => f.EndsWith(".perga.js", StringComparison.Ordinal) || f.EndsWith(".json", StringComparison.Ordinal))
-            .OrderBy(f => f, StringComparer.Ordinal)
-            .ToArray();
-
-        var pending = files.Select(file => CompileFileSource(File.ReadAllText(file, Encoding.UTF8))).ToList();
+        var pending = sources.Select(CompileFileSource).ToList();
         var count = 0;
         while (pending.Count > 0)
         {

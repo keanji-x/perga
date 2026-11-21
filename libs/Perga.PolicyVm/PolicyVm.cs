@@ -58,15 +58,21 @@ public sealed partial class PolicyVm : IPolicyVm
 
         return ExecuteSandboxed("Compile", () =>
         {
-            using var engine = CreateSandboxedEngine(CompileTimeoutMs);
-            var loaded = LoadDefinition(engine, jsModuleSource);
-            var def = ValidateDefaultTemplateObject(loaded.Definition);
+            var bundle = TemplateBundle.Parse(jsModuleSource);
+            using var engine = CreateSandboxedEngine(CompileTimeoutMs, bundle);
+            var tHelper = engine.GetValue("t");
+            var loaded = LoadDefinition(engine, bundle);
+            var rawDef = ValidateDefaultTemplateObject(loaded.Definition);
 
-            var id = ReadRequiredNonEmptyString(def, "id", "template.id");
-            var title = ReadRequiredNonEmptyString(def, "title", "template.title");
-            var description = ReadOptionalString(def, "description", "template.description");
-            var defaultPlugins = ReadOptionalStringList(def, "plugins", "template.plugins");
-            var inputsSchema = ExtractInputsSchema(engine, def);
+            var id = ReadRequiredNonEmptyString(rawDef, "id", "template.id");
+            var title = ReadRequiredNonEmptyString(rawDef, "title", "template.title");
+            var description = ReadOptionalString(rawDef, "description", "template.description");
+            var defaultPlugins = ReadOptionalStringList(rawDef, "plugins", "template.plugins");
+            var inputsSchema = ExtractInputsSchema(engine, rawDef);
+            var extendsId = ReadOptionalString(rawDef, "extends", "template.extends");
+
+            var defaultInputsJs = BuildEffectiveJsInputs(engine, rawDef, ParseJsonObject("{}"));
+            var def = ResolveEffectiveDefinition(engine, rawDef, defaultInputsJs);
 
             EnsureOptionalFunction(def, "headerView", "template.headerView");
             EnsureOptionalFunction(def, "before", "template.before");
@@ -90,6 +96,8 @@ public sealed partial class PolicyVm : IPolicyVm
             // Report spec
             int? maxProseChars = null;
             var sections = new List<SectionRule>();
+            var humanReadOnly = false;
+            var viewNames = new List<string>();
             if (TryGetOptionalObject(def, "report", "template.report", out var reportObj))
             {
                 maxProseChars = ReadOptionalInt(reportObj, "maxProseChars", "template.report.maxProseChars");
@@ -98,8 +106,28 @@ public sealed partial class PolicyVm : IPolicyVm
                     throw new InvalidOperationException("template.report.maxProseChars must be positive when specified.");
                 }
 
+                humanReadOnly = ReadOptionalBool(reportObj, "humanReadOnly", "template.report.humanReadOnly") ?? false;
                 sections = ParseSectionRules(reportObj);
+                if (TryGetOptionalObject(reportObj, "views", "template.report.views", out var viewsObj))
+                {
+                    foreach (var prop in viewsObj.GetOwnProperties())
+                    {
+                        var viewKey = prop.Key.AsString();
+                        if (prop.Value.Value is not Function)
+                        {
+                            throw new InvalidOperationException($"template.report.views.{viewKey} must be a function.");
+                        }
+
+                        viewNames.Add(viewKey);
+                    }
+                }
             }
+
+            var initialReportMarkdown = ResolveInitialReportMarkdown(def, bundle);
+            var checkpoints = ParseCheckpoints(def);
+            var triggers = ParseTriggers(engine, def);
+            ValidateCrossFileReferencesAndInitialData(
+                engine, def, defaultInputsJs, bundle, initialReportMarkdown, viewNames, tHelper, skipCrossFileChecks: !string.IsNullOrWhiteSpace(extendsId));
 
             // Tasks spec
             var requireGateForReadWrite = false;
@@ -138,10 +166,15 @@ public sealed partial class PolicyVm : IPolicyVm
                 WorkspaceCloseCmd: workspaceCloseCmd,
                 AfterWorkerDoneCmd: afterWorkerDoneCmd,
                 Schedules: schedules,
+                Routing: ReadRoutingRules(engine, def),
                 WorkerDispatch: workerDispatch,
-                Extends: ReadOptionalString(def, "extends", "template.extends"),
+                Extends: ReadOptionalString(rawDef, "extends", "template.extends"),
                 HasHeaderView: !def.Get("headerView").IsUndefined(),
-                Routing: ReadRoutingRules(engine, def));
+                InitialReportMarkdown: initialReportMarkdown,
+                Checkpoints: checkpoints.Count > 0 ? checkpoints : null,
+                Triggers: triggers.Count > 0 ? triggers : null,
+                ViewNames: viewNames.Count > 0 ? viewNames : null,
+                HumanReadOnly: humanReadOnly);
 
             return new CompiledPolicy(id, jsModuleSource, manifest,
                 loaded.LegacyBefore, loaded.LegacyAfter);
@@ -154,9 +187,28 @@ public sealed partial class PolicyVm : IPolicyVm
 
         return ExecuteSandboxed("InitState", () =>
         {
-            using var engine = CreateSandboxedEngine();
-            var def = LoadDefaultTemplateObject(engine, policy.JsSource);
-            var jsInputs = BuildEffectiveJsInputs(engine, def, inputs);
+            var bundle = TemplateBundle.Parse(policy.JsSource);
+            using var engine = CreateSandboxedEngine(ExecutionTimeoutMs, bundle);
+            var tHelper = engine.GetValue("t");
+            var rawDef = LoadDefaultTemplateObject(engine, bundle);
+            var jsInputs = BuildEffectiveJsInputs(engine, rawDef, inputs);
+            var def = ResolveEffectiveDefinition(engine, rawDef, jsInputs);
+
+            if (TryGetOptionalObject(def, "data", "template.data", out var dataObj))
+            {
+                var dataInit = dataObj.Get("initial");
+                if (!dataInit.IsUndefined() && !dataInit.IsNull())
+                {
+                    var validated = InitializeAndValidateData(
+                        engine,
+                        def,
+                        dataObj,
+                        jsInputs,
+                        knownTaskKeys: [],
+                        tHelper);
+                    return new PolicyEvalResult<JsonElement>(validated, validated.Clone());
+                }
+            }
 
             var initialStateFn = def.Get("initialState");
             if (initialStateFn.IsUndefined() || initialStateFn.IsNull())
@@ -193,8 +245,11 @@ public sealed partial class PolicyVm : IPolicyVm
 
         return ExecuteSandboxed("TurnContext", () =>
         {
-            using var engine = CreateSandboxedEngine();
-            var def = LoadDefaultTemplateObject(engine, policy.JsSource);
+            var bundle = TemplateBundle.Parse(policy.JsSource);
+            using var engine = CreateSandboxedEngine(ExecutionTimeoutMs, bundle);
+            var rawDef = LoadDefaultTemplateObject(engine, bundle);
+            var jsInputs = BuildEffectiveJsInputs(engine, rawDef, ctx.Inputs);
+            var def = ResolveEffectiveDefinition(engine, rawDef, jsInputs);
 
             var hookVal = def.Get("turnContext");
             if (hookVal.IsUndefined() || hookVal.IsNull())
@@ -229,7 +284,7 @@ public sealed partial class PolicyVm : IPolicyVm
         });
     }
 
-    private static Engine CreateSandboxedEngine(int timeoutMs = ExecutionTimeoutMs)
+    private static Engine CreateSandboxedEngine(int timeoutMs = ExecutionTimeoutMs, TemplateBundle? bundle = null)
     {
         var engine = new Engine(options =>
         {
@@ -241,16 +296,24 @@ public sealed partial class PolicyVm : IPolicyVm
             options.Interop.Enabled = false;
             options.Interop.AllowGetType = false;
             options.Interop.AllowSystemReflection = false;
+            if (bundle is { HasMultiFileSources: true })
+            {
+                options.Modules.ModuleLoader = new BundleModuleLoader(bundle);
+            }
         });
 
-        // Remove any host-reflection or dynamic-code hatches if present, then inject the 4 frozen global helpers.
+        // Remove any host-reflection or dynamic-code hatches if present, then inject the frozen global helpers.
         engine.Execute(GlobalPreludeScript);
+        engine.Execute(SchemaPrelude.Script);
         engine.Constraints.Reset();
         return engine;
     }
 
     private static ObjectInstance LoadDefaultTemplateObject(Engine engine, string jsModuleSource) =>
-        ValidateDefaultTemplateObject(LoadDefinition(engine, jsModuleSource).Definition);
+        LoadDefaultTemplateObject(engine, TemplateBundle.Parse(jsModuleSource));
+
+    private static ObjectInstance LoadDefaultTemplateObject(Engine engine, TemplateBundle bundle) =>
+        ValidateDefaultTemplateObject(LoadDefinition(engine, bundle).Definition);
 
     private static ObjectInstance ValidateDefaultTemplateObject(JsValue defaultExport)
     {

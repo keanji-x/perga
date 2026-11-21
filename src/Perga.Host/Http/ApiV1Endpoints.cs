@@ -228,6 +228,19 @@ public static class ApiV1Endpoints
             return Results.Json(report, PergaJsonDefaults.ApiOptions);
         });
 
+        v1.MapGet("/tracks/{trackId}/views", async (string trackId, IPergaKernel kernel, CancellationToken ct) =>
+        {
+            var views = await kernel.GetTrackViewsAsync(trackId, ct).ConfigureAwait(false);
+            return Results.Json(views, PergaJsonDefaults.ApiOptions);
+        });
+
+        v1.MapPatch("/tracks/{trackId}/data", async (string trackId, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
+        {
+            var patch = await ReadRequiredJsonBodyAsync<JsonElement>(ctx, ct).ConfigureAwait(false);
+            var nextData = await kernel.PatchTrackDataAsync(trackId, patch, source: "api", callerSessionId: null, ct: ct).ConfigureAwait(false);
+            return Results.Json(new { ok = true, data = nextData }, PergaJsonDefaults.ApiOptions);
+        });
+
         v1.MapPut("/tracks/{trackId}/report/blocks/{blockId}", async (string trackId, string blockId, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
         {
             var req = await ReadRequiredJsonBodyAsync<HumanBlockUpdateRequest>(ctx, ct).ConfigureAwait(false);

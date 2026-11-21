@@ -28,25 +28,115 @@ export interface TemplateContext<TState = Record<string, any>, TInputs = Record<
   state: TState;
 }
 
-export interface PergaTemplateDefinition<TState = Record<string, any>, TInputs = Record<string, any>> {
+export interface TaskRoutingRuleSpec {
+  when: { role?: string; access?: "read_only" | "read_write" };
+  provider?: string;
+  model?: string;
+  access?: "read_only" | "read_write";
+  enforce?: boolean;
+}
+
+export interface CheckpointSpec {
   id: string;
   title: string;
-  description?: string;
-  /** 1 uses original prefixed tool names and 2 uses canonical names.
-   * Catalog files and old snapshots default to 1, while new inline sources default to 2. */
-  toolNameVersion?: 1 | 2;
-  /** Catalog base; snapshots freeze its complete source. Child keyed declarations take precedence. */
-  extends?: string;
-  /** Child hooks replace the inherited slot; omitted hooks inherit the defining module's names.
-   * Version 2 uses unprefixed tool names, e.g. type "tool.pr_merge", mcpServer "vcs", toolName "pr_merge". */
-  before?: (action: { type: string; role?: string; access?: string; provider?: string; model?: string; arguments?: Record<string, any>; [key: string]: any }, ctx: TemplateContext<TState, TInputs>) => GuardDecision;
-  /** Events include schedule.fired ({scheduleId, sourceKind, prompt}), task.settled, report.commit,
-   * turn.after, and tool.<name> using the same tool name as before. */
-  after?: (event: { type: string; [key: string]: any }, ctx: TemplateContext<TState, TInputs>) => string | null | void;
+  role?: string;
+  access?: "read_only" | "read_write";
+  dependsOn?: string[];
+  docPath?: string;
+}
+
+export interface SchemaNode {
+  readonly __pergaSchema: true;
+  optional(): SchemaNode;
+  default(value: unknown): SchemaNode;
+}
+
+export interface SchemaBuilder {
+  id(): SchemaNode;
+  string(): SchemaNode;
+  markdown(): SchemaNode;
+  number(): SchemaNode;
+  boolean(): SchemaNode;
+  isoDate(): SchemaNode;
+  enum(values: readonly string[]): SchemaNode;
+  ref(kind: "task" | "file"): SchemaNode;
+  array(item: SchemaNode): SchemaNode;
+  object(shape: Record<string, SchemaNode>): SchemaNode;
+}
+
+export interface KernelTaskFact {
+  id: string;
+  taskKey: string;
+  status: "pending" | "running" | "done" | "blocked";
+  provider?: string | null;
+  model?: string | null;
+  sessionId?: string | null;
+  gates?: Array<{
+    label: string;
+    status: "pass" | "fail" | "running" | "pending";
+    detail?: string | null;
+    command?: string | null;
+    output?: string | null;
+  }>;
+  updatedAtMs?: number;
+}
+
+export interface KernelFactsSnapshot {
+  trackId?: string;
+  tasks: Record<string, KernelTaskFact>;
+  sessions?: Record<string, {
+    id: string;
+    isLead: boolean;
+    provider?: string | null;
+    model?: string | null;
+    boundAttemptId?: string | null;
+    status?: string;
+  }>;
+}
+
+export interface TriggerEventContext<TState = Record<string, any>> {
+  data: TState;
+  event: Record<string, any>;
+  kernel: KernelFactsSnapshot;
+}
+
+export interface TriggerSpec<TState = Record<string, any>> {
+  id: string;
+  label: string;
+  on:
+    | { kind: "cron"; expr: string; timezone?: string; summary?: string }
+    | { kind: "task_settled"; taskKey?: string; role?: string; summary?: string }
+    | { kind: "data_change"; path: string; summary?: string }
+    | { kind: "schedule_at"; dataPath: string; dateField: string; summary?: string }
+    | { kind: "event"; event: string; filter?: Record<string, unknown>; summary?: string }
+    | { kind: "manual"; summary?: string };
+  when?: (ctx: TriggerEventContext<TState>) => boolean;
+  action:
+    | { kind: "run_cli"; command: string; writeDataPath?: string; then?: string }
+    | {
+        kind: "dispatch_worker";
+        taskKey?: string;
+        bindRef?: string;
+        role?: string;
+        model?: string;
+        access?: "read_only" | "read_write";
+        goal?: string | ((ctx: TriggerEventContext<TState>) => string);
+      }
+    | { kind: "wake_lead"; prompt?: string | ((ctx: TriggerEventContext<TState>) => string) };
+}
+
+export interface PergaTemplateSetupResult<TState = Record<string, any>, TInputs = Record<string, any>> {
   plugins?: string[];
-  inputs?: Record<string, { type: "string" | "number" | "boolean" | "enum"; values?: string[]; default?: any; optional?: boolean; label?: string }>;
+  data?: {
+    schema?: ((t: SchemaBuilder) => Record<string, SchemaNode>) | SchemaNode;
+    initial?: (inputs: TInputs) => TState;
+  };
   initialState?: (inputs: TInputs) => TState;
   headerView?: (ctx: TemplateContext<TState, TInputs>) => TemplateHeaderView;
+  before?: (action: { type: string; role?: string; access?: string; provider?: string; model?: string; arguments?: Record<string, any>; [key: string]: any }, ctx: TemplateContext<TState, TInputs>) => GuardDecision;
+  after?: (event: { type: string; [key: string]: any }, ctx: TemplateContext<TState, TInputs>) => string | null | void;
+  checkpoints?: CheckpointSpec[];
+  triggers?: TriggerSpec<TState>[];
   workspace?: {
     driver?: string;
     lowerCacheDirs?: string[];
@@ -54,6 +144,9 @@ export interface PergaTemplateDefinition<TState = Record<string, any>, TInputs =
     onCloseCmd?: string;
   };
   report?: {
+    humanReadOnly?: boolean;
+    template?: string;
+    views?: Record<string, (data: TState, kernel: KernelFactsSnapshot) => unknown>;
     maxProseChars?: number;
     sections?: SectionSpec[];
   };
@@ -61,7 +154,7 @@ export interface PergaTemplateDefinition<TState = Record<string, any>, TInputs =
     dispatch?: { section?: string; access?: "read_only" | "read_write"; gateInput?: string };
     /** First matching defaults fill omitted fields. enforce denies explicit conflicts.
      * provider/model support ${inputs.key}, including input schema defaults. */
-    routing?: Array<{ when: { role?: string; access?: "read_only" | "read_write" }; provider?: string; model?: string; enforce?: boolean }>;
+    routing?: TaskRoutingRuleSpec[];
     requireGateForReadWrite?: boolean;
     afterWorkerDoneCmd?: string;
   };
@@ -79,6 +172,20 @@ export interface PergaTemplateDefinition<TState = Record<string, any>, TInputs =
     title?: string;
     prompt: string;
   }>;
+}
+
+export interface PergaTemplateDefinition<TState = Record<string, any>, TInputs = Record<string, any>>
+  extends PergaTemplateSetupResult<TState, TInputs> {
+  id: string;
+  title: string;
+  description?: string;
+  /** 1 uses original prefixed tool names and 2 uses canonical names.
+   * Catalog files and old snapshots default to 1, while new inline sources default to 2. */
+  toolNameVersion?: 1 | 2;
+  /** Catalog base; snapshots freeze its complete source. Child keyed declarations take precedence. */
+  extends?: string;
+  inputs?: Record<string, { type: "string" | "number" | "boolean" | "enum"; values?: string[]; default?: any; optional?: boolean; label?: string }>;
+  setup?: (inputs: TInputs) => PergaTemplateSetupResult<TState, TInputs>;
 }
 
 declare global {

@@ -96,6 +96,7 @@ import { TaskRecovery, useCurrentTaskRows } from './task-recovery.tsx';
 import { WorkerDispatchControl } from './worker-controls.tsx';
 import { useReportPreviewResolver, useReportPreviewViewports } from './report-preview.ts';
 import { useReportSeriesResolver } from './report-series.ts';
+import { useTrackTemplateViews } from './report-views.ts';
 import { ReportReferencePreview } from './report-reference.tsx';
 import { ReportSourceInDocument, ReportSourcePreview } from './report-source.tsx';
 import { reportSourcePosition, type ReportSourcePosition } from '../../features/report/source/placement.ts';
@@ -1472,6 +1473,7 @@ function TrackRouteBody({
   const resolveSeries = useReportSeriesResolver(transport, track.id, reportBlocks, unauthorized);
   /* One polled read of the track's previews, only while the report has a `preview` block. */
   const resolvePreview = useReportPreviewResolver(transport, track.id, reportBlocks, unauthorized, isPergaTrack);
+  const templateViews = useTrackTemplateViews(transport, track.id, reportBlocks, unauthorized, isPergaTrack);
   const previewViewports = useReportPreviewViewports(track.id);
   /* The cards this route can open, asked of the registry through the list the board
    * draws. A worker card whose kind no entry claims is `unknown` and its `?card=`
@@ -1705,6 +1707,7 @@ function TrackRouteBody({
         sourceInsertion={requestedFilePath === null ? sourceInsertion : undefined}
         trackId={track.id}
         openedAt={navigationCompletedAt}
+        templateViews={templateViews}
         resolveSeries={resolveSeries}
         resolvePreview={resolvePreview}
         previewViewports={previewViewports}
@@ -1727,8 +1730,18 @@ function TrackRouteBody({
         backlinkCounts={backlinks === undefined ? undefined : backlinkCountsByBlock(backlinks.backlinks)}
         onOpenLink={openReportLink}
         onOpenFileLink={openReportFile}
+        onOpenWorker={(cardId) => {
+          if (!openableWorkerIds.has(cardId)) return;
+          if (isPergaTrack && rows.some((row) => row.id === cardId)) {
+            registry.requestOpen(cardId, { focusComposer: false });
+            return;
+          }
+          go({ name: 'track', trackId: track.id, cardId, from: routeFrom });
+        }}
         onOpenSourceLink={openReportSource}
         onSaveProseBlock={report?.docRev !== undefined
+          && !(templateViews?.status === 'ready' && templateViews.projection.humanReadOnly)
+          && !(report?.blocks?.some((block) => block.kind === 'checkpoints' || block.kind === 'widget') ?? false)
           ? async (blockId, markdown) => {
             await trackMutations.updateReportBlock(track.id, blockId, {
               docRev: report.docRev!,
@@ -1841,7 +1854,7 @@ function TrackRouteBody({
           {center.render(<div ref={setCenterHost} className={mobileChatStyles.embeddedSlot} />)}
         </div>}
         {!centerActive && <>{!pergaMode && reportHeader}{(!chat.isOpen || chat.selectedConversationId !== plannerCard?.id) && workspaceNotice}
-        {canCloseTrack && shareAccess === null &&
+        {canCloseTrack && shareAccess === null && !(report?.blocks?.some((block) => block.kind === 'checkpoints' || block.kind === 'widget') ?? false) &&
           <WorkerDispatchControl key={track.id} trackId={track.id} transport={transport} unauthorized={unauthorized} />}
         {reportRegion}</>}
       </>}

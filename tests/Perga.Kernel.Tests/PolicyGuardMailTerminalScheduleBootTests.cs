@@ -183,13 +183,14 @@ public sealed class PolicyGuardMailTerminalScheduleBootTests
         Assert.Equal(turnsBeforeHumanEdit + 1, ctx.Store.GetTurnsForSession(leadId).Count);
 
         // 4. Independent sessions get unified controls; bound Workers retain observation and completion.
-        Assert.Equal(37, KernelMcpToolNames.All.Count);
+        Assert.Equal(38, KernelMcpToolNames.All.Count);
         Assert.Contains(KernelMcpCatalog.GetToolsForSession(boundAttemptId: null, isLead: true), tool => tool.Name == KernelMcpToolNames.SessionSend);
-        Assert.Equal(32, KernelMcpCatalog.GetToolsForSession(boundAttemptId: null).Count);
+        Assert.Equal(33, KernelMcpCatalog.GetToolsForSession(boundAttemptId: null).Count);
         Assert.Contains(KernelMcpCatalog.GetToolsForSession(boundAttemptId: null), tool => tool.Name == KernelMcpToolNames.SessionCreate);
         var workerTools = KernelMcpCatalog.GetToolsForSession(boundAttemptId: "att_1");
-        Assert.Equal(16, workerTools.Count);
+        Assert.Equal(17, workerTools.Count);
         Assert.Contains(workerTools, tool => tool.Name == KernelMcpToolNames.ProviderList);
+        Assert.Contains(workerTools, tool => tool.Name == KernelMcpToolNames.DataPatch);
 
         var reg = ctx.Kernel.McpSessionBridge.RegisterSession(trackId, leadId, isLead: true, null, null, ["market"]);
         var statusJson = await ctx.Kernel.InvokeKernelMcpToolAsync(reg.Principal, KernelMcpToolNames.TrackStatus, TestJson.Parse("{}"));

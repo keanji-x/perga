@@ -16,6 +16,7 @@ public static class KernelMcpToolNames
     // Shared across all sessions (Lead, free Subagent, contract Subagent)
     public const string ReportRead = "report_read";
     public const string ReportCommit = "report_commit";
+    public const string DataPatch = "data_patch";
     public const string TaskList = "task_list";
     public const string UserAsk = "user_ask";
     public const string MailList = "mail_list";
@@ -58,6 +59,7 @@ public static class KernelMcpToolNames
         SystemUpgradeCheck, SystemUpgradeApply, SystemUpgradeRollback,
         ReportRead,
         ReportCommit,
+        DataPatch,
         TaskList,
         UserAsk,
         MailList,
@@ -150,6 +152,8 @@ public static class KernelMcpCatalog
                 Schema(KernelMcpReportSupport.ReportReadSchemaJson)),
             new(KernelMcpToolNames.ReportCommit, "Atomically apply block operations (replace_section, upsert, delete, move) to the track report using a ReadAnchor. Returns a compact commit receipt by default; set includeDocument=true for full renderedMarkdown and blocks.",
                 Schema(KernelMcpReportSupport.ReportCommitSchemaJson)),
+            new(KernelMcpToolNames.DataPatch, "Patch the track's structured template data (validated Fail-Closed against template data.schema and stamped with _meta.updatedAt/_meta.updatedBy).",
+                Schema("""{"type":"object","required":["patch"],"properties":{"patch":{"type":"object","description":"Partial JSON object merged into the track's structured template data."}}}""")),
             new(KernelMcpToolNames.TaskList, "List all tasks declared in the track.",
                 Schema("""{"type":"object","properties":{}}""")),
             new(KernelMcpToolNames.UserAsk, "Suspend and ask the human user one or more structured multiple-choice questions.",
@@ -347,7 +351,13 @@ public static class KernelMcpDispatcher
             case KernelMcpToolNames.ReportRead:
             {
                 var res = await kernel.ReadReportAsync(caller.TrackId, caller.SessionId, ct).ConfigureAwait(false);
-                return KernelMcpReportSupport.FormatReportReadResponse(res, args);
+                Perga.PolicyVm.TemplateViewsProjection? templateViews = null;
+                if (res.Blocks.Any(b => b.Kind == ReportBlockKind.Widget))
+                {
+                    templateViews = await kernel.GetTrackViewsAsync(caller.TrackId, ct).ConfigureAwait(false);
+                }
+
+                return KernelMcpReportSupport.FormatReportReadResponse(res, args, templateViews);
             }
 
             case KernelMcpToolNames.ReportCommit:
@@ -357,6 +367,22 @@ public static class KernelMcpDispatcher
                 var res = await kernel.CommitReportAsync(caller.TrackId, caller.SessionId, commitReq, ct, caller.ExecutionOrigin, expectedPolicyGeneration)
                     .ConfigureAwait(false);
                 return KernelMcpReportSupport.FormatReportCommitResponse(res, includeDocument);
+            }
+
+            case KernelMcpToolNames.DataPatch:
+            {
+                if (!args.TryGetProperty("patch", out var patchEl) || patchEl.ValueKind != JsonValueKind.Object)
+                {
+                    throw KernelException.InvalidArgument("data_patch requires a JSON object 'patch' property.");
+                }
+
+                var nextData = await kernel.PatchTrackDataAsync(
+                    caller.TrackId,
+                    patchEl,
+                    source: $"session:{caller.SessionId}",
+                    callerSessionId: caller.SessionId,
+                    ct: ct).ConfigureAwait(false);
+                return JsonHelpers.ToElement(new { ok = true, data = nextData });
             }
 
             case KernelMcpToolNames.TaskList:

@@ -50,7 +50,7 @@ export type TaskRunStatus = z.infer<typeof taskRunStatusSchema>;
 export const semanticVerdictSchema = z.enum(['none', 'accepted', 'rejected']);
 export type SemanticVerdict = z.infer<typeof semanticVerdictSchema>;
 
-export const reportBlockKindSchema = z.enum(['prose', 'task', 'html', 'table', 'view']);
+export const reportBlockKindSchema = z.enum(['prose', 'task', 'html', 'table', 'view', 'checkpoints', 'widget']);
 export type ReportBlockKind = z.infer<typeof reportBlockKindSchema>;
 
 export const askStatusSchema = z.enum(['open', 'answered', 'withdrawn']);
@@ -126,6 +126,11 @@ export const compiledTemplateManifestDtoSchema = z.object({
   afterWorkerDoneCmd: z.string().nullish(),
   schedules: z.array(scheduleSpecDtoSchema).nullish().transform((v) => v ?? []),
   initialReportMarkdown: z.string().nullish().transform((v) => v ?? ''),
+  routing: z.array(z.unknown()).nullish(),
+  checkpoints: z.array(z.unknown()).nullish(),
+  triggers: z.array(z.unknown()).nullish(),
+  viewNames: z.array(z.string()).nullish(),
+  humanReadOnly: z.boolean().nullish().transform((v) => v ?? false),
 }).transform((raw) => ({
   ...raw,
   title: raw.title ?? raw.name ?? raw.id,

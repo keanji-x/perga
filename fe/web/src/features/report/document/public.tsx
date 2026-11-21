@@ -6,13 +6,13 @@ import { useCompactViewport } from '../../../ui/viewport/public.ts';
 import { useEffect, useLayoutEffect, useMemo, useRef, type ReactNode } from 'react';
 import { useState } from '../../../ui/state/public.ts';
 
-import { PreparedProseBlock, PlainReportText } from './content.tsx';
+import { PreparedProseBlock, PlainReportText, ProseBlock } from './content.tsx';
 export { ProseBlock, ReportTextLink } from './content.tsx';
 import type { ReferenceRepository } from '../../../../../core/domain/report-references.ts';
 import {
   deriveReportTasks, isTaskBlock,
   type PreviewResolution, type ReportBlock, type ReportLinkTarget, type ReportTaskRow, type TaskVerdict,
-  type TrackReport,
+  type TemplateViewsProjection, type TemplateViewsState, type TrackReport,
 } from '../../../../../core/domain/report.ts';
 import {
   type ReportFileLinkTarget,
@@ -25,6 +25,8 @@ import { prepareReportDocument, type PreparedReport, type PreparedReportBlock } 
 import { ReportDetails } from './details.tsx';
 import { REPORT_ANCHOR_REQUEST, revealReportAnchor, type ReportAnchorRequest } from '../anchor/public.ts';
 import { ReportAppBlock } from '../app/public.tsx';
+import { ReportCheckpointsBlock } from '../checkpoints/public.tsx';
+import { ReportWidgetBlock } from '../widget/public.tsx';
 import { ReportHtmlBlock } from '../html/public.tsx';
 import { ReportCandlesBlock } from '../candles/public.tsx';
 import { ReportPreviewBlock, type PreviewViewportStore } from '../preview/public.tsx';
@@ -56,6 +58,8 @@ export type ReportDocumentProps = Readonly<{
   onOpenLink?: (target: ReportLinkTarget) => void;
   /** A file link admitted beneath `fileRoot` was activated. */
   onOpenFileLink?: (target: ReportFileLinkTarget) => void;
+  /** Opens a Worker conversation bound to a report checkpoint or task. */
+  onOpenWorker?: (sessionId: string) => void;
   /** A `neige://source/…` citation was activated. Absent ⇒ citations render as an inline badge plus their label. */
   onOpenSourceLink?: (target: ReportSourceLinkTarget) => void;
   /** Absolute root used to admit relative or already-absolute workspace links. */
@@ -73,6 +77,8 @@ export type ReportDocumentProps = Readonly<{
   renderTaskExecution?: (task: ReportTaskRow, expanded: boolean) => ReactNode;
   /** Resolves a Track overlay for a live `table` or a `view` live slot; each renderer validates its declared contract. */
   resolveOverlay?: (source: string) => unknown;
+  /** Projected template views & bundled HTML widgets for Scheme B `widget` blocks. */
+  templateViews?: TemplateViewsProjection | TemplateViewsState;
   /** Resolves a `chart.series` block, by id and rev, to the app's query of the kernel's resolved data. Absent ⇒ series blocks say the view carries no such data. */
   resolveSeries?: (blockId: string, rev: number) => SeriesResolution | undefined;
   /** Resolves a `preview` block's `key` to the app's read of the track's registered previews. Absent ⇒ preview blocks say the view carries none. */
@@ -85,11 +91,12 @@ export type ReportDocumentProps = Readonly<{
 
 /** Agent-authored destinations become admitted preview controls. Navigation stays behind typed callbacks or explicit external activation. */
 export function ReportDocument({
-  report, preparation, empty, outlineEmpty, rail, byline, sourceInsertion, backlinkCounts, onOpenLink, onOpenFileLink, onOpenSourceLink, fileRoot, fileBasePath, linkPreview,
-  resolveOverlay, resolveSeries, resolvePreview, previewViewports, onSaveProseBlock,
+  report, preparation, empty, outlineEmpty, rail, byline, sourceInsertion, backlinkCounts, onOpenLink, onOpenFileLink, onOpenWorker, onOpenSourceLink, fileRoot, fileBasePath, linkPreview,
+  resolveOverlay, templateViews, resolveSeries, resolvePreview, previewViewports, onSaveProseBlock,
   arrivalAnchorId, taskVerdicts, taskRows, renderTaskExecution,
 }: ReportDocumentProps) {
   const compactViewport = useCompactViewport();
+  const [widgetSelections, setWidgetSelections] = useState<Readonly<Record<string, string>>>({});
   const prepared = useMemo(() => preparation ?? prepareReportDocument(report), [preparation, report]);
   if (prepared.report !== report) throw new Error('Report preparation does not match the displayed report');
   const { referenceRepository } = prepared;
@@ -137,11 +144,18 @@ export function ReportDocument({
                   backlinks={backlinkCounts?.get(slot.block.id) ?? 0}
                   referenceRepository={referenceRepository} onOpenLink={onOpenLink}
                   onOpenFileLink={onOpenFileLink}
+                  onOpenWorker={onOpenWorker}
+                  taskRows={taskRows}
                   onOpenSourceLink={onOpenSourceLink}
                   fileRoot={fileRoot}
                   fileBasePath={fileBasePath}
                   linkPreview={linkPreview}
                   resolveOverlay={resolveOverlay}
+                  templateViews={templateViews}
+                  widgetSelections={widgetSelections}
+                  onSelectWidget={(key, value) => {
+                    setWidgetSelections((prev) => (prev[key] === value ? prev : { ...prev, [key]: value }));
+                  }}
                   resolveSeries={resolveSeries}
                   resolvePreview={resolvePreview}
                   previewViewports={previewViewports}
@@ -235,7 +249,7 @@ function ReportReference({ blocks, backlinkCounts, tasks, verdicts, renderTaskEx
 
 /** One block, plus the sidenote that belongs to it. */
 function BlockSlot({
-  slot, backlinks, onOpenLink, onOpenFileLink, onOpenSourceLink, fileRoot, fileBasePath, linkPreview, referenceRepository, resolveOverlay, resolveSeries,
+  slot, backlinks, onOpenLink, onOpenFileLink, onOpenWorker, taskRows, onOpenSourceLink, fileRoot, fileBasePath, linkPreview, referenceRepository, resolveOverlay, templateViews, widgetSelections, onSelectWidget, resolveSeries,
   resolvePreview, previewViewports, onSaveProseBlock, sourceInsertion,
 }: {
   referenceRepository: ReferenceRepository | null;
@@ -243,11 +257,16 @@ function BlockSlot({
   backlinks: number;
   onOpenLink?: (target: ReportLinkTarget) => void;
   onOpenFileLink?: (target: ReportFileLinkTarget) => void;
+  onOpenWorker?: (sessionId: string) => void;
+  taskRows?: readonly ReportTaskRow[];
   onOpenSourceLink?: (target: ReportSourceLinkTarget) => void;
   fileRoot?: string;
   fileBasePath?: string;
   linkPreview?: ReportLinkPreviewResources;
   resolveOverlay?: ReportDocumentProps['resolveOverlay'];
+  templateViews?: ReportDocumentProps['templateViews'];
+  widgetSelections?: Readonly<Record<string, string>>;
+  onSelectWidget?: (key: string, value: string) => void;
   resolveSeries?: ReportDocumentProps['resolveSeries'];
   resolvePreview?: ReportDocumentProps['resolvePreview'];
   previewViewports?: PreviewViewportStore;
@@ -323,10 +342,10 @@ function BlockSlot({
                 </button>
               )}
             </>
-          : <BlockBody block={block} referenceRepository={referenceRepository} onOpenLink={onOpenLink}
-              onOpenFileLink={onOpenFileLink} fileRoot={fileRoot} fileBasePath={fileBasePath}
+          : <BlockBody block={block} taskRows={taskRows} referenceRepository={referenceRepository} onOpenLink={onOpenLink}
+              onOpenFileLink={onOpenFileLink} onOpenWorker={onOpenWorker} fileRoot={fileRoot} fileBasePath={fileBasePath}
               onOpenSourceLink={onOpenSourceLink} linkPreview={linkPreview}
-              resolveOverlay={resolveOverlay} resolveSeries={resolveSeries} resolvePreview={resolvePreview}
+              resolveOverlay={resolveOverlay} templateViews={templateViews} widgetSelections={widgetSelections} onSelectWidget={onSelectWidget} resolveSeries={resolveSeries} resolvePreview={resolvePreview}
               previewViewports={previewViewports} />}
         {(!prose || editing) && sourceInsertion?.content}
       </div>
@@ -341,18 +360,22 @@ function BlockSlot({
 
 /** One bad block may not cost the page: an unknown kind or an unparsable payload degrades to one line. */
 function BlockBody({
-  block, task, renderTaskExecution, referenceRepository, onOpenLink, onOpenFileLink, fileRoot, fileBasePath, onOpenSourceLink, linkPreview, resolveOverlay, resolveSeries, resolvePreview, previewViewports,
+  block, task, taskRows, renderTaskExecution, referenceRepository, onOpenLink, onOpenFileLink, onOpenWorker, fileRoot, fileBasePath, onOpenSourceLink, linkPreview, resolveOverlay, templateViews, widgetSelections, onSelectWidget, resolveSeries, resolvePreview, previewViewports,
 }: {
   referenceRepository: ReferenceRepository | null;
   onOpenLink?: (target: ReportLinkTarget) => void;
   onOpenFileLink?: (target: ReportFileLinkTarget) => void;
+  onOpenWorker?: (sessionId: string) => void;
   fileRoot?: string;
   fileBasePath?: string;
-  block: ReportBlock; task?: ReportTaskRow; renderTaskExecution?: ReportDocumentProps['renderTaskExecution'];
+  block: ReportBlock; task?: ReportTaskRow; taskRows?: readonly ReportTaskRow[]; renderTaskExecution?: ReportDocumentProps['renderTaskExecution'];
   /** A table cell that is one source citation is the same control the prose paints. */
   onOpenSourceLink?: (target: ReportSourceLinkTarget) => void;
   linkPreview?: ReportLinkPreviewResources;
   resolveOverlay?: ReportDocumentProps['resolveOverlay'];
+  templateViews?: ReportDocumentProps['templateViews'];
+  widgetSelections?: Readonly<Record<string, string>>;
+  onSelectWidget?: (key: string, value: string) => void;
   resolveSeries?: ReportDocumentProps['resolveSeries'];
   resolvePreview?: ReportDocumentProps['resolvePreview'];
   previewViewports?: PreviewViewportStore;
@@ -375,6 +398,34 @@ function BlockBody({
     /* The page is read through the same Track file port as prose links and images. */
     case 'html': return <ReportHtmlBlock payload={block.payload} files={linkPreview?.files}
       onOpen={onOpenFileLink === undefined ? undefined : (path) => { onOpenFileLink({ path }); }} />;
+    case 'checkpoints':
+      return (
+        <ReportCheckpointsBlock
+          payload={block.payload}
+          taskRows={taskRows}
+          renderText={renderText}
+          renderMarkdown={(markdown, key) => (
+            <ProseBlock markdown={markdown} blockId={key} compact {...textContext} />
+          )}
+          onOpenWorker={onOpenWorker}
+        />
+      );
+    case 'widget':
+      return (
+        <ReportWidgetBlock
+          payload={block.payload}
+          projection={templateViews}
+          taskRows={taskRows}
+          selectedId={block.payload.selectionKey !== undefined ? widgetSelections?.[block.payload.selectionKey] : undefined}
+          onSelect={onSelectWidget}
+          renderText={renderText}
+          renderMarkdown={(markdown, key) => (
+            <ProseBlock markdown={markdown} blockId={key} compact {...textContext} />
+          )}
+          onOpenFile={onOpenFileLink === undefined ? undefined : (path) => { onOpenFileLink({ path }); }}
+          onOpenWorker={onOpenWorker}
+        />
+      );
     case 'unsupported':
       return (
         <div className={styles.unsupported} role="note">

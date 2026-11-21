@@ -10,8 +10,17 @@ import { nativeViewPayloadSchema, type NativeViewPayload } from './report-view.j
 import { sameOriginPath } from './report-src.js';
 import { htmlBlockPayloadSchema, type HtmlBlockPayload } from './report-html.js';
 import { reportTaskKey, reportTaskPayload } from './report-task-declaration.js';
+import { checkpointsBlockPayloadSchema, type CheckpointsBlockPayload } from './report-checkpoints.js';
+import {
+  widgetBlockPayloadSchema,
+  templateViewsProjectionSchema,
+  type WidgetBlockPayload,
+  type TemplateViewsProjection,
+} from './report-widget.js';
 export { inlineTableBlockPayloadSchema } from './report-table.js';
 export { isCalendarDate } from './report-date.js';
+export type { CheckpointsBlockPayload, CheckpointItem, CheckpointRule, CheckpointCheck, CheckpointStatus } from './report-checkpoints.js';
+export type { WidgetBlockPayload, TemplateViewsProjection, TemplateViewsState } from './report-widget.js';
 
 import type { CurrentTaskExecution } from './task-execution.js';
 import type { ApiFailure, ApiOperation } from '../api/types.js';
@@ -253,6 +262,8 @@ export type ReportBlock =
   | Readonly<{ id: string; kind: 'task'; payload: TaskBlockPayload }>
   | Readonly<{ id: string; kind: 'preview'; payload: PreviewBlockPayload }>
   | Readonly<{ id: string; kind: 'html'; payload: HtmlBlockPayload }>
+  | Readonly<{ id: string; kind: 'checkpoints'; payload: CheckpointsBlockPayload }>
+  | Readonly<{ id: string; kind: 'widget'; payload: WidgetBlockPayload }>
   | Readonly<{ id: string; kind: 'unsupported'; declaredKind: string }>;
 
 const blockWireSchema = z.object({
@@ -370,6 +381,8 @@ function payloadSchemaFor(kind: string): z.ZodType | null {
     case 'task': return taskBlockPayloadSchema;
     case 'preview': return previewBlockPayloadSchema;
     case 'html': return htmlBlockPayloadSchema;
+    case 'checkpoints': return checkpointsBlockPayloadSchema;
+    case 'widget': return widgetBlockPayloadSchema;
     default: return null;
   }
 }
@@ -660,6 +673,14 @@ export function readTrackReportOperation(trackId: string): ApiOperation<ReportRe
     method: 'GET',
     path: `/api/v1/tracks/${encodeURIComponent(trackId)}/report`,
     responseSchema: reportReadResultDtoSchema,
+  };
+}
+
+export function readTrackViewsOperation(trackId: string): ApiOperation<TemplateViewsProjection> {
+  return {
+    method: 'GET',
+    path: `/api/v1/tracks/${encodeURIComponent(trackId)}/views`,
+    responseSchema: templateViewsProjectionSchema,
   };
 }
 
