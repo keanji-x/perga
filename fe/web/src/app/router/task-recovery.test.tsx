@@ -1,225 +1,75 @@
-import { fixtureSnapshot, fixtureSession, fixtureTrack } from './session-contract-fixture.ts';
-import { prepareReportDocument } from '../../features/report/document/preparation.ts';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { RouterProvider, createMemoryHistory } from '@tanstack/react-router';
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
-import type { ApiRequest, ApiTransportPort, ApiTransportResponse } from '../../../../core/api/types.ts';
-import type { TaskAttempt } from '../../../../core/domain/task-recovery.ts';
+import { taskDtoSchema } from '../../../../core/api/perga-v1.ts';
+import type { ApiRequest, ApiTransportPort } from '../../../../core/api/types.ts';
 import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
-import { ThemeProvider } from '../theme/public.tsx';
-import { createAppRouter } from './public.tsx';
-import { applyEventEffects } from '../events/query-invalidation-adapter.ts';
-import { initialEventState, reduceEventFrame } from '../../../../core/events/reducer.ts';
-import { wireEventSchema } from '../../../../core/api/schemas.ts';
+import { deriveReportTasks } from '../../../../core/domain/report.ts';
 import { TaskRecoveryDetails } from '../../features/report/task/recovery.tsx';
-import { bootTestCardRuntime } from './test-card-runtime.ts';
-import { withReadReceipts } from '../providers/read-receipts-fixture.tsx';
+import { TaskRecovery, useCurrentTaskRows } from './task-recovery.tsx';
+import { fixtureSnapshot, fixtureTrack } from './session-contract-fixture.ts';
+import { queryKeys } from '../providers/queries.ts';
 
 afterEach(cleanup);
 
-function setup(mode: 'awaiting' | 'dispatched' | 'event-advance' | 'dependency' | 'withdrawn' | 'contract-blocked' | 'capacity' | 'empty') {
+function setup(status = 'failed') {
   const requests: ApiRequest[] = [];
-  const taskKey = mode === 'dependency' ? 'c' : 'b';
-  const blocker = mode === 'dependency' ? 'Blocked by b (failed). Declare a new task in place of b before c can continue.'
-    : mode === 'withdrawn' ? 'Execution release was withdrawn. Release this task to continue.'
-    : mode === 'contract-blocked' ? 'Task requirements changed. Review the declaration.'
-    : mode === 'capacity' ? 'All execution slots are occupied. Waiting for capacity.' : null;
-  const old: TaskAttempt = { attempt_id: 'opaque-old-id', generation: 1, status: 'failed', blocking_reason: null, status_detail: 'gate-red',
-    worker_card_id: 'old-worker', created_at_ms: 1000, finished_at_ms: 2000 };
-  const next: TaskAttempt = { ...old, attempt_id: 'opaque-new-id', generation: 2, status: 'pending',
-    blocking_reason: null, status_detail: null, worker_card_id: null, finished_at_ms: null };
-  let current = mode === 'awaiting' ? { ...next, status: 'awaiting_projection' }
-    : mode === 'dispatched' ? { ...next, status: 'dispatched' } : old;
-  if (blocker !== null) current = { ...next,
-    status: mode === 'dependency' || mode === 'capacity' ? 'pending' : 'awaiting_projection',
-    blocking_reason: blocker,
-  };
-  let initiallyEmpty = mode === 'empty';
-  const area = { id: 'c1', name: 'Work', color: '#123456', sort: 1, kind: 'user', created_at: 1, updated_at: 1 };
-  const track = fixtureTrack('w1', { areaId: 'c1', title: 'Continuing work', cwd: '/tmp', sortOrder: 1, closedAtMs: null, createdAtMs: 1, updatedAtMs: 2 });
-  const card = { id: 'report', track_id: 'w1', title: null, kind: 'track-report', sort: 1, deletable: false,
-    created_at: 1, updated_at: 2, payload: { schemaVersion: 3, docRev: 1, summary: '', body: '', blocks: [
-      { id: 'b-task', rev: 1, kind: 'task', payload: {
-        key: taskKey, kind: 'codex', declared_by: 'user', ready: mode !== 'withdrawn' && !initiallyEmpty,
-        goal: `Complete ${taskKey} under the original requirements.`, depends_on: mode === 'dependency' ? ['b'] : [],
-      } },
-    ] } };
-  if (mode === 'dependency') card.payload.blocks.push({ id: 'b-dependency', rev: 1, kind: 'task', payload: {
-    key: 'b', kind: 'codex', declared_by: 'user', ready: true, goal: 'Prepare the input for c.', depends_on: [],
-  } });
-  const ok = (body: unknown): ApiTransportResponse => ({ status: 200, statusText: 'OK', body });
-  const transport: ApiTransportPort = { send(request) {
-    return Promise.resolve().then(() => {
+  let task = taskDtoSchema.parse({ id: 'task', trackId: 'w1', blockId: 'block', taskKey: 'inspect', kind: 'agent',
+    status, sessionId: 'worker', runCount: 2, createdAtMs: 1, updatedAtMs: 2, workerResult: { summary: 'Latest result' },
+    gateVerdict: { passed: false, steps: [{ name: 'check', exitCode: 1, durationMs: 3, stdout: 'failed check', outputTail: '' }] } });
+  const transport: ApiTransportPort = { send: request => {
     requests.push(request);
-    if (request.path === '/api/v1/areas') return ok([area]);
-    if (request.path === '/api/v1/areas/c1/tracks?includeClosed=true') return ok([track]);
-    if (request.path === '/api/v1/tracks/w1') return ok(fixtureSnapshot(track, [fixtureSession('old-worker', track.id, { title: 'Previous worker' }), fixtureSession('new-worker', track.id, { title: 'Current worker' })], { docRev: card.payload.docRev, summary: card.payload.summary, leadingComment: '', blocks: card.payload.blocks.map(block => ({ ...block, markdown: '' })) }));
-    if (request.path === '/api/v1/tracks/w1/report' && initiallyEmpty) return ok({ taskDiagnostics: [
-      { blockId: 'b-task', key: taskKey, schedulable: false, status: null, statusDetail: null, workerCardId: null, diagnostics: [] },
-    ] });
-    if (request.path === '/api/v1/tracks/w1/report') return ok({ taskDiagnostics: [
-      { blockId: 'b-task', key: taskKey, schedulable: true,
-        pendingReason: mode === 'dependency' ? { kind: 'dependencyBlocked', message: blocker, dependencies: ['b'] } : null,
-        status: blocker !== null ? (mode === 'dependency' ? 'pending' : current.status === 'awaiting_projection' ? null : current.status) : mode === 'event-advance' ? current.status : mode === 'awaiting' ? null : 'failed', statusDetail: blocker !== null || mode === 'event-advance' ? current.status_detail : 'gate-red', workerCardId: blocker !== null ? null : mode === 'event-advance' ? current.worker_card_id : 'old-worker', diagnostics: [] },
-      ...(mode === 'dependency' ? [{ blockId: 'b-dependency', key: 'b', schedulable: true, status: 'failed', statusDetail: 'gate-red', diagnostics: [] }] : []),
-    ] });
-    if (request.path.endsWith('/attempts') && initiallyEmpty) return ok({ key: taskKey, current: null, attempts: [] });
-    if (request.path.endsWith('/attempts')) return ok({ key: taskKey, current,
-      attempts: mode === 'empty' ? [current] : current === old ? [old] : [old, current],
-    });
-    if (request.path === '/api/settings') return ok({});
-    return ok([]);
-    });
+    return Promise.resolve({ status: 200, statusText: 'OK', body: request.method === 'GET'
+      ? { ...fixtureSnapshot(fixtureTrack('w1')), tasks: [task] } : task });
   } };
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-  const router = createAppRouter({ prepareReport: prepareReportDocument, transport: withReadReceipts(transport), client, cards: bootTestCardRuntime(),
-    unauthorized: createUnauthorizedChannel({ enqueue: (task) => task() }), onSignOut: vi.fn() });
-  router.update({ history: createMemoryHistory({ initialEntries: ['/track/w1'] }) });
-  const mount = () => render(<QueryClientProvider client={client}><ThemeProvider storage={{ getItem: () => null, setItem: () => undefined }}>
-    <RouterProvider router={router} />
-  </ThemeProvider></QueryClientProvider>);
-  mount();
-  return { requests, client, router, mount, allocate: () => {
-    initiallyEmpty = false;
-    current = { ...old, status: 'pending', worker_card_id: null, status_detail: null, finished_at_ms: null };
-  }, advance: (status: string) => {
-    current = { ...next, status, worker_card_id: 'new-worker' };
-    const event = wireEventSchema.parse(status === 'done'
-      ? { ev: 'task.completed', data: { notification: 'notify', idempotency_key: current.attempt_id, result: {}, artifacts: [] } }
-      : { ev: 'task.dispatched', data: { idempotency_key: current.attempt_id, kind: 'codex' } });
-    applyEventEffects(client, reduceEventFrame(initialEventState(null), {
-      type: 'event', event, meta: { id: requests.length + 1, eventVersion: 1 },
-    }).effects);
-  }, open: async () => {
-    await userEvent.click(await screen.findByText('Reference', {}, { timeout: 5_000 }));
-    await userEvent.click(document.querySelector('[data-nc-task-state] > summary')!);
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const unauthorized = createUnauthorizedChannel({ enqueue: task => task() });
+  function Owner() {
+    const rows = useCurrentTaskRows(transport, unauthorized, 'w1', deriveReportTasks([
+      { id: 'block', kind: 'task', payload: { key: 'inspect', kind: 'codex', declared_by: 'user', ready: true, goal: 'Inspect' } },
+    ]));
+    return <><output aria-label="Inventory status">{rows[0]?.execution?.label}</output><TaskRecovery trackId="w1" taskKey="inspect" expanded
+      transport={transport} unauthorized={unauthorized} openWorker={vi.fn()} openableWorkerIds={new Set(['worker'])} enableTaskActions /></>;
+  }
+  render(<QueryClientProvider client={client}><Owner /></QueryClientProvider>);
+  return { client, requests, advance: async (status: string) => {
+    task = { ...task, status, runCount: task.runCount + 1, workerResult: 'New result', gateVerdict: null };
+    await client.invalidateQueries({ queryKey: queryKeys.trackDetail('w1') });
   } };
 }
 
-it('retains the current allocation when there is no projected execution row', async () => {
-  await setup('awaiting').open();
-  expect(await screen.findByText('Current attempt 2 · Waiting to start')).toBeTruthy();
-  expect(document.querySelector('[data-nc-task-state] > summary')!.textContent).toContain('Waiting to start');
-  expect(screen.queryByTitle('Open the worker card for b')).toBeNull();
-  expect(screen.queryByRole('button', { name: /b.*failed/i })).toBeNull();
-  expect(screen.getByText('Reference').closest('summary')!.textContent).toContain('1 task');
-  await userEvent.click(screen.getByText('Attempt history (2)'));
-  await userEvent.click(screen.getByText('Attempt 1 · Failed'));
-  expect(screen.getByText('gate-red')).toBeTruthy();
-  expect(screen.queryByRole('button', { name: 'Open attempt 1' })).toBeNull();
+it('shares the track snapshot between inventory and task details and refreshes latest evidence', async () => {
+  const fixture = setup();
+  expect(await screen.findByText('Run 2 · Failed')).toBeTruthy();
+  expect(screen.getByText('failed check')).toBeTruthy();
+  expect(screen.getByText(/Latest result/)).toBeTruthy();
+  expect(fixture.requests.every(request => request.path === '/api/v1/tracks/w1')).toBe(true);
+  await fixture.advance('running');
+  expect(await screen.findByText('Run 3 · Running')).toBeTruthy();
+  expect(screen.getByText('New result')).toBeTruthy();
+  expect(screen.queryByText('failed check')).toBeNull();
+  expect(screen.getByRole('status', { name: 'Inventory status' }).textContent).toBe('Running');
 });
 
-it('describes dispatch as preparation before the worker starts', async () => {
-  await setup('dispatched').open();
-  expect(await screen.findByText('Current attempt 2 · Preparing')).toBeTruthy();
-  expect(screen.queryByText('Current attempt 2 · Running')).toBeNull();
+it('uses task governance routes and refreshes the shared snapshot', async () => {
+  const fixture = setup('running');
+  await userEvent.click(await screen.findByRole('button', { name: 'Cancel task' }));
+  await waitFor(() => expect(fixture.requests.some(request => request.path === '/api/v1/tracks/w1/tasks/inspect/cancel' && request.method === 'POST')).toBe(true));
 });
 
-it('refreshes collapsed current execution through task events without reopening history', async () => {
-  const { open, advance } = setup('event-advance');
-  await open();
-  await screen.findByText('Current attempt 1 · Failed');
-  const disclosure = document.querySelector<HTMLDetailsElement>('[data-nc-task-state]')!;
-  await userEvent.click(disclosure.querySelector('summary')!);
-  await waitFor(() => expect(disclosure.open).toBe(false));
-  await act(() => { advance('running'); return Promise.resolve(); });
-  await waitFor(() => expect(disclosure.querySelector('summary')!.textContent).toContain('Running'));
-  expect(disclosure.open).toBe(false);
-  await userEvent.click(screen.getByRole('button', { name: 'Progress' }));
-  const progressTask = document.querySelector('[data-nc-module="work"] [data-nc-row="task:b-task"]')!;
-  expect(progressTask.textContent).toContain('Running');
-  expect(screen.queryByTitle('Open the worker card for b')).toBeNull();
-  await act(() => { advance('done'); return Promise.resolve(); });
-  await waitFor(() => expect(disclosure.querySelector('summary')!.textContent).toContain('Completed'));
-  await waitFor(() => expect(progressTask.textContent).toContain('Finished'));
-  expect(disclosure.open).toBe(false);
-});
-
-it('does not read never-opened execution history for a folded initial visit', async () => {
-  const fixture = setup('event-advance');
-  await screen.findByText('Reference');
-  await waitFor(() => expect(fixture.client.isFetching()).toBe(0));
-  expect(document.querySelector('[data-nc-task-state]')).toBeNull();
-  expect(fixture.requests.filter(request => request.path.endsWith('/attempts'))).toEqual([]);
-});
-
-it('refreshes previously admitted execution after revisiting with Reference still folded', async () => {
-  const fixture = setup('event-advance');
-  await fixture.open();
-  await screen.findByText('Current attempt 1 · Failed');
-  const reads = fixture.requests.filter(request => request.path.endsWith('/attempts')).length;
-  cleanup();
-  await act(() => { fixture.advance('done'); return Promise.resolve(); });
-  fixture.mount();
-  await screen.findByText('Reference');
-  await userEvent.click(await screen.findByRole('button', { name: 'Progress' }));
-  await waitFor(() => {
-    const row = document.querySelector('[data-nc-row="task:b-task"]');
-    expect(row?.textContent).toContain('Finished');
-  });
-  expect(document.querySelector<HTMLDetailsElement>('[data-nc-report-reference]')?.open).toBe(false);
-  expect(document.querySelector('[data-nc-task-state]')).toBeNull();
-  expect(fixture.requests.filter(request => request.path.endsWith('/attempts')).length).toBeGreaterThan(reads);
-  expect(screen.queryByRole('menuitem', { name: 'View execution' })).toBeNull();
-});
-
-it('keeps the current failed dependency explanation after loading pending task history', async () => {
-  const { open, advance } = setup('dependency');
-  const cause = 'Blocked by b (failed). Declare a new task in place of b before c can continue.';
-  await userEvent.click(await screen.findByRole('button', { name: 'Progress' }));
-  expect(await screen.findByTitle(cause)).toBeTruthy();
-  await open();
-  await screen.findByText('Current attempt 2 · Queued');
-  expect(screen.getByText(cause)).toBeTruthy();
-  expect(document.querySelector('[data-nc-task-state] > summary [title]')!.getAttribute('title')).toContain(cause);
-  expect(screen.getByTitle(cause)).toBeTruthy();
-  await act(() => { advance('running'); return Promise.resolve(); });
-  await screen.findByText('Current attempt 2 · Running');
-  expect(screen.queryByText(cause)).toBeNull();
-  expect(screen.queryByTitle(cause)).toBeNull();
-});
-
-it.each([
-  ['withdrawn', 'Execution release was withdrawn. Release this task to continue.'],
-  ['contract-blocked', 'Task requirements changed. Review the declaration.'],
-  ['capacity', 'All execution slots are occupied. Waiting for capacity.'],
-] as const)('explains current admission blocker %s without requiring a projected row', async (mode, cause) => {
-  await setup(mode).open();
-  await userEvent.click(screen.getByRole('button', { name: 'Progress' }));
-  await screen.findByText(mode === 'capacity' ? 'Current attempt 2 · Queued' : 'Current attempt 2 · Waiting to start');
-  expect(screen.getByText(cause)).toBeTruthy();
-  expect(document.querySelector('[data-nc-task-state] > summary [title]')!.getAttribute('title')).toContain(cause);
-  expect(screen.getByTitle(cause)).toBeTruthy();
-});
-
-it('observes the first allocation through owner polling without an empty-state action', async () => {
-  const { open, allocate, requests } = setup('empty');
-  await open();
-  expect(await screen.findByText('No attempts yet')).toBeTruthy();
-  expect(screen.queryByRole('alert')).toBeNull();
-  expect(screen.queryByRole('button', { name: 'Refresh execution history' })).toBeNull();
-  allocate();
-  expect(await screen.findByText('Current attempt 1 · Queued', {}, { timeout: 5000 })).toBeTruthy();
-  expect(screen.queryByText('No attempts yet')).toBeNull();
-  expect(screen.queryByRole('alert')).toBeNull();
-  expect(requests.filter((request) => request.method === 'POST')).toHaveLength(0);
-});
-
-
-it('keeps the history refresh action visible and unavailable while refreshing', async () => {
+it('keeps the refresh action busy while refreshing', async () => {
   const refresh = vi.fn();
-  render(<TaskRecoveryDetails view={undefined} current={undefined} loading
-    loadError={null} onRefresh={refresh} openWorker={undefined} openableWorkerIds={new Set()} />);
+  render(<TaskRecoveryDetails task={undefined} current={undefined} loading loadError={null}
+    onRefresh={refresh} openWorker={undefined} openableWorkerIds={new Set()} />);
   const action = screen.getByRole('button', { name: 'Refresh execution history' });
   expect(action.getAttribute('aria-busy')).toBe('true');
   await userEvent.click(action);
   expect(refresh).not.toHaveBeenCalled();
 });
 
-it('groups a failed history read with its recovery action', () => {
-  render(<TaskRecoveryDetails view={undefined} current={undefined} loading={false}
-    loadError="History is unavailable." onRefresh={vi.fn()} openWorker={undefined} openableWorkerIds={new Set()} />);
+it('groups a failed read with its recovery action', () => {
+  render(<TaskRecoveryDetails task={undefined} current={undefined} loading={false} loadError="Task is unavailable."
+    onRefresh={vi.fn()} openWorker={undefined} openableWorkerIds={new Set()} />);
   expect(screen.getByRole('alert').contains(screen.getByRole('button', { name: 'Refresh execution history' }))).toBe(true);
 });

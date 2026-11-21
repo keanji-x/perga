@@ -46,12 +46,10 @@ public sealed class SessionRuntimeIntegrationTests
             await ctx.Kernel.ReadReportAsync(trackId).WaitAsync(TimeSpan.FromSeconds(2));
             Assert.Equal(TaskRunStatus.Pending, second.Receipt.Task!.Status);
             Assert.Single(ctx.AgentRuntime.OpenedSessions);
-            Assert.Empty(ctx.DirectDriver.SettleLeaseCalls);
             Assert.False(cancel.IsCompleted);
             release.SetResult();
             var error = await Assert.ThrowsAsync<KernelException>(() => cancel);
             Assert.Equal(KernelErrorCode.SessionRecoveryRequired, error.Code);
-            Assert.Empty(ctx.DirectDriver.SettleLeaseCalls);
             var report = await ctx.Kernel.ReadReportAsync(trackId);
             Assert.Equal(TaskRunStatus.Running, report.Tasks.Single(t => t.Id == first.Receipt.Task!.Id).Status);
             Assert.Equal(TaskRunStatus.Pending, report.Tasks.Single(t => t.Id == second.Receipt.Task.Id).Status);
@@ -62,7 +60,6 @@ public sealed class SessionRuntimeIntegrationTests
             ctx.AgentRuntime.TurnScript = null;
             await ctx.Kernel.CancelTaskAsync(trackId, null, first.Receipt.Task!.Id);
             await ctx.Kernel.WaitForTrackIdleAsync(trackId).WaitAsync(TimeSpan.FromSeconds(3));
-            Assert.Single(ctx.DirectDriver.SettleLeaseCalls);
             Assert.Equal(2, ctx.AgentRuntime.OpenedSessions.Count);
         }
         finally { release.TrySetResult(); }

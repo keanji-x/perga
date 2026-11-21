@@ -84,12 +84,11 @@ public partial interface IPergaKernel : IAsyncDisposable
 
     // Tasks, Governance & Completion
     Task<IReadOnlyList<TaskDto>> ListTasksAsync(string trackId, CancellationToken ct = default);
-    Task<IReadOnlyList<TaskAttemptDto>> ListTaskAttemptsAsync(string trackId, string taskKeyOrId, CancellationToken ct = default);
     Task<TaskDto> CancelTaskAsync(string trackId, string? callerSessionId, string taskKeyOrId, string? reason = null, CancellationToken ct = default);
     Task<TaskDto> AcceptTaskAsync(string trackId, string? callerSessionId, string taskKeyOrId, string? note = null, CancellationToken ct = default);
     Task<TaskDto> RejectTaskAsync(string trackId, string? callerSessionId, string taskKeyOrId, string note, bool reQueue = false, CancellationToken ct = default);
-    Task<TaskDto> CompleteAttemptDoneAsync(string trackId, string callerSessionId, JsonElement? workerResult = null, CancellationToken ct = default, WorkerCompletionOrigin? origin = null);
-    Task<TaskDto> CompleteAttemptFailAsync(string trackId, string callerSessionId, string reason, JsonElement? workerResult = null, CancellationToken ct = default, WorkerCompletionOrigin? origin = null);
+    Task<TaskDto> CompleteTaskDoneAsync(string trackId, string callerSessionId, JsonElement? workerResult = null, CancellationToken ct = default, WorkerCompletionOrigin? origin = null);
+    Task<TaskDto> CompleteTaskFailAsync(string trackId, string callerSessionId, string reason, JsonElement? workerResult = null, CancellationToken ct = default, WorkerCompletionOrigin? origin = null);
 
     // Sessions, Messages & Epoch Compaction
     Task<ReadReceiptsResponseDto> GetReadReceiptsAsync(CancellationToken ct = default);
@@ -556,8 +555,15 @@ public sealed partial class PergaKernelService : IPergaKernel
     public Task<BootReconcileResult> ReconcileOnBootAsync(CancellationToken ct = default) =>
         BootReconciler.ReconcileAsync(ct);
 
-    public Task<DbMaintenanceStatsDto> RunMaintenancePassAsync(CancellationToken ct = default) =>
-        _store.RunMaintenancePassAsync(NowMs(), ct);
+    public async Task<DbMaintenanceStatsDto> RunMaintenancePassAsync(CancellationToken ct = default)
+    {
+        var stats = await _store.RunMaintenancePassAsync(NowMs(), ct).ConfigureAwait(false);
+        if (stats.CompactedTasks > 0)
+            foreach (var track in await _store.ListTracksAsync(includeClosed: true, ct: ct).ConfigureAwait(false))
+                if (Actors.TryGetActive(track.Id, out var actor))
+                    await actor!.RefreshTaskDiagnosticsAsync(ct).ConfigureAwait(false);
+        return stats;
+    }
 
     // ------------------- Areas -------------------
 
@@ -772,8 +778,6 @@ public sealed partial class PergaKernelService : IPergaKernel
             Id: leadSessionId,
             TrackId: trackId,
             IsLead: true,
-            BoundTaskId: null,
-            BoundAttemptId: null,
             Title: "Lead",
             Provider: leadProvider,
             Model: req.Model ?? _options.DefaultModel,
@@ -1118,12 +1122,6 @@ public sealed partial class PergaKernelService : IPergaKernel
     public Task<IReadOnlyList<TaskDto>> ListTasksAsync(string trackId, CancellationToken ct = default) =>
         Actors.GetOrActivate(trackId).ListTasksAsync(ct);
 
-    public Task<IReadOnlyList<TaskAttemptDto>> ListTaskAttemptsAsync(
-        string trackId,
-        string taskKeyOrId,
-        CancellationToken ct = default) =>
-        Actors.GetOrActivate(trackId).ListTaskAttemptsAsync(taskKeyOrId, ct);
-
     public Task<TaskDto> CancelTaskAsync(
         string trackId,
         string? callerSessionId,
@@ -1149,20 +1147,20 @@ public sealed partial class PergaKernelService : IPergaKernel
         CancellationToken ct = default) =>
         Actors.GetOrActivate(trackId).RejectTaskAsync(callerSessionId, taskKeyOrId, note, reQueue, ct);
 
-    public Task<TaskDto> CompleteAttemptDoneAsync(
+    public Task<TaskDto> CompleteTaskDoneAsync(
         string trackId,
         string callerSessionId,
         JsonElement? workerResult = null,
         CancellationToken ct = default, WorkerCompletionOrigin? origin = null) =>
-        Actors.GetOrActivate(trackId).CompleteAttemptDoneAsync(callerSessionId, workerResult, ct, origin);
+        Actors.GetOrActivate(trackId).CompleteTaskDoneAsync(callerSessionId, workerResult, ct, origin);
 
-    public Task<TaskDto> CompleteAttemptFailAsync(
+    public Task<TaskDto> CompleteTaskFailAsync(
         string trackId,
         string callerSessionId,
         string reason,
         JsonElement? workerResult = null,
         CancellationToken ct = default, WorkerCompletionOrigin? origin = null) =>
-        Actors.GetOrActivate(trackId).CompleteAttemptFailAsync(callerSessionId, reason, workerResult, ct, origin);
+        Actors.GetOrActivate(trackId).CompleteTaskFailAsync(callerSessionId, reason, workerResult, ct, origin);
 
     public async Task<string?> GetTrackLeadSessionIdAsync(string trackId, CancellationToken ct) =>
         (await _store.GetTrackAsync(trackId, ct).ConfigureAwait(false))?.LeadSessionId;

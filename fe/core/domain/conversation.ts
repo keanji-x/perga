@@ -474,14 +474,14 @@ export function sendPlannerInputOperation(
   idempotencyKey: string,
   steerIfRunning = false,
   queueIfBusy = false,
-  expectedAttemptId?: string,
+  expectedEpoch?: number,
 ): ApiOperation<SentPlannerInput> {
   return {
     method: 'POST',
     path: `/api/v1/sessions/${encodeURIComponent(cardId)}/messages`,
     timeoutMs: 10 * 60_000,
     body: { content: text, mode: steerIfRunning ? 'steer' : queueIfBusy ? 'queue' : 'default',
-      ...(expectedAttemptId === undefined ? {} : { expectedAttemptId }) },
+      ...(expectedEpoch === undefined ? {} : { expectedEpoch }) },
     headers: { 'Idempotency-Key': idempotencyKey },
     responseSchema: sessionMessageReceiptSchema.refine(receipt => receipt.sessionId === cardId).transform(receipt => ({
       card_id: receipt.sessionId, worker_session_id: receipt.sessionId, entry_id: receipt.messageId, delivery: receipt.delivery,
@@ -607,11 +607,11 @@ export function compactPlannerOperation(cardId: string): ApiOperation<{ started:
   };
 }
 
-export function interruptPlannerOperation(cardId: string, worker?: { attemptId?: string; turnId: string }): ApiOperation<{ stopped: boolean }> {
+export function interruptPlannerOperation(cardId: string, worker?: { epoch?: number; turnId: string }): ApiOperation<{ stopped: boolean }> {
   return {
     method: 'POST',
     path: `/api/v1/sessions/${encodeURIComponent(cardId)}/control`,
-    body: { action: 'stop', turnId: worker?.turnId, expectedAttemptId: worker?.attemptId },
+    body: { action: 'stop', turnId: worker?.turnId, expectedEpoch: worker?.epoch },
     responseSchema: agentSessionDtoSchema.transform(() => ({ stopped: true })),
   };
 }
@@ -642,7 +642,7 @@ export function agentSessionDtoToConversation(dto: AgentSessionDto): Conversatio
     id: dto.id,
     trackId: dto.trackId,
     archivedAt: dto.archivedAtMs ?? null,
-    title: dto.title ?? (dto.boundTaskId ? `Task: ${dto.boundTaskId}` : null),
+    title: dto.title ?? null,
     kind: 'agent',
     isLead: dto.isLead,
     provider,

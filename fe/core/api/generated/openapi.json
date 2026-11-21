@@ -12719,104 +12719,6 @@
         }
       }
     },
-    "/api/tracks/{id}/tasks/{key}/attempts": {
-      "get": {
-        "tags": [
-          "tracks"
-        ],
-        "operationId": "get_attempts",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "key",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TaskRecoveryView"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "`bad_request`: a path or query parameter does not parse.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "`unauthorized`: no valid session cookie.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Only `X-Calm-Actor: user` may read task attempts",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "The task's declaration is ambiguous or invalid (`conflict`)",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/tracks/{track_id}/cards": {
       "get": {
         "tags": [
@@ -14751,42 +14653,6 @@
         }
       }
     },
-    "/api/v1/tracks/{trackId}/tasks/{taskKey}/attempts": {
-      "parameters": [
-        {
-          "name": "trackId",
-          "in": "path",
-          "required": true,
-          "schema": {
-            "type": "string"
-          }
-        },
-        {
-          "name": "taskKey",
-          "in": "path",
-          "required": true,
-          "schema": {
-            "type": "string"
-          }
-        }
-      ],
-      "get": {
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/TaskAttemptDto"
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/v1/tracks/{trackId}/sessions": {
       "parameters": [
         {
@@ -15597,15 +15463,7 @@
         }
       ],
       "delete": {
-        "parameters": [
-          {
-            "name": "expectedAttemptId",
-            "in": "query",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
+        "parameters": [],
         "responses": {
           "204": {
             "description": "Withdrawn"
@@ -22682,61 +22540,6 @@
         },
         "additionalProperties": false
       },
-      "TaskAttemptView": {
-        "type": "object",
-        "description": "Execution summary. Status includes awaiting_projection when admission capacity removed a pending row.\nBlocking reason applies only to the selected current attempt; historical attempts carry null.",
-        "required": [
-          "attempt_id",
-          "generation",
-          "status",
-          "status_detail",
-          "worker_card_id",
-          "created_at_ms",
-          "finished_at_ms",
-          "blocking_reason"
-        ],
-        "properties": {
-          "attempt_id": {
-            "type": "string"
-          },
-          "blocking_reason": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "created_at_ms": {
-            "type": "integer",
-            "format": "int64"
-          },
-          "finished_at_ms": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64"
-          },
-          "generation": {
-            "type": "integer",
-            "format": "int64"
-          },
-          "status": {
-            "type": "string"
-          },
-          "status_detail": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "worker_card_id": {
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        }
-      },
       "TaskPendingReason": {
         "oneOf": [
           {
@@ -22846,36 +22649,6 @@
             "format": "int64"
           },
           "text": {
-            "type": "string"
-          }
-        }
-      },
-      "TaskRecoveryView": {
-        "type": "object",
-        "description": "Execution history. `current` is null only when the live declaration has never\nreceived an allocation.",
-        "required": [
-          "key",
-          "current",
-          "attempts"
-        ],
-        "properties": {
-          "attempts": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/TaskAttemptView"
-            }
-          },
-          "current": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/TaskAttemptView"
-              }
-            ]
-          },
-          "key": {
             "type": "string"
           }
         }
@@ -25468,14 +25241,15 @@
           "taskKey",
           "generation",
           "kind",
-          "accessMode",
+          "access",
           "ready",
           "dependsOn",
           "goalOrCmd",
           "status",
           "semanticVerdict",
           "createdAtMs",
-          "updatedAtMs"
+          "updatedAtMs",
+          "runCount"
         ],
         "properties": {
           "role": {
@@ -25508,9 +25282,6 @@
               "null"
             ]
           },
-          "accessMode": {
-            "type": "string"
-          },
           "ready": {
             "type": "boolean"
           },
@@ -25535,31 +25306,7 @@
           "updatedAtMs": {
             "type": "integer"
           },
-          "permissionMode": {
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        }
-      },
-      "TaskAttemptDto": {
-        "type": "object",
-        "required": [
-          "attemptId",
-          "taskId",
-          "trackId",
-          "status",
-          "startedAtMs"
-        ],
-        "properties": {
-          "attemptId": {
-            "type": "string"
-          },
-          "taskId": {
-            "type": "string"
-          },
-          "trackId": {
+          "access": {
             "type": "string"
           },
           "sessionId": {
@@ -25568,16 +25315,53 @@
               "null"
             ]
           },
-          "status": {
-            "type": "string"
+          "statusDetail": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
+          "semanticNote": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "acceptance": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "workerResult": {},
+          "meta": {},
+          "gateVerdict": {},
+          "context": {},
           "startedAtMs": {
-            "type": "integer"
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
           },
           "finishedAtMs": {
             "type": [
               "integer",
               "null"
+            ],
+            "format": "int64"
+          },
+          "runCount": {
+            "type": "integer"
+          },
+          "gate": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GateSpecDto"
+              },
+              {
+                "type": "null"
+              }
             ]
           }
         }
@@ -25604,18 +25388,6 @@
           },
           "isLead": {
             "type": "boolean"
-          },
-          "boundTaskId": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "boundAttemptId": {
-            "type": [
-              "string",
-              "null"
-            ]
           },
           "title": {
             "type": [
@@ -26053,7 +25825,8 @@
               null,
               "archived",
               "track_closed",
-              "worker_finished"
+              "waiting_task",
+              "task_finished"
             ]
           },
           "canReopen": {
@@ -26224,6 +25997,24 @@
           "exitedAtMs": {
             "type": [
               "integer",
+              "null"
+            ]
+          },
+          "sessionId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "idempotencyKey": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "program": {
+            "type": [
+              "string",
               "null"
             ]
           }
@@ -27511,12 +27302,6 @@
               "null"
             ]
           },
-          "expectedAttemptId": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
           "expectedConfigVersion": {
             "type": [
               "integer",
@@ -27552,12 +27337,6 @@
               "null"
             ]
           },
-          "expectedAttemptId": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
           "mode": {
             "type": "string",
             "enum": [
@@ -27566,6 +27345,18 @@
               "queue"
             ],
             "default": "default"
+          },
+          "expectedEpoch": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "requestKey": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
@@ -27619,12 +27410,6 @@
           "expectedEpoch": {
             "type": [
               "integer",
-              "null"
-            ]
-          },
-          "expectedAttemptId": {
-            "type": [
-              "string",
               "null"
             ]
           }
@@ -27708,25 +27493,19 @@
           "task": {
             "$ref": "#/components/schemas/TaskDto"
           },
-          "attemptId": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "attemptPhase": {
-            "type": "string"
-          },
           "waitingReason": {
             "type": [
               "string",
               "null"
             ]
+          },
+          "phase": {
+            "type": "string"
           }
         },
         "required": [
           "task",
-          "attemptPhase"
+          "phase"
         ]
       },
       "WorkerModelOption": {
@@ -27905,6 +27684,13 @@
             "type": [
               "string",
               "null"
+            ],
+            "enum": [
+              null,
+              "archived",
+              "track_closed",
+              "waiting_task",
+              "task_finished"
             ]
           },
           "workerPaused": {
@@ -27922,6 +27708,12 @@
           },
           "pendingInteractionCount": {
             "type": "integer"
+          },
+          "taskId": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -28067,6 +27859,70 @@
             "format": "int64"
           }
         }
+      },
+      "GateSpecDto": {
+        "type": "object",
+        "properties": {
+          "steps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GateStepDto"
+            }
+          },
+          "timeoutSecs": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "steps",
+          "timeoutSecs"
+        ]
+      },
+      "GateStepDto": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "cmd": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "cmd"
+        ]
+      },
+      "DbMaintenanceStatsDto": {
+        "type": "object",
+        "properties": {
+          "prunedEvents": {
+            "type": "integer"
+          },
+          "thinnedRevisions": {
+            "type": "integer"
+          },
+          "compactedItems": {
+            "type": "integer"
+          },
+          "reclaimedPages": {
+            "type": "integer"
+          },
+          "compactedTasks": {
+            "type": "integer"
+          },
+          "reclaimedBlobs": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "prunedEvents",
+          "thinnedRevisions",
+          "compactedItems",
+          "reclaimedPages",
+          "compactedTasks",
+          "reclaimedBlobs"
+        ]
       }
     },
     "securitySchemes": {

@@ -182,7 +182,7 @@ export function useConversationStore(
   const steeringTarget = run.data?.activeTurn?.status === 'running' ? run.data.activeTurn.id : null;
   const outbox = useConversationOutbox({
     cardId, transport, send: mutations.send, serverEntries, liveReplies,
-    stalled: false, target: run.data?.taskBinding?.attemptId == null ? undefined : { attemptId: run.data.taskBinding.attemptId, queue: canQueueWhileRunning }, queuesInput: kernelQueuesInput(phase), queueIfBusy: canQueueWhileRunning,
+    stalled: false, target: run.data == null ? undefined : { epoch: run.data.session.epoch, queue: canQueueWhileRunning }, queuesInput: kernelQueuesInput(phase), queueIfBusy: canQueueWhileRunning,
     pressed: () => { setActionError(null); stop.clearFeedback(); },
   });
   const { view, accountQueueDisplay } = outbox;
@@ -281,6 +281,7 @@ export function useConversationStore(
     session: run.data?.session ?? null,
     sessionState, readonlyReason,
     canReopen: run.data?.canReopen ?? false,
+    taskId: run.data?.taskBinding?.task.id ?? null,
     workerPaused: run.data?.workerPaused ?? false,
     lastTurn: run.data?.lastTurn ?? null,
     unknownDetail: run.data?.unknownDetail ?? null,
@@ -373,7 +374,7 @@ export function useConversationStore(
     model,
     modelCatalog: sessionCatalog ?? modelCatalog.data ?? null,
     modelDefaultAvailable: true,
-    modelChangeDisabled: run.data === undefined || recoveryHoldsSend || readonlyReason !== null,
+    modelChangeDisabled: run.data === undefined || recoveryHoldsSend || (readonlyReason !== null && readonlyReason !== 'waiting_task'),
     setModel: (selection) => {
       if (recoveryHoldsSend) return;
       const setFor = cardId;
@@ -388,7 +389,7 @@ export function useConversationStore(
     permissionMode: run.data?.session.permissionMode ?? null,
     permissionOptions: capabilities?.permissionModes.length ? capabilities.permissionModes
       : run.data?.permissionModes?.length ? run.data.permissionModes : null,
-    permissionChangeDisabled: run.data === undefined || recoveryHoldsSend || readonlyReason !== null,
+    permissionChangeDisabled: run.data === undefined || recoveryHoldsSend || (readonlyReason !== null && readonlyReason !== 'waiting_task'),
     setPermissionMode: async (mode) => {
       const setFor = cardId;
       setActionError(null);

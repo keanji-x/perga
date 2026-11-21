@@ -98,7 +98,7 @@ export function useConversationOutbox({
       (error) => (error instanceof ApiError ? error.failure : null),
       (retry) => new Promise<void>((resolve) => { setTimeout(resolve, recoveryDelay(retry, Math.random())); }),
       op.unknown, (target?.queue ?? queueIfBusy) ? 0 : SEND_RETRIES,
-      // The task admission check rejects a conflict before writing the message. After a lost
+      // The session epoch and task admission checks reject a conflict before writing the message. After a lost
       // response the shared retry logic still keeps uncertainty until it receives a receipt.
       failure => target !== undefined && failure?.kind === 'http' && failure.status === 409 && failure.code === 'conflict'
         ? 'refused' : classifyFailure(failure, SEND_FAILURES),

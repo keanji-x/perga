@@ -312,7 +312,6 @@ it('declares all Perga /api/v1 REST endpoints in openapi.json', () => {
     '/api/v1/tracks/{trackId}/vcs-diff',
     '/api/v1/tracks/{trackId}/report',
     '/api/v1/tracks/{trackId}/report/blocks/{blockId}',
-    '/api/v1/tracks/{trackId}/tasks/{taskKey}/attempts',
     '/api/v1/tracks/{trackId}/sessions',
     '/api/v1/sessions/{sessionId}/items',
     '/api/v1/sessions/{sessionId}/messages',
@@ -326,6 +325,7 @@ it('declares all Perga /api/v1 REST endpoints in openapi.json', () => {
     expect(document.paths[path], `missing ${path}`).toBeDefined();
   }
   expect(document.paths['/api/calendar/tasks']).toBeUndefined();
+  expect(document.paths['/api/v1/tracks/{trackId}/tasks/{taskKey}/attempts']).toBeUndefined();
 });
 
 it('compiles shipped Perga .perga.js template input schemas cleanly', () => {
@@ -384,7 +384,7 @@ it('matches the eight session primitives to the production Host routes and remov
     .flatMap(([path, operations]) => Object.keys(operations).filter(method => METHODS.has(method)).map(method => `${method} ${path}`)).sort();
   expect(expected).toHaveLength(8);
   expect(actual).toEqual(expected);
-  for (const name of ['WorkerActivityDto', 'WorkerSettings', 'WorkerDispatchReceipt', 'WorkerMessageReceipt', 'RecoverSessionRequest', 'UpdateSessionModelRequest'])
+  for (const name of ['WorkerActivityDto', 'WorkerSettings', 'WorkerDispatchReceipt', 'WorkerMessageReceipt', 'RecoverSessionRequest', 'UpdateSessionModelRequest', 'TaskAttemptDto', 'TaskAttemptView', 'TaskRecoveryView'])
     expect(document.components.schemas).not.toHaveProperty(name);
 });
 
@@ -396,6 +396,7 @@ it.each([
   ['SessionCreationReceipt', hostPayloads.emptyCreation],
   ['SessionItemsPageDto', hostPayloads.page],
   ['SessionSummaryDto', hostPayloads.summary],
+  ['TaskDto', hostPayloads.task],
   ['PendingInteractionDto', hostPayloads.approval],
   ['PendingInteractionDto', hostPayloads.ask],
 ])('accepts null-emitting Host payloads for %s', (name, payload) => {
@@ -407,4 +408,27 @@ it.each([
   const schema = z.fromJSONSchema({ $defs: definitions, $ref: `#/$defs/${name}` });
   expect(schema.parse(payload)).toEqual(payload);
   expect(schema.safeParse(null).success).toBe(false);
+});
+
+
+it('publishes task-owned sessions and epoch message guards without attempt fields', () => {
+  const document = JSON.parse(readFileSync(new URL('../../core/api/generated/openapi.json', import.meta.url), 'utf8')) as {
+    components: { schemas: Record<string, { properties: Record<string, unknown> }> };
+  };
+  const schemas = document.components.schemas;
+  expect(Object.keys(schemas.TaskDto.properties)).toEqual(expect.arrayContaining([
+    'sessionId', 'runCount', 'workerResult', 'meta', 'gateVerdict', 'startedAtMs', 'finishedAtMs',
+  ]));
+  expect(schemas.TaskDto.properties).not.toHaveProperty('latestAttemptId');
+  expect(schemas.AgentSessionDto.properties).not.toHaveProperty('boundTaskId');
+  expect(schemas.AgentSessionDto.properties).not.toHaveProperty('boundAttemptId');
+  expect(schemas.SessionSummaryDto.properties).toHaveProperty('taskId');
+  expect(Object.keys(schemas.SessionTaskBindingDto.properties).sort()).toEqual(['phase', 'task', 'waitingReason']);
+  for (const name of ['UpdateSessionRequest', 'SendSessionMessageRequest', 'SessionControlRequest'])
+    expect(schemas[name].properties).not.toHaveProperty('expectedAttemptId');
+  expect(schemas.SendSessionMessageRequest.properties).toHaveProperty('expectedEpoch');
+  expect(schemas.TerminalDto.properties).toHaveProperty('sessionId');
+  expect(schemas.TerminalDto.properties).not.toHaveProperty('attemptId');
+  expect(schemas.DbMaintenanceStatsDto.properties).toHaveProperty('compactedTasks');
+  expect(schemas.DbMaintenanceStatsDto.properties).not.toHaveProperty('compactedAttempts');
 });

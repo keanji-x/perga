@@ -48,11 +48,9 @@ public sealed class SqliteColdBlobAndConcurrencyTests
 
         var task = new TaskDto(
             "task_blob", "trk_blob", "b_1", "verify", 1, "subagent", "codex", AccessMode.ReadWrite,
-            true, [], "Verify", null, null, null, TaskRunStatus.Done, null, SemanticVerdict.None, null, "att_blob", 1_000, 1_200);
-        var attempt = new TaskAttemptDto(
-            "att_blob", "task_blob", "trk_blob", "sess_blob", "done",
-            null, StorageTestHarness.Json("{}"), null, bigGatePayload, 1_000, 1_200);
-        await store.UpsertTaskAndAttemptAsync(task, attempt, null, null, ct);
+            true, [], "Verify", null, null, null, TaskRunStatus.Done, null, SemanticVerdict.None, null, 1_000, 1_200,
+            SessionId: "sess_blob", RunCount: 1, Meta: StorageTestHarness.Json("{}"), GateVerdict: bigGatePayload, StartedAtMs: 1_000, FinishedAtMs: 1_200);
+        await store.UpsertTaskAsync(task, null, null, ct);
 
         // 1. Verify SQLite B-Tree stores compact {"v":1,"blobRef":"blobs/trk_blob/<sha256>.zst","bytes":...,"preview":...}
         string rawItemSqlJson;
@@ -60,7 +58,7 @@ public sealed class SqliteColdBlobAndConcurrencyTests
         using (var rawConn = harness.OpenRawInspectConnection())
         {
             rawItemSqlJson = await rawConn.ExecuteScalarAsync<string>("SELECT payload_json FROM session_items LIMIT 1;") ?? string.Empty;
-            rawGateSqlJson = await rawConn.ExecuteScalarAsync<string>("SELECT gate_verdict_json FROM task_attempts WHERE attempt_id = 'att_blob';") ?? string.Empty;
+            rawGateSqlJson = await rawConn.ExecuteScalarAsync<string>("SELECT gate_verdict_json FROM tasks WHERE id = 'task_blob';") ?? string.Empty;
         }
 
         Assert.True(rawItemSqlJson.Length < 4_096, $"Expected compact SQLite envelope, got {rawItemSqlJson.Length} chars.");
@@ -76,14 +74,13 @@ public sealed class SqliteColdBlobAndConcurrencyTests
         var trackBlobDir = Path.Combine(harness.DataDir, "blobs", "trk_blob");
         Assert.Equal(2, Directory.GetFiles(trackBlobDir, "*.zst").Length);
 
-        // 2. Verify transparent decompression on read via ListSessionItemsAsync & ListAttemptsForTaskAsync
+        // 2. Verify transparent decompression on read via ListSessionItemsAsync & LoadTrackAggregateAsync
         var hydratedItems = await store.ListSessionItemsAsync("sess_blob", afterId: 0, limit: 10, ct: ct);
         var hydratedItem = Assert.Single(hydratedItems);
         Assert.Equal(bigOutputText, hydratedItem.Payload.GetProperty("stdout").GetString());
 
-        var hydratedAttempts = await store.ListAttemptsForTaskAsync("task_blob", ct);
-        var hydratedAttempt = Assert.Single(hydratedAttempts);
-        Assert.Equal(bigGateLogText, hydratedAttempt.GateVerdict!.Value.GetProperty("log").GetString());
+        var hydratedTask = Assert.Single((await store.LoadTrackAggregateAsync("trk_blob", ct))!.Tasks);
+        Assert.Equal(bigGateLogText, hydratedTask.GateVerdict!.Value.GetProperty("log").GetString());
 
         // 3. Simulate pruned .zst blob: reader returns compact envelope JSON cleanly without throwing
         using var gateEnvDoc = JsonDocument.Parse(rawGateSqlJson);
@@ -91,8 +88,8 @@ public sealed class SqliteColdBlobAndConcurrencyTests
         var gateBlobPath = Path.Combine(harness.DataDir, gateBlobRef.Replace('/', Path.DirectorySeparatorChar));
         File.Delete(gateBlobPath);
 
-        var fallbackAttempts = await store.ListAttemptsForTaskAsync("task_blob", ct);
-        var fallbackGate = fallbackAttempts[0].GateVerdict!.Value;
+        var fallbackTask = Assert.Single((await store.LoadTrackAggregateAsync("trk_blob", ct))!.Tasks);
+        var fallbackGate = fallbackTask.GateVerdict!.Value;
         Assert.Equal(1, fallbackGate.GetProperty("v").GetInt32());
         Assert.Equal(gateBlobRef, fallbackGate.GetProperty("blobRef").GetString());
 
@@ -204,8 +201,6 @@ public sealed class SqliteColdBlobAndConcurrencyTests
             Id: "bad_sess",
             TrackId: "trk_nonexistent_fk_violation",
             IsLead: false,
-            BoundTaskId: null,
-            BoundAttemptId: null,
             Title: null,
             Provider: "codex",
             Model: null,

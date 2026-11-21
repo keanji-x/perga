@@ -284,7 +284,7 @@ function policies(): PolicyMap {
     eventKeys.overlaysByKind('track'),
     ...taskVerdicts(event.data.track_id ?? null),
     ...(event.data.track_id
-      ? [eventKeys.trackDetail(event.data.track_id), eventKeys.taskAttemptsPrefix(event.data.track_id), eventKeys.trackViews(event.data.track_id)]
+      ? [eventKeys.trackDetail(event.data.track_id), eventKeys.trackViews(event.data.track_id)]
       : [eventKeys.trackViewsPrefix()]),
   ])),
   'system.upgrade_status': noop('The upgrade store consumes system status independently of query caches.'),

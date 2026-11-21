@@ -34,7 +34,6 @@ public sealed class TaskGraphSchedulerTests
             StatusDetail: null,
             SemanticVerdict: SemanticVerdict.None,
             SemanticNote: null,
-            LatestAttemptId: null,
             CreatedAtMs: createdAtMs,
             UpdatedAtMs: createdAtMs);
     }

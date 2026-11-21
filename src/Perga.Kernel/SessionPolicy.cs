@@ -6,7 +6,7 @@ namespace Perga.Kernel;
 public abstract record InteropPrincipal
 {
     public sealed record Human : InteropPrincipal;
-    public sealed record Session(string TrackId, string SessionId, bool IsLead, string? BoundAttemptId,
+    public sealed record Session(string TrackId, string SessionId, bool IsLead, string? BoundTaskId,
         int SpawnDepth, string Token, McpExecutionOrigin? ExecutionOrigin) : InteropPrincipal
     {
         internal string? AuthorizedPolicyGeneration { get; init; }
@@ -42,10 +42,11 @@ public static class SessionPolicy
     }
 
     public static void RequireCreate(InteropPrincipal principal, AgentSessionDto? caller, string trackId,
-        int maxDepth = MaxSessionSpawnDepth)
+        bool callerIsTaskOwned = false, int maxDepth = MaxSessionSpawnDepth)
     {
         if (principal is InteropPrincipal.Human) return;
-        if (caller is null || caller.TrackId != trackId || caller.ArchivedAtMs is not null || caller.BoundAttemptId is not null)
+        if (caller is null || caller.TrackId != trackId || caller.ArchivedAtMs is not null ||
+            callerIsTaskOwned || principal is InteropPrincipal.Session { BoundTaskId: not null })
             throw KernelException.Forbidden("Only an active independent session may create children.");
         if (caller.SpawnDepth >= maxDepth)
             throw KernelException.Forbidden("The maximum session spawn depth has been reached.");

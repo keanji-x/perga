@@ -805,7 +805,7 @@ it('[#2068] gives a refused send its words back in its own conversation when the
     /* The next press sends the words again as a new message, and nothing of the refused one is left to drop. */
     await submit();
     await waitFor(() => expect(inputBodies(requests)).toHaveLength(2));
-    expect(inputBodies(requests)[1]).toEqual({ content: 'Words the server refused', mode: 'default' });
+    expect(inputBodies(requests)[1]).toEqual({ content: 'Words the server refused', mode: 'default', expectedEpoch: 1 });
   });
 
 it('[G4] starts a conversation on a track that has no planner card', async () => {

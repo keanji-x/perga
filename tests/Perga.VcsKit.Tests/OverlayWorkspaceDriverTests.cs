@@ -46,16 +46,12 @@ public sealed class OverlayWorkspaceDriverTests
             Assert.Equal("second", await File.ReadAllTextAsync(Path.Combine(newSnapshot, "source.txt")));
 
             var mounted = await driver.EnsureMountedAsync(first);
-            var attempt = await driver.AcquireAttemptLeaseAsync(mounted, "att_test", readWrite: true);
-            Assert.Equal(first.MergedCwd, attempt.EffectiveCwd);
-            Assert.False(attempt.IsIsolatedCopyOnWrite);
-            Assert.False(driver.SupportsParallelIsolatedWriteLeases);
+            Assert.Equal(first.MergedCwd, mounted.MergedCwd);
 
             var locked = Directory.CreateDirectory(Path.Combine(first.UpperDir!, "locked")).FullName;
             var upperEdit = Path.Combine(locked, "edit");
             await File.WriteAllTextAsync(upperEdit, "keep");
             Assert.Equal(UnixFileMode.None, File.GetUnixFileMode(first.MergedCwd));
-            await driver.SettleAttemptLeaseAsync(attempt, AttemptLeaseDisposition.Discard);
             mounts.Busy = true;
             await Assert.ThrowsAsync<WorkspaceUnavailableException>(() => driver.TeardownTrackAsync(first));
             Assert.Equal("keep", await File.ReadAllTextAsync(upperEdit));

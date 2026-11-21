@@ -194,22 +194,23 @@ public sealed class SqliteMaintenanceGcTests
             updatedSession: null,
             ct);
 
-        // B. Settled contract subagent (bound_attempt_id != null, finished 15 days ago) -> MUST be slimmed (1 thinking + 1 >4KB tool_result = 2 compacted items)
+        // B. Settled task subagent (owned by a task finished 15 days ago) -> MUST be slimmed (1 thinking + 1 >4KB tool_result = 2 compacted items)
+        var subOld = new AgentSessionDto(
+            "sess_sub_old", "trk_gc", false, "Worker Old",
+            "codex", null, null, Epoch: 1, "idle", null, nowMs - 16L * DayMs, nowMs - 15L * DayMs);
         var taskSub = new TaskDto(
             "t_sub", "trk_gc", "b_1", "work", 1, "subagent", "codex", AccessMode.ReadWrite,
-            true, [], "Work", null, null, null, TaskRunStatus.Done, null, SemanticVerdict.None, null, "att_old_settled", nowMs - 16L * DayMs, nowMs - 15L * DayMs);
-        var attemptOld = new TaskAttemptDto(
-            "att_old_settled", "t_sub", "trk_gc", "sess_sub_old", "done",
-            StorageTestHarness.Json("""{"stdout":"Worker business result","stdoutTruncated":false}"""),
-            StorageTestHarness.Json("{}"), null, StorageTestHarness.Json($$"""
+            true, [], "Work", null, null, null, TaskRunStatus.Done, null, SemanticVerdict.None, null, nowMs - 16L * DayMs, nowMs - 15L * DayMs,
+            SessionId: "sess_sub_old",
+            RunCount: 1,
+            WorkerResult: StorageTestHarness.Json("""{"stdout":"Worker business result","stdoutTruncated":false}"""),
+            Meta: StorageTestHarness.Json("{}"),
+            GateVerdict: StorageTestHarness.Json($$"""
                 {"passed":true,"steps":[{"name":"check","exitCode":0,"stdout":"{{new string('F', 80_000)}}","stderr":""}]}
-                """), nowMs - 16L * DayMs, nowMs - 15L * DayMs);
-        await store.UpsertTaskAndAttemptAsync(taskSub, attemptOld, null, null, ct);
-
-        var subOld = new AgentSessionDto(
-            "sess_sub_old", "trk_gc", false, "t_sub", "att_old_settled", "Worker Old",
-            "codex", null, null, Epoch: 1, "idle", null, nowMs - 16L * DayMs, nowMs - 15L * DayMs);
-        await store.UpsertSessionAsync(subOld, null, ct);
+                """),
+            StartedAtMs: nowMs - 16L * DayMs,
+            FinishedAtMs: nowMs - 15L * DayMs);
+        await store.UpsertTaskAsync(taskSub, null, null, ct, session: subOld);
         await store.RecordTurnAndItemsAsync(
             new SessionTurnDto("turn_sub_old", "sess_sub_old", 1, Epoch: 1, "wake", StorageTestHarness.Json("{}"), "completed", null, null, nowMs - 16L * DayMs, nowMs - 15L * DayMs),
             [
@@ -221,7 +222,7 @@ public sealed class SqliteMaintenanceGcTests
 
         // C. An unbound session with a newer or still running turn may discard diagnostics from its old completed turn.
         var subFree = new AgentSessionDto(
-            "sess_sub_free", "trk_gc", false, null, null, "Free Helper",
+            "sess_sub_free", "trk_gc", false, "Free Helper",
             "codex", null, null, Epoch: 1, "running", null, nowMs - 16L * DayMs, nowMs - 15L * DayMs);
         await store.UpsertSessionAsync(subFree, null, ct);
         await store.RecordTurnAndItemsAsync(
@@ -266,10 +267,10 @@ public sealed class SqliteMaintenanceGcTests
 
         Assert.Equal(120, stats.PrunedEvents);
         Assert.Equal(6, stats.CompactedItems);
-        Assert.Equal(1, stats.CompactedAttempts);
-        var compactedAttempt = Assert.Single(await store.ListAttemptsForTaskAsync("t_sub", ct));
-        Assert.Equal("Worker business result", compactedAttempt.WorkerResult!.Value.GetProperty("stdout").GetString());
-        var step = compactedAttempt.GateVerdict!.Value.GetProperty("steps")[0];
+        Assert.Equal(1, stats.CompactedTasks);
+        var compactedTask = Assert.Single((await store.LoadTrackAggregateAsync("trk_gc", ct))!.Tasks, t => t.Id == "t_sub");
+        Assert.Equal("Worker business result", compactedTask.WorkerResult!.Value.GetProperty("stdout").GetString());
+        var step = compactedTask.GateVerdict!.Value.GetProperty("steps")[0];
         Assert.False(step.TryGetProperty("stdout", out _));
         Assert.Equal(0, step.GetProperty("exitCode").GetInt32());
         Assert.True(stats.ReclaimedPages > 0, $"Expected positive ReclaimedPages from incremental_vacuum, got {stats.ReclaimedPages}.");

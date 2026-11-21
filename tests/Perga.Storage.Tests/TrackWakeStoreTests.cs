@@ -184,19 +184,17 @@ public sealed class TrackWakeStoreTests
         using var db = h.OpenRawInspectConnection();
         await db.ExecuteAsync("CREATE TRIGGER reject_wake BEFORE INSERT ON track_wakes BEGIN SELECT RAISE(ABORT, 'outbox failure'); END;");
         var task = new TaskDto("task", "trk_1", "block", "key", 1, "subagent", "codex", AccessMode.ReadWrite,
-            true, [], "Goal", null, null, null, TaskRunStatus.Done, null, SemanticVerdict.None, null, "attempt", 1000, 1000);
-        var attempt = new TaskAttemptDto("attempt", "task", "trk_1", "sess_lead_1", "done", null,
-            StorageTestHarness.Json("{}"), null, null, 1000, 1001);
-        await Assert.ThrowsAsync<SqliteException>(() => h.Store.UpsertTaskAndAttemptAsync(task, attempt, null, evt, default));
+            true, [], "Goal", null, null, null, TaskRunStatus.Done, null, SemanticVerdict.None, null, 1000, 1000,
+            SessionId: "sess_lead_1", RunCount: 1, Meta: StorageTestHarness.Json("{}"), StartedAtMs: 1000, FinishedAtMs: 1001);
+        await Assert.ThrowsAsync<SqliteException>(() => h.Store.UpsertTaskAsync(task, null, evt, default));
         Assert.Equal(0, await db.ExecuteScalarAsync<int>("SELECT count(*) FROM tasks;"));
-        Assert.Equal(0, await db.ExecuteScalarAsync<int>("SELECT count(*) FROM task_attempts;"));
         var snapshot = (await h.Store.LoadTrackAggregateAsync("trk_1", default))!;
         await Assert.ThrowsAsync<SqliteException>(() => h.Store.SaveReportAndTasksAsync("trk_1",
             snapshot.Report with { DocRev = 2 }, [], null, "Human edit", [], snapshot.Track.TemplateState, evt, default));
         Assert.Equal(1, (await h.Store.LoadTrackAggregateAsync("trk_1", default))!.Report.DocRev);
         await db.ExecuteAsync("DROP TRIGGER reject_wake;");
-        await h.Store.UpsertTaskAndAttemptAsync(task, attempt, null, evt, default);
-        await h.Store.UpsertTaskAndAttemptAsync(task, attempt, null, evt, default);
+        await h.Store.UpsertTaskAsync(task, null, evt, default);
+        await h.Store.UpsertTaskAsync(task, null, evt, default);
         Assert.Single(await h.Store.TrackWakes.ListAsync("trk_1", default), w => w.Kind == "task_settled");
         await h.Store.SaveReportAndTasksAsync("trk_1", snapshot.Report with { DocRev = 2 }, [], null, "Human edit",
             [task], snapshot.Track.TemplateState, evt, default);

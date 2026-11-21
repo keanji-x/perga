@@ -18,9 +18,9 @@ public sealed class KernelMcpBackend : IMcpToolBackend
 
     public async Task<IReadOnlyList<McpToolWireDescriptor>> ListToolsAsync(McpSessionPrincipal caller, CancellationToken ct)
     {
-        var isLead = caller.BoundAttemptId is null &&
+        var isLead = caller.BoundTaskId is null &&
             await _kernel.GetTrackLeadSessionIdAsync(caller.TrackId, ct).ConfigureAwait(false) == caller.SessionId;
-        return KernelMcpCatalog.GetToolsForSession(caller.BoundAttemptId, isLead)
+        return KernelMcpCatalog.GetToolsForSession(caller.BoundTaskId, isLead)
             .Select(static t => new McpToolWireDescriptor(t.Name, t.Description, t.InputSchema))
             .ToArray();
     }
@@ -38,7 +38,7 @@ public sealed class KernelMcpBackend : IMcpToolBackend
         try
         {
             // InvokeKernelMcpToolAsync runs IPergaKernel.GuardMcpToolCallAsync("perga") first,
-            // then enforces BoundAttemptId fences and executes the kernel tool!
+            // then enforces bound-task fences and executes the kernel tool!
             var result = await _kernel.InvokeKernelMcpToolAsync(caller, toolName, normalizedArgs, ct)
                 .ConfigureAwait(false);
             var normalizedText = result.GetRawText()

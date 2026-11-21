@@ -1,3 +1,6 @@
+using Dapper;
+using Microsoft.Data.Sqlite;
+using Perga.ReportDoc;
 using System.Net;
 using System.Net.Http.Json;
 using System.Runtime.CompilerServices;
@@ -13,8 +16,39 @@ namespace Perga.Host.IntegrationTests;
 
 public sealed class UnifiedSessionHttpTests
 {
+    [Fact]
+    public async Task InitialRunWriteFailureRollsBackSessionAndPersistsFailedTask()
+    {
+        await using var host = new PergaHostTestCluster();
+        var (trackId, leadId) = await host.CreateTrackAsync();
+        await using var db = new SqliteConnection($"Data Source={Path.Combine(host.DataDir, "perga.db")};Pooling=False");
+        await db.OpenAsync();
+        await db.ExecuteAsync("""
+            CREATE TRIGGER fail_initial_run BEFORE INSERT ON tasks
+            WHEN NEW.status = 'running'
+            BEGIN SELECT RAISE(ABORT, 'initial run write failed'); END;
+            """);
+        var kernel = host.Services.GetRequiredService<IPergaKernel>();
+        var report = await kernel.ReadReportAsync(trackId);
+        await kernel.CommitReportAsync(trackId, leadId, new(report.Anchor,
+            [new BlockOp.UpsertBlockOp(null, ReportBlockKind.Task, null, JsonSerializer.SerializeToElement(new
+            { task_key = "write-failure", ready = true, goal_or_cmd = "inspect" }))]));
+        await kernel.WaitForTrackIdleAsync(trackId);
+        var failed = Assert.Single(await kernel.ListTasksAsync(trackId));
+        Assert.Equal(TaskRunStatus.Failed, failed.Status);
+        Assert.Contains("initial run write failed", failed.StatusDetail);
+        Assert.Null(failed.SessionId);
+        Assert.Equal(0, failed.RunCount);
+        Assert.NotNull(failed.FinishedAtMs);
+        Assert.Equal("failed", await db.ExecuteScalarAsync<string>("SELECT status FROM tasks WHERE id = @Id", new { failed.Id }));
+        Assert.Null(await db.ExecuteScalarAsync<string?>("SELECT session_id FROM tasks WHERE id = @Id", new { failed.Id }));
+        Assert.Equal(1, await db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM agent_sessions WHERE track_id = @TrackId", new { TrackId = trackId }));
+        Assert.Empty(await db.QueryAsync("PRAGMA foreign_key_check;"));
+    }
+
     [Theory]
     [InlineData("POST", "tracks/t/tasks/dispatch")]
+    [InlineData("GET", "tracks/t/tasks/key/attempts")]
     [InlineData("PUT", "sessions/s/model")]
     [InlineData("PUT", "sessions/s/permission-mode")]
     [InlineData("PATCH", "sessions/s/settings")]

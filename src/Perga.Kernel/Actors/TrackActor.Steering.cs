@@ -44,10 +44,8 @@ public sealed partial class TrackActor
                     result = (await SettleSteerCoreAsync(message, outcome, ct).ConfigureAwait(false)).Delivery;
                 else
                 {
-                    // Only a still-current Attempt can take back a declined message for a later turn.
-                    if (outcome is "queued" or "rejected" && message.AttemptId is { } attemptId &&
-                        (!_activeAttempts.TryGetValue(attemptId, out var attempt) || attempt.Settling ||
-                         !string.Equals(attempt.AttemptDto.Status, "running", StringComparison.OrdinalIgnoreCase)))
+                    // Only an open (non-frozen) session can take back a declined message for a later turn.
+                    if (outcome is "queued" or "rejected" && IsSessionFrozenForDispatchCore(RequireSessionCore(message.SessionId)))
                         outcome = "interrupted";
                     var item = outcome == "delivered" ? CreateSteeredItem(message, turnId) : null;
                     try
@@ -98,7 +96,7 @@ public sealed partial class TrackActor
             saved = await Messages.TransitionAsync(settled, "dispatching", ct).ConfigureAwait(false);
 
         NotifyQueueChangedCore(message.SessionId);
-        return saved ? settled : (await Messages.GetAsync(message.SessionId, message.AttemptId is not null, message.Id, ct)
+        return saved ? settled : (await Messages.GetAsync(message.SessionId, message.Id, ct)
             .ConfigureAwait(false)) ?? settled;
     }
 
@@ -116,17 +114,8 @@ public sealed partial class TrackActor
         {
             var session = RequireSessionCore(message.SessionId);
             RequireDispatchWorkspace(session);
-            if (message.AttemptId is { } attemptId)
-            {
-                try
-                {
-                    RequireCurrentWorkerCore(session.Id, attemptId);
-                }
-                catch (KernelException ex) when (ex.Code == KernelErrorCode.Conflict)
-                {
-                    return Task.FromResult<ActiveTurnState?>(null);
-                }
-            }
+            if (IsSessionFrozenForDispatchCore(session))
+                return Task.FromResult<ActiveTurnState?>(null);
             _scheduler.TryGetActive(message.SessionId, out var current);
             return Task.FromResult(current is not null && current.TurnDto.Id == turnId && !current.Interrupted ? current : null);
         }, ct).ConfigureAwait(false);

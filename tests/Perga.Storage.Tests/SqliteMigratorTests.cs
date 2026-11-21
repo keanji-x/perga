@@ -38,8 +38,8 @@ public sealed class SqliteMigratorTests
         {
             var dbPath = Path.Combine(tempDir, "fresh.db");
             var migrator = new SqliteMigrator();
-            Assert.Equal(Enumerable.Range(1, 22), migrator.Migrations.Select(m => m.Version));
-            Assert.Equal("0022_track_data.sql", migrator.Migrations[^1].Name);
+            Assert.Equal(Enumerable.Range(1, 23), migrator.Migrations.Select(m => m.Version));
+            Assert.Equal("0023_unify_task_session_ownership.sql", migrator.Migrations[^1].Name);
             await migrator.MigrateAsync(dbPath);
 
             // Idempotent re-run on already-initialized v1 database must not create a spurious backup.
@@ -54,11 +54,13 @@ public sealed class SqliteMigratorTests
             }.ToString());
             await conn.OpenAsync();
 
-            Assert.Equal(22L, await conn.ExecuteScalarAsync<long>("SELECT MAX(version) FROM schema_migrations;"));
+            Assert.Equal(23L, await conn.ExecuteScalarAsync<long>("SELECT MAX(version) FROM schema_migrations;"));
             Assert.Equal(13L, await conn.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM pragma_table_info('track_wakes');"));
             Assert.Equal(0L, await conn.ExecuteScalarAsync<long>("SELECT [unique] FROM pragma_index_list('session_messages') WHERE name='idx_session_messages_input_turn';"));
             Assert.Equal(2L, await conn.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM pragma_table_info('agent_sessions') WHERE name IN ('reasoning_effort', 'permission_mode');"));
+            Assert.Equal(0L, await conn.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM pragma_table_info('agent_sessions') WHERE name IN ('bound_task_id', 'bound_attempt_id');"));
             Assert.Equal(1L, await conn.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM pragma_table_info('tasks') WHERE name = 'role';"));
+            Assert.Equal(7L, await conn.ExecuteScalarAsync<long>("SELECT COUNT(*) FROM pragma_table_info('tasks') WHERE name IN ('session_id', 'run_count', 'worker_result_json', 'meta_json', 'gate_verdict_json', 'started_at_ms', 'finished_at_ms');"));
             var autoVacuum = await conn.ExecuteScalarAsync<long>("PRAGMA auto_vacuum;");
             var journalMode = await conn.ExecuteScalarAsync<string>("PRAGMA journal_mode;");
             Assert.Equal(2L, autoVacuum); // 2 == INCREMENTAL
@@ -82,7 +84,6 @@ public sealed class SqliteMigratorTests
                 "reports",
                 "report_revisions",
                 "tasks",
-                "task_attempts",
                 "agent_sessions",
                 "session_turns",
                 "session_items",
@@ -93,7 +94,6 @@ public sealed class SqliteMigratorTests
                 "mails",
                 "terminals",
                 "events",
-                "worker_messages",
                 "session_messages",
                 "system_upgrade_receipts",
                 "track_wakes",
@@ -124,8 +124,8 @@ public sealed class SqliteMigratorTests
                 "idx_tracks_area",
                 "idx_tracks_parent",
                 "idx_tasks_track_status",
-                "idx_attempts_task",
-                "idx_attempts_track",
+                "idx_tasks_session",
+                "idx_tasks_gate_blob_ref",
                 "idx_sessions_track",
                 "idx_turns_session_idx",
                 "idx_turns_session_epoch",
@@ -139,11 +139,8 @@ public sealed class SqliteMigratorTests
                 "idx_events_track_id",
                 "idx_events_created",
                 "idx_session_items_blob_ref",
-                "idx_attempts_gate_blob_ref",
-                "idx_worker_messages_queue",
                 "idx_session_messages_queue",
                 "idx_session_messages_boot",
-                "idx_session_messages_attempt",
                 "idx_session_messages_input_turn",
                 "idx_items_message_ordinal"
             ];

@@ -248,7 +248,7 @@ export function usePlannerMutations(transport: ApiTransportPort, cardId: string,
   return {
     send: (text: string, attachments: readonly string[], idempotencyKey: string,
       admitted: ApiTransportPort, queueIfBusy = false, target?: ConversationSendTarget) => {
-      const sent = runOperation(admitted, sendPlannerInputOperation(cardId, text, attachments, idempotencyKey, false, queueIfBusy || target?.queue === true, target?.attemptId), unauthorized);
+      const sent = runOperation(admitted, sendPlannerInputOperation(cardId, text, attachments, idempotencyKey, false, queueIfBusy || target?.queue === true, target?.epoch), unauthorized);
       return sent.then(receipt => {
         if (receipt.delivery === 'unknown' || receipt.delivery === 'dispatching')
           throw new KeyedSendFailure(new Error('Message delivery is unconfirmed.'), 'unknown');
@@ -257,7 +257,8 @@ export function usePlannerMutations(transport: ApiTransportPort, cardId: string,
         return receipt;
       }).then(receipt => refreshAfterInput(receipt, false), (error: unknown) => {
         refreshInputMetadata(admitted, error);
-        if (target !== undefined) refreshAfter(undefined);
+        if (target !== undefined && error instanceof ApiError && error.failure.kind === 'http' && error.failure.status === 409)
+          refreshAfter(undefined);
         throw error;
       });
     },
@@ -275,7 +276,7 @@ export function usePlannerMutations(transport: ApiTransportPort, cardId: string,
     /* Admitted at the press, as every chat write is: a stop that cannot leave the browser is not sent (#2068). */
     compact: () => Promise.resolve().then(() => admitTransport(transport))
       .then((admitted) => runOperation(admitted, compactPlannerOperation(cardId), unauthorized)).then(refreshAfter),
-    interrupt: (worker?: { attemptId?: string; turnId: string }) => Promise.resolve().then(() => admitTransport(transport))
+    interrupt: (worker?: { epoch?: number; turnId: string }) => Promise.resolve().then(() => admitTransport(transport))
       .then((admitted) => runOperation(admitted, interruptPlannerOperation(cardId, worker), unauthorized)).then(refreshAfter),
     answerInteraction: (sessionId: string, askId: AskId, answers: readonly AskAnswer[], questions: readonly AskQuestion[]) =>
       Promise.resolve().then(() => admitTransport(transport))

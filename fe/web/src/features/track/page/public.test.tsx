@@ -217,7 +217,7 @@ describe('TrackPage task inventory', () => {
       running('impl', 'running', 'busy'),
       running('gate', 'running', null),
       { ...running('doc', 'dispatched', 'stale'), execution: {
-        attemptId: 'a1', generation: 1, createdAtMs: 1000, finishedAtMs: null, status: 'running', label: 'Running', statusDetail: null,
+        sessionId: 'a1', runCount: 1, createdAtMs: 1000, finishedAtMs: null, status: 'running', label: 'Running', statusDetail: null,
         workerCardId: 'stale', blockingReason: null,
       } },
     ];

@@ -1,6 +1,4 @@
-using System.Text.Json;
 using Perga.Kernel.Actors;
-using Perga.Kernel.Internal;
 using Perga.Kernel.Ports;
 using Perga.VcsKit;
 
@@ -36,31 +34,8 @@ public sealed class BootReconciler : IBootReconciler
         var preparingTracks = await _store.RecoverWorkspacePreparationsAsync(ct).ConfigureAwait(false);
         var queuedInputs = await _store.RecoverSessionInputsAsync(ct).ConfigureAwait(false);
         var affectedTrackIds = new HashSet<string>(StringComparer.Ordinal);
-        var discardedLeases = 0;
 
-        // Recover leases before marking the owning attempts interrupted.
-        var leases = await _store.ListInFlightAttemptLeasesAsync(ct).ConfigureAwait(false);
-        foreach (var trackLeases in leases.GroupBy(lease => lease.TrackId))
-        {
-            var track = await _store.GetTrackAsync(trackLeases.Key, ct).ConfigureAwait(false);
-            if (track is null)
-            {
-                continue;
-            }
-
-            foreach (var entry in trackLeases)
-            {
-                if (entry.WorkspaceLease.ValueKind == JsonValueKind.Object &&
-                    TryParseAttemptLease(entry.WorkspaceLease, track.WorkspaceDriver, entry.AttemptId, track.Cwd) is { } lease)
-                {
-                    var driver = _workspaceDrivers.GetRequired(lease.DriverId);
-                    await driver.SettleAttemptLeaseAsync(lease, AttemptLeaseDisposition.Discard, ct).ConfigureAwait(false);
-                    discardedLeases++;
-                }
-            }
-        }
-
-        // 2. Mark all in-flight turns & attempts as interrupted in persistent store.
+        // Mark all in-flight turns & tasks as interrupted in persistent store.
         var storeAffected = await _store.MarkInFlightInterruptedOnBootAsync(ct).ConfigureAwait(false);
         foreach (var trackId in storeAffected)
         {
@@ -119,45 +94,6 @@ public sealed class BootReconciler : IBootReconciler
             }
         }
 
-        return new BootReconcileResult(orderedAffected, discardedLeases, wokenCount);
-    }
-
-    private static AttemptWorkspaceLease? TryParseAttemptLease(
-        JsonElement element,
-        string fallbackDriverId,
-        string fallbackAttemptId,
-        string fallbackCwd)
-    {
-        try
-        {
-            var parsed = JsonHelpers.Deserialize<AttemptWorkspaceLease>(element);
-            if (parsed is not null && !string.IsNullOrWhiteSpace(parsed.DriverId))
-            {
-                return parsed;
-            }
-        }
-        catch (JsonException)
-        {
-            // Fall through to tolerant manual extraction below.
-        }
-
-        var driverId = JsonHelpers.TryGetPropertyIgnoreCase(element, ["driverId", "driver_id"], out var d) && d.ValueKind == JsonValueKind.String
-            ? d.GetString() ?? fallbackDriverId
-            : fallbackDriverId;
-        var attemptId = JsonHelpers.TryGetPropertyIgnoreCase(element, ["attemptId", "attempt_id"], out var a) && a.ValueKind == JsonValueKind.String
-            ? a.GetString() ?? fallbackAttemptId
-            : fallbackAttemptId;
-        var effectiveCwd = JsonHelpers.TryGetPropertyIgnoreCase(element, ["effectiveCwd", "effective_cwd", "cwd"], out var c) && c.ValueKind == JsonValueKind.String
-            ? c.GetString() ?? fallbackCwd
-            : fallbackCwd;
-        var isCow = JsonHelpers.TryGetPropertyIgnoreCase(element, ["isIsolatedCopyOnWrite", "is_isolated_copy_on_write"], out var cow) &&
-                    cow.ValueKind == JsonValueKind.True;
-
-        return new AttemptWorkspaceLease(
-            DriverId: driverId,
-            AttemptId: attemptId,
-            EffectiveCwd: effectiveCwd,
-            IsIsolatedCopyOnWrite: isCow,
-            Metadata: element.Clone());
+        return new BootReconcileResult(orderedAffected, wokenCount);
     }
 }

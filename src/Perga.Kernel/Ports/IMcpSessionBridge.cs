@@ -9,7 +9,7 @@ public sealed record McpSessionPrincipal(
     string SessionId,
     bool IsLead,
     string? BoundTaskId,
-    string? BoundAttemptId,
+    int? TaskRunCount,
     IReadOnlyList<string> EnabledPlugins)
 {
     public McpExecutionOrigin? ExecutionOrigin { get; init; }
@@ -28,7 +28,7 @@ public interface IMcpSessionBridge
         string sessionId,
         bool isLead,
         string? boundTaskId,
-        string? boundAttemptId,
+        int? taskRunCount,
         IReadOnlyList<string> enabledPlugins);
 
     McpSessionPrincipal? ResolveToken(string token);
@@ -55,7 +55,7 @@ public sealed class InMemoryMcpSessionBridge : IMcpSessionBridge
         string sessionId,
         bool isLead,
         string? boundTaskId,
-        string? boundAttemptId,
+        int? taskRunCount,
         IReadOnlyList<string> enabledPlugins)
     {
         McpSessionPrincipal principal;
@@ -73,7 +73,7 @@ public sealed class InMemoryMcpSessionBridge : IMcpSessionBridge
                 sessionId,
                 isLead,
                 boundTaskId,
-                boundAttemptId,
+                taskRunCount,
                 enabledPlugins.ToArray());
 
             _byToken[token] = principal;

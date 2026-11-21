@@ -274,8 +274,8 @@ public sealed class DurableSessionInputTests
                     """
                     INSERT INTO session_turns (id, session_id, turn_index, trigger_kind, status, accepted_at_ms, provider, model)
                     VALUES ('fixture-turn', @SessionId, 1, 'user', @TurnStatus, 1, 'codex', 'A');
-                    INSERT INTO session_messages (id, session_id, source, kind, turn_id, author_id, request_key, request_hash, content, created_at_ms, delivery, delivered_turn_id)
-                    VALUES ('fixture-input', @SessionId, 'session', 'input', 'fixture-turn', 'owner:installation', 'fixture-key',
+                    INSERT INTO session_messages (id, session_id, kind, turn_id, author_id, request_key, request_hash, content, created_at_ms, delivery, delivered_turn_id)
+                    VALUES ('fixture-input', @SessionId, 'input', 'fixture-turn', 'owner:installation', 'fixture-key',
                             'fixture-hash', 'Recover me', 1, @State, CASE WHEN @State = 'delivered' THEN 'fixture-turn' END);
                     INSERT INTO session_items (session_id, turn_id, kind, payload_json, created_at_ms, message_ordinal)
                     VALUES (@SessionId, 'fixture-turn', 'user', '{}', 1, last_insert_rowid());

@@ -1,3 +1,4 @@
+import { taskDtoSchema } from './perga-v1.js';
 import hostPayloads from './fixtures/unified-host-payloads.json';
 import { sessionContextUsage } from '../domain/session-context-usage.js';
 import { describe, expect, it } from 'vitest';
@@ -57,9 +58,8 @@ import {
 import {
   acceptTaskOperation,
   cancelTaskOperation,
-  pergaTaskAttemptsOperation,
+  taskEvidence,
   rejectTaskOperation,
-  taskAttemptsOperation,
 } from '../domain/task-recovery.js';
 import { templateDetailOperation } from '../domain/template.js';
 import { compilePergaTemplateInputs, parsePergaInputsSchema } from '../domain/template-input.js';
@@ -358,7 +358,8 @@ describe('Perga /api/v1 protocol contracts', () => {
           statusDetail: null,
           semanticVerdict: 'none',
           semanticNote: null,
-          latestAttemptId: 'att_1',
+          sessionId: 'ses_worker1',
+          runCount: 1,
           createdAtMs: 1200,
           updatedAtMs: 2400,
         },
@@ -368,8 +369,6 @@ describe('Perga /api/v1 protocol contracts', () => {
           id: 'ses_lead',
           trackId: 'trk_1',
           isLead: true,
-          boundTaskId: null,
-          boundAttemptId: null,
           title: 'Lead',
           provider: 'codex',
           model: 'gpt-5',
@@ -494,25 +493,6 @@ describe('Perga /api/v1 protocol contracts', () => {
       method: 'PUT',
       path: '/api/v1/tracks/trk_1/report/blocks/b_prose1',
     });
-
-    const attemptsOp = taskAttemptsOperation('trk_1', 'build-fe');
-    expect(attemptsOp.path).toBe('/api/v1/tracks/trk_1/tasks/build-fe/attempts');
-    const attemptsView = attemptsOp.responseSchema.parse([
-      {
-        attemptId: 'att_1',
-        taskId: 'tsk_1',
-        trackId: 'trk_1',
-        sessionId: 'ses_worker1',
-        status: 'failed',
-        workerResult: null,
-        meta: {},
-        workspaceLease: null,
-        gateVerdict: { passed: false, steps: [{ name: 'lint', exitCode: 1 }] },
-        startedAtMs: 1300,
-        finishedAtMs: 1900,
-      },
-    ]);
-    expect(attemptsView.current?.status_detail).toBe('Gate step failed: lint');
   });
 
   it('maps Binary Sessions (Lead + Subagent), Terminals, Files, VCS Diff, and WS envelopes', () => {
@@ -530,8 +510,6 @@ describe('Perga /api/v1 protocol contracts', () => {
         id: 'ses_lead',
         trackId: 'trk_1',
         isLead: true,
-        boundTaskId: null,
-        boundAttemptId: null,
         title: 'Lead',
         provider: 'codex',
         model: 'gpt-5',
@@ -717,7 +695,7 @@ describe('Perga /api/v1 protocol contracts', () => {
       activeTurn: null,
       state: 'idle', readonlyReason: null, canReopen: false, workerPaused: false, lastTurn: null, unknownDetail: null,
       session: {
-        id: 'ses_lead', trackId: 'trk_1', isLead: true, boundTaskId: null, boundAttemptId: null,
+        id: 'ses_lead', trackId: 'trk_1', isLead: true,
         title: 'Lead', provider: 'codex', model: 'gpt-5', nativeThreadId: 'thr_1', epoch: 1,
         status: 'idle', contextUsage: null, archivedAtMs: null, createdAtMs: 90, updatedAtMs: 130,
       },
@@ -742,7 +720,7 @@ describe('Perga /api/v1 protocol contracts', () => {
       activeTurn: null,
       state: 'idle', readonlyReason: null, canReopen: false, workerPaused: false, lastTurn: null, unknownDetail: null,
       session: {
-        id: 'ses_lead', trackId: 'trk_1', isLead: true, boundTaskId: null, boundAttemptId: null,
+        id: 'ses_lead', trackId: 'trk_1', isLead: true,
         title: 'Lead', provider: 'codex', model: 'gpt-5', nativeThreadId: 'thr_1', epoch: 1,
         status: 'idle', contextUsage: null, archivedAtMs: null, createdAtMs: 90, updatedAtMs: 130,
       },
@@ -779,7 +757,7 @@ describe('Perga /api/v1 protocol contracts', () => {
     const termCard = terminalDtoToCardWire({
       id: 'term_1',
       trackId: 'trk_1',
-      attemptId: null,
+      sessionId: null,
       title: 'Shell',
       cwd: '/repo',
       program: '/bin/bash',
@@ -822,25 +800,14 @@ describe('Perga /api/v1 protocol contracts', () => {
       id: 'blank', title: 'Blank', description: null, availability: { status: 'ready' }, input_schema: {}, tasks: [],
     }])).toBe('blank');
 
-    const pergaAttempts = pergaTaskAttemptsOperation('trk_1', 'build-fe').responseSchema.parse([{
-      attemptId: 'att_9',
-      taskId: 'tsk_1',
-      trackId: 'trk_1',
-      sessionId: 'ses_worker',
-      status: 'Failed',
-      workerResult: { summary: 'Partial progress' },
-      meta: {},
-      workspaceLease: null,
-      gateVerdict: {
-        passed: false,
-        steps: [{ name: 'test', cmd: 'npm test', exitCode: 1, passed: false, durationMs: 420, stdout: '1 failing', stderr: 'AssertionError', outputTail: '' }],
-      },
-      startedAtMs: 1000,
-      finishedAtMs: 1420,
-    }]);
-    expect(pergaAttempts.current?.status).toBe('failed');
-    expect(pergaAttempts.evidenceByAttemptId?.att_9?.gateSteps[0]?.output).toContain('AssertionError');
-    expect(pergaAttempts.evidenceByAttemptId?.att_9?.workerResult).toContain('Partial progress');
+    const evidence = taskEvidence(taskDtoSchema.parse({
+      id: 'task', trackId: 'trk_1', blockId: 'block', taskKey: 'build-fe', kind: 'agent', status: 'failed',
+      sessionId: 'ses_worker', runCount: 2, createdAtMs: 1000, updatedAtMs: 1420,
+      workerResult: { summary: 'Partial progress' }, gateVerdict: { passed: false,
+        steps: [{ name: 'test', cmd: 'npm test', exitCode: 1, passed: false, durationMs: 420, stdout: '1 failing', stderr: 'AssertionError', outputTail: '' }] },
+    }));
+    expect(evidence.gateSteps[0]?.output).toContain('AssertionError');
+    expect(evidence.workerResult).toContain('Partial progress');
     expect(cancelTaskOperation('trk_1', 'build-fe').path).toBe('/api/v1/tracks/trk_1/tasks/build-fe/cancel');
     expect(acceptTaskOperation('trk_1', 'build-fe').path).toBe('/api/v1/tracks/trk_1/tasks/build-fe/accept');
     expect(rejectTaskOperation('trk_1', 'build-fe').path).toBe('/api/v1/tracks/trk_1/tasks/build-fe/reject');
@@ -913,4 +880,12 @@ it('decodes the Host creation receipt without a legacy status URL', () => {
     session: hostPayloads.creation.session, sessionInput: hostPayloads.creation.firstInput,
   });
   expect(sessionCreationReceiptSchema.parse(hostPayloads.emptyCreation)).toEqual(hostPayloads.emptyCreation);
+});
+
+
+it('decodes task ownership and latest evidence from the C# task fixture', () => {
+  const task = taskDtoSchema.parse(hostPayloads.task);
+  expect(task).toMatchObject({ sessionId: 'session', runCount: 2, workerResult: { summary: 'Latest result' } });
+  expect(taskEvidence(task)).toMatchObject({ gatePassed: false, gateSteps: [{ output: 'Check failed' }] });
+  expect(task).not.toHaveProperty('latestAttemptId');
 });

@@ -5,7 +5,7 @@ import {
   plugins, pluginDataPrefix, trackTemplates,
   transcriptPrefix, transcript as harnessItems, plannerRun, modelCatalog, modelCatalogForCard,
   modelCatalogPrefix, trackDetailPrefix,
-  sessionLive, trackTerminals, taskAttemptsPrefix,
+  sessionLive, trackTerminals,
 } from '../../../../core/events/query-keys.ts';
 
 // Key shapes match the legacy app so a cache dump reads the same in both.
@@ -77,5 +77,4 @@ export const queryKeys = Object.freeze({
    */
   sessionLive,
   trackTerminals,
-  taskAttemptsPrefix,
 });

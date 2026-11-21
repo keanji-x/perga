@@ -10,6 +10,35 @@ public sealed class UnifiedSessionTests
 {
     private static readonly InteropPrincipal Human = new InteropPrincipal.Human();
 
+    [Fact]
+    public async Task InitialRunPersistenceFailureRetainsPersistedSessionReference()
+    {
+        await using var ctx = new KernelTestContext();
+        var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
+        var rejected = false;
+        ctx.Store.OnBeforeUpsertTask = (task, session) =>
+        {
+            if (session is not null && task.Status == TaskRunStatus.Running)
+            {
+                rejected = true;
+                throw new IOException("initial run persistence failed");
+            }
+            if (task.Status == TaskRunStatus.Failed) Assert.Null(task.SessionId);
+        };
+        var report = await ctx.Kernel.ReadReportAsync(snapshot.Track.Id);
+        await ctx.Kernel.CommitReportAsync(snapshot.Track.Id, snapshot.Track.LeadSessionId!,
+            new(report.Anchor, [new Perga.ReportDoc.BlockOp.UpsertBlockOp(null, Perga.ReportDoc.ReportBlockKind.Task, null,
+                TestJson.FromObject(new { task_key = "initial-failure", ready = true, goal_or_cmd = "inspect" }))]));
+        await ctx.Kernel.WaitForTrackIdleAsync(snapshot.Track.Id);
+        Assert.True(rejected);
+        var failed = Assert.Single((await ctx.Store.LoadTrackAggregateAsync(snapshot.Track.Id, default))!.Tasks);
+        Assert.Equal(TaskRunStatus.Failed, failed.Status);
+        Assert.Null(failed.SessionId);
+        Assert.Equal(0, failed.RunCount);
+        Assert.Equal("initial run persistence failed", failed.StatusDetail);
+        Assert.NotNull(failed.FinishedAtMs);
+    }
+
     [Theory]
     [InlineData(false, false, false, true, true)]
     [InlineData(false, true, false, true, true)]
@@ -56,10 +85,10 @@ public sealed class UnifiedSessionTests
     {
         await using var ctx = new KernelTestContext();
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
-        var session = snapshot.Sessions.Single() with { SpawnDepth = depth, BoundAttemptId = bound ? "attempt" : null };
-        var principal = new InteropPrincipal.Session(session.TrackId, session.Id, true, session.BoundAttemptId, depth, "", null);
-        if (allowed) SessionPolicy.RequireCreate(principal, session, session.TrackId);
-        else Assert.Throws<KernelException>(() => SessionPolicy.RequireCreate(principal, session, session.TrackId));
+        var session = snapshot.Sessions.Single() with { SpawnDepth = depth };
+        var principal = new InteropPrincipal.Session(session.TrackId, session.Id, true, bound ? "task_1" : null, depth, "", null);
+        if (allowed) SessionPolicy.RequireCreate(principal, session, session.TrackId, callerIsTaskOwned: bound);
+        else Assert.Throws<KernelException>(() => SessionPolicy.RequireCreate(principal, session, session.TrackId, callerIsTaskOwned: bound));
     }
 
     [Theory]
@@ -85,7 +114,7 @@ public sealed class UnifiedSessionTests
     [Theory]
     [InlineData("reconnect")]
     [InlineData("reset_context")]
-    public async Task WorkerRecoveryRetainsAttemptAndLease(string action)
+    public async Task WorkerRecoveryRetainsActiveTaskRun(string action)
     {
         await using var ctx = new KernelTestContext();
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
@@ -96,16 +125,16 @@ public sealed class UnifiedSessionTests
         var before = await ctx.Kernel.GetSessionItemsAsync(id, new(), new InteropPrincipal.Human(), default);
         if (action == "reconnect")
         {
-            // The live actor owns the lease, so induce an unknown stream in its next turn.
+            // Induce an unknown stream in its next turn.
             ctx.AgentRuntime.TurnScript = Inconclusive;
             await ctx.Kernel.SendSessionMessageAsync(id, new(Content: "lose stream", RequestKey: "lose"), Human, default);
             await ctx.Kernel.WaitForTrackIdleAsync(snapshot.Track.Id);
         }
-        var attempts = await ctx.Kernel.ListTaskAttemptsAsync(snapshot.Track.Id, created.Receipt.Task!.Id);
-        var lease = Assert.Single(attempts).WorkspaceLease;
         var recovered = await ctx.Kernel.ControlSessionAsync(id, new(action), Human, default);
-        Assert.Equal(before.Session.BoundAttemptId, recovered.BoundAttemptId);
-        Assert.Equal(lease, Assert.Single(await ctx.Kernel.ListTaskAttemptsAsync(snapshot.Track.Id, created.Receipt.Task.Id)).WorkspaceLease);
+        var taskAfter = Assert.Single(await ctx.Kernel.ListTasksAsync(snapshot.Track.Id), t => t.Id == created.Receipt.Task!.Id);
+        Assert.Equal(id, taskAfter.SessionId);
+        Assert.Equal(1, taskAfter.RunCount);
+        Assert.Equal(TaskRunStatus.Running, taskAfter.Status);
         Assert.Equal(action == "reset_context" ? before.Session.Epoch + 1 : before.Session.Epoch, recovered.Epoch);
         Assert.Equal("idle", recovered.Status);
         if (action == "reset_context") Assert.Null(recovered.NativeThreadId);
@@ -128,15 +157,23 @@ public sealed class UnifiedSessionTests
         var id = created.Session.Id;
         if (blocked)
         {
-            Assert.Null(created.Session.BoundAttemptId);
+            Assert.Equal(0, created.Task!.RunCount);
+            var summary = Assert.Single(await ctx.Kernel.ListSessionsAsync(snapshot.Track.Id, new(), Human, default), s => s.Session.Id == id);
+            Assert.Equal("waiting_task", summary.ReadonlyReason);
+            Assert.Equal(created.Task.Id, summary.TaskId);
+            Assert.Equal("waiting_task", (await ctx.Kernel.GetSessionItemsAsync(id, new(), Human, default)).ReadonlyReason);
+            Assert.Equal(KernelErrorCode.Conflict, (await Assert.ThrowsAsync<KernelException>(() =>
+                ctx.Kernel.SendSessionMessageAsync(id, new(Content: "too early", RequestKey: "early"), Human, default))).Code);
             await ctx.Kernel.UpdateSessionAsync(id, new(ExpectedConfigVersion: 0, Model: new("model-b"),
                 ReasoningEffort: new("high")), Human, default);
-            await ctx.Kernel.CompleteAttemptDoneAsync(snapshot.Track.Id, blocker!.Session.Id);
+            await ctx.Kernel.CompleteTaskDoneAsync(snapshot.Track.Id, blocker!.Session.Id);
             await ctx.Kernel.AcceptTaskAsync(snapshot.Track.Id, null, blocker.Task!.Id);
         }
         await ctx.Kernel.WaitForTrackIdleAsync(snapshot.Track.Id);
-        var session = (await ctx.Kernel.GetSessionItemsAsync(id, new(), new InteropPrincipal.Human(), default)).Session;
-        Assert.NotNull(session.BoundAttemptId);
+        var page = await ctx.Kernel.GetSessionItemsAsync(id, new(), new InteropPrincipal.Human(), default);
+        var session = page.Session;
+        Assert.NotNull(page.TaskBinding);
+        Assert.Equal(1, page.TaskBinding!.Task.RunCount);
         Assert.Equal("claude", session.Provider);
         Assert.Equal("plan", session.PermissionMode);
         Assert.Equal(blocked ? "model-b" : "model-a", session.Model);
@@ -146,6 +183,27 @@ public sealed class UnifiedSessionTests
         Assert.Equal(session.Model, launch.Model);
         Assert.Equal("plan", launch.PermissionMode);
         Assert.Equal(session.ReasoningEffort, launch.ReasoningEffort);
+    }
+
+    [Theory]
+    [InlineData("done")]
+    [InlineData("failed")]
+    [InlineData("canceled")]
+    public async Task SettledTaskSessionHasConsistentReadonlyReason(string outcome)
+    {
+        await using var ctx = new KernelTestContext();
+        var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
+        var receipt = (await ctx.Kernel.CreateSessionAsync(snapshot.Track.Id,
+            new(Prompt: "inspect", Task: new()), "settled", Human, default)).Receipt;
+        await ctx.Kernel.WaitForTrackIdleAsync(snapshot.Track.Id);
+        if (outcome == "done") await ctx.Kernel.CompleteTaskDoneAsync(snapshot.Track.Id, receipt.Session.Id);
+        else if (outcome == "failed") await ctx.Kernel.CompleteTaskFailAsync(snapshot.Track.Id, receipt.Session.Id, "failed");
+        else await ctx.Kernel.CancelTaskAsync(snapshot.Track.Id, null, receipt.Task!.Id);
+        await ctx.Kernel.WaitForTrackIdleAsync(snapshot.Track.Id);
+        var summary = Assert.Single(await ctx.Kernel.ListSessionsAsync(snapshot.Track.Id, new(), Human, default),
+            s => s.Session.Id == receipt.Session.Id);
+        Assert.Equal("task_finished", summary.ReadonlyReason);
+        Assert.Equal("task_finished", (await ctx.Kernel.GetSessionItemsAsync(receipt.Session.Id, new(), Human, default)).ReadonlyReason);
     }
 
     private static async IAsyncEnumerable<UnifiedAgentEvent> Inconclusive(ScriptableFakeAgentSession session, TurnInput input,

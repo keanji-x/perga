@@ -17,7 +17,7 @@ public sealed class SessionResetSweepTests
         using var db = h.OpenRawInspectConnection();
         var originalText = "  exact text\nwith quotes: \"hello\" and 中文  ";
         foreach (var state in new[] { "queued", "dispatching", "unknown", "withdrawn" })
-            await h.Store.SessionMessages.InsertAsync(new("msg_" + state, lead.Id, null, "user", state,
+            await h.Store.SessionMessages.InsertAsync(new("msg_" + state, lead.Id, "user", state,
                 "hash", null, null, originalText + state, state, 100, "queue"), default);
         await h.Store.TrackWakes.EnqueueAsync(new(track.Id, "mail", null,
             StorageTestHarness.Json("""{"prompt":"critical text","mailId":"mail_1"}""")), default);

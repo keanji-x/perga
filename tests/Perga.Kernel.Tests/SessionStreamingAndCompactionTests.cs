@@ -645,7 +645,7 @@ public sealed class SessionStreamingAndCompactionTests
         var openedWorker = new TaskCompletionSource<ScriptableFakeAgentSession>(TaskCreationOptions.RunContinuationsAsynchronously);
         ctx.AgentRuntime.TurnScript = (session, input, ct) =>
         {
-            if (session.LaunchSpec.SystemPrompt?.Contains("BoundAttemptId=", StringComparison.Ordinal) == true)
+            if (session.LaunchSpec.SystemPrompt?.Contains("BoundTaskId=", StringComparison.Ordinal) == true)
                 openedWorker.TrySetResult(session);
             return StreamScriptedTurn(session, input, 1, ct);
         };
@@ -667,8 +667,8 @@ public sealed class SessionStreamingAndCompactionTests
         var workerSession = await openedWorker.Task.WaitAsync(TimeSpan.FromSeconds(10));
         Assert.Equal(provider.StartsWith("acp:") ? null : "never", workerSession.LaunchSpec.PermissionMode);
 
-        var sessions = (await ctx.Kernel.ListSessionsAsync(trackId, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray();
-        var bound = Assert.Single(sessions, s => s.BoundTaskId is not null);
+        var summaries = await ctx.Kernel.ListSessionsAsync(trackId, new(IncludeArchived: true), new InteropPrincipal.Human(), default);
+        var bound = Assert.Single(summaries, s => s.TaskId is not null).Session;
         var mode = provider.StartsWith("acp:") ? "plan" : provider == "codex" ? "full" : "plan";
         var updated = await ctx.Kernel.UpdateSessionAsync(bound.Id, new(PermissionMode: new(mode)), new InteropPrincipal.Human(), default);
         Assert.Equal(mode, updated.PermissionMode);

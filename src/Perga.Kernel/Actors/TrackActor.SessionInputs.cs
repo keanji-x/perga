@@ -35,7 +35,8 @@ public sealed partial class TrackActor
                 var replay = await ReplayCreationCoreAsync(intent, ct).ConfigureAwait(false);
                 if (replay is not null) return replay;
                 await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
-                SessionPolicy.RequireCreate(caller, parent, TrackId, _options.MaxSessionSpawnDepth);
+                SessionPolicy.RequireCreate(caller, parent, TrackId,
+                    callerIsTaskOwned: parent is not null && IsTaskOwnedSessionCore(parent.Id), _options.MaxSessionSpawnDepth);
                 return null;
             }, ct).ConfigureAwait(false);
             if (initialReplay is not null) return (initialReplay, true);
@@ -46,13 +47,14 @@ public sealed partial class TrackActor
                 var parent = RequireInteropCore(caller, write: true);
                 var replay = await ReplayCreationCoreAsync(intent, ct).ConfigureAwait(false);
                 if (replay is not null) return (replay, true);
-                SessionPolicy.RequireCreate(caller, parent, TrackId, _options.MaxSessionSpawnDepth);
+                SessionPolicy.RequireCreate(caller, parent, TrackId,
+                    callerIsTaskOwned: parent is not null && IsTaskOwnedSessionCore(parent.Id), _options.MaxSessionSpawnDepth);
                 var session = NewSubagentSessionCore(request, providers,
                     requireAvailable: caller is InteropPrincipal.Session || request.Prompt is not null, parent);
                 SessionInputRequest? first = null;
                 if (request.Prompt is { } content)
                 {
-                    var firstHash = RequestIdentity.Hash(new { version = 3, Content = content, Mode = "default", TurnId = (string?)null, ExpectedAttemptId = (string?)null });
+                    var firstHash = RequestIdentity.Hash(new { version = 4, Content = content, Mode = "default", TurnId = (string?)null, ExpectedEpoch = (int?)null });
                     first = new(key, firstHash, content, intent.AuthorId);
                     session = session with { Status = "queued" };
                 }
@@ -103,10 +105,11 @@ public sealed partial class TrackActor
             // Capture a token before activation can dispose the scheduler's source.
             var startupToken = startup.Token;
             var expectedEpoch = input.Epoch;
+            SessionTurnDto? completedTurn = null;
             try
             {
                 await WaitForWorkspacePreparationAsync(startupToken).ConfigureAwait(false);
-                await _turnRunner.RunAsync(new SessionInputBatchWorkItem(this, input), _actorShutdownCts.Token,
+                completedTurn = await _turnRunner.RunAsync(new SessionInputBatchWorkItem(this, input), _actorShutdownCts.Token,
                     startupCancellation: startupToken, compactedEpoch: epoch => expectedEpoch = epoch).ConfigureAwait(false);
             }
             catch (OperationCanceledException error) when (!_actorShutdownCts.IsCancellationRequested)
@@ -132,7 +135,7 @@ public sealed partial class TrackActor
                     await EnqueueAsync(async _ =>
                     {
                         if (RequireSessionCore(input.Receipt.SessionId).Epoch == expectedEpoch)
-                            await PokeSessionCoreAsync(input.Receipt.SessionId).ConfigureAwait(false);
+                            await PokeSessionCoreAsync(input.Receipt.SessionId, allowWorker: completedTurn?.Status == "completed").ConfigureAwait(false);
                     }, CancellationToken.None).ConfigureAwait(false);
             }
         });

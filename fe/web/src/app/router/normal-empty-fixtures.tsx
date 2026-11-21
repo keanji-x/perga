@@ -65,7 +65,7 @@ export function mountReportComponentStates() {
     {box('时间序列 · 无数据集',<TimeSeriesChart label="趋势" datasets={[{id:'default',label:'趋势',unit:'',style:'line',series:[{id:'value',label:'值',palette:0}],points:[]}]} emptyText="暂无图表数据（示例文案）" selection={{datasetId:'',selected:null,sample:null,readoutOpen:false}} onSelection={noop}/>)}
     {box('额度图 · 无数据',<MeterChart label="额度" unit="" used={null} limit={null} usedLabel="已用" limitLabel="总额" detail="" emptyText="暂无额度数据（示例文案）" tone="neutral"/>)}
     {box('记录视图 · 空记录',<RecordBrowser component={{kind:'records',id:'records',title:'记录',emptyText:'暂无记录（示例文案）',datasets:[{id:'default',label:'默认',items:[]}]}} selection={{datasetId:'default',mode:'list',selectedId:null,disclosures:[]}} onSelection={noop}/>)}
-    {box('执行历史 · 无尝试',<TaskRecoveryDetails view={{key:'task',current:null,attempts:[]}} current={undefined} loading={false} loadError={null} onRefresh={noop} openWorker={undefined} openableWorkerIds={new Set()}/>)}
+    {box('任务执行 · 尚未运行',<TaskRecoveryDetails task={undefined} current={undefined} loading={false} loadError={null} onRefresh={noop} openWorker={undefined} openableWorkerIds={new Set()}/>)}
     {box('实时内容 · 等待数据',<LivePlaceholder state="pending" source="数据源" />)}
     {box('实时内容 · 未携带数据',<LivePlaceholder state="detached" source="数据源" />)}
   </div>,true);

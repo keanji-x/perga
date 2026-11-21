@@ -810,12 +810,6 @@ export type TailnetPhase = "disabled" | "starting" | "needs-login" | "needs-appr
 export type TailnetStatus = { desiredEnabled: boolean, phase: TailnetPhase, processRunning: boolean, childPid: number | null, nodeState: TailnetNodeState, httpsReady: boolean, upstreamReady: boolean, origin: string | null, dnsName: string | null, nodeId: string | null, addresses: Array<string>, detail: string, };
 
 /**
- * Execution summary. Status includes awaiting_projection when admission capacity removed a pending row.
- * Blocking reason applies only to the selected current attempt; historical attempts carry null.
- */
-export type TaskAttemptView = { attempt_id: string, generation: number, status: string, status_detail: string | null, worker_card_id: string | null, created_at_ms: number, finished_at_ms: number | null, blocking_reason: string | null, };
-
-/**
  * One changed frozen reference carried by a context-advance verdict.
  */
 export type TaskContextChangedRef = { track_id: TrackId, block_id: string, from_rev: number, to_rev: number, from_hash: string, to_hash: string, };
@@ -826,12 +820,6 @@ export type TaskContextChangedRef = { track_id: TrackId, block_id: string, from_
 export type TaskContextRef = { track_id: TrackId, block_id: string, rev: number, hash: string, is_root: boolean, };
 
 export type TaskPlannerMessage = { message_id: string, seq: number, text: string, created_at_ms: number, read_at_ms: number | null, };
-
-/**
- * Execution history. `current` is null only when the live declaration has never
- * received an allocation.
- */
-export type TaskRecoveryView = { key: string, current: TaskAttemptView | null, attempts: Array<TaskAttemptView>, };
 
 export type TerminalPresentation = { source: CardCreationSource, in_workbench: boolean, };
 
@@ -1233,7 +1221,6 @@ export type TrackDto = import('../perga-v1.js').TrackDto;
 export type TrackTemplateSnapshot = import('zod').infer<typeof import('../perga-v1.js').trackTemplateSnapshotSchema>;
 export type ReportDocumentDto = import('../perga-v1.js').ReportDocumentDto;
 export type TaskDto = import('../perga-v1.js').TaskDto;
-export type TaskAttemptDto = import('../perga-v1.js').TaskAttemptDto;
 export type AgentSessionDto = import('../perga-v1.js').AgentSessionDto;
 export type SessionTurnDto = import('../perga-v1.js').SessionTurnDto;
 export type SessionInputReceipt = import('../perga-v1.js').SessionInputReceipt;
@@ -1290,3 +1277,5 @@ export type SessionActivityDto = import('../perga-v1.js').SessionActivity;
 export type SessionCapabilitiesDto = import('../perga-v1.js').SessionCapabilities;
 export type PendingInteractionDto = import('../perga-v1.js').PendingInteraction;
 export type SessionTaskBindingDto = NonNullable<import('../perga-v1.js').SessionItemsPageDto['taskBinding']>;
+
+export type DbMaintenanceStatsDto = import('../perga-v1.js').DbMaintenanceStatsDto;

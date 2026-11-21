@@ -1,6 +1,5 @@
-using System.Text.Json;
 using System.Text;
-using Perga.AgentKit;
+using System.Text.Json;
 using Perga.Contracts;
 using Perga.Kernel.Events;
 using Perga.Kernel.Internal;
@@ -10,100 +9,32 @@ namespace Perga.Kernel.Actors;
 
 public sealed partial class TrackActor
 {
-    private (AgentSessionDto Session, ActiveAttemptState Attempt) RequireCurrentWorkerCore(
-        string sessionId, string expectedAttemptId)
-    {
-        var session = RequireSessionCore(sessionId);
-        if (session.BoundAttemptId != expectedAttemptId || !_activeAttempts.TryGetValue(expectedAttemptId, out var attempt) ||
-            attempt.SessionId != sessionId || RequireTaskCore(attempt.TaskId).LatestAttemptId != expectedAttemptId ||
-            !string.Equals(attempt.AttemptDto.Status, "running", StringComparison.OrdinalIgnoreCase) || attempt.Settling || _track.ClosedAtMs.HasValue)
-            throw KernelException.Conflict("The Worker attempt is no longer running. Refresh the task before sending a command.");
-        RequireDispatchWorkspace(session);
-        return (session, attempt);
-    }
-
-    private async Task CloseInterruptedWorkerAsync(ActiveTurnState turn, ActiveAttemptState attempt)
-    {
-        var confirmed = false;
-        try
-        {
-            await _runtimes.Get(turn.SessionId).CloseAsync(_options.SessionStartupTimeout, CancellationToken.None).ConfigureAwait(false);
-            confirmed = true;
-        }
-        catch { /* Durable settlement fences the session and retains the handle for retry. */ }
-        await EnqueueAsync(_ =>
-        {
-            attempt.InterruptionUnconfirmed = !confirmed;
-            return Task.CompletedTask;
-        }, CancellationToken.None).ConfigureAwait(false);
-    }
-
     internal Task<WorkerCompletionOrigin> CaptureWorkerCompletionOriginAsync(McpSessionPrincipal caller, CancellationToken ct) =>
         EnqueueAsync(async _ =>
         {
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
-            var session = RequireBoundAttemptSessionCore(caller.SessionId, "Worker completion");
+            if (string.IsNullOrEmpty(caller.BoundTaskId) || caller.TaskRunCount is not { } runCount)
+                throw KernelException.Forbidden("Completion tool requires an active bound task session.");
+            var session = RequireSessionCore(caller.SessionId);
+            if (!_activeTasks.TryGetValue(caller.BoundTaskId, out var activeTask) ||
+                activeTask.SessionId != session.Id || activeTask.RunCount != runCount)
+                throw KernelException.Conflict("The task execution no longer accepts completion.");
             if (!_scheduler.TryGetActive(session.Id, out var active) || active.Interrupted ||
                 _mcpBridge.ResolveToken(caller.Token)?.SessionId != session.Id)
-                throw KernelException.Conflict("The Worker turn no longer accepts completion.");
-            return new WorkerCompletionOrigin(caller.Token, active.TurnDto.Id);
+                throw KernelException.Conflict("The worker turn no longer accepts completion.");
+            return new WorkerCompletionOrigin(caller.Token, active.TurnDto.Id, caller.BoundTaskId, runCount);
         }, ct);
 
-    private void CheckWorkerCompletionCore(ActiveAttemptState attempt, WorkerCompletionOrigin? origin)
+    private void CheckWorkerCompletionCore(ActiveTaskRunState activeTask, WorkerCompletionOrigin? origin)
     {
-        if (attempt.Paused || attempt.Settling || !string.Equals(attempt.AttemptDto.Status, "running", StringComparison.OrdinalIgnoreCase))
-            throw KernelException.Conflict("The Worker attempt no longer accepts completion from this turn.");
+        var task = RequireTaskCore(activeTask.TaskId);
+        if (activeTask.Paused || activeTask.Settling || task.Status != TaskRunStatus.Running)
+            throw KernelException.Conflict("The task no longer accepts completion from this turn.");
         if (origin is not null &&
-            (attempt.SessionId is not { } sessionId || _mcpBridge.ResolveToken(origin.Token)?.SessionId != sessionId ||
+            (origin.TaskId != activeTask.TaskId || origin.RunCount != activeTask.RunCount ||
+             activeTask.SessionId is not { } sessionId || _mcpBridge.ResolveToken(origin.Token)?.SessionId != sessionId ||
              !_scheduler.TryGetActive(sessionId, out var turn) || turn.Interrupted || turn.TurnDto.Id != origin.TurnId))
-            throw KernelException.Conflict("The Worker turn no longer accepts completion.");
-    }
-
-    private async Task ScheduleWorkerMessageCoreAsync(SessionMessage next, ActiveAttemptState attempt)
-    {
-        var sessionId = next.SessionId;
-        if (!await Messages.TransitionAsync(next with { Delivery = "dispatching" }, "queued",
-                CancellationToken.None).ConfigureAwait(false))
-            return;
-        var reservation = Guid.NewGuid();
-        _scheduler.Reserve(sessionId, reservation);
-        _ = TrackBackgroundJob(async () =>
-        {
-            var shouldContinue = false;
-            string? error = null;
-            try
-            {
-                var turn = await _turnRunner.RunAsync(new WorkerMessageWorkItem(this, next, attempt, reservation), attempt.Token).ConfigureAwait(false);
-                shouldContinue = turn?.Status == "completed";
-                if (turn?.Status is "failed" or "unknown")
-                    error = turn.ErrorText;
-            }
-            catch (OperationCanceledException) when (attempt.Cts.IsCancellationRequested || _actorShutdownCts.IsCancellationRequested)
-            {
-                await Messages.TransitionAsync(next with { Delivery = "interrupted" }, "dispatching", CancellationToken.None).ConfigureAwait(false);
-            }
-            catch (KernelException ex) when (ex.Code == KernelErrorCode.Conflict)
-            {
-                await Messages.TransitionAsync(next with { Delivery = "interrupted" }, "dispatching", CancellationToken.None).ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                error = ex.Message;
-                await Messages.TransitionAsync(next with { Delivery = "unknown" }, "dispatching", CancellationToken.None).ConfigureAwait(false);
-            }
-            finally
-            {
-                if (!_actorShutdownCts.IsCancellationRequested)
-                    await EnqueueAsync(async _ =>
-                    {
-                        if (_scheduler.TryGetReservation(sessionId, out var held) && held == reservation)
-                            _scheduler.ReleaseReservation(sessionId);
-                        attempt.LastError = error;
-                        if (shouldContinue)
-                            await PokeSessionCoreAsync(sessionId).ConfigureAwait(false);
-                    }, CancellationToken.None).ConfigureAwait(false);
-            }
-        });
+            throw KernelException.Conflict("The worker turn no longer accepts completion.");
     }
 
     private void PublishTurnActivity(ActiveTurnState active, string kind, JsonElement payload, long now)

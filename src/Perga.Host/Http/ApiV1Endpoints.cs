@@ -265,12 +265,6 @@ public static class ApiV1Endpoints
             return Results.Json(updated, PergaJsonDefaults.ApiOptions);
         });
 
-        v1.MapGet("/tracks/{trackId}/tasks/{taskKey}/attempts", async (string trackId, string taskKey, IPergaKernel kernel, CancellationToken ct) =>
-        {
-            var attempts = await kernel.ListTaskAttemptsAsync(trackId, taskKey, ct).ConfigureAwait(false);
-            return Results.Json(attempts, PergaJsonDefaults.ApiOptions);
-        });
-
         v1.MapPost("/tracks/{trackId}/tasks/{taskKey}/cancel", async (string trackId, string taskKey, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
         {
             var body = await ReadOptionalJsonBodyAsync(ctx, () => new CancelTaskHttpBody(), ct).ConfigureAwait(false);
@@ -334,9 +328,9 @@ public static class ApiV1Endpoints
         });
 
         v1.MapDelete("/sessions/{sessionId}/messages/{messageId}", async (string sessionId, string messageId,
-            string? expectedAttemptId, IPergaKernel kernel, CancellationToken ct) =>
+            IPergaKernel kernel, CancellationToken ct) =>
         {
-            await kernel.WithdrawSessionMessageAsync(sessionId, messageId, expectedAttemptId, new InteropPrincipal.Human(), ct).ConfigureAwait(false);
+            await kernel.WithdrawSessionMessageAsync(sessionId, messageId, new InteropPrincipal.Human(), ct).ConfigureAwait(false);
             return Results.NoContent();
         });
 

@@ -61,7 +61,7 @@ describe('session permission mode', () => {
     const taskBound = responseSchema.parse({
       ...basePage,
       session: {
-        id: 'ses_3', trackId: 'trk_1', isLead: false, boundTaskId: 'tsk_1', provider: 'codex',
+        id: 'ses_3', trackId: 'trk_1', isLead: false, provider: 'codex',
         epoch: 1, status: 'idle', contextUsage: null, createdAtMs: 1, updatedAtMs: 2,
         permissionMode: 'full',
       },

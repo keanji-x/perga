@@ -52,7 +52,7 @@ it('keeps a failure without additional detail in one compact status line', () =>
 
 it('shows a label-only failed execution without inventing an explanation', () => {
   const view = render(<TrackPage track={track()} tasks={[{ ...task('verify', 'failed'), execution: {
-    attemptId: 'attempt-1', generation: 1, createdAtMs: 1000, finishedAtMs: null, status: 'failed', label: 'Failed',
+    sessionId: 'attempt-1', runCount: 1, createdAtMs: 1000, finishedAtMs: null, status: 'failed', label: 'Failed',
     statusDetail: null, workerCardId: null, blockingReason: null,
   } }]} cards={[]} openableCards={new Set()} mobilePanelObscured={false}
     canReopenTrack={false} canCloseTrack={false} adminGrantedAt={null} onRenameTrack={vi.fn()}

@@ -51,17 +51,9 @@ public sealed partial class TrackActor
             if (!string.IsNullOrWhiteSpace(callerSessionId))
             {
                 var caller = RequireSessionCore(callerSessionId);
-                if (caller.BoundAttemptId is not null)
-                {
-                    var boundTask = caller.BoundTaskId is not null
-                        ? _tasks.FirstOrDefault(t => string.Equals(t.Id, caller.BoundTaskId, StringComparison.Ordinal))
-                        : _tasks.FirstOrDefault(t => string.Equals(t.LatestAttemptId, caller.BoundAttemptId, StringComparison.Ordinal));
-                    if (boundTask is null || boundTask.Access == AccessMode.ReadOnly)
-                    {
-                        throw KernelException.PolicyDenied(
-                            "Read-only bound worker sessions cannot patch track template data.");
-                    }
-                }
+                if (TryGetOwningTaskCore(caller.Id) is { Access: AccessMode.ReadOnly })
+                    throw KernelException.PolicyDenied(
+                        "Read-only bound worker sessions cannot patch track template data.");
             }
 
             if (expectedDataRev is { } expected && expected != _track.DataRev)
@@ -114,7 +106,7 @@ public sealed partial class TrackActor
             return new TrackDataPatchResult(true, _track.DataRev, _track.Data);
         }, ct);
 
-    private async Task<JsonElement> BuildKernelFactsSnapshotCoreAsync(CancellationToken ct)
+    private Task<JsonElement> BuildKernelFactsSnapshotCoreAsync(CancellationToken ct)
     {
         var tasksMap = new Dictionary<string, object?>(StringComparer.Ordinal);
         var sessionsMap = new Dictionary<string, object?>(StringComparer.Ordinal);
@@ -128,27 +120,16 @@ public sealed partial class TrackActor
                 isLead = s.IsLead,
                 provider = s.Provider,
                 model = s.Model,
-                boundAttemptId = s.BoundAttemptId,
                 status = s.Status,
             };
         }
 
         foreach (var task in _tasks)
         {
-            AgentSessionDto? boundSession = null;
-            if (!string.IsNullOrWhiteSpace(task.LatestAttemptId))
-            {
-                boundSession = _sessions.Values.FirstOrDefault(s =>
-                    string.Equals(s.BoundAttemptId, task.LatestAttemptId, StringComparison.Ordinal));
-            }
-
+            var boundSession = task.SessionId is { } sid && _sessions.TryGetValue(sid, out var session) ? session : null;
             var gateChecks = new List<object>();
-            if (!string.IsNullOrWhiteSpace(task.LatestAttemptId))
             {
-                var attempts = await _store.ListAttemptsForTaskAsync(task.Id, ct).ConfigureAwait(false);
-                var latest = attempts.FirstOrDefault(a => string.Equals(a.AttemptId, task.LatestAttemptId, StringComparison.Ordinal))
-                    ?? attempts.LastOrDefault();
-                if (latest?.GateVerdict is { ValueKind: JsonValueKind.Object } gv &&
+                if (task.GateVerdict is { ValueKind: JsonValueKind.Object } gv &&
                     gv.TryGetProperty("steps", out var stepsEl) &&
                     stepsEl.ValueKind == JsonValueKind.Array)
                 {
@@ -196,11 +177,11 @@ public sealed partial class TrackActor
             };
         }
 
-        return JsonHelpers.ToElement(new
+        return Task.FromResult(JsonHelpers.ToElement(new
         {
             trackId = TrackId,
             tasks = tasksMap,
             sessions = sessionsMap,
-        });
+        }));
     }
 }

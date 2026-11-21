@@ -26,7 +26,7 @@ public sealed class HostMcpSessionBridge : IMcpSessionBridge
         string sessionId,
         bool isLead,
         string? boundTaskId,
-        string? boundAttemptId,
+        int? taskRunCount,
         IReadOnlyList<string> enabledPlugins)
     {
         McpSessionPrincipal principal;
@@ -44,7 +44,7 @@ public sealed class HostMcpSessionBridge : IMcpSessionBridge
                 sessionId,
                 isLead,
                 boundTaskId,
-                boundAttemptId,
+                taskRunCount,
                 enabledPlugins.ToArray());
 
             _byToken[token] = principal;

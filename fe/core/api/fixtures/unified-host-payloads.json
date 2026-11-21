@@ -4,8 +4,6 @@
       "id": "session",
       "trackId": "track",
       "isLead": false,
-      "boundTaskId": null,
-      "boundAttemptId": null,
       "title": null,
       "provider": "codex",
       "model": null,
@@ -46,8 +44,6 @@
       "id": "session",
       "trackId": "track",
       "isLead": false,
-      "boundTaskId": null,
-      "boundAttemptId": null,
       "title": null,
       "provider": "codex",
       "model": null,
@@ -82,8 +78,6 @@
       "id": "session",
       "trackId": "track",
       "isLead": false,
-      "boundTaskId": null,
-      "boundAttemptId": null,
       "title": null,
       "provider": "codex",
       "model": null,
@@ -112,14 +106,61 @@
     "canSteer": false,
     "queueHandoffIds": [],
     "state": "idle",
-    "readonlyReason": null,
+    "readonlyReason": "task_finished",
     "canReopen": false,
     "workerPaused": false,
     "lastTurn": null,
     "unknownDetail": null,
     "permissionModes": null,
     "activity": null,
-    "taskBinding": null,
+    "taskBinding": {
+      "task": {
+        "id": "task",
+        "trackId": "track",
+        "blockId": "block",
+        "taskKey": "inspect",
+        "generation": 1,
+        "kind": "agent",
+        "provider": "codex",
+        "access": "read_write",
+        "ready": true,
+        "dependsOn": [],
+        "goalOrCmd": "Inspect",
+        "context": null,
+        "acceptance": null,
+        "gate": null,
+        "status": "failed",
+        "statusDetail": "Validation failed",
+        "semanticVerdict": "none",
+        "semanticNote": null,
+        "createdAtMs": 1,
+        "updatedAtMs": 2,
+        "role": null,
+        "sessionId": "session",
+        "runCount": 2,
+        "workerResult": {
+          "summary": "Latest result"
+        },
+        "meta": {},
+        "gateVerdict": {
+          "passed": false,
+          "steps": [
+            {
+              "name": "check",
+              "cmd": "check",
+              "exitCode": 1,
+              "passed": false,
+              "durationMs": 3,
+              "outputTail": "Check failed"
+            }
+          ]
+        },
+        "startedAtMs": 1,
+        "finishedAtMs": 2
+      },
+      "phase": "failed",
+      "waitingReason": null
+    },
     "capabilities": null,
     "pendingInteractions": null
   },
@@ -128,8 +169,6 @@
       "id": "session",
       "trackId": "track",
       "isLead": false,
-      "boundTaskId": null,
-      "boundAttemptId": null,
       "title": null,
       "provider": "codex",
       "model": null,
@@ -154,10 +193,11 @@
       "systemPrompt": null
     },
     "state": "idle",
-    "readonlyReason": null,
+    "readonlyReason": "task_finished",
     "workerPaused": false,
     "lastTurn": null,
-    "pendingInteractionCount": 0
+    "pendingInteractionCount": 0,
+    "taskId": "task"
   },
   "approval": {
     "id": "approval",
@@ -201,5 +241,49 @@
     "createdAtMs": 2,
     "toolName": null,
     "arguments": null
+  },
+  "task": {
+    "id": "task",
+    "trackId": "track",
+    "blockId": "block",
+    "taskKey": "inspect",
+    "generation": 1,
+    "kind": "agent",
+    "provider": "codex",
+    "access": "read_write",
+    "ready": true,
+    "dependsOn": [],
+    "goalOrCmd": "Inspect",
+    "context": null,
+    "acceptance": null,
+    "gate": null,
+    "status": "failed",
+    "statusDetail": "Validation failed",
+    "semanticVerdict": "none",
+    "semanticNote": null,
+    "createdAtMs": 1,
+    "updatedAtMs": 2,
+    "role": null,
+    "sessionId": "session",
+    "runCount": 2,
+    "workerResult": {
+      "summary": "Latest result"
+    },
+    "meta": {},
+    "gateVerdict": {
+      "passed": false,
+      "steps": [
+        {
+          "name": "check",
+          "cmd": "check",
+          "exitCode": 1,
+          "passed": false,
+          "durationMs": 3,
+          "outputTail": "Check failed"
+        }
+      ]
+    },
+    "startedAtMs": 1,
+    "finishedAtMs": 2
   }
 }

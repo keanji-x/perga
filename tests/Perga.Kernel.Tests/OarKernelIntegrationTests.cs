@@ -121,8 +121,6 @@ public sealed class OarKernelIntegrationTests : IDisposable
         });
 
         await using var ctx = new KernelTestContext(agentRuntime: runtime);
-        ctx.DirectDriver.CreateLeaseDirectories = true;
-        ctx.CowOverlayDriver.CreateLeaseDirectories = true;
         var area = await ctx.Kernel.CreateAreaAsync(new CreateAreaRequest("OAR Worker Settings", DefaultCwd: _workspaceDir));
         var snap = await ctx.Kernel.CreateTrackAsync(new CreateTrackRequest(
             AreaId: area.Id,
@@ -134,8 +132,7 @@ public sealed class OarKernelIntegrationTests : IDisposable
         var dispatched = await ctx.Kernel.CreateSessionAsync(snap.Track.Id, new(Prompt: "Run initial worker turn", Task: new(), Provider: "codex"), "worker-settings-dispatch", new InteropPrincipal.Human(), CancellationToken.None);
         await ctx.Kernel.WaitForTrackIdleAsync(snap.Track.Id);
 
-        var worker = Assert.Single((await ctx.Kernel.ListSessionsAsync(snap.Track.Id, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray(), s => s.BoundTaskId == dispatched.Receipt.Task!.Id);
-        var attemptId = worker.BoundAttemptId!;
+        var worker = Assert.Single(await ctx.Kernel.ListSessionsAsync(snap.Track.Id, new(IncludeArchived: true), new InteropPrincipal.Human(), default), s => s.TaskId == dispatched.Receipt.Task!.Id).Session;
 
         var itemsPage = await ctx.Kernel.GetSessionItemsAsync(worker.Id, new(), new InteropPrincipal.Human(), default);
         var workerConfig = Assert.IsType<SessionCapabilitiesDto>(itemsPage.Capabilities);
@@ -144,22 +141,22 @@ public sealed class OarKernelIntegrationTests : IDisposable
         Assert.Contains(workerConfig.Models, m => m.Id == "gpt-5.4-mini");
 
         // Switch Worker to gpt-5.4-mini / low and verify next turn reopens OAR session with those exact selections.
-        var updated = await ctx.Kernel.UpdateSessionAsync(worker.Id, new(ExpectedConfigVersion: 0, Model: new("gpt-5.4-mini"), ReasoningEffort: new("low"), ExpectedAttemptId: attemptId), new InteropPrincipal.Human(), CancellationToken.None);
+        var updated = await ctx.Kernel.UpdateSessionAsync(worker.Id, new(ExpectedConfigVersion: 0, Model: new("gpt-5.4-mini"), ReasoningEffort: new("low")), new InteropPrincipal.Human(), CancellationToken.None);
         Assert.Equal("gpt-5.4-mini", updated.Model);
         Assert.Equal("low", updated.ReasoningEffort);
 
-        await ctx.Kernel.SendSessionMessageAsync(worker.Id, new(Content: "Second worker turn", RequestKey: "worker-turn-2", Mode: "default", TurnId: null, ExpectedAttemptId: attemptId), new InteropPrincipal.Human(), CancellationToken.None);
+        await ctx.Kernel.SendSessionMessageAsync(worker.Id, new(Content: "Second worker turn", RequestKey: "worker-turn-2", Mode: "default", TurnId: null, ExpectedEpoch: worker.Epoch), new InteropPrincipal.Human(), CancellationToken.None);
         await ctx.Kernel.WaitForTrackIdleAsync(snap.Track.Id);
         var turnsAfterSwitch = ctx.Store.GetTurnsForSession(worker.Id);
         Assert.Equal(2, turnsAfterSwitch.Count);
         Assert.All(turnsAfterSwitch, t => Assert.Equal("completed", t.Status));
 
         // Reset Worker back to provider defaults (null/null) and verify OAR session reopens on gpt-5.4 / low.
-        var restored = await ctx.Kernel.UpdateSessionAsync(worker.Id, new(ExpectedConfigVersion: 1, Model: new(null), ReasoningEffort: new(null), ExpectedAttemptId: attemptId), new InteropPrincipal.Human(), CancellationToken.None);
+        var restored = await ctx.Kernel.UpdateSessionAsync(worker.Id, new(ExpectedConfigVersion: 1, Model: new(null), ReasoningEffort: new(null)), new InteropPrincipal.Human(), CancellationToken.None);
         Assert.Null(restored.Model);
         Assert.Null(restored.ReasoningEffort);
 
-        await ctx.Kernel.SendSessionMessageAsync(worker.Id, new(Content: "Third worker turn", RequestKey: "worker-turn-3", Mode: "default", TurnId: null, ExpectedAttemptId: attemptId), new InteropPrincipal.Human(), CancellationToken.None);
+        await ctx.Kernel.SendSessionMessageAsync(worker.Id, new(Content: "Third worker turn", RequestKey: "worker-turn-3", Mode: "default", TurnId: null, ExpectedEpoch: worker.Epoch), new InteropPrincipal.Human(), CancellationToken.None);
         await ctx.Kernel.WaitForTrackIdleAsync(snap.Track.Id);
         var turnsAfterRestore = ctx.Store.GetTurnsForSession(worker.Id);
         Assert.Equal(3, turnsAfterRestore.Count);
@@ -195,8 +192,6 @@ public sealed class OarKernelIntegrationTests : IDisposable
         });
 
         await using var ctx = new KernelTestContext(agentRuntime: runtime);
-        ctx.DirectDriver.CreateLeaseDirectories = true;
-        ctx.CowOverlayDriver.CreateLeaseDirectories = true;
         var area = await ctx.Kernel.CreateAreaAsync(new CreateAreaRequest("OAR Null Effort Reconcile", DefaultCwd: _workspaceDir));
         var snap = await ctx.Kernel.CreateTrackAsync(new CreateTrackRequest(
             AreaId: area.Id,
@@ -208,7 +203,7 @@ public sealed class OarKernelIntegrationTests : IDisposable
         var dispatched = await ctx.Kernel.CreateSessionAsync(snap.Track.Id, new(Prompt: "Run turn with null native effort", Task: new(), Provider: "codex"), "worker-null-effort-dispatch", new InteropPrincipal.Human(), CancellationToken.None);
         await ctx.Kernel.WaitForTrackIdleAsync(snap.Track.Id);
 
-        var worker = Assert.Single((await ctx.Kernel.ListSessionsAsync(snap.Track.Id, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray(), s => s.BoundTaskId == dispatched.Receipt.Task!.Id);
+        var worker = Assert.Single(await ctx.Kernel.ListSessionsAsync(snap.Track.Id, new(IncludeArchived: true), new InteropPrincipal.Human(), default), s => s.TaskId == dispatched.Receipt.Task!.Id).Session;
         var turn = Assert.Single(ctx.Store.GetTurnsForSession(worker.Id));
         Assert.Equal("completed", turn.Status);
 

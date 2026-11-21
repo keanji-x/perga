@@ -137,20 +137,19 @@ public sealed class UserJourneyAuditFixesTests
         Assert.All(ctx.AgentRuntime.OpenedSessions, s => Assert.DoesNotContain("/leases/", s.LaunchSpec.Cwd, StringComparison.Ordinal));
         _ = sessionsBefore;
 
-        var okAttempts = await ctx.Kernel.ListTaskAttemptsAsync(trackId, "term-build");
-        var okAttempt = Assert.Single(okAttempts);
-        Assert.Equal("done", okAttempt.Status);
-        Assert.NotNull(okAttempt.GateVerdict);
-        var step0 = okAttempt.GateVerdict!.Value.GetProperty("steps")[0];
+        var tasks = await ctx.Kernel.ListTasksAsync(trackId);
+        var okTask = tasks.Single(t => t.TaskKey == "term-build");
+        Assert.Equal(TaskRunStatus.Done, okTask.Status);
+        Assert.NotNull(okTask.GateVerdict);
+        var step0 = okTask.GateVerdict!.Value.GetProperty("steps")[0];
         Assert.True(step0.GetProperty("passed").GetBoolean());
         Assert.Equal("gate-stdout-line\n", step0.GetProperty("stdout").GetString());
         Assert.Equal("gate-stderr-warn\n", step0.GetProperty("stderr").GetString());
         Assert.Contains("gate-stdout-line", step0.GetProperty("outputTail").GetString());
         Assert.Contains("gate-stderr-warn", step0.GetProperty("outputTail").GetString());
 
-        var failAttempts = await ctx.Kernel.ListTaskAttemptsAsync(trackId, "term-fail");
-        var failAttempt = Assert.Single(failAttempts);
-        Assert.Equal("failed", failAttempt.Status);
+        var failTask = tasks.Single(t => t.TaskKey == "term-fail");
+        Assert.Equal(TaskRunStatus.Failed, failTask.Status);
 
         // Human governance (callerSessionId: null) for Cancel, Accept, and Reject!
         var canceled = await ctx.Kernel.CancelTaskAsync(trackId, callerSessionId: null, "human-cancel-target", "Not needed");

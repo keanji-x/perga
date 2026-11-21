@@ -121,7 +121,7 @@ public sealed class ApiV1RestIntegrationTests
     }
 
     [Fact]
-    public async Task Report_HumanBlockEdit_WakesLead_409Conflict_TaskSync_And_Attempts_WorkEndToEnd()
+    public async Task Report_HumanBlockEdit_WakesLead_409Conflict_TaskSync_And_Runs_WorkEndToEnd()
     {
         await using var cluster = new PergaHostTestCluster();
         var client = cluster.Client;
@@ -195,7 +195,7 @@ public sealed class ApiV1RestIntegrationTests
         Assert.False(string.IsNullOrWhiteSpace(conflictJson.RootElement.GetProperty("error").GetString()));
         Assert.False(string.IsNullOrWhiteSpace(conflictJson.RootElement.GetProperty("nextStep").GetString()));
 
-        // Insert a command task block via human block upsert and verify snake_case TaskDto enums + /tasks/{taskKey}/attempts!
+        // Insert a command task block via human block upsert and verify snake_case TaskDto enums and latest run evidence.
         using var addTaskBlockResp = await client.PutAsJsonAsync(
             $"/api/v1/tracks/{trackId}/report/blocks/b_cmd1",
             new
@@ -225,33 +225,31 @@ public sealed class ApiV1RestIntegrationTests
         var kernel = cluster.Services.GetRequiredService<IPergaKernel>();
         await kernel.WaitForTrackIdleAsync(trackId);
 
-        using var attemptsResp = await client.GetAsync($"/api/v1/tracks/{trackId}/tasks/verify-echo/attempts");
-        Assert.Equal(HttpStatusCode.OK, attemptsResp.StatusCode);
-        var attempts = await attemptsResp.Content.ReadFromJsonAsync<List<TaskAttemptDto>>(PergaJsonDefaults.ApiOptions);
-        Assert.NotNull(attempts);
-        Assert.Single(attempts!);
-        Assert.Equal("done", attempts![0].Status);
-        var result = attempts[0].WorkerResult!.Value;
+        var trackAfter = (await client.GetFromJsonAsync<Perga.Kernel.Ports.TrackAggregateSnapshot>($"/api/v1/tracks/{trackId}", PergaJsonDefaults.ApiOptions))!;
+        var verifyTask = Assert.Single(trackAfter.Tasks, t => t.TaskKey == "verify-echo");
+        Assert.Equal(TaskRunStatus.Done, verifyTask.Status);
+        Assert.Equal(1, verifyTask.RunCount);
+        var result = verifyTask.WorkerResult!.Value;
         Assert.EndsWith("TASK_ATTEMPT_OK\n", result.GetProperty("stdout").GetString());
         Assert.True(result.GetProperty("stdoutTruncated").GetBoolean());
         Assert.InRange(result.GetProperty("stdout").GetString()!.Length, 1, 4096);
-        var gateStep = attempts[0].GateVerdict!.Value.GetProperty("steps")[0];
+        var gateStep = verifyTask.GateVerdict!.Value.GetProperty("steps")[0];
         Assert.EndsWith("GATE_OK\n", gateStep.GetProperty("stderr").GetString());
         Assert.True(gateStep.GetProperty("stderrTruncated").GetBoolean());
         Assert.InRange(gateStep.GetProperty("stderr").GetString()!.Length, 1, 4096);
 
         cluster.TimeProvider.Advance(TimeSpan.FromDays(15));
         var stats = await kernel.RunMaintenancePassAsync();
-        Assert.Equal(1, stats.CompactedAttempts);
-        using var compactedResp = await client.GetAsync($"/api/v1/tracks/{trackId}/tasks/verify-echo/attempts");
-        var compacted = Assert.Single((await compactedResp.Content.ReadFromJsonAsync<List<TaskAttemptDto>>(PergaJsonDefaults.ApiOptions))!);
-        Assert.Equal(attempts[0].AttemptId, compacted.AttemptId);
-        Assert.Equal("done", compacted.Status);
+        Assert.Equal(1, stats.CompactedTasks);
+        var trackAfterGc = (await client.GetFromJsonAsync<Perga.Kernel.Ports.TrackAggregateSnapshot>($"/api/v1/tracks/{trackId}", PergaJsonDefaults.ApiOptions))!;
+        var compacted = Assert.Single(trackAfterGc.Tasks, t => t.TaskKey == "verify-echo");
+        Assert.Equal(verifyTask.Id, compacted.Id);
+        Assert.Equal(TaskRunStatus.Done, compacted.Status);
         Assert.True(compacted.GateVerdict!.Value.GetProperty("passed").GetBoolean());
         Assert.True(compacted.GateVerdict.Value.GetProperty("steps")[0].GetProperty("outputExpired").GetBoolean());
         Assert.Equal(0, compacted.WorkerResult!.Value.GetProperty("exitCode").GetInt32());
         Assert.False(compacted.WorkerResult.Value.TryGetProperty("stdout", out _));
-        Assert.Equal(0, (await kernel.RunMaintenancePassAsync()).CompactedAttempts);
+        Assert.Equal(0, (await kernel.RunMaintenancePassAsync()).CompactedTasks);
     }
 
     [Fact]
@@ -289,7 +287,7 @@ public sealed class ApiV1RestIntegrationTests
         Assert.Null(created.FirstInput);
         var subSession = created.Session;
         Assert.False(subSession.IsLead);
-        Assert.Null(subSession.BoundAttemptId);
+        Assert.Null(created.Task);
 
         using var listSessionsResp = await client.GetAsync($"/api/v1/tracks/{trackId}/sessions");
         var sessions = (await listSessionsResp.Content.ReadFromJsonAsync<List<SessionSummaryDto>>(PergaJsonDefaults.ApiOptions))!;

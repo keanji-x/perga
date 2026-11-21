@@ -39,12 +39,13 @@ public sealed partial class PergaKernelService
 
     public async Task<JsonElement> InvokeSystemUpgradeAsync(McpSessionPrincipal caller, string operation, JsonElement arguments, CancellationToken ct)
     {
-        // Caller role flags and BoundAttemptId are insufficient: free subagents are unbound too.
+        // Caller role flags and BoundTaskId are insufficient: free subagents are unbound too.
         var track = await _store.GetTrackAsync(caller.TrackId, ct).ConfigureAwait(false);
         var aggregate = await _store.LoadTrackAggregateAsync(caller.TrackId, ct).ConfigureAwait(false);
         var session = aggregate?.Sessions.FirstOrDefault(s => s.Id == caller.SessionId);
+        var ownsTask = aggregate?.Tasks.Any(t => t.SessionId == caller.SessionId) == true;
         if (track is null || track.ClosedAtMs is not null || track.LeadSessionId != caller.SessionId ||
-            caller.BoundAttemptId is not null || session is null || !session.IsLead || session.BoundTaskId is not null || session.BoundAttemptId is not null || session.ArchivedAtMs is not null)
+            caller.BoundTaskId is not null || session is null || !session.IsLead || ownsTask || session.ArchivedAtMs is not null)
             throw new KernelException(KernelErrorCode.SystemUpgradeLeadRequired, "System upgrades require the persisted current Lead session.");
         if (operation is not ("check" or "apply" or "rollback") ||
             arguments.ValueKind != JsonValueKind.Object || arguments.EnumerateObject().Any(p => p.Name != "sourceId") ||

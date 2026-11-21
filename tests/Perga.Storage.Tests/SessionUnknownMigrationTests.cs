@@ -46,8 +46,8 @@ public sealed class SessionUnknownMigrationTests
             Assert.True(await upgraded.ExecuteScalarAsync<long>("SELECT max(id) FROM session_items;") > 73);
             await Assert.ThrowsAsync<SqliteException>(() => upgraded.ExecuteAsync("INSERT INTO session_items(session_id, kind, payload_json, created_at_ms) VALUES ('s', 'user', '{}', 3);"));
             await upgraded.ExecuteAsync("""
-                INSERT INTO session_messages(id, session_id, source, kind, author_id, request_key, request_hash, content, delivery, created_at_ms)
-                VALUES ('queued', 's', 'session', 'queue', 'user', 'key', 'hash', 'exact text', 'interrupted', 3);
+                INSERT INTO session_messages(id, session_id, kind, author_id, request_key, request_hash, content, delivery, created_at_ms)
+                VALUES ('queued', 's', 'queue', 'user', 'key', 'hash', 'exact text', 'interrupted', 3);
                 INSERT INTO session_items(session_id, kind, payload_json, created_at_ms, message_ordinal)
                 VALUES ('s', 'user', '{"content":"exact text","status":"interrupted","archived":true}', 3,
                     (SELECT ordinal FROM session_messages WHERE id='queued'));

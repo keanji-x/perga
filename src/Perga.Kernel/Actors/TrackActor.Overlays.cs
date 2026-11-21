@@ -9,8 +9,8 @@ public sealed partial class TrackActor
         status is "queued" or "running" or "stopping" or "compacting";
 
     private bool IsSessionBlockingTrack(AgentSessionDto session) =>
-        session.BoundTaskId is null ||
-        (session.BoundAttemptId is { } attemptId && _activeAttempts.ContainsKey(attemptId));
+        TryGetOwningTaskCore(session.Id) is not { } task ||
+        task.Status is TaskRunStatus.Running or TaskRunStatus.Verifying;
 
     internal Task<TrackOverlayDto> MergeOverlayAsync(TrackOverlayDto stored, CancellationToken ct) =>
         EnqueueAsync(async _ =>
@@ -36,7 +36,7 @@ public sealed partial class TrackActor
                     WorkspacePreparationPhase.Failed or WorkspacePreparationPhase.Unknown,
                 UpdatedAtMs = Math.Max(stored.UpdatedAtMs, LastActivityAtMs),
                 NotifiableSessions = sessions
-                    .Where(s => s.BoundTaskId is null && s.LastNotifiableTurnAtMs is not null)
+                    .Where(s => !IsTaskOwnedSessionCore(s.Id) && s.LastNotifiableTurnAtMs is not null)
                     .OrderBy(s => s.Id, StringComparer.Ordinal)
                     .Select(s => new NotifiableSessionWatermarkDto(s.Id, s.LastNotifiableTurnAtMs!.Value))
                     .ToArray()

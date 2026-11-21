@@ -213,7 +213,7 @@ public sealed partial class PolicyVm : IPolicyVm
     {
         var context = EvaluateTurnContext(policy, ctx, state);
         var before = Before(policy, "turn.before", ctx.TrackId, System.Text.Json.JsonSerializer.SerializeToElement(new {
-            sessionId = ctx.SessionId, isLead = ctx.IsLead, boundAttemptId = ctx.BoundAttemptId,
+            sessionId = ctx.SessionId, isLead = ctx.IsLead, boundTaskId = ctx.BoundTaskId,
             contextUsageRatio = ctx.ContextUsageRatio, context = context.Output
         }), ctx.Inputs, context.NextState);
         return new(before.NextState, new(context.Output, before.Output));
@@ -248,13 +248,13 @@ public sealed partial class PolicyVm : IPolicyVm
             {
                 ["sessionId"] = ctx.SessionId,
                 ["isLead"] = ctx.IsLead,
-                ["boundAttemptId"] = ctx.BoundAttemptId,
+                ["boundTaskId"] = ctx.BoundTaskId,
                 ["contextUsageRatio"] = ctx.ContextUsageRatio
             }));
 
-            if (ctx.BoundAttemptId is null && sessionObj is ObjectInstance sessionInst)
+            if (ctx.BoundTaskId is null && sessionObj is ObjectInstance sessionInst)
             {
-                sessionInst.Delete("boundAttemptId");
+                sessionInst.Delete("boundTaskId");
             }
 
             ((ObjectInstance)templateCtx).Set("session", sessionObj);

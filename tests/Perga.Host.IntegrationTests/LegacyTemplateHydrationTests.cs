@@ -299,7 +299,7 @@ public sealed class LegacyTemplateHydrationTests
             await restarted.WaitForTrackIdleAsync(trackId).WaitAsync(TimeSpan.FromSeconds(10));
             var recovered = (await store.LoadTrackAggregateAsync(trackId, default))!;
             Assert.Null(recovered.TemplateSnapshotSource);
-            Assert.NotNull(Assert.Single(recovered.Tasks).LatestAttemptId);
+            Assert.True(Assert.Single(recovered.Tasks).RunCount >= 1);
             Assert.Contains(reopened.AgentRuntime.ExecutedTurns, t => t.Input.Prompt.Contains("Inspect retained task", StringComparison.Ordinal));
         }
         finally { directory.Delete(recursive: true); }

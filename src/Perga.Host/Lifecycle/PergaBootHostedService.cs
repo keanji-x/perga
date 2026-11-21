@@ -50,12 +50,11 @@ public sealed class PergaBootHostedService : IHostedService
         var result = await _kernel.ReconcileOnBootAsync(cancellationToken).ConfigureAwait(false);
         LastReconcileResult = result;
 
-        if (result.AffectedTrackIds.Count > 0 || result.DiscardedLeases > 0)
+        if (result.AffectedTrackIds.Count > 0)
         {
             _logger.LogInformation(
-                "Perga boot reconciliation completed: {AffectedTracks} tracks reconciled, {DiscardedLeases} leases discarded, {WokenTracks} tracks woken.",
+                "Perga boot reconciliation completed: {AffectedTracks} tracks reconciled, {WokenTracks} tracks woken.",
                 result.AffectedTrackIds.Count,
-                result.DiscardedLeases,
                 result.WokenTracks);
         }
     }

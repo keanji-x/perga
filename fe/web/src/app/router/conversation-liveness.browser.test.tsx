@@ -100,9 +100,8 @@ it('allows Worker reset and follows the runtime compact capability', async () =>
   const view = renderSessionFixture({ initial: '/track/daily?panel=conversations', reply: request => {
     if (!request.path.includes('/items?')) return undefined;
     const result = sessionPage(view.sessions[0]);
-    return sessionReply({ ...result, capabilities: { ...result.capabilities!, supportsCompact: false } });
+    return sessionReply({ ...result, taskBinding: { task: { id: 'task', trackId: 'daily', blockId: 'block', taskKey: 'inspect', kind: 'agent', status: 'running', sessionId: view.sessions[0].id, runCount: 1, createdAtMs: 1, updatedAtMs: 1 }, phase: 'running', waitingReason: null }, capabilities: { ...result.capabilities!, supportsCompact: false } });
   } });
-  view.sessions[0].boundTaskId = 'task'; view.sessions[0].boundAttemptId = 'attempt';
   await page.getByRole('button', { name: /Conversation Daily Planner conversation/ }).click();
   await page.getByRole('button', { name: '会话操作', exact: true }).click();
   await expect.element(page.getByRole('menuitem', { name: '压缩上下文 /compact' })).toHaveAttribute('aria-disabled', 'true');

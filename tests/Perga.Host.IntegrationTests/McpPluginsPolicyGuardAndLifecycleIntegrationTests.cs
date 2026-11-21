@@ -412,6 +412,7 @@ public sealed class McpPluginsPolicyGuardAndLifecycleIntegrationTests
         var ct = cts.Token;
 
         var sharedPersistDir = Directory.CreateTempSubdirectory("perga-lifecycle-it-").FullName;
+        string trackId;
         try
         {
             // -------- Part 1: CronosScheduleHostedService + SqliteMaintenanceHostedService --------
@@ -468,7 +469,7 @@ public sealed class McpPluginsPolicyGuardAndLifecycleIntegrationTests
                     ct);
                 trackResp.EnsureSuccessStatusCode();
                 using var snap = JsonDocument.Parse(await trackResp.Content.ReadAsStringAsync(ct));
-                var trackId = snap.RootElement.GetProperty("track").GetProperty("id").GetString()!;
+                trackId = snap.RootElement.GetProperty("track").GetProperty("id").GetString()!;
                 var leadSessionId = snap.RootElement.GetProperty("track").GetProperty("leadSessionId").GetString()!;
 
                 // Advance TimeProvider by 6 minutes -> CronosScheduleHostedService wakes Lead!
@@ -532,28 +533,13 @@ public sealed class McpPluginsPolicyGuardAndLifecycleIntegrationTests
                     StatusDetail: null,
                     SemanticVerdict: SemanticVerdict.None,
                     SemanticNote: null,
-                    LatestAttemptId: "att_crash_1",
                     CreatedAtMs: nowMs,
-                    UpdatedAtMs: nowMs);
-
-                using var leaseDoc = JsonDocument.Parse(
-                    JsonSerializer.Serialize(
-                        new AttemptWorkspaceLease("direct", "att_crash_1", wsDir, false, dummyDoc.RootElement.Clone()),
-                        PergaJsonDefaults.ApiOptions));
-                var crashedAttempt = new TaskAttemptDto(
-                    AttemptId: "att_crash_1",
-                    TaskId: "tsk_crash_1",
-                    TrackId: trackId,
-                    SessionId: null,
-                    Status: "Running",
-                    WorkerResult: null,
+                    UpdatedAtMs: nowMs,
+                    RunCount: 1,
                     Meta: dummyDoc.RootElement.Clone(),
-                    WorkspaceLease: leaseDoc.RootElement.Clone(),
-                    GateVerdict: null,
-                    StartedAtMs: nowMs,
-                    FinishedAtMs: null);
+                    StartedAtMs: nowMs);
 
-                await store.UpsertTaskAndAttemptAsync(crashedTask, crashedAttempt, null, null, ct);
+                await store.UpsertTaskAsync(crashedTask, null, null, ct);
             }
 
             // -------- Part 2: Reboot Perga.Host on same SQLite DB -> PergaBootHostedService reconciles crashed state! --------
@@ -566,13 +552,13 @@ public sealed class McpPluginsPolicyGuardAndLifecycleIntegrationTests
                 var bootSvc = rebooted.Services.GetRequiredService<PergaBootHostedService>();
                 Assert.NotNull(bootSvc.LastReconcileResult);
                 Assert.NotEmpty(bootSvc.LastReconcileResult!.AffectedTrackIds);
-                Assert.Equal(1, bootSvc.LastReconcileResult.DiscardedLeases);
                 Assert.Equal(1, bootSvc.LastReconcileResult.WokenTracks);
 
                 var store = rebooted.Services.GetRequiredService<SqliteTrackStore>();
-                var attempts = await store.ListAttemptsForTaskAsync("tsk_crash_1", ct);
-                Assert.Single(attempts);
-                Assert.Equal("interrupted", attempts[0].Status);
+                var agg = await store.LoadTrackAggregateAsync(trackId, ct);
+                var taskAfter = Assert.Single(agg!.Tasks, t => t.Id == "tsk_crash_1");
+                Assert.Equal(TaskRunStatus.Failed, taskAfter.Status);
+                Assert.NotNull(taskAfter.FinishedAtMs);
             }
         }
         finally

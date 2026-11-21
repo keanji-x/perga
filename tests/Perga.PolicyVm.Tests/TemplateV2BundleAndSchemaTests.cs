@@ -360,7 +360,7 @@ public sealed class TemplateV2BundleAndSchemaTests
 
         var turnRes = _vm.PrepareTurn(
             compiled,
-            new PolicyTurnContext("trk_1", "ses_1", IsLead: true, BoundAttemptId: null, ContextUsageRatio: 0.1, Inputs: denyInputs),
+            new PolicyTurnContext("trk_1", "ses_1", IsLead: true, BoundTaskId: null, ContextUsageRatio: 0.1, Inputs: denyInputs),
             afterRes.NextState);
         Assert.Equal("ctx:deny", turnRes.Output.Context);
         Assert.IsType<GuardDecision.Allow>(turnRes.Output.Decision);
@@ -665,7 +665,7 @@ public sealed class TemplateV2BundleAndSchemaTests
 
             var turn = _vm.PrepareTurn(
                 policy,
-                new PolicyTurnContext("trk_1", "ses_1", IsLead: true, BoundAttemptId: null, ContextUsageRatio: 0.1, Inputs: inputs),
+                new PolicyTurnContext("trk_1", "ses_1", IsLead: true, BoundTaskId: null, ContextUsageRatio: 0.1, Inputs: inputs),
                 empty);
             Assert.Equal("child context", turn.Output.Context);
 

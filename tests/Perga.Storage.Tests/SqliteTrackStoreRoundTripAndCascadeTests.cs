@@ -95,8 +95,6 @@ public sealed class SqliteTrackStoreRoundTripAndCascadeTests
             Id: "sess_sub_free",
             TrackId: "trk_parent",
             IsLead: false,
-            BoundTaskId: null,
-            BoundAttemptId: null,
             Title: "Helper",
             Provider: "claude",
             Model: "claude-sonnet-4",
@@ -232,7 +230,6 @@ public sealed class SqliteTrackStoreRoundTripAndCascadeTests
             StatusDetail: null,
             SemanticVerdict: SemanticVerdict.None,
             SemanticNote: null,
-            LatestAttemptId: null,
             CreatedAtMs: 3_000,
             UpdatedAtMs: 3_000);
 
@@ -270,32 +267,23 @@ public sealed class SqliteTrackStoreRoundTripAndCascadeTests
         Assert.Equal(ReportBlockKind.Task, decompressedRev2[1].Kind);
         Assert.Empty(await store.GetReportRevisionBlocksAsync("trk_a", 999, ct));
 
-        // 2. Attach an attempt to task_1, then re-run SaveReportAndTasksAsync removing task_2 while keeping task_1!
-        // Existing task_attempts on task_1 MUST survive (in-place ON CONFLICT DO UPDATE, not INSERT OR REPLACE!).
-        var attempt1 = new TaskAttemptDto(
-            AttemptId: "att_1",
-            TaskId: "task_1",
-            TrackId: "trk_a",
-            SessionId: "sess_a",
-            Status: "done",
-            WorkerResult: StorageTestHarness.Json("""{"summary":"compiled"}"""),
-            Meta: StorageTestHarness.Json("""{"exitCode":0}"""),
-            WorkspaceLease: StorageTestHarness.Json("""{"driverId":"direct","effectiveCwd":"/workspace/trk_a"}"""),
-            GateVerdict: StorageTestHarness.Json("""{"passed":true}"""),
-            StartedAtMs: 3_200,
-            FinishedAtMs: 3_300);
-
+        // 2. Settle task_1 with run fields, then re-run SaveReportAndTasksAsync removing task_2 while keeping task_1!
         var task1Done = task1 with
         {
             Status = TaskRunStatus.Done,
             SemanticVerdict = SemanticVerdict.Accepted,
             SemanticNote = "Clean build",
-            LatestAttemptId = "att_1",
+            SessionId = "sess_a",
+            RunCount = 1,
+            WorkerResult = StorageTestHarness.Json("""{"summary":"compiled"}"""),
+            Meta = StorageTestHarness.Json("""{"exitCode":0}"""),
+            GateVerdict = StorageTestHarness.Json("""{"passed":true}"""),
+            StartedAtMs = 3_200,
+            FinishedAtMs = 3_300,
             UpdatedAtMs = 3_300
         };
-        await store.UpsertTaskAndAttemptAsync(
+        await store.UpsertTaskAsync(
             task1Done,
-            attempt1,
             StorageTestHarness.Json("""{"stage":"built"}"""),
             StorageTestHarness.CreateEvent("task.updated", "trk_a", "area_1", createdAtMs: 3_300),
             ct);
@@ -320,10 +308,9 @@ public sealed class SqliteTrackStoreRoundTripAndCascadeTests
         var remainingTask = Assert.Single(aggA.Tasks);
         Assert.Equal("task_1", remainingTask.Id);
         Assert.Equal(SemanticVerdict.Accepted, remainingTask.SemanticVerdict);
-
-        var attemptsOnTask1 = await store.ListAttemptsForTaskAsync("task_1", ct);
-        Assert.Single(attemptsOnTask1);
-        Assert.Equal("att_1", attemptsOnTask1[0].AttemptId);
+        Assert.Equal("sess_a", remainingTask.SessionId);
+        Assert.Equal(1, remainingTask.RunCount);
+        Assert.Equal("compiled", remainingTask.WorkerResult!.Value.GetProperty("summary").GetString());
 
         // 3. RecordTurnAndItemsAsync updates the same turn and paginates its items
         var turn1Running = new SessionTurnDto(
@@ -382,7 +369,7 @@ public sealed class SqliteTrackStoreRoundTripAndCascadeTests
         var unreadMailsB = await store.ListMailsAsync("trk_b", unreadOnly: true, ct: ct);
         Assert.Equal(["mail_1"], unreadMailsB.Select(static m => m.Id).ToArray());
 
-        var term = new TerminalDto("term_1", "trk_a", "att_1", "idem_term", "Build Shell", "/bin/bash", "/workspace/trk_a", TerminalStatus.Running, null, 6_000, null);
+        var term = new TerminalDto("term_1", "trk_a", "sess_a", "idem_term", "Build Shell", "/bin/bash", "/workspace/trk_a", TerminalStatus.Running, null, 6_000, null);
         await store.UpsertTerminalAsync(term, StorageTestHarness.CreateEvent("terminal.changed", "trk_a", "area_1", createdAtMs: 6_000), ct);
         await store.UpsertTerminalAsync(term with { Status = TerminalStatus.Exited, ExitCode = 0, ExitedAtMs = 6_500 }, evt: null, ct);
 
@@ -401,7 +388,7 @@ public sealed class SqliteTrackStoreRoundTripAndCascadeTests
     }
 
     [Fact]
-    public async Task MarkInFlightInterruptedOnBootAsync_MarksMixedCaseAttemptsAndTurnsResetsSessionsAndExtractsLeases()
+    public async Task MarkInFlightInterruptedOnBootAsync_MarksInFlightTasksAndTurnsAndResetsSessions()
     {
         await using var harness = await StorageTestHarness.CreateAsync();
         var store = harness.Store;
@@ -417,24 +404,18 @@ public sealed class SqliteTrackStoreRoundTripAndCascadeTests
         await store.CreateTrackAsync(openTrack2, rep2, null, lead2, ct);
         await store.CreateTrackAsync(closedTrack, repClosed, null, leadClosed with { Status = "running" }, ct);
 
-        // In-flight Verifying attempt with WorkspaceLease on openTrack2
+        // In-flight Verifying task on openTrack2
         var taskOpen2 = new TaskDto(
             "t_open2", "trk_open_2", "b_1", "test", 1, "subagent", "codex", AccessMode.ReadWrite,
-            true, [], "Run tests", null, null, null, TaskRunStatus.Verifying, null, SemanticVerdict.None, null, "att_verifying", 5_000, 5_000);
-        var attemptOpen2 = new TaskAttemptDto(
-            "att_verifying", "t_open2", "trk_open_2", null, "Verifying", null,
-            StorageTestHarness.Json("{}"),
-            StorageTestHarness.Json("""{"driverId":"vcs-workspace","attemptId":"att_verifying","effectiveCwd":"/tmp/lease1"}"""),
-            null, 5_000, null);
-        await store.UpsertTaskAndAttemptAsync(taskOpen2, attemptOpen2, null, null, ct);
+            true, [], "Run tests", null, null, null, TaskRunStatus.Verifying, null, SemanticVerdict.None, null, 5_000, 5_000,
+            RunCount: 1, StartedAtMs: 5_000);
+        var worker = lead2 with { Id = "worker-queued", IsLead = false, Status = "queued" };
+        taskOpen2 = taskOpen2 with { SessionId = worker.Id };
+        await store.UpsertTaskAsync(taskOpen2, null, null, ct, worker);
 
-        var legacyTask = taskOpen2 with { Id = "t_legacy", TaskKey = "legacy", Status = TaskRunStatus.Running, LatestAttemptId = "att_legacy" };
-        var legacyAttempt = attemptOpen2 with { AttemptId = "att_legacy", TaskId = legacyTask.Id, Status = "interrupted" };
-        await store.UpsertTaskAndAttemptAsync(legacyTask, legacyAttempt, null, null, ct);
-
-        var pendingTask = taskOpen2 with { Id = "t_reserved", TaskKey = "reserved", Status = TaskRunStatus.Running, LatestAttemptId = "att_reserved" };
-        var reservation = attemptOpen2 with { AttemptId = "att_reserved", TaskId = pendingTask.Id, Status = "running", WorkspaceLease = null };
-        await store.UpsertTaskAndAttemptAsync(pendingTask, reservation, null, null, ct);
+        var runningWorker = worker with { Id = "worker-running", Status = "running" };
+        var runningTask = taskOpen2 with { Id = "t_running", TaskKey = "running", Status = TaskRunStatus.Running, SessionId = runningWorker.Id };
+        await store.UpsertTaskAsync(runningTask, null, null, ct, runningWorker);
 
         // In-flight Running turn on openTrack1 and closedTrack
         await store.RecordTurnAndItemsAsync(
@@ -448,23 +429,20 @@ public sealed class SqliteTrackStoreRoundTripAndCascadeTests
             updatedSession: null,
             ct);
 
-        var leasesBeforeMark = await store.ListInFlightAttemptLeasesAsync(ct);
-        var leaseBefore = Assert.Single(leasesBeforeMark);
-        Assert.Equal("att_verifying", leaseBefore.AttemptId);
-        Assert.Equal("/tmp/lease1", leaseBefore.WorkspaceLease.GetProperty("effectiveCwd").GetString());
-
         var affectedTracks = await store.MarkInFlightInterruptedOnBootAsync(ct);
         Assert.Equal(["trk_closed", "trk_open_1", "trk_open_2"], affectedTracks.ToArray());
 
-        Assert.Empty(await store.ListInFlightAttemptLeasesAsync(ct));
-
         var recoveredTrack = (await store.LoadTrackAggregateAsync(openTrack2.Id, ct))!;
-        Assert.Equal(TaskRunStatus.Failed, Assert.Single(recoveredTrack.Tasks, task => task.Id == legacyTask.Id).Status);
-        Assert.Equal(TaskRunStatus.Pending, Assert.Single(recoveredTrack.Tasks, task => task.Id == pendingTask.Id).Status);
-
-        var updatedAttempts = await store.ListAttemptsForTaskAsync("t_open2", ct);
-        Assert.Equal("interrupted", updatedAttempts[0].Status);
-        Assert.NotNull(updatedAttempts[0].FinishedAtMs);
+        foreach (var id in new[] { worker.Id, runningWorker.Id })
+        {
+            var archived = Assert.Single(recoveredTrack.Sessions, s => s.Id == id);
+            Assert.NotNull(archived.ArchivedAtMs);
+            Assert.Equal("idle", archived.Status);
+        }
+        var recoveredOpen2 = Assert.Single(recoveredTrack.Tasks, task => task.Id == taskOpen2.Id);
+        Assert.Equal(TaskRunStatus.Failed, recoveredOpen2.Status);
+        Assert.NotNull(recoveredOpen2.FinishedAtMs);
+        Assert.Equal(TaskRunStatus.Failed, Assert.Single(recoveredTrack.Tasks, task => task.Id == runningTask.Id).Status);
 
         var updatedTurnsOpen1 = await store.ListSessionTurnsAsync("sess_open_1", ct);
         Assert.Equal("unknown", updatedTurnsOpen1[0].Status);
@@ -520,10 +498,9 @@ public sealed class SqliteTrackStoreRoundTripAndCascadeTests
 
             var task = new TaskDto(
                 $"task_{suffix}", trackId, "b_1", "k1", 1, "subagent", "codex", AccessMode.ReadWrite,
-                true, [], "Goal", null, null, null, TaskRunStatus.Running, null, SemanticVerdict.None, null, $"att_{suffix}", 1_000, 1_000);
-            var attempt = new TaskAttemptDto(
-                $"att_{suffix}", $"task_{suffix}", trackId, sessId, "running", null, StorageTestHarness.Json("{}"), null, null, 1_000, null);
-            await store.UpsertTaskAndAttemptAsync(task, attempt, null, null, ct);
+                true, [], "Goal", null, null, null, TaskRunStatus.Running, null, SemanticVerdict.None, null, 1_000, 1_000,
+                SessionId: sessId, RunCount: 1, StartedAtMs: 1_000);
+            await store.UpsertTaskAsync(task, null, null, ct);
 
             var turn = new SessionTurnDto(
                 $"turn_{suffix}", sessId, 1, 1, "user", StorageTestHarness.Json("{}"), "completed", null, null, 1_000, 1_100);
@@ -556,7 +533,6 @@ public sealed class SqliteTrackStoreRoundTripAndCascadeTests
             ("reports", "track_id = 'trk_del'"),
             ("report_revisions", "track_id = 'trk_del'"),
             ("tasks", "track_id = 'trk_del'"),
-            ("task_attempts", "track_id = 'trk_del'"),
             ("agent_sessions", "track_id = 'trk_del'"),
             ("session_turns", "session_id = 'sess_del'"),
             ("session_items", "session_id = 'sess_del'"),

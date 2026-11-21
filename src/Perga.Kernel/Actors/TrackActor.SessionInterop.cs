@@ -28,12 +28,12 @@ public sealed partial class TrackActor
         return caller;
     }
 
-    private void RequireSessionMutationCore(AgentSessionDto session, InteropPrincipal principal, string? expectedAttemptId = null,
+    private void RequireSessionMutationCore(AgentSessionDto session, InteropPrincipal principal, int? expectedEpoch = null,
         bool destructive = false)
     {
         RequireInteropCore(principal, session, write: true, destructive: destructive);
-        if (expectedAttemptId is not null && session.BoundAttemptId != expectedAttemptId)
-            throw KernelException.Conflict("The session attempt changed.");
+        if (expectedEpoch is { } epoch && session.Epoch != epoch)
+            throw KernelException.Conflict("The session epoch changed.");
         RequireSessionWritableCore(session);
     }
 
@@ -41,7 +41,24 @@ public sealed partial class TrackActor
     {
         if (_track.ClosedAtMs is not null || session.ArchivedAtMs is not null)
             throw KernelException.PreconditionFailed("Reopen the conversation before modifying it.");
-        if (session.BoundAttemptId is { } attemptId) RequireCurrentWorkerCore(session.Id, attemptId);
+        if (TryGetOwningTaskCore(session.Id) is { } task)
+        {
+            if (!_activeTasks.TryGetValue(task.Id, out var active) || active.Settling || task.Status != TaskRunStatus.Running)
+                throw KernelException.Conflict("The task is no longer running. Refresh the task before sending a command.");
+            RequireDispatchWorkspace(session);
+        }
+    }
+
+    private string? ReadSessionReadonlyReasonCore(AgentSessionDto session)
+    {
+        if (session.ArchivedAtMs is not null) return "archived";
+        if (_track.ClosedAtMs is not null) return "track_closed";
+        var task = TryGetOwningTaskCore(session.Id);
+        if (task?.Status == TaskRunStatus.Pending) return "waiting_task";
+        if (task?.Status == TaskRunStatus.Verifying) return "task_finished";
+        return task is not null && !_activeTasks.ContainsKey(task.Id) &&
+            task.Status is TaskRunStatus.Done or TaskRunStatus.Failed or TaskRunStatus.Canceled
+            ? "task_finished" : null;
     }
 
     public Task<IReadOnlyList<SessionSummaryDto>> ListSessionsAsync(SessionListFilter filter, InteropPrincipal caller, CancellationToken ct) =>
@@ -55,15 +72,13 @@ public sealed partial class TrackActor
                          (filter.ParentSessionId is null || s.ParentSessionId == filter.ParentSessionId)))
             {
                 var last = (await _store.ListSessionTurnsAsync(session.Id, ct).ConfigureAwait(false)).MaxBy(t => t.TurnIndex);
-                _activeAttempts.TryGetValue(session.BoundAttemptId ?? "", out var attempt);
+                var owningTask = TryGetOwningTaskCore(session.Id);
+                var activeTask = owningTask is not null && _activeTasks.TryGetValue(owningTask.Id, out var found) ? found : null;
                 var state = session.Status == "queued" ? "running" : session.Status;
-                string? readonlyReason = null;
-                if (session.ArchivedAtMs is not null) readonlyReason = "archived";
-                else if (_track.ClosedAtMs is not null) readonlyReason = "track_closed";
-                else if (session.BoundAttemptId is not null && attempt is null) readonlyReason = "worker_finished";
+                var readonlyReason = ReadSessionReadonlyReasonCore(session);
                 var pendingInteractionCount = pendingApprovals.Count(a => a.SessionId == session.Id) +
                     _asks.Values.Count(a => a.Status == AskStatus.Open && a.SessionId == session.Id);
-                summaries.Add(new(session, state, readonlyReason, attempt?.Paused == true, last, pendingInteractionCount));
+                summaries.Add(new(session, state, readonlyReason, activeTask?.Paused == true, last, pendingInteractionCount, owningTask?.Id));
             }
             return summaries;
         }, ct);
@@ -101,9 +116,12 @@ public sealed partial class TrackActor
         var session = RequireSessionCore(sessionId);
         RequireInteropCore(caller, session, write: true, destructive: request.Archived == true || request.Provider is not null);
         if (_track.ClosedAtMs is not null) throw KernelException.PreconditionFailed("The Track is closed.");
-        if (session.BoundAttemptId is { } attemptId) RequireCurrentWorkerCore(sessionId, attemptId);
-        if (request.ExpectedAttemptId is not null && session.BoundAttemptId != request.ExpectedAttemptId)
-            throw KernelException.Conflict("The session attempt changed.");
+        if (TryGetOwningTaskCore(sessionId) is { Status: not TaskRunStatus.Pending } task)
+        {
+            if (!_activeTasks.TryGetValue(task.Id, out var active) || active.Settling || task.Status != TaskRunStatus.Running)
+                throw KernelException.Conflict("The task is no longer running. Refresh the task before updating it.");
+            RequireDispatchWorkspace(session);
+        }
         if (configChanged && request.ExpectedConfigVersion is { } version && version != session.ConfigVersion)
             throw KernelException.Conflict("Session configuration changed. Refresh before updating it.");
         if (configChanged && caller is InteropPrincipal.Session && request.ExpectedConfigVersion is null)

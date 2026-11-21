@@ -10,7 +10,7 @@ public partial interface IPergaKernel
     Task<SessionItemsPageDto> GetSessionItemsAsync(string sessionId, SessionReadQuery query, InteropPrincipal caller, CancellationToken ct);
     Task<AgentSessionDto> UpdateSessionAsync(string sessionId, UpdateSessionRequest request, InteropPrincipal caller, CancellationToken ct);
     Task<SessionMessageReceipt> SendSessionMessageAsync(string sessionId, SendSessionMessageRequest request, InteropPrincipal caller, CancellationToken ct);
-    Task WithdrawSessionMessageAsync(string sessionId, string messageId, string? expectedAttemptId, InteropPrincipal caller, CancellationToken ct);
+    Task WithdrawSessionMessageAsync(string sessionId, string messageId, InteropPrincipal caller, CancellationToken ct);
     Task<AgentSessionDto> ControlSessionAsync(string sessionId, SessionControlRequest request, InteropPrincipal caller, CancellationToken ct);
     Task<SessionInteractionResult> RespondInteractionAsync(string sessionId, string interactionId, RespondInteractionRequest request, InteropPrincipal caller, CancellationToken ct);
 }
@@ -30,9 +30,9 @@ public sealed partial class PergaKernelService
     public async Task<SessionMessageReceipt> SendSessionMessageAsync(string sessionId, SendSessionMessageRequest request, InteropPrincipal caller, CancellationToken ct) =>
         await Actors.GetOrActivate(await ResolveTrackIdForSessionAsync(sessionId, ct).ConfigureAwait(false))
             .SendSessionMessageAsync(sessionId, request, caller, ct).ConfigureAwait(false);
-    public async Task WithdrawSessionMessageAsync(string sessionId, string messageId, string? expectedAttemptId, InteropPrincipal caller, CancellationToken ct) =>
+    public async Task WithdrawSessionMessageAsync(string sessionId, string messageId, InteropPrincipal caller, CancellationToken ct) =>
         await Actors.GetOrActivate(await ResolveTrackIdForSessionAsync(sessionId, ct).ConfigureAwait(false))
-            .WithdrawSessionMessageAsync(sessionId, messageId, expectedAttemptId, caller, ct).ConfigureAwait(false);
+            .WithdrawSessionMessageAsync(sessionId, messageId, caller, ct).ConfigureAwait(false);
     public async Task<AgentSessionDto> ControlSessionAsync(string sessionId, SessionControlRequest request, InteropPrincipal caller, CancellationToken ct) =>
         await Actors.GetOrActivate(await ResolveTrackIdForSessionAsync(sessionId, ct).ConfigureAwait(false))
             .ControlSessionAsync(sessionId, request, caller, ct).ConfigureAwait(false);

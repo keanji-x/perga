@@ -28,7 +28,7 @@ public static class KernelMcpToolNames
     public const string TerminalInput = "terminal_input";
     public const string ScheduleList = "schedule_list";
 
-    // Governance tools (BoundAttemptId == null ONLY)
+    // Governance tools (BoundTaskId == null ONLY)
     public const string TaskCancel = "task_cancel";
     public const string TaskAccept = "task_accept";
     public const string TaskReject = "task_reject";
@@ -42,7 +42,7 @@ public static class KernelMcpToolNames
     public const string ScheduleSet = "schedule_set";
     public const string ScheduleCancel = "schedule_cancel";
 
-    // Contract completion tools (BoundAttemptId != null ONLY)
+    // Contract completion tools (BoundTaskId != null ONLY)
     public const string TaskDone = "task_done";
     public const string TaskFail = "task_fail";
     public const string SessionRespond = "session_respond";
@@ -106,9 +106,9 @@ public static class KernelMcpCatalog
 
     public static IReadOnlyList<McpToolDescriptor> GetAllTools() => AllDescriptors;
 
-    public static IReadOnlyList<McpToolDescriptor> GetToolsForSession(string? boundAttemptId, bool isLead = false)
+    public static IReadOnlyList<McpToolDescriptor> GetToolsForSession(string? boundTaskId, bool isLead = false)
     {
-        var isBound = !string.IsNullOrEmpty(boundAttemptId);
+        var isBound = !string.IsNullOrEmpty(boundTaskId);
         return AllDescriptors
             .Where(d => isBound ? !IsGovernanceOnly(d.Name) : !IsCompletionOnly(d.Name))
             .Where(d => !IsLeadOnly(d.Name) || (!isBound && isLead))
@@ -185,7 +185,7 @@ public static class KernelMcpCatalog
                 Schema("""{"type":"object","additionalProperties":false,"required":["title","prompt"],"properties":{"id":{"type":"string"},"title":{"type":"string"},"prompt":{"type":"string"},"runAt":{"type":"string"},"runAtMs":{"type":"integer"},"cron":{"type":"string"},"timezone":{"type":"string"},"maxOccurrences":{"type":"integer","minimum":1}}}""")),
             new(KernelMcpToolNames.ScheduleCancel, "Cancel an active schedule on this track and drop any pending wake for it (governance only).",
                 Schema("""{"type":"object","additionalProperties":false,"required":["scheduleId"],"properties":{"scheduleId":{"type":"string"}}}""")),
-            new(KernelMcpToolNames.TaskCancel, "Cancel a task and discard any active attempt lease (task parent or Track Lead).",
+            new(KernelMcpToolNames.TaskCancel, "Cancel a task and stop any active execution (task parent or Track Lead).",
                 Schema("""{"type":"object","required":["taskKey"],"properties":{"taskKey":{"type":"string"},"reason":{"type":"string"}}}""")),
             new(KernelMcpToolNames.TaskAccept, "Record semantic acceptance verdict on a task (task parent or Track Lead).",
                 Schema("""{"type":"object","required":["taskKey"],"properties":{"taskKey":{"type":"string"},"note":{"type":"string"}}}""")),
@@ -203,11 +203,11 @@ public static class KernelMcpCatalog
                 Schema("""{"type":"object","required":["inputs"],"properties":{"inputs":{"type":"object"}}}""")),
             new(KernelMcpToolNames.TrackSet, "Apply a templateId or JSON/.perga.js source with inputs. Use dryRun to preview or clear to detach while keeping the report (governance only).",
                 Schema("""{"type":"object","properties":{"templateId":{"type":"string","minLength":1},"source":{"type":"string","minLength":1},"inputs":{"type":"object"},"dryRun":{"type":"boolean"},"clear":{"type":"boolean"},"resetData":{"type":"boolean"}}}""")),
-            new(KernelMcpToolNames.TrackClose, "Close the current track and cancel active attempts (governance only).",
+            new(KernelMcpToolNames.TrackClose, "Close the current track and cancel active tasks (governance only).",
                 Schema("""{"type":"object","properties":{}}""")),
-            new(KernelMcpToolNames.TaskDone, "Submit completed work for the bound task attempt and trigger gate verification (contract subagent only).",
+            new(KernelMcpToolNames.TaskDone, "Submit completed work for the bound task and trigger gate verification (contract subagent only).",
                 Schema("""{"type":"object","properties":{"result":{}}}""")),
-            new(KernelMcpToolNames.TaskFail, "Report failure for the bound task attempt and discard lease (contract subagent only).",
+            new(KernelMcpToolNames.TaskFail, "Report failure for the bound task (contract subagent only).",
                 Schema("""{"type":"object","required":["reason"],"properties":{"reason":{"type":"string"},"result":{}}}""")),
             new(KernelMcpToolNames.SessionList, "List conversations in this Track.",
                 Schema("""
@@ -259,7 +259,6 @@ public static class KernelMcpCatalog
                 {"type":"object","additionalProperties":false,"properties":{
                   "sessionId":{"type":"string","description":"ID of the conversation to update."},
                   "expectedConfigVersion":{"type":"integer","description":"Current configuration version from session read or list. Required for provider, model, effort, or permission changes."},
-                  "expectedAttemptId":{"type":"string","description":"Current Worker attempt ID, when fencing an update to a particular attempt."},
                   "title":{"type":"string","description":"New title. Omit to keep the current title."},
                   "archived":{"type":"boolean","description":"Set true to archive or false to reopen. Omit to preserve the current state."},
                   "provider":{"type":"string","description":"Provider ID for an idle session. Omit to keep the current provider. Changing providers resets omitted model, reasoningEffort, and permissionMode."},
@@ -272,7 +271,7 @@ public static class KernelMcpCatalog
                 Schema("""
                 {"type":"object","additionalProperties":false,"properties":{
                   "sessionId":{"type":"string","description":"ID of the conversation that should receive the message."},
-                  "expectedAttemptId":{"type":"string","description":"Require the target Worker to still be on this attempt."},
+                  "expectedEpoch":{"type":"integer","description":"Require this conversation epoch."},
                   "content":{"type":"string","description":"Text for a new message, supplied with requestKey in place of messageId."},
                   "requestKey":{"type":"string","description":"Idempotency key required with new content and reused for identical retries."},
                   "messageId":{"type":"string","description":"ID of a queued message to steer into the active turn."},
@@ -284,7 +283,6 @@ public static class KernelMcpCatalog
                 Schema("""
                 {"type":"object","additionalProperties":false,"properties":{
                   "sessionId":{"type":"string","description":"ID of the conversation that owns the message."},
-                  "expectedAttemptId":{"type":"string","description":"Require the target Worker to still be on this attempt."},
                   "messageId":{"type":"string","description":"ID of the queued or unresolved message to withdraw."}
                 },"required":["sessionId","messageId"]}
                 """)),
@@ -292,7 +290,6 @@ public static class KernelMcpCatalog
                 Schema("""
                 {"type":"object","additionalProperties":false,"properties":{
                   "sessionId":{"type":"string","description":"ID of the conversation to control."},
-                  "expectedAttemptId":{"type":"string","description":"Require the target Worker to still be on this attempt."},
                   "action":{"enum":["stop","reconnect","reset_context","compact"],"description":"Lifecycle operation to perform on the target conversation."},
                   "turnId":{"type":"string","description":"ID of the observed turn, required for stop."},
                   "expectedEpoch":{"type":"integer","description":"Require this conversation epoch when reconnecting or resetting context."}
@@ -329,7 +326,7 @@ public static class KernelMcpDispatcher
             return await kernel.InvokeSystemUpgradeAsync(caller,
                 toolName == KernelMcpToolNames.SystemUpgradeCheck ? "check" : toolName == KernelMcpToolNames.SystemUpgradeApply ? "apply" : "rollback", args, ct).ConfigureAwait(false);
         }
-        var origin = KernelMcpCatalog.IsCompletionOnly(toolName) && caller.BoundAttemptId is not null
+        var origin = KernelMcpCatalog.IsCompletionOnly(toolName) && caller.BoundTaskId is not null
             ? await kernel.Actors.GetOrActivate(caller.TrackId).CaptureWorkerCompletionOriginAsync(caller, ct).ConfigureAwait(false)
             : null;
         var expectedPolicyGeneration = await kernel.GuardMcpToolCallAsync(caller.TrackId, caller.SessionId, "perga", toolName, args, ct, caller.ExecutionOrigin)
@@ -477,7 +474,7 @@ public static class KernelMcpDispatcher
             case KernelMcpToolNames.SessionWithdraw:
                 RejectUnknownArgs(args, ToolSchema(toolName));
                 await kernel.WithdrawSessionMessageAsync(RequireStringArg(args, ["sessionId"]), RequireStringArg(args, ["messageId"]),
-                    OptionalTypedStringArg(args, ["expectedAttemptId"]), Principal(caller), ct).ConfigureAwait(false);
+                    Principal(caller), ct).ConfigureAwait(false);
                 return JsonHelpers.ToElement(new { ok = true });
 
             case KernelMcpToolNames.SessionControl:
@@ -643,7 +640,7 @@ public static class KernelMcpDispatcher
                 JsonElement? workerResult = JsonHelpers.TryGetPropertyIgnoreCase(args, ["result", "workerResult", "worker_result"], out var wr)
                     ? wr.Clone()
                     : null;
-                var res = await kernel.CompleteAttemptDoneAsync(caller.TrackId, caller.SessionId, workerResult, ct, origin)
+                var res = await kernel.CompleteTaskDoneAsync(caller.TrackId, caller.SessionId, workerResult, ct, origin)
                     .ConfigureAwait(false);
                 return JsonHelpers.ToElement(res);
             }
@@ -654,7 +651,7 @@ public static class KernelMcpDispatcher
                 JsonElement? workerResult = JsonHelpers.TryGetPropertyIgnoreCase(args, ["result", "workerResult", "worker_result"], out var wr)
                     ? wr.Clone()
                     : null;
-                var res = await kernel.CompleteAttemptFailAsync(caller.TrackId, caller.SessionId, reason, workerResult, ct, origin)
+                var res = await kernel.CompleteTaskFailAsync(caller.TrackId, caller.SessionId, reason, workerResult, ct, origin)
                     .ConfigureAwait(false);
                 return JsonHelpers.ToElement(res);
             }
@@ -665,7 +662,7 @@ public static class KernelMcpDispatcher
     }
 
     private static InteropPrincipal.Session Principal(McpSessionPrincipal caller) => new(
-        caller.TrackId, caller.SessionId, caller.IsLead, caller.BoundAttemptId, 0, caller.Token, caller.ExecutionOrigin);
+        caller.TrackId, caller.SessionId, caller.IsLead, caller.BoundTaskId, 0, caller.Token, caller.ExecutionOrigin);
 
     private sealed record ProviderListArgs(string? Provider = null, bool Refresh = false, bool IncludeUnavailable = false);
 

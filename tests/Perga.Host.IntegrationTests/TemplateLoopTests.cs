@@ -136,7 +136,7 @@ public sealed class TemplateLoopTests
         var receipt = await kernel.CreateSessionAsync(trackId, new(Prompt: "Review this", Task: new(), Role: "review"), "route", new InteropPrincipal.Human(), default);
         await kernel.WaitForTrackIdleAsync(trackId);
         Assert.Equal("review", receipt.Receipt.Task!.Role);
-        var worker = Assert.Single((await kernel.ListSessionsAsync(trackId, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray(), s => s.BoundTaskId == receipt.Receipt.Task!.Id);
+        var worker = Assert.Single(await kernel.ListSessionsAsync(trackId, new(IncludeArchived: true), new InteropPrincipal.Human(), default), s => s.TaskId == receipt.Receipt.Task!.Id).Session;
         Assert.Equal("claude", worker.Provider);
         Assert.Equal("claude-sonnet-4-6", worker.Model);
         var repeated = await kernel.CreateSessionAsync(trackId, new(Prompt: "Review this", Task: new(), Role: "review"), "route", new InteropPrincipal.Human(), default);
@@ -160,7 +160,7 @@ public sealed class TemplateLoopTests
         var authored = Assert.Single(await kernel.ListTasksAsync(trackId), t => t.TaskKey == "authored");
         Assert.Equal("review", authored.Role);
         Assert.Null(authored.Provider);
-        var authoredWorker = Assert.Single((await kernel.ListSessionsAsync(trackId, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray(), s => s.BoundTaskId == authored.Id);
+        var authoredWorker = Assert.Single(await kernel.ListSessionsAsync(trackId, new(IncludeArchived: true), new InteropPrincipal.Human(), default), s => s.TaskId == authored.Id).Session;
         Assert.Equal("claude", authoredWorker.Provider);
         Assert.Equal("claude-sonnet-4-6", authoredWorker.Model);
         var authoredBlock = Assert.Single((await kernel.ReadReportAsync(trackId)).Blocks, b => b.Id == authored.BlockId);

@@ -5,24 +5,21 @@ namespace Perga.Kernel.Actors;
 
 public sealed partial class TrackActor
 {
-    private async Task<SessionTaskBindingDto?> ReadTaskBindingCoreAsync(AgentSessionDto session, CancellationToken ct)
+    private SessionTaskBindingDto? ReadTaskBindingCore(AgentSessionDto session)
     {
-        if (session.BoundTaskId is not { } taskId) return null;
-        var task = RequireTaskCore(taskId);
+        if (TryGetOwningTaskCore(session.Id) is not { } task) return null;
         var phase = task.Status.ToString().ToLowerInvariant();
-        if (session.BoundAttemptId is { } attemptId)
+        if (_activeTasks.TryGetValue(task.Id, out var active) && active.SessionId == session.Id)
         {
-            if (_activeAttempts.TryGetValue(attemptId, out var active))
-                phase = active.Paused ? "paused" : active.AttemptDto.Status.ToLowerInvariant();
-            else
-                phase = (await _store.ListAttemptsForTaskAsync(taskId, ct).ConfigureAwait(false))
-                    .Single(a => a.AttemptId == attemptId).Status.ToLowerInvariant();
+            if (session.Status == "stopping") phase = "interrupting";
+            else if (session.UnknownReason == "shutdown_unconfirmed") phase = "interrupt_unknown";
+            else if (active.Paused) phase = "paused";
         }
         string? waitingReason = null;
         if (phase == "pending")
             waitingReason = task.DependsOn.Any(key => RequireTaskCore(key).Status != TaskRunStatus.Done)
-                ? "waiting_dependencies" : "waiting_lease";
-        return new(task, session.BoundAttemptId, phase, waitingReason);
+                ? "waiting_dependencies" : "waiting_slot";
+        return new(task, phase, waitingReason);
     }
 
     private SessionCapabilitiesDto ReadCapabilitiesCore(AgentSessionDto session)

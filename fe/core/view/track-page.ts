@@ -6,7 +6,7 @@ import { agentProviderSchema } from '../api/schemas.js';
 import { groupPanelRows, progressRowFinished } from './panel-groups.js';
 import { activityLabelOf, cardActivityOf, cardActivityState, type CardActivity } from '../domain/activity.js';
 import { boundedStatusDetail, type ReportTaskRow } from '../domain/report.js';
-import { attemptStatusLabel } from '../domain/task-recovery.js';
+import { taskStatusLabel } from '../domain/task-recovery.js';
 import type { CardWire } from '../domain/track.js';
 import type { PanelRow, RowAction, RowBadge, InventoryModuleView, TrackPageView } from './panel.js';
 
@@ -39,7 +39,7 @@ export function progressStatusLabel(row: PanelRow): string | null {
     case 'cancelled': return 'Canceled';
     case 'superseded': return 'Superseded';
     case 'withdrawn': return 'Withdrawn';
-    default: return attemptStatusLabel(row.status.token);
+    default: return taskStatusLabel(row.status.token);
   }
 }
 
@@ -103,19 +103,19 @@ function taskWorkerCardId(task: ReportTaskRow): string | null {
   return task.execution === undefined ? task.workerCardId : task.execution.workerCardId;
 }
 
-/** The current attempt's status: the loaded execution history when there is one, else the report's verdict. */
+/** The current task run's status: the loaded execution history when there is one, else the report's verdict. */
 function taskCurrentStatus(task: ReportTaskRow): string | null {
   return task.execution?.status ?? task.status;
 }
 
 /**
- * The attempt statuses whose worker the kernel refuses agent input as `worker_parked`
+ * The task statuses whose worker the kernel refuses agent input as `worker_parked`
  * (`terminal_interaction/target.rs` `Resolved::write_refusal`). An allowlist, so an unknown status stays silent.
  */
-const PARKED_ATTEMPT_STATUSES: readonly string[] = Object.freeze(['verifying', 'done', 'failed', 'canceled']);
+const PARKED_TASK_STATUSES: readonly string[] = Object.freeze(['verifying', 'done', 'failed', 'canceled']);
 
 /**
- * The one-line state each task worker card shows while its current attempt is parked, keyed by worker card.
+ * The one-line state each task worker card shows while its current task run is parked, keyed by worker card.
  * A display only: a person's keys still reach the terminal (#2526). A card a task names with any other status
  * (running, or still starting) gets none, and so does a card no task names — a plain or Planner-opened terminal.
  * A withdrawn declaration shows none either: its row carries no runtime in the panel, though the kernel still
@@ -128,9 +128,9 @@ export function parkedWorkerNotices(tasks: readonly ReportTaskRow[]): ReadonlyMa
     const cardId = taskWorkerCardId(task);
     const status = taskCurrentStatus(task);
     if (cardId === null || status === null) continue;
-    if (!PARKED_ATTEMPT_STATUSES.includes(status)) unparked.add(cardId);
+    if (!PARKED_TASK_STATUSES.includes(status)) unparked.add(cardId);
     else if (!notices.has(cardId)) {
-      notices.set(cardId, `${attemptStatusLabel(status)} — this attempt has ended; input typed here belongs to no task.`);
+      notices.set(cardId, `${taskStatusLabel(status)} — this task has ended; input typed here belongs to no task.`);
     }
   }
   for (const cardId of unparked) notices.delete(cardId);
@@ -250,7 +250,7 @@ export function deriveTrackPageView(input: Readonly<{
     absorbed.add(worker.id);
     return { ...row, actions: [...row.actions, ...worker.actions.filter(action => action.kind === 'delete-card')] };
   });
-  // The report and attempt history outlive a deleted worker; Progress follows current resources.
+  // The report and task evidence outlive a deleted worker; Progress follows current resources.
   const taskEntries = workRows.filter(row => {
     const workerId = workerCardByBlock.get(row.id) ?? null;
     return workerId === null || input.existingCardIds.has(workerId);
@@ -262,10 +262,10 @@ export function deriveTrackPageView(input: Readonly<{
     const selected = workerId === null ? undefined : taskByCard.get(workerId);
     const worker = workerId === null ? undefined : resourcesById.get(workerId);
     const ended = progressRowFinished(row);
-    const attemptTime = execution === undefined ? null : execution.finishedAtMs ?? execution.createdAtMs;
+    const executionTime = execution === undefined ? null : execution.finishedAtMs ?? execution.createdAtMs;
     // A reused Worker's subsequent activity is never evidence about a historical/ended task.
     const workerTime = !ended && selected?.id === row.id && worker !== undefined ? resourceRecency(worker) : null;
-    return { row: { ...row, id: `task:${row.id}` }, recency: latestEvidence(attemptTime, workerTime) };
+    return { row: { ...row, id: `task:${row.id}` }, recency: latestEvidence(executionTime, workerTime) };
   });
   const temporaryIds = new Set<string>();
   const placementRow = (row: PanelRow): PanelRow => {

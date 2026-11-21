@@ -239,42 +239,6 @@ public sealed partial class TrackActor
         }
     }
 
-    private sealed class WorkerMessageWorkItem(TrackActor actor, SessionMessage message, ActiveAttemptState attempt, Guid reservation)
-        : ReservedTurnWorkItem(actor, message.SessionId, reservation)
-    {
-        private bool _delivered;
-        public override bool IsDurable => true;
-        public override string TriggerKind => "user";
-        public override bool IsQueuedMessage => true;
-        protected override SessionMessage DispatchMessage => message;
-
-        public override Task<string?> PreparePromptAsync(CancellationToken ct)
-        {
-            attempt.Token.ThrowIfCancellationRequested();
-            return Task.FromResult<string?>(message.Content);
-        }
-
-        public override async Task OnProviderDeliveredAsync(SessionTurnDto turn, UnifiedAgentEvent evt, string? nativeThreadId)
-        {
-            if (_delivered) return;
-            await Actor.Messages.TransitionAsync(message with { TurnId = turn.Id, DeliveredTurnId = turn.Id, Delivery = "delivered" },
-                "dispatching", CancellationToken.None).ConfigureAwait(false);
-            _delivered = true;
-        }
-
-        public override async Task OnTurnSettledAsync(TurnSettlement settlement)
-        {
-            if (!_delivered)
-                await Actor.Messages.TransitionAsync(message with
-                {
-                    TurnId = settlement.TurnId,
-                    Delivery = settlement.Status == "interrupted" ? "interrupted" : settlement.RejectedBeforePrompt ? "rejected" : "unknown"
-                },
-                    "dispatching", CancellationToken.None).ConfigureAwait(false);
-            await settlement.SettleAsync().ConfigureAwait(false);
-        }
-    }
-
     private sealed class TrackWakeBatchWorkItem(TrackActor actor, string sessionId, IReadOnlyList<TrackWake> batch, Guid reservation)
         : ReservedTurnWorkItem(actor, sessionId, reservation)
     {
@@ -396,8 +360,8 @@ public sealed partial class TrackActor
         }
     }
 
-    // Attempt startup is a reserved turn, never queued as a Track wake.
-    private sealed class ContractWorkerLaunchWorkItem(TrackActor actor, SessionMessage initial, Guid reservation, string attemptId)
+    // Task initial prompt executes as a reserved session turn; the Task driver observes the settled turn outcome.
+    private sealed class TaskLaunchWorkItem(TrackActor actor, SessionMessage initial, Guid reservation)
         : ReservedTurnWorkItem(actor, initial.SessionId, reservation)
     {
         protected override SessionMessage DispatchMessage => initial;
@@ -419,13 +383,7 @@ public sealed partial class TrackActor
             await Actor.Messages.TransitionAsync(initial with { TurnId = settlement.TurnId,
                 Delivery = settlement.Status == "interrupted" ? "interrupted" : settlement.RejectedBeforePrompt ? "rejected" : "unknown" },
                 "dispatching", CancellationToken.None).ConfigureAwait(false);
-            var turn = await settlement.SettleAsync().ConfigureAwait(false);
-            if (turn.Status != "failed") return;
-            var stillActive = await Actor.EnqueueAsync(_ => Task.FromResult(Actor._activeAttempts.ContainsKey(attemptId)), CancellationToken.None)
-                .ConfigureAwait(false);
-            if (stillActive)
-                await Actor.CompleteAttemptFailByAttemptIdAsync(attemptId, turn.ErrorText ?? "Contract subagent turn failed.",
-                    null, CancellationToken.None).ConfigureAwait(false);
+            await settlement.SettleAsync().ConfigureAwait(false);
         }
     }
 }

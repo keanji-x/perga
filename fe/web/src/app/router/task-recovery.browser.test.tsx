@@ -2,147 +2,81 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, cleanup, render, screen } from '@testing-library/react';
 import { page, userEvent } from 'vitest/browser';
 import { afterEach, expect, it } from 'vitest';
+import { taskDtoSchema } from '../../../../core/api/perga-v1.ts';
 import type { ApiRequest, ApiTransportPort, ApiTransportResponse } from '../../../../core/api/types.ts';
 import { createUnauthorizedChannel } from '../../../../core/api/unauthorized.ts';
-import type { TaskAttempt, TaskRecoveryView } from '../../../../core/domain/task-recovery.ts';
 import { deriveReportTasks, type TrackReport } from '../../../../core/domain/report.ts';
 import { ReportDocument } from '../../features/report/document/public.tsx';
 import '../../styles/entry.css';
-import { wireEventSchema } from '../../../../core/api/schemas.ts';
-import { initialEventState, reduceEventFrame } from '../../../../core/events/reducer.ts';
-import { applyEventEffects } from '../events/query-invalidation-adapter.ts';
 import { TaskRecovery, useCurrentTaskRows } from './task-recovery.tsx';
+import { fixtureSnapshot, fixtureTrack } from './session-contract-fixture.ts';
+import { queryKeys } from '../providers/queries.ts';
 
 afterEach(cleanup);
 
-it('navigates prior evidence from the task disclosure at desktop and phone widths', async () => {
+it('shows latest task evidence and its session on desktop and phone and refreshes folded inventory', async () => {
   const requests: ApiRequest[] = [];
-  const first: TaskAttempt = { attempt_id: 'attempt-one', generation: 1, status: 'failed',
-    blocking_reason: null, status_detail: 'The implementation did not pass validation.', worker_card_id: 'worker-old',
-    created_at_ms: 1788600000000, finished_at_ms: 1788600060000 };
-  const second: TaskAttempt = { attempt_id: 'attempt-two', generation: 2, status: 'dispatched',
-    blocking_reason: null, status_detail: null, worker_card_id: null, created_at_ms: 1788600070000, finished_at_ms: null };
-  let current = second;
+  let task = taskDtoSchema.parse({ id: 'task', trackId: 'w1', blockId: 'b-b', taskKey: 'b', kind: 'agent',
+    status: 'failed', sessionId: 'worker', runCount: 2, statusDetail: 'Validation failed', createdAtMs: 1, updatedAtMs: 2,
+    workerResult: { summary: 'Latest worker result' }, gateVerdict: { passed: false,
+      steps: [{ name: 'check', exitCode: 1, durationMs: 10, stdout: 'Check failed', outputTail: '' }] } });
   let conversation: string | null = null;
-  const transport: ApiTransportPort = { send(request) {
-    return Promise.resolve().then(() => {
+  const transport: ApiTransportPort = { send: request => {
     requests.push(request);
-    const body: TaskRecoveryView = { key: 'b', current, attempts: [first, current] };
-    return { status: 200, statusText: 'OK', body };
-    });
+    return Promise.resolve({ status: 200, statusText: 'OK', body: { ...fixtureSnapshot(fixtureTrack('w1')), tasks: [task] } });
   } };
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  const unauthorized = createUnauthorizedChannel({ enqueue: (task) => task() });
-  await page.viewport(1080, 800);
+  const unauthorized = createUnauthorizedChannel({ enqueue: task => task() });
   const report: TrackReport = { summary: '', body: '', blocks: [{ id: 'b-b', kind: 'task', payload: {
-    key: 'b', declared_by: 'user', kind: 'codex', ready: true, goal: 'Finish the calculation under the original requirements.',
+    key: 'b', kind: 'codex', declared_by: 'user', ready: true, goal: 'Finish the calculation under the original requirements.',
   } }] };
   function Document() {
-    const rows = useCurrentTaskRows(transport, unauthorized, 'w1', deriveReportTasks(report.blocks, [
-      { blockId: 'b-b', key: 'b', schedulable: true, status: 'failed', workerCardId: 'worker-old' },
-    ]));
+    const rows = useCurrentTaskRows(transport, unauthorized, 'w1', deriveReportTasks(report.blocks));
     return <ReportDocument report={report} taskRows={rows} empty={null}
-      renderTaskExecution={(task, expanded) => <TaskRecovery trackId="w1" taskKey={task.key} expanded={expanded}
-        transport={transport} unauthorized={unauthorized} openableWorkerIds={new Set(['worker-old'])}
-        openWorker={(cardId) => { conversation = cardId; }} />} />;
+      renderTaskExecution={(row, expanded) => <TaskRecovery trackId="w1" taskKey={row.key} expanded={expanded}
+        transport={transport} unauthorized={unauthorized} openableWorkerIds={new Set(['worker'])}
+        openWorker={id => { conversation = id; }} />} />;
   }
+  await page.viewport(1080, 800);
   render(<QueryClientProvider client={client}><div style={{ padding: 24 }}><Document /></div></QueryClientProvider>);
   await userEvent.click(document.querySelector('[data-nc-report-reference] > summary')!);
   await userEvent.click(document.querySelector('[data-nc-task-state] > summary')!);
-  await expect.element(page.getByText('Current attempt 2 · Preparing')).toBeVisible();
-  expect(document.querySelector('[data-nc-task-state] > summary')!.textContent).toContain('Preparing');
-  expect(document.querySelector('[data-nc-task-state] > summary')!.textContent).not.toContain('failed');
-  await page.getByText('Attempt history (2)').click();
-  await page.getByText('Attempt 1 · Failed', { exact: true }).click();
-  await expect.element(page.getByText('The implementation did not pass validation.')).toBeVisible();
-  await page.getByRole('button', { name: 'Open attempt 1' }).click();
-  expect(conversation).toBe('worker-old');
-  expect(requests.every((request) => request.method === 'GET')).toBe(true);
-  await page.screenshot({ path: '__screenshots__/issue-1501-desktop.png' });
+  await expect.element(page.getByText('Run 2 · Failed')).toBeVisible();
+  await expect.element(page.getByText('Check failed', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Open task session' }).click();
+  expect(conversation).toBe('worker');
+  expect(requests.every(request => request.method === 'GET' && request.path === '/api/v1/tracks/w1')).toBe(true);
   await page.viewport(390, 844);
-  const action = page.getByRole('button', { name: 'Refresh execution history' });
-  await expect.element(action).toBeVisible();
-  await action.click();
+  await expect.element(page.getByRole('button', { name: 'Refresh execution history' })).toBeVisible();
   expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(390);
-  await page.screenshot({ path: '__screenshots__/issue-1501-phone.png' });
-  current = { ...second, status: 'awaiting_projection',
-    blocking_reason: 'Execution release was withdrawn. Release this task to continue.' };
-  await action.click();
-  await expect.element(page.getByText(current.blocking_reason!)).toBeVisible();
-  expect(document.querySelector('[data-nc-task-state] > summary [title]')!.getAttribute('title')).toContain(current.blocking_reason);
-  await page.screenshot({ path: '__screenshots__/issue-1501-blocker-phone.png' });
   const disclosure = document.querySelector<HTMLDetailsElement>('[data-nc-task-state]')!;
   await userEvent.click(disclosure.querySelector('summary')!);
-  expect(disclosure.open).toBe(false);
-  current = { ...second, status: 'done' };
-  await act(() => {
-    const event = wireEventSchema.parse({ ev: 'task.completed', data: { notification: 'notify',
-      idempotency_key: second.attempt_id, result: {}, artifacts: [],
-    } });
-    applyEventEffects(client, reduceEventFrame(initialEventState(null), {
-      type: 'event', event, meta: { id: 1, eventVersion: 1 },
-    }).effects);
-    return Promise.resolve();
-  });
+  task = { ...task, status: 'done', workerResult: 'Finished', gateVerdict: null };
+  await act(() => client.invalidateQueries({ queryKey: queryKeys.trackDetail('w1') }));
   await expect.poll(() => disclosure.querySelector('summary')!.textContent).toContain('Completed');
   expect(disclosure.open).toBe(false);
 });
 
-it('shows empty history before allocation and refreshes the first attempt in the report disclosure', async () => {
-  let current: TaskAttempt | null = null;
-  const transport: ApiTransportPort = { send: () => Promise.resolve({ status: 200, statusText: 'OK', body: {
-    key: 'waiting', current, attempts: current === null ? [] : [current],
-  } }) };
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  const unauthorized = createUnauthorizedChannel({ enqueue: (task) => task() });
-  const report: TrackReport = { summary: '', body: '', blocks: [{ id: 'waiting-block', kind: 'task', payload: {
-    key: 'waiting', declared_by: 'user', kind: 'codex', ready: false, goal: 'Wait for authorization.',
-  } }] };
-  render(<QueryClientProvider client={client}><ReportDocument report={report}
-    taskRows={deriveReportTasks(report.blocks, [{ blockId: 'waiting-block', key: 'waiting', schedulable: false, status: null }])}
-    empty={null} renderTaskExecution={(task, expanded) => <TaskRecovery trackId="w1" taskKey={task.key} expanded={expanded}
-      transport={transport} unauthorized={unauthorized} openableWorkerIds={new Set()} openWorker={() => undefined} />} />
-  </QueryClientProvider>);
-  await userEvent.click(document.querySelector('[data-nc-report-reference] > summary')!);
-  await userEvent.click(document.querySelector('[data-nc-task-state] > summary')!);
-  await expect.element(page.getByText('No attempts yet', { exact: true })).toBeVisible();
-  expect(document.querySelector('[role="alert"]')).toBeNull();
-  await page.screenshot({ path: '__screenshots__/issue-1501-empty-history.png' });
-  current = { attempt_id: 'first-allocated', generation: 1, status: 'pending', status_detail: null,
-    blocking_reason: null, worker_card_id: null, created_at_ms: 1788600000000, finished_at_ms: null };
-  await page.getByRole('button', { name: 'Refresh execution history' }).click();
-  await expect.element(page.getByText('Current attempt 1 · Queued')).toBeVisible();
-  await expect.element(page.getByText('No attempts yet', { exact: true })).not.toBeInTheDocument();
-  expect(document.querySelector('[role="alert"]')).toBeNull();
-});
-
-
-it('keeps the failed first history read recovery action focused during retry', async () => {
+it('keeps a failed task read recovery action focused during retry', async () => {
   let reads = 0;
   let finishRetry!: (response: ApiTransportResponse) => void;
-  const retry = new Promise<ApiTransportResponse>((resolve) => { finishRetry = resolve; });
+  const retry = new Promise<ApiTransportResponse>(resolve => { finishRetry = resolve; });
   const transport: ApiTransportPort = { send() {
-    reads += 1;
-    return reads === 1
-      ? Promise.resolve({ status: 500, statusText: 'Internal Server Error', body: { error: 'History is unavailable.' } })
-      : retry;
+    return ++reads === 1 ? Promise.resolve({ status: 500, statusText: 'Internal Server Error', body: { error: 'Private details' } }) : retry;
   } };
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  const unauthorized = createUnauthorizedChannel({ enqueue: (task) => task() });
+  const unauthorized = createUnauthorizedChannel({ enqueue: task => task() });
   render(<QueryClientProvider client={client}><TaskRecovery trackId="w1" taskKey="b" expanded
-    transport={transport} unauthorized={unauthorized} openableWorkerIds={new Set()} openWorker={() => {}} />
-  </QueryClientProvider>);
+    transport={transport} unauthorized={unauthorized} openableWorkerIds={new Set()} openWorker={() => {}} /></QueryClientProvider>);
   await expect.element(page.getByText('Could not refresh execution history.', { exact: true })).toBeVisible();
-  /* A 500's text is the server's internals: only the fixed sentence shows. */
-  expect(page.getByText('History is unavailable.').query()).toBeNull();
+  expect(page.getByText('Private details').query()).toBeNull();
   const action = screen.getByRole('button', { name: 'Refresh execution history' });
   await userEvent.click(action);
   await expect.poll(() => action.getAttribute('aria-busy')).toBe('true');
   expect(document.activeElement).toBe(action);
-  // Exercise the handler guard even when the driver sees aria-disabled.
   await userEvent.click(action, { force: true });
   expect(reads).toBe(2);
-  await act(async () => { finishRetry({ status: 200, statusText: 'OK', body: { key: 'b', current: null, attempts: [] } }); await retry; });
-  await expect.element(page.getByText('No attempts yet', { exact: true })).toBeVisible();
+  await act(async () => { finishRetry({ status: 200, statusText: 'OK', body: fixtureSnapshot(fixtureTrack('w1')) }); await retry; });
+  await expect.element(page.getByText('No execution yet', { exact: true })).toBeVisible();
   client.clear();
 });

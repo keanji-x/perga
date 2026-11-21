@@ -98,8 +98,8 @@ const devTemplate = {
     const session = ctx.session;
     const roleLabel = session.isLead
       ? "Lead"
-      : session.boundAttemptId
-        ? `Contract Subagent (${session.boundAttemptId})`
+      : session.boundTaskId
+        ? `Contract Subagent (${session.boundTaskId})`
         : "Collaborative Subagent";
     const lines = [
       `[Dev Policy] Role: ${roleLabel} | Base: ${ctx.inputs.baseBranch} | Test Gate: ${ctx.inputs.testCmd}`,
@@ -125,7 +125,7 @@ const devTemplate = {
       ctx.state.rollbackOpId = event.meta.opId;
     }
 
-    if (event.attemptStatus === "done") {
+    if (event.status === "done") {
       if (!ctx.state.completedTasks.includes(event.taskKey)) {
         ctx.state.completedTasks.push(event.taskKey);
       }
@@ -139,7 +139,7 @@ const devTemplate = {
       return `Task '${event.taskKey}' completed (change=${ctx.state.latestChangeId ?? "n/a"}, verified=${ctx.state.ciVerified}).`;
     }
 
-    if (event.attemptStatus === "failed") {
+    if (event.status === "failed") {
       ctx.state.failedAttempts += 1;
       if (event.accessMode === "read_write") {
         ctx.state.ciVerified = false;
@@ -147,7 +147,7 @@ const devTemplate = {
       return `Task '${event.taskKey}' failed (attempt failures=${ctx.state.failedAttempts}). Inspect gate diagnostics before re-dispatching.`;
     }
 
-    return `Task '${event.taskKey}' settled with status '${event.attemptStatus}'.`;
+    return `Task '${event.taskKey}' settled with status '${event.status}'.`;
   },
   before: (action, ctx) => {
     if (action.type === "report.commit") {

@@ -13,12 +13,12 @@ internal sealed record TaskSyncOutcome(
 
 internal static class TaskBlockSynchronizer
 {
-    public static void ValidatePreCommitBoundAttemptFence(
-        string? callerBoundAttemptId,
+    public static void ValidatePreCommitBoundTaskFence(
+        string? callerBoundTaskId,
         ReportDocument current,
         IReadOnlyList<BlockOp> ops)
     {
-        if (string.IsNullOrEmpty(callerBoundAttemptId))
+        if (string.IsNullOrEmpty(callerBoundTaskId))
         {
             return;
         }
@@ -33,7 +33,7 @@ internal static class TaskBlockSynchronizer
                     if (upsert.Kind == ReportBlockKind.Task)
                     {
                         throw KernelException.Forbidden(
-                            $"Session bound to attempt '{callerBoundAttemptId}' is forbidden from creating or editing Task blocks.");
+                            $"Session bound to task '{callerBoundTaskId}' is forbidden from creating or editing Task blocks.");
                     }
 
                     if (upsert.Id is not null &&
@@ -41,7 +41,7 @@ internal static class TaskBlockSynchronizer
                         targetUpsert.Kind == ReportBlockKind.Task)
                     {
                         throw KernelException.Forbidden(
-                            $"Session bound to attempt '{callerBoundAttemptId}' is forbidden from modifying Task block '{upsert.Id}'.");
+                            $"Session bound to task '{callerBoundTaskId}' is forbidden from modifying Task block '{upsert.Id}'.");
                     }
                     break;
 
@@ -50,7 +50,7 @@ internal static class TaskBlockSynchronizer
                         targetDel.Kind == ReportBlockKind.Task)
                     {
                         throw KernelException.Forbidden(
-                            $"Session bound to attempt '{callerBoundAttemptId}' is forbidden from deleting Task block '{del.Id}'.");
+                            $"Session bound to task '{callerBoundTaskId}' is forbidden from deleting Task block '{del.Id}'.");
                     }
                     break;
 
@@ -59,19 +59,19 @@ internal static class TaskBlockSynchronizer
                         targetMove.Kind == ReportBlockKind.Task)
                     {
                         throw KernelException.Forbidden(
-                            $"Session bound to attempt '{callerBoundAttemptId}' is forbidden from moving Task block '{move.Id}'.");
+                            $"Session bound to task '{callerBoundTaskId}' is forbidden from moving Task block '{move.Id}'.");
                     }
                     break;
             }
         }
     }
 
-    public static void ValidatePostCommitBoundAttemptFence(
-        string? callerBoundAttemptId,
+    public static void ValidatePostCommitBoundTaskFence(
+        string? callerBoundTaskId,
         ReportDocument previous,
         ReportCommitResult commitResult)
     {
-        if (string.IsNullOrEmpty(callerBoundAttemptId))
+        if (string.IsNullOrEmpty(callerBoundTaskId))
         {
             return;
         }
@@ -81,7 +81,7 @@ internal static class TaskBlockSynchronizer
             if (change.Kind == ReportBlockKind.Task)
             {
                 throw KernelException.Forbidden(
-                    $"Session bound to attempt '{callerBoundAttemptId}' is forbidden from mutating Task block '{change.Id}'.");
+                    $"Session bound to task '{callerBoundTaskId}' is forbidden from mutating Task block '{change.Id}'.");
             }
         }
 
@@ -91,7 +91,7 @@ internal static class TaskBlockSynchronizer
         if (prevTasks.Length != nextTasks.Length)
         {
             throw KernelException.Forbidden(
-                $"Session bound to attempt '{callerBoundAttemptId}' is forbidden from adding or removing Task blocks.");
+                $"Session bound to task '{callerBoundTaskId}' is forbidden from adding or removing Task blocks.");
         }
 
         for (var i = 0; i < prevTasks.Length; i++)
@@ -105,7 +105,7 @@ internal static class TaskBlockSynchronizer
                 !JsonHelpers.JsonEquals(prev.Payload, next.Payload))
             {
                 throw KernelException.Forbidden(
-                    $"Session bound to attempt '{callerBoundAttemptId}' is forbidden from altering Task block '{prev.Id}'.");
+                    $"Session bound to task '{callerBoundTaskId}' is forbidden from altering Task block '{prev.Id}'.");
             }
         }
     }
@@ -183,6 +183,7 @@ internal static class TaskBlockSynchronizer
                     Gate = parsed.Gate,
                     Status = parsed.Ready ? TaskRunStatus.Pending : TaskRunStatus.Draft,
                     StatusDetail = null,
+                    FinishedAtMs = null,
                     SemanticVerdict = SemanticVerdict.None,
                     SemanticNote = null,
                     UpdatedAtMs = nowMs
@@ -257,6 +258,7 @@ internal static class TaskBlockSynchronizer
                     Ready = false,
                     Status = TaskRunStatus.Canceled,
                     StatusDetail = "Task block removed from report.",
+                    FinishedAtMs = oldTask.FinishedAtMs ?? nowMs,
                     UpdatedAtMs = nowMs
                 };
                 synced.Add(canceled);
@@ -301,7 +303,6 @@ internal static class TaskBlockSynchronizer
             StatusDetail: null,
             SemanticVerdict: SemanticVerdict.None,
             SemanticNote: null,
-            LatestAttemptId: null,
             CreatedAtMs: nowMs,
             UpdatedAtMs: nowMs);
     }

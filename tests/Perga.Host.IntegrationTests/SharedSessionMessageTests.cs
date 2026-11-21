@@ -90,12 +90,12 @@ public sealed class SharedSessionMessageTests
             {
                 (trackId, sessionId) = await host.CreateTrackAsync();
                 var store = host.Services.GetRequiredService<ITrackStore>().SessionMessages!;
-                await InsertQueueAsync(store, sessionId, null, "declared-uncertain", "dispatching");
-                await InsertQueueAsync(store, sessionId, null, "withdraw-me", "queued");
+                await InsertQueueAsync(store, sessionId, "declared-uncertain", "dispatching");
+                await InsertQueueAsync(store, sessionId, "withdraw-me", "queued");
                 using var withdrawn = await host.Client.DeleteAsync($"/api/v1/sessions/{sessionId}/messages/withdraw-me");
                 Assert.Equal(HttpStatusCode.NoContent, withdrawn.StatusCode);
-                await InsertQueueAsync(store, sessionId, null, "first-waiting", "queued");
-                await InsertQueueAsync(store, sessionId, null, "second-waiting", "queued");
+                await InsertQueueAsync(store, sessionId, "first-waiting", "queued");
+                await InsertQueueAsync(store, sessionId, "second-waiting", "queued");
             }
 
             await using var reopened = new PergaHostTestCluster(directory.FullName);
@@ -128,30 +128,30 @@ public sealed class SharedSessionMessageTests
         try
         {
             string trackId;
+            string taskId;
             AgentSessionDto worker;
             await using (var host = new PergaHostTestCluster(directory.FullName))
             {
                 (trackId, _) = await host.CreateTrackAsync();
                 var kernel = host.Services.GetRequiredService<IPergaKernel>();
                 var dispatch = await kernel.CreateSessionAsync(trackId, new(Prompt: "Old Worker goal", Task: new()), "old-worker", new InteropPrincipal.Human(), default);
+                taskId = dispatch.Receipt.Task!.Id;
                 await kernel.WaitForTrackIdleAsync(trackId);
-                worker = Assert.Single((await kernel.ListSessionsAsync(trackId, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray(), session => session.BoundTaskId == dispatch.Receipt.Task!.Id);
+                worker = Assert.Single(await kernel.ListSessionsAsync(trackId, new(IncludeArchived: true), new InteropPrincipal.Human(), default), summary => summary.TaskId == taskId).Session;
                 var store = host.Services.GetRequiredService<ITrackStore>().SessionMessages!;
-                await InsertQueueAsync(store, worker.Id, worker.BoundAttemptId, "worker-waiting", "queued");
-                await InsertQueueAsync(store, worker.Id, worker.BoundAttemptId, "worker-uncertain", "dispatching");
-                await InsertQueueAsync(store, worker.Id, worker.BoundAttemptId, "worker-confirmed", "delivered");
+                await InsertQueueAsync(store, worker.Id, "worker-waiting", "queued");
+                await InsertQueueAsync(store, worker.Id, "worker-uncertain", "dispatching");
+                await InsertQueueAsync(store, worker.Id, "worker-confirmed", "delivered");
             }
 
-            // Reproduce an abrupt host exit before the active attempt's settlement transaction.
+            // Reproduce an abrupt host exit before the active task run's settlement transaction.
             await using (var db = OpenDatabase(directory.FullName))
             {
                 await db.OpenAsync();
                 await db.ExecuteAsync("""
-                    UPDATE task_attempts SET status = 'running', finished_at_ms = NULL, workspace_lease_json = NULL
-                    WHERE attempt_id = @BoundAttemptId;
-                    UPDATE tasks SET status = 'running' WHERE id = @BoundTaskId;
+                    UPDATE tasks SET status = 'running', finished_at_ms = NULL WHERE id = @TaskId;
                     UPDATE agent_sessions SET status = 'running', archived_at_ms = NULL WHERE id = @Id;
-                    """, worker);
+                    """, new { TaskId = taskId, worker.Id });
             }
 
             await using var reopened = new PergaHostTestCluster(directory.FullName);
@@ -159,20 +159,18 @@ public sealed class SharedSessionMessageTests
             await activeKernel.WaitForTrackIdleAsync(trackId);
             var old = (await activeKernel.GetSessionItemsAsync(worker.Id, new(), new InteropPrincipal.Human(), default)).Session;
             Assert.NotNull(old.ArchivedAtMs);
-            Assert.Equal(worker.BoundAttemptId, old.BoundAttemptId);
 
             foreach (var (key, expected) in new[] { ("worker-waiting", "interrupted"), ("worker-uncertain", "unknown"), ("worker-confirmed", "delivered") })
             {
-                var replay = await activeKernel.SendSessionMessageAsync(worker.Id, new(Content: key, RequestKey: key, Mode: "queue", TurnId: null, ExpectedAttemptId: worker.BoundAttemptId!), new InteropPrincipal.Human(), default);
+                var replay = await activeKernel.SendSessionMessageAsync(worker.Id, new(Content: key, RequestKey: key, Mode: "queue", TurnId: null), new InteropPrincipal.Human(), default);
                 Assert.Equal((key, expected), (replay.MessageId, replay.Delivery));
             }
             Assert.DoesNotContain(reopened.AgentRuntime.ExecutedTurns, execution => execution.Input.Prompt.StartsWith("worker-", StringComparison.Ordinal));
 
             var next = await activeKernel.CreateSessionAsync(trackId, new(Prompt: "New Worker goal", Task: new()), "fresh-worker", new InteropPrincipal.Human(), default);
             await activeKernel.WaitForTrackIdleAsync(trackId);
-            var replacement = Assert.Single((await activeKernel.ListSessionsAsync(trackId, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray(), session => session.BoundTaskId == next.Receipt.Task!.Id);
+            var replacement = Assert.Single(await activeKernel.ListSessionsAsync(trackId, new(IncludeArchived: true), new InteropPrincipal.Human(), default), summary => summary.TaskId == next.Receipt.Task!.Id).Session;
             Assert.NotEqual(old.Id, replacement.Id);
-            Assert.NotEqual(old.BoundAttemptId, replacement.BoundAttemptId);
             Assert.Empty((await activeKernel.GetSessionItemsAsync(replacement.Id, new(), new InteropPrincipal.Human(), default)).QueuedMessages);
         }
         finally
@@ -265,11 +263,10 @@ public sealed class SharedSessionMessageTests
         }
     }
 
-    private static Task InsertQueueAsync(ISessionMessageStore store, string sessionId, string? attemptId, string key, string delivery)
+    private static Task InsertQueueAsync(ISessionMessageStore store, string sessionId, string key, string delivery)
     {
-        var hash = Hash(new { version = 3, Content = key, Mode = "queue", TurnId = (string?)null, ExpectedAttemptId = attemptId });
-        return store.InsertAsync(new(key, sessionId, attemptId, "owner:installation", key, hash, null, null, key, delivery, 1,
-            attemptId is null ? "queue" : "worker"), default);
+        var hash = Hash(new { version = 4, Content = key, Mode = "queue", TurnId = (string?)null, ExpectedEpoch = (int?)null });
+        return store.InsertAsync(new(key, sessionId, "owner:installation", key, hash, null, null, key, delivery, 1, "queue"), default);
     }
 
     private static SqliteConnection OpenDatabase(string directory) =>

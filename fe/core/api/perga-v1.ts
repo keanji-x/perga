@@ -282,7 +282,13 @@ export const taskDtoSchema = z.object({
   statusDetail: z.string().nullish(),
   semanticVerdict: semanticVerdictSchema.default('none'),
   semanticNote: z.string().nullish(),
-  latestAttemptId: z.string().nullish(),
+  sessionId: z.string().nullish(),
+  runCount: z.number().int().default(0),
+  workerResult: z.unknown().nullish(),
+  meta: z.unknown().nullish(),
+  gateVerdict: z.unknown().nullish(),
+  startedAtMs: z.number().nullish(),
+  finishedAtMs: z.number().nullish(),
   createdAtMs: z.number(),
   updatedAtMs: z.number(),
 }).transform((raw) => ({
@@ -290,21 +296,6 @@ export const taskDtoSchema = z.object({
   access: raw.access ?? raw.accessMode ?? 'read_write',
 }));
 export type TaskDto = z.infer<typeof taskDtoSchema>;
-
-export const taskAttemptDtoSchema = z.object({
-  attemptId: z.string(),
-  taskId: z.string(),
-  trackId: z.string(),
-  sessionId: z.string().nullish(),
-  status: z.string(),
-  workerResult: z.unknown().nullish(),
-  meta: z.unknown().nullish(),
-  workspaceLease: z.unknown().nullish(),
-  gateVerdict: z.unknown().nullish(),
-  startedAtMs: z.number(),
-  finishedAtMs: z.number().nullish(),
-});
-export type TaskAttemptDto = z.infer<typeof taskAttemptDtoSchema>;
 
 export const reportBlockDtoSchema = z.object({
   id: z.string(),
@@ -354,8 +345,6 @@ export const agentSessionDtoSchema = z.object({
   id: z.string(),
   trackId: z.string(),
   isLead: z.boolean().default(false),
-  boundTaskId: z.string().nullish(),
-  boundAttemptId: z.string().nullish(),
   title: z.string().nullish(),
   provider: z.string(),
   model: z.string().nullish(),
@@ -451,15 +440,15 @@ export const createSessionRequestSchema = z.object({
 }).strict();
 export const updateSessionRequestSchema = z.object({
   expectedConfigVersion: z.number().int().nullish(), title: z.string().nullish(), archived: z.boolean().nullish(),
-  provider: z.string().nullish(), model: z.string().nullish(), reasoningEffort: z.string().nullish(), permissionMode: z.string().nullish(), expectedAttemptId: z.string().nullish(),
+  provider: z.string().nullish(), model: z.string().nullish(), reasoningEffort: z.string().nullish(), permissionMode: z.string().nullish(),
 }).strict();
 export const sendSessionMessageRequestSchema = z.object({
   content: z.string().nullish(), mode: z.enum(['default', 'steer', 'queue']).optional(), turnId: z.string().nullish(),
-  messageId: z.string().nullish(), expectedAttemptId: z.string().nullish(),
+  messageId: z.string().nullish(), requestKey: z.string().nullish(), expectedEpoch: z.number().int().nullish(),
 }).strict();
 export const sessionControlRequestSchema = z.object({
   action: z.enum(['stop', 'reconnect', 'reset_context', 'compact']), turnId: z.string().nullish(),
-  expectedEpoch: z.number().int().nullish(), expectedAttemptId: z.string().nullish(),
+  expectedEpoch: z.number().int().nullish(),
 }).strict();
 export const respondInteractionRequestSchema = z.object({ executionId: z.string().nullish(), optionId: z.string().nullish(), answers: z.unknown().optional() }).strict();
 export type CreateSessionRequest = z.infer<typeof createSessionRequestSchema>;
@@ -469,7 +458,7 @@ export type SessionControlRequest = z.infer<typeof sessionControlRequestSchema>;
 export type RespondInteractionRequest = z.infer<typeof respondInteractionRequestSchema>;
 export const sessionSummarySchema = z.object({
   session: agentSessionDtoSchema, state: z.enum(['idle', 'running', 'stopping', 'compacting', 'unknown']),
-  readonlyReason: z.string().nullable(), workerPaused: z.boolean(), lastTurn: sessionTurnDtoSchema.nullish(), pendingInteractionCount: z.number().int(),
+  taskId: z.string().nullish(), readonlyReason: z.enum(['archived', 'track_closed', 'waiting_task', 'task_finished']).nullable(), workerPaused: z.boolean(), lastTurn: sessionTurnDtoSchema.nullish(), pendingInteractionCount: z.number().int(),
 });
 export type SessionSummary = z.infer<typeof sessionSummarySchema>;
 export const sessionMessageReceiptSchema = z.object({
@@ -498,7 +487,7 @@ export const sessionItemsPageDtoSchema = z.object({
   items: z.array(sessionItemDtoSchema).nullish().transform((v) => v ?? []),
   activeTurn: sessionTurnDtoSchema.nullish(),
   state: z.enum(['idle', 'running', 'stopping', 'compacting', 'unknown']),
-  readonlyReason: z.enum(['archived', 'track_closed', 'worker_finished']).nullable(),
+  readonlyReason: z.enum(['archived', 'track_closed', 'waiting_task', 'task_finished']).nullable(),
   canReopen: z.boolean(),
   workerPaused: z.boolean(),
   lastTurn: sessionTurnDtoSchema.nullish().transform(value => value ?? null),
@@ -513,7 +502,7 @@ export const sessionItemsPageDtoSchema = z.object({
   activity: sessionActivitySchema.nullish(),
   capabilities: sessionCapabilitiesSchema.nullish(),
   pendingInteractions: z.array(pendingInteractionSchema).nullish(),
-  taskBinding: z.object({ task: taskDtoSchema, attemptId: z.string().nullish(), attemptPhase: z.string(), waitingReason: z.string().nullish() }).nullish(),
+  taskBinding: z.object({ task: taskDtoSchema, phase: z.string(), waitingReason: z.string().nullish() }).nullish(),
   permissionModes: z.array(permissionModeOptionDtoSchema).nullish(),
 });
 export type SessionItemsPageDto = z.infer<typeof sessionItemsPageDtoSchema>;
@@ -557,10 +546,16 @@ export const mailDtoSchema = z.object({
 });
 export type MailDto = z.infer<typeof mailDtoSchema>;
 
+export const dbMaintenanceStatsDtoSchema = z.object({
+  prunedEvents: z.number().int(), thinnedRevisions: z.number().int(), compactedItems: z.number().int(),
+  reclaimedPages: z.number().int(), compactedTasks: z.number().int(), reclaimedBlobs: z.number().int(),
+});
+export type DbMaintenanceStatsDto = z.infer<typeof dbMaintenanceStatsDtoSchema>;
+
 export const terminalDtoSchema = z.object({
   id: z.string(),
   trackId: z.string(),
-  attemptId: z.string().nullish(),
+  sessionId: z.string().nullish(),
   idempotencyKey: z.string().nullish(),
   title: z.string().nullish().transform((v) => v ?? 'Terminal'),
   program: z.string().nullish(),

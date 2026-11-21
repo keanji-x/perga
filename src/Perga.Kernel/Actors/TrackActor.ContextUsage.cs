@@ -6,9 +6,9 @@ namespace Perga.Kernel.Actors;
 public sealed partial class TrackActor
 {
     private static bool HasCurrentContextConfigurationCore(AgentSessionDto session, OpenSessionHandle open) =>
-        string.Equals(open.LaunchSpec.Provider, session.Provider, StringComparison.OrdinalIgnoreCase) && (session.BoundAttemptId is not null ||
-        (open.Selection == SessionConfiguration.FromNullable(session.Model, session.ReasoningEffort, session.PermissionMode) &&
-         open.Confirmation is not null && open.Confirmation == open.Agent.ConfigurationState));
+        string.Equals(open.LaunchSpec.Provider, session.Provider, StringComparison.OrdinalIgnoreCase) &&
+        open.Selection == SessionConfiguration.FromNullable(session.Model, session.ReasoningEffort, session.PermissionMode) &&
+        open.Confirmation is not null && open.Confirmation == open.Agent.ConfigurationState;
 
     private bool IsCurrentContextBindingCore(
         AgentSessionDto session, IAgentSession provider, LiveContextUsage state) =>
@@ -71,11 +71,6 @@ public sealed partial class TrackActor
     private async Task RegisterConfirmedOpenAgentSessionCoreAsync(
         AgentSessionDto session, IAgentSession agentSession, HarnessLaunchSpec launchSpec, ConfirmedConfiguration? confirmation, CancellationToken ct)
     {
-        if (session.BoundAttemptId is not null)
-        {
-            return;
-        }
-
         var sessionId = session.Id;
         var expectedEpoch = session.Epoch;
         var pending = agentSession.AttachIdleContextUsageHandler(idleUsage =>
@@ -160,7 +155,6 @@ public sealed partial class TrackActor
         if (_track.ClosedAtMs is not null ||
             !_sessions.TryGetValue(sessionId, out var current) ||
             current.ArchivedAtMs is not null ||
-            current.BoundAttemptId is not null ||
             current.Epoch != expectedEpoch ||
             (current.Status == "unknown" || !bindPending && _scheduler.IsRecovering(sessionId)) ||
             !_runtimes.TryGetOpen(sessionId, out var openSession) ||

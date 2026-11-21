@@ -194,7 +194,7 @@ public sealed class WorkerRoutingTests
         var leadSession = Assert.Single(track.Sessions, s => s.IsLead);
         var mcpReport = await KernelMcpDispatcher.ExecuteGuardedAsync(
             ctx.Kernel,
-            new McpSessionPrincipal("tok", track.Track.Id, leadSession.Id, IsLead: true, BoundTaskId: null, BoundAttemptId: null, EnabledPlugins: []),
+            new McpSessionPrincipal("tok", track.Track.Id, leadSession.Id, IsLead: true, BoundTaskId: null, TaskRunCount: null, EnabledPlugins: []),
             KernelMcpToolNames.ReportRead,
             TestJson.Parse("""{"format":"full"}"""),
             CancellationToken.None);

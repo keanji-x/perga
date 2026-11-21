@@ -12,8 +12,9 @@ function snapshot(overrides: object = {}) {
       { id: 'input', trackId: 't', provider: 'codex', status: 'running', contextUsage: null, createdAtMs: 1, updatedAtMs: 900 },
       { id: 'working', trackId: 't', provider: 'codex', status: 'compacting', contextUsage: null, createdAtMs: 1, updatedAtMs: 900 },
       { id: 'archived', trackId: 't', provider: 'codex', status: 'unknown', contextUsage: null, createdAtMs: 1, updatedAtMs: 900, archivedAtMs: 2, lastNotifiableTurnAtMs: 300 },
-      { id: 'worker', trackId: 't', provider: 'codex', boundTaskId: 'task', status: 'idle', contextUsage: null, createdAtMs: 1, updatedAtMs: 900, lastNotifiableTurnAtMs: 400 },
+      { id: 'worker', trackId: 't', provider: 'codex', status: 'idle', contextUsage: null, createdAtMs: 1, updatedAtMs: 900, lastNotifiableTurnAtMs: 400 },
     ],
+    tasks: [{ id: 'task', trackId: 't', blockId: 'block', taskKey: 'task', kind: 'agent', status: 'done', sessionId: 'worker', createdAtMs: 1, updatedAtMs: 2 }],
     pendingApprovals: [{ id: 'blocked-approval', executionId: 'exec', sessionId: 'blocked', title: 'Approve', options: [], createdAtMs: 2 }, { id: 'approval', executionId: 'exec', sessionId: 'input', title: 'Approve', options: [], createdAtMs: 2 }],
     ...overrides,
   });
@@ -40,10 +41,10 @@ it('retains only conversation watermarks when the track closes', () => {
 it('does not turn historical task failures or finished-task unknown workers into track or card failures', () => {
   const value = snapshot({
     sessions: [
-      { id: 'stale-worker', trackId: 't', provider: 'codex', boundTaskId: 'task', boundAttemptId: 'att-1', status: 'unknown', contextUsage: null, createdAtMs: 1, updatedAtMs: 2 },
+      { id: 'stale-worker', trackId: 't', provider: 'codex', status: 'unknown', contextUsage: null, createdAtMs: 1, updatedAtMs: 2 },
     ],
     pendingApprovals: [],
-    tasks: [{ id: 'task', trackId: 't', blockId: 'block', taskKey: 'task', kind: 'agent', status: 'failed', latestAttemptId: 'att-1', createdAtMs: 1, updatedAtMs: 2 }],
+    tasks: [{ id: 'task', trackId: 't', blockId: 'block', taskKey: 'task', kind: 'agent', status: 'failed', sessionId: 'stale-worker', createdAtMs: 1, updatedAtMs: 2 }],
   });
   expect(trackActivityFromSnapshot(value)).toMatchObject({ attention: 'none', working: false, cards: {}, attentionItems: [] });
 });

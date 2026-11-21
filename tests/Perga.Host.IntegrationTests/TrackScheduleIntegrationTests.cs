@@ -121,12 +121,10 @@ public sealed class TrackScheduleIntegrationTests
         await kernel.WaitForTrackIdleAsync(trackId).WaitAsync(Deadline);
         var store = cluster.Services.GetRequiredService<ITrackStore>();
         var nowMs = cluster.TimeProvider.GetUtcNow().ToUnixTimeMilliseconds();
-        await store.UpsertSessionAsync(new AgentSessionDto(
+        var workerSession = new AgentSessionDto(
             Id: "ses_worker",
             TrackId: trackId,
             IsLead: false,
-            BoundTaskId: "tsk_1",
-            BoundAttemptId: "att_1",
             Title: "Contract Worker",
             Provider: "codex",
             Model: null,
@@ -135,10 +133,14 @@ public sealed class TrackScheduleIntegrationTests
             Status: "running",
             ArchivedAtMs: null,
             CreatedAtMs: nowMs,
-            UpdatedAtMs: nowMs), null, default);
+            UpdatedAtMs: nowMs);
+        await store.UpsertTaskAsync(new TaskDto(
+            "tsk_1", trackId, "b_1", "worker", 1, "agent", "codex", AccessMode.ReadOnly,
+            true, [], "Work", null, null, null, TaskRunStatus.Running, null, SemanticVerdict.None, null, nowMs, nowMs,
+            SessionId: "ses_worker", RunCount: 1, StartedAtMs: nowMs), null, null, default, session: workerSession);
         await kernel.Actors.RemoveAndDisposeAsync(trackId);
         var leadCaller = new McpSessionPrincipal("lead-tok", trackId, leadSessionId, true, null, null, []);
-        var workerCaller = new McpSessionPrincipal("worker-tok", trackId, "ses_worker", false, "att_1", null, []);
+        var workerCaller = new McpSessionPrincipal("worker-tok", trackId, "ses_worker", false, "tsk_1", 1, []);
 
         // Contract worker cannot mutate schedules, only list them.
         var setErr = await Assert.ThrowsAsync<KernelException>(() =>
