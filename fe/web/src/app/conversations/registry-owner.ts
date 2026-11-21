@@ -79,34 +79,50 @@ function isPendingTrackInitialSend(value: unknown): value is PendingTrackInitial
     && typeof (value as { key?: unknown }).key === 'string';
 }
 
-function readPendingTrackInitialSends(key: string, submittedStorage?: () => Storage): ById<PendingTrackInitialSend> {
-  if (submittedStorage === undefined) return {};
+function readPendingTrackInitialSends(key: string, submittedStorage?: () => Storage):
+  { ok: true; map: ById<PendingTrackInitialSend> } | { ok: false } {
+  if (submittedStorage === undefined) return { ok: true, map: {} };
+  let raw: string | null;
   try {
-    const raw = submittedStorage().getItem(key);
-    if (raw === null) return {};
-    const parsed: unknown = JSON.parse(raw);
-    if (typeof parsed !== 'object' || parsed === null) return {};
-    return Object.fromEntries(Object.entries(parsed).filter((entry): entry is [string, PendingTrackInitialSend] => isPendingTrackInitialSend(entry[1])));
+    raw = submittedStorage().getItem(key);
   } catch {
-    return {};
+    return { ok: false };
+  }
+  if (raw === null) return { ok: true, map: {} };
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return { ok: true, map: {} };
+    const map = Object.fromEntries(Object.entries(parsed)
+      .filter((entry): entry is [string, PendingTrackInitialSend] => isPendingTrackInitialSend(entry[1])));
+    return { ok: true, map };
+  } catch {
+    return { ok: true, map: {} };
   }
 }
 
-function writePendingTrackInitialSends(key: string, map: ById<PendingTrackInitialSend>, submittedStorage?: () => Storage): void {
-  if (submittedStorage === undefined) return;
+function writePendingTrackInitialSends(key: string, map: ById<PendingTrackInitialSend>, submittedStorage?: () => Storage): boolean {
+  if (submittedStorage === undefined) return true;
   try {
     const storage = submittedStorage();
     if (Object.keys(map).length === 0) storage.removeItem(key);
     else storage.setItem(key, JSON.stringify(map));
-  } catch { /* Ignore storage quota/availability failures. */ }
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** The only local conversation authority. Commands finish before any observer is notified. */
 export function createConversationOwner(submittedStorage?: () => Storage) {
   const pendingInitialSendsKey = createStorageKey('pending-track-initial-sends-v1');
+  const initialRead = readPendingTrackInitialSends(pendingInitialSendsKey, submittedStorage);
+  let pendingInitialSendsHydrated = initialRead.ok;
+  let pendingInitialSendsDirty = false;
+  const consumedBeforeHydration = new Map<string, string>();
   let state: ConversationSnapshot = {
-    entries: {}, conversations: NO_CONVERSATIONS, drafts: {}, openRequest: null, pendingTrackInitialSends: readPendingTrackInitialSends(pendingInitialSendsKey, submittedStorage), outboxes: {}, acceptedTurns: {},
-    composers: {}, newComposers: {}, uploads: {},  queueWrites: {}, restarts: {}, resolutions: {},
+    entries: {}, conversations: NO_CONVERSATIONS, drafts: {}, openRequest: null,
+    pendingTrackInitialSends: initialRead.ok ? initialRead.map : {}, outboxes: {}, acceptedTurns: {},
+    composers: {}, newComposers: {}, uploads: {}, queueWrites: {}, restarts: {}, resolutions: {},
   };
   const sendGenerations = new Map<string, number>();
   const epochs = new Map<string, number>();
@@ -117,6 +133,31 @@ export function createConversationOwner(submittedStorage?: () => Storage) {
     if (next === state) return;
     state = next;
     for (const listener of listeners) listener();
+  };
+  const savePendingTrackInitialSends = (pendingTrackInitialSends: ById<PendingTrackInitialSend>) => {
+    pendingInitialSendsDirty = !writePendingTrackInitialSends(pendingInitialSendsKey, pendingTrackInitialSends, submittedStorage);
+    return !pendingInitialSendsDirty;
+  };
+  const hydratePendingTrackInitialSends = () => {
+    if (pendingInitialSendsHydrated) {
+      return !pendingInitialSendsDirty || savePendingTrackInitialSends(state.pendingTrackInitialSends);
+    }
+    const loaded = readPendingTrackInitialSends(pendingInitialSendsKey, submittedStorage);
+    if (!loaded.ok) return false;
+    pendingInitialSendsHydrated = true;
+    const current = state.pendingTrackInitialSends;
+    const recovered = { ...loaded.map };
+    // A replay can finish in this tab while its original queue entry is still unreadable.
+    for (const [trackId, key] of consumedBeforeHydration) {
+      if (recovered[trackId]?.key === key) delete recovered[trackId];
+    }
+    const pendingTrackInitialSends = { ...recovered, ...current };
+    if (!equalRecord(loaded.map, pendingTrackInitialSends)) {
+      savePendingTrackInitialSends(pendingTrackInitialSends);
+    }
+    consumedBeforeHydration.clear();
+    if (!equalRecord(current, pendingTrackInitialSends)) commit({ ...state, pendingTrackInitialSends });
+    return !pendingInitialSendsDirty;
   };
   const rememberEntry = (id: string, conversation: Conversation, given: readonly TranscriptEntry[]) => {
     const canonical = given.some(isOptimisticConversationTurn) ? given.filter(turn => !isOptimisticConversationTurn(turn)) : given;
@@ -170,15 +211,22 @@ export function createConversationOwner(submittedStorage?: () => Storage) {
     },
     requestOpen: (id, options) => { commit({ ...state, openRequest: { id, focusComposer: options?.focusComposer ?? false } }); },
     clearOpenRequest: () => { if (state.openRequest !== null) commit({ ...state, openRequest: null }); },
+    hydratePendingTrackInitialSends,
+    hasPendingTrackInitialSend: (trackId) => Object.hasOwn(state.pendingTrackInitialSends, trackId),
     queueTrackInitialSend: (trackId, text, key) => {
+      if (!pendingInitialSendsHydrated) hydratePendingTrackInitialSends();
       const pendingTrackInitialSends = put(state.pendingTrackInitialSends, trackId, { text, key });
-      writePendingTrackInitialSends(pendingInitialSendsKey, pendingTrackInitialSends, submittedStorage);
+      const saved = pendingInitialSendsHydrated && savePendingTrackInitialSends(pendingTrackInitialSends);
       commit({ ...state, pendingTrackInitialSends });
+      return saved;
     },
     consumeTrackInitialSend: (trackId) => {
-      if (state.pendingTrackInitialSends[trackId] === undefined) return;
+      if (!pendingInitialSendsHydrated) hydratePendingTrackInitialSends();
+      const pending = state.pendingTrackInitialSends[trackId];
+      if (pending === undefined) return;
       const pendingTrackInitialSends = put(state.pendingTrackInitialSends, trackId, undefined);
-      writePendingTrackInitialSends(pendingInitialSendsKey, pendingTrackInitialSends, submittedStorage);
+      if (pendingInitialSendsHydrated) savePendingTrackInitialSends(pendingTrackInitialSends);
+      else consumedBeforeHydration.set(trackId, pending.key);
       commit({ ...state, pendingTrackInitialSends });
     },
     draftOf: scope => { const slot = state.drafts[scope]; return slot?.kind === 'held' ? slot.draft : null; },

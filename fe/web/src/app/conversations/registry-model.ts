@@ -119,7 +119,12 @@ export type ConversationRegistry = Readonly<{
   ) => void;
   requestOpen: (conversationId: string, options?: { focusComposer?: boolean }) => void;
   clearOpenRequest: () => void;
-  queueTrackInitialSend: (trackId: string, text: string, key: string) => void;
+  /** Retries reading and saving the initial-send queue. Returns true once synced. */
+  hydratePendingTrackInitialSends: () => boolean;
+  /** Checks the current in-memory queue, including sends queued during a storage failure. */
+  hasPendingTrackInitialSend: (trackId: string) => boolean;
+  /** Queues in memory and reports whether configured storage accepted the write. */
+  queueTrackInitialSend: (trackId: string, text: string, key: string) => boolean;
   consumeTrackInitialSend: (trackId: string) => void;
   /** Failed first-message attempts live here, above every route remount. */
   draftOf: (scopeId: string) => ConversationDraft | null;
