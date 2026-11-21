@@ -2641,7 +2641,9 @@ public sealed partial class TrackActor : IAsyncDisposable
                 {
                     RequireConfirmedConfiguration(session, agent, agent.ConfigurationState);
                 }, _options.SessionStartupTimeout, ct).ConfigureAwait(false);
-            await EnqueueAsync(_ => RegisterOpenAgentSessionCoreAsync(session, handle.Agent, handle.LaunchSpec, ct), ct).ConfigureAwait(false);
+            // Finish handing off the owned handle before startup cancellation can be observed.
+            await EnqueueAsync(_ => RegisterOpenAgentSessionCoreAsync(session, handle.Agent, handle.LaunchSpec, CancellationToken.None),
+                CancellationToken.None).ConfigureAwait(false);
             return handle.Agent;
         }
         catch (Exception error)

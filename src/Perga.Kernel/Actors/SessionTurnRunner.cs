@@ -100,6 +100,7 @@ public sealed partial class TrackActor
             if (claim is not { } claimed) return null;
             using var startupDeadline = CancellationTokenSource.CreateLinkedTokenSource(ct, claimed.Startup.Token);
             IAgentSession? startupAgent = null;
+            long? priorGeneration = actor._runtimes.Get(work.SessionId).Snapshot?.Generation;
             try
             {
                 await actor.EnqueueAsync(_ =>
@@ -154,7 +155,11 @@ public sealed partial class TrackActor
             }
             catch (Exception error)
             {
-                if (startupAgent is not null)
+                // Registration can fail before returning the newly opened agent to this caller.
+                // A retained unconfirmed handle already went through startup cleanup.
+                if (startupAgent is not null ||
+                    actor._runtimes.TryGetOpen(work.SessionId, out var opened) && opened.Generation != priorGeneration &&
+                    !actor._runtimes.IsShutdownUnconfirmed(work.SessionId))
                 {
                     try { await actor._runtimes.Get(work.SessionId).CloseAsync(actor._options.SessionStartupTimeout, CancellationToken.None).ConfigureAwait(false); }
                     catch { /* Setup settlement records unconfirmed shutdown. */ }

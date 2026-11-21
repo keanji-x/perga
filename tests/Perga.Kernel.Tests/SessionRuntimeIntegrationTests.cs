@@ -122,6 +122,30 @@ public sealed class SessionRuntimeIntegrationTests
     }
 
     [Fact]
+    public async Task RegistrationFailureClosesNewProviderBeforeSettlingStartup()
+    {
+        await using var ctx = new KernelTestContext();
+        var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
+        var id = snapshot.Track.LeadSessionId!;
+        ctx.AgentRuntime.OnOpenedSession = agent => agent.OnAttachIdleContextUsage = () =>
+            throw new InvalidOperationException("deliberate registration failure");
+
+        await ctx.Kernel.SendSessionMessageAsync(id, new(Content: "fail registration", RequestKey: "registration"), Human, default);
+        await ctx.Kernel.WaitForTrackIdleAsync(snapshot.Track.Id).WaitAsync(TimeSpan.FromSeconds(3));
+
+        var provider = Assert.Single(ctx.AgentRuntime.OpenedSessions);
+        Assert.Empty(provider.RecordedInputs);
+        Assert.Equal(1, provider.DisposeCalls);
+        var page = await ctx.Kernel.GetSessionItemsAsync(id, new(), Human, default);
+        Assert.Equal("failed", page.LastTurn!.Status);
+
+        ctx.AgentRuntime.OnOpenedSession = null;
+        await ctx.SendAndWaitForTurnAsync(id, new("retry after registration failure", "retry-registration"));
+        Assert.Equal(2, ctx.AgentRuntime.OpenedSessions.Count);
+        Assert.Equal("completed", ctx.Store.GetTurnsForSession(id).Last().Status);
+    }
+
+    [Fact]
     public async Task FailedTrackDeletionLeavesExistingAndNewSessionsUsable()
     {
         await using var ctx = new KernelTestContext();
