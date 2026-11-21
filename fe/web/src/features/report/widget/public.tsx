@@ -204,7 +204,6 @@ export function ReportWidgetBlock({
   renderMarkdown,
   onOpenFile,
   onOpenWorker,
-  onCancelFlowNode,
 }: Readonly<{
   payload: WidgetBlockPayload;
   projection?: TemplateViewsProjection | TemplateViewsState;
@@ -215,7 +214,6 @@ export function ReportWidgetBlock({
   renderMarkdown?: (markdown: string, key: string) => ReactNode;
   onOpenFile?: (path: string) => void;
   onOpenWorker?: (sessionId: string) => void;
-  onCancelFlowNode?: (nodeId: string) => Promise<void> | void;
 }>) {
   if (isTemplateViewsState(rawProjection)) {
     if (rawProjection.status === 'loading') {
@@ -277,7 +275,6 @@ export function ReportWidgetBlock({
         renderText={renderText}
         renderMarkdown={renderMarkdown}
         onOpenWorker={onOpenWorker}
-        onCancelFlowNode={onCancelFlowNode}
       />
     );
   }

@@ -105,7 +105,7 @@ import { ReportFileViewer } from '../../features/report/file-viewer/public.tsx';
 import { ReportOutline } from '../../features/report/outline/public.tsx';
 import { RecentFiles } from '../../features/report/recent-files/public.tsx';
 import {
-  backlinkCountsByBlock, cancelFlowNodeOperation, deriveReportTasks, type ReportLinkTarget,
+  backlinkCountsByBlock, deriveReportTasks, type ReportLinkTarget,
 } from '../../../../core/domain/report.ts';
 import {
   parseWorkspaceRelativeFilePath, type ReportFileLinkTarget,
@@ -1717,7 +1717,6 @@ function TrackRouteBody({
         trackId={track.id}
         openedAt={navigationCompletedAt}
         templateViews={templateViews}
-        onCancelFlowNode={protocolWritable ? (nodeId) => protocolWrite(cancelFlowNodeOperation(track.id, nodeId)) : undefined}
         resolveSeries={resolveSeries}
         resolvePreview={resolvePreview}
         previewViewports={previewViewports}
@@ -1749,18 +1748,6 @@ function TrackRouteBody({
           go({ name: 'track', trackId: track.id, cardId, from: routeFrom });
         }}
         onOpenSourceLink={openReportSource}
-        onSaveProseBlock={report?.docRev !== undefined
-          && !(templateViews?.status === 'ready' && templateViews.projection.humanReadOnly)
-          && !(report?.blocks?.some((block) => block.kind === 'checkpoints' || block.kind === 'widget') ?? false)
-          ? async (blockId, markdown) => {
-            await trackMutations.updateReportBlock(track.id, blockId, {
-              docRev: report.docRev!,
-              knownBlockRev: report.blockRevs?.[blockId] ?? 1,
-              kind: 'prose',
-              markdown,
-            });
-          }
-          : undefined}
         fileRoot={track.agentCwd}
         linkPreview={linkPreview}
         outlineEmpty={reportEmpty}

@@ -86,10 +86,6 @@ export type ReportDocumentProps = Readonly<{
   resolvePreview?: (key: string) => PreviewResolution;
   /** Where preview blocks remember the reader's device choice, by block key (the app scopes it per track). Absent ⇒ not remembered. */
   previewViewports?: PreviewViewportStore;
-  /** Optional human CAS editor for prose blocks (`PUT /api/v1/tracks/{trackId}/report/blocks/{blockId}`). */
-  onSaveProseBlock?: (blockId: string, markdown: string) => Promise<void>;
-  /** Cancels an active node in the Track's Unified Flow (`PUT /api/v1/tracks/{trackId}/flow/nodes/{nodeId}/cancel`). */
-  onCancelFlowNode?: (nodeId: string) => Promise<void> | void;
 }>;
 
 function resolveAutoFlow(
@@ -117,7 +113,7 @@ function isTargetSectionProse(slot: PreparedReportBlock | undefined): boolean {
 /** Agent-authored destinations become admitted preview controls. Navigation stays behind typed callbacks or explicit external activation. */
 export function ReportDocument({
   report, preparation, empty, outlineEmpty, rail, byline, sourceInsertion, backlinkCounts, onOpenLink, onOpenFileLink, onOpenWorker, onOpenSourceLink, fileRoot, fileBasePath, linkPreview,
-  resolveOverlay, templateViews, resolveSeries, resolvePreview, previewViewports, onSaveProseBlock, onCancelFlowNode,
+  resolveOverlay, templateViews, resolveSeries, resolvePreview, previewViewports,
   arrivalAnchorId, taskVerdicts, taskRows, renderTaskExecution,
 }: ReportDocumentProps) {
   const compactViewport = useCompactViewport();
@@ -144,7 +140,6 @@ export function ReportDocument({
               <ProseBlock markdown={markdown} blockId={key} compact {...textContext} />
             )}
             onOpenWorker={onOpenWorker}
-            onCancelFlowNode={onCancelFlowNode}
           />
         </div>
       </div>
@@ -216,8 +211,6 @@ export function ReportDocument({
               resolveSeries={resolveSeries}
               resolvePreview={resolvePreview}
               previewViewports={previewViewports}
-              onSaveProseBlock={report?.docRev !== undefined ? onSaveProseBlock : undefined}
-              onCancelFlowNode={onCancelFlowNode}
             />
           );
           return (
@@ -315,10 +308,10 @@ function ReportReference({ blocks, backlinkCounts, tasks, verdicts, renderTaskEx
   );
 }
 
-/** One block, plus the sidenote that belongs to it. */
+/** One block, plus the sidenote that belongs to it. Reports are read-only publications. */
 function BlockSlot({
   slot, backlinks, onOpenLink, onOpenFileLink, onOpenWorker, taskRows, onOpenSourceLink, fileRoot, fileBasePath, linkPreview, referenceRepository, resolveOverlay, templateViews, widgetSelections, onSelectWidget, resolveSeries,
-  resolvePreview, previewViewports, onSaveProseBlock, onCancelFlowNode, sourceInsertion,
+  resolvePreview, previewViewports, sourceInsertion,
 }: {
   referenceRepository: ReferenceRepository | null;
   slot: PreparedReportBlock;
@@ -338,85 +331,31 @@ function BlockSlot({
   resolveSeries?: ReportDocumentProps['resolveSeries'];
   resolvePreview?: ReportDocumentProps['resolvePreview'];
   previewViewports?: PreviewViewportStore;
-  onSaveProseBlock?: ReportDocumentProps['onSaveProseBlock'];
-  onCancelFlowNode?: ReportDocumentProps['onCancelFlowNode'];
   sourceInsertion?: ReportSourceInsertion;
 }) {
   const { block, prose } = slot;
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState('');
-  const [saving, setSaving] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
-  const canEditProse = block.kind === 'prose' && onSaveProseBlock !== undefined;
   return (
     <div className={styles.row}>
-      <div className={`${styles.block} ${canEditProse ? styles.editable : ''}`} id={block.id} data-nc-report-reading="" data-nc-link-reading="" data-nc-report-source-block={block.id}>
-        {canEditProse && editing ? (
-          <div className={styles.proseEditor} data-nc-prose-editor="">
-            <textarea
-              aria-label={`Markdown for block ${block.id}`}
-              value={draft}
-              rows={6}
-              disabled={saving}
-              onChange={(event) => { setDraft(event.target.value); }}
+      <div className={styles.block} id={block.id} data-nc-report-reading="" data-nc-link-reading="" data-nc-report-source-block={block.id}>
+        {prose !== null
+          ? (
+            <PreparedProseBlock
+              prepared={prose}
+              sourceInsertion={sourceInsertion}
+              referenceRepository={referenceRepository} onOpenLink={onOpenLink}
+              onOpenFileLink={onOpenFileLink}
+              onOpenSourceLink={onOpenSourceLink}
+              fileRoot={fileRoot}
+              fileBasePath={fileBasePath}
+              linkPreview={linkPreview}
             />
-            {saveError !== null && <p role="alert">{saveError}</p>}
-            <div className={styles.proseEditorActions}>
-              <button
-                type="button"
-                disabled={saving}
-                onClick={() => {
-                  setSaving(true);
-                  setSaveError(null);
-                  void onSaveProseBlock(block.id, draft).then(
-                    () => { setSaving(false); setEditing(false); },
-                    (error: unknown) => {
-                      setSaving(false);
-                      setSaveError(error instanceof Error ? error.message : 'Could not save block.');
-                    },
-                  );
-                }}
-              >
-                Save block
-              </button>
-              <button
-                type="button"
-                disabled={saving}
-                onClick={() => { setEditing(false); setSaveError(null); }}
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        ) : prose !== null
-          ? <>
-              <PreparedProseBlock
-                prepared={prose}
-                sourceInsertion={sourceInsertion}
-                referenceRepository={referenceRepository} onOpenLink={onOpenLink}
-                onOpenFileLink={onOpenFileLink}
-                onOpenSourceLink={onOpenSourceLink}
-                fileRoot={fileRoot}
-                fileBasePath={fileBasePath}
-                linkPreview={linkPreview}
-              />
-              {canEditProse && (
-                <button
-                  type="button"
-                  className={styles.editProse}
-                  aria-label={`Edit block ${block.id}`}
-                  onClick={() => { setDraft(block.payload.markdown); setSaveError(null); setEditing(true); }}
-                >
-                  Edit
-                </button>
-              )}
-            </>
+          )
           : <BlockBody block={block} taskRows={taskRows} referenceRepository={referenceRepository} onOpenLink={onOpenLink}
               onOpenFileLink={onOpenFileLink} onOpenWorker={onOpenWorker} fileRoot={fileRoot} fileBasePath={fileBasePath}
               onOpenSourceLink={onOpenSourceLink} linkPreview={linkPreview}
               resolveOverlay={resolveOverlay} templateViews={templateViews} widgetSelections={widgetSelections} onSelectWidget={onSelectWidget} resolveSeries={resolveSeries} resolvePreview={resolvePreview}
-              previewViewports={previewViewports} onCancelFlowNode={onCancelFlowNode} />}
-        {(!prose || editing) && sourceInsertion?.content}
+              previewViewports={previewViewports} />}
+        {!prose && sourceInsertion?.content}
       </div>
       {backlinks > 0 && (
         <span className={styles.sidenote} title={`${backlinks} report${backlinks === 1 ? '' : 's'} cite this block`}>
@@ -429,7 +368,7 @@ function BlockSlot({
 
 /** One bad block may not cost the page: an unknown kind or an unparsable payload degrades to one line. */
 function BlockBody({
-  block, task, taskRows, renderTaskExecution, referenceRepository, onOpenLink, onOpenFileLink, onOpenWorker, fileRoot, fileBasePath, onOpenSourceLink, linkPreview, resolveOverlay, templateViews, widgetSelections, onSelectWidget, resolveSeries, resolvePreview, previewViewports, onCancelFlowNode,
+  block, task, taskRows, renderTaskExecution, referenceRepository, onOpenLink, onOpenFileLink, onOpenWorker, fileRoot, fileBasePath, onOpenSourceLink, linkPreview, resolveOverlay, templateViews, widgetSelections, onSelectWidget, resolveSeries, resolvePreview, previewViewports,
 }: {
   referenceRepository: ReferenceRepository | null;
   onOpenLink?: (target: ReportLinkTarget) => void;
@@ -448,7 +387,6 @@ function BlockBody({
   resolveSeries?: ReportDocumentProps['resolveSeries'];
   resolvePreview?: ReportDocumentProps['resolvePreview'];
   previewViewports?: PreviewViewportStore;
-  onCancelFlowNode?: ReportDocumentProps['onCancelFlowNode'];
 }): ReactNode {
   const textContext = { referenceRepository, onOpenLink, onOpenFileLink, onOpenSourceLink, fileRoot, fileBasePath, linkPreview };
   const renderText = (text: string) => <PlainReportText text={text} context={textContext} />;
@@ -494,7 +432,6 @@ function BlockBody({
           )}
           onOpenFile={onOpenFileLink === undefined ? undefined : (path) => { onOpenFileLink({ path }); }}
           onOpenWorker={onOpenWorker}
-          onCancelFlowNode={onCancelFlowNode}
         />
       );
     case 'unsupported':

@@ -1,7 +1,7 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { FlowNodeProjection, FlowProjection } from '../../../../../core/domain/report-flow.ts';
-import { buildFlowLayout } from './layout.ts';
+import { balanceFlowRows, buildFlowLayout } from './layout.ts';
 import { ReportFlowBlock } from './public.tsx';
 
 afterEach(() => { cleanup(); });
@@ -50,12 +50,26 @@ describe('buildFlowLayout', () => {
     expect(cyclic.layers[0].isCycleFallback).toBe(true);
     expect(cyclic.layers[0].nodes.map((n) => n.node.id)).toEqual(['a', 'b']);
   });
+
+  it('balances periodic rows without lonely single-item orphans', () => {
+    const rowLengths = (count: number) =>
+      balanceFlowRows(Array.from({ length: count }, (_, idx) => idx), 3).map((row) => row.length);
+
+    expect(rowLengths(0)).toEqual([]);
+    expect(rowLengths(1)).toEqual([1]);
+    expect(rowLengths(2)).toEqual([2]);
+    expect(rowLengths(3)).toEqual([3]);
+    expect(rowLengths(4)).toEqual([2, 2]);
+    expect(rowLengths(5)).toEqual([3, 2]);
+    expect(rowLengths(6)).toEqual([3, 3]);
+    expect(rowLengths(7)).toEqual([3, 2, 2]);
+    expect(rowLengths(8)).toEqual([3, 3, 2]);
+  });
 });
 
 describe('ReportFlowBlock (builtin:flow)', () => {
-  it('renders layered branches, watch progress, attention auto-selection, worker jump, cancel action, cron footnotes, and archived drawer', async () => {
+  it('renders layered branches, watch progress, attention auto-selection, worker jump, balanced periodic cards, and archived drawer without action buttons', () => {
     const onOpenWorker = vi.fn();
-    const onCancelFlowNode = vi.fn().mockResolvedValue(undefined);
 
     const flow: FlowProjection = {
       rev: 5,
@@ -149,7 +163,6 @@ describe('ReportFlowBlock (builtin:flow)', () => {
       <ReportFlowBlock
         flow={flow}
         onOpenWorker={onOpenWorker}
-        onCancelFlowNode={onCancelFlowNode}
         renderText={(text) => <span>{text}</span>}
         renderMarkdown={(md) => <div data-testid="flow-md">{md}</div>}
       />,
@@ -159,26 +172,20 @@ describe('ReportFlowBlock (builtin:flow)', () => {
     expect(container.querySelectorAll('[data-nc-flow-layer]')).toHaveLength(3);
     expect(screen.getByText('PR #115 · 3/5 checks · 等待中')).toBeTruthy();
 
-    // 2. Attention node auto-selected by default with summary highlight
+    // 2. Attention node auto-selected by default with summary highlight (strictly read-only: no cancel button)
     const panel = screen.getByRole('tabpanel', { name: 'CI 红灯自动修复' });
     expect(within(panel).getByRole('alert').textContent).toContain('Unit test `FlowReconcilerTests` failed on Linux runner.');
-    // Done attention node is NOT cancellable
     expect(within(panel).queryByRole('button', { name: '取消节点' })).toBeNull();
 
     // Clicking model in detail byline opens worker session
     fireEvent.click(within(panel).getByRole('button', { name: 'claude-sonnet-4-6' }));
     expect(onOpenWorker).toHaveBeenCalledWith('ses_ci_fixer');
 
-    // 3. Clicking wait-ci shows watch progress details and cancellable button
+    // 3. Clicking wait-ci shows watch progress details without any report mutation button
     fireEvent.click(screen.getByRole('tab', { name: /^等待 PR #115 CI/ }));
     const watchPanel = screen.getByRole('tabpanel', { name: '等待 PR #115 CI' });
     expect(within(watchPanel).getByRole('region', { name: '探针等待进度' }).textContent).toContain('2 checks still queued');
-
-    const cancelBtn = within(watchPanel).getByRole('button', { name: '取消节点' });
-    fireEvent.click(cancelBtn);
-    await waitFor(() => {
-      expect(onCancelFlowNode).toHaveBeenCalledWith('wait-ci');
-    });
+    expect(within(watchPanel).queryByRole('button', { name: '取消节点' })).toBeNull();
 
     // 4. Clicking recheck-a shows `复用上下文` hint and clicking model jumps to targetSession
     fireEvent.click(screen.getByRole('tab', { name: /^复审 A（复用原上下文）/ }));

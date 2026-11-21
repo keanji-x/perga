@@ -35,6 +35,27 @@ export type FlowLayout = Readonly<{
   hasCycle: boolean;
 }>;
 
+/**
+ * Partitions `items` into visually balanced rows of at most `maxCols` columns so no row ever has
+ * a lonely 1-item orphan when `items.length >= 2` (e.g. 4 -> [2, 2], 5 -> [3, 2], 7 -> [3, 2, 2]).
+ */
+export function balanceFlowRows<T>(items: readonly T[], maxCols = 3): readonly (readonly T[])[] {
+  const count = items.length;
+  if (count === 0) return [];
+  const cols = Math.max(1, maxCols);
+  const rowCount = Math.ceil(count / cols);
+  const base = Math.floor(count / rowCount);
+  const extra = count % rowCount;
+  const rows: (readonly T[])[] = [];
+  let offset = 0;
+  for (let row = 0; row < rowCount; row += 1) {
+    const size = base + (row < extra ? 1 : 0);
+    rows.push(items.slice(offset, offset + size));
+    offset += size;
+  }
+  return rows;
+}
+
 export function buildFlowLayout(nodes: readonly FlowNodeProjection[]): FlowLayout {
   if (nodes.length === 0) {
     return { layers: [], cronNodes: [], standaloneCronNodes: [], hasCycle: false };

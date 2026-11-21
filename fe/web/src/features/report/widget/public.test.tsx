@@ -275,7 +275,6 @@ describe('ReportWidgetBlock (Scheme B Unified VO)', () => {
   });
 
   it('dispatches builtin:flow widget from projection.flow and handles empty flow cleanly', () => {
-    const onCancelFlowNode = vi.fn();
     const projection: TemplateViewsProjection = {
       templateId: '',
       views: {},
@@ -312,13 +311,11 @@ describe('ReportWidgetBlock (Scheme B Unified VO)', () => {
         payload={{ use: 'builtin:flow', view: 'flow', title: '交付流水线' }}
         projection={{ status: 'ready', projection }}
         renderText={(text) => <span>{text}</span>}
-        onCancelFlowNode={onCancelFlowNode}
       />,
     );
 
     expect(screen.getByRole('region', { name: '交付流水线' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: '取消节点' }));
-    expect(onCancelFlowNode).toHaveBeenCalledWith('build');
+    expect(screen.queryByRole('button', { name: '取消节点' })).toBeNull();
 
     rerender(
       <ReportWidgetBlock

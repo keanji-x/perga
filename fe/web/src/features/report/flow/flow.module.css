@@ -397,35 +397,6 @@
     color: var(--text);
   }
 
-  .cancelButton {
-    appearance: none;
-    border: 1px solid var(--hairline-strong);
-    border-radius: var(--radius-sm);
-    background: transparent;
-    padding: var(--space-half) var(--space-2);
-    font-family: var(--font-sans);
-    font-size: var(--font-step-1-size);
-    color: var(--text-2);
-    cursor: pointer;
-    line-height: 1.4;
-  }
-
-  .cancelButton:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: 2px;
-  }
-
-  .cancelButton:disabled {
-    opacity: 0.6;
-    cursor: default;
-  }
-
-  .cancelButton:hover:not(:disabled) {
-    border-color: var(--error-border);
-    color: var(--error-text);
-    background: var(--error-soft);
-  }
-
   .metaLine {
     margin-block-start: var(--space-2);
     display: flex;
@@ -446,16 +417,6 @@
 
   .contextReuseHint {
     color: var(--accent);
-  }
-
-  .cancelError {
-    margin-block: var(--space-2) var(--space-3);
-    padding: var(--space-2) var(--space-3);
-    border-inline-start: 2px solid var(--error);
-    background: var(--error-soft);
-    color: var(--error-text);
-    font-family: var(--font-sans);
-    font-size: var(--font-step-1-size);
   }
 
   .attentionBanner {
@@ -574,16 +535,37 @@
     color: var(--text-3);
   }
 
-  .periodicGrid {
+  .periodicRows {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .periodicRow {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
     gap: var(--space-3);
+    padding-block: var(--space-2);
     min-inline-size: 0;
   }
 
-  .periodicCard {
+  .periodicRow + .periodicRow {
     border-block-start: 1px solid var(--hairline);
-    padding-block-start: var(--space-2);
+  }
+
+  .periodicCell {
+    display: flex;
+    flex-direction: column;
+    min-inline-size: 0;
+  }
+
+  .periodicCell + .periodicCell {
+    padding-inline-start: var(--space-3);
+    border-inline-start: 1px solid var(--hairline);
+  }
+
+  .periodicCard {
+    inline-size: 100%;
+    block-size: 100%;
   }
 
   .cronExpr {
@@ -734,6 +716,17 @@
     .layerColumn + .layerColumn {
       padding-inline-start: 0;
       padding-block-start: var(--space-3);
+      border-inline-start: 0;
+      border-block-start: 1px solid var(--hairline);
+    }
+
+    .periodicRow {
+      grid-template-columns: 1fr;
+    }
+
+    .periodicCell + .periodicCell {
+      padding-inline-start: 0;
+      padding-block-start: var(--space-2);
       border-inline-start: 0;
       border-block-start: 1px solid var(--hairline);
     }

@@ -60,15 +60,6 @@ export function archivedOutcomeTone(item: FlowArchivedNodeProjection): 'ok' | 'w
   return 'ok';
 }
 
-export function isNodeCancellable(node: FlowNodeProjection): boolean {
-  if (node.canceled || node.status === 'canceled') return false;
-  if (node.whenKind === 'cron') return true;
-  return node.status === 'pending'
-    || node.status === 'waiting'
-    || node.status === 'running'
-    || node.status === 'verifying';
-}
-
 /**
  * Default-selects the highest-priority active node:
  * 1. `attention` / `blocked` / `failed` (non-canceled)

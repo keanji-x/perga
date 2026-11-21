@@ -23,12 +23,11 @@ import {
   formatNodeCaption,
   formatWatchSummary,
   formatWhenRule,
-  isNodeCancellable,
   pickDefaultFlowNodeId,
   toEditorialBylineItem,
   type FlowVisualState,
 } from './format.ts';
-import { buildFlowLayout, type FlowLayeredNode } from './layout.ts';
+import { balanceFlowRows, buildFlowLayout, type FlowLayeredNode } from './layout.ts';
 import styles from './flow.module.css';
 
 export type ReportFlowBlockProps = Readonly<{
@@ -38,7 +37,6 @@ export type ReportFlowBlockProps = Readonly<{
   renderText?: (text: string) => ReactNode;
   renderMarkdown?: (markdown: string, key: string) => ReactNode;
   onOpenWorker?: (sessionId: string) => void;
-  onCancelFlowNode?: (nodeId: string) => Promise<void> | void;
 }>;
 
 function formatLayerNumber(index: number): string {
@@ -267,15 +265,16 @@ export function ReportFlowBlock({
   renderText,
   renderMarkdown,
   onOpenWorker,
-  onCancelFlowNode,
 }: ReportFlowBlockProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [activeGateKey, setActiveGateKey] = useState<string | null>(null);
   const [archivedOpen, setArchivedOpen] = useState(false);
-  const [cancelingId, setCancelingId] = useState<string | null>(null);
-  const [cancelError, setCancelError] = useState<string | null>(null);
 
   const layout = useMemo(() => buildFlowLayout(flow.nodes), [flow.nodes]);
+  const periodicRows = useMemo(
+    () => balanceFlowRows(layout.standaloneCronNodes, 3),
+    [layout.standaloneCronNodes],
+  );
   const defaultNodeId = useMemo(() => pickDefaultFlowNodeId(flow.nodes), [flow.nodes]);
   const titleById = useMemo(
     () => new Map(flow.nodes.map((node) => [node.id, node.title] as const)),
@@ -299,22 +298,6 @@ export function ReportFlowBlock({
   const handleSelectNode = (nodeId: string) => {
     setSelectedId(nodeId);
     setActiveGateKey(null);
-    setCancelError(null);
-  };
-
-  const handleCancelNode = (nodeId: string) => {
-    if (onCancelFlowNode === undefined || cancelingId !== null) return;
-    setCancelingId(nodeId);
-    setCancelError(null);
-    void Promise.resolve(onCancelFlowNode(nodeId)).then(
-      () => {
-        setCancelingId(null);
-      },
-      (error: unknown) => {
-        setCancelingId(null);
-        setCancelError(error instanceof Error ? error.message : '取消节点失败，请稍后重试。');
-      },
-    );
   };
 
   const headingLabel = title != null && title.trim() !== '' ? title : '调度流程';
@@ -397,34 +380,37 @@ export function ReportFlowBlock({
         </nav>
       )}
 
-      {/* 2. First-class multi-column grid for standalone periodic rules */}
-      {layout.standaloneCronNodes.length > 0 && (
+      {/* 2. Balanced multi-row grid for standalone periodic rules (zero lonely orphans) */}
+      {periodicRows.length > 0 && (
         <section className={styles.cronSection} aria-label="周期巡检规则">
           <div className={styles.cronHeaderRow}>
             <h3 className={styles.footnoteHeading}>周期巡检</h3>
             <span className={styles.layerCountHint}>{layout.standaloneCronNodes.length} 项常驻</span>
           </div>
-          <div className={styles.periodicGrid} role="tablist" aria-label="周期巡检节点">
-            {layout.standaloneCronNodes.map((cronNode) => (
-              <FlowPeriodicNodeCard
-                key={cronNode.id}
-                node={cronNode}
-                isSelected={activeNode?.id === cronNode.id}
-                titleById={titleById}
-                onSelect={handleSelectNode}
-              />
+          <div className={styles.periodicRows} role="tablist" aria-label="周期巡检节点">
+            {periodicRows.map((row, rowIndex) => (
+              <div key={`periodic-row-${rowIndex}`} className={styles.periodicRow}>
+                {row.map((cronNode) => (
+                  <div key={cronNode.id} className={styles.periodicCell}>
+                    <FlowPeriodicNodeCard
+                      node={cronNode}
+                      isSelected={activeNode?.id === cronNode.id}
+                      titleById={titleById}
+                      onSelect={handleSelectNode}
+                    />
+                  </div>
+                ))}
+              </div>
             ))}
           </div>
         </section>
       )}
 
-      {/* 2. Calm editorial detail panel for the selected node */}
+      {/* 3. Calm editorial detail panel for the selected node (strictly read-only publication) */}
       {activeNode !== null && (() => {
         const visual = classifyFlowNodeState(activeNode);
         const bylineItem = toEditorialBylineItem(activeNode);
         const checks = toEditorialChecks(activeNode);
-        const canCancel = onCancelFlowNode !== undefined && isNodeCancellable(activeNode);
-        const isCanceling = cancelingId === activeNode.id;
         const reusesSession = activeNode.targetSession != null && activeNode.targetSession.startsWith('ses_');
         const hasOutcomeSummary = activeNode.outcomeSummary != null && activeNode.outcomeSummary.trim() !== '';
         const whenRule = formatWhenRule(activeNode, titleById);
@@ -434,16 +420,6 @@ export function ReportFlowBlock({
             <header className={styles.detailHeader}>
               <div className={styles.detailTitleRow}>
                 <h3 className={styles.detailTitle}>{activeNode.title}</h3>
-                {canCancel && (
-                  <button
-                    type="button"
-                    className={styles.cancelButton}
-                    disabled={isCanceling}
-                    onClick={() => { handleCancelNode(activeNode.id); }}
-                  >
-                    {isCanceling ? '取消中…' : '取消节点'}
-                  </button>
-                )}
               </div>
 
               <EditorialByline
@@ -476,12 +452,6 @@ export function ReportFlowBlock({
                 )}
               </div>
             </header>
-
-            {cancelError !== null && (
-              <div className={styles.cancelError} role="alert">
-                {cancelError}
-              </div>
-            )}
 
             {hasOutcomeSummary && (
               <div
