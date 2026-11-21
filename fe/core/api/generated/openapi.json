@@ -14634,27 +14634,12 @@
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "required": ["templateId", "views", "widgets", "triggers", "diagnostics"],
+                  "required": ["templateId", "views", "widgets", "diagnostics", "humanReadOnly", "dataRev"],
                   "properties": {
                     "templateId": { "type": "string" },
                     "views": { "type": "object", "additionalProperties": true },
                     "widgets": { "type": "object", "additionalProperties": { "type": "string" } },
-                    "triggers": {
-                      "type": "array",
-                      "items": {
-                        "type": "object",
-                        "required": ["id", "label", "onKind", "actionKind"],
-                        "properties": {
-                          "id": { "type": "string" },
-                          "label": { "type": "string" },
-                          "onKind": { "type": "string" },
-                          "onSummary": { "type": ["string", "null"] },
-                          "actionKind": { "type": "string" },
-                          "assign": { "type": ["string", "null"] },
-                          "assignKind": { "type": ["string", "null"] }
-                        }
-                      }
-                    },
+                    "dataRev": { "type": "integer", "format": "int64", "minimum": 0 },
                     "diagnostics": {
                       "type": "array",
                       "items": {
@@ -14691,7 +14676,24 @@
           "required": true,
           "content": {
             "application/json": {
-              "schema": { "type": "object", "additionalProperties": true }
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "required": ["patch"],
+                    "properties": {
+                      "patch": { "type": "object", "additionalProperties": true },
+                      "expectedDataRev": { "type": "integer", "format": "int64", "minimum": 0 }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "description": "Raw data patch without envelope keys",
+                    "not": { "anyOf": [{ "required": ["patch"] }, { "required": ["expectedDataRev"] }] },
+                    "additionalProperties": true
+                  }
+                ]
+              }
             }
           }
         },
@@ -14701,9 +14703,10 @@
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "required": ["ok", "data"],
+                  "required": ["ok", "dataRev", "data"],
                   "properties": {
                     "ok": { "type": "boolean" },
+                    "dataRev": { "type": "integer", "format": "int64", "minimum": 0 },
                     "data": { "type": "object", "additionalProperties": true }
                   }
                 }
@@ -14711,7 +14714,7 @@
             }
           },
           "400": { "description": "Schema validation or patch argument error" },
-          "409": { "description": "Track is closed or has no active template" }
+          "409": { "description": "Track is closed, has no active template, or the expected data revision is stale" }
         }
       }
     },
@@ -25043,10 +25046,6 @@
           "checkpoints": {
             "type": ["array", "null"],
             "items": { "type": "object" }
-          },
-          "triggers": {
-            "type": ["array", "null"],
-            "items": { "type": "object" }
           }
         }
       },
@@ -25394,6 +25393,8 @@
           "templateInputs": {
             "type": "object"
           },
+          "data": { "type": "object", "additionalProperties": true, "default": {} },
+          "dataRev": { "type": "integer", "format": "int64", "minimum": 0, "default": 0 },
           "templateState": {
             "type": "object"
           },

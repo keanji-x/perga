@@ -18,6 +18,7 @@ public sealed class UnifiedTemplateScheduleTests
     private const string Source = """
         export default {id:'unified', title:'Unified', inputs:{target:{type:'string',default:'first'}},
           initialState:()=>({fires:0}),
+          data:{initial:()=>({business:"untouched"})},
           after(event,ctx) {
             if(event.type !== 'schedule.fired') return;
             ctx.state.fires++;
@@ -55,7 +56,10 @@ public sealed class UnifiedTemplateScheduleTests
                 patch.EnsureSuccessStatusCode();
                 expected = Assert.Single(await kernel.ListTrackSchedulesAsync(id));
                 Assert.Equal(fired with {Prompt="Check second", UpdatedAtMs=expected.UpdatedAtMs}, expected);
-                Assert.Equal(1, (await kernel.GetTrackAggregateAsync(id)).Track.TemplateState.GetProperty("fires").GetInt32());
+                var updatedTrack = (await kernel.GetTrackAggregateAsync(id)).Track;
+                Assert.Equal(1, updatedTrack.TemplateState.GetProperty("fires").GetInt32());
+                Assert.True(JsonElement.DeepEquals(created.Track.Data, updatedTrack.Data));
+                Assert.Equal(0, updatedTrack.DataRev);
                 Assert.Contains(host.AgentRuntime.ExecutedTurns, t=>t.Input.Prompt.Contains("template:Check first", StringComparison.Ordinal));
                 var events = await host.Services.GetRequiredService<ITrackReadStore>().ListEventsSinceAsync(0, id);
                 Assert.Contains(events, e=>e.Kind == KernelEventKinds.TrackSchedulesUpdated);

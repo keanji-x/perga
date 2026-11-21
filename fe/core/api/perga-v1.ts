@@ -128,7 +128,6 @@ export const compiledTemplateManifestDtoSchema = z.object({
   initialReportMarkdown: z.string().nullish().transform((v) => v ?? ''),
   routing: z.array(z.unknown()).nullish(),
   checkpoints: z.array(z.unknown()).nullish(),
-  triggers: z.array(z.unknown()).nullish(),
   viewNames: z.array(z.string()).nullish(),
   humanReadOnly: z.boolean().nullish().transform((v) => v ?? false),
 }).transform((raw) => ({
@@ -198,6 +197,13 @@ export const trackTemplateSnapshotSchema = z.object({
   inputs: z.unknown(), state: z.unknown(), headerView: templateHeaderViewDtoSchema.nullable(),
 });
 
+export const trackDataPatchResultSchema = z.object({
+  ok: z.literal(true),
+  dataRev: z.number().int().nonnegative(),
+  data: z.record(z.string(), z.unknown()),
+});
+export type TrackDataPatchResult = z.infer<typeof trackDataPatchResultSchema>;
+
 export const trackDtoSchema = z.object({
   id: z.string(),
   areaId: z.string(),
@@ -211,6 +217,8 @@ export const trackDtoSchema = z.object({
   templateId: z.string().nullish(),
   templateInputs: z.unknown().default({}),
   templateState: z.unknown().default({}),
+  data: z.record(z.string(), z.unknown()).default({}),
+  dataRev: z.number().int().nonnegative().default(0),
   templateTitle: z.string().nullish(),
   templateHeaderView: templateHeaderViewDtoSchema.nullish(),
   enabledPlugins: z.array(z.string()).default([]),

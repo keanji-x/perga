@@ -303,11 +303,11 @@ public sealed partial class TrackActor : IAsyncDisposable
     }
 
     public async Task<TrackDto> SetTemplateBySessionAsync(string callerSessionId, string? templateId,
-        string? source, string expectedPolicyGeneration, JsonElement? inputs, CancellationToken ct = default) =>
-        (await SetTemplateWithOptionsAsync(callerSessionId, templateId, source, expectedPolicyGeneration, inputs, false, false, ct).ConfigureAwait(false)).Track;
+        string? source, string expectedPolicyGeneration, JsonElement? inputs, CancellationToken ct = default, bool resetData = false) =>
+        (await SetTemplateWithOptionsAsync(callerSessionId, templateId, source, expectedPolicyGeneration, inputs, false, false, ct, resetData).ConfigureAwait(false)).Track;
 
     public Task<TemplateSetResult> SetTemplateWithOptionsAsync(string callerSessionId, string? templateId,
-        string? source, string expectedPolicyGeneration, JsonElement? inputs, bool dryRun, bool clear, CancellationToken ct = default)
+        string? source, string expectedPolicyGeneration, JsonElement? inputs, bool dryRun, bool clear, CancellationToken ct = default, bool resetData = false)
     {
         return EnqueueAsync(async _ =>
         {
@@ -317,8 +317,8 @@ public sealed partial class TrackActor : IAsyncDisposable
                 throw KernelException.PolicyDenied("Active policy changed after template application was authorized.");
             if (_track.ClosedAtMs is not null)
                 throw KernelException.Conflict("Cannot set a template on a closed track.");
-            if (clear && (templateId is not null || source is not null || inputs is not null))
-                throw KernelException.InvalidArgument("clear cannot be combined with a template or inputs.");
+            if (clear && (templateId is not null || source is not null || inputs is not null || resetData))
+                throw KernelException.InvalidArgument("clear cannot be combined with a template, inputs, or resetData.");
             if (clear)
             {
                 return new TemplateSetResult(await DetachTemplateCoreAsync(dryRun, ct).ConfigureAwait(false), [], dryRun);
@@ -352,6 +352,19 @@ public sealed partial class TrackActor : IAsyncDisposable
                 throw KernelException.InvalidArgument($"Template compilation or initialization failed: {ex.Message}");
             }
 
+            var data = _track.Data.ValueKind == JsonValueKind.Object ? _track.Data : JsonHelpers.EmptyObject;
+            if (resetData || !HasBusinessDataFields(data))
+            {
+                try { data = _policyVm.InitData(policy, nextInputs); }
+                catch (InvalidOperationException ex) { throw KernelException.InvalidArgument(ex.Message); }
+            }
+            else
+            {
+                ValidateTrackDataCompatibilityCore(policy, nextInputs, data,
+                    "Existing track data is incompatible with the new template",
+                    ". Migrate data or explicitly pass resetData: true.");
+            }
+            var dataRev = JsonElement.DeepEquals(data, _track.Data) ? _track.DataRev : checked(_track.DataRev + 1);
             var warnings = await TemplateWarningsCoreAsync(policy, nextInputs, ct).ConfigureAwait(false);
             var now = NowMs();
             var nextTrack = _track with
@@ -359,6 +372,8 @@ public sealed partial class TrackActor : IAsyncDisposable
                 TemplateId = policy.TemplateId,
                 TemplateInputs = nextInputs,
                 TemplateState = state,
+                Data = data,
+                DataRev = dataRev,
                 EnabledPlugins = _track.EnabledPlugins.Concat(policy.Manifest.DefaultPlugins).Distinct(StringComparer.Ordinal).ToArray(),
                 UpdatedAtMs = now
             };
@@ -368,7 +383,7 @@ public sealed partial class TrackActor : IAsyncDisposable
                 JsonHelpers.ToElement(TemplatePresentation.Project(nextTrack, policy, _policyVm)), now);
             await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
             var snapshotSource = TemplateHost.Freeze(policy);
-            await _store.UpdateTrackTemplateAndEmitAsync(nextTrack, snapshotSource, evt, ct, schedules).ConfigureAwait(false);
+            await _store.UpdateTrackTemplateAndEmitAsync(nextTrack, snapshotSource, evt, ct, schedules, writeData: dataRev != _track.DataRev).ConfigureAwait(false);
             _policy = policy;
             _policyUnavailableReason = null;
             _policyGeneration = Guid.NewGuid().ToString("N");
@@ -595,7 +610,8 @@ public sealed partial class TrackActor : IAsyncDisposable
                 Blocks: _report.Blocks,
                 Tasks: _tasks.ToArray(),
                 Anchor: anchor,
-                Diagnostics: []);
+                Diagnostics: [],
+                DataRev: _policy is not null || _track.DataRev > 0 ? _track.DataRev : null);
         }, ct);
     }
 
@@ -3258,8 +3274,8 @@ public sealed partial class TrackActor : IAsyncDisposable
         }
 
         var hasViews = _policy.Manifest.ViewNames is { Count: > 0 };
-        var hasState = _track.TemplateState.ValueKind == JsonValueKind.Object &&
-                       _track.TemplateState.EnumerateObject().Any();
+        var hasState = _track.Data.ValueKind == JsonValueKind.Object &&
+                       _track.Data.EnumerateObject().Any();
         if (!hasViews && !hasState)
         {
             return string.Empty;
@@ -3270,6 +3286,7 @@ public sealed partial class TrackActor : IAsyncDisposable
         sb.AppendLine();
         sb.AppendLine();
         sb.AppendLine($"## Active Template Data ({_policy.TemplateId})");
+        sb.AppendLine($"dataRev: {_track.DataRev} (pass expectedDataRev to data_patch to reject stale writes).");
         if (hasViews)
         {
             sb.AppendLine("Report `perga-block widget` blocks render live from this structured template data (and Track kernel facts). Call `data_patch` to update structured fields, or `report_read` to inspect the latest projected views.");
@@ -3277,7 +3294,7 @@ public sealed partial class TrackActor : IAsyncDisposable
 
         if (hasState)
         {
-            var rawJson = _track.TemplateState.GetRawText();
+            var rawJson = _track.Data.GetRawText();
             if (rawJson.Length > maxChars)
             {
                 rawJson = rawJson[..maxChars] + "\n... (truncated; call perga_report_read for latest projected views)";

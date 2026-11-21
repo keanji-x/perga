@@ -31,15 +31,6 @@ public sealed record CheckpointSpec(
     IReadOnlyList<string>? DependsOn = null,
     string? DocPath = null);
 
-public sealed record CompiledTriggerSpec(
-    string Id,
-    string Label,
-    string OnKind,
-    string? OnSummary,
-    string ActionKind,
-    string? Assign = null,
-    string? AssignKind = null);
-
 public sealed record DataValidationError(
     string Path,
     string Message);
@@ -57,9 +48,9 @@ public sealed record TemplateViewsProjection(
     string TemplateId,
     IReadOnlyDictionary<string, JsonElement> Views,
     IReadOnlyDictionary<string, string> Widgets,
-    IReadOnlyList<CompiledTriggerSpec> Triggers,
     IReadOnlyList<TemplateViewDiagnostic> Diagnostics,
-    bool HumanReadOnly = false);
+    bool HumanReadOnly = false,
+    long DataRev = 0);
 
 public sealed record CompiledTemplateManifest(
     string Id,
@@ -82,7 +73,6 @@ public sealed record CompiledTemplateManifest(
     bool HasHeaderView = false,
     string InitialReportMarkdown = "",
     IReadOnlyList<CheckpointSpec>? Checkpoints = null,
-    IReadOnlyList<CompiledTriggerSpec>? Triggers = null,
     IReadOnlyList<string>? ViewNames = null,
     bool HumanReadOnly = false);
 
@@ -131,6 +121,8 @@ public interface IPolicyVm
     PolicyEvalResult<GuardDecision> Before(CompiledPolicy policy, string action, string trackId, JsonElement data, JsonElement inputs, JsonElement state);
     PolicyEvalResult<string?> After(CompiledPolicy policy, string eventName, string trackId, JsonElement data, JsonElement inputs, JsonElement state);
     TemplateHeaderView? EvaluateHeaderView(CompiledPolicy policy, PolicyHeaderViewContext ctx, JsonElement state);
+    JsonElement InitData(CompiledPolicy policy, JsonElement inputs);
+    IReadOnlyList<DataValidationError> ValidateData(CompiledPolicy policy, JsonElement inputs, JsonElement data, IReadOnlyList<string>? knownTaskKeys);
     PolicyEvalResult<JsonElement> InitState(CompiledPolicy policy, JsonElement inputs);
     PolicyEvalResult<PolicyTurnPreparation> PrepareTurn(CompiledPolicy policy, PolicyTurnContext ctx, JsonElement state);
     PolicyTaskRoute RouteTaskDispatch(CompiledPolicy policy, string? role, string access, string? provider, string? model, JsonElement inputs);

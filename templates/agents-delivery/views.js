@@ -34,7 +34,7 @@ function hydrateNode(node, tasks) {
     assign: kTask && kTask.model ? kTask.model : safe.assign,
     assignKind: safe.assignKind === "cli" ? "command" : "model",
     summary: summaryParts.join("\n\n"),
-    blockers: Array.isArray(safe.blockers) ? safe.blockers : [],
+    callouts: { title: "发现的阻断项 / 修复清单", items: Array.isArray(safe.blockers) ? safe.blockers : [] },
     docRef: safe.docRef || undefined,
     docLabel: safe.docLabel || undefined,
     triggerAt: safe.triggerAt || undefined,
@@ -42,17 +42,7 @@ function hydrateNode(node, tasks) {
   };
 }
 
-/**
- * @param {any[]} triggers
- */
-export function createViews(triggers = []) {
-  const standingTriggers = (Array.isArray(triggers) ? triggers : []).map((tr) => ({
-    trigger: tr.on && tr.on.summary ? tr.on.summary : (tr.on && tr.on.expr ? tr.on.expr : (tr.on && tr.on.kind) || "条件触发"),
-    action: tr.label || tr.id,
-    assign: tr.action && (tr.action.command || tr.action.model || tr.action.role) || "—",
-    assignKind: tr.action && tr.action.kind === "run_cli" ? "command" : "model",
-  }));
-
+export function createViews() {
   return {
     /**
      * Projects BOTH the pure SVG topology graph (`./widgets/delivery-flow.html`)
@@ -74,20 +64,23 @@ export function createViews(triggers = []) {
           : (rd.outcome === "changes_requested" ? "打回修复" : "进行中"),
       }));
 
+      const entries = { title: `修复闭环记录 · ${reviewTier}`, items: rounds.map((rd) => ({
+        tag: `R${rd.round}`, status: rd.outcome === "pass" ? "pass" : rd.outcome === "changes_requested" ? "fail" : "running",
+        statusLabel: rd.outcomeLabel, actor: rd.triggeredBy, summary: rd.summary,
+      })) };
       const design = { ...hydrateNode(data.design, tasks), id: "design", code: "01" };
-      const implement = { ...hydrateNode(data.implement, tasks), id: "implement", code: "02", rounds };
+      const implement = { ...hydrateNode(data.implement, tasks), id: "implement", code: "02", entries };
       const reviews = rawReviews.map((r, idx) => ({
         ...hydrateNode(r, tasks),
         id: r.id || `review-${idx + 1}`,
         code: `03${String.fromCharCode(97 + idx)}`,
-        rounds,
+        entries,
       }));
       const mergeBase = hydrateNode(data.merge, tasks);
       const merge = {
         ...mergeBase,
         id: "merge",
         code: "04",
-        triggers: mergeBase.status === "pending" ? standingTriggers : [],
       };
 
       const allNodes = [design, implement, ...reviews, merge];
@@ -98,8 +91,6 @@ export function createViews(triggers = []) {
 
       return {
         reviewTier,
-        blockersTitle: "发现的阻断项 / 修复清单",
-        roundsTitle: `修复闭环记录 · ${reviewTier}`,
         currentRound: typeof data.currentRound === "number" ? data.currentRound : 1,
         defaultSelectedId: defaultSelected ? defaultSelected.id : "design",
         design,
@@ -108,7 +99,6 @@ export function createViews(triggers = []) {
         merge,
         items: allNodes,
         rounds,
-        triggers: standingTriggers,
       };
     },
   };

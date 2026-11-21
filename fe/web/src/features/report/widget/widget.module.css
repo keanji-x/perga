@@ -68,7 +68,7 @@
     color: var(--text);
   }
 
-  .detailBlockers {
+  .detailCallouts {
     margin-block-start: var(--space-3);
     padding-inline-start: var(--space-3);
     border-inline-start: 2px solid var(--error);
@@ -81,7 +81,7 @@
     color: var(--text-2);
   }
 
-  .detailBlockersTitle {
+  .detailCalloutsTitle {
     font-family: var(--font-mono);
     font-size: var(--font-step-1-size);
     letter-spacing: 0.04em;
@@ -89,7 +89,7 @@
     color: var(--error-text);
   }
 
-  .detailRounds {
+  .detailEntries {
     margin-block-start: var(--space-4);
     padding-block-start: var(--space-3);
     border-block-start: 1px dashed var(--hairline);
@@ -98,13 +98,13 @@
     gap: var(--space-2);
   }
 
-  .detailRoundsHead {
+  .detailEntriesHead {
     font-family: var(--font-mono);
     font-size: var(--font-step-1-size);
     color: var(--text-3);
   }
 
-  .detailRoundRow {
+  .detailEntryRow {
     display: flex;
     align-items: baseline;
     gap: var(--space-3);
@@ -114,7 +114,7 @@
     color: var(--text-2);
   }
 
-  .detailRoundTag {
+  .detailEntryTag {
     flex: 0 0 auto;
     font-family: var(--font-mono);
     font-size: var(--font-step-1-size);
@@ -122,24 +122,15 @@
     color: var(--text);
   }
 
-  .detailRoundPass {
+  .detailEntryPass, .detailEntryFail, .detailEntryRun, .detailEntryWarn, .detailEntryNeutral {
     flex: 0 0 auto;
     font-family: var(--font-mono);
     font-size: var(--font-step-1-size);
-    color: var(--text);
   }
 
-  .detailRoundFail {
-    flex: 0 0 auto;
-    font-family: var(--font-mono);
-    font-size: var(--font-step-1-size);
-    color: var(--error-text);
-  }
-
-  .detailRoundRun {
-    flex: 0 0 auto;
-    font-family: var(--font-mono);
-    font-size: var(--font-step-1-size);
-    color: var(--accent);
-  }
+  .detailEntryPass { color: var(--success-text); }
+  .detailEntryFail { color: var(--error-text); }
+  .detailEntryRun { color: var(--accent); }
+  .detailEntryWarn { color: var(--warn-text); }
+  .detailEntryNeutral { color: var(--text-3); }
 }

@@ -180,12 +180,13 @@ public sealed class WorkerRoutingTests
 
         var beforeTip = await ctx.Store.GetEventTipIdAsync(CancellationToken.None);
         var patched = await ctx.Kernel.PatchTrackDataAsync(track.Track.Id, TestJson.Parse("""{"price":148.5}"""), source: "api");
-        Assert.Equal(148.5, patched.GetProperty("price").GetDouble());
+        Assert.Equal(148.5, patched.Data.GetProperty("price").GetDouble());
 
         var events = await ctx.Store.ListEventsSinceAsync(beforeTip, track.Track.Id, 50, CancellationToken.None);
         Assert.Contains(events, e => e.Kind == KernelEventKinds.TrackUpdated);
 
         var views = await ctx.Kernel.GetTrackViewsAsync(track.Track.Id);
+        Assert.Equal(1, views.DataRev);
         Assert.True(views.HumanReadOnly);
         Assert.Equal(148.5, views.Views["summary"].GetProperty("currentPrice").GetDouble());
 

@@ -441,11 +441,13 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
         }
     }
 
-    public Task UpdateTrackAndEmitAsync(TrackDto track, EventEnvelopeDto? evt, CancellationToken ct)
+    public Task UpdateTrackAndEmitAsync(TrackDto track, EventEnvelopeDto? evt, CancellationToken ct, bool writeData = false)
     {
         lock (_gate)
         {
             if (FailTemplateStateUpdate && evt is null) throw new IOException("template state persistence failure");
+            if (!writeData && _tracks.TryGetValue(track.Id, out var existing))
+                track = track with { Data = existing.Data, DataRev = existing.DataRev };
             _tracks[track.Id] = track;
             if (track.ClosedAtMs is not null)
             {
@@ -465,14 +467,14 @@ internal sealed partial class InMemoryTrackStore : ITrackStore
         }
     }
 
-    public Task UpdateTrackTemplateAndEmitAsync(TrackDto track, string? templateSnapshot, EventEnvelopeDto evt, CancellationToken ct, IReadOnlyList<TrackScheduleDto>? templateSchedules = null, bool refreshPromptsOnly = false)
+    public Task UpdateTrackTemplateAndEmitAsync(TrackDto track, string? templateSnapshot, EventEnvelopeDto evt, CancellationToken ct, IReadOnlyList<TrackScheduleDto>? templateSchedules = null, bool refreshPromptsOnly = false, bool writeData = false)
     {
         lock (_gate)
         {
             if (FailTemplateUpdate) throw new IOException("template persistence failure");
             _templateSnapshots[track.Id] = templateSnapshot;
             SyncTemplateSchedulesLocked(track.Id, refreshPromptsOnly ? (templateSchedules ?? []).Where(s => _trackSchedules.Any(old => old.TrackId == track.Id && old.Id == s.Id && old.SourceKind == "template" && old.State == "active")).ToArray() : templateSchedules ?? []);
-            return UpdateTrackAndEmitAsync(track, evt, ct);
+            return UpdateTrackAndEmitAsync(track, evt, ct, writeData);
         }
     }
 
@@ -1334,6 +1336,10 @@ internal sealed class ConfigurableFakePolicyVm : IPolicyVm
         return new CompiledPolicy(manifest.Id, jsModuleSource, manifest);
     }
 
+    public JsonElement InitData(CompiledPolicy policy, JsonElement inputs) => TestJson.Parse("{}");
+    public IReadOnlyList<DataValidationError> ValidateData(CompiledPolicy policy, JsonElement inputs, JsonElement data,
+        IReadOnlyList<string>? knownTaskKeys) => [];
+
     public PolicyEvalResult<JsonElement> InitState(CompiledPolicy policy, JsonElement inputs)
     {
         if (OnInitState is not null)
@@ -1385,7 +1391,6 @@ internal sealed class ConfigurableFakePolicyVm : IPolicyVm
             policy.TemplateId,
             new Dictionary<string, JsonElement>(StringComparer.Ordinal),
             new Dictionary<string, string>(StringComparer.Ordinal),
-            policy.Manifest.Triggers ?? [],
             [],
             policy.Manifest.HumanReadOnly);
 }

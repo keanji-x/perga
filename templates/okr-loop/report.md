@@ -11,5 +11,5 @@
 # 优化路线图
 
 ```perga-block widget
-{"use":"builtin:list","view":"loopRoadmap","showTriggers":true}
+{"use":"builtin:list","view":"loopRoadmap"}
 ```

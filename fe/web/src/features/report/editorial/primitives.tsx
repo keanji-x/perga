@@ -9,7 +9,7 @@ import type {
 } from '../../../../../core/domain/report-checkpoints.ts';
 import type { ReportTaskRow } from '../../../../../core/domain/report.ts';
 import { Icon } from '../../../ui/icon/public.tsx';
-import styles from './checkpoints.module.css';
+import styles from './editorial.module.css';
 
 export function defaultStatusLabel(status: CheckpointStatus): string {
   switch (status) {
@@ -20,16 +20,7 @@ export function defaultStatusLabel(status: CheckpointStatus): string {
   }
 }
 
-export function markerToneClass(status: CheckpointStatus): string {
-  switch (status) {
-    case 'done': return styles.markerDone;
-    case 'running': return styles.markerRunning;
-    case 'blocked': return styles.markerBlocked;
-    case 'pending': return styles.markerPending;
-  }
-}
-
-export function bylineStateClass(status: CheckpointStatus): string {
+function bylineStateClass(status: CheckpointStatus): string {
   switch (status) {
     case 'done': return styles.bylineStateDone;
     case 'running': return styles.bylineStateRunning;
@@ -75,7 +66,7 @@ export function deriveFallbackTriggers(item: CheckpointItem): readonly Checkpoin
   }];
 }
 
-export function GateMarker({ status }: Readonly<{ status: CheckpointCheck['status'] }>) {
+function GateMarker({ status }: Readonly<{ status: CheckpointCheck['status'] }>) {
   switch (status) {
     case 'pass':
       return <span className={styles.gateCheckIcon} aria-hidden="true"><Icon name="check" size="sm" /></span>;
@@ -94,7 +85,7 @@ export function GateMarker({ status }: Readonly<{ status: CheckpointCheck['statu
   }
 }
 
-export function CheckpointByline({
+export function EditorialByline({
   item,
   taskRows,
   onOpenWorker,
@@ -233,7 +224,7 @@ export function CheckpointExpectationsTable({
   );
 }
 
-export function CheckpointTriggersTable({
+export function EditorialTriggersTable({
   keyPrefix,
   triggers,
   renderText,
@@ -277,7 +268,7 @@ export function CheckpointTriggersTable({
   );
 }
 
-export function CheckpointGateStrip({
+export function EditorialGateStrip({
   itemId,
   checks,
   activeGateKey,

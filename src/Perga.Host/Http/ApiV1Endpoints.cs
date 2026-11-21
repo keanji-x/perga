@@ -237,8 +237,25 @@ public static class ApiV1Endpoints
         v1.MapPatch("/tracks/{trackId}/data", async (string trackId, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>
         {
             var patch = await ReadRequiredJsonBodyAsync<JsonElement>(ctx, ct).ConfigureAwait(false);
-            var nextData = await kernel.PatchTrackDataAsync(trackId, patch, source: "api", callerSessionId: null, ct: ct).ConfigureAwait(false);
-            return Results.Json(new { ok = true, data = nextData }, PergaJsonDefaults.ApiOptions);
+            long? expectedDataRev = null;
+            if (patch.ValueKind == JsonValueKind.Object &&
+                (patch.TryGetProperty("patch", out _) || patch.TryGetProperty("expectedDataRev", out _)))
+            {
+                if (patch.EnumerateObject().Any(p => p.Name is not ("patch" or "expectedDataRev")))
+                    throw KernelException.InvalidArgument("The data envelope accepts only 'patch' and optional 'expectedDataRev'.");
+                if (patch.TryGetProperty("expectedDataRev", out var rev))
+                {
+                    if (rev.ValueKind != JsonValueKind.Number || !rev.TryGetInt64(out var value) || value < 0)
+                        throw KernelException.InvalidArgument("expectedDataRev must be a non-negative integer.");
+                    expectedDataRev = value;
+                }
+                if (!patch.TryGetProperty("patch", out var innerPatch) || innerPatch.ValueKind != JsonValueKind.Object)
+                    throw KernelException.InvalidArgument("The data envelope requires an object 'patch'.");
+                patch = innerPatch.Clone();
+            }
+            var result = await kernel.PatchTrackDataAsync(trackId, patch, source: "api", callerSessionId: null,
+                ct: ct, expectedDataRev: expectedDataRev).ConfigureAwait(false);
+            return Results.Json(result, PergaJsonDefaults.ApiOptions);
         });
 
         v1.MapPut("/tracks/{trackId}/report/blocks/{blockId}", async (string trackId, string blockId, HttpContext ctx, IPergaKernel kernel, CancellationToken ct) =>

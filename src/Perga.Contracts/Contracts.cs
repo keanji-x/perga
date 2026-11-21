@@ -53,7 +53,14 @@ public sealed record TrackDto(
     long CreatedAtMs,
     long UpdatedAtMs,
     string? TemplateTitle = null,
-    TemplateHeaderViewDto? TemplateHeaderView = null);
+    TemplateHeaderViewDto? TemplateHeaderView = null,
+    JsonElement Data = default,
+    long DataRev = 0)
+{
+    private static readonly JsonElement EmptyData = JsonSerializer.SerializeToElement(new { });
+
+    public JsonElement Data { get; init; } = Data.ValueKind == JsonValueKind.Undefined ? EmptyData : Data;
+}
 
 public sealed record SessionContextUsage(
     long UsedTokens,
@@ -275,3 +282,5 @@ public sealed record NotifiableSessionWatermarkDto(string SessionId, long LastNo
 public sealed record ReadReceiptDto(string Kind, string TargetId, long ReadThroughMs, bool ManualUnread);
 public sealed record ReadReceiptsResponseDto(long BaselineMs, IReadOnlyList<ReadReceiptDto> Receipts);
 public sealed record MarkReadRequest(long? ReadThroughMs = null);
+
+public sealed record TrackDataPatchResult(bool Ok, long DataRev, JsonElement Data);

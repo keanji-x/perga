@@ -19,23 +19,23 @@ public sealed partial class TrackActor
                     TemplateId: _track.TemplateId ?? string.Empty,
                     Views: new Dictionary<string, JsonElement>(StringComparer.Ordinal),
                     Widgets: new Dictionary<string, string>(StringComparer.Ordinal),
-                    Triggers: [],
-                    Diagnostics: []);
+                    Diagnostics: [], DataRev: _track.DataRev);
             }
 
             var kernelSnapshot = await BuildKernelFactsSnapshotCoreAsync(ct).ConfigureAwait(false);
             return _policyVm.ProjectViews(
                 _policy,
                 _track.TemplateInputs,
-                _track.TemplateState,
-                kernelSnapshot);
+                _track.Data,
+                kernelSnapshot) with { DataRev = _track.DataRev };
         }, ct);
 
-    public Task<JsonElement> PatchTemplateDataAsync(
+    public Task<TrackDataPatchResult> PatchTemplateDataAsync(
         JsonElement patch,
         string source,
         string? callerSessionId = null,
-        CancellationToken ct = default) =>
+        CancellationToken ct = default,
+        long? expectedDataRev = null) =>
         EnqueueAsync(async _ =>
         {
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
@@ -64,16 +64,27 @@ public sealed partial class TrackActor
                 }
             }
 
+            if (expectedDataRev is { } expected && expected != _track.DataRev)
+                throw KernelException.Conflict($"Data revision conflict: expected {expected}, current {_track.DataRev}.");
+
             var knownTaskKeys = _tasks.Select(t => t.TaskKey).Distinct(StringComparer.Ordinal).ToArray();
             var nowIso = _timeProvider.GetUtcNow().ToString("O");
-            var result = _policyVm.ValidateAndPatchData(
-                _policy,
-                _track.TemplateInputs,
-                _track.TemplateState,
-                patch,
-                knownTaskKeys,
-                nowIso,
-                string.IsNullOrWhiteSpace(source) ? "system" : source);
+            DataPatchValidationResult result;
+            try
+            {
+                result = _policyVm.ValidateAndPatchData(
+                    _policy,
+                    _track.TemplateInputs,
+                    _track.Data,
+                    patch,
+                    knownTaskKeys,
+                    nowIso,
+                    string.IsNullOrWhiteSpace(source) ? "system" : source);
+            }
+            catch (InvalidOperationException ex)
+            {
+                throw KernelException.InvalidArgument($"Template data could not be validated: {ex.Message}");
+            }
 
             if (!result.Valid)
             {
@@ -83,10 +94,10 @@ public sealed partial class TrackActor
             }
 
             if (result.NextData.ValueKind != JsonValueKind.Undefined &&
-                !JsonElement.DeepEquals(_track.TemplateState, result.NextData))
+                !JsonElement.DeepEquals(_track.Data, result.NextData))
             {
                 var now = NowMs();
-                var nextTrack = _track with { TemplateState = result.NextData.Clone(), UpdatedAtMs = now };
+                var nextTrack = _track with { Data = result.NextData.Clone(), DataRev = checked(_track.DataRev + 1), UpdatedAtMs = now };
                 var evt = new EventEnvelopeDto(
                     EventId: null,
                     AreaId: nextTrack.AreaId,
@@ -95,12 +106,12 @@ public sealed partial class TrackActor
                     Payload: JsonHelpers.ToElement(TemplatePresentation.Project(nextTrack, _policy, _policyVm)),
                     CreatedAtMs: now);
                 await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
-                await _store.UpdateTrackAndEmitAsync(nextTrack, evt, ct).ConfigureAwait(false);
+                await _store.UpdateTrackAndEmitAsync(nextTrack, evt, ct, writeData: true).ConfigureAwait(false);
                 _track = nextTrack;
-                await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, evt, ct).ConfigureAwait(false);
+                await _eventHub.PublishSyncedAfterStoreWriteAsync(_store, evt, CancellationToken.None).ConfigureAwait(false);
             }
 
-            return _track.TemplateState;
+            return new TrackDataPatchResult(true, _track.DataRev, _track.Data);
         }, ct);
 
     private async Task<JsonElement> BuildKernelFactsSnapshotCoreAsync(CancellationToken ct)

@@ -5,19 +5,18 @@ import type {
 } from '../../../../../core/domain/report-checkpoints.ts';
 import type { ReportTaskRow } from '../../../../../core/domain/report.ts';
 import { useState } from '../../../ui/state/public.ts';
-import { CheckpointMetricsStrip } from './metrics-strip.tsx';
-import { CheckpointRangeAxis } from './range-axis.tsx';
+import { EditorialMetricsStrip } from '../editorial/metrics.tsx';
 import {
   CheckpointExpectationsTable,
-  CheckpointGateStrip,
+  EditorialGateStrip,
   CheckpointProseBody,
-  CheckpointTriggersTable,
+  EditorialTriggersTable,
   defaultStatusLabel,
   deriveFallbackTriggers,
-  markerToneClass,
   resolveAuthorDisplay,
   resolveItemSessionId,
-} from './shared.tsx';
+} from '../editorial/primitives.tsx';
+import { markerToneClass } from './marker.ts';
 import styles from './checkpoints.module.css';
 
 const INITIAL_VISIBLE_COUNT = 6;
@@ -89,13 +88,12 @@ export function ReportCheckpointsChronicle({
   return (
     <section className={styles.root} aria-label={payload.title ?? '事件时间线'}>
       {payload.metrics != null && payload.metrics.length > 0 && (
-        <CheckpointMetricsStrip
+        <EditorialMetricsStrip
           metrics={payload.metrics}
           renderText={renderText}
           renderMarkdown={renderMarkdown}
         />
       )}
-      {payload.range != null && <CheckpointRangeAxis range={payload.range} />}
 
       {standingTriggers.length > 0 && (
         <div className={styles.chronicleBar}>
@@ -112,7 +110,7 @@ export function ReportCheckpointsChronicle({
 
       {showTriggers && standingTriggers.length > 0 && (
         <div className={styles.watchDrawer} role="region" aria-label="自动监测与触发规则">
-          <CheckpointTriggersTable keyPrefix="standing" triggers={standingTriggers} renderText={renderText} />
+          <EditorialTriggersTable keyPrefix="standing" triggers={standingTriggers} renderText={renderText} />
         </div>
       )}
 
@@ -203,13 +201,13 @@ export function ReportCheckpointsChronicle({
                         />
                       )}
 
-                      <CheckpointTriggersTable
+                      <EditorialTriggersTable
                         keyPrefix={item.id}
                         triggers={itemTriggers}
                         renderText={renderText}
                       />
 
-                      <CheckpointGateStrip
+                      <EditorialGateStrip
                         itemId={item.id}
                         checks={checks}
                         activeGateKey={activeGateKey}

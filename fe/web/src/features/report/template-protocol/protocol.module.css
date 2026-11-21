@@ -15,8 +15,8 @@
 
   .badges { display: flex; align-items: center; gap: var(--space-2); overflow-x: auto; white-space: nowrap; min-inline-size: 0; }
   .badges > * { flex-shrink: 0; }
-  .template, .pill { padding: var(--space-half) var(--space-2); border-radius: var(--radius-sm); background: var(--surface-chip); }
-  .template { color: var(--accent); font-weight: var(--weight-medium); }
+  .pill { padding: var(--space-half) var(--space-2); border-radius: var(--radius-sm); background: var(--surface-chip); }
+  .template { color: var(--text-3); background: transparent; font-weight: var(--weight-normal); }
   .hint { color: var(--text-3); }
   .toggle { margin-inline-start: auto; flex-shrink: 0; white-space: nowrap; }
   .toggle, .tabs button {

@@ -39,9 +39,9 @@ public partial interface IPergaKernel : IAsyncDisposable
     JsonElement InspectTemplate(string? templateId);
     Task<JsonElement> InspectCurrentTemplateAsync(string trackId, string sessionId, CancellationToken ct = default);
     Task<TemplateSetResult> SetTrackTemplateWithOptionsAsync(string trackId, string sessionId, string? templateId,
-        string? source, string generation, JsonElement? inputs, bool dryRun, bool clear, CancellationToken ct = default);
+        string? source, string generation, JsonElement? inputs, bool dryRun, bool clear, CancellationToken ct = default, bool resetData = false);
     Task<TrackDto> UpdateTemplateInputsAsync(string trackId, string sessionId, JsonElement inputs, string generation, CancellationToken ct = default);
-    Task<TrackDto> SetTrackTemplateAsync(string trackId, string callerSessionId, string? templateId, string? source, string expectedPolicyGeneration, JsonElement? inputs = null, CancellationToken ct = default);
+    Task<TrackDto> SetTrackTemplateAsync(string trackId, string callerSessionId, string? templateId, string? source, string expectedPolicyGeneration, JsonElement? inputs = null, CancellationToken ct = default, bool resetData = false);
     Task<BootReconcileResult> ReconcileOnBootAsync(CancellationToken ct = default);
     Task<DbMaintenanceStatsDto> RunMaintenancePassAsync(CancellationToken ct = default);
 
@@ -76,7 +76,7 @@ public partial interface IPergaKernel : IAsyncDisposable
     // Report & Revisions
     Task<ReportReadResult> ReadReportAsync(string trackId, string? callerSessionId = null, CancellationToken ct = default);
     Task<TemplateViewsProjection> GetTrackViewsAsync(string trackId, CancellationToken ct = default);
-    Task<JsonElement> PatchTrackDataAsync(string trackId, JsonElement patch, string source, string? callerSessionId = null, CancellationToken ct = default);
+    Task<TrackDataPatchResult> PatchTrackDataAsync(string trackId, JsonElement patch, string source, string? callerSessionId = null, CancellationToken ct = default, long? expectedDataRev = null);
     Task<IReadOnlyList<ReportBlock>> GetReportRevisionBlocksAsync(string trackId, int docRev, CancellationToken ct = default);
     Task<ReportReadResult> UpdateReportBlockByHumanAsync(string trackId, string blockId, HumanBlockUpdateRequest req, CancellationToken ct = default);
     Task<ReportReadResult> CommitReportAsync(string trackId, string callerSessionId, ReportCommitRequest req,
@@ -543,15 +543,15 @@ public sealed partial class PergaKernelService : IPergaKernel
         Actors.GetOrActivate(trackId).InspectCurrentTemplateAsync(sessionId, ct);
 
     public Task<TemplateSetResult> SetTrackTemplateWithOptionsAsync(string trackId, string sessionId, string? templateId,
-        string? source, string generation, JsonElement? inputs, bool dryRun, bool clear, CancellationToken ct = default) =>
-        Actors.GetOrActivate(trackId).SetTemplateWithOptionsAsync(sessionId, templateId, source, generation, inputs, dryRun, clear, ct);
+        string? source, string generation, JsonElement? inputs, bool dryRun, bool clear, CancellationToken ct = default, bool resetData = false) =>
+        Actors.GetOrActivate(trackId).SetTemplateWithOptionsAsync(sessionId, templateId, source, generation, inputs, dryRun, clear, ct, resetData);
 
     public Task<TrackDto> UpdateTemplateInputsAsync(string trackId, string sessionId, JsonElement inputs, string generation, CancellationToken ct = default) =>
         Actors.GetOrActivate(trackId).UpdateTemplateInputsAsync(sessionId, inputs, generation, ct);
 
     public Task<TrackDto> SetTrackTemplateAsync(string trackId, string callerSessionId, string? templateId,
-        string? source, string expectedPolicyGeneration, JsonElement? inputs = null, CancellationToken ct = default) =>
-        Actors.GetOrActivate(trackId).SetTemplateBySessionAsync(callerSessionId, templateId, source, expectedPolicyGeneration, inputs, ct);
+        string? source, string expectedPolicyGeneration, JsonElement? inputs = null, CancellationToken ct = default, bool resetData = false) =>
+        Actors.GetOrActivate(trackId).SetTemplateBySessionAsync(callerSessionId, templateId, source, expectedPolicyGeneration, inputs, ct, resetData);
 
     public Task<BootReconcileResult> ReconcileOnBootAsync(CancellationToken ct = default) =>
         BootReconciler.ReconcileAsync(ct);
@@ -719,9 +719,12 @@ public sealed partial class PergaKernelService : IPergaKernel
 
         var templateInputs = JsonHelpers.EnsureClonedObject(req.TemplateInputs);
         var templateState = JsonHelpers.EmptyObject;
+        var templateData = JsonHelpers.EmptyObject;
         if (policy is not null)
         {
             TemplateSchedules.ValidateInputs(_policyVm, policy, templateInputs);
+            try { templateData = _policyVm.InitData(policy, templateInputs); }
+            catch (InvalidOperationException ex) { throw KernelException.InvalidArgument(ex.Message); }
             var initEval = _policyVm.InitState(policy, templateInputs);
             templateState = initEval.Output.ValueKind != JsonValueKind.Undefined
                 ? initEval.Output.Clone()
@@ -754,6 +757,7 @@ public sealed partial class PergaKernelService : IPergaKernel
             TemplateId: policy?.TemplateId,
             TemplateInputs: templateInputs,
             TemplateState: templateState,
+            Data: templateData,
             EnabledPlugins: enabledPlugins,
             ClosedAtMs: null,
             PinnedAtMs: null,

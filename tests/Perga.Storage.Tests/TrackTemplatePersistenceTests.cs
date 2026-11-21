@@ -7,6 +7,30 @@ namespace Perga.Storage.Tests;
 public sealed class TrackTemplatePersistenceTests
 {
     [Fact]
+    public async Task Migration22AddsEmptyDataAndPreservesExistingTemplateState()
+    {
+        var directory = Directory.CreateTempSubdirectory("perga-track-data-migration-");
+        var db = Path.Combine(directory.FullName, "test.db");
+        try
+        {
+            var migrations = SqliteMigrator.LoadEmbeddedMigrations();
+            await new SqliteMigrator(migrations.Where(m => m.Version <= 21).ToArray()).MigrateAsync(db);
+            await using var connection = new SqliteConnection($"Data Source={db};Pooling=False");
+            await connection.OpenAsync();
+            await connection.ExecuteAsync("""
+                INSERT INTO areas(id,name,created_at_ms,updated_at_ms) VALUES('a','area',1,1);
+                INSERT INTO tracks(id,area_id,cwd,created_at_ms,updated_at_ms,template_state_json)
+                    VALUES('t','a','/tmp',1,1,'{"previousWork":42}');
+                """);
+            await new SqliteMigrator().MigrateAsync(db);
+            var row = await connection.QuerySingleAsync<(string State, string Data, long Rev)>(
+                "SELECT template_state_json,data_json,data_rev FROM tracks WHERE id='t';");
+            Assert.Equal(("""{"previousWork":42}""", "{}", 0L), row);
+        }
+        finally { directory.Delete(true); }
+    }
+
+    [Fact]
     public async Task TemplateUpdate_PersistsSnapshotFieldsAndEventAcrossReopen_OrdinaryUpdatesPreserveSnapshot()
     {
         await using var harness = await StorageTestHarness.CreateAsync();
@@ -19,13 +43,15 @@ public sealed class TrackTemplatePersistenceTests
             TemplateId = "custom",
             TemplateInputs = StorageTestHarness.Json("""{"input":"value"}"""),
             TemplateState = StorageTestHarness.Json("""{"initialized":true}"""),
+            Data = StorageTestHarness.Json("""{"research":42}"""),
+            DataRev = 1,
             EnabledPlugins = ["existing", "custom"],
             UpdatedAtMs = 5000
         };
         const string source = "export default defineTemplate({id:'custom',title:'Custom'});";
         var evt = StorageTestHarness.CreateEvent("track.updated", track.Id, track.AreaId, createdAtMs: 5000);
-        await store.UpdateTrackTemplateAndEmitAsync(updated, source, evt, default);
-        await store.UpdateTrackAndEmitAsync(updated with { Title = "Renamed" }, null, default);
+        await store.UpdateTrackTemplateAndEmitAsync(updated, source, evt, default, writeData: true);
+        await store.UpdateTrackAndEmitAsync(track with { Title = "Renamed", TemplateId = updated.TemplateId, TemplateInputs = updated.TemplateInputs, TemplateState = updated.TemplateState, EnabledPlugins = updated.EnabledPlugins, UpdatedAtMs = updated.UpdatedAtMs }, null, default);
         await store.DisposeAsync();
 
         await using var reopened = new SqliteTrackStore(new SqliteStorageOptions { DbPath = harness.DbPath, DataDir = harness.DataDir });
@@ -36,6 +62,8 @@ public sealed class TrackTemplatePersistenceTests
         Assert.Equal("Renamed", snapshot.Track.Title);
         Assert.Equal("value", snapshot.Track.TemplateInputs.GetProperty("input").GetString());
         Assert.True(snapshot.Track.TemplateState.GetProperty("initialized").GetBoolean());
+        Assert.Equal(42, snapshot.Track.Data.GetProperty("research").GetInt32());
+        Assert.Equal(1, snapshot.Track.DataRev);
         Assert.Equal(["existing", "custom"], snapshot.Track.EnabledPlugins);
         Assert.Equal(5000, snapshot.Track.UpdatedAtMs);
         Assert.Single(await reopened.ListEventsSinceAsync(0, track.Id), e => e.Kind == "track.updated");

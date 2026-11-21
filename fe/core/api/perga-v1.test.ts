@@ -10,6 +10,7 @@ import {
   agentSessionDtoSchema,
   sessionCreationReceiptSchema,
   trackDtoSchema,
+  trackDataPatchResultSchema,
 } from './perga-v1.js';
 import { decodeWireEvent } from './schemas.js';
 import { decodeEventFrame } from '../events/protocol.js';
@@ -49,6 +50,7 @@ import { plannerSwitchOperation } from '../domain/planner-switch.js';
 import {
   readReportDocument,
   readTrackReportOperation,
+  readTrackViewsOperation,
   trackTaskVerdictsOperation,
   updateTrackReportBlockOperation,
 } from '../domain/report.js';
@@ -267,6 +269,28 @@ describe('Perga /api/v1 protocol contracts', () => {
     expect(folders.map((f) => f.path)).toEqual(['/repo', '/docs']);
 
     expect(deleteAreaOperation('area_1')).toMatchObject({ method: 'DELETE', path: '/api/v1/areas/area_1' });
+  });
+
+  it('decodes business data revisions from the patch receipt and views endpoint', () => {
+    const receipt = { ok: true, dataRev: 2, data: { records: [{ id: 'a' }] } };
+    expect(trackDataPatchResultSchema.parse(receipt)).toEqual(receipt);
+    expect(trackDataPatchResultSchema.safeParse({ ...receipt, dataRev: -1 }).success).toBe(false);
+
+    const track = trackDtoSchema.parse({
+      id: 'trk_1', areaId: 'area_1', createdAtMs: 0, updatedAtMs: 0,
+      data: receipt.data, dataRev: receipt.dataRev,
+    });
+    expect(track.data).toEqual(receipt.data);
+    expect(track.dataRev).toBe(2);
+    expect(trackDtoSchema.safeParse({
+      id: 'trk_1', areaId: 'area_1', createdAtMs: 0, updatedAtMs: 0, dataRev: -1,
+    }).success).toBe(false);
+
+    const operation = readTrackViewsOperation('trk_1');
+    const views = operation.responseSchema.parse({ templateId: 'demo', dataRev: 2, views: { ledger: receipt.data } });
+    expect(operation.path).toBe('/api/v1/tracks/trk_1/views');
+    expect(views.dataRev).toBe(receipt.dataRev);
+    expect(views.views.ledger).toEqual(receipt.data);
   });
 
   it('maps Track aggregate snapshot, tasks, report blocks, asks, and planner switch to /api/v1', () => {
