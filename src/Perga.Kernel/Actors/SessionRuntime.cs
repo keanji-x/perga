@@ -180,13 +180,15 @@ internal sealed class SessionRuntime
         {
             try
             {
-                if (!agent.ShutdownConfirmed)
+                var startedClose = false;
+                // Dispose every fresh handle; join in-flight cleanup and retry failed or unconfirmed cleanup.
+                if (_closeTask is null || (_closeTask.IsCompleted && (!agent.ShutdownConfirmed || !_closeTask.IsCompletedSuccessfully)))
                 {
-                    // Join an in-flight shutdown; retry only a completed unconfirmed attempt.
-                    if (_closeTask is null || _closeTask.IsCompleted)
-                        _closeTask = agent.DisposeAsync().AsTask();
-                    await _closeTask.WaitAsync(deadline.Token).ConfigureAwait(false);
+                    _closeTask = agent.DisposeAsync().AsTask();
+                    startedClose = true;
                 }
+                if (startedClose || !_closeTask.IsCompleted)
+                    await _closeTask.WaitAsync(deadline.Token).ConfigureAwait(false);
             }
             finally
             {

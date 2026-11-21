@@ -223,6 +223,29 @@ public sealed class SessionRuntimeTests
     }
 
     [Fact]
+    public async Task CloseDisposesFreshHandleEvenWhenShutdownIsAlreadyConfirmed()
+    {
+        var runtime = new SessionRuntime();
+        // Match IAgentSession's default ShutdownConfirmed value before any disposal.
+        var provider = new ScriptableFakeAgentRuntime
+        {
+            OnOpenedSession = agent => agent.ShutdownConfirmed = true
+        };
+        await Open(runtime, provider, default);
+        var agent = Assert.Single(provider.OpenedSessions);
+        Assert.True(agent.ShutdownConfirmed);
+        Assert.Equal(0, agent.DisposeCalls);
+
+        await runtime.CloseAsync(Timeout, default);
+        await runtime.CloseAsync(Timeout, default);
+
+        Assert.Equal(1, agent.DisposeCalls);
+        Assert.Null(runtime.Snapshot);
+        Assert.False(runtime.IsShutdownUnconfirmed);
+        Assert.False(runtime.HasActiveWork);
+    }
+
+    [Fact]
     public async Task DisposeIsBoundedWhenPriorCloseStillHangs()
     {
         var runtime = new SessionRuntime();
