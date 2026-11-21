@@ -93,7 +93,6 @@ import { ContextRing } from '../../features/chat/thread/context-ring.tsx';
 import { useMentionTrigger } from '../../features/chat/thread/mention-trigger.tsx';
 import { ReportBacklinks } from '../../features/report/backlinks/public.tsx';
 import { TaskRecovery, useCurrentTaskRows } from './task-recovery.tsx';
-import { WorkerDispatchControl } from './worker-controls.tsx';
 import { useReportPreviewResolver, useReportPreviewViewports } from './report-preview.ts';
 import { useReportSeriesResolver } from './report-series.ts';
 import { useTrackTemplateViews } from './report-views.ts';
@@ -1851,8 +1850,6 @@ function TrackRouteBody({
           {center.render(<div ref={setCenterHost} className={mobileChatStyles.embeddedSlot} />)}
         </div>}
         {!centerActive && <>{!pergaMode && reportHeader}{(!chat.isOpen || chat.selectedConversationId !== plannerCard?.id) && workspaceNotice}
-        {canCloseTrack && shareAccess === null && !(report?.blocks?.some((block) => block.kind === 'checkpoints' || block.kind === 'widget') ?? false) &&
-          <WorkerDispatchControl key={track.id} trackId={track.id} transport={transport} unauthorized={unauthorized} />}
         {reportRegion}</>}
       </>}
       backlinks={backlinks !== undefined && (backlinks.backlinks.length > 0 || backlinks.truncated || backlinks.skipped_sources > 0)
