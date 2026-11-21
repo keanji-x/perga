@@ -3275,7 +3275,7 @@ public sealed partial class TrackActor : IAsyncDisposable
             ? session.IsLead
                 ? unboundGovernanceNote
                 : unboundGovernanceNote + " If blocked by missing permissions or sandbox restrictions (such as EPERM, blocked local ports/network, or denied actions), do not loop or silently skip checks: report the exact permission gap in your reply so your parent/Lead can adjust permissionMode via session_update (takes effect on the next turn) or run the restricted step; only call user_ask when pausing for explicit human/parent input (it does not auto-wake an idle parent)."
-            : "Use session_list/read to observe conversations. Submit your task with task_done or task_fail; bound Workers cannot spawn or control sessions. If blocked by missing permissions or sandbox restrictions (such as EPERM, blocked local ports/network, or denied actions), do not loop or silently skip required checks: report the exact permission gap clearly via task_fail (or in your turn output if pausing for Lead follow-up) so the Lead can adjust permissionMode via session_update (takes effect on the next turn) or run the restricted check; only call user_ask when waiting for explicit human/parent input (it does not auto-wake an idle parent).";
+            : "Use session_list/read to observe conversations. Submit your task with task_done or task_fail; bound Workers cannot spawn or control sessions. If blocked by missing permissions or sandbox restrictions (such as EPERM, blocked local ports/network, or denied actions), do not loop or silently skip required checks: either finish the turn without calling task_done/task_fail and report the exact permission gap so the Lead can update permissionMode via session_update for the next turn while the task remains active, or call task_fail (which settles the task) so the Lead can run the restricted check or re-dispatch; only call user_ask when waiting for explicit human/parent input (it does not auto-wake an idle parent).";
         var templateDataSection = BuildActiveTemplateDataSectionCore();
         return $"You are operating in Perga Track '{_track.Title}' ({TrackId}) as {role}.{templateNote}\n\n{sessionNote}\n\n## Current Report\n{reportMd}{templateDataSection}";
     }
@@ -3369,7 +3369,7 @@ public sealed partial class TrackActor : IAsyncDisposable
         }
 
         sb.AppendLine();
-        sb.AppendLine("When finished, call `task_done` with your structured result, or `task_fail` if blocked. If blocked by missing permissions or sandbox restrictions (e.g. `EPERM`, blocked local ports, or denied tool calls), do not loop or silently skip checks: report the exact missing permission clearly via `task_fail` (so the Lead can adjust `permissionMode` for the next turn or run the restricted check), or call `user_ask` only when waiting for explicit human/parent input.");
+        sb.AppendLine("When finished, call `task_done` with your structured result, or `task_fail` if blocked. If blocked by missing permissions or sandbox restrictions (e.g. `EPERM`, blocked local ports, or denied tool calls), do not loop or silently skip checks: either end the turn without calling `task_done`/`task_fail` and report the exact permission gap so the Lead can update `permissionMode` via `session_update` for the next turn while the task remains active, or call `task_fail` (which settles the task) so the Lead can run the restricted check or re-dispatch; call `user_ask` only when waiting for explicit human/parent input.");
         return sb.ToString();
     }
 
