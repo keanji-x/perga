@@ -84,7 +84,8 @@ public sealed partial class SqliteTrackStore : ITrackWakeStore
             await DropExhaustedWakesAsync(conn, tx, trackId, null, token).ConfigureAwait(false);
             var wakes = (await conn.QueryAsync<TrackWake>(new CommandDefinition(WakeSelect + $"""
                  WHERE track_id=@TrackId AND state='{TrackWakeStates.Pending}'
-                   AND (target_session_id IS NULL OR target_session_id=@TargetSessionId)
+                   AND (target_session_id=@TargetSessionId OR (target_session_id IS NULL AND EXISTS(
+                       SELECT 1 FROM tracks WHERE id=@TrackId AND lead_session_id=@TargetSessionId)))
                    AND EXISTS(SELECT 1 FROM tracks WHERE id=@TrackId AND closed_at_ms IS NULL)
                  ORDER BY ordinal LIMIT @Limit;
                 """, new { TrackId = trackId, TargetSessionId = targetSessionId, Limit = Math.Clamp(limit, 1, 32) },

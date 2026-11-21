@@ -180,7 +180,7 @@ public sealed class UserJourneyAuditFixesTests
         using var callerCts = new CancellationTokenSource();
         var firstCallTask = ctx.SendAndWaitForTurnAsync(
             leadId,
-            new SendMessageRequest("Build incremental items", "idem-decoupled"),
+            new SendSessionMessageRequest("Build incremental items", "idem-decoupled"),
             callerCts.Token);
 
         await midTurnReached.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -190,7 +190,7 @@ public sealed class UserJourneyAuditFixesTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => firstCallTask);
 
         // 2. While turn is STILL running, query GetSessionItemsAsync -> user, thinking, tool_call, tool_result are ALREADY persisted!
-        var midPage = await ctx.Kernel.GetSessionItemsAsync(leadId);
+        var midPage = await ctx.Kernel.GetSessionItemsAsync(leadId, new(), new InteropPrincipal.Human(), default);
         Assert.NotNull(midPage.ActiveTurn);
         Assert.NotNull(midPage.ActiveTurn!.UserItemId);
         Assert.Contains(midPage.Items, i => i.Kind == "user" && i.Id == midPage.ActiveTurn.UserItemId);
@@ -201,7 +201,7 @@ public sealed class UserJourneyAuditFixesTests
         // 3. Re-attaching with the same IdempotencyKey joins the running turn without spawning a second turn!
         var reattachedTask = ctx.SendAndWaitForTurnAsync(
             leadId,
-            new SendMessageRequest("Build incremental items", "idem-decoupled"));
+            new SendSessionMessageRequest("Build incremental items", "idem-decoupled"));
 
         allowFinish.TrySetResult();
         var completedTurn = await reattachedTask.WaitAsync(TimeSpan.FromSeconds(5));
@@ -209,17 +209,17 @@ public sealed class UserJourneyAuditFixesTests
         Assert.Equal(midPage.ActiveTurn.UserItemId, completedTurn.UserItemId);
         Assert.Single(ctx.Store.GetTurnsForSession(leadId));
 
-        var afterCompletePage = await ctx.Kernel.GetSessionItemsAsync(leadId);
+        var afterCompletePage = await ctx.Kernel.GetSessionItemsAsync(leadId, new(), new InteropPrincipal.Human(), default);
         Assert.Contains(afterCompletePage.Items, i => i.Kind == "assistant_text");
 
         // 4. Failed turn persists kind: "turn_outcome" with exact error text!
         ctx.AgentRuntime.TurnScript = (_, _, _) => StreamFailingTurn("model_not_found: invalid-model-x");
         var failedTurn = await ctx.SendAndWaitForTurnAsync(
             leadId,
-            new SendMessageRequest("Trigger provider failure", "idem-fail-outcome"));
+            new SendSessionMessageRequest("Trigger provider failure", "idem-fail-outcome"));
         Assert.Equal("failed", failedTurn.Status);
 
-        var afterFailPage = await ctx.Kernel.GetSessionItemsAsync(leadId);
+        var afterFailPage = await ctx.Kernel.GetSessionItemsAsync(leadId, new(), new InteropPrincipal.Human(), default);
         var failOutcome = Assert.Single(
             afterFailPage.Items,
             i => i.Kind == "turn_outcome" && i.TurnId == failedTurn.Id);
@@ -233,14 +233,14 @@ public sealed class UserJourneyAuditFixesTests
 
         var interruptTurnTask = ctx.SendAndWaitForTurnAsync(
             leadId,
-            new SendMessageRequest("Long turn to interrupt", "idem-interrupt-outcome"));
+            new SendSessionMessageRequest("Long turn to interrupt", "idem-interrupt-outcome"));
         await startedInterruptTurn.Task.WaitAsync(TimeSpan.FromSeconds(5));
 
-        await ctx.Kernel.InterruptSessionAsync(leadId);
+        await ctx.Kernel.ControlSessionAsync(leadId, new("stop", TurnId: (await ctx.Kernel.GetSessionItemsAsync(leadId, new(), new InteropPrincipal.Human(), default)).ActiveTurn!.Id), new InteropPrincipal.Human(), default);
         var interruptedTurn = await interruptTurnTask.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Equal("interrupted", interruptedTurn.Status);
 
-        var afterInterruptPage = await ctx.Kernel.GetSessionItemsAsync(leadId);
+        var afterInterruptPage = await ctx.Kernel.GetSessionItemsAsync(leadId, new(), new InteropPrincipal.Human(), default);
         var interruptOutcome = Assert.Single(
             afterInterruptPage.Items,
             i => i.Kind == "turn_outcome" && i.TurnId == interruptedTurn.Id);

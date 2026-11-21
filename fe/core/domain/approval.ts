@@ -1,31 +1,25 @@
 // Execution-scoped live approvals: provider tool permissions and policy-guard pauses.
 // Distinct from durable Track Asks (`ask.ts`): an approval is owned by a specific session
-// and execution, carries structured option IDs, and settles through `/approvals/{id}/decision`.
+// and execution, carries structured option IDs, and settles through `/sessions/{sessionId}/interactions/{interactionId}/respond`.
 
-import { z } from 'zod';
-import { approvalDtoSchema, type ApprovalChoiceDto, type ApprovalDto } from '../api/perga-v1.js';
+import { sessionInteractionResultSchema, type ApprovalChoiceDto, type ApprovalDto } from '../api/perga-v1.js';
 import type { ApiOperation } from '../api/types.js';
 import { writeClassOf, writeFailureText, type FailureTable, type WriteClass, type WriteText } from './failure-class.js';
 
-export type PendingApproval = ApprovalDto;
+export type PendingApproval = Pick<ApprovalDto, 'id' | 'executionId' | 'sessionId' | 'turnId' | 'title' | 'options' | 'createdAtMs' | 'toolName' | 'arguments'>;
 export type ApprovalChoice = ApprovalChoiceDto;
 
 export const NO_PENDING_APPROVALS: readonly PendingApproval[] = Object.freeze([]);
 
-/**
- * Authoritative session scoping for live approvals.
- * Worker sessions read their execution-scoped `workerApprovals` when present, falling back to
- * the Track snapshot filtered by `sessionId`; Lead and Subagent sessions read strictly their own
- * `sessionId` from the Track snapshot so approvals never leak across sessions.
- */
+/** Pending interactions from a session read are authoritative; aggregate notifications are session-scoped. */
 export function approvalsForSession(
   trackApprovals: readonly PendingApproval[] | undefined,
   sessionId: string | null,
-  workerApprovals?: readonly PendingApproval[] | null,
+  sessionApprovals?: readonly PendingApproval[] | null,
 ): readonly PendingApproval[] {
   if (sessionId === null) return NO_PENDING_APPROVALS;
-  if (workerApprovals != null) {
-    return workerApprovals.length === 0 ? NO_PENDING_APPROVALS : workerApprovals;
+  if (sessionApprovals != null) {
+    return sessionApprovals.length === 0 ? NO_PENDING_APPROVALS : sessionApprovals;
   }
   if (trackApprovals === undefined || trackApprovals.length === 0) return NO_PENDING_APPROVALS;
   const owned = trackApprovals.filter((approval) => approval.sessionId === sessionId);
@@ -34,21 +28,22 @@ export function approvalsForSession(
 
 /** Submit one structured option decision for an active approval. */
 export function decideApprovalOperation(
-  trackId: string,
+  sessionId: string,
   executionId: string,
   approvalId: string,
   optionId: string,
 ): ApiOperation<undefined> {
   return {
     method: 'POST',
-    path: `/api/v1/tracks/${encodeURIComponent(trackId)}/executions/${encodeURIComponent(executionId)}/approvals/${encodeURIComponent(approvalId)}/decision`,
-    body: { optionId },
-    responseSchema: z.union([approvalDtoSchema.transform(() => undefined), z.undefined()]),
+    path: `/api/v1/sessions/${encodeURIComponent(sessionId)}/interactions/${encodeURIComponent(approvalId)}/respond`,
+    body: { executionId, optionId },
+    responseSchema: sessionInteractionResultSchema.transform(() => undefined),
   };
 }
 
 export const APPROVAL_DECISION_FAILURES: FailureTable<WriteClass> = Object.freeze({
   rules: Object.freeze([
+    Object.freeze({ status: Object.freeze([409]), code: 'precondition_failed', is: 'refused' as const }),
     Object.freeze({ status: Object.freeze([409]), is: 'done' as const }),
     Object.freeze({ status: Object.freeze([400, 403, 404, 413, 415, 422]), is: 'refused' as const }),
   ]),

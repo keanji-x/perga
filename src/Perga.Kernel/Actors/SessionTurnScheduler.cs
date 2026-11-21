@@ -15,7 +15,6 @@ public sealed partial class TrackActor
             public readonly object StartupSync = new();
             public CancellationTokenSource? Startup;
             public string? StartupTurnId;
-            public bool WorkerStartup;
             public volatile ActiveTurnState? Active;
             public Guid? Reservation;
             public bool Compacting;
@@ -32,13 +31,12 @@ public sealed partial class TrackActor
         public bool HasActiveTurns => ActiveTurns.Any();
         public bool HasDispatchingInputs => _sessions.Values.Any(s => Volatile.Read(ref s.DispatchInputId) is not null);
 
-        public CancellationTokenSource BeginStartup(string id, string? turnId = null, bool worker = false)
+        public CancellationTokenSource BeginStartup(string id, string? turnId = null)
         {
             var state = State(id);
             lock (state.StartupSync)
             {
                 state.StartupTurnId ??= turnId;
-                state.WorkerStartup = worker;
                 return state.Startup ??= CancellationTokenSource.CreateLinkedTokenSource(actor._actorShutdownCts.Token);
             }
         }
@@ -48,7 +46,7 @@ public sealed partial class TrackActor
             if (!_sessions.TryGetValue(id, out var state)) return false;
             lock (state.StartupSync)
             {
-                if (state.Active is not null || state.Startup is null || state.WorkerStartup || (turnId is not null && state.StartupTurnId != turnId)) return false;
+                if (state.Active is not null || state.Startup is null || (turnId is not null && state.StartupTurnId != turnId)) return false;
                 state.Startup.Cancel();
                 return true;
             }
@@ -63,7 +61,6 @@ public sealed partial class TrackActor
                 state.Startup?.Dispose();
                 state.Startup = null;
                 state.StartupTurnId = null;
-                state.WorkerStartup = false;
             }
         }
 
@@ -165,12 +162,13 @@ public sealed partial class TrackActor
         public void EndDispatch(string id, string inputId) =>
             Interlocked.CompareExchange(ref State(id).DispatchInputId, null, inputId);
 
-        public bool IsOccupied(AgentSessionDto session, PersistedSessionInput? input = null, Guid? reservation = null, bool allowFinishingDispatch = false)
+        public bool IsOccupied(AgentSessionDto session, PersistedSessionInput? input = null, Guid? reservation = null, bool allowFinishingDispatch = false, bool allowResumeHold = false)
         {
             if (actor._sessionShutdownPending.ContainsKey(session.Id)) return true;
             if (!_sessions.TryGetValue(session.Id, out var state))
                 return input is null && session.Status is "queued" or "running" or "unknown";
-            return state.Active is not null || state.Compacting || state.Steering is not null || state.Resume is not null ||
+            return state.Active is not null || state.Compacting || state.Steering is not null ||
+                (state.Resume is { } hold && (!allowResumeHold || hold.Busy)) ||
                 (state.Reservation is not null && state.Reservation != reservation) ||
                 (!allowFinishingDispatch && Volatile.Read(ref state.DispatchInputId) is { } dispatch && dispatch != input?.Receipt.InputId) ||
                 (input is null && session.Status is "queued" or "running" or "unknown");
@@ -186,7 +184,7 @@ public sealed partial class TrackActor
         public async Task<Func<CancellationToken, Task>?> PokeAsync(string sessionId, bool allowWorker = true, bool allowInline = false)
         {
             if (actor._options.DispatchAdmission.Draining || !actor.WorkspaceReady || actor._track.ClosedAtMs is not null ||
-                !actor._sessions.TryGetValue(sessionId, out var session) || IsOccupied(session))
+                !actor._sessions.TryGetValue(sessionId, out var session) || session.ArchivedAtMs is not null || IsOccupied(session))
                 return null;
 
             ActiveAttemptState? attempt = null;
@@ -216,8 +214,9 @@ public sealed partial class TrackActor
                 return null;
             }
 
+            if (actor.TryScheduleApprovalNotificationCore(sessionId)) return null;
+
             // Pending system work belongs to the Track. Resolve its Lead only when claiming.
-            if (sessionId != actor._track.LeadSessionId) return null;
             var batch = await actor._store.TrackWakes.ClaimBatchAsync(actor.TrackId, sessionId, 32, CancellationToken.None).ConfigureAwait(false);
             if (batch.Count == 0) return null;
             var reservation = Guid.NewGuid();

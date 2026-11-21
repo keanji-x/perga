@@ -16,7 +16,7 @@ public sealed class TrackWakeSchedulingTests
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
         var id = snapshot.Track.Id;
         ctx.Kernel.DispatchAdmission.SetDraining(true);
-        await ctx.Kernel.DispatchWorkerAsync(id, new("Inspect report"), "report-wake", null, default);
+        await ctx.Kernel.CreateSessionAsync(id, new(Prompt: "Inspect report", Task: new()), "report-wake", new InteropPrincipal.Human(), default);
         Assert.DoesNotContain(await ctx.Store.TrackWakes.ListAsync(id, default), wake => wake.Kind == "report_edited");
 
         var report = await ctx.Kernel.ReadReportAsync(id);
@@ -48,7 +48,7 @@ public sealed class TrackWakeSchedulingTests
         await ctx.Store.TrackWakes.EnqueueAsync(new(id, "schedule", "track_schedule:daily", TestJson.FromObject(new { scheduleId = "daily", sourceKind = "template", prompt = staticPrompt ?? "stored prompt" })), default);
         if (withMail)
             await ctx.Store.TrackWakes.EnqueueAsync(TrackWakeRequests.Prompt(id, "mail", "mail:test", "mail prompt", "system_mail"), default);
-        await ctx.Kernel.Actors.GetOrActivate(id).PokeLeadAsync();
+        await ctx.Kernel.Actors.GetOrActivate(id).PokePendingWakesAsync();
         await ctx.Kernel.WaitForTrackIdleAsync(id);
         var expected = output ?? staticPrompt ?? "stored prompt";
         var suppressed = string.IsNullOrWhiteSpace(expected);
@@ -66,7 +66,7 @@ public sealed class TrackWakeSchedulingTests
         var wakes = await ctx.Store.TrackWakes.ListAsync(id, default);
         Assert.Equal(suppressed ? ("dropped", "canceled") : ("done", "delivered"), (wakes[0].State, wakes[0].Reason));
         if (suppressed) Assert.Null(wakes[0].TurnId);
-        await ctx.Kernel.Actors.GetOrActivate(id).PokeLeadAsync();
+        await ctx.Kernel.Actors.GetOrActivate(id).PokePendingWakesAsync();
         Assert.Equal(suppressed && !withMail ? 0 : 1, ctx.Store.GetTurnsForSession(snapshot.Track.LeadSessionId!).Count);
     }
 
@@ -78,7 +78,7 @@ public sealed class TrackWakeSchedulingTests
         var id = snapshot.Track.Id;
         ctx.AgentRuntime.OnBeforeOpenSession = _ => throw KernelException.Conflict("Setup refused");
         await ctx.Store.TrackWakes.EnqueueAsync(TrackWakeRequests.Prompt(id, "mail", "mail:test", "notice"), default);
-        var ex = await Assert.ThrowsAsync<KernelException>(() => ctx.Kernel.Actors.GetOrActivate(id).PokeLeadAsync());
+        var ex = await Assert.ThrowsAsync<KernelException>(() => ctx.Kernel.Actors.GetOrActivate(id).PokePendingWakesAsync());
         Assert.Equal(KernelErrorCode.Conflict, ex.Code);
         var turn = Assert.Single(ctx.Store.GetTurnsForSession(snapshot.Track.LeadSessionId!));
         Assert.Equal("failed", turn.Status);
@@ -92,11 +92,11 @@ public sealed class TrackWakeSchedulingTests
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
         ctx.AgentRuntime.OnBeforeOpenSession = spec =>
         {
-            if (spec.ConfigureWorker) throw KernelException.Conflict("Setup refused");
+            if (spec.SystemPrompt?.Contains("BoundAttemptId=", StringComparison.Ordinal) == true) throw KernelException.Conflict("Setup refused");
         };
-        var dispatch = await ctx.Kernel.DispatchWorkerAsync(snapshot.Track.Id, new("Inspect report"), "worker", null, default);
+        var dispatch = await ctx.Kernel.CreateSessionAsync(snapshot.Track.Id, new(Prompt: "Inspect report", Task: new()), "worker", new InteropPrincipal.Human(), default);
         await ctx.Kernel.WaitForTrackIdleAsync(snapshot.Track.Id);
-        var worker = Assert.Single(await ctx.Kernel.ListSessionsAsync(snapshot.Track.Id), s => s.BoundTaskId == dispatch.Task.Id);
+        var worker = Assert.Single((await ctx.Kernel.ListSessionsAsync(snapshot.Track.Id, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray(), s => s.BoundTaskId == dispatch.Receipt.Task!.Id);
         Assert.Empty(ctx.Store.GetTurnsForSession(worker.Id));
         Assert.Empty(await ctx.Store.ListSessionItemsAsync(worker.Id));
     }
@@ -107,7 +107,7 @@ public sealed class TrackWakeSchedulingTests
         await using var ctx = new KernelTestContext();
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
         var lead = Assert.Single(snapshot.Sessions);
-        var other = await ctx.Kernel.CreateSubagentSessionAsync(snapshot.Track.Id, new CreateSessionRequest());
+        var other = (await ctx.Kernel.CreateSessionAsync(snapshot.Track.Id, new CreateSessionRequest(), Guid.NewGuid().ToString("N"), new InteropPrincipal.Human(), default)).Receipt.Session;
         var first = new SessionMessage("first", lead.Id, null, "owner:installation", "first", "hash",
             null, null, "First", "queued", 1, "queue");
         foreach (var message in new[] { first, first with { Id = "second", RequestKey = "second", Content = "Second" },
@@ -170,7 +170,7 @@ public sealed class TrackWakeSchedulingTests
         await using var ctx = new KernelTestContext();
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
         var id = snapshot.Track.Id;
-        var next = await ctx.Kernel.CreateSubagentSessionAsync(id, new CreateSessionRequest(Title: "Next Lead"));
+        var next = (await ctx.Kernel.CreateSessionAsync(id, new CreateSessionRequest(Title: "Next Lead"), Guid.NewGuid().ToString("N"), new InteropPrincipal.Human(), default)).Receipt.Session;
         await ctx.Store.TrackWakes.EnqueueAsync(TrackWakeRequests.Prompt(id, "mail", "mail:test", "notice"), default);
         await ctx.Kernel.PatchTrackAsync(id, new PatchTrackRequest(LeadSessionId: next.Id));
         await ctx.Kernel.WaitForTrackIdleAsync(id);
@@ -190,7 +190,7 @@ public sealed class TrackWakeSchedulingTests
         ctx.AgentRuntime.TurnScript = Fail;
         var payload = kind == "schedule" ? TestJson.FromObject(new { scheduleId = "daily", sourceKind = "user", prompt = "notice" }) : TestJson.FromObject(new { prompt = "notice" });
         await ctx.Store.TrackWakes.EnqueueAsync(new(id, kind, null, payload), default);
-        await ctx.Kernel.Actors.GetOrActivate(id).PokeLeadAsync();
+        await ctx.Kernel.Actors.GetOrActivate(id).PokePendingWakesAsync();
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         await ctx.Kernel.WaitForTrackIdleAsync(id, deadline.Token);
         var wake = Assert.Single(await ctx.Store.TrackWakes.ListAsync(id, default));
@@ -198,7 +198,7 @@ public sealed class TrackWakeSchedulingTests
         Assert.NotNull(wake.TurnId);
         Assert.Equal(1, wake.Attempts);
         Assert.Equal("idle", (await ctx.Store.LoadTrackAggregateAsync(id, default))!.Sessions.Single(s => s.IsLead).Status);
-        await ctx.Kernel.Actors.GetOrActivate(id).PokeLeadAsync();
+        await ctx.Kernel.Actors.GetOrActivate(id).PokePendingWakesAsync();
         Assert.Single(ctx.Store.GetTurnsForSession(snapshot.Track.LeadSessionId!));
 
         static async IAsyncEnumerable<UnifiedAgentEvent> Fail(ScriptableFakeAgentSession session, TurnInput input,
@@ -223,14 +223,14 @@ public sealed class TrackWakeSchedulingTests
         await ctx.Store.TrackWakes.EnqueueAsync(new(id, "schedule", "track_schedule:daily", TestJson.FromObject(new { scheduleId = "daily", sourceKind = "template", prompt = duringPreparation ? null : "stored prompt" })), default);
         await ctx.Store.TrackWakes.EnqueueAsync(TrackWakeRequests.Prompt(id, "mail", "mail:test", "mail"), default);
         var actor = ctx.Kernel.Actors.GetOrActivate(id);
-        await Assert.ThrowsAsync<InvalidOperationException>(() => actor.PokeLeadAsync());
+        await Assert.ThrowsAsync<InvalidOperationException>(() => actor.PokePendingWakesAsync());
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         await ctx.Kernel.WaitForTrackIdleAsync(id, deadline.Token);
         var rows = await ctx.Store.TrackWakes.ListAsync(id, default);
         Assert.Equal(("dropped", "runtime_failed"), (rows[0].State, rows[0].Reason));
         Assert.Equal("delivering", rows[1].State);
         Assert.Equal("idle", (await ctx.Store.LoadTrackAggregateAsync(id, default))!.Sessions.Single(s => s.IsLead).Status);
-        await actor.PokeLeadAsync();
+        await actor.PokePendingWakesAsync();
         Assert.All(await ctx.Store.TrackWakes.ListAsync(id, default), w => Assert.Equal(1, w.Attempts));
     }
 
@@ -245,7 +245,7 @@ public sealed class TrackWakeSchedulingTests
         ctx.PolicyVm.OnScheduleFired = (_, _, _, _) => throw new InvalidOperationException("broken schedule JS");
         await ctx.Store.TrackWakes.EnqueueAsync(TrackWakeRequests.DynamicSchedule(id, "daily", "stored prompt", "template"), default);
         await ctx.Store.TrackWakes.EnqueueAsync(TrackWakeRequests.Prompt(id, "mail", "mail:test", "mail prompt"), default);
-        await ctx.Kernel.Actors.GetOrActivate(id).PokeLeadAsync();
+        await ctx.Kernel.Actors.GetOrActivate(id).PokePendingWakesAsync();
         await ctx.Kernel.WaitForTrackIdleAsync(id);
         Assert.Equal("stored prompt\n\nmail prompt", Assert.Single(ctx.Store.GetTurnsForSession(snapshot.Track.LeadSessionId!))
             .Input.GetProperty("prompt").GetString());
@@ -266,13 +266,13 @@ public sealed class TrackWakeSchedulingTests
         await ctx.Store.TrackWakes.EnqueueAsync(TrackWakeRequests.Prompt(id, "mail", "mail:test", "first notice"), default);
         await ctx.Store.TrackWakes.EnqueueAsync(new(id, "schedule", "track_schedule:daily", TestJson.FromObject(new { scheduleId = "daily", sourceKind = "template", prompt = "stored prompt" })), default);
         Assert.Equal(0, evaluations);
-        await actor.PokeLeadAsync();
+        await actor.PokePendingWakesAsync();
         Assert.Equal(1, evaluations);
         var turn = Assert.Single(ctx.Store.GetTurnsForSession(snapshot.Track.LeadSessionId!));
         Assert.Equal("system", turn.TriggerKind);
         Assert.Equal("first notice\n\nschedule evaluated", turn.Input.GetProperty("prompt").GetString());
         Assert.All(await ctx.Store.TrackWakes.ListAsync(id, default), w => Assert.Equal(("done", "delivered"), (w.State, w.Reason)));
-        await actor.PokeLeadAsync();
+        await actor.PokePendingWakesAsync();
         Assert.Equal(1, evaluations);
     }
 }

@@ -18,7 +18,7 @@ it('uses the real Planner and opens cited reports from the daily homepage withou
   expect(within(sidebar).queryByText('system')).toBeNull();
   await userEvent.click(await screen.findByRole('button', { name: '讨论这项工作' }));
   await screen.findByRole('complementary', { name: 'Daily Planner conversation' });
-  expect(requests.some((request) => request.path.includes('view=run'))).toBe(true);
+  expect(requests.some((request) => request.path.includes('limit=1'))).toBe(true);
   expect(requests.every((request) => request.method === 'GET')).toBe(true);
   await userEvent.keyboard('{Escape}');
   await userEvent.click(await screen.findByRole('button', { name: 'Project evidence' }));
@@ -111,7 +111,7 @@ it('sends from Today through the existing Planner endpoint and shows a refused s
 });
 
 it('shows the existing history retry in Today when conversation history cannot load', async () => {
-  renderDailyFixture({ reply: request => (request.path.includes('/items') && !request.path.includes('view='))
+  renderDailyFixture({ reply: request => (request.path.includes('/items') && !request.path.includes('limit=1'))
     ? { status: 500, statusText: 'Error', body: { error: 'unavailable' } } : undefined });
   const assistant = await screen.findByRole('region', { name: 'Today Assistant' });
   await within(assistant).findByRole('button', { name: '刷新' });

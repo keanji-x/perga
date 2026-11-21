@@ -21,7 +21,7 @@ describe('system wake projection', () => {
 
 it('rejects old run objects and raw arrays at the canonical run boundary', () => {
   const operation = conversationRunOperation('a/b');
-  expect(operation.path).toBe('/api/v1/sessions/a%2Fb/items?afterId=0&limit=1&view=run');
+  expect(operation.path).toBe('/api/v1/sessions/a%2Fb/items?afterId=0&limit=1');
   for (const value of [[], { card_id: 'card', phase: 'idle' }]) expect(operation.responseSchema.safeParse(value).success).toBe(false);
 });
 

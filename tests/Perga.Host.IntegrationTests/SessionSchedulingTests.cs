@@ -23,7 +23,7 @@ public sealed class SessionSchedulingTests
         await store.SessionMessages!.InsertAsync(new("drained-queue", lead, null, "owner:installation", "drained-key", "hash",
             null, null, "queued during drain", "queued", 1, "queue"), default);
         await store.TrackWakes.EnqueueAsync(TrackWakeRequests.Prompt(trackId, "mail", "mail:drained", "wake during drain"), default);
-        await kernel.Actors.GetOrActivate(trackId).PokeLeadAsync();
+        await kernel.Actors.GetOrActivate(trackId).PokePendingWakesAsync();
         Assert.Equal("pending", Assert.Single(await store.TrackWakes.ListAsync(trackId, default)).State);
         Assert.Null((await store.SessionMessages.GetAsync(lead, false, "drained-queue", default))!.TurnId);
         Assert.Empty(host.AgentRuntime.ExecutedTurns);
@@ -76,15 +76,15 @@ public sealed class SessionSchedulingTests
         try
         {
             await turnStarted.Task.WaitAsync(Deadline);
-            var turn = (await kernel.GetSessionItemsAsync(lead)).ActiveTurn!;
-            var steering = kernel.SteerMessageAsync(lead, turn.Id, "steer", default, "steer-key");
+            var turn = (await kernel.GetSessionItemsAsync(lead, new(), new InteropPrincipal.Human(), default)).ActiveTurn!;
+            var steering = kernel.SendSessionMessageAsync(lead, new(Content: "steer", RequestKey: "steer-key", Mode: "steer", TurnId: turn.Id), new InteropPrincipal.Human(), default);
             await steeringStarted.Task.WaitAsync(Deadline);
             releaseTurn.TrySetResult();
             await firstWake.WaitAsync(Deadline);
             await WakeAsync(host, trackId, "after steering");
             Assert.Single(host.AgentRuntime.ExecutedTurns);
             releaseSteering.TrySetResult();
-            Assert.Equal("accepted", (await steering.WaitAsync(Deadline)).Delivery);
+            Assert.Equal("delivered", (await steering.WaitAsync(Deadline)).Delivery);
             await kernel.WaitForTrackIdleAsync(trackId).WaitAsync(Deadline);
             Assert.Equal(2, host.AgentRuntime.ExecutedTurns.Count);
             Assert.Equal("after steering", host.AgentRuntime.ExecutedTurns.Last().Input.Prompt);
@@ -98,13 +98,13 @@ public sealed class SessionSchedulingTests
         await using var host = new PergaHostTestCluster();
         var (trackId, oldLead) = await host.CreateTrackAsync();
         var kernel = host.Services.GetRequiredService<IPergaKernel>();
-        var newLead = await kernel.CreateSubagentSessionAsync(trackId, new());
+        var newLead = (await kernel.CreateSessionAsync(trackId, new(), Guid.NewGuid().ToString("N"), new InteropPrincipal.Human(), default)).Receipt.Session;
         var started = Signal();
         var release = Signal();
         var wakeStarted = Signal();
         host.AgentRuntime.SetTurnHandler((_, input, ct) => Stream(input.Prompt == "first" ? release.Task : Task.CompletedTask,
             input.Prompt == "first" ? started : wakeStarted, ct));
-        await kernel.AcceptMessageAsync(oldLead, new("first", "first"), default);
+        await kernel.SendSessionMessageAsync(oldLead, new(Content: "first", RequestKey: "first"), new InteropPrincipal.Human(), default);
         try
         {
             await started.Task.WaitAsync(Deadline);
@@ -148,7 +148,7 @@ public sealed class SessionSchedulingTests
     {
         await host.Services.GetRequiredService<ITrackStore>().TrackWakes.EnqueueAsync(
             TrackWakeRequests.Prompt(trackId, "boot", null, prompt), default);
-        await host.Services.GetRequiredService<IPergaKernel>().Actors.GetOrActivate(trackId).PokeLeadAsync();
+        await host.Services.GetRequiredService<IPergaKernel>().Actors.GetOrActivate(trackId).PokePendingWakesAsync();
     }
 
     private static TaskCompletionSource Signal() => new(TaskCreationOptions.RunContinuationsAsynchronously);

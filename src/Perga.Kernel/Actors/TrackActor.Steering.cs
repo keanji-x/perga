@@ -10,112 +10,8 @@ public sealed partial class TrackActor
     private static readonly TimeSpan SteeringTimeout = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan SteeringRequestTimeout = TimeSpan.FromSeconds(15);
 
-    internal Task<SteeringResult> SteerMessageAsync(string sessionId, string turnId, string content, CancellationToken ct, string? requestKey = null)
-    {
-        var key = requestKey ?? $"steer_{Guid.NewGuid():N}";
-        ValidateRequestKey(key);
-        return AcceptSteeringAsync(sessionId, turnId, content, key, ct,
-            RequestIdentity.Hash(new { version = 1, turnId, content }));
-    }
-
-    private async Task<SteeringResult> AcceptSteeringAsync(
-        string sessionId, string turnId, string? content, string keyOrId, CancellationToken ct, string? requestHash = null,
-        string? callerSessionId = null, string? attemptId = null)
-    {
-        var startedAt = _timeProvider.GetTimestamp();
-        var inputId = content is null ? keyOrId : $"steer_{Guid.NewGuid():N}";
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        deadline.CancelAfter(SteeringRequestTimeout);
-        var admissionToken = deadline.Token;
-        try
-        {
-            var attempt = await EnqueueAsync(async actor =>
-            {
-                await EnsureHydratedCoreAsync(admissionToken).ConfigureAwait(false);
-                RequireWorkerOperatorCore(callerSessionId);
-                var session = RequireSessionCore(sessionId);
-                var worker = session.BoundAttemptId is not null;
-                if (callerSessionId is not null && !worker)
-                    throw KernelException.Forbidden("This tool targets Worker sessions on the current Track.");
-                if (worker && content is not null)
-                    throw KernelException.InvalidArgument("Worker messages require an attempt target.");
-
-                SessionMessage? message = null;
-                if (content is null)
-                    message = await Messages.GetAsync(sessionId, worker, inputId, admissionToken).ConfigureAwait(false)
-                        ?? throw KernelException.NotFound("Message not found in this session.");
-                else if (_store.SessionMessages is not null)
-                    message = await Messages.FindAsync(sessionId, worker: false, InstallationAuthor, keyOrId, admissionToken).ConfigureAwait(false);
-
-                if (message is not null)
-                {
-                    inputId = message.Id;
-                    if (content is not null)
-                        RequireMatchingHash(message.RequestHash, requestHash!);
-                    if (attemptId is not null && attemptId != message.AttemptId)
-                        throw KernelException.Conflict("The message belongs to another Worker attempt.");
-                    if ((content is not null && message.Kind != "steer") || (content is null && message.Kind is not ("queue" or "worker")))
-                        throw KernelException.Conflict("This request was used for another message operation.");
-                    var prior = content is null
-                        ? await Messages.FindQueuedSteerAsync(message, turnId, admissionToken).ConfigureAwait(false)
-                        : message.Delivery;
-                    if (prior is not null)
-                    {
-                        if (content is not null && message.TargetTurnId != turnId)
-                            throw KernelException.Conflict("A steering request is bound to its original turn.");
-                        if (prior == "dispatching" && _scheduler.TryGetSteering(sessionId, out var runningSteer) && runningSteer.InputId == inputId &&
-                            runningSteer.Attempt is Task<SteeringResult> runningResult)
-                            return runningResult;
-                        return Task.FromResult(ToSteeringResult(message.Id, prior));
-                    }
-                    if (message.Delivery != "queued" || message.TurnId is not null)
-                        throw KernelException.Conflict("This message is already being sent or has been withdrawn.");
-                }
-
-                RequireSessionDispatchAvailableCore(sessionId);
-                RequireDispatchWorkspace(session);
-                if (worker) RequireCurrentWorkerCore(sessionId, message!.AttemptId!);
-                if (session.Status == "unknown")
-                    throw KernelException.Conflict("Resolve the current turn before sending another message.");
-
-                if (!_scheduler.TryGetActive(sessionId, out var running) || running.TurnDto.Id != turnId || running.Interrupted)
-                {
-                    if (content is not null && !await _store.HasSessionTurnAsync(sessionId, turnId, admissionToken).ConfigureAwait(false))
-                        throw KernelException.NotFound("The target turn was not found in this session.");
-                    throw KernelException.Conflict("The target turn changed. Refresh the session before steering.");
-                }
-                if (message is not null && !running.CanSteerQueuedMessages)
-                    return Task.FromResult(new SteeringResult(inputId, "queued"));
-
-                var prepared = message is null
-                    ? new SessionMessage(inputId, sessionId, null, InstallationAuthor, keyOrId, requestHash!, turnId, null,
-                        content!, "dispatching", NowMs(), "steer")
-                    : message;
-                if (_store.SessionMessages is not null)
-                {
-                    if (message is null)
-                        await Messages.InsertAsync(prepared, admissionToken).ConfigureAwait(false);
-                    else if (!await Messages.ClaimQueuedSteerAsync(prepared, turnId, admissionToken).ConfigureAwait(false))
-                        throw KernelException.Conflict("This message is already being sent or has been withdrawn.");
-                    NotifyQueueChangedCore(sessionId);
-                }
-
-                _scheduler.TryGetSteering(sessionId, out var previous);
-                var next = RunSteeringAsync(previous.Attempt, prepared, turnId, queued: content is null, startedAt);
-                _scheduler.SetSteering(sessionId, (inputId, next));
-                _ = actor.TrackBackgroundJob(() => next);
-                return next;
-            }, admissionToken).ConfigureAwait(false);
-            return await attempt.WaitAsync(admissionToken).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (!ct.IsCancellationRequested && deadline.IsCancellationRequested)
-        {
-            return new(inputId, "unconfirmed");
-        }
-    }
-
     private async Task<SteeringResult> RunSteeringAsync(Task? previous, SessionMessage message,
-        string turnId, bool queued, long startedAt)
+        string turnId, bool queued, bool allowQueueFallback, long startedAt)
     {
         var ct = _actorShutdownCts.Token;
         if (previous is not null)
@@ -128,6 +24,7 @@ public sealed partial class TrackActor
             outcome = delivery switch
             {
                 SteerDelivery.Accepted => "delivered",
+                SteerDelivery.Declined when !allowQueueFallback => "rejected",
                 SteerDelivery.Declined when _timeProvider.GetElapsedTime(startedAt) < SteeringRequestTimeout => "queued",
                 null => "rejected",
                 _ => "unknown",

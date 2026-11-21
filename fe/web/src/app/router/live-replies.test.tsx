@@ -13,7 +13,7 @@ function setup(initial: SessionItemsPageDto) {
   let failHistory = false;
   const fixture = renderDailyFixture({ initial: '/track/daily?panel=conversations', extraPlanner: true, reply: request => {
     if (!request.path.includes(`/sessions/${SESSION}/items?`)) return undefined;
-    if (failHistory && !request.path.includes('view=')) return { status: 503, statusText: 'Unavailable', body: null };
+    if (failHistory && !request.path.includes('limit=1')) return { status: 503, statusText: 'Unavailable', body: null };
     return { status: 200, statusText: 'OK', body: page };
   } });
   return { ...fixture, page: (value: SessionItemsPageDto) => { page = value; }, fail: () => { failHistory = true; },
@@ -40,7 +40,7 @@ it('renders persisted replies once while the v1 live read returns the same sessi
   await open();
   await screen.findByText('Stored answer');
   await screen.findByRole('button', { name: 'Stop' });
-  await waitFor(() => expect(fixture.requests.some(request => request.path.includes('view=live'))).toBe(true));
+  await waitFor(() => expect(fixture.requests.some(request => request.path.includes('limit=1'))).toBe(true));
   expect(historyTexts()).toEqual(['question', 'Stored answer']);
 });
 it('refreshes stored reply text without appending a duplicate', async () => {

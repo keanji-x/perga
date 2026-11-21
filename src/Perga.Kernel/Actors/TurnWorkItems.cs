@@ -35,8 +35,11 @@ public sealed partial class TrackActor
         // Returns null when nothing remains to dispatch.
         Task<string?> PreparePromptAsync(CancellationToken ct);
 
+        // Recheck transient work in the final admission mailbox, before any turn is recorded.
+        string? FinalizePromptCore(string prompt) => prompt;
+
         bool IsOccupiedCore(AgentSessionDto session);
-        SessionTurnDto CreateTurnCore(AgentSessionDto session, string prompt, WorkerSettings? workerSettings, long now);
+        SessionTurnDto CreateTurnCore(AgentSessionDto session, string prompt, long now);
 
         // Returns the session that executes the turn, or null when the turn must not start.
         Task<AgentSessionDto?> ClaimCoreAsync(AgentSessionDto session, AgentSessionDto runningSession,
@@ -49,7 +52,7 @@ public sealed partial class TrackActor
             CancellationToken ct);
         Task OnTurnCreatedAsync(SessionTurnDto turn);
         Task OnTurnActivatedCoreAsync(AgentSessionDto runningSession, EventEnvelopeDto runningEvent, long now, CancellationToken ct);
-        SessionTurnDto CreateUnstartedTurn();
+        SessionTurnDto? CreateUnstartedTurn();
         Task OnProviderDeliveredAsync(SessionTurnDto turn, UnifiedAgentEvent evt, string? nativeThreadId);
         Task PersistSettlementCoreAsync(bool delivered, bool rejectedBeforePrompt, SessionTurnDto turn, IReadOnlyList<SessionItemDto> items,
             AgentSessionDto session);
@@ -72,7 +75,7 @@ public sealed partial class TrackActor
         public Task<string?> PreparePromptAsync(CancellationToken ct) => Task.FromResult<string?>(input.Content);
         public bool IsOccupiedCore(AgentSessionDto session) => actor._scheduler.IsOccupied(session, input);
 
-        public SessionTurnDto CreateTurnCore(AgentSessionDto session, string prompt, WorkerSettings? workerSettings, long now) =>
+        public SessionTurnDto CreateTurnCore(AgentSessionDto session, string prompt, long now) =>
             new(Id: input.Receipt.TurnId, SessionId: session.Id, TurnIndex: input.TurnIndex, Epoch: input.Epoch,
                 TriggerKind: TriggerKind, Input: JsonHelpers.ToElement(new { }), Status: "running", Usage: null,
                 ErrorText: null, StartedAtMs: now, CompletedAtMs: null, UserItemId: input.UserItemId);
@@ -151,7 +154,7 @@ public sealed partial class TrackActor
         protected TrackActor Actor { get; } = actor;
         public string SessionId { get; } = sessionId;
         public abstract string TriggerKind { get; }
-        public bool IsDurable => false;
+        public virtual bool IsDurable => false;
         public virtual bool IsQueuedMessage => false;
         public bool WaitForWorkspacePreparation => true;
         public bool HoldsResumeWhenInconclusive => false;
@@ -162,13 +165,14 @@ public sealed partial class TrackActor
         protected virtual bool RecordsSetupConflicts => false;
 
         public abstract Task<string?> PreparePromptAsync(CancellationToken ct);
+        public virtual string? FinalizePromptCore(string prompt) => prompt;
         public bool IsOccupiedCore(AgentSessionDto session) => Actor._scheduler.IsOccupied(session, reservation: reservation);
 
-        public SessionTurnDto CreateTurnCore(AgentSessionDto session, string prompt, WorkerSettings? workerSettings, long now)
+        public SessionTurnDto CreateTurnCore(AgentSessionDto session, string prompt, long now)
         {
             var turnIndex = Actor.NextTurnIndexCore(session.Id);
-            return new SessionTurnDto(Id: $"trn_{turnIndex:D6}_{Guid.NewGuid():N}", SessionId: session.Id, TurnIndex: turnIndex,
-                Epoch: session.Epoch, TriggerKind: TriggerKind, Input: JsonHelpers.ToElement(new { prompt, workerSettings }),
+            return new SessionTurnDto(Id: DispatchMessage?.TargetTurnId ?? $"trn_{turnIndex:D6}_{Guid.NewGuid():N}", SessionId: session.Id, TurnIndex: turnIndex,
+                Epoch: session.Epoch, TriggerKind: TriggerKind, Input: JsonHelpers.ToElement(new { prompt }),
                 Status: "running", Usage: null, ErrorText: null, StartedAtMs: now, CompletedAtMs: null);
         }
 
@@ -196,6 +200,7 @@ public sealed partial class TrackActor
         public async Task<SessionTurnDto> RecordTurnStartCoreAsync(SessionTurnDto turn, string prompt,
             AgentSessionDto runningSession, CancellationToken ct)
         {
+            turn = turn with { Input = JsonHelpers.ToElement(new { prompt }) };
             var userItem = CreateWakeUserItem(turn, prompt, DispatchMessage?.Id, presentation: Presentation);
             var recorded = await Actor._store.RecordTurnAndItemsWithIdsAsync(turn, [userItem], runningSession, ct, DispatchMessage)
                 .ConfigureAwait(false);
@@ -212,7 +217,7 @@ public sealed partial class TrackActor
             await Actor.PersistAndEmitSessionUpdatedCoreAsync(runningSession, now, ct).ConfigureAwait(false);
         }
 
-        public SessionTurnDto CreateUnstartedTurn() =>
+        public virtual SessionTurnDto? CreateUnstartedTurn() =>
             throw new InvalidOperationException("A reserved turn either starts or fails its setup.");
 
         public abstract Task OnProviderDeliveredAsync(SessionTurnDto turn, UnifiedAgentEvent evt, string? nativeThreadId);
@@ -236,6 +241,7 @@ public sealed partial class TrackActor
         : ReservedTurnWorkItem(actor, message.SessionId, reservation)
     {
         private bool _delivered;
+        public override bool IsDurable => true;
         public override string TriggerKind => "user";
         public override bool IsQueuedMessage => true;
         protected override SessionMessage DispatchMessage => message;
@@ -389,14 +395,28 @@ public sealed partial class TrackActor
     }
 
     // Attempt startup is a reserved turn, never queued as a Track wake.
-    private sealed class ContractWorkerLaunchWorkItem(TrackActor actor, string sessionId, string prompt, Guid reservation, string attemptId)
-        : ReservedTurnWorkItem(actor, sessionId, reservation)
+    private sealed class ContractWorkerLaunchWorkItem(TrackActor actor, SessionMessage initial, Guid reservation, string attemptId)
+        : ReservedTurnWorkItem(actor, initial.SessionId, reservation)
     {
+        protected override SessionMessage DispatchMessage => initial;
+        public override async Task OnTurnCreatedAsync(SessionTurnDto turn)
+        {
+            if (turn.Status == "running") return;
+            await Actor.Messages.TransitionAsync(initial with { TurnId = turn.Id,
+                Delivery = turn.Status == "interrupted" ? "interrupted" : turn.Status == "unknown" ? "unknown" : "rejected" },
+                "dispatching", CancellationToken.None).ConfigureAwait(false);
+        }
+        public override bool IsDurable => true;
         public override string TriggerKind => "wake";
-        public override Task<string?> PreparePromptAsync(CancellationToken ct) => Task.FromResult<string?>(prompt);
-        public override Task OnProviderDeliveredAsync(SessionTurnDto turn, UnifiedAgentEvent evt, string? nativeThreadId) => Task.CompletedTask;
+        public override Task<string?> PreparePromptAsync(CancellationToken ct) => Task.FromResult<string?>(initial.Content);
+        public override async Task OnProviderDeliveredAsync(SessionTurnDto turn, UnifiedAgentEvent evt, string? nativeThreadId) =>
+            await Actor.Messages.TransitionAsync(initial with { TurnId = turn.Id, DeliveredTurnId = turn.Id, Delivery = "delivered" },
+                "dispatching", CancellationToken.None).ConfigureAwait(false);
         public override async Task OnTurnSettledAsync(TurnSettlement settlement)
         {
+            await Actor.Messages.TransitionAsync(initial with { TurnId = settlement.TurnId,
+                Delivery = settlement.Status == "interrupted" ? "interrupted" : settlement.RejectedBeforePrompt ? "rejected" : "unknown" },
+                "dispatching", CancellationToken.None).ConfigureAwait(false);
             var turn = await settlement.SettleAsync().ConfigureAwait(false);
             if (turn.Status != "failed") return;
             var stillActive = await Actor.EnqueueAsync(_ => Task.FromResult(Actor._activeAttempts.ContainsKey(attemptId)), CancellationToken.None)

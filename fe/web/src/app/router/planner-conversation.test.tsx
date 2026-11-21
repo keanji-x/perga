@@ -1,5 +1,4 @@
 import type { SessionItemDto } from '../../../../core/api/perga-v1.ts';
-import { conversationCursorSchema } from '../../../../core/api/schemas.ts';
 import { prepareReportDocument } from '../../features/report/document/preparation.ts';
 import { conversationCardId } from './conversation-read-data.ts';
 import { sessionInput, sessionItem, sessionPage, sessionTurn } from './conversation-session-data.ts';
@@ -75,10 +74,10 @@ function setup(reply?: Reply) {
       if (request.path === '/api/overlays?entity_kind=track') return ok([]);
       if (request.path === '/api/v1/tracks/w1') return ok(fixtureSnapshot(TRACK, [fixtureSession(CARD.id, CARD.trackId, { title: CARD.title, isLead: true })]));
       if (request.path === '/api/v1/tracks/w2') return ok(fixtureSnapshot(TRACK_B, [fixtureSession(CARD_B.id, CARD_B.trackId, { title: CARD_B.title, isLead: true })]));
-      if ((request.path.includes('/items?') && !request.path.includes('view='))) return ok(historyPage(conversationCardId(request.path), []));
-      if (request.path.includes('view=run')) return ok(historyPage(conversationCardId(request.path), []));
+      if ((request.path.includes('/items?') && !request.path.includes('limit=1'))) return ok(historyPage(conversationCardId(request.path), []));
+      if (request.path.includes('limit=1')) return ok(historyPage(conversationCardId(request.path), []));
       if (request.path.endsWith('/messages')) return ok(sessionInput(CARD.id));
-      if (request.path.endsWith('/interrupt')) return ok({ ok: true });
+      if (request.path.endsWith('/control')) return ok({ ok: true });
       if (request.path === '/api/settings') return ok({});
       return ok([]);
     },
@@ -149,7 +148,7 @@ it('renders local screenshot references from planner history using the agent wor
   const agentRoot = '/tmp/planner-worktree';
   setup((request) => {
     if (request.path === '/api/v1/tracks/w1') return ok(fixtureSnapshot({ ...TRACK, workspaceDriver: 'vcs-workspace', workspaceSpec: { logicalRoot: '/tmp', worktreePath: agentRoot } }, [fixtureSession(CARD.id, CARD.trackId, { title: CARD.title, isLead: true })]));
-    if ((request.path.includes('/items?') && !request.path.includes('view='))) return ok(historyPage(conversationCardId(request.path), [{
+    if ((request.path.includes('/items?') && !request.path.includes('limit=1'))) return ok(historyPage(conversationCardId(request.path), [{
       ...messageRows(1)[0],
       payload: { text: `![Screenshot](${agentRoot}/screenshots/page.png)\n\n![Detail](screenshots/detail.png)` },
     }]));
@@ -163,7 +162,7 @@ it('renders local screenshot references from planner history using the agent wor
 });
 
 it('binds the same relative screenshot path to the newly opened conversation track', async () => {
-  const { router } = setup((request) => (request.path.includes('/items?') && !request.path.includes('view=')) ? ok(historyPage(conversationCardId(request.path), [{
+  const { router } = setup((request) => (request.path.includes('/items?') && !request.path.includes('limit=1')) ? ok(historyPage(conversationCardId(request.path), [{
     ...messageRows(1)[0], payload: { text: '![Screenshot](screenshots/page.png)' },
   }])) : undefined);
   await openConversation();
@@ -177,7 +176,7 @@ it('binds the same relative screenshot path to the newly opened conversation tra
 });
 
 it('does not repeat the run phase above the composer while the planner is working', async () => {
-    setupWithTurns((request) => request.path.includes('view=run')
+    setupWithTurns((request) => request.path.includes('limit=1')
       ? ok(runningPage())
       : undefined);
     await openConversationWithTurns();
@@ -186,8 +185,8 @@ it('does not repeat the run phase above the composer while the planner is workin
   });
 
 it('sends the chosen model to the server when the picker is used', async () => {
-    const { requests } = setupWithTurns((request) => request.method === 'PUT'
-        && request.path.endsWith('/model')
+    const { requests } = setupWithTurns((request) => request.method === 'PATCH'
+        && request.method === 'PATCH' && /\/api\/v1\/sessions\/[^/]+$/.test(request.path)
       ? ok({
         id: CARD.id, trackId: TRACK.id, provider: 'codex', model: 'gpt-5', createdAtMs: 1, updatedAtMs: 2,
       })
@@ -200,9 +199,9 @@ it('sends the chosen model to the server when the picker is used', async () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     await waitFor(() => {
-      const writes = requests.filter((request) => request.path.endsWith('/model'));
+      const writes = requests.filter((request) => request.method === 'PATCH' && /\/api\/v1\/sessions\/[^/]+$/.test(request.path));
       expect(writes).toHaveLength(1);
-      expect(writes[0]?.method).toBe('PUT');
+      expect(writes[0]?.method).toBe('PATCH');
       /* The v1 endpoint accepts only the model selection. */
       expect(writes[0]?.body).toEqual({ model: null, reasoningEffort: null });
     });
@@ -299,7 +298,7 @@ it('keeps a track route conversation list scoped after visiting another track', 
   });
 
 it('follows a card swapped out and back, showing the transcript of whichever row is open', async () => {
-    const { client } = setup((request) => (request.path.includes('/items?') && !request.path.includes('view='))
+    const { client } = setup((request) => (request.path.includes('/items?') && !request.path.includes('limit=1'))
       ? ok(historyPage(conversationCardId(request.path), messageRows(3))) : undefined);
     fireEvent.click(await screen.findByRole('button', { name: 'Conversation Planner chat' }));
     /* Wait for all transcript messages before swapping the selected conversation. */
@@ -317,7 +316,7 @@ it('follows a card swapped out and back, showing the transcript of whichever row
   });
 
 it('renders a server-sent reply from the history fixture', async () => {
-    setup((request) => (request.path.includes('/items?') && !request.path.includes('view=')) ? ok(historyPage(conversationCardId(request.path), messageRows(1))) : undefined);
+    setup((request) => (request.path.includes('/items?') && !request.path.includes('limit=1')) ? ok(historyPage(conversationCardId(request.path), messageRows(1))) : undefined);
     await openConversation();
     expect(await screen.findByText('reply 0')).toBeTruthy();
   });
@@ -330,7 +329,7 @@ it('retires a completed tail thought through local send feedback and server hist
       if (request.path.endsWith('/messages')) return new Promise(resolve => {
         accept = () => { stored = true; resolve(ok(sessionInput(CARD.id))); };
       });
-      if (request.path.includes('/items?') && !request.path.includes('view=')) return ok(historyPage(conversationCardId(request.path),
+      if (request.path.includes('/items?') && !request.path.includes('limit=1')) return ok(historyPage(conversationCardId(request.path),
         [thought, ...(stored ? [sessionItem(CARD.id, 2, 'next message', 'user')] : [])]));
       return undefined;
     });
@@ -347,59 +346,59 @@ it('retires a completed tail thought through local send feedback and server hist
   });
 
 it('does not read older bodies after initial presentation, idle, resize or initial top', async () => {
-    const { requests } = setup(request => (request.path.includes('/items?') && !request.path.includes('view='))
+    const { requests } = setup(request => (request.path.includes('/items?') && !request.path.includes('limit=1'))
       ? historyReply(messageRows(TRANSCRIPT_PAGE_LIMIT + 1)) : undefined);
     await openConversationWithTurns();
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 60)); });
     const scroller = drawerElement().querySelector('[data-nc-drawer-scroll]')!;
     fireEvent.scroll(scroller);
     fireEvent(window, new Event('resize'));
-    expect(requests.filter(request => (request.path.includes('/items?') && !request.path.includes('view=')))).toHaveLength(1);
+    expect(requests.filter(request => (request.path.includes('/items?') && !request.path.includes('limit=1')))).toHaveLength(1);
     expect(screen.queryByText('Loading earlier messages… Navigation covers loaded history.')).toBeNull();
   });
 
 it('consumes one upward input for at most one page without response chaining', async () => {
     const rows = messageRows(TRANSCRIPT_PAGE_LIMIT * 3);
     const { requests } = setup(request => {
-      if (!(request.path.includes('/items?') && !request.path.includes('view='))) return undefined;
+      if (!(request.path.includes('/items?') && !request.path.includes('limit=1'))) return undefined;
       const cursor = Number(historyPosition(request.path));
       return historyReply(cursor === 0 ? rows.slice(-500) : rows.filter(row => row.id < cursor).slice(-500));
     });
     await openConversation();
     await screen.findByText(`reply ${TRANSCRIPT_PAGE_LIMIT * 3 - 1}`);
     fireEvent.wheel(drawerElement().querySelector('[data-nc-drawer-scroll]')!, { deltaY: -40 });
-    await waitFor(() => expect(requests.filter(request => (request.path.includes('/items?') && !request.path.includes('view=')))).toHaveLength(2));
+    await waitFor(() => expect(requests.filter(request => (request.path.includes('/items?') && !request.path.includes('limit=1')))).toHaveLength(2));
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 60)); });
-    expect(requests.filter(request => (request.path.includes('/items?') && !request.path.includes('view=')))).toHaveLength(2);
+    expect(requests.filter(request => (request.path.includes('/items?') && !request.path.includes('limit=1')))).toHaveLength(2);
   });
 
 it('cancels pending busy history input on unmount', async () => {
     let release!: (response: ApiTransportResponse) => void;
     let hold = false;
     const rows = messageRows(TRANSCRIPT_PAGE_LIMIT + 1);
-    const { client, requests } = setup(request => (request.path.includes('/items?') && !request.path.includes('view='))
+    const { client, requests } = setup(request => (request.path.includes('/items?') && !request.path.includes('limit=1'))
       ? hold ? new Promise(resolve => { release = resolve; }) : historyReply(rows) : undefined);
     await openConversationWithTurns();
     hold = true;
     act(() => { void client.invalidateQueries({ queryKey: transcriptQueryKey() }); });
-    await waitFor(() => expect(requests.filter(request => (request.path.includes('/items?') && !request.path.includes('view=')))).toHaveLength(2));
+    await waitFor(() => expect(requests.filter(request => (request.path.includes('/items?') && !request.path.includes('limit=1')))).toHaveLength(2));
     await readEarlierWithInput();
     cleanup();
     await act(async () => { release(historyReply(rows)); await Promise.resolve(); });
-    expect(requests.filter(request => (request.path.includes('/items?') && !request.path.includes('view=')))).toHaveLength(2);
+    expect(requests.filter(request => (request.path.includes('/items?') && !request.path.includes('limit=1')))).toHaveLength(2);
   });
 
 it('pauses on failure and explicitly retries only the failed page', async () => {
     let fail = true;
     const { requests } = setup(request => {
-      if (!(request.path.includes('/items?') && !request.path.includes('view='))) return undefined;
+      if (!(request.path.includes('/items?') && !request.path.includes('limit=1'))) return undefined;
       if (historyPosition(request.path) === '0') return historyReply(messageRows(TRANSCRIPT_PAGE_LIMIT + 1));
       return fail ? { status: 503, statusText: 'Unavailable', body: null } : historyReply([]);
     });
     await openConversation();
     await readEarlierWithInput();
     await screen.findByRole('button', { name: '刷新' });
-    const reads = () => requests.filter(request => (request.path.includes('/items?') && !request.path.includes('view=')));
+    const reads = () => requests.filter(request => (request.path.includes('/items?') && !request.path.includes('limit=1')));
     expect(reads()).toHaveLength(2);
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 80)); });
     expect(reads()).toHaveLength(2);
@@ -414,7 +413,7 @@ it('does not cancel a newest reread to fill earlier history', async () => {
     let hold = false;
     const rows = messageRows(TRANSCRIPT_PAGE_LIMIT + 1);
     const { client, requests } = setup(request => {
-      if (!(request.path.includes('/items?') && !request.path.includes('view='))) return undefined;
+      if (!(request.path.includes('/items?') && !request.path.includes('limit=1'))) return undefined;
       if (historyPosition(request.path) !== '0') return historyReply([]);
       return hold ? new Promise(resolve => { release = resolve; }) : historyReply(rows);
     });
@@ -422,12 +421,12 @@ it('does not cancel a newest reread to fill earlier history', async () => {
     await waitFor(() => expect(drawerElement().querySelector('[data-nc-thread]')).not.toBeNull());
     hold = true;
     act(() => { void client.invalidateQueries({ queryKey: transcriptQueryKey() }); });
-    await waitFor(() => expect(requests.filter(request => (request.path.includes('/items?') && !request.path.includes('view=')))).toHaveLength(2));
+    await waitFor(() => expect(requests.filter(request => (request.path.includes('/items?') && !request.path.includes('limit=1')))).toHaveLength(2));
     fireEvent.wheel(drawerElement().querySelector('[data-nc-drawer-scroll]')!, { deltaY: -40 });
     hold = false;
     await act(async () => { release(historyReply(rows)); await Promise.resolve(); });
-    await waitFor(() => expect(requests.filter(request => (request.path.includes('/items?') && !request.path.includes('view=')))).toHaveLength(3));
-    expect(requests.filter(request => (request.path.includes('/items?') && !request.path.includes('view='))).map(request =>
+    await waitFor(() => expect(requests.filter(request => (request.path.includes('/items?') && !request.path.includes('limit=1')))).toHaveLength(3));
+    expect(requests.filter(request => (request.path.includes('/items?') && !request.path.includes('limit=1'))).map(request =>
       historyPosition(request.path))).toEqual(['0', '0', '2']);
   });
 
@@ -440,7 +439,7 @@ it('cancels hidden visits and does not let A history schedule work for B or a la
     let release!: (response: ApiTransportResponse) => void;
     const { client, requests } = setup(request => {
       if (request.path === '/api/v1/tracks/w1') return ok(fixtureSnapshot(TRACK, [fixtureSession(CARD.id, CARD.trackId, { title: CARD.title, isLead: true })]));
-      if (!(request.path.includes('/items?') && !request.path.includes('view='))) return undefined;
+      if (!(request.path.includes('/items?') && !request.path.includes('limit=1'))) return undefined;
       if (request.path.includes(CARD_SAME_TRACK.id)) return historyReply([]);
       if (historyPosition(request.path) === '0') return holdNewest ? new Promise(resolve => { releaseNewest = resolve; }) : historyReply(first);
       if (historyPosition(request.path) === '121') return holdEarlier ? new Promise(resolve => { release = resolve; }) : historyReply(middle);
@@ -450,12 +449,12 @@ it('cancels hidden visits and does not let A history schedule work for B or a la
     await waitFor(() => expect(drawerElement().querySelector('[data-nc-thread]')).not.toBeNull());
     holdNewest = true;
     act(() => { void client.invalidateQueries({ queryKey: transcriptQueryKey() }); });
-    await waitFor(() => expect(requests.filter(request => (request.path.includes('/items?') && !request.path.includes('view=')))).toHaveLength(2));
+    await waitFor(() => expect(requests.filter(request => (request.path.includes('/items?') && !request.path.includes('limit=1')))).toHaveLength(2));
     await readEarlierWithInput();
     fireEvent.click(screen.getByRole('button', { name: 'Close conversation' }));
     holdNewest = false;
     await act(async () => { releaseNewest(historyReply(first)); await Promise.resolve(); });
-    expect(requests.filter(request => (request.path.includes('/items?') && !request.path.includes('view=')))).toHaveLength(2);
+    expect(requests.filter(request => (request.path.includes('/items?') && !request.path.includes('limit=1')))).toHaveLength(2);
     await openConversation();
     await readEarlierWithInput();
     act(() => { client.setQueryData(queryKeys.trackDetail(TRACK.id), fixtureSnapshot(TRACK, [fixtureSession(CARD_SAME_TRACK.id, CARD_SAME_TRACK.trackId, { title: CARD_SAME_TRACK.title, isLead: true })])); });
@@ -487,7 +486,7 @@ it('does not mark a message sent from an idle conversation as queued', async () 
     let stored = false;
     setup(request => {
       if (request.path.endsWith('/messages')) { stored = true; return ok(sessionInput(CARD.id)); }
-      if (request.path.includes('/items?') && !request.path.includes('view=')) return ok(historyPage(conversationCardId(request.path),
+      if (request.path.includes('/items?') && !request.path.includes('limit=1')) return ok(historyPage(conversationCardId(request.path),
         stored ? [sessionItem(CARD.id, 1, 'idle words', 'user')] : []));
       return undefined;
     });
@@ -501,7 +500,7 @@ it('does not mark a message sent from an idle conversation as queued', async () 
   });
 
 it('allows queuing while a v1 active turn is running and exposes Stop', async () => {
-  const { requests } = setup(request => request.path.includes('view=run') ? ok(runningPage()) : undefined);
+  const { requests } = setup(request => request.path.includes('limit=1') ? ok(runningPage()) : undefined);
   await openConversation();
   await screen.findByRole('button', { name: 'Stop' });
   expect(messageField().getAttribute('contenteditable')).toBe('true');
@@ -523,7 +522,7 @@ it('holds the idle composer only while the send is unanswered', async () => {
   });
 
 it('keeps Stop working, and offers nothing else beside it', async () => {
-    const { requests } = setup((request) => request.path.includes('view=run')
+    const { requests } = setup((request) => request.path.includes('limit=1')
       ? ok(runningPage())
       : undefined);
     await openConversation();
@@ -531,7 +530,7 @@ it('keeps Stop working, and offers nothing else beside it', async () => {
     expect(screen.queryByRole('button', { name: 'Queue message' })).toBeNull();
     fireEvent.click(stop);
     await waitFor(() => {
-      expect(requests.filter((request) => request.path.endsWith('/interrupt'))).toHaveLength(1);
+      expect(requests.filter((request) => request.path.endsWith('/control'))).toHaveLength(1);
     });
   });
 
@@ -541,7 +540,7 @@ it('ticks the meta row from the run response\'s running turn', async () => {
       vi.setSystemTime(1_000_000);
       let elapsed = 18_000;
       const { client } = setupWithTurns((request) => {
-        if (request.path.includes('view=run')) {
+        if (request.path.includes('limit=1')) {
           return ok(sessionPage(fixtureSession(CARD.id, TRACK.id, { status: 'running' }), [], { ...sessionTurn(CARD.id), startedAtMs: Date.now() - elapsed }));
         }
         return request.path === '/api/v1/tracks/w1'
@@ -573,17 +572,17 @@ it('invalidates history and phase after a successful send', async () => {
     const { requests } = setup();
     await openConversation();
     await waitFor(() => {
-      expect(requests.filter((request) => (request.path.includes('/items?') && !request.path.includes('view='))).length).toBeGreaterThan(0);
-      expect(requests.filter((request) => request.path.includes('view=run')).length).toBeGreaterThan(0);
+      expect(requests.filter((request) => (request.path.includes('/items?') && !request.path.includes('limit=1'))).length).toBeGreaterThan(0);
+      expect(requests.filter((request) => request.path.includes('limit=1')).length).toBeGreaterThan(0);
     });
-    const beforeHistory = requests.filter((request) => (request.path.includes('/items?') && !request.path.includes('view='))).length;
-    const beforeRun = requests.filter((request) => request.path.includes('view=run')).length;
+    const beforeHistory = requests.filter((request) => (request.path.includes('/items?') && !request.path.includes('limit=1'))).length;
+    const beforeRun = requests.filter((request) => request.path.includes('limit=1')).length;
     const field = messageField();
     await typeInto(field, 'hello');
     await sendWithEnter(field);
     await waitFor(() => {
-      expect(requests.filter((request) => (request.path.includes('/items?') && !request.path.includes('view=')))).toHaveLength(beforeHistory + 1);
-      expect(requests.filter((request) => request.path.includes('view=run'))).toHaveLength(beforeRun + 1);
+      expect(requests.filter((request) => (request.path.includes('/items?') && !request.path.includes('limit=1')))).toHaveLength(beforeHistory + 1);
+      expect(requests.filter((request) => request.path.includes('limit=1'))).toHaveLength(beforeRun + 1);
     });
   });
 
@@ -591,10 +590,10 @@ it('uses Escape to interrupt once, then closes without repeating the pending req
     let resolveInterrupt!: (response: ApiTransportResponse) => void;
     const pendingInterrupt = new Promise<ApiTransportResponse>((resolve) => { resolveInterrupt = resolve; });
     const { requests } = setup((request) => {
-      if (request.path.includes('view=run')) {
+      if (request.path.includes('limit=1')) {
         return ok(runningPage());
       }
-      return request.path.endsWith('/interrupt') ? pendingInterrupt : undefined;
+      return request.path.endsWith('/control') ? pendingInterrupt : undefined;
     });
     const opener = await screen.findByRole('button', { name: /Conversation Planner chat/ });
     opener.focus();
@@ -604,12 +603,12 @@ it('uses Escape to interrupt once, then closes without repeating the pending req
        the query is still loading (idle Escape legitimately closes the pane). */
     await within(drawer).findByRole('button', { name: 'Stop' });
     fireEvent.keyDown(drawer, { key: 'Escape' });
-    await waitFor(() => expect(requests.filter((request) => request.path.endsWith('/interrupt'))).toHaveLength(1));
+    await waitFor(() => expect(requests.filter((request) => request.path.endsWith('/control'))).toHaveLength(1));
     expect(screen.getByRole('complementary', { name: 'Planner chat' })).toBe(drawer);
     const title = within(drawer).getByRole('heading', { name: 'Planner chat' });
     const field = within(drawer).getByRole('combobox', { name: 'Message' });
     fireEvent.keyDown(drawer, { key: 'Escape' });
-    expect(requests.filter((request) => request.path.endsWith('/interrupt'))).toHaveLength(1);
+    expect(requests.filter((request) => request.path.endsWith('/control'))).toHaveLength(1);
     /* A pending stop yields Escape to the drawer owner. Its last tree remains
        for paint, with interaction and accessibility revoked in this commit. */
     expect(screen.queryByRole('complementary', { name: 'Planner chat' })).toBeNull();
@@ -638,7 +637,7 @@ function messageField(): HTMLElement {
 
 function setupWithTurns(reply?: Reply) {
   return setup(async (request) => await reply?.(request)
-    ?? ((request.path.includes('/items?') && !request.path.includes('view=')) ? ok(historyPage(conversationCardId(request.path), messageRows(1))) : undefined));
+    ?? ((request.path.includes('/items?') && !request.path.includes('limit=1')) ? ok(historyPage(conversationCardId(request.path), messageRows(1))) : undefined));
 }
 
 async function openConversationWithTurns() {
@@ -647,8 +646,8 @@ async function openConversationWithTurns() {
 }
 
 function historyPosition(path: string): string {
-  const cursor = new URL(path, 'http://fixture').searchParams.get('cursor');
-  return cursor === null ? '0' : String(conversationCursorSchema.parse(JSON.parse(cursor)).position);
+  const cursor = new URL(path, 'http://fixture').searchParams.get('beforeId');
+  return cursor === null ? '0' : String(Number(cursor));
 }
 function historyReply(rows: ReturnType<typeof messageRows>) {
   return ok(historyPage(CARD.id, rows));
@@ -680,7 +679,7 @@ function toolResult(id: number, callId: string, output: string, isError = false)
 }
 
 it('keeps a completed v1 tool call before the reply interleaved with its result', async () => {
-  setup(request => request.path.includes('/items?') && !request.path.includes('view=') ? ok(historyPage(CARD.id, [
+  setup(request => request.path.includes('/items?') && !request.path.includes('limit=1') ? ok(historyPage(CARD.id, [
     toolCall(1, 'call-1', 'inspect'), sessionItem(CARD.id, 2, 'interleaved reply'), toolResult(3, 'call-1', 'done'),
   ])) : undefined);
   await openConversation();
@@ -691,7 +690,7 @@ it('keeps a completed v1 tool call before the reply interleaved with its result'
 });
 it('keeps a v1 tool group expanded when a result arrives for its running call', async () => {
   let rows = [toolCall(1, 'call-1', 'inspect'), toolCall(2, 'call-2', 'verify')];
-  const { client } = setup(request => request.path.includes('/items?') && !request.path.includes('view=')
+  const { client } = setup(request => request.path.includes('/items?') && !request.path.includes('limit=1')
     ? ok(historyPage(CARD.id, rows)) : undefined);
   await openConversation();
   const group = await screen.findByRole('group', { name: '2 tool calls' });
@@ -709,7 +708,7 @@ it('extends a tool group across the v1 history window when earlier reading is re
   const rows = [toolCall(1, 'call-1', 'first'), toolCall(2, 'call-2', 'second'),
     ...Array.from({ length: TRANSCRIPT_PAGE_LIMIT - 1 }, (_, index) => toolCall(index + 3, `call-${index + 3}`, `tool-${index + 3}`))];
   setup(request => {
-    if (!request.path.includes('/items?') || request.path.includes('view=')) return undefined;
+    if (!request.path.includes('/items?') || request.path.includes('limit=1')) return undefined;
     const beforeId = new URL(request.path, 'http://fixture').searchParams.get('beforeId');
     return ok(historyPage(CARD.id, beforeId === null ? rows : rows.filter(row => row.id < Number(beforeId))));
   });
@@ -725,7 +724,7 @@ it('retains an opened tool failure as the latest v1 window rolls forward', async
   const initial = [toolCall(1, 'call-1', 'inspect'), toolCall(2, 'call-2', 'verify'), toolResult(3, 'call-2', 'failure detail', true),
     ...Array.from({ length: TRANSCRIPT_PAGE_LIMIT - 3 }, (_, index) => sessionItem(CARD.id, index + 4, `reply ${index + 4}`))];
   let rows = initial;
-  const { client } = setup(request => request.path.includes('/items?') && !request.path.includes('view=')
+  const { client } = setup(request => request.path.includes('/items?') && !request.path.includes('limit=1')
     ? ok(historyPage(CARD.id, rows)) : undefined);
   await openConversation();
   const group = await screen.findByRole('group', { name: '2 tool calls' });

@@ -3,7 +3,7 @@ import { act, cleanup, waitFor } from '@testing-library/react';
 import { page, userEvent } from 'vitest/browser';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { ApiRequest } from '../../../../core/api/types.ts';
-import { DB_INSTANCE_ID_KEY } from '../../../../core/keys/storage.ts';
+import { DATABASE_ID_KEY, DB_INSTANCE_ID_KEY } from '../../../../core/keys/storage.ts';
 import { mountProductionApp } from '../auth/production-app.tsx';
 import { createTrackTaskFixture } from './track-task-fixture.ts';
 import { createMemoryStorage } from './share-reuse-fixture.ts';
@@ -53,7 +53,7 @@ function mountShare(kind: 'track' | 'area', unlocked = false, options: Readonly<
     }
     const sessions = () => [fixtureSession('planner', 'w1', { title: 'Planner', isLead: true }), fixtureSession('assistant', 'w1', { title: 'Shared Assistant' })];
     if (url === '/api/v1/tracks/w1/sessions') return reply(sessions());
-    if (url === '/api/v1/bootstrap') return reply({ ...fixtureBootstrap(), version: 'guest-instance' });
+    if (url === '/api/v1/bootstrap') return reply({ ...fixtureBootstrap(), version: 'guest-version', databaseId: 'guest-database', dbInstanceId: 'guest-instance' });
     if (url === '/api/v1/tracks/w1') {
       const result = await fixture.transport.send(request);
       const detail = result.body as TrackAggregateSnapshotDto;
@@ -93,7 +93,7 @@ it('unlocks into the production Report, tasks, tools and full Planner without a 
   expect(requests.filter(r => !r.path.startsWith('/api/share-links/')).every(r => r.headers?.['X-Calm-Share-Link'] === 'link')).toBe(true);
   expect(sockets.some(url => url.includes('/api/v1/events?share_link=link'))).toBe(true);
   expect(storage.getItem(DB_INSTANCE_ID_KEY)).toBe('owner-instance');
-  expect(storage.getItem(`calm-share:link:${DB_INSTANCE_ID_KEY}`)).toBe('perga-guest-instance');
+  expect(storage.getItem(`calm-share:link:${DATABASE_ID_KEY}`)).toBe('guest-database');
 });
 it.each([1280, 390])('limits Area navigation to its Tracks and New Track, with scoped production routing (%ipx)', async width => {
   await page.viewport(width, 900); mountShare('area', true);

@@ -108,7 +108,7 @@ it('keeps draft words across closing and sends the same Planner before reopening
   await expect.poll(() => requests.filter((request) => request.path.endsWith('/messages')).length).toBe(1);
   const sent = requests.find((request) => request.path.endsWith('/messages'))!;
   expect(sent.path).toBe('/api/v1/sessions/daily-planner/messages');
-  expect(sent.body).toMatchObject({ text: '整理今天的计划\n保留这行' });
+  expect(sent.body).toMatchObject({ content: '整理今天的计划\n保留这行' });
   expect(sent.headers?.['Idempotency-Key']).toBeTruthy();
   await expect.element(page.getByRole('dialog', { name: 'Daily Planner conversation', exact: true })).toBeVisible();
   answered = true;
@@ -459,7 +459,7 @@ it('interrupts the current working conversation from its portalled mobile editor
   await page.viewport(390, 844);
   const { requests } = renderDailyFixture({ emptyWorkspace: true, reply: request => {
     if (request.path.includes('/items?')) return ok(sessionPage(fixtureSession('daily-planner', 'daily'), [], sessionTurn('daily-planner')));
-    if (request.path.endsWith('/interrupt')) return ok({ card_id: 'daily-planner', worker_session_id: 'runtime', stopped: true });
+    if (request.path.endsWith('/control')) return ok({ card_id: 'daily-planner', worker_session_id: 'runtime', stopped: true });
     return undefined;
   } });
   await page.getByRole('button', { name: 'Open conversation history', exact: true }).click();
@@ -467,7 +467,7 @@ it('interrupts the current working conversation from its portalled mobile editor
   await expect.element(page.getByRole('button', { name: 'Stop', exact: true })).toBeVisible();
   page.getByRole('button', { name: 'Stop', exact: true }).element().focus();
   await userEvent.keyboard('{Escape}');
-  await expect.poll(() => requests.filter(request => request.path === '/api/v1/sessions/daily-planner/interrupt')).toHaveLength(1);
+  await expect.poll(() => requests.filter(request => request.path === '/api/v1/sessions/daily-planner/control')).toHaveLength(1);
   await expect.element(page.getByRole('dialog', { name: 'Daily Planner conversation', exact: true })).toBeVisible();
 });
 

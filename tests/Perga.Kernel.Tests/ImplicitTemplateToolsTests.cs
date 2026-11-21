@@ -126,8 +126,7 @@ public sealed class ImplicitTemplateToolsTests
             .Track.TemplateState.GetProperty("requests").GetInt32());
         await Call(ctx, caller, KernelMcpToolNames.TrackSet, new { source = replacement });
         var events = ctx.Store.PersistedEvents.Count(e => e.Kind == "track.updated");
-        await ctx.Kernel.DecideApprovalAsync(snap.Track.Id, ask.ExecutionId, ask.Id,
-            ask.Options.Single(option => option.IsApproval).Id, timeout.Token);
+        await ctx.Kernel.RespondInteractionAsync(ask.SessionId, ask.Id, new(ExecutionId: ask.ExecutionId, OptionId: ask.Options.Single(option => option.IsApproval).Id), new InteropPrincipal.Human(), timeout.Token);
         var ex = await Assert.ThrowsAsync<KernelException>(() => suspended);
         Assert.Equal(KernelErrorCode.PolicyDenied, ex.Code);
         var persisted = (await ctx.Store.LoadTrackAggregateAsync(snap.Track.Id, default))!;
@@ -310,7 +309,7 @@ public sealed class ImplicitTemplateToolsTests
     {
         await using var ctx = new KernelTestContext();
         var (_, snap) = await ctx.CreateDefaultTrackAsync();
-        await ctx.SendAndWaitForTurnAsync(snap.Track.LeadSessionId!, new SendMessageRequest("hello", "hint"));
+        await ctx.SendAndWaitForTurnAsync(snap.Track.LeadSessionId!, new SendSessionMessageRequest("hello", "hint"));
         var prompt = Assert.Single(ctx.AgentRuntime.OpenedSessions).LaunchSpec.SystemPrompt;
         Assert.Contains("Templates are optional and implicit", prompt);
         Assert.Contains("perga_template_ls", prompt);

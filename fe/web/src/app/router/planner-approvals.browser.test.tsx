@@ -19,6 +19,7 @@ it('uses the approval options advertised by the open ACP session', async () => {
     if (request.path.startsWith(`/api/v1/sessions/${session.id}/items?`))
       return sessionReply({
         ...sessionPage(session),
+        capabilities: null,
         permissionModes: [
           { id: 'inspect', label: 'Inspect workspace', description: 'Read only', isDefault: true },
           { id: 'act', label: 'Make changes', description: 'Allow edits' },
@@ -37,14 +38,15 @@ it.each([1280, 390])('answers a v1 open ask in the lead conversation at %ipx', a
   await page.viewport(width, 844);
   let answered = false;
   const fixture = renderSessionFixture({ initial: '/track/daily?panel=conversations', reply: request => {
-    if (request.path === '/api/v1/tracks/daily/asks/release-ask/answer') {
+    if (request.path === '/api/v1/sessions/daily-planner/interactions/release-ask/respond') {
       answered = true;
-      return { status: 204, statusText: 'No Content', body: undefined };
+      return sessionReply({ id: 'release-ask', kind: 'ask' });
     }
+    if (request.path.startsWith('/api/v1/sessions/daily-planner/items?')) return sessionReply({ ...sessionPage(fixture.sessions[0]), pendingInteractions: answered ? [] : [{ id: 'release-ask', kind: 'ask', sessionId: 'daily-planner', title: 'Which release branch?', canRespond: true, createdAtMs: 1, questions: [{ question: 'Which release branch?', options: ['main', 'release'], isMultiSelect: false }] }] });
     if (request.path === '/api/v1/tracks/daily') return sessionReply({
       ...fixtureSnapshot(fixtureTrack('daily', { leadSessionId: 'daily-planner' }), [fixtureSession('daily-planner', 'daily', { isLead: true, title: 'Daily Planner conversation' })]),
       openAsks: answered ? [] : [{ id: 'release-ask', trackId: 'daily', status: 'open', delivery: 'wake', createdAtMs: 1,
-        questions: [{ title: 'Which release branch?', options: ['main', 'release'] }] }],
+        questions: [{ question: 'Which release branch?', options: ['main', 'release'] }] }],
     });
     return undefined;
   } });
@@ -53,7 +55,7 @@ it.each([1280, 390])('answers a v1 open ask in the lead conversation at %ipx', a
   await expect.element(ask.getByRole('heading', { name: 'Which release branch?' })).toBeVisible();
   await ask.getByRole('button', { name: 'release', exact: true }).click();
   await expect.poll(() => fixture.requests.filter(request => request.method === 'POST').length).toBe(1);
-  expect(fixture.requests.find(request => request.method === 'POST')).toMatchObject({ path: '/api/v1/tracks/daily/asks/release-ask/answer', body: { answers: [{ option: 1, value: 'release' }] } });
+  expect(fixture.requests.find(request => request.method === 'POST')).toMatchObject({ path: '/api/v1/sessions/daily-planner/interactions/release-ask/respond', body: { answers: [{ option: 1, value: 'release' }] } });
   await expect.element(ask).not.toBeInTheDocument();
   expect(page.getByRole('button', { name: /^Approvals:/ }).query()).toBeNull();
   expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(width);
@@ -62,7 +64,7 @@ it.each([1280, 390])('answers a v1 open ask in the lead conversation at %ipx', a
 it('decides a live approval through its execution and structured optionId', async () => {
   await page.viewport(1280, 844);
   let answered = false;
-  const decisionPath = '/api/v1/tracks/daily/executions/turn-7/approvals/apr-1/decision';
+  const decisionPath = '/api/v1/sessions/daily-planner/interactions/apr-1/respond';
   const approval = {
     id: 'apr-1', executionId: 'turn-7', sessionId: 'daily-planner', turnId: 'turn-7', createdAtMs: 1,
     title: 'Allow publishing this report?',
@@ -74,7 +76,11 @@ it('decides a live approval through its execution and structured optionId', asyn
   const fixture = renderSessionFixture({ initial: '/track/daily?panel=conversations', reply: request => {
     if (request.path === decisionPath) {
       answered = true;
-      return sessionReply(approval);
+      return sessionReply({ id: approval.id, kind: 'approval' });
+    }
+    if (request.path.includes('/items?')) {
+      const id = request.path.split('/')[4];
+      return sessionReply({ ...sessionPage(fixture.sessions.find(session => session.id === id)!), pendingInteractions: !answered && id === approval.sessionId ? [{ ...approval, kind: 'approval', canRespond: true }] : [] });
     }
     if (request.path === '/api/v1/tracks/daily') return sessionReply({
       ...fixtureSnapshot(fixtureTrack('daily', { leadSessionId: 'daily-planner' }),
@@ -88,14 +94,14 @@ it('decides a live approval through its execution and structured optionId', asyn
   await expect.element(drawer.getByText('Turn paused, waiting for your approval')).toBeVisible();
   await drawer.getByRole('button', { name: 'Allow once', exact: true }).click();
   await expect.poll(() => fixture.requests.find(request => request.path === decisionPath)?.body)
-    .toEqual({ optionId: 'allow_once' });
+    .toEqual({ executionId: 'turn-7', optionId: 'allow_once' });
   await expect.element(drawer).not.toBeInTheDocument();
 });
 
 it('isolates subagent approvals to their owning session and routes approval notifications there', async () => {
   await page.viewport(1280, 844);
   let answered = false;
-  const decisionPath = '/api/v1/tracks/daily/executions/turn-sub-1/approvals/apr-sub/decision';
+  const decisionPath = '/api/v1/sessions/second-planner/interactions/apr-sub/respond';
   const subagentApproval = {
     id: 'apr-sub', executionId: 'turn-sub-1', sessionId: 'second-planner', turnId: 'turn-sub-1', createdAtMs: 2,
     title: 'Approve subagent shell command?',
@@ -109,7 +115,11 @@ it('isolates subagent approvals to their owning session and routes approval noti
   const fixture = renderSessionFixture({ initial: '/track/daily?panel=conversations', reply: request => {
     if (request.path === decisionPath) {
       answered = true;
-      return sessionReply(subagentApproval);
+      return sessionReply({ id: subagentApproval.id, kind: 'approval' });
+    }
+    if (request.path.includes('/items?')) {
+      const id = request.path.split('/')[4];
+      return sessionReply({ ...sessionPage(fixture.sessions.find(session => session.id === id)!), pendingInteractions: !answered && id === subagentApproval.sessionId ? [{ ...subagentApproval, kind: 'approval', canRespond: true }] : [] });
     }
     if (request.path === '/api/v1/tracks/daily') return sessionReply({
       ...fixtureSnapshot(fixtureTrack('daily', { leadSessionId: 'daily-planner' }), [lead, subagent]),
@@ -130,14 +140,14 @@ it('isolates subagent approvals to their owning session and routes approval noti
   await expect.element(drawer.getByRole('heading', { name: 'Approve subagent shell command?' })).toBeVisible();
   await drawer.getByRole('button', { name: 'Approve', exact: true }).click();
   await expect.poll(() => fixture.requests.find(request => request.path === decisionPath)?.body)
-    .toEqual({ optionId: 'approve' });
+    .toEqual({ executionId: 'turn-sub-1', optionId: 'approve' });
   await expect.element(drawer).not.toBeInTheDocument();
 });
 
 it('opens Today Assistant for a subagent approval notification from Report changes', async () => {
   await page.viewport(1280, 844);
   let answered = false;
-  const decisionPath = '/api/v1/tracks/daily/executions/turn-sub-1/approvals/apr-sub/decision';
+  const decisionPath = '/api/v1/sessions/second-planner/interactions/apr-sub/respond';
   const subagentApproval = {
     id: 'apr-sub', executionId: 'turn-sub-1', sessionId: 'second-planner', turnId: 'turn-sub-1', createdAtMs: 2,
     title: 'Approve subagent shell command?',
@@ -151,7 +161,11 @@ it('opens Today Assistant for a subagent approval notification from Report chang
   const fixture = renderSessionFixture({ initial: '/', reply: request => {
     if (request.path === decisionPath) {
       answered = true;
-      return sessionReply(subagentApproval);
+      return sessionReply({ id: subagentApproval.id, kind: 'approval' });
+    }
+    if (request.path.includes('/items?')) {
+      const id = request.path.split('/')[4];
+      return sessionReply({ ...sessionPage(fixture.sessions.find(session => session.id === id)!), pendingInteractions: !answered && id === subagentApproval.sessionId ? [{ ...subagentApproval, kind: 'approval', canRespond: true }] : [] });
     }
     if (request.path === '/api/v1/tracks/daily') return sessionReply({
       ...fixtureSnapshot(fixtureTrack('daily', { leadSessionId: 'daily-planner' }), [lead, subagent]),
@@ -174,6 +188,6 @@ it('opens Today Assistant for a subagent approval notification from Report chang
   await expect.element(drawer.getByRole('heading', { name: 'Approve subagent shell command?' })).toBeVisible();
   await drawer.getByRole('button', { name: 'Approve', exact: true }).click();
   await expect.poll(() => fixture.requests.find(request => request.path === decisionPath)?.body)
-    .toEqual({ optionId: 'approve' });
+    .toEqual({ executionId: 'turn-sub-1', optionId: 'approve' });
   await expect.element(drawer).not.toBeInTheDocument();
 });

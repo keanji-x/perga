@@ -166,7 +166,7 @@ it('leaves an empty field for the next `+` after the first message is sent', asy
   });
   await screen.findByRole('complementary', { name: 'The first message' });
   expect(requests.filter((request) => request.method === 'POST').map((request) => request.body))
-    .toEqual([expect.objectContaining({ text: 'The first message', provider: 'codex' })]);
+    .toEqual([expect.objectContaining({ prompt: 'The first message', provider: 'codex' })]);
   closeDrawer();
   await pressPlus();
   expect(messageField().textContent).toBe('');
@@ -181,5 +181,5 @@ it('offers the registered managed backend and sends the selected provider', asyn
   fireEvent.click(screen.getByRole('button', { name: 'Save' }));
   await typeInto('Use the selected backend');
   fireEvent.click(screen.getByRole('button', { name: 'Send' }));
-  await waitFor(() => expect(requests.find(request => request.method === 'POST' && request.path.endsWith('/sessions'))?.body).toMatchObject({ provider: 'claude', model: 'sonnet', text: 'Use the selected backend' }));
+  await waitFor(() => expect(requests.find(request => request.method === 'POST' && request.path.endsWith('/sessions'))?.body).toMatchObject({ provider: 'claude', model: 'sonnet', prompt: 'Use the selected backend' }));
 });

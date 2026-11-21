@@ -89,6 +89,8 @@ public sealed class TrackWakeStoreTests
         Assert.All(batch, w => { Assert.Null(w.TargetSessionId); Assert.Equal(1, w.Attempts); });
         await h.Store.TrackWakes.LinkTurnAsync(batch, "turn", default);
         await h.Store.TrackWakes.MarkDoneAsync(batch, "delivered", "turn", default);
+        using var changed = h.OpenRawInspectConnection();
+        await changed.ExecuteAsync("UPDATE tracks SET lead_session_id='different-lead' WHERE id='trk_1';");
         Assert.Equal(3, (await h.Store.TrackWakes.ClaimBatchAsync("trk_1", "different-lead", 32, default)).Count);
         Assert.All((await h.Store.TrackWakes.ListAsync("trk_1", default)).Take(32), w => Assert.Equal(("done", "delivered", "turn"), (w.State, w.Reason, w.TurnId)));
     }
@@ -114,6 +116,8 @@ public sealed class TrackWakeStoreTests
         Assert.Equal(("pending", "boot_requeued"), (rows[4].State, rows[4].Reason));
         Assert.Null(rows[4].TurnId);
         Assert.Null(rows[4].TargetSessionId);
+        using var changed = h.OpenRawInspectConnection();
+        await changed.ExecuteAsync("UPDATE tracks SET lead_session_id='new-lead' WHERE id='trk_1';");
         var retry = await h.Store.TrackWakes.ClaimBatchAsync("trk_1", "new-lead", 32, default);
         await h.Store.TrackWakes.MarkDoneAsync(retry, "delivered", "new-turn", default);
         await h.Store.TrackWakes.RecoverOnBootAsync(default);

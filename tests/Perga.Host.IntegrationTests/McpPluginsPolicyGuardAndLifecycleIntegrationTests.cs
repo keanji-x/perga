@@ -335,8 +335,8 @@ public sealed class McpPluginsPolicyGuardAndLifecycleIntegrationTests
             Assert.Single(httpUpstreamCalls);
 
             using var approveResp = await client.PostAsJsonAsync(
-                $"/api/v1/tracks/{trackId}/executions/{approvalApprove.ExecutionId}/approvals/{approvalApprove.Id}/decision",
-                new { optionId = "approve" },
+                $"/api/v1/sessions/{approvalApprove.SessionId}/interactions/{approvalApprove.Id}/respond",
+                new { executionId = approvalApprove.ExecutionId, optionId = "approve" },
                 ct);
             approveResp.EnsureSuccessStatusCode();
 
@@ -371,8 +371,8 @@ public sealed class McpPluginsPolicyGuardAndLifecycleIntegrationTests
             }
 
             using var rejectResp = await client.PostAsJsonAsync(
-                $"/api/v1/tracks/{trackId}/executions/{approvalReject.ExecutionId}/approvals/{approvalReject.Id}/decision",
-                new { optionId = "deny" },
+                $"/api/v1/sessions/{approvalReject.SessionId}/interactions/{approvalReject.Id}/respond",
+                new { executionId = approvalReject.ExecutionId, optionId = "deny" },
                 ct);
             rejectResp.EnsureSuccessStatusCode();
 

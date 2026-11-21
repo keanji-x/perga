@@ -4,8 +4,6 @@
 // be briefly absent: on Codex's systemError branch the phase turns `wedged` before the partial row
 // is stored, so the copy can retire a moment before that row arrives.
 
-import { z } from 'zod';
-
 import { sessionItemsPageDtoSchema } from '../api/schemas.js';
 import type { ConversationLiveReplies, HarnessLiveReplies, HarnessPhaseTag } from '../api/generated/wire.js';
 import type { ApiOperation } from '../api/types.js';
@@ -19,39 +17,22 @@ export function replyMayStream(phase: HarnessPhaseTag | null): boolean {
   return phase === 'issuing_turn' || phase === 'turn_running' || phase === 'issuing_interrupt';
 }
 
-const harnessLiveRepliesSchema: z.ZodType<HarnessLiveReplies> = z.object({
-  turn_id: z.string().nullable(),
-  items: z.array(z.object({ item_id: z.string(), text: z.string() })),
-});
-
-export function harnessLiveOperation(cardId: string): ApiOperation<HarnessLiveReplies> {
-  return {
-    method: 'GET',
-    path: `/api/v1/sessions/${encodeURIComponent(cardId)}/items?afterId=0&limit=1&view=live-legacy`,
-    responseSchema: z.union([
-      sessionItemsPageDtoSchema.transform((): HarnessLiveReplies => ({ turn_id: null, items: [] })),
-      harnessLiveRepliesSchema,
-    ]),
-  };
+/** Snapshot reads and streamed text share one display identity for the active turn. */
+export function sessionActivityItemId(turnId: string): string {
+  return `ws-${turnId}`;
 }
-
-const conversationLiveSchema: z.ZodType<ConversationLiveReplies> = z.object({
-  contract: z.literal('conversation_v1'),
-  turn: z.object({
-    thread_id: z.string().min(1),
-    turn_id: z.string().min(1),
-    items: z.array(z.object({ item_id: z.string(), text: z.string() })),
-  }).strict().nullable(),
-}).strict();
 
 export function conversationLiveOperation(cardId: string): ApiOperation<ConversationLiveReplies> {
   return {
     method: 'GET',
-    path: `/api/v1/sessions/${encodeURIComponent(cardId)}/items?afterId=0&limit=1&view=live`,
-    responseSchema: z.union([
-      sessionItemsPageDtoSchema.transform((): ConversationLiveReplies => ({ contract: 'conversation_v1', turn: null })),
-      conversationLiveSchema,
-    ]),
+    path: `/api/v1/sessions/${encodeURIComponent(cardId)}/items?afterId=0&limit=1`,
+    responseSchema: sessionItemsPageDtoSchema.transform((page): ConversationLiveReplies => ({
+      contract: 'conversation_v1',
+      turn: page.activity?.turnId == null ? null : {
+        thread_id: page.session.nativeThreadId || `epoch-${page.session.epoch}`, turn_id: page.activity.turnId,
+        items: [{ item_id: sessionActivityItemId(page.activity.turnId), text: page.activity.text }],
+      },
+    })),
   };
 }
 

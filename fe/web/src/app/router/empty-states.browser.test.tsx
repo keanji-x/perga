@@ -14,10 +14,17 @@ async function settle() {
 it.each([1440, 390, 320])('keeps the empty daily report and conversation reachable at %i', async (width) => {
   await page.viewport(width, 900);
   renderDailyFixture({ reportBody: '' });
-  await expect.element(page.getByRole('heading', { name: width >= 960 ? '聊聊你想做什么' : '今天还没有记录' })).toBeVisible();
+  await expect.element(page.getByRole('heading', { name: width >= 960 ? '今天想推进什么？' : '今天还没有记录' })).toBeVisible();
   await settle();
   await page.screenshot({ path: `./__screenshots__/empty-audit/daily-${width}.png` });
-  if (width >= 960) await page.getByRole('button', { name: /Conversation Daily Planner conversation/ }).click();
+  if (width >= 960) {
+    await page.getByRole('button', { name: /Conversation Daily Planner conversation/ }).click();
+    const assistant = page.getByRole('region', { name: 'Today Assistant', exact: true });
+    await expect.element(assistant.getByRole('heading', { name: '今天想推进什么？' })).toBeVisible();
+    await expect.element(assistant.getByRole('combobox', { name: 'Message' })).toBeVisible();
+    expect(assistant.element().querySelector('[data-nc-thread-empty]')).toBeNull();
+    return;
+  }
   else {
     await page.getByRole('button', { name: 'Open conversation history', exact: true }).click();
     await page.getByRole('button', { name: '2026-10-04 Daily Planner conversation', exact: true }).click();
@@ -30,8 +37,10 @@ it.each([1440, 390, 320])('keeps the empty daily report and conversation reachab
   const scroll = transcript.closest('[data-nc-drawer-scroll]')!;
   const scrollStyle = getComputedStyle(scroll);
   const host = transcript.parentElement!.parentElement!;
-  const inset = host === scroll ? 0 : parseFloat(getComputedStyle(host).paddingTop) + parseFloat(getComputedStyle(host).paddingBottom);
-  const available = scroll.clientHeight - parseFloat(scrollStyle.paddingTop) - parseFloat(scrollStyle.paddingBottom) - inset;
+  const bottomInset = host === scroll ? 0 : parseFloat(getComputedStyle(host).paddingBottom);
+  // The role control precedes the transcript inside this scroll host.
+  const available = scroll.getBoundingClientRect().bottom - transcript.getBoundingClientRect().top
+    - parseFloat(scrollStyle.paddingBottom) - bottomInset;
   expect(transcript.getBoundingClientRect().height).toBeGreaterThanOrEqual(available - 1);
   expect(getComputedStyle(title).fontSize).toBe('16px');
   const visual = title.previousElementSibling!;

@@ -16,8 +16,8 @@ function setup(send = vi.fn().mockResolvedValue({ card_id: 'a', worker_session_i
   }) }), { wrapper: ({ children }: { children: ReactNode }) => <ConversationProvider>{children}</ConversationProvider> }) };
 }
 it('preserves the accepted turn identity from the wire through outbox settlement', async () => {
-  const parsed = sendPlannerInputOperation('a', 'text', [], 'key').responseSchema.parse({ sessionId: 'a', inputId: 'input',
-    turnId: 'accepted-turn', deliveryState: 'accepted', turnStatus: 'queued', statusUrl: '/status' });
+  const parsed = sendPlannerInputOperation('a', 'text', [], 'key').responseSchema.parse({ sessionId: 'a', messageId: 'input', delivery: 'accepted',
+    turnId: 'accepted-turn', deliveryState: 'accepted', turnStatus: 'queued' });
   expect(parsed.turnId).toBe('accepted-turn');
   const { result } = setup(vi.fn().mockResolvedValue(parsed));
   await act(async () => { await result.current.outbox.send('a', 'text', [], true); });

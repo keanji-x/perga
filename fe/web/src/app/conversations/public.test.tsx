@@ -106,7 +106,7 @@ it('ignores a late acceptance after a valid rekey without touching a newer draft
   act(() => { registry().editDraft(from, current => ({ ...current, key: 'new-key', submitted: null })); });
   act(() => { expect(registry().acceptDraft(from, {
     conversation: { id: CONVERSATION, trackId: 'track', kind: 'agent', isLead: false, provider: 'codex', title: null, state: 'idle', updatedAt: 1 },
-    sessionInput: { inputId: 'old-entry', sessionId: CONVERSATION, turnId: 'turn', deliveryState: 'accepted', turnStatus: 'queued', statusUrl: '/status' },
+    sessionInput: { inputId: 'old-entry', sessionId: CONVERSATION, turnId: 'turn', deliveryState: 'accepted', turnStatus: 'queued' },
   }, submitted)).toBe(false); });
   expect(registry().draftOf(from.scopeId)).toMatchObject({ key: 'new-key', text: 'new words', submitted: null });
   expect(registry().outboxOf(CONVERSATION)).toEqual([]);

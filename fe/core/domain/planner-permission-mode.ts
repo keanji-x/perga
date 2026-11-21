@@ -78,13 +78,13 @@ export function permissionModeAfterProviderChange(
   return previousProvider === nextProvider ? (currentMode ?? null) : null;
 }
 
-/** Store `mode` on the session via `/api/v1/sessions/{sessionId}/permission-mode`. */
+/** Store `mode` on the session via `/api/v1/sessions/{sessionId}`. */
 export function setPlannerPermissionModeOperation(
   sessionId: string, mode: PlannerPermissionMode,
 ): ApiOperation<SetPlannerPermissionModeResponse> {
   return {
-    method: 'PUT',
-    path: `/api/v1/sessions/${encodeURIComponent(sessionId)}/permission-mode`,
+    method: 'PATCH',
+    path: `/api/v1/sessions/${encodeURIComponent(sessionId)}`,
     body: { permissionMode: mode },
     responseSchema: agentSessionDtoSchema,
   };

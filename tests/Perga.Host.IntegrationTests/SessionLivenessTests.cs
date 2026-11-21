@@ -20,7 +20,7 @@ public sealed class SessionLivenessTests
         await using var host = new PergaHostTestCluster(configureHostOptions: o => o.SessionStartupTimeout = TimeSpan.FromMilliseconds(250));
         var (track, _) = await host.CreateTrackAsync();
         var kernel = host.Services.GetRequiredService<IPergaKernel>();
-        var session = await kernel.CreateSubagentSessionAsync(track, new());
+        var session = (await kernel.CreateSessionAsync(track, new(), Guid.NewGuid().ToString("N"), new InteropPrincipal.Human(), default)).Receipt.Session;
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var canceled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -33,16 +33,16 @@ public sealed class SessionLivenessTests
         };
         try
         {
-            var accepted = await kernel.AcceptMessageAsync(session.Id, new("launch", "launch"), default);
+            var accepted = await kernel.SendSessionMessageAsync(session.Id, new(Content: "launch", RequestKey: "launch"), new InteropPrincipal.Human(), default);
             await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
             if (stop)
             {
-                using var response = await host.Client.PostAsJsonAsync($"/api/v1/sessions/{session.Id}/interrupt", new { turnId = accepted.Receipt!.TurnId });
+                using var response = await host.Client.PostAsJsonAsync($"/api/v1/sessions/{session.Id}/control", new { action = "stop", turnId = accepted.TurnId });
                 response.EnsureSuccessStatusCode();
             }
             await canceled.Task.WaitAsync(TimeSpan.FromSeconds(5));
             await kernel.WaitForTrackIdleAsync(track).WaitAsync(TimeSpan.FromSeconds(5));
-            var page = await kernel.GetSessionItemsAsync(session.Id);
+            var page = await kernel.GetSessionItemsAsync(session.Id, new(), new InteropPrincipal.Human(), default);
             Assert.Equal("idle", page.State);
             Assert.Equal("interrupted", page.LastTurn?.Status);
             Assert.DoesNotContain(host.AgentRuntime.ExecutedTurns, t => t.Input.Prompt == "launch");
@@ -63,7 +63,7 @@ public sealed class SessionLivenessTests
             {
                 var (track, _) = await host.CreateTrackAsync();
                 var kernel = host.Services.GetRequiredService<IPergaKernel>();
-                var session = await kernel.CreateSubagentSessionAsync(track, new());
+                var session = (await kernel.CreateSessionAsync(track, new(), Guid.NewGuid().ToString("N"), new InteropPrincipal.Human(), default)).Receipt.Session;
                 id = session.Id;
                 var store = host.Services.GetRequiredService<ITrackStore>();
                 // Hydrate the persisted native identity in a fresh host below.
@@ -73,7 +73,7 @@ public sealed class SessionLivenessTests
             {
                 var kernel = host.Services.GetRequiredService<IPergaKernel>();
                 var store = host.Services.GetRequiredService<ITrackStore>();
-                var page = await kernel.GetSessionItemsAsync(id);
+                var page = await kernel.GetSessionItemsAsync(id, new(), new InteropPrincipal.Human(), default);
                 var track = page.Session.TrackId;
                 await store.SessionMessages!.InsertAsync(new("unknown-queue", id, null, "user", "queue", "hash", null, null,
                     "  copy this exact text\nagain  ", "unknown", 1, "queue"), default);
@@ -88,9 +88,9 @@ public sealed class SessionLivenessTests
                 };
                 host.AgentRuntime.MismatchNativeThreadId = mismatch;
                 if (!mismatch) host.AgentRuntime.OpenError = _ => new ProviderSessionNotFoundException("lost");
-                await kernel.AcceptMessageAsync(id, new("first", "first"), default);
+                await kernel.SendSessionMessageAsync(id, new(Content: "first", RequestKey: "first"), new InteropPrincipal.Human(), default);
                 await kernel.WaitForTrackIdleAsync(track).WaitAsync(TimeSpan.FromSeconds(5));
-                var lost = await kernel.GetSessionItemsAsync(id);
+                var lost = await kernel.GetSessionItemsAsync(id, new(), new InteropPrincipal.Human(), default);
                 Assert.Equal("unknown", lost.State);
                 Assert.Equal("session_lost", lost.UnknownDetail?.Reason);
                 Assert.True(lost.Session.ReconnectInvalidated);
@@ -100,10 +100,10 @@ public sealed class SessionLivenessTests
                 Assert.Equal(1, startupCalls);
                 Assert.Equal("unknown", lost.LastTurn?.Status);
                 var launches = host.AgentRuntime.OpenedSessions.Count;
-                await Assert.ThrowsAsync<KernelException>(() => kernel.AcceptMessageAsync(id, new("blocked", "blocked"), default));
-                await kernel.RecoverSessionAsync(id, new("reset_context"), default);
+                await Assert.ThrowsAsync<KernelException>(() => kernel.SendSessionMessageAsync(id, new(Content: "blocked", RequestKey: "blocked"), new InteropPrincipal.Human(), default));
+                await kernel.ControlSessionAsync(id, new("reset_context"), new InteropPrincipal.Human(), default);
                 await kernel.WaitForTrackIdleAsync(track).WaitAsync(TimeSpan.FromSeconds(5));
-                var reset = await kernel.GetSessionItemsAsync(id);
+                var reset = await kernel.GetSessionItemsAsync(id, new(), new InteropPrincipal.Human(), default);
                 Assert.Equal("idle", reset.State);
                 Assert.Empty(reset.QueuedMessages);
                 Assert.Equal(launches, host.AgentRuntime.OpenedSessions.Count);
@@ -129,7 +129,7 @@ public sealed class SessionLivenessTests
         var store = host.Services.GetRequiredService<ITrackStore>();
         await store.SessionMessages!.InsertAsync(new("withdraw", id, null, "user", "withdraw", "hash", null, null,
             "withdraw text", delivery, 1, "queue"), default);
-        using var response = await host.Client.DeleteAsync($"/api/v1/sessions/{id}/messages/queue/withdraw");
+        using var response = await host.Client.DeleteAsync($"/api/v1/sessions/{id}/messages/withdraw");
         Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
         Assert.Equal("withdrawn", (await store.SessionMessages.GetAsync(id, false, "withdraw", default))?.Delivery);
     }
@@ -144,12 +144,12 @@ public sealed class SessionLivenessTests
         host.AgentRuntime.CompactHandler = _ => completion.Task;
         try
         {
-            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => kernel.CompactSessionAsync(id).WaitAsync(TimeSpan.FromSeconds(5)));
-            Assert.Equal("unknown", (await kernel.GetSessionItemsAsync(id)).State);
-            await kernel.RecoverSessionAsync(id, new("reset_context"), default);
-            await kernel.AcceptMessageAsync(id, new("after compact", "after compact"), default);
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => kernel.ControlSessionAsync(id, new("compact"), new InteropPrincipal.Human(), default).WaitAsync(TimeSpan.FromSeconds(5)));
+            Assert.Equal("unknown", (await kernel.GetSessionItemsAsync(id, new(), new InteropPrincipal.Human(), default)).State);
+            await kernel.ControlSessionAsync(id, new("reset_context"), new InteropPrincipal.Human(), default);
+            await kernel.SendSessionMessageAsync(id, new(Content: "after compact", RequestKey: "after compact"), new InteropPrincipal.Human(), default);
             await kernel.WaitForTrackIdleAsync(track).WaitAsync(TimeSpan.FromSeconds(5));
-            Assert.Equal("completed", (await kernel.GetSessionItemsAsync(id)).LastTurn?.Status);
+            Assert.Equal("completed", (await kernel.GetSessionItemsAsync(id, new(), new InteropPrincipal.Human(), default)).LastTurn?.Status);
         }
         finally { completion.TrySetResult(new()); }
     }

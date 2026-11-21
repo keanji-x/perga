@@ -23,8 +23,8 @@ it.each([false, true])('orders permission ACK before a browser send, without wai
         { id: 'full', label: 'Full', description: 'Act directly', tone: 'warning', isDefault: false },
       ],
     }] });
-    if (request.method === 'PUT') { changing = true; return put; }
-    if (changing && request.path.includes('view=run')) return new Promise(() => undefined);
+    if (request.method === 'PATCH') { changing = true; return put; }
+    if (changing && request.path.includes('limit=1')) return new Promise(() => undefined);
     if (request.method === 'POST' && request.path.endsWith('/messages')) return sessionReply(sessionInput('daily-planner'));
     return undefined;
   } });
@@ -41,7 +41,7 @@ it.each([false, true])('orders permission ACK before a browser send, without wai
     await act(async () => { answer(sessionReply(fixtureSession('daily-planner', 'daily', { permissionMode: 'full' }))); await put; });
     await expect.element(page.getByRole('button', { name: 'Approvals: Full' })).toBeVisible();
     await expect.poll(() => view.requests.filter(request => request.method === 'POST').length).toBe(1);
-    expect(view.requests.find(request => request.method === 'POST')?.body).toMatchObject({ content: 'Send after permission', ...(running ? { queueIfBusy: true } : {}) });
+    expect(view.requests.find(request => request.method === 'POST')?.body).toMatchObject({ content: 'Send after permission', mode: running ? 'queue' : 'default' });
   } finally { view.client.clear(); }
 });
 
@@ -56,7 +56,7 @@ it('restores a refused browser send and keeps another conversation independent',
         { id: 'full', label: 'Full', description: 'Act directly', tone: 'warning', isDefault: false },
       ],
     }] });
-    if (request.method === 'PUT') return put;
+    if (request.method === 'PATCH') return put;
     if (request.method === 'POST') return sessionReply(sessionInput('second-planner'));
     return undefined;
   } });
@@ -118,7 +118,7 @@ it('preserves the unknown browser retry key after a permission failure', async (
   }
   const view = renderSessionFixture({ initial: '/track/daily?panel=conversations', routeProbe: <Probe />, reply: request => {
     if (request.path === '/api/v1/bootstrap?scope=managed') return permissionBootstrap();
-    if (request.method === 'PUT') return put;
+    if (request.method === 'PATCH') return put;
     if (request.method === 'POST') return sessionReply(sessionInput('daily-planner'));
     return undefined;
   } });
@@ -146,7 +146,7 @@ it('keeps three generations of A B A permission writes ahead of a queued browser
   const answers: ((response: ApiTransportResponse) => void)[] = [];
   const view = renderSessionFixture({ initial: '/track/daily?panel=conversations', reply: request => {
     if (request.path === '/api/v1/bootstrap?scope=managed') return permissionBootstrap();
-    if (request.method === 'PUT') return new Promise<ApiTransportResponse>(resolve => { answers.push(resolve); });
+    if (request.method === 'PATCH') return new Promise<ApiTransportResponse>(resolve => { answers.push(resolve); });
     if (request.method === 'POST') return sessionReply(sessionInput('daily-planner'));
     return undefined;
   } });
@@ -180,8 +180,8 @@ it('keeps a newer GET permission visible when an old A B A PUT answers', async (
   const put = new Promise<ApiTransportResponse>(resolve => { answer = resolve; });
   const view = renderSessionFixture({ initial: '/track/daily?panel=conversations', reply: request => {
     if (request.path === '/api/v1/bootstrap?scope=managed') return permissionBootstrap();
-    if (request.method === 'PUT') return put;
-    if (holdReads && request.path.includes('view=run')) return new Promise(() => undefined);
+    if (request.method === 'PATCH') return put;
+    if (holdReads && request.path.includes('limit=1')) return new Promise(() => undefined);
     return undefined;
   } });
   view.sessions[0].permissionMode = 'ask';
@@ -204,8 +204,8 @@ it('serializes A B A writes and publishes only the newest permission ACK', async
   let holdReads = false;
   const view = renderSessionFixture({ initial: '/track/daily?panel=conversations', reply: request => {
     if (request.path === '/api/v1/bootstrap?scope=managed') return permissionBootstrap();
-    if (request.method === 'PUT') return new Promise<ApiTransportResponse>(resolve => { answers.push(resolve); });
-    if (holdReads && request.path.includes('view=run')) return new Promise(() => undefined);
+    if (request.method === 'PATCH') return new Promise<ApiTransportResponse>(resolve => { answers.push(resolve); });
+    if (holdReads && request.path.includes('limit=1')) return new Promise(() => undefined);
     return undefined;
   } });
   view.sessions[0].permissionMode = 'ask';

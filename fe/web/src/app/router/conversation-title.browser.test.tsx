@@ -15,7 +15,7 @@ it.each([390, 1400])('uses session metadata for unopened and open conversation t
   fixture.items.set('daily-planner', [sessionItem('daily-planner', 1, 'Stale first input', 'user')]);
   await expect.element(page.getByRole('button', { name: /^Conversation Original title/ })).toBeVisible();
   // Mobile's compact dock already owns a reader; desktop unopened metadata needs no body read.
-  if (width === 1400) expect(fixture.requests.some(request => request.path.includes('/items?') && !request.path.includes('&view='))).toBe(false);
+  if (width === 1400) expect(fixture.requests.some(request => request.path.includes('/items?') && !request.path.includes('limit=1'))).toBe(false);
   await page.getByRole('button', { name: /^Conversation Original title/ }).click();
   await expect.element(page.getByText('Stale first input', { exact: true })).toBeVisible();
   for (const title of [null, 'Manual name']) {

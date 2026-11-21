@@ -34,7 +34,6 @@ export function renderFirstMessageFixture({ mobile = false }: { mobile?: boolean
         reads += 1; await historyGate;
         return ok({ session, activeTurn: null, state: 'idle', readonlyReason: null, canReopen: false, workerPaused: false, lastTurn: null, unknownDetail: null, items } satisfies SessionItemsPageDto);
       }
-      if (request.path === receipt.firstInput!.statusUrl) return ok(receipt.firstInput);
       return undefined;
     },
   });

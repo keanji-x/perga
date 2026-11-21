@@ -1,3 +1,5 @@
+import { z } from 'zod';
+import hostPayloads from '../../core/api/fixtures/unified-host-payloads.json';
 import { readFileSync } from 'node:fs';
 import { systemUpgradeReceiptSchema } from '../../core/api/perga-v1.ts';
 import { compileTemplateInputs } from '../../core/domain/template-input.ts';
@@ -314,9 +316,9 @@ it('declares all Perga /api/v1 REST endpoints in openapi.json', () => {
     '/api/v1/tracks/{trackId}/sessions',
     '/api/v1/sessions/{sessionId}/items',
     '/api/v1/sessions/{sessionId}/messages',
-    '/api/v1/sessions/{sessionId}/interrupt',
-    '/api/v1/sessions/{sessionId}/compact',
-    '/api/v1/tracks/{trackId}/asks/{askId}/answer',
+    '/api/v1/sessions/{sessionId}/control',
+    '/api/v1/sessions/{sessionId}/messages/{messageId}',
+    '/api/v1/sessions/{sessionId}/interactions/{interactionId}/respond',
     '/api/v1/tracks/{trackId}/terminals',
     '/api/v1/tracks/{trackId}/terminals/{termId}',
   ];
@@ -368,4 +370,41 @@ it('preserves fractional Unix seconds in upgrade receipts', () => {
   expect(systemUpgradeReceiptSchema.parse({ jobId: 'fractional', oldReleaseId: null,
     newReleaseId: 'new', status: 'succeeded', error: null, rollbackError: null,
     notifyTrackId: null, finishedAt, changed: [] }).finishedAt).toBe(finishedAt);
+});
+
+it('matches the eight session primitives to the production Host routes and removes retired DTOs', () => {
+  const host = readFileSync(new URL('../../../src/Perga.Host/Http/ApiV1Endpoints.cs', import.meta.url), 'utf8');
+  const document = JSON.parse(readFileSync(new URL('../../core/api/generated/openapi.json', import.meta.url), 'utf8')) as {
+    paths: Record<string, Record<string, unknown>>; components: { schemas: Record<string, unknown> };
+  };
+  const section = host.split('// ------------------- Unified sessions -------------------')[1].split('// ------------------- Terminals')[0];
+  const expected = [...section.matchAll(/v1\.Map(Get|Post|Patch|Delete)\("([^"]+)"/g)]
+    .map(match => `${match[1].toLowerCase()} /api/v1${match[2]}`).sort();
+  const actual = Object.entries(document.paths).filter(([path]) => path.startsWith('/api/v1/sessions/') || path === '/api/v1/tracks/{trackId}/sessions')
+    .flatMap(([path, operations]) => Object.keys(operations).filter(method => METHODS.has(method)).map(method => `${method} ${path}`)).sort();
+  expect(expected).toHaveLength(8);
+  expect(actual).toEqual(expected);
+  for (const name of ['WorkerActivityDto', 'WorkerSettings', 'WorkerDispatchReceipt', 'WorkerMessageReceipt', 'RecoverSessionRequest', 'UpdateSessionModelRequest'])
+    expect(document.components.schemas).not.toHaveProperty(name);
+});
+
+// These fixtures are serialized by the real C# DTOs with PergaJsonDefaults.ApiOptions.
+// Validate the published JSON Schema, including nested refs, rather than the hand-written decoder.
+it.each([
+  ['CreateSessionRequest', { task: null }],
+  ['SessionCreationReceipt', hostPayloads.creation],
+  ['SessionCreationReceipt', hostPayloads.emptyCreation],
+  ['SessionItemsPageDto', hostPayloads.page],
+  ['SessionSummaryDto', hostPayloads.summary],
+  ['PendingInteractionDto', hostPayloads.approval],
+  ['PendingInteractionDto', hostPayloads.ask],
+])('accepts null-emitting Host payloads for %s', (name, payload) => {
+  const document = JSON.parse(readFileSync(new URL('../../core/api/generated/openapi.json', import.meta.url), 'utf8')) as JsonObject;
+  // Zod's JSON Schema reader resolves $defs; preserve each schema and only rebase refs.
+  if (!object(document.components) || !object(document.components.schemas)) throw new Error('Missing schemas');
+  const definitions = JSON.parse(JSON.stringify(document.components.schemas)
+    .replaceAll('#/components/schemas/', '#/$defs/')) as Record<string, z.core.JSONSchema.JSONSchema>;
+  const schema = z.fromJSONSchema({ $defs: definitions, $ref: `#/$defs/${name}` });
+  expect(schema.parse(payload)).toEqual(payload);
+  expect(schema.safeParse(null).success).toBe(false);
 });

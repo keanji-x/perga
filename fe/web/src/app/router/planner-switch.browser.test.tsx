@@ -127,14 +127,14 @@ it('saves and reads back null effort on an existing session without materializin
         defaultReasoningEffort: null, supportedReasoningEfforts: [{ reasoningEffort: 'low', description: '' }, { reasoningEffort: 'high', description: '' }] }];
       return ok(bootstrap);
     }
-    if (request.method === 'PUT' && request.path === '/api/v1/sessions/second-planner/model') {
+    if (request.method === 'PATCH' && request.path === '/api/v1/sessions/second-planner') {
       const body = request.body as { model: string | null; reasoningEffort: string | null };
       saved = { model: body.model, reasoning_effort: body.reasoningEffort };
       wrote = true;
       return ok(session());
     }
     if (request.path.startsWith('/api/v1/sessions/second-planner/items?')) {
-      if (wrote && request.path.includes('view=run')) readbacks.push(saved.reasoning_effort);
+      if (wrote && request.path.includes('limit=1')) readbacks.push(saved.reasoning_effort);
       return ok(sessionPage(session(), [sessionItem('second-planner', 1, 'Ready for switching')]));
     }
     return undefined;
@@ -144,7 +144,7 @@ it('saves and reads back null effort on an existing session without materializin
   await trigger.click();
   await expect.element(page.getByRole('slider', { name: 'Reasoning effort' })).toHaveAttribute('aria-valuetext', 'Default');
   await page.getByRole('button', { name: 'Save', exact: true }).click();
-  await expect.poll(() => fixture.requests.filter(request => request.method === 'PUT').map(request => request.body))
+  await expect.poll(() => fixture.requests.filter(request => request.method === 'PATCH').map(request => request.body))
     .toEqual([{ model: 'test-model', reasoningEffort: null }]);
   await expect.poll(() => readbacks).toEqual([null]);
   await expect.poll(() => fixture.client.getQueryData<{ session: { reasoningEffort: string | null } }>(['planner-run', 'second-planner', 'conversation_v1'])?.session.reasoningEffort).toBeNull();
@@ -156,5 +156,5 @@ it('saves and reads back null effort on an existing session without materializin
   await trigger.click();
   await expect.element(page.getByRole('slider')).toHaveAttribute('aria-valuetext', 'Default');
   expect(saved.reasoning_effort).toBeNull();
-  expect(fixture.requests.filter(request => request.method === 'PUT')).toHaveLength(1);
+  expect(fixture.requests.filter(request => request.method === 'PATCH')).toHaveLength(1);
 });

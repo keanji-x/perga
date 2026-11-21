@@ -91,7 +91,7 @@ it('reads a coherent latest state when an earlier observer completes a reentrant
 it('publishes accepted delivery and adoption together; stale keys and exceptions publish nothing', () => {
   const owner = createConversationOwner(); const registry = owner.commands;
   const submitted = { text: 'Hello', provider: 'codex', model: { model: null, reasoning_effort: null }, atMs: 2 } as const;
-  const receipt = { inputId: 'first', sessionId: card, turnId: 'turn', deliveryState: 'accepted', turnStatus: 'queued', statusUrl: '/status' } as const;
+  const receipt = { inputId: 'first', sessionId: card, turnId: 'turn', deliveryState: 'accepted', turnStatus: 'queued' } as const;
   registry.startDraft(draft);
   const observations: unknown[] = [];
   owner.subscribe(state => state, () => { observations.push({ held: registry.draftOf(draft.scopeId), adopted: registry.adoptedDraftIdOf(draft.scopeId), delivery: registry.outboxOf(card) }); });

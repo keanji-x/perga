@@ -32,7 +32,6 @@ public sealed class OarAgentSession : IAgentSession
 
     private readonly JsonRpcStdioConnection _rpc;
     private readonly Action<IAgentSession>? _onDispose;
-    private readonly bool _configureWorker;
     private readonly SemaphoreSlim _turnLock = new(1, 1);
     private readonly object _idleUsageLock = new();
     private Action<IdleContextUsage>? _idleUsageHandler;
@@ -50,10 +49,9 @@ public sealed class OarAgentSession : IAgentSession
     private int _poisoned;
     private int _disposed;
 
-    private OarAgentSession(StdioSubprocess process, string? initialSessionId, bool configureWorker, Action<IAgentSession>? onDispose)
+    private OarAgentSession(StdioSubprocess process, string? initialSessionId, Action<IAgentSession>? onDispose)
     {
         _nativeThreadId = initialSessionId;
-        _configureWorker = configureWorker;
         _onDispose = onDispose;
         _rpc = new JsonRpcStdioConnection(process, OnNotification, OnServerRequest, OnDisconnected);
     }
@@ -80,7 +78,7 @@ public sealed class OarAgentSession : IAgentSession
         Action<IAgentSession>? onDispose,
         CancellationToken ct)
     {
-        var session = new OarAgentSession(StdioSubprocess.Start(invocation), spec.ResumeNativeThreadId, spec.ConfigureWorker, onDispose);
+        var session = new OarAgentSession(StdioSubprocess.Start(invocation), spec.ResumeNativeThreadId, onDispose);
         try
         {
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -272,8 +270,7 @@ public sealed class OarAgentSession : IAgentSession
                 return Task.FromResult<SessionConfigurationOutcome>(new SessionConfigurationOutcome.Applied(current));
             }
 
-            if (_configureWorker &&
-                current.Selection.Permission == configuration.Permission &&
+            if (current.Selection.Permission == configuration.Permission &&
                 MatchesWorkerSelection(configuration.Model, current.Selection.Model, current.NativeModel) &&
                 MatchesWorkerSelection(configuration.Effort, current.Selection.Effort, current.NativeEffort))
             {
@@ -347,7 +344,7 @@ public sealed class OarAgentSession : IAgentSession
                 ["mcpServers"] = SerializeMcpServers(spec.McpServers),
                 ["env"] = permissionEnv,
                 ["launchArgs"] = permissionLaunchArgs,
-                ["configureWorker"] = spec.ConfigureWorker
+
             }, ct).ConfigureAwait(false);
         }
         catch (JsonRpcRemoteException ex) when (spec.ResumeNativeThreadId is not null && IsSessionNotFoundError(ex))
@@ -378,7 +375,7 @@ public sealed class OarAgentSession : IAgentSession
             ContextUsageRevision: revision,
             Evidence: ConfigurationEvidence.ProviderAcknowledged));
 
-        if (spec.ConfigureWorker && TryParseWorkerConfiguration(result) is { } workerConfig)
+        if (TryParseWorkerConfiguration(result) is { } workerConfig)
             Volatile.Write(ref _workerConfiguration, workerConfig);
 
         if (TryParseUsage(result, "contextUsage") is { } initialUsage)
@@ -564,7 +561,7 @@ public sealed class OarAgentSession : IAgentSession
     private static WorkerProviderConfiguration? TryParseWorkerConfiguration(JsonElement container)
     {
         if (container.ValueKind != JsonValueKind.Object ||
-            !container.TryGetProperty("workerConfiguration", out var cfg) ||
+            !container.TryGetProperty("sessionConfiguration", out var cfg) ||
             cfg.ValueKind != JsonValueKind.Object)
             return null;
 

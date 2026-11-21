@@ -14,8 +14,6 @@ public sealed partial class TrackActor
     {
         private sealed record TurnStart(ActiveTurnState Active, string EffectivePrompt);
 
-        private sealed record PreparedDispatch(IAgentSession AgentSession, string EffectivePrompt);
-
         // What the provider stream established about the turn. Settlement can still mark it interrupted.
         private sealed class TurnOutcome
         {
@@ -78,126 +76,87 @@ public sealed partial class TrackActor
             }
         }
 
-        // Claims the session, records the running turn and makes it the session's active turn, all in one actor step.
-        // Returns null when the work item left the turn unstarted. The active turn is reported to onActivated as
-        // soon as the scheduler sees it, so it is cleaned up even if announcing it fails.
-        private Task<TurnStart?> StartTurnAsync(ITurnWorkItem work, string prompt, TurnPolicyAdmission policyAdmission, Action<ActiveTurnState> onActivated,
-            CancellationToken ct) => actor.EnqueueAsync<TurnStart?>(async _ =>
+        // Claim and activate in the mailbox; provider startup runs between those steps
+        // so an authorized stop can cancel it without waiting behind provider I/O.
+        private async Task<TurnStart?> StartTurnAsync(ITurnWorkItem work, string prompt, TurnPolicyAdmission policyAdmission,
+            Action<ActiveTurnState> onActivated, CancellationToken ct)
         {
-            await actor.EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
-            ct.ThrowIfCancellationRequested();
-            var sessionId = work.SessionId;
-            var session = actor.RequireSessionCore(sessionId);
-            actor.RequireSessionDispatchAvailableCore(sessionId);
-            if (work.IsOccupiedCore(session))
-                throw KernelException.Conflict($"Session '{sessionId}' already has an active or unresolved turn.");
-
-            var workerSettings = session.BoundAttemptId is null ? null
-                : await actor.ReadWorkerSettingsCoreAsync(session, ct).ConfigureAwait(false);
-            var now = actor.NowMs();
-            var turn = work.CreateTurnCore(session, prompt, workerSettings, now);
-            var runningSession = session with { Status = "running", UpdatedAtMs = now };
-            var runningEvent = actor.SessionUpdatedEvent(runningSession);
-            if (await work.ClaimCoreAsync(session, runningSession, runningEvent, ct).ConfigureAwait(false) is not { } executionSession)
-                return null;
-
+            var claim = await actor.EnqueueAsync(async _ =>
+            {
+                await actor.EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
+                ct.ThrowIfCancellationRequested();
+                var session = actor.RequireSessionCore(work.SessionId);
+                actor.RequireSessionDispatchAvailableCore(session.Id);
+                if (work.IsOccupiedCore(session))
+                    throw KernelException.Conflict($"Session '{session.Id}' already has an active or unresolved turn.");
+                var turn = work.CreateTurnCore(session, prompt, actor.NowMs());
+                var running = session with { Status = "running", UpdatedAtMs = actor.NowMs() };
+                var execution = await work.ClaimCoreAsync(session, running, actor.SessionUpdatedEvent(running), ct).ConfigureAwait(false);
+                if (execution is null) return ((SessionTurnDto Turn, AgentSessionDto Session, CancellationTokenSource Startup)?)null;
+                var startup = actor._scheduler.BeginStartup(session.Id, turn.Id);
+                startup.CancelAfter(actor._options.SessionStartupTimeout);
+                return (turn, execution, startup);
+            }, actor._actorShutdownCts.Token).ConfigureAwait(false);
+            if (claim is not { } claimed) return null;
+            using var startupDeadline = CancellationTokenSource.CreateLinkedTokenSource(ct, claimed.Startup.Token);
             try
             {
-                PreparedDispatch prepared;
-                try
+                await actor.EnqueueAsync(_ =>
                 {
-                    var startup = actor._scheduler.BeginStartup(sessionId, turn.Id, session.BoundAttemptId is not null);
-                    startup.CancelAfter(actor._options.SessionStartupTimeout);
-                    using var startupDeadline = CancellationTokenSource.CreateLinkedTokenSource(ct, startup.Token);
+                    if (claimed.Session.BoundAttemptId is { } attemptId && actor.RequireCurrentWorkerCore(claimed.Session.Id, attemptId).Attempt.Paused)
+                        throw KernelException.Conflict("The Worker is paused.");
+                    if (work.IsQueuedMessage) actor.RequireDispatchWorkspace(claimed.Session);
+                    if (policyAdmission.Failure is { } failure) throw failure;
+                    if (actor._policyGeneration != policyAdmission.Generation)
+                        throw KernelException.PolicyDenied("Active policy changed during turn authorization.");
+                    return Task.CompletedTask;
+                }, actor._actorShutdownCts.Token).ConfigureAwait(false);
+                startupDeadline.Token.ThrowIfCancellationRequested();
+                var agent = await actor.GetOrOpenAgentSessionCoreAsync(claimed.Session, null, startupDeadline.Token,
+                    inMailbox: false).ConfigureAwait(false);
+                return await actor.EnqueueAsync(async _ =>
+                {
                     startupDeadline.Token.ThrowIfCancellationRequested();
-                    (prepared, workerSettings) = await PrepareTurnDispatchCoreAsync(
-                        work, executionSession, workerSettings, prompt, policyAdmission, startupDeadline.Token).ConfigureAwait(false);
-                    // Preparation may persist identity and usage from a compacted or reopened
-                    // provider. Activate that durable snapshot, rather than the pre-claim copy.
-                    runningSession = actor.RequireSessionCore(sessionId) with { Status = "running", UpdatedAtMs = now };
-                    runningEvent = actor.SessionUpdatedEvent(runningSession);
-                }
-                catch (Exception ex)
-                {
-                    if (await work.TrySettleSetupFailureCoreAsync(ex, turn, runningSession).ConfigureAwait(false))
-                        return null;
-                    throw;
-                }
-
-                turn = await work.RecordTurnStartCoreAsync(turn, prompt, runningSession, ct).ConfigureAwait(false);
-                await work.OnTurnCreatedAsync(turn).ConfigureAwait(false);
-
-                actor._sessions[sessionId] = runningSession;
-                var turnCts = CancellationTokenSource.CreateLinkedTokenSource(ct, actor._actorShutdownCts.Token);
-                var active = new ActiveTurnState(sessionId, SessionConfiguration.FromNullable(executionSession.Model, executionSession.ReasoningEffort, executionSession.PermissionMode),
-                    actor._liveContextUsage.GetOrCreateValue(prepared.AgentSession), turn, prepared.AgentSession, turnCts, true)
-                {
-                    Settings = workerSettings
-                };
-                actor._scheduler.SetActive(sessionId, active);
-                onActivated(active);
-                await work.OnTurnActivatedCoreAsync(runningSession, runningEvent, now, ct).ConfigureAwait(false);
-                return new TurnStart(active, prepared.EffectivePrompt);
+                    var current = actor.RequireSessionCore(work.SessionId);
+                    actor.RequireSessionDispatchAvailableCore(work.SessionId);
+                    if (current.Epoch != claimed.Session.Epoch || current.BoundAttemptId != claimed.Session.BoundAttemptId ||
+                        actor._policyGeneration != policyAdmission.Generation)
+                        throw KernelException.Conflict("The session changed during provider startup.");
+                    if (work.FinalizePromptCore(prompt) is not { } finalPrompt) return null;
+                    prompt = finalPrompt;
+                    var running = current with { Status = "running", UpdatedAtMs = actor.NowMs() };
+                    var evt = actor.SessionUpdatedEvent(running);
+                    var turn = await work.RecordTurnStartCoreAsync(claimed.Turn, prompt, running, ct).ConfigureAwait(false);
+                    await work.OnTurnCreatedAsync(turn).ConfigureAwait(false);
+                    actor._sessions[running.Id] = running;
+                    var turnCts = CancellationTokenSource.CreateLinkedTokenSource(ct, actor._actorShutdownCts.Token);
+                    var active = new ActiveTurnState(running.Id,
+                        SessionConfiguration.FromNullable(claimed.Session.Model, claimed.Session.ReasoningEffort, claimed.Session.PermissionMode),
+                        actor._liveContextUsage.GetOrCreateValue(agent), turn, agent, turnCts, true)
+                    { BoundAttemptId = running.BoundAttemptId };
+                    actor._scheduler.SetActive(running.Id, active);
+                    onActivated(active);
+                    await work.OnTurnActivatedCoreAsync(running, evt, running.UpdatedAtMs, ct).ConfigureAwait(false);
+                    var effective = string.IsNullOrWhiteSpace(policyAdmission.Context) ? prompt :
+                        $"<policy_context>\n{policyAdmission.Context}\n</policy_context>\n\n{prompt}";
+                    return new TurnStart(active, effective);
+                }, actor._actorShutdownCts.Token).ConfigureAwait(false);
+            }
+            catch (Exception error)
+            {
+                var settled = await actor.EnqueueAsync(_ => work.TrySettleSetupFailureCoreAsync(error, claimed.Turn,
+                    actor.RequireSessionCore(work.SessionId)), CancellationToken.None).ConfigureAwait(false);
+                if (settled) return null;
+                throw;
             }
             finally
             {
-                actor._scheduler.EndStartup(sessionId);
+                await actor.EnqueueAsync(_ =>
+                {
+                    actor._scheduler.EndStartup(work.SessionId, claimed.Startup);
+                    return Task.CompletedTask;
+                }, CancellationToken.None).ConfigureAwait(false);
             }
-        }, actor._actorShutdownCts.Token);
-
-        private async Task<(PreparedDispatch Prepared, WorkerSettings? WorkerSettings)> PrepareTurnDispatchCoreAsync(
-            ITurnWorkItem work, AgentSessionDto executionSession, WorkerSettings? workerSettings,
-            string prompt, TurnPolicyAdmission policyAdmission, CancellationToken ct)
-        {
-            if (workerSettings is null)
-                return (await PrepareDispatchCoreAsync(work, executionSession, prompt, policyAdmission, ct).ConfigureAwait(false), null);
-
-            var dispatchSession = executionSession;
-            var resolvedBeforeOpen = actor.ResolveWorkerTurnSettingsCore(executionSession, workerSettings);
-            var hasHandle = actor._openSessionHandles.TryGetValue(executionSession.Id, out var existingHandle);
-            var needsExplicitDispatch =
-                workerSettings.Model is not null || workerSettings.ReasoningEffort is not null ||
-                (hasHandle && (existingHandle!.Selection.Model is SessionSelection.Explicit || existingHandle.Selection.Effort is SessionSelection.Explicit)) ||
-                (workerSettings.Version > 0 && !hasHandle);
-            if (needsExplicitDispatch)
-                dispatchSession = executionSession with { Model = resolvedBeforeOpen.Model, ReasoningEffort = resolvedBeforeOpen.ReasoningEffort };
-
-            var prepared = await PrepareDispatchCoreAsync(work, dispatchSession, prompt, policyAdmission, ct).ConfigureAwait(false);
-            var resolved = actor.ResolveWorkerTurnSettingsCore(executionSession, workerSettings);
-            var activeConfig = prepared.AgentSession.ConfigurationState;
-            var effectiveModel = activeConfig?.NativeModel ?? activeConfig?.Selection.Model.ValueOrNull;
-            var effectiveEffort = activeConfig?.NativeEffort ?? activeConfig?.Selection.Effort.ValueOrNull;
-            var mismatch =
-                (!string.IsNullOrWhiteSpace(resolved.Model) && !string.Equals(resolved.Model, effectiveModel, StringComparison.Ordinal)) ||
-                (!string.IsNullOrWhiteSpace(resolved.ReasoningEffort) && !string.Equals(resolved.ReasoningEffort, effectiveEffort, StringComparison.Ordinal));
-            if (mismatch &&
-                (!string.Equals(dispatchSession.Model, resolved.Model, StringComparison.Ordinal) ||
-                 !string.Equals(dispatchSession.ReasoningEffort, resolved.ReasoningEffort, StringComparison.Ordinal)))
-            {
-                dispatchSession = executionSession with { Model = resolved.Model, ReasoningEffort = resolved.ReasoningEffort };
-                prepared = await PrepareDispatchCoreAsync(work, dispatchSession, prompt, policyAdmission, ct).ConfigureAwait(false);
-            }
-
-            return (prepared, resolved);
-        }
-
-        private async Task<PreparedDispatch> PrepareDispatchCoreAsync(ITurnWorkItem work, AgentSessionDto session,
-            string prompt, TurnPolicyAdmission policyAdmission, CancellationToken ct)
-        {
-            if (session.BoundAttemptId is { } workerAttemptId && actor.RequireCurrentWorkerCore(session.Id, workerAttemptId).Attempt.Paused)
-                throw KernelException.Conflict("The Worker is paused.");
-            if (work.IsQueuedMessage)
-                actor.RequireDispatchWorkspace(session);
-
-            if (policyAdmission.Failure is { } failure) throw failure;
-            if (actor._policyGeneration != policyAdmission.Generation)
-                throw KernelException.PolicyDenied("Active policy changed during turn authorization.");
-            var effectivePrompt = string.IsNullOrWhiteSpace(policyAdmission.Context) ? prompt
-                : $"<policy_context>\n{policyAdmission.Context}\n</policy_context>\n\n{prompt}";
-            var agentSession = await actor.GetOrOpenAgentSessionCoreAsync(session, overrideSystemPrompt: null, ct)
-                .ConfigureAwait(false);
-            RequireConfirmedConfiguration(session, agentSession, agentSession.ConfigurationState);
-            return new PreparedDispatch(agentSession, effectivePrompt);
         }
 
         private async Task<TurnOutcome> StreamTurnAsync(ITurnWorkItem work, ActiveTurnState active, string effectivePrompt,
@@ -206,7 +165,7 @@ public sealed partial class TrackActor
             var outcome = new TurnOutcome();
             try
             {
-                var input = new TurnInput(effectivePrompt, active.TurnDto.Id, active.Settings?.Model, active.Settings?.ReasoningEffort);
+                var input = new TurnInput(effectivePrompt, active.TurnDto.Id, active.AgentSession.ConfigurationState?.NativeModel ?? active.Configuration.Model.ValueOrNull, active.AgentSession.ConfigurationState?.NativeEffort ?? active.Configuration.Effort.ValueOrNull);
                 await foreach (var evt in actor.ObserveTurnAsync(active, input, active.TurnCts.Token).ConfigureAwait(false))
                     await HandleEventAsync(work, active, outcome, evt).ConfigureAwait(false);
             }
@@ -252,7 +211,7 @@ public sealed partial class TrackActor
                 outcome.ErrorText = "Turn interrupted.";
             }
 
-            if ((work.IsDurable || active.Interrupted && active.Settings is null) && !outcome.Conclusive)
+            if ((work.IsDurable || active.Interrupted) && !outcome.Conclusive)
             {
                 outcome.Status = "unknown";
                 outcome.ErrorText ??= "Provider outcome could not be confirmed.";
@@ -302,14 +261,18 @@ public sealed partial class TrackActor
                     await FlushThinkingChunkAsync(active, outcome, now).ConfigureAwait(false);
                     actor.PublishTurnActivity(active,
                         KernelEventKinds.SessionToolProgress,
-                        JsonHelpers.ToElement(new { sessionId = active.SessionId, turnId = active.TurnDto.Id, phase = "completed", callId = tcc.CallId, isError = tcc.IsError, output = active.Settings is null ? null : tcc.Output }),
+                        JsonHelpers.ToElement(new { sessionId = active.SessionId, turnId = active.TurnDto.Id, phase = "completed", callId = tcc.CallId, isError = tcc.IsError, output = tcc.Output }),
                         now);
                     await RecordActivityAsync(TurnItem(active, "tool_result",
                         JsonHelpers.ToElement(new { v = 1, callId = tcc.CallId, output = tcc.Output, isError = tcc.IsError }), now)).ConfigureAwait(false);
                     break;
 
                 case UnifiedAgentEvent.ApprovalRequested approval:
-                    actor.AdmitProviderApproval(active, approval);
+                    await actor.EnqueueAsync(_ =>
+                    {
+                        actor.AdmitProviderApproval(active, approval);
+                        return Task.CompletedTask;
+                    }, CancellationToken.None).ConfigureAwait(false);
                     break;
 
                 case UnifiedAgentEvent.ContextUsageUpdated contextUsage:
@@ -439,6 +402,9 @@ public sealed partial class TrackActor
                 outcome.Status = "interrupted";
                 outcome.ErrorText = "Turn interrupted.";
                 await actor.CloseInterruptedWorkerCoreAsync(active, pausedAttempt).ConfigureAwait(false);
+                // Confirmed process shutdown fences all further provider effects. The
+                // paused attempt can accept another turn without a resume fence.
+                outcome.Conclusive = !pausedAttempt.InterruptionUnconfirmed;
             }
 
             if (active.MatchesSessionConfiguration(currentSession))
@@ -464,8 +430,6 @@ public sealed partial class TrackActor
             };
             var completedTurn = active.TurnDto with
             {
-                Input = active.Settings is null ? active.TurnDto.Input :
-                    JsonHelpers.ToElement(new { prompt, workerSettings = active.ProviderAccepted ? active.Settings : null }),
                 Status = outcome.Status,
                 Usage = outcome.FinalUsage is null ? null : JsonHelpers.ToElement(outcome.FinalUsage),
                 ErrorText = outcome.ErrorText,
@@ -481,6 +445,10 @@ public sealed partial class TrackActor
                 isLead = currentSession.IsLead, boundAttemptId = currentSession.BoundAttemptId
             }), CancellationToken.None).ConfigureAwait(false);
             actor._scheduler.RemoveActive(sessionId);
+            if (updatedSession.BoundTaskId is { } taskId && actor.RequireTaskCore(taskId).Status == TaskRunStatus.Pending)
+                await actor.ScheduleEligibleTasksCoreAsync(CancellationToken.None).ConfigureAwait(false);
+            await actor.NotifyParentCoreAsync(updatedSession, "turn_end", "turn:" + completedTurn.Id,
+                $"Child session '{sessionId}' turn '{completedTurn.Id}' ended as {completedTurn.Status}.").ConfigureAwait(false);
             active.Settled.TrySetResult(outcome.Conclusive);
             var settledSession = actor._sessions[sessionId];
             var autoCompact = !actor._scheduler.HasResumeHold(sessionId) && settledSession.BoundAttemptId is null &&
@@ -495,7 +463,7 @@ public sealed partial class TrackActor
         {
             var sessionId = updatedSession.Id;
             var turnId = active.TurnDto.Id;
-            if (!conclusive && (work.HoldsResumeWhenInconclusive || active.Interrupted && active.Settings is null) &&
+            if (!conclusive && (work.IsDurable || active.Interrupted) &&
                 !actor._scheduler.HasResumeHold(sessionId))
                 await actor.CreateSessionResumeHoldCoreAsync(sessionId, turnId,
                     updatedSession.NativeThreadId ?? string.Empty, CancellationToken.None).ConfigureAwait(false);
@@ -529,7 +497,7 @@ public sealed partial class TrackActor
                     {
                         if (!actor._scheduler.TryGetActive(active.SessionId, out var current) || !ReferenceEquals(current, active))
                             return;
-                        if (active.Interrupted && active.Settings is null && !HasStopEvidence(active))
+                        if (active.Interrupted && active.BoundAttemptId is null && !HasStopEvidence(active))
                         {
                             var session = actor.RequireSessionCore(active.SessionId);
                             if (!actor._scheduler.HasResumeHold(active.SessionId))

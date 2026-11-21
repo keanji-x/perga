@@ -4,14 +4,18 @@ namespace Perga.Kernel.Actors;
 
 public sealed partial class TrackActor
 {
-    public async Task PokeLeadAsync(CancellationToken ct = default, bool allowInline = true)
+    public async Task PokePendingWakesAsync(CancellationToken ct = default, bool allowInline = true)
     {
-        var run = await EnqueueAsync(async _ =>
+        var runs = await EnqueueAsync(async _ =>
         {
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
-            return await _scheduler.PokeLeadAsync(allowInline: allowInline).ConfigureAwait(false);
+            var pending = new List<Func<CancellationToken, Task>>();
+            foreach (var sessionId in _sessions.Keys)
+                if (await _scheduler.PokeAsync(sessionId, allowInline: allowInline).ConfigureAwait(false) is { } run)
+                    pending.Add(run);
+            return pending;
         }, ct).ConfigureAwait(false);
-        if (run is not null) await run(ct).ConfigureAwait(false);
+        foreach (var run in runs) await run(ct).ConfigureAwait(false);
     }
 
     public Task<bool> CancelPendingWakeAsync(string wakeId, CancellationToken ct = default) =>

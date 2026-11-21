@@ -674,7 +674,7 @@ describe('delete mutation wiring', () => {
     const invalidate = vi.spyOn(client, 'invalidateQueries')
       .mockImplementation(() => { order.push('refresh'); return Promise.reject(new Error('history refresh failed')); });
     const transport: ApiTransportPort = {
-      send: () => Promise.resolve(ok({ card_id: 'card-1', worker_session_id: 'runtime-1' })),
+      send: () => Promise.resolve(ok({ sessionId: 'card-1', messageId: 'message', turnId: 'turn', delivery: 'accepted' })),
     };
     const { result } = renderHook(() => usePlannerMutations(transport, 'card-1', null, unauthorized, useTestConversationRegistry()), {
       wrapper: mutationWrapper(client),
@@ -860,7 +860,7 @@ describe('planner history pagination', () => {
     const page = await options.queryFn({ position: { kind: 'latest' } });
     expect(page.next_cursor).toEqual(cursor);
     await options.queryFn({ position: { kind: 'before', cursor } });
-    expect(paths[1]).toContain(`cursor=${encodeURIComponent(JSON.stringify(cursor))}`);
+    expect(paths[1]).toContain(`beforeId=${cursor.position}`);
     expect(paths[1]).not.toContain('after_id=');
   });
 });
@@ -1092,7 +1092,7 @@ describe('input metadata mutation reconciliation', () => {
           if (outcome === 'unknown') throw new Error('connection lost after write');
           if (outcome !== 'success') return { status: outcome === 'gone' ? 404 : 409, statusText: 'Refused',
             body: { code: 'planner_input_stale', error: 'Changed', text: title, rev: 1, entry_id: 'entry' } };
-          return ok({ card_id: 'card-1', worker_session_id: 'runtime', entry_id: 'entry', text: title, rev: 1, steered: true, turn_id: 'running-turn' });
+          return ok({ sessionId: 'card-1', messageId: 'entry', delivery: 'accepted', turnId: 'running-turn' });
         } };
         const detailOptions = trackDetailQueryOptions(transport, 'w1', unauthorized);
         await client.fetchQuery(detailOptions);

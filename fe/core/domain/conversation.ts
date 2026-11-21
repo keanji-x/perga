@@ -4,12 +4,11 @@ import {
   agentSessionDtoSchema,
   bootstrapDtoSchema,
   normalizeWireAgentProvider,
-  sessionTurnDtoSchema,
   toWireAgentProvider,
   type AgentSessionDto,
 } from '../api/schemas.js';
 
-import { sessionCreationReceiptSchema, sessionInputReceiptSchema, type SessionInputReceipt } from '../api/perga-v1.js';
+import { sessionCreationReceiptSchema, sessionMessageReceiptSchema, sessionSummarySchema, type SessionInputReceipt } from '../api/perga-v1.js';
 
 import type {
   AgentProvider, HarnessInputPresentation,
@@ -413,19 +412,22 @@ export function createSerialWriter<TArgs, TResult>(
 
 export function setPlannerModelOperation(cardId: string, selection: ModelSelection): ApiOperation<ModelSelectionResult> {
   return {
-    method: 'PUT',
-    path: `/api/v1/sessions/${encodeURIComponent(cardId)}/model`,
+    method: 'PATCH',
+    path: `/api/v1/sessions/${encodeURIComponent(cardId)}`,
     body: { model: selection.model, reasoningEffort: selection.reasoning_effort },
     responseSchema: agentSessionDtoSchema,
   };
 }
 
 /**
- * What a failed `PUT /api/v1/sessions/{sessionId}/model` says. Each listed status is answered before anything is stored:
+ * What a failed `PATCH /api/v1/sessions/{sessionId}` says. Each listed status is answered before anything is stored:
  * 400, 403, 404 and 422. A 5xx, a lost or an unreadable answer may follow a stored one.
  */
 export const PLANNER_MODEL_FAILURES: FailureTable<WriteFailure> = Object.freeze({
-  rules: Object.freeze([Object.freeze({ status: Object.freeze([400, 403, 404, 422]), is: 'refused' as const })]),
+  rules: Object.freeze([
+    Object.freeze({ status: Object.freeze([409]), code: 'precondition_failed', is: 'refused' as const }),
+    Object.freeze({ status: Object.freeze([400, 403, 404, 422]), is: 'refused' as const }),
+  ]),
   unauthorized: 'refused',
   otherwise: 'unknown',
 });
@@ -437,16 +439,16 @@ export const MODEL_CHANGE_TEXT = Object.freeze({ refused: 'The model was not cha
 export function steerQueuedSessionMessageOperation(sessionId: string, inputId: string, turnId: string) {
   return {
     method: 'POST',
-    path: `/api/v1/sessions/${encodeURIComponent(sessionId)}/messages/queue/${encodeURIComponent(inputId)}/steer`,
-    body: { turnId },
-    responseSchema: z.object({ inputId: z.literal(inputId), delivery: z.enum(['accepted', 'queued', 'unconfirmed', 'rejected']) }),
+    path: `/api/v1/sessions/${encodeURIComponent(sessionId)}/messages`,
+    body: { mode: 'steer', messageId: inputId, turnId },
+    responseSchema: sessionMessageReceiptSchema,
   } satisfies ApiOperation<unknown>;
 }
 
 export function removeQueuedSessionMessageOperation(sessionId: string, inputId: string) {
   return {
     method: 'DELETE',
-    path: `/api/v1/sessions/${encodeURIComponent(sessionId)}/messages/queue/${encodeURIComponent(inputId)}`,
+    path: `/api/v1/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(inputId)}`,
     responseSchema: z.undefined(),
   } satisfies ApiOperation<unknown>;
 }
@@ -457,6 +459,7 @@ export type SentPlannerInput = Readonly<{
   /** The queue entry the text is now sitting in, or `null` when it folded into an entry that has no id. */
   entry_id: string | null;
   queued?: boolean | undefined;
+  delivery?: string;
   turnId?: string;
 }>;
 
@@ -467,52 +470,29 @@ export type SentPlannerInput = Readonly<{
 export function sendPlannerInputOperation(
   cardId: string,
   text: string,
-  attachments: readonly string[],
+  _attachments: readonly string[],
   idempotencyKey: string,
   steerIfRunning = false,
   queueIfBusy = false,
+  expectedAttemptId?: string,
 ): ApiOperation<SentPlannerInput> {
   return {
     method: 'POST',
     path: `/api/v1/sessions/${encodeURIComponent(cardId)}/messages`,
     timeoutMs: 10 * 60_000,
-    body: {
-      content: text,
-      steerIfRunning,
-      ...(queueIfBusy ? { queueIfBusy } : {}),
-      text,
-      ...(attachments.length === 0 ? {} : { attachments }),
-    },
+    body: { content: text, mode: steerIfRunning ? 'steer' : queueIfBusy ? 'queue' : 'default',
+      ...(expectedAttemptId === undefined ? {} : { expectedAttemptId }) },
     headers: { 'Idempotency-Key': idempotencyKey },
-    responseSchema: z.union([
-      z.object({ sessionId: z.literal(cardId), inputId: z.string().min(1), messageId: z.string().min(1).optional(),
-        queued: z.literal(true), delivery: z.enum(['queued', 'dispatching', 'delivered', 'rejected', 'unknown', 'interrupted', 'withdrawn']).optional() }).transform(receipt => ({
-        card_id: cardId, worker_session_id: cardId, entry_id: receipt.messageId ?? receipt.inputId, queued: true,
-      })),
-      sessionInputReceiptSchema.refine(receipt => receipt.sessionId === cardId).transform((receipt) => ({
-        card_id: receipt.sessionId,
-        worker_session_id: receipt.sessionId,
-        entry_id: receipt.messageId ?? receipt.inputId,
-        turnId: receipt.turnId,
-        ...(queueIfBusy ? { queued: false } : {}),
-      })),
-      ...(steerIfRunning ? [sessionTurnDtoSchema.transform((turn) => ({
-        card_id: turn.sessionId,
-        worker_session_id: turn.sessionId,
-        entry_id: null,
-      }))] : []),
-      z.object({
-        card_id: z.string(),
-        worker_session_id: z.string(),
-        entry_id: z.string().nullable().optional().transform((value) => value ?? null),
-      }),
-    ]),
+    responseSchema: sessionMessageReceiptSchema.refine(receipt => receipt.sessionId === cardId).transform(receipt => ({
+      card_id: receipt.sessionId, worker_session_id: receipt.sessionId, entry_id: receipt.messageId, delivery: receipt.delivery,
+      ...(receipt.turnId == null ? {} : { turnId: receipt.turnId }), queued: receipt.delivery === 'queued',
+    })),
   };
 }
 
 export function recoverSessionOperation(sessionId: string, mode: 'reconnect' | 'reset_context') {
-  return { method: 'POST', path: `/api/v1/sessions/${encodeURIComponent(sessionId)}/recover`,
-    body: { mode }, timeoutMs: 30_000,
+  return { method: 'POST', path: `/api/v1/sessions/${encodeURIComponent(sessionId)}/control`,
+    body: { action: mode }, timeoutMs: 30_000,
     responseSchema: agentSessionDtoSchema.refine(session => session.id === sessionId),
   } satisfies ApiOperation<unknown>;
 }
@@ -556,77 +536,6 @@ export function uploadPlannerAttachmentOperation(
     responseSchema: z.object({
       attachmentId: z.string(), contentType: z.string(), size: z.number(), url: z.string(),
     }),
-  };
-}
-
-/** What `PATCH`/`DELETE /planner/input/{entry_id}` answer on success. */
-export type PlannerInputMutation = Readonly<{
-  card_id: string;
-  entry_id: string;
-  /** The entry's revision after the write. */
-  rev: number;
-  /** The stored text after the write, or `null` when the entry was deleted. */
-  text: string | null;
-}>;
-
-const plannerInputMutationSchema = z.object({
-  card_id: z.string(),
-  entry_id: z.string(),
-  rev: z.number(),
-  text: z.string().nullable(),
-});
-
-function plannerInputPath(cardId: string, entryId: string): string {
-  return `/api/cards/${encodeURIComponent(cardId)}/planner/input/${encodeURIComponent(entryId)}`;
-}
-
-/** Edit in place under the queue's compare-and-swap revision. */
-export function editPlannerInputOperation(cardId: string, entryId: string, text: string, ifEntryRev: number):
-ApiOperation<Omit<PlannerInputMutation, 'text'> & Readonly<{ text: string }>> {
-  return { method: 'PATCH', path: plannerInputPath(cardId, entryId), body: { text, if_entry_rev: ifEntryRev },
-    responseSchema: plannerInputMutationSchema.extend({ text: z.string() }) };
-}
-
-/** Remove one queued message, refusing if somebody moved it first. */
-export function deletePlannerInputOperation(
-  cardId: string, entryId: string, ifEntryRev: number,
-): ApiOperation<PlannerInputMutation> {
-  return {
-    method: 'DELETE', path: plannerInputPath(cardId, entryId),
-    body: { if_entry_rev: ifEntryRev },
-    responseSchema: plannerInputMutationSchema,
-  };
-}
-
-/** What `POST …/planner/input/{entry_id}/steer` answers on success. */
-export type PlannerSteer = Readonly<{
-  card_id: string;
-  entry_id: string;
-  /** Always `true` on a 200; every refusal is a typed 409, never `false` here. */
-  steered: boolean;
-  /** The turn that took the message — the one that was running. */
-  turn_id: string;
-}>;
-
-const plannerSteerSchema: z.ZodType<PlannerSteer> = z.object({
-  card_id: z.string(),
-  entry_id: z.string(),
-  steered: z.boolean(),
-  turn_id: z.string(),
-});
-
-/**
- * Send one queued message into the running turn, with the same compare-and-swap token as the
- * delete. 409 `planner_steer_no_running_turn`: no turn took it. 409 `planner_steer_unknown_outcome`:
- * codex never answered, and whether it reached the turn is not known.
- */
-export function steerPlannerInputOperation(
-  cardId: string, entryId: string, ifEntryRev: number,
-): ApiOperation<PlannerSteer> {
-  return {
-    method: 'POST', path: `${plannerInputPath(cardId, entryId)}/steer`,
-    body: { if_entry_rev: ifEntryRev },
-    responseSchema: plannerSteerSchema,
   };
 }
 
@@ -691,25 +600,19 @@ export const COMPACT_TEXT = Object.freeze({ refused: 'Context was not compacted.
 export function compactPlannerOperation(cardId: string): ApiOperation<{ started: boolean }> {
   return {
     method: 'POST',
-    path: `/api/v1/sessions/${encodeURIComponent(cardId)}/compact`,
+    path: `/api/v1/sessions/${encodeURIComponent(cardId)}/control`,
+    body: { action: 'compact' },
     timeoutMs: 10 * 60_000,
-    responseSchema: z.union([
-      agentSessionDtoSchema.transform(() => ({ started: true as const })),
-      z.object({ started: z.literal(true) }),
-    ]),
+    responseSchema: agentSessionDtoSchema.transform(() => ({ started: true })),
   };
 }
 
 export function interruptPlannerOperation(cardId: string, worker?: { attemptId?: string; turnId: string }): ApiOperation<{ stopped: boolean }> {
   return {
     method: 'POST',
-    path: `/api/v1/sessions/${encodeURIComponent(cardId)}/interrupt`,
-    ...(worker === undefined ? {} : { body: worker }),
-    responseSchema: z.union([
-      z.object({ ok: z.boolean() }).transform(({ ok }) => ({ stopped: ok })),
-      z.undefined().transform(() => ({ stopped: true })),
-      z.object({ stopped: z.boolean() }),
-    ]),
+    path: `/api/v1/sessions/${encodeURIComponent(cardId)}/control`,
+    body: { action: 'stop', turnId: worker?.turnId, expectedAttemptId: worker?.attemptId },
+    responseSchema: agentSessionDtoSchema.transform(() => ({ stopped: true })),
   };
 }
 
@@ -722,17 +625,8 @@ export const CONVERSATION_TEXT_MAX = 32768;
 
 /** Idempotent assignment: a retry cannot toggle a conversation back. */
 export function setConversationArchiveOperation(
-  trackId: string, cardId: string, archived: boolean, options?: Readonly<{ perga?: boolean }>,
+  _trackId: string, cardId: string, archived: boolean,
 ): ApiOperation<undefined> {
-  const usePerga = options?.perga === true || cardId.startsWith('ses_');
-  if (!usePerga) {
-    return {
-      method: 'PATCH',
-      path: `/api/tracks/${encodeURIComponent(trackId)}/conversations/${encodeURIComponent(cardId)}/archive`,
-      body: { archived },
-      responseSchema: z.undefined(),
-    };
-  }
   return {
     method: 'PATCH',
     path: `/api/v1/sessions/${encodeURIComponent(cardId)}`,
@@ -762,6 +656,11 @@ export function agentSessionDtoToConversation(dto: AgentSessionDto): Conversatio
  * `idempotencyKey` identifies the draft, so a key minted per call could create a second
  * conversation after a timeout.
  */
+export function listSessionsOperation(trackId: string, includeArchived = false, parentSessionId?: string) {
+  return { method: 'GET', path: `/api/v1/tracks/${encodeURIComponent(trackId)}/sessions?includeArchived=${includeArchived}${parentSessionId === undefined ? '' : `&parentSessionId=${encodeURIComponent(parentSessionId)}`}`,
+    responseSchema: z.array(sessionSummarySchema) } satisfies ApiOperation<unknown>;
+}
+
 export function createTrackConversationOperation(
   trackId: string, text: string, idempotencyKey: string, provider: AgentProvider, selection: ModelSelection, side?: SideConversation, permissionMode?: string | null,
 ): ApiOperation<CreatedConversation & Readonly<{ session: AgentSessionDto }>> {
@@ -772,9 +671,9 @@ export function createTrackConversationOperation(
     headers: { 'Idempotency-Key': idempotencyKey },
     body: {
       ...(derivedTitle === null ? {} : { title: derivedTitle }),
-      text,
+      prompt: text,
       provider: toWireAgentProvider(provider),
-      ...(side === undefined ? {} : { side }),
+      ...(side === undefined ? {} : { systemPrompt: side.context }),
       ...(selection.model === null ? {} : { model: selection.model }),
       ...(selection.reasoning_effort === null ? {} : { reasoningEffort: selection.reasoning_effort }),
       ...(permissionMode == null ? {} : { permissionMode }),

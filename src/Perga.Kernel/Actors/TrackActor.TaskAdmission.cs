@@ -41,8 +41,10 @@ public sealed partial class TrackActor
         RequirePolicyAvailableCore();
         var model = task.Context is { ValueKind: JsonValueKind.Object } context &&
             context.TryGetProperty("initialModel", out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
-        return _policy is null ? new(task.Provider, model) : _policyVm.RouteTaskDispatch(_policy,
+        var route = _policy is null ? new PolicyTaskRoute(task.Provider, model) : _policyVm.RouteTaskDispatch(_policy,
             task.Role, FormatAccessModeForPolicy(task.Access), task.Provider, model, _track.TemplateInputs);
+        var session = _sessions.Values.FirstOrDefault(s => s.BoundTaskId == task.Id);
+        return session is null ? route : route with { Provider = session.Provider, Model = session.Model };
     }
 
     private PolicyEvalResult<GuardDecision> EvaluateTaskDispatchCore(TaskDto task, PolicyTaskRoute route) =>

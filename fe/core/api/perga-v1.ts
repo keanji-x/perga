@@ -278,11 +278,6 @@ export const taskDtoSchema = z.object({
 }));
 export type TaskDto = z.infer<typeof taskDtoSchema>;
 
-export const workerDispatchReceiptSchema = z.object({
-  task: taskDtoSchema, sessionId: z.string().nullish(), requestKey: z.string(),
-});
-export type WorkerDispatchReceipt = z.infer<typeof workerDispatchReceiptSchema>;
-
 export const taskAttemptDtoSchema = z.object({
   attemptId: z.string(),
   taskId: z.string(),
@@ -342,12 +337,6 @@ export const reportReadResultDtoSchema = z.object({
 });
 export type ReportReadResultDto = z.infer<typeof reportReadResultDtoSchema>;
 
-export const updateSessionModelRequestSchema = z.object({
-  model: z.string().nullable().optional(),
-  reasoningEffort: z.string().nullable().optional(),
-});
-export type UpdateSessionModelRequest = z.infer<typeof updateSessionModelRequestSchema>;
-
 export const agentSessionDtoSchema = z.object({
   id: z.string(),
   trackId: z.string(),
@@ -372,6 +361,10 @@ export const agentSessionDtoSchema = z.object({
   updatedAtMs: z.number(),
   permissionMode: z.string().nullish(),
   lastNotifiableTurnAtMs: z.number().nullish().transform(v => v ?? null),
+  parentSessionId: z.string().nullish(), spawnDepth: z.number().int().default(0),
+  configVersion: z.number().int().default(0), notifyParent: z.string().default('none'),
+  systemPrompt: z.string().nullish(), unknownReason: z.string().nullish(), unknownTurnId: z.string().nullish(),
+  unknownLastError: z.string().nullish(), reconnectInvalidated: z.boolean().default(false),
 });
 export type AgentSessionDto = z.infer<typeof agentSessionDtoSchema>;
 
@@ -398,7 +391,6 @@ export const sessionInputReceiptSchema = z.object({
   sessionId: z.string(),
   deliveryState: z.enum(['accepted', 'dispatching', 'delivered', 'rejected', 'unknown']),
   turnStatus: z.enum(['queued', 'running', 'completed', 'failed', 'interrupted', 'unknown']),
-  statusUrl: z.string(),
   resolvedAtMs: z.number().nullish(),
 });
 export type SessionInputReceipt = z.infer<typeof sessionInputReceiptSchema>;
@@ -406,6 +398,7 @@ export type SessionInputReceipt = z.infer<typeof sessionInputReceiptSchema>;
 export const sessionCreationReceiptSchema = z.object({
   session: agentSessionDtoSchema,
   firstInput: sessionInputReceiptSchema.nullish(),
+  task: taskDtoSchema.nullish(), requestKey: z.string().nullish(),
 }).refine(result => result.firstInput == null || result.firstInput.sessionId === result.session.id);
 
 export type SessionCreationReceipt = z.infer<typeof sessionCreationReceiptSchema>;
@@ -421,42 +414,73 @@ export const sessionItemDtoSchema = z.object({
 });
 export type SessionItemDto = z.infer<typeof sessionItemDtoSchema>;
 
-export const workerSettingsSchema = z.object({
-  version: z.number().int(), model: z.string().nullish(), reasoningEffort: z.string().nullish(),
-  approvalMode: z.enum(['ask', 'deny']),
+export const askQuestionDtoSchema = z.object({
+  question: z.string(),
+  options: z.array(z.string()).nullish().transform((v) => v ?? []),
+  isMultiSelect: z.boolean().nullish().transform((v) => v ?? false),
 });
-export type WorkerSettings = z.infer<typeof workerSettingsSchema>;
+export type AskQuestionDto = z.infer<typeof askQuestionDtoSchema>;
 
-const workerProviderConfigurationSchema = z.object({
-  models: z.array(z.object({ id: z.string(), name: z.string(), reasoningEfforts: z.array(z.string()),
-    defaultReasoningEffort: z.string().nullish() })),
-  defaultModel: z.string().nullish(),
-  defaultReasoningEffort: z.string().nullish(),
-  sessionReasoningEfforts: z.array(z.string()).nullish(),
+export const approvalChoiceDtoSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  isApproval: z.boolean(),
 });
+export type ApprovalChoiceDto = z.infer<typeof approvalChoiceDtoSchema>;
 
-export const workerActivitySchema = z.object({
-  task: taskDtoSchema,
-  attemptId: z.string(),
-  phase: z.string(),
-  nativeSteer: z.boolean(),
-  pendingApprovals: z.array(z.lazy(() => approvalDtoSchema)).optional(),
-  sequence: z.number(),
-  reset: z.boolean(),
-  text: z.string(),
-  textTruncated: z.boolean(),
-  nextSettings: workerSettingsSchema,
-  activeSettings: workerSettingsSchema.nullish(),
-  canChangeModel: z.boolean(),
-  reasoningEfforts: z.array(z.string()),
-  providerConfiguration: workerProviderConfigurationSchema.nullish(),
-  approvalAuthorizationConfigured: z.boolean().optional(),
-  lastError: z.string().nullish(),
+export const sessionTaskRequestSchema = z.object({
+  access: z.enum(['read_only', 'read_write']).nullish(), acceptance: z.string().nullish(), gate: z.string().nullish(), dependsOn: z.array(z.string()).nullish(),
+});
+export const createSessionRequestSchema = z.object({
+  title: z.string().nullish(), provider: z.string().nullish(), model: z.string().nullish(), reasoningEffort: z.string().nullish(),
+  permissionMode: z.string().nullish(), systemPrompt: z.string().nullish(), prompt: z.string().nullish(),
+  notifyParent: z.enum(['none', 'turn_end', 'task_settled']).nullish(), task: sessionTaskRequestSchema.nullish(), role: z.string().nullish(),
+}).strict();
+export const updateSessionRequestSchema = z.object({
+  expectedConfigVersion: z.number().int().nullish(), title: z.string().nullish(), archived: z.boolean().nullish(),
+  provider: z.string().nullish(), model: z.string().nullish(), reasoningEffort: z.string().nullish(), permissionMode: z.string().nullish(), expectedAttemptId: z.string().nullish(),
+}).strict();
+export const sendSessionMessageRequestSchema = z.object({
+  content: z.string().nullish(), mode: z.enum(['default', 'steer', 'queue']).optional(), turnId: z.string().nullish(),
+  messageId: z.string().nullish(), expectedAttemptId: z.string().nullish(),
+}).strict();
+export const sessionControlRequestSchema = z.object({
+  action: z.enum(['stop', 'reconnect', 'reset_context', 'compact']), turnId: z.string().nullish(),
+  expectedEpoch: z.number().int().nullish(), expectedAttemptId: z.string().nullish(),
+}).strict();
+export const respondInteractionRequestSchema = z.object({ executionId: z.string().nullish(), optionId: z.string().nullish(), answers: z.unknown().optional() }).strict();
+export type CreateSessionRequest = z.infer<typeof createSessionRequestSchema>;
+export type UpdateSessionRequest = z.infer<typeof updateSessionRequestSchema>;
+export type SendSessionMessageRequest = z.infer<typeof sendSessionMessageRequestSchema>;
+export type SessionControlRequest = z.infer<typeof sessionControlRequestSchema>;
+export type RespondInteractionRequest = z.infer<typeof respondInteractionRequestSchema>;
+export const sessionSummarySchema = z.object({
+  session: agentSessionDtoSchema, state: z.enum(['idle', 'running', 'stopping', 'compacting', 'unknown']),
+  readonlyReason: z.string().nullable(), workerPaused: z.boolean(), lastTurn: sessionTurnDtoSchema.nullish(), pendingInteractionCount: z.number().int(),
+});
+export type SessionSummary = z.infer<typeof sessionSummarySchema>;
+export const sessionMessageReceiptSchema = z.object({
+  messageId: z.string(), sessionId: z.string(), turnId: z.string().nullish(), delivery: z.string(), replay: z.boolean().default(false),
+});
+export const sessionInteractionResultSchema = z.object({ id: z.string(), kind: z.string() });
+export const sessionActivitySchema = z.object({
+  turnId: z.string().nullish(), sequence: z.number(), reset: z.boolean(), text: z.string(), truncated: z.boolean(),
   events: z.array(z.object({ sequence: z.number(), kind: z.string(), payload: z.unknown(), createdAtMs: z.number() })),
-  messages: z.array(z.object({ id: z.string(), author: z.string(), content: z.string(),
-    turnId: z.string().nullish(), delivery: z.string(), createdAtMs: z.number() })),
 });
-export type WorkerActivity = z.infer<typeof workerActivitySchema>;
+export type SessionActivity = z.infer<typeof sessionActivitySchema>;
+export const sessionCapabilitiesSchema = z.object({
+  models: z.array(z.object({ id: z.string(), name: z.string(), reasoningEfforts: z.array(z.string()), defaultReasoningEffort: z.string().nullish() })),
+  defaultModel: z.string().nullish(), defaultReasoningEffort: z.string().nullish(), permissionModes: z.array(permissionModeOptionDtoSchema),
+  supportsNativeSteer: z.boolean(), supportsSessionResume: z.boolean(), supportsCompact: z.boolean(),
+});
+export type SessionCapabilities = z.infer<typeof sessionCapabilitiesSchema>;
+export const pendingInteractionSchema = z.object({
+  id: z.string(), kind: z.string(), sessionId: z.string(), turnId: z.string().nullish(), executionId: z.string().nullish(),
+  title: z.string(), options: z.array(approvalChoiceDtoSchema).nullish(),
+  questions: z.array(askQuestionDtoSchema).nullish(),
+  canRespond: z.boolean(), createdAtMs: z.number(), toolName: z.string().nullish(), arguments: z.unknown().nullish(),
+});
+export type PendingInteraction = z.infer<typeof pendingInteractionSchema>;
 export const sessionItemsPageDtoSchema = z.object({
   items: z.array(sessionItemDtoSchema).nullish().transform((v) => v ?? []),
   activeTurn: sessionTurnDtoSchema.nullish(),
@@ -473,24 +497,13 @@ export const sessionItemsPageDtoSchema = z.object({
   queueHandoffIds: z.array(z.string()).optional(),
   session: agentSessionDtoSchema,
   hasMoreBefore: z.boolean().optional(),
-  worker: workerActivitySchema.nullish(),
+  activity: sessionActivitySchema.nullish(),
+  capabilities: sessionCapabilitiesSchema.nullish(),
+  pendingInteractions: z.array(pendingInteractionSchema).nullish(),
+  taskBinding: z.object({ task: taskDtoSchema, attemptId: z.string().nullish(), attemptPhase: z.string(), waitingReason: z.string().nullish() }).nullish(),
   permissionModes: z.array(permissionModeOptionDtoSchema).nullish(),
 });
 export type SessionItemsPageDto = z.infer<typeof sessionItemsPageDtoSchema>;
-
-export const askQuestionDtoSchema = z.object({
-  question: z.string(),
-  options: z.array(z.string()).nullish().transform((v) => v ?? []),
-  isMultiSelect: z.boolean().nullish().transform((v) => v ?? false),
-});
-export type AskQuestionDto = z.infer<typeof askQuestionDtoSchema>;
-
-export const approvalChoiceDtoSchema = z.object({
-  id: z.string(),
-  label: z.string(),
-  isApproval: z.boolean(),
-});
-export type ApprovalChoiceDto = z.infer<typeof approvalChoiceDtoSchema>;
 
 export const approvalDtoSchema = z.object({
   id: z.string(),
@@ -499,18 +512,20 @@ export const approvalDtoSchema = z.object({
   turnId: z.string().nullish(),
   title: z.string(),
   options: z.array(approvalChoiceDtoSchema),
+  source: z.string().default('policy'), toolName: z.string().nullish(), arguments: z.unknown().nullish(), delegateSessionId: z.string().nullish(),
   createdAtMs: z.number(),
 });
 export type ApprovalDto = z.infer<typeof approvalDtoSchema>;
 
 export const askDtoSchema = z.object({
+  targetSessionId: z.string().nullish(),
   delivery: z.enum(['wake', 'hold']),
   sessionId: z.string().nullish(),
   turnId: z.string().nullish(),
   id: z.string(),
   trackId: z.string(),
   status: askStatusSchema.or(z.string()),
-  questions: z.unknown(),
+  questions: z.array(askQuestionDtoSchema),
   answer: z.unknown().nullish(),
   createdAtMs: z.number(),
   answeredAtMs: z.number().nullish(),

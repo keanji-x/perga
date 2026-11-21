@@ -15,7 +15,7 @@ it('keeps the side command text and requires support when v1 does not advertise 
   const fixture = renderDailyFixture({ initial: '/track/daily?panel=conversations', extraPlanner: true,
     reply: request => {
       if (request.path === '/api/v1/bootstrap') return { status: 200, statusText: 'OK', body: fixtureBootstrap() };
-      if (request.path.includes('/second-planner/items') && !request.path.includes('view=')) return { status: 200, statusText: 'OK', body: sessionPage(fixtureSession('second-planner', 'daily'), [{ id: 1, sessionId: 'second-planner', turnId: 'turn', kind: 'assistant_text', payload: { text: 'Source ready for presentation.' }, createdAtMs: 1 }]) };
+      if (request.path.includes('/second-planner/items') && !request.path.includes('limit=1')) return { status: 200, statusText: 'OK', body: sessionPage(fixtureSession('second-planner', 'daily'), [{ id: 1, sessionId: 'second-planner', turnId: 'turn', kind: 'assistant_text', payload: { text: 'Source ready for presentation.' }, createdAtMs: 1 }]) };
       return undefined;
     },
   });

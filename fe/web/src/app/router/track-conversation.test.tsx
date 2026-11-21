@@ -56,7 +56,7 @@ const unauthorized = createUnauthorizedChannel({ enqueue: (task) => task() });
 
 const CONVERSATIONS = '/api/v1/tracks/w1/sessions';
 const BARE_CONVERSATIONS = '/api/v1/tracks/w2/sessions';
-const isHistoryPath = (path: string) => path.includes('/items?') && !path.includes('view=');
+const isHistoryPath = (path: string) => path.includes('/items?') && !path.includes('limit=1');
 
 type Row = AgentSessionDto;
 function assistantRow(overrides: Partial<Row> = {}): Row {
@@ -126,7 +126,7 @@ function setup(reply?: Reply, storage?: UiPreferenceStorage, recovery?: Recovery
       if (isHistoryPath(request.path)) return ok(historyPage(conversationCardId(request.path), []));
       /* Both card endpoints echo the card in the path, as the kernel does; a fixed id
          would be a trap for the first case that reads the field. */
-      if (request.path.includes('view=run')) return ok(sessionPage(fixtureSession(pathCardId(request.path), TRACK.id)));
+      if (request.path.includes('limit=1')) return ok(sessionPage(fixtureSession(pathCardId(request.path), TRACK.id)));
       /* An off-schema body is refused by the transport and the optimistic echo rolled back. */
       if (request.path.endsWith('/messages')) return ok(sessionInput(pathCardId(request.path)));
       if (request.path === '/api/settings') return ok({});
@@ -302,7 +302,7 @@ it('uses fresh server metadata for both unopened conversations without eager his
     fireEvent.click(assistant);
     await screen.findByRole('complementary', { name: 'Original assistant input' });
     await screen.findByText('Latest page input');
-    expect(requests.filter(request => isHistoryPath(request.path))[0]?.path).toContain('afterId=0&limit=500');
+    expect(requests.filter(request => isHistoryPath(request.path))[0]?.path).toContain('afterId=0&limit=60');
     fireEvent.click(screen.getByRole('button', { name: 'Close conversation' }));
     await screen.findByRole('button', { name: 'Conversation Original assistant input' });
   });
@@ -514,7 +514,7 @@ it('[F4] keeps a typed refusal in the composer alone, across reopening and a new
     await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
     expect(messageField().textContent).toBe('');
     expect(requests.filter((request) => request.path.endsWith('/messages')).map((request) => request.body))
-      .toEqual([expect.objectContaining({ text: 'Original typed refusal' }), expect.objectContaining({ text: 'A newer unsent draft' })]);
+      .toEqual([expect.objectContaining({ content: 'Original typed refusal' }), expect.objectContaining({ content: 'A newer unsent draft' })]);
   });
 
 it('[F4] edits a rejected message without replaying it before an explicit send', async () => {
@@ -532,7 +532,7 @@ it('[F4] edits a rejected message without replaying it before an explicit send',
     await write('Revised request');
     await screen.findByRole('alert');
     expect(requests.filter((request) => request.path.endsWith('/messages')).map((request) => request.body))
-      .toEqual([expect.objectContaining({ text: 'Original rejected message' }), expect.objectContaining({ text: 'Revised request' })]);
+      .toEqual([expect.objectContaining({ content: 'Original rejected message' }), expect.objectContaining({ content: 'Revised request' })]);
   });
 
 it.each([
@@ -719,7 +719,7 @@ it('Try again offline (bundled build): keeps the unconfirmed footer as it was', 
     });
 
 it('model select: says the change is unconfirmed', async () => {
-      setup((request) => request.path.endsWith('/model') ? timedOut() : undefined);
+      setup((request) => request.method === 'PATCH' && /\/api\/v1\/sessions\/[^/]+$/.test(request.path) ? timedOut() : undefined);
       await openAssistant();
       fireEvent.click(within(drawerElement()).getByRole('button', { name: /^Model:/ }));
       fireEvent.click(await screen.findByRole('radio', { name: /^Default/ }));
@@ -734,7 +734,7 @@ it('model select: says the model was not changed', async () => {
         fireEvent.click(await screen.findByRole('radio', { name: /^Default/ }));
         fireEvent.click(screen.getByRole('button', { name: 'Save' }));
         expect((await screen.findByRole('alert')).textContent).toContain('The model was not changed.');
-        expect(requests.filter((request) => request.path.endsWith('/model'))).toEqual([]);
+        expect(requests.filter((request) => request.method === 'PATCH' && /\/api\/v1\/sessions\/[^/]+$/.test(request.path))).toEqual([]);
       });
 
 it('never carries a delivered message the server has not shown yet into the next conversation', async () => {
@@ -805,7 +805,7 @@ it('[#2068] gives a refused send its words back in its own conversation when the
     /* The next press sends the words again as a new message, and nothing of the refused one is left to drop. */
     await submit();
     await waitFor(() => expect(inputBodies(requests)).toHaveLength(2));
-    expect(inputBodies(requests)[1]).toEqual({ content: 'Words the server refused', text: 'Words the server refused', steerIfRunning: false });
+    expect(inputBodies(requests)[1]).toEqual({ content: 'Words the server refused', mode: 'default' });
   });
 
 it('[G4] starts a conversation on a track that has no planner card', async () => {
@@ -829,7 +829,7 @@ it('[G4] starts a conversation on a track that has no planner card', async () =>
     await write('what is in this repo?');
     await waitFor(() => expect(creates(requests, BARE_CONVERSATIONS)).toHaveLength(1));
     const [post] = creates(requests, BARE_CONVERSATIONS);
-    expect(post?.body).toMatchObject({ text: 'what is in this repo?', provider: 'codex' });
+    expect(post?.body).toMatchObject({ prompt: 'what is in this repo?', provider: 'codex' });
     expect(post?.headers?.['Idempotency-Key']).toMatch(/[0-9a-f-]{36}/);
     /* The drawer moves off the draft onto the row the derived id names. */
     await screen.findByRole('complementary', { name: 'what is in this repo?' });
@@ -872,8 +872,8 @@ it('keeps each failed draft key across track route remounts', async () => {
     expect(first?.headers?.['Idempotency-Key']).toBeDefined();
     expect(retry?.headers?.['Idempotency-Key']).toBe(first?.headers?.['Idempotency-Key']);
     expect([first?.body, retry?.body]).toEqual([
-      { text: 'words for track one', provider: 'codex', title: 'words for track one' },
-      { text: 'words for track one', provider: 'codex', title: 'words for track one' },
+      { prompt: 'words for track one', provider: 'codex', title: 'words for track one' },
+      { prompt: 'words for track one', provider: 'codex', title: 'words for track one' },
     ]);
 
     await act(async () => { await router.navigate({ to: '/track/w2' }); });
@@ -1215,8 +1215,8 @@ it.each([false, true])('selects a model before the first conversation message an
   expect(creates(requests, CONVERSATIONS)).toHaveLength(0);
   await write('Use this model from the start');
   await waitFor(() => expect(creates(requests, CONVERSATIONS)).toHaveLength(1));
-  expect(creates(requests, CONVERSATIONS)[0].body).toMatchObject({ text: 'Use this model from the start', provider: 'codex', model: 'gpt-5' });
-  expect(requests.filter(request => request.method === 'PUT' && request.path.endsWith('/model'))).toEqual([]);
+  expect(creates(requests, CONVERSATIONS)[0].body).toMatchObject({ prompt: 'Use this model from the start', provider: 'codex', model: 'gpt-5' });
+  expect(requests.filter(request => request.method === 'PATCH' && request.method === 'PATCH' && /\/api\/v1\/sessions\/[^/]+$/.test(request.path))).toEqual([]);
 });
 
 it('uses a spinner while a closed conversation runs, a blue unread dot on completion, and no dot after reading', async () => {
@@ -1326,13 +1326,13 @@ it('keeps a nonempty conversation read after closing when activity is newer than
 });
 
 it('sends /compact to the selected conversation compaction endpoint without a chat input', async () => {
-  const { requests } = setup((request) => request.path.endsWith('/compact')
+  const { requests } = setup((request) => request.path.endsWith('/control')
     ? ok(ASSISTANT_CARD) : undefined);
   fireEvent.click(await screen.findByRole('button', { name: 'Conversation Assistant' }));
   await screen.findByRole('complementary', { name: 'Assistant' });
   await waitFor(() => expect(messageField().getAttribute('contenteditable')).toBe('true'));
   await completeAndSubmit('compact');
-  await waitFor(() => expect(creates(requests, `/api/v1/sessions/${ASSISTANT_CARD.id}/compact`)).toHaveLength(1));
+  await waitFor(() => expect(creates(requests, `/api/v1/sessions/${ASSISTANT_CARD.id}/control`)).toHaveLength(1));
   expect(creates(requests, `/api/v1/sessions/${ASSISTANT_CARD.id}/messages`)).toHaveLength(0);
 });
 
@@ -1342,7 +1342,7 @@ it('compacts each selected conversation while another compaction request is pend
   const answers = new Map<string, (response: ApiTransportResponse) => void>();
   const { requests } = setup((request) => {
     if (request.path === '/api/v1/tracks/w1') return ok(fixtureSnapshot(TRACK, [PLANNER_CARD, ...[a, b]]));
-    if (request.path.endsWith('/compact')) {
+    if (request.path.endsWith('/control')) {
       return new Promise<ApiTransportResponse>((resolve) => { answers.set(pathCardId(request.path), resolve); });
     }
     return undefined;
@@ -1351,13 +1351,13 @@ it('compacts each selected conversation while another compaction request is pend
   await screen.findByRole('complementary', { name: 'Compact A' });
   await waitFor(() => expect(messageField().getAttribute('contenteditable')).toBe('true'));
   await completeAndSubmit('compact');
-  await waitFor(() => expect(creates(requests, `/api/v1/sessions/${a.id}/compact`)).toHaveLength(1));
+  await waitFor(() => expect(creates(requests, `/api/v1/sessions/${a.id}/control`)).toHaveLength(1));
   fireEvent.click(screen.getByRole('button', { name: 'Close conversation' }));
   fireEvent.click(await screen.findByRole('button', { name: 'Conversation Compact B' }));
   await screen.findByRole('complementary', { name: 'Compact B' });
   await waitFor(() => expect(messageField().getAttribute('contenteditable')).toBe('true'));
   await completeAndSubmit('compact');
-  await waitFor(() => expect(creates(requests, `/api/v1/sessions/${b.id}/compact`)).toHaveLength(1));
+  await waitFor(() => expect(creates(requests, `/api/v1/sessions/${b.id}/control`)).toHaveLength(1));
   act(() => { answers.get(a.id)?.(ok(a)); });
   expect(document.querySelector('[data-nc-conversation-action]')).toBeNull();
   act(() => { answers.get(b.id)?.(ok(b)); });
@@ -1533,7 +1533,7 @@ describe('registry write-through', () => {
   it('[#2068] refuses to take a spent unknown send back for an Edit', async () => {
     const transport: ApiTransportPort = {
       send: (request) => request.path.endsWith('/messages') ? Promise.reject(new Error('response dropped'))
-        : Promise.resolve(request.path.includes('view=run') ? runIdle()
+        : Promise.resolve(request.path.includes('limit=1') ? runIdle()
           : isHistoryPath(request.path) ? ok(historyPage(conversationCardId(request.path), [])) : ok([])),
     };
     let store!: ReturnType<typeof useConversationStore>;
@@ -1562,8 +1562,8 @@ describe('registry write-through', () => {
     const transport: ApiTransportPort = {
       async send(request) {
         if (request.path.endsWith('/messages')) { await answered; return inputAccepted(); }
-        if (request.path.endsWith('/model')) return failure(500, 'internal', 'model store unavailable');
-        if (request.path.includes('view=run')) return ok(sessionPage(fixtureSession(pathCardId(request.path), TRACK.id)));
+        if (request.method === 'PATCH' && /\/api\/v1\/sessions\/[^/]+$/.test(request.path)) return failure(500, 'internal', 'model store unavailable');
+        if (request.path.includes('limit=1')) return ok(sessionPage(fixtureSession(pathCardId(request.path), TRACK.id)));
         return request.path.includes('/items?') ? ok(sessionPage(fixtureSession(pathCardId(request.path), TRACK.id))) : ok([]);
       },
     };
@@ -1602,8 +1602,8 @@ describe('registry write-through', () => {
     const refused = new Promise<void>((done) => { refuse = done; });
     const transport: ApiTransportPort = {
       async send(request) {
-        if (request.path.endsWith('/model')) { await refused; return failure(400, 'bad_request', 'Claude is not ready'); }
-        if (request.path.includes('view=run')) return ok(sessionPage(fixtureSession(pathCardId(request.path), TRACK.id)));
+        if (request.method === 'PATCH' && /\/api\/v1\/sessions\/[^/]+$/.test(request.path)) { await refused; return failure(400, 'bad_request', 'Claude is not ready'); }
+        if (request.path.includes('limit=1')) return ok(sessionPage(fixtureSession(pathCardId(request.path), TRACK.id)));
         return request.path.includes('/items?') ? ok(sessionPage(fixtureSession(pathCardId(request.path), TRACK.id))) : ok([]);
       },
     };
@@ -1634,7 +1634,7 @@ describe('registry write-through', () => {
     const transport: ApiTransportPort = {
       send(request) {
         if (request.path.endsWith('/messages')) { stored = true; return Promise.resolve(inputAccepted()); }
-        if (request.path.includes('view=run')) return Promise.resolve(runIdle());
+        if (request.path.includes('limit=1')) return Promise.resolve(runIdle());
         return Promise.resolve(request.path.includes('/items?') ? ok(historyPage(conversationCardId(request.path), stored ? [sessionItem(ASSISTANT_CARD.id, 1, 'rename this conversation', 'user')] : [])) : ok([]));
       },
     };
@@ -1659,7 +1659,7 @@ describe('registry write-through', () => {
           await settled;
           return { status: 503, statusText: 'Service Unavailable', body: { code: 'unavailable', error: 'busy' } };
         }
-        if (request.path.includes('view=run')) return runIdle();
+        if (request.path.includes('limit=1')) return runIdle();
         return request.path.includes('/items?') ? ok(sessionPage(fixtureSession(pathCardId(request.path), TRACK.id))) : ok([]);
       },
     };
@@ -1694,7 +1694,7 @@ describe('registry write-through', () => {
           await inputSettled;
           return inputAcceptedWithEntry('refresh-entry');
         }
-        if (request.path.includes('view=run')) return runIdle();
+        if (request.path.includes('limit=1')) return runIdle();
         if (isHistoryPath(request.path)) return ok(historyPage(conversationCardId(request.path), []));
         return request.path.includes('/items?') ? ok(sessionPage(fixtureSession(pathCardId(request.path), TRACK.id))) : ok([]);
       },
@@ -1731,7 +1731,7 @@ describe('registry write-through', () => {
           await inputSettled;
           return inputAccepted();
         }
-        if (request.path.includes('view=run')) return runIdle();
+        if (request.path.includes('limit=1')) return runIdle();
         return request.path.includes('/items?') ? ok(sessionPage(fixtureSession(pathCardId(request.path), TRACK.id))) : ok([]);
       },
     };
@@ -1764,7 +1764,7 @@ describe('registry write-through', () => {
           await new Promise<void>((resolve) => { holds.push(resolve); });
           return inputAcceptedWithEntry(entryId);
         }
-        if (request.path.includes('view=run')) return runIdle();
+        if (request.path.includes('limit=1')) return runIdle();
         if (isHistoryPath(request.path)) return ok(historyPage(conversationCardId(request.path), historyRows));
         return request.path.includes('/items?') ? ok(sessionPage(fixtureSession(pathCardId(request.path), TRACK.id))) : ok([]);
       },

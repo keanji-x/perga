@@ -39,7 +39,7 @@ import { ConversationSessionHeader } from '../../features/chat/thread/session-he
 import { readErrorText } from '../../../../core/domain/read-failure.ts';
 import { permissionModesForProvider } from '../../../../core/domain/agent-providers.ts';
 import { permissionModeAfterProviderChange, resolvePermissionControl } from '../../../../core/domain/planner-permission-mode.ts';
-import { DELETE_FAILURES, DELETE_TEXT, NotSentError, writeFailureText } from '../../../../core/domain/failure-class.ts';
+import { DELETE_FAILURES, DELETE_TEXT, writeFailureText } from '../../../../core/domain/failure-class.ts';
 // Code-based TanStack Router setup, built inside a factory so a test can inject the
 // transport and QueryClient; also the composition point for route-owned surfaces.
 
@@ -719,7 +719,8 @@ function useConversationPane(
     () => shareAccess !== null ? NO_PENDING_APPROVALS : approvalsForSession(source.pendingApprovals, openRowId, store.pendingApprovals),
     [shareAccess, source.pendingApprovals, openRowId, store.pendingApprovals],
   );
-  const conversationAsks = plannerRow?.asks ?? NO_ASKS;
+  const conversationAsks: readonly OpenAsk[] = store.pendingInteractions?.flatMap(interaction => interaction.kind === 'ask' && interaction.canRespond
+    ? [{ askId: interaction.id, delivery: 'wake' as const, questions: interaction.questions?.map(question => ({ title: question.question, options: question.options })) ?? [] }] : []) ?? NO_ASKS;
   /* Read field by field: the control is rebuilt each render, and the composer's memo keys on what it shows. */
   const roleValue = plannerRow?.role.value ?? null;
   const roleDisabled = plannerRow?.role.isDisabled ?? true;
@@ -728,7 +729,7 @@ function useConversationPane(
   const decideApproval = useCommittedCallback(existingId, (approval: PendingApproval, optionId: string) =>
     source.decideApproval(approval, optionId));
   const answerAsk = useCommittedCallback(existingId, (askId: import('../../../../core/domain/activity.ts').AskId, answers: readonly AskAnswer[]) =>
-    plannerRow === null ? Promise.reject(new NotSentError()) : plannerRow.answerAsk(askId, answers));
+    store.answerAsk(askId, answers));
   const attach = useCommittedCallback(existingId, attachments.attach);
   const removeAttachment = useCommittedCallback(existingId, attachments.remove);
   const { items: attachmentItems, ids: attachmentIds, busy: attachmentBusy, error: attachmentError, atCapacity } = attachments;
@@ -767,8 +768,6 @@ function useConversationPane(
     modelDefaultAvailable: store.modelDefaultAvailable,
     modelChangeDisabled: store.modelChangeDisabled,
     permissionChangeDisabled: store.permissionChangeDisabled,
-    permissionAuthorizationMode: store.permissionAuthorizationMode,
-    unavailablePermissionMode: store.unavailablePermissionMode,
     permissionMode: store.permissionMode,
     sendBlocked: store.sendBlocked,
     composerBlocked: store.composerBlocked,
@@ -779,7 +778,7 @@ function useConversationPane(
     stopping: store.stopping,
     working: store.working
   }), [compact, store.compacting, store.manualCompactSupported, store.contextUsage, store.historyReady, store.runReady, interrupt, store.model, store.modelCatalog, store.modelDefaultAvailable, store.modelChangeDisabled, store.permissionChangeDisabled,
-    store.permissionAuthorizationMode, store.unavailablePermissionMode, store.permissionMode, store.sendBlocked, store.composerBlocked, store.sending, store.canQueueWhileRunning, setModel, setPermissionMode, store.stopping, store.working]);
+    store.permissionMode, store.sendBlocked, store.composerBlocked, store.sending, store.canQueueWhileRunning, setModel, setPermissionMode, store.stopping, store.working]);
   const permissionOptions = store.permissionOptions ?? scopePermissionModes;
   const permissionControl = useMemo(() => resolvePermissionControl({
     storedMode: composerView.permissionMode,
@@ -800,9 +799,9 @@ function useConversationPane(
   const commandEnabled = useCallback((command: 'stop' | 'compact' | 'reconnect' | 'reset') =>
     conversationCommandEnabled(command, store.sessionState, store.readonlyReason, store.unknownDetail, store.recovering, {
       canStop: store.canStop, manualCompactSupported: store.manualCompactSupported,
-      canResetContext: store.session?.boundTaskId == null && store.session?.boundAttemptId == null,
+      canResetContext: true,
     }), [store.sessionState, store.readonlyReason, store.unknownDetail, store.recovering, store.canStop,
-      store.manualCompactSupported, store.session?.boundTaskId, store.session?.boundAttemptId]);
+      store.manualCompactSupported]);
   const paneCommands = useMemo(() => composerCommands({
     ...conversationCommandBindings({
       newConversation: options?.inline === true ? undefined : newConversation,
@@ -884,8 +883,6 @@ function useConversationPane(
                       options={permissionControl.options}
                       change={composerView.setPermissionMode}
                       disabled={permissionControl.isDisabled}
-                      authorizationMode={composerView.permissionAuthorizationMode}
-                      unavailableMode={composerView.unavailablePermissionMode}
                     />
                   )}
                 </HStack>

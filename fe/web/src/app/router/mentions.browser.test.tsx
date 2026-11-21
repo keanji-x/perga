@@ -52,10 +52,10 @@ function mount(path: string, storedText: string | null = null, pluginDescription
     if (request.path === '/api/v1/tracks/w1') return Promise.resolve(ok(fixtureSnapshot(TRACK, [PLANNER_CARD, ASSISTANT_ROW])));
     if (request.path === '/api/v1/tracks/w1/sessions') return Promise.resolve(ok([ASSISTANT_ROW]));
     if (request.path.endsWith('/messages')) {
-      storedText = (request.body as { text: string }).text;
+      storedText = (request.body as { content: string }).content;
       return Promise.resolve(ok(sessionInput(conversationCardId(request.path), 'input-1')));
     }
-    if (request.path.endsWith('/interrupt')) return Promise.resolve(ok({ interrupted: true }));
+    if (request.path.endsWith('/control')) return Promise.resolve(ok({ interrupted: true }));
     if (request.path.includes('/items?')) {
       const id = conversationCardId(request.path);
       return Promise.resolve(ok(sessionPage(id === PLANNER_CARD.id ? PLANNER_CARD : ASSISTANT_ROW,
@@ -99,14 +99,14 @@ it('groups the area\'s tags, reports and blocks under @ in the Planner conversat
   await userEvent.keyboard('{Enter}');
 
   await expect.poll(() => requests.filter((request) => request.path.endsWith('/messages')).length).toBe(1);
-  const sent = requests.find((request) => request.path.endsWith('/messages'))!.body as { text: string };
-  expect(sent.text).toBe(`see ${BLOCK_INSERT}`);
+  const sent = requests.find((request) => request.path.endsWith('/messages'))!.body as { content: string };
+  expect(sent.content).toBe(`see ${BLOCK_INSERT}`);
   await expect.element(page.getByText('Deploy notes › b_1a2b', { exact: true }).first()).toBeVisible();
   await expect.poll(() => document.querySelectorAll('[data-nc-turn="human"]')).toHaveLength(1);
   expect(document.querySelector('[data-nc-turn="human"]')?.textContent).toBe('see Deploy notes › b_1a2b');
   // A fresh route has no memory of the menu pick: the stored address still renders as a pill.
   cleanup();
-  mount('/track/w1', sent.text);
+  mount('/track/w1', sent.content);
   await openConversation(/Conversation Planner chat/);
   await expect.element(page.getByText('Deploy notes › b_1a2b', { exact: true }).first()).toBeVisible();
   expect(document.querySelector('[data-nc-sent-mention]')?.getAttribute('title')).toBe(BLOCK_INSERT);
@@ -143,8 +143,8 @@ it.each([
   await expect.element(page.getByText(chip, { exact: true })).toBeVisible();
   await userEvent.keyboard('{Enter}');
   await expect.poll(() => requests.filter((request) => request.path.endsWith('/messages')).length).toBe(1);
-  const sent = requests.find((request) => request.path.endsWith('/messages'))!.body as { text: string };
-  expect(sent.text).toBe(`see ${insert}`);
+  const sent = requests.find((request) => request.path.endsWith('/messages'))!.body as { content: string };
+  expect(sent.content).toBe(`see ${insert}`);
 });
 
 it('keeps the / command in the Planner conversation', async () => {
@@ -165,7 +165,7 @@ it.each([
   await expect.element(page.getByText(empty)).toBeVisible();
   await userEvent.keyboard('{Enter}');
   const sends = () => requests.filter((request) => request.path.endsWith('/messages'))
-    .map((request) => (request.body as { text: string }).text);
+    .map((request) => (request.body as { content: string }).content);
   await expect.poll(sends).toEqual([text]);
   /* A frame for a close the send might have set off. */
   await new Promise((resolve) => { requestAnimationFrame(resolve); });
@@ -295,9 +295,9 @@ it('dismisses a native navigation preview before Escape can stop a working Plann
   await expect.poll(() => document.querySelector('[data-nc-rail-preview]')).not.toBeNull();
   await userEvent.keyboard('{Escape}');
   await expect.poll(() => document.querySelector('[data-nc-rail-preview]')).toBeNull();
-  expect(requests.filter(request => request.path.endsWith('/interrupt'))).toHaveLength(0);
+  expect(requests.filter(request => request.path.endsWith('/control'))).toHaveLength(0);
   await userEvent.keyboard('{Escape}');
-  await expect.poll(() => requests.filter(request => request.path.endsWith('/interrupt')).length).toBe(1);
+  await expect.poll(() => requests.filter(request => request.path.endsWith('/control')).length).toBe(1);
 });
 
 it('loads v1 template documentation after @ and preserves its chip in the first message', async () => {

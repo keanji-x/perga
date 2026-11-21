@@ -16,14 +16,14 @@ public sealed class TrackScheduleTests
         await using var ctx = new KernelTestContext();
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
         var id = snapshot.Track.Id;
-        var next = await ctx.Kernel.CreateSubagentSessionAsync(id, new CreateSessionRequest(Title: "Next Lead"));
+        var next = (await ctx.Kernel.CreateSessionAsync(id, new CreateSessionRequest(Title: "Next Lead"), Guid.NewGuid().ToString("N"), new InteropPrincipal.Human(), default)).Receipt.Session;
         await ctx.Kernel.SetTrackScheduleAsync(id, new("Switch", "SCHEDULE_SWITCH_PROMPT", RunAtMs: 1));
         if (fireBeforeSwitch) await ctx.Store.TrackSchedules!.FireDueAsync(2, _ => null, default);
         await ctx.Kernel.PatchTrackAsync(id, new PatchTrackRequest(LeadSessionId: next.Id));
         if (!fireBeforeSwitch)
         {
             await ctx.Store.TrackSchedules!.FireDueAsync(2, _ => null, default);
-            await ctx.Kernel.Actors.GetOrActivate(id).PokeLeadAsync();
+            await ctx.Kernel.Actors.GetOrActivate(id).PokePendingWakesAsync();
         }
         await ctx.Kernel.WaitForTrackIdleAsync(id);
         Assert.Contains(ctx.Store.GetTurnsForSession(next.Id),
@@ -58,7 +58,7 @@ public sealed class TrackScheduleTests
             Assert.Equal((id, "reminder"), (fired.TrackId, fired.ScheduleId));
             Assert.Equal(1, (await ctx.Store.TrackSchedules!.GetAsync(id, "reminder", default))!.FiredCount);
             // The hosted scheduler pokes the returned tracks.
-            await ctx.Kernel.Actors.GetOrActivate(fired.TrackId).PokeLeadAsync();
+            await ctx.Kernel.Actors.GetOrActivate(fired.TrackId).PokePendingWakesAsync();
         }
         await ctx.Kernel.WaitForTrackIdleAsync(id);
         Assert.True(faults > 0);
@@ -114,7 +114,7 @@ public sealed class TrackScheduleTests
         await ctx.Store.TrackWakes.EnqueueAsync(
             TrackWakeRequests.DynamicSchedule(trackId, "sch_dyn", "CUSTOM_DYNAMIC_PROMPT", "user"),
             default);
-        await ctx.Kernel.Actors.GetOrActivate(trackId).PokeLeadAsync(default);
+        await ctx.Kernel.Actors.GetOrActivate(trackId).PokePendingWakesAsync(default);
         await ctx.Kernel.WaitForTrackIdleAsync(trackId);
 
         Assert.Contains(ctx.Store.GetTurnsForSession(leadId),

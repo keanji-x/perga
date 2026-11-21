@@ -262,7 +262,7 @@ it('reads v1 provider model identifiers without a legacy model write', async () 
   expect(screen.queryByRole('radio', { name: 'Codex' })).toBeNull();
   fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
   expect(screen.getByRole('button', { name: 'Attach an image' }).getAttribute('aria-disabled')).toBe('true');
-  expect(fixture.requests.some(request => request.path.endsWith('/model'))).toBe(false);
+  expect(fixture.requests.some(request => request.method === 'PATCH' && /\/api\/v1\/sessions\/[^/]+$/.test(request.path))).toBe(false);
   expect(fixture.requests.filter(request => request.method === 'POST' && request.path.endsWith('/sessions'))).toHaveLength(0);
 });
 

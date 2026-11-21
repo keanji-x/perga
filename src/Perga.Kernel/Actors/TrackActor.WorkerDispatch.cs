@@ -2,34 +2,68 @@ using Perga.Contracts;
 using Perga.Kernel.Internal;
 using Perga.Kernel.Ports;
 using Perga.ReportDoc;
+using Perga.PolicyVm;
 
 namespace Perga.Kernel.Actors;
 
 public sealed partial class TrackActor
 {
-    public async Task<WorkerDispatchReceipt> DispatchWorkerAsync(
-        DispatchWorkerRequest request, string? requestKey, string? callerSessionId, CancellationToken ct, McpExecutionOrigin? origin = null)
+    public async Task<(SessionCreationReceipt Receipt, bool Replay)> CreateSessionAsync(CreateSessionRequest request,
+        string requestKey, InteropPrincipal caller, CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(request.Goal))
-            throw KernelException.InvalidArgument("Worker dispatch requires a non-empty goal.");
-        var key = requestKey ?? Guid.NewGuid().ToString("N");
-        ValidateRequestKey(key);
-        var authorId = callerSessionId ?? "owner:installation";
-        var taskKey = "worker-" + RequestIdentity.Hash(new { TrackId, authorId, key })[..24].ToLowerInvariant();
-        request = request with { Goal = request.Goal.Trim() };
-        var intent = new WorkerDispatchIntent(TrackId, authorId, key, RequestIdentity.Hash(request), taskKey);
-        var committed = await CommitReportInternalAsync(callerSessionId is null ? EditActorKind.Human : null, callerSessionId,
-            report => BuildWorkerDispatchReportCommitCore(report, request, taskKey), ct, intent, origin).ConfigureAwait(false);
-        var task = committed.Tasks.Single(item => item.TaskKey == taskKey);
-        return await EnqueueAsync(_ => Task.FromResult(new WorkerDispatchReceipt(task,
-            task.LatestAttemptId is null ? null : _sessions.Values.FirstOrDefault(session => session.BoundAttemptId == task.LatestAttemptId)?.Id, key)), ct)
-            .ConfigureAwait(false);
+        if (request.Task is null)
+            return await CreateConversationAsync(request, requestKey, ct, caller).ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(request.Prompt)) throw KernelException.InvalidArgument("A task requires a prompt.");
+        ValidateRequestKey(requestKey);
+        var authorId = caller is InteropPrincipal.Session identity ? identity.SessionId : InstallationAuthor;
+        var taskKey = "worker-" + RequestIdentity.Hash(new { TrackId, authorId, key = requestKey })[..24].ToLowerInvariant();
+        var session = await EnqueueAsync(async _ =>
+        {
+            await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
+            RequirePolicyAvailableCore();
+            var route = _policy is null ? new PolicyTaskRoute(request.Provider, request.Model) :
+                _policyVm.RouteTaskDispatch(_policy, request.Role,
+                    request.Task.Access ?? _policy.Manifest.WorkerDispatch?.Access ?? "read_only",
+                    request.Provider, request.Model, _track.TemplateInputs);
+            if (route.Denial is { } denial) throw KernelException.PolicyDenied(denial);
+            return await NewSubagentSessionCoreAsync(request with
+            {
+                Provider = request.Provider ?? route.Provider,
+                Model = request.Model ?? route.Model,
+                NotifyParent = request.NotifyParent ?? "task_settled"
+            }, ct).ConfigureAwait(false);
+        }, ct).ConfigureAwait(false);
+        var intent = new WorkerDispatchIntent(TrackId, authorId, requestKey, RequestIdentity.Hash(request), taskKey, session, caller);
+        var replayed = false;
+        var committed = await CommitReportInternalAsync(caller is InteropPrincipal.Human ? EditActorKind.Human : null,
+            caller is InteropPrincipal.Session parent ? parent.SessionId : null, report =>
+            {
+                return BuildWorkerDispatchReportCommitCore(report, request, taskKey);
+            }, ct, intent, caller is InteropPrincipal.Session origin ? origin.ExecutionOrigin : null).ConfigureAwait(false);
+        var task = committed.Tasks.Single(t => t.TaskKey == taskKey);
+        return await EnqueueAsync(async _ =>
+        {
+            var created = _sessions.Values.Single(s => s.BoundTaskId == task.Id);
+            replayed = created.Id != session.Id;
+            SessionInputReceipt? first = null;
+            if (created.BoundAttemptId is { } attemptId &&
+                await Messages.GetAsync(created.Id, true, $"inp_{attemptId}", ct).ConfigureAwait(false) is { } initial)
+            {
+                var turn = (await _store.ListSessionTurnsAsync(created.Id, ct).ConfigureAwait(false))
+                    .SingleOrDefault(t => t.Id == initial.TargetTurnId);
+                first = new(initial.Id, initial.TargetTurnId!, created.Id,
+                    initial.Delivery == "dispatching" ? "accepted" : initial.Delivery, turn?.Status ?? initial.Delivery switch
+                    { "unknown" => "unknown", "interrupted" => "interrupted", "rejected" => "failed", _ => "queued" }, null);
+            }
+            return (new SessionCreationReceipt(created, first, task, requestKey), replayed);
+        }, ct).ConfigureAwait(false);
     }
 
     private async Task<ReportReadResult?> TryReplayWorkerDispatchCoreAsync(
         WorkerDispatchIntent intent, string? callerSessionId, CancellationToken ct)
     {
-        RequireWorkerOperatorCore(callerSessionId);
+        var parent = RequireInteropCore(intent.Caller, write: true);
+        SessionPolicy.RequireCreate(intent.Caller, parent, TrackId, _options.MaxSessionSpawnDepth);
         var replay = await _store.FindWorkerDispatchAsync(intent, ct).ConfigureAwait(false);
         if (replay is not null)
         {
@@ -48,10 +82,10 @@ public sealed partial class TrackActor
         return null;
     }
 
-    private ReportCommitRequest BuildWorkerDispatchReportCommitCore(ReportDocument report, DispatchWorkerRequest request, string taskKey)
+    private ReportCommitRequest BuildWorkerDispatchReportCommitCore(ReportDocument report, CreateSessionRequest request, string taskKey)
     {
         var defaults = _policy?.Manifest.WorkerDispatch;
-        var access = request.Access ?? defaults?.Access ?? "read_only";
+        var access = request.Task!.Access ?? defaults?.Access ?? "read_only";
         if (access is not ("read_only" or "read_write"))
             throw KernelException.InvalidArgument("Worker access must be read_only or read_write.");
         string? configuredGate = null;
@@ -63,15 +97,15 @@ public sealed partial class TrackActor
                 schema.TryGetProperty("default", out var defaultGate) && defaultGate.ValueKind == System.Text.Json.JsonValueKind.String)
                 configuredGate = defaultGate.GetString();
         }
-        if (configuredGate is not null && request.Gate is not null && request.Gate != configuredGate)
+        if (configuredGate is not null && request.Task!.Gate is not null && request.Task!.Gate != configuredGate)
             throw KernelException.PolicyDenied("Dispatch uses the validation command already configured by the Track template.");
-        var gate = access == "read_write" ? configuredGate ?? request.Gate : request.Gate;
+        var gate = access == "read_write" ? configuredGate ?? request.Task!.Gate : request.Task!.Gate;
 
         var payload = JsonHelpers.ToElement(new
         {
-            task_key = taskKey, kind = "agent", ready = true, goal_or_cmd = request.Goal,
-            provider = request.Provider, role = request.Role, access, acceptance = request.Acceptance,
-            depends_on = request.DependsOn, gate,
+            task_key = taskKey, kind = "agent", ready = true, goal_or_cmd = request.Prompt,
+            provider = request.Provider, role = request.Role, access, acceptance = request.Task!.Acceptance,
+            depends_on = request.Task!.DependsOn, gate,
             context = new { workerDispatch = true, initialModel = request.Model }
         });
         var position = report.Blocks.Count;

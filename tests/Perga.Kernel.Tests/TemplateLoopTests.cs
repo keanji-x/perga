@@ -45,7 +45,7 @@ public sealed class TemplateLoopTests
             """;
         await KernelMcpDispatcher.ExecuteGuardedAsync(ctx.Kernel, caller, KernelMcpToolNames.TrackSet, TestJson.FromObject(new { source = asking }));
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        var dispatch = ctx.Kernel.DispatchWorkerAsync(snap.Track.Id, new("Inspect", Role: "review"), "ask", null, timeout.Token);
+        var dispatch = ctx.Kernel.CreateSessionAsync(snap.Track.Id, new(Prompt: "Inspect", Task: new(), Role: "review"), "ask", new InteropPrincipal.Human(), timeout.Token);
         ApprovalDto? ask = null;
         while (ask is null)
         {
@@ -58,18 +58,18 @@ public sealed class TemplateLoopTests
         }
         Assert.False(dispatch.IsCompleted);
         Assert.Empty(await ctx.Kernel.ListTasksAsync(snap.Track.Id, timeout.Token));
-        await ctx.Kernel.DecideApprovalAsync(snap.Track.Id, ask.ExecutionId, ask.Id, ask.Options.Single(o => o.IsApproval).Id, timeout.Token);
-        Assert.Equal("review", (await dispatch).Task.Role);
+        await ctx.Kernel.RespondInteractionAsync(ask.SessionId, ask.Id, new(ExecutionId: ask.ExecutionId, OptionId: ask.Options.Single(o => o.IsApproval).Id), new InteropPrincipal.Human(), timeout.Token);
+        Assert.Equal("review", (await dispatch).Receipt.Task!.Role);
 
         const string rewriting = """
             export default {id:'route',title:'Route',tasks:{routing:[{when:{},provider:'codex',model:'gpt-5'}]}};
             """;
         await KernelMcpDispatcher.ExecuteGuardedAsync(ctx.Kernel, caller, KernelMcpToolNames.TrackSet, TestJson.FromObject(new { source = rewriting }));
-        var rewritten = await ctx.Kernel.DispatchWorkerAsync(snap.Track.Id, new("Inspect again"), "rewrite", null, timeout.Token);
-        var worker = (await ctx.Kernel.ListSessionsAsync(snap.Track.Id)).Single(session => session.BoundTaskId == rewritten.Task.Id);
+        var rewritten = await ctx.Kernel.CreateSessionAsync(snap.Track.Id, new(Prompt: "Inspect again", Task: new()), "rewrite", new InteropPrincipal.Human(), timeout.Token);
+        var worker = ((await ctx.Kernel.ListSessionsAsync(snap.Track.Id, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray()).Single(session => session.BoundTaskId == rewritten.Receipt.Task!.Id);
         Assert.Equal("codex", worker.Provider);
         Assert.Equal("gpt-5", worker.Model);
-        Assert.Null(rewritten.Task.Provider);
+        Assert.Null(rewritten.Receipt.Task!.Provider);
     }
 
     [Fact]
@@ -87,7 +87,7 @@ public sealed class TemplateLoopTests
             """;
         await KernelMcpDispatcher.ExecuteGuardedAsync(ctx.Kernel, caller, KernelMcpToolNames.TrackSet, TestJson.FromObject(new { source }));
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        var wake = ctx.SendAndWaitForTurnAsync(caller.SessionId, new SendMessageRequest("Review context", "policy-turn"), timeout.Token);
+        var wake = ctx.SendAndWaitForTurnAsync(caller.SessionId, new SendSessionMessageRequest("Review context", "policy-turn"), timeout.Token);
         ApprovalDto? ask = null;
         while (ask is null)
         {
@@ -95,7 +95,7 @@ public sealed class TemplateLoopTests
             if (ask is null) await Task.Delay(10, timeout.Token);
         }
         Assert.DoesNotContain(ctx.AgentRuntime.OpenedSessions.SelectMany(session => session.RecordedInputs), input => input.Prompt.Contains("Review context", StringComparison.Ordinal));
-        await ctx.Kernel.DecideApprovalAsync(snapshot.Track.Id, ask.ExecutionId, ask.Id, ask.Options.Single(o => o.IsApproval).Id, timeout.Token);
+        await ctx.Kernel.RespondInteractionAsync(ask.SessionId, ask.Id, new(ExecutionId: ask.ExecutionId, OptionId: ask.Options.Single(o => o.IsApproval).Id), new InteropPrincipal.Human(), timeout.Token);
         await wake;
         await ctx.Kernel.WaitForTrackIdleAsync(snapshot.Track.Id, timeout.Token);
         var input = Assert.Single(ctx.AgentRuntime.OpenedSessions.SelectMany(session => session.RecordedInputs), input => input.Prompt.Contains("Review context", StringComparison.Ordinal));
@@ -122,7 +122,7 @@ public sealed class TemplateLoopTests
         var failed = Assert.Single(await ctx.Kernel.ListTasksAsync(snapshot.Track.Id));
         Assert.Equal(TaskRunStatus.Failed, failed.Status);
         Assert.Equal("Blocked after restart", failed.StatusDetail);
-        Assert.DoesNotContain(await ctx.Kernel.ListSessionsAsync(snapshot.Track.Id), session => session.BoundTaskId == failed.Id);
+        Assert.DoesNotContain((await ctx.Kernel.ListSessionsAsync(snapshot.Track.Id, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray(), session => session.BoundTaskId == failed.Id);
     }
 
     [Fact]

@@ -142,14 +142,14 @@ it.each([20, 120, 300, 900])('reports production rendering/update boundaries wit
     resetMetrics();
     let queryEvents = 0;
     const unsubscribe = view.client.getQueryCache().subscribe(() => { queryEvents++; });
-    const pollsBefore = view.requests.filter((request) => request.path.includes('/items?') && !request.path.includes('&view=')).length;
+    const pollsBefore = view.requests.filter((request) => request.path.includes('/items?') && !request.path.includes('limit=1')).length;
     for (let i = 0; i < 4; i++) {
       await act(async () => { await view.client.refetchQueries({ queryKey: queryKeys.harnessItems('perf-card') }); });
       await frames();
     }
     await frames();
     const steady = { ...snapshot(), queryEvents,
-      polls: view.requests.filter((request) => request.path.includes('/items?') && !request.path.includes('&view=')).length - pollsBefore };
+      polls: view.requests.filter((request) => request.path.includes('/items?') && !request.path.includes('limit=1')).length - pollsBefore };
     resetMetrics(); queryEvents = 0;
     let domMutations = 0;
     const observer = new MutationObserver((records) => { domMutations += records.length; });

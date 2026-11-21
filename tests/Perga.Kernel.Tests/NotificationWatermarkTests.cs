@@ -65,7 +65,10 @@ public sealed class NotificationWatermarkTests
         await using var ctx = new KernelTestContext();
         var (_, snap) = await ctx.CreateDefaultTrackAsync();
         var id = snap.Track.Id;
-        var session = Assert.Single(await ctx.Kernel.ListSessionsAsync(id)) with { LastNotifiableTurnAtMs = 123 };
+        // Keep the seeded pending preparation from finishing before the overlay read.
+        if (phase == WorkspacePreparationPhase.Pending)
+            ctx.DirectDriver.ProvisionGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously).Task;
+        var session = Assert.Single(await ctx.Kernel.ListSessionsAsync(id, new(), new InteropPrincipal.Human(), default)).Session with { LastNotifiableTurnAtMs = 123 };
         await ctx.Kernel.Actors.RemoveAndDisposeAsync(id);
         await ctx.Store.UpsertSessionAsync(session, null, default);
         await ctx.Store.SaveWorkspacePreparationAsync(id,
@@ -114,9 +117,9 @@ public sealed class NotificationWatermarkTests
             else yield return new UnifiedAgentEvent.TurnCompleted(null);
         }
         ctx.AgentRuntime.TurnScript = Stream;
-        Assert.Null(Assert.Single(await ctx.Kernel.ListSessionsAsync(snap.Track.Id)).LastNotifiableTurnAtMs);
-        var turn = await ctx.SendAndWaitForTurnAsync(id, new SendMessageRequest("hello", "notification-test"));
-        var session = Assert.Single(await ctx.Kernel.ListSessionsAsync(snap.Track.Id));
+        Assert.Null(Assert.Single(await ctx.Kernel.ListSessionsAsync(snap.Track.Id, new(), new InteropPrincipal.Human(), default)).Session.LastNotifiableTurnAtMs);
+        var turn = await ctx.SendAndWaitForTurnAsync(id, new SendSessionMessageRequest("hello", "notification-test"));
+        var session = Assert.Single(await ctx.Kernel.ListSessionsAsync(snap.Track.Id, new(), new InteropPrincipal.Human(), default)).Session;
         Assert.Equal(status, turn.Status);
         if (status == "interrupted")
         {
@@ -130,7 +133,7 @@ public sealed class NotificationWatermarkTests
         Assert.Equal(session.LastNotifiableTurnAtMs, Assert.Single(snapshot.Sessions).LastNotifiableTurnAtMs);
         var overlay = Assert.Single((await ctx.Kernel.GetOverlaysAsync()).Tracks);
         Assert.Equal(session.LastNotifiableTurnAtMs, Assert.Single(overlay.NotifiableSessions!).LastNotifiableTurnAtMs);
-        await ctx.Kernel.PatchSessionAsync(id, new PatchSessionRequest(Title: "renamed"));
-        Assert.Equal(session.LastNotifiableTurnAtMs, Assert.Single(await ctx.Kernel.ListSessionsAsync(snap.Track.Id)).LastNotifiableTurnAtMs);
+        await ctx.Kernel.UpdateSessionAsync(id, new UpdateSessionRequest(Title: "renamed"), new InteropPrincipal.Human(), default);
+        Assert.Equal(session.LastNotifiableTurnAtMs, Assert.Single(await ctx.Kernel.ListSessionsAsync(snap.Track.Id, new(), new InteropPrincipal.Human(), default)).Session.LastNotifiableTurnAtMs);
     }
 }

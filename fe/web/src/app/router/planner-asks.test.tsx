@@ -39,9 +39,10 @@ function setup() {
         ...fixtureSnapshot(currentTrack, [fixtureSession(PLANNER.id, TRACK.id, { title: PLANNER.title, isLead: true }), ASSISTANT]),
         openAsks: [ASK],
       });
-      if (request.path === '/api/v1/tracks/w1/asks/41/answer') return ok(undefined, 204);
+      if (request.path === '/api/v1/sessions/planner-1/interactions/41/respond') return ok({ id: '41', kind: 'ask' });
       if (request.path.includes('/items')) return ok({
         session: fixtureSession(conversationCardId(request.path), TRACK.id, { permissionMode: 'never' }),
+        pendingInteractions: conversationCardId(request.path) === PLANNER.id ? [{ ...ASK, kind: 'ask', sessionId: PLANNER.id, title: 'Which branch?', canRespond: true }] : [],
         items: [], activeTurn: null, state: 'idle', readonlyReason: null, canReopen: false, workerPaused: false, lastTurn: null, unknownDetail: null,
       });
       if (request.path === '/api/settings') return ok({});
@@ -79,10 +80,10 @@ it('answers the open ask from the Planner composer and hides it before the aggre
   fireEvent.click(within(ask).getByRole('button', { name: 'release' }));
   fireEvent.change(await within(ask).findByRole('textbox', { name: 'Notes?' }), { target: { value: 'Tag it 2.0' } });
   fireEvent.click(within(ask).getByRole('button', { name: 'Answer' }));
-  await waitFor(() => expect(requests.filter((request) => request.path.endsWith('/answer'))).toHaveLength(1));
-  const answer = requests.find((request) => request.path.endsWith('/answer'));
+  await waitFor(() => expect(requests.filter((request) => request.path.endsWith('/respond'))).toHaveLength(1));
+  const answer = requests.find((request) => request.path.endsWith('/respond'));
   expect(answer?.method).toBe('POST');
-  expect(answer?.path).toBe('/api/v1/tracks/w1/asks/41/answer');
+  expect(answer?.path).toBe('/api/v1/sessions/planner-1/interactions/41/respond');
   expect(answer?.body).toEqual({ answers: [{ option: 1, value: 'release' }, { text: 'Tag it 2.0', value: 'Tag it 2.0' }] });
   await waitFor(() => expect(within(drawer).queryByRole('group', { name: 'The Planner asks' })).toBeNull());
   /* The composer itself stays. */

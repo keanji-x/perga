@@ -51,12 +51,18 @@ public sealed partial class TrackActor
         }
     }
 
-    private async Task DisposeOwnedSessionCoreAsync(string sessionId, IAgentSession agent)
+    private async Task DisposeOwnedSessionCoreAsync(string sessionId, IAgentSession agent, bool inMailbox = true)
     {
         using var deadline = new CancellationTokenSource(_options.SessionStartupTimeout);
         await ConfirmProviderShutdownAsync(sessionId, agent, deadline.Token).ConfigureAwait(false);
-        _openSessionHandles.Remove(sessionId);
-        _sessionShutdownPending.TryRemove(sessionId, out _);
+        Task ReleaseAsync()
+        {
+            _openSessionHandles.Remove(sessionId);
+            _sessionShutdownPending.TryRemove(sessionId, out _);
+            return Task.CompletedTask;
+        }
+        if (inMailbox) await ReleaseAsync().ConfigureAwait(false);
+        else await EnqueueAsync(_ => ReleaseAsync(), CancellationToken.None).ConfigureAwait(false);
     }
 
     private async Task<IAgentSession> OpenAgentSessionBoundedAsync(string sessionId, HarnessLaunchSpec spec, CancellationToken ct)

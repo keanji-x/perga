@@ -23,7 +23,6 @@ public sealed partial class TrackActor
     {
         if (session.Status != "unknown") return null;
         _scheduler.TryGetResumeHold(session.Id, out var hold);
-        var worker = session.BoundTaskId is not null || session.BoundAttemptId is not null;
         var supports = _openSessionHandles.TryGetValue(session.Id, out var handle)
             ? handle.Agent.SupportsSessionResume : _agentRuntime.CanResumeSession(session.Provider);
         var reason = session.UnknownReason ?? "stream_lost";
@@ -35,8 +34,9 @@ public sealed partial class TrackActor
             _ => "The provider stream ended without a confirmed outcome."
         };
         if (string.IsNullOrWhiteSpace(session.NativeThreadId)) detail += " No original provider session ID is available.";
-        return new(reason, detail, !worker && supports && !session.ReconnectInvalidated &&
-            !string.IsNullOrWhiteSpace(session.NativeThreadId), !worker, hold?.Busy == true, session.UnknownLastError);
+        var recoverable = session.BoundAttemptId is null || _activeAttempts.ContainsKey(session.BoundAttemptId);
+        return new(reason, detail, recoverable && supports && !session.ReconnectInvalidated &&
+            !string.IsNullOrWhiteSpace(session.NativeThreadId), recoverable, hold?.Busy == true, session.UnknownLastError);
     }
 
     private void RequireSessionDispatchAvailableCore(string sessionId)
@@ -73,23 +73,25 @@ public sealed partial class TrackActor
         return Task.CompletedTask;
     }
 
-    internal async Task<AgentSessionDto> RecoverSessionAsync(string sessionId, RecoverSessionRequest request, CancellationToken ct)
+    private async Task<AgentSessionDto> RecoverSessionAsync(string sessionId, string action, CancellationToken ct, InteropPrincipal? principal = null, int? expectedEpoch = null, string? expectedAttemptId = null)
     {
-        if (request.Mode is not ("reconnect" or "reset_context"))
+        if (action is not ("reconnect" or "reset_context"))
             throw KernelException.InvalidArgument("Recovery mode must be reconnect or reset_context.");
         var operation = await EnqueueAsync(async actor =>
         {
             await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
             var session = RequireSessionCore(sessionId);
+            RequireSessionMutationCore(session, principal ?? new InteropPrincipal.Human(), expectedAttemptId, destructive: true);
+            if (expectedEpoch is { } epoch && epoch != session.Epoch) throw KernelException.Conflict("The session epoch changed.");
             RequireResumeWorkspaceCore(session);
             if (_scheduler.HasActive(sessionId) || _scheduler.IsCompacting(sessionId) ||
                 _scheduler.HasReservation(sessionId) || _scheduler.IsSteering(sessionId))
                 throw KernelException.Conflict("Wait for the current session operation before recovering.");
-            if (session.Status != "unknown" && !(request.Mode == "reset_context" && session.Status == "idle"))
+            if (session.Status != "unknown" && !(action == "reset_context" && session.Status == "idle"))
                 throw KernelException.Conflict("Recovery is unavailable in this session state.");
             _scheduler.TryGetResumeHold(sessionId, out var hold);
             if (hold?.Busy == true) throw KernelException.Conflict("Session recovery is already in progress.");
-            if (request.Mode == "reconnect" && ReadUnknownDetailCore(session)?.CanReconnect != true)
+            if (action == "reconnect" && ReadUnknownDetailCore(session)?.CanReconnect != true)
             {
                 if (string.IsNullOrWhiteSpace(session.NativeThreadId))
                     await PersistAndEmitSessionUpdatedCoreAsync(session with { ReconnectInvalidated = true,
@@ -108,7 +110,7 @@ public sealed partial class TrackActor
             _sessionRecoveryJobs.RemoveAll(job => job.IsCompleted);
             _sessionRecoveryJobs.Add(actor.TrackBackgroundJob(async () =>
             {
-                try { completion.TrySetResult(await RunSessionRecoveryAsync(sessionId, request.Mode, hold, session.Epoch).ConfigureAwait(false)); }
+                try { completion.TrySetResult(await RunSessionRecoveryAsync(sessionId, action, hold, session.Epoch).ConfigureAwait(false)); }
                 catch (Exception error) { completion.TrySetException(error); }
             }));
             return completion.Task;
@@ -119,8 +121,8 @@ public sealed partial class TrackActor
     private void RequireResumeWorkspaceCore(AgentSessionDto session)
     {
         RequireWorkspaceReadyCore();
-        if (session.BoundAttemptId is not null || session.BoundTaskId is not null)
-            throw KernelException.InvalidArgument("Use the Worker attempt controls to continue a Worker session.");
+        if (session.BoundAttemptId is { } attemptId)
+            RequireCurrentWorkerCore(session.Id, attemptId);
         RequireDispatchWorkspace(session);
         if (_track.ClosedAtMs is not null || session.ArchivedAtMs is not null)
             throw KernelException.PreconditionFailed("Reopen this conversation before recovering its provider session.");
@@ -209,6 +211,11 @@ public sealed partial class TrackActor
                 _sessions[sessionId] = updated;
                 success = true;
                 ReleaseSessionResumeCore(sessionId);
+                if (session.BoundAttemptId is { } attemptId && _activeAttempts.TryGetValue(attemptId, out var attempt))
+                {
+                    attempt.InterruptionUnconfirmed = false;
+                    if (mode == "reset_context") attempt.Paused = true;
+                }
                 if (mode == "reset_context") _scheduler.Clear(sessionId);
                 if (replacement is not null && spec is not null)
                     await RegisterConfirmedOpenAgentSessionCoreAsync(updated with { Model = spec.Model,

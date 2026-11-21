@@ -44,14 +44,14 @@ it.each(['open', 'close', 'stop'] as const)('typed unavailable /%s is not sent a
   await submit(input, `/${command}`);
   await waitFor(() => expect(input.textContent).toBe(`/${command}`));
   expect(screen.getByRole('alert').textContent).toBeTruthy();
-  expect(fixture.requests.filter(request => request.method === 'PATCH' || request.path.endsWith('/messages') || request.path.endsWith('/interrupt'))).toHaveLength(0);
+  expect(fixture.requests.filter(request => request.method === 'PATCH' || request.path.endsWith('/messages') || request.path.endsWith('/control'))).toHaveLength(0);
 });
 
 it('sends an unregistered /xxx as ordinary Planner text', async () => {
   const fixture = renderCommandFixture();
   await submit(await open(), '/xxx a question');
   await waitFor(() => expect(fixture.requests.filter(request => request.path.endsWith('/messages'))).toHaveLength(1));
-  expect(fixture.requests.find(request => request.path.endsWith('/messages'))?.body).toMatchObject({ text: '/xxx a question' });
+  expect(fixture.requests.find(request => request.path.endsWith('/messages'))?.body).toMatchObject({ content: '/xxx a question' });
 });
 
 it('menu and typed close share the same execution and the page menu refetch fence', async () => {
@@ -84,7 +84,7 @@ it('keeps the v1 running composer read-only and interrupts once through Stop', a
   const input = await screen.findByRole('combobox', { name: 'Message' });
   await waitFor(() => expect(input.getAttribute('contenteditable')).toBe('true'));
   await userEvent.click(await screen.findByRole('button', { name: /^Stop$/ }));
-  await waitFor(() => expect(fixture.requests.filter(request => request.path.endsWith('/interrupt'))).toHaveLength(1));
+  await waitFor(() => expect(fixture.requests.filter(request => request.path.endsWith('/control'))).toHaveLength(1));
   expect(fixture.requests.filter(request => request.path.endsWith('/messages'))).toHaveLength(0);
 });
 
@@ -195,7 +195,7 @@ it.each(['close'].flatMap(command => gestures.map(gesture => [command, gesture] 
     expect(input.textContent).toBe(`/${command}`);
     expect(fixture.requests.filter(request => ['PATCH', 'PUT', 'POST'].includes(request.method))).toHaveLength(0);
     fireEvent.keyDown(input, { key: 'Enter' });
-    await waitFor(() => expect(fixture.requests.filter(request => command === 'close' ? request.method === 'PATCH' : request.path.endsWith('/interrupt'))).toHaveLength(1));
+    await waitFor(() => expect(fixture.requests.filter(request => command === 'close' ? request.method === 'PATCH' : request.path.endsWith('/control'))).toHaveLength(1));
     expect(fixture.requests.filter(request => request.path.endsWith('/messages'))).toHaveLength(0);
   });
 
@@ -221,6 +221,6 @@ it.each(['/rename New title', '/pin', '/unpin', '/admin', '/member', '/askme', '
   const fixture = renderCommandFixture(); const input = await open();
   await submit(input, text);
   await waitFor(() => expect(fixture.requests.filter(request => request.path.endsWith('/messages')).map(request => request.body))
-    .toEqual([expect.objectContaining({ text })]));
+    .toEqual([expect.objectContaining({ content: text })]));
   expect(fixture.requests.filter(request => request.method === 'PATCH' || request.method === 'PUT')).toHaveLength(0);
 });

@@ -45,7 +45,7 @@ it('honors unavailable recovery capabilities', () => {
 it('uses the unified recovery endpoint for both modes', () => {
   for (const mode of ['reconnect', 'reset_context'] as const) {
     const operation = recoverSessionOperation('session /', mode);
-    expect(operation).toMatchObject({ method: 'POST', path: '/api/v1/sessions/session%20%2F/recover', body: { mode } });
+    expect(operation).toMatchObject({ method: 'POST', path: '/api/v1/sessions/session%20%2F/control', body: { action: mode } });
     expect(operation.responseSchema.safeParse({ id: 'other', trackId: 't', provider: 'codex', contextUsage: null, createdAtMs: 1, updatedAtMs: 1 }).success).toBe(false);
   }
 });

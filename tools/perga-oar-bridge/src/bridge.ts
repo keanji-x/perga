@@ -305,8 +305,8 @@ export class OarBridgeServer {
     const resolvedModel = session.model().value ?? model ?? null;
     const resolvedEffort = session.effort().value ?? effort ?? null;
 
-    let workerConfiguration: Record<string, unknown> | null = null;
-    if (params.configureWorker === true) {
+    let sessionConfiguration: Record<string, unknown> | null = null;
+    {
       const { models: catalog } = await listEnabledModels(
         runtime,
         installation,
@@ -328,7 +328,7 @@ export class OarBridgeServer {
       const defaultReasoningEffort =
         (!effort ? resolvedEffort : null) ?? (defaultModelOption?.defaultReasoningEffort ?? null);
       if (workerModels.length > 0 || defaultModel !== null || defaultReasoningEffort !== null) {
-        workerConfiguration = { models: workerModels, defaultModel, defaultReasoningEffort };
+        sessionConfiguration = { models: workerModels, defaultModel, defaultReasoningEffort };
       }
     }
 
@@ -340,7 +340,7 @@ export class OarBridgeServer {
       supportsNativeCompact: nativeCompact || this._slashCompactAdvertised,
       supportsSessionResume: true,
       contextUsage: buildUsagePayload(session),
-      ...(workerConfiguration ? { workerConfiguration } : {}),
+      sessionConfiguration,
     };
   }
 

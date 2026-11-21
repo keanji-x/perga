@@ -48,7 +48,7 @@ it('cancels a closing v1 items read and rejects its late body before fetching fr
   const held = new Promise<ApiTransportResponse>(resolve => { release = resolve; });
   let reads = 0;
   const view = renderSessionFixture({ initial: '/track/daily?panel=conversations', reply: request => {
-    if (request.path.includes('/sessions/second-planner/items?') && !request.path.includes('&view=') && ++reads === 1) return held;
+    if (request.path.includes('/sessions/second-planner/items?') && !request.path.includes('limit=1') && ++reads === 1) return held;
     return undefined;
   } });
   view.items.set('second-planner', [sessionItem('second-planner', 1, 'Fresh history.')]);
@@ -56,7 +56,7 @@ it('cancels a closing v1 items read and rejects its late body before fetching fr
     await page.getByRole('button', { name: 'Conversation Other conversation', exact: true }).click();
     await expect.element(page.getByText('Loading conversation…')).toBeVisible();
     await expect.poll(() => reads).toBe(1);
-    const first = view.requests.find(request => request.path.includes('/sessions/second-planner/items?') && !request.path.includes('&view='))!;
+    const first = view.requests.find(request => request.path.includes('/sessions/second-planner/items?') && !request.path.includes('limit=1'))!;
     await page.getByRole('button', { name: 'Close conversation', exact: true }).click();
     expect(first.signal?.aborted).toBe(true);
     await act(async () => {

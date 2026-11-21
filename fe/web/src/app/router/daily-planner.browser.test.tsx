@@ -101,7 +101,7 @@ it('keeps the daily report usable at phone width', async () => {
 it.each([1000, 768, 600])('keeps the composer inside its conversation card with a long transcript at height %s', async (height) => {
   await page.viewport(1440, height);
   const history = Array.from({ length: 30 }, (_, index) => sessionItem('daily-planner', index + 1, `Reply ${index + 1}.\n\n${'A detailed progress update with enough content to need scrolling. '.repeat(12)}`));
-  renderDailyFixture({ initial: '/?day=2026-10-04', reply: (request) => request.path.includes('/items?') && !request.path.includes('&view=')
+  renderDailyFixture({ initial: '/?day=2026-10-04', reply: (request) => request.path.includes('/items?') && !request.path.includes('limit=1')
     ? { status: 200, statusText: 'OK', body: sessionPage(fixtureSession('daily-planner', 'daily'), history) } : undefined });
   await page.getByText('Prioritize the release.', { exact: false }).findElement();
   await page.getByRole('button', { name: '讨论这项工作', exact: true }).click();
@@ -242,14 +242,14 @@ it.each([1024, 1440])('keeps the real Today conversation and draft in separate c
   await page.screenshot({ path: `../../../../test-results/v10-today-changes-${width}.png` });
   await page.getByRole('button', { name: 'Back to Today Assistant', exact: true }).click();
   await expect.element(field).toHaveTextContent('Help me plan today');
-  expect(requests.some(request => request.path.includes('/items?afterId=0&limit=1&view=run'))).toBe(true);
+  expect(requests.some(request => request.path.includes('/items?afterId=0&limit=1'))).toBe(true);
   expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(window.innerWidth);
 });
 
 it('scrolls real Planner history above the fixed Today composer across views', async () => {
   await page.viewport(1440, 600);
   const history = Array.from({ length: 20 }, (_, index) => sessionItem('daily-planner', index + 1, `Daily reply ${index + 1}.\n\n${'Plan the release using the current evidence. '.repeat(20)}`));
-  renderDailyFixture({ reply: request => request.path.includes('/items?') && !request.path.includes('&view=')
+  renderDailyFixture({ reply: request => request.path.includes('/items?') && !request.path.includes('limit=1')
     ? { status: 200, statusText: 'OK', body: sessionPage(fixtureSession('daily-planner', 'daily'), history) } : undefined });
   const assistant = page.getByRole('region', { name: 'Today Assistant', exact: true });
   await assistant.getByText('Daily reply 20.', { exact: false }).findElement();
@@ -271,7 +271,7 @@ it.each([false, true])('navigates loaded Today exchanges and restores the parked
     sessionItem('daily-planner', index * 2 + 1, `Today question ${index + 1}`, 'user', `turn-${index}`),
     sessionItem('daily-planner', index * 2 + 2, `Today reply ${index + 1}. ${'Read the release evidence carefully. '.repeat(30)}`, 'assistant_text', `turn-${index}`),
   ]).flat();
-  renderDailyFixture({ reply: request => request.path.includes('/items?') && !request.path.includes('&view=') ? { status: 200, statusText: 'OK', body: sessionPage(fixtureSession('daily-planner', 'daily'), items) } : undefined });
+  renderDailyFixture({ reply: request => request.path.includes('/items?') && !request.path.includes('limit=1') ? { status: 200, statusText: 'OK', body: sessionPage(fixtureSession('daily-planner', 'daily'), items) } : undefined });
   const assistant = page.getByRole('region', { name: 'Today Assistant', exact: true });
   const field = assistant.getByRole('combobox', { name: 'Message', exact: true });
   await field.fill('Keep my draft');
@@ -305,7 +305,7 @@ it.each([false, true])('focuses every explicit Today Reply without replacing the
   await page.viewport(1440, 800);
   renderDailyFixture({ reply: request => request.path === '/api/v1/tracks/daily' ? { status: 200, statusText: 'OK', body: {
     ...fixtureSnapshot(fixtureTrack('daily', { leadSessionId: 'daily-planner' }), [fixtureSession('daily-planner', 'daily', { title: 'Daily Planner conversation', isLead: true })]),
-    openAsks: [{ id: '7', trackId: 'daily', status: 'open', delivery: 'wake', createdAtMs: 5, questions: [{ title: 'Choose the release branch', options: ['main'] }] }],
+    openAsks: [{ id: '7', trackId: 'daily', status: 'open', delivery: 'wake', createdAtMs: 5, questions: [{ question: 'Choose the release branch', options: ['main'] }] }],
   } } : undefined });
   const field = page.getByRole('combobox', { name: 'Message', exact: true });
   await field.fill('An unfinished sentence');
@@ -327,7 +327,7 @@ it('interrupts the working Today conversation from the transcript with Escape', 
   await page.viewport(1440, 800);
   const { requests } = renderDailyFixture({ reply: request => {
     if (request.path.includes('/items?')) return { status: 200, statusText: 'OK', body: sessionPage(fixtureSession('daily-planner', 'daily'), [sessionItem('daily-planner', 1, 'Working on the [Release evidence](mailto:release@example.test).')], sessionTurn('daily-planner')) };
-    if (request.path.endsWith('/interrupt')) return { status: 200, statusText: 'OK', body: { card_id: 'daily-planner', worker_session_id: 'runtime', stopped: true } };
+    if (request.path.endsWith('/control')) return { status: 200, statusText: 'OK', body: { card_id: 'daily-planner', worker_session_id: 'runtime', stopped: true } };
     return undefined;
   } });
   const assistant = page.getByRole('region', { name: 'Today Assistant', exact: true });
@@ -336,7 +336,7 @@ it('interrupts the working Today conversation from the transcript with Escape', 
   const evidence = await assistant.getByRole('link', { name: 'Release evidence', exact: true }).findElement();
   evidence.focus();
   await userEvent.keyboard('{Escape}');
-  await expect.poll(() => requests.filter(request => request.path.endsWith('/interrupt')).length).toBe(1);
+  await expect.poll(() => requests.filter(request => request.path.endsWith('/control')).length).toBe(1);
   await expect.element(assistant).toBeVisible();
 });
 
@@ -414,7 +414,7 @@ it.each([900, 600])('optically centers the empty perga Today composer and pins i
   await expect.poll(() => getComputedStyle(referenceBody).boxShadow).toBe('none');
   reference.unmount();
   let populated = false;
-  const fixture = renderDailyFixture({ pergaMode: true, reply: request => request.path.includes('/items?') && !request.path.includes('&view=')
+  const fixture = renderDailyFixture({ pergaMode: true, reply: request => request.path.includes('/items?') && !request.path.includes('limit=1')
     ? { status: 200, statusText: 'OK', body: sessionPage(fixtureSession('daily-planner', 'daily'), populated ? [sessionItem('daily-planner', 1, 'Plan the release', 'user')] : []) }
     : undefined });
   const assistant = page.getByRole('region', { name: 'Today Assistant', exact: true });

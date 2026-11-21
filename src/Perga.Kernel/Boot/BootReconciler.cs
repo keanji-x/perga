@@ -103,7 +103,7 @@ public sealed class BootReconciler : IBootReconciler
         {
             var track = await _store.GetTrackAsync(trackId, ct).ConfigureAwait(false);
             if (track is null || track.ClosedAtMs is not null || track.LeadSessionId is null) continue;
-            await _actorRegistry.GetOrActivate(trackId).PokeLeadAsync(ct).ConfigureAwait(false);
+            await _actorRegistry.GetOrActivate(trackId).PokePendingWakesAsync(ct).ConfigureAwait(false);
             wokenCount++;
         }
 

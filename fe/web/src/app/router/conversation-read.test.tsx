@@ -37,8 +37,8 @@ it.each([true, false])('does not claim Running after a failed run read (initial 
   expect(field.textContent).toBe('Keep this draft.');
   const after = fixture.requests.slice(before);
   expect(after.every(request => request.method === 'GET')).toBe(true);
-  expect(after.filter(request => !request.path.includes('view=live')).map(request => request.path))
-    .toEqual(['/api/v1/sessions/daily-planner/items?afterId=0&limit=1&view=run']);
+  expect(new Set(after.map(request => request.path)))
+    .toEqual(new Set(['/api/v1/sessions/daily-planner/items?afterId=0&limit=1']));
 });
 
 it('retries history independently and retains the last readable transcript', async () => {
@@ -57,7 +57,7 @@ it('retries history independently and retains the last readable transcript', asy
   expect(after.every(request => request.method === 'GET')).toBe(true);
   // Status/live polling may run while the history retry settles. Count the
   // independently retried history read without treating a poll as its effect.
-  expect(after.filter(request => request.path === '/api/v1/sessions/daily-planner/items?afterId=0&limit=500&latest=true')).toHaveLength(1);
+  expect(after.filter(request => request.path === '/api/v1/sessions/daily-planner/items?afterId=0&limit=60&latest=true')).toHaveLength(1);
 });
 
 it('keeps execution status unconfirmed throughout a cold retry', async () => {

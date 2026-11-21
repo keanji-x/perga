@@ -2,8 +2,8 @@
 // Live execution-scoped approvals belong to `approval.ts`, never here.
 
 import { z } from 'zod';
-import { askDtoSchema, askQuestionSchema } from '../api/schemas.js';
-import { askQuestionDtoSchema } from '../api/perga-v1.js';
+import { askQuestionSchema } from '../api/schemas.js';
+import { askQuestionDtoSchema, sessionInteractionResultSchema } from '../api/perga-v1.js';
 import type { AskAction, AskAnswer } from '../api/generated/wire.js';
 import type { ApiOperation } from '../api/types.js';
 import type { ActivityItem, AskDelivery, AskId, AskQuestion } from './activity.js';
@@ -95,10 +95,10 @@ export function clampAskAnswer(text: string): string {
 }
 
 /**
- * Answer every question of one durable ask via `POST /api/v1/tracks/{trackId}/asks/{askId}/answer`.
+ * Answer every question of one durable ask via `POST /api/v1/sessions/{sessionId}/interactions/{interactionId}/respond`.
  */
 export function answerAskOperation(
-  trackId: string,
+  sessionId: string,
   askId: AskId,
   answers: readonly AskAnswer[],
   questions?: readonly AskQuestion[],
@@ -112,14 +112,15 @@ export function answerAskOperation(
     });
   return {
     method: 'POST',
-    path: `/api/v1/tracks/${encodeURIComponent(trackId)}/asks/${encodeURIComponent(String(askId))}/answer`,
+    path: `/api/v1/sessions/${encodeURIComponent(sessionId)}/interactions/${encodeURIComponent(String(askId))}/respond`,
     body: { answers: mappedAnswers },
-    responseSchema: z.union([askDtoSchema.transform(() => undefined), z.undefined()]),
+    responseSchema: sessionInteractionResultSchema.transform(() => undefined),
   };
 }
 
 export const ANSWER_ASK_FAILURES: FailureTable<WriteClass> = Object.freeze({
   rules: Object.freeze([
+    Object.freeze({ status: Object.freeze([409]), code: 'precondition_failed', is: 'refused' as const }),
     Object.freeze({ status: Object.freeze([409]), is: 'done' as const }),
     Object.freeze({ status: Object.freeze([400, 403, 404, 413, 415, 422]), is: 'refused' as const }),
   ]),

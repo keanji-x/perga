@@ -26,22 +26,22 @@ public sealed class SessionContextUsageTests
         }
 
         await ctx.SendAndWaitForTurnAsync(id, new("sample", "before-switch"));
-        var sampled = Assert.Single(await ctx.Kernel.ListSessionsAsync(snap.Track.Id));
+        var sampled = Assert.Single((await ctx.Kernel.ListSessionsAsync(snap.Track.Id, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray());
         Assert.Equal(250, sampled.ContextUsage?.UsedTokens);
         Assert.NotNull(sampled.ContextUsage?.ObservedAtMs);
 
-        var switched = await ctx.Kernel.UpdateSessionModelAsync(id, new("next-model"));
+        var switched = await ctx.Kernel.UpdateSessionAsync(id, new(Model: new("next-model")), new InteropPrincipal.Human(), default);
         Assert.Null(switched.ContextUsage);
         var native = Assert.Single(ctx.AgentRuntime.OpenedSessions);
         Assert.Contains("next-model", native.ModelSwitches);
 
-        var compacted = await ctx.Kernel.CompactSessionAsync(id);
+        var compacted = await ctx.Kernel.ControlSessionAsync(id, new("compact"), new InteropPrincipal.Human(), default);
         Assert.Equal(1, native.CompactCalls);
         Assert.Equal("next-model", compacted.Model);
         Assert.Null(compacted.ContextUsage);
 
         Assert.Null(ctx.Store.GetTurnsForSession(id).Last().Usage);
-        var persisted = Assert.Single(await ctx.Kernel.ListSessionsAsync(snap.Track.Id));
+        var persisted = Assert.Single((await ctx.Kernel.ListSessionsAsync(snap.Track.Id, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray());
         Assert.Equal(compacted, persisted);
         Assert.Contains(ctx.Store.PersistedEvents, e => e.Kind == KernelEventKinds.SessionUpdated &&
             e.Payload.GetProperty("id").GetString() == id &&
@@ -74,7 +74,7 @@ public sealed class SessionContextUsageTests
         try
         {
             await sampled.Task.WaitAsync(TimeSpan.FromSeconds(10));
-            var live = (await ctx.Kernel.ListSessionsAsync(snap.Track.Id)).Single(s => s.Id == id);
+            var live = ((await ctx.Kernel.ListSessionsAsync(snap.Track.Id, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray()).Single(s => s.Id == id);
             Assert.Equal(250, live.ContextUsage?.UsedTokens);
             Assert.Equal(1000, live.ContextUsage?.WindowTokens);
             Assert.Equal(0.25, live.ContextUsage?.Ratio);
@@ -84,11 +84,11 @@ public sealed class SessionContextUsageTests
                 e.Payload.GetProperty("id").GetString() == id &&
                 e.Payload.TryGetProperty("contextUsage", out var usage) && usage.ValueKind == System.Text.Json.JsonValueKind.Object && usage.GetProperty("usedTokens").GetInt64() == 250);
             if (changeDuringTurn)
-                Assert.Null((await ctx.Kernel.UpdateSessionModelAsync(id, new("next-model"))).ContextUsage);
+                Assert.Null((await ctx.Kernel.UpdateSessionAsync(id, new(Model: new("next-model")), new InteropPrincipal.Human(), default)).ContextUsage);
         }
         finally { release.TrySetResult(); }
         await turn;
-        var completed = (await ctx.Kernel.ListSessionsAsync(snap.Track.Id)).Single(s => s.Id == id);
+        var completed = ((await ctx.Kernel.ListSessionsAsync(snap.Track.Id, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray()).Single(s => s.Id == id);
         if (changeDuringTurn)
             Assert.Null(completed.ContextUsage);
         else
@@ -97,15 +97,15 @@ public sealed class SessionContextUsageTests
             Assert.Equal(noFinalUsage ? 0.25 : 0.4, completed.ContextUsage?.Ratio);
         }
         if (!changeDuringTurn)
-            Assert.Null((await ctx.Kernel.UpdateSessionModelAsync(id, new("next-model"))).ContextUsage);
+            Assert.Null((await ctx.Kernel.UpdateSessionAsync(id, new(Model: new("next-model")), new InteropPrincipal.Human(), default)).ContextUsage);
         Assert.Contains(ctx.Store.PersistedEvents, e => e.Kind == KernelEventKinds.SessionUpdated &&
             e.Payload.GetProperty("id").GetString() == id &&
             (!e.Payload.TryGetProperty("contextUsage", out var usage) || usage.ValueKind == System.Text.Json.JsonValueKind.Null));
 
         // A new turn on the selected model validates the new measurement.
         await ctx.SendAndWaitForTurnAsync(id, new("next", "usage-next"));
-        Assert.NotNull((await ctx.Kernel.ListSessionsAsync(snap.Track.Id)).Single(s => s.Id == id).ContextUsage);
-        var compacted = await ctx.Kernel.CompactSessionAsync(id);
+        Assert.NotNull(((await ctx.Kernel.ListSessionsAsync(snap.Track.Id, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray()).Single(s => s.Id == id).ContextUsage);
+        var compacted = await ctx.Kernel.ControlSessionAsync(id, new("compact"), new InteropPrincipal.Human(), default);
         Assert.Null(compacted.ContextUsage);
 
     }
@@ -135,14 +135,14 @@ public sealed class SessionContextUsageTests
 
         await ctx.SendAndWaitForTurnAsync(id, new("hello", "delayed-compact-1"));
 
-        var compacted = await ctx.Kernel.CompactSessionAsync(id);
+        var compacted = await ctx.Kernel.ControlSessionAsync(id, new("compact"), new InteropPrincipal.Human(), default);
         Assert.Equal(1, compacted.Epoch);
         Assert.Equal("thr_native_1", compacted.NativeThreadId);
         Assert.Equal(100, compacted.ContextUsage?.UsedTokens);
         Assert.Equal(1_048_576, compacted.ContextUsage?.WindowTokens);
 
         await ctx.SendAndWaitForTurnAsync(id, new("after compact", "compact-window-follow-up"));
-        var after = Assert.Single(await ctx.Kernel.ListSessionsAsync(snap.Track.Id));
+        var after = Assert.Single((await ctx.Kernel.ListSessionsAsync(snap.Track.Id, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray());
         Assert.Equal(550, after.ContextUsage?.UsedTokens);
         Assert.Equal(1_048_576, after.ContextUsage?.WindowTokens);
 
@@ -161,12 +161,12 @@ public sealed class SessionContextUsageTests
         ctx.AgentRuntime.TurnScript = Stream;
 
         await ctx.SendAndWaitForTurnAsync(id, new("first", "trailing-1"));
-        var initial = Assert.Single(await ctx.Kernel.ListSessionsAsync(snap.Track.Id));
+        var initial = Assert.Single((await ctx.Kernel.ListSessionsAsync(snap.Track.Id, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray());
         Assert.Equal(220, initial.ContextUsage?.UsedTokens);
         Assert.Equal(2000, initial.ContextUsage?.WindowTokens);
 
         await ctx.SendAndWaitForTurnAsync(id, new("second", "trailing-2"));
-        var latest = Assert.Single(await ctx.Kernel.ListSessionsAsync(snap.Track.Id));
+        var latest = Assert.Single((await ctx.Kernel.ListSessionsAsync(snap.Track.Id, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray());
         Assert.Equal(100, latest.ContextUsage?.UsedTokens);
         Assert.Equal(1000, latest.ContextUsage?.WindowTokens);
 
@@ -202,7 +202,7 @@ public sealed class SessionContextUsageTests
         await ctx.SendAndWaitForTurnAsync(id, new("hello", "handover-idle-1"));
 
         var originalSession = Assert.Single(ctx.AgentRuntime.OpenedSessions);
-        var oldEpochCompacted = await ctx.Kernel.CompactSessionAsync(id);
+        var oldEpochCompacted = await ctx.Kernel.ControlSessionAsync(id, new("compact"), new InteropPrincipal.Human(), default);
         Assert.Equal(2, oldEpochCompacted.Epoch);
         Assert.Null(oldEpochCompacted.NativeThreadId);
         Assert.Null(oldEpochCompacted.ContextUsage);
@@ -227,7 +227,7 @@ public sealed class SessionContextUsageTests
         AgentSessionDto latest;
         do
         {
-            latest = (await ctx.Kernel.ListSessionsAsync(snap.Track.Id)).Single(s => s.Id == id);
+            latest = ((await ctx.Kernel.ListSessionsAsync(snap.Track.Id, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray()).Single(s => s.Id == id);
             if (latest.ContextUsage?.WindowTokens == 1_048_576)
                 break;
             await Task.Delay(15);
@@ -246,7 +246,7 @@ public sealed class SessionContextUsageTests
         await using var ctx = new KernelTestContext();
         var (_, snap) = await ctx.CreateDefaultTrackAsync();
         var id = snap.Track.LeadSessionId!;
-        await ctx.Kernel.UpdateSessionModelAsync(id, new("model-a"));
+        await ctx.Kernel.UpdateSessionAsync(id, new(Model: new("model-a")), new InteropPrincipal.Human(), default);
 
         ctx.AgentRuntime.TurnScript = Stream;
         async IAsyncEnumerable<UnifiedAgentEvent> Stream(ScriptableFakeAgentSession session, TurnInput input,
@@ -276,7 +276,7 @@ public sealed class SessionContextUsageTests
         AgentSessionDto synced;
         do
         {
-            synced = (await ctx.Kernel.ListSessionsAsync(snap.Track.Id)).Single(s => s.Id == id);
+            synced = ((await ctx.Kernel.ListSessionsAsync(snap.Track.Id, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray()).Single(s => s.Id == id);
             if (synced.ContextUsage?.UsedTokens == 1200)
                 break;
             await Task.Delay(15);
@@ -286,7 +286,7 @@ public sealed class SessionContextUsageTests
         Assert.Equal(1_048_576, synced.ContextUsage?.WindowTokens);
 
         // Switch model to model-b; stale model-a reading must be rejected, model-b reading accepted.
-        var switched = await ctx.Kernel.UpdateSessionModelAsync(id, new("model-b"));
+        var switched = await ctx.Kernel.UpdateSessionAsync(id, new(Model: new("model-b")), new InteropPrincipal.Human(), default);
         Assert.Null(switched.ContextUsage);
 
         opened.EmitIdleContextUsage(new IdleContextUsage(
@@ -294,7 +294,7 @@ public sealed class SessionContextUsageTests
             -1,
             "thr_model_test"));
         await Task.Delay(40);
-        var stillInvalidated = (await ctx.Kernel.ListSessionsAsync(snap.Track.Id)).Single(s => s.Id == id);
+        var stillInvalidated = ((await ctx.Kernel.ListSessionsAsync(snap.Track.Id, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray()).Single(s => s.Id == id);
         Assert.Null(stillInvalidated.ContextUsage);
 
         opened.EmitIdleContextUsage(new IdleContextUsage(
@@ -306,7 +306,7 @@ public sealed class SessionContextUsageTests
         AgentSessionDto updatedModelB;
         do
         {
-            updatedModelB = (await ctx.Kernel.ListSessionsAsync(snap.Track.Id)).Single(s => s.Id == id);
+            updatedModelB = ((await ctx.Kernel.ListSessionsAsync(snap.Track.Id, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray()).Single(s => s.Id == id);
             if (updatedModelB.ContextUsage?.WindowTokens == 200_000)
                 break;
             await Task.Delay(15);
@@ -322,7 +322,7 @@ public sealed class SessionContextUsageTests
         await using var ctx = new KernelTestContext();
         var (_, snap) = await ctx.CreateDefaultTrackAsync();
         var id = snap.Track.LeadSessionId!;
-        await ctx.Kernel.UpdateSessionModelAsync(id, new("model-a"));
+        await ctx.Kernel.UpdateSessionAsync(id, new(Model: new("model-a")), new InteropPrincipal.Human(), default);
 
         var turnIndex = 0;
         var turn3Started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -353,11 +353,11 @@ public sealed class SessionContextUsageTests
         }
 
         await ctx.SendAndWaitForTurnAsync(id, new("t1", "same-model-1"));
-        var after1 = (await ctx.Kernel.ListSessionsAsync(snap.Track.Id)).Single(s => s.Id == id);
+        var after1 = ((await ctx.Kernel.ListSessionsAsync(snap.Track.Id, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray()).Single(s => s.Id == id);
         Assert.Equal(1_000_000, after1.ContextUsage?.WindowTokens);
 
         await ctx.SendAndWaitForTurnAsync(id, new("t2", "same-model-2"));
-        var after2 = (await ctx.Kernel.ListSessionsAsync(snap.Track.Id)).Single(s => s.Id == id);
+        var after2 = ((await ctx.Kernel.ListSessionsAsync(snap.Track.Id, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray()).Single(s => s.Id == id);
         Assert.Equal(220, after2.ContextUsage?.UsedTokens);
         Assert.Equal(1_000_000, after2.ContextUsage?.WindowTokens);
         Assert.Equal(220d / 1_000_000d, after2.ContextUsage!.Ratio!.Value, precision: 6);
@@ -368,14 +368,14 @@ public sealed class SessionContextUsageTests
         try
         {
             await turn3Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            await ctx.Kernel.UpdateSessionModelAsync(id, new("model-b"));
+            await ctx.Kernel.UpdateSessionAsync(id, new(Model: new("model-b")), new InteropPrincipal.Human(), default);
         }
         finally
         {
             releaseTurn3.TrySetResult();
         }
         await turn3Task;
-        var after3 = (await ctx.Kernel.ListSessionsAsync(snap.Track.Id)).Single(s => s.Id == id);
+        var after3 = ((await ctx.Kernel.ListSessionsAsync(snap.Track.Id, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray()).Single(s => s.Id == id);
         Assert.Null(after3.ContextUsage);
         Assert.Null(after3.ContextUsage?.WindowTokens);
     }
@@ -429,7 +429,7 @@ public sealed class SessionContextUsageTests
         await oldStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
         releaseOld.TrySetResult();
         await oldTurnTask;
-        var items = await ctx.Kernel.GetSessionItemsAsync(id);
+        var items = await ctx.Kernel.GetSessionItemsAsync(id, new(), new InteropPrincipal.Human(), default);
         var targetTurnId = items.LastTurn!.Id;
 
         var throwOnPendingUsage = false;
@@ -445,7 +445,7 @@ public sealed class SessionContextUsageTests
 
         // Allow pending idle usage write to fail after CompleteSessionResumeAsync commits.
         throwOnPendingUsage = true;
-        var resumed = await ctx.Kernel.RecoverSessionAsync(id, new("reconnect"), CancellationToken.None);
+        var resumed = await ctx.Kernel.ControlSessionAsync(id, new("reconnect"), new InteropPrincipal.Human(), CancellationToken.None);
         await oldTurnTask;
 
         Assert.Equal(1, pendingWriteAttempts);
@@ -473,7 +473,7 @@ public sealed class SessionContextUsageTests
         await using var ctx = new KernelTestContext();
         var (_, snap) = await ctx.CreateDefaultTrackAsync();
         var id = snap.Track.LeadSessionId!;
-        await ctx.Kernel.UpdateSessionModelAsync(id, new("model-a", "low"));
+        await ctx.Kernel.UpdateSessionAsync(id, new(Model: new("model-a"), ReasoningEffort: new("low")), new InteropPrincipal.Human(), default);
 
         var turnIndex = 0;
         ctx.AgentRuntime.TurnScript = Stream;
@@ -497,16 +497,16 @@ public sealed class SessionContextUsageTests
         }
 
         await ctx.SendAndWaitForTurnAsync(id, new("turn on model A", "switch-no-win-1"));
-        var afterA = (await ctx.Kernel.ListSessionsAsync(snap.Track.Id)).Single(s => s.Id == id);
+        var afterA = ((await ctx.Kernel.ListSessionsAsync(snap.Track.Id, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray()).Single(s => s.Id == id);
         Assert.Equal(1000, afterA.ContextUsage?.WindowTokens);
         Assert.Equal(0.15, afterA.ContextUsage!.Ratio!.Value, precision: 6);
 
 
-        var switched = await ctx.Kernel.UpdateSessionModelAsync(id, new(effortOnly ? "model-a" : "model-b", "high"));
+        var switched = await ctx.Kernel.UpdateSessionAsync(id, new(Model: new(effortOnly ? "model-a" : "model-b"), ReasoningEffort: new("high")), new InteropPrincipal.Human(), default);
         Assert.Null(switched.ContextUsage);
 
         await ctx.SendAndWaitForTurnAsync(id, new("turn on model B", "switch-no-win-2"));
-        var afterB = (await ctx.Kernel.ListSessionsAsync(snap.Track.Id)).Single(s => s.Id == id);
+        var afterB = ((await ctx.Kernel.ListSessionsAsync(snap.Track.Id, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray()).Single(s => s.Id == id);
         var opened = Assert.Single(ctx.AgentRuntime.OpenedSessions);
         Assert.Equal(effortOnly ? "model-a" : "model-b", afterB.Model);
         Assert.Equal("high", afterB.ReasoningEffort);
@@ -526,7 +526,7 @@ public sealed class SessionContextUsageTests
         await using var ctx = new KernelTestContext();
         var (_, snap) = await ctx.CreateDefaultTrackAsync();
         var id = snap.Track.LeadSessionId!;
-        await ctx.Kernel.UpdateSessionModelAsync(id, new("model-a"));
+        await ctx.Kernel.UpdateSessionAsync(id, new(Model: new("model-a")), new InteropPrincipal.Human(), default);
 
         var turnIndex = 0;
         ctx.AgentRuntime.TurnScript = Stream;
@@ -550,15 +550,15 @@ public sealed class SessionContextUsageTests
         }
 
         await ctx.SendAndWaitForTurnAsync(id, new("turn on model A", "compact-switch-1"));
-        var switched = await ctx.Kernel.UpdateSessionModelAsync(id, new("model-b"));
+        var switched = await ctx.Kernel.UpdateSessionAsync(id, new(Model: new("model-b")), new InteropPrincipal.Human(), default);
         Assert.Null(switched.ContextUsage);
 
-        var compacted = await ctx.Kernel.CompactSessionAsync(id);
+        var compacted = await ctx.Kernel.ControlSessionAsync(id, new("compact"), new InteropPrincipal.Human(), default);
         Assert.Null(compacted.ContextUsage?.WindowTokens);
 
 
         await ctx.SendAndWaitForTurnAsync(id, new("turn on model B", "compact-switch-2"));
-        var afterB = (await ctx.Kernel.ListSessionsAsync(snap.Track.Id)).Single(s => s.Id == id);
+        var afterB = ((await ctx.Kernel.ListSessionsAsync(snap.Track.Id, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray()).Single(s => s.Id == id);
         var opened = Assert.Single(ctx.AgentRuntime.OpenedSessions);
         Assert.Equal(900, afterB.ContextUsage?.UsedTokens);
         Assert.Null(afterB.ContextUsage?.WindowTokens);

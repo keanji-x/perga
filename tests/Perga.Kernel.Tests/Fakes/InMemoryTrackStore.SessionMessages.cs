@@ -3,13 +3,12 @@ using Perga.Kernel.Ports;
 
 namespace Perga.Kernel.Tests.Fakes;
 
-internal sealed partial class InMemoryTrackStore : ISessionInputStore, ISessionMessageStore, IWorkerSettingsStore
+internal sealed partial class InMemoryTrackStore : ISessionInputStore, ISessionMessageStore
 {
     private readonly Dictionary<(string SessionId, bool Worker, string Id), PersistedSessionInput> _inputs = new();
     private readonly Dictionary<(string SessionId, bool Worker, string Id), SessionMessage> _messages = new();
-    private readonly Dictionary<(string Track, string Key), StoredSessionCreation> _sessionCreations = new();
+    private readonly Dictionary<(string Track, string Author, string Key), StoredSessionCreation> _sessionCreations = new();
     private readonly Dictionary<(string Id, string Turn), string> _queuedSteers = new();
-    private readonly Dictionary<string, WorkerSettings> _workerSettings = new(StringComparer.Ordinal);
 
     private static (string SessionId, bool Worker, string Id) Key(SessionMessage message) =>
         (message.SessionId, message.AttemptId is not null, message.Id);
@@ -18,26 +17,6 @@ internal sealed partial class InMemoryTrackStore : ISessionInputStore, ISessionM
 
     public ISessionInputStore SessionInputs => this;
     public ISessionMessageStore SessionMessages => this;
-    public IWorkerSettingsStore? WorkerSettings => this;
-
-    public Task<WorkerSettings?> ReadAsync(string sessionId, CancellationToken ct)
-    {
-        lock (_gate)
-            return Task.FromResult(_workerSettings.GetValueOrDefault(sessionId));
-    }
-
-    public Task WriteAsync(string sessionId, WorkerSettings settings, string authorId, AgentSessionDto? updatedSession, EventEnvelopeDto evt, CancellationToken ct)
-    {
-        lock (_gate)
-        {
-            _workerSettings[sessionId] = settings;
-            if (updatedSession is not null) _sessions[sessionId] = updatedSession;
-            AppendEventLocked(evt);
-            return Task.CompletedTask;
-        }
-    }
-
-
     public Task<IReadOnlyList<SessionTurnDto>> ListSessionTurnsAsync(string sessionId, CancellationToken ct) =>
         Task.FromResult(GetTurnsForSession(sessionId));
 
@@ -61,11 +40,20 @@ internal sealed partial class InMemoryTrackStore : ISessionInputStore, ISessionM
                 i.Receipt.TurnStatus == "unknown" && i.Receipt.ResolvedAtMs is null));
     }
 
+    public Task<StoredWorkerDispatch?> FindWorkerDispatchAsync(WorkerDispatchIntent intent, CancellationToken ct)
+    {
+        lock (_gate)
+        {
+            var prior = _sessionCreations.GetValueOrDefault((intent.TrackId, intent.AuthorId, intent.RequestKey));
+            return Task.FromResult(prior is null ? null : new StoredWorkerDispatch(prior.RequestHash, prior.Session?.BoundTaskId!));
+        }
+    }
+
     public Task<StoredSessionCreation?> FindCreationAsync(SessionCreateIntent intent, CancellationToken ct)
     {
         lock (_gate)
         {
-            var creation = _sessionCreations.GetValueOrDefault((intent.TrackId, intent.Key));
+            var creation = _sessionCreations.GetValueOrDefault((intent.TrackId, intent.AuthorId, intent.Key));
             return Task.FromResult(creation is null ? null : creation with
             {
                 Session = creation.Session is { } session ? _sessions.GetValueOrDefault(session.Id) : null,
@@ -96,7 +84,7 @@ internal sealed partial class InMemoryTrackStore : ISessionInputStore, ISessionM
         {
             if (_sessions[session.Id].Status is "queued" or "running" or "unknown")
                 throw KernelException.Conflict("The session already has an active or unresolved turn.");
-            var input = BindInputLocked(session, new($"inp_{Guid.NewGuid():N}", session.Id, null, "owner:installation", request.Key,
+            var input = BindInputLocked(session, new($"inp_{Guid.NewGuid():N}", session.Id, null, request.AuthorId, request.Key,
                 request.Hash, null, null, request.Content, "queued", session.UpdatedAtMs, "input"), false);
             AppendEventLocked(sessionEvent);
             return Task.FromResult(input);
@@ -132,7 +120,7 @@ internal sealed partial class InMemoryTrackStore : ISessionInputStore, ISessionM
             _sessions[session.Id] = session;
             var input = firstInput is null ? null : BindInputLocked(session, new($"inp_{Guid.NewGuid():N}", session.Id, null,
                 "owner:installation", firstInput.Key, firstInput.Hash, null, null, firstInput.Content, "queued", session.UpdatedAtMs, "input"), false);
-            _sessionCreations.Add((intent.TrackId, intent.Key), new(intent.Hash, session, input));
+            _sessionCreations.Add((intent.TrackId, intent.AuthorId, intent.Key), new(intent.Hash, session, input));
             AppendEventLocked(sessionEvent);
             return Task.FromResult(input);
         }

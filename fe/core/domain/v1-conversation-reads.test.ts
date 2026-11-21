@@ -89,7 +89,7 @@ it('returns the canonical queue, handoff, receipt and resume facts without a sec
 
   };
   const run = conversationRunOperation(session.id).responseSchema.parse(value);
-  expect(run).toEqual(value);
+  expect(run).toMatchObject(value);
   expect(conversationPendingQueue(run)).toEqual([
     { entry_id: 'second', text: 'second message', queued_at_ms: 9, rev: 1, state: 'waiting' },
     { entry_id: 'first', text: 'first message', queued_at_ms: 8, rev: 1, state: 'unconfirmed' },
@@ -110,15 +110,12 @@ it('keeps actual terminal session status and computes a nonnegative running cloc
   expect(conversationRunningTurn(run, 10)).toEqual({ turn_id: 'turn', elapsed_ms: 0 });
 });
 
-it('preserves worker activity and interrupting phase independently of the session turn', () => {
-  const worker = {
-    task: { id: 'task', trackId: 'track', blockId: 'block', taskKey: 'inspect', kind: 'agent', status: 'running', createdAtMs: 1, updatedAtMs: 2 },
-    attemptId: 'attempt', phase: 'interrupting', nativeSteer: true, pendingApprovals: [], sequence: 7, reset: true,
-    text: 'partial reply', textTruncated: false, nextSettings: { version: 1, model: null, reasoningEffort: null, approvalMode: 'ask' },
-    canChangeModel: true, reasoningEfforts: ['low'], events: [], messages: [],
-  };
-  const run = conversationRunOperation(session.id).responseSchema.parse({ ...page, state: 'stopping', worker });
-  expect(run.worker).toMatchObject(worker);
+it('preserves top-level activity and task binding independently of the session turn', () => {
+  const activity = { turnId: 'turn', sequence: 7, reset: true, text: 'partial reply', truncated: false, events: [] };
+  const taskBinding = { task: { id: 'task', trackId: 'track', blockId: 'block', taskKey: 'inspect', kind: 'agent', status: 'running', createdAtMs: 1, updatedAtMs: 2 }, attemptId: 'attempt', attemptPhase: 'interrupting', waitingReason: null };
+  const run = conversationRunOperation(session.id).responseSchema.parse({ ...page, state: 'stopping', activity, taskBinding });
+  expect(run.activity).toEqual(activity);
+  expect(run.taskBinding).toMatchObject(taskBinding);
   expect(conversationRunPhase(run)).toBe('issuing_interrupt');
   expect(conversationRunningTurn(run, 10)).toBeNull();
 });
