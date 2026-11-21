@@ -69,6 +69,37 @@ public sealed class SessionRuntimeIntegrationTests
     }
 
     [Fact]
+    public async Task CloseCanceledBehindBusyMailboxLeavesTrackSchedulableAndClosable()
+    {
+        await using var ctx = new KernelTestContext();
+        var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
+        var actor = ctx.Kernel.Actors.GetOrActivate(snapshot.Track.Id);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var busy = actor.EnqueueAsync(async _ => { entered.SetResult(); await release.Task; });
+        using var cancellation = new CancellationTokenSource();
+        Task<TrackDto>? close = null;
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            close = actor.CloseTrackBySessionAsync(snapshot.Track.LeadSessionId!, cancellation.Token);
+            Assert.False(close.IsCompleted);
+            cancellation.Cancel();
+        }
+        finally { release.TrySetResult(); }
+        await busy.WaitAsync(TimeSpan.FromSeconds(3));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => close!.WaitAsync(TimeSpan.FromSeconds(3)));
+        // Drain the reservation even when the canceled caller returned before it ran.
+        await actor.EnqueueAsync(_ => Task.CompletedTask);
+        var created = await ctx.Kernel.CreateSessionAsync(snapshot.Track.Id,
+            new(Prompt: "after canceled close", Task: new()), "after-close", Human, default);
+        await ctx.Kernel.WaitForTrackIdleAsync(snapshot.Track.Id).WaitAsync(TimeSpan.FromSeconds(3));
+        Assert.Equal("completed", Assert.Single(ctx.Store.GetTurnsForSession(created.Receipt.Session.Id)).Status);
+        var closed = await actor.CloseTrackBySessionAsync(snapshot.Track.LeadSessionId!).WaitAsync(TimeSpan.FromSeconds(3));
+        Assert.NotNull(closed.ClosedAtMs);
+    }
+
+    [Fact]
     public async Task StopBetweenProviderOpenAndActivationNeverSendsPrompt()
     {
         await using var ctx = new KernelTestContext();

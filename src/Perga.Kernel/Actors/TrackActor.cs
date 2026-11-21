@@ -379,15 +379,18 @@ public sealed partial class TrackActor : IAsyncDisposable
 
     public async Task<TrackDto> CloseTrackBySessionAsync(string callerSessionId, CancellationToken ct = default)
     {
-        await EnqueueAsync(async _ =>
-        {
-            await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
-            RequireGovernanceSessionCore(callerSessionId, "perga_track_close");
-            if (_closingTrack || _deletingTrack) throw KernelException.Conflict("Track teardown is already in progress.");
-            _closingTrack = true;
-        }, ct).ConfigureAwait(false);
+        var reserved = false;
         try
         {
+            await EnqueueAsync(async _ =>
+            {
+                await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
+                RequireGovernanceSessionCore(callerSessionId, "perga_track_close");
+                if (_closingTrack || _deletingTrack) throw KernelException.Conflict("Track teardown is already in progress.");
+                ct.ThrowIfCancellationRequested();
+                _closingTrack = true;
+                reserved = true;
+            }, CancellationToken.None).ConfigureAwait(false);
             await CancelAllInFlightAttemptsAsync("Track closed.", ct).ConfigureAwait(false);
             return await EnqueueAsync(async _ =>
             {
@@ -400,7 +403,8 @@ public sealed partial class TrackActor : IAsyncDisposable
         }
         finally
         {
-            await EnqueueAsync(_ => { _closingTrack = false; return Task.CompletedTask; }, CancellationToken.None).ConfigureAwait(false);
+            if (reserved)
+                await EnqueueAsync(_ => { _closingTrack = false; return Task.CompletedTask; }, CancellationToken.None).ConfigureAwait(false);
         }
     }
 
@@ -748,9 +752,10 @@ public sealed partial class TrackActor : IAsyncDisposable
                     _policy?.Manifest.RequireGateForReadWrite ?? false, NowMs());
                 var attempts = _activeAttempts.Values.Where(a => sync.SupersededOrRemovedActiveTaskIds.Contains(a.TaskId)).ToArray();
                 RequireAttemptsOutsideVerification(attempts);
+                ct.ThrowIfCancellationRequested();
                 foreach (var attempt in attempts) BeginAttemptCancellationCore(attempt);
                 return Task.FromResult(attempts);
-            }, ct).ConfigureAwait(false);
+            }, CancellationToken.None).ConfigureAwait(false);
             foreach (var attempt in superseded) await CloseCanceledWorkerAsync(attempt).ConfigureAwait(false);
 
             return await EnqueueAsync(async _ =>
@@ -938,11 +943,12 @@ public sealed partial class TrackActor : IAsyncDisposable
             var task = RequireTaskCore(taskKeyOrId);
             RequireTaskOwnershipCore(callerSessionId, task);
             var attempt = task.LatestAttemptId is { } id && _activeAttempts.TryGetValue(id, out var found) ? found : null;
+            ct.ThrowIfCancellationRequested();
             // A pending task must be canceled atomically, before another mailbox operation can start it.
             if (attempt is null) return (await SettleCoreAsync(task, null).ConfigureAwait(false), null);
             BeginAttemptCancellationCore(attempt);
             return (null, attempt);
-        }, ct).ConfigureAwait(false);
+        }, CancellationToken.None).ConfigureAwait(false);
         if (cancellation.Completed is { } completed) return completed;
         await CloseCanceledWorkerAsync(cancellation.Active!).ConfigureAwait(false);
         return await EnqueueAsync(_ => SettleCoreAsync(RequireTaskCore(taskKeyOrId), cancellation.Active), CancellationToken.None).ConfigureAwait(false);
@@ -1708,6 +1714,7 @@ public sealed partial class TrackActor : IAsyncDisposable
             if (active is not null)
             {
                 const string reason = "Task contract superseded or removed in report.";
+                BeginAttemptCancellationCore(active);
                 var canceled = await CancelAndDiscardActiveAttemptCoreAsync(active, reason, now, ct).ConfigureAwait(false);
                 var superseded = RequireTaskCore(active.TaskId) with { Status = TaskRunStatus.Canceled, StatusDetail = reason, UpdatedAtMs = now };
                 await PersistAndEmitTaskUpdatedCoreAsync(superseded, canceled, null, now, ct).ConfigureAwait(false);
@@ -2778,6 +2785,11 @@ public sealed partial class TrackActor : IAsyncDisposable
         try
         {
             await _runtimes.Get(sessionId).CloseAsync(_options.SessionStartupTimeout, CancellationToken.None).ConfigureAwait(false);
+            // Provider shutdown can finish before the runner clears its active runtime work.
+            var settled = await EnqueueAsync(_ => Task.FromResult(
+                _scheduler.TryGetActive(sessionId, out var turn) ? turn.Settled.Task : Task.CompletedTask),
+                CancellationToken.None).ConfigureAwait(false);
+            await settled.WaitAsync(_options.SessionStartupTimeout).ConfigureAwait(false);
         }
         catch (Exception error)
         {
@@ -2791,7 +2803,7 @@ public sealed partial class TrackActor : IAsyncDisposable
     {
         if (!_activeAttempts.TryGetValue(active.AttemptId, out var current) || !ReferenceEquals(active, current))
             throw KernelException.Conflict("The attempt already ended.");
-        if (active.SessionId is { } id && (_runtimes.IsShutdownUnconfirmed(id) || _runtimes.TryGetOpen(id, out _)))
+        if (active.SessionId is { } id && (_runtimes.Get(id).HasActiveWork || _runtimes.TryGetOpen(id, out _)))
             throw new KernelException(KernelErrorCode.SessionRecoveryRequired, "Worker shutdown has not been confirmed.");
         await active.Driver.SettleAttemptLeaseAsync(active.Lease, AttemptLeaseDisposition.Discard, ct).ConfigureAwait(false);
         _activeAttempts.Remove(active.AttemptId);
@@ -2807,9 +2819,10 @@ public sealed partial class TrackActor : IAsyncDisposable
         {
             RequireAttemptsOutsideVerification(_activeAttempts.Values);
             var attempts = _activeAttempts.Values.ToArray();
+            ct.ThrowIfCancellationRequested();
             foreach (var active in attempts) BeginAttemptCancellationCore(active);
             return Task.FromResult(attempts);
-        }, ct).ConfigureAwait(false);
+        }, CancellationToken.None).ConfigureAwait(false);
         foreach (var active in attempts)
         {
             await CloseCanceledWorkerAsync(active).ConfigureAwait(false);

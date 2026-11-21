@@ -136,7 +136,15 @@ public sealed partial class TrackActor
                         SessionConfiguration.FromNullable(claimed.Session.Model, claimed.Session.ReasoningEffort, claimed.Session.PermissionMode),
                         actor._runtimes.Get(running.Id).ContextUsage, turn, agent, turnCts, true)
                     { BoundAttemptId = running.BoundAttemptId };
-                    actor._scheduler.SetActive(running.Id, active);
+                    try
+                    {
+                        actor._scheduler.SetActive(running.Id, active);
+                    }
+                    catch
+                    {
+                        turnCts.Dispose();
+                        throw;
+                    }
                     onActivated(active);
                     await work.OnTurnActivatedCoreAsync(running, evt, running.UpdatedAtMs, ct).ConfigureAwait(false);
                     var effective = string.IsNullOrWhiteSpace(policyAdmission.Context) ? prompt :
