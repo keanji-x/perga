@@ -2,7 +2,7 @@ import { floatingControlClassName } from '../floating-control/public.ts';
 import { Heading as AstryxHeading } from '@astryxdesign/core/Heading';
 import { Icon } from '../icon/public.tsx';
 import { IconButton as AstryxIconButton } from '@astryxdesign/core/IconButton';
-import type { ReactNode } from 'react';
+import type { ReactNode, Ref } from 'react';
 
 import styles from './mobile-header.module.css';
 
@@ -14,7 +14,7 @@ type MobileHeaderTitle =
   | Readonly<{ titleContent: ReactNode; titleFieldMarker?: never; titleText?: never }>;
 
 export function MobileHeader({
-  title, meta, level = 2, backLabel, onBack, actions, actionsHidden = false, titleFieldMarker, titleContent, titleText, leading, className,
+  title, meta, level = 2, backLabel, onBack, backRef, actions, actionsHidden = false, titleFieldMarker, titleContent, titleText, leading, className,
 }: Readonly<{
   title: string;
   className?: string;
@@ -22,6 +22,7 @@ export function MobileHeader({
   level?: 1 | 2;
   backLabel?: string;
   onBack?: () => void;
+  backRef?: Ref<HTMLButtonElement>;
   actions?: ReactNode;
   /** Keeps a declared action host mounted without reserving a visible column. */
   actionsHidden?: boolean;
@@ -36,6 +37,7 @@ export function MobileHeader({
       <span className={styles.leading}>
         {leading ?? (onBack !== undefined && (
           <AstryxIconButton
+            ref={backRef}
             className={`${styles.back} ${floatingControlClassName}`}
             label={`Back to ${backLabel ?? 'previous page'}`}
             variant="ghost"

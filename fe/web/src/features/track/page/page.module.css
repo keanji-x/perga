@@ -165,6 +165,7 @@
    */
   .page > .workspace {
     position: relative;
+    --track-column-gap: var(--space-5);
     display: grid;
     grid-template-rows: minmax(max-content, 1fr);
     min-block-size: 0;
@@ -246,8 +247,14 @@
     display: grid;
     grid-template-columns: minmax(0, 1fr) var(--panel-span, 25%);
     grid-template-rows: minmax(0, 1fr);
-    gap: var(--space-5);
+    gap: var(--track-column-gap);
     min-block-size: 0;
+  }
+
+  .fileSurface {
+    position: absolute;
+    inset: 0;
+    inset-inline-end: calc(var(--panel-span, 25%) + var(--track-column-gap));
   }
 
   /*
@@ -259,16 +266,20 @@
    * centred document put its first character 100px away from the title of the
    * page it is the content of.
    */
-  .doc {
+  .doc,
+  .fileSurface {
     /* Own the inline container so the report and its outline query the real
        document column rather than `.main`, and resolve 100cqi against it. */
     container-type: inline-size;
     --document-measure: min(var(--document-measure-max), 100cqi);
     --document-start: max(0px, calc((100cqi - var(--document-measure)) / 2));
-    display: flex;
-    flex-direction: column;
     min-inline-size: 0;
     min-block-size: 0;
+  }
+
+  .doc {
+    display: flex;
+    flex-direction: column;
   }
 
 
@@ -399,6 +410,10 @@
       display: grid;
       grid-template-columns: minmax(0, 1fr);
       gap: 0;
+    }
+
+    .fileSurface {
+      inset-inline-end: 0;
     }
 
     .doc {

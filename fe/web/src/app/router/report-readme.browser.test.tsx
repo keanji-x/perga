@@ -142,6 +142,13 @@ it.each([390, 1000, 1440])('cold-loads docs/README.md in the document viewport a
   expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(width);
   expect(trackPage().scrollTop).toBe(0);
   await page.screenshot({ path: `./__screenshots__/report-readme-cold-${width}.png` });
+  if (width === 390) {
+    const back = page.getByRole('button', { name: 'Back to Report', exact: true });
+    (back.element() as HTMLButtonElement).focus();
+    await expect.element(back).toHaveFocus();
+    await userEvent.keyboard('{Escape}');
+    await expect.poll(() => router.history.location.href).toBe(README_TRACK_URL);
+  }
 });
 
 it('reads a cold file with wheel, PageDown, Tab and document links, then closes in place', async () => {
@@ -159,6 +166,53 @@ it('reads a cold file with wheel, PageDown, Tab and document links, then closes 
   await scrollSettled(trackPage());
   expectReportPosition(reportScroll, 'cold close');
   expect(router.history.length).toBe(1);
+});
+
+it('keeps the right-side conversation list usable while a report file is open', async () => {
+  await page.viewport(1440, 900);
+  const { router } = renderReadmeFixture(README_TRACK_URL, undefined, { shortReport: true });
+  const opener = page.getByRole('button', { name: 'docs/README.md', exact: true });
+  await opener.click();
+  const file = await visibleReadme();
+  const row = page.getByRole('button', { name: /Conversation Existing conversation/ });
+  await expect.element(row).toBeVisible();
+  const panel = row.element().closest('[data-nc-panel]')!;
+  expect(file.element().getBoundingClientRect().right).toBeLessThanOrEqual(panel.getBoundingClientRect().left);
+  expectHit(row.element());
+  (row.element() as HTMLButtonElement).focus();
+  await expect.element(row).toHaveFocus();
+  await userEvent.keyboard('{Escape}');
+  expect(router.history.location.href).toBe(README_FILE_URL);
+
+  await row.click();
+  const chat = page.getByRole('complementary', { name: 'Existing conversation' });
+  const composer = chat.getByRole('combobox', { name: 'Message' });
+  await composer.fill('Notes from this file');
+  await expect.element(file.getByRole('heading', { name: 'Documentation', exact: true })).toBeVisible();
+  await expect.element(composer).toHaveTextContent('Notes from this file');
+  act(() => { router.history.back(); });
+  await expect.element(file).not.toBeInTheDocument();
+  await expect.element(composer).toHaveFocus();
+
+  await opener.click();
+  await expect.element(file).toBeVisible();
+  const back = page.getByRole('button', { name: 'Back to track' });
+  (back.element() as HTMLButtonElement).focus();
+  await expect.element(back).toHaveFocus();
+  await userEvent.keyboard('{Escape}');
+  await expect.element(file).not.toBeInTheDocument();
+  await expect.element(opener).toHaveFocus();
+  await expect.element(composer).toHaveTextContent('Notes from this file');
+
+  await opener.click();
+  await expect.element(file).toBeVisible();
+  await composer.click();
+  await userEvent.keyboard('{Escape}');
+  await expect.element(chat).not.toBeInTheDocument();
+  expect(router.history.location.href).toBe(README_FILE_URL);
+  await expect.element(row).toBeVisible();
+  await back.click();
+  await expect.element(opener).toHaveFocus();
 });
 
 it('reads from a wheel-scrolled Report with Conversation and restores its position and draft on close and Back', async () => {
