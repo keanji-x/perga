@@ -17,11 +17,8 @@ public sealed class TrackActorRegistry : IAsyncDisposable
     private readonly IReportDocEngine _reportEngine;
     private readonly IPolicyVm _policyVm;
     private readonly ITemplateCatalog _templateCatalog;
-    private readonly IAgentRuntime _agentRuntime;
-    private readonly IWorkspaceDriverRegistry _workspaceDrivers;
-    private readonly ITerminalBridgeClient _terminalClient;
+    private readonly IExecutionEnvironmentRegistry _executionEnvironments;
     private readonly IMcpSessionBridge _mcpBridge;
-    private readonly IShellCommandRunner _commandRunner;
     private readonly EventHub _eventHub;
     private readonly KernelOptions _options;
     private readonly TimeProvider _timeProvider;
@@ -35,11 +32,8 @@ public sealed class TrackActorRegistry : IAsyncDisposable
         IReportDocEngine reportEngine,
         IPolicyVm policyVm,
         ITemplateCatalog templateCatalog,
-        IAgentRuntime agentRuntime,
-        IWorkspaceDriverRegistry workspaceDrivers,
-        ITerminalBridgeClient terminalClient,
+        IExecutionEnvironmentRegistry executionEnvironments,
         IMcpSessionBridge mcpBridge,
-        IShellCommandRunner commandRunner,
         EventHub eventHub,
         KernelOptions options,
         TimeProvider? timeProvider = null, IScheduleCronEvaluator? scheduleCronEvaluator = null)
@@ -49,11 +43,8 @@ public sealed class TrackActorRegistry : IAsyncDisposable
         _reportEngine = reportEngine;
         _policyVm = policyVm;
         _templateCatalog = templateCatalog;
-        _agentRuntime = agentRuntime;
-        _workspaceDrivers = workspaceDrivers;
-        _terminalClient = terminalClient;
+        _executionEnvironments = executionEnvironments;
         _mcpBridge = mcpBridge;
-        _commandRunner = commandRunner;
         _eventHub = eventHub;
         _options = options;
         _timeProvider = timeProvider ?? TimeProvider.System;
@@ -165,11 +156,8 @@ public sealed class TrackActorRegistry : IAsyncDisposable
             _reportEngine,
             _policyVm,
             _templateCatalog,
-            _agentRuntime,
-            _workspaceDrivers,
-            _terminalClient,
+            _executionEnvironments,
             _mcpBridge,
-            _commandRunner,
             _eventHub,
             _options,
             _timeProvider, _scheduleCronEvaluator);

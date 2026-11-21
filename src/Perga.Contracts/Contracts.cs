@@ -12,6 +12,12 @@ public enum AskStatus { Open, Answered, Withdrawn }
 public enum TerminalStatus { Running, Exited }
 public enum EditActorKind { Human, Lead, Subagent, System }
 
+public sealed record ExecutionTargetDto(
+    string Id,
+    string Label,
+    string Kind,
+    bool IsDefault = false);
+
 public sealed record AreaDto(
     string Id,
     string Name,
@@ -20,7 +26,8 @@ public sealed record AreaDto(
     IReadOnlyList<string> Folders,
     double SortOrder,
     long CreatedAtMs,
-    long UpdatedAtMs);
+    long UpdatedAtMs,
+    string ExecutionTargetId = "local");
 
 public sealed record TemplateHeaderBadgeDto(string Label, string? Tone = null);
 public sealed record TemplateHeaderNoticeDto(string Text, string? Tone = null);
@@ -55,7 +62,8 @@ public sealed record TrackDto(
     string? TemplateTitle = null,
     TemplateHeaderViewDto? TemplateHeaderView = null,
     JsonElement Data = default,
-    long DataRev = 0)
+    long DataRev = 0,
+    string ExecutionTargetId = "local")
 {
     private static readonly JsonElement EmptyData = JsonSerializer.SerializeToElement(new { });
 

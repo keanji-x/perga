@@ -20,4 +20,6 @@ public sealed record AgentRuntimeOptions
     public TimeSpan HandshakeTimeout { get; init; } = TimeSpan.FromSeconds(30);
 
     public TimeProvider TimeProvider { get; init; } = TimeProvider.System;
+
+    public ISubprocessTransport? SubprocessTransport { get; init; }
 }

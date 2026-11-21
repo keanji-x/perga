@@ -86,6 +86,7 @@ public interface ITrackReadStore
     Task<ReadReceiptsResponseDto> GetReadReceiptsAsync(CancellationToken ct = default);
     Task<IReadOnlyList<TrackOverlayDto>> ListTrackOverlaysAsync(bool includeClosed = false, CancellationToken ct = default);
     Task<string?> FindTrackIdBySessionAsync(string sessionId, CancellationToken ct);
+    Task<string?> FindTrackIdByTerminalAsync(string terminalId, CancellationToken ct) => Task.FromResult<string?>(null);
 }
 
 public interface ITrackStore : ITrackReadStore

@@ -203,7 +203,7 @@ public sealed partial class TrackActor
             warnings.Add("Template workspace settings are ignored for an existing track.");
         if (policy.Manifest.Routing.Count > 0)
         {
-            var providers = await _agentRuntime.ProbeProvidersAsync(ct).ConfigureAwait(false);
+            var providers = await EffectiveAgentRuntime.ProbeProvidersAsync(ct).ConfigureAwait(false);
             foreach (var route in _policyVm.ResolveRoutingTargets(policy, inputs))
             {
                 var provider = route.Provider ?? GetDefaultProviderCore();

@@ -54,15 +54,16 @@ function NewTrackEditor({ transport, unauthorized, pergaMode = false, workspace,
 }) {
   const compactViewport = useCompactViewport();
   const areaId = session.area.id;
+  const targetId = session.area.executionTargetId;
   /* Availability has one cache owner; the managed response supplies only static creation capability.
      The server admits each submitted shape and renders any refusal through the existing error flow. */
-  const codexCatalog = useQuery(modelCatalogQueryOptions(transport, { kind: 'provider', provider: 'codex' }, unauthorized));
-  const claudeCatalog = useQuery(modelCatalogQueryOptions(transport, { kind: 'provider', provider: 'claude' }, unauthorized));
-  const opencodeCatalog = useQuery(modelCatalogQueryOptions(transport, { kind: 'provider', provider: 'opencode' }, unauthorized));
-  const grokCatalog = useQuery(modelCatalogQueryOptions(transport, { kind: 'provider', provider: 'grok' }, unauthorized));
-  const antigravityCatalog = useQuery(modelCatalogQueryOptions(transport, { kind: 'provider', provider: 'antigravity' }, unauthorized));
-  const availability = useQuery(agentProvidersQueryOptions(transport, unauthorized));
-  const providers = useQuery(managedProvidersQueryOptions(transport, unauthorized));
+  const codexCatalog = useQuery(modelCatalogQueryOptions(transport, { kind: 'provider', provider: 'codex', targetId }, unauthorized));
+  const claudeCatalog = useQuery(modelCatalogQueryOptions(transport, { kind: 'provider', provider: 'claude', targetId }, unauthorized));
+  const opencodeCatalog = useQuery(modelCatalogQueryOptions(transport, { kind: 'provider', provider: 'opencode', targetId }, unauthorized));
+  const grokCatalog = useQuery(modelCatalogQueryOptions(transport, { kind: 'provider', provider: 'grok', targetId }, unauthorized));
+  const antigravityCatalog = useQuery(modelCatalogQueryOptions(transport, { kind: 'provider', provider: 'antigravity', targetId }, unauthorized));
+  const availability = useQuery(agentProvidersQueryOptions(transport, unauthorized, targetId));
+  const providers = useQuery(managedProvidersQueryOptions(transport, unauthorized, targetId));
   const optionCwd = session.form?.cwd ?? session.area.defaultCwd ?? '';
   const workspaceOptionsQuery = useQuery({
     queryKey: ['track-workspace-options', areaId, optionCwd],
@@ -74,7 +75,7 @@ function NewTrackEditor({ transport, unauthorized, pergaMode = false, workspace,
   const trackMutations = useTrackMutations(transport, unauthorized);
   const conversationRegistry = useConversationCommands();
   const go = useGo();
-  const listDirectory = createDirectoryLister(transport, unauthorized, pergaMode);
+  const listDirectory = createDirectoryLister(transport, unauthorized, pergaMode, targetId);
   /* The sentence is the new track's Planner's first message, and that Planner reads this Area's reports; there is no track yet to rank first. */
   const templatesRef = useRef<readonly TrackTemplate[]>([]);
   const onTemplates = useCallback((templates: readonly TrackTemplate[]) => { templatesRef.current = templates; }, []);

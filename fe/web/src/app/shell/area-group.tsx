@@ -31,9 +31,12 @@ export function AreaGroup({
 }) {
   const preferences = useUiPreferences();
   const ordered = areaPinnedTracks(areaTracks, (track) => preferences.areaTrackPinned(area.id, track.id));
+  const areaTitle = area.executionTargetId && area.executionTargetId !== 'local'
+    ? `${area.name} · ${area.executionTargetId}`
+    : area.name;
   return <SidebarTrackGroup
     emptyState={readReady ? { icon: <Icon name="file" />, title: '没有可显示的 Track', description: '此 Area 中符合当前筛选的 Track 会显示在这里。' } : null}
-    title={area.name}
+    title={areaTitle}
     label={`area ${area.name}`}
     icon="folder"
     level="area"

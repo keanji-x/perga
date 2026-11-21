@@ -27,7 +27,17 @@ public sealed class HostMcpSessionBridge : IMcpSessionBridge
         bool isLead,
         string? boundTaskId,
         int? taskRunCount,
-        IReadOnlyList<string> enabledPlugins)
+        IReadOnlyList<string> enabledPlugins) =>
+        RegisterSession(trackId, sessionId, isLead, boundTaskId, taskRunCount, enabledPlugins, baseUriOverride: null);
+
+    public McpSessionRegistration RegisterSession(
+        string trackId,
+        string sessionId,
+        bool isLead,
+        string? boundTaskId,
+        int? taskRunCount,
+        IReadOnlyList<string> enabledPlugins,
+        string? baseUriOverride)
     {
         McpSessionPrincipal principal;
         lock (_gate)
@@ -51,7 +61,7 @@ public sealed class HostMcpSessionBridge : IMcpSessionBridge
             _tokenBySession[sessionId] = token;
         }
 
-        return new McpSessionRegistration(principal, BuildMcpServerMap(principal));
+        return new McpSessionRegistration(principal, BuildMcpServerMap(principal, baseUriOverride));
     }
 
     public McpSessionPrincipal? ResolveToken(string token)
@@ -169,9 +179,11 @@ public sealed class HostMcpSessionBridge : IMcpSessionBridge
         return "http://127.0.0.1:5000";
     }
 
-    private IReadOnlyDictionary<string, McpServerConfig> BuildMcpServerMap(McpSessionPrincipal principal)
+    private IReadOnlyDictionary<string, McpServerConfig> BuildMcpServerMap(McpSessionPrincipal principal, string? baseUriOverride = null)
     {
-        var baseUri = ResolveBaseUri();
+        var baseUri = string.IsNullOrWhiteSpace(baseUriOverride)
+            ? ResolveBaseUri()
+            : baseUriOverride.TrimEnd('/');
         var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
             ["Authorization"] = $"Bearer {principal.Token}"

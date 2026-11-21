@@ -7,6 +7,7 @@ import {
   bootstrapDtoSchema,
   normalizeWireAgentProvider,
   permissionModeOptionDtoSchema,
+  providerStatusDtoSchema,
   type AgentProvider,
   type PermissionModeOptionDto,
   type ProviderStatusDto,
@@ -59,15 +60,26 @@ export function providerStatusToAvailability(dto: ProviderStatusDto): ProviderAv
   };
 }
 
-/** `GET /api/v1/bootstrap`; `recheck` appends `?refresh=true` to bypass cached reads. */
-export function agentProvidersOperation(recheck: boolean): ApiOperation<ProviderAvailability[]> {
+function mapProvidersToAvailability(providers: readonly ProviderStatusDto[]): ProviderAvailability[] {
+  return providers.flatMap((provider) => {
+    const mapped = providerStatusToAvailability(provider);
+    return mapped === null ? [] : [mapped];
+  });
+}
+
+/** `GET /api/v1/bootstrap` (or `/api/v1/targets/{targetId}/providers` for non-local targets); `recheck` appends `?refresh=true`. */
+export function agentProvidersOperation(recheck: boolean, targetId?: string): ApiOperation<ProviderAvailability[]> {
+  if (targetId !== undefined && targetId !== '' && targetId !== 'local') {
+    return {
+      method: 'GET',
+      path: `/api/v1/targets/${encodeURIComponent(targetId)}/providers${recheck ? '?refresh=true' : ''}`,
+      responseSchema: z.array(providerStatusDtoSchema).transform(mapProvidersToAvailability),
+    };
+  }
   return {
     method: 'GET',
     path: recheck ? '/api/v1/bootstrap?scope=providers&refresh=true' : '/api/v1/bootstrap?scope=providers',
-    responseSchema: bootstrapDtoSchema.transform((bootstrap) => bootstrap.providers.flatMap((provider) => {
-      const mapped = providerStatusToAvailability(provider);
-      return mapped === null ? [] : [mapped];
-    })),
+    responseSchema: bootstrapDtoSchema.transform((bootstrap) => mapProvidersToAvailability(bootstrap.providers)),
   };
 }
 
@@ -130,28 +142,39 @@ export const managedProviderAvailabilitySchema = z.object({
 });
 export type ManagedProviderAvailability = z.infer<typeof managedProviderAvailabilitySchema>;
 
-/** Provider menus consume `/api/v1/bootstrap` instead of maintaining an Assistant provider list. */
-export function managedProvidersOperation(recheck: boolean): ApiOperation<ManagedProviderAvailability[]> {
+function mapProvidersToManaged(providers: readonly ProviderStatusDto[]): ManagedProviderAvailability[] {
+  return providers.flatMap((provider) => {
+    const availability = providerStatusToAvailability(provider);
+    if (availability === null) return [];
+    return [{
+      accepts_unavailable_blank_track: true,
+      availability,
+      permission_modes: provider.permissionModes,
+      capabilities: {
+        managed_conversation: true,
+        steer: true,
+        images: false,
+        manual_compact: true,
+        history_replacement: false,
+        requires_ready_availability: false,
+      },
+    }];
+  });
+}
+
+/** Provider menus consume `/api/v1/bootstrap` (or `/api/v1/targets/{targetId}/providers` for non-local targets). */
+export function managedProvidersOperation(recheck: boolean, targetId?: string): ApiOperation<ManagedProviderAvailability[]> {
+  if (targetId !== undefined && targetId !== '' && targetId !== 'local') {
+    return {
+      method: 'GET',
+      path: `/api/v1/targets/${encodeURIComponent(targetId)}/providers${recheck ? '?refresh=true' : ''}`,
+      responseSchema: z.array(providerStatusDtoSchema).transform(mapProvidersToManaged),
+    };
+  }
   return {
     method: 'GET',
     path: recheck ? '/api/v1/bootstrap?scope=managed&refresh=true' : '/api/v1/bootstrap?scope=managed',
-    responseSchema: bootstrapDtoSchema.transform((bootstrap) => bootstrap.providers.flatMap((provider) => {
-      const availability = providerStatusToAvailability(provider);
-      if (availability === null) return [];
-      return [{
-        accepts_unavailable_blank_track: true,
-        availability,
-        permission_modes: provider.permissionModes,
-        capabilities: {
-          managed_conversation: true,
-          steer: true,
-          images: false,
-          manual_compact: true,
-          history_replacement: false,
-          requires_ready_availability: false,
-        },
-      }];
-    })),
+    responseSchema: bootstrapDtoSchema.transform((bootstrap) => mapProvidersToManaged(bootstrap.providers)),
   };
 }
 

@@ -147,7 +147,8 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                        folders_json AS FoldersJson,
                        sort_order AS SortOrder,
                        created_at_ms AS CreatedAtMs,
-                       updated_at_ms AS UpdatedAtMs
+                       updated_at_ms AS UpdatedAtMs,
+                       execution_target_id AS ExecutionTargetId
                 FROM areas
                 WHERE is_system = 0
                 ORDER BY sort_order ASC, created_at_ms ASC, id ASC;
@@ -173,7 +174,8 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                        folders_json AS FoldersJson,
                        sort_order AS SortOrder,
                        created_at_ms AS CreatedAtMs,
-                       updated_at_ms AS UpdatedAtMs
+                       updated_at_ms AS UpdatedAtMs,
+                       execution_target_id AS ExecutionTargetId
                 FROM areas
                 WHERE id = @AreaId;
                 """,
@@ -202,7 +204,8 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                                folders_json AS FoldersJson,
                                sort_order AS SortOrder,
                                created_at_ms AS CreatedAtMs,
-                               updated_at_ms AS UpdatedAtMs
+                               updated_at_ms AS UpdatedAtMs,
+                               execution_target_id AS ExecutionTargetId
                         FROM areas
                         WHERE id = @Id;
                         """,
@@ -218,11 +221,12 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
     private static async Task UpsertAreaInternalAsync(SqliteConnection conn, SqliteTransaction tx, AreaDto area, CancellationToken ct)
     {
         var foldersJson = SqliteJsonUpcaster.SerializeStringList(area.Folders);
+        var executionTargetId = string.IsNullOrWhiteSpace(area.ExecutionTargetId) ? "local" : area.ExecutionTargetId.Trim();
         await conn.ExecuteAsync(
             new CommandDefinition(
                 """
-                INSERT INTO areas (id, name, color, default_cwd, folders_json, sort_order, created_at_ms, updated_at_ms)
-                VALUES (@Id, @Name, @Color, @DefaultCwd, @FoldersJson, @SortOrder, @CreatedAtMs, @UpdatedAtMs)
+                INSERT INTO areas (id, name, color, default_cwd, folders_json, sort_order, created_at_ms, updated_at_ms, execution_target_id)
+                VALUES (@Id, @Name, @Color, @DefaultCwd, @FoldersJson, @SortOrder, @CreatedAtMs, @UpdatedAtMs, @ExecutionTargetId)
                 ON CONFLICT(id) DO UPDATE SET
                     name = excluded.name,
                     color = excluded.color,
@@ -240,7 +244,8 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
                     FoldersJson = foldersJson,
                     area.SortOrder,
                     area.CreatedAtMs,
-                    area.UpdatedAtMs
+                    area.UpdatedAtMs,
+                    ExecutionTargetId = executionTargetId
                 },
                 transaction: tx,
                 cancellationToken: ct)).ConfigureAwait(false);
@@ -443,42 +448,44 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
 
         var sql = new StringBuilder(
             """
-            SELECT id AS Id,
-                   area_id AS AreaId,
-                   parent_track_id AS ParentTrackId,
-                   parent_attempt_id AS ParentAttemptId,
-                   title AS Title,
-                   cwd AS Cwd,
-                   workspace_driver AS WorkspaceDriver,
-                   workspace_spec_json AS WorkspaceSpecJson,
-                   lead_session_id AS LeadSessionId,
-                   template_id AS TemplateId,
-                   template_snapshot AS TemplateSnapshot,
-                   template_inputs_json AS TemplateInputsJson,
-                   template_state_json AS TemplateStateJson,
-                   data_json AS DataJson,
-                   data_rev AS DataRev,
-                   enabled_plugins_json AS EnabledPluginsJson,
-                   closed_at_ms AS ClosedAtMs,
-                   pinned_at_ms AS PinnedAtMs,
-                   sort_order AS SortOrder,
-                   created_at_ms AS CreatedAtMs,
-                   updated_at_ms AS UpdatedAtMs
-            FROM tracks
+            SELECT t.id AS Id,
+                   t.area_id AS AreaId,
+                   t.parent_track_id AS ParentTrackId,
+                   t.parent_attempt_id AS ParentAttemptId,
+                   t.title AS Title,
+                   t.cwd AS Cwd,
+                   t.workspace_driver AS WorkspaceDriver,
+                   t.workspace_spec_json AS WorkspaceSpecJson,
+                   t.lead_session_id AS LeadSessionId,
+                   t.template_id AS TemplateId,
+                   t.template_snapshot AS TemplateSnapshot,
+                   t.template_inputs_json AS TemplateInputsJson,
+                   t.template_state_json AS TemplateStateJson,
+                   t.data_json AS DataJson,
+                   t.data_rev AS DataRev,
+                   t.enabled_plugins_json AS EnabledPluginsJson,
+                   t.closed_at_ms AS ClosedAtMs,
+                   t.pinned_at_ms AS PinnedAtMs,
+                   t.sort_order AS SortOrder,
+                   t.created_at_ms AS CreatedAtMs,
+                   t.updated_at_ms AS UpdatedAtMs,
+                   a.execution_target_id AS ExecutionTargetId
+            FROM tracks t
+            JOIN areas a ON a.id = t.area_id
             WHERE 1 = 1
             """);
 
         if (!string.IsNullOrWhiteSpace(areaId))
         {
-            sql.Append(" AND area_id = @AreaId");
+            sql.Append(" AND t.area_id = @AreaId");
         }
 
         if (!includeClosed)
         {
-            sql.Append(" AND closed_at_ms IS NULL");
+            sql.Append(" AND t.closed_at_ms IS NULL");
         }
 
-        sql.Append(" ORDER BY CASE WHEN pinned_at_ms IS NOT NULL THEN 0 ELSE 1 END ASC, sort_order ASC, created_at_ms ASC, id ASC;");
+        sql.Append(" ORDER BY CASE WHEN t.pinned_at_ms IS NOT NULL THEN 0 ELSE 1 END ASC, t.sort_order ASC, t.created_at_ms ASC, t.id ASC;");
 
         var rows = await conn.QueryAsync<TrackRow>(
             new CommandDefinition(
@@ -1633,6 +1640,19 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
         return rows.Select(MapTerminal).ToList();
     }
 
+    public async Task<string?> FindTrackIdByTerminalAsync(string terminalId, CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(terminalId);
+        EnsureInitialized();
+
+        await using var conn = await OpenReadConnectionAsync(ct).ConfigureAwait(false);
+        return await conn.QuerySingleOrDefaultAsync<string>(
+            new CommandDefinition(
+                "SELECT track_id FROM terminals WHERE id = @TerminalId;",
+                new { TerminalId = terminalId },
+                cancellationToken: ct)).ConfigureAwait(false);
+    }
+
     public Task AppendEventAsync(EventEnvelopeDto evt, CancellationToken ct) =>
         AppendEventWithIdAsync(evt, ct);
 
@@ -1895,29 +1915,31 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
         return await conn.QuerySingleOrDefaultAsync<TrackRow>(
             new CommandDefinition(
                 """
-                SELECT id AS Id,
-                       area_id AS AreaId,
-                       parent_track_id AS ParentTrackId,
-                       parent_attempt_id AS ParentAttemptId,
-                       title AS Title,
-                       cwd AS Cwd,
-                       workspace_driver AS WorkspaceDriver,
-                       workspace_spec_json AS WorkspaceSpecJson,
-                       lead_session_id AS LeadSessionId,
-                       template_id AS TemplateId,
-                       template_snapshot AS TemplateSnapshot,
-                       template_inputs_json AS TemplateInputsJson,
-                       template_state_json AS TemplateStateJson,
-                       data_json AS DataJson,
-                       data_rev AS DataRev,
-                       enabled_plugins_json AS EnabledPluginsJson,
-                       closed_at_ms AS ClosedAtMs,
-                       pinned_at_ms AS PinnedAtMs,
-                       sort_order AS SortOrder,
-                       created_at_ms AS CreatedAtMs,
-                       updated_at_ms AS UpdatedAtMs
-                FROM tracks
-                WHERE id = @TrackId;
+                SELECT t.id AS Id,
+                       t.area_id AS AreaId,
+                       t.parent_track_id AS ParentTrackId,
+                       t.parent_attempt_id AS ParentAttemptId,
+                       t.title AS Title,
+                       t.cwd AS Cwd,
+                       t.workspace_driver AS WorkspaceDriver,
+                       t.workspace_spec_json AS WorkspaceSpecJson,
+                       t.lead_session_id AS LeadSessionId,
+                       t.template_id AS TemplateId,
+                       t.template_snapshot AS TemplateSnapshot,
+                       t.template_inputs_json AS TemplateInputsJson,
+                       t.template_state_json AS TemplateStateJson,
+                       t.data_json AS DataJson,
+                       t.data_rev AS DataRev,
+                       t.enabled_plugins_json AS EnabledPluginsJson,
+                       t.closed_at_ms AS ClosedAtMs,
+                       t.pinned_at_ms AS PinnedAtMs,
+                       t.sort_order AS SortOrder,
+                       t.created_at_ms AS CreatedAtMs,
+                       t.updated_at_ms AS UpdatedAtMs,
+                       a.execution_target_id AS ExecutionTargetId
+                FROM tracks t
+                JOIN areas a ON a.id = t.area_id
+                WHERE t.id = @TrackId;
                 """,
                 new { TrackId = trackId },
                 transaction: tx,
@@ -2149,7 +2171,8 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
             Folders: SqliteJsonUpcaster.DeserializeStringList(r.FoldersJson),
             SortOrder: r.SortOrder,
             CreatedAtMs: r.CreatedAtMs,
-            UpdatedAtMs: r.UpdatedAtMs);
+            UpdatedAtMs: r.UpdatedAtMs,
+            ExecutionTargetId: string.IsNullOrWhiteSpace(r.ExecutionTargetId) ? "local" : r.ExecutionTargetId);
 
     private TrackDto MapTrack(TrackRow r) =>
         new(
@@ -2172,7 +2195,8 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
             PinnedAtMs: r.PinnedAtMs,
             SortOrder: r.SortOrder,
             CreatedAtMs: r.CreatedAtMs,
-            UpdatedAtMs: r.UpdatedAtMs);
+            UpdatedAtMs: r.UpdatedAtMs,
+            ExecutionTargetId: string.IsNullOrWhiteSpace(r.ExecutionTargetId) ? "local" : r.ExecutionTargetId);
 
     private TaskDto MapTask(TaskRow r) =>
         new(
@@ -2330,6 +2354,7 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
         public double SortOrder { get; init; }
         public long CreatedAtMs { get; init; }
         public long UpdatedAtMs { get; init; }
+        public string ExecutionTargetId { get; init; } = "local";
     }
 
     private sealed class TrackRow
@@ -2355,6 +2380,7 @@ public sealed partial class SqliteTrackStore : ITrackStore, IAsyncDisposable
         public double SortOrder { get; init; }
         public long CreatedAtMs { get; init; }
         public long UpdatedAtMs { get; init; }
+        public string ExecutionTargetId { get; init; } = "local";
     }
 
 

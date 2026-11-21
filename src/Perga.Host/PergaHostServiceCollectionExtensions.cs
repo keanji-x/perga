@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Perga.AgentKit;
 using Perga.Host.Configuration;
+using Perga.Host.Execution;
 using Perga.Host.Lifecycle;
 using Perga.Host.Mcp;
 using Perga.Host.Terminals;
@@ -140,6 +141,44 @@ public static class PergaHostServiceCollectionExtensions
         services.TryAddSingleton<ITerminalBridgeClient>(sp =>
             new ManagedTerminalBridgeClient(sp.GetRequiredService<PergaHostOptions>()));
 
+        services.TryAddSingleton<IExecutionEnvironmentRegistry>(sp =>
+        {
+            var opts = sp.GetRequiredService<PergaHostOptions>();
+            var paths = sp.GetRequiredService<ResolvedHostStoragePaths>();
+            var shellRunner = sp.GetService<IShellCommandRunner>() ?? new ProcessShellCommandRunner();
+            var environments = new List<IExecutionEnvironment>
+            {
+                new LocalExecutionEnvironment(
+                    workspacesRoot: paths.WorkspacesRootDir,
+                    agentRuntime: sp.GetRequiredService<IAgentRuntime>(),
+                    shell: shellRunner,
+                    vcs: sp.GetRequiredService<IVcsService>(),
+                    workspaceDrivers: sp.GetRequiredService<IWorkspaceDriverRegistry>(),
+                    terminals: sp.GetRequiredService<ITerminalBridgeClient>(),
+                    forge: sp.GetService<IGitHubForgeService>())
+            };
+
+            foreach (var (targetId, targetOpts) in opts.ExecutionTargets)
+            {
+                if (string.IsNullOrWhiteSpace(targetId) ||
+                    string.Equals(targetId.Trim(), ExecutionTargetIds.Local, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                if (!string.Equals(targetOpts.Kind, "ssh", StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidOperationException(
+                        $"Unsupported execution target kind '{targetOpts.Kind}' for target '{targetId}'. Supported kinds: ssh.");
+                }
+
+                var sshConfig = new SshTargetConfig(targetId, targetOpts, opts.OarBridgeScriptPath);
+                environments.Add(new SshExecutionEnvironment(sshConfig));
+            }
+
+            return new ExecutionEnvironmentRegistry(environments);
+        });
+
         services.TryAddSingleton(sp =>
             new HostMcpSessionBridge(
                 sp.GetRequiredService<PergaHostOptions>(),
@@ -197,7 +236,8 @@ public static class PergaHostServiceCollectionExtensions
                 timeProvider: sp.GetRequiredService<TimeProvider>(),
                 systemUpgradeController: sp.GetRequiredService<ISystemUpgradeController>(),
                 upgradeReceiptSource: sp.GetRequiredService<ISystemUpgradeReceiptSource>(),
-                scheduleCronEvaluator: sp.GetRequiredService<IScheduleCronEvaluator>());
+                scheduleCronEvaluator: sp.GetRequiredService<IScheduleCronEvaluator>(),
+                executionEnvironments: sp.GetRequiredService<IExecutionEnvironmentRegistry>());
         });
 
         services.TryAddSingleton<KernelMcpBackend>();

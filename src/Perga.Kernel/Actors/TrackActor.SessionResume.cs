@@ -33,7 +33,7 @@ public sealed partial class TrackActor
     {
         if (session.Status != "unknown") return null;
         var supports = _runtimes.TryGetOpen(session.Id, out var handle)
-            ? handle.Agent.SupportsSessionResume : _agentRuntime.CanResumeSession(session.Provider);
+            ? handle.Agent.SupportsSessionResume : EffectiveAgentRuntime.CanResumeSession(session.Provider);
         var reason = session.UnknownReason ?? "stream_lost";
         var detail = reason switch
         {
@@ -125,7 +125,7 @@ public sealed partial class TrackActor
                     if (spec is not null)
                     {
                         using var launch = await _options.DispatchAdmission.EnterAsync(ct).ConfigureAwait(false);
-                        var opened = await owner.OpenLockedAsync(_agentRuntime, spec, agent =>
+                        var opened = await owner.OpenLockedAsync(EffectiveAgentRuntime, spec, agent =>
                         {
                             if (!agent.SupportsSessionResume || agent.NativeThreadId != nativeId)
                                 throw new ProviderSessionNotFoundException("The provider did not restore the original session.");

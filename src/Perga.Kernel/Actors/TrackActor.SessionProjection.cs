@@ -29,7 +29,7 @@ public sealed partial class TrackActor
         var configuration = handle?.Agent.WorkerConfiguration;
         return new(configuration?.Models ?? [], configuration?.DefaultModel, configuration?.DefaultReasoningEffort,
             handle?.Agent.AvailablePermissionModes ?? [], handle?.Agent.SupportsNativeSteer == true,
-            handle?.Agent.SupportsSessionResume ?? _agentRuntime.CanResumeSession(session.Provider),
+            handle?.Agent.SupportsSessionResume ?? EffectiveAgentRuntime.CanResumeSession(session.Provider),
             handle?.Agent.SupportsNativeCompact == true);
     }
 
