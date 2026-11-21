@@ -5,9 +5,7 @@ using System.Net.WebSockets;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
-using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
-using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Perga.AgentKit;
@@ -393,39 +391,18 @@ public sealed class PergaHostTestCluster : IAsyncDisposable
         AgentRuntime = new ScriptableAgentRuntime();
         ForgeService = new FakeGitHubForgeService();
 
-        Factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
+        Factory = new IsolatedPergaHostFactory(DataDir, configureHostOptions, services =>
         {
-            builder.ConfigureTestServices(services =>
-            {
-                services.RemoveAll<TimeProvider>();
-                services.AddSingleton<TimeProvider>(TimeProvider);
+            services.RemoveAll<TimeProvider>();
+            services.AddSingleton<TimeProvider>(TimeProvider);
 
-                services.RemoveAll<IAgentRuntime>();
-                services.AddSingleton<IAgentRuntime>(AgentRuntime);
+            services.RemoveAll<IAgentRuntime>();
+            services.AddSingleton<IAgentRuntime>(AgentRuntime);
 
-                services.RemoveAll<IGitHubForgeService>();
-                services.AddSingleton<IGitHubForgeService>(ForgeService);
+            services.RemoveAll<IGitHubForgeService>();
+            services.AddSingleton<IGitHubForgeService>(ForgeService);
 
-                services.RemoveAll<PergaHostOptions>();
-                services.AddSingleton(sp =>
-                {
-                    var env = sp.GetRequiredService<IWebHostEnvironment>();
-                    var cfg = sp.GetRequiredService<Microsoft.Extensions.Configuration.IConfiguration>();
-                    var opts = PergaHostOptions.BindFrom(cfg, env.ContentRootPath);
-                    opts.DataDir = DataDir;
-                    opts.DbPath = Path.Combine(DataDir, "perga.db");
-                    opts.WorkspacesRootDirectory = Path.Combine(DataDir, "workspaces");
-                    opts.McpBaseUri = "http://localhost";
-                    opts.DispatchWakesInBackground = false;
-                    opts.EnableScheduleService = false;
-                    opts.EnableMaintenanceService = false;
-                    opts.CleanupEphemeralDataOnShutdown = false;
-                    configureHostOptions?.Invoke(opts);
-                    return opts;
-                });
-
-                configureExtraServices?.Invoke(services);
-            });
+            configureExtraServices?.Invoke(services);
         });
 
         Client = Factory.CreateClient(new WebApplicationFactoryClientOptions

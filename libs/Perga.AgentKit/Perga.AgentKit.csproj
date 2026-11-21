@@ -2,4 +2,7 @@
   <ItemGroup>
     <InternalsVisibleTo Include="Perga.AgentKit.Tests" />
   </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Perga.Processes/Perga.Processes.csproj" />
+  </ItemGroup>
 </Project>

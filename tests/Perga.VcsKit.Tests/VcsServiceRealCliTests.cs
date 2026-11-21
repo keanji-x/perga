@@ -2,6 +2,7 @@ using System.Text;
 
 namespace Perga.VcsKit.Tests;
 
+[Collection("VCS process environment")]
 public sealed class VcsServiceRealCliTests : IDisposable
 {
     private readonly string _tempRoot;
@@ -142,6 +143,46 @@ public sealed class VcsServiceRealCliTests : IDisposable
         await vcs.RestoreOperationAsync(repoDir, preConflictOpId, conflictCts.Token);
         var afterRestore = await vcs.SnapshotWorkingCopyAsync(repoDir, ct: conflictCts.Token);
         Assert.False(afterRestore.HasConflicts);
+    }
+
+    [Fact]
+    public async Task GitWorktree_PostCheckoutDoesNotInheritHostStorageAndKeepsDeveloperEnv()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var source = await InitGitRepoAsync(Path.Combine(_tempRoot, "repo"));
+        var hooks = Directory.CreateDirectory(Path.Combine(_tempRoot, "hooks"));
+        await RunCheckedAsync("git", ["config", "core.hooksPath", hooks.FullName], source);
+        var postCheckout = Path.Combine(hooks.FullName, "post-checkout");
+        await File.WriteAllTextAsync(postCheckout, """
+            #!/bin/sh
+            if test -z "${PERGA_DB_PATH+x}" && test "$VIRTUAL_ENV" = /simulated/venv; then
+                echo isolated > hook-result
+            else
+                echo leaked > hook-result
+            fi
+            """.ReplaceLineEndings("\n"));
+        File.SetUnixFileMode(postCheckout, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+
+        var previousDb = Environment.GetEnvironmentVariable("PERGA_DB_PATH");
+        var previousVenv = Environment.GetEnvironmentVariable("VIRTUAL_ENV");
+        try
+        {
+            Environment.SetEnvironmentVariable("PERGA_DB_PATH", Path.Combine(_tempRoot, "inherited.db"));
+            Environment.SetEnvironmentVariable("VIRTUAL_ENV", "/simulated/venv");
+            var vcs = new VcsService(new VcsServiceOptions { DisableJj = true });
+            var workspace = await vcs.CreateWorkspaceAsync(source, "track-hook", Path.Combine(_tempRoot, "workspace"));
+
+            Assert.Equal("isolated", (await File.ReadAllTextAsync(Path.Combine(workspace.WorkspacePath, "hook-result"))).Trim());
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PERGA_DB_PATH", previousDb);
+            Environment.SetEnvironmentVariable("VIRTUAL_ENV", previousVenv);
+        }
     }
 
     [Fact]
@@ -383,3 +424,6 @@ public sealed class VcsServiceRealCliTests : IDisposable
         }
     }
 }
+
+[CollectionDefinition("VCS process environment", DisableParallelization = true)]
+public sealed class VcsProcessEnvironmentCollection;

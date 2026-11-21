@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
 using Perga.AgentKit.Internal;
+using Perga.Processes;
 
 namespace Perga.AgentKit;
 
@@ -241,12 +242,8 @@ public sealed class AgentRuntime : IAgentRuntime
 
     private static Dictionary<string, string> BuildProcessEnvironment(IReadOnlyDictionary<string, string>? overrides)
     {
-        var comparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
-        var env = new Dictionary<string, string>(comparer);
-        foreach (System.Collections.DictionaryEntry entry in Environment.GetEnvironmentVariables())
-        {
-            if (entry.Key is string key && entry.Value is string value) env[key] = value;
-        }
+        var env = ChildProcessEnvironment.Capture();
+        var comparer = env.Comparer;
 
         var pathOverridden = false;
         if (overrides is not null)

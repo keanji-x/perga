@@ -106,11 +106,24 @@ public sealed class McpPluginsPolicyGuardAndLifecycleIntegrationTests
         var tempPluginDir = Directory.CreateTempSubdirectory("perga-mcp-plugins-").FullName;
         try
         {
+            using var ambientHost = new AmbientEnvironmentScope(new Dictionary<string, string?>
+            {
+                ["PERGA_TEST_MCP_DB"] = Path.Combine(tempPluginDir, "inherited.db"),
+                ["ASPNETCORE_TEST_MCP_URL"] = "http://127.0.0.1:4240",
+                ["VIRTUAL_ENV"] = "/simulated/venv"
+            });
             var stdioScriptPath = Path.Combine(tempPluginDir, "stdio-calc.mjs");
             await File.WriteAllTextAsync(
                 stdioScriptPath,
                 """
                 import readline from 'node:readline';
+                if (Object.hasOwn(process.env, 'PERGA_TEST_MCP_DB') ||
+                    Object.hasOwn(process.env, 'ASPNETCORE_TEST_MCP_URL') ||
+                    process.env.VIRTUAL_ENV !== '/simulated/venv' ||
+                    process.env.PLUGIN_SETTING !== 'configured') {
+                  process.stderr.write('The plugin received the wrong environment.\n');
+                  process.exit(1);
+                }
                 const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
                 for await (const line of rl) {
                   const trimmed = line.trim();
@@ -157,7 +170,8 @@ public sealed class McpPluginsPolicyGuardAndLifecycleIntegrationTests
                     {
                         transport = "stdio",
                         command = nodeExe,
-                        args = new[] { stdioScriptPath }
+                        args = new[] { stdioScriptPath },
+                        env = new Dictionary<string, string> { ["PLUGIN_SETTING"] = "configured" }
                     }
                 }
             });
