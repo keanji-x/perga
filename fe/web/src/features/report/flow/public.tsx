@@ -269,12 +269,16 @@ export function ReportFlowBlock({
       {/* 1. Topologically layered DAG canvas */}
       {layout.layers.length > 0 && (
         <nav className={styles.graphRail} aria-label="调度步骤图">
-          <div className={styles.layers} role="tablist" aria-label="流程节点">
+          <div
+            className={`${styles.layers} ${layout.layers.length > 4 ? styles.layersScrollable : ''}`}
+            role="tablist"
+            aria-label="流程节点"
+          >
             {layout.layers.map((layer) => (
               <div
                 key={`layer-${layer.index}-${layer.isCycleFallback ? 'cycle' : 'dag'}`}
                 className={styles.layerColumn}
-                data-flow-layer={layer.index}
+                data-nc-flow-layer={layer.index}
               >
                 <div className={styles.layerIndex}>
                   {layer.isCycleFallback ? '环依赖' : formatLayerNumber(layer.index)}

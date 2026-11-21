@@ -129,7 +129,10 @@ export function formatWatchSummary(watch: FlowWatchProgress): string {
     : (watch.probeKind === 'prChecks' ? 'PR checks' : 'cmd probe');
   const parts: string[] = [baseLabel];
   if (watch.passedChecks != null && watch.totalChecks != null) {
-    parts.push(`${watch.passedChecks}/${watch.totalChecks} checks`);
+    const ratio = `${watch.passedChecks}/${watch.totalChecks}`;
+    if (!baseLabel.includes(ratio)) {
+      parts.push(`${ratio} checks`);
+    }
   }
   parts.push('等待中');
   return parts.join(' · ');
@@ -186,6 +189,9 @@ export function formatNodeCaption(
   }
   if (visual === 'pending') {
     if (node.waitingOn.length > 0) {
+      if (node.after.length > 0) {
+        return '待前置完成';
+      }
       const names = node.waitingOn.map((id) => titleById.get(id) ?? id);
       return `等待 ${names.join('、')}`;
     }

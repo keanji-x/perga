@@ -156,7 +156,7 @@ describe('ReportFlowBlock (builtin:flow)', () => {
     );
 
     // 1. Topological layers: fix-r2 (0) -> wait-ci (1) -> [recheck-a, fix-ci] (2)
-    expect(container.querySelectorAll('[data-flow-layer]')).toHaveLength(3);
+    expect(container.querySelectorAll('[data-nc-flow-layer]')).toHaveLength(3);
     expect(screen.getByText('PR #115 · 3/5 checks · 等待中')).toBeTruthy();
 
     // 2. Attention node auto-selected by default with summary highlight
