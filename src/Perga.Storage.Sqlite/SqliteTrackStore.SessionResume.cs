@@ -6,29 +6,6 @@ namespace Perga.Storage.Sqlite;
 
 public sealed partial class SqliteTrackStore
 {
-    public async Task<IReadOnlyList<ProviderSessionResumeFence>> ListSessionResumeFencesAsync(string trackId, CancellationToken ct)
-    {
-        EnsureInitialized();
-        await using var conn = await OpenReadConnectionAsync(ct).ConfigureAwait(false);
-        return (await conn.QueryAsync<(string SessionId, string TurnId, string NativeId, long Quiescent)>(new CommandDefinition(
-            """
-            SELECT id AS SessionId, COALESCE(unknown_turn_id, '') AS TurnId,
-                   COALESCE(native_thread_id, '') AS NativeId, 1 AS Quiescent
-            FROM agent_sessions WHERE track_id = @TrackId AND status = 'unknown';
-            """, new { TrackId = trackId }, cancellationToken: ct)).ConfigureAwait(false)).Select(row => new ProviderSessionResumeFence(row.SessionId, row.TurnId, row.NativeId, row.Quiescent != 0)).ToArray();
-    }
-
-    public Task SaveSessionResumeFenceAsync(ProviderSessionResumeFence fence, CancellationToken ct) =>
-        _writer.EnqueueAsync(async (conn, tx, token) =>
-        {
-            RequireOne(await conn.ExecuteAsync(new CommandDefinition(
-                """
-                UPDATE agent_sessions SET status = 'unknown', unknown_turn_id = @TurnId,
-                    unknown_reason = COALESCE(unknown_reason, 'stream_lost')
-                WHERE id = @SessionId;
-                """, fence, tx, cancellationToken: token)).ConfigureAwait(false));
-        }, ct);
-
     public Task CompleteSessionResumeAsync(AgentSessionDto session, PersistedSessionInput? unresolved,
         EventEnvelopeDto sessionEvent, int expectedEpoch, CancellationToken ct, SessionItemDto? boundary = null) =>
         _writer.EnqueueAsync(async (conn, tx, token) =>

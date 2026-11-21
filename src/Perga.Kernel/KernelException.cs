@@ -9,6 +9,7 @@ public enum KernelErrorCode
     Forbidden,
     PolicyDenied,
     PreconditionFailed,
+    SessionRecoveryRequired,
     IdempotencyKeyInvalid,
     IdempotencyKeyReused,
     IdempotencyKeyExhausted,

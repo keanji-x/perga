@@ -27,7 +27,8 @@ public sealed partial class TrackActor
 
     private SessionCapabilitiesDto ReadCapabilitiesCore(AgentSessionDto session)
     {
-        _openSessionHandles.TryGetValue(session.Id, out var handle);
+        _runtimes.TryGetOpen(session.Id, out var handle);
+        if (handle?.LaunchSpec.Provider != session.Provider) handle = null;
         var configuration = handle?.Agent.WorkerConfiguration;
         return new(configuration?.Models ?? [], configuration?.DefaultModel, configuration?.DefaultReasoningEffort,
             handle?.Agent.AvailablePermissionModes ?? [], handle?.Agent.SupportsNativeSteer == true,

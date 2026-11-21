@@ -98,8 +98,9 @@ public sealed partial class TrackActor
             var lost = ex is ProviderSessionNotFoundException;
             var status = lost ? "unknown" : ex is OperationCanceledException ? "interrupted" : "failed";
             var failed = turn with { Status = status, ErrorText = ex.Message, CompletedAtMs = lost ? null : actor.NowMs() };
-            var idle = actor.RequireSessionCore(SessionId) with { Status = lost ? "unknown" : "idle",
-                UnknownReason = lost ? "session_lost" : null, UnknownTurnId = lost ? turn.Id : null,
+            var unconfirmed = actor._runtimes.IsShutdownUnconfirmed(SessionId);
+            var idle = actor.RequireSessionCore(SessionId) with { Status = lost || unconfirmed ? "unknown" : "idle",
+                UnknownReason = unconfirmed ? "shutdown_unconfirmed" : lost ? "session_lost" : null, UnknownTurnId = lost || unconfirmed ? turn.Id : null,
                 ReconnectInvalidated = lost, UpdatedAtMs = actor.NowMs() };
             if (failed.Status == "failed" && failed.CompletedAtMs is { } completedAt)
                 idle = idle with { LastNotifiableTurnAtMs = Math.Max(idle.LastNotifiableTurnAtMs ?? 0, completedAt) };
@@ -186,8 +187,9 @@ public sealed partial class TrackActor
             var lost = ex is ProviderSessionNotFoundException;
             var failed = turn with { Status = lost ? "unknown" : ex is OperationCanceledException ? "interrupted" : "failed",
                 ErrorText = ex.Message, CompletedAtMs = lost ? null : Actor.NowMs() };
-            var idle = Actor.RequireSessionCore(SessionId) with { Status = lost ? "unknown" : "idle",
-                UnknownReason = lost ? "session_lost" : null, UnknownTurnId = lost ? turn.Id : null,
+            var unconfirmed = Actor._runtimes.IsShutdownUnconfirmed(SessionId);
+            var idle = Actor.RequireSessionCore(SessionId) with { Status = lost || unconfirmed ? "unknown" : "idle",
+                UnknownReason = unconfirmed ? "shutdown_unconfirmed" : lost ? "session_lost" : null, UnknownTurnId = lost || unconfirmed ? turn.Id : null,
                 ReconnectInvalidated = lost, UpdatedAtMs = Actor.NowMs() };
             if (failed.Status == "failed" && failed.CompletedAtMs is { } completedAt)
                 idle = idle with { LastNotifiableTurnAtMs = Math.Max(idle.LastNotifiableTurnAtMs ?? 0, completedAt) };

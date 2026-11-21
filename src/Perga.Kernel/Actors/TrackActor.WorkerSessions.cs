@@ -22,21 +22,20 @@ public sealed partial class TrackActor
         return (session, attempt);
     }
 
-    private async Task CloseInterruptedWorkerCoreAsync(ActiveTurnState turn, ActiveAttemptState attempt)
+    private async Task CloseInterruptedWorkerAsync(ActiveTurnState turn, ActiveAttemptState attempt)
     {
-        if (_openSessionHandles.TryGetValue(turn.SessionId, out var agent))
+        var confirmed = false;
+        try
         {
-            try
-            {
-                _sessionShutdownPending.TryAdd(turn.SessionId, 0);
-                await DisposeOwnedSessionCoreAsync(turn.SessionId, agent.Agent).ConfigureAwait(false);
-                attempt.InterruptionUnconfirmed = false;
-            }
-            catch (Exception)
-            {
-                attempt.InterruptionUnconfirmed = true;
-            }
+            await _runtimes.Get(turn.SessionId).CloseAsync(_options.SessionStartupTimeout, CancellationToken.None).ConfigureAwait(false);
+            confirmed = true;
         }
+        catch { /* Durable settlement fences the session and retains the handle for retry. */ }
+        await EnqueueAsync(_ =>
+        {
+            attempt.InterruptionUnconfirmed = !confirmed;
+            return Task.CompletedTask;
+        }, CancellationToken.None).ConfigureAwait(false);
     }
 
     internal Task<WorkerCompletionOrigin> CaptureWorkerCompletionOriginAsync(McpSessionPrincipal caller, CancellationToken ct) =>

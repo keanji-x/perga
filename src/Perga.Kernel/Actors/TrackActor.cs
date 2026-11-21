@@ -51,8 +51,9 @@ public sealed partial class TrackActor : IAsyncDisposable
     private readonly Dictionary<string, AskDto> _asks = new(StringComparer.Ordinal);
     private readonly Dictionary<string, TerminalDto> _terminals = new(StringComparer.Ordinal);
     private readonly Dictionary<string, int> _nextTurnIndexBySession = new(StringComparer.Ordinal);
-    private sealed record OpenSessionHandle(IAgentSession Agent, HarnessLaunchSpec LaunchSpec, SessionConfiguration Selection, ConfirmedConfiguration? Confirmation);
-    private readonly Dictionary<string, OpenSessionHandle> _openSessionHandles = new(StringComparer.Ordinal);
+    private readonly SessionRuntimeRegistry _runtimes = new();
+    private readonly object _disposeSync = new();
+    private Task? _disposeTask;
     private readonly SessionTurnScheduler _scheduler;
     private readonly SessionTurnRunner _turnRunner;
     private readonly Dictionary<string, TaskCompletionSource<JsonElement>> _pendingAskWaiters = new(StringComparer.Ordinal);
@@ -115,11 +116,10 @@ public sealed partial class TrackActor : IAsyncDisposable
 
     public bool HasActiveWork =>
         Volatile.Read(ref _activeAttemptCount) > 0 ||
-        Volatile.Read(ref _sessionResumeHoldCount) > 0 ||
         Volatile.Read(ref _queuedMailboxOps) > 0 ||
         Volatile.Read(ref _inFlightExternalOps) > 0 ||
         !_backgroundJobs.IsEmpty ||
-        HasPendingSessionOwnership;
+        _runtimes.HasActiveWork;
 
     public bool IsSessionOrTaskRunning =>
         _scheduler.HasActiveTurns || _activeAttempts.Count > 0 || _scheduler.HasDispatchingInputs;
@@ -430,7 +430,7 @@ public sealed partial class TrackActor : IAsyncDisposable
             if (_deletingTrack)
                 throw KernelException.Conflict("This Track is already being deleted.");
             RequireAttemptsOutsideVerification(_activeAttempts.Values);
-            if (_scheduler.ResumeHolds.Any(hold => hold.Busy))
+            if (_sessions.Keys.Any(_runtimes.IsRecovering))
                 throw KernelException.Conflict("Wait for provider recovery before deleting this Track.");
             ct.ThrowIfCancellationRequested();
             _deletingTrack = true;
@@ -441,14 +441,6 @@ public sealed partial class TrackActor : IAsyncDisposable
             foreach (var turn in _scheduler.ActiveTurns.ToArray())
             {
                 AbortTurn(turn);
-                try
-                {
-                    await turn.AgentSession.CancelTurnAsync(ct).ConfigureAwait(false);
-                }
-                catch
-                {
-                    // Best-effort turn cancellation.
-                }
             }
 
             // 2. Cancel pending ask waiters
@@ -475,14 +467,6 @@ public sealed partial class TrackActor : IAsyncDisposable
                 }
             }
 
-            // 5. Dispose open agent sessions & revoke MCP tokens
-            foreach (var kvp in _openSessionHandles.ToArray())
-            {
-                _openSessionHandles.Remove(kvp.Key);
-
-                await kvp.Value.Agent.DisposeAsync().ConfigureAwait(false);
-            }
-
             _mcpBridge.RevokeTrack(TrackId);
 
             var driver = _workspaceDrivers.GetRequired(_track.WorkspaceDriver);
@@ -492,6 +476,8 @@ public sealed partial class TrackActor : IAsyncDisposable
             _mountedWorkspace = null;
             return (spec, driver, closeCmd, cwd, _track.AreaId);
         }, CancellationToken.None).ConfigureAwait(false);
+
+        await _runtimes.DisposeAllAsync(_options.SessionStartupTimeout).ConfigureAwait(false);
 
         // Run WorkspaceCloseCmd before tearing down workspace
         if (!string.IsNullOrWhiteSpace(teardownInfo.CloseCmd))
@@ -770,8 +756,8 @@ public sealed partial class TrackActor : IAsyncDisposable
     // ------------------- Sessions, Streaming Turns & Epoch Compaction -------------------
 
     private IAgentSession? FindOpenSessionForSettingsCore(string sessionId, string provider) =>
-        !_scheduler.HasResumeHold(sessionId) &&
-            _openSessionHandles.TryGetValue(sessionId, out var handle) &&
+        RequireSessionCore(sessionId).Status != "unknown" &&
+            _runtimes.TryGetOpen(sessionId, out var handle) &&
             string.Equals(handle.LaunchSpec.Provider, provider, StringComparison.OrdinalIgnoreCase)
             ? handle.Agent : null;
 
@@ -1597,7 +1583,6 @@ public sealed partial class TrackActor : IAsyncDisposable
                 .ConfigureAwait(false);
         }
 
-        RestoreSessionResumeFencesCore(await _store.ListSessionResumeFencesAsync(TrackId, ct).ConfigureAwait(false));
 
         _asks.Clear();
         foreach (var ask in snapshot.OpenAsks)
@@ -1831,19 +1816,42 @@ public sealed partial class TrackActor : IAsyncDisposable
                                 string.Equals(task.Kind, "terminal", StringComparison.OrdinalIgnoreCase);
             var workerProvider = route.Provider ?? GetDefaultProviderCore();
             var previousSession = _sessions.Values.FirstOrDefault(s => s.BoundTaskId == task.Id);
-            // An orphaned attempt can release its restored hold, but live operations and ownership still fence reuse.
+            // Orphaned attempts can be rebound after live provider ownership is closed.
             var orphaned = previousSession?.BoundAttemptId is { } previousAttempt && !_activeAttempts.ContainsKey(previousAttempt);
             if (previousSession is not null && _scheduler.IsOccupied(
-                orphaned ? previousSession with { Status = "idle" } : previousSession, allowResumeHold: orphaned)) return true;
+                orphaned ? previousSession with { Status = "idle" } : previousSession)) return true;
             if (previousSession?.BoundAttemptId is not null)
             {
                 _mcpBridge.RevokeSession(previousSession.Id);
-                if (_openSessionHandles.TryGetValue(previousSession.Id, out var oldHandle))
+                if (_runtimes.TryGetOpen(previousSession.Id, out _))
                 {
-                    _sessionShutdownPending.TryAdd(previousSession.Id, 0);
-                    await DisposeOwnedSessionCoreAsync(previousSession.Id, oldHandle.Agent).ConfigureAwait(false);
+                    var cleanupReservation = Guid.NewGuid();
+                    _scheduler.Reserve(previousSession.Id, cleanupReservation);
+                    _ = TrackBackgroundJob(async () =>
+                    {
+                        var confirmed = false;
+                        try
+                        {
+                            await _runtimes.Get(previousSession.Id).CloseAsync(_options.SessionStartupTimeout,
+                                _actorShutdownCts.Token).ConfigureAwait(false);
+                            confirmed = true;
+                        }
+                        catch { /* Retain ownership and fence reuse until explicit recovery. */ }
+                        if (!_actorShutdownCts.IsCancellationRequested)
+                            await EnqueueAsync(async _ =>
+                            {
+                                _scheduler.ReleaseReservation(previousSession.Id);
+                                if (confirmed) await ScheduleEligibleTasksCoreAsync(CancellationToken.None).ConfigureAwait(false);
+                                else
+                                {
+                                    var current = RequireSessionCore(previousSession.Id);
+                                    var unknown = current with { Status = "unknown", UnknownReason = "shutdown_unconfirmed", UpdatedAtMs = NowMs() };
+                                    await PersistAndEmitSessionUpdatedCoreAsync(unknown, unknown.UpdatedAtMs, CancellationToken.None).ConfigureAwait(false);
+                                }
+                            }, CancellationToken.None).ConfigureAwait(false);
+                    });
+                    return true;
                 }
-                ReleaseSessionResumeCore(previousSession.Id);
                 _scheduler.Clear(previousSession.Id);
             }
             var subagent = isCommandTask ? null : previousSession is not null ? previousSession with
@@ -2338,7 +2346,7 @@ public sealed partial class TrackActor : IAsyncDisposable
         var reserved = false;
         try
         {
-            var preparation = await EnqueueAsync<(IAgentSession OldAgentSession, LiveContextUsage ContextBinding, int HandoverTurnIndex)?>(async _ =>
+            var preparation = await EnqueueAsync<(AgentSessionDto Session, int HandoverTurnIndex)?>(async _ =>
             {
                 await EnsureHydratedCoreAsync(ct).ConfigureAwait(false);
                 var session = RequireSessionCore(sessionId);
@@ -2351,19 +2359,20 @@ public sealed partial class TrackActor : IAsyncDisposable
                     throw KernelException.Conflict($"Cannot compact session '{sessionId}' while a turn is actively running.");
                 }
 
-                var oldAgentSession = await GetOrOpenAgentSessionCoreAsync(session, overrideSystemPrompt: null, ct)
-                    .ConfigureAwait(false);
                 ct.ThrowIfCancellationRequested();
-                _scheduler.StartCompacting(sessionId);
+                _runtimes.Get(sessionId).SetBusy("compacting");
                 reserved = true;
                 await PersistAndEmitSessionUpdatedCoreAsync(session with { Status = "compacting", UpdatedAtMs = NowMs() }, NowMs(), ct).ConfigureAwait(false);
                 var turnIdx = NextTurnIndexCore(sessionId);
-                return (oldAgentSession, _liveContextUsage.GetOrCreateValue(oldAgentSession), turnIdx);
+                return (session, turnIdx);
             }, CancellationToken.None).ConfigureAwait(false);
 
-            if (preparation is not { } prep)
+            if (preparation is not { } prepared)
                 return await EnqueueAsync(_ => Task.FromResult(RequireSessionCore(sessionId)), ct).ConfigureAwait(false);
 
+            var oldAgent = await GetOrOpenAgentSessionCoreAsync(prepared.Session, null, ct).ConfigureAwait(false);
+            var prep = (OldAgentSession: oldAgent, ContextBinding: _runtimes.Get(sessionId).ContextUsage,
+                HandoverTurnIndex: prepared.HandoverTurnIndex);
             if (await prep.OldAgentSession.ResolveNativeCompactSupportAsync(ct).AsTask().WaitAsync(ct).ConfigureAwait(false))
             {
                 var compactTurnId = $"trn_{prep.HandoverTurnIndex:D6}_{Guid.NewGuid():N}";
@@ -2448,14 +2457,11 @@ public sealed partial class TrackActor : IAsyncDisposable
             var handoverSummary = summaryBuilder.ToString().Trim();
 
             // 2. Dispose old IAgentSession instance.
-            _sessionShutdownPending.TryAdd(sessionId, 0);
-            await ConfirmProviderShutdownAsync(sessionId, prep.OldAgentSession, ct).ConfigureAwait(false);
+            await _runtimes.Get(sessionId).CloseAsync(_options.SessionStartupTimeout, ct).ConfigureAwait(false);
 
             // 3 & 4. Update Epoch = Epoch + 1, NativeThreadId = null, clear context usage -> seed fresh IAgentSession with latest Report + handover summary!
-            return await EnqueueAsync(async _ =>
+            var handover = await EnqueueAsync(async _ =>
             {
-                _openSessionHandles.Remove(sessionId);
-                _sessionShutdownPending.TryRemove(sessionId, out var removedShutdown);
 
                 var current = RequireSessionCore(sessionId);
                 var now = NowMs();
@@ -2496,13 +2502,10 @@ public sealed partial class TrackActor : IAsyncDisposable
                 var latestReportMarkdown = _reportEngine.RenderMarkdown(_report, withMarkers: true);
                 var seedPrompt = BuildEpochSeedSystemPrompt(compacted, latestReportMarkdown, handoverSummary);
 
-                // Seed fresh IAgentSession with ResumeNativeThreadId == null and SystemPrompt = Report + Handover Summary.
-                var fresh = await OpenFreshAgentSessionCoreAsync(compacted, seedPrompt, ct).ConfigureAwait(false);
-                _scheduler.EndCompacting(sessionId);
-                await RegisterOpenAgentSessionCoreAsync(compacted, fresh.Agent, fresh.Spec, ct).ConfigureAwait(false);
-
-                return RequireSessionCore(sessionId);
+                return (Session: compacted, SeedPrompt: seedPrompt);
             }, ct).ConfigureAwait(false);
+            await GetOrOpenAgentSessionCoreAsync(handover.Session, handover.SeedPrompt, ct).ConfigureAwait(false);
+            return await EnqueueAsync(_ => Task.FromResult(RequireSessionCore(sessionId)), ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (deadline.IsCancellationRequested && !_actorShutdownCts.IsCancellationRequested)
         {
@@ -2522,7 +2525,7 @@ public sealed partial class TrackActor : IAsyncDisposable
             if (reserved && !_actorShutdownCts.IsCancellationRequested)
                 await EnqueueAsync(async _ =>
                 {
-                    _scheduler.EndCompacting(sessionId);
+                    _runtimes.Get(sessionId).SetBusy(null);
                     var current = RequireSessionCore(sessionId);
                     if (current.Status == "compacting")
                         await PersistAndEmitSessionUpdatedCoreAsync(current with { Status = "idle", UpdatedAtMs = NowMs() }, NowMs(), CancellationToken.None).ConfigureAwait(false);
@@ -2549,117 +2552,50 @@ public sealed partial class TrackActor : IAsyncDisposable
         }
     }
 
+    // Called only outside the mailbox. The runtime gate serializes provider I/O;
+    // launch-spec construction and durable publication use short mailbox operations.
     private async Task<IAgentSession> GetOrOpenAgentSessionCoreAsync(
-        AgentSessionDto session, string? overrideSystemPrompt, CancellationToken ct, bool inMailbox = true)
+        AgentSessionDto session, string? overrideSystemPrompt, CancellationToken ct)
     {
-        Task<T> Core<T>(Func<Task<T>> action) => inMailbox ? action() : EnqueueAsync(_ => action(), CancellationToken.None);
-        var handle = await Core(async () =>
-        {
-            if (_sessionShutdownPending.ContainsKey(session.Id))
-                throw KernelException.PreconditionFailed("Confirm provider shutdown through session recovery before reuse.");
-            _openSessionHandles.TryGetValue(session.Id, out var existing);
-            if (existing?.Agent.ConfigurationState is not null && existing.Agent.NativeThreadId is { } nativeId)
-            {
-                var current = RequireSessionCore(session.Id);
-                if (current.NativeThreadId is null)
-                {
-                    var identified = current with { NativeThreadId = nativeId, UpdatedAtMs = NowMs() };
-                    await PersistAndEmitSessionUpdatedCoreAsync(identified, identified.UpdatedAtMs, ct).ConfigureAwait(false);
-                }
-                session = session with { NativeThreadId = current.NativeThreadId ?? nativeId };
-            }
-            return existing;
-        }).ConfigureAwait(false);
-        var desired = SessionConfiguration.FromNullable(session.Model, session.ReasoningEffort, session.PermissionMode);
-        if (handle is not null)
-        {
-            SessionConfigurationOutcome outcome;
-            async Task CloseHandleAsync()
-            {
-                await Core(() =>
-                {
-                    _sessionShutdownPending.TryAdd(session.Id, 0);
-                    InvalidateContextBindingCore(session.Id);
-                    handle.Agent.AttachIdleContextUsageHandler(null);
-                    return Task.FromResult(true);
-                }).ConfigureAwait(false);
-                await DisposeOwnedSessionCoreAsync(session.Id, handle.Agent, inMailbox).ConfigureAwait(false);
-            }
-            try { outcome = await handle.Agent.ConfigureAsync(desired, ct).WaitAsync(ct).ConfigureAwait(false); }
-            catch
-            {
-                await CloseHandleAsync().ConfigureAwait(false);
-                throw;
-            }
-            if (outcome is SessionConfigurationOutcome.Applied applied)
-                return await Core(() =>
-                {
-                    RequireConfirmedConfiguration(session, handle.Agent, applied.Configuration);
-                    if (handle.Confirmation != applied.Configuration) InvalidateContextBindingCore(session.Id);
-                    _openSessionHandles[session.Id] = handle with { Selection = applied.Configuration.Selection, Confirmation = applied.Configuration };
-                    return Task.FromResult(handle.Agent);
-                }).ConfigureAwait(false);
-            await CloseHandleAsync().ConfigureAwait(false);
-            switch (outcome)
-            {
-                case SessionConfigurationOutcome.RequiresReopen: break;
-                case SessionConfigurationOutcome.Unsupported unsupported: throw KernelException.InvalidArgument(unsupported.Reason);
-                case SessionConfigurationOutcome.Rejected rejected: throw KernelException.PreconditionFailed(rejected.Reason);
-                default: throw KernelException.PreconditionFailed("The provider returned an unknown configuration outcome.");
-            }
-        }
-        var opened = await OpenFreshAgentSessionCoreAsync(session, overrideSystemPrompt, ct, inMailbox).ConfigureAwait(false);
-        return await Core(async () =>
-        {
-            await RegisterOpenAgentSessionCoreAsync(session, opened.Agent, opened.Spec, ct).ConfigureAwait(false);
-            return opened.Agent;
-        }).ConfigureAwait(false);
-    }
-
-    private async Task<(IAgentSession Agent, HarnessLaunchSpec Spec)> OpenFreshAgentSessionCoreAsync(
-        AgentSessionDto session, string? overrideSystemPrompt, CancellationToken ct, bool inMailbox = true)
-    {
-        Task<T> Core<T>(Func<Task<T>> action) => inMailbox ? action() : EnqueueAsync(_ => action(), CancellationToken.None);
         try
         {
-            var spec = await Core(() => BuildAgentLaunchSpecCoreAsync(session, overrideSystemPrompt, ct)).ConfigureAwait(false);
-            IAgentSession opened;
-            try { opened = await OpenAgentSessionBoundedAsync(session.Id, spec, ct).ConfigureAwait(false); }
-            catch (SessionConfigurationException error) { throw KernelException.PreconditionFailed(error.Message); }
-            await Core(() =>
+            if (_runtimes.TryGetOpen(session.Id, out var existing) && existing.Agent.NativeThreadId is { } nativeId &&
+                existing.LaunchSpec.Provider == session.Provider)
             {
-                _openSessionHandles[session.Id] = new(opened, spec, SessionConfiguration.FromLaunch(spec), opened.ConfigurationState);
-                _pendingSessionLaunches.TryRemove(session.Id, out var transferredLaunch);
-                return Task.FromResult(true);
-            }).ConfigureAwait(false);
-            try
-            {
-                if (spec.ResumeNativeThreadId is not null && opened.NativeThreadId != spec.ResumeNativeThreadId)
-                    throw new ProviderSessionNotFoundException("The provider did not restore the original session.");
-                RequireConfirmedConfiguration(session, opened, opened.ConfigurationState);
-                return (opened, spec);
-            }
-            catch
-            {
-                _sessionShutdownPending.TryAdd(session.Id, 0);
-                try
+                session = session with { NativeThreadId = session.NativeThreadId ?? nativeId };
+                await EnqueueAsync(async _ =>
                 {
-                    await DisposeOwnedSessionCoreAsync(session.Id, opened, inMailbox).ConfigureAwait(false);
-                }
-                catch { /* Validation failure remains authoritative; keep unconfirmed ownership. */ }
-                throw;
+                    var current = RequireSessionCore(session.Id);
+                    if (current.NativeThreadId is null)
+                    {
+                        var identified = current with { NativeThreadId = nativeId, UpdatedAtMs = NowMs() };
+                        await PersistAndEmitSessionUpdatedCoreAsync(identified, identified.UpdatedAtMs, ct).ConfigureAwait(false);
+                    }
+                }, ct).ConfigureAwait(false);
             }
+            var handle = await _runtimes.Get(session.Id).EnsureOpenAsync(_agentRuntime,
+                SessionConfiguration.FromNullable(session.Model, session.ReasoningEffort, session.PermissionMode),
+                session.Provider,
+                () => EnqueueAsync(_ => BuildAgentLaunchSpecCoreAsync(session, overrideSystemPrompt, ct), ct),
+                agent =>
+                {
+                    RequireConfirmedConfiguration(session, agent, agent.ConfigurationState);
+                }, _options.SessionStartupTimeout, ct).ConfigureAwait(false);
+            await EnqueueAsync(_ => RegisterOpenAgentSessionCoreAsync(session, handle.Agent, handle.LaunchSpec, ct), ct).ConfigureAwait(false);
+            return handle.Agent;
         }
-        catch (ProviderSessionNotFoundException)
+        catch (Exception error)
         {
-            await Core(async () =>
-            {
-                var current = RequireSessionCore(session.Id);
-                var unknown = current with { Status = "unknown", UnknownReason = "session_lost",
-                    ReconnectInvalidated = true, UpdatedAtMs = NowMs() };
-                await PersistAndEmitSessionUpdatedCoreAsync(unknown, unknown.UpdatedAtMs, CancellationToken.None).ConfigureAwait(false);
-                return true;
-            }).ConfigureAwait(false);
+            if (error is ProviderSessionNotFoundException || _runtimes.IsShutdownUnconfirmed(session.Id))
+                await EnqueueAsync(async _ =>
+                {
+                    var current = RequireSessionCore(session.Id);
+                    var unknown = current with { Status = "unknown",
+                        UnknownReason = _runtimes.IsShutdownUnconfirmed(session.Id) ? "shutdown_unconfirmed" : "session_lost",
+                        ReconnectInvalidated = error is ProviderSessionNotFoundException, UpdatedAtMs = NowMs() };
+                    await PersistAndEmitSessionUpdatedCoreAsync(unknown, unknown.UpdatedAtMs, CancellationToken.None).ConfigureAwait(false);
+                }, CancellationToken.None).ConfigureAwait(false);
+            if (error is SessionConfigurationException) throw KernelException.PreconditionFailed(error.Message);
             throw;
         }
     }
@@ -2801,14 +2737,11 @@ public sealed partial class TrackActor : IAsyncDisposable
         if (active.SessionId is not null && _scheduler.TryGetActive(active.SessionId, out var runningTurn))
         {
             AbortTurn(runningTurn);
-            try
+            _ = TrackBackgroundJob(async () =>
             {
-                await runningTurn.AgentSession.CancelTurnAsync(ct).ConfigureAwait(false);
-            }
-            catch
-            {
-                // Best-effort turn cancellation.
-            }
+                try { await _runtimes.Get(runningTurn.SessionId).CloseAsync(_options.SessionStartupTimeout, CancellationToken.None).ConfigureAwait(false); }
+                catch { /* The runtime retains unconfirmed ownership. */ }
+            });
         }
 
         await active.Driver.SettleAttemptLeaseAsync(active.Lease, AttemptLeaseDisposition.Discard, ct)
@@ -3242,12 +3175,7 @@ public sealed partial class TrackActor : IAsyncDisposable
             // Ignore shutdown cancellation.
         }
 
-        // Recovery and configuration jobs can still create or transfer ownership.
-        // Quiesce those producers before taking the final ownership snapshots, and keep
-        // the shutdown token source alive until their cancellation/finally paths finish.
-        try { await Task.WhenAll(_sessionRecoveryJobs).ConfigureAwait(false); }
-        catch { /* Failed operations still leave their provider ownership registered. */ }
-        await DisposeSessionOwnershipAsync().ConfigureAwait(false);
+        await _runtimes.DisposeAllAsync(_options.SessionStartupTimeout).ConfigureAwait(false);
 
         _actorShutdownCts.Dispose();
     }

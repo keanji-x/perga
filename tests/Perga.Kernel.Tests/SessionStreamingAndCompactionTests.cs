@@ -129,8 +129,12 @@ public sealed class SessionStreamingAndCompactionTests
             : new SessionConfigurationOutcome.Rejected(ConfigurationFailureCode.InvalidAcknowledgement, "effort rejected",
                 new("new-model", null, false));
         var inputs = original.RecordedInputs.Count;
-        var error = await Assert.ThrowsAsync<KernelException>(() => ctx.Kernel.UpdateSessionAsync(id, new(Model: new("new-model"), ReasoningEffort: new("high")), new InteropPrincipal.Human(), default));
-        Assert.Equal(unsupported ? KernelErrorCode.InvalidArgument : KernelErrorCode.PreconditionFailed, error.Code);
+        await ctx.Kernel.UpdateSessionAsync(id, new(Model: new("new-model"), ReasoningEffort: new("high")), new InteropPrincipal.Human(), default);
+        Assert.False(original.Disposed);
+        Assert.Empty(original.Configurations);
+        var failure = await ctx.SendAndWaitForTurnAsync(id, new("rebind", "configuration-rebind"));
+        Assert.Equal("failed", failure.Status);
+        Assert.Contains(unsupported ? "effort unavailable" : "effort rejected", failure.ErrorText);
         Assert.Single(ctx.AgentRuntime.OpenedSessions);
         Assert.True(original.Disposed);
         Assert.Equal(inputs, original.RecordedInputs.Count);
@@ -265,6 +269,10 @@ public sealed class SessionStreamingAndCompactionTests
         Assert.Equal("new-model", ((await ctx.Kernel.ListSessionsAsync(snap.Track.Id, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray()).Single(s => s.Id == id).Model);
         Assert.Contains(ctx.Store.PersistedEvents, e => e.Kind == Perga.Kernel.Events.KernelEventKinds.SessionUpdated &&
             e.Payload.GetProperty("id").GetString() == id && e.Payload.TryGetProperty("model", out var model) && model.GetString() == "new-model");
+        Assert.Empty(original.ModelSwitches);
+        Assert.False(original.Disposed);
+        Assert.Single(ctx.AgentRuntime.OpenedSessions);
+        await ctx.SendAndWaitForTurnAsync(id, new SendSessionMessageRequest("next", "next"));
         Assert.Equal(new[] { "new-model" }, original.ModelSwitches);
         Assert.Equal(!supportsSwitch, original.Disposed);
         var opened = ctx.AgentRuntime.OpenedSessions.ToArray();
@@ -274,7 +282,6 @@ public sealed class SessionStreamingAndCompactionTests
             Assert.Equal("new-model", opened[1].LaunchSpec.Model);
             Assert.Equal(original.NativeThreadId, opened[1].LaunchSpec.ResumeNativeThreadId);
         }
-        await ctx.SendAndWaitForTurnAsync(id, new SendSessionMessageRequest("next", "next"));
         Assert.Equal(opened.Length, ctx.AgentRuntime.OpenedSessions.Count);
         await ctx.Kernel.UpdateSessionAsync(id, new(Model: new("new-model")), new InteropPrincipal.Human(), default);
         Assert.Single(original.ModelSwitches);
@@ -297,7 +304,11 @@ public sealed class SessionStreamingAndCompactionTests
         }
         var opens = ctx.AgentRuntime.OpenedSessions.Count;
         ctx.AgentRuntime.OnBeforeOpenSession = _ => throw new InvalidOperationException("provider unavailable");
-        await Assert.ThrowsAsync<InvalidOperationException>(() => ctx.Kernel.UpdateSessionAsync(id, new(Model: new("retry-model")), new InteropPrincipal.Human(), default));
+        await ctx.Kernel.UpdateSessionAsync(id, new(Model: new("retry-model")), new InteropPrincipal.Human(), default);
+        Assert.False(original.Disposed);
+        var failed = await ctx.SendAndWaitForTurnAsync(id, new("rebind", "failed-rebind"));
+        Assert.Equal("failed", failed.Status);
+        Assert.Contains("provider unavailable", failed.ErrorText);
         Assert.True(original.Disposed);
         Assert.Equal("retry-model", ((await ctx.Kernel.ListSessionsAsync(snap.Track.Id, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray()).Single(s => s.Id == id).Model);
         ctx.AgentRuntime.OnBeforeOpenSession = null;

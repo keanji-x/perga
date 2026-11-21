@@ -65,10 +65,8 @@ public sealed class UnifiedSessionLifecycleTests
         Assert.DoesNotContain(ctx.AgentRuntime.OpenedSessions.SelectMany(s => s.RecordedInputs), i => i.Prompt == "declined");
     }
 
-    [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public async Task CancelledConfigurationUpdateStillReleasesReservation(bool duringReservation)
+    [Fact]
+    public async Task CancelledLazyConfigurationUpdateLeavesNoReservation()
     {
         await using var ctx = new KernelTestContext();
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
@@ -77,16 +75,9 @@ public sealed class UnifiedSessionLifecycleTests
         using var caller = new CancellationTokenSource();
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        if (duringReservation)
             ctx.Store.BeforeEventPublication = async events =>
             {
                 if (!events.Any(e => e.Kind == KernelEventKinds.SessionUpdated)) return;
-                entered.TrySetResult();
-                await release.Task;
-            };
-        else
-            ctx.AgentRuntime.BeforeOpenAsync = async () =>
-            {
                 entered.TrySetResult();
                 await release.Task;
             };
@@ -109,7 +100,7 @@ public sealed class UnifiedSessionLifecycleTests
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public async Task ActorShutdownJoinsConfigurationProducerBeforeOwnershipCleanup(bool duringConfigure)
+    public async Task ActorShutdownJoinsLazyRebindBeforeOwnershipCleanup(bool duringConfigure)
     {
         await using var ctx = new KernelTestContext();
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
@@ -131,7 +122,9 @@ public sealed class UnifiedSessionLifecycleTests
             };
         else
             ctx.AgentRuntime.BeforeOpenAsync = () => { Pause(); return Task.CompletedTask; };
-        var update = Task.Run(() => ctx.Kernel.UpdateSessionAsync(id, new(Model: new("new-model")), Human, default));
+        await ctx.Kernel.UpdateSessionAsync(id, new(Model: new("new-model")), Human, default);
+        Assert.Single(ctx.AgentRuntime.OpenedSessions);
+        var update = Task.Run(() => ctx.SendAndWaitForTurnAsync(id, new("next", "lazy-next")));
         Task? shutdown = null;
         try
         {
@@ -239,7 +232,7 @@ public sealed class UnifiedSessionLifecycleTests
     [InlineData(true, false)]
     [InlineData(false, true)]
     [InlineData(true, true)]
-    public async Task ConfigurationUpdateReopensOutsideMailboxAndKeepsItResponsive(bool worker, bool slowDisposal)
+    public async Task LazyConfigurationReopensOnNextTurnOutsideMailboxAndKeepsItResponsive(bool worker, bool slowDisposal)
     {
         await using var ctx = new KernelTestContext();
         var (_, snapshot) = await ctx.CreateDefaultTrackAsync();
@@ -259,7 +252,13 @@ public sealed class UnifiedSessionLifecycleTests
         else ctx.AgentRuntime.BeforeOpenAsync = Pause;
         try
         {
-            var update = ctx.Kernel.UpdateSessionAsync(id, new(Model: new("new-model")), Human, default);
+            var updated = await ctx.Kernel.UpdateSessionAsync(id, new(Model: new("new-model")), Human, default);
+            Assert.Equal("new-model", updated.Model);
+            var update = Task.Run(async () =>
+            {
+                await ctx.Kernel.SendSessionMessageAsync(id, new(Content: "next", RequestKey: "lazy-next"), Human, default);
+                await ctx.Kernel.WaitForTrackIdleAsync(snapshot.Track.Id);
+            });
             await entered.Task.WaitAsync(TimeSpan.FromSeconds(2));
             Assert.False(update.IsCompleted);
             await ctx.Kernel.ListSessionsAsync(snapshot.Track.Id, new(), Human, default).WaitAsync(TimeSpan.FromSeconds(2));
@@ -267,7 +266,8 @@ public sealed class UnifiedSessionLifecycleTests
             await ctx.Kernel.ControlSessionAsync(leadId, new("stop", TurnId: running.ActiveTurn!.Id), Human, default)
                 .WaitAsync(TimeSpan.FromSeconds(2));
             release.TrySetResult();
-            Assert.Equal("new-model", (await update.WaitAsync(TimeSpan.FromSeconds(2))).Model);
+            turnRelease.TrySetResult();
+            await update.WaitAsync(TimeSpan.FromSeconds(2));
         }
         finally { release.TrySetResult(); turnRelease.TrySetResult(); }
         await ctx.Kernel.WaitForTrackIdleAsync(snapshot.Track.Id);

@@ -93,12 +93,13 @@ public sealed partial class TrackActor
                 var running = session with { Status = "running", UpdatedAtMs = actor.NowMs() };
                 var execution = await work.ClaimCoreAsync(session, running, actor.SessionUpdatedEvent(running), ct).ConfigureAwait(false);
                 if (execution is null) return ((SessionTurnDto Turn, AgentSessionDto Session, CancellationTokenSource Startup)?)null;
-                var startup = actor._scheduler.BeginStartup(session.Id, turn.Id);
+                var startup = actor._runtimes.Get(session.Id).BeginLaunch(actor._actorShutdownCts.Token, turn.Id);
                 startup.CancelAfter(actor._options.SessionStartupTimeout);
                 return (turn, execution, startup);
             }, actor._actorShutdownCts.Token).ConfigureAwait(false);
             if (claim is not { } claimed) return null;
             using var startupDeadline = CancellationTokenSource.CreateLinkedTokenSource(ct, claimed.Startup.Token);
+            IAgentSession? startupAgent = null;
             try
             {
                 await actor.EnqueueAsync(_ =>
@@ -112,8 +113,8 @@ public sealed partial class TrackActor
                     return Task.CompletedTask;
                 }, actor._actorShutdownCts.Token).ConfigureAwait(false);
                 startupDeadline.Token.ThrowIfCancellationRequested();
-                var agent = await actor.GetOrOpenAgentSessionCoreAsync(claimed.Session, null, startupDeadline.Token,
-                    inMailbox: false).ConfigureAwait(false);
+                var agent = await actor.GetOrOpenAgentSessionCoreAsync(claimed.Session, null, startupDeadline.Token).ConfigureAwait(false);
+                startupAgent = agent;
                 return await actor.EnqueueAsync(async _ =>
                 {
                     startupDeadline.Token.ThrowIfCancellationRequested();
@@ -132,7 +133,7 @@ public sealed partial class TrackActor
                     var turnCts = CancellationTokenSource.CreateLinkedTokenSource(ct, actor._actorShutdownCts.Token);
                     var active = new ActiveTurnState(running.Id,
                         SessionConfiguration.FromNullable(claimed.Session.Model, claimed.Session.ReasoningEffort, claimed.Session.PermissionMode),
-                        actor._liveContextUsage.GetOrCreateValue(agent), turn, agent, turnCts, true)
+                        actor._runtimes.Get(running.Id).ContextUsage, turn, agent, turnCts, true)
                     { BoundAttemptId = running.BoundAttemptId };
                     actor._scheduler.SetActive(running.Id, active);
                     onActivated(active);
@@ -144,6 +145,11 @@ public sealed partial class TrackActor
             }
             catch (Exception error)
             {
+                if (startupAgent is not null)
+                {
+                    try { await actor._runtimes.Get(work.SessionId).CloseAsync(actor._options.SessionStartupTimeout, CancellationToken.None).ConfigureAwait(false); }
+                    catch { /* Setup settlement records unconfirmed shutdown. */ }
+                }
                 var settled = await actor.EnqueueAsync(_ => work.TrySettleSetupFailureCoreAsync(error, claimed.Turn,
                     actor.RequireSessionCore(work.SessionId)), CancellationToken.None).ConfigureAwait(false);
                 if (settled) return null;
@@ -153,7 +159,7 @@ public sealed partial class TrackActor
             {
                 await actor.EnqueueAsync(_ =>
                 {
-                    actor._scheduler.EndStartup(work.SessionId, claimed.Startup);
+                    actor._runtimes.Get(work.SessionId).EndLaunch(claimed.Startup);
                     return Task.CompletedTask;
                 }, CancellationToken.None).ConfigureAwait(false);
             }
@@ -378,6 +384,20 @@ public sealed partial class TrackActor
             var items = BuildFinalItems(active, outcome, endNow);
             (SessionTurnDto? Turn, bool ShouldAutoCompact) settled = default;
 
+            if (active.Interrupted && active.BoundAttemptId is { } boundAttemptId)
+            {
+                var paused = await actor.EnqueueAsync(_ => Task.FromResult(
+                    actor._activeAttempts.TryGetValue(boundAttemptId, out var attempt) && attempt.Paused ? attempt : null),
+                    CancellationToken.None).ConfigureAwait(false);
+                if (paused is not null)
+                {
+                    await actor.CloseInterruptedWorkerAsync(active, paused).ConfigureAwait(false);
+                    outcome.Status = paused.InterruptionUnconfirmed ? "unknown" : "interrupted";
+                    outcome.ErrorText = "Turn interrupted.";
+                    outcome.Conclusive = !paused.InterruptionUnconfirmed;
+                }
+            }
+
             async Task<SessionTurnDto> SettleAsync()
             {
                 var result = await actor.EnqueueAsync(_ => SettleCoreAsync(work, active, prompt, outcome, items, endNow),
@@ -396,17 +416,6 @@ public sealed partial class TrackActor
         {
             var sessionId = active.SessionId;
             var currentSession = actor.RequireSessionCore(sessionId);
-            if (currentSession.BoundAttemptId is { } boundAttemptId && active.Interrupted &&
-                actor._activeAttempts.TryGetValue(boundAttemptId, out var pausedAttempt) && pausedAttempt.Paused)
-            {
-                outcome.Status = "interrupted";
-                outcome.ErrorText = "Turn interrupted.";
-                await actor.CloseInterruptedWorkerCoreAsync(active, pausedAttempt).ConfigureAwait(false);
-                // Confirmed process shutdown fences all further provider effects. The
-                // paused attempt can accept another turn without a resume fence.
-                outcome.Conclusive = !pausedAttempt.InterruptionUnconfirmed;
-            }
-
             if (active.MatchesSessionConfiguration(currentSession))
             {
                 if (outcome.FinalUsage is { } usage)
@@ -420,7 +429,7 @@ public sealed partial class TrackActor
             {
                 NativeThreadId = outcome.BoundThreadId ?? active.AgentSession.NativeThreadId ?? currentSession.NativeThreadId,
                 Status = outcome.Status == "unknown" ? "unknown" : "idle",
-                UnknownReason = outcome.Status == "unknown" ? (active.Control.StopTimedOut ? "stop_timeout" : "stream_lost") : null,
+                UnknownReason = outcome.Status == "unknown" ? (actor._runtimes.IsShutdownUnconfirmed(sessionId) ? "shutdown_unconfirmed" : active.Control.StopTimedOut ? "stop_timeout" : "stream_lost") : null,
                 UnknownTurnId = outcome.Status == "unknown" ? active.TurnDto.Id : null,
                 UnknownLastError = null, ReconnectInvalidated = false,
                 UpdatedAtMs = endNow,
@@ -436,7 +445,6 @@ public sealed partial class TrackActor
                 CompletedAtMs = outcome.Status == "unknown" ? null : endNow
             };
 
-            await UpdateResumeHoldCoreAsync(work, active, outcome.Conclusive, updatedSession).ConfigureAwait(false);
             await work.PersistSettlementCoreAsync(outcome.Delivered, outcome.RejectedBeforePrompt, completedTurn, items, updatedSession)
                 .ConfigureAwait(false);
 
@@ -451,25 +459,10 @@ public sealed partial class TrackActor
                 $"Child session '{sessionId}' turn '{completedTurn.Id}' ended as {completedTurn.Status}.").ConfigureAwait(false);
             active.Settled.TrySetResult(outcome.Conclusive);
             var settledSession = actor._sessions[sessionId];
-            var autoCompact = !actor._scheduler.HasResumeHold(sessionId) && settledSession.BoundAttemptId is null &&
+            var autoCompact = settledSession.BoundAttemptId is null &&
                               settledSession.Status == "idle" && outcome.Status == "completed" &&
                               actor.CurrentContextUsageRatioCore(settledSession) >= actor._options.AutoCompactionThreshold;
             return (completedTurn, autoCompact);
-        }
-
-        // An inconclusive queued follow-up holds the session for resume. A conclusive outcome quiesces the hold
-        // this turn created.
-        private async Task UpdateResumeHoldCoreAsync(ITurnWorkItem work, ActiveTurnState active, bool conclusive, AgentSessionDto updatedSession)
-        {
-            var sessionId = updatedSession.Id;
-            var turnId = active.TurnDto.Id;
-            if (!conclusive && (work.IsDurable || active.Interrupted) &&
-                !actor._scheduler.HasResumeHold(sessionId))
-                await actor.CreateSessionResumeHoldCoreAsync(sessionId, turnId,
-                    updatedSession.NativeThreadId ?? string.Empty, CancellationToken.None).ConfigureAwait(false);
-
-            if (conclusive && actor._scheduler.TryGetResumeHold(sessionId, out var recovery) && recovery.TurnId == turnId)
-                await actor.MarkSessionResumeQuiescentCoreAsync(sessionId, recovery, CancellationToken.None).ConfigureAwait(false);
         }
 
         private async Task<int?> TryAutoCompactAsync(string sessionId)
@@ -500,10 +493,6 @@ public sealed partial class TrackActor
                         if (active.Interrupted && active.BoundAttemptId is null && !HasStopEvidence(active))
                         {
                             var session = actor.RequireSessionCore(active.SessionId);
-                            if (!actor._scheduler.HasResumeHold(active.SessionId))
-                                await actor.CreateSessionResumeHoldCoreAsync(active.SessionId, active.TurnDto.Id,
-                                    active.AgentSession.NativeThreadId ?? session.NativeThreadId ?? string.Empty,
-                                    CancellationToken.None).ConfigureAwait(false);
                             if (!work.IsDurable)
                             {
                                 var unknown = session with { Status = "unknown", UnknownReason = "stream_lost", UnknownTurnId = active.TurnDto.Id, UpdatedAtMs = actor.NowMs() };

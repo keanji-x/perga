@@ -1,3 +1,5 @@
+using Perga.Kernel.Events;
+using Perga.Kernel.Internal;
 using Perga.Contracts;
 using Perga.Kernel.Ports;
 
@@ -60,15 +62,8 @@ public sealed partial class TrackActor
 
     private void NotifyQueueChangedCore(string sessionId)
     {
-        // Queue changes invalidate the existing session projection without publishing message content.
-        var ct = _actorShutdownCts.Token;
-        _ = TrackBackgroundJob(() => EnqueueAsync(async _ =>
-        {
-            var evt = SessionUpdatedEvent(RequireSessionCore(sessionId)) with { CreatedAtMs = NowMs() };
-            await _eventHub.EnsureInitializedFromStoreAsync(_store, ct).ConfigureAwait(false);
-            await _store.AppendEventAsync(evt, ct).ConfigureAwait(false);
-            await PublishInputEventAsync(evt).ConfigureAwait(false);
-        }, ct));
+        _eventHub.PublishTransient(_track.AreaId, TrackId, KernelEventKinds.SessionStateChanged,
+            JsonHelpers.ToElement(new { sessionId }), NowMs());
     }
 
     private Task RemoveQueuedMessageAsync(string sessionId, string inputId, CancellationToken ct, string? attemptId, InteropPrincipal principal) =>

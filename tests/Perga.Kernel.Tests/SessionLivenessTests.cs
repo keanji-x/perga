@@ -6,6 +6,13 @@ namespace Perga.Kernel.Tests;
 
 public sealed class SessionLivenessTests
 {
+    private static async Task RebindOnNextTurnAsync(KernelTestContext ctx, string id, UpdateSessionRequest update)
+    {
+        await ctx.Kernel.UpdateSessionAsync(id, update, new InteropPrincipal.Human(), default);
+        var failed = await ctx.SendAndWaitForTurnAsync(id, new("rebind", Guid.NewGuid().ToString("N")));
+        Assert.NotEqual("completed", failed.Status);
+    }
+
     [Fact]
     public async Task StopCancelsQueuedInputWhileDispatchAdmissionIsDraining()
     {
@@ -128,7 +135,7 @@ public sealed class SessionLivenessTests
         {
             await ctx.SendAndWaitForTurnAsync(id, new("first", "first"));
             HoldDisposal(ctx.AgentRuntime.OpenedSessions.Single());
-            await Assert.ThrowsAnyAsync<Exception>(() => ctx.Kernel.UpdateSessionAsync(id, new(Model: new("B")), new InteropPrincipal.Human(), default));
+            await RebindOnNextTurnAsync(ctx, id, new(Model: new("B")));
         }
         var shutdown = ctx.Kernel.Actors.GetOrActivate(snap.Track.Id).DisposeAsync().AsTask();
         try
@@ -172,7 +179,7 @@ public sealed class SessionLivenessTests
             await ctx.SendAndWaitForTurnAsync(id, new("first", "first"));
             var opened = ctx.AgentRuntime.OpenedSessions.Single();
             opened.ShutdownConfirmed = false;
-            await Assert.ThrowsAnyAsync<Exception>(() => ctx.Kernel.UpdateSessionAsync(id, new(Model: new("B")), new InteropPrincipal.Human(), default));
+            await RebindOnNextTurnAsync(ctx, id, new(Model: new("B")));
         }
         try
         {
@@ -220,7 +227,7 @@ public sealed class SessionLivenessTests
             if (configureThrows) old.ConfigureHandler = _ => throw new IOException("configure failed");
             old.ShutdownConfirmed = false;
             old.FailDisposal = throws;
-            await Assert.ThrowsAnyAsync<Exception>(() => ctx.Kernel.UpdateSessionAsync(id, new(Model: new("B"), ReasoningEffort: new("high")), new InteropPrincipal.Human(), default));
+            await RebindOnNextTurnAsync(ctx, id, new(Model: new("B"), ReasoningEffort: new("high")));
         }
         else
         {
@@ -257,7 +264,7 @@ public sealed class SessionLivenessTests
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         agent.DisposeHandler = () => release.Task;
         agent.ShutdownConfirmed = false;
-        await Assert.ThrowsAnyAsync<Exception>(() => ctx.Kernel.UpdateSessionAsync(id, new(Model: new("B"), ReasoningEffort: new("high")), new InteropPrincipal.Human(), default));
+        await RebindOnNextTurnAsync(ctx, id, new(Model: new("B"), ReasoningEffort: new("high")));
         var reset = ctx.Kernel.ControlSessionAsync(id, new("reset_context"), new InteropPrincipal.Human(), default);
         await Assert.ThrowsAnyAsync<Exception>(() => ctx.Kernel.SendSessionMessageAsync(id, new(Content: "blocked", RequestKey: "blocked"), new InteropPrincipal.Human(), default));
         Assert.False(reset.IsCompleted);

@@ -26,7 +26,8 @@ public sealed class L2ConfigurationRecoveryRegressionTests
             "unsupported" => new SessionConfigurationOutcome.Unsupported(ConfigurationDimension.Effort, "unsupported"),
             _ => throw new IOException("transport")
         };
-        await Assert.ThrowsAnyAsync<Exception>(() => ctx.Kernel.UpdateSessionAsync(id, new(Model: new("B"), ReasoningEffort: new("high")), new InteropPrincipal.Human(), default));
+        await ctx.Kernel.UpdateSessionAsync(id, new(Model: new("B"), ReasoningEffort: new("high")), new InteropPrincipal.Human(), default);
+        Assert.Equal("failed", (await ctx.SendAndWaitForTurnAsync(id, new("rebind", "rebind"))).Status);
         Assert.True(original.Disposed);
         Assert.Equal(nativeId, ((await ctx.Kernel.ListSessionsAsync(snap.Track.Id, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray()).Single().NativeThreadId);
         Assert.Equal(nativeId, (await ctx.Store.LoadTrackAggregateAsync(snap.Track.Id, default))!.Sessions.Single().NativeThreadId);
@@ -70,7 +71,8 @@ public sealed class L2ConfigurationRecoveryRegressionTests
         await ctx.SendAndWaitForTurnAsync(id, new("first", "first"));
         var nativeId = ctx.AgentRuntime.OpenedSessions.Last().NativeThreadId;
         ctx.AgentRuntime.OnOpenedSession = session => session.NativeThreadId = "contradictory";
-        await Assert.ThrowsAsync<KernelException>(() => ctx.Kernel.UpdateSessionAsync(id, new(Model: new("B"), ReasoningEffort: new("high")), new InteropPrincipal.Human(), default));
+        await ctx.Kernel.UpdateSessionAsync(id, new(Model: new("B"), ReasoningEffort: new("high")), new InteropPrincipal.Human(), default);
+        Assert.Equal("unknown", (await ctx.SendAndWaitForTurnAsync(id, new("rebind", "rebind"))).Status);
         var replacement = ctx.AgentRuntime.OpenedSessions.Last();
         Assert.Equal(nativeId, replacement.LaunchSpec.ResumeNativeThreadId);
         Assert.True(replacement.Disposed);
@@ -134,13 +136,13 @@ public sealed class L2ConfigurationRecoveryRegressionTests
         if (unconfirmed)
         {
             await Assert.ThrowsAsync<KernelException>(() => resume);
-            Assert.Single(await ctx.Store.ListSessionResumeFencesAsync(snap.Track.Id, default));
+            Assert.Equal("unknown", (await ctx.Store.LoadTrackAggregateAsync(snap.Track.Id, default))!.Sessions.Single().Status);
             Assert.Equal("unknown", (await ctx.Kernel.GetSessionItemsAsync(id, new(), new InteropPrincipal.Human(), default)).State);
         }
         else
         {
             await resume;
-            Assert.Empty(await ctx.Store.ListSessionResumeFencesAsync(snap.Track.Id, default));
+            Assert.Equal("idle", (await ctx.Store.LoadTrackAggregateAsync(snap.Track.Id, default))!.Sessions.Single().Status);
             Assert.Equal("full", ((await ctx.Kernel.ListSessionsAsync(snap.Track.Id, new(IncludeArchived: true), new InteropPrincipal.Human(), default)).Select(summary => summary.Session).ToArray()).Single().PermissionMode);
             ctx.AgentRuntime.OnBeforeOpenSession = null;
             await ctx.SendAndWaitForTurnAsync(id, new("next", "next"));

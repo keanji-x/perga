@@ -194,10 +194,12 @@ public sealed partial class TrackActor
                         var stopping = RequestTurnStop(active, workerAttempt: attempt);
                         return (stopping, session with { Status = "stopping", UpdatedAtMs = NowMs() });
                     }
-                    if (_scheduler.CancelStartup(sessionId, request.TurnId))
+                    if (_runtimes.Get(sessionId).CancelLaunch(request.TurnId))
                     {
                         if (session.BoundAttemptId is { } attemptId) _activeAttempts[attemptId].Paused = true;
-                        return (Task.CompletedTask, session);
+                        var stopping = session with { Status = "stopping", UpdatedAtMs = NowMs() };
+                        await PersistAndEmitSessionUpdatedCoreAsync(stopping, stopping.UpdatedAtMs, CancellationToken.None).ConfigureAwait(false);
+                        return (Task.CompletedTask, stopping);
                     }
                     throw KernelException.Conflict("The observed turn is no longer current.");
                 }, ct).ConfigureAwait(false);
